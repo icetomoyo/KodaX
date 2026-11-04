@@ -1890,7 +1890,10 @@ export function withExtensionRuntimeContext<T>(
 ): Promise<T> {
   const current = executionFrames.getStore();
   if (runId !== undefined && current?.runId === runId && !current.closed) return execute();
-  const frame: ExecutionFrame = { runId, activeRuntime: runtime instanceof KodaXExtensionRuntime ? runtime : null, activeExecutionRuntime: null,
+  const activeRuntime = runtime instanceof KodaXExtensionRuntime ? runtime : null;
+  // A combined Session runtime is not a registry runtime, but its hooks and events must still fire.
+  const activeExecutionRuntime = !activeRuntime && isActiveExtensionExecutionRuntime(runtime) ? runtime : null;
+  const frame: ExecutionFrame = { runId, activeRuntime, activeExecutionRuntime,
     controllers: new Map(), snapshots: new Map(), cleanups: [] };
   return executionFrames.run(frame, () => withToolRegistrySnapshot(async () => {
     runtime?.pinExecutionContributions?.();

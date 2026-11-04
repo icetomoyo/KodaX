@@ -258,7 +258,7 @@ import {
 import { getToolExecutionOverride } from '../agent-runtime/permission-gate.js';
 import { applyToolVisibilityPolicy, filterExcludedTools } from '../agent-runtime/tool-resolution.js';
 import { listRunScopedTools, runScopedToolMap } from '../agent-runtime/run-scoped-tools.js';
-import { listToolDefinitions } from '../tools/index.js';
+import { listToolDefinitions, TOOL_CALL_NAME, TOOL_DESCRIBE_NAME } from '../tools/index.js';
 import { activateSessionHistoryTools } from '../tools/session-history.js';
 import { runToolDispatch } from '../agent-runtime/tool-dispatch.js';
 import { randomUUID } from 'node:crypto';
@@ -2421,20 +2421,19 @@ async function runManagedTaskViaRunnerInner(
     beforeTool: async (call) => {
       if (skillLoadBatch && !isSkillToolCall(call)) return SKILL_ACTION_DEFERRED;
       if (scriptMode && call.name === SCRIPT_TOOL_NAME) return true;
-      if (options.events) {
-        const override = await getToolExecutionOverride(
-          options.events,
-          call.name,
-          call.input,
-          call.id,
-          options.context?.executionCwd,
-          options.context?.gitRoot ?? undefined,
-          baseCtx.toolResultRecovery,
-        );
-        if (override === undefined) return true;
-        return override;
-      }
-      return true;
+      // Like SA dispatch, the bridge gates its concrete target; gating the
+      // wrapper too would ask twice for one operation.
+      if (call.name === TOOL_CALL_NAME || call.name === TOOL_DESCRIBE_NAME) return true;
+      const override = await getToolExecutionOverride(
+        options.events ?? {},
+        call.name,
+        call.input,
+        call.id,
+        options.context?.executionCwd,
+        options.context?.gitRoot ?? undefined,
+        baseCtx.toolResultRecovery,
+      );
+      return override ?? true;
     },
     onToolCall: (call) => {
       // CAP-035: filter internal control-plane tools (emit_managed_protocol,

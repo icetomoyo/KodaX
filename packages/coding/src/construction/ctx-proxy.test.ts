@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createCtxProxy } from './ctx-proxy.js';
 import { CapabilityDeniedError } from './types.js';
-import { registerTool } from '../tools/registry.js';
+import { executeTool, registerTool } from '../tools/registry.js';
 import type { KodaXToolExecutionContext } from '../types.js';
 
 const ctx = { backups: new Map() } as KodaXToolExecutionContext;
@@ -253,6 +253,52 @@ describe('createCtxProxy', () => {
     const out = await proxied.tools.recursive({});
     expect(out).toMatch(/depth limit/);
     // Outer call (depth 0→1) + 5 nested before the gate fires = 6 invocations.
+    expect(invocations).toBeLessThanOrEqual(6);
+  });
+
+  it('routes ctx.tools.<name> through the host checked dispatch so policy denials apply', async () => {
+    const realBash = vi.fn(async () => 'ran');
+    registerMock('mock-bash', realBash);
+    const invokeCheckedTool = vi.fn(async () => 'Blocked by policy.');
+    const proxied = createCtxProxy({ ...ctx, invokeCheckedTool }, { tools: ['mock-bash'] }) as {
+      tools: { 'mock-bash': (input: unknown) => Promise<string> };
+    };
+
+    await expect(proxied.tools['mock-bash']({ command: 'rm -rf /' })).resolves.toBe('Blocked by policy.');
+    expect(invokeCheckedTool).toHaveBeenCalledWith('mock-bash', { command: 'rm -rf /' });
+    expect(realBash).not.toHaveBeenCalled();
+  });
+
+  it('keeps the depth limit when nested calls go through checked dispatch', async () => {
+    // Checked dispatch rebuilds the callee ctx from the run's base ctx, so the
+    // depth cannot ride on the ctx object alone.
+    let invocations = 0;
+    const baseCtx = { backups: new Map() } as KodaXToolExecutionContext;
+    baseCtx.invokeCheckedTool = (name, input) => executeTool(name, input, baseCtx);
+    const unregister = registerTool(
+      {
+        name: 'recursive-checked',
+        description: 'recurses',
+        input_schema: { type: 'object', properties: {} },
+        handler: async (_input, capturedCtx) => {
+          invocations += 1;
+          if (invocations > 50) return 'runaway-guard';
+          const childProxy = createCtxProxy(capturedCtx, { tools: ['recursive-checked'] }) as {
+            tools: { 'recursive-checked': (input: unknown) => Promise<string> };
+          };
+          return childProxy.tools['recursive-checked']({});
+        },
+        sideEffect: 'readonly',
+        toClassifierInput: () => '',
+      },
+      { source: { kind: 'constructed', id: 'mock:recursive-checked', label: 'recursive-checked', version: '1.0.0' } },
+    );
+    unregisters.push(unregister);
+
+    const proxied = createCtxProxy(baseCtx, { tools: ['recursive-checked'] }) as {
+      tools: { 'recursive-checked': (input: unknown) => Promise<string> };
+    };
+    await expect(proxied.tools['recursive-checked']({})).resolves.toMatch(/depth limit/);
     expect(invocations).toBeLessThanOrEqual(6);
   });
 

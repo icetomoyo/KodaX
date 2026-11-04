@@ -253,17 +253,15 @@ function buildManagedToolCallBridge(
         toolCallId: targetToolId,
         toolCall: targetCall,
       };
-      const permissionOverride = events
-        ? await getToolExecutionOverride(
-          events,
-          parsed.name,
-          parsed.input,
-          targetToolId,
-          ctx.executionCwd,
-          ctx.gitRoot,
-          ctx.toolResultRecovery,
-        )
-        : undefined;
+      const permissionOverride = await getToolExecutionOverride(
+        events ?? {},
+        parsed.name,
+        parsed.input,
+        targetToolId,
+        ctx.executionCwd,
+        ctx.gitRoot,
+        ctx.toolResultRecovery,
+      );
       throwIfManagedToolAborted(runnerCtx.abortSignal);
       if (permissionOverride !== undefined) {
         // Like native beforeTool rejection, no executable target was invoked.

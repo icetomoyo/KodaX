@@ -9,11 +9,13 @@
  *
  * Behavior (v0.7.28, single-dim capabilities) — see DD §14.5.3:
  *   - `ctx.tools.<name>(...)` — capability check first, then dispatch
- *     through `executeTool()` so the call traverses the SAME registry
- *     pipeline as a builtin tool invocation. This "completes the chain":
- *     the constructed handler reuses every safety policy that already
- *     ships with builtins (e.g. bash OS sandbox, write path policy,
- *     truncation, error mapping).
+ *     through the host's checked dispatch (`hostCtx.invokeCheckedTool`)
+ *     when the run provides one, so permission prompts, extension
+ *     `tool:before` policy and the run's active tool set apply to nested
+ *     calls exactly as to model calls. Without a host dispatch (direct
+ *     embedding, tests) it falls back to `executeTool()`, which still
+ *     applies every per-tool safety policy (bash OS sandbox, write path
+ *     policy, truncation, error mapping).
  *   - Plan-mode predicate (`hostCtx.planModeBlockCheck`) is consulted
  *     before every dispatch so a constructed handler cannot reach a
  *     write tool that the parent plan-mode would have blocked. The
@@ -40,6 +42,7 @@
  * Guardrail static check + LLM review.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { KodaXToolExecutionContext } from '../types.js';
 import { executeTool, getRegisteredToolDefinition } from '../tools/registry.js';
 import type { Capabilities } from './types.js';
@@ -65,6 +68,8 @@ export const MAX_CONSTRUCTED_DEPTH = 5;
  * construction subsystem's internal contract.
  */
 const CONSTRUCTED_DEPTH_KEY = '__constructedDepth' as const;
+/** Checked dispatch rebuilds the callee ctx, so the depth also rides the async context. */
+const constructedDepth = new AsyncLocalStorage<number>();
 
 export interface CreateCtxProxyOptions {
   /**
@@ -84,7 +89,7 @@ export function createCtxProxy(
     [CONSTRUCTED_DEPTH_KEY]?: number;
   };
   const allowedTools = new Set(capabilities.tools);
-  const currentDepth = hostCtx[CONSTRUCTED_DEPTH_KEY] ?? 0;
+  const currentDepth = hostCtx[CONSTRUCTED_DEPTH_KEY] ?? constructedDepth.getStore() ?? 0;
 
   // Build a guarded `tools` object: only whitelisted names are reachable,
   // and each call dispatches through `executeTool()` so the constructed
@@ -136,6 +141,10 @@ export function createCtxProxy(
         return `[Tool Error] Constructed tool depth limit (${MAX_CONSTRUCTED_DEPTH}) exceeded calling '${name}'. Possible recursive composition (A→B→A); break the cycle or factor through a builtin tool.`;
       }
 
+      const invokeChecked = hostCtx.invokeCheckedTool;
+      if (invokeChecked) {
+        return constructedDepth.run(nextDepth, () => invokeChecked(name, normalizedInput));
+      }
       const childCtx = {
         ...hostCtx,
         [CONSTRUCTED_DEPTH_KEY]: nextDepth,

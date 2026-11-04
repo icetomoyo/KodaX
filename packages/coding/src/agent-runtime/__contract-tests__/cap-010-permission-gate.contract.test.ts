@@ -24,7 +24,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { CANCELLED_TOOL_RESULT_MESSAGE } from '../../constants.js';
+import { createExtensionRuntime, withExtensionRuntimeContext } from '../../extensions/runtime.js';
 import { getToolExecutionOverride } from '../permission-gate.js';
+import type { KodaXEvents } from '../../types.js';
 
 describe('CAP-010: tri-state permission gate contract', () => {
   it('CAP-PERMISSION-001: events.beforeToolExecute returning false yields CANCELLED constant (block-as-cancel)', async () => {
@@ -93,6 +95,31 @@ describe('CAP-010: tri-state permission gate contract', () => {
         expect(typeof result).toBe('string');
         expect(result).not.toBe(CANCELLED_TOOL_RESULT_MESSAGE);
       }
+    }
+  });
+
+  it('CAP-PERMISSION-005: every Host allow verdict still runs extension tool:before; only a Host block skips it', async () => {
+    // Permission modes (plan, accept-edits, auto, full-access) all reduce to a
+    // Host beforeToolExecute verdict, so no mode can bypass an extension policy.
+    const runtime = createExtensionRuntime();
+    const hook = vi.fn(() => 'Blocked by extension policy.');
+    runtime.registerHook('tool:before', hook);
+    const hostVerdicts: Array<{ events: KodaXEvents; expected: string }> = [
+      { events: {}, expected: 'Blocked by extension policy.' },
+      { events: { beforeToolExecute: async () => true }, expected: 'Blocked by extension policy.' },
+      { events: { beforeToolExecute: async () => false }, expected: CANCELLED_TOOL_RESULT_MESSAGE },
+      { events: { beforeToolExecute: async () => '[Plan Mode] blocked' }, expected: '[Plan Mode] blocked' },
+    ];
+    try {
+      for (const { events, expected } of hostVerdicts) {
+        hook.mockClear();
+        const result = await withExtensionRuntimeContext(
+          () => getToolExecutionOverride(events, 'bash', { command: 'ls' }), runtime);
+        expect(result).toBe(expected);
+        expect(hook).toHaveBeenCalledTimes(expected === 'Blocked by extension policy.' ? 1 : 0);
+      }
+    } finally {
+      await runtime.dispose();
     }
   });
 });
