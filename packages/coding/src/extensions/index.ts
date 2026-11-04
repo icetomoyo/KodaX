@@ -15,6 +15,7 @@ export type {
   ExtensionContributionSource,
   ExtensionLoadSource,
   ExtensionLogger,
+  ExtensionToolBeforeAsk,
   ExtensionToolBeforeHookContext,
   ExtensionEventMap,
   ExtensionHookMap,

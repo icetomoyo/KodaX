@@ -194,6 +194,15 @@ export interface ExtensionToolBeforeHookContext {
   gitRoot?: string;
 }
 
+/**
+ * Asks a person to approve this one call. A block from any handler still wins,
+ * and the call runs only after an explicit approval.
+ */
+export interface ExtensionToolBeforeAsk {
+  readonly decision: 'ask';
+  readonly reason: string;
+}
+
 export interface ExtensionProviderBeforeHookContext {
   provider: string;
   model?: string;
@@ -356,9 +365,14 @@ export interface KodaXTodoItem {
 }
 
 export interface ExtensionHookMap {
+  /**
+   * Policy check before a tool call. Return nothing to allow, a string or
+   * `false` to block, or an `ExtensionToolBeforeAsk` to have a person approve
+   * this one call. A block from any handler wins over an ask.
+   */
   'tool:before': (
     context: ExtensionToolBeforeHookContext,
-  ) => Promise<void | string | false> | void | string | false;
+  ) => Promise<void | string | false | ExtensionToolBeforeAsk> | void | string | false | ExtensionToolBeforeAsk;
   'provider:before': (
     context: ExtensionProviderBeforeHookContext,
   ) => Promise<void> | void;

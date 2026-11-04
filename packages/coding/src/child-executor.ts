@@ -2543,6 +2543,11 @@ export function buildChildEvents(
       if (!parentEvents?.beforeToolExecute) return true;
       return parentEvents.beforeToolExecute(tool, input, toolEventMeta(meta));
     },
+    // Absent when the parent cannot ask a person, so an extension ask still blocks.
+    ...(parentEvents?.requestToolApproval ? {
+      requestToolApproval: (tool: string, input: Record<string, unknown>, reason: string, meta?: KodaXToolEventMeta) =>
+        parentEvents.requestToolApproval!(tool, input, reason, toolEventMeta(meta)),
+    } : {}),
     // Silently update counter; tool use line will include it.
     onIterationStart: (iter: number, maxIter: number) => {
       iterationCount = iter;

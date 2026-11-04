@@ -4,6 +4,7 @@ import type { KodaXExtensionRuntime } from './runtime.js';
 import type { CapabilityProvider, CapabilityResult } from './types.js';
 import { resolveExecutionPath } from '../runtime-paths.js';
 import { createBuiltinToolDefinition } from '../tools/index.js';
+import { parseBashCommand } from '../permissions/bash-ast.js';
 
 export type OfficialSandboxMode = 'enforced' | 'best_effort';
 
@@ -17,6 +18,7 @@ interface OfficialSandboxPolicySnapshot {
   workspaceRoot: string;
   guardedTools: string[];
   bashBlocklist: string[];
+  bashApprovals: string[];
   semantics: string;
 }
 
@@ -24,9 +26,57 @@ const OFFICIAL_SANDBOX_PROVIDER_ID = 'official-sandbox';
 
 const DEFAULT_BASH_BLOCKLIST: Array<{ label: string; pattern: RegExp }> = [
   { label: 'git reset --hard', pattern: /\bgit\s+reset\s+--hard\b/i },
-  { label: 'rm -rf', pattern: /\brm\s+-rf\b/i },
-  { label: 'Remove-Item -Recurse', pattern: /\bremove-item\b[\s\S]*\b-recurse\b/i },
 ];
+
+const BASH_APPROVALS = ['recursive delete', 'delete outside the workspace'];
+const DELETE_COMMANDS = new Set(['rm', 'rmdir', 'rd', 'del', 'erase', 'unlink', 'remove-item', 'ri']);
+const DELETE_WORD = /\b(?:rm|rmdir|rd|del|erase|unlink|remove-item|ri)\b/i;
+
+function commandName(token: string): string {
+  return (token.replace(/\\/g, '/').split('/').at(-1) ?? '').toLowerCase().replace(/\.exe$/, '');
+}
+
+/** rm -r, -R or --recursive; PowerShell -Recurse or a prefix of it; cmd /s. */
+function isRecursiveFlag(token: string): boolean {
+  return token === '--recursive'
+    || /^-[dfiIrRv]*[rR][dfiIrRv]*$/.test(token)
+    || /^-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?$/i.test(token)
+    || /^\/s$/i.test(token);
+}
+
+function deleteTargets(args: readonly string[]): string[] {
+  return args.flatMap((token) => {
+    const pathValue = /^-(?:literal)?path:(.+)$/i.exec(token)?.[1];
+    if (pathValue !== undefined) return pathValue.split(',');
+    if (token.startsWith('-') || /^\/[a-z]$/i.test(token)) return [];
+    return token.split(',');
+  }).map((target) => target.trim()).filter(Boolean);
+}
+
+function isOutsideWorkspace(target: string, cwd: string, workspaceRoot: string): boolean {
+  // Variables, home paths and drive-relative paths cannot be resolved here, so they count as outside.
+  if (/[$%`]/.test(target) || target.startsWith('~') || /^[a-z]:(?![\\/])/i.test(target)) return true;
+  return !isPathInsideWorkspace(path.resolve(cwd, target), workspaceRoot);
+}
+
+function deleteApprovalReason(command: string, cwd: string, workspaceRoot: string): string | undefined {
+  // Backslashes are path separators in Windows shells, not escapes.
+  const tree = parseBashCommand(command.replace(/\\/g, '\\\\'));
+  if (tree.unparseable) {
+    return DELETE_WORD.test(command) ? 'Delete in a command the sandbox cannot check.' : undefined;
+  }
+  const reasons = new Set<string>();
+  for (const stage of tree.statements.flatMap((statement) => statement.stages)) {
+    // Searching the whole stage also covers wrappers such as sudo or xargs.
+    const start = stage.argv.findIndex((token) => DELETE_COMMANDS.has(commandName(token)));
+    if (start < 0) continue;
+    const args = stage.argv.slice(start + 1);
+    if (args.some(isRecursiveFlag)) reasons.add('Recursive delete.');
+    const outside = deleteTargets(args).find((target) => isOutsideWorkspace(target, cwd, workspaceRoot));
+    if (outside !== undefined) reasons.add(`Deletes ${outside}, outside the workspace root ${workspaceRoot}.`);
+  }
+  return reasons.size === 0 ? undefined : [...reasons].join(' ');
+}
 
 function isPathInsideWorkspace(targetPath: string, workspaceRoot: string): boolean {
   const resolvedWorkspace = path.resolve(workspaceRoot);
@@ -47,9 +97,10 @@ function buildPolicySnapshot(options: OfficialSandboxOptions): OfficialSandboxPo
     workspaceRoot,
     guardedTools: ['write', 'edit', 'bash'],
     bashBlocklist: DEFAULT_BASH_BLOCKLIST.map((entry) => entry.label),
+    bashApprovals: BASH_APPROVALS,
     semantics: mode === 'enforced'
-      ? 'Workspace-bound file mutations and a narrow destructive bash blocklist are enforced.'
-      : 'Workspace-bound file mutations and a narrow destructive bash blocklist are best-effort and should not be treated as complete isolation.',
+      ? 'Workspace-bound file mutations, a narrow destructive bash blocklist, and approval for recursive or out-of-workspace deletes are enforced.'
+      : 'Workspace-bound file mutations, a narrow destructive bash blocklist, and approval for recursive or out-of-workspace deletes are best-effort and should not be treated as complete isolation.',
   };
 }
 
@@ -61,6 +112,7 @@ function formatPolicyContent(policy: OfficialSandboxPolicySnapshot): string {
     `Workspace root: ${policy.workspaceRoot}`,
     `Guarded tools: ${policy.guardedTools.join(', ')}`,
     `Bash blocklist: ${policy.bashBlocklist.join(', ')}`,
+    `Bash approvals: ${policy.bashApprovals.join(', ')}`,
     '',
     policy.semantics,
   ].join('\n');
@@ -76,6 +128,7 @@ function buildPolicyResult(policy: OfficialSandboxPolicySnapshot): CapabilityRes
       workspaceRoot: policy.workspaceRoot,
       guardedTools: policy.guardedTools,
       bashBlocklist: policy.bashBlocklist,
+      bashApprovals: policy.bashApprovals,
     },
   };
 }
@@ -129,6 +182,7 @@ export function registerOfficialSandboxExtension(
       workspaceRoot: policy.workspaceRoot,
       guardedTools: policy.guardedTools,
       bashBlocklist: policy.bashBlocklist,
+      bashApprovals: policy.bashApprovals,
     }),
   };
 
@@ -164,11 +218,12 @@ export function registerOfficialSandboxExtension(
         ? context.input.command
         : '';
       const matched = DEFAULT_BASH_BLOCKLIST.find((entry) => entry.pattern.test(command));
-      if (!matched) {
-        return undefined;
+      if (matched) {
+        return `[Tool Error] bash: Blocked by official sandbox (${policy.mode}). Command matches destructive policy: ${matched.label}.`;
       }
 
-      return `[Tool Error] bash: Blocked by official sandbox (${policy.mode}). Command matches destructive policy: ${matched.label}.`;
+      const reason = deleteApprovalReason(command, context.executionCwd ?? policy.workspaceRoot, policy.workspaceRoot);
+      return reason === undefined ? undefined : { decision: 'ask' as const, reason };
     },
     {
       source: {

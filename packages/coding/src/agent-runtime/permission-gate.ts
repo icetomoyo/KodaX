@@ -5,7 +5,8 @@
  *
  * Pre-execute gate run before every tool dispatch. Three sources can veto
  * or modify the call; precedence is `events.beforeToolExecute` first, then
- * the extension `tool:before` hook. Returns:
+ * the extension `tool:before` hook. An extension ask runs the call only after
+ * `events.requestToolApproval` answers `true` (FEATURE_304, ADR-071). Returns:
  *
  *   - `undefined`  → allow execution (the default)
  *   - a string     → block, but use this string as the synthesized
@@ -24,7 +25,7 @@
  */
 
 import { CANCELLED_TOOL_RESULT_MESSAGE } from '../constants.js';
-import { runActiveExtensionHook } from '../extensions/runtime.js';
+import { isExtensionToolBeforeAsk, runActiveExtensionHook } from '../extensions/runtime.js';
 import type { KodaXEvents } from '../types.js';
 import type { ToolResultRecovery } from '../tool-result-recovery.js';
 
@@ -60,6 +61,16 @@ export async function getToolExecutionOverride(
   if (extensionOverride === false) {
     recovery?.denyRead(name, input);
     return CANCELLED_TOOL_RESULT_MESSAGE;
+  }
+
+  if (isExtensionToolBeforeAsk(extensionOverride)) {
+    // Without a way to ask a person, an ask must block rather than allow.
+    const approval = events.requestToolApproval
+      ? await events.requestToolApproval(name, input, extensionOverride.reason, { toolId })
+      : `[Tool Error] ${name}: This call needs a person's approval, but this host cannot ask for it.\n${extensionOverride.reason}`;
+    if (approval === true) return undefined;
+    recovery?.denyRead(name, input);
+    return typeof approval === 'string' ? approval : CANCELLED_TOOL_RESULT_MESSAGE;
   }
 
   if (typeof extensionOverride === 'string') recovery?.denyRead(name, input);

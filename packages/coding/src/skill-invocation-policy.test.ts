@@ -130,6 +130,14 @@ describe('applyRuntimeSkillInvocationPolicy', () => {
       expect(hookCalls).toHaveLength(2);
     } finally { probe.mockRestore(); }
   });
+  it('keeps the Host approval member through the Skill policy wrappers', async () => {
+    const fixture = await optionsWithSkill({ allowedTools: 'Read' });
+    const requestToolApproval = vi.fn(async () => true);
+    fixture.options.events = { beforeToolExecute: async () => true, requestToolApproval };
+    const options = await applyRuntimeSkillInvocationPolicy(fixture.options);
+    expect(options.events?.requestToolApproval).toBe(requestToolApproval);
+  });
+
   it.each([undefined, 'Bash', '*'] as const)('retains Host authorization for unrestricted shell rules (%s)', async allowedTools => {
     const fixture = await optionsWithSkill({ allowedTools });
     fixture.options.events = { beforeToolExecute: async () => '[Blocked] Host decision' };

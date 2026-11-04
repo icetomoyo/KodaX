@@ -663,6 +663,59 @@ describe('KodaXExtensionRuntime', () => {
     await runtime.dispose();
   });
 
+  it('asks a person before a recursive delete or a delete outside the workspace', async () => {
+    const workspaceRoot = path.join(tempDir, 'workspace');
+    const outsideRoot = path.join(tempDir, 'outside');
+    const runtime = createExtensionRuntime();
+    registerOfficialSandboxExtension(runtime, { workspaceRoot });
+    const check = (command: string, executionCwd = workspaceRoot) => runtime.runHook('tool:before', {
+      name: 'bash',
+      input: { command },
+      executionCwd,
+      gitRoot: workspaceRoot,
+    });
+
+    expect(runtime.getDiagnostics().capabilityProviders).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'official-sandbox',
+        metadata: expect.objectContaining({
+          bashBlocklist: ['git reset --hard'],
+          bashApprovals: ['recursive delete', 'delete outside the workspace'],
+        }),
+      }),
+    ]));
+    for (const command of [
+      'rm -rf build', 'rm -r build', 'rm -fR build', 'rm --recursive build', 'sudo rm -rf build',
+      'Remove-Item -Recurse build', 'ri build -r', 'rd /s /q build', 'Remove-Item build\\cache -Recurse',
+    ]) {
+      await expect(check(command), command).resolves.toEqual({
+        decision: 'ask',
+        reason: 'Extension "official-sandbox": Recursive delete.',
+      });
+    }
+    for (const command of [
+      `rm "${path.join(outsideRoot, 'old.log')}"`, 'rm ../old.log', 'rm ~/old.log', 'rm $HOME/old.log',
+      'del %TEMP%\\old.log', 'Remove-Item -Path ../old.log', 'Remove-Item -Path:..\\old.log', 'rm build/a.log,../b.log',
+    ]) {
+      await expect(check(command), command).resolves.toMatchObject({
+        decision: 'ask',
+        reason: expect.stringContaining(`outside the workspace root ${workspaceRoot}`),
+      });
+    }
+    await expect(check('rm old.log', outsideRoot)).resolves.toMatchObject({ decision: 'ask' });
+    await expect(check('rm -rf ../build')).resolves.toMatchObject({
+      reason: expect.stringMatching(/^Extension "official-sandbox": Recursive delete\. Deletes \.\.\/build, outside/),
+    });
+    await expect(check('echo $(rm -rf build)')).resolves.toMatchObject({ decision: 'ask' });
+
+    for (const command of ['rm old.log', 'rm -f build/old.log', 'Remove-Item -Force build\\old.log', 'git status', 'grep -rn TODO src']) {
+      await expect(check(command), command).resolves.toBeUndefined();
+    }
+    await expect(check('rm -rf build && git reset --hard')).resolves.toContain('Command matches destructive policy: git reset --hard');
+
+    await runtime.dispose();
+  });
+
   it('keeps the previous extension active when a hot reload fails', async () => {
     const extensionPath = path.join(tempDir, 'reloadable-extension.mjs');
     const ctx: KodaXToolExecutionContext = {
@@ -1213,6 +1266,56 @@ describe('KodaXExtensionRuntime — tool:before is a fail-closed policy hook', (
     sessionRuntime.registerHook('tool:before', () => undefined, source('session-policy'));
     await expect(combineExtensionRuntimes(sessionRuntime, globalRuntime).runHook('tool:before', payload))
       .resolves.toBe('[Tool Error] bash: Extension "global-policy" policy check failed: boom');
+    await sessionRuntime.dispose();
+    await globalRuntime.dispose();
+  });
+
+  it('names the extension when a policy handler asks for approval', async () => {
+    const runtime = createExtensionRuntime();
+    runtime.registerHook('tool:before', () => ({ decision: 'ask', reason: 'Deletes files outside the workspace.' }), source('sandbox'));
+    await expect(runtime.runHook('tool:before', payload)).resolves.toEqual(
+      { decision: 'ask', reason: 'Extension "sandbox": Deletes files outside the workspace.' });
+    await runtime.dispose();
+  });
+
+  it('gives an ask without a reason a generic one, so the person still sees who asked', async () => {
+    const runtime = createExtensionRuntime();
+    const bareAsk = (() => ({ decision: 'ask' })) as unknown as () => undefined; // JS extensions can omit the reason.
+    runtime.registerHook('tool:before', bareAsk, source('audit'));
+    await expect(runtime.runHook('tool:before', payload)).resolves.toEqual(
+      { decision: 'ask', reason: 'Extension "audit": wants a person to approve this call.' });
+    await runtime.dispose();
+  });
+
+  it('lets a block from a later handler win over an earlier ask', async () => {
+    const runtime = createExtensionRuntime();
+    runtime.registerHook('tool:before', () => ({ decision: 'ask', reason: 'Recursive delete.' }), source('sandbox'));
+    runtime.registerHook('tool:before', () => 'Blocked by deny-list.', source('deny-list'));
+    await expect(runtime.runHook('tool:before', payload)).resolves.toBe('Blocked by deny-list.');
+    await runtime.dispose();
+  });
+
+  it('shows every asking extension in one request', async () => {
+    const runtime = createExtensionRuntime();
+    runtime.registerHook('tool:before', () => ({ decision: 'ask', reason: 'Recursive delete.' }), source('sandbox'));
+    runtime.registerHook('tool:before', () => undefined, source('allow'));
+    runtime.registerHook('tool:before', () => ({ decision: 'ask', reason: 'Touches billing data.' }), source('compliance'));
+    await expect(runtime.runHook('tool:before', payload)).resolves.toEqual({ decision: 'ask',
+      reason: 'Extension "sandbox": Recursive delete.\nExtension "compliance": Touches billing data.' });
+    await runtime.dispose();
+  });
+
+  it('merges asks across a combined Session runtime and lets either side block', async () => {
+    const sessionRuntime = createExtensionRuntime();
+    const globalRuntime = createExtensionRuntime();
+    const combined = combineExtensionRuntimes(sessionRuntime, globalRuntime);
+    globalRuntime.registerHook('tool:before', () => ({ decision: 'ask', reason: 'Global ask.' }), source('global'));
+    sessionRuntime.registerHook('tool:before', () => ({ decision: 'ask', reason: 'Session ask.' }), source('session'));
+    await expect(combined.runHook('tool:before', payload)).resolves.toEqual({ decision: 'ask',
+      reason: 'Extension "global": Global ask.\nExtension "session": Session ask.' });
+    // A global ask must not hide a Session block.
+    sessionRuntime.registerHook('tool:before', () => 'Session block.', source('session-block'));
+    await expect(combined.runHook('tool:before', payload)).resolves.toBe('Session block.');
     await sessionRuntime.dispose();
     await globalRuntime.dispose();
   });

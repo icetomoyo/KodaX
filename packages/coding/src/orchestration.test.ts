@@ -356,6 +356,23 @@ describe('createKodaXTaskRunner', () => {
     });
   });
 
+  it('keeps the Host approval member on worker events, so an extension ask reaches a person', async () => {
+    const workspaceDir = await createTempDir('kodax-runner-');
+    const requestToolApproval = vi.fn(async () => true);
+    const runAgent = vi.fn(async (_runOptions: { events?: { requestToolApproval?: unknown } }, _prompt: unknown) => ({
+      success: true, lastText: 'done', messages: [], sessionId: 'session-ask',
+    }));
+    const runner = createKodaXTaskRunner({
+      baseOptions: { provider: 'anthropic', events: { requestToolApproval } },
+      runAgent,
+    });
+    await runner({ id: 'worker', title: 'Worker', prompt: 'Clean the build.' }, {
+      runId: 'run-ask', workspaceDir, taskDir: path.join(workspaceDir, 'tasks', '01-worker'),
+      dependencyResults: {}, emit: async () => {},
+    });
+    expect(runAgent.mock.calls[0]?.[0].events?.requestToolApproval).toBe(requestToolApproval);
+  });
+
   it('merges the outer abort signal into worker runs and reports interrupted workers as blocked', async () => {
     const workspaceDir = await createTempDir('kodax-runner-');
     const outerAbort = new AbortController();

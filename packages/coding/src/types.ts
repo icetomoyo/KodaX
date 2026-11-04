@@ -829,6 +829,17 @@ export interface KodaXEvents {
     input: Record<string, unknown>,
     meta?: KodaXToolEventMeta
   ) => Promise<boolean | string>;
+  /**
+   * Asks a person to approve one call that an extension `tool:before` policy
+   * flagged. Only `true` runs the call; a string blocks it with that text. If a
+   * host omits this, the call is blocked.
+   */
+  requestToolApproval?: (
+    tool: string,
+    input: Record<string, unknown>,
+    reason: string,
+    meta?: KodaXToolEventMeta
+  ) => Promise<boolean | string>;
   /** Ask user a question interactively - Issue 069. Select answers may be
    *  strings, arrays, or structured custom-input answers. */
   askUser?: (

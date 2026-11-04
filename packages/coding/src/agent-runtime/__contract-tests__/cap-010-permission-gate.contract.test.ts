@@ -8,6 +8,9 @@
  * - CAP-PERMISSION-002: accept-edits passes through (returns undefined)
  * - CAP-PERMISSION-003: extension `tool:before` hook returning a string yields
  *   the verbatim string as block-with-custom-message
+ * - CAP-PERMISSION-006: extension `tool:before` returning an ask runs the call
+ *   only when `requestToolApproval` answers `true`; a Host without the member
+ *   blocks (FEATURE_304, ADR-071)
  *
  * Risk: HIGH_RISK_PARITY — `runner-driven.ts:4404-4410` parity-restore evidence:
  * "Legacy agent.ts:810 ran this pre-execute"
@@ -118,6 +121,35 @@ describe('CAP-010: tri-state permission gate contract', () => {
         expect(result).toBe(expected);
         expect(hook).toHaveBeenCalledTimes(expected === 'Blocked by extension policy.' ? 1 : 0);
       }
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it('CAP-PERMISSION-006: an extension ask runs the call only after an explicit approval', async () => {
+    const runtime = createExtensionRuntime();
+    runtime.registerHook('tool:before', () => ({ decision: 'ask', reason: 'Recursive delete.' }),
+      { source: { kind: 'runtime', id: 'sandbox', label: 'sandbox' } });
+    const reason = 'Extension "sandbox": Recursive delete.';
+    const answers: Array<{ answer: boolean | string; expected: string | undefined }> = [
+      { answer: true, expected: undefined },
+      { answer: false, expected: CANCELLED_TOOL_RESULT_MESSAGE },
+      { answer: 'Not now.', expected: 'Not now.' },
+    ];
+    try {
+      for (const { answer, expected } of answers) {
+        const requestToolApproval = vi.fn(async () => answer);
+        const result = await withExtensionRuntimeContext(() => getToolExecutionOverride(
+          { requestToolApproval }, 'bash', { command: 'rm -rf build' }, 'call_1'), runtime);
+        expect(result).toBe(expected);
+        expect(requestToolApproval).toHaveBeenCalledWith('bash', { command: 'rm -rf build' }, reason, { toolId: 'call_1' });
+      }
+      // A Host that cannot ask a person must not turn an ask into an allow.
+      const unanswerable = await withExtensionRuntimeContext(
+        () => getToolExecutionOverride({ beforeToolExecute: async () => true }, 'bash', { command: 'rm -rf build' }), runtime);
+      expect(unanswerable).toMatch(/^\[Tool Error\] bash: /);
+      expect(unanswerable).toContain(reason);
+      expect(unanswerable).not.toBe(CANCELLED_TOOL_RESULT_MESSAGE);
     } finally {
       await runtime.dispose();
     }

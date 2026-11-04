@@ -68,6 +68,7 @@ import type {
   ExtensionModelSelection,
   ExtensionRuntimeDiagnostics,
   ExtensionRuntimeController,
+  ExtensionToolBeforeAsk,
   KodaXExtensionAPI,
   KodaXExtensionModule,
   ModelProviderRegistration,
@@ -142,6 +143,25 @@ interface ExtensionLoadOptions {
 let activeExtensionRuntime: KodaXExtensionRuntime | null = null;
 /** A `tool:before` policy handler that has not settled by then blocks the call. */
 export const TOOL_BEFORE_HOOK_TIMEOUT_MS = 10_000;
+type ToolPolicyVerdict = string | false | ExtensionToolBeforeAsk | undefined;
+
+export function isExtensionToolBeforeAsk(value: unknown): value is ExtensionToolBeforeAsk {
+  return typeof value === 'object' && value !== null && (value as { decision?: unknown }).decision === 'ask';
+}
+
+/** Every asking extension is shown in the one approval request. */
+function mergeToolPolicyAsks(asks: readonly ExtensionToolBeforeAsk[]): ExtensionToolBeforeAsk | undefined {
+  return asks.length === 0 ? undefined : { decision: 'ask', reason: asks.map((ask) => ask.reason).join('\n') };
+}
+
+function toToolPolicyVerdict(result: unknown, extensionLabel: string): ToolPolicyVerdict {
+  if (typeof result === 'string' || result === false) return result;
+  if (!isExtensionToolBeforeAsk(result)) return undefined;
+  const reason = typeof result.reason === 'string' && result.reason.trim() !== ''
+    ? result.reason
+    : 'wants a person to approve this call.';
+  return { decision: 'ask', reason: `Extension "${extensionLabel}": ${reason}` };
+}
 let activeExtensionExecutionRuntime: ActiveExtensionExecutionRuntime | null = null;
 
 interface ActiveExtensionExecutionRuntime {
@@ -1028,24 +1048,26 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
 
   /**
    * `tool:before` is a policy gate, so unlike other hooks it fails closed: a
-   * handler that throws or does not settle blocks the call. An allow does not
-   * stop later handlers, because any one of them may block.
+   * handler that throws or does not settle blocks the call. An allow or an ask
+   * does not stop later handlers, because any one of them may block.
    */
   private async runToolPolicy(
     handlers: readonly RuntimeRecord<(payload: unknown) => Promise<unknown> | unknown>[],
     payload: Parameters<ExtensionHookMap['tool:before']>[0],
-  ): Promise<string | false | undefined> {
+  ): Promise<ToolPolicyVerdict> {
+    const asks: ExtensionToolBeforeAsk[] = [];
     for (const handler of handlers) {
       const verdict = await this.runToolPolicyHandler(handler, payload);
-      if (verdict !== undefined) return verdict;
+      if (isExtensionToolBeforeAsk(verdict)) asks.push(verdict);
+      else if (verdict !== undefined) return verdict;
     }
-    return undefined;
+    return mergeToolPolicyAsks(asks);
   }
 
   private async runToolPolicyHandler(
     handler: RuntimeRecord<(payload: unknown) => Promise<unknown> | unknown>,
     payload: Parameters<ExtensionHookMap['tool:before']>[0],
-  ): Promise<string | false | undefined> {
+  ): Promise<ToolPolicyVerdict> {
     const timedOut = Symbol('timed-out');
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<typeof timedOut>((resolve) => {
@@ -1054,7 +1076,7 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
     });
     try {
       const result = await Promise.race([Promise.resolve(handler.value(payload)), timeout]);
-      if (result !== timedOut) return typeof result === 'string' || result === false ? result : undefined;
+      if (result !== timedOut) return toToolPolicyVerdict(result, handler.source.label);
       throw new Error(`timed out after ${TOOL_BEFORE_HOOK_TIMEOUT_MS / 1000}s.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1640,6 +1662,14 @@ export class CombinedExtensionRuntime implements ExtensionRuntimeContract {
     payload: Parameters<ExtensionHookMap[THook]>[0],
   ): Promise<Awaited<ReturnType<ExtensionHookMap[THook]>> | undefined> {
     const secondaryResult = await this.secondary.runHook(hook, payload);
+    if (hook === 'tool:before' && isExtensionToolBeforeAsk(secondaryResult)) {
+      // A global ask must not hide a Session block, and both sides' asks are shown together.
+      const primaryResult = await this.primary.runHook(hook, payload);
+      const merged = isExtensionToolBeforeAsk(primaryResult)
+        ? mergeToolPolicyAsks([secondaryResult, primaryResult])
+        : primaryResult ?? secondaryResult;
+      return merged as Awaited<ReturnType<ExtensionHookMap[THook]>> | undefined;
+    }
     if (secondaryResult !== undefined) {
       return secondaryResult;
     }
