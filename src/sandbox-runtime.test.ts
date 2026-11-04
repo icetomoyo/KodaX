@@ -19,7 +19,7 @@ import { Server } from 'node:net';
 import { PassThrough } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 
-import { readProcessStartIdentity, SkillRegistry, type KodaXDiagnostic } from '@kodax-ai/agent';
+import { readProcessStartIdentity, registerRuntimeAgentHome, SkillRegistry, type KodaXDiagnostic } from '@kodax-ai/agent';
 import { build } from 'esbuild';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -2714,6 +2714,28 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
       expect(request.denyRead.map(value => value.toLowerCase())).not.toContain(canonical);
     }
     await invocation.cleanup();
+  });
+
+  it('masks shell writes to internal state of an inline Runtime agent home inside the workspace', async () => {
+    await resetSandboxRuntimeForTest();
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-runtime-home-write-mask-'));
+    tempRoots.push(root);
+    const runtimeHome = path.join(root, '.kodax');
+    const release = registerRuntimeAgentHome(runtimeHome);
+    try {
+      const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
+      const invocation = await sandbox.prepare({ toolCallId: 'runtime-home-write-mask', toolInput: { command: 'node --version' },
+        command: 'node --version', executable: process.execPath, args: ['--version'], cwd: root, env: process.env, fallbackToNormalExecution: false });
+      if (!invocation) throw new Error('expected Windows v2 invocation');
+      const request = JSON.parse(readFileSync(invocation.args.at(-1)!, 'utf8')) as { denyWrite: string[] };
+      for (const directory of ['extensions', 'integrations', 'runtime']) {
+        const canonical = (await realpath(path.join(runtimeHome, directory))).toLowerCase();
+        expect(request.denyWrite.map(value => value.toLowerCase())).toContain(canonical);
+      }
+      await invocation.cleanup();
+    } finally {
+      release();
+    }
   });
 
   it('allows broad home reads and isolates host temporary writes per command', async () => {

@@ -346,6 +346,7 @@ import {
   enqueueWithArtifacts,
   getMessageQueue,
   registerActiveRootQueueRoute,
+  registerRuntimeAgentHome,
   getActiveUserInteraction,
   setActiveUserInteraction,
   runWithMcpCallContext,
@@ -4497,12 +4498,14 @@ async function createKodaXRuntimeInternal(
   let startupIntegrations: Awaited<ReturnType<typeof createHostIntegrations>> | undefined;
   let failedPlaneCleanup: (() => Promise<void>) | undefined;
   let initializedClose: (() => Promise<void>) | undefined;
+  let releaseRuntimeAgentHome: (() => void) | undefined;
   const cleanupInitialization = async (): Promise<void> => {
     if (initializedClose) { await initializedClose(); return; }
     await failedPlaneCleanup?.();
     await agentPlane?.close();
     agentStore?.close();
     await startupIntegrations?.close();
+    releaseRuntimeAgentHome?.();
     await ownerLiveness.close();
   };
   try {
@@ -5090,6 +5093,8 @@ async function createKodaXRuntimeInternal(
   };
 
   reportStartupProgress({ stage: 'initializing', phase: 'mcp' });
+  // This Runtime loads trusted code and grants from configHome, which can differ from the process agent home.
+  releaseRuntimeAgentHome = registerRuntimeAgentHome(configHome);
   const integrations = await createHostIntegrations(configHome,
     readRuntimeConfig(path.join(configHome, "config.json")), reportStartupProgress);
   startupIntegrations = integrations;
@@ -5552,6 +5557,7 @@ async function createKodaXRuntimeInternal(
       }
       agentStore?.close();
       await integrations.close();
+      releaseRuntimeAgentHome?.();
       if (getActiveUserInteraction() === sharedElicitSurface) {
         setActiveUserInteraction(undefined);
       }

@@ -46,6 +46,7 @@ import {
   ELECTRON_RUN_AS_NODE_ENV,
   containWindowsEffectProcess,
   emitKodaXDiagnostic,
+  getActiveAgentHomes,
   getAgentConfigHome,
   isCurrentProcessWindowsJobContained,
   killChildProcessTree,
@@ -4460,13 +4461,17 @@ function workspaceShellSandboxConfig(
       const memory = path.join(legacyProjects, entry.name, 'memory');
       return (entry.isDirectory() || entry.isSymbolicLink()) && existsSync(memory) ? [memory] : [];
     }) : [];
+  // Inline Runtimes may load from their own agent home; its internal state needs the same mask.
+  const runtimeAgentHomes = getActiveAgentHomes().slice(1).map((home) => (
+    process.platform === 'win32' ? canonicalExistingPath(home) : home
+  ));
   const protectedAgentHomeWriteRoots = [
     controlDirectory,
     ...credentialRoots,
     ...legacyMemoryRoots,
-    ...WORKSPACE_SHELL_INTERNAL_AGENT_HOME_DIRECTORIES.map(
-      (directory) => path.join(agentHome, directory),
-    ),
+    ...[agentHome, ...runtimeAgentHomes].flatMap((home) => (
+      WORKSPACE_SHELL_INTERNAL_AGENT_HOME_DIRECTORIES.map((directory) => path.join(home, directory))
+    )),
   ];
   if (process.platform === 'win32') {
     for (const protectedRoot of protectedAgentHomeWriteRoots) {
