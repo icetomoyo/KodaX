@@ -28,7 +28,16 @@ function isJsonDto(value: unknown, ancestors = new Set<object>()): value is Koda
 function stringifyValue(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value === 'string') return value.trim().length > 0 ? value : undefined;
-  return JSON.stringify(value);
+  try {
+    return JSON.stringify(value);
+  } catch (error) {
+    // Deep-but-valid DTOs must not displace original evidence; the structured
+    // display section is as optional as the projection snapshots below.
+    if (!(error instanceof RangeError)) throw error;
+    emitKodaXDiagnostic({ source: 'coding:tool-result-projection', level: 'warn',
+      message: `Optional tool projection is unavailable (${error.name}); original tool evidence is retained.` });
+    return undefined;
+  }
 }
 
 /** Keep provider content and structuredContent distinct at model-facing adapters. */

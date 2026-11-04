@@ -53,6 +53,11 @@ a manual maintainer action.
   optional Host outputSchema registration through IPC and `mcp_describe`
   on-demand output contracts without enlarging default menus or adding
   result validators.
+- Keep the structured display section inside the capacity guard: deep-but-valid
+  provider DTOs no longer fail the whole render when local stringify/clone
+  budgets overflow — original tool evidence is retained with the same optional
+  projection warning, and the pilot tests probe the local clone capacity
+  instead of assuming one fixed stack depth.
 - Append bounded runtime and receipt guidance only for exact missing Node
   globals, preserving original QuickJS error JSON, settled receipts and
   authorized tool aliases without reading guest globals, displacing original

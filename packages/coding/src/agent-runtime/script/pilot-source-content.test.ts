@@ -13,6 +13,21 @@ import { tryMcpFallback } from '../tool-dispatch.js';
 const name = 'sample.original-content';
 const limits = { timeoutMs: 5000, memoryBytes: 16 * 1024 * 1024, maxCalls: 4, maxTransferBytes: 64 * 1024 };
 
+function deepValue(depth: number): Record<string, unknown> {
+  let value: Record<string, unknown> = { end: true };
+  for (let index = 0; index < depth; index++) value = { next: value };
+  return value;
+}
+
+// The stack/clone capacity differs across supported Node runtimes; probe the
+// actual bound instead of assuming one fixed depth budget.
+function depthExceedingCloneCapacity(start = 1600): number {
+  for (let depth = start; depth < 10_000_000; depth *= 2) {
+    try { structuredClone(deepValue(depth)); } catch { return depth; }
+  }
+  throw new Error('No local clone capacity bound found');
+}
+
 function fixture(result: CapabilityResult, route: 'host' | 'mcp' = 'host') {
   const executeCapability = vi.fn(async () => result);
   const definition = { name, description: 'Return original sample evidence.',
@@ -167,8 +182,7 @@ it('retains native output and independent JSON data if the optional source snaps
 });
 
 it('retains a string source independently when a deep structured snapshot exceeds local capacity', async () => {
-  let value: Record<string, unknown> = { end: true };
-  for (let depth = 0; depth < 1600; depth++) value = { next: value };
+  const value = deepValue(depthExceedingCloneCapacity());
   const { pilot, call } = fixture({ kind: 'tool', content: 'Exact original survives', structuredContent: value });
   const diagnostics = vi.fn();
   const restore = setKodaXDiagnosticSink(diagnostics);

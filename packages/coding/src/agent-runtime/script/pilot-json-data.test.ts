@@ -8,6 +8,30 @@ import type { KodaXToolExecutionContext } from '../../types.js';
 
 const limits = { timeoutMs: 5000, memoryBytes: 16 * 1024 * 1024, maxCalls: 4, maxTransferBytes: 64 * 1024 };
 const name = 'geometry.sample-grid';
+
+function deepValue(depth: number): Record<string, unknown> {
+  let value: Record<string, unknown> = { end: true };
+  for (let index = 0; index < depth; index++) value = { next: value };
+  return value;
+}
+
+// The stack/clone capacity differs across supported Node runtimes; probe the
+// actual bound instead of assuming one fixed depth budget.
+function depthExceedingCloneCapacity(start = 1600): number {
+  for (let depth = start; depth < 10_000_000; depth *= 2) {
+    try { structuredClone(deepValue(depth)); } catch { return depth; }
+  }
+  throw new Error('No local clone capacity bound found');
+}
+
+function largestSupportedDepth(start: number): number {
+  for (let depth = start; depth > 0; depth = Math.floor(depth / 2)) {
+    const value = deepValue(depth);
+    try { structuredClone(value); JSON.stringify(value); return depth; } catch { /* shrink */ }
+  }
+  throw new Error('No locally supported depth found');
+}
+
 function fixture(result: CapabilityResult, route: 'host' | 'mcp' = 'host') {
   const executeCapability = vi.fn(async () => result);
   const definition = { name, description: 'Returns a measured grid.', inputSchema: { type: 'object', properties: {} },
@@ -149,8 +173,7 @@ it('keeps existing native failure semantics for cyclic structured content withou
 });
 
 it('preserves native evidence when an optional deep JSON snapshot exceeds local stack capacity', async () => {
-  let value: Record<string, unknown> = { end: true };
-  for (let depth = 0; depth < 1600; depth++) value = { next: value };
+  const value = deepValue(depthExceedingCloneCapacity());
   const { pilot, dispatch, definition } = fixture({ kind: 'tool', structuredContent: value,
     content: 'WARNING: deeply nested provider evidence' });
   const native = await executeRunScopedTool(dispatch.ctx, { ...definition, sideEffect: 'readonly' }, {});
@@ -166,9 +189,18 @@ it('preserves native evidence when an optional deep JSON snapshot exceeds local 
   } finally { restore(); }
 });
 
-it.each([128, 1000])('round-trips a supported nested JSON result through the actual VM (depth %s)', async depth => {
-  let value: Record<string, unknown> = { end: true };
-  for (let index = 0; index < depth; index++) value = { next: value };
+it('round-trips a supported nested JSON result through the actual VM (depth 128)', async () => {
+  const value = deepValue(128);
+  const { pilot } = fixture({ kind: 'tool', structuredContent: value, content: 'WARNING: original nested source' });
+  const cell = await pilot.run(`return await tools['${name}']({});`, limits);
+  expect(cell.status, cell.error).toBe('completed');
+  expect(cell.hadToolErrors).toBe(false);
+  expect(cell.receipts[0]?.result.data?.kind).toBe('json');
+  expect(JSON.stringify(cell.value)).toBe(JSON.stringify(cell.receipts[0]?.result));
+});
+
+it('round-trips a supported nested JSON result through the actual VM (largest local depth)', async () => {
+  const value = deepValue(largestSupportedDepth(1000));
   const { pilot } = fixture({ kind: 'tool', structuredContent: value, content: 'WARNING: original nested source' });
   const cell = await pilot.run(`return await tools['${name}']({});`, limits);
   expect(cell.status, cell.error).toBe('completed');
