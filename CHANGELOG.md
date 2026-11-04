@@ -6,6 +6,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Proxy and private CA support (FEATURE_303). The OpenAI Responses WebSocket
+  follows `HTTPS_PROXY`/`HTTP_PROXY` and `NO_PROXY`: on Node 22.21+ or 24.5+
+  with `NODE_USE_ENV_PROXY=1`, and in the standalone binary. When a proxy
+  variable is set but some requests would bypass it, the Host logs a
+  `runtime:network` warning that names the variable without its value.
+  `NODE_EXTRA_CA_CERTS` is documented for private root CAs.
+
 ### Security
 
 - Extension `tool:before` now applies on every dispatch path: AMA with a

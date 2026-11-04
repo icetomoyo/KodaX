@@ -1254,6 +1254,27 @@ dist/binary/linux-x64/
 
 详细的构建参数、archive 结构、`KODAX_BUNDLED` / `KODAX_VERSION` build-time defines、故障排查，参见 [docs/release.md](docs/release.md)。
 
+### 8. 代理与私有根证书
+
+KodaX Host 启动时读取以下标准环境变量：
+
+- `NODE_EXTRA_CA_CERTS=/path/to/root.pem`：为模型请求和 `web_fetch` 追加私有根证书。
+- `HTTPS_PROXY`、`HTTP_PROXY`：指定代理，小写变量名同样有效。
+- `NO_PROXY`：不走代理的主机列表，例如 `localhost,127.0.0.1,.corp.example`。
+
+在 Node 22.21+ 或 24.5+ 上还需要设置 `NODE_USE_ENV_PROXY=1`，否则 Node 会忽略代理变量。Node 20 以及更早的 22/24 版本无法使用代理变量，请升级 Node 或改用单文件二进制。二进制版本的模型请求无需额外设置即可走代理；如果 `web_fetch` 也必须走代理，同样设置 `NODE_USE_ENV_PROXY=1`。
+
+```bash
+export NODE_EXTRA_CA_CERTS=/etc/ssl/corp-root.pem
+export HTTPS_PROXY=http://proxy.corp.example:3128
+export NO_PROXY=localhost,127.0.0.1,.corp.example
+export NODE_USE_ENV_PROXY=1
+kodax daemon stop --profile default   # 已运行的 Host 沿用它启动时的环境变量
+kodax -p "Review this repository"
+```
+
+设置了代理变量、但仍有请求会绕过代理时，Host 会向 `kodax daemon logs` 写入一条 `[runtime:network]` 警告。警告只给出变量名，不会打印变量值。
+
 ## 内置 Provider 列表
 
 | Provider | 环境变量 | Reasoning | 默认 Model |

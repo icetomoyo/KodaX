@@ -2119,6 +2119,27 @@ Related variables: `KODAX_MAX_TOKENS` (global fallback when no provider/model ca
 
 > **Retired in v0.7.42**: `KODAX_RST_PRONE_PROVIDERS` and `KODAX_WRITE_TURN_MAX_TOKENS` (the v0.7.28 P2b write-turn cap mechanism) are no longer recognized. The 2026-04 bench measured RST as time-based (zhipu-coding 308s server kill window), not payload-size-based, so the cap was retired in favor of the per-provider `streamMaxDurationMs` watchdog + non-streaming fallback chain (configured in `registry.ts`). Existing env exports become silent no-ops; remove them from shell profiles when convenient.
 
+#### Proxy and private CA
+
+The KodaX Host reads these standard variables when it starts:
+
+- `NODE_EXTRA_CA_CERTS=/path/to/root.pem` adds a private root CA for model requests and `web_fetch`.
+- `HTTPS_PROXY` and `HTTP_PROXY` choose a proxy. Lowercase names also work.
+- `NO_PROXY` lists hosts that skip the proxy, such as `localhost,127.0.0.1,.corp.example`.
+
+On Node 22.21+ or 24.5+, also set `NODE_USE_ENV_PROXY=1`, because Node ignores the proxy variables without it. Node 20 and older 22/24 releases cannot use them; upgrade Node or use the standalone binary. The binary sends model requests through the proxy with no extra setting. Set `NODE_USE_ENV_PROXY=1` there as well if `web_fetch` must use the proxy.
+
+```bash
+export NODE_EXTRA_CA_CERTS=/etc/ssl/corp-root.pem
+export HTTPS_PROXY=http://proxy.corp.example:3128
+export NO_PROXY=localhost,127.0.0.1,.corp.example
+export NODE_USE_ENV_PROXY=1
+kodax daemon stop --profile default   # a running Host keeps the environment it started with
+kodax -p "Review this repository"
+```
+
+When a proxy variable is set but some requests would bypass it, the Host writes a `[runtime:network]` warning to `kodax daemon logs`. The warning names the variable and never prints its value.
+
 #### Result verification
 
 The main agent verifies each requested requirement with actual tool and rendered evidence before delivery. The built-in `visual-review` skill covers static images/charts, paginated documents/slides/sheets, interactive web/app/terminal/canvas/3D surfaces, and temporal video/animation results. Missing capabilities and unchecked scope are reported as unverified. An ordinary read-only child reviewer may contribute findings within the same Run; the main agent owns repairs and the final answer.
