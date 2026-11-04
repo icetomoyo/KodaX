@@ -1,5 +1,44 @@
+import { globalAgent as httpAgent, type Agent } from 'node:http';
+import { globalAgent as httpsAgent } from 'node:https';
 import { createRequire } from 'node:module';
 import type { KodaXResponsesSocket, KodaXResponsesSocketFactory } from '../types.js';
+
+type ProxyEnv = Readonly<Record<string, string | undefined>>;
+interface ProxyOptions { agent?: Agent; proxy?: string }
+
+function parseNoProxyEntry(entry: string): { host: string; port?: string } {
+  const bracketed = /^\[([^\]]+)\](?::(\d+))?$/.exec(entry);
+  if (bracketed) return { host: bracketed[1]!, port: bracketed[2] };
+  const hostPort = /^([^:]+):(\d+)$/.exec(entry);
+  return hostPort ? { host: hostPort[1]!, port: hostPort[2] } : { host: entry };
+}
+function bypassesProxy(target: URL, noProxy: string): boolean {
+  const host = target.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  const port = target.port || (target.protocol === 'wss:' || target.protocol === 'https:' ? '443' : '80');
+  return noProxy.toLowerCase().split(/[\s,]+/).filter(Boolean).some(entry => {
+    if (entry === '*') return true;
+    const parsed = parseNoProxyEntry(entry);
+    const suffix = parsed.host.replace(/^\*?\./, '');
+    return (parsed.port === undefined || parsed.port === port) && (host === suffix || host.endsWith(`.${suffix}`));
+  });
+}
+/** The HTTP(S)_PROXY URL for a target, honouring NO_PROXY; lowercase variables win as in curl, Node and Bun. */
+export function resolveEnvProxy(target: URL, env: ProxyEnv = process.env): string | undefined {
+  const secure = target.protocol === 'wss:' || target.protocol === 'https:';
+  const proxy = secure ? env.https_proxy || env.HTTPS_PROXY : env.http_proxy || env.HTTP_PROXY;
+  return proxy && !bypassesProxy(target, env.no_proxy || env.NO_PROXY || '') ? proxy : undefined;
+}
+/**
+ * ws dials directly unless given an agent. Node's global agents follow the environment proxy under
+ * NODE_USE_ENV_PROXY (Node 22.21+/24.5+); Bun's built-in ws ignores agents but takes the proxy URL.
+ */
+export function webSocketProxyOptions(url: string, env: ProxyEnv = process.env,
+  bun = process.versions.bun !== undefined): ProxyOptions {
+  const target = new URL(url);
+  const proxy = resolveEnvProxy(target, env);
+  if (!proxy) return {};
+  return bun ? { proxy } : { agent: target.protocol === 'wss:' ? httpsAgent : httpAgent };
+}
 
 interface NodeSocket {
   readyState: number;
@@ -8,7 +47,7 @@ interface NodeSocket {
   terminate(): void;
 }
 type SocketConstructor = new (url: string, options: { headers: Readonly<Record<string, string>>; handshakeTimeout: number;
-  maxPayload: number; followRedirects: boolean; perMessageDeflate: boolean }) => NodeSocket;
+  maxPayload: number; followRedirects: boolean; perMessageDeflate: boolean } & ProxyOptions) => NodeSocket;
 /** One native WebSocket, with a bounded text-frame queue and a single consumer. */
 class ResponsesSocket implements KodaXResponsesSocket {
   private readonly socket: NodeSocket;
@@ -22,7 +61,7 @@ class ResponsesSocket implements KodaXResponsesSocket {
     // Runtime dependency is lazy and remains real when Ink's dev-only ws shim is stubbed by the CLI build.
     const WebSocket = createRequire(import.meta.url)('ws') as SocketConstructor;
     this.socket = new WebSocket(input.url, { headers: input.headers, handshakeTimeout: input.timeoutMs,
-      maxPayload: 24 * 1024 * 1024, followRedirects: false, perMessageDeflate: false });
+      maxPayload: 24 * 1024 * 1024, followRedirects: false, perMessageDeflate: false, ...webSocketProxyOptions(input.url) });
     this.opened = new Promise((resolve, reject) => {
       let opened = false;
       this.socket.on('open', () => { opened = true; resolve(); });
