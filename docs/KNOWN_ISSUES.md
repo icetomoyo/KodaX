@@ -47,6 +47,49 @@ not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
 
+## Issue 384: Nested workflows and CLI print-mode commands ignore KODAX_HOME
+
+- Priority: Low
+- Status: Resolved
+- Introduced: nested resolver in FEATURE_246 Part E; CLI commands predate FEATURE_145
+- Created / Resolved: 2026-11-04
+- Fixed: KodaX-next-dev (unreleased)
+
+### Original Problem
+
+The REPL saves and lists personal workflows and user commands under the agent home
+(`getAgentConfigPath`). Two other readers built `~/.kodax` from `os.homedir()`:
+
+- `defaultSavedWorkflowDirs()` (`packages/coding/src/workflows/nested-resolver.ts`),
+  used by nested `wf.workflow(name)` calls;
+- `KODAX_COMMANDS_DIR` and `loadCommands()` (`src/cli_commands.ts`), used by
+  `kodax "/name"` print mode.
+
+With `KODAX_HOME` or `setAgentConfigHome()`, a workflow or command the REPL found
+was not found by these two paths.
+
+### Resolution
+
+- `defaultSavedWorkflowDirs()` uses `getAgentConfigPath('workflows')`.
+- `getDefaultCommandDir()` resolves `getAgentConfigPath('commands')` at call time,
+  and `loadCommands()` uses it when no directory is given.
+- `KODAX_COMMANDS_DIR` stays exported. Like `KODAX_DIR`, it is fixed when the module
+  loads, so it follows `KODAX_HOME` but not a later `setAgentConfigHome()`.
+
+### Remaining Limits
+
+- A user who sets `KODAX_HOME` and kept personal workflows or commands in
+  `~/.kodax` must move them to `<KODAX_HOME>/workflows` or `<KODAX_HOME>/commands`.
+
+### Verification
+
+- `nested-resolver.test.ts`: the personal dir follows the agent home, and a workflow
+  saved there resolves by name. Both failed before the fix.
+- `src/cli_commands.test.ts`: `getDefaultCommandDir()` follows `setAgentConfigHome()`,
+  and `loadCommands()` finds a prompt command there. Both failed before the fix.
+- `tests/kodax_cli.test.ts` expects `KODAX_COMMANDS_DIR` to equal
+  `getAgentConfigPath('commands')` instead of the OS-home path.
+
 ## Issue 383: Volcengine instance metadata address is not confirmed
 
 - Priority: Low
@@ -101,8 +144,7 @@ that intentionally skip the resolver; user Skills are not among them.
 - A user who sets `KODAX_HOME` and kept Skills in `~/.kodax/skills` must move
   them to `<KODAX_HOME>/skills`.
 - Personal workflows (`packages/coding/src/workflows/nested-resolver.ts`) and
-  user commands (`src/cli_commands.ts`) still use `~/.kodax` directly. They are
-  not part of this issue.
+  user commands (`src/cli_commands.ts`) had the same problem; see Issue 384.
 
 ### Verification
 
@@ -2586,6 +2628,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 384 | Low | Resolved | Nested workflows and CLI print-mode commands ignore KODAX_HOME | FEATURE_246 Part E; CLI commands earlier | KodaX-next-dev (unreleased) | 2026-11-04 | 2026-11-04 |
 | 383 | Low | Open | Volcengine instance metadata address is not confirmed | Issue 381 metadata set | — | 2026-11-04 | — |
 | 382 | Low | Resolved | User Skill discovery ignores KODAX_HOME | FEATURE_194 v0.7.43 or earlier | KodaX-next-dev working tree (unreleased) | 2026-11-04 | 2026-11-04 |
 | 381 | High | Resolved | `web_fetch` can read cloud metadata and follow public redirects into the private network | first affected version unknown | KodaX-next-dev working tree (unreleased) | 2026-11-04 | 2026-11-04 |
@@ -17459,20 +17502,21 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 261 (38 Open, 223 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 262 (38 Open, 224 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
 
-### 2026-11-04: Issues 378-383
+### 2026-11-04: Issues 378-384
 
 - Resolved extension tool policy gaps (378, 379), model installation of
   Host-loaded extensions and integrations (380), and `web_fetch` access to cloud
   metadata and public-to-private redirects (381).
 - Resolved User Skill discovery ignoring `KODAX_HOME` (382).
 - Recorded the unconfirmed Volcengine instance metadata address (383, Open).
+- Resolved nested workflows and CLI print-mode commands ignoring `KODAX_HOME` (384).
 
 ### 2026-10-29: Issues 374 and 375
 
