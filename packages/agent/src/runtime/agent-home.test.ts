@@ -4,15 +4,17 @@
 
 import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join, parse } from 'node:path';
+import { join, parse, resolve } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  getActiveAgentHomes,
   getAgentConfigHome,
   getAgentConfigPath,
   getAppDataDir,
   isPathInsideDirectory,
+  registerRuntimeAgentHome,
   resolveExecutionPath,
   setAgentConfigHome,
 } from './agent-home.js';
@@ -138,6 +140,62 @@ describe('runtime path containment', () => {
     expect(resolveExecutionPath('~/.kodax/config.json', cwd)).toBe(
       join(homedir(), '.kodax', 'config.json'),
     );
+  });
+});
+
+describe('runtime agent homes', () => {
+  const processHome = join(tmpdir(), 'kodax-process-home');
+  const runtimeHome = join(tmpdir(), 'kodax-runtime-home');
+
+  beforeEach(() => {
+    setAgentConfigHome(processHome);
+  });
+
+  afterEach(() => {
+    setAgentConfigHome(undefined);
+  });
+
+  it('lists only the process agent home when no Runtime registered one', () => {
+    expect(getActiveAgentHomes()).toEqual([resolve(processHome)]);
+  });
+
+  it('adds a registered Runtime agent home until it is released', () => {
+    const release = registerRuntimeAgentHome(runtimeHome);
+
+    expect(getActiveAgentHomes()).toEqual([resolve(processHome), resolve(runtimeHome)]);
+
+    release();
+    expect(getActiveAgentHomes()).toEqual([resolve(processHome)]);
+  });
+
+  it('keeps a home while any of its registrations is open', () => {
+    const first = registerRuntimeAgentHome(runtimeHome);
+    const second = registerRuntimeAgentHome(runtimeHome);
+
+    first();
+    first();
+    expect(getActiveAgentHomes()).toContain(resolve(runtimeHome));
+
+    second();
+    expect(getActiveAgentHomes()).not.toContain(resolve(runtimeHome));
+  });
+
+  it('does not repeat the process agent home when a Runtime registers it', () => {
+    const release = registerRuntimeAgentHome(join(processHome, '.'));
+    try {
+      expect(getActiveAgentHomes()).toEqual([resolve(processHome)]);
+    } finally {
+      release();
+    }
+  });
+
+  it.runIf(process.platform === 'win32')('treats differently cased Windows paths as one home', () => {
+    const release = registerRuntimeAgentHome(processHome.toUpperCase());
+    try {
+      expect(getActiveAgentHomes()).toEqual([resolve(processHome)]);
+    } finally {
+      release();
+    }
   });
 });
 

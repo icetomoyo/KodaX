@@ -106,6 +106,38 @@ export function getAgentConfigPath(...segments: string[]): string {
   return join(getAgentConfigHome(), ...segments);
 }
 
+const runtimeAgentHomes = new Map<string, number>();
+
+/**
+ * Register the agent home an in-process Runtime loads extensions, integrations
+ * and permission grants from, so model-side write protection covers it while
+ * the Runtime is open. Registrations of one path are counted; the returned
+ * release is idempotent.
+ */
+export function registerRuntimeAgentHome(agentHome: string): () => void {
+  const key = resolve(agentHome);
+  runtimeAgentHomes.set(key, (runtimeAgentHomes.get(key) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const remaining = (runtimeAgentHomes.get(key) ?? 1) - 1;
+    if (remaining > 0) runtimeAgentHomes.set(key, remaining);
+    else runtimeAgentHomes.delete(key);
+  };
+}
+
+/** The process agent home first, then every registered Runtime agent home, without duplicates. */
+export function getActiveAgentHomes(): string[] {
+  const homes = [resolve(getAgentConfigHome())];
+  for (const home of runtimeAgentHomes.keys()) {
+    if (!homes.some((known) => isPathInsideDirectory(home, known) && isPathInsideDirectory(known, home))) {
+      homes.push(home);
+    }
+  }
+  return homes;
+}
+
 /**
  * Lexical path containment with the host filesystem's comparison semantics.
  * Windows paths are case-insensitive; segment boundaries prevent sibling

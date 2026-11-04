@@ -392,6 +392,8 @@ export {
   getAppDataDir,
   isPathInsideDirectory,
   resolveExecutionPath,
+  registerRuntimeAgentHome,
+  getActiveAgentHomes,
 } from './runtime/agent-home.js';
 
 export {
