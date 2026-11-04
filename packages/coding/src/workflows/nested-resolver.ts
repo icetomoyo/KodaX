@@ -4,7 +4,7 @@
  * Maps a workflow name to a runnable module for the agent-layer runtime's
  * injected `resolveWorkflowModule` port. Resolution order: built-in registry
  * first (in-memory, trusted), then a saved capsule discovered under the run's
- * `.kodax/workflows` (project) + `~/.kodax/workflows` (personal) dirs.
+ * `.kodax/workflows` (project) + `<agent home>/workflows` (personal) dirs.
  *
  * Layer: this is the coding-side resolver; the agent runtime only sees the
  * opaque `(name) => module | undefined` port (ADR-021 — agent has no coding
@@ -12,10 +12,9 @@
  * re-export cycle.
  */
 
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import type { WorkflowModule, WorkflowModuleResolver } from '@kodax-ai/agent';
+import { getAgentConfigPath, type WorkflowModule, type WorkflowModuleResolver } from '@kodax-ai/agent';
 
 import { getBuiltinWorkflow } from './builtin/registry.js';
 import {
@@ -25,11 +24,11 @@ import {
 } from './discovery.js';
 
 /** Default saved-workflow dirs for a run cwd: project `.kodax/workflows` +
- *  personal `~/.kodax/workflows`. Mirrors the REPL's `savedWorkflowDirs`. */
+ *  personal `<agent home>/workflows`. Mirrors the REPL's `savedWorkflowDirs`. */
 export function defaultSavedWorkflowDirs(cwd: string): SavedWorkflowDirs {
   return {
     project: join(cwd, '.kodax', 'workflows'),
-    personal: join(homedir(), '.kodax', 'workflows'),
+    personal: getAgentConfigPath('workflows'),
   };
 }
 

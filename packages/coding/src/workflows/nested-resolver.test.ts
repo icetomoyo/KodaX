@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { getAgentConfigPath, setAgentConfigHome } from '@kodax-ai/agent';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createNestedWorkflowResolver, defaultSavedWorkflowDirs } from './nested-resolver.js';
@@ -27,7 +28,36 @@ describe('createNestedWorkflowResolver (FEATURE_246 Part E)', () => {
   it('derives project + personal saved dirs from the cwd', () => {
     const dirs = defaultSavedWorkflowDirs('/proj');
     expect(dirs.project).toBe(join('/proj', '.kodax', 'workflows'));
-    expect(dirs.personal?.endsWith(join('.kodax', 'workflows'))).toBe(true);
+    expect(dirs.personal).toBe(getAgentConfigPath('workflows'));
+  });
+
+  it('reads personal workflows from the agent home the REPL saves to', () => {
+    const home = mkdtempSync(join(tmpdir(), 'kodax-nested-home-'));
+    tmpDirs.push(home);
+    setAgentConfigHome(home);
+    try {
+      expect(defaultSavedWorkflowDirs('/proj').personal).toBe(join(home, 'workflows'));
+    } finally {
+      setAgentConfigHome(undefined);
+    }
+  });
+
+  it('resolves a personal saved workflow from the agent home', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'kodax-nested-home-'));
+    const cwd = mkdtempSync(join(tmpdir(), 'kodax-nested-cwd-'));
+    tmpDirs.push(home, cwd);
+    mkdirSync(join(home, 'workflows'), { recursive: true });
+    writeFileSync(
+      join(home, 'workflows', 'home-saved.mjs'),
+      "export default { meta: { name: 'home-saved', description: 'personal' }, run: async () => 'ok' };\n",
+    );
+    setAgentConfigHome(home);
+    try {
+      const module = await createNestedWorkflowResolver(cwd)('home-saved');
+      expect(module?.meta.name).toBe('home-saved');
+    } finally {
+      setAgentConfigHome(undefined);
+    }
   });
 
   it('resolves a saved workflow capsule by name from the project dir', async () => {
