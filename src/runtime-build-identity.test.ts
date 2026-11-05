@@ -58,6 +58,21 @@ it('includes dist code, native assets and builtin instructions, excluding build 
   }
 });
 
+it('matches a packaged SDK with stripped npm metadata but detects changes to runtime dependencies', () => {
+  const cli = installation('dist');
+  const desktop = installation('dist');
+  const manifest = { type: 'module', dependencies: { commander: '13.1.0' } };
+  writeFileSync(path.join(cli.root, 'package.json'), JSON.stringify({
+    scripts: { build: 'tsc' }, keywords: ['cli'], bundleDependencies: ['commander'], ...manifest,
+  }, null, 2));
+  const desktopManifest = path.join(desktop.root, 'package.json');
+  writeFileSync(desktopManifest, JSON.stringify(manifest));
+  const cliBuild = readRuntimeBuildIdentity(cli.entry);
+  expect(readRuntimeBuildIdentity(desktop.entry).fingerprint).toBe(cliBuild.fingerprint);
+  writeFileSync(desktopManifest, JSON.stringify({ ...manifest, dependencies: { commander: '14.0.0' } }));
+  expect(readRuntimeBuildIdentity(desktop.entry).fingerprint).not.toBe(cliBuild.fingerprint);
+});
+
 it('includes source-mode native artifacts without treating unrelated root bundles as loaded code', () => {
   const { root, entry } = installation();
   const before = readRuntimeBuildIdentity(entry);

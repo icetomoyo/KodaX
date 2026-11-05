@@ -281,7 +281,7 @@ describe('product Host startup and passive connection', () => {
     expect(upgradeMocks.waitOwnerExit).not.toHaveBeenCalled();
   });
 
-  it('attaches a compatible shared Host in another profile without restarting its work', async () => {
+  it('attaches the same build from another installation and profile without restarting its work', async () => {
     const calls: string[] = [];
     const diagnostics: KodaXDiagnostic[] = [];
     const restore = setKodaXDiagnosticSink(diagnostic => { diagnostics.push(diagnostic); });
@@ -293,7 +293,8 @@ describe('product Host startup and passive connection', () => {
       ...base,
       async request(method, params) {
         const result = await base.request(method, params) as { identity: Record<string, unknown> };
-        return { ...result, identity: { ...result.identity, profile: 'default' } };
+        return { ...result, identity: { ...result.identity, profile: 'default',
+          build: { ...LOCAL_RUNTIME_BUILD, origin: '/desktop/sdk/dist/kodax_cli.js' } } };
       },
     }));
     const runtime = await ensureKodaXRuntime({ profile: PROFILE, sessionsDir });
@@ -857,7 +858,7 @@ describe('product Host startup and passive connection', () => {
 
   it.each([
     { name: 'busy changed build', build: { ...LOCAL_RUNTIME_BUILD, fingerprint: '0'.repeat(64) }, busy: true },
-    { name: 'another installation', build: { ...LOCAL_RUNTIME_BUILD, origin: '/other/kodax_cli.js' }, busy: false },
+    { name: 'different build from another installation', build: { origin: '/other/kodax_cli.js', fingerprint: '0'.repeat(64) }, busy: false },
     { name: 'legacy missing identity', build: undefined, busy: false },
   ])('does not silently attach or stop a $name', async ({ build, busy }) => {
     const calls: string[] = [];

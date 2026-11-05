@@ -6247,13 +6247,14 @@ function requiresRuntimeBuildRefresh(identity: RuntimeIdentity): boolean {
       undefined, undefined, 'runtimeBuild',
     );
   }
+  if (identity.build.fingerprint === LOCAL_RUNTIME_BUILD.fingerprint) return false;
   if (identity.build.origin !== LOCAL_RUNTIME_BUILD.origin) {
     throw new RuntimeDaemonCapabilityUpgradeError(
       'A different KodaX installation owns this profile. Connect passively to use that Host, or stop it explicitly before starting this installation.',
       undefined, undefined, 'runtimeBuild',
     );
   }
-  return identity.build.fingerprint !== LOCAL_RUNTIME_BUILD.fingerprint;
+  return true;
 }
 
 function assertCurrentLauncherBuild(): void {
