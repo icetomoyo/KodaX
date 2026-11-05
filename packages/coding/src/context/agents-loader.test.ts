@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdirSync, writeFileSync, rmSync, mkdtempSync, utimesSync, statSync } from "node:fs";
+import fs, { mkdirSync, writeFileSync, rmSync, mkdtempSync, utimesSync, statSync, symlinkSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -21,6 +22,9 @@ describe("agents-loader", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    syncBuiltinESMExports();
+    clearAgentsLoaderCacheForTesting();
     // Cleanup test directory
     rmSync(testDir, { recursive: true, force: true });
   });
@@ -34,6 +38,140 @@ describe("agents-loader", () => {
   });
 
   describe("loadAgentsFiles", () => {
+    it("bounds provenance overhead when many tiny rule fragments exist", () => {
+      const globalDir = join(testDir, "global");
+      const rulesDir = join(globalDir, "rules");
+      mkdirSync(rulesDir, { recursive: true });
+      for (let index = 0; index < 200; index++) {
+        writeFileSync(join(rulesDir, `rule-${index.toString().padStart(3, "0")}.md`), "x");
+      }
+      const onDiagnostic = vi.fn();
+      const files = loadAgentsFiles({ cwd: testDir, projectRoot: testDir, kodaxDir: globalDir, onDiagnostic });
+      expect(Buffer.byteLength(formatAgentsForPrompt(files), "utf8")).toBeLessThanOrEqual(16 * 1024);
+      expect(onDiagnostic).toHaveBeenCalled();
+    });
+
+    it("uses cwd for project fragments outside a Git repository and avoids duplicate sources", () => {
+      const configDir = join(testDir, ".kodax");
+      mkdirSync(join(configDir, "rules"), { recursive: true });
+      writeFileSync(join(configDir, "rules", "testing.md"), "one shared source");
+      expect(loadAgentsFiles({ cwd: testDir, kodaxDir: join(testDir, "missing") })
+        .map(file => file.content)).toEqual(["one shared source"]);
+      const files = loadAgentsFiles({ cwd: testDir, projectRoot: testDir, kodaxDir: configDir });
+      expect(files.map(file => file.content)).toEqual(["one shared source"]);
+      expect(files[0].scope).toBe("global");
+    });
+
+    it("rejects a linked rules directory outside its scope while retaining AGENTS", () => {
+      const configDir = join(testDir, ".kodax");
+      const outside = join(testDir, "other-home");
+      const projectRoot = join(testDir, "project");
+      mkdirSync(configDir);
+      mkdirSync(outside);
+      mkdirSync(join(projectRoot, ".kodax"), { recursive: true });
+      writeFileSync(join(outside, "private.md"), "external sentinel");
+      writeFileSync(join(projectRoot, "AGENTS.md"), "existing instructions");
+      symlinkSync(outside, join(projectRoot, ".kodax", "rules"), "junction");
+      const onDiagnostic = vi.fn();
+      const files = loadAgentsFiles({ cwd: projectRoot, projectRoot, kodaxDir: configDir, onDiagnostic });
+      expect(files.map(file => file.content)).toEqual(["existing instructions"]);
+      expect(onDiagnostic).toHaveBeenCalledWith(expect.objectContaining({
+        path: join(projectRoot, ".kodax", "rules"), reason: expect.stringContaining("link"),
+      }));
+    });
+
+    it("reuses directory and content caches but observes adds, changes and removals", () => {
+      const rulesDir = join(testDir, ".kodax", "rules");
+      mkdirSync(rulesDir, { recursive: true });
+      const rulePath = join(rulesDir, "testing.md");
+      writeFileSync(rulePath, "first rule");
+      const options = { cwd: testDir, projectRoot: testDir, kodaxDir: join(testDir, "home") };
+      const listSpy = vi.spyOn(fs, "readdirSync");
+      const readSpy = vi.spyOn(fs, "readSync");
+      syncBuiltinESMExports();
+      expect(loadAgentsFiles(options).map(file => file.content)).toEqual(["first rule"]);
+      const listings = listSpy.mock.calls.length;
+      const reads = readSpy.mock.calls.length;
+      expect(listings).toBe(1);
+      expect(reads).toBeGreaterThan(0);
+      expect(loadAgentsFiles(options).map(file => file.content)).toEqual(["first rule"]);
+      expect(listSpy).toHaveBeenCalledTimes(listings);
+      expect(readSpy).toHaveBeenCalledTimes(reads);
+      writeFileSync(rulePath, "updated longer rule");
+      expect(loadAgentsFiles(options).map(file => file.content)).toEqual(["updated longer rule"]);
+      writeFileSync(join(rulesDir, "z.md"), "added");
+      expect(loadAgentsFiles(options).map(file => file.content)).toEqual(["updated longer rule", "added"]);
+      rmSync(rulePath);
+      expect(loadAgentsFiles(options).map(file => file.content)).toEqual(["added"]);
+    });
+
+    it("keeps whole UTF-8 files within independent scope budgets and reports skipped paths", () => {
+      const globalDir = join(testDir, "global");
+      const rulesDir = join(globalDir, "rules");
+      const projectRules = join(testDir, ".kodax", "rules");
+      mkdirSync(rulesDir, { recursive: true });
+      mkdirSync(projectRules, { recursive: true });
+      writeFileSync(join(rulesDir, "00-large.md"), "界".repeat(3000));
+      writeFileSync(join(rulesDir, "01.md"), "a".repeat(7000));
+      writeFileSync(join(rulesDir, "02.md"), "b".repeat(7000));
+      writeFileSync(join(rulesDir, "03.md"), "c".repeat(3000));
+      writeFileSync(join(projectRules, "testing.md"), "project still fits");
+      writeFileSync(join(globalDir, "AGENTS.md"), "existing user agents");
+      const onDiagnostic = vi.fn();
+
+      const files = loadAgentsFiles({
+        cwd: testDir, kodaxDir: globalDir, projectRoot: testDir, onDiagnostic,
+      });
+      expect(files.map(file => file.content)).toEqual([
+        "a".repeat(7000), "b".repeat(7000), "existing user agents", "project still fits",
+      ]);
+      expect(onDiagnostic).toHaveBeenCalledWith(expect.objectContaining({
+        path: join(rulesDir, "00-large.md"), reason: expect.stringContaining("8192"),
+      }));
+      expect(onDiagnostic).toHaveBeenCalledWith(expect.objectContaining({
+        path: join(rulesDir, "03.md"), reason: expect.stringContaining("16384"),
+      }));
+    });
+
+    it("preserves exact AGENTS prompt bytes for absent, empty and irrelevant rules directories", () => {
+      const globalDir = join(testDir, "global");
+      const options = { cwd: testDir, kodaxDir: globalDir, projectRoot: testDir };
+      writeFileSync(join(testDir, "AGENTS.md"), "existing rules");
+      const baseline = formatAgentsForPrompt(loadAgentsFiles(options));
+      mkdirSync(join(globalDir, "rules"), { recursive: true });
+      mkdirSync(join(testDir, ".kodax", "rules"), { recursive: true });
+      expect(formatAgentsForPrompt(loadAgentsFiles(options))).toBe(baseline);
+      writeFileSync(join(globalDir, "rules", "empty.md"), "  \n");
+      writeFileSync(join(globalDir, "rules", "commands.rules"), "unrelated policy");
+      expect(formatAgentsForPrompt(loadAgentsFiles(options))).toBe(baseline);
+    });
+
+    it("loads both rules directories before their AGENTS defaults with stable provenance", () => {
+      const globalDir = join(testDir, "global");
+      const childDir = join(testDir, "src");
+      mkdirSync(join(globalDir, "rules"), { recursive: true });
+      mkdirSync(join(testDir, ".kodax", "rules"), { recursive: true });
+      mkdirSync(childDir);
+      writeFileSync(join(globalDir, "rules", "z.md"), "user last");
+      writeFileSync(join(globalDir, "rules", "testing.md"), "user testing");
+      writeFileSync(join(globalDir, "AGENTS.md"), "user agents");
+      writeFileSync(join(testDir, ".kodax", "rules", "testing.md"), "project testing");
+      writeFileSync(join(testDir, "AGENTS.md"), "root agents");
+      writeFileSync(join(childDir, "AGENTS.md"), "child agents");
+      writeFileSync(join(testDir, ".kodax", "AGENTS.md"), "project agents");
+
+      const files = loadAgentsFiles({ cwd: childDir, kodaxDir: globalDir, projectRoot: testDir });
+      expect(files.map(file => file.content)).toEqual([
+        "user testing", "user last", "user agents", "project testing",
+        "root agents", "child agents", "project agents",
+      ]);
+      expect(files[0].scope).toBe("global");
+      expect(files[3].scope).toBe("project");
+      const prompt = formatAgentsForPrompt(files);
+      expect(prompt).toContain(join(globalDir, "rules", "testing.md"));
+      expect(prompt).toContain(join(testDir, ".kodax", "rules", "testing.md"));
+    });
+
     it("should return empty array when no AGENTS files exist", () => {
       const files = loadAgentsFiles({ cwd: testDir });
       expect(files).toEqual([]);

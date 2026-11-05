@@ -788,7 +788,7 @@ export const BUILTIN_COMMANDS: Command[] = [
 
         if (files.length === 0 && skillCount === 0 && extensionCount === 0 && reloadFailures === 0) {
           console.log(chalk.yellow('No project rule files, skills, or active extensions found.\n'));
-          console.log(chalk.dim('  Create AGENTS.md or CLAUDE.md in your project, add skills, or load extensions with --extension.'));
+          process.stdout.write(chalk.dim('  Add AGENTS.md, .kodax/rules/*.md, skills, or extensions with --extension.') + '\n');
           console.log();
           return;
         }
@@ -802,6 +802,9 @@ export const BUILTIN_COMMANDS: Command[] = [
         }
         if (result.project > 0) {
           console.log(chalk.dim(`  - Project: ${result.project} file(s)`));
+        }
+        for (const file of files) {
+          process.stdout.write(chalk.dim(`    ${file.path}\n`));
         }
         if (extensionSummary.reloaded > 0) {
           console.log(chalk.dim(`  - Extensions reloaded: ${extensionSummary.reloaded} module(s)`));
@@ -830,14 +833,20 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.dim('  /reload            ') + 'Reload project rule files, skills, and active extensions');
       console.log();
       console.log(chalk.bold('Description:'));
-      console.log('  Reloads project-level context rules from AGENTS.md, CLAUDE.md, and .kodax/AGENTS.md files.');
+      process.stdout.write('  Reloads AGENTS.md and user/project Markdown rule fragments.\n');
       console.log('  Reloads skills from .kodax/skills/, ~/.kodax/skills/, ~/.agents/skills/, plugins, and builtins.');
       console.log('  Rediscovers default/configured extensions, creates a runtime if needed, and hot-reloads loaded extensions.');
       console.log();
       console.log(chalk.bold('Rule Priority:'));
-      console.log(chalk.dim('  1. Global:   ') + '~/.kodax/AGENTS.md');
-      console.log(chalk.dim('  2. Directory: ') + 'AGENTS.md or CLAUDE.md from project root to current directory');
-      console.log(chalk.dim('  3. Project:  ') + '.kodax/AGENTS.md at the project root');
+      process.stdout.write([
+        '  1. User rules:    ~/.kodax/rules/*.md',
+        '  2. User:          ~/.kodax/AGENTS.md',
+        '  3. Project rules: .kodax/rules/*.md at the project root',
+        '  4. Directory:     AGENTS.md from project root to current directory',
+        '  5. Project:       .kodax/AGENTS.md at the project root',
+        '  Rules use complete files, up to 8 KiB each and 16 KiB per scope.',
+        '',
+      ].join('\n'));
       console.log();
       console.log(chalk.bold('Examples:'));
       console.log(chalk.dim('  /reload            ') + '# Reload and show loaded rules');

@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createExtensionRuntime } from '../extensions/runtime.js';
 import { buildSystemPrompt, buildSystemPromptSnapshot } from './builder.js';
 
@@ -34,9 +34,53 @@ describe('buildSystemPrompt', () => {
   const cleanupDirs: string[] = [];
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     for (const dir of cleanupDirs.splice(0)) {
       await removeTempDir(dir);
     }
+  });
+
+  it('keeps the rendered prompt identical without rules and refreshes rule bodies without accumulating tokens', async () => {
+    const executionCwd = await createTempDir('kodax-prompt-rules-');
+    cleanupDirs.push(executionCwd);
+    vi.stubEnv('KODAX_HOME', path.join(executionCwd, 'user-home'));
+    const options = { provider: 'openai', context: { executionCwd, gitRoot: executionCwd } };
+    const baseline = await buildSystemPrompt(options, false);
+    const rulesDir = path.join(executionCwd, '.kodax', 'rules');
+    await fs.mkdir(rulesDir, { recursive: true });
+    expect(await buildSystemPrompt(options, false)).toBe(baseline);
+    const rulePath = path.join(rulesDir, 'testing.md');
+    await fs.writeFile(rulePath, 'FIRST_ACTION_TESTING_RULE');
+    const first = await buildSystemPromptSnapshot(options, true);
+    expect(first.sections.find(section => section.id === 'project-agents')?.content)
+      .toContain('FIRST_ACTION_TESTING_RULE');
+    const next = await buildSystemPrompt(options, false);
+    expect(next.match(/FIRST_ACTION_TESTING_RULE/g)).toHaveLength(1);
+    expect(await buildSystemPrompt(options, false)).toBe(next);
+    await fs.writeFile(rulePath, 'UPDATED_TESTING_RULE');
+    const updated = await buildSystemPrompt(options, false);
+    expect(updated).toContain('UPDATED_TESTING_RULE');
+    expect(updated).not.toContain('FIRST_ACTION_TESTING_RULE');
+    await fs.rm(rulePath);
+    expect(await buildSystemPrompt(options, false)).toBe(baseline);
+  });
+
+  it('respects the host readable-path boundary for user rule bodies', async () => {
+    const executionCwd = await createTempDir('kodax-prompt-bound-rules-');
+    cleanupDirs.push(executionCwd);
+    const userHome = path.join(executionCwd, 'user-home');
+    const userRules = path.join(userHome, 'rules');
+    await fs.mkdir(userRules, { recursive: true });
+    await fs.writeFile(path.join(userRules, 'private.md'), 'PRIVATE_USER_RULE');
+    vi.stubEnv('KODAX_HOME', userHome);
+    const prompt = await buildSystemPrompt({
+      provider: 'openai',
+      context: {
+        executionCwd, gitRoot: executionCwd,
+        assertReadablePath: () => { throw new Error('outside bound workspace'); },
+      },
+    }, true);
+    expect(prompt).not.toContain('PRIVATE_USER_RULE');
   });
 
   it('uses executionCwd instead of process cwd for prompt context', async () => {

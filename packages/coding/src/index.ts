@@ -930,9 +930,11 @@ export type { DenialRecord, DenialTracker } from './permissions/denial-tracker.j
 
 export {
   loadAgentsFiles,
+  clearAgentsLoaderCache,
   formatAgentsForPrompt,
   getKodaxGlobalDir,
 } from './context/agents-loader.js';
+export type { RuleDiagnostic } from './context/rules-loader.js';
 
 export type {
   AgentsFile,

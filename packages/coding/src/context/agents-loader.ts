@@ -1,16 +1,17 @@
 /**
- * AGENTS.md - Project-level AI Context Rules Loader
+ * Project instructions from AGENTS.md and scoped Markdown rules.
  *
  * This module implements loading of project-level context rules from AGENTS.md files,
  * inspired by pi-mono's implementation.
  *
- * Priority: global < root < ... < current directory < .kodax/
+ * Priority: user rules < user AGENTS < project rules < root ... cwd AGENTS < .kodax/AGENTS
  */
 
 import { readFileSync, statSync } from "node:fs";
 import { join, parse, resolve } from "node:path";
 
 import { getAgentConfigHome } from "@kodax-ai/agent";
+import { clearRulesLoaderCache, loadRulesFiles, type RulesLoadOptions } from './rules-loader.js';
 
 // v0.7.38 (2026-05-09) — KodaX only reads `AGENTS.md`, never `CLAUDE.md`.
 //
@@ -35,11 +36,13 @@ export interface AgentsFile {
   scope: 'global' | 'project' | 'directory';
 }
 
-export interface LoadAgentsOptions {
+export interface LoadAgentsOptions extends RulesLoadOptions {
   /** Pass cwd explicitly for deterministic prompt building; process.cwd() is only a legacy fallback. */
   cwd?: string;
   kodaxDir?: string;
   projectRoot?: string;
+  /** Original project root for local fragments inherited by isolated worktrees. */
+  projectRulesRoot?: string;
 }
 
 /**
@@ -68,11 +71,13 @@ export function getKodaxGlobalDir(): string {
  */
 const fileContentCache = new Map<string, { mtimeMs: number; content: string }>();
 
-/** Test-only helper. Resets the module-level cache between unit tests. */
-export function clearAgentsLoaderCacheForTesting(): void {
+/** Clear cached instruction files and rule listings for an explicit reload. */
+export function clearAgentsLoaderCache(): void {
   fileContentCache.clear();
+  clearRulesLoaderCache();
 }
 
+export const clearAgentsLoaderCacheForTesting = clearAgentsLoaderCache;
 function readFileWithMtimeCache(filePath: string): string | null {
   let mtimeMs: number;
   try {
@@ -127,8 +132,8 @@ function loadContextFileFromDir(dir: string): AgentsFile | null {
 }
 
 /**
- * Load all AGENTS files
- * Priority: global < root < ... < current directory < .kodax/
+ * Load AGENTS and Markdown fragments. Empty rules directories preserve the
+ * existing AGENTS prompt. Deeper AGENTS can refine project-wide fragments.
  */
 export function loadAgentsFiles(options?: LoadAgentsOptions): AgentsFile[] {
   const resolvedCwd = resolve(options?.cwd ?? process.cwd());
@@ -139,12 +144,29 @@ export function loadAgentsFiles(options?: LoadAgentsOptions): AgentsFile[] {
   const contextFiles: AgentsFile[] = [];
   const seenPaths = new Set<string>();
 
+  const globalRules = loadRulesFiles(join(resolvedKodaxDir, 'rules'), resolvedKodaxDir, 'global', options ?? {});
+  for (const file of globalRules) {
+    contextFiles.push(file);
+    seenPaths.add(file.path);
+  }
+
   // 1. Load global config (~/.kodax/AGENTS.md only)
   const globalContext = loadAgentsFile(resolvedKodaxDir, ["AGENTS.md"]);
   if (globalContext) {
     globalContext.scope = "global";
     contextFiles.push(globalContext);
     seenPaths.add(globalContext.path);
+  }
+
+  const rulesProjectRoot = options?.projectRulesRoot
+    ? resolve(options.projectRulesRoot)
+    : resolvedProjectRoot ?? resolvedCwd;
+  for (const file of loadRulesFiles(
+    join(rulesProjectRoot, '.kodax', 'rules'), rulesProjectRoot, 'project', options ?? {},
+  )) {
+    if (seenPaths.has(file.path)) continue;
+    contextFiles.push(file);
+    seenPaths.add(file.path);
   }
 
   // 2. Traverse from project root to current directory

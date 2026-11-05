@@ -579,6 +579,7 @@ async function prepareChildIsolationScope(
       ...parentCtx,
       gitRoot: worktreePath,
       executionCwd: worktreePath,
+      projectRulesRoot: parentCtx.projectRulesRoot ?? parentCtx.gitRoot ?? resolveExecutionCwd(parentCtx),
     },
     worktreePath,
     parentGitRoot: parentCtx.gitRoot ?? resolveExecutionCwd(parentCtx),
@@ -1455,6 +1456,7 @@ async function runReadChildBody(
             options.parentOptions.permissionIntent ?? scope.ctx.permissionIntent,
           ),
           assertReadablePath: scope.ctx.assertReadablePath,
+          projectRulesRoot: scope.ctx.projectRulesRoot,
           toolVisibilityPolicy: scope.ctx.toolVisibilityPolicy,
           skillRegistry: scope.ctx.skillRegistry,
           admitLearnedSkillInvocation: scope.ctx.admitLearnedSkillInvocation,
@@ -1657,6 +1659,8 @@ async function runWriteChildBody(
   const systemPromptOverride = buildWriteSystemPrompt(
     childCtx.gitRoot ?? childCtx.executionCwd ?? process.cwd(),
     specialistSystemPrompt,
+    childCtx.assertReadablePath,
+    childCtx.projectRulesRoot,
   );
   const excludeTools = restrictToolsForChildRuntime(
     [...(childCtx.excludeTools ?? []), ...specialistExcludeTools],
@@ -1765,6 +1769,7 @@ async function runWriteChildBody(
             options.parentOptions.permissionIntent ?? childCtx.permissionIntent,
           ),
           assertReadablePath: childCtx.assertReadablePath,
+          projectRulesRoot: childCtx.projectRulesRoot,
           toolVisibilityPolicy: childCtx.toolVisibilityPolicy,
           skillRegistry: childCtx.skillRegistry,
           admitLearnedSkillInvocation: childCtx.admitLearnedSkillInvocation,
@@ -2241,12 +2246,14 @@ export const CHILD_AGENT_SYSTEM_PROMPT = [
 function buildWriteSystemPrompt(
   gitRoot: string,
   baseSystemPrompt: string = CHILD_AGENT_SYSTEM_PROMPT,
+  assertReadablePath?: (candidate: string) => void,
+  projectRulesRoot?: string,
 ): string {
   // Sync — `loadAgentsFiles` reads via `readFileSync` and the helper has no
   // async I/O. Kept synchronous so the single mtime-stat-and-cache walk
   // does not pay an unnecessary microtask boundary on every write-child
   // spawn (FEATURE_119 H2 fan-out can dispatch 4-8 children in one wave).
-  const agentsFiles = loadAgentsFiles({ cwd: gitRoot, projectRoot: gitRoot });
+  const agentsFiles = loadAgentsFiles({ cwd: gitRoot, projectRoot: gitRoot, assertReadablePath, projectRulesRoot });
   const formatted = formatAgentsForPrompt(agentsFiles);
   if (!formatted) return baseSystemPrompt;
 

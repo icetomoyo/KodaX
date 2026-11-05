@@ -397,7 +397,19 @@
       "",
       "Env mirrors / extras: KODAX_PROVIDER, KODAX_EFFORT, KODAX_FALLBACK_PROVIDERS, KODAX_FAST_*/KODAX_DEEP_*,",
       "KODAX_REPO_INTELLIGENCE. Env generally overrides file. Project vs user config:",
-      "user config is ~/.kodax; project-scoped state lives under <repo>/.kodax/."
+      "user config is ~/.kodax; project-scoped state lives under <repo>/.kodax/.",
+      "",
+      "Markdown instructions: ~/.kodax/rules/*.md (relocated by KODAX_HOME) and",
+      "<repo>/.kodax/rules/*.md load direct files in filename order, with complete bodies",
+      "and source paths in the initial project context. Without a Git root, use cwd.",
+      "Precedence: user rules, user AGENTS.md, project rules, root-to-cwd AGENTS.md,",
+      "then project .kodax/AGENTS.md. Same-named files in both scopes accumulate.",
+      "Each fragment has an 8 KiB UTF-8 limit and each scope a separate 16 KiB budget including source headings.",
+      "Empty rules add no prompt text. Oversized or unreadable files are skipped whole.",
+      "/reload lists loaded files and skipped reasons. Active managed Runs retain their snapshot.",
+      "Host readable-path policies apply to fragments. Writable children inherit project rules.",
+      "SDK prompt overrides and read-only children keep their own instruction contracts.",
+      "Use exec-policy.jsonc for enforced command policy and Skills for longer task procedures."
     ],
     "sources": [
       {

@@ -2537,6 +2537,29 @@ KodaX ships 50+ built-in tools, grouped below. They are registered as a single f
 
 ---
 
+## Project instructions
+
+Put short, always-applicable Markdown rules in `~/.kodax/rules/*.md` or
+`<project>/.kodax/rules/*.md`. `KODAX_HOME` also relocates the user rules.
+KodaX loads direct `.md` children in filename order, then supplies their complete
+contents with source paths before the first model action. Empty or absent rules
+directories add no prompt text. Nested folders and frontmatter conditions are
+outside this discovery format.
+
+The instruction order is user rules → user `AGENTS.md` → project rules → directory
+`AGENTS.md` files from root to working directory → project `.kodax/AGENTS.md`.
+Same-named user and project rules both apply. Without a Git root, project rules
+are resolved from the working directory. Each fragment is limited to 8 KiB of
+UTF-8, with a separate 16 KiB total per scope including source headings. Oversized, unreadable, or overflowing
+files are skipped whole and reported through diagnostics. `/reload` lists loaded
+paths and skipped-file reasons. Active managed Runs keep their instruction snapshot.
+Writable children inherit these rules through their existing project context.
+SDK prompt overrides and read-only children follow their own instruction contracts,
+and bound hosts apply their readable-path policy to rule files.
+
+Use `exec-policy.jsonc` for enforced command approvals. Longer task-specific
+procedures can live in Skills.
+
 ## Skills System
 
 KodaX includes a built-in Skills system. Model-visible Skills can be triggered

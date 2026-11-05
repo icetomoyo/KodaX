@@ -168,6 +168,7 @@ export function buildToolExecutionContext(
     isPagedContentRecoveryAllowed: options.context?.isPagedContentRecoveryAllowed,
     toolResultRecovery: options.context?.toolResultRecovery,
     assertReadablePath: options.context?.assertReadablePath,
+    projectRulesRoot: options.context?.projectRulesRoot,
     toolVisibilityPolicy: options.context?.toolVisibilityPolicy,
     excludeTools: options.context?.excludeTools,
     // FEATURE_132 v0.7.47 — LSP service for edit-time diagnostics reflux.

@@ -1359,6 +1359,23 @@ KodaX 有 50+ 个内置工具，按类别分组如下（实际暴露给 LLM 是�
 | `ask_user_question` | 向用户发起单选 / 多选 / 自由文本提问 |
 | `exit_plan_mode` | 仅在当前 REPL/宿主提供审批回调时提交最终方案 |
 
+## 项目指令
+
+把简短、默认生效的 Markdown 约定放到 `~/.kodax/rules/*.md` 或
+`<项目根>/.kodax/rules/*.md`。用户目录跟随 `KODAX_HOME`。KodaX 按文件名排序读取
+直属 `.md` 文件，在模型首次操作前注入完整正文和来源路径。目录缺失或为空时，
+提示词没有新增内容。该格式只发现直属文件，正文按普通 Markdown 处理。
+
+指令顺序为用户 rules → 用户 `AGENTS.md` → 项目 rules → 根目录到工作目录的
+`AGENTS.md` → 项目 `.kodax/AGENTS.md`。两级同名文件均保留。没有 Git 根目录时，
+从当前工作目录加载项目 rules。单文件上限为 8 KiB UTF-8，用户和项目各有 16 KiB
+总额度（含来源标题开销）。超大、不可读或超出总额度的文件会整份跳过并提供诊断。
+`/reload` 展示已加载路径和跳过原因。已运行的托管 Run 使用自身的指令快照，
+可写子 Agent 沿用项目上下文接收规则。SDK 自定义提示词、只读子 Agent 按各自既有
+指令契约运行，绑定宿主的可读路径限制也适用于规则文件。
+
+需要强制执行的命令审批使用 `exec-policy.jsonc`，较长的任务专用流程可以放进 Skills。
+
 ## 内置 Skills
 
 五个核心 Skill（git-workflow、tdd、code-review、skill-creator、visual-review）

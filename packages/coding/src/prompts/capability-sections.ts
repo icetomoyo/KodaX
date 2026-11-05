@@ -266,6 +266,8 @@ export async function buildCapabilityContextSections(
   const agentsFiles = loadAgentsFiles({
     cwd: executionCwd,
     projectRoot: options.context?.gitRoot ?? undefined,
+    assertReadablePath: options.context?.assertReadablePath,
+    projectRulesRoot: options.context?.projectRulesRoot,
   });
   const agentsContent = formatAgentsForPrompt(agentsFiles);
   if (agentsContent) {

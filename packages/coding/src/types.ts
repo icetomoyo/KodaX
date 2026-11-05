@@ -1889,6 +1889,8 @@ export interface KodaXContextOptions {
   workflowIntent?: 'explicit';
   /** Project root used for project-scoped prompts, permissions, and path policy. */
   gitRoot?: string | null;
+  /** Host-owned origin of project Markdown rules across isolated worktrees. */
+  projectRulesRoot?: string;
   /**
    * Explicit working directory used for prompt context, relative tool paths,
    * and shell execution. Defaults to `gitRoot`, then `process.cwd()`.
@@ -2785,6 +2787,8 @@ export interface KodaXToolExecutionContext {
   loadSessionHistory?: () => Promise<KodaXSessionLineage | null>;
   /** Git root directory - Git 鏍圭洰褰?*/
   gitRoot?: string;
+  /** Host-owned origin of project Markdown rules across isolated worktrees. */
+  projectRulesRoot?: string;
   /**
    * FEATURE_247 (R7) — runtime-resolved session id for the run that owns this
    * tool call. Lets host-registered tools (Space artifact/source/KB) attribute a
