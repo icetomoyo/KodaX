@@ -124,6 +124,9 @@ function mergeGuardedResults(
     const guarded = guardedById.get(String(index));
     const content = guarded?.content ?? result.content;
     if (content === result.content) return result;
+    // A read may be nested in a Script/tool alias. Once admission replaces any
+    // output, cached reads can no longer claim their original text is visible.
+    options.ctx.readFileStateCache?.clear();
     options.onCapacityFallback?.(batch.calls[index]!);
     return {
       ...result,

@@ -6,11 +6,14 @@ import type { RunnerToolCall, RunnerToolResult } from '@kodax-ai/agent';
 import { calculateMaxContextInputTokens } from '@kodax-ai/agent';
 
 import { estimateTokens } from '../tokenizer.js';
+import { toolRead } from '../tools/read.js';
+import { createReadFileStateCache } from '../multi-instance/read-file-state-cache.js';
 import { TOOL_OUTPUT_DIR_ENV } from '../tools/truncate.js';
 import {
   createRunnerToolResultBatchTransform,
   estimateRunnerToolResultBatchTokens,
   shouldStampRunnerCapacityDebt,
+  resolveRunnerToolResultBudget,
 } from './runner-tool-result-batch.js';
 
 describe('Runner tool-result batch capacity', () => {
@@ -106,6 +109,34 @@ describe('Runner tool-result batch capacity', () => {
     expect(estimateRunnerToolResultBatchTokens(calls, transformed)).toBeLessThanOrEqual(availableTokens);
     expect(await fs.readdir(tempDir)).toHaveLength(1);
     expect(transformed[1]!.metadata?.handoffTarget).toBe('worker');
+  });
+
+  it.each(['read', 'tool_call'])('allows a native page to be reread after parallel %s batch admission replaces its content', async toolName => {
+    const paths = [path.join(tempDir, 'first.txt'), path.join(tempDir, 'second.txt')];
+    await Promise.all(paths.map(filePath => fs.writeFile(filePath,
+      Array.from({ length: 60 }, (_, i) => `exact evidence line ${i} ${'x'.repeat(100)}`).join('\n'))));
+    const readFileStateCache = createReadFileStateCache({ disabled: false });
+    const ctx = { backups: new Map(), executionCwd: tempDir, readFileStateCache, canReadPagedContent: true };
+    const contextWindow = 16384;
+    const reservedResponseTokens = 1000;
+    const options = { ctx, contextWindow, reservedResponseTokens, contextTokenSnapshotRef: {
+      current: { currentTokens: calculateMaxContextInputTokens(contextWindow, reservedResponseTokens) - 2500,
+        baselineEstimatedTokens: baselineTokens, source: 'api' as const },
+    } };
+    const budget = resolveRunnerToolResultBudget(transcript, options);
+    // The outer name can hide a native read; exercise admission's alias boundary
+    // without pretending this fixture executes a complete Script program.
+    const calls = paths.map((filePath, i) => ({ id: `read-${i}`, name: toolName, input: { path: filePath } }));
+    const results = await Promise.all(calls.map(async entry => ({ content: await toolRead(entry.input,
+      { ...ctx, toolResultCapacityTokens: budget.aggregateInlineTokens }) })));
+    expect(readFileStateCache.size()).toBe(2);
+    for (const result of results) expect(result.content).toContain('exact evidence line 59');
+    const transformed = await createRunnerToolResultBatchTransform(options)({ calls, results, transcript });
+    const replaced = transformed.findIndex((result, index) => result.content !== results[index]!.content);
+    expect(replaced).toBeGreaterThanOrEqual(0);
+    const reread = await toolRead(calls[replaced]!.input, { ...ctx, toolResultCapacityTokens: budget.aggregateInlineTokens });
+    expect(reread).not.toContain('[Read Cache]');
+    expect(reread).toContain('exact evidence line 59');
   });
 
   it('reuses structured artifact metadata when a guarded result needs a smaller preview later', async () => {
