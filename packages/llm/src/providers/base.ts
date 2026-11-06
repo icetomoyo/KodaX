@@ -995,9 +995,19 @@ export abstract class KodaXBaseProvider {
       } catch (e) {
         const terminal = nonRetryableCause(e);
         if (terminal) throw terminal;
+        if (e instanceof KodaXContextOverflowError) throw e;
         const headers = extractHeadersFromError(e);
         const shouldRetry = readHeader(headers, 'x-should-retry');
-        if (isProviderQuotaError(e) || shouldRetry === 'false'
+        const quotaError = isProviderQuotaError(e);
+        if (!quotaError && shouldRetry === 'false' && this.isContextOverflowError(e)) {
+          // No transport retry: preserve the capacity identity so the runtime
+          // can recover with a smaller request instead of stopping on a wrapper.
+          throw new KodaXContextOverflowError(
+            parseContextOverflowFacts(getErrorMessage(e)), this.name,
+            { ...this.providerErrorMetadata(e), retryable: false },
+          );
+        }
+        if (quotaError || shouldRetry === 'false'
           || (e instanceof KodaXProviderError && e.metadata?.retryable === false)) {
           throw new KodaXProviderError(`${this.name} API error: ${e instanceof Error ? e.message : getErrorMessage(e)}`, this.name, {
             ...this.providerErrorMetadata(e), retryable: false,
@@ -1041,7 +1051,6 @@ export abstract class KodaXBaseProvider {
           }
         }
 
-        if (e instanceof KodaXContextOverflowError) throw e;
         if (this.isContextOverflowError(e)) {
           throw new KodaXContextOverflowError(
             parseContextOverflowFacts(getErrorMessage(e)), this.name, this.providerErrorMetadata(e),

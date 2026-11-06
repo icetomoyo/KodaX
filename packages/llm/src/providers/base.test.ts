@@ -755,6 +755,51 @@ describe('KodaXBaseProvider', () => {
     expect(failure).not.toBeInstanceOf(KodaXContextOverflowError);
   });
 
+  it('preserves capacity classification when the server forbids retrying the request', async () => {
+    const task = vi.fn(async () => {
+      throw Object.assign(new Error("Input length (72000) exceeds model's maximum context length (65536)."), {
+        status: 400, headers: { 'x-should-retry': 'false' },
+      });
+    });
+    const onRetry = vi.fn();
+    const failure: unknown = await new TestProvider().exposeWithRateLimit(task, undefined, 3, onRetry)
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(KodaXContextOverflowError);
+    expect(failure).toMatchObject({ capacity: {
+      inputTokens: 72000, contextWindow: 65536, inputTokensKind: 'exact',
+    }, metadata: { retryable: false } });
+    expect(task).toHaveBeenCalledTimes(1);
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it('preserves existing capacity facts and identity under a no-retry header', async () => {
+    const classified = Object.assign(new KodaXContextOverflowError({
+      inputTokens: 72000, contextWindow: 65536, inputTokensKind: 'exact',
+    }, 'upstream'), { headers: { 'x-should-retry': 'false' } });
+    const task = vi.fn(async () => { throw classified; });
+    const failure: unknown = await new TestProvider().exposeWithRateLimit(task)
+      .catch((error: unknown) => error);
+    expect(failure).toBe(classified);
+    expect(task).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { message: 'prompt too long; insufficient_quota', status: 402 },
+    { message: 'Your request exceeded model token limit: 65536 (requested: 72000)', status: 429 },
+    { message: 'invalid max_tokens: output token limit exceeded', status: 400 },
+    { message: 'service unavailable', status: 503 },
+  ])('honors no-retry for non-capacity failures: $message', async ({ message, status }) => {
+    const task = vi.fn(async () => {
+      throw Object.assign(new Error(message), { status, headers: { 'x-should-retry': 'false' } });
+    });
+    const failure: unknown = await new TestProvider().exposeWithRateLimit(task, undefined, 3)
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(KodaXProviderError);
+    expect(failure).not.toBeInstanceOf(KodaXContextOverflowError);
+    expect(failure).toMatchObject({ metadata: { retryable: false } });
+    expect(task).toHaveBeenCalledTimes(1);
+  });
+
   it('retries Chinese context-overflow errors immediately', async () => {
     const provider = new TestProvider();
     const onRateLimit = vi.fn();
