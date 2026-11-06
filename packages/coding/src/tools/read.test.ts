@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
+import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyToolResultGuardrail } from './tool-result-policy.js';
 import { DEFAULT_TOOL_OUTPUT_MAX_BYTES } from './truncate.js';
@@ -77,6 +78,41 @@ describe('toolRead', () => {
     expect(result).toContain('line-12');
     expect(result).not.toContain('line-9');
   });
+
+  it('rejects an already cancelled read before accessing content', async () => {
+    const filePath = path.join(tempDir, 'cancelled.txt');
+    await fs.writeFile(filePath, 'must not be delivered');
+    const controller = new AbortController();
+    controller.abort();
+    await expect(toolRead({ path: filePath }, {
+      backups: new Map(), abortSignal: controller.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('reads a giant line and giant lookahead within a bounded child heap', async () => {
+    const giantPath = path.join(tempDir, 'giant.txt');
+    const lookaheadPath = path.join(tempDir, 'lookahead.txt');
+    await fs.writeFile(giantPath, 'x'.repeat(8 * 1024 * 1024));
+    await fs.writeFile(lookaheadPath, 'first\n' + 'x'.repeat(8 * 1024 * 1024));
+    const childPath = path.join(tempDir, 'read-child.mjs');
+    await fs.writeFile(childPath, `
+      import assert from 'node:assert/strict';
+      import { toolRead } from ${JSON.stringify(new URL('./read.ts', import.meta.url).href)};
+      const first = await toolRead({ path: ${JSON.stringify(giantPath)}, limit: 1 }, { backups: new Map() });
+      assert.equal(typeof first, 'string');
+      assert.ok(first.includes('line_offset=2000'));
+      assert.ok(!first.includes('of 8388608'));
+      const next = await toolRead({ path: ${JSON.stringify(lookaheadPath)}, limit: 1 }, { backups: new Map() });
+      assert.ok(next.includes('Use offset=2'));
+      assert.ok(!next.includes('xxxx'));
+    `);
+    const child = spawnSync(process.execPath, ['--max-old-space-size=96', '--import', 'tsx', childPath], {
+      cwd: process.cwd(), encoding: 'utf8', timeout: 20_000, windowsHide: true,
+    });
+    expect({ status: child.status, error: child.error, stderr: child.stderr }).toEqual({
+      status: 0, error: undefined, stderr: '',
+    });
+  }, 30_000);
 
   it('pages opaque process-memory artifacts without filesystem access', async () => {
     const artifactPath = createTransientTextArtifact('one\ntwo\nthree\nfour');
@@ -197,10 +233,10 @@ describe('toolRead', () => {
 
     expect(body(first) + body(second) + body(third)).toBe(content);
     expect(first).toContain(
-      '[Line 1 is partial: showing Unicode characters 0-1999 of 4500. Continue with offset=1 limit=1 line_offset=2000.]',
+      '[Line 1 is partial: showing Unicode characters 0-1999. Continue with offset=1 limit=1 line_offset=2000.]',
     );
     expect(second).toContain(
-      '[Line 1 is partial: showing Unicode characters 2000-3999 of 4500. Continue with offset=1 limit=1 line_offset=4000.]',
+      '[Line 1 is partial: showing Unicode characters 2000-3999. Continue with offset=1 limit=1 line_offset=4000.]',
     );
     expect(first).not.toContain('[End of file');
     expect(second).not.toContain('[End of file');
@@ -217,6 +253,54 @@ describe('toolRead', () => {
     expect(definition?.description).toContain('partial-line continuation marker');
     expect(schema?.properties?.line_offset?.description).toContain('Unicode character offset');
     expect(schema?.properties?.line_offset?.description).toContain('continuation marker');
+  });
+
+  it.each([
+    ['UTF-8', 'x'.repeat(65_534) + '\n', '🙂e\u0301'],
+    ['CRLF', 'x'.repeat(65_535) + '\r\n', '🙂e\u0301'],
+  ])('preserves %s chunk boundaries and structured next cursors', async (_name, prefix, unit) => {
+    const filePath = path.join(tempDir, 'boundary.txt');
+    const content = unit.repeat(900);
+    await fs.writeFile(filePath, prefix + content + '\r\nlast');
+    const projection = vi.fn();
+    const ctx = { backups: new Map(), toolCallId: 'read-page', recordToolResultProjection: projection };
+    const first = await toolRead({ path: filePath, offset: 2, limit: 2 }, ctx);
+    expect(first).not.toContain('\uFFFD');
+    const firstData = projection.mock.calls[0]?.[1].data;
+    expect(firstData.next).toEqual({ offset: 2, limit: 2, line_offset: 2000 });
+    await toolRead({ path: filePath, ...firstData.next }, ctx);
+    const secondData = projection.mock.calls[1]?.[1].data;
+    expect(firstData.text + secondData.text).toBe(content + '\nlast');
+    expect(secondData.next).toBeUndefined();
+    expect(secondData.lineCount).toBe(2);
+  });
+
+  it.each([
+    ['', '[End of file]'],
+    ['\n', '     1\t\n\n[End of file - 1 lines total]'],
+    ['a\r\nb\rc\n', '     1\ta\n     2\tb\n     3\tc\n\n[End of file - 3 lines total]'],
+  ])('keeps small-file newline behavior for %j', async (content, expected) => {
+    const filePath = path.join(tempDir, 'newlines.txt');
+    await fs.writeFile(filePath, content);
+    expect(await toolRead({ path: filePath }, { backups: new Map() })).toBe(expected);
+  });
+
+  it('cancels while skipping a giant line without returning or caching a page', async () => {
+    const filePath = path.join(tempDir, 'cancel-during-read.txt');
+    await fs.writeFile(filePath, 'x'.repeat(16 * 1024 * 1024) + '\ntail');
+    const controller = new AbortController();
+    const projection = vi.fn();
+    const reading = toolRead({ path: filePath, offset: 2 }, {
+      backups: new Map(), abortSignal: controller.signal,
+      toolCallId: 'cancelled', recordToolResultProjection: projection,
+    });
+    const timer = setTimeout(() => controller.abort(), 10);
+    try {
+      await expect(reading).rejects.toMatchObject({ name: 'AbortError' });
+      expect(projection).not.toHaveBeenCalled();
+    } finally {
+      clearTimeout(timer);
+    }
   });
 
   it('rejects binary files', async () => {
