@@ -738,3 +738,39 @@ These process-kill and isolated boot-identity cases do not simulate an actual ma
 failure. Other platforms and legacy Windows receipts retain their conservative inspection
 path when equivalent containment evidence is unavailable. Never delete the daemon tree to
 make these checks pass. It contains Run, event and client-exit evidence.
+
+## 2026-11-06 bounded runtime temporary-file maintenance
+
+The ready Host schedules an asynchronous first round and later idle rounds at five-minute
+intervals. Each round visits at most 32 entries in its own daemon profile directory and
+continues its directory cursor in the next round. The timer is unreferenced, rounds never
+overlap, busy work defers the round, and Host shutdown stops scheduling and joins cleanup
+before releasing ownership. No LLM request, worker thread, or recursive history scan is used.
+
+Only complete `daemon.lock.<UUID>.tmp` and `daemon.json.<PID>.<UUID>.tmp` publications are
+candidates. A positive OS dead-PID observation, unchanged profile ownership, coordination
+lock, unchanged file identity and bytes are required before unlink. Live or unverified PIDs,
+malformed/oversized records, symlinks, replacement files, coordination markers, owner policy,
+Run/event/history data and exit receipts are retained. PID reuse conservatively retains the
+temporary file rather than launching a slow process-identity probe during background work.
+Logs and shutdown outcomes continue through their existing retention paths.
+Candidate read/delete failures are reported without resetting the directory cursor, so a
+persistently denied file cannot starve later entries. Directory enumeration failures reset
+only the broken cursor and retry on a later round.
+
+```powershell
+node node_modules/vitest/vitest.mjs run src/runtime-daemon/maintenance.test.ts src/runtime-daemon/maintenance-scheduler.test.ts src/runtime-daemon/host.test.ts
+```
+
+The bundled maintenance entry is also verified through a real isolated Host. It removes an
+abandoned publication while retaining a live-process publication and remains available for
+normal status reads. This test is included in `npm run test:bundle`.
+
+```powershell
+node --test tests/bundled-daemon-maintenance.test.mjs
+```
+
+Validation on Windows, 2026-11-06: the maintenance, scheduler, Host, state and orphan-exit
+suites passed all 127 tests; the bundled Host test passed separately. Coverage of the two
+new maintenance modules was 97.34% lines, 92.90% statements and 87.20% branches. Typechecking
+and `npm run build:bundle` passed, including the existing CLI startup size/import budgets.
