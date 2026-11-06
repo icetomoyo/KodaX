@@ -565,3 +565,30 @@ Layer 1 无法回答：摘要是否保存跨章节例外、纠正后的事实优
 fixture 在 A/B/C 三处预置精确可引用事实，并包含一个跨章节例外、一处后续纠正和一段明确未读的章节。分别观测引用是否可追溯、例外是否保存、纠正是否覆盖旧事实、未读部分是否被误称已读、已完成动作是否被要求重复。正则/JSON 只记录机械表现；主会话盲化读取配对原文、摘要和回答，逐项给出保留/遗漏/错误增强/证据不足及理由，不能用总命中率代替判断。
 
 原始请求/响应、usage、超时和预算账本保存在 OS 临时目录下的独立 revision 目录，记录绝对路径与 hash，不提交 raw。报告必须区分 `eval-design`、`provider-noise`、工程故障、模型语义遗漏与 `inconclusive`，给出任务有效性、收益/回退、建议及下一步最小成本。历史源码比较或本次离线通过均不能填充真实模型结果栏。
+
+## 2026-11-07: Actor restart completion wait regression
+
+### 原始失败与诊断边界
+
+冻结核心快照 `58671f8dea75a0df2498ad553536b17ee2b04896` 的全量运行保留为：1,425 文件中 1,417 通过、1 失败、7 跳过；19,723 项中 19,635 通过、1 失败、87 跳过。唯一失败是 `sdk-runtime.generation-actors.test.ts` 中独立 Actor 的 depth=0 重启恢复：恢复请求已返回，等待 `agents.output(...).state` 为 `completed` 时仍为 `running`。不能将后续定向通过追记为那一次全量通过。
+
+原场景串行 12 次、四 worker 并行 48 次均未重现失败。仅凭这些通过不足以排除实际恢复故障，因此在同一 SDK `agents.followup` / `agents.output` 边界增加受控慢落盘场景：恢复后的执行器返回完成结果后，将当前 Session 的一次真实文件 rename 延迟 1,200ms，不改 Runtime、Actor controller 或存储实现。
+
+未修复内层等待时，受控场景两次均在同一 `running` / `completed` 断言失败。临时定向诊断记录：原内层等待结束时为 `running`；约 1,307ms 后变为 `completed`；再次关闭并重启 Host，仍能读到持久化的 `completed`；执行器调用合计两次，即原执行一次、恢复一次，没有重放。临时诊断代码已删除，原始诊断日志位于 OS 临时目录 `kodax-actor-restart-20261107`。
+
+Vitest 4.1.11 的 `vi.waitFor` 默认 timeout 为 1,000ms；外层测试的 20,000ms 不会扩大这个内层期限。Actor 的终态须等待持久化提交，合法的异步落盘可能超过 1 秒。这确认了测试时限缺口；受控延迟复现不等于取得了原始全量失败的完整时序 trace，不能据此声称排除了所有其他恢复竞态。目前未重现终态丢失或恢复后重复执行的生产缺陷。
+
+### 修复与回归
+
+只将该文件的五处 Actor 完成等待显式设为 5,000ms，保留外层测试硬上限及原有状态、Turn identity、checkpoint、调用次数和 Stop 拒绝断言。新增 `slow-settlement` 场景验证慢落盘后完成、再次重启后终态仍存在，且没有额外执行器调用。所有普通场景继续使用真实存储，不注入延迟。没有增加生产配置或修改生产 deadline。
+
+首轮完整文件验证：10/10 通过，其中慢落盘场景约 2 秒。随后以四 worker 运行 Actor controller、owner liveness、Runtime Actor facade、generation recovery、本文文件及小窗口文档恢复，共 6 文件 / 161 项全部通过。`npm run typecheck` 的 source / tests 均通过，`git diff --check` 通过。此次仅测试和验收记录变更，未重新运行全仓 1,425 文件或重新构建生产包；此前全量的原始失败继续保留，不改写为全量通过。
+
+“首轮运行后锁定 work mode”由另一线程维护。本补丁不修改 Runtime、work-mode 授权、settings/storage 逻辑或其断言；若后续整合出现相关语义冲突，应暂停该部分处理，不能放宽模式锁定以使测试通过。
+#### Standards
+
+独立逐 hunk 评审：0 项发现，无严重级别。未发现新增成文规范违反或需要处理的基线坏味道。
+
+#### Spec
+
+独立需求评审：0 项发现，无严重级别。保留原 Turn、fresh authority、checkpoint 和 Stop 断言；真实 Session rename 延迟、第三次 Host 启动后的终态和调用次数检查覆盖持久化与不重放。受控复现与历史全量 trace 明确分开；未修改 work mode 锁定机制。
