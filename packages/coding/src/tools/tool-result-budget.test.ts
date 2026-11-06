@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { exceedsContextCapacity } from '@kodax-ai/agent';
+import { exceedsContextCapacity, reclaimReservedResponseTokens } from '@kodax-ai/agent';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { toolRead } from './read.js';
+import { estimateTokens } from '../tokenizer.js';
+import { createRunnerToolResultBatchTransform, estimateRunnerToolResultBatchTokens,
+  resolveRunnerToolResultBudget } from '../task-engine/runner-tool-result-batch.js';
 import type {
   RuntimeContextBudgetSnapshot,
   RuntimeContextPressure,
@@ -40,6 +47,37 @@ function snapshot(input: {
 }
 
 describe('tool result budget', () => {
+  it.each([8192, 16384, 32768, 65536, 98304])('keeps reading at a %i context window when generation can reclaim a large output reserve', async contextWindow => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-read-reserve-'));
+    try {
+      const filePath = path.join(directory, 'evidence.txt');
+      await fs.writeFile(filePath, 'Evidence: the critical exception is in section nine.');
+      const transcript = [{ role: 'user' as const, content: 'Read the evidence.' }];
+      const ctx = { backups: new Map(), executionCwd: directory, canReadPagedContent: true };
+      const options = { ctx, contextWindow, reservedResponseTokens: contextWindow,
+        contextTokenSnapshotRef: { current: { currentTokens: 3000,
+          baselineEstimatedTokens: estimateTokens(transcript), source: 'api' as const } } };
+      const budget = resolveRunnerToolResultBudget(transcript, options);
+      const page = await toolRead({ path: filePath }, {
+        ...ctx, toolResultCapacityTokens: budget.aggregateInlineTokens,
+      });
+      expect(page).toContain('critical exception');
+      expect(page).not.toContain('[Tool Error]');
+      const calls = [{ id: 'read-evidence', name: 'read', input: { path: filePath } }];
+      const admitted = await createRunnerToolResultBatchTransform(options)({
+        calls, results: [{ content: page }], transcript,
+      });
+      expect(admitted[0]!.content).toBe(page);
+      expect(admitted[0]!.metadata?.capacityDebt).not.toBe(true);
+      const currentTokens = 3000 + estimateRunnerToolResultBatchTokens(calls, admitted);
+      const reservedResponseTokens = reclaimReservedResponseTokens({
+        contextWindow, currentTokens, reservedResponseTokens: contextWindow,
+      });
+      expect(exceedsContextCapacity({ contextWindow, currentTokens, reservedResponseTokens })).toBe(false);
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
   it('preserves the public snapshot-budget compatibility API', () => {
     const budget = buildToolResultBudget(snapshot({
       contextWindow: 128_000,
@@ -80,6 +118,11 @@ describe('tool result budget', () => {
     });
 
     expect(budget.aggregateInlineTokens).toBe(0);
+  });
+
+  it('does not invent page capacity when even the reclaimed output floor cannot fit', () => {
+    expect(buildToolResultBudgetFromUsage({ contextWindow: 8192, currentTokens: 6000,
+      reservedResponseTokens: 8192 }).aggregateInlineTokens).toBe(0);
   });
 
   it('subtracts response and canonical safety reserves from the final batch capacity', () => {
