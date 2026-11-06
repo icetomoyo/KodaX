@@ -247,3 +247,7 @@ LLM eval 必须遵守 [benchmark/EVAL_GUIDELINES.md](../../benchmark/EVAL_GUIDEL
 容量工程切片完成至 `dcda31e11696ef25d85b84aa799bc287977cf27f` 后，再次执行不修改工作区的 `git merge-tree --write-tree --name-only --no-messages HEAD KodaX-next-dev`，冲突仍为 §5 列出的同 8 个路径，结果对象为 `23d11d1e3e2ce61379bc53d87378b67f5e598caf`。本次没有新合并。
 
 相对冻结评估点新增的 `64b218be8`、`1eca089ba`、`a856136fc`、`cc48eea79`、`d723d8352`、`7823443e0`、`dcda31e11`、`14e1da985` 均为主线容量/读取可靠性补修及集成回归，后续 W0–W5 必须保留；不能以 next-dev 的旧 summary/read 文件覆盖。8 个文本冲突保持不变不表示新组合已验收，尤其需将有界归并、自适应分页/预算回收和 next-dev 合同缓存/视觉保留组合验证。
+
+最终跨阶段评审补修 `69b196400` 和 `ada535a13` 同样属于待保留的当前主线：分别闭合重试提示下容量类型和 batch 外置后的 read cache 事实。62 项原清单不变。
+
+最终构建门槛更新：主线 `e40272c75` 在同编译器/相同配置回放后，将 CLI 门槛审计为5071KiB，5MiB总目标保持，余量49KiB。以上冻结37ba历史的5064KiB不改写；未来W0/W5/A10使用新的5071KiB并对实际整合产物重新审计。见 [2026-11-06 CLI审计](cli-startup-budget-audit-2026-11-06.md)。`c5f5dc38e` 的Windows management owner wire字段也必须保留；原T14测试在基线已失败，此次通过真实schema补齐而非改fixture。

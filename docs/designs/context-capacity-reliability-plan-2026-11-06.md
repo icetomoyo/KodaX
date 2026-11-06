@@ -243,3 +243,9 @@ Spec/Standards 审查覆盖 parser、分类、摘要、read/budget、PDF 和 Spa
 真实模型 pilot 的 40 请求/US$5 上限及冻结协议见 [ISSUE_322_v0.7.97_REGRESSION_GUIDE.md](../test-guides/ISSUE_322_v0.7.97_REGRESSION_GUIDE.md)，状态未执行。next-dev 完整评估见 [next-dev-integration-assessment-2026-11-06.md](next-dev-integration-assessment-2026-11-06.md)。没有执行 next-dev 整体合并或发布。
 
 定向覆盖率：7 文件/172 项通过，测量 `context-overflow.ts`、`read-text-page.ts`、`tool-result-budget.ts`、`summary-generator.ts` 四模块，statements 94.57%、branches 92.27%、functions 91.30%、lines 97.03%。这是指定模块覆盖率，不是全仓覆盖率；报告位于 OS 临时目录 `kodax-context-implementation-20261106/coverage`。
+
+最终跨阶段 Spec 评审补修：`69b196400` 防止 `x-should-retry:true` 将明确容量错误送入普通原请求重发；`ada535a13` 在最终批次改变正文后清空读取 cache（覆盖原生 read 与工具别名）。两项都经过真实公共边界 RED→GREEN，关联 144 项/6 文件和源码/测试 typecheck 通过；独立评审重新检查后剩余 0 项。缓存测试覆盖别名 admission，不冒充完整 Script 执行验收。
+
+全量检查收口时发现两项基线/夹具问题并单独处理：`ee2e8f578` 固定 FEATURE_270 零费用测试的一次 manifest 和独立临时目录，避免实时 Git 状态变化改变输出目录或删除真实 raw；`c5f5dc38e` 补齐 Windows owner 实际返回的两个 wire schema 字段，原始 T14 集成测试恢复通过（SDK fixture 未修改）。
+
+构建门槛按 `e40272c75` 重新审计为 5071KiB，实际 CLI 5,190,291 bytes；净增5169 bytes，无新增依赖或外部 import。保留5MiB总目标、49KiB余量；五平台 manifest 的尺寸模拟不冒充五平台 native 运行验收。详见 [CLI 体积审计](cli-startup-budget-audit-2026-11-06.md)。
