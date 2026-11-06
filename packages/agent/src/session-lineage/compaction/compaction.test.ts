@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type {
   KodaXContentBlock,
   KodaXMessage,
@@ -307,6 +307,22 @@ describe('compaction', () => {
       triggerPercent: 30,
     }, provider, 10_000)).rejects.toThrow('summary failed');
     expect(messages).toEqual(original);
+  });
+
+  it.each(['max_tokens', 'length'])('rejects a %s checkpoint without consuming original evidence', async (stopReason) => {
+    const provider = new FakeSummaryProvider();
+    const request = vi.spyOn(provider, 'stream').mockResolvedValue({
+      textBlocks: [{ type: 'text', text: '<summary>## Goal\nReview the document and preserve its exact exceptions.\n## Progress\nThe first sections were inspected and contain relevant constraints.\n## Next Steps\nContinue reading the remaining evidence before drawing a conclusion.</summary>' }],
+      toolBlocks: [], thinkingBlocks: [], stopReason,
+    });
+    const messages = buildLongConversation(10, 220);
+    const original = structuredClone(messages);
+
+    await expect(compact(messages, {
+      enabled: true, triggerPercent: 30,
+    }, provider, 10_000)).rejects.toThrow(/truncated/i);
+    expect(messages).toEqual(original);
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
   it('preserves the original history and fails explicitly when no summary request fits', async () => {

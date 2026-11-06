@@ -523,6 +523,10 @@ export async function generateSummary(
     // Diagnostics are fail-open and must never change a successful summary.
   }
 
+  if (result.stopReason === 'max_tokens' || result.stopReason === 'length') {
+    throw new Error('Compaction summary was truncated at the output token limit');
+  }
+
   if (result.toolBlocks.length > 0) {
     throw new Error(
       `Compaction summary returned ${result.toolBlocks.length} tool_use block(s); text-only output is required`,
