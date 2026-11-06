@@ -1019,7 +1019,8 @@ export abstract class KodaXBaseProvider {
           retryState.disablePreferredToolConstraints = true;
           continue;
         }
-        if (status === 408 || status === 409 || (status !== undefined && status >= 500) || (status !== 429 && shouldRetry === 'true')) {
+        if (status === 408 || status === 409 || (status !== undefined && status >= 500)
+          || (status !== 429 && shouldRetry === 'true' && !this.isContextOverflowError(e))) {
           if (i === retries - 1) {
             throw new KodaXProviderError(e instanceof Error ? e.message : String(e), this.name, this.providerErrorMetadata(e));
           }

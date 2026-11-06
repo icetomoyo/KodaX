@@ -783,6 +783,20 @@ describe('KodaXBaseProvider', () => {
     expect(task).toHaveBeenCalledTimes(1);
   });
 
+  it('does not retry an unchanged capacity rejection despite a retry hint', async () => {
+    const task = vi.fn(async () => {
+      throw Object.assign(new Error("Input length (72000) exceeds model's maximum context length (65536)."), {
+        status: 400, headers: { 'x-should-retry': 'true', 'retry-after-ms': '0' },
+      });
+    });
+    const onRetry = vi.fn();
+    const failure: unknown = await new TestProvider().exposeWithRateLimit(task, undefined, 3, onRetry)
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(KodaXContextOverflowError);
+    expect(task).toHaveBeenCalledTimes(1);
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
   it.each([
     { message: 'prompt too long; insufficient_quota', status: 402 },
     { message: 'Your request exceeded model token limit: 65536 (requested: 72000)', status: 429 },
