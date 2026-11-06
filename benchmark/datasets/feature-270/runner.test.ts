@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ModelAlias } from '../../harness/aliases.js';
 import { MODEL_ALIASES } from '../../harness/aliases.js';
 import { buildFeature270ExperimentManifest } from './experiment-contract.js';
+import * as experimentContract from './experiment-contract.js';
 
 const runOneShotMock = vi.hoisted(() => vi.fn());
 
@@ -22,14 +23,18 @@ import {
 
 describe('FEATURE_270 runner safety', () => {
   let directory: string | undefined;
-  const rawRoots = new Set<string>();
   const previousAllow = process.env.KODAX_F270_ALLOW_GENERATION;
   const previousAuthorization = process.env.KODAX_F270_AUTHORIZATION;
 
   afterEach(async () => {
-    if (directory !== undefined) await rm(directory, { recursive: true, force: true });
-    for (const rawRoot of rawRoots) await rm(rawRoot, { recursive: true, force: true });
-    rawRoots.clear();
+    if (directory !== undefined) {
+      if (path.dirname(directory) !== path.resolve(os.tmpdir()) || !path.basename(directory).startsWith('kodax-f270-')) {
+        throw new Error('Unsafe FEATURE_270 fixture cleanup');
+      }
+      await rm(directory, { recursive: true, force: true });
+      directory = undefined;
+    }
+    vi.restoreAllMocks();
     restoreEnvironment('KODAX_F270_ALLOW_GENERATION', previousAllow);
     restoreEnvironment('KODAX_F270_AUTHORIZATION', previousAuthorization);
     runOneShotMock.mockReset();
@@ -65,10 +70,12 @@ describe('FEATURE_270 runner safety', () => {
   it('runs pilot, resume, Layer 2, and two-round Layer 3 with a zero-cost fake provider', async () => {
     process.env.KODAX_F270_ALLOW_GENERATION = '1';
     process.env.KODAX_F270_AUTHORIZATION = 'Unit-test fake provider; no external call.';
-    const manifest = buildFeature270ExperimentManifest();
-    expect(manifest.rawOutputRoot.startsWith(path.join(os.tmpdir(), 'kodax-eval-dumps'))).toBe(true);
-    rawRoots.add(manifest.rawOutputRoot);
-    await rm(manifest.rawOutputRoot, { recursive: true, force: true });
+    directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-f270-runner-'));
+    // A real run intentionally fingerprints the live checkout. This fixture
+    // must keep one revision across pilot/resume/stages even while another
+    // process edits or commits files, and must never delete real eval evidence.
+    const manifest = { ...buildFeature270ExperimentManifest(), rawOutputRoot: directory };
+    const manifestBuilder = vi.spyOn(experimentContract, 'buildFeature270ExperimentManifest').mockReturnValue(manifest);
     runOneShotMock.mockImplementation(async (alias: ModelAlias) => ({
       alias,
       target: MODEL_ALIASES[alias],
@@ -92,6 +99,9 @@ describe('FEATURE_270 runner safety', () => {
     const layer3 = await runFeature270Layer3({ allowGeneration: true });
     expect(layer3).toMatchObject({ complete: true, expectedCalls: 24, externalCallsThisRun: 24 });
     expect(runOneShotMock).toHaveBeenCalledTimes(90);
+    expect(manifestBuilder).toHaveBeenCalledTimes(4);
+    expect([pilot, resumedPilot, layer2, layer3].map(run => run.rawRoot))
+      .toEqual([directory, directory, directory, directory]);
 
     const evidence = await readFile(
       path.join(manifest.rawOutputRoot, 'layer3', 'main-session-review', 'evidence.json'),
