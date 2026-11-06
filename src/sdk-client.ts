@@ -48,7 +48,13 @@ export async function readKodaXClientExits(options: {
   if (!instanceId || !/^[A-Za-z0-9_.:-]{4,160}$/.test(instanceId) || !instanceSecret
     || instanceSecret.length < 32 || instanceSecret.length > 512) throw new Error('Exit recovery requires the original stable client identity and secret.');
   const paths = resolveRuntimeDaemonPathsFromConfigHome(options.homeDir === undefined ? KODAX_DIR : path.resolve(options.homeDir, '.kodax'), options.profile);
-  return Promise.all(readExitReceipts(paths, runtimeClientPrincipal(instanceId, instanceSecret)).map(receipt => verifyExitReceipt(paths, receipt)));
+  const verified: ClientExitReceipt[] = [];
+  // Historical exits can require OS probes. Keep one probe chain in flight so
+  // a large history cannot launch a burst of native inspection processes.
+  for (const receipt of readExitReceipts(paths, runtimeClientPrincipal(instanceId, instanceSecret))) {
+    verified.push(await verifyExitReceipt(paths, receipt));
+  }
+  return verified;
 }
 
 /** Local launcher. All business operations use the same product Client as passive connections. */

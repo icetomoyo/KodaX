@@ -5,14 +5,20 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { emitKodaXDiagnostic, setKodaXDiagnosticSink } from '@kodax-ai/agent';
 import * as daemonState from './state.js';
+import * as daemonLifecycle from './lifecycle.js';
 
 const { jobProbe } = vi.hoisted(() => ({ jobProbe: vi.fn((): {
   processStartIdentity?: string; supervisorProcessStartIdentity?: string;
 } | undefined => ({})) }));
+const { bootProbe } = vi.hoisted(() => ({ bootProbe: vi.fn(() => 'windows-boot-638900000000000000') }));
 
 vi.mock('@kodax-ai/agent', async (importOriginal) => ({
   ...await importOriginal<typeof import('@kodax-ai/agent')>(),
   readCurrentProcessWindowsJobIdentity: jobProbe,
+}));
+vi.mock('../sandbox-runtime.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../sandbox-runtime.js')>(),
+  readWindowsSandboxBootIdentity: bootProbe,
 }));
 
 import { acquireRuntimeDaemonLease } from './manager.js';
@@ -22,6 +28,8 @@ const originalSupervisorPid = process.env.KODAX_DAEMON_JOB_SUPERVISOR_PID;
 
 afterEach(() => {
   jobProbe.mockReset().mockReturnValue({});
+  bootProbe.mockReset().mockReturnValue('windows-boot-638900000000000000');
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
   if (originalSupervisorPid === undefined) {
     delete process.env.KODAX_DAEMON_JOB_SUPERVISOR_PID;
@@ -34,6 +42,21 @@ afterEach(() => {
 });
 
 describe('runtime daemon containment ownership', () => {
+  it('publishes the verified global Job name and OS boot identity for later crash recovery', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-daemon-recovery-owner-'));
+    temporaryDirectories.push(homeDir);
+    const windowsJobName = 'Global\\KodaXDaemonJob-00000000-0000-4000-8000-000000000001';
+    vi.stubEnv('KODAX_DAEMON_JOB_NAME', windowsJobName);
+    vi.stubEnv('KODAX_DAEMON_JOB_SUPERVISOR_PID', '2147483000');
+    jobProbe.mockReturnValue({ processStartIdentity: 'exact-host', supervisorProcessStartIdentity: 'exact-supervisor' });
+    const observe = vi.spyOn(daemonLifecycle, 'resolveRuntimeDaemonOwnership').mockRejectedValue(new Error('fixture stop'));
+    await expect(acquireRuntimeDaemonLease({ homeDir, createRuntime: vi.fn() })).rejects.toThrow('fixture stop');
+    expect(observe).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      windowsJobName, windowsBootIdentity: 'windows-boot-638900000000000000',
+    }), undefined);
+  });
+
   it('rejects an unverified supervised Host before publishing incomplete capabilities', async () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
     vi.stubEnv('KODAX_DAEMON_JOB_CONTAINED', '1');

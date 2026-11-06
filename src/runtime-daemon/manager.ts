@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { setKodaXDiagnosticSink } from '@kodax-ai/agent';
+import { readWindowsSandboxBootIdentity } from '../sandbox-runtime.js';
 
 import type {
   KodaXRuntime,
@@ -92,12 +93,19 @@ export async function acquireRuntimeDaemonLease(
       'Could not read the Windows Job supervisor process identity; refusing PID-only ownership.',
     );
   }
+  const configuredJobName = process.env.KODAX_DAEMON_JOB_NAME;
+  const windowsJobName = jobContained && configuredJobName !== undefined
+    && /^Global\\KodaXDaemonJob-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(configuredJobName)
+    ? configuredJobName : undefined;
+  const windowsBootIdentity = jobContained ? readWindowsSandboxBootIdentity() : undefined;
   const owner = {
     runtimeId: `rt_${randomUUID().replace(/-/g, '').slice(0, 12)}`,
     pid: process.pid,
     createdAt: new Date().toISOString(),
     kind: 'daemon' as const,
     ...(processStartIdentity === undefined ? {} : { processStartIdentity }),
+    ...(windowsJobName === undefined ? {} : { windowsJobName }),
+    ...(windowsBootIdentity === undefined ? {} : { windowsBootIdentity }),
     ...(jobContained ? {
       processContainment: 'windows-job' as const,
       supervisorPid,

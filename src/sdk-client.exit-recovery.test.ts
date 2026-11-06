@@ -2,19 +2,101 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { readProcessStartIdentity } from '@kodax-ai/agent';
+import * as agent from '@kodax-ai/agent';
 import type { ClientExitReceipt } from '@kodax-ai/coding/client-contract';
 import { readKodaXClientExits } from './sdk-client.js';
 import { runtimeClientPrincipal } from './runtime-daemon/client-lifecycle.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock, writeRuntimeDaemonShutdownOutcome } from './runtime-daemon/state.js';
+import * as sandboxRuntime from './sandbox-runtime.js';
 
 const directories: string[] = [];
 const clientInfo = { name: 'Space', instanceId: 'space-recovery', instanceSecret: 'fixture-secret-for-exit-recovery-32' };
 const deadPid = 2_147_483_647;
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true, maxRetries: 5 })));
+});
+
+it.skipIf(process.platform !== 'win32')('permits guarded recovery after a verified reboot without changing unknown historical execution results', async () => {
+  const { homeDir, receipt, file } = await fixture();
+  vi.spyOn(sandboxRuntime, 'readWindowsSandboxBootIdentity').mockReturnValue('windows-boot-639293550000000000');
+  const interrupted = { ...receipt, host: { ...receipt.host, owner: {
+    ...receipt.host.owner, windowsBootIdentity: 'windows-boot-639292550000000000',
+  } } };
+  const original = JSON.stringify(interrupted);
+  await writeFile(file, original);
+  for (let restart = 0; restart < 3; restart += 1) {
+    expect((await readKodaXClientExits({ homeDir, clientInfo }))[0]).toMatchObject({
+      cleanup: receipt.cleanup, host: { state: 'unknown' },
+      recovery: { state: 'ready', reason: 'host_generation_terminated', nextAction: 'start_or_connect' },
+    });
+    expect(await readFile(file, 'utf8')).toBe(original);
+  }
+});
+
+it.skipIf(process.platform !== 'win32')('preserves explicit client cleanup failures even when a reboot proves the old processes ended', async () => {
+  const { homeDir, receipt, file } = await fixture();
+  vi.spyOn(sandboxRuntime, 'readWindowsSandboxBootIdentity').mockReturnValue('windows-boot-639293550000000000');
+  await writeFile(file, JSON.stringify({ ...receipt, cleanup: { ...receipt.cleanup, state: 'failed' },
+    host: { ...receipt.host, owner: { ...receipt.host.owner, windowsBootIdentity: 'windows-boot-639292550000000000' } } }));
+  expect((await readKodaXClientExits({ homeDir, clientInfo }))[0]).toMatchObject({
+    cleanup: { state: 'failed' }, recovery: { state: 'blocked', reason: 'cleanup_failed', nextAction: 'inspect_failure' },
+  });
+});
+
+it.skipIf(process.platform !== 'win32').each([0, 1, undefined])('requires an empty verified Job after a same-boot crash (active processes=%s)', async count => {
+  const { homeDir, receipt, file } = await fixture();
+  const jobName = 'Global\\KodaXDaemonJob-81a98ee5-755a-47c5-b888-7934356f5912';
+  const job = vi.spyOn(agent, 'readWindowsJobActiveProcessCount').mockResolvedValue(count);
+  const original = JSON.stringify({ ...receipt, host: { ...receipt.host, owner: {
+    ...receipt.host.owner, windowsJobName: jobName,
+  } } });
+  await writeFile(file, original);
+  const [recovered] = await readKodaXClientExits({ homeDir, clientInfo });
+  expect(recovered).toMatchObject({ cleanup: receipt.cleanup, host: { state: 'unknown' }, recovery: count === 0
+    ? { state: 'ready', reason: 'host_generation_terminated', nextAction: 'start_or_connect' }
+    : { state: 'blocked', reason: 'outcome_missing', nextAction: 'inspect_failure' } });
+  expect(job).toHaveBeenCalledExactlyOnceWith(jobName);
+  expect(await readFile(file, 'utf8')).toBe(original);
+});
+
+it.skipIf(process.platform !== 'win32')('does not reuse a prior empty-Job observation after a retry sees a live process', async () => {
+  const { homeDir, receipt, file } = await fixture();
+  await writeFile(file, JSON.stringify({ ...receipt, host: { ...receipt.host, owner: {
+    ...receipt.host.owner, windowsJobName: 'Global\\KodaXDaemonJob-81a98ee5-755a-47c5-b888-7934356f5912',
+  } } }));
+  const job = vi.spyOn(agent, 'readWindowsJobActiveProcessCount').mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+  expect((await readKodaXClientExits({ homeDir, clientInfo }))[0]?.recovery?.state).toBe('ready');
+  expect((await readKodaXClientExits({ homeDir, clientInfo }))[0]?.recovery).toMatchObject({ state: 'blocked', nextAction: 'inspect_failure' });
+  expect(job).toHaveBeenCalledTimes(2);
+});
+
+it.skipIf(process.platform !== 'win32')('keeps the caller responsive while several historical exits await Job verification', async () => {
+  const { homeDir, receipt, file } = await fixture();
+  const pending: Array<(value: number | undefined) => void> = [];
+  vi.spyOn(agent, 'readWindowsJobActiveProcessCount').mockImplementation(() => new Promise(resolve => pending.push(resolve)));
+  const evidence = { ...receipt, host: { ...receipt.host, owner: {
+    ...receipt.host.owner, windowsJobName: 'Global\\KodaXDaemonJob-81a98ee5-755a-47c5-b888-7934356f5912',
+  } } };
+  for (let index = 0; index < 3; index += 1) {
+    const value = { ...evidence, requestId: `interrupted-${index}` };
+    await writeFile(path.join(path.dirname(file), `slow-${index}.json`), JSON.stringify(value));
+  }
+  await writeFile(file, JSON.stringify(evidence));
+  const read = readKodaXClientExits({ homeDir, clientInfo });
+  let readSettled = false;
+  void read.then(() => { readSettled = true; });
+  await vi.waitFor(() => expect(pending).toHaveLength(1));
+  await new Promise<void>(resolve => setTimeout(resolve, 0));
+  expect(readSettled).toBe(false);
+  for (let index = 0; index < 4; index += 1) {
+    await vi.waitFor(() => expect(pending).toHaveLength(index + 1));
+    pending[index]!(0);
+  }
+  expect((await read).map(value => value.recovery?.reason)).toEqual(Array(4).fill('host_generation_terminated'));
 });
 
 async function fixture() {
@@ -56,11 +138,11 @@ it('converges across repeated Space restarts without promoting unknown work or r
   }
 });
 
-it('remains blocked through retries without evidence, then converges when the exact shutdown outcome arrives', async () => {
+it('requests inspection for legacy missing evidence and still accepts a late exact shutdown outcome', async () => {
   const { homeDir, receipt, outcome } = await fixture();
   for (let restart = 0; restart < 3; restart += 1) {
     expect((await readKodaXClientExits({ homeDir, clientInfo }))[0]).toMatchObject({ cleanup: receipt.cleanup,
-      recovery: { state: 'blocked', reason: 'outcome_missing', nextAction: 'retry_verification' } });
+      recovery: { state: 'blocked', reason: 'outcome_missing', nextAction: 'inspect_failure' } });
   }
   outcome();
   expect((await readKodaXClientExits({ homeDir, clientInfo }))[0]).toMatchObject({ cleanup: receipt.cleanup, recovery: { state: 'ready' } });
@@ -82,7 +164,7 @@ it('does not trust an outcome file whose contents identify a different Host', as
     version: 1, runtimeId: 'unrelated-host', pid: receipt.host.owner.pid, status: 'succeeded', completedAt: '2026-10-26T00:01:00.000Z',
   }));
   expect((await readKodaXClientExits({ homeDir, clientInfo }))[0]).toMatchObject({
-    recovery: { state: 'blocked', reason: 'outcome_missing', nextAction: 'retry_verification' },
+    recovery: { state: 'blocked', reason: 'outcome_missing', nextAction: 'inspect_failure' },
   });
 });
 

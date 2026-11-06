@@ -5,10 +5,11 @@ import type { ClientExitReceipt, ClientExitRecovery } from '@kodax-ai/coding/cli
 import type { KodaXRuntime } from '../sdk-runtime.js';
 import { cleanupClientWork, settleClientWork } from '../runtime-client-work.js';
 import type { RuntimeDaemonManagementController } from './management.js';
-import { readRuntimeDaemonLockOwner, type RuntimeDaemonPaths } from './state.js';
+import { readRuntimeDaemonLockOwner, runtimeOwnerProcessState, type RuntimeDaemonPaths } from './state.js';
 import { isRuntimeDaemonOwnerPidAlive } from './lifecycle.js';
 import { waitForRuntimeDaemonShutdown } from './shutdown-verifier.js';
-import { emitKodaXDiagnostic } from '@kodax-ai/agent';
+import { emitKodaXDiagnostic, readWindowsJobActiveProcessCount } from '@kodax-ai/agent';
+import { readWindowsSandboxBootIdentity } from '../sandbox-runtime.js';
 
 export function runtimeClientPrincipal(instanceId: string, instanceSecret: string): string {
   return `client_${createHash('sha256').update(JSON.stringify([instanceId, instanceSecret])).digest('hex')}`;
@@ -76,7 +77,7 @@ export async function verifyExitReceipt(paths: RuntimeDaemonPaths, receipt: Clie
     return withRecovery(recovered, 'blocked', 'owner_identity_mismatch', 'inspect_failure');
   }
   const result = latest ? afterOwnerLoss(latest) : recovered;
-  if (result.host.cleanup === 'failed') return withRecovery(result, 'blocked', 'cleanup_failed', 'inspect_failure');
+  if (result.cleanup.state === 'failed' || result.host.cleanup === 'failed') return withRecovery(result, 'blocked', 'cleanup_failed', 'inspect_failure');
   if (verification.status === 'succeeded' || verification.status === 'replacement_running') {
     if (!owner.processStartIdentity || (owner.processContainment === 'windows-job'
       && !owner.supervisorProcessStartIdentity)) {
@@ -90,10 +91,29 @@ export async function verifyExitReceipt(paths: RuntimeDaemonPaths, receipt: Clie
     host: { ...result.host, state: 'failed', cleanup: 'failed', message: verification.outcome.error } },
     'blocked', 'cleanup_failed', 'inspect_failure');
   const reason = verification.status === 'unverified' ? verification.reason : 'outcome_missing';
+  const crashed = { ...result, host: { ...result.host,
+    state: receipt.host.requested ? 'unknown' as const : 'not_requested' as const, message: reason } };
+  if (reason === 'outcome_missing' && await canRecoverTerminatedWindowsHost(owner)) {
+    // This authorizes fenced Host recovery. It never certifies the original exit,
+    // its resource cleanup, or the outcome of an interrupted tool/Provider request.
+    return withRecovery(crashed, 'ready', 'host_generation_terminated', 'start_or_connect');
+  }
   return withRecovery({ ...result, host: { ...result.host,
     state: receipt.host.requested ? 'unknown' : 'not_requested',
     message: reason } }, 'blocked', reason,
-    reason === 'containment_unavailable' ? 'inspect_failure' : 'retry_verification');
+    reason === 'containment_unavailable' || reason === 'outcome_missing' ? 'inspect_failure' : 'retry_verification');
+}
+
+async function canRecoverTerminatedWindowsHost(owner: ClientExitReceipt['host']['owner']): Promise<boolean> {
+  if (process.platform !== 'win32' || owner.kind !== 'daemon' || !owner.processStartIdentity
+    || owner.processContainment !== 'windows-job' || !owner.supervisorProcessStartIdentity
+    || !Number.isSafeInteger(owner.supervisorPid) || owner.supervisorPid! <= 0
+    || runtimeOwnerProcessState(owner) !== 'gone'
+    || runtimeOwnerProcessState({ pid: owner.supervisorPid!, processStartIdentity: owner.supervisorProcessStartIdentity }) !== 'gone') return false;
+  const currentBoot = owner.windowsBootIdentity === undefined ? undefined : readWindowsSandboxBootIdentity();
+  if (currentBoot !== undefined && /^windows-boot-\d+$/.test(currentBoot)
+    && /^windows-boot-\d+$/.test(owner.windowsBootIdentity!) && currentBoot !== owner.windowsBootIdentity) return true;
+  return owner.windowsJobName !== undefined && await readWindowsJobActiveProcessCount(owner.windowsJobName) === 0;
 }
 
 function withRecovery(receipt: ClientExitReceipt, state: ClientExitRecovery['state'],
@@ -111,7 +131,8 @@ function afterOwnerLoss(receipt: ClientExitReceipt): ClientExitReceipt {
 function sameExitOwner(left: ClientExitReceipt['host']['owner'], right: ClientExitReceipt['host']['owner']): boolean {
   return left.runtimeId === right.runtimeId && left.pid === right.pid && left.kind === right.kind
     && left.processStartIdentity === right.processStartIdentity && left.processContainment === right.processContainment
-    && left.supervisorPid === right.supervisorPid && left.supervisorProcessStartIdentity === right.supervisorProcessStartIdentity;
+    && left.supervisorPid === right.supervisorPid && left.supervisorProcessStartIdentity === right.supervisorProcessStartIdentity
+    && left.windowsJobName === right.windowsJobName && left.windowsBootIdentity === right.windowsBootIdentity;
 }
 
 export interface RuntimeClientLifecycleController {

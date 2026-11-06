@@ -510,7 +510,7 @@ export interface ClientStatisticsService {
 export interface ClientExitRecovery {
   readonly state: 'ready' | 'pending' | 'blocked';
   readonly checkedAt: string;
-  readonly reason: 'host_shutdown_verified' | 'client_cleanup_verified'
+  readonly reason: 'host_shutdown_verified' | 'host_generation_terminated' | 'client_cleanup_verified'
     | 'client_cleanup_pending' | 'client_cleanup_unknown' | 'cleanup_failed' | 'host_protected'
     | 'daemon_active' | 'containment_active' | 'containment_unavailable' | 'outcome_missing'
     | 'owner_identity_unverified' | 'owner_identity_mismatch';
@@ -541,6 +541,8 @@ export interface ClientExitReceipt {
       readonly runtimeId: string; readonly pid: number; readonly kind?: 'daemon' | 'inline';
       readonly processStartIdentity?: string; readonly processContainment?: 'windows-job';
       readonly supervisorPid?: number; readonly supervisorProcessStartIdentity?: string;
+      /** Verified containment evidence for crash recovery, distinct from successful cleanup. */
+      readonly windowsJobName?: string; readonly windowsBootIdentity?: string;
     };
     readonly cleanup?: 'succeeded' | 'failed';
     readonly message?: string;
