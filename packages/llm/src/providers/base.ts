@@ -30,7 +30,7 @@ import {
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { observeProviderAttempt } from '../provider-request-observation.js';
 import { KodaXError, KodaXRateLimitError, KodaXProviderError, KodaXNetworkError, KodaXContextOverflowError, KodaXReasoningEffortRejectedError } from '../errors.js';
-import { parseContextOverflowFacts } from './context-overflow.js';
+import { isContextOverflowMessage, parseContextOverflowFacts } from './context-overflow.js';
 import { isProviderQuotaError } from '../retry/provider-quota.js';
 import { isProviderConnectionFailure } from '../retry/provider-network.js';
 import type { KodaXProviderErrorMetadata } from '../errors.js';
@@ -962,14 +962,9 @@ export abstract class KodaXBaseProvider {
   }
 
   protected isContextOverflowError(error: unknown): boolean {
-    const msg = getErrorMessage(error).toLowerCase();
-    return msg.includes('prompt is too long')
-      || msg.includes('prompt too long')
-      || msg.includes('context length')
-      || msg.includes('context_length_exceeded')
-      || msg.includes('context window')
-      || msg.includes('context limit')
-      || msg.includes('上下文长度');
+    if (extractHttpStatus(error) === 429) return false;
+    return isContextOverflowMessage(getErrorMessage(error))
+      || this.providerErrorMetadata(error).upstreamCode === 'context_length_exceeded';
   }
 
   protected async withRateLimit<T>(
