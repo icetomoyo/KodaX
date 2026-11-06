@@ -415,6 +415,8 @@ describe('runtime daemon protocol schema', () => {
         processContainment: 'windows-job',
         supervisorPid: 43,
         supervisorProcessStartIdentity: 'windows:134158463000000000',
+        windowsJobName: 'Global\\KodaXDaemonJob-00000000-0000-4000-8000-000000000001',
+        windowsBootIdentity: 'windows-boot-638900000000000000',
       },
       preflight: {},
     })).toEqual([]);
