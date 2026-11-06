@@ -318,7 +318,11 @@ describe('buildCompactionPromptSnapshot', () => {
     )).rejects.toThrow(/tool_use/i);
   });
 
-  it('generateSummary throws when the provider returns no usable text', async () => {
+  it.each([
+    '<analysis>thinking only</analysis>',
+    '<analysis>thinking only, without a completed summary',
+    '<analysis>first scratchpad</analysis>\n<analysis>unfinished second scratchpad',
+  ])('generateSummary rejects scratchpad-only output: %s', async (text) => {
     class EmptyTextProvider extends KodaXBaseProvider {
       readonly name = 'empty-summary';
       readonly supportsThinking = false;
@@ -333,7 +337,7 @@ describe('buildCompactionPromptSnapshot', () => {
         // Simulate provider returning only whitespace / analysis block — the
         // case where a tool-calling-heavy model emits no real summary text.
         return {
-          textBlocks: [{ type: 'text', text: '<analysis>thinking only</analysis>' }],
+          textBlocks: [{ type: 'text', text }],
           toolBlocks: [],
           thinkingBlocks: [],
         };
@@ -352,5 +356,48 @@ describe('buildCompactionPromptSnapshot', () => {
         undefined,
       ),
     ).rejects.toThrow(/did not contain valid text/i);
+  });
+
+  it('keeps a completed summary before an unfinished scratchpad', async () => {
+    const provider = new RecordingSummaryProvider();
+    vi.spyOn(provider, 'stream').mockResolvedValue({
+      textBlocks: [{ type: 'text', text: '<summary>## Goal\nContinue the evidence review.</summary>\n<analysis>unfinished scratchpad' }],
+      toolBlocks: [], thinkingBlocks: [],
+    });
+
+    await expect(generateSummary(
+      [{ role: 'user', content: 'continue' }], provider,
+      { readFiles: [], modifiedFiles: [] },
+    )).resolves.toBe('## Goal\nContinue the evidence review.');
+  });
+
+  it.each([
+    '## Goal\nFix literal `<analysis>` output handling.\n## Next Steps\nKeep unresolved evidence.',
+    '## Goal\nDocument the literal `<analysis>example</analysis>` markup without losing it.',
+  ])('preserves literal scratchpad markup inside a completed summary', async (summary) => {
+    const provider = new RecordingSummaryProvider();
+    vi.spyOn(provider, 'stream').mockResolvedValue({
+      textBlocks: [{ type: 'text', text:
+        `<analysis>Ignore this quoted <summary>scratchpad example</summary>.</analysis><summary>${summary}</summary>` }],
+      toolBlocks: [], thinkingBlocks: [],
+    });
+
+    await expect(generateSummary(
+      [{ role: 'user', content: 'continue' }], provider,
+      { readFiles: [], modifiedFiles: [] },
+    )).resolves.toBe(summary);
+  });
+
+  it('preserves literal unfinished markup in an unwrapped summary', async () => {
+    const summary = '## Goal\nFix literal `<analysis>` output handling.\n## Next Steps\nKeep unresolved evidence.';
+    const provider = new RecordingSummaryProvider();
+    vi.spyOn(provider, 'stream').mockResolvedValue({
+      textBlocks: [{ type: 'text', text: summary }], toolBlocks: [], thinkingBlocks: [],
+    });
+
+    await expect(generateSummary(
+      [{ role: 'user', content: 'continue' }], provider,
+      { readFiles: [], modifiedFiles: [] },
+    )).resolves.toBe(summary);
   });
 });
