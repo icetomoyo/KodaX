@@ -13,8 +13,10 @@ import { extractArtifactLedger, extractFileOps } from './file-tracker.js';
 import {
   buildCompactionCacheInstruction,
   buildCompactionPromptSnapshot,
+  countCompactionRequestTokens,
   extractCompactMemorySeed,
   generateSummary,
+  resolveSummaryBudget,
 } from './summary-generator.js';
 import type {
   CompactionCacheContext,
@@ -496,9 +498,33 @@ function assertUsableSummary(summary: string, previousSummary?: string): void {
 }
 
 async function summarizeCompletePrefix(
-  input: CompletePrefixSummaryInput,
+  original: CompletePrefixSummaryInput,
 ): Promise<CompletePrefixSummaryResult> {
-  if (input.cacheContext && input.cacheMessages) {
+  const budget = resolveSummaryBudget(original.provider, original.modelOverride, original.contextWindow);
+  const input = { ...original, ...budget,
+    routing: { ...original.routing, contextWindow: budget.contextWindow } };
+  const options = {
+    customInstructions: input.customInstructions, systemPrompt: input.systemPrompt,
+    summaryPrompt: input.summaryPrompt, updateSummaryPrompt: input.updateSummaryPrompt,
+  };
+  const fits = (messages: KodaXMessage[], previousSummary?: string): boolean => !exceedsContextCapacity({
+    ...budget, currentTokens: countSummaryRequestTokens(messages, { ...options, previousSummary }),
+  });
+  const summarize = (messages: KodaXMessage[], previousSummary?: string): Promise<string> => generateSummary(
+    messages, input.provider, extractFileOps(messages), input.customInstructions,
+    input.systemPrompt, previousSummary, input.summaryPrompt, input.updateSummaryPrompt,
+    input.modelOverride, undefined, input.observer, input.routing,
+  );
+  const cacheSnapshot = input.cacheContext && input.cacheMessages
+    ? buildCompactionPromptSnapshot({ ...options, messages: input.cacheMessages,
+        details: extractFileOps(input.messages), previousSummary: input.previousSummary }) : undefined;
+  if (input.cacheContext && input.cacheMessages && cacheSnapshot && !exceedsContextCapacity({
+    ...budget,
+    currentTokens: countCompactionRequestTokens({ messages: input.cacheMessages,
+      tools: input.cacheContext.tools, system: cacheSnapshot.systemPrompt,
+      ephemeralSuffix: { content: buildCompactionCacheInstruction(cacheSnapshot, input.cacheContext.protectedTailMessageCount) },
+    }),
+  })) {
     const summary = await generateSummary(
       input.cacheMessages,
       input.provider,
@@ -517,38 +543,19 @@ async function summarizeCompletePrefix(
     return { summary, strategy: 'full_prefix' };
   }
 
-  const promptTokens = countSummaryRequestTokens(input.messages, {
-    customInstructions: input.customInstructions,
-    systemPrompt: input.systemPrompt,
-    previousSummary: input.previousSummary,
-    summaryPrompt: input.summaryPrompt,
-    updateSummaryPrompt: input.updateSummaryPrompt,
-  });
-  if (!exceedsContextCapacity({
-    contextWindow: input.contextWindow,
-    currentTokens: promptTokens,
-    reservedResponseTokens: input.reservedResponseTokens,
-  })) {
-    const summary = await generateSummary(
-      input.messages,
-      input.provider,
-      extractFileOps(input.messages),
-      input.customInstructions,
-      input.systemPrompt,
-      input.previousSummary,
-      input.summaryPrompt,
-      input.updateSummaryPrompt,
-      input.modelOverride,
-      undefined,
-      input.observer,
-      input.routing,
-    );
+  if (fits(input.messages, input.previousSummary)) {
+    const summary = await summarize(input.messages, input.previousSummary);
     assertUsableSummary(summary, input.previousSummary);
     return { summary, strategy: 'full_prefix' };
   }
 
   const mappedSummaries: string[] = [];
-  let remaining = input.messages;
+  // The previous checkpoint is source material too, including its exact query
+  // ledger. Never inject an unbudgeted checkpoint at the final reduce step.
+  let remaining: KodaXMessage[] = input.previousSummary
+    ? [{ role: 'user', content: `<previous-summary>\n${input.previousSummary}\n</previous-summary>`,
+        _synthetic: true, _source: 'compaction-previous-summary' }, ...input.messages]
+    : input.messages;
   while (remaining.length > 0) {
     let chunkEnd: number;
     let chunk: KodaXMessage[];
@@ -584,47 +591,49 @@ async function summarizeCompletePrefix(
         throw error;
       }
     }
-    const summary = await generateSummary(
-      chunk,
-      input.provider,
-      extractFileOps(chunk),
-      input.customInstructions,
-      input.systemPrompt,
-      undefined,
-      input.summaryPrompt,
-      input.updateSummaryPrompt,
-      input.modelOverride,
-      undefined,
-      input.observer,
-      input.routing,
-    );
+    const summary = await summarize(chunk);
     assertUsableSummary(summary);
     mappedSummaries.push(summary);
     remaining = remaining.slice(chunkEnd);
   }
 
-  const reductionMessages: KodaXMessage[] = mappedSummaries.map((summary, index) => ({
+  const asParts = (summaries: string[]): KodaXMessage[] => summaries.map((summary, index) => ({
     role: 'user',
     content: `<compaction-part index="${index + 1}">\n${summary}\n</compaction-part>`,
     _synthetic: true,
     _source: 'compaction-map-result',
   }));
-  const reduced = await generateSummary(
-    reductionMessages,
-    input.provider,
-    extractFileOps(input.messages),
-    input.customInstructions,
-    input.systemPrompt,
-    input.previousSummary,
-    input.summaryPrompt,
-    input.updateSummaryPrompt,
-    input.modelOverride,
-    undefined,
-    input.observer,
-    input.routing,
-  );
-  assertUsableSummary(reduced, input.previousSummary);
-  return { summary: reduced, strategy: 'map_reduce' };
+  let units = mappedSummaries;
+  while (units.length > 1) {
+    const next: string[] = [];
+    for (let start = 0; start < units.length;) {
+      if (start === units.length - 1) {
+        next.push(units[start]!);
+        break;
+      }
+      let end = start + 2;
+      if (!fits(asParts(units.slice(start, end)))) {
+        throw new ContextCapacityError({ ...budget,
+          currentTokens: countSummaryRequestTokens(asParts(units.slice(start, end)), options),
+        }, 'Compaction summary request');
+      }
+      while (end < units.length && fits(asParts(units.slice(start, end + 1)))) end++;
+      const group = units.slice(start, end);
+      const reduced = await summarize(asParts(group));
+      assertUsableSummary(reduced);
+      if (countTokens(reduced) >= group.reduce((total, unit) => total + countTokens(unit), 0)) {
+        throw new Error('Compaction summary reduction made no token progress');
+      }
+      next.push(reduced);
+      start = end;
+    }
+    // Every successful reduce consumes at least two units; singletons carry
+    // forward unchanged. Thus N map units require at most N-1 reducer calls.
+    units = next;
+  }
+  const summary = units[0]!;
+  assertUsableSummary(summary, input.previousSummary);
+  return { summary, strategy: 'map_reduce' };
 }
 
 function createCapacitySafeSummaryBlock(messages: KodaXMessage[]): KodaXMessage[] {
@@ -715,7 +724,9 @@ function countSummaryRequestTokens(
     summaryPrompt: options.summaryPrompt,
     updateSummaryPrompt: options.updateSummaryPrompt,
   });
-  return countTokens(snapshot.systemPrompt) + countTokens(snapshot.userPrompt);
+  return countCompactionRequestTokens({
+    messages: [{ role: 'user', content: snapshot.userPrompt }], tools: [], system: snapshot.systemPrompt,
+  });
 }
 
 function buildCompactedMessages(

@@ -180,7 +180,7 @@ describe('compaction', () => {
 
   it('marks the protected raw tail when reusing the exact main-request cache prefix', async () => {
     const provider = new FakeSummaryProvider();
-    const messages = buildLongConversation(12, 2_000);
+    const messages = buildLongConversation(12, 1_500);
 
     await compact(
       messages,

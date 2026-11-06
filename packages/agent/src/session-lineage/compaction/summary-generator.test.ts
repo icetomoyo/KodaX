@@ -281,6 +281,20 @@ describe('buildCompactionPromptSnapshot', () => {
     expect(provider.reasoningRequests).toEqual([{ effort: 'low' }]);
   });
 
+  it('uses the selected summary model window and output limit on the actual stream', async () => {
+    const provider = new RecordingSummaryProvider();
+    const window = vi.spyOn(provider, 'getEffectiveContextWindow').mockReturnValue(8192);
+    vi.spyOn(provider, 'getEffectiveMaxOutputTokens').mockImplementation((_model, override) => Math.min(1000, override ?? 16000));
+    const stream = vi.spyOn(provider, 'stream');
+    await generateSummary([{ role: 'user', content: 'continue' }], provider,
+      { readFiles: [], modifiedFiles: [] }, undefined, undefined, undefined,
+      undefined, undefined, 'small-selected-model', undefined, undefined, { contextWindow: 100_000 });
+    expect(window).toHaveBeenCalledWith('small-selected-model');
+    expect(stream.mock.calls[0]?.[4]).toMatchObject({
+      modelOverride: 'small-selected-model', maxOutputTokensOverride: 1000,
+    });
+  });
+
   it('preserves a provider failure when a metrics observer also throws', async () => {
     const provider = new RecordingSummaryProvider();
     const failure = new Error('provider unavailable');

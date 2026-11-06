@@ -20,6 +20,8 @@ import { emitKodaXDiagnostic } from '../../diagnostics.js';
 import type { CompactionDetails, CompactionRequestMetrics } from './types.js';
 import type { KodaXCompactMemorySeed } from '../../index.js';
 import { serializeConversation } from './utils.js';
+import { countTokens, estimateTokens } from '../../tokenizer.js';
+import { ContextCapacityError, exceedsContextCapacity } from '../../context-capacity.js';
 
 const SUMMARIZATION_SYSTEM_PROMPT = `You are a context summarization specialist.
 
@@ -250,6 +252,7 @@ export interface CompactionProviderRequest {
   readonly modelOverride?: string;
   readonly ephemeralSuffix?: KodaXEphemeralSuffix;
   readonly promptCacheKey?: string;
+  readonly maxOutputTokens?: number;
 }
 
 export interface CompactionProviderObserver {
@@ -266,6 +269,27 @@ export interface CompactionProviderObserver {
 export interface CompactionProviderRouting {
   readonly promptCacheKey?: string;
   readonly reasoning?: boolean | KodaXReasoningRequest;
+  /** Host capacity may be smaller than the selected summary model's window. */
+  readonly contextWindow?: number;
+}
+
+/** Summary output is independent of the main turn's response reservation. */
+export function resolveSummaryBudget(provider: KodaXBaseProvider, modelOverride?: string, hostWindow?: number): {
+  contextWindow: number; reservedResponseTokens: number;
+} {
+  const contextWindow = Math.min(hostWindow ?? Infinity, provider.getEffectiveContextWindow(modelOverride));
+  // Leave room for at least two summary units, instructions and safety. This is
+  // a planning bound; every actual envelope is checked again before dispatch.
+  const reservedResponseTokens = provider.getEffectiveMaxOutputTokens(modelOverride,
+    Math.max(1, Math.min(provider.getEffectiveMaxOutputTokens(modelOverride), Math.floor(contextWindow / 5))));
+  return { contextWindow, reservedResponseTokens };
+}
+
+export function countCompactionRequestTokens(request: Pick<CompactionProviderRequest,
+  'messages' | 'tools' | 'system' | 'ephemeralSuffix'>): number {
+  return estimateTokens(request.messages) + countTokens(request.system)
+    + countTokens(JSON.stringify(request.tools))
+    + (request.ephemeralSuffix ? 4 + countTokens(request.ephemeralSuffix.content) : 0);
 }
 
 export function buildCompactionCacheInstruction(
@@ -490,12 +514,14 @@ export async function generateSummary(
     || profile?.localRejectEfforts?.includes('none')
     ? resolveDefaultSideQueryReasoning(profile) : false;
   const reasoning = routing?.reasoning ?? defaultReasoning ?? false;
+  const budget = resolveSummaryBudget(provider, modelOverride, routing?.contextWindow);
   const request: CompactionProviderRequest = cacheContext
     ? {
         messages,
         tools: cacheContext.tools,
         system: promptSnapshot.systemPrompt,
         reasoning,
+        maxOutputTokens: budget.reservedResponseTokens,
         ...(modelOverride ? { modelOverride } : {}),
         ...(promptCacheKey
           ? { promptCacheKey }
@@ -507,9 +533,14 @@ export async function generateSummary(
         tools: [],
         system: promptSnapshot.systemPrompt,
         reasoning,
+        maxOutputTokens: budget.reservedResponseTokens,
         ...(modelOverride ? { modelOverride } : {}),
         ...(promptCacheKey ? { promptCacheKey } : {}),
       };
+  const capacity = { ...budget, currentTokens: countCompactionRequestTokens(request) };
+  if (exceedsContextCapacity(capacity)) {
+    throw new ContextCapacityError(capacity, 'Compaction summary request');
+  }
   try {
     (cacheContext?.observer ?? observer)?.onRequest?.(request);
   } catch {
@@ -569,6 +600,7 @@ async function streamSummary(
         providerStart = performance.now();
         return provider.stream([...request.messages], [...request.tools], request.system,
           request.reasoning, {
+            maxOutputTokensOverride: request.maxOutputTokens,
             ...(request.modelOverride ? { modelOverride: request.modelOverride } : {}),
             ...(request.ephemeralSuffix ? { ephemeralSuffix: request.ephemeralSuffix } : {}),
             ...(request.promptCacheKey ? { promptCacheKey: request.promptCacheKey } : {}),
