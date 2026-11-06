@@ -3,10 +3,12 @@ import os from 'os';
 import path from 'path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { applyToolResultGuardrail } from './tool-result-policy.js';
-import { DEFAULT_TOOL_OUTPUT_MAX_BYTES } from './truncate.js';
+import { applyToolResultBatchGuardrail, applyToolResultGuardrail } from './tool-result-policy.js';
+import { DEFAULT_TOOL_OUTPUT_MAX_BYTES, TOOL_OUTPUT_DIR_ENV } from './truncate.js';
 import { toolRead } from './read.js';
 import { getToolDefinition } from './registry.js';
+import { countTokens } from '../tokenizer.js';
+import { createReadFileStateCache } from '../multi-instance/read-file-state-cache.js';
 import {
   createTransientTextArtifact,
   deleteTransientTextArtifact,
@@ -300,6 +302,86 @@ describe('toolRead', () => {
       expect(projection).not.toHaveBeenCalled();
     } finally {
       clearTimeout(timer);
+    }
+  });
+
+  it('fits a Unicode page and its exact continuation within the advisory token capacity', async () => {
+    const filePath = path.join(tempDir, 'token-page.txt');
+    const content = '一🙂e\u0301'.repeat(400);
+    await fs.writeFile(filePath, content);
+    const projection = vi.fn();
+    const result = await toolRead({ path: filePath, limit: 1 }, {
+      backups: new Map(), toolResultCapacityTokens: 200,
+      toolCallId: 'small-page', recordToolResultProjection: projection,
+    });
+    expect(countTokens(String(result))).toBeLessThanOrEqual(200);
+    const data = projection.mock.calls[0]?.[1].data;
+    expect(data.text.length).toBeGreaterThan(0);
+    expect(data.complete).toBe(false);
+    expect(data.next.offset).toBe(1);
+    expect(data.next.line_offset).toBeGreaterThan(0);
+    await toolRead({ path: filePath, ...data.next }, {
+      backups: new Map(), toolCallId: 'remaining', recordToolResultProjection: projection,
+    });
+    expect(data.text + projection.mock.calls[1]?.[1].data.text).toBe(content);
+    expect(result).not.toContain('\uFFFD');
+  });
+
+  it('does not cache a budget-clipped range as a complete prior read', async () => {
+    const filePath = path.join(tempDir, 'budget-cache.txt');
+    await fs.writeFile(filePath, Array.from({ length: 100 }, (_, i) => `evidence-${i}-中文`).join('\n'));
+    const readFileStateCache = createReadFileStateCache({ disabled: false });
+    const projection = vi.fn();
+    const ctx = { backups: new Map(), readFileStateCache,
+      toolCallId: 'cache-page', recordToolResultProjection: projection };
+    const small = await toolRead({ path: filePath }, { ...ctx, toolResultCapacityTokens: 200 });
+    expect(countTokens(String(small))).toBeLessThanOrEqual(200);
+    expect(readFileStateCache.size()).toBe(0);
+    expect(projection.mock.calls[0]?.[1].data.next.offset).toBeGreaterThan(1);
+    const larger = await toolRead({ path: filePath }, { ...ctx, toolResultCapacityTokens: 2000 });
+    expect(larger).toContain('evidence-99');
+    expect(larger).not.toContain('[Read Cache]');
+    expect(readFileStateCache.size()).toBe(1);
+  });
+
+  it('returns an explicit capacity failure without a zero-progress projection', async () => {
+    const filePath = path.join(tempDir, 'no-room.txt');
+    await fs.writeFile(filePath, '🙂'.repeat(2000));
+    const projection = vi.fn();
+    const readFileStateCache = createReadFileStateCache();
+    const result = await toolRead({ path: filePath }, {
+      backups: new Map(), toolResultCapacityTokens: 0, readFileStateCache,
+      toolCallId: 'no-room', recordToolResultProjection: projection,
+    });
+    expect(result).toContain('[Tool Error] Remaining context capacity');
+    expect(result).toContain('Compact context');
+    expect(projection).not.toHaveBeenCalled();
+    expect(readFileStateCache.size()).toBe(0);
+  });
+
+  it('leaves parallel page admission to the final batch guardrail with recoverable evidence', async () => {
+    const filePath = path.join(tempDir, 'parallel.txt');
+    await fs.writeFile(filePath, '重要证据🙂'.repeat(1000));
+    const ctx = { backups: new Map(), executionCwd: tempDir,
+      toolResultCapacityTokens: 1200, canReadPagedContent: true };
+    const pages = await Promise.all([1, 2].map(() => toolRead({ path: filePath, limit: 1 }, ctx)));
+    for (const page of pages) expect(countTokens(String(page))).toBeLessThanOrEqual(1200);
+    expect(pages.reduce((sum, page) => sum + countTokens(String(page)), 0)).toBeGreaterThan(1200);
+    vi.stubEnv(TOOL_OUTPUT_DIR_ENV, path.join(tempDir, 'artifacts'));
+    try {
+      const guarded = await applyToolResultBatchGuardrail(pages.map((page, i) => ({
+        id: `read-${i}`, toolName: 'read', content: String(page),
+      })), ctx, { aggregateInlineTokens: 1200 });
+      expect(guarded.capacityDebt).toBeUndefined();
+      expect(4 + guarded.entries.reduce((sum, entry) => sum + countTokens(entry.content) + 4, 0))
+        .toBeLessThanOrEqual(1200);
+      const spilled = guarded.entries.filter(entry => entry.outputPath);
+      expect(spilled.length).toBeGreaterThan(0);
+      for (const entry of spilled) {
+        expect(await fs.readFile(entry.outputPath!, 'utf8')).toBe(pages[Number(entry.id.slice(-1))]);
+      }
+    } finally {
+      vi.unstubAllEnvs();
     }
   });
 

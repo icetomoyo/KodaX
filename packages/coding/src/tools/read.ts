@@ -430,8 +430,64 @@ export async function toolRead(
       ? `[Large file: ${formatSize(stat.size)}. Read returns at most ${READ_DEFAULT_LIMIT} lines or ${formatSize(DEFAULT_TOOL_OUTPUT_MAX_BYTES)} per call. Use offset/limit or grep to narrow the scope.]`
       : '';
   let effectiveLines = [...lines];
+  let effectiveTextLines = textLines;
   let effectiveHasMoreLines = hasMoreLines;
   let effectiveLineContinuation = lineContinuation;
+
+  // This is an advisory per-call ceiling, not a reservation of the batch's
+  // capacity. The existing batch guardrail remains the admission owner.
+  const tokenBudget = ctx.toolResultCapacityTokens;
+  const fitsTokenBudget = (candidate: string[], continuation: LineContinuation | undefined, more: boolean): boolean => {
+    if (tokenBudget === undefined || !Number.isFinite(tokenBudget)) return true;
+    return countTokens(renderReadOutput(candidate, buildReadNotes({
+      offset, linesShown: candidate.length, limit, totalLines, hasMoreLines: more,
+      preflightNote, lineContinuation: continuation,
+    }))) <= Math.max(0, tokenBudget);
+  };
+  let budgetClipped = false;
+  if (!fitsTokenBudget(effectiveLines, effectiveLineContinuation, effectiveHasMoreLines)) {
+    budgetClipped = true;
+    // Only count bounded page candidates, logarithmically rather than once for
+    // every removed line. Continuation notes and line numbers count as input.
+    let low = 0;
+    let high = Math.max(0, lines.length - 1);
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (fitsTokenBudget(lines.slice(0, middle), undefined, true)) low = middle;
+      else high = middle - 1;
+    }
+    effectiveHasMoreLines = true;
+    effectiveLineContinuation = undefined;
+    effectiveLines = lines.slice(0, low);
+    effectiveTextLines = textLines?.slice(0, low);
+    if (low === 0 && page.lines.length > 0) {
+      // At most READ_MAX_LINE_CHARS code points: never materialize a giant line.
+      const characters = Array.from(page.lines[0]!);
+      const partial = (length: number): LineContinuation => ({
+        lineNumber: offset, start: lineOffset, end: lineOffset + length - 1,
+        nextOffset: lineOffset + length,
+        ...(lineContinuation?.lineNumber === offset
+          ? (lineContinuation.total === undefined ? {} : { total: lineContinuation.total })
+          : { total: lineOffset + characters.length }),
+      });
+      high = Math.max(0, characters.length - 1);
+      while (low < high) {
+        const middle = Math.ceil((low + high) / 2);
+        const candidate = `${offset.toString().padStart(6)}\t${characters.slice(0, middle).join('')}`;
+        if (fitsTokenBudget([candidate], partial(middle), true)) low = middle;
+        else high = middle - 1;
+      }
+      if (low > 0) {
+        const text = characters.slice(0, low).join('');
+        effectiveLines = [`${offset.toString().padStart(6)}\t${text}`];
+        effectiveTextLines = textLines ? [text] : undefined;
+        effectiveLineContinuation = partial(low);
+      }
+    }
+    if (effectiveLines.length === 0) {
+      return '[Tool Error] Remaining context capacity cannot fit a read page and its continuation. Compact context before retrying this range.';
+    }
+  }
 
   while (true) {
     const notes = buildReadNotes({
@@ -459,13 +515,13 @@ export async function toolRead(
       // for the anti-loop dedup. The next re-read with these same
       // params + unchanged mtime returns a stub instead of paying disk
       // I/O and re-flooding the conversation with identical content.
-      if (lineOffset === 0) {
+      if (lineOffset === 0 && !budgetClipped) {
         ctx.readFileStateCache?.record(filePath, offset, limit, stat.mtimeMs);
       }
       if (ctx.toolCallId) ctx.recordToolResultProjection?.(ctx.toolCallId, {
         content: output, modelContent: notes.join('\n'),
-        ...(textLines ? { data: {
-          kind: 'text' as const, text: textLines.slice(0, effectiveLines.length).join('\n'), normalized: true as const,
+        ...(effectiveTextLines ? { data: {
+          kind: 'text' as const, text: effectiveTextLines.slice(0, effectiveLines.length).join('\n'), normalized: true as const,
           offset, line_offset: lineOffset, lineCount: effectiveLines.length,
           complete: offset === 1 && lineOffset === 0 && !effectiveHasMoreLines,
           // Unlike the short human hint, keep the requested page size so a
