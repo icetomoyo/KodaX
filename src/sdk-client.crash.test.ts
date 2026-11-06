@@ -5,8 +5,10 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { connectKodaXClient } from '@kodax-ai/kodax/client';
-import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
+import { connectKodaXClient, readKodaXClientExits } from '@kodax-ai/kodax/client';
+import type { ClientExitReceipt, ClientSessionView } from '@kodax-ai/coding/client-contract';
+import { createHash } from 'node:crypto';
+import { runtimeClientPrincipal } from './runtime-daemon/client-lifecycle.js';
 import { ensureKodaXRuntime } from './sdk-runtime.js';
 import { readRuntimeDaemonLockOwner, resolveRuntimeDaemonPaths, type RuntimeDaemonPaths } from './runtime-daemon/state.js';
 import { RuntimeDaemonTransportError } from './runtime-daemon/transport.js';
@@ -204,6 +206,57 @@ it('a Host crash after input acceptance preserves content, marks the Run interru
     await survivor.disconnect().catch(() => undefined);
     await restarted.close().catch(() => undefined);
     killRemainingOwner(scenario.paths);
+  }
+}, 180_000);
+
+it.skipIf(process.platform !== 'win32')('recovers an interrupted exit on one Host when Space and CLI start concurrently, retaining the receipt and unknown Run outcome', async () => {
+  const scenario = await startScenario('Retain this interrupted history without replaying it.');
+  const owner = readRuntimeDaemonLockOwner(scenario.paths.lockFile)!;
+  expect(owner.windowsJobName).toMatch(/^Global\\KodaXDaemonJob-/);
+  const clientInfo = { name: 'Space recovery', instanceId: 'crash-reentry-space', instanceSecret: 'local-crash-reentry-space-secret-32' };
+  const principal = runtimeClientPrincipal(clientInfo.instanceId, clientInfo.instanceSecret);
+  const receipt: ClientExitReceipt = { requestId: 'power-loss-during-exit', clientId: principal,
+    runtimeId: owner.runtimeId, accepted: true, requestedAt: owner.createdAt, updatedAt: owner.createdAt,
+    cleanup: { state: 'pending', runIds: [scenario.runId], operationIds: ['unconfirmed-operation'],
+      actorTurns: [], withdrawnInputs: [], issues: [] }, host: { requested: true, state: 'accepted', owner } };
+  const digest = (value: string): string => createHash('sha256').update(value).digest('hex');
+  const directory = path.join(scenario.paths.rootDir, 'client-exits', digest(principal));
+  fs.mkdirSync(directory, { recursive: true });
+  const file = path.join(directory, `${digest(receipt.requestId)}.json`);
+  const original = JSON.stringify(receipt);
+  fs.writeFileSync(file, original);
+  const clients: Awaited<ReturnType<typeof ensureKodaXRuntime>>[] = [];
+  let survivor: Awaited<ReturnType<typeof connectKodaXClient>> | undefined;
+  try {
+    await vi.waitFor(() => expect(providerRequests).toBe(1), { timeout: 20_000 });
+    process.kill(owner.pid, 'SIGKILL');
+    await scenario.client.disconnect();
+    await scenario.first.close();
+    await waitForRuntimeDaemonOwnerExit(owner, 30_000);
+    await vi.waitFor(async () => expect((await readKodaXClientExits({ homeDir, profile: scenario.profile, clientInfo }))[0])
+      .toMatchObject({ cleanup: { state: 'unknown', runIds: [scenario.runId] }, host: { state: 'unknown' },
+        recovery: { state: 'ready', reason: 'host_generation_terminated' } }), { timeout: 30_000 });
+    const launches = await Promise.allSettled([scenario.profile, 'coder'].map(async profile => {
+      const client = await ensureKodaXRuntime({ homeDir, profile, daemonStartupTimeoutMs: 60_000 });
+      clients.push(client);
+      return client;
+    }));
+    for (const launch of launches) if (launch.status === 'rejected') throw launch.reason;
+    expect(clients).toHaveLength(2);
+    expect(clients[0]!.identity.runtimeId).toBe(clients[1]!.identity.runtimeId);
+    expect(clients[0]!.identity.runtimeId).not.toBe(owner.runtimeId);
+    survivor = await connectKodaXClient({ homeDir, profile: clients[0]!.identity.profile });
+    expect(await readAfterCrashBoundary(() => survivor!.sessions.read(scenario.sessionId))).toMatchObject({ id: scenario.sessionId });
+    const run = await readAfterCrashBoundary(() => survivor!.runs.read(scenario.runId));
+    expect(['interrupted', 'unknown']).toContain(run.phase);
+    expect(run.terminal?.effectOutcome).toBe('unknown');
+    expect(providerRequests).toBe(1);
+    expect(fs.readFileSync(file, 'utf8')).toBe(original);
+  } finally {
+    await survivor?.disconnect();
+    await Promise.all(clients.map(client => client.close()));
+    killRemainingOwner(scenario.paths);
+    killRemainingOwner(resolveRuntimeDaemonPaths(homeDir, 'coder'));
   }
 }, 180_000);
 

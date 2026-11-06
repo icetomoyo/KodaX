@@ -14,6 +14,8 @@ export interface RuntimeDaemonShutdownVerificationOwner {
   readonly processContainment?: 'windows-job';
   readonly supervisorPid?: number;
   readonly supervisorProcessStartIdentity?: string;
+  readonly windowsJobName?: string;
+  readonly windowsBootIdentity?: string;
 }
 
 export interface RuntimeDaemonShutdownVerificationInput {

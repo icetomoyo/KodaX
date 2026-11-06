@@ -706,3 +706,35 @@ the accepted lifetime requirement. This does not close the original slow-resume
 diagnosis or the intermittent ConPTY exit observation. Release remains held.
 Incremental Spec review reported zero remaining findings after the remote
 preflight cancellation correction.
+
+## 2026-11-06 working-tree crash reentry qualification
+
+This addendum describes the local fix, without assigning a new published SDK version.
+A missing successful shutdown outcome can follow power loss. Recovery reads preserve the
+original exit receipt, unknown cleanup, Run IDs and operation IDs. They authorize fenced
+Host recovery separately from successful shutdown.
+
+On Windows, automatic crash reentry requires exact daemon and Job-supervisor generations
+to be gone, plus a recorded changed Windows boot identity or a fresh query proving the
+recorded Global Job empty/absent. Query denial, a live Job, unknown identity, explicit
+cleanup failure, or legacy missing proof requires inspection. Normal shutdown verification
+continues to require its exact successful outcome. Windows ACL admission remains in force.
+The new Host still acquires canonical Session ownership before managed-child/Run recovery.
+
+Run the focused regressions from the repository root:
+
+```powershell
+node node_modules/vitest/vitest.mjs run src/sdk-client.exit-recovery.test.ts src/runtime-daemon/client-lifecycle.test.ts src/runtime-daemon/shutdown-verifier.test.ts src/runtime-daemon/state.test.ts
+node node_modules/vitest/vitest.mjs run packages/agent/src/runtime/process-tree.windows.test.ts packages/agent/src/runtime/process-tree.windows-job.integration.test.ts src/runtime-daemon/manager-containment.test.ts src/runtime-daemon/windows-job-supervisor.test.ts
+node node_modules/vitest/vitest.mjs run src/sdk-client.crash.test.ts src/sdk-runtime.shell-recovery.test.ts src/runtime-daemon/process.owner-exit.test.ts src/runtime-daemon/lifecycle.process-identity.test.ts --maxWorkers 1
+```
+
+The real Windows crash case kills the original Host, then concurrently starts two profiles.
+Require one replacement runtimeId, unchanged original receipt, retained Session history,
+an interrupted/unknown Run with unknown effect outcome, and no repeated Provider request.
+The native Job case retains a query handle in a surviving descendant writer. Require a
+positive active count while the writer remains alive, then zero only after its Job ends.
+These process-kill and isolated boot-identity cases do not simulate an actual machine power
+failure. Other platforms and legacy Windows receipts retain their conservative inspection
+path when equivalent containment evidence is unavailable. Never delete the daemon tree to
+make these checks pass. It contains Run, event and client-exit evidence.

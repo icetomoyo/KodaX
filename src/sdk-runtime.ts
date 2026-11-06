@@ -625,6 +625,8 @@ export interface RuntimeOwnerIdentity {
   readonly supervisorPid?: number;
   /** OS-issued identity used to distinguish the original supervisor from PID reuse. */
   readonly supervisorProcessStartIdentity?: string;
+  readonly windowsJobName?: string;
+  readonly windowsBootIdentity?: string;
 }
 
 export interface RuntimeOwnerState {
@@ -745,6 +747,8 @@ export function getKodaXRuntimeOwnerState(
           ...(owner.supervisorProcessStartIdentity === undefined
             ? {}
             : { supervisorProcessStartIdentity: owner.supervisorProcessStartIdentity }),
+          ...(owner.windowsJobName === undefined ? {} : { windowsJobName: owner.windowsJobName }),
+          ...(owner.windowsBootIdentity === undefined ? {} : { windowsBootIdentity: owner.windowsBootIdentity }),
         },
   };
 }
