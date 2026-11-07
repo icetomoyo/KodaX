@@ -10,6 +10,12 @@ import { toolRead } from '../tools/read.js';
 import { createReadFileStateCache } from '../multi-instance/read-file-state-cache.js';
 import { TOOL_OUTPUT_DIR_ENV } from '../tools/truncate.js';
 import {
+  createTransientTextArtifact,
+  deleteTransientTextArtifact,
+  markTransientOriginalPrepared,
+  nextUnreadTransientPage,
+} from '../transient-text-artifacts.js';
+import {
   createRunnerToolResultBatchTransform,
   estimateRunnerToolResultBatchTokens,
   shouldStampRunnerCapacityDebt,
@@ -137,6 +143,34 @@ describe('Runner tool-result batch capacity', () => {
     const reread = await toolRead(calls[replaced]!.input, { ...ctx, toolResultCapacityTokens: budget.aggregateInlineTokens });
     expect(reread).not.toContain('[Read Cache]');
     expect(reread).toContain('exact evidence line 59');
+  });
+
+  it('keeps a paged original unread when batch admission replaces its page', async () => {
+    const text = Array.from({ length: 60 }, (_, i) => `original requirement ${i} ${'x'.repeat(100)}`).join('\n');
+    const paths = [createTransientTextArtifact(text, true, 4000), createTransientTextArtifact(text, true, 4000)];
+    try {
+      const ctx = { backups: new Map(), executionCwd: tempDir };
+      const contextWindow = 16384;
+      const reservedResponseTokens = 1000;
+      const options = { ctx, contextWindow, reservedResponseTokens, contextTokenSnapshotRef: {
+        current: { currentTokens: calculateMaxContextInputTokens(contextWindow, reservedResponseTokens) - 2500,
+          baselineEstimatedTokens: baselineTokens, source: 'api' as const },
+      } };
+      const calls = paths.map((artifactPath, i) => ({ id: `page-${i}`, name: 'read', input: { path: artifactPath } }));
+      const results = await Promise.all(calls.map(async entry => ({ content: await toolRead(entry.input, ctx) })));
+      for (const artifactPath of paths) expect(nextUnreadTransientPage(artifactPath)).toBeUndefined();
+      const transformed = await createRunnerToolResultBatchTransform(options)({ calls, results, transcript });
+      const replaced = transformed.findIndex((result, index) => result.content !== results[index]!.content);
+      expect(replaced).toBeGreaterThanOrEqual(0);
+      // The model saw only a preview, so it must still read this page before acting.
+      expect(nextUnreadTransientPage(paths[replaced]!)).toEqual({ offset: 1, line_offset: 0 });
+      // A preparer that inspected every chunk is not reopened by a later replacement.
+      markTransientOriginalPrepared(paths[replaced]!);
+      await createRunnerToolResultBatchTransform(options)({ calls, results, transcript });
+      expect(nextUnreadTransientPage(paths[replaced]!)).toBeUndefined();
+    } finally {
+      for (const artifactPath of paths) deleteTransientTextArtifact(artifactPath);
+    }
   });
 
   it('reuses structured artifact metadata when a guarded result needs a smaller preview later', async () => {

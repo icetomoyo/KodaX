@@ -12,6 +12,10 @@ All notable changes to this project will be documented in this file.
   with `productHistoryLocation`. Resolve a complete turn, including persisted
   tool results, for Fork and rewind with `productHistoryTurnResolution`.
   Both Host capabilities can be requested at connection time.
+- Load Markdown rule fragments from `~/.kodax/rules/*.md` and the project's
+  `.kodax/rules/*.md` into Project Rules beside AGENTS.md. Isolated worktrees
+  inherit the original project's fragments; symlinked or oversized fragments
+  are skipped with a diagnostic.
 
 ### Changed
 
@@ -30,6 +34,9 @@ All notable changes to this project will be documented in this file.
 - Recover from context-capacity errors with bounded reads, adaptive compaction
   budgets and strict complete-summary parsing. Retain original tool evidence
   and report capacity failure instead of leaving execution silently stalled.
+- Keep a page of oversized original input unread when capacity admission
+  replaces its read result with a preview, so the model reads it again
+  before acting.
 - Settle independent Actor Runs only after the exact Turn's terminal state is
   durable. Reconcile both crash windows without replaying completed execution;
   preserve cancellation, unknown outcomes and close/ownership boundaries.

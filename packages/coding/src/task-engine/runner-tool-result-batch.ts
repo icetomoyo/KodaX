@@ -9,6 +9,7 @@ import type { KodaXMessage, KodaXToolResultBlock } from '@kodax-ai/llm';
 import { estimateTokens } from '../tokenizer.js';
 import { isCancelledToolResultContent } from '../agent-runtime/tool-result-classify.js';
 import { resolveContextTokenCount } from '../token-accounting.js';
+import { rewindTransientPageRead } from '../transient-text-artifacts.js';
 import type { KodaXToolExecutionContext } from '../types.js';
 import type { ContextTokenSnapshotRef } from './_internal/managed-task/compaction.js';
 import {
@@ -109,6 +110,20 @@ function collectToolResultEntries(batch: RunnerToolResultBatch): ToolResultBatch
   });
 }
 
+// While a paged original is unread, the input guard admits only direct reads,
+// so the call input locates the page the model did not receive.
+function rewindReplacedTransientPage(call: RunnerToolCall): void {
+  const { input } = call;
+  if (call.name !== 'read' || typeof input.path !== 'string') return;
+  const position = (value: unknown, fallback: number, min: number): number => (
+    Number.isFinite(value) ? Math.max(min, Math.floor(Number(value))) : fallback
+  );
+  rewindTransientPageRead(input.path, {
+    offset: position(input.offset, 1, 1),
+    line_offset: position(input.line_offset, 0, 0),
+  });
+}
+
 function mergeGuardedResults(
   batch: RunnerToolResultBatch,
   guardedEntries: readonly ToolResultBatchEntry[],
@@ -127,6 +142,7 @@ function mergeGuardedResults(
     // A read may be nested in a Script/tool alias. Once admission replaces any
     // output, cached reads can no longer claim their original text is visible.
     options.ctx.readFileStateCache?.clear();
+    rewindReplacedTransientPage(batch.calls[index]!);
     options.onCapacityFallback?.(batch.calls[index]!);
     return {
       ...result,
