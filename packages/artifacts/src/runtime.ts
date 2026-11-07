@@ -28,7 +28,7 @@ async function execute(request: ArtifactRequest, options: ArtifactRuntimeOptions
   for (const format of ['pptx', 'pdf', 'docx', 'png', 'jpeg', 'webp', 'svg', 'html'] as const) {
    const engine = format === 'pptx' ? { name: '@aiden0z/pptx-renderer', version: '1.3.0' } : format === 'pdf' ? { name: 'PDF.js', version: '5.4.296' }
     : format === 'docx' ? { name: 'docx-renderer', version: '0.2.2' } : format === 'png' ? { name: 'pngjs/exact-bytes', version: '7.0.0' } : { name: 'Chromium', version: 'not-observed' };
-   const diagnostics = format === 'docx' ? [{ code: 'docx-preview-fidelity', message: 'Lightweight candidate pixels; Word/WPS fidelity remains unverified.', blocking: true }]
+   const diagnostics = format === 'docx' ? [{ code: 'docx-preview-fidelity', message: 'Lightweight approximation: fields such as page numbers or a table of contents are not computed, and Word/WPS layout can differ.', blocking: true }]
     : format === 'png' ? [{ code: 'png-capture-scope', message: 'Exact whole-image PNG needs no browser; regions/backgrounds require prepared Chromium.' }]
     : [{ code: 'browser-candidate', message: 'Browser file presence is checked; actual executable compatibility/version is observed during explicit prepare/render/capture.' }];
    capabilities.push({ operation: 'open', input: format, availability: format === 'pdf' && !available ? 'not-prepared' : 'available',
@@ -41,7 +41,7 @@ async function execute(request: ArtifactRequest, options: ArtifactRuntimeOptions
    try { converterAvailable = (await fs.stat(options.libreOfficeExecutable)).isFile(); }
    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   }
-  capabilities.push({ operation: 'render', input: 'pptx', backend: 'libreoffice', availability: converterAvailable && available ? 'available' : 'not-prepared',
+  for (const input of ['pptx', 'docx'] as const) capabilities.push({ operation: 'render', input, backend: 'libreoffice', availability: converterAvailable && available ? 'available' : 'not-prepared',
    engine: { name: 'LibreOffice/PDF.js', version: 'not-observed' }, diagnostics: [{ code: 'converter-candidate', message: 'Requires trusted absolute LibreOffice and prepared Chromium paths. File presence is checked here; converter identity/version is verified during render.' }] });
   for (const operation of ['create', 'edit', 'export'] as const) capabilities.push({ operation, input: 'pptx', availability: 'available', diagnostics: [] });
   capabilities.push({ operation: 'prepare', input: 'runtime', availability: options.browserExecutable && !available ? 'unsupported' : 'available', diagnostics: [] },
@@ -77,14 +77,18 @@ async function execute(request: ArtifactRequest, options: ArtifactRuntimeOptions
   const { renderPresentation } = await import('./render.js'); result = await renderPresentation(source.bytes, artifact, request.input, inspected.diagnostics, options);
  } else {
   if (request.operation === 'edit' || request.operation === 'export') throw new Error('Edit/export are available only for PPTX.');
-  if (request.operation === 'render' && request.input.backend === 'libreoffice') throw new Error('LibreOffice conversion is available only for PPTX; native formats use their declared renderer.');
+  if (request.operation === 'render' && request.input.backend === 'libreoffice' && format !== 'docx') throw new Error('LibreOffice conversion is available only for PPTX and DOCX; other formats use their declared renderer.');
   if (request.operation === 'open' && format !== 'pdf') { if (format === 'png') inspectPng(source.bytes); return { status: 'ready', artifact: { ...base, format }, diagnostics: [] }; }
   if (format === 'pdf' || format === 'docx') {
+   // A host-supplied converter is the default DOCX layout engine; the lightweight renderer remains the fallback.
+   const backend = format === 'docx' ? (request.operation === 'render' ? request.input.backend : undefined) ?? (options.libreOfficeExecutable ? 'libreoffice' : 'lightweight') : 'lightweight';
+   if (backend === 'libreoffice' && !options.libreOfficeExecutable) return { status: 'unverified', artifact: { ...base, format: 'docx' }, diagnostics: [
+    { code: 'libreoffice-unavailable', message: 'The host has not provided LibreOffice for this conversion backend.', blocking: true }] };
    if (!(await browserAvailable(options))) return missingBrowser();
    if (request.operation === 'capture' && (request.input.kind !== 'paginated' || request.input.locators.some(l => l.kind !== 'paginated' || l.sheet !== undefined || l.range !== undefined))) return { status: 'unverified', diagnostics: [{ code: 'capture-unavailable', message: 'Document capture requires page locators without sheet/range.', blocking: true }] };
    const { processDocument } = await import('./document-render.js');
    const renderInput = request.operation === 'open' ? undefined : request.operation === 'capture' ? { path: source.path, pages: request.input.locators.map(l => l.kind === 'paginated' ? l.page : 0) } : request.input;
-   result = await processDocument(source.bytes, { ...base, format }, renderInput, options);
+   result = await processDocument(source.bytes, { ...base, format }, renderInput, options, backend);
   } else {
    const artifact: ArtifactRef = { ...base, format };
    if (request.operation === 'render' && request.input.pages !== undefined) throw new Error('Image render does not accept page numbers.');

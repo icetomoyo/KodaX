@@ -21,6 +21,8 @@ import {
   KODAX_INTERRUPTED_TOOL_RESULT_MARKER,
   resolvePromptCacheDisabled,
   getPreparedImageDiagnostic,
+  MISSING_IMAGE_PLACEHOLDER,
+  UNSUPPORTED_TOOL_RESULT_IMAGE_PLACEHOLDER,
   UNSUPPORTED_MODEL_IMAGE_PLACEHOLDER,
 } from '@kodax-ai/llm';
 import type {
@@ -173,10 +175,10 @@ function projectOpenAIToolResult(
         else images.push(part);
       }
     } else if (diagnosticImageMissing(item.path)) {
-      text.push('[Historical image unavailable: the local attachment file is missing.]');
+      text.push(MISSING_IMAGE_PLACEHOLDER);
     } else if (supportsImages) images.push({ type: 'image_url',
       mediaType: resolveDiagnosticImageMediaType(item.path, item.mediaType), dataHash: hashImageFile(item.path) });
-    else text.push('[Image content omitted: this provider does not support inline images in tool results.]');
+    else text.push(UNSUPPORTED_TOOL_RESULT_IMAGE_PLACEHOLDER);
   }
   if (images.length > 0) text.push('[Images from this tool result follow in a user message.]');
   const message: DiagnosticOpenAIWireMessage = {
@@ -476,7 +478,7 @@ export function hashProviderVisibleMessages(
   const projected = provider instanceof KodaXOpenAIResponsesProvider
     ? projectResponsesMessages(messages, provider.getGenerationSource(model), block => {
       if (provider.getCapabilityProfile(model).multimodalSupport === 'none') {
-        return [{ type: 'input_text', text: '[Image content omitted: this provider does not support inline images in tool results.]' }];
+        return [{ type: 'input_text', text: UNSUPPORTED_TOOL_RESULT_IMAGE_PLACEHOLDER }];
       }
       const image = getPreparedImageDiagnostic(block);
       if (image && 'placeholder' in image) return [{ type: 'input_text', text: image.placeholder }];

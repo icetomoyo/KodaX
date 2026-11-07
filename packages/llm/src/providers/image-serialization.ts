@@ -16,9 +16,9 @@ const IMAGE_MEDIA_TYPES: Record<string, string> = {
 export const MISSING_IMAGE_PLACEHOLDER =
   "[Historical image unavailable: the local attachment file is missing.]";
 export const UNSUPPORTED_TOOL_RESULT_IMAGE_PLACEHOLDER =
-  "[Image content omitted: this provider does not support inline images in tool results.]";
+  "[Image content omitted: this provider does not support inline images in tool results. Visual properties of this image are unverified.]";
 export const UNSUPPORTED_MODEL_IMAGE_PLACEHOLDER =
-  '[Image content omitted: the selected model does not support image input.]';
+  '[Image content omitted: the selected model does not support image input. Visual properties of this image are unverified.]';
 export const INVALID_IMAGE_PLACEHOLDER =
   '[Image unavailable: this attachment cannot be decoded. Re-extract or replace this image; other content remains available.]';
 

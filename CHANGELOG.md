@@ -6,6 +6,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Artifacts — DOCX visual review**: when the host supplies a LibreOffice
+  executable, DOCX render now converts through it by default (Writer PDF
+  export → PDF.js) with evidence still bound to the DOCX source hash; the
+  lightweight renderer stays the fallback, explains what it does not compute
+  (fields, table of contents, Word/WPS pagination), and returns structured
+  `docx-render-failed` instead of throwing on documents it cannot lay out.
+  The render tool description and `artifact-review` skill no longer state that
+  the converter applies only to PPTX.
+- **Artifacts — Windows LibreOffice hang**: a configured `soffice.exe` now runs
+  through its console twin `soffice.com`; the GUI launcher blocked on CLI calls
+  until the 90 s timeout (also affected PPTX conversion). Conversion leaves
+  only PNG evidence in the render directory.
+- **LLM — image placeholders**: when a provider or model cannot accept images,
+  the text placeholder explicitly marks visual properties of the image as
+  unverified. Coding prompt-cache diagnostics reuse the exported constants.
+
 ---
 
 ## [0.7.97-beta.2] - 2026-11-04

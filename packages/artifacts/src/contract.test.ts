@@ -34,3 +34,8 @@ it('checks optional authoring fields and rejects fields from another element var
   expect(() => decodeArtifactRequest({ operation: 'create', input: { output: 'x.pptx', slides: [{ elements: [element] }] } })).toThrow();
  }
 });
+it('admits the LibreOffice render backend for PPTX and DOCX only', () => {
+ const capability = (input: string) => ({ status: 'ready', diagnostics: [], capabilities: [{ operation: 'render', input, backend: 'libreoffice', availability: 'available', diagnostics: [] }] });
+ for (const input of ['pptx', 'docx']) expect(() => decodeArtifactResult('capabilities', capability(input))).not.toThrow();
+ expect(() => decodeArtifactResult('capabilities', capability('pdf'))).toThrow();
+});

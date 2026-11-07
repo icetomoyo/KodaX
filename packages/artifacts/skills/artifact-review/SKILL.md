@@ -39,7 +39,10 @@ time. A receipt or image path does not establish that pixels were inspected.
 ## Limits and fallback
 
 Lightweight rendering uses compatible Chromium, not PowerPoint or LibreOffice.
-DOCX lightweight pagination remains unverified for Word/WPS fidelity. Native PDF
+DOCX renders through the host converter when one is provided. The lightweight DOCX
+fallback approximates Word/WPS layout and does not compute fields; its diagnostics
+name what stays unverified. Rendered fields show the values stored in the file, so
+an empty or outdated table of contents is a document finding. Native PDF
 retains each page's dimensions and rotation. Missing fonts/resources and unsupported
 objects remain unverified for affected requirements; optional static conversion
 cannot verify animation or transitions.

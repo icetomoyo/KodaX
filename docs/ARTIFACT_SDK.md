@@ -103,11 +103,11 @@ previous verification limits.
 | `prepare(signal?)` | Explicit compatible Chromium preparation; custom executables remain the trusted host's responsibility |
 | `create`, `edit`, `export` | Existing PPTX authoring, limited text/geometry repair, exclusive new output; no new-format editors |
 | `open` | Content-identified PPTX/PDF/DOCX/PNG/JPEG/WebP/SVG/HTML identity; PPTX object inspection; intrinsic PPTX/PDF page count |
-| `render` | PPTX, native PDF, exact PNG bytes, JPEG/WebP/SVG rasters, candidate DOCX pagination |
+| `render` | PPTX, native PDF, exact PNG bytes, JPEG/WebP/SVG rasters, DOCX pages (host LibreOffice conversion by default when configured; lightweight candidate otherwise) |
 | `capture` | Static image/SVG regions; PDF/DOCX pages; local HTML `loaded` state at explicit viewport, sequence `0`; actual SVG SMIL seconds |
 | `readEvidence` | Provenance/current file and dependency hashes, actual PNG hash/geometry/bounds, then PNG data as base64 |
 
-Missing capability records do not imply support. Native Word/WPS fidelity remains **unverified** for every DOCX render, even when useful page pixels exist. DOCX `open` has no `pages`; pagination belongs to `evidence.layout.totalPages`. Minimal documents without settings are normalized only in the rendering snapshot; source bytes stay unchanged. Fields, floating objects, complex sections and native Office pagination need reference validation.
+Missing capability records do not imply support. When the host supplies `libreOfficeExecutable`, DOCX render defaults to `backend: 'libreoffice'`: the DOCX snapshot is converted to PDF and rendered by PDF.js, while evidence stays bound to the DOCX source hash and the result may be `ready` with a non-blocking `docx-converted` note. Converted fields show the values stored in the file, so an empty or outdated table of contents is a document finding. The lightweight backend (no converter, or `backend: 'lightweight'`) stays **unverified** with a blocking `docx-preview-fidelity` diagnostic, and a document the lightweight renderer cannot lay out returns structured `docx-render-failed` instead of throwing. DOCX `open` has no `pages`; pagination belongs to `evidence.layout.totalPages`. Minimal documents without settings are normalized only in the rendering snapshot; source bytes stay unchanged. Fields, floating objects, complex sections and native Office pagination need reference validation.
 
 PPTX geometry uses inches. Text/rectangle colors are six hexadecimal digits without `#` (for example, `172C45`). `edit` uses inspected `page/objectId`, the current `expectedSourceHash` and an exclusive new `output`. Text replacement supports a single run in a single paragraph; rich-run/multi-paragraph text needs another compatible editor. Geometry edits retain their existing bounds and grouped-object limitations. Use `render({ path, pages })` for PPTX page evidence; PPTX does not implement `capture`.
 
@@ -151,7 +151,7 @@ if (result.evidence) {
 }
 ```
 
-Browser/LibreOffice executable paths and workspace authority belong to trusted runtime options, never model request JSON. LibreOffice is optional for PPTX conversion only; other supported formats do not require it. Render capability records include `backend: 'lightweight' | 'libreoffice'`; select by operation, format and backend. LibreOffice availability checks the configured absolute file and browser presence without launching either; its identity/version is checked during rendering. Preparation may download the pinned Playwright browser and write its cache; ordinary permission/sandbox rules apply. Querying/rendering never installs implicitly.
+Browser/LibreOffice executable paths and workspace authority belong to trusted runtime options, never model request JSON. LibreOffice is optional for PPTX and DOCX conversion; other supported formats do not require it. On Windows, a configured `soffice.exe` runs through its sibling console entry `soffice.com`, because the GUI launcher blocks on command-line calls. Render capability records include `backend: 'lightweight' | 'libreoffice'`; select by operation, format and backend. LibreOffice availability checks the configured absolute file and browser presence without launching either; its identity/version is checked during rendering. Preparation may download the pinned Playwright browser and write its cache; ordinary permission/sandbox rules apply. Querying/rendering never installs implicitly.
 
 ## Existing shared KodaX Host
 

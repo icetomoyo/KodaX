@@ -45,6 +45,14 @@ it.skipIf(!browserExecutable)('lays out minimal DOCX without settings, preservin
   const final = await sdk.render({ path: name + '.docx', pages: [count] }); expect(final.evidence!.evidence[0]!.locator).toEqual({ kind: 'paginated', page: count });
  }
 }));
+it.skipIf(!browserExecutable)('reports a lightweight DOCX layout failure as structured unverified evidence instead of a worker crash', () => fixture(async (sdk, root) => {
+ await fs.copyFile('tests/fixtures/artifacts/inline-image.docx', path.join(root, 'x.docx'));
+ const rendered = await sdk.render({ path: 'x.docx', pages: [1] });
+ expect(rendered.status).toBe('unverified'); expect(rendered.evidence).toBeUndefined();
+ const failure = rendered.diagnostics.find(d => d.code === 'docx-render-failed')!;
+ expect(failure.blocking).toBe(true); expect(failure.message).toMatch(/PDF/);
+ expect(rendered.artifact).toMatchObject({ format: 'docx' });
+}));
 it.skipIf(!browserExecutable)('binds HTML loaded viewport and observed local dependencies, rejecting fake states', () => fixture(async (sdk, root) => {
  await fs.writeFile(path.join(root, 'a.css'), 'body { margin:0; background:#123456; }');
  await fs.writeFile(path.join(root, 'a.html'), '<!doctype html><html><head><link rel="stylesheet" href="a.css"></head><body><h1>Observed</h1></body></html>');

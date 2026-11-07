@@ -92,6 +92,18 @@ describe('real PPT public operations', () => {
   expect((await executeArtifactRequest({ operation: 'render', input: { path: 'x.pptx', backend: 'libreoffice' } }, options)).status).toBe('unverified');
   await expect(executeArtifactRequest({ operation: 'open', input: { path: 'x.pptx' } }, { ...options, signal: AbortSignal.abort() })).rejects.toThrow(/abort/i);
  });
+ it('offers LibreOffice DOCX rendering only when the host supplies the converter', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'artifact docx backend ')); roots.push(root);
+  await fs.copyFile('tests/fixtures/artifacts/explicit-break-table.docx', path.join(root, 'x.docx'));
+  const options = { workspaceRoot: root, browserExecutable: path.join(root, 'missing.exe') };
+  const docxConverter = async (extra: object) => (await executeArtifactRequest({ operation: 'capabilities', input: {} }, { ...options, ...extra })).capabilities!
+   .find(c => c.operation === 'render' && c.input === 'docx' && c.backend === 'libreoffice')!;
+  expect((await docxConverter({})).availability).toBe('not-prepared');
+  const result = await executeArtifactRequest({ operation: 'render', input: { path: 'x.docx', backend: 'libreoffice' } }, options);
+  expect(result.status).toBe('unverified'); expect(result.diagnostics[0]!.code).toBe('libreoffice-unavailable');
+  await fs.copyFile('tests/fixtures/artifacts/mixed-pages.pdf', path.join(root, 'x.pdf'));
+  await expect(executeArtifactRequest({ operation: 'render', input: { path: 'x.pdf', backend: 'libreoffice' } }, options)).rejects.toThrow(/PPTX and DOCX/);
+ });
  it('rejects falsely declared compressed ZIP expansion before parsing', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'artifact zip expansion ')); roots.push(root);
   const zip = new JSZip(); zip.file('oversized.xml', Buffer.alloc(33 * 1024 * 1024, 65));
