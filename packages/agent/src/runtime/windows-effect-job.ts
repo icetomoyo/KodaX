@@ -1,5 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 import { killChildProcessTree } from './process-tree.js';
@@ -11,399 +13,28 @@ const SUPERVISOR_OUTPUT_LIMIT = 8_192;
 // only compatibility input so an interrupted older SDK can still converge.
 const WINDOWS_EFFECT_JOB_NAME_PATTERN = /^(?:Global\\)?KodaXEffect-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-const WINDOWS_EFFECT_JOB_SOURCE = String.raw`
-using System;
-using System.IO;
-using System.Runtime.InteropServices;
-using System.Threading;
-
-public static class KodaXEffectJob {
-  [StructLayout(LayoutKind.Sequential)]
-  private struct IoCounters {
-    public ulong ReadOperationCount;
-    public ulong WriteOperationCount;
-    public ulong OtherOperationCount;
-    public ulong ReadTransferCount;
-    public ulong WriteTransferCount;
-    public ulong OtherTransferCount;
+const WINDOWS_PROGRAM_HASHES = {
+  "effectJob": "a2fd25dbd7c7dcf8438d3d048b4040db49ee380090dd83c77ca5ad9eb7842f76",
+  "sidProbe": "02307259d2398a467692c41e5673fccd141f7ad08d4862601e99f6fae63f05ce"
+} as const;
+const encodedPrograms = new Map<keyof typeof WINDOWS_PROGRAM_HASHES, string>();
+function windowsProgram(key: keyof typeof WINDOWS_PROGRAM_HASHES): string {
+  const cached = encodedPrograms.get(key);
+  if (cached !== undefined) return cached;
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = process.env.KODAX_BUNDLED === 'true'
+    ? [path.join(path.dirname(process.execPath), 'windows-effect-job-programs.json')]
+    : [path.join(here, 'windows-effect-job-programs.json'), path.join(here, '..', 'windows-effect-job-programs.json')];
+  const programs: unknown = JSON.parse(fs.readFileSync(candidates.find(fs.existsSync) ?? candidates[0]!, 'utf8'));
+  const text = typeof programs === 'object' && programs !== null
+    ? (programs as Record<string, unknown>)[key] : undefined;
+  if (typeof text !== 'string' || createHash('sha256').update(text, 'utf8').digest('hex') !== WINDOWS_PROGRAM_HASHES[key]) {
+    throw new Error('Packaged Windows program is missing or does not match the audited program.');
   }
-
-  [StructLayout(LayoutKind.Sequential)]
-  private struct BasicLimitInformation {
-    public long PerProcessUserTimeLimit;
-    public long PerJobUserTimeLimit;
-    public uint LimitFlags;
-    public UIntPtr MinimumWorkingSetSize;
-    public UIntPtr MaximumWorkingSetSize;
-    public uint ActiveProcessLimit;
-    public UIntPtr Affinity;
-    public uint PriorityClass;
-    public uint SchedulingClass;
-  }
-
-  [StructLayout(LayoutKind.Sequential)]
-  private struct ExtendedLimitInformation {
-    public BasicLimitInformation BasicLimitInformation;
-    public IoCounters IoInfo;
-    public UIntPtr ProcessMemoryLimit;
-    public UIntPtr JobMemoryLimit;
-    public UIntPtr PeakProcessMemoryUsed;
-    public UIntPtr PeakJobMemoryUsed;
-  }
-
-  [StructLayout(LayoutKind.Sequential)]
-  private struct BasicAccountingInformation {
-    public long TotalUserTime;
-    public long TotalKernelTime;
-    public long ThisPeriodTotalUserTime;
-    public long ThisPeriodTotalKernelTime;
-    public uint TotalPageFaultCount;
-    public uint TotalProcesses;
-    public uint ActiveProcesses;
-    public uint TotalTerminatedProcesses;
-  }
-
-  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-  private static extern IntPtr CreateJobObjectW(IntPtr attributes, string name);
-
-  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-  private static extern IntPtr OpenJobObjectW(uint desiredAccess, bool inheritHandle, string name);
-
-  [DllImport("kernel32.dll", SetLastError = true)]
-  private static extern bool SetInformationJobObject(
-    IntPtr job,
-    int infoClass,
-    ref ExtendedLimitInformation info,
-    uint length);
-
-  [DllImport("kernel32.dll", SetLastError = true)]
-  private static extern bool QueryInformationJobObject(
-    IntPtr job,
-    int infoClass,
-    out BasicAccountingInformation info,
-    uint length,
-    IntPtr returnLength);
-
-  [DllImport("kernel32.dll", SetLastError = true)]
-  private static extern IntPtr OpenProcess(uint access, bool inheritHandle, uint processId);
-
-  [DllImport("kernel32.dll", SetLastError = true)]
-  private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
-
-  [DllImport("kernel32.dll", SetLastError = true)]
-  private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
-
-  [DllImport("kernel32.dll", SetLastError = true)]
-  private static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
-
-  [DllImport("kernel32.dll", SetLastError = true)]
-  private static extern bool TerminateJobObject(IntPtr job, uint exitCode);
-
-  [DllImport("kernel32.dll", SetLastError = true)]
-  private static extern bool CloseHandle(IntPtr handle);
-
-  private const uint Synchronize = 0x00100000;
-  private const uint ProcessTerminate = 0x0001;
-  private const uint ProcessSetQuota = 0x0100;
-  private const uint ProcessQueryLimitedInformation = 0x1000;
-  private const uint JobObjectTerminate = 0x0008;
-  private const uint JobObjectQuery = 0x0004;
-  private const uint JobObjectLimitKillOnJobClose = 0x00002000;
-  private const uint WaitObject0 = 0;
-
-  private static void Require(bool result, string operation) {
-    if (!result) throw new InvalidOperationException(
-      operation + " failed with Win32 error " + Marshal.GetLastWin32Error());
-  }
-
-  private static void PublishReady() {
-    Console.Out.WriteLine("READY");
-    Console.Out.Flush();
-  }
-
-  public static void Run(uint targetPid, uint ownerPid, string jobName) {
-    var job = CreateJobObjectW(IntPtr.Zero, jobName);
-    if (job == IntPtr.Zero) throw new InvalidOperationException(
-      "CreateJobObject failed with Win32 error " + Marshal.GetLastWin32Error());
-    var processAccess = Synchronize | ProcessTerminate | ProcessSetQuota | ProcessQueryLimitedInformation;
-    var target = OpenProcess(processAccess, false, targetPid);
-    var owner = OpenProcess(Synchronize, false, ownerPid);
-    if (target == IntPtr.Zero || owner == IntPtr.Zero) {
-      if (target != IntPtr.Zero) CloseHandle(target);
-      if (owner != IntPtr.Zero) CloseHandle(owner);
-      CloseHandle(job);
-      throw new InvalidOperationException(
-        "OpenProcess failed with Win32 error " + Marshal.GetLastWin32Error());
-    }
-    try {
-      var limits = new ExtendedLimitInformation();
-      limits.BasicLimitInformation.LimitFlags = JobObjectLimitKillOnJobClose;
-      Require(SetInformationJobObject(
-        job,
-        9,
-        ref limits,
-        (uint)Marshal.SizeOf(typeof(ExtendedLimitInformation))),
-        "SetInformationJobObject");
-      Require(AssignProcessToJobObject(job, target), "AssignProcessToJobObject");
-      PublishReady();
-
-      uint targetExitCode = 1;
-      while (true) {
-        if (WaitForSingleObject(owner, 0) == WaitObject0) break;
-        if (WaitForSingleObject(target, 0) == WaitObject0) {
-          GetExitCodeProcess(target, out targetExitCode);
-          break;
-        }
-        Thread.Sleep(20);
-      }
-
-      Require(TerminateJobObject(job, targetExitCode), "TerminateJobObject");
-      while (true) {
-        BasicAccountingInformation accounting;
-        Require(QueryInformationJobObject(
-          job,
-          1,
-          out accounting,
-          (uint)Marshal.SizeOf(typeof(BasicAccountingInformation)),
-          IntPtr.Zero),
-          "QueryInformationJobObject");
-        if (accounting.ActiveProcesses == 0) return;
-        Thread.Sleep(10);
-      }
-    } finally {
-      CloseHandle(owner);
-      CloseHandle(target);
-      CloseHandle(job);
-    }
-  }
-
-  public static bool TerminateAndDrain(string jobName) {
-    var job = OpenJobObjectW(JobObjectTerminate | JobObjectQuery, false, jobName);
-    if (job == IntPtr.Zero) {
-      var error = Marshal.GetLastWin32Error();
-      if (error == 2) return false;
-      throw new InvalidOperationException(
-        "OpenJobObject failed with Win32 error " + error);
-    }
-    try {
-      Require(TerminateJobObject(job, 1), "TerminateJobObject");
-      while (true) {
-        BasicAccountingInformation accounting;
-        Require(QueryInformationJobObject(
-          job,
-          1,
-          out accounting,
-          (uint)Marshal.SizeOf(typeof(BasicAccountingInformation)),
-          IntPtr.Zero),
-          "QueryInformationJobObject");
-        if (accounting.ActiveProcesses == 0) return true;
-        Thread.Sleep(10);
-      }
-    } finally {
-      CloseHandle(job);
-    }
-  }
-
-}`;
-
-const WINDOWS_SID_PROBE_SOURCE = String.raw`
-using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Runtime.InteropServices;
-using System.Security.Principal;
-
-public static class KodaXSidProbe {
-  [StructLayout(LayoutKind.Sequential)]
-  private struct WtsProcessInformation {
-    public uint SessionId;
-    public uint ProcessId;
-    public IntPtr ProcessName;
-    public IntPtr UserSid;
-  }
-
-  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-  private struct ProcessEntry32 {
-    public uint Size;
-    public uint Usage;
-    public uint ProcessId;
-    public UIntPtr DefaultHeapId;
-    public uint ModuleId;
-    public uint Threads;
-    public uint ParentProcessId;
-    public int PriorityClassBase;
-    public uint Flags;
-    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
-    public string ExecutableFile;
-  }
-
-  [DllImport("wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-  private static extern bool WTSEnumerateProcessesW(
-    IntPtr server,
-    uint reserved,
-    uint version,
-    out IntPtr processInformation,
-    out uint count);
-
-  [DllImport("wtsapi32.dll")]
-  private static extern void WTSFreeMemory(IntPtr memory);
-
-  [DllImport("kernel32.dll", SetLastError = true)]
-  private static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint processId);
-
-  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-  private static extern bool Process32FirstW(IntPtr snapshot, ref ProcessEntry32 entry);
-
-  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-  private static extern bool Process32NextW(IntPtr snapshot, ref ProcessEntry32 entry);
-
-  [DllImport("kernel32.dll", SetLastError = true)]
-  private static extern bool CloseHandle(IntPtr handle);
-
-  private static Dictionary<uint, uint> ProcessParents() {
-    var parents = new Dictionary<uint, uint>();
-    var snapshot = CreateToolhelp32Snapshot(0x00000002, 0);
-    if (snapshot == new IntPtr(-1)) throw new InvalidOperationException(
-      "CreateToolhelp32Snapshot failed with Win32 error " + Marshal.GetLastWin32Error());
-    try {
-      var entry = new ProcessEntry32();
-      entry.Size = (uint)Marshal.SizeOf(typeof(ProcessEntry32));
-      if (!Process32FirstW(snapshot, ref entry)) throw new InvalidOperationException(
-        "Process32First failed with Win32 error " + Marshal.GetLastWin32Error());
-      do {
-        parents[entry.ProcessId] = entry.ParentProcessId;
-        entry.Size = (uint)Marshal.SizeOf(typeof(ProcessEntry32));
-      } while (Process32NextW(snapshot, ref entry));
-    } finally {
-      CloseHandle(snapshot);
-    }
-    return parents;
-  }
-
-  private static HashSet<uint> MatchingProcesses(SecurityIdentifier expected) {
-    var matches = new HashSet<uint>();
-    IntPtr processes;
-    uint count;
-    if (!WTSEnumerateProcessesW(IntPtr.Zero, 0, 1, out processes, out count)) {
-      throw new InvalidOperationException(
-        "WTSEnumerateProcesses failed with Win32 error " + Marshal.GetLastWin32Error());
-    }
-    try {
-      var entrySize = Marshal.SizeOf(typeof(WtsProcessInformation));
-      for (uint index = 0; index < count; index++) {
-        var address = new IntPtr(processes.ToInt64() + ((long)index * entrySize));
-        var entry = (WtsProcessInformation)Marshal.PtrToStructure(
-          address,
-          typeof(WtsProcessInformation));
-        if (entry.UserSid == IntPtr.Zero) continue;
-        if (new SecurityIdentifier(entry.UserSid).Equals(expected)) matches.Add(entry.ProcessId);
-      }
-    } finally {
-      WTSFreeMemory(processes);
-    }
-    return matches;
-  }
-
-  private static bool DescendsFrom(
-    uint process,
-    uint root,
-    Dictionary<uint, uint> parents
-  ) {
-    var visited = new HashSet<uint>();
-    while (process != 0 && visited.Add(process)) {
-      if (process == root) return true;
-      if (!parents.ContainsKey(process)) return false;
-      process = parents[process];
-    }
-    return false;
-  }
-
-  public static bool HasOtherProcessWithSid(string expectedSid, bool ignoreProbeTree) {
-    var expected = new SecurityIdentifier(expectedSid);
-    using (var identity = WindowsIdentity.GetCurrent()) {
-      var sameUser = identity.User != null && identity.User.Equals(expected);
-      var administrator = new WindowsPrincipal(identity)
-        .IsInRole(WindowsBuiltInRole.Administrator);
-      if (ignoreProbeTree && !sameUser) {
-        throw new InvalidOperationException("Process-tree SID probe must run as the expected sandbox user");
-      }
-      if (!ignoreProbeTree && !sameUser && !administrator) {
-        throw new InvalidOperationException(
-          "Machine-wide inspection of a foreign Windows SID requires an elevated administrator token");
-      }
-    }
-    var matches = MatchingProcesses(expected);
-    if (!ignoreProbeTree) return matches.Count > 0;
-    var current = (uint)Process.GetCurrentProcess().Id;
-    if (!matches.Contains(current)) throw new InvalidOperationException(
-      "SID probe could not observe its own process");
-    var parents = ProcessParents();
-    var root = parents.ContainsKey(current) ? parents[current] : current;
-    foreach (var process in matches) {
-      if (!DescendsFrom(process, root, parents)) return true;
-    }
-    return false;
-  }
-}`;
-
-const WINDOWS_EFFECT_JOB_SCRIPT = String.raw`
-$ErrorActionPreference = 'Stop'
-try {
-  $payload = [Text.Encoding]::UTF8.GetString(
-    [Convert]::FromBase64String($env:${PAYLOAD_ENV})) | ConvertFrom-Json
-  Remove-Item Env:${PAYLOAD_ENV} -ErrorAction SilentlyContinue
-  $source = @'
-${WINDOWS_EFFECT_JOB_SOURCE}
-'@
-  Add-Type -TypeDefinition $source
-  if ($payload.action -eq 'recover') {
-    $drained = [KodaXEffectJob]::TerminateAndDrain([string]$payload.jobName)
-    [Console]::Out.WriteLine($(if ($drained) { 'DRAINED' } else { 'NOT_FOUND' }))
-    [Console]::Out.Flush()
-  } else {
-    [KodaXEffectJob]::Run(
-      [uint32]$payload.targetPid,
-      [uint32]$payload.ownerPid,
-      [string]$payload.jobName)
-  }
-  exit 0
-} catch {
-  [Console]::Out.WriteLine('ERROR:' + $_.Exception.Message)
-  [Console]::Out.Flush()
-  exit 1
-}`;
-
-const WINDOWS_EFFECT_JOB_ENCODED_COMMAND = Buffer.from(
-  WINDOWS_EFFECT_JOB_SCRIPT,
-  'utf16le',
-).toString('base64');
-
-const WINDOWS_SID_PROBE_SCRIPT = String.raw`
-$ErrorActionPreference = 'Stop'
-try {
-  $payload = [Text.Encoding]::UTF8.GetString(
-    [Convert]::FromBase64String($env:${PAYLOAD_ENV})) | ConvertFrom-Json
-  Remove-Item Env:${PAYLOAD_ENV} -ErrorAction SilentlyContinue
-  $source = @'
-${WINDOWS_SID_PROBE_SOURCE}
-'@
-  Add-Type -TypeDefinition $source
-  $active = [KodaXSidProbe]::HasOtherProcessWithSid(
-    [string]$payload.sid,
-    [bool]$payload.ignoreCurrentProcessTree)
-  [Console]::Out.WriteLine($(if ($active) { 'ACTIVE' } else { 'CLEAR' }))
-  [Console]::Out.Flush()
-  exit 0
-} catch {
-  [Console]::Out.WriteLine('ERROR:' + $_.Exception.Message)
-  [Console]::Out.Flush()
-  exit 1
-}`;
-
-const WINDOWS_SID_PROBE_ENCODED_COMMAND = Buffer.from(
-  WINDOWS_SID_PROBE_SCRIPT,
-  'utf16le',
-).toString('base64');
+  const encoded = Buffer.from(text, 'utf16le').toString('base64');
+  encodedPrograms.set(key, encoded);
+  return encoded;
+}
 
 export interface WindowsEffectJob {
   /** Resolves only after the Job reports zero active processes. */
@@ -451,8 +82,8 @@ function spawnWindowsEffectJobAction(
   const payload = Buffer.from(JSON.stringify(payloadValue), 'utf8').toString('base64');
   const powershell = windowsPowerShellPath();
   const encodedCommand = payloadValue.action === 'sid-active'
-    ? WINDOWS_SID_PROBE_ENCODED_COMMAND
-    : WINDOWS_EFFECT_JOB_ENCODED_COMMAND;
+    ? windowsProgram('sidProbe')
+    : windowsProgram('effectJob');
   const powershellArgs = [
     '-NoProfile',
     '-NonInteractive',
@@ -656,7 +287,7 @@ export async function containWindowsEffectProcess(
       '-ExecutionPolicy',
       'Bypass',
       '-EncodedCommand',
-      WINDOWS_EFFECT_JOB_ENCODED_COMMAND,
+      windowsProgram('effectJob'),
     ], {
       env: { ...process.env, [PAYLOAD_ENV]: payload },
       stdio: ['ignore', 'pipe', 'pipe'],

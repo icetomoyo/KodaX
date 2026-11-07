@@ -424,11 +424,11 @@ assertSingleProviderCredentialModule('CLI', cliResult);
 
 const cliBytes = statSync(path.join(distDir, 'kodax_cli.js')).size;
 if (writeMetafile) writeFileSync(path.join(distDir, 'cli-meta.json'), JSON.stringify(cliResult.metafile));
-// Match the published-artifact fence: preserve 43 KiB of CLI headroom.
+// Match the published-artifact fence: preserve 49 KiB of CLI headroom.
 // Audited program data stays in packaged resources, without trimming behavior.
-// Actor settlement adds 5,916 bytes; the five-native composition fits 5,077 KiB.
-// See docs/designs/actor-settlement-bundle-audit-2026-11-07.md.
-assertBundleSize('CLI', cliBytes, 5 * 1024 * 1024 - 43 * 1024);
+// Audited Windows programs are packaged intact instead of carried as JS literals.
+// See docs/designs/beta3-cli-reserve-audit-2026-11-07.md.
+assertBundleSize('CLI', cliBytes, 5 * 1024 * 1024 - 49 * 1024);
 log(`  ✓ dist/kodax_cli.js (${(cliBytes / 1024).toFixed(0)} kB)`);
 
 // Bare `-r` must show the picker without evaluating the full CLI graph.
@@ -616,6 +616,7 @@ cpSync(capJsonSrc, capJsonDst);
 cpSync(path.join(repoRoot, 'packages/coding/src/self-knowledge/manual-topics.json'), path.join(distDir, 'manual-topics.json'));
 cpSync(path.join(repoRoot, 'packages/coding/src/prompts/static-text.json'), path.join(distDir, 'static-text.json'));
 cpSync(path.join(repoRoot, 'src/windows-native-scripts.json'), path.join(distDir, 'windows-native-scripts.json'));
+cpSync(path.join(repoRoot, 'packages/agent/src/runtime/windows-effect-job-programs.json'), path.join(distDir, 'windows-effect-job-programs.json'));
 cpSync(path.join(repoRoot, 'packages/repl/src/common/generated-config-templates.json'), path.join(distDir, 'generated-config-templates.json'));
 log(`  ✓ dist/provider-capabilities.json copied`);
 
