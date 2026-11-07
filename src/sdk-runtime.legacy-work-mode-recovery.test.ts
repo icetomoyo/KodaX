@@ -22,6 +22,7 @@ const scenarios = {
   'missing-status': 'recovers the effective saved mode when an old Run status has no mode field',
   'profile-effective': 'retains the effective Coding mode of a saved Agent request with an SDK profile',
   'callback-effective': 'uses the saved callback declaration to retain Coding mode and invokes only fresh authority',
+  'fresh-mode-drift': 'refuses fresh authorization context that changes the admitted effective Agent mode',
   'checkpoint-repeat': 'resumes the same legacy Agent checkpoint after two real Host close and restart cycles',
 } as const;
 for (const scenario of Object.keys(scenarios) as Array<keyof typeof scenarios>) {
@@ -91,8 +92,10 @@ it(scenarios[scenario], async ({ onTestFailed, signal }) => {
       start: { prompt: 'Continue the original Agent task without repeating EDIT019.', options: {
         provider: providerName, model: 'fixture', workMode: 'agent', agentMode: 'sa', lsp: false, reasoningMode: 'off',
         context: { gitRoot: homeDir, executionCwd: homeDir, repoIntelligenceMode: 'off',
-          ...(scenario === 'profile-effective' ? { agentProfile: { instructions: 'Keep the admitted SDK Coding surface.' } } : {}) },
-      }, requiredBindings: scenario === 'callback-effective' ? [{ path: 'context.toolVisibilityPolicy', type: 'function' }] : [] },
+          ...(scenario === 'profile-effective' ? { agentProfile: { instructions: 'Keep the admitted SDK Coding surface.' } } : {}),
+          ...(scenario === 'fresh-mode-drift' ? { workModePolicy: 'intersect' } : {}) },
+      }, requiredBindings: scenario === 'callback-effective' || scenario === 'fresh-mode-drift'
+        ? [{ path: 'context.toolVisibilityPolicy', type: 'function' }] : [] },
       requiresCredential: false, requiresHostTools: false, actorTurnBaseline: [] }));
 
     runtime = await createKodaXRuntime({ homeDir, defaultProvider: providerName, defaultModel: 'fixture' });
@@ -100,10 +103,19 @@ it(scenarios[scenario], async ({ onTestFailed, signal }) => {
     expect((await runtime.runs.get(runId)).workMode).toBe(statusMode);
     expect(await runtime.sessions.getSettingsVersioned(sessionId)).toMatchObject({ workModeLocked: scenario !== 'modern-empty' });
     expect((await runtime.sessions.getSettings(sessionId)).workMode).toBeUndefined();
-    if (modernLocked || scenario === 'status-mismatch' || scenario === 'modern-empty') {
-      await expect(runtime.runs.recover({ runId })).rejects.toMatchObject({ code: 'conflict',
-        ...(scenario === 'status-mismatch' ? { message: 'Generation recovery mode does not match the persisted Run.' } : {}) });
+    if (modernLocked || scenario === 'status-mismatch' || scenario === 'modern-empty' || scenario === 'fresh-mode-drift') {
+      await expect(runtime.runs.recover({ runId, ...(scenario === 'fresh-mode-drift' ? { options: { context: {
+        toolVisibilityPolicy: () => true, currentAgentId: 'fresh-child',
+      } } } : {}) })).rejects.toMatchObject({ code: 'conflict',
+        ...(scenario === 'status-mismatch' ? { message: 'Generation recovery mode does not match the persisted Run.' }
+          : scenario === 'fresh-mode-drift' ? { message: 'Generation recovery must retain the admitted Run mode.' } : {}) });
       expect(await runtime.runs.get(runId)).toMatchObject({ phase: 'recovering', workMode: statusMode });
+      if (scenario === 'fresh-mode-drift') {
+        expect((await runtime.sessions.getSettings(sessionId)).workMode).toBeUndefined();
+        const saved = await new FileSessionStorage({ sessionsDir: join(configHome, 'sessions'), configHome }).load(sessionId);
+        expect(saved?.runtimeInfo).not.toHaveProperty('workModeLocked');
+        expect(await readFile(marker, 'utf8')).toBe(currentMarker);
+      }
       expect(calls).toBe(0);
       expect(fetcher).not.toHaveBeenCalled();
       return;
