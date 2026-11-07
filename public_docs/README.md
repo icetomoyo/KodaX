@@ -3,8 +3,13 @@
 Documentation for KodaX users, product-client integrators and trusted Host developers.
 
 This development tree implements the unified Product Client contract under
-FEATURE_298/299/301. The package version is `0.7.97-beta.2`;
-`v0.7.96` remains the last stable release. `v0.7.97-beta.2` hardens Script
+FEATURE_298/299/301. The package version is `0.7.97-beta.3`;
+`v0.7.96` remains the last stable release. `v0.7.97-beta.3` repairs
+long-context recovery (bounded reads, adaptive compaction budgets and strict
+complete-summary parsing), durable independent Actor settlement, the
+first-Run work-mode lock and saved Session history (`productHistoryLocation`
+and `productHistoryTurnResolution`), with verified interrupted-exit recovery
+and DOCX/LibreOffice evidence; `v0.7.97-beta.2` hardens Script
 execution reliability (collision-safe VM call paths with typed program data,
 native tool-name wire fidelity, optional sourceContent and on-demand
 outputSchema, missing-Node-global contextual guidance) with shared Host
@@ -38,7 +43,9 @@ estimated-token streaming progress shipped in `v0.7.97-alpha.11`; the unified
 Host cutover and provider/OAuth credential parity shipped in
 `v0.7.97-alpha.12`; the Space execution and session seams completed in
 `v0.7.97-beta.1`; Script execution reliability hardening and shared Host
-recovery fixes shipped in `v0.7.97-beta.2`. Read the
+recovery fixes shipped in `v0.7.97-beta.2`; long-context recovery, durable
+Actor settlement and saved-history location/turn resolution shipped in
+`v0.7.97-beta.3`. Read the
 [current SDK alignment](sdk/embedder-guide.md#post-alpha10-sdk-alignment)
 and [unified Host cutover](sdk/embedder-guide.md#unified-host-sdk-cutover-shipped-in-v0797-alpha12)
 for compatibility and standalone-library boundaries. Historical first-read

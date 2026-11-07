@@ -6,6 +6,37 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-beta.3] - 2026-11-08
+
+Third beta of the v0.7.97 line: a repair release for long-context recovery,
+durable Actor settlement and saved Session history. Context-capacity errors
+recover through bounded reads, adaptive compaction budgets and strict
+complete-summary parsing that retain original tool evidence and report
+capacity failure instead of stalling; a paged original input replaced by
+capacity admission stays unread so the model reads it again. Independent
+Actor Runs settle only from the exact Turn's durable terminal state and
+reconcile both crash windows without replaying completed execution; Session
+work mode locks after the first accepted root Run and survives Actor
+settlement, checkpoint recovery and verified legacy generation recovery. The
+`productHistoryLocation` and `productHistoryTurnResolution` Host capabilities
+locate saved history around search hits and resolve complete turns for Fork
+and rewind, legacy view items read their full bodies through their original
+owner, and Markdown rule fragments load from `~/.kodax/rules` and
+`.kodax/rules`. Interrupted Host exits recover from verified Windows
+containment evidence, identical Host builds are shared across installations,
+abandoned daemon publications are removed in bounded idle rounds, and Windows
+startup requests only the boot-identity property. DOCX visual review converts
+through a host-supplied LibreOffice by default and discloses field
+recalculation; Windows LibreOffice runs through its `soffice.com` console
+twin. Complete audited Windows programs ship as byte-verified resources in
+npm packages and native archives, restoring the 49 KiB CLI reserve beneath
+the unchanged 5 MiB limit. Bounded real-model probes use a 64K application
+budget and do not validate native sub-100K models or arbitrary whole-document
+reading quality. Every v0.7.96 stable and v0.7.97-alpha.1 through beta.2
+contract is retained. npm publication remains a manual maintainer action.
+
 ### Added
 
 - Locate saved conversation history around a search hit or a proven source
@@ -19,7 +50,6 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- Prepare `0.7.97-beta.3` locally. This candidate has not been published.
 - Package the complete audited Windows containment programs as byte-verified
   resources, restoring 49 KiB of CLI reserve beneath the existing 5 MiB limit.
 

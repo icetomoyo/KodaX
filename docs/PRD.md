@@ -1,10 +1,10 @@
 # KodaX Product Requirements
 
-The unpublished `0.7.97-beta.3` candidate adds context-capacity recovery, durable independent Actor settlement, a first-Run work-mode lock, DOCX/LibreOffice evidence, scoped Markdown rule fragments, saved-history location and complete-turn resolution, and bounded idle daemon maintenance. See [release preparation](release.md#v0797-beta3-local-preparation).
+The `v0.7.97-beta.3` release adds context-capacity recovery, durable independent Actor settlement, a first-Run work-mode lock, DOCX/LibreOffice evidence, scoped Markdown rule fragments, saved-history location and complete-turn resolution, verified interrupted-exit recovery, and bounded idle daemon maintenance. See [release preparation](release.md#v0797-beta3-release-preparation).
 
-> Last updated: 2026-11-07
+> Last updated: 2026-11-08
 >
-> Current implementation baseline: `@kodax-ai/kodax@0.7.97-beta.2`.
+> Current implementation baseline: `@kodax-ai/kodax@0.7.97-beta.3`.
 > The GitHub release is automated from the release tag; npm publication
 > remains manual.
 > This baseline advertises Windows `sandboxRuntime:11`;

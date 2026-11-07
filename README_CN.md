@@ -53,7 +53,9 @@ CLI 使用 `--work-mode`，REPL 使用 `/work-mode`，Product Client 使用 Sess
 `v0.7.97-beta.1` 标签完成 Space 侧 Host 执行与会话接缝——Main 默认 Skills、
 Quick Ask Session promotion 与核心配置原子发布;`v0.7.97-beta.2` 标签加固
 Script 执行可靠性——类型化程序数据、原生工具名 wire 保真、按需输出契约与
-共享 Host 恢复/Workflow 终结修复。
+共享 Host 恢复/Workflow 终结修复;`v0.7.97-beta.3` 标签修复长上下文恢复、
+持久 Actor 结算与已保存会话历史——上下文容量恢复、首个 Run 工作模式锁定、
+历史定位/整轮解析与基于已验证证据的中断退出恢复。
 Issue 371 的历史首次读取延迟及 Script 模型效率验收仍未关闭。
 
 ## 30 秒上手
@@ -333,6 +335,23 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 详见 [docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) 与
 [v0.7.97-alpha.4 发布清单](docs/release.md#v0797-alpha4-release-preparation)。
 所有 v0.7.96 稳定与 v0.7.97-alpha.1/alpha.2/alpha.3 契约全部保留。
+
+**v0.7.97-beta.3 发布**：针对长上下文恢复、持久 Actor 结算与已保存会话历史的
+修复版本。上下文容量错误通过有界读取、自适应压缩预算与严格的完整摘要解析恢复,
+保留原始工具证据,容量不足时明确报告而不是静默停滞;被容量准入替换为预览的
+分页原始输入保持未读,模型会重新读取。独立 Actor Run 仅依据精确 Turn 的持久
+终态结算,并在两个崩溃窗口内对账而不重放已完成的执行;Session 工作模式在首个
+被接受的根 Run 后锁定,并在 Actor 结算、checkpoint 恢复与已验证的旧代际恢复中
+保持。`productHistoryLocation` 与 `productHistoryTurnResolution` 两个 Host 能力
+可围绕搜索命中定位已保存历史,并为 Fork 与回退解析完整轮次;Markdown 规则片段
+从 `~/.kodax/rules` 与 `.kodax/rules` 加载。中断的 Host 退出依据已验证的 Windows
+containment 证据恢复,相同构建的 Host 可跨安装位置共享,废弃的 daemon 发布文件在
+有界空闲轮次中清理。DOCX 视觉评审在宿主提供 LibreOffice 时默认经其转换,并披露
+字段重算。完整的已审计 Windows 程序作为字节校验资源打包,在 5 MiB 上限不变的
+前提下恢复 49 KiB CLI 余量。有界真实模型探测使用 64K 应用预算,不验证原生
+100K 以下的模型或任意整篇文档阅读质量。代码提交、版本标签与实际发布分别判断。
+详见 [v0.7.97-beta.3 发布清单](docs/release.md#v0797-beta3-release-preparation)。
+所有 v0.7.96 稳定与 v0.7.97-alpha.1 至 beta.2 契约全部保留。
 
 **v0.7.97-beta.2 发布**：Script 执行可靠性加固——VM 调用路径在原名之外提供
 无冲突安全别名,类型化程序数据承载规范化读取窗口与可信结构化 JSON,仅在原

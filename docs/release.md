@@ -8,21 +8,27 @@ Use [SDK_MIGRATION.md](SDK_MIGRATION.md) for the supported current surface.
 KodaX is distributed as **standalone binaries** built with `bun build --compile`.
 Target machines do **not** need Node.js or any runtime installed.
 
-## v0.7.97-beta.3 local preparation
+## v0.7.97-beta.3 release preparation
 
-Local `KodaX` includes the integration candidate and the upstream daemon
-maintenance change. Merge `5057f7828` retains both saved-history entries
-and the idle maintenance scheduler in the packaged CLI. The last published
-Host-upgrade baseline is
+Release state: `v0.7.97-beta.3` is a candidate awaiting multi-platform CI.
+npm publication has not occurred. The candidate is the third beta of the
+v0.7.97 line, a repair release for long-context recovery, durable Actor
+settlement and saved Session history. The release branch includes the
+integration candidate and the upstream daemon maintenance change. Merge
+`5057f7828` retains both saved-history entries and the idle maintenance
+scheduler in the packaged CLI. The last published Host-upgrade baseline is
 `0.7.97-beta.2`, confirmed in the public npm registry on 2026-11-07
-(published 2026-11-04T23:47:39.827Z). Preparing beta.3 does not advance it.
-The CI/Release upgrade fixture pins that public tarball by SHA-512.
+(published 2026-11-04T23:47:39.827Z). Tagging beta.3 does not advance it;
+bump the CI/Release upgrade gates only after the maintainer publishes beta.3
+to npm. The CI/Release upgrade fixture pins that public tarball by SHA-512.
 
 The candidate combines capacity recovery and complete-summary parsing,
 durable independent Actor settlement/restart reconciliation, the first-root-Run
 work-mode lock, and DOCX/LibreOffice evidence improvements. Mainline adds
 scoped Markdown rule fragments (`~/.kodax/rules`, `.kodax/rules`), the
 `productHistoryLocation` and `productHistoryTurnResolution` Host capabilities,
+verified-containment recovery of interrupted Host exits, Host build sharing
+across installations, bounded idle cleanup of abandoned daemon publications
 and a narrower Windows boot-identity query. A paged original input page
 replaced by capacity admission now stays unread. Complete audited
 Windows programs move into packaged resources so the CLI again preserves
@@ -36,7 +42,36 @@ Real-model probes use a 64K application budget on models with larger native
 windows; they do not validate native sub-100K models or arbitrary whole-document
 reading quality. Cross-platform native release gates and installed Space/SDK
 acceptance remain separate from local Windows candidate evidence. The remaining
-next-dev feature merge is deferred until after this repair release.
+next-dev feature merge is deferred until after this repair release. The
+tag-triggered Release workflow runs the reusable CI workflow alongside the
+build matrix; ordinary branch pushes do not trigger it, while CI can also be
+dispatched manually. The `-beta` tag suffix marks the release as a GitHub
+pre-release automatically. npm registry publication remains a separate
+maintainer step.
+
+### Release execution contract
+
+- Push the version tag only after the release candidate, documentation and
+  feature-design submodule commits are prepared. Ordinary branch pushes do not
+  run CI. A `v*` tag starts Release, including the reusable full CI workflow.
+- Full CI and all five native build jobs run concurrently. The GitHub Release
+  requires successful CI, all platform archive checks, and the universal npm
+  package checks. Manual dispatch builds candidates but never publishes a Release.
+- Each build validates its actual archive before the longer Electron checks.
+  Bundle and archive steps have five-minute process limits; the archive test
+  has a three-minute test budget, aborts pending waits and retains failure
+  evidence. Failed archive evidence is uploaded for seven days. No failed test
+  is converted into success or automatically retried.
+- Re-run failed jobs when diagnosing infrastructure failures on an unchanged
+  candidate. A source or workflow fix requires a new commit/run. Verify the
+  final tag SHA and every required job; an earlier green branch run is not
+  evidence for a different tagged commit.
+- Release assets comprise five platform archives and their checksums, one
+  universal npm tarball and its checksum, plus aggregated `SHA256SUMS`.
+  The maintainer publishes the audited tarball with `node scripts/release.mjs`;
+  this workflow never performs `npm publish`.
+
+The workflow contracts are covered by `tests/release-workflow.test.ts`.
 
 ## v0.7.97-beta.2 release preparation
 
