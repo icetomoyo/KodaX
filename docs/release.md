@@ -20,9 +20,14 @@ The CI/Release upgrade fixture pins that public tarball by SHA-512.
 
 The candidate combines capacity recovery and complete-summary parsing,
 durable independent Actor settlement/restart reconciliation, the first-root-Run
-work-mode lock, and DOCX/LibreOffice evidence improvements. Complete audited
+work-mode lock, and DOCX/LibreOffice evidence improvements. Mainline adds
+scoped Markdown rule fragments (`~/.kodax/rules`, `.kodax/rules`), the
+`productHistoryLocation` and `productHistoryTurnResolution` Host capabilities,
+and a narrower Windows boot-identity query. A paged original input page
+replaced by capacity admission now stays unread. Complete audited
 Windows programs move into packaged resources so the CLI again preserves
-49 KiB beneath the unchanged 5 MiB limit. LibreOffice may recalculate fields;
+49 KiB beneath the unchanged 5 MiB limit. This remains below the 64 KiB
+reserve targeted for v0.7.99. LibreOffice may recalculate fields;
 conversion is not proof of Word/WPS pagination or current TOC values.
 
 Joint regression, artifact and bounded real-model results are recorded in
