@@ -614,9 +614,13 @@ Vitest 4.1.11 的 `vi.waitFor` 默认 timeout 为 1,000ms；外层测试的 20,0
 - `src/sdk-runtime.actor-exceptions.test.ts`：temporary Session、checkpoint 关闭、无事件 unknown、共享 fence、通知失败和 Shell cleanup 解除后收敛。
 - `src/sdk-runtime.actor-stop.test.ts`：Stop 两赢家、真实 Run-store/确认/读回/通知故障，以及 owner/revision 被替换后的旧回调和旧 Host close。
 - `src/sdk-runtime.actor-crash.test.ts`：两个真实进程硬崩溃停点。专属 fixture 进程在 threads pool 运行，父仅 kill 自己 spawn 的 handle，校验 marker PID/Turn/Run/真实 save phase；重启不重执行旧 Turn。
+- `src/sdk-runtime.actor-hook-idempotency.test.ts`：重复 canonical hook、旧 Turn 通知与同 Actor 后续 Turn 隔离。
+- `src/sdk-runtime.actor-races.test.ts`：A 已完成后 B unknown，以及 checkpoint 关闭失败、所有权保持、重试关闭和恢复。
 
 两个硬崩溃回归已实际 2/2 通过。crash fixture 的后缀路径和 Node builtin mock 曾导致门控未命中；这些夹具错误修正后才计通过，不作为生产 RED。父套件不把预期硬退出算作未处理 worker 错误。
 
 原 generation-actors 文件的五处五秒完成期限已撤除。等待按精确 `agents.output` 判定，终态错误立即失败，`agents.wait(...,100,{signal})` 仅作唤醒，保留外层预算。失败 hook 输出最近 output/Run/event、执行次数、有界 `coding:actors` sink 和真实 save-attempt 阶段诊断，不在失败 hook 再访问 SDK 或磁盘。既有 1,200ms 延迟场景保留为附加慢存储回归；它不替代精确 terminal-save gate 或硬崩溃证据。
 
 生产冻结点 SDK blob 为 `adf5fded8ca0141d1aceac2ebc69effe54ea4dce`，另两生产模块及 CLI 增量记录于 [构建预算审计](../designs/actor-settlement-bundle-audit-2026-11-07.md)。最终全仓与完整构建正在执行，完成后追加实际计数，不把中间专项或旧构建当成最终通过。
+
+P1 追加 2 文件 / 3 项独立执行全部通过；它们在默认全仓启动后加入，不归入那次预先收集的文件清单。generation 等待诊断顺序经复审调整后，完整文件另跑 10/10 通过。两项只改测试，生产冻结点保持不变。标准轴与需求轴交叉复审最终均无剩余发现。

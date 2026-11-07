@@ -275,7 +275,7 @@ Stop 的两种赢家、持久写入拒绝、提交后确认丢失、读回失败
 
 P0-C 包含两个已编写的真实子进程崩溃回归、撤销五秒完成等待及有界诊断，随后完成最终全仓和构建检查。真实崩溃夹具仅终止自己 spawn 的专属子进程，预期硬退出不作为普通测试错误；低层 Turn 定位回归同时覆盖同 Actor 的新旧 Turn。CLI 的增量和最小预算复核单列在 [Actor 构建预算审计](actor-settlement-bundle-audit-2026-11-07.md)。
 
-P1 已执行上述基本 Stop、unknown 晚确认、共享 fence 和 live-owner 竞争；重复 hook 的组合压力、A 已 canonical 后另一 Actor 进入 unknown、关闭失败与接管的组合压力尚未作为完整矩阵验收，不宣称 P1 全部完成。没有执行发布或 next-dev 整体合并，也没有写回另一工作区的 work mode 锁定改动。
+此 P0-B 提交时，P1 已执行上述基本 Stop、unknown 晚确认、共享 fence 和 live-owner 竞争，其余确定性验证在下面单独记录。没有执行发布或 next-dev 整体合并，也没有写回另一工作区的 work mode 锁定改动。
 
 #### Standards
 
@@ -284,3 +284,23 @@ P1 已执行上述基本 Stop、unknown 晚确认、共享 fence 和 live-owner 
 #### Spec
 
 独立最终审查：0 项剩余实现发现。精确 canonical、owner/revision/binding CAS、unknown 出口、checkpoint 关闭及 Shell cleanup 约束均已落实；专项、全仓、构建和未覆盖压力范围分别记录。
+
+### P0-C 与 P1：崩溃、重复交付及关闭竞争
+
+P0-C 回归已提交 `ef1af6fe9`。两个真实进程停点实际 2/2 通过；generation-actors 的五处固定五秒完成等待已删除。等待依精确 output 判断终态，事件只作提示，错误诊断使用有界缓存及 save-attempt；需求复审发现终态检查前多读了一次 Run 诊断，已调整为终态立即返回/失败，最后完整文件 10/10 通过。只改变测试，没有解冻生产源码。
+
+P1 新增两文件，最终串行组合执行 3/3 通过：
+
+- `sdk-runtime.actor-hook-idempotency.test.ts`：实际构造器截获已安装 committed hook，重复交付同一终态，再于同 Actor 新 Turn 执行时交付旧事件。两个 Run 的真实状态文件及 revision 不受重复通知改变，每个 Turn 仅一个完成事件，各执行一次。
+- `sdk-runtime.actor-races.test.ts`：A 已完成 canonical 和 Run 后，B 的精确 terminal rename 进入 unknown；A 的状态、输出和事件不回退，Session fence 保留，B 后续修复完成。
+- 同一 races 文件：真实 owner-release rename 注入一次 EIO；并发 close 复用 Promise，错误保留，活跃 owner 阻止 contender 接管；重试关闭成功后，原 Turn 以 fresh authority 和原 checkpoint 恢复，执行次数为原始一次加恢复一次。
+
+这些验证补齐 P1 的确定性边界矩阵，与前述 Stop 两赢家、共享 unknown、live-owner/revision 和写入/通知确认故障共同验收。它们不代表所有可能调度、概率失败率或长时间压力均已穷举。新增 P1 文件在全仓启动后加入，因此单独执行并保留 JSON，不伪称被此前已收集的默认套件包含；生产 blob 全程保持不变。
+
+#### Standards
+
+新增 P1 测试与 P0-C 诊断增量独立复审：0 项可行动发现。实际 save/rename 及状态文件验证，不添加生产测试注入点。
+
+#### Spec
+
+交叉审查其他 Agent 编写的文件：0 项剩余发现。P0-C 等待诊断顺序的 P2 已修正并定向验证；hook 重复投递、canonical 事实保持和关闭失败后的所有权边界符合第 6–7 节。
