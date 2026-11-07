@@ -592,3 +592,11 @@ Vitest 4.1.11 的 `vi.waitFor` 默认 timeout 为 1,000ms；外层测试的 20,0
 #### Spec
 
 独立需求评审：0 项发现，无严重级别。保留原 Turn、fresh authority、checkpoint 和 Stop 断言；真实 Session rename 延迟、第三次 Host 启动后的终态和调用次数检查覆盖持久化与不重放。受控复现与历史全量 trace 明确分开；未修改 work mode 锁定机制。
+
+### 2026-11-07 后续调查：五秒缓解不构成完整修复
+
+后续三路交叉审查和精确提交门控发现独立 Actor 的生产一致性缺口：`environment.release` 先提交 Run `completed`，Controller 随后才提交 Actor canonical terminal。门控时实际观测 Run 为 `completed`、Actor output 为 `running`、真实 save attempt 停在 `commit_inflight/rename`；硬终止该自建 Host worker 后，另一进程启动仍读到 Run `completed`，Actor Turn 却已 `interrupted`，恢复被拒。
+
+这确认了需要修复的独立 Run 结算屏障，不能继续将 `64dab173a` 的五秒等待解释为完整生产修复；历史全量失败仍不能唯一归因为人工慢落盘。门控与硬崩溃 raw 位于 OS 临时目录 `kodax-actor-root-cause-20261107`，没有提交 raw 或一次性探针。
+
+具体根因、证据边界、拟定的最小修复及验收门见 [Actor 重启结算分析](../designs/actor-restart-settlement-analysis-2026-11-07.md)。该方案尚未实施，验收门未计为通过。work mode 锁定机制及生产源码保持不变。
