@@ -2,7 +2,45 @@
 
 Status: **local pre-publication verification complete; final full suite passed**. The user clarified that the earlier conflict instruction concerned other chats editing concurrently, and confirmed no other chat was working. Investigation and implementation continued while preserving first-Run locking. This is a local candidate, not a release. No tag, remote push, npm/GitHub publication, installed Space/CLI replacement or next-dev feature merge occurred.
 
-## Saved-history and Windows boot update
+## Local KodaX mainline after integrating upstream daemon maintenance
+
+Merge `5057f7828` contains both the previously tested candidate `311a52f0b`
+and upstream `eba20154b`. The package built in the main checkout includes
+the release notes from `6568541ca`. The 9 failures from the earlier checkout
+were 6 legacy recovery failures and 3 outdated authorization expectations.
+The three original files ran under the fast configuration on main and passed
+all 13 current cases, including same-Run recovery and refusal to switch mode
+after admission.
+
+The production build and source/test typechecks passed in the main checkout.
+The complete `npm run test:fast` run passed 3,586 tests and skipped 55. The
+remaining default tests passed 16,171 and skipped 34. Vitest's default file
+inventory and the two JSON result sets agreed on all 1,443 files, with zero
+overlap. The combined result is **19,757 passed, 89 skipped, 0 failed**.
+
+| Mainline artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| npm beta.3 tarball | 12,050,777 | `ca00f27202ba67df4fb513acdd7b5f4339eaabbafeb9de4ca7a05a681cafd7f1` |
+| Windows x64 standalone ZIP | 63,612,425 | `7d7528d7d540652c896eadb6ad286bea6ac0dd2f7ca4b3c844128a69923e196b` |
+
+All 297 packaged dist files matched the production build. The CLI with five
+native manifests was 5,186,891 bytes, leaving 5,813 bytes below the existing
+49 KiB reserve gate. The 104 bundled regressions passed. The npm Host and
+the extracted Windows executable each removed an abandoned publication and
+preserved the live owner's file byte for byte. The ZIP also passed the 11
+existing archive scenarios with no Node or Bun on the child PATH.
+
+The published beta.2 upgrade fixture passed against a physical copy of the
+new tarball's dist. Earlier local attempts rejected a different beta.2
+archive at the integrity check and a Windows junction at the file-copy step.
+The passing test used the registry-pinned archive and ordinary dist files.
+Space's install-to-tarball comparison passed and both
+source Electron and the Windows executable passed 8/8 history scenarios.
+In both runs the legacy session copy resolved all 7 visible user turns and
+rereading the fork and rewound source returned turn 13. The additional
+packaged Host gate passed its 6 lifecycle scenarios (2 overlap with the 8).
+
+## Saved-history and Windows boot update before the mainline merge
 
 The candidate based on `a03b9f53c` includes the history changes and the
 one-property Windows boot query. The package measurements and acceptance
