@@ -2,11 +2,13 @@ import {
   _resetMessageQueueForTests,
   getMessageQueue,
   type AgentActorSnapshot,
+  type AgentEvent,
   type AgentExecutionInput,
   type AgentExecutionResult,
   type AgentExecutorPlaneBinding,
   type AgentTaskSnapshot,
   type AgentTurnExecutor,
+  type AgentTurnState,
 } from '@kodax-ai/agent';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -114,6 +116,76 @@ afterEach(() => {
 });
 
 describe('F270 coding Actor runtime adapter', () => {
+  it('quiesces only the exact Turn and ignores a stale request after a followup starts', async () => {
+    const signals = new Map<string, AbortSignal>();
+    const releases = new Map<string, () => void>();
+    executeChildAgentsMock.mockResolvedValueOnce(completedChild('Original turn completed.'));
+    executeChildAgentsMock.mockImplementation(async (_bundles, _ctx, childOptions) => {
+      const turnId = childOptions.actorTurnId;
+      const signal = childOptions.abortSignal;
+      if (!turnId || !signal) throw new Error('Quiesce fixture requires an exact Turn and cancellation signal.');
+      signals.set(turnId, signal);
+      let release!: () => void;
+      const execution = new Promise<void>(resolve => { release = resolve; });
+      releases.set(turnId, release);
+      signal.addEventListener('abort', release, { once: true });
+      if (signal.aborted) release();
+      try { await execution; } finally { signal.removeEventListener('abort', release); }
+      return completedChild('Executor drained.');
+    });
+    const session = new CodingActorSession({ sessionId: 'exact-turn-quiesce' });
+    const { ctx, options } = environment();
+    const root = session.attach(ctx, options);
+    try {
+      const original = await root.spawn({ taskName: 'worker', objective: 'Finish the original turn.' });
+      await vi.waitFor(() => expect(root.output(original.actorPath, original.turnId).state).toBe('completed'));
+      const followup = await session.followupRoot(original.actorPath, 'Start a new turn.');
+      const peer = await root.spawn({ taskName: 'peer', objective: 'Keep working independently.' });
+      await vi.waitFor(() => expect(signals.size).toBe(2));
+      expect(followup.turn.turnId).not.toBe(original.turnId);
+
+      await session.quiesceTurn(original.turnId, 'Late Stop for the completed turn.');
+      expect(root.output(original.actorPath, original.turnId).state).toBe('completed');
+      expect(root.output(followup.turn.actorPath, followup.turn.turnId).state).toBe('running');
+      expect(root.output(peer.actorPath, peer.turnId).state).toBe('running');
+      expect(signals.get(followup.turn.turnId)?.aborted).toBe(false);
+      expect(signals.get(peer.turnId)?.aborted).toBe(false);
+
+      await session.quiesceTurn(followup.turn.turnId, 'Stop only the current exact turn.');
+      expect(root.output(followup.turn.actorPath, followup.turn.turnId).state).toBe('interrupted');
+      expect(signals.get(followup.turn.turnId)?.aborted).toBe(true);
+      expect(root.output(peer.actorPath, peer.turnId).state).toBe('running');
+      expect(signals.get(peer.turnId)?.aborted).toBe(false);
+    } finally {
+      for (const release of releases.values()) release();
+      await session.close();
+    }
+  });
+
+  it('forwards committed terminal events with the matching Turn output already visible', async () => {
+    executeChildAgentsMock.mockResolvedValueOnce(completedChild('Canonical completion.'));
+    const observations: Array<{ event: AgentEvent; state: AgentTurnState }> = [];
+    const sessionOptions = {
+      sessionId: 'committed-event-forwarding',
+      onEventCommitted(event: AgentEvent) {
+        if (event.kind === 'turn_completed') {
+          observations.push({ event, state: session.rootControl().output(event.actorPath, event.turnId).state });
+        }
+      },
+    };
+    const session = new CodingActorSession(sessionOptions);
+    const { ctx, options } = environment();
+    const root = session.attach(ctx, options);
+    try {
+      const turn = await root.spawn({ taskName: 'worker', objective: 'Publish its committed result.' });
+      await vi.waitFor(() => expect(root.output(turn.actorPath, turn.turnId).state).toBe('completed'));
+      expect(observations).toEqual([{
+        event: expect.objectContaining({ kind: 'turn_completed', actorPath: turn.actorPath, turnId: turn.turnId }),
+        state: 'completed',
+      }]);
+    } finally { await session.close(); }
+  });
+
   it('waits for physical Workflow executors without waiting for another client subtree', async () => {
     const releases = new Map<string, () => void>();
     executeChildAgentsMock.mockImplementation(async (_bundles, _ctx, options) => {

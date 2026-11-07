@@ -424,11 +424,11 @@ assertSingleProviderCredentialModule('CLI', cliResult);
 
 const cliBytes = statSync(path.join(distDir, 'kodax_cli.js')).size;
 if (writeMetafile) writeFileSync(path.join(distDir, 'cli-meta.json'), JSON.stringify(cliResult.metafile));
-// Match the stricter published-artifact fence: preserve 49 KiB of CLI headroom.
+// Match the published-artifact fence: preserve 43 KiB of CLI headroom.
 // Audited program data stays in packaged resources, without trimming behavior.
-// Small-context recovery adds 5,169 bytes; the five-native composition fits
-// 5,071 KiB. See docs/designs/cli-startup-budget-audit-2026-11-06.md.
-assertBundleSize('CLI', cliBytes, 5 * 1024 * 1024 - 49 * 1024);
+// Actor settlement adds 5,916 bytes; the five-native composition fits 5,077 KiB.
+// See docs/designs/actor-settlement-bundle-audit-2026-11-07.md.
+assertBundleSize('CLI', cliBytes, 5 * 1024 * 1024 - 43 * 1024);
 log(`  ✓ dist/kodax_cli.js (${(cliBytes / 1024).toFixed(0)} kB)`);
 
 // Bare `-r` must show the picker without evaluating the full CLI graph.

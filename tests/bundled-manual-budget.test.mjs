@@ -14,7 +14,7 @@ test('npm package includes the required manual data', () => {
 });
 
 test('CLI retains room for native Responses within the existing 5 MiB limit', () => {
-  assert.ok(statSync(new URL('../dist/kodax_cli.js', import.meta.url)).size <= 5 * 1024 * 1024 - 49 * 1024);
+  assert.ok(statSync(new URL('../dist/kodax_cli.js', import.meta.url)).size <= 5 * 1024 * 1024 - 43 * 1024);
 });
 
 test('published SDK and standalone coding package expose identical complete manuals', async () => {

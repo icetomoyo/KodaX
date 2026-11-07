@@ -11,6 +11,7 @@ import {
   type AgentExecutorPlaneBinding,
   type AgentActorStore,
   type AgentControllerHealth,
+  type AgentEvent,
   type AgentExecutionInput,
   type AgentExecutionResult,
   type AgentIterationProgress,
@@ -81,6 +82,7 @@ export interface CodingActorSessionOptions {
   readonly owner?: AgentActorOwner;
   readonly isOwnerAlive?: (owner: AgentActorOwner) => boolean | Promise<boolean>;
   readonly onHealthChanged?: (health: AgentControllerHealth) => void;
+  readonly onEventCommitted?: (event: AgentEvent) => void | Promise<void>;
 }
 
 export interface CodingActorEnvironment {
@@ -231,6 +233,7 @@ export class CodingActorSession {
         message: error instanceof Error ? error.message : String(error),
       }),
       onHealthChanged: sessionOptions.onHealthChanged,
+      onEventCommitted: sessionOptions.onEventCommitted,
       onMessageCommitted: (message) => publishRootMailboxMessage(
         this.controller,
         message,
@@ -520,6 +523,10 @@ export class CodingActorSession {
     this.environmentsByActor.clear();
     this.clientTurnOwners.clear();
     this.environment = undefined;
+  }
+
+  quiesceTurn(turnId: string, reason?: string): Promise<void> {
+    return this.controller.quiesce(reason, undefined, turnId);
   }
 
   quiesce(
