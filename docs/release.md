@@ -13,7 +13,9 @@ Target machines do **not** need Node.js or any runtime installed.
 This is an unpublished local candidate on `codex/beta3-integration`. Preparation
 stops before tagging, pushing, npm/GitHub publication or replacing installed
 Space/CLI packages. The last actually published Host-upgrade baseline remains
-`0.7.97-beta.1`; preparing a version does not advance that baseline.
+`0.7.97-beta.2`, confirmed in the public npm registry on 2026-11-07
+(published 2026-11-04T23:47:39.827Z). Preparing beta.3 does not advance it.
+The CI/Release upgrade fixture pins that public tarball by SHA-512.
 
 The candidate combines capacity recovery and complete-summary parsing,
 durable independent Actor settlement/restart reconciliation, the first-root-Run
