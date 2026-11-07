@@ -14,6 +14,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Reduce Windows daemon startup time by requesting only the CIM property
+  needed to verify the current boot for interrupted-exit recovery.
 - Recover from context-capacity errors with bounded reads, adaptive compaction
   budgets and strict complete-summary parsing. Retain original tool evidence
   and report capacity failure instead of leaving execution silently stalled.

@@ -1482,7 +1482,7 @@ function readWindowsBootIdentity(): string | undefined {
   }
   const script = String.raw`
 # KodaXWindowsBootIdentity-v1
-$boot = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime
+$boot = (Get-CimInstance Win32_OperatingSystem -Property LastBootUpTime -ErrorAction Stop).LastBootUpTime
 [Console]::Out.Write($boot.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture))
 `;
   const executable = windowsAclPowerShellExecutable();
