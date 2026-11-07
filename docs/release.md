@@ -34,6 +34,9 @@ next-dev feature merge is deferred until after this repair release.
 
 ## v0.7.97-beta.2 release preparation
 
+Historical preparation record: the publication status below predates the
+beta.2 publication confirmed in the beta.3 section above.
+
 Release state: `v0.7.97-beta.2` is a candidate awaiting multi-platform CI.
 npm publication has not occurred. The candidate is the second beta of the
 v0.7.97 line, hardening Script execution reliability: VM call paths expose
