@@ -118,6 +118,7 @@ describe('F269 shared Runtime contracts', () => {
     expect(applied).toEqual({
       revision: 1,
       value: { model: 'model-a', agentMode: 'ama' },
+      workModeLocked: false,
     });
     await expect(runtime.sessions.updateSettingsVersioned(
       session.id,

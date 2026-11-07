@@ -138,6 +138,8 @@ function restoreSettingsPatch(
 ): ClientSessionSettingsPatch {
   const restore: Record<string, string | number | boolean | null> = {};
   for (const key of Object.keys(applied)) {
+    // Work mode belongs to the Session once its first run starts.
+    if (key === 'workMode') continue;
     const value = (previous as Record<string, unknown>)[key];
     restore[key] =
       typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
@@ -169,7 +171,7 @@ export async function runOneShotClientTask(
   const plan = await resolveOneShotSession(client, options, prompt);
 
   const patch = toOneShotSettingsPatch(options);
-  // Flags stay per-invocation: settings are patched for this run and
+  // Except for the Session's fixed work mode, flags stay per-invocation: settings are patched for this run and
   // restored afterwards, for resumed AND freshly created persistent
   // sessions (pre-T35 run options never persisted). A concurrent run
   // another client starts on the same session during this window also

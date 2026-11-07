@@ -2,11 +2,11 @@ import type { Command } from './types.js';
 
 /** One Session selector; /mode remains the independent permission control. */
 export const workModeCommand: Command = {
-  name: 'work-mode', description: 'Select Agent, Coding or Script for this idle Session',
+  name: 'work-mode', description: 'Select Agent, Coding or Script before the first Run',
   usage: '/work-mode [agent|coding|script]',
   handler: async (args, _context, callbacks, current) => {
     if (!args.length) return { success: true,
-      message: `Work mode: ${current.hostSettings ? current.hostSettings.workMode ?? 'coding' : current.workMode ?? 'coding'}\nChoices: agent, coding (default), script. Permissions and AMA strategy are unchanged.` };
+      message: `Work mode: ${current.hostSettings ? current.hostSettings.workMode ?? 'coding' : current.workMode ?? 'coding'}\nNew Session choices: agent, coding (default), script. Fixed after the first Run. Permissions and AMA strategy are unchanged.` };
     const mode = args[0]?.toLowerCase();
     if (args.length !== 1 || (mode !== 'agent' && mode !== 'coding' && mode !== 'script')) {
       return { success: false, message: 'Usage: /work-mode [agent|coding|script]' };

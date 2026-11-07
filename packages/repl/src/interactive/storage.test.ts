@@ -2346,6 +2346,19 @@ describe('FileSessionStorage', () => {
     }));
   });
 
+  it('preserves the permanent work mode lock across stale snapshots', async () => {
+    const { FileSessionStorage } = await import('./storage.js');
+    const storage = new FileSessionStorage({ sessionsDir: testSessionsDir() });
+    const id = 'session-work-mode-lock';
+    const stale = { messages: [], title: 'New', gitRoot: KODAX_REPO_ROOT, runtimeInfo: { surface: 'code' } };
+    await storage.save(id, stale);
+    await storage.mutateRuntimeInfo(id, current => ({ ...current, workModeLocked: true }));
+    for (const runtimeInfo of [stale.runtimeInfo, { ...stale.runtimeInfo, workModeLocked: false }]) {
+      await storage.save(id, { ...stale, runtimeInfo });
+      await expect(storage.load(id)).resolves.toMatchObject({ runtimeInfo: { workModeLocked: true } });
+    }
+  });
+
   it('atomically preserves sandbox worktree roots across a stale Session snapshot', async () => {
     const { FileSessionStorage } = await import('./storage.js');
     const storage = new FileSessionStorage({ sessionsDir: testSessionsDir() });

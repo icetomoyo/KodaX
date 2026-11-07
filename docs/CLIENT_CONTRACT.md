@@ -213,8 +213,9 @@ Learning/Workflow 订阅的 `ready` 只表示 Host 已完成注册，不表示�
 Session 可选 `planModeEffort` 表达明确的计划模式默认：Host 仅在模式为 `plan` 且没有 Session `effort` 覆盖时采用它；离开计划模式后恢复原有 effort 解析，客户端无需回写缓存。`null` 清除覆盖。既有 `sharedSessionSettings.keys` 声明支持；旧 Host 未列出该键时，新 SDK 在发送包含该字段的设置 mutation 前返回 `daemon_upgrade_required`，其他设置仍可使用，不提升整个 productClient 版本。ACP 初始化只提交明确的选项/环境意图，普通 prompt 不回写缓存设置；显式 prompt effort 和模式切换仍提交对应的窄设置意图。计划批准使用完整 `options.plan`，Host 模式变化通过 ACP `current_mode_update` 显示。
 
 Session 可选 `workMode` 为 `agent | coding | script`，缺失或 `null` 清除后采用 Coding；它不是权限或 AMA 模式，也不是全局 config 字段。
-仅安全空闲时经同一 Session owner 更新，普通与 versioned mutation 都拒绝活跃 Run；不排队隐式切换、不清空历史。
+仅首次 Run 被接纳前经同一 Session owner 选择；之后普通、versioned mutation 和单次 Run 参数均拒绝改成其他模式（同值写入允许）。版本化设置快照返回只读 `workModeLocked`；Host 持久化该事实，重启、历史清理或 Run 索引淘汰不会解锁，已有完整 lineage 的会话同样锁定。
 选择随 Session 重启恢复，模型切换不修改它。旧 Host 未在 `sharedSessionSettings.keys` 声明 workMode 时，客户端在 mutation 前明确拒绝并要求升级。
+新版 Host 仅为新会话显式记录首轮前状态；旧版或导入会话缺少该事实时保持原模式，需新建会话才能另选。不在启动时读取、改写所有历史正文。
 Script 选择及 Run 准入进行无工具、无模型的本地 VM 可用性检查；失败保留原选择，不能先生成再发现执行器缺失。
 首轮提供完整叶契约，原生控制项、undo 和支持后台命令的 bash 保留；回执与原生错误证据保留，未结算 cell 不自动重放。
 当前 Windows 离线证据及尚未验证的完整任务效果见 [工具总计划](designs/tool-portfolio-plan.md)。

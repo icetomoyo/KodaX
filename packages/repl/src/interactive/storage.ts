@@ -4201,6 +4201,8 @@ export class FileSessionStorage implements KodaXSessionStorage {
             }),
             // Execution snapshots cannot change the Host-owned Session lifetime.
             ...(existing?.data.runtimeInfo?.temporary === true ? { temporary: true } : {}),
+            // First admission is permanent, including stale execution snapshots.
+            ...(existing?.data.runtimeInfo?.workModeLocked === true ? { workModeLocked: true } : {}),
             ...(!acceptSandboxWorktreeRoots
               && existing?.data.runtimeInfo?.sandboxWorktreeRoots !== undefined
               ? {

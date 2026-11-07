@@ -920,6 +920,8 @@ export interface ClientRunStopReceipt {
 export interface ClientSessionSettingsSnapshot {
   readonly revision: number;
   readonly value: ClientSessionSettings;
+  /** Host fact: work mode is fixed after first admission or inherited conversation history. */
+  readonly workModeLocked?: boolean;
 }
 
 export interface ClientSessionCancelInput {

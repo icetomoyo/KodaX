@@ -59,7 +59,7 @@ async function startHarness(prefix: string): Promise<Harness> {
     close: async () => {
       await runtime.close();
       await host.close();
-      await rm(homeDir, { recursive: true, force: true });
+      await rm(homeDir, { recursive: true, force: true, maxRetries: 3 });
     },
   };
 }
@@ -158,6 +158,7 @@ it('FEATURE_298 T35 — resume submits into the newest project session and resto
       gitRoot: (await getGitRootForTest()) ?? process.cwd(),
       surface: 'cli',
     });
+    await client.sessions.updateSettings(seeded.id, { workMode: 'agent' });
     await client.inputs.submit({
       sessionId: seeded.id, inputId: 'seed-input', text: 'seed turn',
     });
@@ -175,7 +176,10 @@ it('FEATURE_298 T35 — resume submits into the newest project session and resto
       context: { repoIntelligenceMode: 'full', repoIntelligenceTrace: true },
       session: { id: seeded.id, scope: 'user' },
     };
-    await client.sessions.updateSettings(seeded.id, { model: 'seed-model', workMode: 'coding', repoIntelligenceMode: 'light', repoIntelligenceTrace: false });
+    await client.sessions.updateSettings(seeded.id, { model: 'seed-model', repoIntelligenceMode: 'light', repoIntelligenceTrace: false });
+    await expect(runOneShotClientTask({ client, runtime: harness.runtime,
+      options: { ...options, workMode: 'coding' }, prompt: 'Do not change the existing mode.' }))
+      .rejects.toMatchObject({ code: 'conflict' });
     const result = await runOneShotClientTask({
       client, runtime: harness.runtime, options, prompt: 'Continue here.',
     });
@@ -188,7 +192,7 @@ it('FEATURE_298 T35 — resume submits into the newest project session and resto
     await expect.poll(async () => (await client.sessions.getSettings(seeded.id)).provider)
       .toBeUndefined();
     expect((await client.sessions.getSettings(seeded.id)).model).toBe('seed-model');
-    expect(await client.sessions.getSettings(seeded.id)).toMatchObject({ workMode: 'coding', repoIntelligenceMode: 'light', repoIntelligenceTrace: false });
+    expect(await client.sessions.getSettings(seeded.id)).toMatchObject({ workMode: 'agent', repoIntelligenceMode: 'light', repoIntelligenceTrace: false });
   } finally {
     await harness.close();
   }

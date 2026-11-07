@@ -1992,7 +1992,7 @@ export interface RuntimeSessionService {
   getSettings(sessionId: string): Promise<RuntimeSessionSettings>;
   getSettingsVersioned(
     sessionId: string,
-  ): Promise<RuntimeVersionedValue<RuntimeSessionSettings>>;
+  ): Promise<RuntimeVersionedValue<RuntimeSessionSettings> & { readonly workModeLocked?: boolean }>;
   /** Runtime-owned Auto classifier state used by diagnostics and status UI. */
   getAutoModeStats(sessionId: string): Promise<AutoModeStats | undefined>;
   updateSettings(
@@ -2003,7 +2003,7 @@ export interface RuntimeSessionService {
     sessionId: string,
     patch: RuntimeSessionSettingsPatch,
     options: RuntimeVersionedUpdateOptions,
-  ): Promise<RuntimeVersionedValue<RuntimeSessionSettings>>;
+  ): Promise<RuntimeVersionedValue<RuntimeSessionSettings> & { readonly workModeLocked?: boolean }>;
   appendNotice(
     input: RuntimeAppendNoticeInput,
   ): Promise<SessionTranscriptEntry | null>;
@@ -8523,7 +8523,7 @@ function createRuntimeSessionService(
           title: input.title ?? "",
           gitRoot: gitRoot ?? "",
           ...(input.tag !== undefined ? { tag: input.tag } : {}),
-          ...(runtimeInfo !== undefined ? { runtimeInfo } : {}),
+          runtimeInfo: { ...runtimeInfo, workModeLocked: false },
           scope: "user",
         };
         const sessionWorkspaceRoot = projectPath ?? gitRoot ?? process.cwd();
@@ -9387,8 +9387,11 @@ function createRuntimeSessionService(
     async getSettingsVersioned(sessionId) {
       ensureOpen();
       await sessionViews.flush(sessionId);
-      await admission.loadRequired(sessionId);
-      return settingsOwner.read(sessionId);
+      const data = await admission.loadRequired(sessionId);
+      return {
+        ...await settingsOwner.read(sessionId),
+        workModeLocked: sessionHasWorkModeHistory(data),
+      };
     },
 
     async getSettings(sessionId) {
@@ -9416,7 +9419,16 @@ function createRuntimeSessionService(
 
     async updateSettings(sessionId, patch) {
       return mutateActiveSession(sessionId, async (sessionData) => {
-        if (patch.workMode !== undefined) assertSessionMutationAllowed(sessionId, activeRunOwner);
+        if (patch.workMode !== undefined) {
+          const current = await settingsOwner.read(sessionId);
+          if ((current.value.workMode ?? 'coding') !== (patch.workMode ?? 'coding')) {
+            assertSessionMutationAllowed(sessionId, activeRunOwner);
+          }
+          assertWorkModeUnchanged(
+            sessionHasWorkModeHistory(sessionData),
+            current.value.workMode ?? 'coding', patch.workMode ?? 'coding',
+          );
+        }
         if (patch.workMode === 'script') await assertWorkModeAvailable({ workMode: patch.workMode });
         return (await settingsOwner.update(
           sessionId,
@@ -9431,14 +9443,24 @@ function createRuntimeSessionService(
       return mutateActiveSession(
         sessionId,
         async (sessionData) => {
-          if (patch.workMode !== undefined) assertSessionMutationAllowed(sessionId, activeRunOwner);
+          const workModeLocked = sessionHasWorkModeHistory(sessionData);
+          if (patch.workMode !== undefined) {
+            const current = await settingsOwner.read(sessionId);
+            if ((current.value.workMode ?? 'coding') !== (patch.workMode ?? 'coding')) {
+              assertSessionMutationAllowed(sessionId, activeRunOwner);
+            }
+            assertWorkModeUnchanged(
+              workModeLocked,
+              current.value.workMode ?? 'coding', patch.workMode ?? 'coding',
+            );
+          }
           if (patch.workMode === 'script') await assertWorkModeAvailable({ workMode: patch.workMode });
-          return settingsOwner.update(
+          return { ...await settingsOwner.update(
             sessionId,
             patch,
             options.expectedRevision,
             (settings) => assertSessionSettingsAllowed(sessionData, settings),
-          );
+          ), workModeLocked };
         },
       );
     },
@@ -12203,6 +12225,7 @@ async function createRuntimeRunService(deps: {
     );
     deps.persistence.assertPendingInputsReadable(input.sessionId);
     let admittedSessionContext = requiredAfterRun?.admittedSessionContext;
+    let hasWorkModeHistory = requiredAfterRun !== undefined;
     if (requiredAfterRun !== undefined && admittedSessionContext === undefined) {
       throw new RuntimeContinuationStaleError(requiredAfterRun.runId);
     }
@@ -12211,6 +12234,7 @@ async function createRuntimeRunService(deps: {
       const session = await deps.sessionAdmission.loadExecutable(
         input.sessionId,
       );
+      hasWorkModeHistory = sessionHasWorkModeHistory(session);
       await migrateLegacyWorkspaceSandboxRoots({
         session,
         sessionId: input.sessionId,
@@ -12237,6 +12261,13 @@ async function createRuntimeRunService(deps: {
     if (recovery) options = { ...options, session: { ...options.session, generationCheckpoint: recovery.data.checkpoint } };
     await protectRuntimeWorkflowProject(options.context?.executionCwd);
     assertExecutionWorkMode(options.executionWorkMode, resolveWorkMode(options));
+    const selectedWorkMode = resolveWorkMode(options);
+    if (selectedWorkMode !== (settings.workMode ?? 'coding')) {
+      assertWorkModeUnchanged(
+        hasWorkModeHistory,
+        settings.workMode ?? 'coding', selectedWorkMode,
+      );
+    }
     await assertWorkModeAvailable(options);
     if (trustedInput.productSession === true || productInput !== undefined) {
       // Product Runs use the same Host-owned directory as declarative starts.
@@ -12557,6 +12588,20 @@ async function createRuntimeRunService(deps: {
     }
     execution?.assertAdmission?.();
     trustedInput.assertAdmission?.();
+    if (selectedWorkMode !== (settings.workMode ?? 'coding')) {
+      await deps.settingsOwner.update(input.sessionId, { workMode: selectedWorkMode }, undefined,
+        updated => assertSessionSettingsAllowed(admittedSessionContext!, updated));
+    }
+    if (admittedSessionContext.runtimeInfo?.workModeLocked !== true) {
+      const mutateRuntimeInfo = deps.sessionManager.storage.mutateRuntimeInfo;
+      if (!mutateRuntimeInfo) throw new Error('Session storage cannot persist the work mode lock.');
+      const found = await mutateRuntimeInfo.call(deps.sessionManager.storage, input.sessionId, current => {
+        const locked = { ...current, workModeLocked: true };
+        admittedSessionContext.runtimeInfo = locked;
+        return locked;
+      });
+      if (!found) throw new Error(`Session not found while locking work mode: ${input.sessionId}`);
+    }
     if (trustedInput.productBatch) productQueue.submitBatch(input.sessionId, trustedInput.productBatch, runId);
     if (recovery) {
       const saved = await deps.sessionAdmission.loadExecutable(input.sessionId);
@@ -25947,6 +25992,21 @@ function createUnsupportedHostToolService(): RuntimeHostToolService {
       return false;
     },
   };
+}
+
+function sessionHasWorkModeHistory(data: KodaXSessionData): boolean {
+  // Only an explicit new-Session marker permits selection. Legacy/imported
+  // Sessions keep their mode even when their admission history was pruned.
+  return data.runtimeInfo?.workModeLocked !== false || data.messages.length > 0 || data.lineage?.entries.some(
+    entry => entry.type === 'message' || entry.type === 'compaction',
+  ) === true;
+}
+
+function assertWorkModeUnchanged(locked: boolean, current: string, requested: string): void {
+  if (locked && current !== requested) {
+    throw Object.assign(new Error('Work mode is fixed after the first run. Start a new session to choose another mode.'),
+      { code: 'conflict' });
+  }
 }
 
 function assertSessionMutationAllowed(
