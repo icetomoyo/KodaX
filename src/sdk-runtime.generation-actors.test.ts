@@ -3,8 +3,9 @@ import fsPromises, { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { afterEach, expect, it, vi } from 'vitest';
-import { createSessionLineage } from '@kodax-ai/agent';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { createSessionLineage, setKodaXDiagnosticSink, type AgentActorSaveAttempt } from '@kodax-ai/agent';
+import { FileSessionStorage } from '@kodax-ai/repl';
 import { executeChildAgents } from '../packages/coding/src/child-executor.js';
 import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { KodaXBaseProvider, registerModelProvider, clearRuntimeModelProviders, type KodaXMessage } from '@kodax-ai/llm';
@@ -13,10 +14,68 @@ vi.mock('../packages/coding/src/child-executor.js', async importOriginal => ({
   ...await importOriginal<typeof import('../packages/coding/src/child-executor.js')>(), executeChildAgents: vi.fn(),
 }));
 const directories: string[] = [];
+const actorDiagnostics: string[] = [];
+const actorSaves: AgentActorSaveAttempt[] = [];
+let lastActorObservation: unknown;
+let restoreDiagnostics: (() => void) | undefined;
+beforeEach(({ onTestFailed }) => {
+  actorDiagnostics.length = 0;
+  actorSaves.length = 0;
+  lastActorObservation = undefined;
+  onTestFailed(() => {
+    process.stderr.write(`Actor recovery diagnostics: ${JSON.stringify({ lastActorObservation,
+      executorCalls: vi.mocked(executeChildAgents).mock.calls.length, actorDiagnostics,
+      saves: actorSaves.map(attempt => ({ phase: attempt.phase(), diagnostics: attempt.diagnostics() })) })}\n`);
+  });
+  restoreDiagnostics = setKodaXDiagnosticSink(diagnostic => {
+    if (diagnostic.source !== 'coding:actors') return;
+    if (actorDiagnostics.length === 16) actorDiagnostics.shift();
+    actorDiagnostics.push(`${diagnostic.level}: ${diagnostic.message}`.slice(0, 512));
+  });
+  const beginSave = FileSessionStorage.prototype.beginActorSnapshotSave;
+  vi.spyOn(FileSessionStorage.prototype, 'beginActorSnapshotSave').mockImplementation(function (
+    this: FileSessionStorage, sessionId, snapshot, expectedRevision,
+  ) {
+    const attempt = beginSave.call(this, sessionId, snapshot, expectedRevision);
+    if (actorSaves.length === 16) actorSaves.shift();
+    actorSaves.push(attempt);
+    return attempt;
+  });
+});
+async function awaitActorCompletion(runtime: Awaited<ReturnType<typeof createKodaXRuntime>>, sessionId: string,
+  turn: { readonly actorPath: string; readonly turnId: string }, signal: AbortSignal): Promise<void> {
+  let cursor = 0;
+  let lastOutput: unknown;
+  let lastRun: unknown;
+  let lastEvent: unknown;
+  try {
+    for (;;) {
+      signal.throwIfAborted();
+      const output = await runtime.agents.output(sessionId, turn.actorPath, turn.turnId);
+      lastOutput = output;
+      lastActorObservation = { turn, lastOutput, lastRun, lastEvent };
+      signal.throwIfAborted();
+      if (output.state !== 'accepted' && output.state !== 'running') {
+        expect(output.state).toBe('completed');
+        return;
+      }
+      lastRun = await runtime.runs.list({ sessionId });
+      lastActorObservation = { turn, lastOutput, lastRun, lastEvent };
+      const event = await runtime.agents.wait(sessionId, cursor, 100, { signal });
+      lastEvent = event;
+      if (event) cursor = event.sequence;
+    }
+  } catch (error: unknown) {
+    throw new Error(`Exact Actor completion failed: ${JSON.stringify({ turn, lastOutput, lastRun, lastEvent,
+      executorCalls: vi.mocked(executeChildAgents).mock.calls.length, actorDiagnostics,
+      saves: actorSaves.map(attempt => ({ phase: attempt.phase(), diagnostics: attempt.diagnostics() })) })}`, { cause: error });
+  }
+}
 afterEach(async () => { vi.restoreAllMocks(); vi.mocked(executeChildAgents).mockReset(); clearRuntimeModelProviders(); delete process.env.KODAX_GENERATION_FIXTURE_KEY;
+  restoreDiagnostics?.();
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 
-it('preserves and resumes an original Workflow leaf after Host restart without invoking its script again', async () => {
+it('preserves and resumes an original Workflow leaf after Host restart without invoking its script again', async ({ signal }) => {
   const homeDir = await mkdtemp(join(tmpdir(), 'kodax-workflow-generation-'));
   directories.push(homeDir);
   class FixtureProvider extends KodaXBaseProvider {
@@ -61,13 +120,13 @@ it('preserves and resumes an original Workflow leaf after Host restart without i
     const freshAuthority = { resumeCheckpoint: true,
       providerCredentialAccessFactory: () => ({ allowedProviders: ['generation-fixture'], acquire: async () => 'fixture-only' }) };
     await restarted.agents.followup(session.id, actor.path, '', freshAuthority);
-    await vi.waitFor(async () => expect((await restarted.agents.output(session.id, actor.path, actor.currentTurnId!)).state).toBe('completed'), { timeout: 5_000 });
+    await awaitActorCompletion(restarted, session.id, { actorPath: actor.path, turnId: actor.currentTurnId! }, signal);
     expect(executeChildAgents).toHaveBeenCalledTimes(2);
     expect((await restarted.agents.output(session.id, actor.path, actor.currentTurnId!)).structured).toMatchObject({ taskId: originalBundle!.id });
   } finally { await restarted.close(); }
 }, 30_000);
 
-it.each([0, 1, 2, 'session-stop', 'slow-settlement'] as const)('resumes an independently authorized Actor and its nested checkpoints after Host restart (depth=%s)', async scenario => {
+it.for([0, 1, 2, 'session-stop', 'slow-settlement'] as const)('resumes an independently authorized Actor and its nested checkpoints after Host restart (depth=%s)', { timeout: 20_000 }, async (scenario, { signal }) => {
   const depth = typeof scenario === 'number' ? scenario : 0;
   const homeDir = await mkdtemp(join(tmpdir(), 'kodax-actor-generation-'));
   directories.push(homeDir);
@@ -145,9 +204,8 @@ it.each([0, 1, 2, 'session-stop', 'slow-settlement'] as const)('resumes an indep
     }
     const recovered = await restarted.agents.followup(session.id, turn.actorPath, '', { ...authority, resumeCheckpoint: true });
     expect(recovered.turn.turnId).toBe(turn.turnId);
-    // Durable settlement may outlast vi.waitFor's default 1s under filesystem contention.
-    await vi.waitFor(async () => expect((await restarted.agents.output(session.id, turn.actorPath, turn.turnId)).state).toBe('completed'), { timeout: 5_000 });
-    for (const nestedTurn of nestedTurns) await vi.waitFor(async () => expect((await restarted.agents.output(session.id, nestedTurn.actorPath, nestedTurn.turnId)).state).toBe('completed'), { timeout: 5_000 });
+    await awaitActorCompletion(restarted, session.id, turn, signal);
+    for (const nestedTurn of nestedTurns) await awaitActorCompletion(restarted, session.id, nestedTurn, signal);
     expect(executeChildAgents).toHaveBeenCalledTimes((depth + 1) * 2);
     if (scenario === 'slow-settlement') {
       expect(delayedSettlementWrite).toBe(true);
@@ -159,9 +217,9 @@ it.each([0, 1, 2, 'session-stop', 'slow-settlement'] as const)('resumes an indep
       } finally { await verified.close(); }
     }
   } finally { await restarted.close(); }
-}, 20_000);
+});
 
-it.each(['actor', 'workflow', 'stopped-actor'] as const)('checkpoints the parent mailbox receipt and resumes its child after Host restart (%s)', async scenario => {
+it.for(['actor', 'workflow', 'stopped-actor'] as const)('checkpoints the parent mailbox receipt and resumes its child after Host restart (%s)', { timeout: 30_000 }, async (scenario, { signal }) => {
   const kind = scenario === 'stopped-actor' ? 'actor' : scenario;
   const agentMode = 'ama';
   const homeDir = await mkdtemp(join(tmpdir(), 'kodax-wait-generation-'));
@@ -227,14 +285,14 @@ it.each(['actor', 'workflow', 'stopped-actor'] as const)('checkpoints the parent
     });
     const recovered = await restarted.runs.recover({ runId: handle.runId });
     await recovered.result;
-    await vi.waitFor(async () => expect((await restarted.agents.output(session.id, actor.path, actor.currentTurnId!)).state).toBe('completed'), { timeout: 5_000 });
+    await awaitActorCompletion(restarted, session.id, { actorPath: actor.path, turnId: actor.currentTurnId! }, signal);
     expect(executeChildAgents).toHaveBeenCalledTimes(2);
     expect(JSON.stringify(requests.at(-1))).toContain('interrupted');
     expect(JSON.stringify(requests.at(-1))).toContain('tool-2');
   } finally { await restarted.close(); }
-}, 30_000);
+});
 
-it('keeps identical Actor turn IDs in different Sessions in separate recovery records', async () => {
+it('keeps identical Actor turn IDs in different Sessions in separate recovery records', async ({ signal }) => {
   const homeDir = await mkdtemp(join(tmpdir(), 'kodax-actor-session-boundary-'));
   directories.push(homeDir);
   const first = await createKodaXRuntime({ homeDir, defaultProvider: 'deepseek' });
@@ -265,7 +323,7 @@ it('keeps identical Actor turn IDs in different Sessions in separate recovery re
     });
     for (const [index, session] of sessions.entries()) {
       await restarted.agents.followup(session.id, turns[index]!.actorPath, '', { ...authority, resumeCheckpoint: true });
-      await vi.waitFor(async () => expect((await restarted.agents.output(session.id, turns[index]!.actorPath, turns[index]!.turnId)).state).toBe('completed'), { timeout: 5_000 });
+      await awaitActorCompletion(restarted, session.id, turns[index]!, signal);
     }
   } finally { await restarted.close(); }
 });

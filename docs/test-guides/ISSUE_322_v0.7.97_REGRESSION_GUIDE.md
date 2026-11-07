@@ -602,3 +602,21 @@ Vitest 4.1.11 的 `vi.waitFor` 默认 timeout 为 1,000ms；外层测试的 20,0
 具体根因、证据边界、拟定的最小修复及验收门见 [Actor 重启结算分析](../designs/actor-restart-settlement-analysis-2026-11-07.md)。该方案尚未实施，验收门未计为通过。work mode 锁定机制及生产源码保持不变。
 
 第二轮方案复核优先采用内部 committed-event hook 驱动 Run 结算，替代另建 Host 等待 finalizer；补充首次 dispatch 前持久关联，以及启动/后续 owner-death 两处对账。P0 必须同时覆盖 Actor 提交前和 Actor 已提交、Run 尚未提交两个硬崩溃停点，并包含基础 unknown、Run 写入失败、checkpoint 关闭收敛及撤销五秒等待；P1 扩大竞争和故障组合。反向停点本轮仅确认启动代码缺少对账，尚未执行该停点的硬崩溃验收，不计为通过。
+
+### 2026-11-07 分阶段修复与最终验证入口
+
+前文“尚未实施/未执行”是调查阶段的历史状态。P0-A 已提交 `c68e7abc8`，P0-B 及必要异常出口已提交 `0c37a4eb7`。具体实现、有效 RED→GREEN 和验证范围见 [实施记录](../designs/actor-restart-settlement-analysis-2026-11-07.md#11-分阶段实施记录)。容量修复、work mode 锁定及 next-dev 整体合并继续独立管理，没有发布安装包。
+
+新增源码回归入口：
+
+- `src/sdk-runtime.actor-settlement-recovery.test.ts`：持久关联、启动/后续 owner-death/直接 Stop 对账，legacy、失败详情、身份、CAS 和 Shell 清理约束。
+- `src/sdk-runtime.actor-terminal.test.ts`：精确真实 terminal-save/rename gate，completed、failed、iteration limit 和独立 Turn 范围。
+- `src/sdk-runtime.actor-exceptions.test.ts`：temporary Session、checkpoint 关闭、无事件 unknown、共享 fence、通知失败和 Shell cleanup 解除后收敛。
+- `src/sdk-runtime.actor-stop.test.ts`：Stop 两赢家、真实 Run-store/确认/读回/通知故障，以及 owner/revision 被替换后的旧回调和旧 Host close。
+- `src/sdk-runtime.actor-crash.test.ts`：两个真实进程硬崩溃停点。专属 fixture 进程在 threads pool 运行，父仅 kill 自己 spawn 的 handle，校验 marker PID/Turn/Run/真实 save phase；重启不重执行旧 Turn。
+
+两个硬崩溃回归已实际 2/2 通过。crash fixture 的后缀路径和 Node builtin mock 曾导致门控未命中；这些夹具错误修正后才计通过，不作为生产 RED。父套件不把预期硬退出算作未处理 worker 错误。
+
+原 generation-actors 文件的五处五秒完成期限已撤除。等待按精确 `agents.output` 判定，终态错误立即失败，`agents.wait(...,100,{signal})` 仅作唤醒，保留外层预算。失败 hook 输出最近 output/Run/event、执行次数、有界 `coding:actors` sink 和真实 save-attempt 阶段诊断，不在失败 hook 再访问 SDK 或磁盘。既有 1,200ms 延迟场景保留为附加慢存储回归；它不替代精确 terminal-save gate 或硬崩溃证据。
+
+生产冻结点 SDK blob 为 `adf5fded8ca0141d1aceac2ebc69effe54ea4dce`，另两生产模块及 CLI 增量记录于 [构建预算审计](../designs/actor-settlement-bundle-audit-2026-11-07.md)。最终全仓与完整构建正在执行，完成后追加实际计数，不把中间专项或旧构建当成最终通过。
