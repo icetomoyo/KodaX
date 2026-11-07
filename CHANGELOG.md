@@ -6,8 +6,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Prepare `0.7.97-beta.3` locally. This candidate has not been published.
+- Package the complete audited Windows containment programs as byte-verified
+  resources, restoring 49 KiB of CLI reserve beneath the existing 5 MiB limit.
+
 ### Fixed
 
+- Recover from context-capacity errors with bounded reads, adaptive compaction
+  budgets and strict complete-summary parsing. Retain original tool evidence
+  and report capacity failure instead of leaving execution silently stalled.
+- Settle independent Actor Runs only after the exact Turn's terminal state is
+  durable. Reconcile both crash windows without replaying completed execution;
+  preserve cancellation, unknown outcomes and close/ownership boundaries.
+- Lock Session work mode after the first accepted root Run, preserving the lock
+  through independent Actor settlement, checkpoint recovery and later idle time.
 - **Artifacts — DOCX visual review**: when the host supplies a LibreOffice
   executable, DOCX render now converts through it by default (Writer PDF
   export → PDF.js) with evidence still bound to the DOCX source hash; the

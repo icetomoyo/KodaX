@@ -8,6 +8,28 @@ Use [SDK_MIGRATION.md](SDK_MIGRATION.md) for the supported current surface.
 KodaX is distributed as **standalone binaries** built with `bun build --compile`.
 Target machines do **not** need Node.js or any runtime installed.
 
+## v0.7.97-beta.3 local preparation
+
+This is an unpublished local candidate on `codex/beta3-integration`. Preparation
+stops before tagging, pushing, npm/GitHub publication or replacing installed
+Space/CLI packages. The last actually published Host-upgrade baseline remains
+`0.7.97-beta.1`; preparing a version does not advance that baseline.
+
+The candidate combines capacity recovery and complete-summary parsing,
+durable independent Actor settlement/restart reconciliation, the first-root-Run
+work-mode lock, and DOCX/LibreOffice evidence improvements. Complete audited
+Windows programs move into packaged resources so the CLI again preserves
+49 KiB beneath the unchanged 5 MiB limit. LibreOffice may recalculate fields;
+conversion is not proof of Word/WPS pagination or current TOC values.
+
+Joint regression, artifact and bounded real-model results are recorded in
+[the integration readiness record](designs/beta3-integration-readiness-2026-11-07.md).
+Real-model probes use a 64K application budget on models with larger native
+windows; they do not validate native sub-100K models or arbitrary whole-document
+reading quality. Cross-platform native release gates and installed Space/SDK
+acceptance remain separate from local Windows candidate evidence. The remaining
+next-dev feature merge is deferred until after this repair release.
+
 ## v0.7.97-beta.2 release preparation
 
 Release state: `v0.7.97-beta.2` is a candidate awaiting multi-platform CI.
