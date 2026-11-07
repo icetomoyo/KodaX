@@ -9,7 +9,7 @@ import { test } from 'node:test';
 
 const exec = promisify(execFile);
 const workflow = await readFile(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
-const required = ['provider-capabilities.json', 'manual-topics.json', 'static-text.json', 'runtime-daemon-schema.json', 'windows-native-scripts.json', 'generated-config-templates.json'];
+const required = ['provider-capabilities.json', 'manual-topics.json', 'static-text.json', 'runtime-daemon-schema.json', 'windows-native-scripts.json', 'windows-effect-job-programs.json', 'generated-config-templates.json'];
 
 test('the actual npm pack inventory includes runtime data sidecars', async () => {
   const npm = [process.env.npm_execpath,
