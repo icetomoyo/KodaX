@@ -387,12 +387,16 @@ describe('resolved shell execution', () => {
     expect(await remaining).toContain('shared-probe-completed');
   });
 
-  it('starts a fresh probe for a caller arriving after the last waiter cancels', async () => {
+  it('starts a fresh probe for a caller arriving after the last waiter cancels', async ({ signal, onTestFailed }) => {
     const cwd = await mkdtemp(path.join(tmpdir(), 'kodax-shell-retry-probe-'));
     const probeCount = path.join(cwd, 'probe-count.txt');
+    // Reproduce startup beyond the old 2s test deadline, inside the real 10s probe budget.
+    // The first probe then stays pending until cancellation; its replacement exits immediately.
     const delayScript = Buffer.from([
-      `require("node:fs").appendFileSync(${JSON.stringify(probeCount)},"x");`,
-      'setTimeout(()=>{},400)',
+      `const fs=require("node:fs");const file=${JSON.stringify(probeCount)};`,
+      'const first=!fs.existsSync(file);',
+      'const ready=()=>{fs.appendFileSync(file,"x");if(first)setInterval(()=>{},1000);};',
+      'if(first)setTimeout(ready,2200);else ready();',
     ].join('')).toString('base64');
     const setup =
       `"${process.execPath}" -e "eval(Buffer.from('${delayScript}','base64').toString())"`;
@@ -401,6 +405,16 @@ describe('resolved shell execution', () => {
       cache: { ttlMs: 60_000 },
     };
     const controller = new AbortController();
+    let firstSettled = false;
+    let firstResult: string | undefined;
+    let firstError: unknown;
+    let retryResult: string | undefined;
+    let probeMarkers: string | undefined;
+    onTestFailed(() => {
+      process.stderr.write(`Fresh shell probe evidence: ${JSON.stringify({ probeMarkers, firstSettled,
+        firstResult: firstResult?.slice(0, 2048), firstError: firstError instanceof Error ? firstError.message : firstError,
+        retryResult: retryResult?.slice(0, 2048) })}\n`);
+    });
     const cancelled = toolBash(
       { command: 'echo cancelled-command-must-not-run' },
       {
@@ -408,20 +422,39 @@ describe('resolved shell execution', () => {
         abortSignal: controller.signal,
       },
     );
-    await vi.waitFor(() => {
-      expect(existsSync(probeCount)).toBe(true);
-    }, { timeout: 2_000 });
-    controller.abort();
-    const retried = toolBash(
-      { command: 'echo fresh-probe-completed' },
-      context(cwd, contract),
+    const firstObservation = cancelled.then(
+      value => { firstSettled = true; firstResult = value; },
+      error => { firstSettled = true; firstError = error; },
     );
-    expect(await cancelled).toContain('[Cancelled] Operation cancelled by user');
-
-    const retryResult = await retried;
-    expect(retryResult).toContain('fresh-probe-completed');
-    expect(retryResult).not.toContain('[Cancelled]');
-    expect(await readFile(probeCount, 'utf8')).toBe('xx');
+    try {
+      for (;;) {
+        signal.throwIfAborted();
+        if (firstSettled) {
+          if (firstError !== undefined) throw firstError;
+          throw new Error(`First probe finished before its cancellation handshake: ${firstResult}`);
+        }
+        try { probeMarkers = await readFile(probeCount, 'utf8'); }
+        catch (error: unknown) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+        if (probeMarkers === 'x') break;
+        await new Promise(resolveDelay => setTimeout(resolveDelay, 25));
+      }
+      controller.abort();
+      const retried = toolBash(
+        { command: 'echo fresh-probe-completed' },
+        { ...context(cwd, contract), abortSignal: signal },
+      );
+      expect(await cancelled).toContain('[Cancelled] Operation cancelled by user');
+      retryResult = await retried;
+      expect(retryResult).toContain('fresh-probe-completed');
+      expect(retryResult).not.toContain('[Cancelled]');
+      probeMarkers = await readFile(probeCount, 'utf8');
+      expect(probeMarkers).toBe('xx');
+    } finally {
+      controller.abort();
+      await firstObservation;
+    }
   });
 
   it.runIf(process.platform === 'win32')(
