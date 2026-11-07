@@ -455,6 +455,20 @@ Both macOS jobs, Linux ARM64 and Windows Shell contracts also passed.
 The temporary diagnostic workflow, dispatch input and probes are removed.
 Release remains held by explicit user instruction; no release or tag was made.
 
+## Withdrawn asynchronous registry reader (2026-10-17)
+
+After a rebuild, the npm-linked CLI again took roughly 30s for its first resume.
+The retained child registry held over 860 incomplete records. A Host CPU profile
+attributed about 2.94s of one cold bootstrap to synchronous initial registry reads.
+
+An experiment read historical registry files asynchronously in bounded batches.
+It did not shorten total resume time: an end-to-end probe measured 11.0s before
+and 11.7s after the change. It also introduced a race in which an asynchronous
+read could capture partial JSON during a synchronous re-registration and then
+prune the now-valid record. The reader and its tests were withdrawn, and the
+runtime source was not changed. Revisit asynchronous registry reads only with
+end-to-end evidence of a benefit and a fresh-read guard against that race.
+
 ## Interactive Host lifetime follow-up (accepted 2026-10-17)
 
 Accepted user requirement: ordinary `kodax` auto-started Hosts exit after the
