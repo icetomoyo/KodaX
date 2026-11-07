@@ -374,6 +374,7 @@ import type {
   AgentOutput,
   AgentSpawnInput,
   AgentTreeSnapshot,
+  AgentTurn,
   AgentTurnRef,
   AgentCredentialBroker,
   AgentDispatchContext,
@@ -3739,7 +3740,7 @@ interface RuntimeRunRecord {
   contextRecoveryRevision?: number;
   contextRecoverySelection?: { provider?: string; model?: string; reasoning?: KodaXReasoningMode };
   goalRuntime?: NonNullable<NonNullable<KodaXOptions['context']>['goalRuntime']>;
-  readonly independentActorRef?: { readonly actorPath: string; readonly turnId: string };
+  readonly independentActorRef?: RuntimeIndependentActorRef;
   readonly productExecutionKey?: string;
   readonly productSession?: boolean;
   readonly productInput?: { readonly inputId: string; readonly digest: string };
@@ -3964,11 +3965,18 @@ function persistGenerationRecovery(record: RuntimeRunRecord, persistence: Runtim
   });
 }
 
+interface RuntimeIndependentActorRef {
+  readonly actorPath: string;
+  readonly turnId: string;
+  readonly createdAt: string;
+}
+
 interface PersistedRuntimeRunStatus {
   readonly status: RuntimeRunStatus;
   readonly owner?: AgentActorOwner;
   readonly revision: number;
   readonly shellCleanups?: unknown;
+  readonly actor?: RuntimeIndependentActorRef;
 }
 
 interface PersistedRuntimeRunStop {
@@ -4022,7 +4030,8 @@ interface RuntimePersistence {
   assertPendingInputsReadable(sessionId: string): void;
   close(): void;
   nextSessionOrder(sessionId: string): number;
-  saveRunStatus(status: RuntimeRunStatus): RuntimeRunStatus;
+  saveRunStatus(status: RuntimeRunStatus, actor?: RuntimeIndependentActorRef,
+    expected?: PersistedRuntimeRunStatus): RuntimeRunStatus;
   saveGenerationRecovery(runId: string, recovery: RuntimeGenerationRecovery): void;
   saveDetachedGenerationRecovery(runId: string, parentRunId: string, recovery: RuntimeGenerationRecovery): void;
   loadGenerationRecovery(runId: string): RuntimeGenerationRecovery | undefined;
@@ -5014,6 +5023,7 @@ async function createKodaXRuntimeInternal(
           normalizedStatus,
           false,
           persisted.owner,
+          persisted.actor,
         ),
       );
       continue;
@@ -5034,6 +5044,13 @@ async function createKodaXRuntimeInternal(
       : persisted.owner === undefined
         ? "unknown"
         : ownerStates[ownerStateIndex++] ?? "unknown";
+    if (!isTerminalRunPhase(status.phase) && ownerState === 'dead') {
+      const reconciled = await reconcileIndependentActorRun(persisted, sessionManager, persistence, bus);
+      if (reconciled) {
+        runs.set(status.runId, recordFromPersistedStatus(reconciled.status, false, reconciled.owner, reconciled.actor));
+        continue;
+      }
+    }
     if (!isTerminalRunPhase(status.phase) && (ownerState !== "dead"
       || (status.phase === 'recovering' && status.contextRecovery?.checkpoint !== undefined && status.stop === undefined))) {
       runs.set(
@@ -5042,6 +5059,7 @@ async function createKodaXRuntimeInternal(
           normalizedStatus,
           false,
           persisted.owner,
+          persisted.actor,
         ),
       );
       continue;
@@ -5053,7 +5071,7 @@ async function createKodaXRuntimeInternal(
     );
     runs.set(
       recovered.runId,
-      recordFromPersistedStatus(recovered, false, persisted.owner),
+      recordFromPersistedStatus(recovered, false, persisted.owner, persisted.actor),
     );
   }
   let closed = false;
@@ -5710,7 +5728,7 @@ async function createKodaXRuntimeInternal(
         record.recoveryToolCeiling = recovery?.actor?.tools === undefined ? trusted.tools
           : recovery.actor.tools.filter(tool => trusted.tools === undefined || trusted.tools.includes(tool));
         record.turnId = execution.turn.turnId;
-        Object.assign(record, { independentActorRef: { actorPath: execution.actor.path, turnId: execution.turn.turnId },
+        Object.assign(record, { independentActorRef: { actorPath: execution.actor.path, turnId: execution.turn.turnId, createdAt: execution.turn.createdAt },
           admittedSessionContext: { gitRoot: session.gitRoot, runtimeInfo: session.runtimeInfo } });
         record.permissionMode = settings.permissionMode;
         record.permissionBroker = 'runtime';
@@ -10010,6 +10028,11 @@ async function createRuntimeRunService(deps: {
         error: "owner_liveness_unconfirmed",
       };
     }
+    const reconciled = await reconcileIndependentActorRun(persisted, deps.sessionManager, deps.persistence, deps.bus);
+    if (reconciled) {
+      deps.runs.set(reconciled.status.runId, recordFromPersistedStatus(reconciled.status, false, reconciled.owner, reconciled.actor));
+      return reconciled.status;
+    }
     if (persisted.status.phase === 'recovering' && persisted.status.contextRecovery?.checkpoint && !persisted.status.stop) {
       return persisted.status;
     }
@@ -10020,7 +10043,7 @@ async function createRuntimeRunService(deps: {
     );
     deps.runs.set(
       recovered.runId,
-      recordFromPersistedStatus(recovered, false, owner),
+      recordFromPersistedStatus(recovered, false, owner, persisted.actor),
     );
     return recovered;
   };
@@ -13639,7 +13662,7 @@ async function createRuntimeRunService(deps: {
             const recovery = deps.persistence.loadGenerationRecovery(runId);
             if (!recovery) throw new Error('Generation recovery instructions are unavailable.');
             deps.persistence.claimGenerationRecovery(runId, persisted.revision);
-            const owned = recordFromPersistedStatus(persisted.status, true);
+            const owned = recordFromPersistedStatus(persisted.status, true, undefined, persisted.actor);
             Object.assign(owned, { actorSession });
             owned.actorTurnBaseline = new Set(recovery.actorTurnBaseline);
             deps.runs.set(runId, owned);
@@ -17383,12 +17406,23 @@ function createRuntimePersistence(
         return next;
       });
     },
-    saveRunStatus(status) {
+    saveRunStatus(status, actor, expected) {
       const dir = runDir(status.runId);
       fs.mkdirSync(dir, { recursive: true });
       const file = statusFile(status.runId);
       return withRuntimeStatusFileLock(file, () => {
         const existing = readPersistedRuntimeRunStatus(file);
+        if (expected && (!existing || existing.revision !== expected.revision
+          || existing.owner?.ownerId !== expected.owner?.ownerId
+          || existing.status.sessionId !== expected.status.sessionId
+          || existing.status.runId !== expected.status.runId
+          || !isDeepStrictEqual(existing.actor, expected.actor))) {
+          if (!existing) throw createRuntimeConflictError('Actor Run disappeared before settlement.', 0);
+          return existing.status;
+        }
+        if (actor && existing?.actor && !isDeepStrictEqual(actor, existing.actor)) {
+          throw createRuntimeConflictError('Actor Run binding changed.', existing.revision);
+        }
         if (hasPersistedBlockingShellCleanups(existing) && isTerminalRunPhase(status.phase)) {
           return existing!.status;
         }
@@ -17407,6 +17441,7 @@ function createRuntimePersistence(
           _runtime: {
             revision: (existing?.revision ?? 0) + 1,
             owner: runOwner,
+            ...((actor ?? existing?.actor) ? { actor: actor ?? existing?.actor } : {}),
             ...(existing?.shellCleanups !== undefined ? { shellCleanups: existing.shellCleanups } : {}),
           },
         });
@@ -17478,6 +17513,7 @@ function createRuntimePersistence(
         prepare?.();
         writeRuntimeJsonAtomic(statusFile(runId), { ...current.status,
           _runtime: { revision: current.revision + 1, owner: runOwner,
+            ...(current.actor ? { actor: current.actor } : {}),
             ...(current.shellCleanups !== undefined ? { shellCleanups: current.shellCleanups } : {}) } });
       });
     },
@@ -17491,6 +17527,7 @@ function createRuntimePersistence(
         }
         writeRuntimeJsonAtomic(file, { ...existing.status, _runtime: {
           revision: existing.revision + 1, owner: existing.owner,
+          ...(existing.actor ? { actor: existing.actor } : {}),
           shellCleanups: references,
         } });
       });
@@ -17598,6 +17635,7 @@ function createRuntimePersistence(
           _runtime: {
             revision,
             owner: runOwner,
+            ...(existing.actor ? { actor: existing.actor } : {}),
               ...(existing.shellCleanups !== undefined ? { shellCleanups: existing.shellCleanups } : {}),
           },
         });
@@ -18742,6 +18780,17 @@ function parsePersistedRuntimeRunStatus(
     ? value._runtime
     : undefined;
   const owner = parseRuntimeRunOwner(metadata?.owner);
+  const actor = metadata?.actor;
+  let actorBinding: RuntimeIndependentActorRef | undefined;
+  if (isRecord(actor) && typeof actor.actorPath === 'string' && actor.actorPath.startsWith('/root/')
+    && typeof actor.turnId === 'string' && actor.turnId.length > 0
+    && typeof actor.createdAt === 'string' && Number.isFinite(Date.parse(actor.createdAt))) {
+    actorBinding = { actorPath: actor.actorPath, turnId: actor.turnId, createdAt: actor.createdAt };
+  }
+  if (actor !== undefined && !actorBinding) {
+    emitKodaXDiagnostic({ source: 'runtime.persistence', level: 'warn',
+      message: `Ignored malformed independent Actor binding for Run ${status.runId}.` });
+  }
 
   const revision =
     metadata !== undefined
@@ -18755,6 +18804,7 @@ function parsePersistedRuntimeRunStatus(
     revision,
     ...(metadata?.shellCleanups !== undefined ? { shellCleanups: metadata.shellCleanups } : {}),
     ...(owner !== undefined ? { owner } : {}),
+    ...(actorBinding ? { actor: actorBinding } : {}),
   };
 }
 
@@ -19133,8 +19183,10 @@ function recordFromPersistedStatus(
   status: RuntimeRunStatus,
   ownedByRuntime: boolean,
   observedOwner?: AgentActorOwner,
+  actor?: RuntimeIndependentActorRef,
 ): RuntimeRunRecord {
   return {
+    ...(actor ? { independentActorRef: actor } : {}),
     ...(status.requiredWorkMode === undefined ? {} : { requiredWorkMode: status.requiredWorkMode }),
     ...(status.executionBinding === undefined ? {} : { executionBinding: structuredClone(status.executionBinding) }),
     ...(status.workMode !== undefined ? { workMode: status.workMode } : {}),
@@ -24119,19 +24171,87 @@ function runtimeSessionActiveRunOwner(
   return foreignActive ? "foreign" : undefined;
 }
 
+async function reconcileIndependentActorRun(
+  persisted: PersistedRuntimeRunStatus,
+  manager: SessionManager,
+  persistence: RuntimePersistence,
+  bus: RuntimeEventBus,
+): Promise<PersistedRuntimeRunStatus | undefined> {
+  const binding = persisted.actor;
+  if (!binding) return undefined;
+  const unconfirmed = (message: string): PersistedRuntimeRunStatus => ({
+    ...persisted,
+    status: { ...persisted.status, phase: 'unknown', stage: 'unknown', terminal: undefined, endedAt: undefined,
+      error: message, lifecycleError: { code: 'actor_settlement_not_persisted', message, retryable: false } },
+  });
+  try {
+    const snapshot = await manager.storage.readActorSnapshot(persisted.status.sessionId);
+    const turn = snapshot?.turns.find(value => value.actorPath === binding.actorPath
+      && value.turnId === binding.turnId && value.createdAt === binding.createdAt);
+    if (!turn) return unconfirmed('Independent Actor terminal identity is unavailable.');
+    if (turn.state === 'accepted' || turn.state === 'running') return undefined;
+    if (hasPersistedBlockingShellCleanups(persisted)) return unconfirmed('shell_cleanup_unconfirmed');
+    const record = recordFromPersistedStatus(persisted.status, false, persisted.owner, binding);
+    projectIndependentActorTerminal(bus, persistence, record, turn, persisted);
+    return persistence.loadRunStatus(persisted.status.runId)
+      ?? unconfirmed('Independent Actor Run settlement could not be read back.');
+  } catch (error: unknown) {
+    emitKodaXDiagnostic({ source: 'runtime.actor-settlement', level: 'error',
+      message: `Could not reconcile independent Actor Run ${persisted.status.runId}.`, detail: normalizeError(error) });
+    try {
+      const current = persistence.loadRunStatus(persisted.status.runId);
+      if (current && isTerminalRunPhase(current.status.phase)) return current;
+    } catch (readbackError: unknown) {
+      emitKodaXDiagnostic({ source: 'runtime.actor-settlement', level: 'error',
+        message: `Could not read back independent Actor Run ${persisted.status.runId}.`, detail: normalizeError(readbackError) });
+    }
+    return unconfirmed('Independent Actor Run settlement is unconfirmed.');
+  }
+}
+
+function projectIndependentActorTerminal(
+  bus: RuntimeEventBus,
+  persistence: RuntimePersistence,
+  run: RuntimeRunRecord,
+  turn: AgentTurn,
+  expected: PersistedRuntimeRunStatus,
+): void {
+  const binding = expected.actor;
+  if (!binding || turn.actorPath !== binding.actorPath || turn.turnId !== binding.turnId
+    || turn.createdAt !== binding.createdAt || turn.state === 'accepted' || turn.state === 'running') {
+    throw createRuntimeConflictError('Independent Actor terminal identity changed.', expected.revision);
+  }
+  const phase = turn.state === 'completed' ? 'completed'
+    : turn.state === 'failed' ? 'failed' : run.stop ? 'cancelled' : 'interrupted';
+  if (phase === 'completed') {
+    delete run.error;
+  } else {
+    run.error = run.failureDetail?.safeMessage ?? (turn.terminationReason === 'iteration_limit'
+      ? 'Actor reached its execution iteration limit.'
+      : phase === 'failed' ? 'Actor execution failed.'
+        : phase === 'cancelled' ? 'Actor execution was cancelled.' : 'Actor execution was interrupted.');
+  }
+  markRunTerminal(bus, persistence, run, phase, {
+    code: phase === 'completed' ? 'completed' : phase === 'failed' ? 'run_failed' : phase,
+    effectOutcome: 'unknown', message: run.error ?? phase,
+    ...(phase !== 'completed' && run.failureDetail ? { failureKind: run.failureDetail.failureKind } : {}),
+  }, expected);
+}
+
 function markRunTerminal(
   bus: RuntimeEventBus,
   persistence: RuntimePersistence,
   run: RuntimeRunRecord,
   phase: RuntimeRunPhase,
   terminal?: Omit<RuntimeTerminalFact, "revision" | "kind">,
+  expected?: PersistedRuntimeRunStatus,
 ): void {
   if (run.terminalEmitted) return;
   if (hasBlockingShellCleanups(run)) {
     run.phase = "unknown";
     run.stage = "unknown";
     run.error = "shell_cleanup_unconfirmed";
-    saveRunStatusSafely(bus, persistence, run, statusFromRecord(run));
+    saveRunStatusSafely(bus, persistence, run, statusFromRecord(run), expected);
     return;
   }
   delete run.actorHealthBaseState;
@@ -24191,12 +24311,12 @@ function markRunTerminal(
           ? "run.interrupted"
           : "run.failed";
   const proposed = statusFromRecord(run);
-  let authoritative = saveRunStatusSafely(bus, persistence, run, proposed);
+  let authoritative = saveRunStatusSafely(bus, persistence, run, proposed, expected);
   if (authoritative === undefined) {
     // A status write can fail after an earlier unknown Stop was durably
     // recorded. Re-read and retry once so a transient atomic-replace failure
     // cannot regress the stronger local executor terminal fact.
-    authoritative = saveRunStatusSafely(bus, persistence, run, proposed);
+    authoritative = saveRunStatusSafely(bus, persistence, run, proposed, expected);
   }
   const statusPersisted = authoritative !== undefined;
   if (authoritative === undefined) {
@@ -24249,9 +24369,10 @@ function saveRunStatusSafely(
   persistence: RuntimePersistence,
   run: RuntimeRunRecord | undefined,
   status: RuntimeRunStatus,
+  expected?: PersistedRuntimeRunStatus,
 ): RuntimeRunStatus | undefined {
   try {
-    return persistence.saveRunStatus(status);
+    return persistence.saveRunStatus(status, run?.independentActorRef, expected);
   } catch (error: unknown) {
     const turnId = run?.turnId ?? status.turnId;
     bus.emit(
