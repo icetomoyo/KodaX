@@ -212,6 +212,22 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
       attachmentOffset: integerSchema, expectedImageSha256: stringSchema }, ['sessionId', 'itemId']),
     result: nullOrObjectSchema,
   },
+  'session.history.resolveTurn': {
+    params: objectSchema({ sessionId: stringSchema, selector: { oneOf: [
+      objectSchema({ kind: { enum: ['latest', 'previous'] } }, ['kind']),
+      objectSchema({ kind: { enum: ['index'] }, index: { type: 'integer', minimum: 0 } }, ['kind', 'index']),
+      objectSchema({ kind: { enum: ['item'] }, itemId: stringSchema, source: { enum: ['history'] },
+        revision: stringSchema }, ['kind', 'itemId', 'source', 'revision']),
+      objectSchema({ kind: { enum: ['item'] }, itemId: stringSchema, source: { enum: ['view'] },
+        revision: stringSchema, inputId: stringSchema, outputId: stringSchema }, ['kind', 'itemId', 'source']),
+    ] } }, ['sessionId', 'selector']),
+    result: { oneOf: [
+      objectSchema({ status: { enum: ['ready'] }, historyBoundary: conversationHistoryBoundarySchema(),
+        expectedHead: nullableSchema(stringSchema), turnIndex: { type: 'integer', minimum: 0 },
+        excerpt: stringSchema, hasLaterTurn: booleanSchema }, ['status', 'historyBoundary', 'expectedHead', 'turnIndex', 'excerpt', 'hasLaterTurn']),
+      objectSchema({ status: { enum: ['unavailable', 'stale'] }, reason: stringSchema }, ['status', 'reason']),
+    ] },
+  },
   'session.conversation': {
     params: objectSchema({
       sessionId: stringSchema,
@@ -222,6 +238,10 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
   'session.conversation.page': {
     params: objectSchema({
       sessionId: stringSchema,
+      around: { oneOf: [
+        objectSchema({searchItemId:stringSchema}, ['searchItemId']),
+        objectSchema({historyBoundary:conversationHistoryBoundarySchema()}, ['historyBoundary']),
+      ] },
       cursor: stringSchema,
       limit: integerSchema,
       timeoutMs: integerSchema,

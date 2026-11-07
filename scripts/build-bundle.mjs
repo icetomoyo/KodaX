@@ -416,7 +416,15 @@ const cliResult = await build({
   ...commonOptions,
   metafile: true,
   entryPoints: [path.join(repoRoot, 'src/kodax_cli.ts')],
-  external: [...external, './provider-auth-cli.js', './storage-repair-cli.js', './kodax_doctor.js', './one-shot-task.js'],
+  external: [...external, './provider-auth-cli.js', './storage-repair-cli.js', './kodax_doctor.js', './one-shot-task.js', './history-turn.js', './client-history.js'],
+  plugins: [...commonOptions.plugins, {
+    name: 'lazy-cli-history-reader',
+    setup(builder) {
+      // client.ts is bundled into the root CLI, so its parent-relative import
+      // must target the same private sibling as the Host-side import.
+      builder.onResolve({ filter: /^\.\.\/client-history\.js$/ }, () => ({ path: './client-history.js', external: true }));
+    },
+  }],
   outfile: path.join(distDir, 'kodax_cli.js'),
 });
 assertStartupImportBoundary('CLI', cliResult, { eagerOnly: true });
@@ -493,6 +501,8 @@ sdkEntryPoints['provider-auth-cli'] = path.join(repoRoot, 'src/provider-auth-cli
 sdkEntryPoints['storage-repair-cli'] = path.join(repoRoot, 'src/storage-repair-cli.ts');
 sdkEntryPoints.kodax_doctor = path.join(repoRoot, 'src/kodax_doctor.ts');
 sdkEntryPoints['one-shot-task'] = path.join(repoRoot, 'src/one-shot-task.ts');
+sdkEntryPoints['history-turn'] = path.join(repoRoot, 'src/history-turn.ts');
+sdkEntryPoints['client-history'] = path.join(repoRoot, 'src/client-history.ts');
 
 log(`Building ${sdkEntryNames.length} SDK entries (splitting on)…`);
 const sdkResult = await build({

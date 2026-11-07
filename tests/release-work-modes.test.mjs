@@ -25,6 +25,55 @@ async function until(read) {
   throw new Error('Timed out waiting for a durable Script read receipt');
 }
 
+async function verifyArchiveHistory(client, storage, workspace, previouslyAdmitted) {
+  const id = previouslyAdmitted ? 'archive-history-active' : 'archive-history-cold';
+  const first = 'Archive history first question ARCHIVEHISTORYANCHOR7';
+  const second = 'Archive history follow up';
+  await storage.save(id, { title: 'Archive history fixture', gitRoot: workspace, messages: [
+    { role: 'user', content: first }, { role: 'assistant', content: 'First answer' },
+    { role: 'user', content: second }, { role: 'assistant', content: 'Second answer' },
+  ] });
+  if (previouslyAdmitted) await client.sessions.updateSettings(id, { permissionMode: 'full-access' });
+  assert.equal(client.capabilities.productHistoryLocation?.version, 1);
+  assert.equal(client.capabilities.productHistoryTurnResolution?.version, 1);
+  const search = await client.sessions.searchHistory(id, { query: 'ARCHIVEHISTORYANCHOR7' });
+  assert.equal(search.hits.length, 1);
+  const page = await client.sessions.readHistory(id, { limit: 1, around: { searchItemId: search.hits[0].itemId } });
+  const selected = page.items.find(item => item.text === first);
+  assert.ok(selected);
+  assert.equal(page.locatedBoundaryId, selected.historyBoundary.entryId);
+  assert.ok(page.newerCursor);
+  assert.equal((await client.sessions.readHistory(id, { limit: 1, cursor: page.newerCursor })).items[0].text, 'First answer');
+  // Original text routes through the daemon's own lazily loaded history reader.
+  assert.equal((await client.sessions.readHistoryEntry(id, selected.id, { part: 'original' })).text, first);
+  const selector = { kind: 'item', source: 'history', itemId: selected.id, revision: page.revision };
+  const target = await client.sessions.resolveHistoryTurn(id, selector);
+  assert.equal(target.status, 'ready');
+  assert.equal(target.excerpt, first);
+  assert.equal(target.hasLaterTurn, true);
+  const child = await client.sessions.fork({ sessionId: id, newSessionId: `${id}-fork`, historyBoundary: target.historyBoundary });
+  assert.ok(child);
+  const contents = async session => (await client.sessions.readHistory(session)).items.map(item => item.text);
+  assert.deepEqual(await contents(child.id), [first, 'First answer']);
+  assert.deepEqual(await contents(id), [first, 'First answer', second, 'Second answer']);
+  const rewind = async () => {
+    const confirmation = await client.sessions.resolveHistoryTurn(id, { kind: 'index', index: 0 });
+    assert.equal(confirmation.status, 'ready');
+    assert.ok(await client.sessions.rewind({ sessionId: id, historyBoundary: confirmation.historyBoundary,
+      expectedHead: confirmation.expectedHead }));
+  };
+  let refreshedColdBoundary = false;
+  try { await rewind(); } catch (error) {
+    if (previouslyAdmitted || error.code !== 'resync_required') throw error;
+    // A first write can acquire a durable Actor claim on a cold legacy session.
+    assert.deepEqual(await contents(id), [first, 'First answer', second, 'Second answer']);
+    refreshedColdBoundary = true;
+    await rewind();
+  }
+  assert.deepEqual(await contents(id), [first, 'First answer']);
+  return { session: previouslyAdmitted ? 'admitted' : 'cold', refreshedColdBoundary };
+}
+
 // Invoked on the matching native CI runner after creating the exact release archive.
 // Every provider request terminates at this loopback fixture; no external model is used.
 test('release archive preserves work modes, partial effects, cancellation and restart on its shipped runtime', { timeout: 180_000 }, async t => {
@@ -273,6 +322,11 @@ test('release archive preserves work modes, partial effects, cancellation and re
         assert.equal((await client.sessions.getSettings(sessionId)).workMode ?? 'coding', 'coding');
         assert.equal(primaryRequests.length, requestCount);
       } finally { await rename(`${worker}.missing`, worker); }
+      phase('verifying saved history and exact mutations on the packaged host');
+      for (const previouslyAdmitted of [true, false]) {
+        const result = await verifyArchiveHistory(client, storage, workspace, previouslyAdmitted);
+        cases.push({ name: 'history-locate-resolve-fork-rewind', primaryRequests: 0, ...result });
+      }
       assert.deepEqual(failures, []);
       completedAssertions = true;
     })());

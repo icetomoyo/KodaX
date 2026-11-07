@@ -95,6 +95,7 @@ export function toKodaXProductClient(
       observe: (sessionId, onView, options) => runtime.sessions.observeView(sessionId, onView, options),
       readItem: (sessionId, itemId, options) => runtime.sessions.readViewItem(sessionId, itemId, options),
       readHistory: (sessionId, options) => runtime.sessions.readHistory(sessionId, options),
+      resolveHistoryTurn: (sessionId, selector) => runtime.sessions.resolveHistoryTurn(sessionId, selector),
       readHistoryEntry: (sessionId, itemId, options) => runtime.sessions.readHistoryEntry(sessionId, itemId, options),
       searchHistory: (sessionId, input) => runtime.sessions.searchHistory(sessionId, input),
       readGoal: (sessionId) => runtime.sessions.readGoal(sessionId),

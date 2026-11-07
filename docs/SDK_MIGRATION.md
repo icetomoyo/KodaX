@@ -4,6 +4,8 @@
 
 Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附件/统计与退出恢复范围见 [SDK/Host 接缝](SPACE_SDK_SEAMS.md)。
 
+从 beta.2 升级后，检查 Host 的 `productHistoryLocation` 和 `productHistoryTurnResolution` 再启用搜索定位和整轮操作。旧会话无需改写。保留 SDK 返回的字符串修订和确认时的分支头；收到过期结果时重新选择目标。
+
 2026-11-02 发布验收修复中，扩展 API `exec()` 的 PowerShell 启动改为
 `-NoLogo -NoProfile -NonInteractive`，避免隐式执行用户 profile 和交互提示。
 依赖 profile 内函数或 alias 的扩展需在命令中显式初始化（例如 `Import-Module`）。

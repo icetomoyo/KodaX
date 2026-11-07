@@ -1447,6 +1447,7 @@ function makeRuntime(
         return { items: [], revision: "sha256:" + "0".repeat(64), sourceRevision: 'source', status: 'resolved', issues: [], oversized: [] };
       },
       async readHistoryEntry() { return null; },
+      async resolveHistoryTurn() { return { status: 'unavailable', reason: 'no_turns' }; },
       async searchHistory() {
         return { revision: "sha256:" + "0".repeat(64), hits: [] };
       },

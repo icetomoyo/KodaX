@@ -94,7 +94,6 @@ import type {
 import type { KodaXPromptCacheDiagnosticEvent } from '@kodax-ai/coding';
 import { parseRuntimeEvent } from '../runtime-event.js';
 import { toRuntimePermissionRequest, toRuntimeUserInputRequest } from '../client-interactions.js';
-import { projectConversationHistoryPage, readConversationHistoryEntry, readHistoryPageWithBoundaryRetry } from '../client-history.js';
 import type {
   AskUserAnswer,
   LearningEvent,
@@ -578,30 +577,36 @@ export function createRuntimeDaemonClient(
       readViewItem(sessionId, itemId, options) {
         return request('session.view.item', { sessionId, itemId, ...options }) as Promise<ClientItemContent | null>;
       },
+      resolveHistoryTurn(sessionId, selector) {
+        return readRequest('session.history.resolveTurn', { sessionId, selector }) as Promise<import('@kodax-ai/coding/client-contract').ClientHistoryTurnResolution>;
+      },
       async readHistory(sessionId, options) {
+        const { projectConversationHistoryPage, readHistoryPageWithBoundaryRetry } = await import('../client-history.js');
         const page = await readHistoryPageWithBoundaryRetry(
           () => readRequest(
             'session.conversation.page',
             {
               sessionId,
+              ...(options?.around ? {around: options.around} : {}),
               ...(options?.cursor !== undefined ? { cursor: options.cursor } : {}),
               ...(options?.limit !== undefined ? { limit: options.limit } : {}),
             },
           ) as Promise<RuntimeConversationHistorySlice | null>,
-          { ...(options?.cursor !== undefined ? { cursor: options.cursor } : {}) },
+          { ...(options?.cursor !== undefined ? { cursor: options.cursor } : {}), ...(options?.around ? { around: options.around } : {}) },
         );
         if (page === null) {
           throw new Error('Runtime daemon returned no conversation history page.');
         }
         return projectConversationHistoryPage(sessionId, page, (input) => readRequest(
           'session.conversation.entryChunk', { ...input },
-        ) as Promise<RuntimeConversationHistoryEntryChunk | null>);
+        ) as Promise<RuntimeConversationHistoryEntryChunk | null>, emitKodaXDiagnostic);
       },
-      readHistoryEntry(sessionId, itemId, options) {
+      async readHistoryEntry(sessionId, itemId, options) {
         if (options?.part === 'original') {
           return request('session.view.item', { sessionId, itemId, ...options }) as Promise<ClientItemContent | null>;
         }
         const transcript = itemId.startsWith(`${sessionId}:transcript:`);
+        const { readConversationHistoryEntry } = await import('../client-history.js');
         return readConversationHistoryEntry(
           sessionId,
           itemId,
@@ -611,6 +616,7 @@ export function createRuntimeDaemonClient(
           ) as Promise<RuntimeConversationHistoryEntryChunk | null>,
           options,
           transcript ? 'transcript' : 'history',
+          emitKodaXDiagnostic,
         );
       },
       async searchHistory(sessionId, input) {

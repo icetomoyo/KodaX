@@ -12,6 +12,14 @@ import {
 } from './schema.js';
 
 describe('runtime daemon protocol schema', () => {
+  it.each(['history', 'view'])('accepts only SDK source strings for a %s history-turn selection', source => {
+    const schema = RUNTIME_DAEMON_METHOD_SCHEMAS['session.history.resolveTurn'].params;
+    const selector = { kind: 'item', source, itemId: 'saved-item', revision: 'sdk-source' };
+    expect(validateRuntimeDaemonJsonSchema(schema, { sessionId: 'session', selector })).toEqual([]);
+    expect(validateRuntimeDaemonJsonSchema(schema, { sessionId: 'session', selector: { ...selector, revision: 42 } }))
+      .not.toEqual([]);
+  });
+
   it('requires explicit identity confirmation and a persisted delivery receipt', () => {
     const schema = RUNTIME_DAEMON_METHOD_SCHEMAS['session.identityAlias.confirm'];
     expect(schema).toBeDefined();

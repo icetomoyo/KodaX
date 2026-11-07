@@ -37,6 +37,7 @@ export type RuntimeDaemonMethod =
   | 'session.view.observe'
   | 'session.view.close'
   | 'session.view.item'
+  | 'session.history.resolveTurn'
   | 'session.diagnostics'
   | 'session.fork'
   | 'session.recover'
@@ -411,6 +412,7 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'session.view.observe',
   'session.view.close',
   'session.view.item',
+  'session.history.resolveTurn',
   'session.diagnostics',
   'session.fork',
   'session.recover',

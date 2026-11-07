@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Locate saved conversation history around a search hit or a proven source
+  with `productHistoryLocation`. Resolve a complete turn, including persisted
+  tool results, for Fork and rewind with `productHistoryTurnResolution`.
+  Both Host capabilities can be requested at connection time.
+
 ### Changed
 
 - Prepare `0.7.97-beta.3` locally. This candidate has not been published.
@@ -14,6 +21,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Read full text and tool input from legacy view items through their original
+  view owner, including items whose IDs also match the history reference format.
 - Reduce Windows daemon startup time by requesting only the CIM property
   needed to verify the current boot for interrupted-exit recovery.
 - Recover from context-capacity errors with bounded reads, adaptive compaction

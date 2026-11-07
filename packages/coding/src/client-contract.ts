@@ -183,6 +183,8 @@ export interface KodaXProductClient {
     readItem(sessionId: string, itemId: string, options?: ClientItemReadOptions): Promise<ClientItemContent | null>;
     /** Newest page of the canonical conversation first; older pages via nextCursor. */
     readHistory(sessionId: string, options?: ClientHistoryReadOptions): Promise<ClientHistoryPage>;
+    /** Resolve a complete saved conversational turn on demand; never runs a model. */
+    resolveHistoryTurn(sessionId: string, selector: ClientHistoryTurnSelector): Promise<ClientHistoryTurnResolution>;
     /** Full body behind one oversized history entry, chunked like readItem. */
     readHistoryEntry(sessionId: string, itemId: string, options?: ClientItemReadOptions): Promise<ClientItemContent | null>;
     /** Search the whole Session history; entryIndex values are stable within the returned revision. */
@@ -433,9 +435,32 @@ export interface ClientHistoryReadOptions {
   /** Cursor from a previous page's nextCursor; omit to read the newest page. */
   readonly cursor?: string;
   readonly limit?: number;
+  /** Read a window ending at a proven saved source. Mutually exclusive with cursor. */
+  readonly around?: { readonly searchItemId: string } | { readonly historyBoundary: ClientHistoryBoundary };
 }
 
+export type ClientHistoryTurnSelector =
+  | { readonly kind: 'latest' | 'previous' }
+  | { readonly kind: 'index'; readonly index: number }
+  | { readonly kind: 'item'; readonly itemId: string; readonly source: 'history';
+      /** The original page/search revision, never a local UI generation. */
+      readonly revision: string }
+  | { readonly kind: 'item'; readonly itemId: string; readonly source: 'view';
+      /** The item's historyBoundary.sourceRevision, when available. */
+      readonly revision?: string;
+      /** Exact identities copied from this observed SDK item, for a newly saved source. */
+      readonly inputId?: string; readonly outputId?: string };
+
+export type ClientHistoryTurnResolution =
+  | { readonly status: 'ready'; readonly historyBoundary: ClientHistoryBoundary;
+      readonly expectedHead: string | null; readonly turnIndex: number;
+      readonly excerpt: string; readonly hasLaterTurn: boolean }
+  | { readonly status: 'unavailable' | 'stale'; readonly reason: string };
+
 export interface ClientHistoryPage {
+  readonly locatedBoundaryId?: string;
+  /** Newer neighbor of a located window. */
+  readonly newerCursor?: string;
   /** This page's entries projected like view items, oldest first. */
   readonly items: readonly ClientViewItem[];
   /** Conversation revision this page was read at. */

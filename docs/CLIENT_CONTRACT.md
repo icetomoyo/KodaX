@@ -132,7 +132,7 @@ Host owner 实际销毁视图服务时，先停止新的读取、刷新和监听
 | `sessions` Auto 诊断 | `getAutoModeStats` | 返回现有 Host Auto 拒绝、熔断和分类器健康事实；非 Auto 为 undefined，不创建第二套权限状态 |
 | `sessions` 显示 | `observe`, `readItem` | 当前显示视图及其替换；补读显示项的完整正文或工具输入 |
 | `sessions` 图片附件 | `readItem(..., {part:'attachment', attachmentIndex, attachmentOffset, expectedImageSha256})` | 读取该 Host 项已附带的 PNG 字节块；不接受客户端文件路径 |
-| `sessions` 历史 | `readHistory`, `readHistoryEntry`, `searchHistory` | 规范对话分页、超大项正文和全 Session 搜索 |
+| `sessions` 历史 | `readHistory`, `readHistoryEntry`, `searchHistory`, `resolveHistoryTurn` | 规范对话分页、超大项正文和全 Session 搜索。支持时可定位搜索结果，并为 Fork/回退解析完整轮尾。 |
 | `sessions` 目标 | `readGoal`, `createGoal`, `pauseGoal`, `resumeGoal`, `clearGoal` | 读取及修改共享持久目标；创建、状态转换和预算遵守领域约束 |
 | `sessions` 通知 | `appendNotice` | 由 Host 保存通知正文及可选来源 |
 | `sessions` 分支 | `readLineage`, `labelEntry`, `selectBranch`, `rewindSession`, `forkSession`, `recoverSession` | 读取分支、标签、选择头、回退，以及派生新 Session |

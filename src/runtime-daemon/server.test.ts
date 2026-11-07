@@ -3347,6 +3347,7 @@ const METHOD_SMOKE_PARAMS = {
   },
   'session.transcript.search': { sessionId: 'session-1', query: 'historical detail' },
   'session.conversation': { sessionId: 'session-1' },
+  'session.history.resolveTurn': { sessionId: 'session-1', selector: { kind: 'latest' } },
   'session.conversation.page': { sessionId: 'session-1' },
   'session.conversation.entryChunk': {
     sessionId: 'session-1',
@@ -3701,6 +3702,7 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
         return { items: [], revision: 'sha256:' + '0'.repeat(64), sourceRevision: 'source', status: 'resolved', issues: [], oversized: [] };
       },
       async readHistoryEntry() { return null; },
+      async resolveHistoryTurn() { return { status: 'unavailable', reason: 'no_turns' }; },
       async searchHistory() {
         return { revision: 'sha256:' + '0'.repeat(64), hits: [] };
       },

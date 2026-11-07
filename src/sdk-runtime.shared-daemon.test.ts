@@ -25,6 +25,25 @@ afterEach(() => {
 });
 
 describe('F269 shared Runtime contracts', () => {
+  it.each(['productHistoryTurnResolution', 'productHistoryLocation'] as const)(
+    'rejects a daemon missing the explicitly required %s capability', async capability => {
+      const { createKodaXRuntime: launchRuntime } = await import('./sdk-runtime-public.js');
+      const transport: import('./sdk-runtime.js').RuntimeDaemonClientTransport = {
+        async request(method) {
+          if (method !== 'initialize') return null;
+          return {
+            identity: { runtimeId: 'old-history-host', mode: 'daemon', profile: 'default',
+              startedAt: '2026-11-07T00:00:00.000Z', version: '0.7.97-beta.2' },
+            capabilities: {},
+          };
+        },
+        subscribe() { return { close() {} }; },
+      };
+      await expect(launchRuntime({ mode: 'daemon', daemonTransport: transport,
+        requirements: { [capability]: 1 } })).rejects.toThrow(new RegExp(`does not support.*${capability}`));
+    },
+  );
+
   it('recovers a public inline owner left by a crashed process', () => {
     const homeDir = makeHome();
     const profile = 'coder';

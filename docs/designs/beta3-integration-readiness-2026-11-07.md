@@ -2,6 +2,66 @@
 
 Status: **local pre-publication verification complete; final full suite passed**. The user clarified that the earlier conflict instruction concerned other chats editing concurrently, and confirmed no other chat was working. Investigation and implementation continued while preserving first-Run locking. This is a local candidate, not a release. No tag, remote push, npm/GitHub publication, installed Space/CLI replacement or next-dev feature merge occurred.
 
+## Saved-history and Windows boot update
+
+The candidate based on `a03b9f53c` includes the history changes and the
+one-property Windows boot query. The package measurements and acceptance
+results below supersede the older package hashes later in this document.
+
+| Local artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| npm beta.3 tarball | 12,047,608 | `8a05e09ab44909033be73f7fca45c9a1395669d578c7ba809810ba53e9865ff3` |
+| CLI with five native manifests | 5,186,242 | `e2f26452e55ab01473863cb834f51df2b4f7e1e7add56fdf3728518eadba0bd9` |
+| Windows x64 standalone ZIP | 63,610,927 | `5910127f634db0d12635b3875e6780dc91da640b0accc5b93af4d105cdb8c944` |
+
+The npm tarball contains 1,137 files. All 296 packaged `dist` files match
+the build byte-for-byte, including the two lazy history modules. The CLI is
+6,462 bytes below the existing 49 KiB reserve gate. Windows npm installation
+exposed a CRLF shebang rewrite in an earlier archive. The final LF checkout
+rule passes Space's original archive-to-install byte check. The Windows native
+resources were built locally. The other four native resource sets come from
+the integrity-pinned beta.2 tarball with unchanged native source and build
+script; their manifests and content hashes were verified. Their platforms
+still require native CI.
+
+The production build and both source/test typechecks passed. The default
+Vitest suite finished in 27m51s with **19,731 passed, 89 skipped, 0 failed**
+across 1,441 files. All 103 bundled regressions passed, using two concurrent
+files for the first 27 and the prescribed serial execution for the final two.
+The installed npm package loaded native protocol 5, the three Host cutover
+checks passed, and the Artifact SDK packed consumer gate passed against an
+independently repacked, SHA-256-identical tarball. A focused 48-test V8 run
+over the two new production modules measured 94.69% lines, 80.79% statements,
+80.26% branches and 94.73% functions. This is module-scoped coverage.
+
+Space installed this tarball in an isolated checkout. Source Electron and
+the packaged Windows executable each passed eight history scenarios. The
+session copy had seven visible user items; all resolved, and rereading both
+the fork and the rewound source returned the exact selected turn. The
+post-fork loopback request contained both prompts and all three paired tool
+calls/results. The same Space source with the registry beta.2 Host returned
+111 live items, 201 saved items and an explicit unsupported resolution.
+Packaged Runtime/Worker startup, native loading and the six Host lifecycle
+scenarios passed (two overlap the eight history scenarios). A running
+beta.2 Host deferred the upgrade until its Run completed; the tool ran once
+and the number of main Provider requests stayed at two. These checks measure
+what the client sends to the model. They use no external model.
+
+The Windows ZIP passed eight build smokes and eleven archive scenarios with
+Node and Bun absent from the launched program's PATH. A cold legacy Actor
+claim can change the revision after a read: the first rewind then safely
+refuses the stale confirmation and the newly confirmed exact turn succeeds.
+An already claimed session rewinds on the first confirmation. A damaged
+stored body through the real RPC emitted one diagnostic at the appropriate
+owner and omitted the malformed content.
+
+The six paired, same-source Windows cold-connection trials from the
+investigation saved 565–704 ms per pair (median 640 ms) by requesting only
+`LastBootUpTime`. Windows PowerShell 5.1 and PowerShell 7.6.5 returned the
+same UTC ticks for broad and narrow queries. Recovery tests exercised a
+different stored boot identity and query failure. A physical OS reboot was
+outside the local test.
+
 ## Fixed inputs and preservation
 
 The original checkout was at `58671f8dea75a0df2498ad553536b17ee2b04896` when a hash-checked snapshot of 13 work-mode files and 19 DOCX-related files was taken into OS temporary storage. That checkout was not modified. The existing managed worktree is reused on `codex/beta3-integration`.

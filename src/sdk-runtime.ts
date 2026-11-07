@@ -85,6 +85,8 @@ import type {
   ClientInteractionResult,
   ClientHistoryReadOptions,
   ClientHistoryPage,
+  ClientHistoryTurnSelector,
+  ClientHistoryTurnResolution,
   ClientHistorySearchInput,
   ClientHistorySearchResult,
   ClientLineageSummary,
@@ -99,14 +101,9 @@ import {
 } from "./session-view.js";
 import { SessionInputQueue, inputIntentDigest } from "./session-input-queue.js";
 import { listClientInteractions, respondToClientInteraction } from "./client-interactions.js";
-import {
-  assembleConversationHistoryEntry,
-  projectConversationHistoryPage,
-  readConversationHistoryEntry,
-  readFollowingMessage,
-  readHistoryPageWithBoundaryRetry,
-} from "./client-history.js";
+import { assembleConversationHistoryEntry, readFollowingMessage } from './conversation-entry-reader.js';
 import { CLIENT_CONFIG_APPLICATION, toClientConfig, toClientSessionSettings } from "./client-settings.js";
+export type { ClientHistoryTurnSelector, ClientHistoryTurnResolution } from '@kodax-ai/coding/client-contract';
 import { createHostIntegrations } from "./host-integrations.js";
 import { spawnSync } from "node:child_process";
 import { RUNTIME_AUTO_MODE_GUARDRAIL_CAPABILITY } from './runtime-capability-facts.js';
@@ -1024,6 +1021,8 @@ export interface ConnectKodaXRuntimeOptions {
 
 /** SDK facts that embedders can inspect before auto-starting a daemon. */
 export const KODAX_RUNTIME_SDK_CAPABILITIES = Object.freeze({
+  productHistoryTurnResolution: 1,
+  productHistoryLocation: 1,
   productClient: 1,
   sessionDrafts: 1,
   sessionPromotion: 1,
@@ -1045,6 +1044,8 @@ export const KODAX_RUNTIME_SDK_CAPABILITIES = Object.freeze({
 } as const);
 
 export interface RuntimeCapabilityRequirements {
+  readonly productHistoryTurnResolution?: 1;
+  readonly productHistoryLocation?: 1;
   readonly productExitControl?: 1;
   readonly productExecutionFacts?: 1;
   readonly productActorAuthorization?: 1;
@@ -1488,6 +1489,8 @@ export interface RuntimeConversationHistorySliceEntry {
 }
 
 export interface RuntimeConversationHistorySlice {
+  readonly locatedBoundaryId?: string;
+  readonly newerCursor?: string;
   readonly revision: string;
   readonly sourceRevision: string;
   readonly status: SessionConversationHistoryStatus;
@@ -1498,6 +1501,7 @@ export interface RuntimeConversationHistorySlice {
 }
 
 export interface RuntimeConversationHistoryPageInput {
+  readonly around?: ClientHistoryReadOptions['around'];
   readonly sessionId: string;
   readonly cursor?: string;
   readonly limit?: number;
@@ -1906,6 +1910,7 @@ export interface RuntimeObservationInvalidation {
 }
 
 export interface RuntimeSessionService {
+  resolveHistoryTurn(sessionId: string, selector: ClientHistoryTurnSelector): Promise<ClientHistoryTurnResolution>;
   observeView(sessionId: string, listener: (view: ClientSessionView) => void, options?: ClientObserveOptions): Promise<ClientObservation>;
   readViewItem(sessionId: string, itemId: string, options?: ClientItemReadOptions): Promise<ClientItemContent | null>;
   readHistory(
@@ -4378,6 +4383,8 @@ async function createKodaXRuntimeInternal(
     productExecutionModeConstraint: { version: 1 },
     sessionDrafts: { version: 1 },
     productHistoryBoundaries: { version: 1 },
+    productHistoryTurnResolution: { version: 1 },
+    productHistoryLocation: { version: 1 },
     productExecutionAuthorization: { version: 2 },
     productExecutionProfile: { version: 2 },
     repoIntelligenceDiagnostics: { version: 1 },
@@ -4599,11 +4606,15 @@ async function createKodaXRuntimeInternal(
     } while (cursor && pending.size > 0);
     return { revision, entries: entries.sort((left, right) => left.index - right.index) };
   };
+  type ViewConversation = {
+    readonly messages: readonly KodaXMessage[];
+    readonly boundaries: ReadonlyMap<KodaXMessage, { readonly entryId: string; readonly sourceRevision: string }>;
+  };
   const readConversationHistory = async (
     sessionId: string,
     retainedSourceKeys: readonly string[],
-  ): Promise<readonly KodaXMessage[] | null> => {
-    const readOnce = (): Promise<readonly KodaXMessage[] | null> =>
+  ): Promise<ViewConversation | null> => {
+    const readOnce = (): Promise<ViewConversation | null> =>
       sessionService.conversationPage({ sessionId, limit: 80 }).then(async (page) => {
         if (!page) return null;
         const sources = retainedSourceKeys.length === 0 ? null : await locateConversationSources(sessionId, page.revision, retainedSourceKeys);
@@ -4611,11 +4622,13 @@ async function createKodaXRuntimeInternal(
         const entries = new Map(page.entries.map(entry => [entry.index, entry]));
         for (const entry of sources?.entries ?? []) if (!entries.has(entry.index)) entries.set(entry.index, entry);
         const messages: KodaXMessage[] = [];
+        const boundaries = new Map<KodaXMessage, { entryId: string; sourceRevision: string }>();
         for (const entry of [...entries.values()].sort((left, right) => left.index - right.index)) {
           const source = entry.entry ?? await assembleConversationHistoryEntry(
             input => sessionService.conversationEntryChunk(input), sessionId, page.revision, entry.index);
           if (source) {
             messages.push(source.message);
+            if (entry.boundaryId) boundaries.set(source.message, { entryId: entry.boundaryId, sourceRevision: page.sourceRevision });
             if (!entries.has(entry.index + 1) && source.message.role === 'assistant'
               && Array.isArray(source.message.content) && source.message.content.some(block => block.type === 'tool_use')) {
               const successor = await readFollowingMessage(input => sessionService.conversationEntryChunk(input),
@@ -4624,7 +4637,7 @@ async function createKodaXRuntimeInternal(
             }
           }
         }
-        return messages.length > 0 ? messages : null;
+        return messages.length > 0 ? { messages, boundaries } : null;
       });
     // One re-armed history reload per session so an idle view eventually
     // picks the conversation back up after a transient boundary miss;
@@ -4635,7 +4648,7 @@ async function createKodaXRuntimeInternal(
       sessionViews.changed(sessionId, true);
     };
     try {
-      let result: readonly KodaXMessage[] | null;
+      let result: ViewConversation | null;
       try {
         // The page cache reads under a strict quiescent boundary; a session
         // lock released mid-read right after activity is a transient miss.
@@ -4694,8 +4707,8 @@ async function createKodaXRuntimeInternal(
     const settings = { ...resolveEffectiveRuntimeSessionSettings(config, rawSettings, true),
       ...(activeRun ? { agentMode: activeRun.mode === 'coding' ? 'sa' as const : 'ama' as const } : {}) };
     const contextBudget = resolveClientContextBudget(config, settings, options.defaultProvider, options.defaultModel);
-    return { session, settings: toClientSessionSettings(settings), contextBudget, items: restoreSessionViewItems(sessionId, data, conversation, liveItems),
-      ...(data ? { committedOutputIds: [...committedSessionOutputIds(data, conversation ?? [])] } : {}),
+    return { session, settings: toClientSessionSettings(settings), contextBudget, items: restoreSessionViewItems(sessionId, data, conversation?.messages, liveItems, conversation?.boundaries),
+      ...(data ? { committedOutputIds: [...committedSessionOutputIds(data, conversation?.messages ?? [])] } : {}),
       parentContextTokens: data ? estimateTokens(data.messages) : previous?.parentContextTokens,
       queue: runService.queuedInputs(sessionId),
       interactions: await interactions.list({ sessionId }),
@@ -5939,7 +5952,7 @@ function assertRuntimeCapabilities(
     requirements?.sandboxRuntime === undefined &&
     requirements?.runtimeAutoModeGuardrail === undefined &&
     requirements?.sessionDrafts === undefined && requirements?.sessionPromotion === undefined && requirements?.productExecutionBinding === undefined && requirements?.productInputRecovery === undefined && requirements?.productExecutionModeConstraint === undefined && requirements?.productClient === undefined &&
-    requirements?.productHistoryBoundaries === undefined &&
+    requirements?.productHistoryBoundaries === undefined && requirements?.productHistoryTurnResolution === undefined && requirements?.productHistoryLocation === undefined &&
     requirements?.productExecutionAuthorization === undefined && requirements?.productExitControl === undefined
     && requirements?.productExecutionFacts === undefined && requirements?.productActorAuthorization === undefined
   )
@@ -5961,6 +5974,8 @@ function assertRuntimeCapabilities(
     ['productInputRecovery', requirements.productInputRecovery],
     ['productExecutionModeConstraint', requirements.productExecutionModeConstraint],
     ["productHistoryBoundaries", requirements.productHistoryBoundaries],
+    ['productHistoryTurnResolution', requirements.productHistoryTurnResolution],
+    ['productHistoryLocation', requirements.productHistoryLocation],
     ["productExecutionAuthorization", requirements.productExecutionAuthorization],
     ["externalAgentAdmin", requirements.externalAgentAdmin],
     ["a2aConfigReconciler", requirements.a2aConfigReconciler],
@@ -6219,6 +6234,8 @@ function firstUpgradeableCapability(
     'productInputRecovery',
     'productExecutionModeConstraint',
     "productHistoryBoundaries",
+    'productHistoryTurnResolution',
+    'productHistoryLocation',
     "productExecutionAuthorization", 'productExitControl', 'productExecutionFacts', 'productActorAuthorization',
     "actorSettlementConvergence",
     "crashOutcomeModel",
@@ -8525,6 +8542,26 @@ function createRuntimeSessionService(
     });
   };
 
+  async function readLocatedConversationPage(
+    input: RuntimeConversationHistoryPageInput, budget: RuntimeReadBudget,
+  ): Promise<RuntimeConversationHistorySlice | null> {
+    const { readLocatedHistoryPage } = await import('./history-turn.js');
+    return readLocatedHistoryPage(input, {
+      readPage: (cursor, limit) => service.conversationPage({ sessionId: input.sessionId, cursor, limit }, sessionReadOptionsFromBudget(budget)),
+      readSource: async () => {
+        const capture = await readSessionCapture(input.sessionId, budget);
+        return replApi.conversationHistoryFromCapture(capture, () => sessionReadOptionsFromBudget(budget));
+      },
+      transcriptSource: (revision, index) => {
+        const snapshot = getTranscriptSnapshot(input.sessionId, revision, 'transcript');
+        return snapshot ? { sourceRevision: snapshot.sourceRevision, entryId: snapshot.entries[index]?.entryId } : undefined;
+      },
+      encode: encodeRuntimeTranscriptCursor, decode: decodeRuntimeTranscriptCursor,
+      yieldControl: () => yieldToRuntimeReadBudget(budget),
+      defaultLimit: DEFAULT_RUNTIME_TRANSCRIPT_PAGE_LIMIT, maximumLimit: MAX_RUNTIME_TRANSCRIPT_PAGE_LIMIT,
+    });
+  }
+
   const service: RuntimeSessionService
     & { deleteTemporary(sessionId: string): Promise<void> } = {
     cancel,
@@ -8840,6 +8877,9 @@ function createRuntimeSessionService(
       ensureOpen();
       const budget = createRuntimeReadBudget(options);
       sessionReadOptionsFromBudget(budget);
+      if (input.around || input.cursor?.startsWith("newer.")) {
+        return readLocatedConversationPage(input, budget);
+      }
       // Cached pages need the same Host checkpoint boundary as a fresh capture.
       await awaitRuntimeReadOperation(() => sessionViews.flush(input.sessionId), budget);
       const limit = input.limit ?? DEFAULT_RUNTIME_TRANSCRIPT_PAGE_LIMIT;
@@ -9096,24 +9136,29 @@ function createRuntimeSessionService(
       ensureOpen();
       return sessionViews.observe(sessionId, listener, options);
     },
-    readViewItem(sessionId, itemId, options) {
+    async readViewItem(sessionId, itemId, options) {
       ensureOpen();
       if (itemId.startsWith(`${sessionId}:history:`) || itemId.startsWith(`${sessionId}:transcript:`)) {
-        return service.readHistoryEntry(sessionId, itemId, options);
+        // Legacy view identities also use :history:. The view owner must get
+        // the first chance before interpreting the ID as an opaque page reference.
+        return await sessionViews.readItem(sessionId, itemId, options)
+          ?? service.readHistoryEntry(sessionId, itemId, options);
       }
       return sessionViews.readItem(sessionId, itemId, options);
     },
     async readHistory(sessionId, options) {
       ensureOpen();
+      const { readHistoryPageWithBoundaryRetry, projectConversationHistoryPage } = await import('./client-history.js');
       // Transient boundary misses retry once for fresh reads; stale cursors
       // reject with resync_required for the caller to restart (see helper).
       const page = await readHistoryPageWithBoundaryRetry(
         () => service.conversationPage({
           sessionId,
+          ...(options?.around ? {around: options.around} : {}),
           ...(options?.cursor !== undefined ? { cursor: options.cursor } : {}),
           ...(options?.limit !== undefined ? { limit: options.limit } : {}),
         }),
-        { ...(options?.cursor !== undefined ? { cursor: options.cursor } : {}) },
+        { ...(options?.cursor !== undefined ? { cursor: options.cursor } : {}), ...(options?.around ? { around: options.around } : {}) },
       );
       if (page === null) {
         throw Object.assign(
@@ -9121,10 +9166,33 @@ function createRuntimeSessionService(
           { code: "not_found" as const },
         );
       }
-      return projectConversationHistoryPage(sessionId, page, (input) => service.conversationEntryChunk(input));
+      return projectConversationHistoryPage(sessionId, page, (input) => service.conversationEntryChunk(input), emitKodaXDiagnostic);
     },
-    readHistoryEntry(sessionId, itemId, options) {
+    async resolveHistoryTurn(sessionId, selector) {
       ensureOpen();
+      try {
+      const { resolveHistoryTurnAtSnapshot } = await import('./history-turn.js');
+      const budget = createRuntimeReadBudget(undefined);
+      await awaitRuntimeReadOperation(() => sessionViews.flush(sessionId), budget);
+      const capture = await readSessionCapture(sessionId, budget);
+      const history = replApi.conversationHistoryFromCapture(capture, () => sessionReadOptionsFromBudget(budget));
+      return resolveHistoryTurnAtSnapshot({ sessionId, history, selector,
+        get conversationRevision() { return createRuntimeConversationHistoryRevision(history); },
+        expectedHead: capture.transcript.lineage?.activeEntryId ?? null,
+        ...(selector.kind === 'item' && selector.source === 'view'
+          ? { viewItem: sessionViews.historyItem(sessionId, selector.itemId) } : {}),
+        transcriptSource: (revision, index) => {
+          const snapshot = getTranscriptSnapshot(sessionId, revision, 'transcript');
+          return snapshot ? { sourceRevision: snapshot.sourceRevision, entryId: snapshot.entries[index]?.entryId } : undefined;
+        }, checkpoint: () => sessionReadOptionsFromBudget(budget) });
+      } catch (error: unknown) {
+        if (isTransientConversationBoundaryError(error)) return { status: 'stale', reason: 'source_changed' };
+        throw error;
+      }
+    },
+    async readHistoryEntry(sessionId, itemId, options) {
+      ensureOpen();
+      const { readConversationHistoryEntry } = await import('./client-history.js');
       const transcript = itemId.startsWith(`${sessionId}:transcript:`);
       return readConversationHistoryEntry(
         sessionId,
@@ -9132,6 +9200,7 @@ function createRuntimeSessionService(
         (input) => transcript ? service.transcriptEntryChunk(input) : service.conversationEntryChunk(input),
         options,
         transcript ? 'transcript' : 'history',
+        emitKodaXDiagnostic,
       );
     },
     async searchHistory(sessionId, input) {
@@ -22285,7 +22354,7 @@ interface RuntimeTranscriptSnapshotView {
   readonly conversation?: RuntimeConversationSnapshotMetadata;
 }
 
-function encodeRuntimeTranscriptCursor(
+export function encodeRuntimeTranscriptCursor(
   cursor:
     | RuntimeTranscriptPageCursor
     | RuntimeConversationCachePageCursor
@@ -22294,7 +22363,7 @@ function encodeRuntimeTranscriptCursor(
   return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 }
 
-function decodeRuntimeTranscriptCursor(
+export function decodeRuntimeTranscriptCursor(
   cursor: string,
 ):
   | RuntimeTranscriptPageCursor

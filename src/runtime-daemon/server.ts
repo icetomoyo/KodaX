@@ -216,6 +216,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "session.view.observe",
     "session.view.close",
     "session.view.item",
+    "session.history.resolveTurn",
     "session.diagnostics",
     "session.settings.get",
     "session.transcript.search",
@@ -1686,6 +1687,9 @@ async function dispatchRuntimeDaemonRequest(
     case "session.view.item":
       return runtime.sessions.readViewItem(requireStringParam(request.params, 'sessionId'),
         requireStringParam(request.params, 'itemId'), requireRecord(request.params));
+    case "session.history.resolveTurn":
+      return runtime.sessions.resolveHistoryTurn(requireStringParam(request.params, 'sessionId'),
+        requireRecord(request.params).selector as import('@kodax-ai/coding/client-contract').ClientHistoryTurnSelector);
     case "session.observe": {
       const subscriptionId = createSubscriptionId();
       const sessionId = requireStringParam(request.params, "sessionId");
@@ -2731,7 +2735,7 @@ function runtimeDaemonCapabilities(
   ownerCapabilities: Readonly<Record<string, unknown>> = {},
   clientExitControl = false,
 ): Record<string, unknown> {
-  const { productClient, productHistoryBoundaries, productExecutionAuthorization, toolInvocation, sessionCancellation, workflowSettingsDefaults } = ownerCapabilities;
+  const { productClient, productHistoryBoundaries, productHistoryTurnResolution, productExecutionAuthorization, toolInvocation, sessionCancellation, workflowSettingsDefaults } = ownerCapabilities;
   const safeOverrides = { ...overrides };
   delete safeOverrides.externalAgents;
   delete safeOverrides.externalAgentAdmin;
@@ -2759,6 +2763,8 @@ function runtimeDaemonCapabilities(
   delete safeOverrides.productInputRecovery;
   delete safeOverrides.productExecutionModeConstraint;
   delete safeOverrides.productHistoryBoundaries;
+  delete safeOverrides.productHistoryTurnResolution;
+  delete safeOverrides.productHistoryLocation;
   delete safeOverrides.productExecutionAuthorization;
   delete safeOverrides.productExitControl;
   delete safeOverrides.productExecutionFacts;
@@ -2798,6 +2804,10 @@ function runtimeDaemonCapabilities(
       ? { productClient: { version: 1 } } : {}),
     ...(isRecord(productHistoryBoundaries) && productHistoryBoundaries.version === 1
       ? { productHistoryBoundaries: { version: 1 } } : {}),
+    ...(isRecord(productHistoryTurnResolution) && productHistoryTurnResolution.version === 1
+      ? { productHistoryTurnResolution: { version: 1 } } : {}),
+    ...(isRecord(ownerCapabilities.productHistoryLocation) && ownerCapabilities.productHistoryLocation.version === 1
+      ? { productHistoryLocation: { version: 1 } } : {}),
     ...(isRecord(productExecutionAuthorization) && (productExecutionAuthorization.version === 1 || productExecutionAuthorization.version === 2)
       ? { productExecutionAuthorization: { version: productExecutionAuthorization.version } } : {}),
     ...(daemonManagement && clientExitControl && isRecord(ownerCapabilities.productExitControl) && ownerCapabilities.productExitControl.version === 1

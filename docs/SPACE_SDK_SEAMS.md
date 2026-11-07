@@ -1,5 +1,14 @@
 # Space 的 Product Client / Host 接缝
 
+## beta.3 候选的会话历史
+
+| Host 能力 | 客户端行为 |
+| --- | --- |
+| `productHistoryLocation: 1` | 向 `sessions.readHistory` 传 `around: { searchItemId }` 或 `around: { historyBoundary }`，使用返回的 `locatedBoundaryId` 定位。按 `nextCursor` 读更早记录，按 `newerCursor` 读更新记录。仅搜索原文可用时保留原文预览。 |
+| `productHistoryTurnResolution: 1` | 在 Fork/回退前调用 `sessions.resolveHistoryTurn`。行内目标传 SDK 项和来源，菜单使用 `latest` 或 `previous`，显式命令使用零基 `index`。完整轮尾包含已持久化的工具结果。写入时交回 `historyBoundary`，回退还须交回确认过的 `expectedHead`。 |
+
+两个能力均支持可选建连要求。Space 在连接后按操作检查 Host 能力，使旧 Host 仍可提供已有的浏览及搜索原文。来源修订使用 SDK 返回的字符串；新保存的 view 项暂缺修订时，可以提交其稳定输入或输出身份由 SDK 验证。浏览与解析只读，均不调用模型。
+
 ## 2026-11-02 后续接手：默认方法与 Quick Ask（alpha.12 之后，未发布）
 
 已发布 alpha.12 及 Space `codex/sdk-alpha12-preparation` 的先行适配仍是各自历史基线；
