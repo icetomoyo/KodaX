@@ -695,6 +695,7 @@ export class AgentActorController {
   async quiesce(
     reason = 'runtime quiesced',
     preservedTurnIds?: ReadonlySet<string>,
+    onlyTurnId?: string,
   ): Promise<void> {
     if (this.ownershipReleased) return;
     if (this.ownershipLost && this.settlementPersistenceUnknown) {
@@ -717,6 +718,7 @@ export class AgentActorController {
         () => {
           let changed = false;
           for (const turn of this.turns.values()) {
+            if (onlyTurnId !== undefined && turn.turnId !== onlyTurnId) continue;
             if (isTerminal(turn.state) || preservedTurnIds?.has(turn.turnId)) continue;
             changed = true;
             const abort = this.abortControllers.get(turn.turnId);

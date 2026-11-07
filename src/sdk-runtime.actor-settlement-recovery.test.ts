@@ -212,7 +212,7 @@ it('persists the exact independent Actor binding before its worker dispatches', 
   }
 }, 30_000);
 
-it('reconciles a foreign independent Run when its owner dies after this Host starts', async ({ signal }) => {
+it.for(['observe', 'abort'] as const)('reconciles a foreign independent Run after owner death before %s', { timeout: 30_000 }, async (operation, { signal }) => {
   const temporaryRoot = resolve(tmpdir());
   const homeDir = await mkdtemp(join(temporaryRoot, 'kodax-actor-observed-owner-'));
   const first = await createKodaXRuntime({ homeDir, defaultProvider: 'deepseek' });
@@ -236,7 +236,9 @@ it('reconciles a foreign independent Run when its owner dies after this Host sta
     if (!run || !completedTurn) throw new Error('Owner-death fixture did not publish its exact Run and Turn.');
     const { statusFile, persisted } = await readRunEnvelope(homeDir, run.runId);
     await writeFile(statusFile, JSON.stringify({
-      ...persisted, phase: 'running', stage: 'executing', endedAt: undefined, terminal: undefined,
+      ...persisted, phase: operation === 'abort' ? 'recovering' : 'running', stage: 'executing', endedAt: undefined, terminal: undefined,
+      ...(operation === 'abort' ? { contextRecovery: { waitingSince: run.startedAt,
+        checkpoint: { version: 1, sessionId: 'old-worker-history', activeEntryId: null, messagesDigest: 'a'.repeat(64) } } } : {}),
       _runtime: { ...persisted._runtime, actor: {
         actorPath: turn.actorPath, turnId: turn.turnId, createdAt: completedTurn.createdAt,
       } },
@@ -244,11 +246,15 @@ it('reconciles a foreign independent Run when its owner dies after this Host sta
 
     observer = await createKodaXRuntime({ homeDir, defaultProvider: 'deepseek' });
     // The original owner is still alive here: startup must leave its Run alone.
-    await expect(observer.runs.get(run.runId)).resolves.toMatchObject({ phase: 'running' });
+    await expect(observer.runs.get(run.runId)).resolves.toMatchObject({ phase: operation === 'abort' ? 'recovering' : 'running' });
     expect(vi.mocked(executeChildAgents)).toHaveBeenCalledTimes(1);
     await first.close();
 
-    // This get exercises subsequent owner-death observation, not startup repair.
+    if (operation === 'abort') {
+      await expect(observer.runs.abort(run.runId)).resolves.toMatchObject({ accepted: false,
+        phase: 'completed' });
+    }
+    // These controls exercise subsequent owner-death reconciliation, not startup repair.
     await expect(observer.runs.get(run.runId)).resolves.toMatchObject({
       phase: 'completed', terminal: { kind: 'completed' },
     });
@@ -261,7 +267,7 @@ it('reconciles a foreign independent Run when its owner dies after this Host sta
     if (dirname(homeDir) !== temporaryRoot) throw new Error('Refusing to remove a fixture outside its temporary root.');
     await rm(homeDir, { recursive: true, force: true });
   }
-}, 30_000);
+});
 
 for (const scenario of ['failed', 'failed-with-detail', 'legacy', 'completed-stop-detail',
   'wrong-createdAt', 'wrong-turnId', 'recovering-checkpoint', 'blocked-cleanup', 'snapshot-read-failure'] as const) {

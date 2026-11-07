@@ -252,4 +252,35 @@ RED 证据：对未修改基线实际运行的启动与 dispatch 两项均失败
 
 独立评审剩余 0 项。两项 P1 的失败详情问题均补了有效 RED 并修复；abort-control 的 dead-owner checkpoint 直达分支留在 P0-C 控制收口，不算本阶段已验收。
 
-P0-B 及 P0-C 尚未提交完成，容量修复和 next-dev 整体合并未混入本切片。
+以上是 P0-A 提交时的阶段状态；后续实施如下。容量修复和 next-dev 整体合并未混入 Actor 切片。
+
+### P0-B：canonical 事件结算及必要异常出口
+
+冻结生产源码 SDK blob `adf5fded8ca0141d1aceac2ebc69effe54ea4dce`。CodingActorSession 透传构造期 committed hook；Registry 按 Session、actorPath 和 Turn ID 路由，读取对应 canonical 历史 Turn，经 P0-A 同一投影及 CAS 结算 Run。release 仅捕获执行事实，保留 generationSuspended 短路，没有新增 Host finalizer 或生产轮询期限。
+
+独立运行接入现有异常和资源清理时，回归额外定位并修复了以下真实缺口：
+
+- 临时 Session 的独立 Actor 结算误触发 Session 删除；独立结算现不负责 Session 生命周期和主 Run 队列推进。
+- unknown 通知失败阻断结果收敛，且缺少 baseline 导致修复不前进；现在通知失败仍进入明确 unknown，并复用 Session 级 quiesce/repair，保留共享存储安全 fence。
+- Stop 提前 abort 执行器导致 failed 抢赢取消；独立取消先按精确 Turn 提交中断，再传递取消信号。旧 Turn 取消不会影响同 Actor 的新 Turn 或无关 peer；owner/store unknown 仍按 Session 范围修复。
+- checkpoint 关闭资格误受无关运行影响，且排队取消与 registry shutdown 竞争；关闭按独立 Turn 检查 checkpoint，并等待已发起的独立取消提交。
+- Shell cleanup 阻塞时，healthy 通知恢复旧 running 缓存；解除 cleanup 后也没有新事件触发结算。现保留 unknown，解除清理并持久保存后重新读取精确 Turn，经同一投影收敛，不绕过清理屏障。
+- dead-owner checkpoint 的直接 abort 入口先做 canonical 对账，不把已完成事实转成取消或再走恢复。
+
+上述问题分别先出现有效 RED，再由最小生产改动转为 GREEN；注入未命中的夹具调试不计为生产 RED。源码全量验收尚在 P0-C 收口阶段，不以专项通过替代最终全仓。
+
+专项实际通过：实时结算 4 项；异常出口 5 项；Stop、写入/通知确认和 live-owner 竞争 7 项；CodingActorSession 41 项。P0-A 的新增 abort 控制回归先返回 recovery instructions missing，修复后通过。SDK 主回归 342 项在 P0-B 较早实现通过，之后关闭和 Shell 修正仍须由最终完整快照验证。source/tests typecheck 已分别执行；最终冻结快照再次执行。
+
+Stop 的两种赢家、持久写入拒绝、提交后确认丢失、读回失败、终态通知失败、foreign owner/revision 替换后的迟到 hook 与旧 Host close 均有门控验证；实际保存/故障注入标志必须命中，不能将未命中的注入当作通过。标准轴与需求轴独立复审均为 0 项剩余发现。
+
+P0-C 包含两个已编写的真实子进程崩溃回归、撤销五秒完成等待及有界诊断，随后完成最终全仓和构建检查。真实崩溃夹具仅终止自己 spawn 的专属子进程，预期硬退出不作为普通测试错误；低层 Turn 定位回归同时覆盖同 Actor 的新旧 Turn。CLI 的增量和最小预算复核单列在 [Actor 构建预算审计](actor-settlement-bundle-audit-2026-11-07.md)。
+
+P1 已执行上述基本 Stop、unknown 晚确认、共享 fence 和 live-owner 竞争；重复 hook 的组合压力、A 已 canonical 后另一 Actor 进入 unknown、关闭失败与接管的组合压力尚未作为完整矩阵验收，不宣称 P1 全部完成。没有执行发布或 next-dev 整体合并，也没有写回另一工作区的 work mode 锁定改动。
+
+#### Standards
+
+独立最终审查：0 项可行动发现。新回归只在失败时读取缓存和同步 save-attempt 诊断，不重新发起 SDK/磁盘查询；未新增配置、依赖或跨文件测试框架。
+
+#### Spec
+
+独立最终审查：0 项剩余实现发现。精确 canonical、owner/revision/binding CAS、unknown 出口、checkpoint 关闭及 Shell cleanup 约束均已落实；专项、全仓、构建和未覆盖压力范围分别记录。

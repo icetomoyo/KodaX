@@ -3741,6 +3741,7 @@ interface RuntimeRunRecord {
   contextRecoverySelection?: { provider?: string; model?: string; reasoning?: KodaXReasoningMode };
   goalRuntime?: NonNullable<NonNullable<KodaXOptions['context']>['goalRuntime']>;
   readonly independentActorRef?: RuntimeIndependentActorRef;
+  independentExecutorSettled?: boolean;
   readonly productExecutionKey?: string;
   readonly productSession?: boolean;
   readonly productInput?: { readonly inputId: string; readonly digest: string };
@@ -3887,6 +3888,7 @@ type RuntimeUserInputRegistry = ReturnType<
 type RuntimeArtifactStore = ReturnType<typeof createRuntimeArtifactStore>;
 
 interface RuntimeRunServiceInternal extends RuntimeRunService {
+  settleIndependentActor(record: RuntimeRunRecord, turn?: AgentTurn): void;
   cleanupClientWork(principalId: string): Promise<ClientWorkCleanup>;
   startAdmitted(input: RuntimeTrustedStartRunInput): Promise<RuntimeRunHandle>;
   startPreparedInvocation(input: ClientCommandInput, invocation: RuntimeCommandInvocation): Promise<RuntimeRunHandle>;
@@ -4878,89 +4880,97 @@ async function createKodaXRuntimeInternal(
       ) {
         continue;
       }
-      if (health.state === "unknown") {
-        fenceRunAfterActorSettlementUnknown(run, health);
-      }
-      if (run.stop?.state === "unknown") {
-        delete run.actorHealthBaseState;
+      try {
         if (health.state === "unknown") {
+          fenceRunAfterActorSettlementUnknown(run, health);
+        }
+        if (run.stop?.state === "unknown") {
+          delete run.actorHealthBaseState;
+          if (health.state === "unknown") {
+            run.lifecycleError = {
+              code: health.code ?? "actor_settlement_not_persisted",
+              message:
+                health.message
+                ?? "Actor executor settlement persistence is not confirmed.",
+              retryable: false,
+            };
+            run.stageChangedAt = new Date().toISOString();
+            const status = statusFromRecord(run);
+            const authoritative = saveRunStatusSafely(
+              bus,
+              persistence,
+              run,
+              status,
+            );
+            if (authoritative === status) {
+              bus.emit("run.updated", status, {
+                sessionId: run.sessionId,
+                runId: run.runId,
+                ...(run.turnId !== undefined ? { turnId: run.turnId } : {}),
+              });
+            } else if (authoritative !== undefined) {
+              applyAuthoritativeRunStatus(run, authoritative);
+            }
+          }
+          continue;
+        }
+        if (health.state === "healthy") {
+          if (run.actorDurabilityFailure !== undefined) {
+            delete run.actorHealthBaseState;
+            continue;
+          }
+          const prior = run.actorHealthBaseState;
+          if (prior === undefined) continue;
+          run.phase = prior.phase;
+          run.stage = prior.stage;
+          run.error = prior.error;
+          run.lifecycleError = prior.lifecycleError;
+          delete run.actorHealthBaseState;
+        } else {
+          if (run.actorHealthBaseState === undefined) {
+            run.actorHealthBaseState = {
+              phase: run.phase,
+              stage: run.stage,
+              error: run.error,
+              lifecycleError: run.lifecycleError,
+            };
+          }
+          if (run.phase !== "queued") {
+            run.phase = health.state;
+          }
+          run.stage = health.state;
+          run.error = health.message;
           run.lifecycleError = {
-            code: health.code ?? "actor_settlement_not_persisted",
+            code: health.code ?? "actor_settlement_retrying",
             message:
               health.message
               ?? "Actor executor settlement persistence is not confirmed.",
-            retryable: false,
-          };
-          run.stageChangedAt = new Date().toISOString();
-          const status = statusFromRecord(run);
-          const authoritative = saveRunStatusSafely(
-            bus,
-            persistence,
-            run,
-            status,
-          );
-          if (authoritative === status) {
-            bus.emit("run.updated", status, {
-              sessionId: run.sessionId,
-              runId: run.runId,
-              ...(run.turnId !== undefined ? { turnId: run.turnId } : {}),
-            });
-          } else if (authoritative !== undefined) {
-            applyAuthoritativeRunStatus(run, authoritative);
-          }
-        }
-        continue;
-      }
-      if (health.state === "healthy") {
-        if (run.actorDurabilityFailure !== undefined) {
-          delete run.actorHealthBaseState;
-          continue;
-        }
-        const prior = run.actorHealthBaseState;
-        if (prior === undefined) continue;
-        run.phase = prior.phase;
-        run.stage = prior.stage;
-        run.error = prior.error;
-        run.lifecycleError = prior.lifecycleError;
-        delete run.actorHealthBaseState;
-      } else {
-        if (run.actorHealthBaseState === undefined) {
-          run.actorHealthBaseState = {
-            phase: run.phase,
-            stage: run.stage,
-            error: run.error,
-            lifecycleError: run.lifecycleError,
+            retryable: health.state === "recovering",
           };
         }
-        if (run.phase !== "queued") {
-          run.phase = health.state;
+        run.stageChangedAt = new Date().toISOString();
+        const status = statusFromRecord(run);
+        const authoritative = saveRunStatusSafely(
+          bus,
+          persistence,
+          run,
+          status,
+        );
+        if (authoritative === status) {
+          bus.emit("run.updated", status, {
+            sessionId: run.sessionId,
+            runId: run.runId,
+            ...(run.turnId !== undefined ? { turnId: run.turnId } : {}),
+          });
+        } else if (authoritative !== undefined) {
+          applyAuthoritativeRunStatus(run, authoritative);
         }
-        run.stage = health.state;
-        run.error = health.message;
-        run.lifecycleError = {
-          code: health.code ?? "actor_settlement_retrying",
-          message:
-            health.message
-            ?? "Actor executor settlement persistence is not confirmed.",
-          retryable: health.state === "recovering",
-        };
-      }
-      run.stageChangedAt = new Date().toISOString();
-      const status = statusFromRecord(run);
-      const authoritative = saveRunStatusSafely(
-        bus,
-        persistence,
-        run,
-        status,
-      );
-      if (authoritative === status) {
-        bus.emit("run.updated", status, {
-          sessionId: run.sessionId,
-          runId: run.runId,
-          ...(run.turnId !== undefined ? { turnId: run.turnId } : {}),
-        });
-      } else if (authoritative !== undefined) {
-        applyAuthoritativeRunStatus(run, authoritative);
+      } catch (error: unknown) {
+        if (!run.independentActorRef) throw error;
+        emitKodaXDiagnostic({ source: 'runtime.actor-settlement', level: 'error',
+          message: `Independent Actor Run health publication failed: ${run.runId}.`, detail: normalizeError(error) });
+      } finally {
+        if (health.state === 'unknown' && run.independentActorRef) runService.settleIndependentActor(run);
       }
     }
     if (health.state !== "recovering") {
@@ -4977,6 +4987,13 @@ async function createKodaXRuntimeInternal(
     agentPlane,
     options.externalAgents?.defaultContext,
     onActorHealthChanged,
+    (sessionId, root, event) => {
+      if (!event.turnId || !['turn_completed', 'turn_failed', 'turn_interrupted'].includes(event.kind)) return;
+      const record = runs.get(actorGenerationRunId(sessionId, event.turnId));
+      if (!record?.ownedByRuntime || record.independentActorRef?.actorPath !== event.actorPath) return;
+      const turn = root.get(event.actorPath).turns.find(value => value.turnId === event.turnId);
+      if (turn) runService.settleIndependentActor(record, turn);
+    },
   );
   reportStartupProgress({ stage: 'initializing', phase: 'recovery' });
   const recoveredSessionOrders = new Map<string, number>();
@@ -5723,6 +5740,7 @@ async function createKodaXRuntimeInternal(
         const startedAt = previous?.status.startedAt ?? new Date().toISOString();
         const record = recordFromPersistedStatus({ runId, sessionId, phase: 'running', startedAt, provider,
           sessionOrder: previous?.status.sessionOrder ?? persistence.nextSessionOrder(sessionId), origin: trusted.origin }, true);
+        Object.assign(record, { actorSession: await actorRegistry.forSession(sessionId) });
         Object.assign(record, { hadProviderCredential: trusted.providerCredentialAccessFactory !== undefined });
         record.recoveryRequiresExtensionRuntime = trusted.actorExtensionRuntime !== undefined;
         record.recoveryToolCeiling = recovery?.actor?.tools === undefined ? trusted.tools
@@ -5773,6 +5791,9 @@ async function createKodaXRuntimeInternal(
               if (entry) entry.reference = { ...entry.reference, deferred: true };
             } else entries.delete(reference.registrationId);
             save();
+            const turn = record.actorSession?.rootControl().get(execution.actor.path).turns
+              .find(value => value.turnId === execution.turn.turnId);
+            if (turn && turn.state !== 'accepted' && turn.state !== 'running') runService.settleIndependentActor(record, turn);
           };
           entries.set(reference.registrationId, { reference, retry: async () => {
             await retry();
@@ -5811,13 +5832,14 @@ async function createKodaXRuntimeInternal(
               .filter(tool => !allowed.includes(tool.name)).map(tool => tool.name),
           ])] }),
           guardrails: runOptions.guardrails,
-        }, release: (result, error) => {
+        }, release: (_result, error) => {
           if (record.generationSuspended) { resolveResult(resultFromStatus(statusFromRecord(record))); return; }
-          record.error = error instanceof Error ? error.message : error === undefined ? undefined : String(error);
-          const phase = signal.aborted ? 'cancelled' : error !== undefined || result?.terminationReason ? 'failed' : 'completed';
-          markRunTerminal(bus, persistence, record, phase, { code: phase === 'completed' ? 'completed' : phase === 'cancelled' ? 'cancelled' : 'run_failed',
-            effectOutcome: 'unknown', message: record.error ?? phase });
-          resolveResult(resultFromStatus(statusFromRecord(record)));
+          record.independentExecutorSettled = true;
+          if (error !== undefined) {
+            record.failureDetail = captureRuntimeFailureDetail(error, record);
+            record.error = record.failureDetail.safeMessage;
+          }
+          if (record.actorSession?.health().state === 'unknown') runService.settleIndependentActor(record);
         } };
       },
       async (sessionId, actorPath, turnId, trusted) => {
@@ -10144,6 +10166,7 @@ async function createRuntimeRunService(deps: {
       || (redirected && isTerminalRunPhase(record.phase));
     if (
       record.admittedSessionContext?.runtimeInfo?.temporary !== true
+      && record.independentActorRef === undefined
       && stopAllowsQueue
       && executorPromiseSettled(record)
       && phaseContinuesQueue
@@ -10164,7 +10187,8 @@ async function createRuntimeRunService(deps: {
       record.unconfirmedResult = result;
       return result;
     }
-    const temporary = record.admittedSessionContext?.runtimeInfo?.temporary === true;
+    const temporary = record.independentActorRef === undefined
+      && record.admittedSessionContext?.runtimeInfo?.temporary === true;
     if (temporary && !executorPromiseSettled(record)) return result;
     if (
       record.settlementFinished === true
@@ -10211,7 +10235,7 @@ async function createRuntimeRunService(deps: {
       pruneTerminalRuns(deps.runs);
     });
     runSettlementCleanupStep(record, "queued-Run admission", () => {
-      drainNext(record.sessionId);
+      if (record.independentActorRef === undefined) drainNext(record.sessionId);
     });
     if (!temporary) maybeDrainProductQueue(record);
     return result;
@@ -10405,13 +10429,17 @@ async function createRuntimeRunService(deps: {
     const baseline = record.actorTurnBaseline;
     if (
       actorSession === undefined
-      || baseline === undefined
+      || (baseline === undefined && record.independentActorRef === undefined)
     ) {
       return Promise.resolve({});
     }
     const previous = record.actorCancellation ?? Promise.resolve();
     const cancellation = previous
-      .then(() => actorSession.quiesce(reason, new Set([...baseline, ...actorSession.independentTurnIds()])))
+      .then(() => record.independentActorRef
+        ? actorSession.health().state === 'unknown'
+          ? actorSession.quiesce(reason)
+          : actorSession.quiesceTurn(record.independentActorRef.turnId, reason)
+        : actorSession.quiesce(reason, new Set([...baseline!, ...actorSession.independentTurnIds()])))
       .then(() => ({}))
       .catch((error: unknown) => {
         const normalized = normalizeError(error);
@@ -10434,7 +10462,8 @@ async function createRuntimeRunService(deps: {
     && record.actorDurabilityPreservesExecutorFact !== true;
   const executorPromiseSettled = (record: RuntimeRunRecord): boolean =>
     record.capturedExecutorResult !== undefined
-    || record.capturedExecutorFailure !== undefined;
+    || record.capturedExecutorFailure !== undefined
+    || record.independentExecutorSettled === true;
   const recoverActorDurability = async (
     record: RuntimeRunRecord,
     reason: string,
@@ -10490,9 +10519,7 @@ async function createRuntimeRunService(deps: {
         failureKind: failureDetail.failureKind,
       },
     };
-    record.actorDurabilityPreservesExecutorFact =
-      record.capturedExecutorResult !== undefined
-      || record.capturedExecutorFailure !== undefined;
+    record.actorDurabilityPreservesExecutorFact = executorPromiseSettled(record);
     record.interruptInputOpen = false;
     terminalizeQueuedInterruptInputs(record, (inputId) =>
       productQueue.markDropped(record.sessionId, inputId),
@@ -11145,9 +11172,10 @@ async function createRuntimeRunService(deps: {
     record.providerCredentialScope?.close(reason);
     const abortError = new DOMException(reason, "AbortError");
     record.running?.abort(abortError);
-    record.abortController?.abort(abortError);
+    if (!record.independentActorRef) record.abortController?.abort(abortError);
     record.resumeContextCapacity?.();
-    void requestManagedActorCancellation(record, reason);
+    const actorCancellation = requestManagedActorCancellation(record, reason);
+    if (record.independentActorRef) void actorCancellation.then(() => record.abortController?.abort(abortError));
     record.actorFinalizationAbortController?.abort(abortError);
     deps.permissions.rejectForRun(record.runId, reason);
     record.trustedTextApprovals?.clear();
@@ -13103,12 +13131,13 @@ async function createRuntimeRunService(deps: {
       }
       releaseAbortSignalSubscription(run);
       run.running?.abort(new DOMException(reason, "AbortError"));
-      run.abortController?.abort(new DOMException(reason, "AbortError"));
+      if (!run.independentActorRef) run.abortController?.abort(new DOMException(reason, "AbortError"));
       const actorCancellation = requestManagedActorCancellation(
         run,
         reason,
       );
       void actorCancellation.then((attempt) => {
+        if (run.independentActorRef) run.abortController?.abort(new DOMException(reason, "AbortError"));
         if (attempt.error === undefined) finishRecoveredUnconfirmedRun(run);
       });
       deps.permissions.rejectForRun(run.runId, reason);
@@ -13212,6 +13241,44 @@ async function createRuntimeRunService(deps: {
   };
 
   const service: RuntimeRunServiceInternal = {
+    settleIndependentActor(record, turn) {
+      if (!record.ownedByRuntime || !record.independentActorRef || record.generationSuspended || record.terminalEmitted) return;
+      if (!turn) {
+        if (record.actorSession?.health().state === 'unknown') {
+          finishUnconfirmedRun(record, unknownActorSettlementResult(record));
+        }
+        return;
+      }
+      record.independentExecutorSettled = true;
+      try {
+        const expected = deps.persistence.loadRunStatus(record.runId);
+        if (!expected || expected.owner?.ownerId !== deps.runOwner.ownerId
+          || !isDeepStrictEqual(expected.actor, record.independentActorRef)) {
+          throw createRuntimeConflictError('Independent Actor Run owner changed.', expected?.revision ?? 0);
+        }
+        projectIndependentActorTerminal(deps.bus, deps.persistence, record, turn, expected);
+        const authoritative = deps.persistence.loadRunStatus(record.runId);
+        if (authoritative && isTerminalRunPhase(authoritative.status.phase)
+          && isDeepStrictEqual(authoritative.actor, record.independentActorRef)) {
+          applyAuthoritativeRunStatus(record, authoritative.status);
+          finishRun(record, resultFromStatus(authoritative.status));
+        } else {
+          finishRunSettlementFailure(record, new Error('Independent Actor Run terminal was not confirmed.'));
+        }
+      } catch (error: unknown) {
+        try {
+          const authoritative = deps.persistence.loadRunStatus(record.runId);
+          if (authoritative && isTerminalRunPhase(authoritative.status.phase)
+            && isDeepStrictEqual(authoritative.actor, record.independentActorRef)) {
+            applyAuthoritativeRunStatus(record, authoritative.status);
+          }
+        } catch (readbackError: unknown) {
+          emitKodaXDiagnostic({ source: 'runtime.actor-settlement', level: 'error',
+            message: `Could not read back independent Actor Run ${record.runId}.`, detail: normalizeError(readbackError) });
+        }
+        finishRunSettlementFailure(record, error);
+      }
+    },
     start,
     async recover(input) {
       deps.ensureOpen();
@@ -13658,6 +13725,11 @@ async function createRuntimeRunService(deps: {
           && await inspectRuntimeActorOwner(persisted.owner) === 'dead') {
           return deps.sessionOperations.run(sessionId, async () => {
             await deps.sessionAdmission.assertRunAccess(sessionId);
+            const reconciled = await reconcileIndependentActorRun(persisted, deps.sessionManager, deps.persistence, deps.bus);
+            if (reconciled) {
+              return runtimeRunStopReceipt({ accepted: false, effectDeliveryAllowed: false,
+                status: reconciled.status, revision: reconciled.revision });
+            }
             const actorSession = await deps.actorRegistry.forSession(sessionId);
             const recovery = deps.persistence.loadGenerationRecovery(runId);
             if (!recovery) throw new Error('Generation recovery instructions are unavailable.');
@@ -13743,9 +13815,10 @@ async function createRuntimeRunService(deps: {
         if (run.ownedByRuntime && (run.contextRecovery?.checkpoint || run.contextRecovery?.children?.some(child => child.checkpoint))
           && !run.stop && !hasBlockingShellCleanups(run)
           && !run.activeEffectCount
-          && !run.actorSession?.rootControl().list().actors.some(actor => actor.path !== '/root'
+          && (run.independentActorRef ? Boolean(run.contextRecovery?.checkpoint)
+            : !run.actorSession?.rootControl().list().actors.some(actor => actor.path !== '/root'
             && actor.currentTurnId !== undefined && actor.state === 'running' && actor.kind !== 'workflow'
-            && !run.actorSession!.rootControl().get(actor.path).turns.find(turn => turn.turnId === actor.currentTurnId)?.checkpoint)) {
+            && !run.actorSession!.rootControl().get(actor.path).turns.find(turn => turn.turnId === actor.currentTurnId)?.checkpoint))) {
           run.generationSuspended = true;
         }
         if (run.generationSuspended) {
@@ -13778,6 +13851,8 @@ async function createRuntimeRunService(deps: {
         });
         closeOrSuspend(run);
       }));
+      await Promise.all([...deps.runs.values()].flatMap(run => run.independentActorRef && run.actorCancellation
+        ? [run.actorCancellation] : []));
       activeRunBySession.clear();
       autoModeGuardrails.clear();
       autoModeStates.clear();
@@ -15280,6 +15355,7 @@ function createRuntimeAgentActorRegistry(
     sessionId: string,
     health: AgentControllerHealth,
   ) => void,
+  onEventCommitted?: (sessionId: string, root: AgentActorClient, event: AgentEvent) => void,
 ): RuntimeAgentActorRegistry {
   const sessions = new Map<string, Promise<CodingActorSession>>();
   const ready = new Map<string, CodingActorSession>();
@@ -15354,6 +15430,7 @@ function createRuntimeAgentActorRegistry(
         },
         isOwnerAlive: isRuntimeActorOwnerAlive,
         onHealthChanged: (health) => onHealthChanged?.(sessionId, health),
+        onEventCommitted: (event): void => onEventCommitted?.(sessionId, session.rootControl(), event),
         ...(plane
           ? {
               executor: createExternalActorTurnExecutor({
@@ -24247,6 +24324,7 @@ function markRunTerminal(
   expected?: PersistedRuntimeRunStatus,
 ): void {
   if (run.terminalEmitted) return;
+  delete run.actorHealthBaseState;
   if (hasBlockingShellCleanups(run)) {
     run.phase = "unknown";
     run.stage = "unknown";
@@ -24254,7 +24332,6 @@ function markRunTerminal(
     saveRunStatusSafely(bus, persistence, run, statusFromRecord(run), expected);
     return;
   }
-  delete run.actorHealthBaseState;
   delete run.lifecycleError;
   if (run.error === "stop_outcome_unconfirmed" || run.error === "shell_cleanup_unconfirmed") delete run.error;
   run.interruptInputOpen = false;
