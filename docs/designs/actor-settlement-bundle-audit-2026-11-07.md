@@ -30,3 +30,5 @@ Five-manifest probes retain the actual Windows manifest and synthesize Linux/Dar
 ## Verification boundary
 
 The builder and published-artifact test must use the same fixed ceiling, `5 * 1024 * 1024 - 43 * 1024`. There is no override or automatic budget growth. Final complete build, SDK declarations, packaged smoke checks and full source regressions are recorded in the Actor implementation report, independently of this size audit. This audit establishes neither startup latency nor next-dev merge safety. Future combined builds must measure their actual artifact; neither branch's historical byte count is sufficient.
+
+The final complete build subsequently passed and emitted **5,196,207 bytes**, SHA-256 `76ae8781f649d05ecc742f2f87b1023afb739152dc32a92a2ac7948e0a2701f3`, matching the final local composition probe exactly. All 102 bundled regressions passed, including the published-artifact size gate; all 37 package export targets are present in the local tarball. These final checks use the same frozen production blobs listed above and do not convert the synthetic non-Windows compositions into native execution evidence.

@@ -621,6 +621,10 @@ Vitest 4.1.11 的 `vi.waitFor` 默认 timeout 为 1,000ms；外层测试的 20,0
 
 原 generation-actors 文件的五处五秒完成期限已撤除。等待按精确 `agents.output` 判定，终态错误立即失败，`agents.wait(...,100,{signal})` 仅作唤醒，保留外层预算。失败 hook 输出最近 output/Run/event、执行次数、有界 `coding:actors` sink 和真实 save-attempt 阶段诊断，不在失败 hook 再访问 SDK 或磁盘。既有 1,200ms 延迟场景保留为附加慢存储回归；它不替代精确 terminal-save gate 或硬崩溃证据。
 
-生产冻结点 SDK blob 为 `adf5fded8ca0141d1aceac2ebc69effe54ea4dce`，另两生产模块及 CLI 增量记录于 [构建预算审计](../designs/actor-settlement-bundle-audit-2026-11-07.md)。最终全仓与完整构建正在执行，完成后追加实际计数，不把中间专项或旧构建当成最终通过。
+生产冻结点 SDK blob 为 `adf5fded8ca0141d1aceac2ebc69effe54ea4dce`，另两生产模块及 CLI 增量记录于 [构建预算审计](../designs/actor-settlement-bundle-audit-2026-11-07.md)。最终结果如下，不把中间专项或旧构建当成最终通过。
 
 P1 追加 2 文件 / 3 项独立执行全部通过；它们在默认全仓启动后加入，不归入那次预先收集的文件清单。generation 等待诊断顺序经复审调整后，完整文件另跑 10/10 通过。两项只改测试，生产冻结点保持不变。标准轴与需求轴交叉复审最终均无剩余发现。
+
+最终默认全仓：1,430 文件中 1,423 通过、7 跳过；19,758 项中 **19,671 通过、87 跳过、0 失败**。此新的执行没有改写前文历史失败。源码/测试 typecheck、完整构建、29 文件的打包回归 102/102、本地打包及 37 个导出目标存在性检查均通过。打包测试第一组采用并发 4，原串行尾组保持并发 1；没有修改其文件清单或断言。
+
+实际 CLI 5,196,207 bytes，与审计探测的 SHA-256 一致，仍在原 5 MiB 外层上限内。全仓 JSON、P1 追加 JSON、最终构建/打包日志和本地产物位于 OS 临时目录 `kodax-actor-final-20261107`。阶段提交、冻结 blob、精确验证范围及原工作区隔离说明见实施记录的“最终冻结快照验收”。本次没有发布或更新安装中的 Space/CLI。
