@@ -31,6 +31,15 @@ All notable changes to this project will be documented in this file.
   needed to verify the current boot for interrupted-exit recovery.
 - Remove abandoned daemon publication files in bounded idle rounds after
   the Host is ready. Preserve files owned by live or unverified processes.
+- Reuse a running shared Host whose runtime build fingerprint matches the
+  client even when the SDK is installed at a different path. Packaged
+  manifests are compared without npm scripts, keywords or bundleDependencies;
+  different builds and dependency changes are still refused.
+- Recover interrupted Host exits from verified containment evidence. Windows
+  crash reentry requires the exact owner generations to have ended with an
+  empty Job or a verified reboot; original exit receipts and unknown
+  cleanup/execution outcomes are preserved, and the management wire admits
+  the Windows Job and boot identities this evidence carries.
 - Recover from context-capacity errors with bounded reads, adaptive compaction
   budgets and strict complete-summary parsing. Retain original tool evidence
   and report capacity failure instead of leaving execution silently stalled.
