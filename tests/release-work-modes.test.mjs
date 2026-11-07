@@ -174,6 +174,12 @@ test('release archive preserves work modes, partial effects, cancellation and re
     cases.push({ name: active.name, mode: active.mode, primaryRequests: active.requests.length, phase: result.phase });
     phase(`completed ${active.name}`);
   };
+  const newSession = async (title, workMode) => {
+    const session = await client.sessions.create({ projectPath: workspace, title });
+    sessionId = session.id;
+    await client.sessions.updateSettings(sessionId, { permissionMode: 'full-access', agentMode: 'ama',
+      ...(workMode === undefined ? {} : { workMode }) });
+  };
   try {
     await wait((async () => {
       phase('extracting archive');
@@ -181,6 +187,12 @@ test('release archive preserves work modes, partial effects, cancellation and re
       // MSYS GNU tar treats drive-letter arguments (C:/...) as remote tape
       // specs; keep both tar paths relative to the extraction directory.
       await exec('tar', ['-xf', path.relative(packageDir, path.resolve(archive)), '-C', '.'], { cwd: packageDir, signal: t.signal, windowsHide: true, timeout: 60_000 });
+      const windowsPrograms = JSON.parse(await readFile(path.join(packageDir, 'windows-effect-job-programs.json'), 'utf8'));
+      assert.deepEqual(Object.fromEntries(Object.entries(windowsPrograms).map(([name, text]) =>
+        [name, createHash('sha256').update(text, 'utf8').digest('hex')])), {
+        effectJob: 'a2fd25dbd7c7dcf8438d3d048b4040db49ee380090dd83c77ca5ad9eb7842f76',
+        sidProbe: '02307259d2398a467692c41e5673fccd141f7ad08d4862601e99f6fae63f05ce',
+      });
       if (process.platform === 'win32') for (const runtime of ['node', 'bun']) {
         await assert.rejects(exec(path.join(process.env.SystemRoot, 'System32/where.exe'), [runtime], { env: environment, windowsHide: true }), { code: 1 });
       }
@@ -192,13 +204,25 @@ test('release archive preserves work modes, partial effects, cancellation and re
           apiKeyEnv: 'KODAX_RELEASE_MODE_KEY', model: 'fixture', contextWindow: 128000, reasoning: 'none' }] }));
       assert.match((await cli(['--help'])).stdout, /--work-mode/);
       const firstHost = await connect();
-      const session = await client.sessions.create({ projectPath: workspace, title: 'Release modes' }); sessionId = session.id;
-      await client.sessions.updateSettings(sessionId, { permissionMode: 'full-access', agentMode: 'ama' });
+      await newSession('Default Coding mode');
       assert.equal((await client.sessions.getSettings(sessionId)).workMode ?? 'coding', 'coding');
       await complete(await run('default', 'coding'));
-      await client.sessions.updateSettings(sessionId, { workMode: 'agent' });
+      await newSession('First Agent selection', 'agent');
       await complete(await run('agent', 'agent', undefined, true));
-      await client.sessions.updateSettings(sessionId, { workMode: 'script' });
+      const locked = await client.sessions.getSettingsVersioned(sessionId);
+      assert.equal(locked.workModeLocked, true);
+      const beforeLockedRequests = primaryRequests.length;
+      await assert.rejects(client.sessions.updateSettings(sessionId, { workMode: 'coding' }), { code: 'conflict' });
+      await assert.rejects(client.sessions.updateSettings(sessionId, { workMode: null }), { code: 'conflict' });
+      await assert.rejects(client.sessions.updateSettingsVersioned(sessionId, { workMode: null }, { expectedRevision: locked.revision }), { code: 'conflict' });
+      active = { name: 'locked-cli-override', mode: 'coding', requests: [] };
+      await assert.rejects(cli(['-p', 'Do not change the locked Agent mode.', '--session', sessionId,
+        '--work-mode', 'coding', '--effort', 'off']), error => /Work mode is fixed/.test(String(error.stderr || error.message)));
+      assert.equal(primaryRequests.length, beforeLockedRequests);
+      assert.equal(active.requests.length, 0);
+      assert.equal((await client.sessions.getSettings(sessionId)).workMode, 'agent');
+      cases.push({ name: active.name, mode: 'agent', primaryRequests: 0, outcome: 'rejected' });
+      await newSession('First Script selection', 'script');
       await complete(await run('partial', 'script', "await tools.read({path:'fixture.txt'}); await tools.edit({path:'fixture.txt',edits:[{old_string:'RELEASE_VALUE=1',new_string:'RELEASE_VALUE=2'}]}); throw Error('intentional partial stop');"));
       assert.equal(await readFile(path.join(workspace, 'fixture.txt'), 'utf8'), 'RELEASE_VALUE=2\n');
       const storage = new FileSessionStorage({ sessionsDir: path.join(configHome, 'sessions'), configHome });
@@ -227,13 +251,18 @@ test('release archive preserves work modes, partial effects, cancellation and re
       await complete(await run('cancel-control', 'script', cancellationCode));
       assert.equal(await readFile(path.join(workspace, 'cancel-probe.txt'), 'utf8'), 'reachable');
 
-      active = { name: 'cli-override', mode: 'agent', requests: [] };
-      await cli(['-p', 'Check temporary Agent mode.', '--session', sessionId, '--work-mode', 'agent', '--effort', 'off']);
+      await newSession('First CLI Agent selection');
+      active = { name: 'cli-first-selection', mode: 'agent', requests: [] };
+      await cli(['-p', 'Check first Agent selection.', '--session', sessionId, '--work-mode', 'agent', '--effort', 'off']);
       assert.equal(active.requests.length, 1);
-      assert.equal((await client.sessions.getSettings(sessionId)).workMode, 'script');
+      assert.equal((await client.sessions.getSettings(sessionId)).workMode, 'agent');
+      assert.equal((await client.sessions.getSettingsVersioned(sessionId)).workModeLocked, true);
       cases.push({ name: active.name, mode: active.mode, primaryRequests: 1 });
+      await newSession('Clear before first Run', 'agent');
+      assert.equal((await client.sessions.getSettingsVersioned(sessionId)).workModeLocked, false);
       await client.sessions.updateSettings(sessionId, { workMode: null });
       await complete(await run('cleared-default', 'coding'));
+      await newSession('Missing Script worker preflight');
       const worker = path.join(packageDir, 'script-worker.cjs');
       await rename(worker, `${worker}.missing`);
       try {
