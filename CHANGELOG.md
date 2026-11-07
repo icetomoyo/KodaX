@@ -25,6 +25,8 @@ All notable changes to this project will be documented in this file.
   view owner, including items whose IDs also match the history reference format.
 - Reduce Windows daemon startup time by requesting only the CIM property
   needed to verify the current boot for interrupted-exit recovery.
+- Remove abandoned daemon publication files in bounded idle rounds after
+  the Host is ready. Preserve files owned by live or unverified processes.
 - Recover from context-capacity errors with bounded reads, adaptive compaction
   budgets and strict complete-summary parsing. Retain original tool evidence
   and report capacity failure instead of leaving execution silently stalled.

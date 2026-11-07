@@ -10,9 +10,10 @@ Target machines do **not** need Node.js or any runtime installed.
 
 ## v0.7.97-beta.3 local preparation
 
-This is an unpublished local candidate on `codex/beta3-integration`. Preparation
-stops before tagging, pushing, npm/GitHub publication or replacing installed
-Space/CLI packages. The last actually published Host-upgrade baseline remains
+Local `KodaX` includes the integration candidate and the upstream daemon
+maintenance change. Merge `5057f7828` retains both saved-history entries
+and the idle maintenance scheduler in the packaged CLI. The last published
+Host-upgrade baseline is
 `0.7.97-beta.2`, confirmed in the public npm registry on 2026-11-07
 (published 2026-11-04T23:47:39.827Z). Preparing beta.3 does not advance it.
 The CI/Release upgrade fixture pins that public tarball by SHA-512.
