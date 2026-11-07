@@ -28,7 +28,7 @@ async function loadPdf(page: Page, bytes: Buffer): Promise<number> {
  }, { code, worker, base64: bytes.toString('base64') });
 }
 const pdfAdvice = 'For page-accurate review, render a PDF exported from this document by an available converter or its authoring application. '
- + 'Keep stored field values during export, because readers see those values when they open the file. Write the PDF to a scratch location so it is not mistaken for the deliverable.';
+ + 'Check stored field values and any values recalculated during conversion; a PDF alone does not prove that the DOCX fields are current. Write the PDF to a scratch location so it is not mistaken for the deliverable.';
 async function loadDocx(page: Page, bytes: Buffer, findings: Diagnostic[]): Promise<number | { error: string }> {
  const zip = await JSZip.loadAsync(bytes);
  // Valid minimal Word files may omit settings. Normalize only the render snapshot.
@@ -63,7 +63,7 @@ export async function processDocument(bytes: Buffer, file: Omit<ArtifactRef, 'pa
  // DOCX conversion happens before the browser budget starts; evidence stays bound to the DOCX source.
  const converted = input && file.format === 'docx' && backend === 'libreoffice' ? await convertDocx(bytes, options) : undefined;
  if (converted) findings.push({ code: 'docx-converted', message: 'Pages were rendered from a LibreOffice PDF conversion. '
-  + 'Fields such as a table of contents show the values stored in the file, so an empty or outdated table of contents is a document finding. Pagination can still differ slightly from Word/WPS.' });
+  + 'Conversion can recalculate page-number fields; a table of contents can remain empty or outdated and needs review. Field values and pagination must be checked against the intended Word/WPS output.' });
  const asPdf = file.format === 'pdf' || converted !== undefined;
  return withArtifactPage(options, async page => {
   await page.context().route('**/*', route => {

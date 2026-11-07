@@ -43,6 +43,8 @@ it.skipIf(!process.env.KODAX_ARTIFACT_TEST_BROWSER)('renders DOCX through the ho
   expect(result.evidence!.engine).toEqual({ name: 'LibreOffice/PDF.js', version: 'LibreOffice fixture' });
   expect(result.evidence!.source).toEqual({ kind: 'file', file: opened.artifact });
   expect(result.diagnostics.map(d => d.code)).toEqual(['docx-converted']); expect(result.diagnostics[0]!.blocking).toBeUndefined();
+  expect(result.diagnostics[0]!.message).toMatch(/recalculat.*page|page.*recalculat/i);
+  expect(result.diagnostics[0]!.message).toMatch(/table of contents.*(?:empty|stale|outdated)/i);
   expect(result.evidence!.layout!.totalPages).toBe(1);
   const lightweight = await executeArtifactRequest({ operation: 'render', input: { path: 'x.docx', backend: 'lightweight' } }, options);
   expect(convert).toHaveBeenCalledOnce(); expect(lightweight.status).toBe('unverified');
