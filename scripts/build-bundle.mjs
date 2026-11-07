@@ -416,7 +416,7 @@ const cliResult = await build({
   ...commonOptions,
   metafile: true,
   entryPoints: [path.join(repoRoot, 'src/kodax_cli.ts')],
-  external: [...external, './provider-auth-cli.js', './storage-repair-cli.js', './kodax_doctor.js', './one-shot-task.js', './history-turn.js', './client-history.js'],
+  external: [...external, './provider-auth-cli.js', './storage-repair-cli.js', './kodax_doctor.js', './one-shot-task.js', './history-turn.js', './client-history.js', './maintenance-scheduler.js'],
   plugins: [...commonOptions.plugins, {
     name: 'lazy-cli-history-reader',
     setup(builder) {
@@ -503,6 +503,7 @@ sdkEntryPoints.kodax_doctor = path.join(repoRoot, 'src/kodax_doctor.ts');
 sdkEntryPoints['one-shot-task'] = path.join(repoRoot, 'src/one-shot-task.ts');
 sdkEntryPoints['history-turn'] = path.join(repoRoot, 'src/history-turn.ts');
 sdkEntryPoints['client-history'] = path.join(repoRoot, 'src/client-history.ts');
+sdkEntryPoints['maintenance-scheduler'] = path.join(repoRoot, 'src/runtime-daemon/maintenance-scheduler.ts');
 
 log(`Building ${sdkEntryNames.length} SDK entries (splitting on)…`);
 const sdkResult = await build({
