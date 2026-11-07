@@ -1,10 +1,10 @@
 # beta.3 integration readiness — 2026-11-07
 
-Status: **stopped at the user-required work-mode conflict boundary; not release ready**. The user authorized continuous preparation, stopping before publishing beta.3, and separately required stopping if integration conflicts with first-Run work-mode locking. Full integration found that conflict. This document records a local candidate, not a release. No tag, remote push, npm/GitHub publication, installed Space/CLI replacement or next-dev feature merge occurred.
+Status: **local pre-publication verification complete; final full suite passed**. The user clarified that the earlier conflict instruction concerned other chats editing concurrently, and confirmed no other chat was working. Investigation and implementation continued while preserving first-Run locking. This is a local candidate, not a release. No tag, remote push, npm/GitHub publication, installed Space/CLI replacement or next-dev feature merge occurred.
 
 ## Fixed inputs and preservation
 
-The original checkout remains at `58671f8dea75a0df2498ad553536b17ee2b04896` with other threads' uncommitted work. A hash-checked snapshot of 13 work-mode files and 19 DOCX-related files was taken into OS temporary storage; that checkout was not modified. The existing managed worktree is reused on `codex/beta3-integration`.
+The original checkout was at `58671f8dea75a0df2498ad553536b17ee2b04896` when a hash-checked snapshot of 13 work-mode files and 19 DOCX-related files was taken into OS temporary storage. That checkout was not modified. The existing managed worktree is reused on `codex/beta3-integration`.
 
 | Stage | Commit | Scope |
 | --- | --- | --- |
@@ -21,7 +21,7 @@ The DOCX eval draft was preserved separately and is not accepted release evidenc
 
 ## Required validation slices
 
-1. Exercise first-root admission, independent Actor success/failure, queued roots, checkpoint close/restart and exact-Turn recovery through the public Runtime seam. Verify the lock persists even after all Runs become idle. Stop work affecting mode logic if an actual conflict is discovered.
+1. Exercise first-root admission, independent Actor success/failure, queued roots, checkpoint close/restart and exact-Turn recovery through the public Runtime seam. Verify the lock persists even after all Runs become idle. Coordinate concurrent edits; investigate semantic incompatibility and preserve the permanent lock when repairing it.
 2. Re-measure the real combined artifact and preserve a 49 KiB CLI reserve beneath the unchanged 5 MiB outer limit. A prior temporary source-overlay probe measured the largest five-manifest composition at 5,199,570 bytes, requiring at least 6,866 bytes of reduction to meet that target. That probe did not establish successful joint typechecking or execution. Prefer complete static program resources with byte verification and existing package/binary resource paths; do not remove behavior or lower the reserve to obtain green checks.
 3. Validate DOCX/PPTX conversion with the installed LibreOffice console entry and Chromium, structured fallback, actual PNG evidence and original source hashes. Test cached fields before asserting that conversion preserves their values. Host converter availability is a runtime prerequisite, not guaranteed by an SDK version update.
 4. Freeze a combined candidate before real-model calls. The user selected `deepseek/deepseek-flash`, `zhipu-coding/glm-5.3-flash`, with `kimi-code/kimi-for-coding` also allowed. Start with the first two routes, enforce a 64K application context budget, and distinguish that artificial budget from the models' larger native windows. Respect the pre-existing 40-request, 600,000-token, US$5 global limits; no automatic retries or unbudgeted judge calls. Pilot method and source/input hashes must be fixed in a new revision before execution.
@@ -31,7 +31,7 @@ The DOCX eval draft was preserved separately and is not accepted release evidenc
 
 Space SDK upgrade and installed-application acceptance occur after the SDK publication step unless separately prepared against an explicitly local candidate. PDF pagination also requires the Extensions binary/remote sidecar update. The pre-release report must distinguish completed local candidate checks from those later installation/release checks and from unexecuted native platforms. The remainder of next-dev is postponed until after this repair release and needs a fresh integration candidate, conflict list and budget audit.
 
-## Evidence record
+## Initial integration checkpoint — historical
 
 Production candidate: `58f234dbad97137d0d258f8392f52b496545c3c0`.
 Forced package re-emission followed by the complete `npm run build` passed;
@@ -41,7 +41,8 @@ Vitest run finished **19,676 passed, nine failed, 89 skipped** across 1,434
 files (1,424 passed, three failed, seven skipped), approximately 24m15s. It is
 not green. Six failures expose real legacy recovery compatibility and three
 use obsolete after-first-Run mode-switch expectations. Both independent
-read-only investigations agree; the lock and affected tests remain untouched.
+read-only investigations identified the boundary; the refined effective-mode
+diagnosis and subsequent repair are recorded below.
 The concrete path and proposed boundary are recorded in
 [the conflict report](beta3-work-mode-integration-conflict-2026-11-07.md).
 
@@ -53,7 +54,7 @@ current-SID APIs and npm bin wrapper succeed, reporting `0.7.97-beta.3`.
 Existing external dependencies are borrowed through a temporary parent junction;
 this is local package consumption, not a clean-machine installation claim.
 
-Final local CLI: 5,185,031 bytes, SHA-256
+Initial checkpoint CLI: 5,185,031 bytes, SHA-256
 `74c29f62ecc7eaedc6f42d37d4ae09010b0d64461e321e29593604811498f82b`.
 The unchanged startup, credential-uniqueness and 49 KiB gates pass in three
 compositions: local, five-manifest Linux selection (5,186,532 bytes), and
@@ -94,15 +95,12 @@ are recorded in [the pilot report](beta3-document-pilot-results-2026-11-07.md).
 R2's stricter eval-only closing-tag failure and the six zero-HTTP replays in
 r3 remain explicit; cumulative accounting was preserved.
 
-Stop-before-release checkpoint: production artifact bytes remain the validated
-candidate above, but the integration is **blocked by the work-mode compatibility
-decision**. The user has been asked whether to authorize the minimal legacy
-same-Run continuation proposal; no answer is inferred and no affected code or
-tests have been changed. The model ledger also remains stopped; no increased
-cap, replacement model or additional requests were used to obtain green output.
-Raw logs, archives and model output remain in OS temporary storage, never
-committed here. Capacity work and the remaining next-dev feature merge keep
-their separate histories.
+That initial checkpoint stopped for a coordination clarification. The user
+subsequently clarified that no other chat was editing; the compatibility repair
+and independent DOCX phase proceeded as recorded below. The failed full run
+and stopped SC model sample remain intact. Raw evidence stays in OS temporary
+storage. Capacity work and the remaining next-dev feature merge retain their
+separate histories.
 
 ## Published-baseline correction
 
@@ -116,3 +114,100 @@ The change is committed as `01173f5ef`. Release-workflow regressions passed
 22/22, and the real integrity-pinned beta.2 Host upgraded to the candidate in
 an isolated installation while preserving busy work, Session and completed
 results without replay (1/1, approximately 32 seconds).
+
+## Corrected candidate and final verification
+
+Production repair: `e0b508ade`. The [root-cause report](beta3-work-mode-integration-conflict-2026-11-07.md)
+distinguishes a legacy same-Run continuation from selecting a new Session mode,
+and a requested Agent string from the original effective Coding mode. No
+Session migration state or configuration was added. Original checkpoints,
+fresh authority and modern lock refusal remain enforced; legacy continuation
+does not rewrite Session mode or its marker. Ten public Runtime cases and
+the original authority/recovery suites passed. A fresh-authorization context
+mode-drift counterexample is separately committed as `4b2911db6`.
+
+Complete build and source/test typechecks passed. Targeted recovery-module
+coverage passed 24 tests: statements 95.31%, branches 95.45%, functions 87.5%,
+lines 96%; these are module measurements, not whole-repository coverage.
+Independent Standards/Spec reviews have zero remaining findings. The next
+default full-suite run finished in 24m25s: **19,712 passed, one failed, 89
+skipped** across 1,436 files (1,428 passed, one failed, seven skipped). All
+original nine failures passed, including the three original failing files;
+the ten new public recovery cases passed. The remaining failure was
+`shell-execution/resolver.test.ts`, waiting two seconds for the first probe's
+ready file, before cancellation or retry occurred. This run is not green;
+that startup failure was investigated separately below. It does not establish
+that last-waiter cancellation or fresh-probe retry failed.
+
+A controlled first-probe startup delay of 2.2 seconds reproduces the exact
+ready-file RED, while remaining below the existing ten-second production
+probe deadline. The test-only repair waits for a readiness handshake within
+the outer test budget, observes premature completion/errors and holds the
+first probe until cancellation. Immediate retry still precedes awaiting
+cancellation, and successful fresh execution plus exactly two probe markers
+remain required. Cleanup aborts the first caller; bounded failure diagnostics
+record observed results. Production Shell code is unchanged. This establishes
+a test-timing failure mechanism, not the unrecorded duration or sole cause of
+that natural full-suite failure.
+The test-only repair is committed as `cc727a0d1`; its complete file passed
+23/23, test typechecking passed, and independent Standards/Spec reviews have
+zero remaining findings. The following full-suite run uses that frozen test.
+
+The final default full suite completed on 2026-11-07 in **24m10s**, using
+`cc727a0d1`: **19,713 passed, zero failed, 89 skipped**, across **1,436 files
+(1,429 passed, seven skipped)**. All ten legacy recovery cases, the original
+three work-mode files, the complete 23-case Shell resolver file, and the Actor
+recovery/race/terminal suites passed. The log and JSON report remain in OS
+temporary storage under `kodax-beta3-work-mode-final-rerun-20261107`. This is a
+new green run, not a relabelling of either historical failure.
+
+The corrected 29-file bundled regression set passed 103/103. The resource
+archive regression was rerun after `c1b84cf84` added the Windows program JSON
+to both tar and zip inventories: two archive RED failures became 3/3 GREEN;
+release-workflow regressions passed 22/22. This fixes a real publication-list
+omission, independently of the work-mode implementation.
+
+Final npm artifact: 10,734,211 bytes / 1,121 entries, SHA-256
+`81bd81a682685c589a27fbbc75cce79307cc4aabc06e6cc0eb2ebebf8b735cc4`.
+All 37 export targets, seven resource groups and both audited program hashes
+are present; isolated Root/Agent SDK and real Windows API consumption passed.
+Only CHANGELOG differs from the preceding mode-fixed package; all dist/scripts
+match byte-for-byte. The real integrity-pinned published beta.2 Host upgrade
+passed again (1/1, approximately 24 seconds).
+
+The actual CLI is 5,185,678 bytes, SHA-256
+`f05a58735a8794d228f59e01e9b6844de37f2cdc4e374ac49dfad1e48980cbc8`.
+Five-manifest Linux composition is 5,187,179 bytes; the Windows maximum is
+5,187,650 bytes, leaving **5,054 bytes** beneath the preserved 49 KiB gate.
+Startup and credential uniqueness checks passed; all 1,138 inputs remain.
+
+Windows native compilation is now verified: Bun 1.4.4 was retrieved into OS
+temporary storage with its official npm SHA-512 verified, without global
+installation. The build's eight standalone checks passed. The actual zip,
+SHA-256 `8f6b13267ad7fcd554b4189bdc8ce1bd0c1b56dfc5c13a5e14b05f350c72a9bd`,
+passed the real archive gate on a PATH containing neither Node nor Bun:
+nine scenarios, 11 primary/7 auxiliary loopback requests, zero external model
+calls. It covers partial effects, daemon restart, model changes, cancellation
+with identical-code positive control, permanent lock refusal, first selection
+and original resource hashes. The gate's old mode-switch assumptions were
+updated in `d3b63167d`. Linux/Darwin native execution remains unverified.
+
+The independently preregistered [DOCX R4 phase](beta3-docx-pilot-r4-2026-11-07.md)
+completed its eight unchanged next-response probes. Cumulative model accounting
+is now 24 physical calls / 145,003 tokens / US$0.0321729 DeepSeek peak liability;
+GLM used subscription quota. No unknown usage or reservations remain, and the
+ledger is explicitly closed against extra requests. The original SC cap stop
+was not retried or relabelled. Main-session blind judgments and limitations
+are in [the model report](beta3-document-pilot-results-2026-11-07.md).
+
+## Stop before publication
+
+The authorized local integration, repair, review, build, packaging and Windows
+archive acceptance are complete. No release command was executed. The final
+documentation and test-only changes do not change the production CLI hash or
+the accepted package resources. The candidate remains unpublished beta.3;
+installed Space still needs its SDK update and installed-package acceptance
+after publication. Linux/Darwin native execution still needs its platform CI.
+The pilot does not establish native sub-100K-model behavior or autonomous
+whole-book reading quality; its censored SC sample remains incomplete. Those
+limits and the remaining next-dev merge are not silently marked complete.

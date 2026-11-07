@@ -4,7 +4,7 @@ Recommendation: **recommend-iterate** for the model-facing pilot. This is not a
 Boolean release gate or evidence of general whole-document understanding.
 Production code stayed unchanged during both experiment revisions.
 
-## Accounting and stopped scope
+## R2/R3 SC accounting and stopped scope
 
 The two user-selected routes used the same 64K application ceiling on models
 whose native windows exceed 100K. The actual serialized request, output and
@@ -27,8 +27,9 @@ The second fixture stopped at DeepSeek S1 with a real `max_tokens` result at
 the fixed 2,048-output-token cap. That summary was rejected before canonical
 injection; no repair, increased cap, replacement model or repeat generation
 was requested. The other lane's next request was refused locally before HTTP.
-The shared ledger remains stopped. The eight DOCX inputs are frozen and
-serialized offline, but **no live DOCX requests were sent**.
+At that checkpoint the shared ledger remained stopped, and no live DOCX
+requests had been sent. The separately preregistered R4 phase below later
+executed only those independent DOCX cells; it did not resume this SC chain.
 
 ## Validity and main-session judgments
 
@@ -73,6 +74,51 @@ Do not rerun paid outputs merely to improve the scorer. A later pilot must
 explicitly decide whether to revise the output cap/task or continue the
 independent DOCX component, preserve cumulative accounting and document any
 reviewed transition out of the stopped ledger. No further calls are authorized
-by this report itself. Separately, the full integration suite found a work-mode
-legacy-recovery compatibility conflict; the user requested stopping before
-changes to that mechanism.
+by this report itself. The full integration suite also found a work-mode
+legacy-recovery compatibility conflict. The user clarified that the earlier
+stop instruction concerned concurrent chats; the repair is now implemented
+in `e0b508ade`, with focused engineering regressions. The final full-suite
+result is recorded separately in the integration readiness document.
+
+## R4 independent DOCX phase
+
+[R4 preregistration](beta3-docx-pilot-r4-2026-11-07.md) retained the same eight
+logical inputs, native wires, assets, models and hard budgets. A separate
+immutable phase freeze bound the current production commit and audited the
+settled ledger before explicitly authorizing only those eight new calls.
+No SC output was regenerated, no cap was increased and no model was replaced.
+The R3 filenames describe the reused data/runner format, not experiment
+authorization. All eight next responses were observed; none of their proposed
+tools was executed.
+
+The main session saved four blinded paired judgments before opening the
+original mapping:
+
+| Route / case | Judgment | Limitation |
+| --- | --- | --- |
+| DeepSeek / entry | Current description preferred: source-bound LibreOffice render advances evidence more directly than another listing | Converted pagination and actual render success were not observed |
+| DeepSeek / fallback | Inconclusive: remaining lightweight page versus structure/capability inspection are both preliminary | Neither next response resolves all native-field/pagination uncertainty |
+| GLM / entry | Tie: authoring-application PDF export plus lightweight render versus explicit runtime preparation | Browser file presence is not observed compatibility; updating fields after export does not prove fresh fields in that PDF |
+| GLM / fallback | Current diagnostic preferred with caveat: recognizes the fidelity blocker and proposes Word PDF export | Scratch parent-directory existence is unverified; conversion and review were not executed |
+
+This small panel supports retaining the engineering converter/diagnostic change,
+with limited and mixed route-selection evidence. It does not prove final visual
+approval, Word/WPS equivalence, general model quality improvement or reliable
+behavior on every provider. No Boolean per-alias ship scorer or model judge
+was used. Actual SDK conversions supply separate engineering evidence.
+
+## Final cumulative accounting
+
+| Route | Physical calls | Input tokens | Output tokens | Total |
+| --- | ---: | ---: | ---: | ---: |
+| DeepSeek / deepseek-flash | 13 | 70,567 | 9,169 | 79,736 |
+| zhipu-coding / glm-5.3-flash | 11 | 60,073 | 5,194 | 65,267 |
+
+All phases together consumed **24 physical requests and 145,003 reported
+tokens**. Six earlier requests were replayed without HTTP or duplicate usage.
+DeepSeek peak per-token liability is conservatively US$0.0321729; GLM consumed
+subscription quota, whose subscription cost is not treated as free. Unknown
+usage and outstanding reservations are zero. The original 40/600,000/US$5
+limits were never reset, and the final ledger is explicitly closed against
+further requests or panel expansion. R4 analysis and pre-unblind judgments
+remain in OS temporary storage alongside the original SC failure evidence.

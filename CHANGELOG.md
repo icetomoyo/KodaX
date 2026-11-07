@@ -22,6 +22,11 @@ All notable changes to this project will be documented in this file.
   preserve cancellation, unknown outcomes and close/ownership boundaries.
 - Lock Session work mode after the first accepted root Run, preserving the lock
   through independent Actor settlement, checkpoint recovery and later idle time.
+- Preserve the admitted effective mode of verified legacy generation recovery
+  across fresh authority binding without rewriting Session mode or lock facts.
+  Reject contradictory persisted modes and new-format recovery mismatches.
+- Include the audited Windows program resource in native tar/zip release
+  archives as well as npm packages.
 - **Artifacts — DOCX visual review**: when the host supplies a LibreOffice
   executable, DOCX render now converts through it by default (Writer PDF
   export → PDF.js) with evidence still bound to the DOCX source hash; the
