@@ -12,6 +12,14 @@ import type { BudgetSnapshot } from './first-turn-eval-support.js';
 export const PILOT_LIMITS = Object.freeze({ maxProviderCalls: 40, maxTotalTokens: 600_000, maxExternalSpendUsd: 5,
   applicationWindow: 65_536, maxEstimatedInputTokens: 12_000, maxOutputTokens: 2048, protocolReserve: 4096, timeoutMs: 90_000 });
 export const pilotHash = (value: unknown): string => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
+export const R3_REPLAY_CALL_IDS = Object.freeze([
+  'sc-deepseek-deepseek-flash-RUNBOOK_A-reference',
+  'sc-deepseek-deepseek-flash-RUNBOOK_A-g1',
+  'sc-deepseek-deepseek-flash-RUNBOOK_A-s1',
+  'sc-zhipu-coding-glm-5.3-flash-RUNBOOK_A-reference',
+  'sc-zhipu-coding-glm-5.3-flash-RUNBOOK_A-g1',
+  'sc-zhipu-coding-glm-5.3-flash-RUNBOOK_A-s1',
+]);
 export interface PilotRoute {
   readonly provider: string; readonly model: string;
   readonly billing: 'token-bill' | 'coding-subscription';
@@ -161,16 +169,13 @@ export async function capturePilotWire(provider: KodaXBaseProvider, route: Pilot
 /** Strict boundary before production strips wrappers; malformed summaries never enter later rounds. */
 export function assertCompletePilotSummary(result: KodaXStreamResult): void {
   if (result.stopReason === 'max_tokens' || result.stopReason === 'length' || result.toolBlocks.length) throw new Error('Censored or tool-bearing summary is not injectable.');
-  const text = result.textBlocks.map(block => block.text).join('\n').trim();
-  if (!/^(?:<analysis>[\s\S]*?<\/analysis>\s*)?<summary>[\s\S]+<\/summary>$/i.test(text)
-    || (text.match(/<summary>/gi)?.length ?? 0) !== 1 || (text.match(/<\/summary>/gi)?.length ?? 0) !== 1) {
-    throw new Error('Summary wrappers are incomplete or ambiguous; not injectable.');
-  }
+  // Production generateSummary/compact owns analysis stripping, usable-body checks and reinsertion.
+  // Closing-wrapper omissions are recorded below, not promoted into a stricter eval-only gate.
 }
 
 /** Wrap the actual adapter, preserving native serialization and production summary generation. */
 export function createBudgetedProvider(provider: KodaXBaseProvider, route: PilotRoute, budget: PilotBudget,
-  context: { callId: string; summary?: boolean; manifestHash?: string }): KodaXBaseProvider {
+  context: { callId: string; summary?: boolean; manifestHash?: string; manifestFile?: 'frozen-candidate.r3.json'; replayR2?: boolean }): KodaXBaseProvider {
   if (!/^[a-zA-Z0-9_.-]+$/.test(context.callId)) throw new Error('Unsafe pilot call identity.');
   let started = false;
   return new Proxy(provider, { get(target, key) {
@@ -182,17 +187,52 @@ export function createBudgetedProvider(provider: KodaXBaseProvider, route: Pilot
       started = true;
       if (estimatedPilotInput(args[0], args[1], args[2], args[4]) > PILOT_LIMITS.maxEstimatedInputTokens) throw new Error('Estimated input exceeds the separately labelled 12000-token pilot bound.');
       if (!budget.offline) {
-        const freeze = JSON.parse(await fs.readFile(path.join(budget.directory, 'frozen-candidate.json'), 'utf8')) as { manifestHash?: string };
+        const freeze = JSON.parse(await fs.readFile(path.join(budget.directory, context.manifestFile ?? 'frozen-candidate.json'), 'utf8')) as { manifestHash?: string };
         if (!context.manifestHash || freeze.manifestHash !== context.manifestHash) throw new Error('Main-session frozen candidate manifest required before live transport.');
       }
       const signal = AbortSignal.any([AbortSignal.timeout(PILOT_LIMITS.timeoutMs), ...(args[5] ? [args[5]] : [])]);
       let transports = 0;
       let reserved = false;
+      let physical = false;
+      let replayed = false;
+      let guardFailure: unknown;
       const guardedFetch: typeof fetch = async (url, init) => {
+        try {
         if (transports++) throw new Error('Automatic retry blocked before HTTP transport.');
         if (typeof init?.body !== 'string') throw new Error('Pilot requires the exact serialized JSON request body.');
         const wire = init.body;
         const { wireBytes, reservedTokens } = inspectPilotWire(wire);
+        if (context.replayR2 && R3_REPLAY_CALL_IDS.includes(context.callId)) {
+          const oldWire = await fs.readFile(path.join(budget.directory, `${context.callId}.request.json`), 'utf8');
+          if (wire !== oldWire) throw new Error('Replay wire differs from its settled r2 request; fresh transport is forbidden.');
+          const events = (await fs.readFile(path.join(budget.directory, 'journal.jsonl'), 'utf8')).split('\n').filter(Boolean)
+            .map(line => JSON.parse(line) as Record<string, unknown>).filter(event => event.callId === context.callId);
+          const request = events.find(event => event.event === 'request');
+          const response = events.find(event => event.event === 'response');
+          const originalReservation = events.find(event => event.event === 'reserved');
+          const settled = events.find(event => event.event === 'settled');
+          const oldUsage = settled?.usage as KodaXTokenUsage | undefined;
+          const settledLedger = settled?.ledger as PilotLedger | undefined;
+          const currentLedger = await budget.snapshot();
+          const saved = await fs.readFile(path.join(budget.directory, `${context.callId}.response.txt`), 'utf8');
+          if (request?.wireHash !== pilotHash(wire) || response?.status !== 200 || response.responseHash !== pilotHash(saved)
+            || !/^data:/m.test(saved) || !oldUsage || !Number.isSafeInteger(oldUsage.totalTokens)
+            || !Number.isSafeInteger(oldUsage.inputTokens) || !Number.isSafeInteger(oldUsage.outputTokens)
+            || oldUsage.inputTokens < 0 || oldUsage.outputTokens < 0 || oldUsage.totalTokens <= 0
+            || oldUsage.totalTokens !== oldUsage.inputTokens + oldUsage.outputTokens
+            || typeof originalReservation?.tokens !== 'number' || !Number.isSafeInteger(originalReservation.tokens)
+            || originalReservation.tokens !== reservedTokens || oldUsage.totalTokens > originalReservation.tokens || oldUsage.outputTokens > PILOT_LIMITS.maxOutputTokens
+            || !settledLedger || settledLedger.unknownUsageCalls !== 0 || !Array.isArray(settledLedger.reservations)
+            || settledLedger.chargedTokens < oldUsage.totalTokens
+            || settledLedger.reservations.some(item => item.callId === context.callId)
+            || currentLedger.unknownUsageCalls !== 0 || currentLedger.reservations.some(item => R3_REPLAY_CALL_IDS.includes(item.callId))) {
+            throw new Error('Replay requires intact 200 SSE and genuinely settled credible usage, with no retained r2 reservation.');
+          }
+          replayed = true;
+          await budget.journal({ event: 'replayed', callId: context.callId, physical: false, requestHash: pilotHash(wire),
+            responseHash: pilotHash(saved), originalUsage: oldUsage, newCharges: 0, revision: 'r3' });
+          return new Response(saved, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+        }
         const usd = route.billing === 'coding-subscription' ? 0
           : ((wireBytes + PILOT_LIMITS.protocolReserve) * route.peakInputUsdPerMillion
             + PILOT_LIMITS.maxOutputTokens * route.peakOutputUsdPerMillion) / 1_000_000;
@@ -201,12 +241,21 @@ export function createBudgetedProvider(provider: KodaXBaseProvider, route: Pilot
         await fs.writeFile(path.join(budget.directory, `${context.callId}.request.json`), wire, { flag: 'wx' });
         await budget.journal({ event: 'request', callId: context.callId, url: String(url), wireBytes, wireHash: pilotHash(wire),
           estimatedInputTokens: estimatedPilotInput(args[0], args[1], args[2], args[4]), reservedTokens, usd });
+        physical = true;
         const response = await budget.transport(url, { ...init, signal: AbortSignal.any([signal, ...(init.signal ? [init.signal] : [])]) });
         const rawResponse = await response.clone().text();
         await fs.writeFile(path.join(budget.directory, `${context.callId}.response.txt`), rawResponse, { flag: 'wx' });
         await budget.journal({ event: 'response', callId: context.callId, status: response.status,
           responseHash: pilotHash(rawResponse), responseBytes: Buffer.byteLength(rawResponse) });
         return response;
+        } catch (error: unknown) {
+          if (!physical) {
+            guardFailure = error;
+            await budget.journal({ event: 'transport-refused', callId: context.callId, physical: false,
+              reason: error instanceof Error ? error.message : String(error) });
+          }
+          throw error;
+        }
       };
       let result: KodaXStreamResult | undefined;
       let failure: unknown;
@@ -216,10 +265,16 @@ export function createBudgetedProvider(provider: KodaXBaseProvider, route: Pilot
         if (transports !== 1) throw new Error('Expected exactly one guarded provider HTTP request.');
         if (context.summary) assertCompletePilotSummary(result);
         return result;
-      } catch (error: unknown) { failure = error; throw error; }
+      } catch (error: unknown) { failure = guardFailure ?? error; throw failure; }
       finally {
         if (reserved) await budget.settle(context.callId, result?.usage, route);
         await budget.journal({ event: 'provider-result', callId: context.callId, result: result ?? null,
+          physical, replayed,
+          ...(context.summary && result ? { summaryFormat: {
+            openingTags: (result.textBlocks.map(block => block.text).join('\n').match(/<summary>/gi) ?? []).length,
+            closingTags: (result.textBlocks.map(block => block.text).join('\n').match(/<\/summary>/gi) ?? []).length,
+            acceptance: 'Production generateSummary/compact decides usable content; tags alone do not decide acceptance.',
+          } } : {}),
           error: failure instanceof Error ? { name: failure.name, message: failure.message } : failure === undefined ? null : String(failure) });
         if (failure !== undefined) await budget.stop(`Call ${context.callId} failed; inspect its immutable evidence before a new revision.`);
       }

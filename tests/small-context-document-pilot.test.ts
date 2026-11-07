@@ -7,7 +7,7 @@ import type { KodaXMessage, KodaXProviderStreamOptions, KodaXReasoningRequest, K
 import { CODING_SUMMARY_PROMPT, CODING_UPDATE_SUMMARY_PROMPT } from '../packages/coding/src/agent-runtime/coding-compaction-prompts.js';
 import { COMPACTION_SUMMARY_PREFIX, COMPACTED_HISTORY_RECOVERY_GUIDANCE } from '../packages/agent/src/session-lineage/compaction/compaction.js';
 import { prepareDocumentPilot, runDocumentPilotPair, DOCUMENT_PILOT_ROUTES } from './small-context-document-pilot.eval.js';
-import { createBudgetedProvider, createPilotBudget, PILOT_LIMITS, pilotHash, type PilotLedger } from './small-context-document-pilot-support.js';
+import { createBudgetedProvider, createPilotBudget, PILOT_LIMITS, R3_REPLAY_CALL_IDS, pilotHash, type PilotLedger } from './small-context-document-pilot-support.js';
 
 const roots: string[] = [];
 async function temporaryRoot() { const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-document-pilot-offline-')); roots.push(root); return root; }
@@ -33,6 +33,20 @@ class FakeApiProvider extends KodaXBaseProvider {
     const result = await options.fetch('https://offline.invalid/generation', { method: 'POST', body });
     if (this.fault === 'retry') await options.fetch('https://offline.invalid/generation', { method: 'POST', body });
     return await result.json() as KodaXStreamResult;
+  }
+}
+class ReplayApiProvider extends FakeApiProvider {
+  private calls = 0;
+  constructor(private readonly stopAfter = Infinity) { super(); }
+  override async stream(messages: KodaXMessage[], tools: KodaXToolDefinition[], system: string,
+    _reasoning?: boolean | KodaXReasoningRequest, options?: KodaXProviderStreamOptions): Promise<KodaXStreamResult> {
+    if (++this.calls > this.stopAfter) throw new Error('Controlled offline prefix stop.');
+    if (!options?.fetch) throw new Error('Expected injected fetch.');
+    const response = await options.fetch('https://offline.invalid/generation', { method: 'POST',
+      body: JSON.stringify({ model: options.modelOverride, max_tokens: options.maxOutputTokensOverride, system, messages, tools }) });
+    const data = (await response.text()).split('\n').find(line => line.startsWith('data: ') && !line.includes('[DONE]'));
+    if (!data) throw new Error('Missing offline SSE data.');
+    return JSON.parse(data.slice(6)) as KodaXStreamResult;
   }
 }
 const route = DOCUMENT_PILOT_ROUTES[0]!;
@@ -134,14 +148,14 @@ it('blocks a hidden retry and retains the unknown-usage reservation', async () =
   expect(ledger.stopped).toContain('Usage unavailable');
 });
 
-for (const fault of ['truncated', 'wrapper'] as const) {
+for (const fault of ['truncated', 'unclosed-analysis'] as const) {
   it(`never injects a ${fault} summary or dispatches its later rounds`, async () => {
     const root = await temporaryRoot();
     const capture = await prepareDocumentPilot(root, { providerForRoute: () => new FakeApiProvider() });
     let calls = 0;
     const transport = vi.fn<typeof fetch>(async () => {
       calls++;
-      return Response.json(calls === 3 ? response(fault === 'wrapper' ? summary(1).replace('</summary>', '') : summary(1),
+      return Response.json(calls === 3 ? response(fault === 'unclosed-analysis' ? '<analysis>unfinished scratchpad with no usable summary' : summary(1),
         fault === 'truncated' ? 'max_tokens' : 'end_turn') : response('Interim notes.'));
     });
     const budget = await createPilotBudget(root, { offline: true, fetch: transport });
@@ -163,6 +177,87 @@ it('shares concurrent reservations and settlements across two independent budget
   await Promise.all([first.settle('sc-call', usage, route), second.settle('docx-call', usage, DOCUMENT_PILOT_ROUTES[1]!)]);
   const ledger: PilotLedger = await first.snapshot();
   expect(ledger).toMatchObject({ calls: 2, chargedTokens: 480, reservedTokens: 0, reservedUsd: 0, reservations: [] });
+});
+
+it('accepts an end-turn summary body without its closing tag through production compaction', async () => {
+  const root = await temporaryRoot();
+  const capture = await prepareDocumentPilot(root, { providerForRoute: () => new FakeApiProvider() });
+  let calls = 0;
+  const transport = vi.fn<typeof fetch>(async () => {
+    calls++;
+    return Response.json(response(calls === 3 ? summary(1).replace('</summary>', '') : calls === 5 ? summary(2) : 'Interim/final response.'));
+  });
+  const budget = await createPilotBudget(root, { offline: true, fetch: transport });
+  await expect(runDocumentPilotPair(capture, capture.fixtures[0]!, route, budget, { provider: new FakeApiProvider() })).resolves.toMatchObject({ calls: 6 });
+  expect(transport).toHaveBeenCalledTimes(6);
+});
+
+it('replays settled exact SSE without a second transport or usage charge, and refuses changed wire', async () => {
+  const root = await temporaryRoot();
+  const transport = vi.fn<typeof fetch>(async () => new Response(`data: ${JSON.stringify(response())}\n\ndata: [DONE]\n\n`,
+    { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+  const budget = await createPilotBudget(root, { offline: true, fetch: transport });
+  const callId = R3_REPLAY_CALL_IDS[0]!;
+  const messages: KodaXMessage[] = [{ role: 'user', content: 'fixed input' }];
+  const original = await createBudgetedProvider(new ReplayApiProvider(), route, budget, { callId }).stream(messages, [], 'system');
+  const before = await budget.snapshot();
+  const replay = await createBudgetedProvider(new ReplayApiProvider(), route, budget, { callId, replayR2: true }).stream(messages, [], 'system');
+  expect(replay).toEqual(original);
+  expect(await budget.snapshot()).toEqual(before);
+  expect(transport).toHaveBeenCalledTimes(1);
+  const events = (await fs.readFile(path.join(root, 'journal.jsonl'), 'utf8')).split('\n').filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>);
+  expect(events.filter(event => event.event === 'replayed')).toEqual([expect.objectContaining({ callId, physical: false, newCharges: 0 })]);
+  expect(events.filter(event => event.event === 'settled')).toHaveLength(1);
+  await expect(createBudgetedProvider(new ReplayApiProvider(), route, budget, { callId, replayR2: true })
+    .stream([{ role: 'user', content: 'changed input' }], [], 'system')).rejects.toThrow('Replay wire differs');
+  expect(transport).toHaveBeenCalledTimes(1);
+  expect((await budget.snapshot()).calls).toBe(1);
+});
+
+it('refuses replay when the current ledger still retains the original reservation', async () => {
+  const root = await temporaryRoot();
+  const transport = vi.fn<typeof fetch>(async () => new Response(`data: ${JSON.stringify(response())}\n\ndata: [DONE]\n\n`));
+  const budget = await createPilotBudget(root, { offline: true, fetch: transport });
+  const callId = R3_REPLAY_CALL_IDS[0]!;
+  const messages: KodaXMessage[] = [{ role: 'user', content: 'fixed input' }];
+  await createBudgetedProvider(new ReplayApiProvider(), route, budget, { callId }).stream(messages, [], 'system');
+  const ledger = await budget.snapshot();
+  ledger.reservations.push({ callId, lane: 'deepseek/deepseek-flash', tokens: 4000, usd: 0.01 });
+  ledger.reservedTokens = 4000; ledger.reservedUsd = 0.01;
+  await fs.writeFile(path.join(root, 'global-budget.json'), JSON.stringify(ledger));
+  await expect(createBudgetedProvider(new ReplayApiProvider(), route, budget, { callId, replayR2: true })
+    .stream(messages, [], 'system')).rejects.toThrow('genuinely settled');
+  expect(transport).toHaveBeenCalledTimes(1);
+});
+
+it('continues the same graph with three exact replays and retains the saved GLM canonical blob', async () => {
+  const root = await temporaryRoot();
+  const capture = await prepareDocumentPilot(root, { providerForRoute: () => new FakeApiProvider() });
+  const glm = DOCUMENT_PILOT_ROUTES[1]!;
+  let physical = 0;
+  const transport = vi.fn<typeof fetch>(async () => {
+    physical++;
+    const result = response(physical === 3 ? summary(1) : physical === 5 ? summary(2) : 'Recorded interim/final response.');
+    return new Response(`data: ${JSON.stringify(result)}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } });
+  });
+  const budget = await createPilotBudget(root, { offline: true, fetch: transport });
+  await expect(runDocumentPilotPair(capture, capture.fixtures[0]!, glm, budget, { provider: new ReplayApiProvider(3) }))
+    .rejects.toThrow('Controlled offline prefix stop');
+  expect(transport).toHaveBeenCalledTimes(3);
+  const file = path.join(root, 'sc-zhipu-coding-glm-5.3-flash-RUNBOOK_A-s1.compacted.json');
+  const canonical = await fs.readFile(file, 'utf8');
+  const ledger = await budget.snapshot();
+  expect(ledger).toMatchObject({ calls: 3, reservedTokens: 0, unknownUsageCalls: 0 });
+  delete ledger.stopped; // Test-only simulation of the main session's explicit audited resume.
+  await fs.writeFile(path.join(root, 'global-budget.json'), JSON.stringify(ledger));
+  await expect(runDocumentPilotPair(capture, capture.fixtures[0]!, glm, budget, { provider: new ReplayApiProvider(), r3: true }))
+    .resolves.toMatchObject({ calls: 6 });
+  expect(transport).toHaveBeenCalledTimes(6);
+  expect(await fs.readFile(file, 'utf8')).toBe(canonical);
+  expect((await budget.snapshot())).toMatchObject({ calls: 6, chargedTokens: 1440, reservedTokens: 0, unknownUsageCalls: 0 });
+  const events = (await fs.readFile(path.join(root, 'journal.jsonl'), 'utf8')).split('\n').filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>);
+  expect(events.filter(event => event.event === 'replayed')).toHaveLength(3);
+  expect(events.filter(event => event.event === 'compaction-replayed')).toHaveLength(1);
 });
 
 it('retains the worst reservation when provider usage is internally inconsistent', async () => {

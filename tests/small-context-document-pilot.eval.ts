@@ -15,9 +15,9 @@ import { buildSystemPromptSnapshot } from '../packages/coding/src/prompts/builde
 import { CODING_SUMMARY_PROMPT, CODING_UPDATE_SUMMARY_PROMPT } from '../packages/coding/src/agent-runtime/coding-compaction-prompts.js';
 import { KODAX_TOOLS } from '../packages/coding/src/tools/registry.js';
 import { toolRead } from '../packages/coding/src/tools/read.js';
-import { PILOT_LIMITS, capturePilotWire, createPilotBudget, createBudgetedProvider, pilotHash, type PilotBudget, type PilotRoute } from './small-context-document-pilot-support.js';
+import { PILOT_LIMITS, R3_REPLAY_CALL_IDS, capturePilotWire, createPilotBudget, createBudgetedProvider, pilotHash, type PilotBudget, type PilotRoute } from './small-context-document-pilot-support.js';
 
-export const DOCUMENT_PILOT_REVISION = 'small-context-document-r2-20261107';
+export const DOCUMENT_PILOT_REVISION = 'small-context-document-r3-20261107';
 export const DOCUMENT_PILOT_ROUTES: readonly PilotRoute[] = [
   { provider: 'deepseek', model: 'deepseek-flash', billing: 'token-bill', peakInputUsdPerMillion: 0.3, peakOutputUsdPerMillion: 1.2 },
   { provider: 'zhipu-coding', model: 'glm-5.3-flash', billing: 'coding-subscription', peakInputUsdPerMillion: 0, peakOutputUsdPerMillion: 0 },
@@ -31,6 +31,7 @@ export interface DocumentPilotCapture {
   revision: string; sourceRevision: string; system: string; systemHash: string; tools: KodaXToolDefinition[]; toolsHash: string;
   fixtures: DocumentPilotFixture[]; routes: readonly PilotRoute[]; sourceHashes: Record<string, string>;
   wirePreflight: Array<{ provider: string; model: string; fixture: string; wireBytes: number; reservedTokens: number; wireHash: string }>;
+  derivedFrom?: { revision: string; sourceRevision: string; manifestHash: string; replayCallIds: readonly string[] };
   method: Record<string, unknown>;
 }
 const jsonWriteNew = (file: string, value: unknown) => fs.writeFile(file, JSON.stringify(value, null, 2), { flag: 'wx' });
@@ -106,7 +107,7 @@ export async function prepareDocumentPilot(directory: string, options: { provide
   for (const file of [...sourceFiles, ...providerSources.map(file => `packages/llm/src/${file.replaceAll('\\', '/')}`)]) {
     sourceHashes[file] = pilotHash(await fs.readFile(file, 'utf8'));
   }
-  const capture: DocumentPilotCapture = { revision: DOCUMENT_PILOT_REVISION,
+  const capture: DocumentPilotCapture = { revision: 'small-context-document-r2-20261107',
     sourceRevision: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true }).trim(),
     system, systemHash: pilotHash(system), tools, toolsHash: pilotHash(tools), fixtures,
     routes: DOCUMENT_PILOT_ROUTES, sourceHashes, wirePreflight,
@@ -125,6 +126,31 @@ export async function prepareDocumentPilot(directory: string, options: { provide
   return capture;
 }
 
+/** Derive r3 without regenerating documents, system prompts, pages or paid results. */
+export async function prepareDocumentPilotR3(directory: string): Promise<DocumentPilotCapture> {
+  const root = path.resolve(directory);
+  const previous = JSON.parse(await fs.readFile(path.join(root, 'sc-manifest.json'), 'utf8')) as DocumentPilotCapture;
+  if (previous.revision !== 'small-context-document-r2-20261107') throw new Error('r3 requires its immutable r2 capture.');
+  const changedHarness = new Set(['tests/small-context-document-pilot.eval.ts', 'tests/small-context-document-pilot-support.ts']);
+  for (const [file, hash] of Object.entries(previous.sourceHashes)) {
+    if (!changedHarness.has(file) && pilotHash(await fs.readFile(file, 'utf8')) !== hash) throw new Error(`Production source changed since r2: ${file}`);
+  }
+  const sourceHashes = { ...previous.sourceHashes };
+  for (const file of [...changedHarness, 'packages/coding/src/prompts/static-text.json', 'packages/coding/src/prompts/static-text.ts',
+    'docs/designs/beta3-document-pilot-r3-2026-11-07.md']) sourceHashes[file] = pilotHash(await fs.readFile(file, 'utf8'));
+  const capture: DocumentPilotCapture = { ...previous, revision: DOCUMENT_PILOT_REVISION,
+    sourceRevision: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true }).trim(), sourceHashes,
+    derivedFrom: { revision: previous.revision, sourceRevision: previous.sourceRevision,
+      manifestHash: pilotHash(previous), replayCallIds: R3_REPLAY_CALL_IDS },
+    method: { ...previous.method, summaryPromptHash: pilotHash(CODING_SUMMARY_PROMPT), updateSummaryPromptHash: pilotHash(CODING_UPDATE_SUMMARY_PROMPT),
+      revisionReason: 'r2 imposed a closing-tag gate stricter than production. Production accepts both recorded end_turn S1 bodies. r3 changes only eval acceptance and replays six already-paid exact requests.',
+      accounting: 'Keep the original shared cumulative ledger: six known calls plus eighteen new SC and eight new DOCX = thirty-two physical requests. No budget reset, automatic retry, or judge.',
+      replay: 'Only the six literal allowlisted r2 call IDs may reuse exact request bytes, intact 200 SSE and already-settled credible usage. Replay has no HTTP, reservation or second usage settlement. Any mismatch stops without fresh transport.',
+    } };
+  await jsonWriteNew(path.join(root, 'sc-manifest.r3.json'), capture);
+  return capture;
+}
+
 function suppliedPage(fixture: DocumentPilotFixture, page: SourcePage, stage: string): KodaXMessage[] {
   const id = `${fixture.id}-${stage}-${page.offset}`;
   return [{ role: 'assistant', content: [{ type: 'tool_use', id, name: 'read', input: { path: fixture.file, offset: page.offset, limit: page.limit } }] },
@@ -133,14 +159,15 @@ function suppliedPage(fixture: DocumentPilotFixture, page: SourcePage, stage: st
 
 /** Six registered calls maximum. Any failure stops this pair, preserving prior evidence. */
 export async function runDocumentPilotPair(capture: DocumentPilotCapture, fixture: DocumentPilotFixture, route: PilotRoute,
-  budget: PilotBudget, options: { provider?: KodaXBaseProvider; manifestHash?: string } = {}) {
+  budget: PilotBudget, options: { provider?: KodaXBaseProvider; manifestHash?: string; r3?: boolean } = {}) {
   if (pilotHash(capture.system) !== capture.systemHash || pilotHash(capture.tools) !== capture.toolsHash) throw new Error('Captured production prompt/tool hashes changed.');
   const provider = options.provider ?? getProvider(route.provider);
   const prefix = `sc-${route.provider}-${route.model}-${fixture.id}`;
   let calls = 0;
   const nextProvider = (stage: string, summary = false) => {
     if (++calls > 6) throw new Error('Fixed six-call document pair graph exhausted.');
-    return createBudgetedProvider(provider, route, budget, { callId: `${prefix}-${stage}`, summary, manifestHash: options.manifestHash });
+    return createBudgetedProvider(provider, route, budget, { callId: `${prefix}-${stage}`, summary, manifestHash: options.manifestHash,
+      ...(options.r3 ? { manifestFile: 'frozen-candidate.r3.json' as const, replayR2: true } : {}) });
   };
   const generation = async (stage: string, messages: KodaXMessage[]) => nextProvider(stage).stream(messages, capture.tools, capture.system,
     { enabled: false, effort: 'none' }, { modelOverride: route.model });
@@ -151,7 +178,24 @@ export async function runDocumentPilotPair(capture: DocumentPilotCapture, fixtur
     const checkpoint = result.messages.find(message => message._source === 'compaction-checkpoint');
     if (!result.compacted || typeof checkpoint?.content !== 'string' || !checkpoint.content.startsWith(COMPACTION_SUMMARY_PREFIX)
       || !checkpoint.content.endsWith(COMPACTED_HISTORY_RECOVERY_GUIDANCE)) throw new Error('Production compaction did not produce its canonical reinsertion format.');
-    await jsonWriteNew(path.join(budget.directory, `${prefix}-${stage}.compacted.json`), result);
+    const file = path.join(budget.directory, `${prefix}-${stage}.compacted.json`);
+    let saved: typeof result | undefined;
+    if (options.r3 && R3_REPLAY_CALL_IDS.includes(`${prefix}-${stage}`)) {
+      try { saved = JSON.parse(await fs.readFile(file, 'utf8')) as typeof result; }
+      catch (error: unknown) {
+        if (!(typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT')) throw error;
+      }
+    }
+    if (saved) {
+      const canonical = (value: typeof result) => ({ messages: value.messages, tokensBefore: value.tokensBefore,
+        tokensAfter: value.tokensAfter, entriesRemoved: value.entriesRemoved, summary: value.anchor?.summary, details: value.anchor?.details });
+      if (pilotHash(canonical(saved)) !== pilotHash(canonical(result))) throw new Error('Replayed production compaction differs from its saved canonical state; refusing overwrite.');
+      await budget.journal({ event: 'compaction-replayed', callId: `${prefix}-${stage}`, physical: false,
+        canonicalHash: pilotHash(canonical(saved)), originalBlobHash: pilotHash(await fs.readFile(file, 'utf8')),
+        timing: 'Parsing replay has new wall timing; original metrics/blob retained unchanged.' });
+      return saved.messages;
+    }
+    await jsonWriteNew(file, result);
     return result.messages;
   };
   const task: KodaXMessage = { role: 'user', content: fixture.task };
@@ -171,8 +215,8 @@ export async function runDocumentPilotPair(capture: DocumentPilotCapture, fixtur
   const pairId = `${route.provider}-${route.model}-${fixture.id}`;
   const pair = { pairId, task: fixture.task, sourcePages: fixture.pages, groundTruth: fixture.groundTruth,
     A: visible(reverse ? candidate : reference), B: visible(reverse ? reference : candidate) };
-  await jsonWriteNew(path.join(budget.directory, `${pairId}.blind.json`), pair);
-  await jsonWriteNew(path.join(budget.directory, `${pairId}.reveal.json`), { pairHash: pilotHash(pair),
+  await jsonWriteNew(path.join(budget.directory, `${pairId}.blind${options.r3 ? '.r3' : ''}.json`), pair);
+  await jsonWriteNew(path.join(budget.directory, `${pairId}.reveal${options.r3 ? '.r3' : ''}.json`), { pairHash: pilotHash(pair),
     A: reverse ? 'candidate' : 'reference', B: reverse ? 'reference' : 'candidate' });
   return { pairId, calls, blindHash: pilotHash(pair) };
 }
@@ -181,20 +225,22 @@ async function main() {
   const directory = process.env.KODAX_DOCUMENT_PILOT_DIR;
   if (!directory) throw new Error('KODAX_DOCUMENT_PILOT_DIR must name the shared OS-temp evidence directory.');
   if (process.env.KODAX_DOCUMENT_PILOT_COMMAND === 'prepare') {
-    const capture = await prepareDocumentPilot(directory);
-    process.stdout.write(JSON.stringify({ directory, scManifestHash: pilotHash(capture), noProviderCalls: true, plannedCalls: 24 }) + '\n');
+    const capture = await prepareDocumentPilotR3(directory);
+    process.stdout.write(JSON.stringify({ directory, scManifestHash: pilotHash(capture), noProviderCalls: true,
+      existingPhysicalCalls: 6, newDocumentCalls: 18, newDocxCalls: 8, plannedCumulativeCalls: 32 }) + '\n');
     return;
   }
   if (process.env.KODAX_DOCUMENT_PILOT_COMMAND !== 'run' || process.env.KODAX_DOCUMENT_PILOT_GO !== '1') throw new Error('Manual prepare or main-session GO is required; no provider calls dispatched.');
-  const capture = JSON.parse(await fs.readFile(path.join(directory, 'sc-manifest.json'), 'utf8')) as DocumentPilotCapture;
-  const freeze = JSON.parse(await fs.readFile(path.join(directory, 'frozen-candidate.json'), 'utf8')) as { manifestHash: string; scManifestHash: string };
-  if (freeze.manifestHash !== process.env.KODAX_DOCUMENT_PILOT_MANIFEST_HASH || freeze.scManifestHash !== pilotHash(capture)) throw new Error('Frozen combined manifest does not match the SC capture.');
+  const capture = JSON.parse(await fs.readFile(path.join(directory, 'sc-manifest.r3.json'), 'utf8')) as DocumentPilotCapture;
+  const freeze = JSON.parse(await fs.readFile(path.join(directory, 'frozen-candidate.r3.json'), 'utf8')) as { manifestHash: string; scManifestHash: string };
+  if (capture.revision !== DOCUMENT_PILOT_REVISION || freeze.manifestHash !== process.env.KODAX_DOCUMENT_PILOT_MANIFEST_HASH
+    || freeze.scManifestHash !== pilotHash(capture)) throw new Error('Frozen r3 combined manifest does not match the SC capture.');
   for (const [file, hash] of Object.entries(capture.sourceHashes)) if (pilotHash(await fs.readFile(file, 'utf8')) !== hash) throw new Error(`Source changed after capture: ${file}`);
   for (const fixture of capture.fixtures) if (pilotHash(await fs.readFile(fixture.file, 'utf8')) !== fixture.documentHash) throw new Error('Controlled document changed after capture.');
   const budget = await createPilotBudget(directory);
   const lanes = await Promise.allSettled(capture.routes.map(async route => {
     try {
-      for (const fixture of capture.fixtures) await runDocumentPilotPair(capture, fixture, route, budget, { manifestHash: freeze.manifestHash });
+      for (const fixture of capture.fixtures) await runDocumentPilotPair(capture, fixture, route, budget, { manifestHash: freeze.manifestHash, r3: true });
     } catch (error: unknown) {
       await budget.stop(`Document route ${route.provider}/${route.model} stopped; retain already dispatched lane evidence.`);
       throw error;
