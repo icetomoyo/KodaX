@@ -4,6 +4,8 @@
 
 状态：**生产缺口已通过门控及真实进程硬终止复现；本轮完成调查和方案，生产修复尚未实施。** 下文的修复和验收是拟定方案，不是已交付能力。原始全量失败的唯一成因仍不能从现有历史日志确定。
 
+方案修订：2026-11-07 根据第二轮 Claude 建议及独立交叉核对，优先采用内部终态事件驱动，补充反向崩溃窗口、持久绑定与两处恢复对账，并拆分 P0/P1。此前异步 Host finalizer 为被替代的候选，不与事件路线同时实施。
+
 关联：[ISSUE_322 回归记录](../test-guides/ISSUE_322_v0.7.97_REGRESSION_GUIDE.md)、[容量可靠性方案](context-capacity-reliability-plan-2026-11-06.md)。
 
 ## 1. 结论与证据边界
@@ -96,56 +98,101 @@ Controller shutdown 先置 `closing`、递增 settlement generation、停止本�
 
 此次生产缺口与历史失败处于同一恢复结算链，值得修复；不能把它与历史单次失败强行写成唯一因果关系。
 
-## 6. 推荐修复：复用既有结算能力，补齐独立范围
+## 6. 修订方案：内部终态事件驱动，加持久化对账
 
-### 生产路径
+本版优先采纳 Claude 的更小实现路线：**内部 committed-event hook + 一个幂等的 canonical Turn → Run 投影入口**。不新建另一套 Host 等待 finalizer、轮询循环或生产 deadline。原 Host 异步 finalizer 降为备选，只有事件路径出现已证实且无法复用现有机制覆盖的缺口时才重新评估，不同时实现两套结算机制。
 
-1. 独立 Actor factory 绑定其真实 `record.actorSession` 和明确的 Actor/Turn 所有权范围。
-2. `environment.release` 只捕获执行器成功/失败事实，立即返回，让 Controller 可以提交终态。不得在 release 内等待本次 Actor finalization，否则执行器和 Controller 相互等待。
-3. 由 Host 的异步 finalizer 复用既有 RunService finalization / unknown / Run 状态保存失败处理，等匹配 Actor/Turn 的 canonical terminal 后再写 Run 终态、resolve Run result。先确认目标 Turn 已提交的终态，再处理尚未提交时的 health；不能直接等待整个 Session 的所有 Actor，也不能照搬“先等全局 health 再看全部 active turns”的顺序，否则无关 Actor 会拖住已经提交的目标事实。
-4. 正常 finalization 和普通 Stop 按本独立 Actor 的执行所有权范围处理，保留同 Session 的无关独立 Actor；既有 managed cancellation 默认保留所有 independent turns，必须针对本独立范围适配，不能原样套用。存储或 owner unknown 仍执行既有 Session 级安全 fence/repair：同 Session 共用 owner、snapshot 和写队列，不能承诺无关 Actor 的未完成执行不受影响，也不能为了隔离它们而绕过安全 fence；已提交事实仍须保留。
-5. Actor unknown / 提交失败时进入现有不确定结算路径，不能公布 `completed`。Run 状态自身保存失败走既有 `finishRunSettlementFailure`，不能吞错或无跟踪地 fire-and-forget。
-6. 保留 `generationSuspended` 的安全 checkpoint 关闭短路。未保存新 checkpoint 就再次崩溃，应明确中断或 unknown，不能恢复成虚假的完成，也不能自动重放旧边界。
+### 6.1 实时结算
 
-不推荐在 release 中 `await`、仅 `setImmediate(markRunTerminal)`、新加全局重试层、提高生产 deadline，或为此新增通用状态机。
+1. Registry 构造时安装 Controller 的内部 `onEventCommitted` hook，经 CodingActorSession 的最小 optional callback 透传。它是已有的构造期单 sink，并非现成的 per-Turn subscribe API；不为此扩展公开 SDK。内部 hook 不经过 `agents.events/wait` 的 ack 过滤。
+2. 独立 factory 在 worker dispatch 前，与首份 Run 状态原子写入内部精确关联：Session、actorPath、turnId；使用已有 `turn.createdAt` 等事实核验绑定，不增加新 ID 体系。可放 `_runtime` envelope，不必污染公开 RunStatus。所有后续状态写必须保留该关联；绑定未提交就不能 dispatch。恢复 Run 也必须遵守同一规则，无需改 work mode admission。
+3. Host 在执行前建立精确关联的路由；`environment.release` 只捕获执行器事实，立即返回，让 Controller 可以进入终态提交。不能在 release 内等自身终态。
+4. 内部终态 hook 使用预绑定 Session/root，同步读取该事件对应的 canonical 历史 Turn，调用共享投影入口提交 Run 终态并收敛 Run result。当前 Run 持久化是同步路径，因此正常成功/失败路径不需要额外可跟踪的异步 finalizer。重复、过期、不同 actorPath/turnId 或不同 owner/revision 的事件不能覆盖当前 Run；路由在结算或所有权结束时清理。
+5. canonical Turn 是执行结果真值，不再使用晚时点 `signal.aborted` 覆盖已提交的完成事实。但 event 本身不含完整 error / terminationReason / failureDetail，必须读取对应 Turn。Actor `interrupted` 也不机械等于 Run `cancelled`：仍须结合持久化 Stop、关闭/重启原因和现有终态策略。Run 的 blocking Shell cleanup 未确认时保持 unknown，不能因 Actor completed 绕过它。
 
-finalizer 的 Promise 必须被跟踪。不能放进 `record.preparation`：Host close 在关闭 Actor registry 前等待 preparation，会再次形成自等待。关闭顺序应先 fence/关闭 Actor registry，再收敛独立 finalizer，保持现有 owner liveness 释放约束。
+### 6.2 事件之外的必要出口
 
-finalizer 使用预先绑定的 `record.actorSession` / root，不能在关闭期间再通过需要 open registry 的公开 SDK 或 `registry.forSession` 查找。跨 await 之后以现有 Run owner/revision 和 Actor/Turn identity 再核验，防止旧 finalizer 在新一轮接管后晚写。
+- **unknown 没有终态事件也必须收敛。** 继续接入已有 health / settlement persistence error 路径，不假完成、不让 Run result 永久悬空。owner/store unknown 保留 Session 级 fence/repair；普通 Stop 和正常结算才按独立 Actor 执行范围处理。
+- **checkpoint 正常关闭仍有短路。** 保留 `generationSuspended` 的现有 resolve 行为；安全悬停不一定产生终态事件，不能把 Host close 变成等待永远不会到来的 terminal event。
+- **callback / Run 写入失败不能只交给日志。** Controller 的 `onEventCommitted` 调用是 fire-and-forget，抛错只进入后台诊断；`markRunTerminal` 又会先改内存 phase，再可能在保存时抛错。Host hook 必须显式接入既有结算保存失败/unknown 处理。若写入或通知的确认失败，应核对权威 Run 记录：已提交的终态不倒写为 unknown，只有未确认的提交才保持不确定。不能相信预先修改过的内存 phase。
+- **关闭与迟到回调仍需 owner 约束。** 使用预绑定 root，不在关闭期间再走公开 SDK/已关闭 registry 查找；保存时核验 Run owner/revision、精确 Turn。关闭后的旧 hook 不能晚写新 Host 状态。保留 owner liveness 和错误传播，不通过强制假完成释放资源。
 
-Actor registry close 失败或进入 unknown 时，也必须以既有有界结算机制收敛 finalizer并保留错误，不能在已关闭 controller 上无限等待新 health/event；owner liveness 按现有未确认资源规则处理，不能通过假完成或强制释放所有权消除等待。
+内部事件解决实时顺序，不构成跨两份持久化记录的原子事务。因此必须同时实施下面的对账，不能把“预先订阅”当成崩溃恢复保证。
 
-Stop 的赢家应以原执行器事实及匹配的 canonical Turn 判定，不能在晚时点只看 `signal.aborted`，否则自然完成提交期间到达的 Stop 会错误覆盖完成事实。
+### 6.3 反向崩溃窗口与恢复对账
 
-### 测试同步与诊断
+调整顺序后，存在第二个必须覆盖的停点：**Actor terminal 已 canonical，Run terminal 尚未提交时 Host 死亡**。
 
-以精确 Turn 的 `agents.output` 为完成真值；`completed` 成功，`failed` / `interrupted` 立即失败。`agents.wait(cursor, 100–250ms, {signal})` 只作为唤醒提示，返回无事件也重新读取 output；使用外层测试硬期限及 TestContext signal，不再增加独立的一秒或五秒完成期限。
+基线代码审查确认缺少这种对账：
 
-不能纯等终态事件：已被父级 ack 的 direct-child terminal 会被过滤，存在 output 读取与 wait 注册之间的漏唤醒窗口。取消 signal 也不能被描述成取消所有 SDK I/O，因为 `agents.output` 本身没有 signal 参数。
+- `sdk-runtime.ts:5030–5056` 启动恢复会将 dead-owner 非终态 Run 送入 `interruptPersistedNonTerminalRun`。
+- `:19247` 的该函数不读取 Actor snapshot，直接生成 interrupted。
+- `:9978–10024` 的 `observePersistedRun` 在之后发现旧 owner 死亡时，也使用同一路径；因此不只启动要修。
+- 两条路径目前都会先保留 `recovering + checkpoint`。对已 canonical terminal 的精确 Turn，应先对账，再决定是否仍可恢复。
+- 内存 `independentActorRef` 不在 RunStatus / `statusFromRecord` / `recordFromPersistedStatus` 中持久化；checkpoint 专用的 generation-recovery.actor 不能覆盖普通独立 Run。所以精确持久关联是本修复的必要前置，不能猜最新 Actor 或反解析 turnId。
 
-用 Promise gates 检查提交前后，不用固定 1.2 秒睡眠作为主要证明。失败时保留有界 diagnostic sink、最后 output/events、Run lifecycleError 和真实 save attempt diagnostics；失败钩子不能为了取诊断再发起可能无限等待的 SDK I/O。所有 gates 在 finally 先释放，再关闭 Host。
+这确认了修复方案必须包含反向窗口；本轮尚未对该新顺序的第二停点执行硬崩溃实验，不将静态确认写成实验通过。
 
-## 7. 实施验收门
+共用的对账/投影规则：
+
+1. 对有可靠持久关联、仍非 terminal 的独立 Run 使用投影。入口权限分开：实时 hook 核验本 Host 仍持有匹配的 Run owner/revision/binding；启动和后续 owner-death 对账才要求旧 owner 已 dead，alive/unknown 不能抢写。可共享结果构造和受约束提交，不能把“owner 必须 dead”当作实时 hook 的前置条件。
+2. 用已有 `readActorSnapshot/readActorMetadata` 读取稳定 canonical 投影，定位精确历史 Turn；不要先初始化 Controller，让 `recoverUnmatchedTurns` 改变现场，也不要读取 actor.currentTurnId 来猜目标。
+3. 若精确 Turn 已 terminal，只修复 Run 状态，不进入任何执行、LLM、工具或 checkpoint 恢复入口。该检查先于“保留 recovering/checkpoint”以及首次写 interrupted。
+4. 在 Run 状态锁内按 observed owner + expected revision + durable binding 做 CAS；竞争变化则重新读取权威事实并重新投影或明确退出所有权，不能覆盖接管者。若本地仍有待完成的 Run result，也要以权威终态或明确 unknown 收敛，不能静默退出使结果永久悬空。现有 `saveRunStatus` 对 terminal 写入没有完整 foreign-owner guard，不能无条件拿来写新对账结果；应使用既有锁内的受约束提交入口。
+5. actor canonical terminal 只决定执行事实；Stop 结果、failure detail、Shell cleanup 等仍走同一既有 Run 终态策略。缺失/损坏/身份不符时保守 unknown/interrupted 并记录诊断，不猜 completed，更不重执行。canonical Turn 未必保留完整 Runtime failureDetail；只恢复可证实的 state/error/terminationReason 和已持久化上下文，不补造 typed failure details。缺少错误细节可以使用既有安全通用诊断，不因细节缺失抹掉已经证实的 failed 终态。
+6. 投影入口供实时 hook、启动恢复、后续 owner-death observation 三处复用，保证重复调用幂等，不重复执行或重复结算。Run 提交后的通知失败也不能反转已确认的完成。
+7. 历史 terminal 仍遵守不可随意覆写原则。旧记录没有精确关联时，不自动“修正”所有 completed/interrupted；已知历史不一致应单独诊断，必要的迁移另行设计。
+
+这条设计收敛的是两种崩溃方向，不是引入跨存储事务系统或通用后台对账服务。
+
+### 6.4 测试同步与诊断
+
+P0 事件路线闭合时，真正撤掉 `64dab173a` 中五处固定五秒完成等待。以精确 Turn 的 `agents.output` 为真值；completed 成功，failed/interrupted 立即失败。`agents.wait(cursor, 100–250ms, {signal})` 仅作唤醒提示，无事件也重新读取；只使用外层测试预算和 TestContext signal。
+
+这与生产内部 hook 不矛盾：公开事件会过滤已 ack 的 direct-child terminal，测试不能纯等公开事件。`agents.output` 没有 signal 参数，不能声称 signal 能取消所有 SDK I/O。
+
+回归注册有界 `coding:actors` diagnostic sink；失败时保存最后 output/events、Run lifecycleError、执行器调用次数和真实 save attempt 的 stage/phase/canonical/completion diagnostics。取证不能在 failure hook 再发起可能无限等待的 SDK I/O。用精确 terminal snapshot 的 Promise gate 检查提交前后，所有 gates 在 finally 先释放再 close；不以固定 1.2 秒睡眠作为主要证明。
+
+## 7. 分阶段交付与放行条件
+
+采用 P0/P1 分批，但分批是缩小提交和评审范围，不把新路线的基础错误收敛推迟到下一批。以下仍是未实施的验收要求。
+
+### P0：闭合最小一致性修复
+
+按垂直切片执行，不一次堆完：
+
+| 切片 | 内容 | 放行条件 |
+| --- | --- | --- |
+| P0-A 持久关联与恢复对账 | 首次 dispatch 前原子写入关联；共享 canonical 投影及 owner/revision CAS；启动和后续 owner-death observation 两个入口 | 精确历史 Turn、幂等、legacy 缺关联、损坏/缺失、foreign owner、并发 revision 变化；不执行模型/工具 |
+| P0-B 实时事件驱动 | 内部 hook 透传和精确路由；release 捕获事实；canonical 后结算 Run | 原门控 RED→GREEN，正常完成、执行错误/iteration limit；无关 Actor 执行器挂起时本 Actor 不被错误拖住 |
+| P0-C 基础异常与测试收口 | basic unknown、callback/Run-store 失败、checkpoint graceful close；撤销五秒等待、接入有界诊断 | 不假完成、不悬空、不死锁；既有 Stop/close 回归不退化；不绕过 Shell cleanup 和 Session 安全 fence |
+
+P0 必须包含两个真实进程硬崩溃停点：
+
+1. **Actor terminal canonical 之前。** 新 Host 不读到虚假的 Run completed；没有新安全 checkpoint 时明确中断/unknown，不重放旧工具。
+2. **Actor terminal canonical 之后、Run terminal 提交之前。** 新 Host 或后续 dead-owner 观察按精确 terminal Turn 补写 Run；不把 completed Turn 当 interrupted，也不再次启动该 Turn。
+
+还需覆盖重复终态事件、重复对账、Run 已提交但通知失败以及失败后的权威读回。测试子进程的强制退出须作为受控夹具处理，不把预期崩溃误算成普通通过测试。
+
+P0-A 应先于 P0-B 的实时顺序切换落地，避免交付“新顺序已经产生反向窗口、对账却尚未具备”的中间版本。A/B/C 可以分别提交评审，但中间切片不能单独宣称完整修复。P0 通过上述基础门后可以作为独立修复候选评审；不得据此宣布 P1 的组合压力已验证。
+
+### P1：扩大竞争与故障组合验证
 
 | 验收 | 必须观察到的行为 |
 | --- | --- |
-| 精确提交门控 | Actor canonical 前 Run 没有 terminal；释放后同 Turn 的 Actor/Run 终态一致 |
-| 成功与失败 | 成功、执行错误、iteration limit 均等待正确的 Actor 事实，不把失败等成超时 |
-| unknown 与晚确认 | 提交未知不报完成；既有 fencing/repair 与晚确认不双结算、不丢错误 |
-| 正常范围隔离 | 同 Session 另一个独立 Actor 的执行器被阻塞、但未占用共同 canonical/写锁时，不妨碍本 Actor 正确结算，也不被本 Run 的普通 Stop 误取消 |
-| 共享存储边界 | 共同提交或写锁被阻塞可合法阻挡多个 Actor；owner/store unknown 仍触发 Session 级安全 fence，不以范围隔离断言要求继续执行 |
-| 已提交事实优先 | A 已 canonical 后 B 进入 recovering/unknown，不撤销 A 已确认的终态；A 自身尚未 canonical 且 unknown 时不报完成 |
-| Stop 两种赢家 | 自然完成先 canonical 与 Stop 先取消都保留真实赢家 |
-| 正常关闭 | checkpoint suspension、提交前关闭、提交后维护未完成均不自等待、不提前释放 owner |
-| 异常关闭与接管 | registry close 失败保留错误且有界收敛；旧 finalizer 不跨 owner/revision 写入新 Host 状态 |
-| 硬崩溃 | gate 点强制终止后重新启动，Run 不再假完成；无新 checkpoint 时明确中断/unknown，不重放旧工具 |
-| 组合检查 | Actor/controller/generation/小窗口回归、类型检查、相关构建及最终全量，分别记录失败与跳过 |
+| Stop 两种赢家 | 自然完成先 canonical、Stop 先取消均保留真实赢家；不只按晚时点 signal 判断 |
+| unknown 与晚确认 | 无终态事件时有明确不确定出口；晚确认不双结算、不丢错误 |
+| 正常范围隔离 | 无关独立 Actor 的执行器挂起但未占共同写锁时，不错误等待/取消它 |
+| 共享存储边界 | 共同提交/写锁可合法阻挡多个 Actor；owner/store unknown 保留 Session 级安全 fence |
+| 已提交事实优先 | A 已 canonical 后 B recovering/unknown，不撤销 A 的终态；A 自身未 canonical 且 unknown 不报完成 |
+| 关闭与接管 | registry close 失败有界收敛并保留错误；旧 hook/旧 owner 不跨 revision 写入新 Host 状态 |
+| 组合检查 | Actor/controller/generation/小窗口、源码/测试 typecheck、相关构建及最终全量；失败、跳过、未运行分别记录 |
 
-先将第 3 节门控转成永久失败回归，再改生产路径；每个新增边界先 RED 后 GREEN。修复完成前不把上述验收写成通过。
+P0 合入不自动等于发布。发布候选按实际承诺范围和必需回归放行；容量修复与此 Actor 切片独立管理，不与 next-dev 整体合并捆绑。work mode 锁定不属于本修复范围。
 
 ## 8. work mode 与整合边界
 
-原工作区首轮 work mode 锁定改动集中在 SDK 接口、fork/settings、Run admission 和锁持久化及 helper。当前候选修改点是独立 factory 和 Actor finalization helpers；只读 diff 核对未发现当前文本重叠，也不需要改变模式选择或锁定规则。
+原工作区首轮 work mode 锁定改动集中在 SDK 接口、fork/settings、Run admission 和锁持久化及 helper。修订后的候选修改点为独立 factory、CodingActorSession/Registry 的内部 hook 透传，以及 Runtime 的内部持久化、启动和观察对账；不需要改变模式选择或锁定规则。此前只读 diff 核对未发现相关文本重叠，实际补丁前仍须按最终修改位置重新核对。
 
 本轮没有修改任何生产文件或原工作区。如果实际补丁触及 mode/admission 共享 hunk 或发现语义冲突，应停止该部分处理并保留另一线程的机制。不能仅因 SDK 文件名相同断言已经冲突，也不能据这次静态无重叠保证未来整合不会冲突。
 

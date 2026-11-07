@@ -600,3 +600,5 @@ Vitest 4.1.11 的 `vi.waitFor` 默认 timeout 为 1,000ms；外层测试的 20,0
 这确认了需要修复的独立 Run 结算屏障，不能继续将 `64dab173a` 的五秒等待解释为完整生产修复；历史全量失败仍不能唯一归因为人工慢落盘。门控与硬崩溃 raw 位于 OS 临时目录 `kodax-actor-root-cause-20261107`，没有提交 raw 或一次性探针。
 
 具体根因、证据边界、拟定的最小修复及验收门见 [Actor 重启结算分析](../designs/actor-restart-settlement-analysis-2026-11-07.md)。该方案尚未实施，验收门未计为通过。work mode 锁定机制及生产源码保持不变。
+
+第二轮方案复核优先采用内部 committed-event hook 驱动 Run 结算，替代另建 Host 等待 finalizer；补充首次 dispatch 前持久关联，以及启动/后续 owner-death 两处对账。P0 必须同时覆盖 Actor 提交前和 Actor 已提交、Run 尚未提交两个硬崩溃停点，并包含基础 unknown、Run 写入失败、checkpoint 关闭收敛及撤销五秒等待；P1 扩大竞争和故障组合。反向停点本轮仅确认启动代码缺少对账，尚未执行该停点的硬崩溃验收，不计为通过。
