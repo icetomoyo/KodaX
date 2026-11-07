@@ -1,6 +1,6 @@
 # SDK 统一 Client 契约迁移指南
 
-适用范围：当前工作树的 FEATURE_298/299/301 实现；本次核对的包版本为 `0.7.97-beta.2`。版本号不表示 npm 已发布当前工作树中的所有变更。接入前应核对所安装包的导出和 Host 能力。
+适用范围：当前工作树的 FEATURE_298/299/301 实现；本次核对的包版本为 `0.7.97-beta.3` 本地候选，尚未发布。接入前应核对所安装包的导出和 Host 能力；下文带日期的 beta.1/beta.2 记录保留各自历史范围。
 
 Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附件/统计与退出恢复范围见 [SDK/Host 接缝](SPACE_SDK_SEAMS.md)。
 
@@ -561,6 +561,8 @@ TUI、桌面 UI、IDE、自动化应用接入共享 KodaX 时，以 `KodaXProduc
 根入口和上述底层导出尚未全部删除，也没有因为本次迁移就全部成为 TypeScript `@deprecated`。产品接入应迁走它们承担的业务职责；确需底层能力的受信任宿主仍可明确使用。客户端不能在连接失败时创建私有 Runtime，形成第二个 Session 写入者。
 
 工作模式使用 `sessions.updateSettings(id, { workMode: 'agent' | 'coding' | 'script' })`；Coding 默认，仅首次 Run 被接纳前可选择，之后更换模式须新建 Session。`getSettingsVersioned` 返回只读 `workModeLocked`；旧 Host 缺少该字段时，产品 UI 应禁止修改并提示升级。
+
+旧格式 Session 可能没有模式记录，但旧 Run 已持久化原执行配置。通过原身份、已停止 owner、checkpoint 和 fresh authority 校验后，同一 Run/Turn 可按原有效模式恢复；它不回填 Session 模式，也不写新锁标记，因此再次 checkpoint/restart 仍能恢复。后续新 Run 与普通/versioned 设置仍受 Session 锁约束。profile 和工具策略会影响有效模式，不能仅采用请求中的 `workMode` 字符串；持久 Run 事实与原快照冲突时明确拒绝。显式新格式锁元数据不适用该兼容路径；generation checkpoint v3 表达 Agent authority，不代表新锁格式。
 产品 Host 能力由 `sharedSessionSettings.keys` 报告；旧 Host 不支持时明确拒绝，不静默丢弃。模型/权限设置与工作模式独立。
 独立 `/coding` 的 `runManagedTask({ workMode: 'script', session: { storage }, ... }, prompt)` 要求可写 Session storage；
 `persistedByHost:true` 的宿主须实现可选 `appendSessionRecords(id, records)` 原子追加接口，以免旧的全量快照覆盖宿主历史。

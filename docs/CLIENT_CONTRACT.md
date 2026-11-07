@@ -216,6 +216,7 @@ Session 可选 `workMode` 为 `agent | coding | script`，缺失或 `null` 清�
 仅首次 Run 被接纳前经同一 Session owner 选择；之后普通、versioned mutation 和单次 Run 参数均拒绝改成其他模式（同值写入允许）。版本化设置快照返回只读 `workModeLocked`；Host 持久化该事实，重启、历史清理或 Run 索引淘汰不会解锁，已有完整 lineage 的会话同样锁定。
 选择随 Session 重启恢复，模型切换不修改它。旧 Host 未在 `sharedSessionSettings.keys` 声明 workMode 时，客户端在 mutation 前明确拒绝并要求升级。
 新版 Host 仅为新会话显式记录首轮前状态；旧版或导入会话缺少该事实时保持原模式，需新建会话才能另选。不在启动时读取、改写所有历史正文。
+旧格式 Session 的同一 Run/Turn generation 恢复延续原有效执行模式：原身份、已停止 owner、精确 checkpoint 和 fresh authority 均须通过现有校验。它不选择或回写 Session 模式，也不写入新的锁标记；后续新 Run 和设置 mutation 继续受 Session 锁约束。持久 Run 模式与原执行快照不一致时拒绝恢复；新绑定不能改变原有效模式。显式新格式锁元数据不享有该兼容路径。
 Script 选择及 Run 准入进行无工具、无模型的本地 VM 可用性检查；失败保留原选择，不能先生成再发现执行器缺失。
 首轮提供完整叶契约，原生控制项、undo 和支持后台命令的 bash 保留；回执与原生错误证据保留，未结算 cell 不自动重放。
 当前 Windows 离线证据及尚未验证的完整任务效果见 [工具总计划](designs/tool-portfolio-plan.md)。

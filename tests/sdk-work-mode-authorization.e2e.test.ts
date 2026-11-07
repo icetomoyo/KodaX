@@ -15,6 +15,17 @@ async function fixture(options: { holdFirst?: boolean; defaultSkill?: boolean; s
   const first = new Promise<void>(done => { release = done; });
   const wire = createServer(async (request, response) => {
     let body = ''; for await (const chunk of request) body += String(chunk);
+    const input = JSON.parse(body) as { tools?: { function?: { name: string } }[] };
+    if (input.tools?.some(tool => tool.function?.name === 'commit_episode_learning_review')) {
+      // Background episode reviews are separate from the root admission count.
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      response.end(`data: ${JSON.stringify({ id: 'mode-review', choices: [{ index: 0,
+        delta: { tool_calls: [{ index: 0, id: 'discard-one-off', type: 'function', function: {
+          name: 'commit_episode_learning_review', arguments: JSON.stringify({ memoryPlan: { actions: [], warnings: [] },
+            capabilityDecision: { disposition: 'discard', reasonCodes: ['one_off'] } }),
+        } }] }, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n`);
+      return;
+    }
     requests.push(body);
     if (options.holdFirst && requests.length === 1) await first;
     response.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -93,7 +104,7 @@ it.each(['coding', 'script'] as const)('rejects a trusted Agent requirement in %
   } finally { await state.close(); }
 }, 120_000);
 
-it('retains a pending static Agent constraint when the original Main reconnects with weaker authority', async () => {
+it('retains locked Agent mode and the pending constraint when Main reconnects with weaker authority', async () => {
   const state = await fixture({ holdFirst: true, defaultSkill: false, staticAuthorization: true });
   try {
     await state.client.sessions.updateSettings(state.session.id, { workMode: 'agent', agentMode: 'sa', permissionMode: 'full-access' });
@@ -105,13 +116,15 @@ it('retains a pending static Agent constraint when the original Main reconnects 
     state.release();
     await state.client.runs.await(active.runId!);
     await state.restartMain();
-    await state.peer.sessions.updateSettings(state.session.id, { workMode: 'coding' });
+    await expect(state.peer.sessions.updateSettings(state.session.id, { workMode: 'coding' })).rejects.toMatchObject({ code: 'conflict' });
     state.requireAgent(false);
     await state.client.inputs.submit(pending);
-    await expect.poll(async () => (await state.client.inputs.read(pending.sessionId, pending.inputId))?.admissionError?.code,
-      { timeout: 5_000 }).toBe('execution_mode_mismatch');
-    expect(state.requests).toHaveLength(1);
-    expect((await state.client.inputs.withdraw(pending.sessionId, pending.inputId)).text).toBe(pending.text);
+    await expect.poll(async () => (await state.client.inputs.read(pending.sessionId, pending.inputId))?.runId,
+      { timeout: 15_000 }).toBeTruthy();
+    const accepted = await state.client.inputs.read(pending.sessionId, pending.inputId);
+    expect((await state.client.runs.await(accepted!.runId!)).phase).toBe('completed');
+    expect(await state.client.runs.read(accepted!.runId!)).toMatchObject({ workMode: 'agent', requiredWorkMode: 'agent' });
+    expect(state.requests).toHaveLength(2);
   } finally { await state.close(); }
 }, 120_000);
 
@@ -131,10 +144,15 @@ it.each([true, false])('preserves rejected queued input at actual mode admission
       { timeout: 5_000 }).toBe('execution_mode_mismatch');
     expect(state.requests).toHaveLength(1);
     if (defaultSkill) expect((await readFile(join(state.homeDir, 'mode-hook.txt'), 'utf8')).trim()).toBe('hook');
-    await state.peer.sessions.updateSettings(state.session.id, { workMode: 'agent' });
-    expect(await state.client.inputs.submit(pending)).toMatchObject({ state: 'queued' });
-    await expect.poll(async () => (await state.client.inputs.read(pending.sessionId, pending.inputId))?.runId, { timeout: 15_000 }).toBeTruthy();
-    const accepted = await state.client.inputs.read(pending.sessionId, pending.inputId);
+    await expect(state.peer.sessions.updateSettings(state.session.id, { workMode: 'agent' })).rejects.toMatchObject({ code: 'conflict' });
+    expect(await state.client.inputs.read(pending.sessionId, pending.inputId)).toMatchObject({ state: 'queued',
+      admissionError: { code: 'execution_mode_mismatch' } });
+    expect(await state.client.inputs.withdraw(pending.sessionId, pending.inputId)).toEqual(pending);
+    const agentSession = await state.client.sessions.create({ projectPath: state.homeDir, surface: 'partner' });
+    await state.client.sessions.updateSettings(agentSession.id, { workMode: 'agent', agentMode: 'sa', permissionMode: 'full-access' });
+    await state.client.inputs.submit({ ...pending, sessionId: agentSession.id });
+    await expect.poll(async () => (await state.client.inputs.read(agentSession.id, pending.inputId))?.runId, { timeout: 15_000 }).toBeTruthy();
+    const accepted = await state.client.inputs.read(agentSession.id, pending.inputId);
     expect((await state.client.runs.await(accepted!.runId!)).phase).toBe('completed');
     expect(state.requests).toHaveLength(2);
   } finally { await state.close(); }

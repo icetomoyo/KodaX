@@ -60,7 +60,7 @@ import { createExecutionFactsStore, type ExecutionFactsStore } from './execution
 export type { RuntimeExecutionAuthorization } from './client-host-authorization.js';
 export type { RuntimeBuildIdentity } from './runtime-build-identity.js';
 import { createHash, randomUUID } from "node:crypto";
-import { captureGenerationResume, parseGenerationCheckpoint, rebindGenerationOptions, type RuntimeGenerationResume } from './runtime-generation-recovery.js';
+import { captureGenerationResume, parseGenerationCheckpoint, rebindGenerationOptions, resolveGenerationRecoveryWorkMode, type RuntimeGenerationResume } from './runtime-generation-recovery.js';
 import { clearRemovedExecutionConfig, resolveExecutionConfig, RUN_CONFIG_KEYS } from './execution-config.js';
 import type {
   ClientSession,
@@ -12208,7 +12208,8 @@ async function createRuntimeRunService(deps: {
   const startRun = async (
     input: RuntimeStartRunInput,
     operation: RuntimeRunInputOperation,
-    recovery?: { readonly persisted: PersistedRuntimeRunStatus; readonly data: RuntimeGenerationRecovery },
+    recovery?: { readonly persisted: PersistedRuntimeRunStatus; readonly data: RuntimeGenerationRecovery;
+      readonly workMode: ReturnType<typeof resolveWorkMode> },
   ): Promise<RuntimeRunHandle> => {
     deps.ensureOpen();
     let trustedInput = input as RuntimeTrustedStartRunInput;
@@ -12313,9 +12314,15 @@ async function createRuntimeRunService(deps: {
     await protectRuntimeWorkflowProject(options.context?.executionCwd);
     assertExecutionWorkMode(options.executionWorkMode, resolveWorkMode(options));
     const selectedWorkMode = resolveWorkMode(options);
-    if (selectedWorkMode !== (settings.workMode ?? 'coding')) {
+    if (recovery && selectedWorkMode !== recovery.workMode) {
+      throw createRuntimeConflictError('Generation recovery must retain the admitted Run mode.', recovery.persisted.revision);
+    }
+    // Continuing a verified old Run does not select a mode for its Session.
+    // Keep the missing legacy marker so another checkpoint can recover too.
+    const legacyRecovery = recovery !== undefined && admittedSessionContext.runtimeInfo?.workModeLocked === undefined;
+    if (!legacyRecovery && selectedWorkMode !== (settings.workMode ?? 'coding')) {
       assertWorkModeUnchanged(
-        hasWorkModeHistory,
+        recovery !== undefined || hasWorkModeHistory,
         settings.workMode ?? 'coding', selectedWorkMode,
       );
     }
@@ -12639,11 +12646,11 @@ async function createRuntimeRunService(deps: {
     }
     execution?.assertAdmission?.();
     trustedInput.assertAdmission?.();
-    if (selectedWorkMode !== (settings.workMode ?? 'coding')) {
+    if (!legacyRecovery && selectedWorkMode !== (settings.workMode ?? 'coding')) {
       await deps.settingsOwner.update(input.sessionId, { workMode: selectedWorkMode }, undefined,
         updated => assertSessionSettingsAllowed(admittedSessionContext!, updated));
     }
-    if (admittedSessionContext.runtimeInfo?.workModeLocked !== true) {
+    if (!legacyRecovery && admittedSessionContext.runtimeInfo?.workModeLocked !== true) {
       const mutateRuntimeInfo = deps.sessionManager.storage.mutateRuntimeInfo;
       if (!mutateRuntimeInfo) throw new Error('Session storage cannot persist the work mode lock.');
       const found = await mutateRuntimeInfo.call(deps.sessionManager.storage, input.sessionId, current => {
@@ -13363,12 +13370,14 @@ async function createRuntimeRunService(deps: {
           throw new Error('Generation recovery requires newly bound Host tools.');
         }
         const bindings = rebindGenerationOptions(recovery.start, input.options);
+        const workMode = resolveGenerationRecoveryWorkMode(recovery.start, persisted.status.workMode);
         const selected = input.options;
         const executionToolCeiling = intersectExecutionToolCeilings(
           recovery.start.options.executionToolCeiling, selected?.executionToolCeiling,
         );
         const freshPolicy = bindings.context?.toolVisibilityPolicy;
         const options: RuntimeKodaXOptions = { ...bindings, ...recovery.start.options,
+          workMode,
           ...(executionToolCeiling === undefined ? {} : { executionToolCeiling }),
           provider: selected?.provider ?? persisted.status.provider,
           model: selected?.model ?? persisted.status.model,
@@ -13379,7 +13388,7 @@ async function createRuntimeRunService(deps: {
           },
         };
         return startRun({ ...trusted, sessionId: record.sessionId, prompt: recovery.start.prompt,
-          mode: persisted.status.mode, options, permissionBroker: 'runtime' }, 'runtime.runs.start', { persisted, data: recovery });
+          mode: persisted.status.mode, options, permissionBroker: 'runtime' }, 'runtime.runs.start', { persisted, data: recovery, workMode });
       });
     },
     startAdmitted: (input) => startRun(input, 'runtime.runs.start'),
