@@ -213,7 +213,7 @@ lineage，并提供确定性、revision-bound 的历史检索与按条目回读�
 
 **优先级**: 中
 
-1. 查看仓库根 `config.example.jsonc` 与首次启动生成的配置模板。
+1. 查看仓库 `config-templates/config.example.jsonc` 与首次启动生成的配置模板。
 2. 调用 `kodax_manual({topic:"compaction"})`。
 3. 对照 SDK 指南第 25 节与 Space 设置界面。
 

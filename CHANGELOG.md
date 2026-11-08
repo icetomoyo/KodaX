@@ -6,6 +6,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Removed
+
+- Remove the unmaintained Docker build files (`Dockerfile`,
+  `docker-compose.yml`, `.dockerignore`). They still copied the retired
+  `packages/skills` workspace and could no longer build; KodaX ships as the
+  npm package and standalone native binaries.
+- Remove the repository-root `config.example.jsonc` copy and the placeholder
+  `clients/` directory. `config-templates/` remains the single template
+  source, and setup still writes `config.example.jsonc` into the config home.
+
+### Changed
+
+- Move the README demo animation into `assets/`.
+
 ---
 
 ## [0.7.97-beta.4] - 2026-11-08

@@ -11,7 +11,6 @@ const copiedFiles = [
   'config-templates/integrations/mcp.example.jsonc',
   'config-templates/integrations/a2a.example.jsonc',
   'config-templates/integrations/extensions.example.jsonc',
-  'config.example.jsonc',
   'packages/repl/src/common/generated-config-templates.ts',
   'packages/repl/src/common/generated-config-templates.json',
 ] as const;

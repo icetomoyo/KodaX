@@ -98,7 +98,6 @@ packages/
   repl/     Ink terminal UI, config, commands, session management surface
   artifacts/ private file authoring/rendering and visual evidence source module
 src/        CLI entry point and binary-facing bootstrap
-clients/    optional external clients and protocol adapters
 benchmark/  eval harness, datasets, and prompt-change rules
 ```
 

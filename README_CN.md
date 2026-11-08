@@ -31,7 +31,7 @@
 </p>
 
 <p align="center">
-  <img src="kodax-hd.gif" alt="KodaX 实战演示" width="880">
+  <img src="assets/kodax-hd.gif" alt="KodaX 实战演示" width="880">
 </p>
 
 ---

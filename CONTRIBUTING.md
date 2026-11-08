@@ -119,7 +119,6 @@ KodaX/
 ├── src/
 │   └── kodax_cli.ts         # Main CLI entry point
 │
-├── clients/                 # External clients / protocol adapters
 ├── benchmark/               # Eval harness and datasets
 └── package.json             # Root workspace config
 ```
