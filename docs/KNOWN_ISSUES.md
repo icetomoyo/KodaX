@@ -30,10 +30,10 @@ resolution evidence is retained. Issues 345–347 are unchanged.
 ## Issue 388: SDK history capacity fixture observes the parent before the worker on Windows
 
 - Priority: Medium
-- Status: ready
+- Status: Resolved
 - Introduced: observed in v0.7.97-beta.3 Release CI; first affected version unknown
-- Created: 2026-11-08
-- Fixed: —
+- Created / Resolved: 2026-11-08
+- Fixed: post-`v0.7.97-beta.4` (unreleased)
 
 `src/sdk-client.history.test.ts:22` ("projects the actual request compaction
 capacity including Memory reserve without enabling diagnostics") failed on the
@@ -49,13 +49,25 @@ worker's is expected. Reproduce under a slow serial Windows run
 automatically retried (see [release execution](release.md#current-release-execution)),
 so the fix belongs in the fixture or the code.
 
+Resolution (2026-11-08): the failing assertion used vitest's 1-second
+`expect.poll` default (line 39). Line 39 waits for the worker projection after `worker.result`; the latest view still had the parent scope when the 1-second budget ran out. The shared `createVitestConfig`
+now gives `expect.poll` a 10-second default for every tier, including Windows.
+This is not a retry: a poll returns as soon as it matches. 110 polls had
+already been raised by hand to 4-20 seconds, and explicit per-poll timeouts
+still take precedence. No production code changed.
+
+- Files changed: `vitest.config.ts`
+- Tests added: `tests/vitest-poll-budget.test.ts` (a projection settling after
+  1.5 s failed with "Matcher did not succeed in time" before the change)
+- Fixed: post-`v0.7.97-beta.4` (unreleased)
+
 ## Issue 387: Busy-Session Ink attach fixture times out before the prompt renders on Windows
 
 - Priority: Medium
-- Status: ready
+- Status: Resolved
 - Introduced: observed in v0.7.97-beta.4 Release CI; first affected version unknown
-- Created: 2026-11-08
-- Fixed: —
+- Created / Resolved: 2026-11-08
+- Fixed: post-`v0.7.97-beta.4` (unreleased)
 
 `src/sdk-client.repl-activity.test.ts:71` ("renders current Host activity and
 accepts follow-ups when attaching Ink to a busy Session") failed on the
@@ -67,6 +79,18 @@ Expected: attaching Ink to a busy Session renders the input prompt and current
 activity on a slow runner. Determine whether the wait is too short or keyed to
 the wrong signal, or whether the attach path stalls before the prompt. A stall
 would be a user-visible REPL defect.
+
+Resolution (2026-11-08): the failing assertion used vitest's 1-second
+`expect.poll` default (line 220). The failed frame showed the Host still projecting "Stop request accepted; waiting for execution to settle" and the withdrawn queued input, so the settled state reached Ink late rather than never. The shared `createVitestConfig`
+now gives `expect.poll` a 10-second default for every tier, including Windows.
+This is not a retry: a poll returns as soon as it matches. 110 polls had
+already been raised by hand to 4-20 seconds, and explicit per-poll timeouts
+still take precedence. No production code changed.
+
+- Files changed: `vitest.config.ts`
+- Tests added: `tests/vitest-poll-budget.test.ts` (a projection settling after
+  1.5 s failed with "Matcher did not succeed in time" before the change)
+- Fixed: post-`v0.7.97-beta.4` (unreleased)
 
 ## Issue 386: Extension `exec` can take over 30 seconds on Windows
 
@@ -2291,8 +2315,8 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 388 | Medium | ready | SDK history capacity fixture observes the parent before the worker on Windows | observed in v0.7.97-beta.3 Release CI; first affected version unknown | — | 2026-11-08 | — |
-| 387 | Medium | ready | Busy-Session Ink attach fixture times out before the prompt renders on Windows | observed in v0.7.97-beta.4 Release CI; first affected version unknown | — | 2026-11-08 | — |
+| 388 | Medium | Resolved | SDK history capacity fixture observes the parent before the worker on Windows | observed in v0.7.97-beta.3 Release CI; first affected version unknown | post-`v0.7.97-beta.4` (unreleased) | 2026-11-08 | 2026-11-08 |
+| 387 | Medium | Resolved | Busy-Session Ink attach fixture times out before the prompt renders on Windows | observed in v0.7.97-beta.4 Release CI; first affected version unknown | post-`v0.7.97-beta.4` (unreleased) | 2026-11-08 | 2026-11-08 |
 | 386 | High | ready | Extension `exec` can take over 30 seconds on Windows | observed in v0.7.97-beta.4 Release CI; first affected version unknown | — | 2026-11-08 | — |
 | 375 | High | Resolved | Constrained Skill shell patterns admit extra effects | observed on aeb16fef; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
 | 374 | Medium | Resolved | Client question adapters lose unanswered semantics | observed on aeb16fef; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
@@ -17160,8 +17184,8 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 257 (40 Open, 217 Resolved, 0 Partially Resolved, 0 Won't Fix)
-- Ready: 3 (386, 387, 388)
+- Total: 257 (38 Open, 219 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Ready: 1 (386)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
