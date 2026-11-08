@@ -119,6 +119,7 @@ export interface ConversationPageCachePage {
   readonly entries: readonly ConversationPageCacheEntry[];
   readonly hasMore: boolean;
   readonly nextEnd?: number;
+  readonly newerStart?: number;
 }
 
 export interface ConversationPageCacheChunkInput {
@@ -612,6 +613,7 @@ async function readConversationPageCacheInternal(
       issues: structuredClone(manifest.issues),
       entries,
       hasMore: firstIndex > 0,
+      ...(end < manifest.entryCount ? { newerStart: end } : {}),
       ...(firstIndex > 0 ? { nextEnd: firstIndex } : {}),
     };
   } finally {

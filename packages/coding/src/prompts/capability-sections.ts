@@ -53,7 +53,7 @@ import { promisify } from 'node:util';
 import { assertNoGitInstallPrompt, createMemoryControlPlane, type MemoryPack } from '@kodax-ai/agent';
 
 import { emitResilienceDebug } from '../agent-runtime/resilience-debug.js';
-import { loadAgentsFiles, formatAgentsForPrompt } from '../context/agents-loader.js';
+import { loadInstructionFiles, formatAgentsForPrompt } from '../context/agents-loader.js';
 import { listConstructedAgents, type KodaXAgentScope } from '../construction/agent-resolver.js';
 import { resolveExecutionCwd } from '../runtime-paths.js';
 import { getSessionScratchDir } from '../session-scratch.js';
@@ -263,7 +263,7 @@ export async function buildCapabilityContextSections(
     );
   }
 
-  const agentsFiles = loadAgentsFiles({
+  const agentsFiles = loadInstructionFiles({
     cwd: executionCwd,
     projectRoot: options.context?.gitRoot ?? undefined,
     assertReadablePath: options.context?.assertReadablePath,

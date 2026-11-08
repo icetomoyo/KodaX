@@ -75,6 +75,7 @@ import {
 } from './project-manifest.js';
 import { ensureLayoutMigrated } from './session-migration.js';
 import {
+  assertConversationTurnBoundary,
   buildSessionConversationHistory,
   forkSessionConversationLineage,
   type SessionConversationHistoryData,
@@ -644,6 +645,8 @@ export interface SessionReadOptions {
 /** Immutable read boundary used by conversation-history fork/rewind. */
 export interface SessionHistoryBoundary {
   readonly sourceRevision: string;
+  readonly startEntryId?: string;
+  readonly kind?: 'turn_end';
 }
 
 export interface SessionReadSnapshot {
@@ -5491,6 +5494,10 @@ export class FileSessionStorage implements KodaXSessionStorage {
           ? undefined
           : completeLineageBoundaryPath(sourceLineage, targetId);
         if (captured !== undefined && boundaryPath === undefined) return;
+        if (captured) assertConversationTurnBoundary(
+          buildSessionConversationHistory(sourceLineage, captured.sourceRevision), targetId,
+          { startEntryId: historyBoundary?.startEntryId, kind: historyBoundary?.kind },
+        );
         const rewindSource = boundaryPath === undefined
           ? sourceLineage
           : {
@@ -5637,6 +5644,10 @@ export class FileSessionStorage implements KodaXSessionStorage {
       ) {
         return;
       }
+      if (captured && selector !== undefined) assertConversationTurnBoundary(
+        buildSessionConversationHistory(sourceLineage, captured.sourceRevision), selector,
+        { before: options?.before, startEntryId: historyBoundary?.startEntryId, kind: historyBoundary?.kind },
+      );
       const projectionStartedAt = Date.now();
       if (options?.before === true && captured === undefined) throw new Error('Fork before requires a canonical history boundary.');
       const targetId = options?.before === true ? boundaryPath?.at(-2)?.id : selector;

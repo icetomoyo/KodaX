@@ -213,7 +213,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
     result: nullOrObjectSchema,
   },
   'session.history.resolveTurn': {
-    params: objectSchema({ sessionId: stringSchema, selector: { oneOf: [
+    params: objectSchema({ sessionId: stringSchema, contractVersion: { enum: [2] }, timeoutMs: integerSchema, selector: { oneOf: [
       objectSchema({ kind: { enum: ['latest', 'previous'] } }, ['kind']),
       objectSchema({ kind: { enum: ['index'] }, index: { type: 'integer', minimum: 0 } }, ['kind', 'index']),
       objectSchema({ kind: { enum: ['item'] }, itemId: stringSchema, source: { enum: ['history'] },
@@ -222,7 +222,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
         revision: stringSchema, inputId: stringSchema, outputId: stringSchema }, ['kind', 'itemId', 'source']),
     ] } }, ['sessionId', 'selector']),
     result: { oneOf: [
-      objectSchema({ status: { enum: ['ready'] }, historyBoundary: conversationHistoryBoundarySchema(),
+      objectSchema({ status: { enum: ['ready'] }, sessionId: stringSchema, startBoundary: conversationHistoryBoundarySchema(), historyBoundary: conversationHistoryBoundarySchema(),
         expectedHead: nullableSchema(stringSchema), turnIndex: { type: 'integer', minimum: 0 },
         excerpt: stringSchema, hasLaterTurn: booleanSchema }, ['status', 'historyBoundary', 'expectedHead', 'turnIndex', 'excerpt', 'hasLaterTurn']),
       objectSchema({ status: { enum: ['unavailable', 'stale'] }, reason: stringSchema }, ['status', 'reason']),
@@ -308,9 +308,11 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
   'session.rewind': {
     params: objectSchema({
       sessionId: stringSchema,
+      contractVersion: { enum: [2] },
       selector: stringSchema,
       expectedHead: nullableSchema(stringSchema),
       historyBoundary: conversationHistoryBoundarySchema(),
+      turn: historyTurnTargetSchema(),
     }, ['sessionId']),
     result: nullableSchema(sessionSchema()),
   },
@@ -1375,14 +1377,23 @@ function forkSessionParamsSchema(): RuntimeDaemonJsonSchema {
     newSessionId: stringSchema,
     title: stringSchema,
     historyBoundary: conversationHistoryBoundarySchema(),
+    turn: historyTurnTargetSchema(),
   }, ['sessionId']);
 }
 
 function conversationHistoryBoundarySchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
+    kind: { enum: ['turn_end'] },
     entryId: stringSchema,
     sourceRevision: stringSchema,
   }, ['entryId', 'sourceRevision']);
+}
+
+function historyTurnTargetSchema(): RuntimeDaemonJsonSchema {
+  return objectSchema({ sessionId: stringSchema, historyBoundary: conversationHistoryBoundarySchema(),
+    startBoundary: conversationHistoryBoundarySchema(), expectedHead: nullableSchema(stringSchema),
+    status: { enum: ['ready'] }, turnIndex: integerSchema, excerpt: stringSchema, hasLaterTurn: booleanSchema,
+  }, ['sessionId', 'historyBoundary', 'startBoundary', 'expectedHead']);
 }
 
 function activeEntryParamsSchema(): RuntimeDaemonJsonSchema {

@@ -15,6 +15,7 @@ import type {
   ClientItemContent,
   ClientItemReadOptions,
   ClientViewItem,
+  ClientReadOptions,
 } from '@kodax-ai/coding/client-contract';
 import type {
   RuntimeConversationHistoryEntryChunk,
@@ -22,6 +23,20 @@ import type {
 } from './sdk-runtime.js';
 
 const HISTORY_READ_CHUNK_CHARS = 65_536;
+
+/** Shared deadline across a page, its retry and any oversized body reads. */
+export function createHistoryReadBudget(options?: ClientReadOptions): () => ClientReadOptions {
+  if (options?.timeoutMs !== undefined && (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0)) {
+    throw Object.assign(new Error('History read timeoutMs must be positive and finite.'), { code: 'invalid_params' });
+  }
+  const deadline = options?.timeoutMs === undefined ? undefined : Date.now() + options.timeoutMs;
+  return () => {
+    if (options?.signal?.aborted) throw Object.assign(new Error('History read cancelled.'), { code: 'read_cancelled' });
+    const remaining = deadline === undefined ? undefined : deadline - Date.now();
+    if (remaining !== undefined && remaining <= 0) throw Object.assign(new Error('History read timed out.'), { code: 'read_timeout' });
+    return { ...(remaining === undefined ? {} : { timeoutMs: remaining }), ...(options?.signal ? { signal: options.signal } : {}) };
+  };
+}
 
 /** Project one conversation page into public display items. */
 export async function projectConversationHistoryPage(

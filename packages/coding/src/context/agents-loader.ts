@@ -36,6 +36,11 @@ export interface AgentsFile {
   scope: 'global' | 'project' | 'directory';
 }
 
+/** Ordered prompt sources; scope describes precedence, kind describes the editable file. */
+export type InstructionFile =
+  | (AgentsFile & { readonly kind: 'agents' })
+  | { readonly kind: 'rule'; path: string; content: string; scope: 'global' | 'project' };
+
 export interface LoadAgentsOptions extends RulesLoadOptions {
   /** Pass cwd explicitly for deterministic prompt building; process.cwd() is only a legacy fallback. */
   cwd?: string;
@@ -106,12 +111,13 @@ function readFileWithMtimeCache(filePath: string): string | null {
   }
 }
 
-function loadAgentsFile(dir: string, filenames: readonly string[]): AgentsFile | null {
+function loadAgentsFile(dir: string, filenames: readonly string[]): Extract<InstructionFile, { kind: 'agents' }> | null {
   for (const filename of filenames) {
     const filePath = join(dir, filename);
     const content = readFileWithMtimeCache(filePath);
     if (content !== null) {
       return {
+        kind: 'agents',
         path: filePath,
         content,
         scope: "directory", // Will be adjusted by caller if needed
@@ -127,7 +133,7 @@ function loadAgentsFile(dir: string, filenames: readonly string[]): AgentsFile |
  * Only reads `AGENTS.md` — `CLAUDE.md` is intentionally NOT a fallback;
  * see the rationale on `CONTEXT_FILE_CANDIDATES` above.
  */
-function loadContextFileFromDir(dir: string): AgentsFile | null {
+function loadContextFileFromDir(dir: string): Extract<InstructionFile, { kind: 'agents' }> | null {
   return loadAgentsFile(dir, CONTEXT_FILE_CANDIDATES);
 }
 
@@ -135,16 +141,25 @@ function loadContextFileFromDir(dir: string): AgentsFile | null {
  * Load AGENTS and Markdown fragments. Empty rules directories preserve the
  * existing AGENTS prompt. Deeper AGENTS can refine project-wide fragments.
  */
+export function loadInstructionFiles(options?: LoadAgentsOptions): InstructionFile[] {
+  return loadFiles(options, true);
+}
+
+/** Legacy editor contract: only AGENTS.md files, without reading rule fragments. */
 export function loadAgentsFiles(options?: LoadAgentsOptions): AgentsFile[] {
+  return loadFiles(options, false).map(({ path, content, scope }) => ({ path, content, scope }));
+}
+
+function loadFiles(options: LoadAgentsOptions | undefined, includeRules: boolean): InstructionFile[] {
   const resolvedCwd = resolve(options?.cwd ?? process.cwd());
   const resolvedKodaxDir = options?.kodaxDir ?? getKodaxGlobalDir();
   const resolvedProjectRoot = options?.projectRoot ? resolve(options.projectRoot) : null;
   const traversalRoot = resolvedProjectRoot ?? parse(resolvedCwd).root;
 
-  const contextFiles: AgentsFile[] = [];
+  const contextFiles: InstructionFile[] = [];
   const seenPaths = new Set<string>();
 
-  const globalRules = loadRulesFiles(join(resolvedKodaxDir, 'rules'), resolvedKodaxDir, 'global', options ?? {});
+  const globalRules = includeRules ? loadRulesFiles(join(resolvedKodaxDir, 'rules'), resolvedKodaxDir, 'global', options ?? {}) : [];
   for (const file of globalRules) {
     contextFiles.push(file);
     seenPaths.add(file.path);
@@ -161,16 +176,16 @@ export function loadAgentsFiles(options?: LoadAgentsOptions): AgentsFile[] {
   const rulesProjectRoot = options?.projectRulesRoot
     ? resolve(options.projectRulesRoot)
     : resolvedProjectRoot ?? resolvedCwd;
-  for (const file of loadRulesFiles(
+  for (const file of includeRules ? loadRulesFiles(
     join(rulesProjectRoot, '.kodax', 'rules'), rulesProjectRoot, 'project', options ?? {},
-  )) {
+  ) : []) {
     if (seenPaths.has(file.path)) continue;
     contextFiles.push(file);
     seenPaths.add(file.path);
   }
 
   // 2. Traverse from project root to current directory
-  const directoryFiles: AgentsFile[] = [];
+  const directoryFiles: InstructionFile[] = [];
   let currentDir = resolvedCwd;
   const visitedDirs = new Set<string>();
 

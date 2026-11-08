@@ -68,6 +68,7 @@ import {
 } from "../tests/runtime-fixture.js";
 import type { RuntimeDaemonClientTransport } from './runtime-daemon/client.js';
 import { RuntimeDaemonDisconnectError } from './runtime-daemon/transport.js';
+import { ensureKodaXClient } from './sdk-client.js';
 import type { RuntimeDaemonProcessLease } from './runtime-daemon/process.js';
 import type { RuntimeDaemonPaths } from './runtime-daemon/state.js';
 
@@ -110,6 +111,27 @@ describe('product Host startup and passive connection', () => {
     upgradeMocks.findSharedHost.mockReset();
 
   });
+
+  it.each((['productHistoryTurnResolution', 'productHistoryLocation'] as const).flatMap(capability =>
+    ['older version', 'changed installation bytes'].map(mode => ({ capability, mode }))))(
+    'self-heals an idle v1 $capability Host ($mode) for a new Product SDK client', async ({ capability, mode }) => {
+      const calls: string[] = [];
+      const initialized = await createCurrentTransport([], async () => undefined).request('initialize') as { capabilities: Record<string, unknown> };
+      const old = createLegacyTransport({ preflight: createPreflight(), calls, close: async () => undefined,
+        runtimeVersion: mode === 'older version' ? OLDER_RUNTIME_VERSION : KODAX_VERSION,
+        build: mode === 'older version' ? LOCAL_RUNTIME_BUILD : { ...LOCAL_RUNTIME_BUILD, fingerprint: '0'.repeat(64) },
+        capabilities: { ...initialized.capabilities, [capability]: { version: 1 } } });
+      upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(old))
+        .mockResolvedValueOnce(createLease(createCurrentTransport(calls, async () => undefined)));
+      upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
+      const client = await ensureKodaXClient({ profile: PROFILE, requirements: { [capability]: 2 } });
+      try {
+        expect(client.capabilities.supports(capability, 2)).toBe(true);
+        expect(calls.filter(call => call === 'old:runtime.shutdown')).toHaveLength(1);
+        expect(upgradeMocks.waitOwnerExit).toHaveBeenCalledOnce();
+      } finally { await client.disconnect(); }
+    },
+  );
 
   it.each(['timeout', 'cancel'] as const)('bounds waiting for another launcher by the original %s control', async mode => {
     const controller = new AbortController();
@@ -1168,6 +1190,9 @@ function createCurrentTransport(
         throw new Error(`Unexpected current daemon request: ${method}`);
       }
       return initializeResult('runtime_current', {
+        productClient: { version: 1 }, productHistoryBoundaries: { version: 1 },
+        productExitControl: { version: 1 }, productExecutionFacts: { version: 1 }, productInputRecovery: { version: 1 },
+        productHistoryTurnResolution: { version: 2 }, productHistoryLocation: { version: 2 },
         actorSettlementConvergence: { version: 2 },
         conversationHistory: { version: 2 },
         crashOutcomeModel: { version: 2 },

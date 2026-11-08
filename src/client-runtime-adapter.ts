@@ -1,4 +1,5 @@
 import type { ClientWorkflowRun, KodaXProductClient } from '@kodax-ai/coding/client-contract';
+import { KODAX_RUNTIME_SDK_CAPABILITIES, supportsRuntimeCapability, requireRuntimeCapability } from '@kodax-ai/coding/client-contract';
 import { memoryProposalRevision } from '@kodax-ai/agent';
 import type { KodaXRuntime } from './sdk-runtime.js';
 import { toClientConfig, toClientSessionSettings } from './client-settings.js';
@@ -14,6 +15,9 @@ export function toKodaXProductClient(
   runtime: KodaXRuntime,
   authorizeExecution?: KodaXClientHostAuthorization,
 ): KodaXProductClient {
+  const requireHistoryTurns = (): void => {
+    requireRuntimeCapability(runtime.capabilities, 'productHistoryTurnResolution', 2);
+  };
   const requirePromotionContract = (): void => {
     if ((runtime.capabilities?.sessionPromotion as { version?: number } | undefined)?.version !== 1) {
       throw Object.assign(new Error('Session promotion requires an upgraded Host.'), { code: 'daemon_upgrade_required' });
@@ -44,6 +48,8 @@ export function toKodaXProductClient(
     return { ...input, ...(authorization === undefined ? {} : { authorization: structuredClone(authorization) }) };
   };
   return {
+    capabilities: { sdk: KODAX_RUNTIME_SDK_CAPABILITIES,
+      supports: (name, version) => supportsRuntimeCapability(runtime.capabilities, name, version) },
     statistics: runtime.statistics ?? {
       read: async () => { throw new Error('Execution facts require a compatible Host.'); },
       readRequests: async () => { throw new Error('Execution facts require a compatible Host.'); },
@@ -95,7 +101,10 @@ export function toKodaXProductClient(
       observe: (sessionId, onView, options) => runtime.sessions.observeView(sessionId, onView, options),
       readItem: (sessionId, itemId, options) => runtime.sessions.readViewItem(sessionId, itemId, options),
       readHistory: (sessionId, options) => runtime.sessions.readHistory(sessionId, options),
-      resolveHistoryTurn: (sessionId, selector) => runtime.sessions.resolveHistoryTurn(sessionId, selector),
+      resolveHistoryTurn: async (sessionId, selector, options) => {
+        requireHistoryTurns();
+        return runtime.sessions.resolveHistoryTurn(sessionId, selector, options);
+      },
       readHistoryEntry: (sessionId, itemId, options) => runtime.sessions.readHistoryEntry(sessionId, itemId, options),
       searchHistory: (sessionId, input) => runtime.sessions.searchHistory(sessionId, input),
       readGoal: (sessionId) => runtime.sessions.readGoal(sessionId),
@@ -116,16 +125,18 @@ export function toKodaXProductClient(
           if (session === null) throw Object.assign(new Error('No lineage entry matches the selector.'), { code: 'conflict' as const });
           return session;
         }),
-      rewindSession: (sessionId, input) => runtime.sessions.rewind({ sessionId, ...input })
-        .then((session) => {
-          if (session === null) throw Object.assign(new Error('Rewind target no longer resolves.'), { code: 'conflict' as const });
-          return session;
-        }),
-      forkSession: (sessionId, input) => runtime.sessions.fork({ sessionId, ...(input ?? {}) })
-        .then((session) => {
-          if (session === null) throw Object.assign(new Error('Fork boundary no longer resolves.'), { code: 'conflict' as const });
-          return session;
-        }),
+      rewindSession: async (sessionId, input) => {
+        if (input.turn || input.historyBoundary) requireHistoryTurns();
+        const session = await runtime.sessions.rewind({ sessionId, ...input });
+        if (session === null) throw Object.assign(new Error('Rewind target no longer resolves.'), { code: 'conflict' as const });
+        return session;
+      },
+      forkSession: async (sessionId, input) => {
+        if (input?.turn || (input?.historyBoundary && (input.before !== true || 'kind' in input.historyBoundary))) requireHistoryTurns();
+        const session = await runtime.sessions.fork({ sessionId, ...(input ?? {}) });
+        if (session === null) throw Object.assign(new Error('Fork boundary no longer resolves.'), { code: 'conflict' as const });
+        return session;
+      },
       recoverSession: (sessionId, input) => runtime.sessions.recover({ sessionId, ...(input ?? {}) }),
       compact: async (sessionId, input) => {
         const authorized = await authorize({ kind: 'compaction', input: { ...input, sessionId } });

@@ -6,6 +6,26 @@ import * as repl from '@kodax-ai/repl';
 import { FileSessionStorage } from '@kodax-ai/repl';
 import { createKodaXRuntime } from '../tests/runtime-fixture.js';
 
+it('provides both ordinary neighbor cursors when persistent paging falls back to a snapshot', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-history-fallback-'));
+  const sessionsDir = path.join(root, 'sessions');
+  const storage = new FileSessionStorage({ sessionsDir, configHome: root });
+  await storage.save('fallback', { title: 'Fallback', gitRoot: root,
+    messages: Array.from({ length: 12 }, (_, index) => ({ role: index % 2 ? 'assistant' as const : 'user' as const, content: `message ${index}` })) });
+  const cache = vi.spyOn(FileSessionStorage.prototype, 'readConversationPageCache').mockResolvedValue(null);
+  const runtime = await createKodaXRuntime({ homeDir: root, sessionsDir });
+  try {
+    const newest = await runtime.sessions.readHistory('fallback', { limit: 3 });
+    const older = await runtime.sessions.readHistory('fallback', { limit: 3, cursor: newest.nextCursor });
+    expect(older.newerCursor).toBeTruthy();
+    const returned = await runtime.sessions.readHistory('fallback', { limit: 3, cursor: older.newerCursor });
+    expect(returned.items.map(item => item.id)).toEqual(newest.items.map(item => item.id));
+  } finally {
+    await runtime.close(); cache.mockRestore();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 it('only computes the full page revision when resolving an item from that page', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-history-revision-'));
   const sessionsDir = path.join(root, 'sessions');
@@ -22,6 +42,23 @@ it('only computes the full page revision when resolving an item from that page',
       kind: 'item', source: 'history', itemId: page.items[0]!.id, revision: page.revision,
     })).toMatchObject({ status: 'ready' });
     expect(revision).toHaveBeenCalledOnce();
+    await runtime.sessions.resolveHistoryTurn('revision', {
+      kind: 'item', source: 'history', itemId: page.items[0]!.id, revision: page.revision,
+    });
+    expect(revision, 'repeat clicks reuse the validated conversation revision').toHaveBeenCalledOnce();
+    const projection = vi.spyOn(repl, 'conversationHistoryFromCapture');
+    try {
+      await runtime.sessions.resolveHistoryTurn('revision', { kind: 'latest' });
+      await runtime.sessions.resolveHistoryTurn('revision', { kind: 'latest' });
+      expect(projection, 'unchanged source should reuse the validated canonical projection').not.toHaveBeenCalled();
+      const saved = (await storage.load('revision'))!;
+      saved.messages.push({ role: 'user', content: 'new turn' });
+      delete saved.lineage;
+      await storage.save('revision', saved);
+      expect(await runtime.sessions.resolveHistoryTurn('revision', { kind: 'latest' }))
+        .toMatchObject({ status: 'ready', excerpt: 'new turn' });
+      expect(projection).toHaveBeenCalledOnce();
+    } finally { projection.mockRestore(); }
   } finally {
     revision.mockRestore();
     await runtime.close();
@@ -40,6 +77,11 @@ it('opens a saved context at the exact search hit and continues forward without 
   await storage.save('location', { title:'Location', gitRoot:root, messages });
   const runtime = await createKodaXRuntime({homeDir:root, sessionsDir});
   try {
+    const newest = await runtime.sessions.readHistory('location', { limit: 3 });
+    const older = await runtime.sessions.readHistory('location', { limit: 3, cursor: newest.nextCursor });
+    expect(older.newerCursor).toBeTruthy();
+    const returned = await runtime.sessions.readHistory('location', { limit: 3, cursor: older.newerCursor });
+    expect(returned.items.map(item => item.id)).toEqual(newest.items.map(item => item.id));
     const search = await runtime.sessions.searchHistory('location', { query:'identical needle' });
     expect(search.hits).toHaveLength(2);
     for (const hit of search.hits) {

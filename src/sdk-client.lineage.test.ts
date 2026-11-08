@@ -204,7 +204,7 @@ it('rewinds the head through the Host without dropping entries', async () => {
   const observation = await second.sessions.observe(session.id, view => views.push(view));
   expect(views.at(-1)!.items.some(item => item.text === 'REPLY 2')).toBe(true);
   await expect(first.sessions.rewindSession(session.id, { selector: rootId, expectedHead: rootId }))
-    .rejects.toMatchObject({ code: 'conflict' });
+    .rejects.toMatchObject({ code: 'resync_required', data: { reason: 'head_changed' } });
   expect((await second.sessions.readLineage(session.id))!.activeEntryId).toBe(abandonedHead);
   const rewound = await first.sessions.rewindSession(session.id, { selector: rootId, expectedHead: abandonedHead });
   expect(rewound.id).toBe(session.id);

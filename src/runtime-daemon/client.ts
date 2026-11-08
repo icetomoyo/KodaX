@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { createExecutionBindingClient } from '../execution-binding-client.js';
 import { createExecutionServices } from '../execution-services.js';
 import { isDeepStrictEqual } from 'node:util';
+import { requireRuntimeCapability, supportsRuntimeCapability } from '@kodax-ai/coding/client-contract';
 import type { ClientHistoryPage, ClientHistoryReadOptions, ClientHistorySearchInput, ClientHistorySearchResult, ClientInteraction, ClientInteractionResponse, ClientInteractionResult, ClientObservation, ClientObserveOptions, ClientObservationStatus, ClientProviderInfo, ClientSessionView, ClientItemContent } from '@kodax-ai/coding/client-contract';
 
 import type {
@@ -577,11 +578,13 @@ export function createRuntimeDaemonClient(
       readViewItem(sessionId, itemId, options) {
         return request('session.view.item', { sessionId, itemId, ...options }) as Promise<ClientItemContent | null>;
       },
-      resolveHistoryTurn(sessionId, selector) {
-        return readRequest('session.history.resolveTurn', { sessionId, selector }) as Promise<import('@kodax-ai/coding/client-contract').ClientHistoryTurnResolution>;
+      async resolveHistoryTurn(sessionId, selector, readOptions) {
+        requireRuntimeCapability(options.capabilities, 'productHistoryTurnResolution', 2);
+        return readRequest('session.history.resolveTurn', { sessionId, selector, contractVersion: 2 }, readOptions) as Promise<import('@kodax-ai/coding/client-contract').ClientHistoryTurnResolution>;
       },
       async readHistory(sessionId, options) {
-        const { projectConversationHistoryPage, readHistoryPageWithBoundaryRetry } = await import('../client-history.js');
+        const { projectConversationHistoryPage, readHistoryPageWithBoundaryRetry, createHistoryReadBudget } = await import('../client-history.js');
+        const budget = createHistoryReadBudget(options);
         const page = await readHistoryPageWithBoundaryRetry(
           () => readRequest(
             'session.conversation.page',
@@ -591,15 +594,18 @@ export function createRuntimeDaemonClient(
               ...(options?.cursor !== undefined ? { cursor: options.cursor } : {}),
               ...(options?.limit !== undefined ? { limit: options.limit } : {}),
             },
+            budget(),
           ) as Promise<RuntimeConversationHistorySlice | null>,
           { ...(options?.cursor !== undefined ? { cursor: options.cursor } : {}), ...(options?.around ? { around: options.around } : {}) },
         );
         if (page === null) {
           throw new Error('Runtime daemon returned no conversation history page.');
         }
-        return projectConversationHistoryPage(sessionId, page, (input) => readRequest(
-          'session.conversation.entryChunk', { ...input },
+        const result = await projectConversationHistoryPage(sessionId, page, (input) => readRequest(
+          'session.conversation.entryChunk', { ...input }, budget(),
         ) as Promise<RuntimeConversationHistoryEntryChunk | null>, emitKodaXDiagnostic);
+        budget();
+        return result;
       },
       async readHistoryEntry(sessionId, itemId, options) {
         if (options?.part === 'original') {
@@ -658,7 +664,8 @@ export function createRuntimeDaemonClient(
           runtimeMode: options.identity.mode,
         }));
       },
-      fork(input) {
+      async fork(input) {
+        if (input.turn || (input.historyBoundary && (input.before !== true || 'kind' in input.historyBoundary))) requireRuntimeCapability(options.capabilities, 'productHistoryTurnResolution', 2);
         return request('session.fork', input) as Promise<RuntimeSession | null>;
       },
       recover(input) {
@@ -708,8 +715,11 @@ export function createRuntimeDaemonClient(
       labelEntry(input) {
         return request('session.lineage.label', input) as ReturnType<KodaXRuntime['sessions']['labelEntry']>;
       },
-      rewind(input) {
-        return request('session.rewind', input) as Promise<RuntimeSession | null>;
+      async rewind(input) {
+        if (input.turn || input.historyBoundary) requireRuntimeCapability(options.capabilities, 'productHistoryTurnResolution', 2);
+        return request('session.rewind', { ...input,
+          ...(supportsRuntimeCapability(options.capabilities, 'productHistoryTurnResolution', 2) ? { contractVersion: 2 } : {}),
+        }) as Promise<RuntimeSession | null>;
       },
       confirmIdentityAlias(input) {
         return request('session.identityAlias.confirm', input) as ReturnType<KodaXRuntime['sessions']['confirmIdentityAlias']>;

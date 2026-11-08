@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Restore the AGENTS-only editor loader; keep tagged Markdown rule sources and
+  structured skip diagnostics through the new instruction loader.
+- Validate complete history turn targets for Fork/Rewind/Retry under the storage
+  lock, unify stale-history recovery, add ordinary bidirectional paging and
+  cancellable budgeted reads with bounded source reuse.
+- Expose typed SDK/Host capability checks and optional Product launcher
+  requirements; retain basic-startup compatibility and idle Host self-healing.
+
 ---
 
 ## [0.7.97-beta.3] - 2026-11-08

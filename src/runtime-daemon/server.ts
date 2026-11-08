@@ -1687,9 +1687,25 @@ async function dispatchRuntimeDaemonRequest(
     case "session.view.item":
       return runtime.sessions.readViewItem(requireStringParam(request.params, 'sessionId'),
         requireStringParam(request.params, 'itemId'), requireRecord(request.params));
-    case "session.history.resolveTurn":
-      return runtime.sessions.resolveHistoryTurn(requireStringParam(request.params, 'sessionId'),
-        requireRecord(request.params).selector as import('@kodax-ai/coding/client-contract').ClientHistoryTurnSelector);
+    case "session.history.resolveTurn": {
+      const params = requireRecord(request.params);
+      try {
+        const result = await runtime.sessions.resolveHistoryTurn(requireStringParam(params, 'sessionId'),
+          params.selector as import('@kodax-ai/coding/client-contract').ClientHistoryTurnSelector,
+          runtimeReadOptions(params, requestSignal));
+        if (params.contractVersion === 2 || result.status !== 'ready') return result;
+        // beta.3 clients validate exact result keys, including the nested boundary.
+        return { status: 'ready', historyBoundary: { entryId: result.historyBoundary.entryId,
+          sourceRevision: result.historyBoundary.sourceRevision }, expectedHead: result.expectedHead,
+          turnIndex: result.turnIndex, excerpt: result.excerpt, hasLaterTurn: result.hasLaterTurn };
+      } catch (error) {
+        if (params.contractVersion !== 2 && isRecord(error) && error.code === 'resync_required') {
+          return { status: 'stale', reason: isRecord(error.data) && typeof error.data.reason === 'string'
+            ? error.data.reason : 'source_changed' };
+        }
+        throw error;
+      }
+    }
     case "session.observe": {
       const subscriptionId = createSubscriptionId();
       const sessionId = requireStringParam(request.params, "sessionId");
@@ -1822,10 +1838,18 @@ async function dispatchRuntimeDaemonRequest(
         ...(label !== undefined ? { label } : {}),
       });
     }
-    case "session.rewind":
-      return runtime.sessions.rewind(
-        requireRecord(request.params) as unknown as RuntimeRewindSessionInput,
-      );
+    case "session.rewind": {
+      const params = requireRecord(request.params);
+      try {
+        return await runtime.sessions.rewind(params as unknown as RuntimeRewindSessionInput);
+      } catch (error) {
+        if (params.contractVersion !== 2 && isRecord(error) && error.code === 'resync_required'
+          && isRecord(error.data) && error.data.reason === 'head_changed') {
+          throw daemonError('conflict', error instanceof Error ? error.message : 'Session head changed.');
+        }
+        throw error;
+      }
+    }
     case "session.identityAlias.confirm":
       return runtime.sessions.confirmIdentityAlias(
         requireRecord(request.params) as unknown as RuntimeConfirmIdentityAliasInput,
@@ -2804,10 +2828,10 @@ function runtimeDaemonCapabilities(
       ? { productClient: { version: 1 } } : {}),
     ...(isRecord(productHistoryBoundaries) && productHistoryBoundaries.version === 1
       ? { productHistoryBoundaries: { version: 1 } } : {}),
-    ...(isRecord(productHistoryTurnResolution) && productHistoryTurnResolution.version === 1
-      ? { productHistoryTurnResolution: { version: 1 } } : {}),
-    ...(isRecord(ownerCapabilities.productHistoryLocation) && ownerCapabilities.productHistoryLocation.version === 1
-      ? { productHistoryLocation: { version: 1 } } : {}),
+    ...(isRecord(productHistoryTurnResolution) && (productHistoryTurnResolution.version === 1 || productHistoryTurnResolution.version === 2)
+      ? { productHistoryTurnResolution: { version: productHistoryTurnResolution.version } } : {}),
+    ...(isRecord(ownerCapabilities.productHistoryLocation) && (ownerCapabilities.productHistoryLocation.version === 1 || ownerCapabilities.productHistoryLocation.version === 2)
+      ? { productHistoryLocation: { version: ownerCapabilities.productHistoryLocation.version } } : {}),
     ...(isRecord(productExecutionAuthorization) && (productExecutionAuthorization.version === 1 || productExecutionAuthorization.version === 2)
       ? { productExecutionAuthorization: { version: productExecutionAuthorization.version } } : {}),
     ...(daemonManagement && clientExitControl && isRecord(ownerCapabilities.productExitControl) && ownerCapabilities.productExitControl.version === 1

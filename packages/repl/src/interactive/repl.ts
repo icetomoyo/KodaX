@@ -772,10 +772,10 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
     ?? 200000;
 
   // Load AGENTS.md and Markdown rule fragments through the same prompt source.
-  const { loadAgentsFiles, clearAgentsLoaderCache } = await import('@kodax-ai/coding');
+  const { loadInstructionFiles, clearAgentsLoaderCache } = await import('@kodax-ai/coding');
   const reloadAgentsFiles = async (): Promise<AgentsFile[]> => {
     clearAgentsLoaderCache();
-    return loadAgentsFiles({
+    return loadInstructionFiles({
       cwd: process.cwd(),
       projectRoot: context.gitRoot ?? undefined,
       onDiagnostic: ({ path, reason }) => {

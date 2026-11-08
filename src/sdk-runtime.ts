@@ -87,6 +87,9 @@ import type {
   ClientHistoryPage,
   ClientHistoryTurnSelector,
   ClientHistoryTurnResolution,
+  ClientHistoryTurnTarget,
+  ClientReadOptions,
+  RuntimeCapabilityRequirements,
   ClientHistorySearchInput,
   ClientHistorySearchResult,
   ClientLineageSummary,
@@ -1020,106 +1023,9 @@ export interface ConnectKodaXRuntimeOptions {
 }
 
 /** SDK facts that embedders can inspect before auto-starting a daemon. */
-export const KODAX_RUNTIME_SDK_CAPABILITIES = Object.freeze({
-  productHistoryTurnResolution: 1,
-  productHistoryLocation: 1,
-  productClient: 1,
-  sessionDrafts: 1,
-  sessionPromotion: 1,
-  productExecutionBinding: 1,
-  productInputRecovery: 1,
-  productExecutionModeConstraint: 1,
-  actorSettlementConvergence: 2,
-  conversationHistory: 2,
-  crashOutcomeModel: 2,
-  daemonOrphanExit: 1,
-  daemonShutdownVerification: 1,
-  effectiveConfig: 1,
-  managedRunDurability: 1,
-  runtimeAutoModeGuardrail: RUNTIME_AUTO_MODE_GUARDRAIL_CAPABILITY.version,
-  sandboxRuntime: 11,
-  sharedSessionSettings: 2,
-  runtimeEventCoalescing: 1,
-  liveOutputSegments: 1,
-} as const);
+export { KODAX_RUNTIME_SDK_CAPABILITIES } from '@kodax-ai/coding/client-contract';
 
-export interface RuntimeCapabilityRequirements {
-  readonly productHistoryTurnResolution?: 1;
-  readonly productHistoryLocation?: 1;
-  readonly productExitControl?: 1;
-  readonly productExecutionFacts?: 1;
-  readonly productActorAuthorization?: 1;
-  readonly providerProbeAuthorization?: 1;
-  readonly providerCredentialConnectionBinding?: 1;
-  readonly productHistoryBoundaries?: 1;
-  readonly productExecutionAuthorization?: 1 | 2;
-  /** Unified product business operations and current-view lifecycle. */
-  readonly productClient?: 1;
-  readonly sessionDrafts?: 1;
-  readonly sessionPromotion?: 1;
-  readonly productExecutionBinding?: 1;
-  readonly productInputRecovery?: 1;
-  readonly productExecutionModeConstraint?: 1;
-  /** Reject hosts that do not advertise an installed external Agent executor plane. */
-  readonly externalAgents?: boolean;
-  /** Require owner/revision-fenced external Agent registration administration. */
-  readonly externalAgentAdmin?: 1;
-  /** Require a daemon that owns and hot-reconciles its A2A integration config. */
-  readonly a2aConfigReconciler?: 1;
-  readonly sessionObservation?: 1;
-  readonly afterTurnInput?: 1;
-  readonly learningCenter?: 1;
-  readonly skillLearningLoop?: 1;
-  readonly interruptInput?: 1;
-  readonly askUserTransport?: 1;
-  readonly permissionCas?: 1;
-  readonly providerCredentialBroker?: 1 | 2;
-  /** v1: run-bound host tool leases. v2 additionally materializes bound host tools into the agent tool table and cached capability catalog. */
-  readonly runBoundHostTools?: 1 | 2;
-  readonly coderOwnerFencing?: 1;
-  readonly crashOutcomeModel?: 1 | 2;
-  readonly coderFeatureMatrix?: 1;
-  readonly sessionAdmission?: 1;
-  readonly completeObservationSnapshot?: 1;
-  /** Require always-on thresholds, stable context identity, and canonical compact events. */
-  readonly contextCompaction?: 1 | 2 | 3;
-  /** Require bounded transcript slices plus page/chunk recovery. */
-  readonly transcriptPaging?: 1;
-  /** Require deterministic exact-history search over merged persisted lineage. */
-  readonly transcriptSearch?: 1;
-  /** v2 also requires topology-transparent managed context and direct clone provenance. */
-  readonly conversationHistory?: 1 | 2;
-  readonly connectionLifecycle?: 1;
-  readonly typedRuntimeEvents?: 1;
-  readonly daemonSafeRunInput?: 1;
-  readonly sharedSessionSettings?: 1 | 2;
-  readonly durableRecoveryQueries?: 1;
-  /** Require durable accepted-input and completed-turn boundaries for managed Runs. */
-  readonly managedRunDurability?: 1;
-  /** Require fail-closed root fencing plus automatic same-owner Actor settlement repair. */
-  readonly actorSettlementConvergence?: 1 | 2;
-  /** Require Session-local event ordering and scoped event access. */
-  readonly daemonManagement?: 1;
-  /** Require a read-only inventory of initialized logical daemon clients. */
-  readonly daemonClientInventory?: 1;
-  /** Require an auto-started daemon whose current host has orphan idle-exit enabled. */
-  readonly daemonOrphanExit?: 1;
-  /** Require authoritative durable shutdown plus kernel-backed process containment. */
-  readonly daemonShutdownVerification?: 1;
-  /** Require source-level bounded coalescing before sequence allocation and persistence. */
-  readonly runtimeEventCoalescing?: 1;
-  /** Require provider-request-owned live output with explicit replacement semantics. */
-  readonly liveOutputSegments?: 1;
-  /** Optional integration failures are isolated, observable, and hot-recoverable. */
-  readonly integrationConfigResilience?: 1;
-  /** Require a secret-safe snapshot of applied Runtime configuration provenance. */
-  readonly effectiveConfig?: 1;
-  readonly actorControlPlane?: 1;
-  /** Require the sandbox-first execution chain and permission fallback revision. */
-  readonly sandboxRuntime?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
-  /** Runtime owns Auto[LLM] review at the proven host boundary. */
-  readonly runtimeAutoModeGuardrail?: 1 | 2 | 3 | 4 | 5 | 6;
-}
+export type { RuntimeCapabilityRequirements } from '@kodax-ai/coding/client-contract';
 
 export interface RuntimeConnectionState {
   readonly state: "connected" | "disconnected";
@@ -1662,6 +1568,7 @@ export interface RuntimeTranscriptSearchResult {
 export type RuntimeSessionFilter = ClientSessionFilter;
 
 export interface RuntimeForkSessionInput {
+  readonly turn?: ClientHistoryTurnTarget;
   readonly before?: boolean;
   readonly sessionId: string;
   readonly selector?: string;
@@ -1679,6 +1586,8 @@ export interface RuntimeRecoverSessionInput {
 export interface RuntimeConversationHistoryBoundary {
   readonly entryId: string;
   readonly sourceRevision: string;
+  readonly startEntryId?: string;
+  readonly kind?: 'turn_end';
 }
 
 export type RuntimePermissionMode =
@@ -1748,6 +1657,7 @@ export interface RuntimeAppendNoticeInput {
 }
 
 export interface RuntimeRewindSessionInput {
+  readonly turn?: ClientHistoryTurnTarget;
   readonly sessionId: string;
   readonly selector?: string;
   readonly expectedHead?: string | null;
@@ -1910,7 +1820,7 @@ export interface RuntimeObservationInvalidation {
 }
 
 export interface RuntimeSessionService {
-  resolveHistoryTurn(sessionId: string, selector: ClientHistoryTurnSelector): Promise<ClientHistoryTurnResolution>;
+  resolveHistoryTurn(sessionId: string, selector: ClientHistoryTurnSelector, options?: ClientReadOptions): Promise<ClientHistoryTurnResolution>;
   observeView(sessionId: string, listener: (view: ClientSessionView) => void, options?: ClientObserveOptions): Promise<ClientObservation>;
   readViewItem(sessionId: string, itemId: string, options?: ClientItemReadOptions): Promise<ClientItemContent | null>;
   readHistory(
@@ -4383,8 +4293,8 @@ async function createKodaXRuntimeInternal(
     productExecutionModeConstraint: { version: 1 },
     sessionDrafts: { version: 1 },
     productHistoryBoundaries: { version: 1 },
-    productHistoryTurnResolution: { version: 1 },
-    productHistoryLocation: { version: 1 },
+    productHistoryTurnResolution: { version: 2 },
+    productHistoryLocation: { version: 2 },
     productExecutionAuthorization: { version: 2 },
     productExecutionProfile: { version: 2 },
     repoIntelligenceDiagnostics: { version: 1 },
@@ -7286,6 +7196,9 @@ function createRuntimeSessionService(
     issues: prepared.issues,
     entries: prepared.entries,
     hasMore: prepared.hasMore,
+    ...(prepared.newerStart !== undefined ? { newerCursor: 'newer.' + encodeRuntimeTranscriptCursor({
+      kind: 'conversation_cache_page', view: 'conversation', revision: prepared.revision, end: prepared.newerStart,
+    }) } : {}),
     ...(prepared.nextEnd !== undefined
       ? {
           nextCursor: encodeRuntimeTranscriptCursor({
@@ -7312,6 +7225,11 @@ function createRuntimeSessionService(
     }
   >();
   const transcriptRevisionBySource = new Map<string, string>();
+  // Retain only the latest bounded source; validate the existing storage witness
+  // before reuse. The resolver's turn index is weakly held with this source.
+  let historyTurnSource: { readonly sessionId: string; readonly history: SessionConversationHistoryData;
+    readonly boundaryRevision: string; readonly expectedHead: string | null; revision?: string } | undefined;
+  let historyTurnSourceTimer: ReturnType<typeof setTimeout> | undefined;
   const sessionCaptureFlights = new Map<string, {
     readonly controller: AbortController;
     readonly promise: Promise<SessionReadCapture>;
@@ -8228,6 +8146,8 @@ function createRuntimeSessionService(
       flight.controller.abort();
     }
     sessionCaptureFlights.clear();
+    historyTurnSource = undefined;
+    clearTimeout(historyTurnSourceTimer);
     for (const flight of transcriptMaterializationFlights.values()) {
       flight.controller.abort();
     }
@@ -8875,6 +8795,7 @@ function createRuntimeSessionService(
 
     async conversationPage(input, options) {
       ensureOpen();
+      if (input.around !== undefined && input.cursor !== undefined) throw Object.assign(new Error('Use either around or cursor.'), { code: 'invalid_params' });
       const budget = createRuntimeReadBudget(options);
       sessionReadOptionsFromBudget(budget);
       if (input.around || input.cursor?.startsWith("newer.")) {
@@ -9148,6 +9069,8 @@ function createRuntimeSessionService(
     },
     async readHistory(sessionId, options) {
       ensureOpen();
+      const budget = createRuntimeReadBudget(options);
+      sessionReadOptionsFromBudget(budget);
       const { readHistoryPageWithBoundaryRetry, projectConversationHistoryPage } = await import('./client-history.js');
       // Transient boundary misses retry once for fresh reads; stale cursors
       // reject with resync_required for the caller to restart (see helper).
@@ -9157,7 +9080,7 @@ function createRuntimeSessionService(
           ...(options?.around ? {around: options.around} : {}),
           ...(options?.cursor !== undefined ? { cursor: options.cursor } : {}),
           ...(options?.limit !== undefined ? { limit: options.limit } : {}),
-        }),
+        }, sessionReadOptionsFromBudget(budget)),
         { ...(options?.cursor !== undefined ? { cursor: options.cursor } : {}), ...(options?.around ? { around: options.around } : {}) },
       );
       if (page === null) {
@@ -9166,27 +9089,64 @@ function createRuntimeSessionService(
           { code: "not_found" as const },
         );
       }
-      return projectConversationHistoryPage(sessionId, page, (input) => service.conversationEntryChunk(input), emitKodaXDiagnostic);
+      const result = await projectConversationHistoryPage(sessionId, page,
+        (input) => service.conversationEntryChunk(input, sessionReadOptionsFromBudget(budget)), emitKodaXDiagnostic);
+      sessionReadOptionsFromBudget(budget);
+      return result;
     },
-    async resolveHistoryTurn(sessionId, selector) {
+    async resolveHistoryTurn(sessionId, selector, options) {
       ensureOpen();
       try {
-      const { resolveHistoryTurnAtSnapshot } = await import('./history-turn.js');
-      const budget = createRuntimeReadBudget(undefined);
-      await awaitRuntimeReadOperation(() => sessionViews.flush(sessionId), budget);
-      const capture = await readSessionCapture(sessionId, budget);
-      const history = replApi.conversationHistoryFromCapture(capture, () => sessionReadOptionsFromBudget(budget));
-      return resolveHistoryTurnAtSnapshot({ sessionId, history, selector,
-        get conversationRevision() { return createRuntimeConversationHistoryRevision(history); },
-        expectedHead: capture.transcript.lineage?.activeEntryId ?? null,
-        ...(selector.kind === 'item' && selector.source === 'view'
-          ? { viewItem: sessionViews.historyItem(sessionId, selector.itemId) } : {}),
-        transcriptSource: (revision, index) => {
-          const snapshot = getTranscriptSnapshot(sessionId, revision, 'transcript');
-          return snapshot ? { sourceRevision: snapshot.sourceRevision, entryId: snapshot.entries[index]?.entryId } : undefined;
-        }, checkpoint: () => sessionReadOptionsFromBudget(budget) });
+        const { resolveHistoryTurnAtSnapshot } = await import('./history-turn.js');
+        const budget = createRuntimeReadBudget(options);
+        await awaitRuntimeReadOperation(() => sessionViews.flush(sessionId), budget);
+        let saved = historyTurnSource;
+        if (saved?.sessionId === sessionId) {
+          const boundary = await manager.storage.readConversationPageBoundary(sessionId, sessionReadOptionsFromBudget(budget));
+          if (boundary) admission.assertCachedIdentity(sessionId, boundary.admission);
+          if (!boundary || boundary.boundaryRevision !== saved.boundaryRevision) saved = undefined;
+        } else saved = undefined;
+        if (!saved) {
+          historyTurnSource = undefined;
+          clearTimeout(historyTurnSourceTimer);
+          const capture = await readSessionCapture(sessionId, budget);
+          const history = replApi.conversationHistoryFromCapture(capture, () => sessionReadOptionsFromBudget(budget));
+          saved = { sessionId, history, boundaryRevision: capture.boundaryRevision,
+            expectedHead: capture.transcript.lineage?.activeEntryId ?? null };
+          if (capture.sourceRevisionState.files.reduce((bytes, file) => bytes + file.byteLength, 0)
+            <= MAX_RUNTIME_TRANSCRIPT_SNAPSHOT_BYTES) {
+            historyTurnSource = saved;
+            historyTurnSourceTimer = setTimeout(() => { historyTurnSource = undefined; }, RUNTIME_TRANSCRIPT_SNAPSHOT_TTL_MS);
+            historyTurnSourceTimer.unref?.();
+          }
+        }
+        const source = saved;
+        const { history, expectedHead } = source;
+        return await resolveHistoryTurnAtSnapshot({ sessionId, history, selector,
+          conversationRevision: async () => {
+            if (source.revision !== undefined) return source.revision;
+            let chain = replApi.emptyConversationEntryChain();
+            for (let start = 0; start < history.entries.length; start += MAX_RUNTIME_TRANSCRIPT_SNAPSHOT_WRITE_BATCH_ENTRIES) {
+              await yieldToRuntimeReadBudget(budget);
+              chain = replApi.extendConversationEntryChain(chain, history.entries.slice(start, start + MAX_RUNTIME_TRANSCRIPT_SNAPSHOT_WRITE_BATCH_ENTRIES));
+            }
+            const revision = replApi.createSessionConversationHistoryRevision(history, chain);
+            await yieldToRuntimeReadBudget(budget);
+            source.revision = revision;
+            return revision;
+          },
+          expectedHead,
+          ...(selector.kind === 'item' && selector.source === 'view'
+            ? { viewItem: sessionViews.historyItem(sessionId, selector.itemId) } : {}),
+          transcriptSource: (revision, index) => {
+            const snapshot = getTranscriptSnapshot(sessionId, revision, 'transcript');
+            return snapshot ? { sourceRevision: snapshot.sourceRevision, entryId: snapshot.entries[index]?.entryId } : undefined;
+          }, checkpoint: () => yieldToRuntimeReadBudget(budget) });
       } catch (error: unknown) {
-        if (isTransientConversationBoundaryError(error)) return { status: 'stale', reason: 'source_changed' };
+        if (isTransientConversationBoundaryError(error)) {
+          if (isRecord(error) && isRecord(error.data) && typeof error.data.reason === 'string') throw error;
+          throw createRuntimeResyncError(normalizeError(error).message);
+        }
         throw error;
       }
     },
@@ -9382,6 +9342,10 @@ function createRuntimeSessionService(
 
     async fork(input) {
       ensureOpen();
+      if (input.turn) {
+        if (input.historyBoundary !== undefined || input.selector !== undefined) throw Object.assign(new Error('Conflicting turn selectors.'), { code: 'invalid_params' });
+        input = { ...input, historyBoundary: runtimeTurnBoundary(input.sessionId, input.turn, input.before) };
+      }
       if (input.before === true && input.historyBoundary === undefined) {
         throw Object.assign(new Error('Fork before requires a canonical history boundary.'), { code: 'invalid_params' as const });
       }
@@ -9413,6 +9377,8 @@ function createRuntimeSessionService(
                 ...(input.title !== undefined ? { title: input.title } : {}),
                 historyBoundary: {
                   sourceRevision: input.historyBoundary.sourceRevision,
+                  startEntryId: input.historyBoundary.startEntryId,
+                  kind: input.historyBoundary.kind,
                 },
                 ...(input.before === true ? { before: true } : {}),
               },
@@ -9717,11 +9683,16 @@ function createRuntimeSessionService(
     },
 
     async rewind(input) {
+      if (input.turn) {
+        if (input.historyBoundary !== undefined || input.selector !== undefined
+          || (input.expectedHead !== undefined && input.expectedHead !== input.turn.expectedHead)) throw Object.assign(new Error('Turn changed.'), { code: 'invalid_params' });
+        input = { ...input, historyBoundary: runtimeTurnBoundary(input.sessionId, input.turn), expectedHead: input.turn.expectedHead };
+      }
       return mutateActiveSession(input.sessionId, async (current) => {
         assertSessionMutationAllowed(input.sessionId, sessionMutationOwner);
         await sessionViews.flush(input.sessionId);
         if (input.expectedHead !== undefined && input.expectedHead !== (current.lineage?.activeEntryId ?? null)) {
-          throw sessionCommandError('conflict', 'Session head changed; read the current branch before rewinding.');
+          throw createRuntimeResyncError('Session head changed; select again.', 'head_changed');
         }
         if (input.selector !== undefined && input.historyBoundary !== undefined) {
           throw new Error("rewind accepts either selector or historyBoundary, not both");
@@ -9738,6 +9709,8 @@ function createRuntimeSessionService(
                 {
                   historyBoundary: {
                     sourceRevision: input.historyBoundary.sourceRevision,
+                    startEntryId: input.historyBoundary.startEntryId,
+                    kind: input.historyBoundary.kind,
                   },
                 },
               );
@@ -22582,6 +22555,7 @@ async function createRuntimeConversationHistorySlice(
       issues: snapshot.conversation.issues,
     }), "utf8"),
   );
+  const lastIndex = slice.entries.at(-1)?.index;
   return {
     revision: snapshot.revision,
     sourceRevision: snapshot.conversation.sourceRevision,
@@ -22596,6 +22570,9 @@ async function createRuntimeConversationHistorySlice(
         ? { entry: item.entry as SessionConversationHistoryEntry }
         : {}),
     })),
+    ...(lastIndex !== undefined && lastIndex + 1 < snapshot.entries.length
+      ? { newerCursor: 'newer.' + encodeRuntimeTranscriptCursor({ kind: 'page', view: 'conversation',
+          revision: snapshot.revision, end: lastIndex + 1 }) } : {}),
     hasMore: slice.hasMore,
     ...(slice.nextCursor !== undefined ? { nextCursor: slice.nextCursor } : {}),
   };
@@ -26093,9 +26070,11 @@ function createSessionArchivedError(
 
 function createRuntimeResyncError(
   message: string,
+  reason: import('@kodax-ai/coding/client-contract').ClientHistoryResyncReason = 'source_changed',
 ): Error & { readonly code: "resync_required" } {
   return Object.assign(new Error(message), {
     code: "resync_required" as const,
+    data: { reason },
   });
 }
 
@@ -26106,6 +26085,17 @@ function normalizeConversationBoundaryMutationError(error: unknown): Error {
     );
   }
   return normalizeError(error);
+}
+
+function runtimeTurnBoundary(sessionId: string, turn: ClientHistoryTurnTarget, before = false): RuntimeConversationHistoryBoundary {
+  if (turn.sessionId !== sessionId || turn.historyBoundary?.kind !== 'turn_end'
+    || !turn.startBoundary?.entryId || !turn.historyBoundary.entryId
+    || typeof turn.historyBoundary.sourceRevision !== 'string'
+    || (turn.expectedHead !== null && typeof turn.expectedHead !== 'string')
+    || turn.startBoundary.sourceRevision !== turn.historyBoundary.sourceRevision) {
+    throw Object.assign(new Error('Invalid turn.'), { code: 'invalid_params' });
+  }
+  return { ...(before ? turn.startBoundary : turn.historyBoundary), startEntryId: turn.startBoundary.entryId };
 }
 
 function createRuntimeTranscriptSnapshotInvalidError(

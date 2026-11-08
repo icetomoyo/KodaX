@@ -1043,3 +1043,65 @@ LRU 淘汰或旧格式 cursor 返回 `conflict` 时，从第一页重取并按 I
 [接入契约](LLM_INTEGRATION.md)。全局工具输出自动清理是另一个存储能力：需要关闭
 Root/Space/分支/附件的引用与所有权链路。本轮没有加入 TTL 删除，旧工具原件保留；
 现有显式诊断不等于自动 GC 已完成。
+
+
+## Space SDK repair migration, 2026-11-08 (unreleased)
+
+These are source fixes after beta.3, not a claim that npm or a running Host has
+already been upgraded. Pin and validate the actual SDK package and Host bytes.
+
+- `loadAgentsFiles` again returns only AGENTS.md files for legacy editors/count
+  limits. Prompt consumers use the new `loadInstructionFiles` API, whose ordered
+  sources have `kind:'agents'|'rule'`. Keep `scope` for precedence, not file kind.
+  Existing rule order, whole-file budgets and prompt formatting are retained.
+  `onDiagnostic` reports skipped fragments with typed `RuleDiagnostic.code`,
+  source path and human-readable reason. It is available through the public
+  coding export. Previously overwritten AGENTS content needs backup/version
+  recovery; upgrading cannot reconstruct it.
+- Resolve history actions and pass the ready result as `{turn}`. Retry uses
+  `{turn,before:true}`. Rewind derives the confirmed expected head from that
+  result. Never send an observed tool item's message boundary as a turn end.
+  Handle `resync_required` using `error.data.reason` and reselect/reconfirm;
+  `status:'stale'` is replaced by the shared error contract in v2.
+  The SDK negotiates v2 on the wire; old SDKs retain their original response
+  shape and stale result, so strict beta.3 clients can coexist with an upgraded Host.
+- Keep both opaque neighbor cursors from each page. Do not combine `around` and
+  `cursor`. Pass AbortSignal and an optional timeout for cancellable reads.
+
+### Startup and self-healing
+
+Use `ensureKodaXClient` when the app owns local Host startup/update:
+
+```ts
+const client = await ensureKodaXClient({
+  requirements: { productHistoryTurnResolution: 2, productHistoryLocation: 2 },
+  onStartupProgress: renderStartupProgress,
+});
+```
+
+The existing launcher discovers the actual owner, upgrades a provably older
+idle Host (or changed bytes in the same installation), closes temporary clients,
+then reconnects with the original principal and requirements. No manual npm
+capability casts, private Host startup implementation or second Session writer
+is needed. Do not implement another upgrade/retry loop in the Renderer.
+
+Optional history contracts are not newly mandatory for a basic Client startup.
+Apps that can open before history editing is available may omit these optional
+requirements and check
+`client.capabilities.supports('productHistoryTurnResolution',2)` and
+`client.capabilities.supports('productHistoryLocation',2)` per feature. A missing
+turn contract fails before a new turn operation is sent. Module constants only
+check SDK adapter support; they cannot prove a live Host was upgraded.
+
+`connectKodaXClient` remains passive, accepts the same typed requirements, and
+does not start/replace a Host. `ensure` retains existing busy/owner/build fences:
+it never kills active work, replaces an unproven/newer foreign installation, or
+replays an uncertain write. Competing launchers and connected-client contention
+use the existing bounded startup wait/progress path. Active-work blockers are
+structured upgrade errors; preserve the running work and retry normal startup
+when idle. Do not treat such a blocker as corrupt SDK installation or reset the
+user's home/session data. A changed launcher process must reload the installed
+SDK bytes before retrying; do not weaken build proof to force startup.
+
+The versioned contract, reasons, revision domains and remaining cold-read limits
+are recorded in [Client contract](CLIENT_CONTRACT.md#2026-11-08-space-sdk-contract-repairs-unreleased).

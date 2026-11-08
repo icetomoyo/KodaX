@@ -1,63 +1,84 @@
-import { readTaskResultReports } from '@kodax-ai/agent';
-import type { KodaXMessage } from '@kodax-ai/agent';
+import { isConversationTurnInput, scanConversationToolPairing } from '@kodax-ai/repl';
 import type { SessionConversationHistoryData } from '@kodax-ai/repl';
 import type { ClientHistoryTurnResolution, ClientHistoryTurnSelector, ClientViewItem } from '@kodax-ai/coding/client-contract';
 import { parseHistoryEntryItemId, projectHistoryEntry } from './client-history.js';
 import type { RuntimeConversationHistoryPageInput, RuntimeConversationHistorySlice,
   encodeRuntimeTranscriptCursor, decodeRuntimeTranscriptCursor } from './sdk-runtime.js';
 
-function isTurnInput(message: KodaXMessage): boolean {
-  return message.role === 'user' && message._synthetic !== true
-    && readTaskResultReports(message).length === 0
-    && !(Array.isArray(message.content) && message.content.length > 0
-      && message.content.every(block => block.type === 'tool_result'));
-}
+const turnStarts = new WeakMap<SessionConversationHistoryData, readonly number[]>();
 
 /** The selected prefix includes invisible tool-result messages up to the next real input. */
-export function resolveSavedHistoryTurn(
+export async function resolveSavedHistoryTurn(
   history: SessionConversationHistoryData,
   expectedHead: string | null,
   selector: Exclude<ClientHistoryTurnSelector, { kind: 'item' }>,
   entryIndex?: number,
-  checkpoint: () => void = () => undefined,
-): ClientHistoryTurnResolution {
+  checkpoint: () => void | Promise<void> = () => undefined,
+  sessionId = '',
+): Promise<ClientHistoryTurnResolution> {
   if (history.status !== 'resolved') return { status: 'unavailable', reason: 'unresolved_history' };
-  const starts: number[] = [];
-  for (const [index, entry] of history.entries.entries()) {
-    checkpoint();
-    if (isTurnInput(entry.message)) starts.push(index);
+  let starts = turnStarts.get(history);
+  if (!starts) {
+    const collected: number[] = [];
+    for (const [index, entry] of history.entries.entries()) {
+      if ((index & 255) === 0) await checkpoint();
+      if (isConversationTurnInput(entry.message)) collected.push(index);
+    }
+    starts = collected;
+    turnStarts.set(history, starts);
   }
+  await checkpoint();
   if (starts.length === 0) return { status: 'unavailable', reason: 'no_turns' };
   if (entryIndex === undefined && selector.kind === 'previous' && starts.length < 2)
     return { status: 'unavailable', reason: 'no_previous_turn' };
   const selected = entryIndex === undefined
     ? selector.kind === 'index' ? selector.index : starts.length - (selector.kind === 'previous' ? 2 : 1)
-    : starts.filter(index => index <= entryIndex).length - 1;
+    : findContainingTurn(starts, entryIndex);
   if (!Number.isSafeInteger(selected) || selected < 0 || selected >= starts.length)
     return { status: 'unavailable', reason: 'turn_not_found' };
   const lastIndex = (starts[selected + 1] ?? history.entries.length) - 1;
+  const pairing = scanConversationToolPairing(history.entries, starts[selected]!, lastIndex);
+  let step = pairing.next();
+  while (!step.done) {
+    await checkpoint();
+    step = pairing.next();
+  }
+  await checkpoint();
+  if (!step.value) return { status: 'unavailable', reason: 'incomplete_turn' };
   const entryId = history.entries[lastIndex]?.boundaryId;
-  if (!entryId) return { status: 'unavailable', reason: 'unproven_source' };
+  if (!entryId || !history.entries[starts[selected]!]!.boundaryId) return { status: 'unavailable', reason: 'unproven_source' };
   const content = history.entries[starts[selected]!]!.message.content;
-  const text = typeof content === 'string' ? content : content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n');
-  return { status: 'ready', historyBoundary: { entryId, sourceRevision: history.sourceRevision },
+  let text = typeof content === 'string' ? content.slice(0, 240) : '';
+  if (Array.isArray(content)) {
+    let seenText = false;
+    for (const [index, block] of content.entries()) {
+      if ((index & 255) === 0) await checkpoint();
+      if (block.type !== 'text') continue;
+      text += (seenText ? '\n' : '') + block.text.slice(0, 240 - text.length);
+      seenText = true;
+      if (text.length >= 240) break;
+    }
+  }
+  await checkpoint();
+  return { status: 'ready', sessionId, historyBoundary: { kind: 'turn_end', entryId, sourceRevision: history.sourceRevision },
+    startBoundary: { entryId: history.entries[starts[selected]!]!.boundaryId!, sourceRevision: history.sourceRevision },
     expectedHead, turnIndex: selected, excerpt: text.slice(0, 240).replace(/[\uD800-\uDBFF]$/u, ''),
     hasLaterTurn: selected < starts.length - 1 };
 }
 
 /** Selection validation belongs to the saved source, independent of the display window. */
-export function resolveHistoryTurnAtSnapshot(input: {
+export async function resolveHistoryTurnAtSnapshot(input: {
   readonly sessionId: string;
   readonly history: SessionConversationHistoryData;
-  readonly conversationRevision: string;
+  readonly conversationRevision: string | (() => Promise<string>);
   readonly expectedHead: string | null;
   readonly selector: ClientHistoryTurnSelector;
   readonly viewItem?: ClientViewItem;
   readonly transcriptSource: (revision: string, index: number) => { readonly sourceRevision: string; readonly entryId?: string } | undefined;
-  readonly checkpoint: () => void;
-}): ClientHistoryTurnResolution {
+  readonly checkpoint: () => void | Promise<void>;
+}): Promise<ClientHistoryTurnResolution> {
   const { sessionId, history, selector, expectedHead, checkpoint } = input;
-  if (selector.kind !== 'item') return resolveSavedHistoryTurn(history, expectedHead, selector, undefined, checkpoint);
+  if (selector.kind !== 'item') return resolveSavedHistoryTurn(history, expectedHead, selector, undefined, checkpoint, sessionId);
   let entryIndex: number;
   if (selector.source === 'view') {
     const item = input.viewItem;
@@ -65,21 +86,21 @@ export function resolveHistoryTurnAtSnapshot(input: {
     const boundary = item.historyBoundary;
     if (selector.revision !== undefined) {
       if (!boundary) return { status: 'unavailable', reason: 'unproven_source' };
-      if (selector.revision !== boundary.sourceRevision) return { status: 'stale', reason: 'revision_mismatch' };
+      if (selector.revision !== boundary.sourceRevision) return staleHistory('Saved history selection changed.', 'revision_mismatch');
       // Read-time resolution may renew a metadata-only stale source if the
       // original immutable entry is still uniquely proven. Mutations still CAS
       // the new returned sourceRevision and never silently renew their target.
-      const matches = history.entries.flatMap((entry, index) => entry.boundaryId === boundary.entryId
-        || entry.auditEntryIds.includes(boundary.entryId) ? [index] : []);
-      if (matches.length !== 1) return { status: 'stale', reason: 'source_changed' };
+      const matches = await matchingEntries(history, entry => entry.boundaryId === boundary.entryId
+        || entry.auditEntryIds.includes(boundary.entryId), checkpoint);
+      if (matches.length !== 1) return staleHistory('Saved history selection changed.', 'source_changed');
       entryIndex = matches[0]!;
     } else {
       const inputId = item.type === 'user' && selector.inputId === item.inputId ? item.inputId : undefined;
       const outputId = selector.outputId === (item.outputId ?? item.tool?.assistantOutputId) ? selector.outputId : undefined;
       if (!inputId && !outputId) return { status: 'unavailable', reason: 'unproven_source' };
-      const matches = history.entries.flatMap((entry, index) => (inputId
+      const matches = await matchingEntries(history, entry => !!(inputId
         ? entry.message.inputId === inputId || entry.message.inputIds?.includes(inputId)
-        : entry.message.outputId === outputId) ? [index] : []);
+        : entry.message.outputId === outputId), checkpoint);
       if (matches.length !== 1) return { status: 'unavailable', reason: 'unproven_source' };
       entryIndex = matches[0]!;
     }
@@ -87,23 +108,47 @@ export function resolveHistoryTurnAtSnapshot(input: {
     const parsed = parseHistoryEntryItemId(sessionId, selector.itemId, 'history');
     const reference = parsed ?? parseHistoryEntryItemId(sessionId, selector.itemId, 'transcript');
     if (!reference) return { status: 'unavailable', reason: 'item_not_found' };
-    if (selector.revision !== reference.revision) return { status: 'stale', reason: 'revision_mismatch' };
+    if (selector.revision !== reference.revision) return staleHistory('Saved history selection changed.', 'revision_mismatch');
     if (parsed) {
-      if (parsed.revision !== input.conversationRevision) return { status: 'stale', reason: 'source_changed' };
+      const revision = typeof input.conversationRevision === 'function' ? await input.conversationRevision() : input.conversationRevision;
+      if (parsed.revision !== revision) return staleHistory('Saved history selection changed.', 'source_changed');
       entryIndex = parsed.entryIndex;
       const entry = history.entries[entryIndex];
       if (!entry || (parsed.ordinal !== undefined && !projectHistoryEntry(sessionId, parsed.revision, entryIndex, [entry.message])[parsed.ordinal]))
         return { status: 'unavailable', reason: 'item_not_found' };
     } else {
       const snapshot = input.transcriptSource(reference.revision, reference.entryIndex);
-      if (!snapshot) return { status: 'stale', reason: 'selection_expired' };
-      if (snapshot.sourceRevision !== history.sourceRevision) return { status: 'stale', reason: 'source_changed' };
+      if (!snapshot) return staleHistory('Saved history selection changed.', 'selection_expired');
+      if (snapshot.sourceRevision !== history.sourceRevision) return staleHistory('Saved history selection changed.', 'source_changed');
       const entryId = snapshot.entryId;
-      entryIndex = entryId === undefined ? -1 : history.entries.findIndex(entry => entry.auditEntryIds.includes(entryId));
+      entryIndex = entryId === undefined ? -1 : (await matchingEntries(history, entry => entry.auditEntryIds.includes(entryId), checkpoint))[0] ?? -1;
     }
   }
   if (entryIndex < 0 || entryIndex >= history.entries.length) return { status: 'unavailable', reason: 'not_canonical' };
-  return resolveSavedHistoryTurn(history, expectedHead, { kind: 'latest' }, entryIndex, checkpoint);
+  return resolveSavedHistoryTurn(history, expectedHead, { kind: 'latest' }, entryIndex, checkpoint, sessionId);
+}
+
+
+function findContainingTurn(starts: readonly number[], entryIndex: number): number {
+  let low = 0, high = starts.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (starts[middle]! <= entryIndex) low = middle + 1;
+    else high = middle;
+  }
+  return low - 1;
+}
+
+async function matchingEntries(history: SessionConversationHistoryData,
+  matches: (entry: SessionConversationHistoryData['entries'][number]) => boolean,
+  checkpoint: () => void | Promise<void>): Promise<number[]> {
+  const found: number[] = [];
+  for (const [index, entry] of history.entries.entries()) {
+    if ((index & 255) === 0) await checkpoint();
+    if (matches(entry)) found.push(index);
+    if (found.length > 1) break;
+  }
+  return found;
 }
 
 interface LocatedHistoryRead {
@@ -117,8 +162,8 @@ interface LocatedHistoryRead {
   readonly maximumLimit: number;
 }
 
-function staleHistory(message: string): never {
-  throw Object.assign(new Error(message), { code: 'resync_required' });
+function staleHistory(message: string, reason: import('@kodax-ai/coding/client-contract').ClientHistoryResyncReason = 'source_changed'): never {
+  throw Object.assign(new Error(message), { code: 'resync_required', data: { reason } });
 }
 
 async function locateConversationEntry(
@@ -126,7 +171,7 @@ async function locateConversationEntry(
   sourceRevision: string, read: LocatedHistoryRead,
 ): Promise<{index: number; boundaryId: string} | undefined> {
   let auditId: string | undefined;
-  if ('searchItemId' in around) {
+  if (around.searchItemId !== undefined) {
     const hit = parseHistoryEntryItemId(sessionId, around.searchItemId, 'transcript');
     const transcript = hit && read.transcriptSource(hit.revision, hit.entryIndex);
     if (!transcript || transcript.sourceRevision !== sourceRevision) staleHistory('Search reference expired; search again.');
@@ -139,7 +184,7 @@ async function locateConversationEntry(
   for (const [index, entry] of history.entries.entries()) {
     if ((index & 255) === 0) await read.yieldControl();
     if (!entry.boundaryId) continue;
-    const matches = 'historyBoundary' in around ? entry.boundaryId === around.historyBoundary.entryId
+    const matches = around.historyBoundary !== undefined ? entry.boundaryId === around.historyBoundary.entryId
       : auditId !== undefined && entry.auditEntryIds.includes(auditId);
     if (!matches) continue;
     if (found) return undefined;
@@ -153,7 +198,7 @@ export async function readLocatedHistoryPage(
   input: RuntimeConversationHistoryPageInput, read: LocatedHistoryRead,
 ): Promise<RuntimeConversationHistorySlice | null> {
   const {sessionId, around, cursor} = input;
-  if (around && cursor) throw new Error('Use either a saved position or a cursor.');
+  if (around !== undefined && cursor !== undefined) throw Object.assign(new Error('Use either a saved position or a cursor.'), { code: 'invalid_params' });
   const limit = Math.min(input.limit ?? read.defaultLimit, read.maximumLimit);
   if (!Number.isSafeInteger(limit) || limit < 1) throw new Error('Invalid history page limit.');
   const tail = await read.readPage(undefined, 1);

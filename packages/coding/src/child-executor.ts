@@ -43,7 +43,7 @@ import { invokeChildWithFallback, readChildTokenUsage } from './child-fallback.j
 import { createWorkflowWorktree, removeWorkflowWorktree } from './tools/worktree.js';
 import { pinGenerationWorktree, restoreGenerationWorktree, releaseGenerationWorktree } from './worktree-generation.js';
 import { dirname } from 'node:path';
-import { loadAgentsFiles, formatAgentsForPrompt } from './context/agents-loader.js';
+import { loadInstructionFiles, formatAgentsForPrompt } from './context/agents-loader.js';
 import {
   parseBareInlineSlashReferences,
   parseInlineSkillReferences,
@@ -2235,7 +2235,7 @@ export const CHILD_AGENT_SYSTEM_PROMPT = [
  * skip the project rules. This helper restores them only for the write
  * path.
  *
- * Cost: AGENTS.md is loaded once via `loadAgentsFiles` (mtime-cached by
+ * Cost: AGENTS.md is loaded once via `loadInstructionFiles` (mtime-cached by
  * FEATURE_149 Phase 1.2), formatted, and appended to the override.
  * Anthropic `cache_control: ephemeral` covers the system prompt block,
  * so the AGENTS.md tokens are billed once per ~5 min cache window
@@ -2249,11 +2249,11 @@ function buildWriteSystemPrompt(
   assertReadablePath?: (candidate: string) => void,
   projectRulesRoot?: string,
 ): string {
-  // Sync — `loadAgentsFiles` reads via `readFileSync` and the helper has no
+  // Sync — `loadInstructionFiles` reads via `readFileSync` and the helper has no
   // async I/O. Kept synchronous so the single mtime-stat-and-cache walk
   // does not pay an unnecessary microtask boundary on every write-child
   // spawn (FEATURE_119 H2 fan-out can dispatch 4-8 children in one wave).
-  const agentsFiles = loadAgentsFiles({ cwd: gitRoot, projectRoot: gitRoot, assertReadablePath, projectRulesRoot });
+  const agentsFiles = loadInstructionFiles({ cwd: gitRoot, projectRoot: gitRoot, assertReadablePath, projectRulesRoot });
   const formatted = formatAgentsForPrompt(agentsFiles);
   if (!formatted) return baseSystemPrompt;
 

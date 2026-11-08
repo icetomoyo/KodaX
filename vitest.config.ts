@@ -38,6 +38,7 @@ export function createVitestConfig(options: TestSuiteOptions = {}) {
         '@kodax-ai/kodax/session': resolveFromRoot('src', 'sdk-session.ts'),
         '@kodax-ai/kodax/runtime': resolveFromRoot('src', 'sdk-runtime-public.ts'),
         '@kodax-ai/kodax/client': resolveFromRoot('src', 'sdk-client.ts'),
+        '@kodax-ai/coding/client-contract': resolveFromRoot('packages', 'coding', 'src', 'client-contract.ts'),
         '@kodax-ai/agent/media': resolveFromRoot('packages', 'agent', 'src', 'media', 'index.ts'),
         '@kodax-ai/coding/media': resolveFromRoot('packages', 'coding', 'src', 'media', 'index.ts'),
         '@kodax-ai/agent/capabilities/skills/shared/yaml': resolveFromRoot('packages', 'agent', 'src', 'capabilities', 'skills', 'shared', 'yaml.ts'),

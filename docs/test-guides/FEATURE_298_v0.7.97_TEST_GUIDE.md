@@ -2638,3 +2638,125 @@ The same final build also passed bundle 55/55, historical owner cutover 3/3 and
 real alpha.11 in-place Host upgrade 1/1. The 6,914-file fingerprint stayed unchanged
 through all gates. Native Linux/macOS and Node 20 execution, live-model quality,
 publication and deployed Space acceptance remain outside this Windows/Node 22 run.
+
+
+## 2026-11-08 Space SDK repair acceptance (unreleased)
+
+Implementation requirements from Space's beta.3 feedback and the approved repair
+plan: restore legacy AGENTS-only loading while retaining tagged prompt sources
+and typed skip diagnostics; separate complete turn targets from message positions;
+validate derivation under the write lock; preserve Retry's turn-start meaning;
+close reason unions and unify stale recovery; add bidirectional ordinary paging
+and mutually exclusive position options; document revision domains; carry read
+cancellation/deadlines to Host work, reuse validated bounded history state without
+Provider requests; expose typed SDK/Host capability checks and launcher requirements.
+
+Upgrade acceptance must cover a new Product SDK calling ensure against both an
+older Host version and changed bytes at the same version/installation. Optional
+history contracts must not become unconditional basic-startup gates. Passive
+connect must leave the Host alive; busy/newer/unproven owners retain the original
+safety fences. Reconnection must retain requirements and principal; mutations are
+never silently replayed or retargeted.
+
+Regression seams:
+
+- `agents-loader.test.ts`: legacy editor list excludes both rules directories;
+  tagged prompt ordering, byte-for-byte no-rule formatting, skip codes and cache
+  behavior. Existing child/profile/prompt tests cover model-visible instructions.
+- `sdk-client.history-turn.test.ts`: real daemon, hidden tool results, rejection
+  of raw tool-use boundary, cross-Session target, Retry before the genuine input,
+  stale source/head and confirmed Rewind, public read cancellation, no extra
+  Provider call during resolution.
+- `sdk-runtime.history-location.test.ts`: ordinary older/newer round trip,
+  centered byte-bounded windows, stale/cross-Session references, unchanged-source
+  projection reuse and invalidation after an external storage write.
+- `sdk-runtime-daemon-upgrade.test.ts`, `sdk-client.test.ts`: real public SDK
+  startup requirements, older/same-version-changed idle Host self-healing,
+  optional-feature startup, passive/active/competing owner and deadline fences.
+- `tests/fixtures/product-client-types/consumer.ts`: shipped declarations accept
+  turn targets/read options and reject raw message turn boundaries and mixed
+  cursor/around modes.
+
+Source/full-suite, declaration/bundle and installed Host checks are separate
+layers. No model-quality benchmark or deployed Space/Electron acceptance is
+inferred from these offline regressions. Full bounded turn indexing for cold
+very large histories is not promised by this patch.
+
+### Local verification evidence, 2026-11-08
+
+- TDD failures were observed before fixes for legacy editor rule contamination,
+  unsafe message-boundary Fork, ordinary forward pagination, public read abort,
+  missing diagnostic codes, exact legacy loader/wire shape, single-turn pairing
+  cancellation, and carrying earlier unmatched calls into a later-turn fork.
+- The final complete build and source/test typechecks passed. The CLI remains
+  below the existing 5 MiB minus 49 KiB startup fence; no size budget was raised.
+  Declaration bundling validates all 14 SDK entries and the Node-free Product
+  Client consumer, including turn and cursor/around compile-time misuse cases.
+- `node --test tests/bundled-history-contracts.test.mjs`: 1 passed against the
+  fixed built SDK and real independent Host. Covered coding export provenance,
+  new capability requirements, ordinary forward navigation, unsafe Fork refusal,
+  complete tool results, Retry-before-turn and public read cancellation.
+- `KODAX_BETA2_TARBALL=<integrity-pinned public beta.2 tarball> node --test
+  tests/bundled-historical-host-upgrade.test.mjs`: 1 passed. Real older installed
+  bytes retained busy work and Session data, then upgraded in place and reattached.
+  The script verifies the public archive's fixed SHA-512 before installation.
+- Initial broad testing overlapped a bundle rebuild and was stopped after
+  workflow/input-recovery/binding-controls failures. That attempt is not accepted
+  evidence; the final broad run uses frozen installed bytes. The isolated steer
+  binding regression subsequently passed. Raw command logs remain in OS temporary
+  storage; no generated artifacts or raw experiment output are committed.
+
+- Focused V8 coverage: 98 tests passed across five files; instruction loaders,
+  shared capability module and history-turn reader reported 94.33% lines,
+  87.12% statements, 80.36% branches and 100% functions (aggregate). This is a
+  targeted report, not a whole-repository coverage claim.
+- Independent code-review axes completed: Standards reported no actionable
+  violations; Spec's read-budget, pre-send capability-gate and public-export
+  findings were corrected and rechecked with no remaining findings. The final
+  pairing scanner yields within large single-message tool block arrays and
+  checks the budget before returning ready; conversation-revision hashing is
+  budgeted and reused for an unchanged proven source.
+- Read-only comparison with the local Space startup assertions confirmed the
+  existing required SDK capability values remain compatible. Space's deployed
+  application build has not been changed or certified by this SDK patch.
+
+- The first frozen fast-tier run exposed an overstrict check against a valid
+  legacy user-message prefix (3,588 passed, 55 skipped, 1 failed). Untagged safe
+  prefixes and missing-entry null results were restored while tagged targets
+  remain turn-strict. The original regression was kept unchanged and passed.
+- The next fast tier passed 369 files / 3,589 tests (55 conditional skips). Its
+  unit tier exposed the incomplete-parent null contract (13,532 passed, five
+  conditional skips, one failed). Source CAS remains first; existing complete
+  parent-path validation now precedes the new content/turn check. Existing tests
+  stayed unchanged. The affected storage and public SDK suites passed 34 tests.
+- A forced persistent-cache miss additionally exercises ordinary snapshot
+  older/newer round trips. A dedicated failing test caught the fallback cursor
+  omission, then passed after correcting the conversation-only projection.
+  Raw audit transcript projection keeps its original shape.
+- Final fixed-byte package verification reran both built-history and actual
+  beta.2 upgrade tests successfully (2/2), and source/test typechecks passed.
+  The new bundled history regression is included in the existing test:bundle
+  release gate. Final full-tier results are recorded below after completion.
+
+### Final frozen-source full gate
+
+`npm run test:full` completed successfully against the final fixed source and
+built artifacts (Windows, Node 22.23.1), with no intervening runtime rebuild:
+
+| Tier | Passed files | Passed tests | Conditional skipped tests |
+| --- | ---: | ---: | ---: |
+| fast | 369 | 3,589 | 55 |
+| unit | 846 | 13,533 | 5 |
+| contract | 120 | 1,037 | 0 |
+| system | 101 | 1,609 | 29 |
+| Total | 1,436 | 19,768 | 89 |
+
+There were zero failures. Expected fault-injection/background warnings and CRLF
+fixture warnings remain in the raw log; this is not a warning-free claim. Build,
+source/test typechecks, 14-entry declaration packaging and the two final
+built-package tests also passed. The full source gate includes prompt/child
+execution contracts; no provider-backed intelligence benchmark or deployed
+Space acceptance was run. The bounded warm-source reuse and unchanged prompt
+formatting/provider-call assertions support the performance/behavior scope
+claimed above, not a new model-quality score. No push, tag or npm publication
+was performed for this unreleased patch.

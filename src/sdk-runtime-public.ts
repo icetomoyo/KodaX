@@ -1,5 +1,7 @@
 export { providerOAuthStore, migrateProviderOAuthRegistration } from './provider-oauth-store.js';
 export type { ClientHistoryTurnSelector, ClientHistoryTurnResolution } from './sdk-runtime.js';
+export { supportsRuntimeCapability } from '@kodax-ai/coding/client-contract';
+export type { RuntimeCapabilityName, ClientCapabilityService } from '@kodax-ai/coding/client-contract';
 export type { KodaXClientHostServices, RuntimeDefaultSkill, RuntimeBusinessBinding, RuntimeExecutionBindingSnapshot,
   RuntimeExecutionBindingRequest, RuntimeExecutionBindingResolver, RuntimeExecutionBindingService } from './client-host-authorization.js';
 export { inspectStorageRepair, inspectStorageRepairCandidate, applyStorageRepair, confirmStorageRepair } from './storage-repair.js';

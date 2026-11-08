@@ -63,6 +63,20 @@ async function readBody(client: KodaXProductClient, sessionId: string, itemId: s
   throw new Error('History body did not finish within the test read budget.');
 }
 
+it('refuses to copy an earlier incomplete tool exchange into a later-turn fork', async () => {
+  await withHistory([
+    { role: 'user', content: 'first query' },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'unfinished', name: 'read', input: {} }] },
+    { role: 'user', content: 'later query' },
+    { role: 'assistant', content: 'later answer' },
+  ], async (client, sessionId) => {
+    const turn = await client.sessions.resolveHistoryTurn(sessionId, { kind: 'latest' });
+    if (turn.status !== 'ready') throw new Error('Expected the later complete turn.');
+    await expect(client.sessions.forkSession(sessionId, { turn })).rejects.toMatchObject({ code: 'invalid_params' });
+    await expect(client.sessions.forkSession(sessionId, { turn, before: true })).rejects.toMatchObject({ code: 'invalid_params' });
+  });
+});
+
 it('preserves structured input attachments in canonical Product history', async () => {
   const attachments = [{ kind: 'image' as const, path: '/fixture/image.png', mediaType: 'image/png' }];
   await withHistory([{ role: 'user', inputId: 'attached', content: [

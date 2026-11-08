@@ -8,7 +8,8 @@ import { FileSessionStorage } from '@kodax-ai/repl';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { createKodaXRuntime } from '../tests/runtime-fixture.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
-import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
+import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock, readRuntimeDaemonToken } from './runtime-daemon/state.js';
+import { createRuntimeDaemonSocketClientTransport } from './runtime-daemon/transport.js';
 
 it('resolves complete legacy turns through the daemon Product API and preserves hidden tool results', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-history-turn-'));
@@ -35,7 +36,11 @@ it('resolves complete legacy turns through the daemon Product API and preserves 
     : { kind: 'unix' as const, path: path.join(root, 'host.sock') };
   const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
   const client = await connectKodaXClient({ homeDir: root, endpoint: endpoint.path });
+  const legacyTransport = await createRuntimeDaemonSocketClientTransport(endpoint);
+  await legacyTransport.request('initialize', { token: readRuntimeDaemonToken(paths) });
   try {
+    expect(client.capabilities.supports('productHistoryTurnResolution', 2)).toBe(true);
+    expect(client.capabilities.sdk.productHistoryTurnResolution).toBe(2);
     const session = await client.sessions.create({ projectPath: root });
     const storage = new FileSessionStorage({ sessionsDir: path.join(root, '.kodax/sessions'), configHome: path.join(root, '.kodax') });
     const data = (await storage.load(session.id))!;
@@ -50,10 +55,18 @@ it('resolves complete legacy turns through the daemon Product API and preserves 
     const target = await client.sessions.resolveHistoryTurn(session.id, { kind: 'previous' });
     expect(target).toMatchObject({ status: 'ready', turnIndex: 0, hasLaterTurn: true, excerpt: 'same prompt' });
     if (target.status !== 'ready') throw new Error('Expected complete first turn.');
-    const fork = await client.sessions.forkSession(session.id, { historyBoundary: target.historyBoundary });
+    expect(await legacyTransport.request('session.history.resolveTurn', { sessionId: session.id, selector: { kind: 'previous' } }))
+      .toEqual({ status: 'ready', historyBoundary: { entryId: target.historyBoundary.entryId,
+        sourceRevision: target.historyBoundary.sourceRevision }, expectedHead: target.expectedHead,
+        turnIndex: 0, excerpt: 'same prompt', hasLaterTurn: true });
+    const fork = await client.sessions.forkSession(session.id, { turn: target });
     const forked = (await storage.load(fork.id))!;
     expect(forked.messages).toHaveLength(3);
     expect(forked.messages[2]?.content).toEqual([{ type: 'tool_result', tool_use_id: 'call', content: 'saved result' }]);
+    const retry = await client.sessions.forkSession(session.id, { turn: target, before: true });
+    expect((await storage.load(retry.id))!.messages).toHaveLength(0);
+    await expect(client.sessions.forkSession(session.id, { turn: { ...target, sessionId: fork.id } }))
+      .rejects.toMatchObject({ code: 'invalid_params' });
     expect(await client.sessions.resolveHistoryTurn(session.id, { kind: 'latest' }))
       .toMatchObject({ status: 'ready', turnIndex: 1, hasLaterTurn: false });
     expect(await client.sessions.resolveHistoryTurn(session.id, { kind: 'index', index: 99 }))
@@ -68,7 +81,15 @@ it('resolves complete legacy turns through the daemon Product API and preserves 
       });
       expect(fromView).toMatchObject({ status: 'ready', turnIndex: 0, historyBoundary: target.historyBoundary });
       const page = await client.sessions.readHistory(session.id);
+      const cancelled = new AbortController();
+      cancelled.abort();
+      await expect(client.sessions.readHistory(session.id, { signal: cancelled.signal }))
+        .rejects.toMatchObject({ code: 'read_cancelled' });
       const selectedHistory = page.items.find(item => item.type === 'tool')!;
+      await expect(client.sessions.forkSession(session.id, {
+        // Simulate an old JavaScript client passing a message boundary.
+        historyBoundary: selectedHistory.historyBoundary as import('@kodax-ai/coding/client-contract').ClientHistoryTurnBoundary,
+      })).rejects.toMatchObject({ code: 'invalid_params' });
       const fromHistory = await client.sessions.resolveHistoryTurn(session.id, {
         kind: 'item', source: 'history', itemId: selectedHistory.id, revision: page.revision,
       });
@@ -82,9 +103,12 @@ it('resolves complete legacy turns through the daemon Product API and preserves 
         kind: 'item', source: 'history', itemId: search.hits[0]!.itemId, revision: search.revision,
       })).toMatchObject({ status: 'ready', turnIndex: 0 });
       await storage.mutateUiHistory(session.id, () => [{ type: 'info', text: 'new metadata' }]);
-      expect(await client.sessions.resolveHistoryTurn(session.id, {
+      expect(await legacyTransport.request('session.history.resolveTurn', { sessionId: session.id,
+        selector: { kind: 'item', source: 'history', itemId: selectedHistory.id, revision: page.revision } }))
+        .toEqual({ status: 'stale', reason: 'source_changed' });
+      await expect(client.sessions.resolveHistoryTurn(session.id, {
         kind: 'item', source: 'history', itemId: selectedHistory.id, revision: page.revision,
-      })).toMatchObject({ status: 'stale' });
+      })).rejects.toMatchObject({ code: 'resync_required', data: { reason: 'source_changed' } });
       const current = await client.sessions.resolveHistoryTurn(session.id, { kind: 'previous' });
       if (current.status !== 'ready') throw new Error('Expected refreshed first turn.');
       // A cold mutation may claim the Actor and invalidate the previously read
@@ -96,8 +120,10 @@ it('resolves complete legacy turns through the daemon Product API and preserves 
       const reconfirmed = await client.sessions.resolveHistoryTurn(session.id, { kind: 'previous' });
       if (reconfirmed.status !== 'ready') throw new Error('Expected same turn after cold admission.');
       expect(reconfirmed).toMatchObject({ turnIndex: current.turnIndex, excerpt: current.excerpt });
+      await expect(client.sessions.rewindSession(session.id, { turn: { ...reconfirmed, expectedHead: 'old-head' } }))
+        .rejects.toMatchObject({ code: 'resync_required', data: { reason: 'head_changed' } });
       await expect(client.sessions.rewindSession(session.id, {
-        historyBoundary: reconfirmed.historyBoundary, expectedHead: reconfirmed.expectedHead,
+        turn: reconfirmed,
       })).resolves.toMatchObject({ id: session.id });
       expect((await storage.load(session.id))!.messages).toHaveLength(3);
       const fresh = await client.sessions.create({ projectPath: root });
@@ -116,6 +142,7 @@ it('resolves complete legacy turns through the daemon Product API and preserves 
       } finally { freshObservation.close(); }
     } finally { observation.close(); }
   } finally {
+    await legacyTransport.close?.();
     await client.disconnect();
     await host.close();
     await runtime.close();

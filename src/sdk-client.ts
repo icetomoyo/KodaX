@@ -1,5 +1,7 @@
 /** Product SDK entry — @kodax-ai/kodax/client. */
 import type { ClientStartupProgress, KodaXProductClient } from '@kodax-ai/coding/client-contract';
+import type { RuntimeCapabilityRequirements } from '@kodax-ai/coding/client-contract';
+export { KODAX_RUNTIME_SDK_CAPABILITIES, supportsRuntimeCapability } from '@kodax-ai/coding/client-contract';
 import { connectKodaXRuntime } from './sdk-runtime.js';
 import { ensureRecoveringKodaXRuntime } from './recovering-runtime-client.js';
 import type { RuntimeClientInfo } from './runtime-client-info.js';
@@ -20,6 +22,8 @@ export type { RuntimeExecutionProfile, RuntimeExecutionProfileSource, RuntimeDef
 export type { RuntimeClientInfo } from './runtime-client-info.js';
 
 export interface ConnectKodaXClientOptions {
+  /** Optional features; ensure upgrades an idle Host while connect stays passive. */
+  readonly requirements?: RuntimeCapabilityRequirements;
   /** Local launcher stage changes. Work is not awaited; observer failures do not change the result. */
   readonly onStartupProgress?: (progress: ClientStartupProgress) => void | Promise<void>;
   /** Base directory containing .kodax, matching CLI --home. */
@@ -60,6 +64,7 @@ export async function readKodaXClientExits(options: {
 /** Local launcher. All business operations use the same product Client as passive connections. */
 export async function ensureKodaXClient(options: EnsureKodaXClientOptions = {}): Promise<KodaXProductClient> {
   return toKodaXProductClient(await ensureRecoveringKodaXRuntime({ ...options, requirements: {
+    ...options.requirements,
     productClient: 1, productHistoryBoundaries: 1, productExitControl: 1, productExecutionFacts: 1, productInputRecovery: 1,
     ...(options.authorizeExecution ? { productExecutionAuthorization: 2, productActorAuthorization: 1, providerProbeAuthorization: 1 } : {}),
   } }, options.authorizeExecution), options.authorizeExecution);
@@ -77,7 +82,7 @@ export async function connectKodaXClient(
     autoStart: false,
     onStartupProgress: options.onStartupProgress,
     clientInfo: options.clientInfo,
-    requirements: { productClient: 1, productHistoryBoundaries: 1, productExitControl: 1, productExecutionFacts: 1, productInputRecovery: 1,
+    requirements: { ...options.requirements, productClient: 1, productHistoryBoundaries: 1, productExitControl: 1, productExecutionFacts: 1, productInputRecovery: 1,
       ...(options.authorizeExecution ? { productExecutionAuthorization: 2, productActorAuthorization: 1, providerProbeAuthorization: 1 } : {}) },
   });
   return toKodaXProductClient(runtime, options.authorizeExecution);
