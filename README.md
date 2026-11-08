@@ -64,7 +64,9 @@ fidelity, on-demand output contracts and shared Host recovery/Workflow
 finalization fixes; the `v0.7.97-beta.3` tag repairs long-context recovery,
 durable Actor settlement and saved Session history with context-capacity
 recovery, the first-Run work-mode lock, history location/turn resolution
-and verified interrupted-exit recovery.
+and verified interrupted-exit recovery; the `v0.7.97-beta.4` tag repairs
+the Space SDK instruction and history client contracts with history
+contract v2, a tagged instruction loader and typed capability checks.
 Issue 371's historical first-read latency and Script model-efficiency
 acceptance remain open.
 
@@ -829,6 +831,26 @@ starts, upgrades, or waits. See
 [docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) and the
 [v0.7.97-alpha.4 release notes](docs/release.md#v0797-alpha4-release-preparation).
 Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2/alpha.3 contract is
+retained.
+
+**v0.7.97-beta.4 release:** Repairs the Space SDK instruction and history
+client contracts. AGENTS-only editor loading returns beside a tagged
+instruction loader whose ordered sources carry `kind:'agents'|'rule'` with
+typed skip diagnostics. History contract v2 validates revision-fenced
+complete turn targets for Fork, Rewind and Retry under the storage lock,
+replaces stale results with the shared `resync_required` error contract,
+and adds ordinary bidirectional paging, cancellable budgeted reads and
+bounded source reuse without extra Provider requests. The SDK negotiates
+v2 on the wire while strict beta.3 clients keep their original response
+shapes; typed SDK/Host capability checks and optional Product launcher
+requirements add no mandatory basic-startup gates, and model prompts are
+unchanged. The CLI embeds its native manifest map compactly without
+unreachable copies, keeping the audited 49 KiB headroom under the
+unchanged 5 MiB limit. Tagging and
+publication remain separate. See the
+[v0.7.97-beta.4 release notes](docs/release.md#v0797-beta4-release-preparation)
+and the [SDK migration notes](docs/SDK_MIGRATION.md).
+Every v0.7.96 stable and v0.7.97-alpha.1 through beta.3 contract is
 retained.
 
 **v0.7.97-beta.3 release:** Repair release for long-context recovery,
@@ -2271,7 +2293,7 @@ This development tree exposes 17 SDK subpaths plus the root. Shared product
 applications use `@kodax-ai/kodax/client`; independent libraries and trusted Host
 APIs remain available through the other subpaths. See the [Client contract](docs/CLIENT_CONTRACT.md)
 and [SDK migration guide](docs/SDK_MIGRATION.md). This documentation was checked
-against package version `0.7.97-beta.3`; npm publication is separate from
+against package version `0.7.97-beta.4`; npm publication is separate from
 the current development-tree contract.
 
 ```bash

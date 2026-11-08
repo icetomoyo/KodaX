@@ -648,7 +648,7 @@ requestedEffort、可选 sentEffort、fallbacks 和 `verified:false`。旧请求
 计划批准使用已有 permission Interaction，`options.plan` 提供完整计划正文，不从截断的 inputPreview 恢复。首个有效回答生效；Host 确认当前 Run 仍在运行且仍为 Plan 模式后才应用批准结果。拒绝、取消及 Stop 不切换权限模式，客户端不能自行先显示已批准。
 
 
-## 2026-11-08 Space SDK contract repairs (unreleased)
+## 2026-11-08 Space SDK contract repairs (shipped in v0.7.97-beta.4)
 
 `productHistoryTurnResolution:2` distinguishes a message reading position from a
 complete operation target. Pass the ready `resolveHistoryTurn` result unchanged
@@ -705,7 +705,7 @@ and `/runtime`. `/client` exposes `KODAX_RUNTIME_SDK_CAPABILITIES` and
 `client.capabilities.{sdk,supports}`. SDK facts describe implemented adapters;
 `supports(name,version)` checks the current connected Host, including after
 launcher-owned reconnection. Dynamic Host configuration/availability is not
-inferred from SDK module facts. See [startup migration](SDK_MIGRATION.md#space-sdk-repair-migration-2026-11-08-unreleased).
+inferred from SDK module facts. See [startup migration](SDK_MIGRATION.md#space-sdk-repair-migration-2026-11-08-shipped-in-v0797-beta4).
 
 For wire compatibility, new daemon SDKs explicitly request turn contract v2.
 Requests without that negotiation retain the beta.3 ready-result shape and

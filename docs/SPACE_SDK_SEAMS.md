@@ -1,5 +1,9 @@
 # Space 的 Product Client / Host 接缝
 
+## beta.4 的历史契约 v2
+
+`v0.7.97-beta.4` 标签发布 `productHistoryTurnResolution: 2` 与 `productHistoryLocation: 2`（npm 发布为手动步骤）。Fork/Rewind/Retry 交回 `resolveHistoryTurn` 的完整就绪结果 `{turn}`（Retry 用 `{turn, before: true}`），过期时按共享 `resync_required` 错误重新选择并确认；读取页保留两个不透明的相邻游标，`around` 与 `cursor` 不可同时使用，可传 AbortSignal 与超时取消。未协商 v2 的严格 beta.3 客户端保留原响应形状。由应用负责本地 Host 启动/升级时使用 `ensureKodaXClient({ requirements })`；可在历史编辑可用前打开的应用省略可选要求，按功能用 `client.capabilities.supports(...)` 检查。迁移细节见 [SDK 迁移说明](SDK_MIGRATION.md#space-sdk-repair-migration-2026-11-08-shipped-in-v0797-beta4)。
+
 ## beta.3 的会话历史
 
 以下两个 Host 能力随 `v0.7.97-beta.3` 标签发布（npm 发布为手动步骤）。
@@ -83,7 +87,7 @@ Main/Renderer 不传该标记、不改 inputId，也不需自行迁移队列文�
 新 SDK 仍待发布；Space 升级后验收默认保持/变更、普通与显式 redirect、冷恢复和原账号
 保持，继续使用既有 API，不传内部队列标记，也不手改 pending 文件。
 
-2026-10-18 的 Space 核查样本安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，当时官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前开发树 `0.7.97-beta.3` 核对，不据此推断 Space 已升级；源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
+2026-10-18 的 Space 核查样本安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，当时官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前开发树 `0.7.97-beta.4` 核对，不据此推断 Space 已升级；源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
 
 ## 2026-10-29 未发布 SDK 接入补充
 

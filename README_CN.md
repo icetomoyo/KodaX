@@ -55,7 +55,9 @@ Quick Ask Session promotion 与核心配置原子发布;`v0.7.97-beta.2` 标签�
 Script 执行可靠性——类型化程序数据、原生工具名 wire 保真、按需输出契约与
 共享 Host 恢复/Workflow 终结修复;`v0.7.97-beta.3` 标签修复长上下文恢复、
 持久 Actor 结算与已保存会话历史——上下文容量恢复、首个 Run 工作模式锁定、
-历史定位/整轮解析与基于已验证证据的中断退出恢复。
+历史定位/整轮解析与基于已验证证据的中断退出恢复;`v0.7.97-beta.4` 标签修复
+Space SDK 指令与历史客户端契约——history contract v2、带标签的指令加载器与
+类型化能力检查。
 Issue 371 的历史首次读取延迟及 Script 模型效率验收仍未关闭。
 
 ## 30 秒上手
@@ -335,6 +337,20 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 详见 [docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) 与
 [v0.7.97-alpha.4 发布清单](docs/release.md#v0797-alpha4-release-preparation)。
 所有 v0.7.96 稳定与 v0.7.97-alpha.1/alpha.2/alpha.3 契约全部保留。
+
+**v0.7.97-beta.4 发布**：修复 Space SDK 指令与历史客户端契约。编辑器加载
+恢复为仅 AGENTS.md,新增带标签的指令加载器按序给出 `kind:'agents'|'rule'`
+来源并附类型化跳过诊断。history contract v2 在存储锁下校验带修订围栏的
+Fork/Rewind/Retry 完整轮次目标,以共享的 `resync_required` 错误契约取代
+stale 结果,并为历史读取带来双向分页、可取消的有界读取与有界来源复用,不
+增加任何 Provider 请求。SDK 在 wire 上协商 v2,严格的 beta.3 客户端保留原
+响应形状;类型化 SDK/Host 能力检查与可选 Product 启动要求不引入新的强制
+basic-startup 门,模型提示不变。CLI 以紧凑形式内嵌 native manifest 映射并去掉
+运行时从不读取的副本,在
+5 MiB 上限不变的前提下保住已审计的 49 KiB 余量。代码提交、版本标签与实际
+发布分别判断。详见 [v0.7.97-beta.4 发布清单](docs/release.md#v0797-beta4-release-preparation)
+与 [SDK 迁移说明](docs/SDK_MIGRATION.md)。
+所有 v0.7.96 稳定与 v0.7.97-alpha.1 至 beta.3 契约全部保留。
 
 **v0.7.97-beta.3 发布**：针对长上下文恢复、持久 Actor 结算与已保存会话历史的
 修复版本。上下文容量错误通过有界读取、自适应压缩预算与严格的完整摘要解析恢复,

@@ -15,7 +15,7 @@ before printing and never dispatches management operations. See the
 > [migration and ownership limits](SDK_MIGRATION.md#统一-host-sdk-收口未发布).
 
 Last updated: 2026-11-08. Current development tree: FEATURE_298/299/301/302 on package
-`0.7.97-beta.3`, with `v0.7.96` as the last stable release; publication is separate.
+`0.7.97-beta.4`, with `v0.7.96` as the last stable release; publication is separate.
 
 Product integrations use `KodaXProductClient` through `/client`. Read the
 [Client contract](CLIENT_CONTRACT.md) and [SDK migration guide](SDK_MIGRATION.md)

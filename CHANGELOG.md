@@ -6,13 +6,50 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-beta.4] - 2026-11-08
+
+Fourth beta of the v0.7.97 line: Space SDK instruction and history
+contract repairs. AGENTS-only editor loading returns beside a new tagged
+instruction loader whose ordered sources carry `kind:'agents'|'rule'`
+with typed skip diagnostics. History contract v2 validates
+revision-fenced complete turn targets for Fork, Rewind and Retry under
+the storage lock, replaces stale results with the shared
+`resync_required` error contract, and adds ordinary bidirectional
+paging, cancellable budgeted reads and bounded source reuse without
+extra Provider requests. The SDK negotiates v2 on the wire while strict
+v1/beta.3 clients keep their original response shapes; typed SDK/Host
+capability checks and optional Product launcher requirements arrive
+without new mandatory basic-startup gates, and model prompts are
+unchanged. The CLI embeds its native manifest map compactly without
+unreachable copies, keeping the audited 49 KiB headroom under the
+unchanged 5 MiB limit. Every
+v0.7.96 stable and v0.7.97-alpha.1 through beta.3 contract is retained.
+npm publication remains a manual maintainer action.
+
+### Fixed
+
 - Restore the AGENTS-only editor loader; keep tagged Markdown rule sources and
   structured skip diagnostics through the new instruction loader.
 - Validate complete history turn targets for Fork/Rewind/Retry under the storage
   lock, unify stale-history recovery, add ordinary bidirectional paging and
   cancellable budgeted reads with bounded source reuse.
+
+### Added
+
 - Expose typed SDK/Host capability checks and optional Product launcher
   requirements; retain basic-startup compatibility and idle Host self-healing.
+
+### Changed
+
+- Embed the CLI's native manifest map compactly: drop the single-manifest
+  copies the runtime never reads once the platform map is embedded, and the
+  `legal` entries and pretty-printing it never parses. The SDK
+  capability-vocabulary and history contract v2 additions had ended the
+  five-native universal build 1,948 bytes past the audited 49 KiB CLI
+  headroom; it is now 356 bytes under it. Packaged manifest files and their
+  audited legal hashes are unchanged and no reserve is lowered.
 
 ---
 

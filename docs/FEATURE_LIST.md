@@ -11,15 +11,15 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.97-beta.3` (Git tag); `v0.7.96` remains the last stable release |
-| Current package version | `@kodax-ai/kodax@0.7.97-beta.3`; npm `beta` is `0.7.97-beta.2` until the maintainer publishes beta.3 (publication remains manual) |
+| Current released version | `v0.7.97-beta.4` (Git tag); `v0.7.96` remains the last stable release |
+| Current package version | `@kodax-ai/kodax@0.7.97-beta.4`; npm `beta` is `0.7.97-beta.3` until the maintainer publishes beta.4 (publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 core packages + private optional `artifacts` source workspace; one public npm package |
 | Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4` and extended with the unified Artifact SDK in `v0.7.97-alpha.5`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3` and extended with startup streamlining, Session recency ordering, draft admission, concurrent-launch recovery and shared-Session Host ownership resolution through `v0.7.97-alpha.7`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
 | Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement released in alpha.4; missing visual capabilities remain unverified; [design](ADR.md#verification-responsibility-and-tradeoffs) |
 | Artifact distribution revision | `2026-10-18` — one `@kodax-ai/kodax` npm package; four `/artifacts` subpaths and resources staged in the main tarball; local implementation, not yet published |
 | Current Artifact SDK additions | Unified visual evidence SDK and format backends released in `v0.7.97-alpha.5`: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
-| Current development | `v0.7.97-beta.3` repair release — context-capacity recovery, durable independent Actor settlement, first-Run work-mode lock, DOCX/LibreOffice evidence, scoped Markdown rule fragments, saved-history location/turn resolution, verified interrupted-exit recovery and bounded idle daemon maintenance; [release preparation](release.md#v0797-beta3-release-preparation). Cross-platform manual acceptance, installed Space/SDK acceptance and the original slow first resume after rebuild remain open; next-dev features are deferred until after this repair release. |
-| Roadmap updated | `2026-11-08` — beta.3 repair release prepared on top of the published beta.2; FEATURE_300 remains Planned |
+| Current development | `v0.7.97-beta.4` Space SDK contract repair — AGENTS-only editor loading beside a tagged instruction loader, history contract v2 (revision-fenced Fork/Rewind/Retry turn targets, `resync_required`, bidirectional paging, cancellable budgeted reads), typed capability checks and optional launcher requirements, on top of the beta.3 repair release; [release preparation](release.md#v0797-beta4-release-preparation). Cross-platform manual acceptance, installed Space/SDK acceptance and the original slow first resume after rebuild remain open; next-dev features remain deferred. |
+| Roadmap updated | `2026-11-08` — beta.4 Space SDK contract repair prepared on top of the published beta.3; FEATURE_300 remains Planned |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
 | Total tracked features | `86` |
 | InProgress | `2` |
@@ -552,6 +552,29 @@ Final frozen package **80** and historical/real-alpha.11 Host gates **4** passed
 and build fingerprints remained unchanged throughout. See the J guide for exact checkpoints.
 Space stays independently at `da531f0a`; its historical I counts do not certify a newly paired
 Space build. No push/publication.
+
+## v0.7.97-beta.4 Release Record
+
+`v0.7.97-beta.4` is the fourth beta of the v0.7.97 line: Space SDK
+instruction and history client contract repairs. AGENTS-only editor loading
+returns beside a tagged instruction loader whose ordered sources carry
+`kind:'agents'|'rule'` with typed skip diagnostics. History contract v2
+validates revision-fenced complete turn targets for Fork, Rewind and Retry
+under the storage lock, replaces stale results with the shared
+`resync_required` error contract, and adds ordinary bidirectional paging,
+cancellable budgeted reads and bounded source reuse without extra Provider
+requests. The SDK negotiates v2 on the wire while strict beta.3 clients keep
+their original response shapes; typed SDK/Host capability checks and
+optional Product launcher requirements add no mandatory basic-startup gates,
+and model prompts are unchanged. The CLI embeds its native manifest map
+compactly without unreachable copies, keeping the audited 49 KiB headroom
+under the unchanged 5 MiB
+limit, and the CI/Release in-place upgrade gate now pins the published
+beta.3 tarball. Validation is recorded in the
+[FEATURE_298 test guide](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md).
+Every v0.7.96 stable and v0.7.97-alpha.1 through beta.3 contract is
+retained. Cross-platform manual acceptance, installed Space/SDK acceptance
+and npm publication remain manual maintainer steps.
 
 ## v0.7.97-beta.3 Release Record
 

@@ -8,6 +8,62 @@ Use [SDK_MIGRATION.md](SDK_MIGRATION.md) for the supported current surface.
 KodaX is distributed as **standalone binaries** built with `bun build --compile`.
 Target machines do **not** need Node.js or any runtime installed.
 
+## v0.7.97-beta.4 release preparation
+
+Release state: `v0.7.97-beta.4` is a candidate awaiting multi-platform CI.
+npm publication has not occurred. The candidate is the fourth beta of the
+v0.7.97 line, repairing the Space SDK instruction and history client
+contracts: AGENTS-only editor loading returns beside a tagged instruction
+loader whose ordered sources carry `kind:'agents'|'rule'` with typed skip
+diagnostics; complete Fork/Rewind/Retry turn targets validate
+revision-fenced under the storage lock, `resync_required` replaces stale
+results through the shared error contract, and history reading gains
+bidirectional paging, cancellable budgeted reads and bounded source reuse
+without extra Provider requests. The SDK negotiates history contract v2 on
+the wire while strict beta.3 clients keep their original response shapes;
+typed capability checks and optional Product launcher requirements add no
+mandatory basic-startup gates, and model prompts are unchanged. Source
+validation — full build, source/test typechecks, all four test tiers
+(19,768 passed) and the real beta.2 in-place upgrade fixture — is recorded
+in the SDK migration notes and the FEATURE_298 test guide; the CI/Release
+upgrade gate now pins the published `0.7.97-beta.3` tarball (published
+2026-11-08T00:12:56.388Z, confirmed in the public npm registry) and that
+in-place upgrade passed locally against the real artifact. The CLI embeds
+its native manifest map compactly, without the single-manifest copies and
+`legal` entries the runtime never reads: the five-native universal build had
+ended 1,948 bytes past the audited 49 KiB headroom and is now 356 bytes under
+the unchanged gate; no reserve was lowered. The
+tag-triggered Release workflow runs the reusable CI workflow alongside the
+build matrix; ordinary branch pushes do not trigger it, while CI can also
+be dispatched manually. The `-beta` tag suffix marks the release as a
+GitHub pre-release automatically. npm registry publication remains a
+separate maintainer step. Cross-platform manual acceptance and installed
+Space/SDK acceptance remain separate from local evidence.
+
+### Release execution contract
+
+- Push the version tag only after the release candidate, documentation and
+  feature-design submodule commits are prepared. Ordinary branch pushes do not
+  run CI. A `v*` tag starts Release, including the reusable full CI workflow.
+- Full CI and all five native build jobs run concurrently. The GitHub Release
+  requires successful CI, all platform archive checks, and the universal npm
+  package checks. Manual dispatch builds candidates but never publishes a Release.
+- Each build validates its actual archive before the longer Electron checks.
+  Bundle and archive steps have five-minute process limits; the archive test
+  has a three-minute test budget, aborts pending waits and retains failure
+  evidence. Failed archive evidence is uploaded for seven days. No failed test
+  is converted into success or automatically retried.
+- Re-run failed jobs when diagnosing infrastructure failures on an unchanged
+  candidate. A source or workflow fix requires a new commit/run. Verify the
+  final tag SHA and every required job; an earlier green branch run is not
+  evidence for a different tagged commit.
+- Release assets comprise five platform archives and their checksums, one
+  universal npm tarball and its checksum, plus aggregated `SHA256SUMS`.
+  The maintainer publishes the audited tarball with `node scripts/release.mjs`;
+  this workflow never performs `npm publish`.
+
+The workflow contracts are covered by `tests/release-workflow.test.ts`.
+
 ## v0.7.97-beta.3 release preparation
 
 Historical preparation record: the baseline and publication status below

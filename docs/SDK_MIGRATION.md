@@ -1,6 +1,6 @@
 # SDK 统一 Client 契约迁移指南
 
-适用范围：当前工作树的 FEATURE_298/299/301 实现；本次核对的包版本为 `0.7.97-beta.3`，随 `v0.7.97-beta.3` 标签发布（npm 发布为手动步骤）。接入前应核对所安装包的导出和 Host 能力；下文带日期的 beta.1/beta.2 记录保留各自历史范围。
+适用范围：当前工作树的 FEATURE_298/299/301 实现；本次核对的包版本为 `0.7.97-beta.4`，随 `v0.7.97-beta.4` 标签发布（npm 发布为手动步骤）。接入前应核对所安装包的导出和 Host 能力；下文带日期的 beta.1/beta.2/beta.3 记录保留各自历史范围。
 
 Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附件/统计与退出恢复范围见 [SDK/Host 接缝](SPACE_SDK_SEAMS.md)。
 
@@ -1045,10 +1045,12 @@ Root/Space/分支/附件的引用与所有权链路。本轮没有加入 TTL 删
 现有显式诊断不等于自动 GC 已完成。
 
 
-## Space SDK repair migration, 2026-11-08 (unreleased)
+## Space SDK repair migration, 2026-11-08 (shipped in v0.7.97-beta.4)
 
-These are source fixes after beta.3, not a claim that npm or a running Host has
-already been upgraded. Pin and validate the actual SDK package and Host bytes.
+These source fixes after beta.3 ship with the `v0.7.97-beta.4` tag; npm
+publication is a separate maintainer step, and a tag is not a claim that a
+running Host has already been upgraded. Pin and validate the actual SDK package
+and Host bytes.
 
 - `loadAgentsFiles` again returns only AGENTS.md files for legacy editors/count
   limits. Prompt consumers use the new `loadInstructionFiles` API, whose ordered
@@ -1104,4 +1106,4 @@ user's home/session data. A changed launcher process must reload the installed
 SDK bytes before retrying; do not weaken build proof to force startup.
 
 The versioned contract, reasons, revision domains and remaining cold-read limits
-are recorded in [Client contract](CLIENT_CONTRACT.md#2026-11-08-space-sdk-contract-repairs-unreleased).
+are recorded in [Client contract](CLIENT_CONTRACT.md#2026-11-08-space-sdk-contract-repairs-shipped-in-v0797-beta4).
