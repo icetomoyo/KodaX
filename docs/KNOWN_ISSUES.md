@@ -84,10 +84,15 @@ commit passed on rerun.
 On Windows, `exec` (`packages/coding/src/extensions/helpers.ts`) launches
 PowerShell with a minimal environment: PATH, HOME, LANG, TERM, SYSTEMROOT,
 COMSPEC and PATHEXT. It omits `PSModulePath`, `TEMP`/`TMP`, `APPDATA`,
-`LOCALAPPDATA` and `USERPROFILE`. Dropping `PSModulePath` already made
-PowerShell start more than 15 seconds slower in the alpha.11 archive-gate
-failures, so this is the leading hypothesis. If confirmed, extension commands
-on users' Windows machines are slow too, not only in CI.
+`LOCALAPPDATA` and `USERPROFILE`. Dropping `PSModulePath` made PowerShell
+`Add-Type` take more than 15 seconds in the alpha.11 archive-gate failures.
+A local Windows 11 measurement (2026-11-08) does not support that cause here:
+`echo hello` took 130-150 ms with the full environment, the minimal one, and
+the minimal one plus `PSModulePath` and/or `TEMP`/`APPDATA`. The cause is still
+unknown. Candidates are a cold first PowerShell start on the runner and a
+child that never exits. Commands needing module autoload may still be slowed
+by the missing `PSModulePath`; that is separate from this failure. Diagnosis
+needs timing from a Windows runner.
 
 Expected: a trivial command returns in a few seconds on a Windows runner. The
 environment must still exclude secrets: add only the non-secret variables
