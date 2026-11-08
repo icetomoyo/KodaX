@@ -49,6 +49,17 @@ All notable changes to this project will be documented in this file.
 - The Windows effect Job supervisor reports its `Add-Type` compile time and
   startup time through `runtime:windows` diagnostics, and reports startup
   failures and timeouts as warnings.
+- Move the README demo animation into `assets/`.
+
+### Removed
+
+- Remove the unmaintained Docker build files (`Dockerfile`,
+  `docker-compose.yml`, `.dockerignore`). They still copied the retired
+  `packages/skills` workspace and could no longer build; KodaX ships as the
+  npm package and standalone native binaries.
+- Remove the repository-root `config.example.jsonc` copy and the placeholder
+  `clients/` directory. `config-templates/` remains the single template
+  source, and setup still writes `config.example.jsonc` into the config home.
 
 ### Fixed
 
@@ -76,6 +87,208 @@ All notable changes to this project will be documented in this file.
 - With `KODAX_HOME` set, user Skills, personal workflows and commands in
   `~/.kodax` are no longer found. Move them to `<KODAX_HOME>/skills`,
   `<KODAX_HOME>/workflows` and `<KODAX_HOME>/commands`.
+
+---
+
+## [0.7.97-beta.4] - 2026-11-08
+
+Fourth beta of the v0.7.97 line: Space SDK instruction and history
+contract repairs. AGENTS-only editor loading returns beside a new tagged
+instruction loader whose ordered sources carry `kind:'agents'|'rule'`
+with typed skip diagnostics. History contract v2 validates
+revision-fenced complete turn targets for Fork, Rewind and Retry under
+the storage lock, replaces stale results with the shared
+`resync_required` error contract, and adds ordinary bidirectional
+paging, cancellable budgeted reads and bounded source reuse without
+extra Provider requests. The SDK negotiates v2 on the wire while strict
+v1/beta.3 clients keep their original response shapes; typed SDK/Host
+capability checks and optional Product launcher requirements arrive
+without new mandatory basic-startup gates, and model prompts are
+unchanged. The CLI embeds its native manifest map compactly without
+unreachable copies, keeping the audited 49 KiB headroom under the
+unchanged 5 MiB limit. Every
+v0.7.96 stable and v0.7.97-alpha.1 through beta.3 contract is retained.
+npm publication remains a manual maintainer action.
+
+### Fixed
+
+- Restore the AGENTS-only editor loader; keep tagged Markdown rule sources and
+  structured skip diagnostics through the new instruction loader.
+- Validate complete history turn targets for Fork/Rewind/Retry under the storage
+  lock, unify stale-history recovery, add ordinary bidirectional paging and
+  cancellable budgeted reads with bounded source reuse.
+
+### Added
+
+- Expose typed SDK/Host capability checks and optional Product launcher
+  requirements; retain basic-startup compatibility and idle Host self-healing.
+
+### Changed
+
+- Embed the CLI's native manifest map compactly: drop the single-manifest
+  copies the runtime never reads once the platform map is embedded, and the
+  `legal` entries and pretty-printing it never parses. The SDK
+  capability-vocabulary and history contract v2 additions had ended the
+  five-native universal build 1,948 bytes past the audited 49 KiB CLI
+  headroom; it is now 356 bytes under it. Packaged manifest files and their
+  audited legal hashes are unchanged and no reserve is lowered.
+
+---
+
+## [0.7.97-beta.3] - 2026-11-08
+
+Third beta of the v0.7.97 line: a repair release for long-context recovery,
+durable Actor settlement and saved Session history. Context-capacity errors
+recover through bounded reads, adaptive compaction budgets and strict
+complete-summary parsing that retain original tool evidence and report
+capacity failure instead of stalling; a paged original input replaced by
+capacity admission stays unread so the model reads it again. Independent
+Actor Runs settle only from the exact Turn's durable terminal state and
+reconcile both crash windows without replaying completed execution; Session
+work mode locks after the first accepted root Run and survives Actor
+settlement, checkpoint recovery and verified legacy generation recovery. The
+`productHistoryLocation` and `productHistoryTurnResolution` Host capabilities
+locate saved history around search hits and resolve complete turns for Fork
+and rewind, legacy view items read their full bodies through their original
+owner, and Markdown rule fragments load from `~/.kodax/rules` and
+`.kodax/rules`. Interrupted Host exits recover from verified Windows
+containment evidence, identical Host builds are shared across installations,
+abandoned daemon publications are removed in bounded idle rounds, and Windows
+startup requests only the boot-identity property. DOCX visual review converts
+through a host-supplied LibreOffice by default and discloses field
+recalculation; Windows LibreOffice runs through its `soffice.com` console
+twin. Complete audited Windows programs ship as byte-verified resources in
+npm packages and native archives, restoring the 49 KiB CLI reserve beneath
+the unchanged 5 MiB limit. Bounded real-model probes use a 64K application
+budget and do not validate native sub-100K models or arbitrary whole-document
+reading quality. Every v0.7.96 stable and v0.7.97-alpha.1 through beta.2
+contract is retained. npm publication remains a manual maintainer action.
+
+### Added
+
+- Locate saved conversation history around a search hit or a proven source
+  with `productHistoryLocation`. Resolve a complete turn, including persisted
+  tool results, for Fork and rewind with `productHistoryTurnResolution`.
+  Both Host capabilities can be requested at connection time.
+- Load Markdown rule fragments from `~/.kodax/rules/*.md` and the project's
+  `.kodax/rules/*.md` into Project Rules beside AGENTS.md. Isolated worktrees
+  inherit the original project's fragments; symlinked or oversized fragments
+  are skipped with a diagnostic.
+
+### Changed
+
+- Package the complete audited Windows containment programs as byte-verified
+  resources, restoring 49 KiB of CLI reserve beneath the existing 5 MiB limit.
+
+### Fixed
+
+- Read full text and tool input from legacy view items through their original
+  view owner, including items whose IDs also match the history reference format.
+- Reduce Windows daemon startup time by requesting only the CIM property
+  needed to verify the current boot for interrupted-exit recovery.
+- Remove abandoned daemon publication files in bounded idle rounds after
+  the Host is ready. Preserve files owned by live or unverified processes.
+- Reuse a running shared Host whose runtime build fingerprint matches the
+  client even when the SDK is installed at a different path. Packaged
+  manifests are compared without npm scripts, keywords or bundleDependencies;
+  different builds and dependency changes are still refused.
+- Recover interrupted Host exits from verified containment evidence. Windows
+  crash reentry requires the exact owner generations to have ended with an
+  empty Job or a verified reboot; original exit receipts and unknown
+  cleanup/execution outcomes are preserved, and the management wire admits
+  the Windows Job and boot identities this evidence carries.
+- Recover from context-capacity errors with bounded reads, adaptive compaction
+  budgets and strict complete-summary parsing. Retain original tool evidence
+  and report capacity failure instead of leaving execution silently stalled.
+- Keep a page of oversized original input unread when capacity admission
+  replaces its read result with a preview, so the model reads it again
+  before acting.
+- Settle independent Actor Runs only after the exact Turn's terminal state is
+  durable. Reconcile both crash windows without replaying completed execution;
+  preserve cancellation, unknown outcomes and close/ownership boundaries.
+- Lock Session work mode after the first accepted root Run, preserving the lock
+  through independent Actor settlement, checkpoint recovery and later idle time.
+- Preserve the admitted effective mode of verified legacy generation recovery
+  across fresh authority binding without rewriting Session mode or lock facts.
+  Reject contradictory persisted modes and new-format recovery mismatches.
+- Include the audited Windows program resource in native tar/zip release
+  archives as well as npm packages.
+- **Artifacts — DOCX visual review**: when the host supplies a LibreOffice
+  executable, DOCX render now converts through it by default (Writer PDF
+  export → PDF.js) with evidence still bound to the DOCX source hash; the
+  lightweight renderer stays the fallback, explains what it does not compute
+  (fields, table of contents, Word/WPS pagination), and returns structured
+  `docx-render-failed` instead of throwing on documents it cannot lay out.
+  The render tool description and `artifact-review` skill no longer state that
+  the converter applies only to PPTX.
+- **Artifacts — Windows LibreOffice hang**: a configured `soffice.exe` now runs
+  through its console twin `soffice.com`; the GUI launcher blocked on CLI calls
+  until the 90 s timeout (also affected PPTX conversion). Conversion leaves
+  only PNG evidence in the render directory.
+- **LLM — image placeholders**: when a provider or model cannot accept images,
+  the text placeholder explicitly marks visual properties of the image as
+  unverified. Coding prompt-cache diagnostics reuse the exported constants.
+
+---
+
+## [0.7.97-beta.2] - 2026-11-04
+
+Second beta of the v0.7.97 line: Script execution reliability hardening —
+VM call paths expose complete collision-safe tool aliases beside original
+names, typed program data carries normalized read windows and trusted
+structured JSON, and duplicate model output is projected only when the
+original receipt stays fully readable. Native tool names are encoded at the
+Anthropic-compatible wire boundary and restore canonical identity, arguments,
+permissions and deltas; an isolated optional sourceContent view preserves
+original content beside display output and JSON data, and Host tools may
+declare outputSchema served on demand through `mcp_describe` without
+enlarging default menus; missing Node globals gain bounded contextual
+guidance without displacing original QuickJS error JSON, settled receipts or
+authorized tool aliases. Shared Host recovery hardens: promoted observers
+refresh, owner-bound pending input recovery is preserved with idempotent
+withdrawal receipts, proven dead history locks are reclaimed, and trusted
+Agent mode is enforced before execution; Host-owned repo diagnostics/prewarm
+and durable Workflow finalization with physical task draining, protected
+project references and precise cleanup retry land. Bounded real-model
+validation records Script model-facing reliability as recommend-iterate
+without efficiency or general intelligence claims. Every v0.7.96 stable and
+v0.7.97-alpha.1 through beta.1 contract is retained. npm publication remains
+a manual maintainer action.
+
+### Fixed
+
+- Harden shared Host recovery and Script lifecycle: refresh promoted
+  observers, preserve owner-bound pending input recovery with persistent
+  idempotent withdrawal receipts, reclaim proven dead history locks, enforce
+  trusted Agent mode before execution, and add Host-owned repo
+  diagnostics/prewarm plus durable Workflow finalization with physical task
+  draining, protected project references and precise cleanup retry.
+- Expose complete VM call paths with collision-safe aliases beside original
+  tool names; carry normalized read windows and trusted structured JSON
+  without parsing presentation, projecting duplicate model output only while
+  full receipts and original readback stay readable.
+- Encode native tool names at the Anthropic-compatible wire boundary and
+  restore canonical identity, arguments, permissions, deltas and opaque
+  history; validate effective forced names against the current canonical
+  menu and document async helper lifetime in the Script code contract.
+- Keep an isolated optional sourceContent view beside display content and
+  JSON data through Script receipts and original-result readers; serve
+  optional Host outputSchema registration through IPC and `mcp_describe`
+  on-demand output contracts without enlarging default menus or adding
+  result validators.
+- Re-audit the CLI startup bundle budget from 5056 kB to 5064 kB (5 MiB minus
+  56 KiB): the Script reliability additions end the five-native release build
+  about 2 kB past the former 64 KiB headroom; audited program data stays in
+  packaged resources and no trimming behavior changes.
+- Keep the structured display section inside the capacity guard: deep-but-valid
+  provider DTOs no longer fail the whole render when local stringify/clone
+  budgets overflow — original tool evidence is retained with the same optional
+  projection warning, and the pilot tests probe the local clone capacity
+  instead of assuming one fixed stack depth.
+- Append bounded runtime and receipt guidance only for exact missing Node
+  globals, preserving original QuickJS error JSON, settled receipts and
+  authorized tool aliases without reading guest globals, displacing original
+  evidence or replaying effects.
 
 ---
 

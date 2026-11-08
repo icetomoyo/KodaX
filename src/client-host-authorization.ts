@@ -6,6 +6,8 @@ import type { AgentSpawnInput, KodaXJsonValue } from '@kodax-ai/agent';
 import type { KodaXAgentProfile, KodaXTaskVerificationContract, KodaXToolVisibilityMeta, KodaXToolVisibilityPolicy } from '@kodax-ai/coding/client-contract';
 
 export interface RuntimeExecutionProfile {
+  /** Required root execution mode; independent of tool permissions and child Agent declarations. */
+  readonly requiredWorkMode?: 'agent';
   readonly defaultSkill?: RuntimeDefaultSkill;
   readonly agentProfile?: KodaXAgentProfile;
   readonly taskVerification?: KodaXTaskVerificationContract;
@@ -16,6 +18,7 @@ export interface RuntimeExecutionProfile {
 }
 
 export interface RuntimeExecutionProfileSource {
+  readonly requiredWorkMode?: 'agent';
   readonly defaultSkill?: RuntimeDefaultSkill;
   readonly agentProfile?: KodaXAgentProfile;
   readonly taskVerification?: KodaXTaskVerificationContract;
@@ -166,6 +169,8 @@ export interface RuntimeHostToolDescriptor {
   readonly name: string;
   readonly description: string;
   readonly inputSchema: Readonly<Record<string, unknown>>;
+  /** Optional declared return shape, disclosed on demand through mcp_describe. */
+  readonly outputSchema?: Readonly<Record<string, unknown>>;
   readonly sideEffect: "none" | "idempotent" | "non_idempotent";
 }
 

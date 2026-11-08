@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { KodaXOpenAICompatProvider } from './openai.js';
+import { UNSUPPORTED_TOOL_RESULT_IMAGE_PLACEHOLDER } from './image-serialization.js';
 import { createCustomProvider } from './custom-provider.js';
 import { KODAX_PROVIDERS } from './registry.js';
 import { sideQuery } from '../side-query.js';
@@ -671,7 +672,7 @@ describe('openai message serialization', () => {
     expect(toolMsg.content).toContain('[Read image metadata]');
     // Image item lowered without disclosing its local path.
     expect(toolMsg.content).toContain(
-      '[Image content omitted: this provider does not support inline images in tool results.]',
+      UNSUPPORTED_TOOL_RESULT_IMAGE_PLACEHOLDER,
     );
     expect(toolMsg.content).not.toContain(imagePath);
     // No image_url block sneaked in (OpenAI rejects images inside tool messages)

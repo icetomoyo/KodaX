@@ -30,3 +30,23 @@ it.skipIf(!process.env.KODAX_ARTIFACT_TEST_BROWSER)('renders converted PDF pixel
   expect((await fs.readFile(result.evidence!.evidence[0]!.path)).subarray(1, 4).toString()).toBe('PNG');
  } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+it.skipIf(!process.env.KODAX_ARTIFACT_TEST_BROWSER)('renders DOCX through the host converter by default while binding evidence to the DOCX source', async () => {
+ const root = await fs.mkdtemp(path.join(os.tmpdir(), 'artifact DOCX PDF browser '));
+ try {
+  await fs.copyFile('tests/fixtures/artifacts/inline-image.docx', path.join(root, 'x.docx'));
+  const options = { workspaceRoot: root, browserExecutable: process.env.KODAX_ARTIFACT_TEST_BROWSER, libreOfficeExecutable: process.execPath };
+  convert.mockReset(); convert.mockResolvedValue({ bytes: fixturePdf(), version: 'LibreOffice fixture' });
+  const opened = await executeArtifactRequest({ operation: 'open', input: { path: 'x.docx' } }, options);
+  const result = await executeArtifactRequest({ operation: 'render', input: { path: 'x.docx' } }, options);
+  expect(convert).toHaveBeenCalledOnce(); expect(convert.mock.calls[0]![3]).toBe('docx');
+  expect(result.status).toBe('ready'); expect(result.artifact).toEqual(opened.artifact);
+  expect(result.evidence!.engine).toEqual({ name: 'LibreOffice/PDF.js', version: 'LibreOffice fixture' });
+  expect(result.evidence!.source).toEqual({ kind: 'file', file: opened.artifact });
+  expect(result.diagnostics.map(d => d.code)).toEqual(['docx-converted']); expect(result.diagnostics[0]!.blocking).toBeUndefined();
+  expect(result.diagnostics[0]!.message).toMatch(/recalculat.*page|page.*recalculat/i);
+  expect(result.diagnostics[0]!.message).toMatch(/table of contents.*(?:empty|stale|outdated)/i);
+  expect(result.evidence!.layout!.totalPages).toBe(1);
+  const lightweight = await executeArtifactRequest({ operation: 'render', input: { path: 'x.docx', backend: 'lightweight' } }, options);
+  expect(convert).toHaveBeenCalledOnce(); expect(lightweight.status).toBe('unverified');
+ } finally { await fs.rm(root, { recursive: true, force: true }); }
+});

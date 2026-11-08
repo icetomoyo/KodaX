@@ -63,9 +63,10 @@ export async function withLearningFileLock<T>(
 export async function acquireLearningFileLock(
   lockPath: string,
   acquireTimeoutMs = LOCK_ACQUIRE_TIMEOUT_MS,
+  options: { readonly requireKnownOwner?: boolean } = {},
 ): Promise<() => Promise<void>> {
   await mkdir(dirname(lockPath), { recursive: true });
-  const lock = await acquireLock(lockPath, acquireTimeoutMs);
+  const lock = await acquireLock(lockPath, acquireTimeoutMs, options.requireKnownOwner === true);
   let handleClosed = false;
   let released = false;
   let releasePromise: Promise<void> | undefined;
@@ -89,29 +90,34 @@ export async function acquireLearningFileLock(
 }
 
 /** Reclaim an abandoned lock through the same ticket queue used by writers. */
-export async function reclaimStaleLearningFileLock(lockPath: string): Promise<boolean> {
-  if (await observeStaleLock(lockPath) === undefined) return false;
-  let release: (() => Promise<void>) | undefined;
+export async function reclaimStaleLearningFileLock(lockPath: string,
+  options: { readonly requireKnownOwner?: boolean } = {}): Promise<boolean> {
+  const observed = await observeStaleLock(lockPath, options.requireKnownOwner === true);
+  if (observed === undefined || (options.requireKnownOwner && parseOwner(observed.raw) === undefined)) return false;
+  let lock: { readonly handle: FileHandle; readonly token: string };
   try {
-    release = await acquireLearningFileLock(lockPath, 0);
+    lock = await acquireLock(lockPath, 0, options.requireKnownOwner === true, observed.abandonedOwner);
   } catch (error: unknown) {
     if (error instanceof KodaXFileLockTimeoutError) return false;
     throw error;
   }
-  await release();
+  await lock.handle.close();
+  await releaseLock(lockPath, lock.token);
   return true;
 }
 
 async function acquireLock(
   lockPath: string,
   acquireTimeoutMs: number,
+  requireKnownOwner: boolean,
+  abandonedOwner?: LockOwnerRecord,
 ): Promise<{ readonly handle: FileHandle; readonly token: string }> {
   const deadline = Date.now() + acquireTimeoutMs;
-  const ticket = await createLockTicket(lockPath);
+  const ticket = await createLockTicket(lockPath, abandonedOwner);
   let acquired: { readonly handle: FileHandle; readonly token: string } | undefined;
   let missingAccessRetryUsed = false;
   try {
-    await waitForTicketTurn(ticket, deadline, lockPath);
+    await waitForTicketTurn(ticket, deadline, lockPath, abandonedOwner);
     while (true) {
       await heartbeatLockTicket(ticket);
       try {
@@ -146,8 +152,9 @@ async function acquireLock(
         }
         if (contention === 'not_contended') throw error;
         missingAccessRetryUsed = false;
-        const staleLock = await observeStaleLock(lockPath);
-        if (staleLock !== undefined && await removeObservedStaleLock(lockPath, staleLock)) {
+        const staleLock = await observeStaleLock(lockPath, requireKnownOwner, abandonedOwner);
+        if (staleLock !== undefined && (!requireKnownOwner || parseOwner(staleLock.raw) !== undefined)
+          && await removeObservedStaleLock(lockPath, staleLock)) {
           continue;
         }
         if (Date.now() >= deadline) throw lockTimeout(lockPath);
@@ -177,7 +184,7 @@ async function acquireLock(
   }
 }
 
-async function createLockTicket(lockPath: string): Promise<LockTicket> {
+async function createLockTicket(lockPath: string, abandonedOwner?: LockOwnerRecord): Promise<LockTicket> {
   const queuePath = `${lockPath}.queue`;
   const token = randomUUID();
   const raw = lockOwnerRecord(token);
@@ -185,7 +192,7 @@ async function createLockTicket(lockPath: string): Promise<LockTicket> {
   await mkdir(queuePath, { recursive: true });
   await createOwnerFile(choosingPath, raw);
   try {
-    await cleanupAbandonedQueueEntries(queuePath, lockPath, choosingPath);
+    await cleanupAbandonedQueueEntries(queuePath, lockPath, choosingPath, abandonedOwner);
     await assertQueueEntryOwned(choosingPath, raw, 'choosing entry');
     const tickets = await listQueueTickets(queuePath);
     const nextNumber = Math.max(0, ...tickets.map((ticket) => ticket.number)) + 1;
@@ -203,10 +210,11 @@ async function waitForTicketTurn(
   ticket: LockTicket,
   deadline: number,
   lockPath: string,
+  abandonedOwner?: LockOwnerRecord,
 ): Promise<void> {
   while (true) {
     await heartbeatLockTicket(ticket);
-    await cleanupAbandonedQueueEntries(ticket.queuePath, lockPath, ticket.path);
+    await cleanupAbandonedQueueEntries(ticket.queuePath, lockPath, ticket.path, abandonedOwner);
     await assertTicketOwned(ticket);
     const names = await readdir(ticket.queuePath);
     const choosing = names.some((name) => name.startsWith('choosing-'));
@@ -294,6 +302,7 @@ async function cleanupAbandonedQueueEntries(
   queuePath: string,
   lockPath: string,
   preservedEntryPath?: string,
+  abandonedOwner?: LockOwnerRecord,
 ): Promise<void> {
   const names = await readdir(queuePath);
   await Promise.all(names
@@ -301,7 +310,7 @@ async function cleanupAbandonedQueueEntries(
     .map(async (name) => {
       const entryPath = join(queuePath, name);
       if (entryPath === preservedEntryPath) return;
-      if (await isAbandonedQueueEntry(entryPath, name, lockPath)) {
+      if (await isAbandonedQueueEntry(entryPath, name, lockPath, abandonedOwner)) {
         await removeFileWithTransientRetry(entryPath);
       }
     }));
@@ -315,11 +324,14 @@ async function isAbandonedQueueEntry(
   entryPath: string,
   name: string,
   lockPath: string,
+  abandonedOwner?: LockOwnerRecord,
 ): Promise<boolean> {
   try {
     const snapshot = await stat(entryPath);
     const owner = parseOwner(await readFile(entryPath, 'utf8'));
     if (owner?.released === true) return true;
+    if (owner !== undefined && !isProcessAlive(owner.pid)) return true;
+    if (owner !== undefined && matchesAbandonedOwner(owner, abandonedOwner)) return true;
     if (Date.now() - snapshot.mtimeMs <= LOCK_STALE_MS) return false;
     if (owner === undefined || !isRecordedOwnerAlive(owner)) return true;
     if (owner.token === undefined) return false;
@@ -364,18 +376,24 @@ interface ObservedStaleLock {
   readonly raw: string;
   readonly mtimeMs: number;
   readonly size: number;
+  readonly abandonedOwner?: LockOwnerRecord;
 }
 
-async function observeStaleLock(lockPath: string): Promise<ObservedStaleLock | undefined> {
+async function observeStaleLock(lockPath: string, checkKnownIdentity = false,
+  abandonedOwner?: LockOwnerRecord): Promise<ObservedStaleLock | undefined> {
   try {
     const snapshot = await stat(lockPath);
     const raw = await readFile(lockPath, 'utf8');
     const owner = parseOwner(raw);
     const explicitlyReleased = owner?.token !== undefined
       && await hasReleaseMarker(lockPath, owner.token);
-    if (!explicitlyReleased && Date.now() - snapshot.mtimeMs <= LOCK_STALE_MS) return undefined;
-    return explicitlyReleased || owner === undefined || !isRecordedOwnerAlive(owner)
-      ? { raw, mtimeMs: snapshot.mtimeMs, size: snapshot.size }
+    const deadOwner = owner !== undefined && (!isProcessAlive(owner.pid)
+      || matchesAbandonedOwner(owner, abandonedOwner)
+      || (checkKnownIdentity && Boolean(owner.processStartIdentity) && !isRecordedOwnerAlive(owner)));
+    if (!explicitlyReleased && !deadOwner && Date.now() - snapshot.mtimeMs <= LOCK_STALE_MS) return undefined;
+    return explicitlyReleased || deadOwner || owner === undefined || !isRecordedOwnerAlive(owner)
+      ? { raw, mtimeMs: snapshot.mtimeMs, size: snapshot.size,
+        ...(deadOwner && owner ? { abandonedOwner: owner } : {}) }
       : undefined;
   } catch (error) {
     if (['ENOENT', 'EPERM', 'EACCES', 'EBUSY'].some((code) => isFileError(error, code))) {
@@ -525,6 +543,7 @@ function parseOwner(raw: string): LockOwnerRecord | undefined {
       const encoded = field.slice('identity='.length);
       if (!/^[A-Za-z0-9_-]+$/.test(encoded)) return undefined;
       processStartIdentity = Buffer.from(encoded, 'base64url').toString('utf8');
+      if (!processStartIdentity) return undefined;
       continue;
     }
     if (field === 'released' && !released) {
@@ -559,6 +578,12 @@ function isRecordedOwnerAlive(owner: LockOwnerRecord): boolean {
   if (owner.processStartIdentity === undefined) return true;
   const currentIdentity = readProcessStartIdentity(owner.pid);
   return currentIdentity === undefined || currentIdentity === owner.processStartIdentity;
+}
+
+/** A reused PID cannot revive tickets belonging to the proven old process. */
+function matchesAbandonedOwner(owner: LockOwnerRecord, abandonedOwner: LockOwnerRecord | undefined): boolean {
+  return Boolean(owner.processStartIdentity) && owner.pid === abandonedOwner?.pid
+    && owner.processStartIdentity === abandonedOwner.processStartIdentity;
 }
 
 function isTransientFileContention(error: unknown): boolean {

@@ -1,5 +1,7 @@
 /** Product SDK entry — @kodax-ai/kodax/client. */
 import type { ClientStartupProgress, KodaXProductClient } from '@kodax-ai/coding/client-contract';
+import type { RuntimeCapabilityRequirements } from '@kodax-ai/coding/client-contract';
+export { KODAX_RUNTIME_SDK_CAPABILITIES, supportsRuntimeCapability } from '@kodax-ai/coding/client-contract';
 import { connectKodaXRuntime } from './sdk-runtime.js';
 import { ensureRecoveringKodaXRuntime } from './recovering-runtime-client.js';
 import type { RuntimeClientInfo } from './runtime-client-info.js';
@@ -20,6 +22,8 @@ export type { RuntimeExecutionProfile, RuntimeExecutionProfileSource, RuntimeDef
 export type { RuntimeClientInfo } from './runtime-client-info.js';
 
 export interface ConnectKodaXClientOptions {
+  /** Optional features; ensure upgrades an idle Host while connect stays passive. */
+  readonly requirements?: RuntimeCapabilityRequirements;
   /** Local launcher stage changes. Work is not awaited; observer failures do not change the result. */
   readonly onStartupProgress?: (progress: ClientStartupProgress) => void | Promise<void>;
   /** Base directory containing .kodax, matching CLI --home. */
@@ -48,13 +52,20 @@ export async function readKodaXClientExits(options: {
   if (!instanceId || !/^[A-Za-z0-9_.:-]{4,160}$/.test(instanceId) || !instanceSecret
     || instanceSecret.length < 32 || instanceSecret.length > 512) throw new Error('Exit recovery requires the original stable client identity and secret.');
   const paths = resolveRuntimeDaemonPathsFromConfigHome(options.homeDir === undefined ? KODAX_DIR : path.resolve(options.homeDir, '.kodax'), options.profile);
-  return Promise.all(readExitReceipts(paths, runtimeClientPrincipal(instanceId, instanceSecret)).map(receipt => verifyExitReceipt(paths, receipt)));
+  const verified: ClientExitReceipt[] = [];
+  // Historical exits can require OS probes. Keep one probe chain in flight so
+  // a large history cannot launch a burst of native inspection processes.
+  for (const receipt of readExitReceipts(paths, runtimeClientPrincipal(instanceId, instanceSecret))) {
+    verified.push(await verifyExitReceipt(paths, receipt));
+  }
+  return verified;
 }
 
 /** Local launcher. All business operations use the same product Client as passive connections. */
 export async function ensureKodaXClient(options: EnsureKodaXClientOptions = {}): Promise<KodaXProductClient> {
   return toKodaXProductClient(await ensureRecoveringKodaXRuntime({ ...options, requirements: {
-    productClient: 1, productHistoryBoundaries: 1, productExitControl: 1, productExecutionFacts: 1,
+    ...options.requirements,
+    productClient: 1, productHistoryBoundaries: 1, productExitControl: 1, productExecutionFacts: 1, productInputRecovery: 1,
     ...(options.authorizeExecution ? { productExecutionAuthorization: 2, productActorAuthorization: 1, providerProbeAuthorization: 1 } : {}),
   } }, options.authorizeExecution), options.authorizeExecution);
 }
@@ -71,7 +82,7 @@ export async function connectKodaXClient(
     autoStart: false,
     onStartupProgress: options.onStartupProgress,
     clientInfo: options.clientInfo,
-    requirements: { productClient: 1, productHistoryBoundaries: 1, productExitControl: 1, productExecutionFacts: 1,
+    requirements: { ...options.requirements, productClient: 1, productHistoryBoundaries: 1, productExitControl: 1, productExecutionFacts: 1, productInputRecovery: 1,
       ...(options.authorizeExecution ? { productExecutionAuthorization: 2, productActorAuthorization: 1, providerProbeAuthorization: 1 } : {}) },
   });
   return toKodaXProductClient(runtime, options.authorizeExecution);

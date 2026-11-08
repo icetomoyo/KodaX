@@ -45,7 +45,7 @@ import { invokeChildWithFallback, readChildTokenUsage } from './child-fallback.j
 import { createWorkflowWorktree, removeWorkflowWorktree } from './tools/worktree.js';
 import { pinGenerationWorktree, restoreGenerationWorktree, releaseGenerationWorktree } from './worktree-generation.js';
 import { dirname } from 'node:path';
-import { loadAgentsFiles, formatAgentsForPrompt } from './context/agents-loader.js';
+import { loadInstructionFiles, formatAgentsForPrompt } from './context/agents-loader.js';
 import {
   parseBareInlineSlashReferences,
   parseInlineSkillReferences,
@@ -581,6 +581,7 @@ async function prepareChildIsolationScope(
       ...parentCtx,
       gitRoot: worktreePath,
       executionCwd: worktreePath,
+      projectRulesRoot: parentCtx.projectRulesRoot ?? parentCtx.gitRoot ?? resolveExecutionCwd(parentCtx),
     },
     worktreePath,
     parentGitRoot: parentCtx.gitRoot ?? resolveExecutionCwd(parentCtx),
@@ -600,6 +601,10 @@ async function cleanupChildIsolationScope(
   if (scope.suspended) return undefined;
   try {
     await releaseGenerationWorktree(scope.worktreePath);
+    // A Workflow may still publish artifacts referring to this scope after the
+    // child returns. Its Host reclaims unreferenced scopes after final evidence
+    // and physical resources settle; a child result is not that boundary.
+    if (parentCtx.workflowWorktreeBaseDir) return undefined;
     await removeWorkflowWorktree(scope.worktreePath, { ...parentCtx, workflowWorktreeBaseDir: dirname(scope.worktreePath) });
     return undefined;
   } catch (error) {
@@ -621,7 +626,7 @@ function appendCleanupWarning(
 
 /**
  * FEATURE_217 Layer 1 — run a child body that yields its own result, then
- * ALWAYS reclaim the isolation worktree, attaching any cleanup warning to the
+ * Reclaim ordinary isolation worktrees (Workflow trees defer to their Host), attaching any cleanup warning to the
  * result. On an unexpected throw past the body's own guards the worktree is
  * still reclaimed before rethrowing, so a workflow worktree can never leak on
  * the per-child path. (The run-terminal sweep in `workflow-runner.ts` — Layer 2
@@ -1455,6 +1460,7 @@ async function runReadChildBody(
             options.parentOptions.permissionIntent ?? scope.ctx.permissionIntent,
           ),
           assertReadablePath: scope.ctx.assertReadablePath,
+          projectRulesRoot: scope.ctx.projectRulesRoot,
           toolVisibilityPolicy: scope.ctx.toolVisibilityPolicy,
           skillRegistry: scope.ctx.skillRegistry,
           admitLearnedSkillInvocation: scope.ctx.admitLearnedSkillInvocation,
@@ -1660,6 +1666,8 @@ async function runWriteChildBody(
   const systemPromptOverride = buildWriteSystemPrompt(
     childCtx.gitRoot ?? childCtx.executionCwd ?? process.cwd(),
     specialistSystemPrompt,
+    childCtx.assertReadablePath,
+    childCtx.projectRulesRoot,
   );
   const excludeTools = restrictToolsForChildRuntime(
     [...(childCtx.excludeTools ?? []), ...specialistExcludeTools],
@@ -1768,6 +1776,7 @@ async function runWriteChildBody(
             options.parentOptions.permissionIntent ?? childCtx.permissionIntent,
           ),
           assertReadablePath: childCtx.assertReadablePath,
+          projectRulesRoot: childCtx.projectRulesRoot,
           toolVisibilityPolicy: childCtx.toolVisibilityPolicy,
           skillRegistry: childCtx.skillRegistry,
           admitLearnedSkillInvocation: childCtx.admitLearnedSkillInvocation,
@@ -2231,7 +2240,7 @@ export async function resolveEvidenceRef(
  * skip the project rules. This helper restores them only for the write
  * path.
  *
- * Cost: AGENTS.md is loaded once via `loadAgentsFiles` (mtime-cached by
+ * Cost: AGENTS.md is loaded once via `loadInstructionFiles` (mtime-cached by
  * FEATURE_149 Phase 1.2), formatted, and appended to the override.
  * Anthropic `cache_control: ephemeral` covers the system prompt block,
  * so the AGENTS.md tokens are billed once per ~5 min cache window
@@ -2242,12 +2251,14 @@ export async function resolveEvidenceRef(
 function buildWriteSystemPrompt(
   gitRoot: string,
   baseSystemPrompt: string = CHILD_AGENT_SYSTEM_PROMPT,
+  assertReadablePath?: (candidate: string) => void,
+  projectRulesRoot?: string,
 ): string {
-  // Sync — `loadAgentsFiles` reads via `readFileSync` and the helper has no
+  // Sync — `loadInstructionFiles` reads via `readFileSync` and the helper has no
   // async I/O. Kept synchronous so the single mtime-stat-and-cache walk
   // does not pay an unnecessary microtask boundary on every write-child
   // spawn (FEATURE_119 H2 fan-out can dispatch 4-8 children in one wave).
-  const agentsFiles = loadAgentsFiles({ cwd: gitRoot, projectRoot: gitRoot });
+  const agentsFiles = loadInstructionFiles({ cwd: gitRoot, projectRoot: gitRoot, assertReadablePath, projectRulesRoot });
   const formatted = formatAgentsForPrompt(agentsFiles);
   if (!formatted) return baseSystemPrompt;
 

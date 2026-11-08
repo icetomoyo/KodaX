@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { exec, webhook } from './helpers.js';
 
 describe('exec', () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
+
   it('runs a simple command and returns stdout', async () => {
     const result = await exec('echo hello');
     expect(result.exitCode).toBe(0);
@@ -19,8 +21,9 @@ describe('exec', () => {
     process.env.OPENAI_API_KEY = 'sk-secret-test';
     try {
       const result = await exec(
+        // PowerShell does not expand cmd-style %VAR%, so that form never read the variable.
         process.platform === 'win32'
-          ? 'echo %OPENAI_API_KEY%'
+          ? 'Write-Output $env:OPENAI_API_KEY'
           : 'echo $OPENAI_API_KEY',
       );
       // The variable should NOT be available — stdout should be empty or the literal variable name
@@ -32,6 +35,15 @@ describe('exec', () => {
         delete process.env.OPENAI_API_KEY;
       }
     }
+  });
+
+  // Without its module analysis cache, PowerShell rescans every installed
+  // module before resolving a command: ~22 s per start on GitHub Windows runners.
+  it.runIf(process.platform === 'win32')('keeps the PowerShell module analysis cache locations', async () => {
+    vi.stubEnv('PSModuleAnalysisCachePath', 'C:/analysis-cache/ModuleAnalysisCache');
+    vi.stubEnv('LOCALAPPDATA', 'C:/local-app-data');
+    const result = await exec('Write-Output "$env:PSModuleAnalysisCachePath|$env:LOCALAPPDATA"');
+    expect(result.stdout).toBe('C:/analysis-cache/ModuleAnalysisCache|C:/local-app-data');
   });
 
   it('injects custom env variables', async () => {

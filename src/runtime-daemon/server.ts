@@ -196,6 +196,8 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
 > = new Map([
   ...scopeEntries("session:observe", [
     'tool.catalog',
+    'repo.intelligence.inspect',
+    'repo.intelligence.prewarm',
     'session.facts.read', 'session.facts.requests', 'session.facts.tools',
     "ping",
     "runtime.identity",
@@ -214,6 +216,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "session.view.observe",
     "session.view.close",
     "session.view.item",
+    "session.history.resolveTurn",
     "session.diagnostics",
     "session.settings.get",
     "session.transcript.search",
@@ -1210,6 +1213,12 @@ async function dispatchRuntimeDaemonRequest(
     case 'tool.catalog':
       if (!runtime.catalog.executionTools) throw daemonError('method_not_found', 'Host tool catalog is unavailable.');
       return runtime.catalog.executionTools(requireStringParam(request.params, 'sessionId'));
+    case 'repo.intelligence.inspect':
+      if (!runtime.catalog.inspectRepoIntelligence) throw daemonError('method_not_found', 'Host repository diagnostics are unavailable.');
+      return runtime.catalog.inspectRepoIntelligence(requireStringParam(request.params, 'sessionId'));
+    case 'repo.intelligence.prewarm':
+      if (!runtime.catalog.prewarmRepoIntelligence) throw daemonError('method_not_found', 'Host repository prewarm is unavailable.');
+      return runtime.catalog.prewarmRepoIntelligence(requireStringParam(request.params, 'sessionId'));
     case "extension.list":
       return runtime.catalog.extensions();
     case "extension.reload":
@@ -1678,6 +1687,25 @@ async function dispatchRuntimeDaemonRequest(
     case "session.view.item":
       return runtime.sessions.readViewItem(requireStringParam(request.params, 'sessionId'),
         requireStringParam(request.params, 'itemId'), requireRecord(request.params));
+    case "session.history.resolveTurn": {
+      const params = requireRecord(request.params);
+      try {
+        const result = await runtime.sessions.resolveHistoryTurn(requireStringParam(params, 'sessionId'),
+          params.selector as import('@kodax-ai/coding/client-contract').ClientHistoryTurnSelector,
+          runtimeReadOptions(params, requestSignal));
+        if (params.contractVersion === 2 || result.status !== 'ready') return result;
+        // beta.3 clients validate exact result keys, including the nested boundary.
+        return { status: 'ready', historyBoundary: { entryId: result.historyBoundary.entryId,
+          sourceRevision: result.historyBoundary.sourceRevision }, expectedHead: result.expectedHead,
+          turnIndex: result.turnIndex, excerpt: result.excerpt, hasLaterTurn: result.hasLaterTurn };
+      } catch (error) {
+        if (params.contractVersion !== 2 && isRecord(error) && error.code === 'resync_required') {
+          return { status: 'stale', reason: isRecord(error.data) && typeof error.data.reason === 'string'
+            ? error.data.reason : 'source_changed' };
+        }
+        throw error;
+      }
+    }
     case "session.observe": {
       const subscriptionId = createSubscriptionId();
       const sessionId = requireStringParam(request.params, "sessionId");
@@ -1810,10 +1838,18 @@ async function dispatchRuntimeDaemonRequest(
         ...(label !== undefined ? { label } : {}),
       });
     }
-    case "session.rewind":
-      return runtime.sessions.rewind(
-        requireRecord(request.params) as unknown as RuntimeRewindSessionInput,
-      );
+    case "session.rewind": {
+      const params = requireRecord(request.params);
+      try {
+        return await runtime.sessions.rewind(params as unknown as RuntimeRewindSessionInput);
+      } catch (error) {
+        if (params.contractVersion !== 2 && isRecord(error) && error.code === 'resync_required'
+          && isRecord(error.data) && error.data.reason === 'head_changed') {
+          throw daemonError('conflict', error instanceof Error ? error.message : 'Session head changed.');
+        }
+        throw error;
+      }
+    }
     case "session.identityAlias.confirm":
       return runtime.sessions.confirmIdentityAlias(
         requireRecord(request.params) as unknown as RuntimeConfirmIdentityAliasInput,
@@ -2440,7 +2476,7 @@ async function dispatchRuntimeDaemonRequest(
     if (authorization !== undefined && params.credential !== undefined) throw daemonError('invalid_params', 'Use one Actor authorization binding.');
     return dispatch();
   }
-  const productExecution = ['input.submit', 'invocations.executeCommand', 'invocations.startReview',
+  const productExecution = ['input.submit', 'input.withdraw', 'invocations.executeCommand', 'invocations.startReview',
     'invocations.startAgentsLean', 'workflow.start', 'run.recover'].includes(request.method);
   if (authorization === undefined && !productExecution) return dispatch();
   options.clientLifecycle?.assertAdmission(principalId);
@@ -2459,6 +2495,7 @@ async function dispatchRuntimeDaemonRequest(
       const leaseId = requireStringField(deferred, 'leaseId');
       const key = JSON.stringify([principalId, sessionId, 'binding', leaseId]);
       return { key, intentKey, principalId, sessionId, assertAdmission,
+        bindingAvailable: reverseBridge.executionBindings.captureAvailability(leaseId),
         async resolve(input, signal) {
           assertAdmission();
           if (input.sessionId !== sessionId) throw daemonError('permission_denied', 'Execution binding belongs to another Session.');
@@ -2491,6 +2528,7 @@ async function dispatchRuntimeDaemonRequest(
       ...(workflowHostPolicy === undefined ? [] : [[workflowHostPolicy.maxAgents ?? null, workflowHostPolicy.tokenBudget ?? null]]),
       ...(profile === undefined ? [] : [profile]), ...(bindingSnapshot === undefined ? [] : [bindingSnapshot])]);
     return { key, intentKey, principalId, sessionId, profile, bindingSnapshot,
+      bindingAvailable: reverseBridge.executionBindings.captureAvailability(),
       authorization: approved as import('../client-host-authorization.js').RuntimeExecutionAuthorization | undefined,
       defaultSkill: profile?.defaultSkill, assertAdmission,
       async bindRun(runInput, runId, baseExtensionRuntime) {
@@ -2512,6 +2550,7 @@ async function dispatchRuntimeDaemonRequest(
       runId: status.runId, ...(original === undefined ? {} : { snapshot: original }), profile: {
         agentProfile: status.effectiveConfig?.agentProfile, taskVerification: status.effectiveConfig?.verification,
         defaultSkill: original?.defaultSkill,
+        requiredWorkMode: status.requiredWorkMode,
       },
     } });
     if (original !== undefined && !isDeepStrictEqual(context.bindingSnapshot?.businessBinding, original.businessBinding)) {
@@ -2641,6 +2680,7 @@ async function bindTrustedRunInput(input: {
       ? {
           options: {
             ...safeTransportOptions,
+            ...(input.profile?.requiredWorkMode === undefined ? {} : { executionWorkMode: input.profile.requiredWorkMode }),
             ...(executionToolCeiling === undefined ? {} : { executionToolCeiling: structuredClone(executionToolCeiling) }),
             ...(input.profile === undefined ? {} : {
               context: {
@@ -2719,7 +2759,7 @@ function runtimeDaemonCapabilities(
   ownerCapabilities: Readonly<Record<string, unknown>> = {},
   clientExitControl = false,
 ): Record<string, unknown> {
-  const { productClient, productHistoryBoundaries, productExecutionAuthorization, toolInvocation, sessionCancellation, workflowSettingsDefaults } = ownerCapabilities;
+  const { productClient, productHistoryBoundaries, productHistoryTurnResolution, productExecutionAuthorization, toolInvocation, sessionCancellation, workflowSettingsDefaults } = ownerCapabilities;
   const safeOverrides = { ...overrides };
   delete safeOverrides.externalAgents;
   delete safeOverrides.externalAgentAdmin;
@@ -2739,11 +2779,16 @@ function runtimeDaemonCapabilities(
   delete safeOverrides.runLifecycleControl;
   delete safeOverrides.productClient;
   delete safeOverrides.productExecutionProfile;
+  delete safeOverrides.repoIntelligenceDiagnostics;
   delete safeOverrides.actorCheckpointRecovery;
   delete safeOverrides.sessionDrafts;
   delete safeOverrides.sessionPromotion;
   delete safeOverrides.productExecutionBinding;
+  delete safeOverrides.productInputRecovery;
+  delete safeOverrides.productExecutionModeConstraint;
   delete safeOverrides.productHistoryBoundaries;
+  delete safeOverrides.productHistoryTurnResolution;
+  delete safeOverrides.productHistoryLocation;
   delete safeOverrides.productExecutionAuthorization;
   delete safeOverrides.productExitControl;
   delete safeOverrides.productExecutionFacts;
@@ -2758,6 +2803,8 @@ function runtimeDaemonCapabilities(
   return {
     events: true,
     productExecutionProfile: { version: 2 },
+    ...(isRecord(ownerCapabilities.repoIntelligenceDiagnostics) && ownerCapabilities.repoIntelligenceDiagnostics.version === 1
+      ? { repoIntelligenceDiagnostics: { version: 1 } } : {}),
     actorCheckpointRecovery: { version: 1 },
     permissions: true,
     workflows: true,
@@ -2782,6 +2829,10 @@ function runtimeDaemonCapabilities(
       ? { productClient: { version: 1 } } : {}),
     ...(isRecord(productHistoryBoundaries) && productHistoryBoundaries.version === 1
       ? { productHistoryBoundaries: { version: 1 } } : {}),
+    ...(isRecord(productHistoryTurnResolution) && (productHistoryTurnResolution.version === 1 || productHistoryTurnResolution.version === 2)
+      ? { productHistoryTurnResolution: { version: productHistoryTurnResolution.version } } : {}),
+    ...(isRecord(ownerCapabilities.productHistoryLocation) && (ownerCapabilities.productHistoryLocation.version === 1 || ownerCapabilities.productHistoryLocation.version === 2)
+      ? { productHistoryLocation: { version: ownerCapabilities.productHistoryLocation.version } } : {}),
     ...(isRecord(productExecutionAuthorization) && (productExecutionAuthorization.version === 1 || productExecutionAuthorization.version === 2)
       ? { productExecutionAuthorization: { version: productExecutionAuthorization.version } } : {}),
     ...(daemonManagement && clientExitControl && isRecord(ownerCapabilities.productExitControl) && ownerCapabilities.productExitControl.version === 1
@@ -2792,6 +2843,10 @@ function runtimeDaemonCapabilities(
       ? { sessionPromotion: { version: 1 } } : {}),
     ...(isRecord(ownerCapabilities.productExecutionBinding) && ownerCapabilities.productExecutionBinding.version === 1
       ? { productExecutionBinding: { version: 1 } } : {}),
+    ...(isRecord(ownerCapabilities.productInputRecovery) && ownerCapabilities.productInputRecovery.version === 1
+      ? { productInputRecovery: { version: 1 } } : {}),
+    ...(isRecord(ownerCapabilities.productExecutionModeConstraint) && ownerCapabilities.productExecutionModeConstraint.version === 1
+      ? { productExecutionModeConstraint: { version: 1 } } : {}),
     ...(isRecord(ownerCapabilities.productExecutionFacts) && ownerCapabilities.productExecutionFacts.version === 1
       ? { productExecutionFacts: { version: 1 } } : {}),
     ...(isRecord(ownerCapabilities.providerProbeAuthorization) && ownerCapabilities.providerProbeAuthorization.version === 1
@@ -3586,6 +3641,7 @@ function parseRuntimeHostToolDescriptors(
       name: requireStringField(record, "name"),
       description: requireStringField(record, "description"),
       inputSchema: requireRecordField(record, "inputSchema"),
+      ...(record.outputSchema !== undefined ? { outputSchema: requireRecordField(record, "outputSchema") } : {}),
       sideEffect,
     };
   });
@@ -4008,6 +4064,6 @@ function isRuntimeDaemonErrorCode(
     value === "host_tool_unavailable" ||
     value === "host_tool_unknown" ||
     value === 'execution_binding_unavailable' || value === 'execution_binding_rejected' || value === 'execution_binding_changed' ||
-    value === 'default_skill_unavailable' || value === "internal_error"
+    value === 'default_skill_unavailable' || value === 'execution_mode_mismatch' || value === "internal_error"
   );
 }

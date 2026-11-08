@@ -105,7 +105,9 @@ it('returns canonical operation boundaries and history quality without parsing d
   await runRound(session.id, 2);
   const page = await first.sessions.readHistory(session.id);
   expect(page).toMatchObject({ sourceRevision: expect.any(String), status: 'resolved', issues: [] });
-  const boundary = page.items.find(item => item.text === 'REPLY 1')?.historyBoundary;
+  const target = await first.sessions.resolveHistoryTurn(session.id, { kind: 'previous' });
+  if (target.status !== 'ready') throw new Error('Expected the complete previous turn.');
+  const boundary = target.historyBoundary;
   expect(boundary).toMatchObject({ entryId: expect.any(String), sourceRevision: page.sourceRevision });
   const fork = await first.sessions.forkSession(session.id, { historyBoundary: boundary });
   expect((await first.sessions.readHistory(fork.id)).items.map(item => item.text)).toEqual(['Ask round 1', 'REPLY 1']);
@@ -123,9 +125,9 @@ it('derives Retry before a canonical user query, including the first query', asy
   await runRound(session.id, 2);
   const page = await first.sessions.readHistory(session.id);
   const queries = page.items.filter(item => item.type === 'user');
-  const firstRetry = await first.sessions.forkSession(session.id, { historyBoundary: queries[0]!.historyBoundary, before: true });
+  const firstRetry = await first.sessions.forkSession(session.id, { historyBoundary: queries[0]!.historyBoundary!, before: true });
   expect((await first.sessions.readHistory(firstRetry.id)).items).toEqual([]);
-  const secondRetry = await first.sessions.forkSession(session.id, { historyBoundary: queries[1]!.historyBoundary, before: true });
+  const secondRetry = await first.sessions.forkSession(session.id, { historyBoundary: queries[1]!.historyBoundary!, before: true });
   expect((await first.sessions.readHistory(secondRetry.id)).items.map(item => item.text)).toEqual(['Ask round 1', 'REPLY 1']);
   const retry = await first.inputs.submit({ sessionId: secondRetry.id, inputId: 'retry-second', text: queries[1]!.text });
   expect((await first.runs.await(retry.runId!)).phase).toBe('completed');
@@ -245,7 +247,7 @@ it('forks an idle session at an explicit boundary with settings and source intac
   expect(boundaryEntry).toBeDefined();
   await runRound(session.id, 4);
   await expect(first.sessions.forkSession(session.id, {
-    historyBoundary: { entryId: boundaryEntry!.id, sourceRevision: page.revision },
+    historyBoundary: { kind: 'turn_end', entryId: boundaryEntry!.id, sourceRevision: page.revision },
   })).rejects.toMatchObject({ code: 'resync_required' });
 }, 90_000);
 

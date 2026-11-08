@@ -1,4 +1,5 @@
 export { parseGenerationCheckpoint } from '@kodax-ai/coding';
+import { resolveWorkMode } from '@kodax-ai/coding';
 import type { RuntimeKodaXOptions } from './sdk-runtime.js';
 import { createExecutionToolPolicy, executionToolPolicyCeiling, intersectExecutionToolCeilings } from './execution-profile.js';
 
@@ -8,10 +9,24 @@ export interface RuntimeGenerationResume {
   readonly requiredBindings: readonly { readonly path: string; readonly type: string }[];
 }
 
+/** Recover the admitted effective mode, including callbacks omitted from JSON. */
+export function resolveGenerationRecoveryWorkMode(resume: RuntimeGenerationResume,
+  persistedMode?: RuntimeKodaXOptions['workMode']): ReturnType<typeof resolveWorkMode> {
+  const hadToolPolicy = resume.requiredBindings.some(binding => binding.path === 'context.toolVisibilityPolicy');
+  const mode = resolveWorkMode({ ...resume.options, context: { ...resume.options.context,
+    // The resolver tests presence only. Never execute or return this placeholder.
+    ...(hadToolPolicy ? { toolVisibilityPolicy: () => false } : {}),
+  } });
+  if (persistedMode !== undefined && persistedMode !== mode) {
+    throw Object.assign(new Error('Generation recovery mode does not match the persisted Run.'), { code: 'conflict' });
+  }
+  return mode;
+}
+
 const OPTION_KEYS = new Set(['provider', 'model', 'modelOverride', 'effort', 'thinking', 'reasoningMode',
   'agentMode', 'workMode', 'maxIter', 'workflowHostPolicy', 'workflowRunsBaseDir', 'modelTiers', 'maxOutputTokens',
   'disablePromptCache', 'lsp', 'workflow', 'selfManual', 'compaction', 'timeouts', 'sandbox', 'maxConcurrentThreadsPerSession',
-  'executionToolCeiling', 'executionBinding']);
+  'executionToolCeiling', 'executionBinding', 'executionWorkMode']);
 const CONTEXT_KEYS = new Set(['gitRoot', 'executionCwd', 'shellExecution', 'contextTokenSnapshot',
   'projectSnapshot', 'longRunning', 'providerPolicyHints', 'repoRoutingSignals', 'repoIntelligenceMode',
   'repoIntelligenceTrace', 'contextDiagnostics', 'disableAutoTaskReroute', 'toolConstructionMode',

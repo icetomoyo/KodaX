@@ -77,6 +77,7 @@ import {
 } from './project-manifest.js';
 import { ensureLayoutMigrated } from './session-migration.js';
 import {
+  assertConversationTurnBoundary,
   buildSessionConversationHistory,
   forkSessionConversationLineage,
   type SessionConversationHistoryData,
@@ -646,6 +647,8 @@ export interface SessionReadOptions {
 /** Immutable read boundary used by conversation-history fork/rewind. */
 export interface SessionHistoryBoundary {
   readonly sourceRevision: string;
+  readonly startEntryId?: string;
+  readonly kind?: 'turn_end';
 }
 
 export interface SessionReadSnapshot {
@@ -816,6 +819,10 @@ async function prepareStableSessionReadBoundary(
   const writerPath = sessionWriteLockPath(sessionsDir, id);
   if (fsSync.existsSync(writerPath)) {
     await reclaimStaleKodaXFileLock(writerPath);
+  }
+  const topologyPath = sessionLocationTopologyLockPath(sessionsDir);
+  if (fsSync.existsSync(topologyPath)) {
+    await reclaimStaleKodaXFileLock(topologyPath, { requireKnownOwner: true });
   }
   assertStableSessionReadBoundary(sessionsDir, id);
 }
@@ -4201,6 +4208,8 @@ export class FileSessionStorage implements KodaXSessionStorage {
             }),
             // Execution snapshots cannot change the Host-owned Session lifetime.
             ...(existing?.data.runtimeInfo?.temporary === true ? { temporary: true } : {}),
+            // First admission is permanent, including stale execution snapshots.
+            ...(existing?.data.runtimeInfo?.workModeLocked === true ? { workModeLocked: true } : {}),
             ...(!acceptSandboxWorktreeRoots
               && existing?.data.runtimeInfo?.sandboxWorktreeRoots !== undefined
               ? {
@@ -4972,7 +4981,10 @@ export class FileSessionStorage implements KodaXSessionStorage {
     options: SessionReadOptions = {},
   ): Promise<ConversationPageCachePage | null> {
     throwIfSessionReadAborted(options.signal);
+    normalizeSessionReadTimeout(options.timeoutMs);
+    const startedAt = Date.now();
     const operation = (async (): Promise<ConversationPageCachePage | null> => {
+      await this.awaitOwnWrites(id, options, startedAt);
       const mainPath = await this.resolveSessionLocation(id, true);
       if (mainPath === null) return null;
       const topologyIdentity = this.verifiedLocationTopology(id);
@@ -5018,7 +5030,10 @@ export class FileSessionStorage implements KodaXSessionStorage {
     readonly admission: ConversationPageCacheAdmission;
   } | null> {
     throwIfSessionReadAborted(options.signal);
+    normalizeSessionReadTimeout(options.timeoutMs);
+    const startedAt = Date.now();
     const operation = (async () => {
+      await this.awaitOwnWrites(id, options, startedAt);
       const mainPath = await this.resolveSessionLocation(id, true);
       if (mainPath === null) return null;
       const topologyIdentity = this.verifiedLocationTopology(id);
@@ -5088,7 +5103,10 @@ export class FileSessionStorage implements KodaXSessionStorage {
     options: SessionReadOptions = {},
   ): Promise<ConversationPageCacheChunk | null> {
     throwIfSessionReadAborted(options.signal);
+    normalizeSessionReadTimeout(options.timeoutMs);
+    const startedAt = Date.now();
     const operation = (async (): Promise<ConversationPageCacheChunk | null> => {
+      await this.awaitOwnWrites(id, options, startedAt);
       const mainPath = await this.resolveSessionLocation(id, true);
       if (mainPath === null) return null;
       const topologyIdentity = this.verifiedLocationTopology(id);
@@ -5505,6 +5523,10 @@ export class FileSessionStorage implements KodaXSessionStorage {
           ? undefined
           : completeLineageBoundaryPath(sourceLineage, targetId);
         if (captured !== undefined && boundaryPath === undefined) return;
+        if (captured) assertConversationTurnBoundary(
+          buildSessionConversationHistory(sourceLineage, captured.sourceRevision), targetId,
+          { startEntryId: historyBoundary?.startEntryId, kind: historyBoundary?.kind },
+        );
         const rewindSource = boundaryPath === undefined
           ? sourceLineage
           : {
@@ -5655,6 +5677,10 @@ export class FileSessionStorage implements KodaXSessionStorage {
       ) {
         return;
       }
+      if (captured && selector !== undefined) assertConversationTurnBoundary(
+        buildSessionConversationHistory(sourceLineage, captured.sourceRevision), selector,
+        { before: options?.before, startEntryId: historyBoundary?.startEntryId, kind: historyBoundary?.kind },
+      );
       const projectionStartedAt = Date.now();
       if (options?.before === true && captured === undefined) throw new Error('Fork before requires a canonical history boundary.');
       const targetId = options?.before === true ? boundaryPath?.at(-2)?.id : selector;

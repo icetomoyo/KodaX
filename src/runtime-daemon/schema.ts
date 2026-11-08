@@ -212,6 +212,22 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
       attachmentOffset: integerSchema, expectedImageSha256: stringSchema }, ['sessionId', 'itemId']),
     result: nullOrObjectSchema,
   },
+  'session.history.resolveTurn': {
+    params: objectSchema({ sessionId: stringSchema, contractVersion: { enum: [2] }, timeoutMs: integerSchema, selector: { oneOf: [
+      objectSchema({ kind: { enum: ['latest', 'previous'] } }, ['kind']),
+      objectSchema({ kind: { enum: ['index'] }, index: { type: 'integer', minimum: 0 } }, ['kind', 'index']),
+      objectSchema({ kind: { enum: ['item'] }, itemId: stringSchema, source: { enum: ['history'] },
+        revision: stringSchema }, ['kind', 'itemId', 'source', 'revision']),
+      objectSchema({ kind: { enum: ['item'] }, itemId: stringSchema, source: { enum: ['view'] },
+        revision: stringSchema, inputId: stringSchema, outputId: stringSchema }, ['kind', 'itemId', 'source']),
+    ] } }, ['sessionId', 'selector']),
+    result: { oneOf: [
+      objectSchema({ status: { enum: ['ready'] }, sessionId: stringSchema, startBoundary: conversationHistoryBoundarySchema(), historyBoundary: conversationHistoryBoundarySchema(),
+        expectedHead: nullableSchema(stringSchema), turnIndex: { type: 'integer', minimum: 0 },
+        excerpt: stringSchema, hasLaterTurn: booleanSchema }, ['status', 'historyBoundary', 'expectedHead', 'turnIndex', 'excerpt', 'hasLaterTurn']),
+      objectSchema({ status: { enum: ['unavailable', 'stale'] }, reason: stringSchema }, ['status', 'reason']),
+    ] },
+  },
   'session.conversation': {
     params: objectSchema({
       sessionId: stringSchema,
@@ -222,6 +238,10 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
   'session.conversation.page': {
     params: objectSchema({
       sessionId: stringSchema,
+      around: { oneOf: [
+        objectSchema({searchItemId:stringSchema}, ['searchItemId']),
+        objectSchema({historyBoundary:conversationHistoryBoundarySchema()}, ['historyBoundary']),
+      ] },
       cursor: stringSchema,
       limit: integerSchema,
       timeoutMs: integerSchema,
@@ -288,9 +308,11 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
   'session.rewind': {
     params: objectSchema({
       sessionId: stringSchema,
+      contractVersion: { enum: [2] },
       selector: stringSchema,
       expectedHead: nullableSchema(stringSchema),
       historyBoundary: conversationHistoryBoundarySchema(),
+      turn: historyTurnTargetSchema(),
     }, ['sessionId']),
     result: nullableSchema(sessionSchema()),
   },
@@ -634,6 +656,8 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
   'mcp.tool.list': { params: objectSchema({ server: stringSchema, forceRefresh: booleanSchema }, [], true), result: arrayAnySchema },
 
   'tool.catalog': { params: objectSchema({ sessionId: stringSchema }, ['sessionId']), result: arraySchema(objectAnySchema) },
+  'repo.intelligence.inspect': { params: objectSchema({ sessionId: stringSchema }, ['sessionId']), result: repoIntelligenceStatusSchema() },
+  'repo.intelligence.prewarm': { params: objectSchema({ sessionId: stringSchema }, ['sessionId']), result: repoIntelligenceStatusSchema() },
   'extension.list': {
     params: noParamsSchema,
     result: objectSchema({
@@ -1341,6 +1365,8 @@ function ownerIdentitySchema(): RuntimeDaemonJsonSchema {
     processContainment: { type: 'string', enum: ['windows-job'] },
     supervisorPid: integerSchema,
     supervisorProcessStartIdentity: stringSchema,
+    windowsJobName: stringSchema,
+    windowsBootIdentity: stringSchema,
   }, ['runtimeId', 'pid', 'createdAt']);
 }
 
@@ -1352,14 +1378,23 @@ function forkSessionParamsSchema(): RuntimeDaemonJsonSchema {
     newSessionId: stringSchema,
     title: stringSchema,
     historyBoundary: conversationHistoryBoundarySchema(),
+    turn: historyTurnTargetSchema(),
   }, ['sessionId']);
 }
 
 function conversationHistoryBoundarySchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
+    kind: { enum: ['turn_end'] },
     entryId: stringSchema,
     sourceRevision: stringSchema,
   }, ['entryId', 'sourceRevision']);
+}
+
+function historyTurnTargetSchema(): RuntimeDaemonJsonSchema {
+  return objectSchema({ sessionId: stringSchema, historyBoundary: conversationHistoryBoundarySchema(),
+    startBoundary: conversationHistoryBoundarySchema(), expectedHead: nullableSchema(stringSchema),
+    status: { enum: ['ready'] }, turnIndex: integerSchema, excerpt: stringSchema, hasLaterTurn: booleanSchema,
+  }, ['sessionId', 'historyBoundary', 'startBoundary', 'expectedHead']);
 }
 
 function activeEntryParamsSchema(): RuntimeDaemonJsonSchema {
@@ -1449,11 +1484,20 @@ function startRunParamsSchema(): RuntimeDaemonJsonSchema {
   }, ['sessionId']);
 }
 
+function repoIntelligenceStatusSchema(): RuntimeDaemonJsonSchema {
+  return objectSchema({ configuredMode: { enum: ['auto', 'off', 'light', 'full'] },
+    requestedMode: { enum: ['off', 'light', 'full'] }, effectiveEngine: { enum: ['off', 'light', 'full'] },
+    status: { enum: ['disabled', 'ok', 'limited', 'unavailable', 'warming'] }, initialized: booleanSchema,
+    warnings: arraySchema(stringSchema), runtimeId: stringSchema, sessionId: stringSchema, workspaceRoot: stringSchema,
+  }, ['configuredMode', 'requestedMode', 'effectiveEngine', 'status', 'initialized', 'warnings', 'runtimeId', 'sessionId', 'workspaceRoot']);
+}
+
 function executionAuthorizationSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
     binding: objectSchema({ leaseId: stringSchema }, ['leaseId']),
     businessBinding: objectSchema({ id: stringSchema, revision: stringSchema, data: objectAnySchema }, ['id', 'revision']),
     profile: objectSchema({ agentProfile: objectAnySchema, taskVerification: objectAnySchema,
+      requiredWorkMode: { enum: ['agent'] },
       defaultSkill: objectSchema({ name: { type: 'string', maxLength: 128 } }, ['name']),
       tools: arraySchema(stringSchema), toolMetadata: arraySchema(objectSchema({ name: stringSchema,
         sideEffect: { enum: ['readonly', 'reads-network', 'mutates-fs', 'mutates-shell', 'mutates-network', 'mutates-state'] },

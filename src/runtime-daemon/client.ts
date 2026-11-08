@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { createExecutionBindingClient } from '../execution-binding-client.js';
 import { createExecutionServices } from '../execution-services.js';
 import { isDeepStrictEqual } from 'node:util';
+import { requireRuntimeCapability, supportsRuntimeCapability } from '@kodax-ai/coding/client-contract';
 import type { ClientHistoryPage, ClientHistoryReadOptions, ClientHistorySearchInput, ClientHistorySearchResult, ClientInteraction, ClientInteractionResponse, ClientInteractionResult, ClientObservation, ClientObserveOptions, ClientObservationStatus, ClientProviderInfo, ClientSessionView, ClientItemContent } from '@kodax-ai/coding/client-contract';
 
 import type {
@@ -94,7 +95,6 @@ import type {
 import type { KodaXPromptCacheDiagnosticEvent } from '@kodax-ai/coding';
 import { parseRuntimeEvent } from '../runtime-event.js';
 import { toRuntimePermissionRequest, toRuntimeUserInputRequest } from '../client-interactions.js';
-import { projectConversationHistoryPage, readConversationHistoryEntry, readHistoryPageWithBoundaryRetry } from '../client-history.js';
 import type {
   AskUserAnswer,
   LearningEvent,
@@ -278,8 +278,16 @@ export function createRuntimeDaemonClient(
     params?: unknown,
     control?: RuntimeDaemonRequestControl,
   ): Promise<unknown> => {
+    if ((method === 'repo.intelligence.inspect' || method === 'repo.intelligence.prewarm')
+      && (runtimeCapabilities.repoIntelligenceDiagnostics as { version?: number } | undefined)?.version !== 1) {
+      return Promise.reject(Object.assign(new Error('Repository intelligence diagnostics require an upgraded Host.'), { code: 'daemon_upgrade_required' }));
+    }
     const authorization = params !== null && typeof params === 'object' && 'authorization' in params
       ? params.authorization as import('../client-host-authorization.js').RuntimeExecutionAuthorization | undefined : undefined;
+    if (authorization?.profile?.requiredWorkMode !== undefined
+      && (runtimeCapabilities.productExecutionModeConstraint as { version?: number } | undefined)?.version !== 1) {
+      return Promise.reject(Object.assign(new Error('Execution mode constraints require an upgraded Host.'), { code: 'daemon_upgrade_required' }));
+    }
     if ((authorization?.binding !== undefined || authorization?.businessBinding !== undefined || authorization?.profile?.defaultSkill !== undefined)
       && (runtimeCapabilities.productExecutionBinding as { version?: number } | undefined)?.version !== 1) {
       return Promise.reject(Object.assign(new Error('Execution bindings require an upgraded Host.'), { code: 'daemon_upgrade_required' }));
@@ -570,30 +578,41 @@ export function createRuntimeDaemonClient(
       readViewItem(sessionId, itemId, options) {
         return request('session.view.item', { sessionId, itemId, ...options }) as Promise<ClientItemContent | null>;
       },
+      async resolveHistoryTurn(sessionId, selector, readOptions) {
+        requireRuntimeCapability(options.capabilities, 'productHistoryTurnResolution', 2);
+        return readRequest('session.history.resolveTurn', { sessionId, selector, contractVersion: 2 }, readOptions) as Promise<import('@kodax-ai/coding/client-contract').ClientHistoryTurnResolution>;
+      },
       async readHistory(sessionId, options) {
+        const { projectConversationHistoryPage, readHistoryPageWithBoundaryRetry, createHistoryReadBudget } = await import('../client-history.js');
+        const budget = createHistoryReadBudget(options);
         const page = await readHistoryPageWithBoundaryRetry(
           () => readRequest(
             'session.conversation.page',
             {
               sessionId,
+              ...(options?.around ? {around: options.around} : {}),
               ...(options?.cursor !== undefined ? { cursor: options.cursor } : {}),
               ...(options?.limit !== undefined ? { limit: options.limit } : {}),
             },
+            budget(),
           ) as Promise<RuntimeConversationHistorySlice | null>,
-          { ...(options?.cursor !== undefined ? { cursor: options.cursor } : {}) },
+          { ...(options?.cursor !== undefined ? { cursor: options.cursor } : {}), ...(options?.around ? { around: options.around } : {}) },
         );
         if (page === null) {
           throw new Error('Runtime daemon returned no conversation history page.');
         }
-        return projectConversationHistoryPage(sessionId, page, (input) => readRequest(
-          'session.conversation.entryChunk', { ...input },
-        ) as Promise<RuntimeConversationHistoryEntryChunk | null>);
+        const result = await projectConversationHistoryPage(sessionId, page, (input) => readRequest(
+          'session.conversation.entryChunk', { ...input }, budget(),
+        ) as Promise<RuntimeConversationHistoryEntryChunk | null>, emitKodaXDiagnostic);
+        budget();
+        return result;
       },
-      readHistoryEntry(sessionId, itemId, options) {
+      async readHistoryEntry(sessionId, itemId, options) {
         if (options?.part === 'original') {
           return request('session.view.item', { sessionId, itemId, ...options }) as Promise<ClientItemContent | null>;
         }
         const transcript = itemId.startsWith(`${sessionId}:transcript:`);
+        const { readConversationHistoryEntry } = await import('../client-history.js');
         return readConversationHistoryEntry(
           sessionId,
           itemId,
@@ -603,6 +622,7 @@ export function createRuntimeDaemonClient(
           ) as Promise<RuntimeConversationHistoryEntryChunk | null>,
           options,
           transcript ? 'transcript' : 'history',
+          emitKodaXDiagnostic,
         );
       },
       async searchHistory(sessionId, input) {
@@ -644,7 +664,8 @@ export function createRuntimeDaemonClient(
           runtimeMode: options.identity.mode,
         }));
       },
-      fork(input) {
+      async fork(input) {
+        if (input.turn || (input.historyBoundary && (input.before !== true || 'kind' in input.historyBoundary))) requireRuntimeCapability(options.capabilities, 'productHistoryTurnResolution', 2);
         return request('session.fork', input) as Promise<RuntimeSession | null>;
       },
       recover(input) {
@@ -694,8 +715,11 @@ export function createRuntimeDaemonClient(
       labelEntry(input) {
         return request('session.lineage.label', input) as ReturnType<KodaXRuntime['sessions']['labelEntry']>;
       },
-      rewind(input) {
-        return request('session.rewind', input) as Promise<RuntimeSession | null>;
+      async rewind(input) {
+        if (input.turn || input.historyBoundary) requireRuntimeCapability(options.capabilities, 'productHistoryTurnResolution', 2);
+        return request('session.rewind', { ...input,
+          ...(supportsRuntimeCapability(options.capabilities, 'productHistoryTurnResolution', 2) ? { contractVersion: 2 } : {}),
+        }) as Promise<RuntimeSession | null>;
       },
       confirmIdentityAlias(input) {
         return request('session.identityAlias.confirm', input) as ReturnType<KodaXRuntime['sessions']['confirmIdentityAlias']>;
@@ -1202,6 +1226,12 @@ export function createRuntimeDaemonClient(
       },
     },
     catalog: {
+      inspectRepoIntelligence(sessionId) {
+        return request('repo.intelligence.inspect', { sessionId }) as Promise<import('@kodax-ai/coding/client-contract').ClientRepoIntelligenceHostStatus>;
+      },
+      prewarmRepoIntelligence(sessionId) {
+        return request('repo.intelligence.prewarm', { sessionId }) as Promise<import('@kodax-ai/coding/client-contract').ClientRepoIntelligenceHostStatus>;
+      },
       executionTools(sessionId) {
         return request('tool.catalog', { sessionId }) as Promise<readonly import('@kodax-ai/coding/client-contract').KodaXToolVisibilityMeta[]>;
       },

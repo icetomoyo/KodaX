@@ -516,7 +516,7 @@ export function createRuntimeDaemonReverseBridge(
     executionBindings,
     attachTransport(notify) {
       requireOpen();
-      executionBindings.cancel();
+      executionBindings.detach();
       if (activeTransport !== undefined) {
         rejectPendingCredentialRequests('Credential client connection was replaced.');
         rejectDispatchedHostCalls();
@@ -527,7 +527,7 @@ export function createRuntimeDaemonReverseBridge(
       return {
         close() {
           if (activeTransport?.id !== id) return;
-          executionBindings.cancel();
+          executionBindings.detach();
           activeTransport = undefined;
           activeHostLeases.clear();
           rejectPendingCredentialRequests('Credential client disconnected.');

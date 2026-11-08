@@ -11,16 +11,16 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.97-beta.1` (Git tag); `v0.7.96` remains the last stable release |
-| Current package version | `@kodax-ai/kodax@0.7.97-beta.1` (npm publication remains manual) |
+| Current released version | `v0.7.97-beta.4` (Git tag); `v0.7.96` remains the last stable release |
+| Current package version | `@kodax-ai/kodax@0.7.97-beta.4`; npm `beta` is `0.7.97-beta.3` until the maintainer publishes beta.4 (publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 core packages + private optional `artifacts` source workspace; one public npm package |
 | Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4` and extended with the unified Artifact SDK in `v0.7.97-alpha.5`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3` and extended with startup streamlining, Session recency ordering, draft admission, concurrent-launch recovery and shared-Session Host ownership resolution through `v0.7.97-alpha.7`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
 | Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement released in alpha.4; missing visual capabilities remain unverified; [design](ADR.md#verification-responsibility-and-tradeoffs) |
 | Artifact distribution revision | `2026-10-18` — one `@kodax-ai/kodax` npm package; four `/artifacts` subpaths and resources staged in the main tarball; local implementation, not yet published |
 | Current Artifact SDK additions | Unified visual evidence SDK and format backends released in `v0.7.97-alpha.5`: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
-| Current development | `v0.7.97` / `FEATURE_298` — the Space Host execution and session seams (Main default Skills with consumption-time execution bindings, Quick Ask Session promotion, redirect-boundary recovery and atomic core-config publication) plus the alpha.12 follow-up Windows hardening prepared for the `v0.7.97-beta.1` candidate on top of the released alpha.12 unified Host cutover; [current SDK checklist](SDK_MIGRATION.md#2026-10-29-未发布改动对齐). Cross-platform/manual release verification, the fix list's still-open findings and Issue 371's historical first-read investigation remain open. |
+| Current development | `v0.7.97-beta.4` Space SDK contract repair — AGENTS-only editor loading beside a tagged instruction loader, history contract v2 (revision-fenced Fork/Rewind/Retry turn targets, `resync_required`, bidirectional paging, cancellable budgeted reads), typed capability checks and optional launcher requirements, on top of the beta.3 repair release; [release preparation](release.md#v0797-beta4-release-preparation). Cross-platform manual acceptance, installed Space/SDK acceptance and the original slow first resume after rebuild remain open; `KodaX-next-dev` carries the unreleased SDK hardening (Issues 378–385) and FEATURE_303/304 on top of beta.4. |
 | Visual harness implementation | [P0–P2 实施与验证](designs/visual-harness-implementation-2026-10-28.md); [P3–P7 续接](designs/visual-harness-p3-p7-implementation-2026-10-29.md) — P3/P4/P5/P6 implemented within declared scope. [New P7 task-value plan](designs/visual-harness-p7-task-value-plan-2026-10-29.md) compares final task results and full-task tokens against optimized pre-visual 1826cc22; not executed. Old r3 remains tool-choice/single-response cost evidence, not task benefit acceptance. Historical default suite 18,094 passed / 0 failed; earlier r2/ENOTEMPTY/Feature270/T30 failures and unlocated causes retained. No new feature ID/version assigned |
-| Roadmap updated | `2026-11-02` — the Space execution/session seam completion and core-config publication prepared for the `v0.7.97-beta.1` candidate on top of the released alpha.12; FEATURE_300 remains Planned |
+| Roadmap updated | `2026-11-08` — beta.4 Space SDK contract repair prepared on top of the published beta.3; FEATURE_300 remains Planned; `KodaX-next-dev` merged beta.4 the same day |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
 | Total tracked features | `88` |
 | InProgress | `2` |
@@ -554,6 +554,81 @@ Final frozen package **80** and historical/real-alpha.11 Host gates **4** passed
 and build fingerprints remained unchanged throughout. See the J guide for exact checkpoints.
 Space stays independently at `da531f0a`; its historical I counts do not certify a newly paired
 Space build. No push/publication.
+
+## v0.7.97-beta.4 Release Record
+
+`v0.7.97-beta.4` is the fourth beta of the v0.7.97 line: Space SDK
+instruction and history client contract repairs. AGENTS-only editor loading
+returns beside a tagged instruction loader whose ordered sources carry
+`kind:'agents'|'rule'` with typed skip diagnostics. History contract v2
+validates revision-fenced complete turn targets for Fork, Rewind and Retry
+under the storage lock, replaces stale results with the shared
+`resync_required` error contract, and adds ordinary bidirectional paging,
+cancellable budgeted reads and bounded source reuse without extra Provider
+requests. The SDK negotiates v2 on the wire while strict beta.3 clients keep
+their original response shapes; typed SDK/Host capability checks and
+optional Product launcher requirements add no mandatory basic-startup gates,
+and model prompts are unchanged. The CLI embeds its native manifest map
+compactly without unreachable copies, keeping the audited 49 KiB headroom
+under the unchanged 5 MiB
+limit, and the CI/Release in-place upgrade gate now pins the published
+beta.3 tarball. Validation is recorded in the
+[FEATURE_298 test guide](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md).
+Every v0.7.96 stable and v0.7.97-alpha.1 through beta.3 contract is
+retained. Cross-platform manual acceptance, installed Space/SDK acceptance
+and npm publication remain manual maintainer steps.
+
+## v0.7.97-beta.3 Release Record
+
+`v0.7.97-beta.3` is the third beta of the v0.7.97 line: a repair release for
+long-context recovery, durable Actor settlement and saved Session history.
+Context-capacity errors recover through bounded reads, adaptive compaction
+budgets and strict complete-summary parsing that retain original tool
+evidence and report capacity failure instead of stalling; a paged original
+input replaced by capacity admission stays unread so the model reads it
+again. Independent Actor Runs settle only from the exact Turn's durable
+terminal state and reconcile both crash windows without replaying completed
+execution; Session work mode locks after the first accepted root Run and
+survives Actor settlement, checkpoint recovery and verified legacy
+generation recovery. The `productHistoryLocation` and
+`productHistoryTurnResolution` Host capabilities locate saved history around
+search hits and resolve complete turns for Fork and rewind, and Markdown rule
+fragments load from `~/.kodax/rules` and `.kodax/rules`. Interrupted Host
+exits recover from verified Windows containment evidence, identical Host
+builds are shared across installations and abandoned daemon publications are
+removed in bounded idle rounds. DOCX visual review converts through a
+host-supplied LibreOffice by default and discloses field recalculation.
+Complete audited Windows programs ship as byte-verified resources in npm
+packages and native archives, restoring the 49 KiB CLI reserve beneath the
+unchanged 5 MiB limit. Bounded real-model probes use a 64K application budget
+and do not validate native sub-100K models or arbitrary whole-document
+reading quality. Every v0.7.96 stable and v0.7.97-alpha.1 through beta.2
+contract is retained. Cross-platform manual acceptance, installed Space/SDK
+acceptance and npm publication remain manual maintainer steps.
+
+## v0.7.97-beta.2 Release Record
+
+`v0.7.97-beta.2` is the second beta of the v0.7.97 line: Script execution
+reliability hardening — VM call paths expose complete collision-safe tool
+aliases beside original names, typed program data carries normalized read
+windows and trusted structured JSON, and duplicate model output is projected
+only when the original receipt stays fully readable; native tool names are
+encoded at the Anthropic-compatible wire boundary and restore canonical
+identity, arguments, permissions and deltas; an isolated optional
+sourceContent view preserves original content beside display output, and
+Host tools may declare outputSchema served on demand through `mcp_describe`
+without enlarging default menus; missing Node globals gain bounded
+contextual guidance without displacing original QuickJS error JSON or
+settled receipts. Shared Host recovery refreshes promoted observers,
+preserves owner-bound pending input recovery with idempotent withdrawal
+receipts, reclaims proven dead history locks and enforces trusted Agent
+mode before execution; Host-owned repo diagnostics/prewarm and durable
+Workflow finalization with physical task draining and protected project
+references land. Bounded real-model validation records Script model-facing
+reliability as recommend-iterate without efficiency or general
+intelligence claims. Every v0.7.96 stable and v0.7.97-alpha.1 through
+beta.1 contract is retained. Cross-platform manual acceptance and npm
+publication remain manual maintainer steps.
 
 ## v0.7.97-beta.1 Release Record
 

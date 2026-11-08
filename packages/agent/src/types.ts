@@ -473,6 +473,8 @@ export interface KodaXSessionPromotionRecord {
 }
 
 export interface KodaXSessionRuntimeInfo {
+  /** Permanent first-Run admission fact; independent of retained history. */
+  workModeLocked?: boolean;
   readonly sessionPromotion?: KodaXSessionPromotionRecord;
   /** Host-owned task lifetime; delete this Session after its task settles. */
   temporary?: boolean;

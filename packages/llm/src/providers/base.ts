@@ -30,7 +30,7 @@ import {
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { observeProviderAttempt } from '../provider-request-observation.js';
 import { KodaXError, KodaXRateLimitError, KodaXProviderError, KodaXNetworkError, KodaXContextOverflowError, KodaXReasoningEffortRejectedError } from '../errors.js';
-import { parseContextOverflowFacts } from './context-overflow.js';
+import { isContextOverflowMessage, parseContextOverflowFacts } from './context-overflow.js';
 import { isProviderQuotaError } from '../retry/provider-quota.js';
 import { isProviderConnectionFailure } from '../retry/provider-network.js';
 import type { KodaXProviderErrorMetadata } from '../errors.js';
@@ -962,14 +962,9 @@ export abstract class KodaXBaseProvider {
   }
 
   protected isContextOverflowError(error: unknown): boolean {
-    const msg = getErrorMessage(error).toLowerCase();
-    return msg.includes('prompt is too long')
-      || msg.includes('prompt too long')
-      || msg.includes('context length')
-      || msg.includes('context_length_exceeded')
-      || msg.includes('context window')
-      || msg.includes('context limit')
-      || msg.includes('上下文长度');
+    if (extractHttpStatus(error) === 429) return false;
+    return isContextOverflowMessage(getErrorMessage(error))
+      || this.providerErrorMetadata(error).upstreamCode === 'context_length_exceeded';
   }
 
   protected async withRateLimit<T>(
@@ -1000,9 +995,19 @@ export abstract class KodaXBaseProvider {
       } catch (e) {
         const terminal = nonRetryableCause(e);
         if (terminal) throw terminal;
+        if (e instanceof KodaXContextOverflowError) throw e;
         const headers = extractHeadersFromError(e);
         const shouldRetry = readHeader(headers, 'x-should-retry');
-        if (isProviderQuotaError(e) || shouldRetry === 'false'
+        const quotaError = isProviderQuotaError(e);
+        if (!quotaError && shouldRetry === 'false' && this.isContextOverflowError(e)) {
+          // No transport retry: preserve the capacity identity so the runtime
+          // can recover with a smaller request instead of stopping on a wrapper.
+          throw new KodaXContextOverflowError(
+            parseContextOverflowFacts(getErrorMessage(e)), this.name,
+            { ...this.providerErrorMetadata(e), retryable: false },
+          );
+        }
+        if (quotaError || shouldRetry === 'false'
           || (e instanceof KodaXProviderError && e.metadata?.retryable === false)) {
           throw new KodaXProviderError(`${this.name} API error: ${e instanceof Error ? e.message : getErrorMessage(e)}`, this.name, {
             ...this.providerErrorMetadata(e), retryable: false,
@@ -1014,7 +1019,8 @@ export abstract class KodaXBaseProvider {
           retryState.disablePreferredToolConstraints = true;
           continue;
         }
-        if (status === 408 || status === 409 || (status !== undefined && status >= 500) || (status !== 429 && shouldRetry === 'true')) {
+        if (status === 408 || status === 409 || (status !== undefined && status >= 500)
+          || (status !== 429 && shouldRetry === 'true' && !this.isContextOverflowError(e))) {
           if (i === retries - 1) {
             throw new KodaXProviderError(e instanceof Error ? e.message : String(e), this.name, this.providerErrorMetadata(e));
           }
@@ -1046,7 +1052,6 @@ export abstract class KodaXBaseProvider {
           }
         }
 
-        if (e instanceof KodaXContextOverflowError) throw e;
         if (this.isContextOverflowError(e)) {
           throw new KodaXContextOverflowError(
             parseContextOverflowFacts(getErrorMessage(e)), this.name, this.providerErrorMetadata(e),

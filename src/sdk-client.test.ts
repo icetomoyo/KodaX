@@ -12,6 +12,35 @@ import {
   tryAcquireRuntimeDaemonLock,
 } from './runtime-daemon/state.js';
 
+it('starts a basic Product client on an old Host without requiring optional history features', async () => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-optional-history-'));
+  const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
+  const paths = resolveRuntimeDaemonPaths(homeDir);
+  const lock = tryAcquireRuntimeDaemonLock(paths, { runtimeId: runtime.identity.runtimeId,
+    pid: process.pid, createdAt: runtime.identity.startedAt });
+  if (!lock) throw new Error('Expected isolated Host lock.');
+  const endpoint = process.platform === 'win32'
+    ? { kind: 'pipe' as const, path: `\\\\.\\pipe\\kodax-optional-${randomUUID()}` }
+    : { kind: 'unix' as const, path: path.join(homeDir, 'host.sock') };
+  const capabilities = { ...runtime.capabilities };
+  delete capabilities.productHistoryTurnResolution;
+  delete capabilities.productHistoryLocation;
+  const host = await startRuntimeDaemonHost({ runtime: { ...runtime, capabilities }, paths, lock, endpoint });
+  try {
+    const client = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
+    try {
+      expect(await client.sessions.list()).toEqual([]);
+      expect(client.capabilities.supports('productHistoryTurnResolution', 2)).toBe(false);
+      await expect(client.sessions.resolveHistoryTurn('unused', { kind: 'latest' }))
+        .rejects.toMatchObject({ code: 'daemon_upgrade_required' });
+    } finally { await client.disconnect(); }
+    expect(await runtime.sessions.list()).toEqual([]);
+  } finally {
+    await host.close(); await runtime.close();
+    await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
 it.each(['productClient', 'productHistoryBoundaries', 'productExecutionAuthorization', 'productExecutionAuthorization-v1'])('rejects an older Host without the required %s contract', async requested => {
   const capability = requested.replace('-v1', '');
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-old-product-'));

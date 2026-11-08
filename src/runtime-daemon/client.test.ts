@@ -27,6 +27,30 @@ const RUN_LIFECYCLE_CAPABILITIES = {
 } as const;
 
 describe('runtime daemon client proxy', () => {
+  it('rejects v2 turn selections and tagged boundaries before sending them to a v1 Host', async () => {
+    const sent: string[] = [];
+    const client = createRuntimeDaemonClient({
+      identity: { runtimeId: 'old-history', mode: 'daemon', profile: 'default', startedAt: '2026-11-08T00:00:00Z', version: KODAX_VERSION },
+      capabilities: { productHistoryTurnResolution: { version: 1 } },
+      transport: { async request(method) { sent.push(method); return {}; }, subscribe() { return { close() {} }; } },
+    });
+    const historyBoundary = { kind: 'turn_end' as const, entryId: 'entry', sourceRevision: 'source' };
+    await expect(client.sessions.resolveHistoryTurn('session', { kind: 'latest' })).rejects.toMatchObject({ code: 'daemon_upgrade_required' });
+    await expect(client.sessions.fork({ sessionId: 'session', historyBoundary })).rejects.toMatchObject({ code: 'daemon_upgrade_required' });
+    await expect(client.sessions.fork({ sessionId: 'session', historyBoundary, before: true })).rejects.toMatchObject({ code: 'daemon_upgrade_required' });
+    await expect(client.sessions.rewind({ sessionId: 'session', historyBoundary, expectedHead: null })).rejects.toMatchObject({ code: 'daemon_upgrade_required' });
+    expect(sent).toEqual([]);
+  });
+  it('rejects repository inspection and prewarm on an old Host without sending requests', async () => {
+    const sent: string[] = [];
+    const client = createRuntimeDaemonClient({
+      identity: { runtimeId: 'old-repo-host', mode: 'daemon', profile: 'default', startedAt: '2026-11-03T00:00:00Z', version: KODAX_VERSION },
+      transport: { async request(method) { sent.push(method); return {}; }, subscribe() { return { close() {} }; } },
+    });
+    await expect(client.catalog.inspectRepoIntelligence!('session')).rejects.toMatchObject({ code: 'daemon_upgrade_required' });
+    await expect(client.catalog.prewarmRepoIntelligence!('session')).rejects.toMatchObject({ code: 'daemon_upgrade_required' });
+    expect(sent).toEqual([]);
+  });
   it.each([{ binding: { leaseId: 'old' } }, { businessBinding: { id: 'expert', revision: 'r1' }, profile: {} },
     { profile: { defaultSkill: { name: 'expert-method' } } }])('rejects new execution intent on an old Host before sending it', async authorization => {
     const sent: string[] = [];

@@ -4,6 +4,7 @@ import { redactScopedProviderCredential } from '@kodax-ai/llm';
 import type { KodaXMessage, KodaXSessionUiHistoryItem, KodaXSessionData } from '@kodax-ai/agent';
 import { createOutputSegmentProjection, reduceOutputSegmentProjection, effectiveOutputSegmentText } from '@kodax-ai/coding';
 import type { KodaXEvents, KodaXOutputSegmentProjection, KodaXActivityEventMeta } from '@kodax-ai/coding';
+import type { CreatableHistoryItem } from '@kodax-ai/repl';
 import { createRetryHistoryItem, buildManagedLiveEventDrafts, restoreHistoryItemsFromSession,
   childActivityId, childActivityLabel, childActivitySource, truncateChildActivityDetail, suppressesChurnOverToolAction,
   toolActivityDetail, formatManagedTaskBreadcrumb, formatWorkflowAgentDigest, inferWorkflowLocaleFromParts } from '@kodax-ai/repl';
@@ -447,6 +448,11 @@ export class SessionViewOwner {
     return reading;
   }
 
+  historyItem(sessionId: string, itemId: string): ClientViewItem | undefined {
+    this.assertOpen();
+    return this.sessions.get(sessionId)?.view?.items.find(item => item.id === itemId);
+  }
+
   close(): Promise<void> {
     if (this.closeAttempt) return this.closeAttempt;
     this.closing = true;
@@ -570,7 +576,8 @@ export function mergeSessionViewItems(history: readonly ClientViewItem[], live: 
   for (const item of [...live].reverse()) {
     const position = items.findIndex(candidate => candidate.id === item.id);
     if (position >= 0) {
-      items[position] = item;
+      const historyBoundary = items[position]!.historyBoundary;
+      items[position] = historyBoundary ? { ...item, historyBoundary } : item;
       nextPosition = position;
     } else if (isSettledCanonicalDuplicate(items, item)) {
       // The canonical projection already owns this settled output; keeping
@@ -823,10 +830,11 @@ export function restoreSessionViewItems(
   data: KodaXSessionData | null | undefined,
   conversation?: readonly KodaXMessage[] | null,
   liveItems: readonly ClientViewItem[] = [],
+  historyBoundaries?: ReadonlyMap<KodaXMessage, NonNullable<ClientViewItem['historyBoundary']>>,
 ): ClientViewItem[] {
   // A long turn can fill the window without its query. Advancing to the next
   // query would discard that entire visible turn as soon as new input arrives.
-  return restoreSessionContentItems(sessionId, data, conversation, liveItems).slice(-SESSION_VIEW_ITEM_LIMIT);
+  return restoreSessionContentItems(sessionId, data, conversation, liveItems, historyBoundaries).slice(-SESSION_VIEW_ITEM_LIMIT);
 }
 
 /** Assign identities before applying the display window; item reads need every block. */
@@ -835,6 +843,7 @@ export function restoreSessionContentItems(
   data: KodaXSessionData | null | undefined,
   conversation?: readonly KodaXMessage[] | null,
   liveItems: readonly ClientViewItem[] = [],
+  historyBoundaries?: ReadonlyMap<KodaXMessage, NonNullable<ClientViewItem['historyBoundary']>>,
 ): ClientViewItem[] {
   if (!data) return [];
   const historyMessages = conversation && conversation.length > 0 ? conversation : data.messages.slice(-30);
@@ -882,9 +891,9 @@ export function restoreSessionContentItems(
     return undefined;
   };
   const occurrences = new Map<string, number>();
-  const restored = restoreHistoryItemsFromSession({ structuredTaskResults: true, historyScope: 'all', messages: historyMessages, uiHistory: uiHistory.filter(item =>
+  const restored = restoreHistoryItemsFromSession({ historyBoundaries, structuredTaskResults: true, historyScope: 'all', messages: historyMessages, uiHistory: uiHistory.filter(item =>
     item.type === 'tool_group' || !item.outputId || !committedOutputs.has(item.outputId)) });
-  const items = restored.flatMap((item): ClientViewItem[] => {
+  const projectItem = (item: CreatableHistoryItem): ClientViewItem[] => {
     if (item.type !== 'tool_group' && item.taskResult) {
       const taskResult = item.taskResult;
       const identity = createHash('sha256').update(JSON.stringify([taskResult.source, taskResult.runId,
@@ -945,7 +954,9 @@ export function restoreSessionContentItems(
     return [{ id: `${sessionId}:history:${fingerprint}:${occurrence}`, type: item.type, text: item.text,
       ...(item.inputId !== undefined ? { inputId: item.inputId } : {}),
       ...('icon' in item ? { icon: item.icon } : {}), ...(item.timestamp !== undefined ? { timestamp: item.timestamp } : {}) }];
-  });
+  };
+  const items = restored.flatMap(item => projectItem(item).map(projected => item.historyBoundary
+    ? { ...projected, historyBoundary: item.historyBoundary } : projected));
   return restoreLineageNotices(data, historyMessages, items);
 }
 
@@ -953,7 +964,7 @@ export function persistSessionViewItems(items: readonly ClientViewItem[]): KodaX
   return items.flatMap((item): KodaXSessionUiHistoryItem[] => {
     if (item.outputState === 'committed' || item.taskResult) return [];
     if (item.type !== 'tool') {
-      const { sidecar, outputState: _state, ...persisted } = item;
+      const { sidecar, outputState: _state, historyBoundary: _boundary, ...persisted } = item;
       return [{ ...persisted, type: item.type, ...(item.outputId ? {} : { presentationOnly: true as const }),
         ...(item.type === 'sidecar' ? { sidecarVerdict: sidecar?.verdict, sidecarDelivery: sidecar?.delivery,
           icon: sidecar?.delivery === 'budget-exhausted' ? 'budget-exhausted' : sidecar?.verdict ?? item.icon } : {}) }];

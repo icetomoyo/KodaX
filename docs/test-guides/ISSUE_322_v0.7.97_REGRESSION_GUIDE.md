@@ -517,3 +517,114 @@ Independent full-difference review and focused re-review: zero remaining P1/P2.
 No paid model requests are made for this integration. Historical GLM/Kimi results
 retain their original revision and scope; offline contracts do not establish
 model-quality equivalence for the integrated revision.
+
+
+## 2026-11-06: Small-context document pipeline acceptance
+
+日期：2026-11-06。关联：[容量可靠性方案](../designs/context-capacity-reliability-plan-2026-11-06.md)、[Eval Guidelines](../../benchmark/EVAL_GUIDELINES.md)。
+
+### 离线集成验收
+
+入口：`tests/small-context-document-recovery.test.ts`。运行：
+
+```powershell
+node node_modules/vitest/vitest.mjs run tests/small-context-document-recovery.test.ts --reporter=dot
+```
+
+矩阵为 8 / 16 / 32 / 64 / 96 Ki-token 模拟窗口，每个窗口分别返回完整摘要和明确 `max_tokens` 截断摘要。临时文档包含 2,000 行具名例外与可继续页码，不读取用户文档。
+
+测试经过真实 Runner、原生 `read`、最终 tool-result batch guardrail、文件持久化、managed compaction hook、实际 `compact` 和摘要请求构造。主生成使用真实 `buildRunnerLlmAdapter` 的受控 stream seam；该适配器负责每次成功响应后的请求估算与快照重建。摘要提供者也是离线受控实现，无网络和付费调用。
+
+固定调用图：并行读取三个文档页 → 注入一次 Provider 上下文拒绝 → 历史恢复并提交 → 用真实 read 读取已保存页的续读提示 → 确认提示出现在下一次模型输入 → 根据提示读取原文下一页 → 完成。断言已完成工具不重复执行、保存内容与实际 read 返回逐字相同、精确用户约束仍可见、截断摘要从未成为检查点。
+
+本测试证明受控运行链路的工程行为，不证明模型理解或自主选择读取范围的能力。固定 system/schema 特意较小；8K/16K 通过不代表生产任意完整工具菜单均能容纳。Provider 计数、摘要正文和下一步工具选择均受控，不能作为真实模型准确率或吞吐量报告。PDF/OCR 使用 Extensions 独立测试，不由本矩阵代替。
+
+### 真实模型 pilot：拟定，未执行
+
+状态：**未执行，不计为通过**。当前阶段不启动付费调用。以下是 `small-context-document-pilot-r1` 的预算与协议冻结；实际模型 ID、价格核验、精确 fixture 字节/hash 与生产提示快照在执行前补齐 manifest，任何变更均建立新 revision，不能边跑边扩样本。
+
+Layer 1 无法回答：摘要是否保存跨章节例外、纠正后的事实优先级、出处和未读范围，以及模型是否正确利用分页提示。pilot 只回答这些语义问题；容量分类、持久化和请求次数等工程行为由离线测试先验收。
+
+| 项目 | 冻结值 |
+| --- | --- |
+| 模型 | 用户实际使用的最多 2 个模型；选定具有 ≤100K 窗口且固定请求可容纳的配置，逐个执行 |
+| fixture | 2 个：中英混合技术文档；含相互冲突条款与后续纠正的长文档 |
+| arms / 重复 | 修复前、修复后各 1 次；相同文档字节、生产 tool descriptions 和主任务 |
+| 每 cell 调用图 | G1 阅读页 A；S1 压缩；G2 注入页 B 与纠正；S2 压缩；G3 注入页 C 后回答；禁止自由工具循环 |
+| maxCallsPerCell / maxRoundsPerCell | 5 次 Provider 请求，其中 3 次主生成、2 次摘要；共 5 个预定义步骤，超过普通 3 轮的原因是必须分别观察两次压缩前后的证据传递 |
+| maxProviderCalls | 40：2 模型 × 2 fixture × 2 arms × 5；所有 transport retry / repair / fallback 也计入，无额外复核模型 |
+| maxOutputTokensPerCall | 2,048，包括可计入该上限的 reasoning；由请求参数强制，不靠文字要求 |
+| 输入上限 | 每次完整 envelope ≤12,000 估算 tokens，且仍须满足所选模型的输入 + 输出 + 安全边际；否则不发送 |
+| maxTotalTokens | 600,000，输入/缓存输入/输出/reasoning 不重叠核算；每次调用前预留最坏预算，之后用 usage 对账 |
+| maxExternalSpendUsd | US$5；执行前按所选模型当时价格核验最坏成本，超过即缩小新 revision 或停止，不能自动加预算 |
+| timeoutMs / 并发 | 每次 90,000 ms；每 provider 同时 1 请求；超时保留为失败，不自动重试 |
+| 工具执行 | 模型提出的调用只记录；由固定 harness 注入预定页面，不能扩大阅读/执行范围 |
+
+先运行 1 个模型 × 1 个 fixture × 2 arms，共最多 10 请求验证实验是否可区分；这 10 次计入总上限。实验无效、预算不足、输出截断或前一阶段无可用摘要时，终止该 cell 并保留原因，不伪造中间结果、不追加补救调用。任何硬上限到达即停止。
+
+fixture 在 A/B/C 三处预置精确可引用事实，并包含一个跨章节例外、一处后续纠正和一段明确未读的章节。分别观测引用是否可追溯、例外是否保存、纠正是否覆盖旧事实、未读部分是否被误称已读、已完成动作是否被要求重复。正则/JSON 只记录机械表现；主会话盲化读取配对原文、摘要和回答，逐项给出保留/遗漏/错误增强/证据不足及理由，不能用总命中率代替判断。
+
+原始请求/响应、usage、超时和预算账本保存在 OS 临时目录下的独立 revision 目录，记录绝对路径与 hash，不提交 raw。报告必须区分 `eval-design`、`provider-noise`、工程故障、模型语义遗漏与 `inconclusive`，给出任务有效性、收益/回退、建议及下一步最小成本。历史源码比较或本次离线通过均不能填充真实模型结果栏。
+
+## 2026-11-07: Actor restart completion wait regression
+
+### 原始失败与诊断边界
+
+冻结核心快照 `58671f8dea75a0df2498ad553536b17ee2b04896` 的全量运行保留为：1,425 文件中 1,417 通过、1 失败、7 跳过；19,723 项中 19,635 通过、1 失败、87 跳过。唯一失败是 `sdk-runtime.generation-actors.test.ts` 中独立 Actor 的 depth=0 重启恢复：恢复请求已返回，等待 `agents.output(...).state` 为 `completed` 时仍为 `running`。不能将后续定向通过追记为那一次全量通过。
+
+原场景串行 12 次、四 worker 并行 48 次均未重现失败。仅凭这些通过不足以排除实际恢复故障，因此在同一 SDK `agents.followup` / `agents.output` 边界增加受控慢落盘场景：恢复后的执行器返回完成结果后，将当前 Session 的一次真实文件 rename 延迟 1,200ms，不改 Runtime、Actor controller 或存储实现。
+
+未修复内层等待时，受控场景两次均在同一 `running` / `completed` 断言失败。临时定向诊断记录：原内层等待结束时为 `running`；约 1,307ms 后变为 `completed`；再次关闭并重启 Host，仍能读到持久化的 `completed`；执行器调用合计两次，即原执行一次、恢复一次，没有重放。临时诊断代码已删除，原始诊断日志位于 OS 临时目录 `kodax-actor-restart-20261107`。
+
+Vitest 4.1.11 的 `vi.waitFor` 默认 timeout 为 1,000ms；外层测试的 20,000ms 不会扩大这个内层期限。Actor 的终态须等待持久化提交，合法的异步落盘可能超过 1 秒。这确认了测试时限缺口；受控延迟复现不等于取得了原始全量失败的完整时序 trace，不能据此声称排除了所有其他恢复竞态。目前未重现终态丢失或恢复后重复执行的生产缺陷。
+
+### 修复与回归
+
+只将该文件的五处 Actor 完成等待显式设为 5,000ms，保留外层测试硬上限及原有状态、Turn identity、checkpoint、调用次数和 Stop 拒绝断言。新增 `slow-settlement` 场景验证慢落盘后完成、再次重启后终态仍存在，且没有额外执行器调用。所有普通场景继续使用真实存储，不注入延迟。没有增加生产配置或修改生产 deadline。
+
+首轮完整文件验证：10/10 通过，其中慢落盘场景约 2 秒。随后以四 worker 运行 Actor controller、owner liveness、Runtime Actor facade、generation recovery、本文文件及小窗口文档恢复，共 6 文件 / 161 项全部通过。`npm run typecheck` 的 source / tests 均通过，`git diff --check` 通过。此次仅测试和验收记录变更，未重新运行全仓 1,425 文件或重新构建生产包；此前全量的原始失败继续保留，不改写为全量通过。
+
+“首轮运行后锁定 work mode”由另一线程维护。本补丁不修改 Runtime、work-mode 授权、settings/storage 逻辑或其断言；若后续整合出现相关语义冲突，应暂停该部分处理，不能放宽模式锁定以使测试通过。
+#### Standards
+
+独立逐 hunk 评审：0 项发现，无严重级别。未发现新增成文规范违反或需要处理的基线坏味道。
+
+#### Spec
+
+独立需求评审：0 项发现，无严重级别。保留原 Turn、fresh authority、checkpoint 和 Stop 断言；真实 Session rename 延迟、第三次 Host 启动后的终态和调用次数检查覆盖持久化与不重放。受控复现与历史全量 trace 明确分开；未修改 work mode 锁定机制。
+
+### 2026-11-07 后续调查：五秒缓解不构成完整修复
+
+后续三路交叉审查和精确提交门控发现独立 Actor 的生产一致性缺口：`environment.release` 先提交 Run `completed`，Controller 随后才提交 Actor canonical terminal。门控时实际观测 Run 为 `completed`、Actor output 为 `running`、真实 save attempt 停在 `commit_inflight/rename`；硬终止该自建 Host worker 后，另一进程启动仍读到 Run `completed`，Actor Turn 却已 `interrupted`，恢复被拒。
+
+这确认了需要修复的独立 Run 结算屏障，不能继续将 `64dab173a` 的五秒等待解释为完整生产修复；历史全量失败仍不能唯一归因为人工慢落盘。门控与硬崩溃 raw 位于 OS 临时目录 `kodax-actor-root-cause-20261107`，没有提交 raw 或一次性探针。
+
+具体根因、证据边界、拟定的最小修复及验收门见 [Actor 重启结算分析](../designs/actor-restart-settlement-analysis-2026-11-07.md)。该方案尚未实施，验收门未计为通过。work mode 锁定机制及生产源码保持不变。
+
+第二轮方案复核优先采用内部 committed-event hook 驱动 Run 结算，替代另建 Host 等待 finalizer；补充首次 dispatch 前持久关联，以及启动/后续 owner-death 两处对账。P0 必须同时覆盖 Actor 提交前和 Actor 已提交、Run 尚未提交两个硬崩溃停点，并包含基础 unknown、Run 写入失败、checkpoint 关闭收敛及撤销五秒等待；P1 扩大竞争和故障组合。反向停点本轮仅确认启动代码缺少对账，尚未执行该停点的硬崩溃验收，不计为通过。
+
+### 2026-11-07 分阶段修复与最终验证入口
+
+前文“尚未实施/未执行”是调查阶段的历史状态。P0-A 已提交 `c68e7abc8`，P0-B 及必要异常出口已提交 `0c37a4eb7`。具体实现、有效 RED→GREEN 和验证范围见 [实施记录](../designs/actor-restart-settlement-analysis-2026-11-07.md#11-分阶段实施记录)。容量修复、work mode 锁定及 next-dev 整体合并继续独立管理，没有发布安装包。
+
+新增源码回归入口：
+
+- `src/sdk-runtime.actor-settlement-recovery.test.ts`：持久关联、启动/后续 owner-death/直接 Stop 对账，legacy、失败详情、身份、CAS 和 Shell 清理约束。
+- `src/sdk-runtime.actor-terminal.test.ts`：精确真实 terminal-save/rename gate，completed、failed、iteration limit 和独立 Turn 范围。
+- `src/sdk-runtime.actor-exceptions.test.ts`：temporary Session、checkpoint 关闭、无事件 unknown、共享 fence、通知失败和 Shell cleanup 解除后收敛。
+- `src/sdk-runtime.actor-stop.test.ts`：Stop 两赢家、真实 Run-store/确认/读回/通知故障，以及 owner/revision 被替换后的旧回调和旧 Host close。
+- `src/sdk-runtime.actor-crash.test.ts`：两个真实进程硬崩溃停点。专属 fixture 进程在 threads pool 运行，父仅 kill 自己 spawn 的 handle，校验 marker PID/Turn/Run/真实 save phase；重启不重执行旧 Turn。
+- `src/sdk-runtime.actor-hook-idempotency.test.ts`：重复 canonical hook、旧 Turn 通知与同 Actor 后续 Turn 隔离。
+- `src/sdk-runtime.actor-races.test.ts`：A 已完成后 B unknown，以及 checkpoint 关闭失败、所有权保持、重试关闭和恢复。
+
+两个硬崩溃回归已实际 2/2 通过。crash fixture 的后缀路径和 Node builtin mock 曾导致门控未命中；这些夹具错误修正后才计通过，不作为生产 RED。父套件不把预期硬退出算作未处理 worker 错误。
+
+原 generation-actors 文件的五处五秒完成期限已撤除。等待按精确 `agents.output` 判定，终态错误立即失败，`agents.wait(...,100,{signal})` 仅作唤醒，保留外层预算。失败 hook 输出最近 output/Run/event、执行次数、有界 `coding:actors` sink 和真实 save-attempt 阶段诊断，不在失败 hook 再访问 SDK 或磁盘。既有 1,200ms 延迟场景保留为附加慢存储回归；它不替代精确 terminal-save gate 或硬崩溃证据。
+
+生产冻结点 SDK blob 为 `adf5fded8ca0141d1aceac2ebc69effe54ea4dce`，另两生产模块及 CLI 增量记录于 [构建预算审计](../designs/actor-settlement-bundle-audit-2026-11-07.md)。最终结果如下，不把中间专项或旧构建当成最终通过。
+
+P1 追加 2 文件 / 3 项独立执行全部通过；它们在默认全仓启动后加入，不归入那次预先收集的文件清单。generation 等待诊断顺序经复审调整后，完整文件另跑 10/10 通过。两项只改测试，生产冻结点保持不变。标准轴与需求轴交叉复审最终均无剩余发现。
+
+最终默认全仓：1,430 文件中 1,423 通过、7 跳过；19,758 项中 **19,671 通过、87 跳过、0 失败**。此新的执行没有改写前文历史失败。源码/测试 typecheck、完整构建、29 文件的打包回归 102/102、本地打包及 37 个导出目标存在性检查均通过。打包测试第一组采用并发 4，原串行尾组保持并发 1；没有修改其文件清单或断言。
+
+实际 CLI 5,196,207 bytes，与审计探测的 SHA-256 一致，仍在原 5 MiB 外层上限内。全仓 JSON、P1 追加 JSON、最终构建/打包日志和本地产物位于 OS 临时目录 `kodax-actor-final-20261107`。阶段提交、冻结 blob、精确验证范围及原工作区隔离说明见实施记录的“最终冻结快照验收”。本次没有发布或更新安装中的 Space/CLI。

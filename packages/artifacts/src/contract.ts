@@ -87,7 +87,7 @@ export function decodeArtifactResult<O extends ArtifactOperation>(operation: O, 
  if (r.image !== undefined) { const image = record(r.image); check(image.mediaType === 'image/png' && hash(image.sha256) && integer(image.width) && integer(image.height));
   check(typeof image.dataBase64 === 'string' && image.dataBase64.length <= 14 * 1024 * 1024 && /^[A-Za-z0-9+/]+={0,2}$/.test(image.dataBase64) && image.dataBase64.length % 4 === 0); }
  if (r.capabilities !== undefined) for (const item of array(r.capabilities)) { const c = record(item); check(operations.includes(c.operation as ArtifactOperation) && [...formats, 'surface', 'runtime', 'raster'].includes(String(c.input)) && ['available', 'not-prepared', 'unsupported'].includes(String(c.availability)));
-  check(c.backend === undefined || c.operation === 'render' && (c.backend === 'lightweight' || c.backend === 'libreoffice' && c.input === 'pptx')); diagnostics(c.diagnostics); if (c.engine !== undefined) engine(c.engine); }
+  check(c.backend === undefined || c.operation === 'render' && (c.backend === 'lightweight' || c.backend === 'libreoffice' && (c.input === 'pptx' || c.input === 'docx'))); diagnostics(c.diagnostics); if (c.engine !== undefined) engine(c.engine); }
  if (r.engine !== undefined) engine(r.engine);
  if (r.objects !== undefined) for (const item of array(r.objects)) { const o = record(item); check(integer(o.page) && text(o.objectId) && text(o.type)); check(o.text === undefined || typeof o.text === 'string'); if (o.box !== undefined) box(o.box, true); }
  if (r.status === 'ready') { check(!array(r.diagnostics).some(d => record(d).blocking === true), 'Ready result contains a blocking diagnostic.');

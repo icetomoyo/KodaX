@@ -35,6 +35,7 @@ import {
   type ClientInteractionRegistries,
 } from "../client-interactions.js";
 import { startRuntimeDaemonHost } from "./host.js";
+import * as daemonMaintenance from './maintenance.js';
 import { createRuntimeDaemonClient, type RuntimeDaemonClientTransport } from "./client.js";
 import {
   readRuntimeDaemonLockOwner,
@@ -182,6 +183,51 @@ afterEach(async () => {
 });
 
 describe("runtime daemon host", () => {
+  it('starts temporary-file maintenance after ready and joins it before closing Runtime', async () => {
+    const paths = resolveRuntimeDaemonPaths(tempHome(), 'host-maintenance');
+    const runtime = makeRuntime();
+    const preflight = runtime.status.preflight.bind(runtime.status);
+    const inspect = vi.spyOn(runtime.status, 'preflight').mockImplementation(async () => ({
+      ...await preflight(), clientCount: 2, blockers: ['connected_clients'], canStop: false,
+    }));
+    const order: string[] = [];
+    let finish!: () => void;
+    let sweepingSignal: AbortSignal | undefined;
+    const runOnce = vi.fn((signal?: AbortSignal) => {
+      expect(readRuntimeDaemonState(paths)?.status).toBe('ready');
+      sweepingSignal = signal;
+      order.push('sweep');
+      return new Promise<{ scanned: number; removed: number }>((resolve) => {
+        finish = () => resolve({ scanned: 1, removed: 0 });
+      });
+    });
+    const factory = vi.spyOn(daemonMaintenance, 'createRuntimeDaemonMaintenance').mockReturnValue({
+      runOnce, close: async () => { order.push('cursor-close'); },
+    });
+    const originalClose = runtime.close.bind(runtime);
+    vi.spyOn(runtime, 'close').mockImplementation(async () => { order.push('Runtime-close'); await originalClose(); });
+    const lock = tryAcquireRuntimeDaemonLock(paths, {
+      runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
+    });
+    if (!lock) throw new Error('Expected maintenance Host owner.');
+    const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint: await makeTestEndpoint() });
+    cleanupTasks.push(() => host.close());
+    try {
+      await waitFor(() => runOnce.mock.calls.length === 1);
+      expect(inspect).toHaveBeenCalledTimes(1);
+      const closing = host.close();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(sweepingSignal?.aborted).toBe(true);
+      expect(order).toEqual(['sweep']);
+      finish();
+      await closing;
+      expect(order).toEqual(['sweep', 'cursor-close', 'Runtime-close']);
+    } finally {
+      finish?.();
+      factory.mockRestore();
+    }
+  });
+
   it.runIf(process.platform === "win32")("survives transient state publication contention across ready and concurrent close", async () => {
     const paths = resolveRuntimeDaemonPaths(tempHome(), "default");
     const runtime = makeRuntime();
@@ -1474,6 +1520,7 @@ function makeRuntime(
         return { items: [], revision: "sha256:" + "0".repeat(64), sourceRevision: 'source', status: 'resolved', issues: [], oversized: [] };
       },
       async readHistoryEntry() { return null; },
+      async resolveHistoryTurn() { return { status: 'unavailable', reason: 'no_turns' }; },
       async searchHistory() {
         return { revision: "sha256:" + "0".repeat(64), hits: [] };
       },

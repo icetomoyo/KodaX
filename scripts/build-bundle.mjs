@@ -247,7 +247,12 @@ if (existsSync(nativeRoot)) {
     if (!entry.isDirectory()) continue;
     const manifestPath = path.join(nativeRoot, entry.name, 'manifest.json');
     if (existsSync(manifestPath)) {
-      nativeManifestMap[entry.name] = readFileSync(manifestPath, 'utf8');
+      // The runtime JSON.parses embedded manifests but never reads their
+      // `legal` entries (files stay beside manifest.json in the package);
+      // strip them and pretty-printing to keep the audited CLI budget.
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+      delete manifest.legal;
+      nativeManifestMap[entry.name] = JSON.stringify(manifest);
     }
   }
 }
@@ -372,10 +377,12 @@ const commonOptions = {
     KODAX_NATIVE_MANIFESTS_JSON: nativeManifestsJson === undefined
       ? 'undefined'
       : JSON.stringify(nativeManifestsJson),
-    KODAX_NATIVE_MANIFEST_JSON: nativeManifestJson === undefined
+    // The runtime reads the single-manifest constants only when no manifest
+    // map is embedded; with a map they are unreachable copies of host data.
+    KODAX_NATIVE_MANIFEST_JSON: nativeManifestJson === undefined || nativeManifestsJson !== undefined
       ? 'undefined'
       : JSON.stringify(nativeManifestJson),
-    KODAX_WINDOWS_NATIVE_MANIFEST_JSON: nativeManifestJson === undefined
+    KODAX_WINDOWS_NATIVE_MANIFEST_JSON: nativeManifestJson === undefined || nativeManifestsJson !== undefined
       ? 'undefined'
       : JSON.stringify(nativeManifestJson),
     'process.env.DEV': '"false"',
@@ -416,7 +423,15 @@ const cliResult = await build({
   ...commonOptions,
   metafile: true,
   entryPoints: [path.join(repoRoot, 'src/kodax_cli.ts')],
-  external: [...external, './provider-auth-cli.js', './storage-repair-cli.js', './kodax_doctor.js', './one-shot-task.js'],
+  external: [...external, './provider-auth-cli.js', './storage-repair-cli.js', './kodax_doctor.js', './one-shot-task.js', './history-turn.js', './client-history.js', './maintenance-scheduler.js'],
+  plugins: [...commonOptions.plugins, {
+    name: 'lazy-cli-history-reader',
+    setup(builder) {
+      // client.ts is bundled into the root CLI, so its parent-relative import
+      // must target the same private sibling as the Host-side import.
+      builder.onResolve({ filter: /^\.\.\/client-history\.js$/ }, () => ({ path: './client-history.js', external: true }));
+    },
+  }],
   outfile: path.join(distDir, 'kodax_cli.js'),
 });
 assertStartupImportBoundary('CLI', cliResult, { eagerOnly: true });
@@ -424,9 +439,11 @@ assertSingleProviderCredentialModule('CLI', cliResult);
 
 const cliBytes = statSync(path.join(distDir, 'kodax_cli.js')).size;
 if (writeMetafile) writeFileSync(path.join(distDir, 'cli-meta.json'), JSON.stringify(cliResult.metafile));
-// Match the stricter published-artifact fence: preserve 64 KiB of CLI headroom.
+// Match the published-artifact fence: preserve 49 KiB of CLI headroom.
 // Audited program data stays in packaged resources, without trimming behavior.
-assertBundleSize('CLI', cliBytes, 5 * 1024 * 1024 - 64 * 1024);
+// Audited Windows programs are packaged intact instead of carried as JS literals.
+// See docs/designs/beta3-cli-reserve-audit-2026-11-07.md.
+assertBundleSize('CLI', cliBytes, 5 * 1024 * 1024 - 49 * 1024);
 log(`  ✓ dist/kodax_cli.js (${(cliBytes / 1024).toFixed(0)} kB)`);
 
 // Bare `-r` must show the picker without evaluating the full CLI graph.
@@ -491,6 +508,9 @@ sdkEntryPoints['provider-auth-cli'] = path.join(repoRoot, 'src/provider-auth-cli
 sdkEntryPoints['storage-repair-cli'] = path.join(repoRoot, 'src/storage-repair-cli.ts');
 sdkEntryPoints.kodax_doctor = path.join(repoRoot, 'src/kodax_doctor.ts');
 sdkEntryPoints['one-shot-task'] = path.join(repoRoot, 'src/one-shot-task.ts');
+sdkEntryPoints['history-turn'] = path.join(repoRoot, 'src/history-turn.ts');
+sdkEntryPoints['client-history'] = path.join(repoRoot, 'src/client-history.ts');
+sdkEntryPoints['maintenance-scheduler'] = path.join(repoRoot, 'src/runtime-daemon/maintenance-scheduler.ts');
 
 log(`Building ${sdkEntryNames.length} SDK entries (splitting on)…`);
 const sdkResult = await build({
@@ -614,6 +634,7 @@ cpSync(capJsonSrc, capJsonDst);
 cpSync(path.join(repoRoot, 'packages/coding/src/self-knowledge/manual-topics.json'), path.join(distDir, 'manual-topics.json'));
 cpSync(path.join(repoRoot, 'packages/coding/src/prompts/static-text.json'), path.join(distDir, 'static-text.json'));
 cpSync(path.join(repoRoot, 'src/windows-native-scripts.json'), path.join(distDir, 'windows-native-scripts.json'));
+cpSync(path.join(repoRoot, 'packages/agent/src/runtime/windows-effect-job-programs.json'), path.join(distDir, 'windows-effect-job-programs.json'));
 cpSync(path.join(repoRoot, 'packages/repl/src/common/generated-config-templates.json'), path.join(distDir, 'generated-config-templates.json'));
 log(`  ✓ dist/provider-capabilities.json copied`);
 

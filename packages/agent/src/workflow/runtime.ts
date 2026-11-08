@@ -723,6 +723,7 @@ function buildRuntime(opts: CreateWorkflowRuntimeOptions): InternalRuntime {
     opts.backend.output(taskId);
 
   const api: WorkflowApi = {
+    ...(opts.signal ? { signal: opts.signal } : {}),
     runId: opts.runId,
     args: opts.args,
     budget,

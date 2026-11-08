@@ -1,4 +1,4 @@
-import { calculateMaxContextInputTokens } from '@kodax-ai/agent';
+import { calculateMaxContextInputTokens, RESERVE_SHRINK_FLOOR_TOKENS } from '@kodax-ai/agent';
 
 import type {
   RuntimeContextBudgetSnapshot,
@@ -63,10 +63,17 @@ export function buildToolResultBudgetFromUsage(
   const contextWindow = Math.max(0, Math.floor(input.contextWindow));
   const currentTokens = Math.max(0, Math.floor(input.currentTokens));
   const reservedResponseTokens = Math.max(0, Math.floor(input.reservedResponseTokens ?? 0));
-  const maxFinalInputTokens = calculateMaxContextInputTokens(
+  let maxFinalInputTokens = calculateMaxContextInputTokens(
     contextWindow,
     reservedResponseTokens,
   );
+  // Generation can reclaim an oversized preferred output reserve down to this
+  // same floor. Do not make a read fail with a zero advisory budget when that
+  // existing recovery rung can admit its result. Keep ordinary positive budgets
+  // unchanged; final batch admission and generation still enforce capacity.
+  if (maxFinalInputTokens <= currentTokens && reservedResponseTokens > RESERVE_SHRINK_FLOOR_TOKENS) {
+    maxFinalInputTokens = calculateMaxContextInputTokens(contextWindow, RESERVE_SHRINK_FLOOR_TOKENS);
+  }
   const aggregateInlineTokens = Math.max(0, maxFinalInputTokens - currentTokens);
   const usedRatio = contextWindow > 0 ? currentTokens / contextWindow : 1;
   const smallWindow = contextWindow > 0 && contextWindow <= 32_000;

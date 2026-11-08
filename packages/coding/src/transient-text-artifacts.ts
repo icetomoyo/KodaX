@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 const TRANSIENT_TEXT_ARTIFACT_PREFIX = 'kodax-transient://text/';
 const artifacts = new Map<string, string>();
 const unread = new Map<string, { offset: number; line_offset: number }>();
+const completedByRead = new Set<string>();
 const originalInputs = new Set<string>();
 const pageBudgets = new Map<string, number>();
 
@@ -22,7 +23,7 @@ export function isPagedOriginalInput(path: string): boolean { return originalInp
 export function transientPageTokenBudget(path: string): number | undefined { return pageBudgets.get(path); }
 
 /** The memory preparer has inspected every original chunk before generation. */
-export function markTransientOriginalPrepared(path: string): void { unread.delete(path); }
+export function markTransientOriginalPrepared(path: string): void { unread.delete(path); completedByRead.delete(path); }
 
 export function nextUnreadTransientPage(path: string): { offset: number; line_offset: number } | undefined {
   const value = unread.get(path);
@@ -37,8 +38,21 @@ export function recordTransientPageRead(path: string, page: { offset: number; li
     || (page.offset === current.offset && page.lineOffset > current.line_offset)) return;
   const next = page.continuation ? { offset: page.continuation.lineNumber, line_offset: page.continuation.nextOffset }
     : { offset: page.offset + page.lines, line_offset: 0 };
-  if (next.offset > page.totalLines) unread.delete(path);
+  if (next.offset > page.totalLines) { unread.delete(path); completedByRead.add(path); }
   else if (next.offset > current.offset || (next.offset === current.offset && next.line_offset > current.line_offset)) unread.set(path, next);
+}
+
+/** A page replaced before the model saw it must be read again. */
+export function rewindTransientPageRead(path: string, page: { offset: number; line_offset: number }): void {
+  const current = unread.get(path);
+  if (!current) {
+    // Only a completion earned by reading can be reopened; preparation stays final.
+    if (completedByRead.delete(path)) unread.set(path, { ...page });
+    return;
+  }
+  if (page.offset < current.offset || (page.offset === current.offset && page.line_offset < current.line_offset)) {
+    unread.set(path, { ...page });
+  }
 }
 
 export function readTransientTextArtifact(artifactPath: string): string | undefined {
@@ -57,6 +71,7 @@ export function deleteTransientTextArtifact(artifactPath: string): void {
   if (artifactPath.startsWith(TRANSIENT_TEXT_ARTIFACT_PREFIX)) {
     artifacts.delete(artifactPath);
     unread.delete(artifactPath);
+    completedByRead.delete(artifactPath);
     originalInputs.delete(artifactPath);
     pageBudgets.delete(artifactPath);
   }

@@ -9,9 +9,9 @@ import { test } from 'node:test';
 
 const exec = promisify(execFile);
 const workflow = await readFile(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
-const required = ['provider-capabilities.json', 'manual-topics.json', 'static-text.json', 'runtime-daemon-schema.json', 'windows-native-scripts.json', 'generated-config-templates.json'];
+const required = ['provider-capabilities.json', 'manual-topics.json', 'static-text.json', 'runtime-daemon-schema.json', 'windows-native-scripts.json', 'windows-effect-job-programs.json', 'generated-config-templates.json'];
 
-test('the actual npm pack inventory includes runtime data sidecars', async () => {
+test('the actual npm pack inventory includes runtime data sidecars and lazy history modules', async () => {
   const npm = [process.env.npm_execpath,
     path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js'),
     path.join(path.dirname(path.dirname(process.execPath)), 'lib/node_modules/npm/bin/npm-cli.js'),
@@ -21,7 +21,9 @@ test('the actual npm pack inventory includes runtime data sidecars', async () =>
     { cwd: path.resolve(import.meta.dirname, '..'), windowsHide: true, timeout: 60_000, maxBuffer: 8 * 1024 * 1024 });
   const [manifest] = JSON.parse(packed.stdout);
   const files = new Set(manifest.files.map(entry => entry.path));
-  for (const name of required) assert.ok(files.has(`dist/${name}`), `npm package omitted ${name}`);
+  for (const name of [...required, 'client-history.js', 'history-turn.js']) {
+    assert.ok(files.has(`dist/${name}`), `npm package omitted ${name}`);
+  }
 });
 
 test('the real tar release inventory includes every runtime data sidecar', async () => {

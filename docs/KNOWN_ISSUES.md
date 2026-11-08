@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-05_
+_Last Updated: 2026-11-08_
 
 ---
 
@@ -46,6 +46,127 @@ This predates the child contract projection; the eval uses raw per-call usage,
 not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
+
+## Issue 388: SDK history capacity fixture observes the parent before the worker on Windows
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: observed in v0.7.97-beta.3 Release CI; first affected version unknown
+- Created / Resolved: 2026-11-08
+- Fixed: post-`v0.7.97-beta.4` (unreleased)
+
+`src/sdk-client.history.test.ts:22` ("projects the actual request compaction
+capacity including Memory reserve without enabling diagnostics") failed on the
+Windows portable tier in Release run 42390168306 attempt 1. The failure was
+`expected 'parent' to be 'worker'` after `Matcher did not succeed in time`.
+The same commit passed on rerun.
+
+Expected: the assertion waits for the projection it checks and passes
+regardless of which side answers first. A real ordering defect is not yet
+ruled out; it would surface as the parent's capacity being reported where the
+worker's is expected. Reproduce under a slow serial Windows run
+(`KODAX_WINDOWS_TEST_TIER=portable`, `maxWorkers: 1`). Failed tests are not
+automatically retried (see [release execution](release.md#current-release-execution)),
+so the fix belongs in the fixture or the code.
+
+Resolution (2026-11-08): the failing assertion used vitest's 1-second
+`expect.poll` default (line 39). Line 39 waits for the worker projection after `worker.result`; the latest view still had the parent scope when the 1-second budget ran out. The shared `createVitestConfig`
+now gives `expect.poll` a 10-second default for every tier, including Windows.
+This is not a retry: a poll returns as soon as it matches. 110 polls had
+already been raised by hand to 4-20 seconds, and explicit per-poll timeouts
+still take precedence. No production code changed.
+
+- Files changed: `vitest.config.ts`
+- Tests added: `tests/vitest-poll-budget.test.ts` (a projection settling after
+  1.5 s failed with "Matcher did not succeed in time" before the change)
+- Fixed: post-`v0.7.97-beta.4` (unreleased)
+
+## Issue 387: Busy-Session Ink attach fixture times out before the prompt renders on Windows
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: observed in v0.7.97-beta.4 Release CI; first affected version unknown
+- Created / Resolved: 2026-11-08
+- Fixed: post-`v0.7.97-beta.4` (unreleased)
+
+`src/sdk-client.repl-activity.test.ts:71` ("renders current Host activity and
+accepts follow-ups when attaching Ink to a busy Session") failed on the
+Windows portable tier in Release run 42456953165 attempt 1. The captured
+frame contained only the banner, and the `Type a message` assertion ended with
+`Matcher did not succeed in time`. The same commit passed on rerun.
+
+Expected: attaching Ink to a busy Session renders the input prompt and current
+activity on a slow runner. Determine whether the wait is too short or keyed to
+the wrong signal, or whether the attach path stalls before the prompt. A stall
+would be a user-visible REPL defect.
+
+Resolution (2026-11-08): the failing assertion used vitest's 1-second
+`expect.poll` default (line 220). The failed frame showed the Host still projecting "Stop request accepted; waiting for execution to settle" and the withdrawn queued input, so the settled state reached Ink late rather than never. The shared `createVitestConfig`
+now gives `expect.poll` a 10-second default for every tier, including Windows.
+This is not a retry: a poll returns as soon as it matches. 110 polls had
+already been raised by hand to 4-20 seconds, and explicit per-poll timeouts
+still take precedence. No production code changed.
+
+- Files changed: `vitest.config.ts`
+- Tests added: `tests/vitest-poll-budget.test.ts` (a projection settling after
+  1.5 s failed with "Matcher did not succeed in time" before the change)
+- Fixed: post-`v0.7.97-beta.4` (unreleased)
+
+## Issue 386: Extension `exec` can take over 30 seconds on Windows
+
+- Priority: High
+- Status: Resolved
+- Introduced: observed in v0.7.97-beta.4 Release CI; first affected version unknown
+- Created / Resolved: 2026-11-08
+- Fixed: post-`v0.7.97-beta.4` (unreleased)
+
+`packages/coding/src/extensions/helpers.test.ts` ("exec > runs a simple command
+and returns stdout") timed out after 30 seconds running `exec('echo hello')`
+on the Windows portable tier in Release run 42456953165 attempt 1. The same
+commit passed on rerun.
+
+On Windows, `exec` (`packages/coding/src/extensions/helpers.ts`) launches
+PowerShell with a minimal environment: PATH, HOME, LANG, TERM, SYSTEMROOT,
+COMSPEC and PATHEXT. It omits `PSModulePath`, `TEMP`/`TMP`, `APPDATA`,
+`LOCALAPPDATA` and `USERPROFILE`. Dropping `PSModulePath` made PowerShell
+`Add-Type` take more than 15 seconds in the alpha.11 archive-gate failures.
+A local Windows 11 measurement (2026-11-08) does not support that cause here:
+`echo hello` took 130-150 ms with the full environment, the minimal one, and
+the minimal one plus `PSModulePath` and/or `TEMP`/`APPDATA`. The cause is still
+unknown. Candidates are a cold first PowerShell start on the runner and a
+child that never exits. Commands needing module autoload may still be slowed
+by the missing `PSModulePath`; that is separate from this failure. Diagnosis
+needs timing from a Windows runner.
+
+Expected: a trivial command returns in a few seconds on a Windows runner. The
+environment must still exclude secrets: add only the non-secret variables
+PowerShell needs, and keep the existing API-key leak test green.
+
+Resolution (2026-11-08): two probe runs on `windows-latest` found the cause.
+Runs 42482422600 and 42484739752 were on the temporary branch
+`probe/issue-386`, since deleted. With `exec`'s environment, PowerShell
+`echo hello` took 22-25 seconds on every start; with the full runner
+environment it took 0.3 seconds. A binary search over the 146 extra runner
+variables isolated `PSModuleAnalysisCachePath`
+(`C:\PSModuleAnalysisCachePath\ModuleAnalysisCache` on the image). Adding only
+that variable brought a start down to 237 ms; `PSModulePath`, `TEMP` and
+`APPDATA` did not help. Without its module analysis cache, PowerShell rescans
+every installed module before resolving a command. `exit 42` was fast because
+it resolves no command. A local machine with few modules starts in about
+140 ms either way, which is why the failure was not reproducible here.
+
+`exec` now forwards `PSModuleAnalysisCachePath` and `LOCALAPPDATA`, the
+documented default cache location, on Windows. Both are paths, not secrets.
+On a user machine with many modules installed, every extension `exec` paid
+the same rescan. The Windows API-key leak test had used cmd-style `%VAR%`,
+which PowerShell does not expand, so it never read the variable. It now uses
+`$env:` and checks the key is absent.
+
+- Files changed: `packages/coding/src/extensions/helpers.ts`,
+  `packages/coding/src/extensions/helpers.test.ts`
+- Tests added: Windows-only check that both cache variables reach PowerShell
+  (failed with `"|"` before the fix)
+- Fixed: post-`v0.7.97-beta.4` (unreleased)
 
 ## Issue 385: Inline Runtime agent home is outside model write protection
 
@@ -2684,14 +2805,17 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 388 | Medium | Resolved | SDK history capacity fixture observes the parent before the worker on Windows | observed in v0.7.97-beta.3 Release CI; first affected version unknown | post-`v0.7.97-beta.4` (unreleased) | 2026-11-08 | 2026-11-08 |
+| 387 | Medium | Resolved | Busy-Session Ink attach fixture times out before the prompt renders on Windows | observed in v0.7.97-beta.4 Release CI; first affected version unknown | post-`v0.7.97-beta.4` (unreleased) | 2026-11-08 | 2026-11-08 |
+| 386 | High | Resolved | Extension `exec` can take over 30 seconds on Windows | observed in v0.7.97-beta.4 Release CI; first affected version unknown | post-`v0.7.97-beta.4` (unreleased) | 2026-11-08 | 2026-11-08 |
 | 385 | Low | Resolved | Inline Runtime agent home is outside model write protection | inline `homeDir` Runtimes; visible with Issue 380 | KodaX-next-dev (unreleased) | 2026-11-05 | 2026-11-05 |
 | 384 | Low | Resolved | Nested workflows and CLI print-mode commands ignore KODAX_HOME | FEATURE_246 Part E; CLI commands earlier | KodaX-next-dev (unreleased) | 2026-11-04 | 2026-11-04 |
 | 383 | Low | Open | Volcengine instance metadata address is not confirmed | Issue 381 metadata set | — | 2026-11-04 | — |
-| 382 | Low | Resolved | User Skill discovery ignores KODAX_HOME | FEATURE_194 v0.7.43 or earlier | KodaX-next-dev working tree (unreleased) | 2026-11-04 | 2026-11-04 |
-| 381 | High | Resolved | `web_fetch` can read cloud metadata and follow public redirects into the private network | first affected version unknown | KodaX-next-dev working tree (unreleased) | 2026-11-04 | 2026-11-04 |
-| 380 | High | Resolved | Model writes can install Host-loaded extensions and integrations | first affected version unknown | KodaX-next-dev working tree (unreleased) | 2026-11-04 | 2026-11-04 |
-| 379 | High | Resolved | Extension `tool:before` fails open on a throw or hang | first affected version unknown | KodaX-next-dev working tree (unreleased) | 2026-11-04 | 2026-11-04 |
-| 378 | High | Resolved | Extension tool policy is skipped or doubled on some dispatch paths | first affected version unknown | KodaX-next-dev working tree (unreleased) | 2026-11-04 | 2026-11-04 |
+| 382 | Low | Resolved | User Skill discovery ignores KODAX_HOME | FEATURE_194 v0.7.43 or earlier | KodaX-next-dev (unreleased) | 2026-11-04 | 2026-11-04 |
+| 381 | High | Resolved | `web_fetch` can read cloud metadata and follow public redirects into the private network | first affected version unknown | KodaX-next-dev (unreleased) | 2026-11-04 | 2026-11-04 |
+| 380 | High | Resolved | Model writes can install Host-loaded extensions and integrations | first affected version unknown | KodaX-next-dev (unreleased) | 2026-11-04 | 2026-11-04 |
+| 379 | High | Resolved | Extension `tool:before` fails open on a throw or hang | first affected version unknown | KodaX-next-dev (unreleased) | 2026-11-04 | 2026-11-04 |
+| 378 | High | Resolved | Extension tool policy is skipped or doubled on some dispatch paths | first affected version unknown | KodaX-next-dev (unreleased) | 2026-11-04 | 2026-11-04 |
 | 377 | Medium | Resolved | Child Agents expose failing Goal tools and bypass the root goal budget | FEATURE_192 v0.7.44; first affected version unknown | post-v0.7.97-alpha.10 working tree (unreleased) | 2026-10-31 | 2026-10-31 |
 | 375 | High | Resolved | Constrained Skill shell patterns admit extra effects | observed on aeb16fef; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
 | 374 | Medium | Resolved | Client question adapters lose unanswered semantics | observed on aeb16fef; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
@@ -17559,7 +17683,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 263 (38 Open, 225 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 266 (38 Open, 228 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md

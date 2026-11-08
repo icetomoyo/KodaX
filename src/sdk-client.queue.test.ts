@@ -105,9 +105,10 @@ it('shares queued input, atomically withdraws exact input, and delivers the rema
     await second.inputs.submit({ ...removed, inputId: 'third', text: 'Third instruction.' });
     await expect.poll(() => views.at(-1)?.queue.map((item) => item.inputId))
       .toEqual(['withdraw-me', 'second', 'third']);
-    const withdrawn = await second.inputs.withdraw(session.id, removed.inputId);
+    await expect(second.inputs.withdraw(session.id, removed.inputId)).rejects.toMatchObject({ code: 'permission_denied' });
+    const withdrawn = await first.inputs.withdraw(session.id, removed.inputId);
     expect(withdrawn).toMatchObject({ inputId: removed.inputId, text: removed.text });
-    await expect(first.inputs.withdraw(session.id, removed.inputId)).rejects.toMatchObject({ code: 'conflict' });
+    expect(await first.inputs.withdraw(session.id, removed.inputId)).toEqual(withdrawn);
     expect(await first.inputs.submit(removed)).toMatchObject({ state: 'withdrawn' });
     await first.sessions.updateSettings(session.id, { model: 'queue-model-b' });
     expect(requestModels).toEqual(['queue-model-a']);
@@ -206,7 +207,7 @@ it('keeps unknown slash tokens, paths and URLs in the ordinary text batch', asyn
     .map(message => message.content)).toEqual([`${text}\n\n---\n\nContinue normally.`]);
 });
 
-it('bounds queue previews and capacity while withdrawal returns the complete original once', async () => {
+it('bounds queue previews and capacity while only the original principal can retrieve the complete withdrawal', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
   await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
   const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
@@ -226,7 +227,7 @@ it('bounds queue previews and capacity while withdrawal returns the complete ori
     expect(attempts.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
     const success = attempts.find((result) => result.status === 'fulfilled');
     expect(success?.status === 'fulfilled' ? success.value.text : undefined).toBe(fullText);
-    expect(attempts.find((result) => result.status === 'rejected')).toMatchObject({ reason: { code: 'conflict' } });
+    expect(attempts.find((result) => result.status === 'rejected')).toMatchObject({ reason: { code: 'permission_denied' } });
     for (let i = 1; i < 5; i += 1) await first.inputs.withdraw(session.id, `queued-${i}`);
     release();
     await runtime.runs.await(active.runId!);
@@ -248,7 +249,7 @@ it.each(['stop', 'failure'] as const)('retains undelivered text and starts no re
   if (ending === 'stop') expect(result.stop?.requestedAt).toEqual(expect.any(String));
   else expect(result.phase).not.toBe('completed');
   expect(await first.inputs.read(session.id, queued.inputId)).toMatchObject({ state: 'queued' });
-  expect(await first.inputs.withdraw(session.id, queued.inputId)).toMatchObject({ text: queued.text });
+  expect(await second.inputs.withdraw(session.id, queued.inputId)).toMatchObject({ text: queued.text });
   expect(requests).toHaveLength(1);
 });
 

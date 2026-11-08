@@ -41,7 +41,8 @@ it.each(['agent', 'coding', 'script'] as const)('keeps %s URL/report work direct
   vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Unexpected network request in offline Runtime test'); }));
   const providerName = `deferred-direct-${path.basename(root)}`;
   const inputs: FrozenInput[] = [], publicResults: { name: string; content: string }[] = [];
-  let mode = initialMode, canonicalHelp = '', step = 0, failure: unknown;
+  const mode = initialMode;
+  let canonicalHelp = '', step = 0, failure: unknown;
   const leaf = (id: string, name: string, input: Record<string, unknown>) => mode === 'script'
     ? { type: 'tool_use' as const, id, name: 'script_exec', input: { code: `return await tools.${name}(${JSON.stringify(input)});` } }
     : { type: 'tool_use' as const, id, name, input };
@@ -130,8 +131,9 @@ it.each(['agent', 'coding', 'script'] as const)('keeps %s URL/report work direct
       return { after: measureModelFields(input).estimatedTokens, before: measureModelFields(restored).estimatedTokens, inputHash: inputHash(input) };
     });
     expect(measured.reduce((sum, row) => sum + row.before - row.after, 0)).toBeGreaterThan(0);
-    mode = initialMode === 'script' ? 'agent' : 'script';
-    await runtime.sessions.updateSettings(session.id, { workMode: mode });
+    // Work mode is locked after the first Run; the follow-up stays in the same mode.
+    await expect(runtime.sessions.updateSettings(session.id, { workMode: initialMode === 'script' ? 'agent' : 'script' }))
+      .rejects.toMatchObject({ code: 'conflict' });
     await run('请再核对已保存的报告，不需要重新访问网页。');
     expect(step).toBe(7);
     expect(fetcher).toHaveBeenCalledTimes(1);
@@ -145,7 +147,7 @@ it.each(['agent', 'coding', 'script'] as const)('keeps %s URL/report work direct
       publicResultNames: publicResults.map(item => item.name),
       taskEstimatedBefore: measured.reduce((sum, row) => sum + row.before, 0), taskEstimatedAfter: measured.reduce((sum, row) => sum + row.after, 0),
       taskWallMs, wallMs: Date.now() - started,
-      scope: 'Same scripted trajectory and shared system/tool contracts; counterfactual restores only search-result parameters, not historical hint text. AMA and capability execution remain active. Heuristic input tokens, not API usage or model quality. Mode-switch follow-up is separate.' };
+      scope: 'Same scripted trajectory and shared system/tool contracts; counterfactual restores only search-result parameters, not historical hint text. AMA and capability execution remain active. Heuristic input tokens, not API usage or model quality. Same-mode follow-up is separate.' };
     expect(inputHash(await hashes()), 'Capture sources must stay unchanged throughout both Runs').toBe(inputHash(sourceHashes));
     await fs.writeFile(artifact, JSON.stringify({ sourceHashes, summary, measured, inputs, canonicalInputs, publicResults, canonicalHelp, durable, transcript }, null, 2), { flag: 'wx' });
     await fs.writeFile(path.join(directory, 'summary.json'), JSON.stringify(summary, null, 2), { flag: 'wx' });

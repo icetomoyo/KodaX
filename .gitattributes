@@ -17,3 +17,4 @@ packages/coding/src/guardrails/auto-mode/guardrail.test.ts text eol=lf
 packages/repl/src/interactive/auto-mode-bootstrap.ts text eol=lf
 packages/repl/src/interactive/auto-mode-bootstrap.test.ts text eol=lf
 *.snap text eol=lf
+scripts/kodax-bin.cjs text eol=lf

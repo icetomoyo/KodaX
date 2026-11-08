@@ -95,9 +95,13 @@ it.each([
     await expect(client.runs.recover({ sessionId, runId })).rejects.toMatchObject({ code: 'credential_unavailable' });
     expect(requests).toHaveLength(0);
     mode = 'fresh';
-    expect(await client.runs.recover({ sessionId, runId })).toEqual({ sessionId, runId });
+    await expect(client.runs.recover({ sessionId, runId })).resolves.toEqual({ sessionId, runId });
     expect((await client.runs.await(runId)).phase).toBe('completed');
-    await client.sessions.updateSettings(sessionId, { provider: 'recovery-fixture', model: 'fixture', agentMode: 'sa', workMode: 'agent', permissionMode: 'full-access' });
+    // The original profile without intersect resolves to Coding. Rebinding
+    // authority must not turn its requested Agent string into a new selection.
+    expect(await client.runs.read(runId)).toMatchObject({ workMode: 'coding' });
+    await expect(client.sessions.updateSettings(sessionId, { workMode: 'agent' })).rejects.toMatchObject({ code: 'conflict' });
+    await client.sessions.updateSettings(sessionId, { provider: 'recovery-fixture', model: 'fixture', agentMode: 'sa', workMode: 'coding', permissionMode: 'full-access' });
     expect(seen).toEqual(['changed', 'revoked', 'fresh']);
     expect(requests).toHaveLength(1);
     expect(requests[0]!.includes('ORIGINAL-PERSONA')).toBe(true);

@@ -11,6 +11,7 @@ import {
   type AgentExecutorPlaneBinding,
   type AgentActorStore,
   type AgentControllerHealth,
+  type AgentEvent,
   type AgentExecutionInput,
   type AgentExecutionResult,
   type AgentIterationProgress,
@@ -81,6 +82,7 @@ export interface CodingActorSessionOptions {
   readonly owner?: AgentActorOwner;
   readonly isOwnerAlive?: (owner: AgentActorOwner) => boolean | Promise<boolean>;
   readonly onHealthChanged?: (health: AgentControllerHealth) => void;
+  readonly onEventCommitted?: (event: AgentEvent) => void | Promise<void>;
 }
 
 export interface CodingActorEnvironment {
@@ -231,6 +233,7 @@ export class CodingActorSession {
         message: error instanceof Error ? error.message : String(error),
       }),
       onHealthChanged: sessionOptions.onHealthChanged,
+      onEventCommitted: sessionOptions.onEventCommitted,
       onMessageCommitted: (message) => publishRootMailboxMessage(
         this.controller,
         message,
@@ -455,6 +458,26 @@ export class CodingActorSession {
     return this.controller.protocolOwnerSignal(ownerPath);
   }
 
+  /** Actor interruption is durable intent; resource cleanup waits for the
+   * actual executor promises. Only this Workflow's descendants participate. */
+  async waitForWorkflowExecutors(runId: string, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    const owner = `/root/workflow:${runId}/`;
+    let abort: (() => void) | undefined;
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      abort = () => reject(signal.reason ?? new Error('Workflow resource settlement aborted.'));
+      signal.addEventListener('abort', abort, { once: true });
+    });
+    try {
+      for (;;) {
+        signal.throwIfAborted();
+        const pending = [...this.executingTurns.values()].filter(turn => turn.actorPath.startsWith(owner));
+        if (pending.length === 0) return;
+        await Promise.race([Promise.allSettled(pending.map(turn => turn.settled)), cancelled]);
+      }
+    } finally { if (abort) signal.removeEventListener('abort', abort); }
+  }
+
   settleWorkflowOwner(
     ownerPath: string,
     state: 'completed' | 'failed' | 'interrupted',
@@ -500,6 +523,10 @@ export class CodingActorSession {
     this.environmentsByActor.clear();
     this.clientTurnOwners.clear();
     this.environment = undefined;
+  }
+
+  quiesceTurn(turnId: string, reason?: string): Promise<void> {
+    return this.controller.quiesce(reason, undefined, turnId);
   }
 
   quiesce(

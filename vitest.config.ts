@@ -38,6 +38,7 @@ export function createVitestConfig(options: TestSuiteOptions = {}) {
         '@kodax-ai/kodax/session': resolveFromRoot('src', 'sdk-session.ts'),
         '@kodax-ai/kodax/runtime': resolveFromRoot('src', 'sdk-runtime-public.ts'),
         '@kodax-ai/kodax/client': resolveFromRoot('src', 'sdk-client.ts'),
+        '@kodax-ai/coding/client-contract': resolveFromRoot('packages', 'coding', 'src', 'client-contract.ts'),
         '@kodax-ai/agent/media': resolveFromRoot('packages', 'agent', 'src', 'media', 'index.ts'),
         '@kodax-ai/coding/media': resolveFromRoot('packages', 'coding', 'src', 'media', 'index.ts'),
         '@kodax-ai/coding/visual-environment': resolveFromRoot('packages', 'coding', 'src', 'media', 'visual-environment.ts'),
@@ -73,6 +74,12 @@ export function createVitestConfig(options: TestSuiteOptions = {}) {
       // is 30s. Passing tests don't get slower; a real deadlock still fails.
       testTimeout: 30_000,
       hookTimeout: 30_000,
+      // vitest's 1s expect.poll default is far below how late cross-process
+      // Host/UI projections settle on slow serial Windows runners; 110 polls
+      // had already been hand-raised to 4-20s. Unbounded ones still flaked
+      // (Issues 387/388). A poll returns as soon as it matches, so passing
+      // tests don't get slower; explicit per-poll timeouts still win.
+      expect: { poll: { timeout: 10_000 } },
       // The suite mixes worker RPC with filesystem-heavy tests and real child
       // processes. On high-core Windows hosts, even eight workers can starve
       // daemon startup/shutdown long enough to create false failures; four keeps

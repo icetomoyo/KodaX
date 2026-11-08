@@ -25,6 +25,14 @@ describe('runtime daemon protocol schema', () => {
     expect(validateRuntimeDaemonJsonSchema(schema, { ...result, hits: [{ ...legacyHit, unexpected: true }] })).not.toEqual([]);
   });
 
+  it.each(['history', 'view'])('accepts only SDK source strings for a %s history-turn selection', source => {
+    const schema = RUNTIME_DAEMON_METHOD_SCHEMAS['session.history.resolveTurn'].params;
+    const selector = { kind: 'item', source, itemId: 'saved-item', revision: 'sdk-source' };
+    expect(validateRuntimeDaemonJsonSchema(schema, { sessionId: 'session', selector })).toEqual([]);
+    expect(validateRuntimeDaemonJsonSchema(schema, { sessionId: 'session', selector: { ...selector, revision: 42 } }))
+      .not.toEqual([]);
+  });
+
   it('requires explicit identity confirmation and a persisted delivery receipt', () => {
     const schema = RUNTIME_DAEMON_METHOD_SCHEMAS['session.identityAlias.confirm'];
     expect(schema).toBeDefined();
@@ -428,6 +436,8 @@ describe('runtime daemon protocol schema', () => {
         processContainment: 'windows-job',
         supervisorPid: 43,
         supervisorProcessStartIdentity: 'windows:134158463000000000',
+        windowsJobName: 'Global\\KodaXDaemonJob-00000000-0000-4000-8000-000000000001',
+        windowsBootIdentity: 'windows-boot-638900000000000000',
       },
       preflight: {},
     })).toEqual([]);

@@ -17,6 +17,7 @@ import type {
 import type { WorkflowScriptManifest } from './manifest.js';
 import { validateWorkflowScriptManifest } from './manifest.js';
 import { assertRestrictedWorkflowQuality } from './quality-lint.js';
+import { WorkflowAbortError } from './runtime.js';
 
 export class WorkflowScriptExecutionError extends Error {
   constructor(message: string) {
@@ -1037,6 +1038,8 @@ export async function runRestrictedWorkflowScript(
         throw new WorkflowScriptExecutionError(`workflow script timed out after ${wallTimeoutMs}ms`);
       }
 
+      if (opts.wf.signal?.aborted) throw new WorkflowAbortError();
+
       const commands = readCommands(context);
       for (const command of commands) {
         const task = handleCommand(opts.wf, command, hostState)
@@ -1079,6 +1082,7 @@ export async function runRestrictedWorkflowScript(
     }
     const cleanupSuffix =
       cleanupError === undefined ? '' : `; workflow phase cleanup failed: ${errorMessage(cleanupError)}`;
+    if (error instanceof WorkflowAbortError && cleanupError === undefined) throw error;
     if (error instanceof WorkflowScriptExecutionError) {
       if (cleanupError === undefined) throw error;
       throw new WorkflowScriptExecutionError(`${error.message}${cleanupSuffix}`);

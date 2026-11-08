@@ -1415,6 +1415,7 @@ describe('executeChildAgents', () => {
       { description: 'workflow-cb-base' },
       expect.objectContaining({ workflowWorktreeBaseDir: '/runs/p/r1/worktrees' }),
     );
+    expect(mockToolWorktreeRemove).not.toHaveBeenCalled();
   });
 
   it('passes active skill resource roots into child briefings', async () => {
@@ -2004,6 +2005,7 @@ describe('FEATURE_117 v2 — write-child AGENTS.md inject', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     clearAgentsLoaderCacheForTesting();
     try {
       rmSync(tmpRoot, { recursive: true, force: true });
@@ -2019,6 +2021,53 @@ describe('FEATURE_117 v2 — write-child AGENTS.md inject', () => {
       executionCwd: gitRoot,
     };
   }
+
+  it('keeps parent project fragments in an isolated writable worktree', async () => {
+    const worktree = join(tmpRoot, 'isolated');
+    mkdirSync(worktree);
+    mkdirSync(join(tmpRoot, '.kodax', 'rules'), { recursive: true });
+    writeFileSync(join(tmpRoot, '.kodax', 'rules', 'testing.md'), 'PARENT_LOCAL_RULE');
+    writeFileSync(join(worktree, 'AGENTS.md'), 'WORKTREE_AGENTS_RULE');
+    mockToolWorktreeCreate.mockResolvedValue(JSON.stringify({ path: worktree }));
+    mockRunKodaX.mockResolvedValueOnce({
+      success: true, lastText: 'done', messages: [{ role: 'assistant', content: '' }],
+      sessionId: 'isolated-rules',
+    });
+    await executeChildAgents(
+      [createBundle({ id: 'isolated-rules', readOnly: false, isolation: 'worktree' })],
+      createTmpCtx(tmpRoot), createOptions(),
+    );
+    const prompt = mockRunKodaX.mock.calls[0]![0].context?.systemPromptOverride;
+    expect(prompt).toContain('PARENT_LOCAL_RULE');
+    expect(prompt).toContain('WORKTREE_AGENTS_RULE');
+    expect(prompt?.indexOf('PARENT_LOCAL_RULE')).toBeLessThan(prompt!.indexOf('WORKTREE_AGENTS_RULE'));
+  });
+
+  it.each([false, true])('write child inherits rules and applies the parent read boundary (%s)', async (restricted) => {
+    const userHome = join(tmpRoot, 'home');
+    mkdirSync(join(userHome, 'rules'), { recursive: true });
+    mkdirSync(join(tmpRoot, '.kodax', 'rules'), { recursive: true });
+    writeFileSync(join(userHome, 'rules', 'writing.md'), 'PRIVATE_WRITE_CHILD_RULE');
+    writeFileSync(join(tmpRoot, '.kodax', 'rules', 'testing.md'), 'PROJECT_WRITE_CHILD_RULE');
+    vi.stubEnv('KODAX_HOME', userHome);
+    mockRunKodaX.mockResolvedValueOnce({
+      success: true, lastText: 'done',
+      messages: [{ role: 'assistant', content: '' }], sessionId: 'rules-child',
+    });
+    await executeChildAgents(
+      [createBundle({ id: 'rules-writer', readOnly: false, objective: 'Refactor' })],
+      {
+        ...createTmpCtx(tmpRoot),
+        assertReadablePath: (candidate: string) => {
+          if (restricted && candidate.startsWith(userHome)) throw new Error('outside bound workspace');
+        },
+      },
+      createOptions({ parentRole: 'worker', parentHarness: 'tool-dispatch' }),
+    );
+    const prompt = mockRunKodaX.mock.calls[0]![0].context?.systemPromptOverride;
+    expect(prompt).toContain('PROJECT_WRITE_CHILD_RULE');
+    expect(prompt?.includes('PRIVATE_WRITE_CHILD_RULE')).toBe(!restricted);
+  });
 
   it('write child receives AGENTS.md mutation policy in systemPromptOverride', async () => {
     const sentinel = 'NEVER_USE_ANY_TYPE_FEAT117_SENTINEL';

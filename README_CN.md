@@ -31,7 +31,7 @@
 </p>
 
 <p align="center">
-  <img src="kodax-hd.gif" alt="KodaX 实战演示" width="880">
+  <img src="assets/kodax-hd.gif" alt="KodaX 实战演示" width="880">
 </p>
 
 ---
@@ -51,7 +51,13 @@ CLI 使用 `--work-mode`，REPL 使用 `/work-mode`，Product Client 使用 Sess
 `v0.7.97-alpha.12` 标签发布统一共享 Host 收口、FEATURE_302 供应商/OAuth 凭据
 对齐栈，以及 2026-11-01 全链路审计的 Windows 恢复、凭据与权限修复；
 `v0.7.97-beta.1` 标签完成 Space 侧 Host 执行与会话接缝——Main 默认 Skills、
-Quick Ask Session promotion 与核心配置原子发布。
+Quick Ask Session promotion 与核心配置原子发布;`v0.7.97-beta.2` 标签加固
+Script 执行可靠性——类型化程序数据、原生工具名 wire 保真、按需输出契约与
+共享 Host 恢复/Workflow 终结修复;`v0.7.97-beta.3` 标签修复长上下文恢复、
+持久 Actor 结算与已保存会话历史——上下文容量恢复、首个 Run 工作模式锁定、
+历史定位/整轮解析与基于已验证证据的中断退出恢复;`v0.7.97-beta.4` 标签修复
+Space SDK 指令与历史客户端契约——history contract v2、带标签的指令加载器与
+类型化能力检查。
 Issue 371 的历史首次读取延迟及 Script 模型效率验收仍未关闭。
 
 ## 30 秒上手
@@ -331,6 +337,52 @@ SDK 系统代码契约更新，但没有放宽 shell/sandbox 的 fail-closed 边
 详见 [docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) 与
 [v0.7.97-alpha.4 发布清单](docs/release.md#v0797-alpha4-release-preparation)。
 所有 v0.7.96 稳定与 v0.7.97-alpha.1/alpha.2/alpha.3 契约全部保留。
+
+**v0.7.97-beta.4 发布**：修复 Space SDK 指令与历史客户端契约。编辑器加载
+恢复为仅 AGENTS.md,新增带标签的指令加载器按序给出 `kind:'agents'|'rule'`
+来源并附类型化跳过诊断。history contract v2 在存储锁下校验带修订围栏的
+Fork/Rewind/Retry 完整轮次目标,以共享的 `resync_required` 错误契约取代
+stale 结果,并为历史读取带来双向分页、可取消的有界读取与有界来源复用,不
+增加任何 Provider 请求。SDK 在 wire 上协商 v2,严格的 beta.3 客户端保留原
+响应形状;类型化 SDK/Host 能力检查与可选 Product 启动要求不引入新的强制
+basic-startup 门,模型提示不变。CLI 以紧凑形式内嵌 native manifest 映射并去掉
+运行时从不读取的副本,在
+5 MiB 上限不变的前提下保住已审计的 49 KiB 余量。代码提交、版本标签与实际
+发布分别判断。详见 [v0.7.97-beta.4 发布清单](docs/release.md#v0797-beta4-release-preparation)
+与 [SDK 迁移说明](docs/SDK_MIGRATION.md)。
+所有 v0.7.96 稳定与 v0.7.97-alpha.1 至 beta.3 契约全部保留。
+
+**v0.7.97-beta.3 发布**：针对长上下文恢复、持久 Actor 结算与已保存会话历史的
+修复版本。上下文容量错误通过有界读取、自适应压缩预算与严格的完整摘要解析恢复,
+保留原始工具证据,容量不足时明确报告而不是静默停滞;被容量准入替换为预览的
+分页原始输入保持未读,模型会重新读取。独立 Actor Run 仅依据精确 Turn 的持久
+终态结算,并在两个崩溃窗口内对账而不重放已完成的执行;Session 工作模式在首个
+被接受的根 Run 后锁定,并在 Actor 结算、checkpoint 恢复与已验证的旧代际恢复中
+保持。`productHistoryLocation` 与 `productHistoryTurnResolution` 两个 Host 能力
+可围绕搜索命中定位已保存历史,并为 Fork 与回退解析完整轮次;Markdown 规则片段
+从 `~/.kodax/rules` 与 `.kodax/rules` 加载。中断的 Host 退出依据已验证的 Windows
+containment 证据恢复,相同构建的 Host 可跨安装位置共享,废弃的 daemon 发布文件在
+有界空闲轮次中清理。DOCX 视觉评审在宿主提供 LibreOffice 时默认经其转换,并披露
+字段重算。完整的已审计 Windows 程序作为字节校验资源打包,在 5 MiB 上限不变的
+前提下恢复 49 KiB CLI 余量。有界真实模型探测使用 64K 应用预算,不验证原生
+100K 以下的模型或任意整篇文档阅读质量。代码提交、版本标签与实际发布分别判断。
+详见 [v0.7.97-beta.3 发布清单](docs/release.md#v0797-beta3-release-preparation)。
+所有 v0.7.96 稳定与 v0.7.97-alpha.1 至 beta.2 契约全部保留。
+
+**v0.7.97-beta.2 发布**：Script 执行可靠性加固——VM 调用路径在原名之外提供
+无冲突安全别名,类型化程序数据承载规范化读取窗口与可信结构化 JSON,仅在原
+回执保持完整可读时才投影重复的模型输出。原生工具名在 Anthropic 兼容 wire
+边界编码并恢复 canonical 身份、参数、权限与增量;独立可选 sourceContent 视图
+在展示输出之外保留原文,Host 工具可声明 outputSchema 经 `mcp_describe` 按需
+返回而不扩大默认菜单;缺失 Node 全局仅追加有界上下文指引,不覆盖原始 QuickJS
+错误 JSON 或已定回执。共享 Host 恢复刷新已提升观察者、以幂等撤回回执保留
+owner 绑定的 pending 输入恢复、回收已证死锁并在执行前核验可信 Agent 模式;
+Host 自有的 repo 诊断/预热与持久 Workflow 终结（物理任务排空、受保护项目
+引用）一并落地。有界真实模型验证将 Script 面向模型的可靠性记为
+recommend-iterate,不宣称效率或通用智能提升。代码提交、版本标签与实际发布
+分别判断。
+详见 [v0.7.97-beta.2 发布清单](docs/release.md#v0797-beta2-release-preparation)。
+所有 v0.7.96 稳定与 v0.7.97-alpha.1 至 beta.1 契约全部保留。
 
 **v0.7.97-beta.1 发布**：Space 侧 Host 执行与会话接缝收尾——Main 持有的
 能力门禁默认 Skills 与消费时执行绑定在实际 Product 输入消费点选取已提交
@@ -1362,6 +1414,23 @@ KodaX 有 50+ 个内置工具，按类别分组如下（实际暴露给 LLM 是�
 | `agent_output` | 读取有权限的 Actor/Turn 有界持久输出。 |
 | `ask_user_question` | 向用户发起单选 / 多选 / 自由文本提问 |
 | `exit_plan_mode` | 仅在当前 REPL/宿主提供审批回调时提交最终方案 |
+
+## 项目指令
+
+把简短、默认生效的 Markdown 约定放到 `~/.kodax/rules/*.md` 或
+`<项目根>/.kodax/rules/*.md`。用户目录跟随 `KODAX_HOME`。KodaX 按文件名排序读取
+直属 `.md` 文件，在模型首次操作前注入完整正文和来源路径。目录缺失或为空时，
+提示词没有新增内容。该格式只发现直属文件，正文按普通 Markdown 处理。
+
+指令顺序为用户 rules → 用户 `AGENTS.md` → 项目 rules → 根目录到工作目录的
+`AGENTS.md` → 项目 `.kodax/AGENTS.md`。两级同名文件均保留。没有 Git 根目录时，
+从当前工作目录加载项目 rules。单文件上限为 8 KiB UTF-8，用户和项目各有 16 KiB
+总额度（含来源标题开销）。超大、不可读或超出总额度的文件会整份跳过并提供诊断。
+`/reload` 展示已加载路径和跳过原因。已运行的托管 Run 使用自身的指令快照，
+可写子 Agent 沿用项目上下文接收规则。SDK 自定义提示词、只读子 Agent 按各自既有
+指令契约运行，绑定宿主的可读路径限制也适用于规则文件。
+
+需要强制执行的命令审批使用 `exec-policy.jsonc`，较长的任务专用流程可以放进 Skills。
 
 ## 内置 Skills
 

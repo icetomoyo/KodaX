@@ -14,6 +14,7 @@ import type {
   KodaXSessionLineage,
   KodaXSessionMessageEntry,
 } from '@kodax-ai/agent';
+import { readTaskResultReports } from '@kodax-ai/agent';
 
 export type SessionConversationHistoryStatus =
   | 'resolved'
@@ -57,6 +58,64 @@ export interface SessionConversationHistoryData {
   readonly status: SessionConversationHistoryStatus;
   readonly entries: readonly SessionConversationHistoryEntry[];
   readonly issues: readonly SessionConversationHistoryIssue[];
+}
+
+/** Real input starts a turn; tool results and injected child reports remain in it. */
+export function isConversationTurnInput(message: KodaXMessage): boolean {
+  return message.role === 'user' && message._synthetic !== true
+    && readTaskResultReports(message).length === 0
+    && !(Array.isArray(message.content) && message.content.length > 0
+      && message.content.every(block => block.type === 'tool_result'));
+}
+
+/** Never derive an executable prefix with an unmatched tool call/result. */
+export function isConversationTurnComplete(
+  entries: readonly SessionConversationHistoryEntry[], start: number, end: number,
+): boolean {
+  const scan = scanConversationToolPairing(entries, start, end);
+  let step = scan.next();
+  while (!step.done) step = scan.next();
+  return step.value;
+}
+
+/** Pure iterator supports synchronous locked writes and yielding read budgets. */
+export function* scanConversationToolPairing(
+  entries: readonly SessionConversationHistoryEntry[], start: number, end: number,
+): Generator<void, boolean> {
+  const pending = new Set<string>();
+  let blocks = 0;
+  for (let index = start; index <= end; index++) {
+    if ((index & 255) === 0) yield;
+    const message = entries[index]!.message;
+    if (!Array.isArray(message.content)) continue;
+    for (const block of message.content) {
+      if ((++blocks & 255) === 0) yield;
+      if (block.type === 'tool_use') {
+        if (pending.has(block.id)) return false;
+        pending.add(block.id);
+      } else if (block.type === 'tool_result' && !pending.delete(block.tool_use_id)) return false;
+    }
+  }
+  return pending.size === 0;
+}
+
+/** Validate tagged turns and safe legacy message prefixes under the source write lock. */
+export function assertConversationTurnBoundary(
+  history: SessionConversationHistoryData, entryId: string,
+  options: { readonly before?: boolean; readonly startEntryId?: string; readonly kind?: 'turn_end' } = {},
+): void {
+  const end = history.entries.findIndex(entry => entry.boundaryId === entryId);
+  const requireTurn = options.kind === 'turn_end' || options.startEntryId !== undefined;
+  if (end < 0 && !requireTurn) return; // Legacy missing-entry result stays null.
+  let start = end;
+  while (start >= 0 && !isConversationTurnInput(history.entries[start]!.message)) start--;
+  const valid = history.status === 'resolved' && end >= 0 && (!requireTurn || start >= 0)
+    && (options.startEntryId === undefined || history.entries[start]?.boundaryId === options.startEntryId)
+    && (options.before ? start === end
+      : (!requireTurn || end === history.entries.length - 1 || isConversationTurnInput(history.entries[end + 1]!.message))
+      )
+    && isConversationTurnComplete(history.entries, 0, options.before ? end - 1 : end);
+  if (!valid) throw Object.assign(new Error('Resolve a complete turn.'), { code: 'invalid_params' });
 }
 
 interface ThreadPath {

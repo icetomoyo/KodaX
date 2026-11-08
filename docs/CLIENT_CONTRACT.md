@@ -132,7 +132,7 @@ Host owner 实际销毁视图服务时，先停止新的读取、刷新和监听
 | `sessions` Auto 诊断 | `getAutoModeStats` | 返回现有 Host Auto 拒绝、熔断和分类器健康事实；非 Auto 为 undefined，不创建第二套权限状态 |
 | `sessions` 显示 | `observe`, `readItem` | 当前显示视图及其替换；补读显示项的完整正文或工具输入 |
 | `sessions` 图片附件 | `readItem(..., {part:'attachment', attachmentIndex, attachmentOffset, expectedImageSha256})` | 读取该 Host 项已附带的 PNG 字节块；不接受客户端文件路径 |
-| `sessions` 历史 | `readHistory`, `readHistoryEntry`, `searchHistory` | 规范对话分页、超大项正文和全 Session 搜索 |
+| `sessions` 历史 | `readHistory`, `readHistoryEntry`, `searchHistory`, `resolveHistoryTurn` | 规范对话分页、超大项正文和全 Session 搜索。支持时可定位搜索结果，并为 Fork/回退解析完整轮尾。 |
 | `sessions` 目标 | `readGoal`, `createGoal`, `pauseGoal`, `resumeGoal`, `clearGoal` | 读取及修改共享持久目标；创建、状态转换和预算遵守领域约束 |
 | `sessions` 通知 | `appendNotice` | 由 Host 保存通知正文及可选来源 |
 | `sessions` 分支 | `readLineage`, `labelEntry`, `selectBranch`, `rewindSession`, `forkSession`, `recoverSession` | 读取分支、标签、选择头、回退，以及派生新 Session |
@@ -213,8 +213,10 @@ Learning/Workflow 订阅的 `ready` 只表示 Host 已完成注册，不表示�
 Session 可选 `planModeEffort` 表达明确的计划模式默认：Host 仅在模式为 `plan` 且没有 Session `effort` 覆盖时采用它；离开计划模式后恢复原有 effort 解析，客户端无需回写缓存。`null` 清除覆盖。既有 `sharedSessionSettings.keys` 声明支持；旧 Host 未列出该键时，新 SDK 在发送包含该字段的设置 mutation 前返回 `daemon_upgrade_required`，其他设置仍可使用，不提升整个 productClient 版本。ACP 初始化只提交明确的选项/环境意图，普通 prompt 不回写缓存设置；显式 prompt effort 和模式切换仍提交对应的窄设置意图。计划批准使用完整 `options.plan`，Host 模式变化通过 ACP `current_mode_update` 显示。
 
 Session 可选 `workMode` 为 `agent | coding | script`，缺失或 `null` 清除后采用 Coding；它不是权限或 AMA 模式，也不是全局 config 字段。
-仅安全空闲时经同一 Session owner 更新，普通与 versioned mutation 都拒绝活跃 Run；不排队隐式切换、不清空历史。
+仅首次 Run 被接纳前经同一 Session owner 选择；之后普通、versioned mutation 和单次 Run 参数均拒绝改成其他模式（同值写入允许）。版本化设置快照返回只读 `workModeLocked`；Host 持久化该事实，重启、历史清理或 Run 索引淘汰不会解锁，已有完整 lineage 的会话同样锁定。
 选择随 Session 重启恢复，模型切换不修改它。旧 Host 未在 `sharedSessionSettings.keys` 声明 workMode 时，客户端在 mutation 前明确拒绝并要求升级。
+新版 Host 仅为新会话显式记录首轮前状态；旧版或导入会话缺少该事实时保持原模式，需新建会话才能另选。不在启动时读取、改写所有历史正文。
+旧格式 Session 的同一 Run/Turn generation 恢复延续原有效执行模式：原身份、已停止 owner、精确 checkpoint 和 fresh authority 均须通过现有校验。它不选择或回写 Session 模式，也不写入新的锁标记；后续新 Run 和设置 mutation 继续受 Session 锁约束。持久 Run 模式与原执行快照不一致时拒绝恢复；新绑定不能改变原有效模式。显式新格式锁元数据不享有该兼容路径。
 Script 选择及 Run 准入进行无工具、无模型的本地 VM 可用性检查；失败保留原选择，不能先生成再发现执行器缺失。
 首轮提供完整叶契约，原生控制项、undo 和支持后台命令的 bash 保留；回执与原生错误证据保留，未结算 cell 不自动重放。
 当前 Windows 离线证据及尚未验证的完整任务效果见 [工具总计划](designs/tool-portfolio-plan.md)。
@@ -686,3 +688,68 @@ matcher 匹配。它适用于同一 Agent Home 下的所有 Run，包括带授�
 
 **Host 环境在启动时固定。** 守护 Host 启动时复制父进程环境，包括代理、证书、
 `KODAX_HOME` 和 Provider 变量。修改这些变量后需要重启 Host 才生效。
+
+## 2026-11-08 Space SDK contract repairs (shipped in v0.7.97-beta.4)
+
+`productHistoryTurnResolution:2` distinguishes a message reading position from a
+complete operation target. Pass the ready `resolveHistoryTurn` result unchanged
+as `{turn}` to `forkSession` or `rewindSession`. It includes Session identity,
+`startBoundary`, the tagged `historyBoundary` (`kind:'turn_end'`), and the
+confirmed `expectedHead`. Fork with `{turn,before:true}` retains history before
+the turn's genuine user input (Retry); it never drops only the last tool result.
+The Host validates the canonical turn and tool pairing under the storage write
+lock against that source revision. No stale mutation is silently retargeted or
+replayed. Legacy untagged canonical boundaries retain safe message-prefix semantics;
+tagged boundaries and resolved targets require complete turns. A tool-use
+message boundary without its result is rejected with `invalid_params`. Generic lineage
+selectors retain their existing low-level semantics.
+
+`resolveHistoryTurn` returns `ready` or `unavailable`. Unavailable reasons are a
+closed union: `unresolved_history`, `no_turns`, `no_previous_turn`,
+`turn_not_found`, `unproven_source`, `item_not_found`, `not_canonical`, and
+`incomplete_turn`. An incomplete tool exchange is not a ready turn-end target.
+History reads, turn selection and derivation use `code:'resync_required'` when
+the saved target expires. `ClientHistoryResyncError.data.reason` is
+`revision_mismatch`, `source_changed`, `selection_expired`, or `head_changed`.
+JSON-RPC preserves `data`; do not parse error messages. Re-read/reselect after
+resync and confirm destructive operations again. Active-work conflicts remain
+`conflict`; cancellation and deadline failures remain `read_cancelled` and
+`read_timeout`. These are distinct recovery actions.
+
+`productHistoryLocation:2` supplies `nextCursor` (older) and `newerCursor` (newer)
+on every page that has the corresponding neighbor. Cursors are opaque and tied
+to the same source; absent neighbors have no cursor. Never derive navigation
+from displayed item counts. `cursor` and `around` are mutually exclusive in
+TypeScript and at runtime. `readHistory` accepts `timeoutMs`/`signal` in its
+options; `resolveHistoryTurn` accepts them as a third argument. One page budget
+covers retry, projection and body-chunk reads; cancellation reaches Host work.
+
+| Revision domain | Producer and permitted use |
+| --- | --- |
+| Numeric observation revision | Ordering within the relevant observation/statistics stream; not a history selection token |
+| `ClientHistoryPage.revision` (string) | Conversation projection; page/item body references and selectors copied from that page |
+| `ClientHistorySearchResult.revision` (string) | Transcript search snapshot; use with its search hit item ID, not a conversation page item ID |
+| `historyBoundary.sourceRevision` (string) | Canonical storage bundle identity; operation source CAS and saved view-item proof |
+| `expectedHead` (string or null) | Confirmed branch head for Rewind; independent of revisions |
+
+Strings are opaque and revisions from different domains are not interchangeable.
+Source validation precedes reuse of the single retained turn projection; retained
+source bytes are capped by the existing 64 MiB snapshot bound and released after
+five minutes or Host close. The turn-start index is weakly held with that source.
+Unchanged-source repeated selection avoids capture/projection reconstruction.
+Cold reads, large uncached histories and source-identity searches can still scan
+the full source; the API does not promise constant-time arbitrary selection.
+These reads do not call a Provider or alter reasoning/model settings.
+
+The shared capability vocabulary and version types are exported from `/client`
+and `/runtime`. `/client` exposes `KODAX_RUNTIME_SDK_CAPABILITIES` and
+`client.capabilities.{sdk,supports}`. SDK facts describe implemented adapters;
+`supports(name,version)` checks the current connected Host, including after
+launcher-owned reconnection. Dynamic Host configuration/availability is not
+inferred from SDK module facts. See [startup migration](SDK_MIGRATION.md#space-sdk-repair-migration-2026-11-08-shipped-in-v0797-beta4).
+
+For wire compatibility, new daemon SDKs explicitly request turn contract v2.
+Requests without that negotiation retain the beta.3 ready-result shape and
+`status:'stale'` response, including an untagged nested boundary. Old strict
+clients therefore do not receive unsolicited target fields. New SDK turn
+operations check the connected Host's v2 capability before sending them.

@@ -7,12 +7,15 @@
 import { restoreHistoryItemsFromSession } from '@kodax-ai/repl';
 import { canonicalTools, canonicalToolKey, toolResultText, toolResultOutputPath } from './client-canonical-tools.js';
 import { readSavedToolOutput } from './tool-output-reader.js';
-import { emitKodaXDiagnostic, readTaskResultReports, type KodaXMessage } from '@kodax-ai/agent';
+import { readTaskResultReports, type KodaXDiagnosticSink, type KodaXMessage } from '@kodax-ai/agent';
+import { assembleConversationHistoryEntry, readFollowingMessage } from './conversation-entry-reader.js';
+export { assembleConversationHistoryEntry, readFollowingMessage } from './conversation-entry-reader.js';
 import type {
   ClientHistoryPage,
   ClientItemContent,
   ClientItemReadOptions,
   ClientViewItem,
+  ClientReadOptions,
 } from '@kodax-ai/coding/client-contract';
 import type {
   RuntimeConversationHistoryEntryChunk,
@@ -20,13 +23,28 @@ import type {
 } from './sdk-runtime.js';
 
 const HISTORY_READ_CHUNK_CHARS = 65_536;
-const HISTORY_CHUNK_READ_LIMIT = 512;
+
+/** Shared deadline across a page, its retry and any oversized body reads. */
+export function createHistoryReadBudget(options?: ClientReadOptions): () => ClientReadOptions {
+  if (options?.timeoutMs !== undefined && (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0)) {
+    throw Object.assign(new Error('History read timeoutMs must be positive and finite.'), { code: 'invalid_params' });
+  }
+  const deadline = options?.timeoutMs === undefined ? undefined : Date.now() + options.timeoutMs;
+  return () => {
+    if (options?.signal?.aborted) throw Object.assign(new Error('History read cancelled.'), { code: 'read_cancelled' });
+    const remaining = deadline === undefined ? undefined : deadline - Date.now();
+    if (remaining !== undefined && remaining <= 0) throw Object.assign(new Error('History read timed out.'), { code: 'read_timeout' });
+    return { ...(remaining === undefined ? {} : { timeoutMs: remaining }), ...(options?.signal ? { signal: options.signal } : {}) };
+  };
+}
 
 /** Project one conversation page into public display items. */
 export async function projectConversationHistoryPage(
   sessionId: string,
   page: RuntimeConversationHistorySlice,
   readChunk: Parameters<typeof readConversationHistoryEntry>[2],
+  // The CLI and the lazily loaded SDK can own distinct diagnostic and credential scopes.
+  report?: KodaXDiagnosticSink,
 ): Promise<ClientHistoryPage> {
   const items: ClientViewItem[] = [];
   const oversized: { itemId: string; byteLength: number }[] = [];
@@ -35,14 +53,14 @@ export async function projectConversationHistoryPage(
       oversized.push({ itemId: historyEntryItemId(sessionId, page.revision, entry.index), byteLength: entry.byteLength });
     }
     const owner = entry.entry ?? (entry.oversized
-      ? await assembleConversationHistoryEntry(readChunk, sessionId, page.revision, entry.index)
+      ? await assembleConversationHistoryEntry(readChunk, sessionId, page.revision, entry.index, report)
       : undefined);
     if (!owner) continue;
     const hasTools = owner.message.role === 'assistant' && Array.isArray(owner.message.content)
       && owner.message.content.some(block => block.type === 'tool_use');
     const successor = hasTools
       ? page.entries[position + 1]?.entry?.message
-        ?? await readFollowingMessage(readChunk, sessionId, page.revision, entry.index)
+        ?? await readFollowingMessage(readChunk, sessionId, page.revision, entry.index, report)
       : undefined;
     const results = successor?.role === 'user' && Array.isArray(successor.content)
       ? successor.content.filter(block => block.type === 'tool_result') : [];
@@ -66,6 +84,9 @@ export async function projectConversationHistoryPage(
   }
   return {
     items,
+    ...(page.locatedBoundaryId && items.some(item => item.historyBoundary?.entryId === page.locatedBoundaryId)
+      ? { locatedBoundaryId: page.locatedBoundaryId } : {}),
+    ...(page.newerCursor ? { newerCursor: page.newerCursor } : {}),
     revision: page.revision,
     sourceRevision: page.sourceRevision,
     status: page.status,
@@ -92,11 +113,12 @@ export async function readConversationHistoryEntry(
   }) => Promise<RuntimeConversationHistoryEntryChunk | null>,
   options: ClientItemReadOptions = {},
   namespace: 'history' | 'transcript' = 'history',
+  report?: KodaXDiagnosticSink,
 ): Promise<ClientItemContent | null> {
   if (options.part === 'attachment') throw new Error('Read image attachments through sessions.readItem.');
   const parsed = parseHistoryEntryItemId(sessionId, itemId, namespace);
   if (parsed === undefined) return null;
-  const entry = await assembleConversationHistoryEntry(readChunk, sessionId, parsed.revision, parsed.entryIndex);
+  const entry = await assembleConversationHistoryEntry(readChunk, sessionId, parsed.revision, parsed.entryIndex, report);
   if (entry === null) return null;
   const selected = parsed.ordinal === undefined ? undefined
     : projectHistoryEntry(sessionId, parsed.revision, parsed.entryIndex, [entry.message])[parsed.ordinal];
@@ -112,7 +134,7 @@ export async function readConversationHistoryEntry(
       if (call?.type !== 'tool_use') return null;
       text = JSON.stringify(call.input);
     } else {
-      const next = await readFollowingMessage(readChunk, sessionId, parsed.revision, parsed.entryIndex);
+      const next = await readFollowingMessage(readChunk, sessionId, parsed.revision, parsed.entryIndex, report);
       const results = Array.isArray(next?.content) ? next.content : [];
       const result = results.find((block) => block.type === 'tool_result' && block.tool_use_id === selected.tool?.callId);
       if (result?.type !== 'tool_result') return null;
@@ -135,21 +157,6 @@ export async function readConversationHistoryEntry(
   };
 }
 
-export async function readFollowingMessage(
-  readChunk: Parameters<typeof readConversationHistoryEntry>[2],
-  sessionId: string,
-  revision: string,
-  entryIndex: number,
-): Promise<KodaXMessage | undefined> {
-  try {
-    return (await assembleConversationHistoryEntry(readChunk, sessionId, revision, entryIndex + 1))?.message;
-  } catch (error: unknown) {
-    // An interrupted final tool call legitimately has no successor.
-    if (error instanceof Error && error.message.startsWith('Transcript entry index is out of range:')) return undefined;
-    throw error;
-  }
-}
-
 /**
  * One bounded retry for a fresh newest-page read: the page cache reads under
  * a strict quiescent boundary, and right after activity a boundary miss is
@@ -158,12 +165,12 @@ export async function readFollowingMessage(
  */
 export async function readHistoryPageWithBoundaryRetry(
   read: () => Promise<RuntimeConversationHistorySlice | null>,
-  options: { readonly cursor?: string },
+  options: { readonly cursor?: string; readonly around?: unknown },
 ): Promise<RuntimeConversationHistorySlice | null> {
   try {
     return await read();
   } catch (error: unknown) {
-    if (options.cursor !== undefined || !isTransientHistoryBoundaryError(error)) throw error;
+    if (options.cursor !== undefined || options.around !== undefined || !isTransientHistoryBoundaryError(error)) throw error;
     await new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, 50);
       timer.unref?.();
@@ -182,7 +189,7 @@ function historyEntryItemId(sessionId: string, revision: string, entryIndex: num
   return `${sessionId}:history:${revision}:${entryIndex}`;
 }
 
-function parseHistoryEntryItemId(
+export function parseHistoryEntryItemId(
   sessionId: string,
   itemId: string,
   namespace: 'history' | 'transcript',
@@ -206,7 +213,7 @@ function parseHistoryEntryItemId(
   return { revision, entryIndex, ...(ordinal !== undefined ? { ordinal: Number(ordinal) } : {}) };
 }
 
-function projectHistoryEntry(
+export function projectHistoryEntry(
   sessionId: string,
   revision: string,
   entryIndex: number,
@@ -261,68 +268,6 @@ function boundHistoryItem(item: ClientViewItem): ClientViewItem {
 
 function historyItemId(sessionId: string, revision: string, entryIndex: number, ordinal: number): string {
   return `${sessionId}:history:${revision}:${entryIndex}#${ordinal}`;
-}
-
-export async function assembleConversationHistoryEntry(
-  readChunk: (
-    input: {
-      readonly sessionId: string;
-      readonly revision: string;
-      readonly entryIndex: number;
-      readonly cursor?: string;
-    },
-  ) => Promise<RuntimeConversationHistoryEntryChunk | null>,
-  sessionId: string,
-  revision: string,
-  entryIndex: number,
-): Promise<{ message: KodaXMessage } | null> {
-  let cursor: string | undefined;
-  const bytes: Buffer[] = [];
-  for (let read = 0; read < HISTORY_CHUNK_READ_LIMIT; read += 1) {
-    const chunk = await readChunk({ sessionId, revision, entryIndex, ...(cursor !== undefined ? { cursor } : {}) });
-    if (chunk === null) return null;
-    // Each chunk has its own base64 padding; UTF-8 may span chunk boundaries.
-    bytes.push(Buffer.from(chunk.data, 'base64'));
-    if (!chunk.hasMore) {
-      const decoded = decodeEntryJson(Buffer.concat(bytes));
-      if (decoded === undefined) {
-        emitKodaXDiagnostic({
-          source: 'client.history',
-          level: 'error',
-          message: `History entry chunk stream for ${sessionId} entry ${entryIndex} did not decode.`,
-        });
-        throw Object.assign(
-          new Error(`History entry ${sessionId}#${entryIndex} is unreadable.`),
-          { code: 'internal_error' as const },
-        );
-      }
-      return { message: decoded.message };
-    }
-    cursor = chunk.nextCursor;
-    if (cursor === undefined) return null;
-  }
-  emitKodaXDiagnostic({
-    source: 'client.history',
-    level: 'error',
-    message: `History entry chunk stream for ${sessionId} entry ${entryIndex} exceeded ${HISTORY_CHUNK_READ_LIMIT} chunks.`,
-  });
-  throw Object.assign(
-    new Error(`History entry ${sessionId}#${entryIndex} exceeded the chunk read limit.`),
-    { code: 'internal_error' as const },
-  );
-}
-
-function decodeEntryJson(bytes: Buffer): { message: KodaXMessage } | undefined {
-  try {
-    const parsed: unknown = JSON.parse(bytes.toString('utf8'));
-    if (typeof parsed !== 'object' || parsed === null) return undefined;
-    const message = (parsed as { message?: unknown }).message;
-    if (typeof message !== 'object' || message === null) return undefined;
-    if (typeof (message as { readonly role?: unknown }).role !== 'string') return undefined;
-    return parsed as { message: KodaXMessage };
-  } catch {
-    return undefined;
-  }
 }
 
 /** Raw entry body, bypassing the replay projection's display truncation. */

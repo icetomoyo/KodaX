@@ -532,7 +532,7 @@ export async function spawnWindowsJobContainedProcess(
     cwd: input.cwd,
     readyFile,
     logFile: input.logFile,
-    jobName: `KodaXDaemonJob-${randomUUID()}`,
+    jobName: `Global\\KodaXDaemonJob-${randomUUID()}`,
   }), 'utf8').toString('base64');
   const supervisorEnv = { ...input.env };
   delete supervisorEnv.KODAX_DAEMON_JOB_CONTAINED;

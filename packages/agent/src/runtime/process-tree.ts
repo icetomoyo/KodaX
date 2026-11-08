@@ -1,4 +1,5 @@
 import {
+  execFile,
   spawnSync,
   type ChildProcess,
   type SpawnSyncReturns,
@@ -6,7 +7,7 @@ import {
 import { readFileSync } from 'node:fs';
 import { emitKodaXDiagnostic } from '../diagnostics.js';
 
-function reportWindowsProbe(stage: string, result: SpawnSyncReturns<string>, startedAt: number, available: boolean): void {
+function reportWindowsProbe(stage: string, result: Pick<SpawnSyncReturns<string>, 'error' | 'status'>, startedAt: number, available: boolean): void {
   const code = (result.error as NodeJS.ErrnoException | undefined)?.code;
   emitKodaXDiagnostic({
     source: 'runtime:windows', level: available ? 'debug' : 'warn',
@@ -31,6 +32,17 @@ const WINDOWS_JOB_MEMBERSHIP_SOURCE = String.raw`
 using System;
 using System.Runtime.InteropServices;
 public static class KodaXWindowsJobMembership {
+  [StructLayout(LayoutKind.Sequential)]
+  private struct BasicAccountingInformation {
+    public long TotalUserTime;
+    public long TotalKernelTime;
+    public long ThisPeriodTotalUserTime;
+    public long ThisPeriodTotalKernelTime;
+    public uint TotalPageFaultCount;
+    public uint TotalProcesses;
+    public uint ActiveProcesses;
+    public uint TotalTerminatedProcesses;
+  }
   [StructLayout(LayoutKind.Sequential)]
   private struct BasicLimitInformation {
     public long PerProcessUserTimeLimit;
@@ -72,6 +84,13 @@ public static class KodaXWindowsJobMembership {
     out ExtendedLimitInformation information,
     uint informationLength,
     IntPtr returnLength);
+  [DllImport("kernel32.dll", SetLastError = true)]
+  private static extern bool QueryInformationJobObject(
+    IntPtr job,
+    int informationClass,
+    out BasicAccountingInformation information,
+    uint informationLength,
+    IntPtr returnLength);
   [DllImport("kernel32.dll")]
   private static extern IntPtr GetCurrentProcess();
   [DllImport("kernel32.dll")]
@@ -93,6 +112,16 @@ public static class KodaXWindowsJobMembership {
     } finally {
       CloseHandle(job);
     }
+  }
+  public static long ActiveProcessCount(string name) {
+    var job = OpenJobObjectW(4, false, name);
+    if (job == IntPtr.Zero) return Marshal.GetLastWin32Error() == 2 ? 0 : -1;
+    try {
+      BasicAccountingInformation accounting;
+      if (!QueryInformationJobObject(job, 1, out accounting,
+        (uint)Marshal.SizeOf(typeof(BasicAccountingInformation)), IntPtr.Zero)) return -1;
+      return accounting.ActiveProcesses;
+    } finally { CloseHandle(job); }
   }
 }`;
 const WINDOWS_JOB_MEMBERSHIP_SCRIPT = String.raw`
@@ -656,6 +685,35 @@ export function readCurrentProcessWindowsJobIdentity(): {
     processStartIdentity: processStartIdentity === '0' ? undefined : processStartIdentity,
     supervisorProcessStartIdentity: supervisorProcessStartIdentity === '0' ? undefined : supervisorProcessStartIdentity,
   };
+}
+
+/** Observe one exact global Job. Unavailable evidence never authorizes recovery. */
+export async function readWindowsJobActiveProcessCount(name: string): Promise<number | undefined> {
+  if (process.platform !== 'win32'
+    || !/^Global\\(?:KodaXDaemonJob|KodaXEffect)-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(name)) return undefined;
+  const script = String.raw`
+$ErrorActionPreference = 'Stop'
+$source = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:KODAX_INTERNAL_JOB_QUERY_SOURCE))
+Add-Type -TypeDefinition $source
+[Console]::Out.Write([KodaXWindowsJobMembership]::ActiveProcessCount($env:KODAX_INTERNAL_JOB_QUERY_NAME))
+`;
+  const startedAt = Date.now();
+  return new Promise((resolve) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      encoding: 'utf8', timeout: 5_000, windowsHide: true,
+      env: { ...process.env, KODAX_INTERNAL_JOB_QUERY_NAME: name,
+        KODAX_INTERNAL_JOB_QUERY_SOURCE: Buffer.from(WINDOWS_JOB_MEMBERSHIP_SOURCE, 'utf8').toString('base64') },
+    }, (error, stdout) => {
+      const output = stdout?.trim() ?? '';
+      const count = /^\d+$/.test(output) ? Number(output) : undefined;
+      const available = error === null && count !== undefined && Number.isSafeInteger(count) && count <= 0xffffffff;
+      reportWindowsProbe('job-active-processes', {
+        error: error ?? undefined,
+        status: error === null ? 0 : typeof error.code === 'number' ? error.code : null,
+      }, startedAt, available);
+      resolve(available ? count : undefined);
+    });
+  });
 }
 
 function collectDescendantIdentities(

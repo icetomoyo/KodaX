@@ -78,6 +78,8 @@ export interface RuntimeDaemonLockOwner {
   readonly supervisorPid?: number;
   /** OS-issued identity that distinguishes the original supervisor from PID reuse. */
   readonly supervisorProcessStartIdentity?: string;
+  readonly windowsJobName?: string;
+  readonly windowsBootIdentity?: string;
 }
 
 export interface RuntimeOwnerPolicy {
@@ -1199,7 +1201,9 @@ function sameRuntimeLockOwner(
     && left.processStartIdentity === right.processStartIdentity
     && left.processContainment === right.processContainment
     && left.supervisorPid === right.supervisorPid
-    && left.supervisorProcessStartIdentity === right.supervisorProcessStartIdentity;
+    && left.supervisorProcessStartIdentity === right.supervisorProcessStartIdentity
+    && left.windowsJobName === right.windowsJobName
+    && left.windowsBootIdentity === right.windowsBootIdentity;
 }
 
 function sameRuntimeDaemonState(
@@ -1338,6 +1342,10 @@ function isRuntimeDaemonLockOwner(value: unknown): value is RuntimeDaemonLockOwn
       || (typeof owner.processStartIdentity === 'string' && owner.processStartIdentity.length > 0)
     )
     && (owner.processContainment === undefined || owner.processContainment === 'windows-job')
+    && (owner.windowsJobName === undefined || (owner.processContainment === 'windows-job'
+      && typeof owner.windowsJobName === 'string' && /^Global\\KodaXDaemonJob-[0-9a-f-]{36}$/i.test(owner.windowsJobName)))
+    && (owner.windowsBootIdentity === undefined || (owner.processContainment === 'windows-job'
+      && typeof owner.windowsBootIdentity === 'string' && /^windows-boot-\d+$/.test(owner.windowsBootIdentity)))
     && (
       owner.supervisorProcessStartIdentity === undefined
       || (

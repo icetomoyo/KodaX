@@ -1,5 +1,5 @@
 import { createHash, type Hash } from 'node:crypto';
-import { closeSync, fstatSync, openSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -93,7 +93,20 @@ export function readRuntimeBuildIdentity(
   const sorted = [...files].map(file => ({ file, relative: path.relative(installation, file).replaceAll('\\', '/') }))
     .sort((left, right) => left.relative < right.relative ? -1 : left.relative > right.relative ? 1 : 0);
   const buffer = Buffer.allocUnsafe(64 * 1024);
-  for (const { file, relative } of sorted) hashRuntimeFile(hash, file, relative, buffer);
+  for (const { file, relative } of sorted) {
+    if (moduleBundle && relative === 'package.json') {
+      // Desktop packagers strip npm metadata from the installed SDK. Preserve loader
+      // and dependency fields, including the order of conditional exports.
+      const manifest: Record<string, unknown> = JSON.parse(readFileSync(file, 'utf8'));
+      delete manifest.scripts;
+      delete manifest.keywords;
+      delete manifest.bundleDependencies;
+      const bytes = Buffer.from(JSON.stringify(manifest));
+      hash.update(`${relative}\0${bytes.length}\0`).update(bytes);
+    } else {
+      hashRuntimeFile(hash, file, relative, buffer);
+    }
+  }
   return { origin: process.platform === 'win32' ? resolvedEntry.toLowerCase() : resolvedEntry,
     fingerprint: hash.digest('hex') };
 }

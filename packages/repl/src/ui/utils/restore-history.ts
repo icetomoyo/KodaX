@@ -15,6 +15,8 @@ const MAX_PERSISTED_UI_HISTORY_ITEMS = 150;
 const MAX_PERSISTED_UI_HISTORY_ROUNDS = 50;
 
 export interface RestoreHistoryItemsFromSessionInput {
+  /** Read-time provenance from the same canonical snapshot as messages. */
+  historyBoundaries?: ReadonlyMap<KodaXMessage, NonNullable<CreatableHistoryItem['historyBoundary']>>;
   /** Product owns canonical task reports; CLI keeps its existing presentation ownership. */
   structuredTaskResults?: boolean;
   messages: readonly KodaXMessage[];
@@ -502,7 +504,7 @@ export function restoreHistoryItemsFromSession(
       && (item.sourceTurnId === undefined || message.turnId === item.sourceTurnId)
       && (item.text === extractTextContent(message.content) || reports.some(report => item.text === report.summary))))));
   const hasPersistedUiHistory = Boolean(persistedHistory?.length);
-  const fullDerivedItems = extractHistorySeedsFromMessages(input.messages, input.structuredTaskResults)
+  const fullDerivedItems = extractHistorySeedsFromMessages(input.messages, input.structuredTaskResults, input.historyBoundaries)
     .filter((seed) => !hasPersistedUiHistory || seed.type !== "task_completed")
     .map(seedToHistoryItem);
   const derivedItems = input.historyScope === 'all' ? fullDerivedItems : trimHistoryWindow(fullDerivedItems);

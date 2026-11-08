@@ -1,3 +1,6 @@
+export { KODAX_RUNTIME_SDK_CAPABILITIES, supportsRuntimeCapability, requireRuntimeCapability } from './runtime-capabilities.js';
+export type { RuntimeCapabilityRequirements, RuntimeCapabilityName, ClientCapabilityService } from './runtime-capabilities.js';
+import type { ClientCapabilityService } from './runtime-capabilities.js';
 /** Product data shared by SDK clients and UIs; independent of Host implementation. */
 import type {
   AgentDataClassification,
@@ -35,6 +38,21 @@ import type {
 } from './client-domains.js';
 export type * from './client-domains.js';
 export type * from './execution-profile-contract.js';
+
+/** Actual execution Host cache facts; inspection never initializes a project. */
+export interface ClientRepoIntelligenceStatus {
+  readonly configuredMode: 'auto' | 'off' | 'light' | 'full';
+  readonly requestedMode: 'off' | 'light' | 'full';
+  readonly effectiveEngine: 'off' | 'light' | 'full';
+  readonly status: 'disabled' | 'ok' | 'limited' | 'unavailable' | 'warming';
+  readonly initialized: boolean;
+  readonly warnings: readonly string[];
+}
+export interface ClientRepoIntelligenceHostStatus extends ClientRepoIntelligenceStatus {
+  readonly runtimeId: string;
+  readonly sessionId: string;
+  readonly workspaceRoot: string;
+}
 
 export type ClientHostStartupPhase =
   | 'modules' | 'extensions' | 'runtime' | 'recovery' | 'mcp' | 'sessions' | 'a2a' | 'listener';
@@ -130,6 +148,7 @@ export interface ClientSessionPromotionResult {
 }
 
 export interface KodaXProductClient {
+  readonly capabilities: ClientCapabilityService;
   readonly lifecycle: ClientLifecycleService;
   readonly statistics: ClientStatisticsService;
   readonly commands: ClientCommandService;
@@ -168,6 +187,8 @@ export interface KodaXProductClient {
     readItem(sessionId: string, itemId: string, options?: ClientItemReadOptions): Promise<ClientItemContent | null>;
     /** Newest page of the canonical conversation first; older pages via nextCursor. */
     readHistory(sessionId: string, options?: ClientHistoryReadOptions): Promise<ClientHistoryPage>;
+    /** Resolve a complete saved conversational turn on demand; never runs a model. */
+    resolveHistoryTurn(sessionId: string, selector: ClientHistoryTurnSelector, options?: ClientReadOptions): Promise<ClientHistoryTurnResolution>;
     /** Full body behind one oversized history entry, chunked like readItem. */
     readHistoryEntry(sessionId: string, itemId: string, options?: ClientItemReadOptions): Promise<ClientItemContent | null>;
     /** Search the whole Session history; entryIndex values are stable within the returned revision. */
@@ -191,7 +212,7 @@ export interface KodaXProductClient {
     /** Move the active head to an entry by id or label; stale selectors conflict, never silently no-op. */
     selectBranch(sessionId: string, selector: string, options?: { readonly summarizeCurrentBranch?: boolean }): Promise<ClientSession>;
     /** Move the head back to an entry; idle sessions only, and file effects are never rolled back. */
-    rewindSession(sessionId: string, input: { readonly selector?: string; readonly historyBoundary?: ClientHistoryBoundary; readonly expectedHead: string | null }): Promise<ClientSession>;
+    rewindSession(sessionId: string, input: ClientSessionRewindInput): Promise<ClientSession>;
     /** Derive a new Session from this idle session's history; the source stays unchanged. */
     forkSession(sessionId: string, input?: ClientSessionForkInput): Promise<ClientSession>;
     /** Derive a new Session from a deterministic recovery seed (no LLM call); continue with a normal input submit. */
@@ -278,6 +299,8 @@ export interface KodaXProductClient {
     reload(): Promise<{ readonly ok: true; readonly config: ClientConfig }>;
   };
   readonly catalog: {
+    inspectRepoIntelligence(sessionId: string): Promise<ClientRepoIntelligenceHostStatus>;
+    prewarmRepoIntelligence(sessionId: string): Promise<ClientRepoIntelligenceHostStatus>;
     extensions(): Promise<{
       readonly active: boolean;
       readonly extensions: readonly ClientLoadedExtension[];
@@ -412,13 +435,53 @@ export interface ClientItemReadOptions {
 }
 
 /** Paging over a Session's canonical conversation history. */
-export interface ClientHistoryReadOptions {
-  /** Cursor from a previous page's nextCursor; omit to read the newest page. */
-  readonly cursor?: string;
-  readonly limit?: number;
+export interface ClientReadOptions {
+  /** One deadline for the complete read, including projection and body chunks. */
+  readonly timeoutMs?: number;
+  readonly signal?: AbortSignal;
 }
 
+export type ClientHistoryReadOptions = ClientReadOptions & {
+  readonly limit?: number;
+} & (
+  | { /** Opaque older/newer cursor; omit both position modes for the newest page. */
+      readonly cursor?: string; readonly around?: never }
+  | { readonly cursor?: never; readonly around: { readonly searchItemId: string; readonly historyBoundary?: never }
+      | { readonly historyBoundary: ClientHistoryBoundary; readonly searchItemId?: never } }
+);
+
+export type ClientHistoryTurnSelector =
+  | { readonly kind: 'latest' | 'previous' }
+  | { readonly kind: 'index'; readonly index: number }
+  | { readonly kind: 'item'; readonly itemId: string; readonly source: 'history';
+      /** The original page/search revision, never a local UI generation. */
+      readonly revision: string }
+  | { readonly kind: 'item'; readonly itemId: string; readonly source: 'view';
+      /** The item's historyBoundary.sourceRevision, when available. */
+      readonly revision?: string;
+      /** Exact identities copied from this observed SDK item, for a newly saved source. */
+      readonly inputId?: string; readonly outputId?: string };
+
+export interface ClientHistoryTurnBoundary extends ClientHistoryBoundary { readonly kind: 'turn_end' }
+export interface ClientHistoryTurnTarget {
+  readonly sessionId: string;
+  readonly historyBoundary: ClientHistoryTurnBoundary;
+  readonly startBoundary: ClientHistoryBoundary;
+  readonly expectedHead: string | null;
+}
+export type ClientHistoryTurnUnavailableReason = 'unresolved_history' | 'no_turns' | 'no_previous_turn'
+  | 'turn_not_found' | 'unproven_source' | 'item_not_found' | 'not_canonical' | 'incomplete_turn';
+export type ClientHistoryResyncReason = 'revision_mismatch' | 'source_changed' | 'selection_expired' | 'head_changed';
+export type ClientHistoryTurnResolution =
+  | (ClientHistoryTurnTarget & { readonly status: 'ready'; readonly turnIndex: number;
+      readonly excerpt: string; readonly hasLaterTurn: boolean }
+    )
+  | { readonly status: 'unavailable'; readonly reason: ClientHistoryTurnUnavailableReason };
+
 export interface ClientHistoryPage {
+  readonly locatedBoundaryId?: string;
+  /** Newer neighbor of this page; absent only when there is no newer page. */
+  readonly newerCursor?: string;
   /** This page's entries projected like view items, oldest first. */
   readonly items: readonly ClientViewItem[];
   /** Conversation revision this page was read at. */
@@ -493,7 +556,7 @@ export interface ClientStatisticsService {
 export interface ClientExitRecovery {
   readonly state: 'ready' | 'pending' | 'blocked';
   readonly checkedAt: string;
-  readonly reason: 'host_shutdown_verified' | 'client_cleanup_verified'
+  readonly reason: 'host_shutdown_verified' | 'host_generation_terminated' | 'client_cleanup_verified'
     | 'client_cleanup_pending' | 'client_cleanup_unknown' | 'cleanup_failed' | 'host_protected'
     | 'daemon_active' | 'containment_active' | 'containment_unavailable' | 'outcome_missing'
     | 'owner_identity_unverified' | 'owner_identity_mismatch';
@@ -524,6 +587,8 @@ export interface ClientExitReceipt {
       readonly runtimeId: string; readonly pid: number; readonly kind?: 'daemon' | 'inline';
       readonly processStartIdentity?: string; readonly processContainment?: 'windows-job';
       readonly supervisorPid?: number; readonly supervisorProcessStartIdentity?: string;
+      /** Verified containment evidence for crash recovery, distinct from successful cleanup. */
+      readonly windowsJobName?: string; readonly windowsBootIdentity?: string;
     };
     readonly cleanup?: 'succeeded' | 'failed';
     readonly message?: string;
@@ -534,6 +599,7 @@ export interface ClientExitReceipt {
 /** Host-issued canonical boundary. Pass it back unchanged; never derive it from an item ID. */
 export interface ClientHistoryBoundary {
   readonly entryId: string;
+  /** Storage-bundle identity for source CAS; not a page or observation revision. */
   readonly sourceRevision: string;
 }
 
@@ -591,14 +657,33 @@ export interface ClientLineageLabelInput {
   readonly label?: string;
 }
 
-export interface ClientSessionForkInput {
+export type ClientSessionForkInput = {
+  /** Pass the ready resolveHistoryTurn result unchanged; before retries from its turn start. */
+  readonly turn?: ClientHistoryTurnTarget;
   /** Exclude the boundary message when deriving Retry; requires historyBoundary. */
   readonly before?: boolean;
   /** Entry id or label naming the boundary; defaults to the active head. */
   readonly selector?: string;
   /** Explicit conversation-history boundary; stale revisions surface as resync_required. */
-  readonly historyBoundary?: ClientHistoryBoundary;
+  readonly historyBoundary?: ClientHistoryTurnBoundary;
   readonly title?: string;
+} | {
+  /** Legacy Retry: the boundary must name a genuine user input. */
+  readonly before: true; readonly historyBoundary: ClientHistoryBoundary;
+  readonly selector?: never; readonly turn?: never; readonly title?: string;
+};
+
+export type ClientSessionRewindInput =
+  | { readonly turn: ClientHistoryTurnTarget; readonly selector?: never; readonly historyBoundary?: never;
+      readonly expectedHead?: string | null }
+  | { readonly turn?: never; readonly selector?: string;
+      /** @deprecated Pass the ready turn result in turn. */
+      readonly historyBoundary?: ClientHistoryTurnBoundary; readonly expectedHead: string | null };
+
+/** JSON-RPC preserves this data in both local and daemon reads/mutations. */
+export interface ClientHistoryResyncError extends Error {
+  readonly code: 'resync_required';
+  readonly data: { readonly reason: ClientHistoryResyncReason };
 }
 
 export interface ClientSessionRecoverInput {
@@ -608,6 +693,7 @@ export interface ClientSessionRecoverInput {
 }
 
 export interface ClientHistorySearchResult {
+  /** Transcript-search snapshot, distinct from a conversation page's revision. */
   readonly revision: string;
   readonly hits: readonly {
     /** Opaque reference readable through readHistoryEntry; expired snapshots require a new search. */
@@ -851,7 +937,7 @@ export interface ClientQueuedInput {
 }
 
 export interface ClientInputAdmissionError {
-  readonly code: 'execution_binding_unavailable' | 'execution_binding_rejected' | 'execution_binding_changed' | 'default_skill_unavailable';
+  readonly code: 'execution_binding_unavailable' | 'execution_binding_rejected' | 'execution_binding_changed' | 'default_skill_unavailable' | 'execution_mode_mismatch';
   readonly message: string;
 }
 
@@ -901,6 +987,8 @@ export interface ClientRunStopReceipt {
 export interface ClientSessionSettingsSnapshot {
   readonly revision: number;
   readonly value: ClientSessionSettings;
+  /** Host fact: work mode is fixed after first admission or inherited conversation history. */
+  readonly workModeLocked?: boolean;
 }
 
 export interface ClientSessionCancelInput {

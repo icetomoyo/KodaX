@@ -8,6 +8,7 @@ type ResolvedAuthorization = Omit<RuntimeExecutionAuthorization, 'binding'>;
 export function createExecutionBindingChannel(notify: () => ((event: RuntimeDaemonNotification) => void) | undefined,
   timeoutMs: number) {
   const leases = new Set<string>();
+  let generation = 0;
   const pending = new Map<string, { leaseId: string; resolve(value: ResolvedAuthorization): void;
     reject(error: Error): void; dispose(): void }>();
   const unavailable = (message: string) => Object.assign(new Error(message), { code: 'execution_binding_unavailable' });
@@ -24,6 +25,11 @@ export function createExecutionBindingChannel(notify: () => ((event: RuntimeDaem
       return { id };
     },
     revoke(id: string) { const existed = leases.delete(id); cancel(id); return existed; },
+    captureAvailability(leaseId?: string) {
+      const original = generation;
+      return () => generation === original && notify() !== undefined && (leaseId === undefined || leases.has(leaseId));
+    },
+    detach() { generation += 1; leases.clear(); cancel(); },
     cancel,
     close() { leases.clear(); cancel(); },
     async resolve(leaseId: string, request: RuntimeExecutionBindingRequest, signal?: AbortSignal): Promise<ResolvedAuthorization> {

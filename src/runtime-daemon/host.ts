@@ -35,6 +35,17 @@ import { createRuntimeDaemonReverseBridgeHub } from './reverse-bridge.js';
 import { createRuntimeDaemonManagementController } from './management.js';
 import { createRuntimeClientLifecycleController } from './client-lifecycle.js';
 
+declare const KODAX_CLI_LAZY_COMPONENTS: boolean | undefined;
+function loadHostMaintenance(): Promise<typeof import('./maintenance-scheduler.js')> {
+  if (typeof KODAX_CLI_LAZY_COMPONENTS !== 'undefined' && KODAX_CLI_LAZY_COMPONENTS && !('Bun' in globalThis)) {
+    const directory = new URL('.', import.meta.url);
+    const component = directory.pathname.endsWith('/chunks/')
+      ? '../maintenance-scheduler.js' : './maintenance-scheduler.js';
+    return import(new URL(component, directory).href) as Promise<typeof import('./maintenance-scheduler.js')>;
+  }
+  return import('./maintenance-scheduler.js');
+}
+
 export interface RuntimeDaemonHostOptions {
   readonly runtime: KodaXRuntime;
   readonly paths: RuntimeDaemonPaths;
@@ -170,6 +181,16 @@ export async function startRuntimeDaemonHost(
     }
     throw error;
   }
+  let maintenanceStopping = false;
+  const reportMaintenanceError = (error: unknown): void => emitKodaXDiagnostic({
+    source: 'runtime.daemon.maintenance', level: 'warn',
+    message: 'Runtime daemon temporary-file maintenance failed.', detail: normalizeHostError(error),
+  });
+  // Load only after successful readiness; maintenance must not delay client attach.
+  const maintenanceReady = loadHostMaintenance().then(({ startRuntimeDaemonHostMaintenance }) => {
+    if (maintenanceStopping || stopPending) return undefined;
+    return startRuntimeDaemonHostMaintenance(options.paths, options.lock.owner, management, reportMaintenanceError);
+  }).catch((error: unknown) => { reportMaintenanceError(error); return undefined; });
   let closed = false;
   let closeAttempt: Promise<void> | undefined;
   let transportClosed = false;
@@ -188,8 +209,15 @@ export async function startRuntimeDaemonHost(
   const closeHost = (): Promise<void> => {
     if (closed) return Promise.resolve();
     if (closeAttempt) return closeAttempt;
+    maintenanceStopping = true;
     const attempt = (async (): Promise<void> => {
       const failures: string[] = [];
+      try {
+        const maintenance = await maintenanceReady;
+        await maintenance?.close();
+      } catch (error: unknown) {
+        failures.push(`maintenance close: ${normalizeHostError(error).message}`);
+      }
       if (!ownershipReleased) {
         try {
           writeRuntimeDaemonState(options.paths, createHostState(options, 'stopping'));

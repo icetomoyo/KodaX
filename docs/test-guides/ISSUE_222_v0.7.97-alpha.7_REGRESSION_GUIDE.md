@@ -455,6 +455,20 @@ Both macOS jobs, Linux ARM64 and Windows Shell contracts also passed.
 The temporary diagnostic workflow, dispatch input and probes are removed.
 Release remains held by explicit user instruction; no release or tag was made.
 
+## Withdrawn asynchronous registry reader (2026-10-17)
+
+After a rebuild, the npm-linked CLI again took roughly 30s for its first resume.
+The retained child registry held over 860 incomplete records. A Host CPU profile
+attributed about 2.94s of one cold bootstrap to synchronous initial registry reads.
+
+An experiment read historical registry files asynchronously in bounded batches.
+It did not shorten total resume time: an end-to-end probe measured 11.0s before
+and 11.7s after the change. It also introduced a race in which an asynchronous
+read could capture partial JSON during a synchronous re-registration and then
+prune the now-valid record. The reader and its tests were withdrawn, and the
+runtime source was not changed. Revisit asynchronous registry reads only with
+end-to-end evidence of a benefit and a fresh-read guard against that race.
+
 ## Interactive Host lifetime follow-up (accepted 2026-10-17)
 
 Accepted user requirement: ordinary `kodax` auto-started Hosts exit after the
@@ -706,3 +720,71 @@ the accepted lifetime requirement. This does not close the original slow-resume
 diagnosis or the intermittent ConPTY exit observation. Release remains held.
 Incremental Spec review reported zero remaining findings after the remote
 preflight cancellation correction.
+
+## 2026-11-06 working-tree crash reentry qualification
+
+This addendum describes the local fix, without assigning a new published SDK version.
+A missing successful shutdown outcome can follow power loss. Recovery reads preserve the
+original exit receipt, unknown cleanup, Run IDs and operation IDs. They authorize fenced
+Host recovery separately from successful shutdown.
+
+On Windows, automatic crash reentry requires exact daemon and Job-supervisor generations
+to be gone, plus a recorded changed Windows boot identity or a fresh query proving the
+recorded Global Job empty/absent. Query denial, a live Job, unknown identity, explicit
+cleanup failure, or legacy missing proof requires inspection. Normal shutdown verification
+continues to require its exact successful outcome. Windows ACL admission remains in force.
+The new Host still acquires canonical Session ownership before managed-child/Run recovery.
+
+Run the focused regressions from the repository root:
+
+```powershell
+node node_modules/vitest/vitest.mjs run src/sdk-client.exit-recovery.test.ts src/runtime-daemon/client-lifecycle.test.ts src/runtime-daemon/shutdown-verifier.test.ts src/runtime-daemon/state.test.ts
+node node_modules/vitest/vitest.mjs run packages/agent/src/runtime/process-tree.windows.test.ts packages/agent/src/runtime/process-tree.windows-job.integration.test.ts src/runtime-daemon/manager-containment.test.ts src/runtime-daemon/windows-job-supervisor.test.ts
+node node_modules/vitest/vitest.mjs run src/sdk-client.crash.test.ts src/sdk-runtime.shell-recovery.test.ts src/runtime-daemon/process.owner-exit.test.ts src/runtime-daemon/lifecycle.process-identity.test.ts --maxWorkers 1
+```
+
+The real Windows crash case kills the original Host, then concurrently starts two profiles.
+Require one replacement runtimeId, unchanged original receipt, retained Session history,
+an interrupted/unknown Run with unknown effect outcome, and no repeated Provider request.
+The native Job case retains a query handle in a surviving descendant writer. Require a
+positive active count while the writer remains alive, then zero only after its Job ends.
+These process-kill and isolated boot-identity cases do not simulate an actual machine power
+failure. Other platforms and legacy Windows receipts retain their conservative inspection
+path when equivalent containment evidence is unavailable. Never delete the daemon tree to
+make these checks pass. It contains Run, event and client-exit evidence.
+
+## 2026-11-06 bounded runtime temporary-file maintenance
+
+The ready Host schedules an asynchronous first round and later idle rounds at five-minute
+intervals. Each round visits at most 32 entries in its own daemon profile directory and
+continues its directory cursor in the next round. The timer is unreferenced, rounds never
+overlap, busy work defers the round, and Host shutdown stops scheduling and joins cleanup
+before releasing ownership. No LLM request, worker thread, or recursive history scan is used.
+
+Only complete `daemon.lock.<UUID>.tmp` and `daemon.json.<PID>.<UUID>.tmp` publications are
+candidates. A positive OS dead-PID observation, unchanged profile ownership, coordination
+lock, unchanged file identity and bytes are required before unlink. Live or unverified PIDs,
+malformed/oversized records, symlinks, replacement files, coordination markers, owner policy,
+Run/event/history data and exit receipts are retained. PID reuse conservatively retains the
+temporary file rather than launching a slow process-identity probe during background work.
+Logs and shutdown outcomes continue through their existing retention paths.
+Candidate read/delete failures are reported without resetting the directory cursor, so a
+persistently denied file cannot starve later entries. Directory enumeration failures reset
+only the broken cursor and retry on a later round.
+
+```powershell
+node node_modules/vitest/vitest.mjs run src/runtime-daemon/maintenance.test.ts src/runtime-daemon/maintenance-scheduler.test.ts src/runtime-daemon/host.test.ts
+```
+
+The bundled maintenance entry is also verified through a real isolated Host. It removes an
+abandoned publication while retaining a live-process publication and remains available for
+normal status reads. This test is included in `npm run test:bundle`.
+
+```powershell
+node --test tests/bundled-daemon-maintenance.test.mjs
+```
+
+Validation on Windows, 2026-11-06: the maintenance, scheduler, Host, state and orphan-exit
+suites passed all 127 tests; the bundled Host test passed separately. Coverage of the two
+new maintenance modules was 97.34% lines, 92.90% statements and 87.20% branches. Typechecking
+and `npm run build:bundle` passed, including the existing CLI startup size/import budgets.

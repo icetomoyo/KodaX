@@ -8,6 +8,7 @@ import type { ArtifactRuntimeOptions } from './runtime.js';
 import { withArtifactPage } from './browser.js';
 import { saveEvidence } from './evidence-files.js';
 import { decodeArtifactResult } from './contract.js';
+import { convertWithLibreOffice } from './libreoffice.js';
 
 type PdfApi = typeof import('pdfjs-dist');
 type DocxApi = typeof import('docx-renderer');
@@ -26,7 +27,9 @@ async function loadPdf(page: Page, bytes: Buffer): Promise<number> {
   } finally { URL.revokeObjectURL(url); }
  }, { code, worker, base64: bytes.toString('base64') });
 }
-async function loadDocx(page: Page, bytes: Buffer, findings: Diagnostic[]): Promise<number> {
+const pdfAdvice = 'For page-accurate review, render a PDF exported from this document by an available converter or its authoring application. '
+ + 'Check stored field values and any values recalculated during conversion; a PDF alone does not prove that the DOCX fields are current. Write the PDF to a scratch location so it is not mistaken for the deliverable.';
+async function loadDocx(page: Page, bytes: Buffer, findings: Diagnostic[]): Promise<number | { error: string }> {
  const zip = await JSZip.loadAsync(bytes);
  // Valid minimal Word files may omit settings. Normalize only the render snapshot.
  if (!zip.file('word/settings.xml')) {
@@ -36,41 +39,53 @@ async function loadDocx(page: Page, bytes: Buffer, findings: Diagnostic[]): Prom
   zip.file('word/_rels/document.xml.rels', xml.replace(/<\/Relationships\s*>/, '<Relationship Id="kodaxRenderSettings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/></Relationships>'));
   findings.push({ code: 'docx-default-settings', message: 'Missing optional settings were supplied only to the lightweight render snapshot.' });
  }
- findings.push({ code: 'docx-preview-fidelity', message: 'docx-renderer is a lightweight candidate. Word/WPS fidelity, fields, floating objects and complex sections remain unverified.', blocking: true });
  await page.setContent('<html><body style="margin:0"><div id="styles"></div><div id="body"></div></body></html>');
  await page.addScriptTag({ content: await fs.readFile(new URL('../dist/docx.browser.js', import.meta.url), 'utf8') });
  const count = await page.evaluate(async base64 => {
   if (!window.kodaxDocx) throw new Error('DOCX renderer missing.');
-  await window.kodaxDocx.render(Uint8Array.from(atob(base64), c => c.charCodeAt(0)), document.getElementById('body')!, document.getElementById('styles')!,
-   { breakPages: true, ignoreLastRenderedPageBreak: false, renderHeaders: true, renderFooters: true });
-  await document.fonts.ready;
-  await Promise.all(Array.from(document.images).map(image => image.decode()));
+  // Renderer exceptions describe this document, not the runtime; browser/protocol failures still throw outside.
+  try {
+   await window.kodaxDocx.render(Uint8Array.from(atob(base64), c => c.charCodeAt(0)), document.getElementById('body')!, document.getElementById('styles')!,
+    { breakPages: true, ignoreLastRenderedPageBreak: false, renderHeaders: true, renderFooters: true });
+   await document.fonts.ready;
+   await Promise.all(Array.from(document.images).map(image => image.decode()));
+  } catch (error) { return { error: String(error instanceof Error ? error.message : error).slice(0, 200) }; }
   await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
   return document.querySelectorAll('#body section').length;
  }, (await zip.generateAsync({ type: 'nodebuffer' })).toString('base64'));
+ if (typeof count === 'number') findings.push({ code: 'docx-preview-fidelity', blocking: true, message: 'The lightweight DOCX renderer approximates Word layout. '
+  + 'It does not compute fields such as page numbers or a table of contents. Pagination, list numbering and table styles can differ from Word/WPS. ' + pdfAdvice });
  return count;
 }
 export async function processDocument(bytes: Buffer, file: Omit<ArtifactRef, 'pages'> & { format: 'pdf' | 'docx' }, input: RenderInput | undefined,
- options: ArtifactRuntimeOptions): Promise<ArtifactResult> {
+ options: ArtifactRuntimeOptions, backend: 'lightweight' | 'libreoffice' = 'lightweight'): Promise<ArtifactResult> {
  const findings: Diagnostic[] = [];
+ // DOCX conversion happens before the browser budget starts; evidence stays bound to the DOCX source.
+ const converted = input && file.format === 'docx' && backend === 'libreoffice' ? await convertDocx(bytes, options) : undefined;
+ if (converted) findings.push({ code: 'docx-converted', message: 'Pages were rendered from a LibreOffice PDF conversion. '
+  + 'Conversion can recalculate page-number fields; a table of contents can remain empty or outdated and needs review. Field values and pagination must be checked against the intended Word/WPS output.' });
+ const asPdf = file.format === 'pdf' || converted !== undefined;
  return withArtifactPage(options, async page => {
   await page.context().route('**/*', route => {
    if (/^(?:data:|blob:|about:blank)/.test(route.request().url())) return route.continue();
    findings.push({ code: 'blocked-resource', message: 'External document resource was blocked.', blocking: true }); return route.abort('blockedbyclient');
   });
-  const total = file.format === 'pdf' ? await loadPdf(page, bytes) : input ? await loadDocx(page, bytes, findings) : undefined;
-  const artifact: ArtifactRef = file.format === 'pdf' ? { path: file.path, sourceHash: file.sourceHash, format: 'pdf', pages: total! } : { path: file.path, sourceHash: file.sourceHash, format: 'docx' };
+  const loaded = asPdf ? await loadPdf(page, converted?.bytes ?? bytes) : input ? await loadDocx(page, bytes, findings) : undefined;
+  const artifact: ArtifactRef = file.format === 'pdf' ? { path: file.path, sourceHash: file.sourceHash, format: 'pdf', pages: loaded as number } : { path: file.path, sourceHash: file.sourceHash, format: 'docx' };
   if (!input) return { status: 'ready', artifact, diagnostics: [] };
+  if (typeof loaded === 'object') return { status: 'unverified', artifact, diagnostics: [...findings, { code: 'docx-render-failed', blocking: true,
+   message: 'The lightweight DOCX renderer could not lay out this file (' + loaded.error + '), so no page pixels were produced. ' + pdfAdvice }] };
+  const total = loaded;
   if (!total || total > 1000) throw new Error('Document page limit exceeded or no pages rendered.');
   const pages = input.pages ?? Array.from({ length: total }, (_, index) => index + 1);
   if (!pages.length || pages.some(n => n < 1 || n > total)) throw new Error('Invalid render pages.');
   if (options.maxRenderPages !== undefined && pages.length > options.maxRenderPages) throw new Error('Specify a render batch of at most ' + options.maxRenderPages + ' pages.');
-  const directory = await fs.mkdtemp(path.join(options.workspaceRoot, '.artifact-render-'));
+  const directory = converted?.directory ?? await fs.mkdtemp(path.join(options.workspaceRoot, '.artifact-render-'));
   const source = { kind: 'file' as const, file: artifact }, rasters: RasterEvidence[] = [];
   const layout: { page: number; width: number; height: number; rotation: number; scale: number }[] = [];
   for (const number of pages) {
    options.signal?.throwIfAborted();
-   if (file.format === 'pdf') {
+   if (asPdf) {
     const geometry = await page.evaluate(async number => {
      const pdfPage = await window.kodaxArtifactPdf!.getPage(number), viewport = pdfPage.getViewport({ scale: 4 / 3 });
      const width = Math.ceil(viewport.width), height = Math.ceil(viewport.height);
@@ -92,7 +107,12 @@ export async function processDocument(bytes: Buffer, file: Omit<ArtifactRef, 'pa
   }
   if (file.format === 'pdf') findings.push({ code: 'pdf-scope', message: 'PDF.js page content at 96 DPI; interactive forms and annotation appearance are outside this capture.' });
   return decodeArtifactResult('render', { status: findings.some(d => d.blocking) ? 'unverified' : 'ready', artifact, diagnostics: findings,
-   evidence: { kind: 'paginated', source, engine: { name: file.format === 'pdf' ? 'PDF.js' : 'docx-renderer', version: file.format === 'pdf' ? '5.4.296' : '0.2.2' },
+   evidence: { kind: 'paginated', source, engine: converted ? { name: 'LibreOffice/PDF.js', version: converted.version } : file.format === 'pdf' ? { name: 'PDF.js', version: '5.4.296' } : { name: 'docx-renderer', version: '0.2.2' },
     diagnostics: findings, scope: { pages }, evidence: rasters, layout: { totalPages: total, pages: layout } } });
  });
+}
+async function convertDocx(bytes: Buffer, options: ArtifactRuntimeOptions): Promise<{ bytes: Buffer; version: string; directory: string }> {
+ const directory = await fs.mkdtemp(path.join(options.workspaceRoot, '.artifact-render-'));
+ try { return { ...await convertWithLibreOffice(bytes, directory, options, 'docx'), directory }; }
+ catch (error) { await fs.rm(directory, { recursive: true, force: true }); throw error; }
 }

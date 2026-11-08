@@ -31,7 +31,7 @@
 </p>
 
 <p align="center">
-  <img src="kodax-hd.gif" alt="KodaX in action" width="880">
+  <img src="assets/kodax-hd.gif" alt="KodaX in action" width="880">
 </p>
 
 ---
@@ -58,7 +58,15 @@ FEATURE_302 provider/OAuth credential parity stack, and the 2026-11-01
 full-chain audit's Windows recovery, credential and permission fixes;
 the `v0.7.97-beta.1` tag completes the Space-facing Host execution and
 Session seams with Main default Skills, Quick Ask Session promotion and
-atomic core-config publication.
+atomic core-config publication; the `v0.7.97-beta.2` tag hardens Script
+execution reliability with typed program data, native tool-name wire
+fidelity, on-demand output contracts and shared Host recovery/Workflow
+finalization fixes; the `v0.7.97-beta.3` tag repairs long-context recovery,
+durable Actor settlement and saved Session history with context-capacity
+recovery, the first-Run work-mode lock, history location/turn resolution
+and verified interrupted-exit recovery; the `v0.7.97-beta.4` tag repairs
+the Space SDK instruction and history client contracts with history
+contract v2, a tagged instruction loader and typed capability checks.
 Issue 371's historical first-read latency and Script model-efficiency
 acceptance remain open.
 
@@ -823,6 +831,76 @@ starts, upgrades, or waits. See
 [docs/SPACE_SDK_SEAMS.md](docs/SPACE_SDK_SEAMS.md) and the
 [v0.7.97-alpha.4 release notes](docs/release.md#v0797-alpha4-release-preparation).
 Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2/alpha.3 contract is
+retained.
+
+**v0.7.97-beta.4 release:** Repairs the Space SDK instruction and history
+client contracts. AGENTS-only editor loading returns beside a tagged
+instruction loader whose ordered sources carry `kind:'agents'|'rule'` with
+typed skip diagnostics. History contract v2 validates revision-fenced
+complete turn targets for Fork, Rewind and Retry under the storage lock,
+replaces stale results with the shared `resync_required` error contract,
+and adds ordinary bidirectional paging, cancellable budgeted reads and
+bounded source reuse without extra Provider requests. The SDK negotiates
+v2 on the wire while strict beta.3 clients keep their original response
+shapes; typed SDK/Host capability checks and optional Product launcher
+requirements add no mandatory basic-startup gates, and model prompts are
+unchanged. The CLI embeds its native manifest map compactly without
+unreachable copies, keeping the audited 49 KiB headroom under the
+unchanged 5 MiB limit. Tagging and
+publication remain separate. See the
+[v0.7.97-beta.4 release notes](docs/release.md#v0797-beta4-release-preparation)
+and the [SDK migration notes](docs/SDK_MIGRATION.md).
+Every v0.7.96 stable and v0.7.97-alpha.1 through beta.3 contract is
+retained.
+
+**v0.7.97-beta.3 release:** Repair release for long-context recovery,
+durable Actor settlement and saved Session history. Context-capacity
+errors recover through bounded reads, adaptive compaction budgets and
+strict complete-summary parsing that retain original tool evidence and
+report capacity failure instead of stalling; a paged original input
+replaced by capacity admission stays unread so the model reads it again.
+Independent Actor Runs settle only from the exact Turn's durable terminal
+state and reconcile both crash windows without replaying completed
+execution; Session work mode locks after the first accepted root Run and
+survives Actor settlement, checkpoint recovery and verified legacy
+generation recovery. The `productHistoryLocation` and
+`productHistoryTurnResolution` Host capabilities locate saved history
+around search hits and resolve complete turns for Fork and rewind, and
+Markdown rule fragments load from `~/.kodax/rules` and `.kodax/rules`.
+Interrupted Host exits recover from verified Windows containment evidence,
+identical Host builds are shared across installations and abandoned daemon
+publications are removed in bounded idle rounds. DOCX visual review
+converts through a host-supplied LibreOffice by default and discloses field
+recalculation. Complete audited Windows programs ship as byte-verified
+resources, restoring the 49 KiB CLI reserve beneath the unchanged 5 MiB
+limit. Bounded real-model probes use a 64K application budget; they do not
+validate native sub-100K models or arbitrary whole-document reading
+quality. Tagging and publication remain separate. See the
+[v0.7.97-beta.3 release notes](docs/release.md#v0797-beta3-release-preparation).
+Every v0.7.96 stable and v0.7.97-alpha.1 through beta.2 contract is
+retained.
+
+**v0.7.97-beta.2 release:** Script execution reliability hardening — VM
+call paths expose complete collision-safe tool aliases beside original
+names, typed program data carries normalized read windows and trusted
+structured JSON, and duplicate model output is projected only when the
+original receipt stays fully readable. Native tool names are encoded at
+the Anthropic-compatible wire boundary and restore canonical identity,
+arguments, permissions and deltas; an isolated optional sourceContent
+view preserves original content beside display output, and Host tools
+may declare outputSchema served on demand through `mcp_describe` without
+enlarging default menus; missing Node globals gain bounded contextual
+guidance without displacing original QuickJS error JSON or settled
+receipts. Shared Host recovery refreshes promoted observers, preserves
+owner-bound pending input recovery with idempotent withdrawal receipts,
+reclaims proven dead history locks and enforces trusted Agent mode before
+execution; Host-owned repo diagnostics/prewarm and durable Workflow
+finalization with physical task draining and protected project references
+land. Bounded real-model validation records Script model-facing
+reliability as recommend-iterate; no efficiency or general intelligence
+improvement is claimed. Tagging and publication remain separate. See the
+[v0.7.97-beta.2 release notes](docs/release.md#v0797-beta2-release-preparation).
+Every v0.7.96 stable and v0.7.97-alpha.1 through beta.1 contract is
 retained.
 
 **v0.7.97-beta.1 release:** Space-facing Host execution and Session seams
@@ -2236,7 +2314,7 @@ This development tree exposes 17 SDK subpaths plus the root. Shared product
 applications use `@kodax-ai/kodax/client`; independent libraries and trusted Host
 APIs remain available through the other subpaths. See the [Client contract](docs/CLIENT_CONTRACT.md)
 and [SDK migration guide](docs/SDK_MIGRATION.md). This documentation was checked
-against package version `0.7.97-beta.1`; npm publication is separate from
+against package version `0.7.97-beta.4`; npm publication is separate from
 the current development-tree contract.
 
 ```bash
@@ -2531,6 +2609,29 @@ KodaX ships 50+ built-in tools, grouped below. They are registered as a single f
 | `run_workflow` | Author and run a deterministic Workflow protocol in AMA only when Workflow intent is explicit; complexity alone never activates it. Child Agents share the Actor control plane. Async / idle-yield. (FEATURE_246; FEATURE_270 v0.7.72) |
 
 ---
+
+## Project instructions
+
+Put short, always-applicable Markdown rules in `~/.kodax/rules/*.md` or
+`<project>/.kodax/rules/*.md`. `KODAX_HOME` also relocates the user rules.
+KodaX loads direct `.md` children in filename order, then supplies their complete
+contents with source paths before the first model action. Empty or absent rules
+directories add no prompt text. Nested folders and frontmatter conditions are
+outside this discovery format.
+
+The instruction order is user rules → user `AGENTS.md` → project rules → directory
+`AGENTS.md` files from root to working directory → project `.kodax/AGENTS.md`.
+Same-named user and project rules both apply. Without a Git root, project rules
+are resolved from the working directory. Each fragment is limited to 8 KiB of
+UTF-8, with a separate 16 KiB total per scope including source headings. Oversized, unreadable, or overflowing
+files are skipped whole and reported through diagnostics. `/reload` lists loaded
+paths and skipped-file reasons. Active managed Runs keep their instruction snapshot.
+Writable children inherit these rules through their existing project context.
+SDK prompt overrides and read-only children follow their own instruction contracts,
+and bound hosts apply their readable-path policy to rule files.
+
+Use `exec-policy.jsonc` for enforced command approvals. Longer task-specific
+procedures can live in Skills.
 
 ## Skills System
 

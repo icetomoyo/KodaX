@@ -2184,9 +2184,18 @@ describe.runIf(process.platform === 'win32')('Windows boot identity resolution',
     vi.stubEnv('ProgramFiles', root);
     const spawnsBefore = capturedSyncSpawns.length;
     expect(readWindowsSandboxBootIdentity()).toBe('windows-boot-100');
-    expect(capturedSyncSpawns.slice(spawnsBefore).some(({ command, args }) => (
+    const probe = capturedSyncSpawns.slice(spawnsBefore).find(({ command, args }) => (
       command === pwsh && args.includes('-EncodedCommand')
-    ))).toBe(true);
+    ));
+    expect(probe).toBeDefined();
+    const script = Buffer.from(probe?.args.at(-1) ?? '', 'base64').toString('utf16le');
+    expect(script).toContain('Get-CimInstance Win32_OperatingSystem -Property LastBootUpTime');
+  });
+
+  it('leaves the boot identity unavailable when the Windows query fails', async () => {
+    await resetSandboxRuntimeForTest();
+    processIdentityMock.windowsBootIdentity = undefined;
+    expect(readWindowsSandboxBootIdentity()).toBeUndefined();
   });
 });
 

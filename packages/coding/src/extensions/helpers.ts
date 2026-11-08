@@ -62,6 +62,11 @@ export async function exec(
           SYSTEMROOT: process.env.SYSTEMROOT ?? '',
           COMSPEC: process.env.COMSPEC ?? '',
           PATHEXT: process.env.PATHEXT ?? '',
+          // PowerShell's module analysis cache: an explicit override, else the
+          // LOCALAPPDATA default. Without it every start rescans all installed
+          // modules (~22 s on GitHub Windows runners). Both are paths, not secrets.
+          PSModuleAnalysisCachePath: process.env.PSModuleAnalysisCachePath ?? '',
+          LOCALAPPDATA: process.env.LOCALAPPDATA ?? '',
         }
       : {}),
     ...options.env,

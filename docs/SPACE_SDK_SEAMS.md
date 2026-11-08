@@ -1,5 +1,20 @@
 # Space 的 Product Client / Host 接缝
 
+## beta.4 的历史契约 v2
+
+`v0.7.97-beta.4` 标签发布 `productHistoryTurnResolution: 2` 与 `productHistoryLocation: 2`（npm 发布为手动步骤）。Fork/Rewind/Retry 交回 `resolveHistoryTurn` 的完整就绪结果 `{turn}`（Retry 用 `{turn, before: true}`），过期时按共享 `resync_required` 错误重新选择并确认；读取页保留两个不透明的相邻游标，`around` 与 `cursor` 不可同时使用，可传 AbortSignal 与超时取消。未协商 v2 的严格 beta.3 客户端保留原响应形状。由应用负责本地 Host 启动/升级时使用 `ensureKodaXClient({ requirements })`；可在历史编辑可用前打开的应用省略可选要求，按功能用 `client.capabilities.supports(...)` 检查。迁移细节见 [SDK 迁移说明](SDK_MIGRATION.md#space-sdk-repair-migration-2026-11-08-shipped-in-v0797-beta4)。
+
+## beta.3 的会话历史
+
+以下两个 Host 能力随 `v0.7.97-beta.3` 标签发布（npm 发布为手动步骤）。
+
+| Host 能力 | 客户端行为 |
+| --- | --- |
+| `productHistoryLocation: 1` | 向 `sessions.readHistory` 传 `around: { searchItemId }` 或 `around: { historyBoundary }`，使用返回的 `locatedBoundaryId` 定位。按 `nextCursor` 读更早记录，按 `newerCursor` 读更新记录。仅搜索原文可用时保留原文预览。 |
+| `productHistoryTurnResolution: 1` | 在 Fork/回退前调用 `sessions.resolveHistoryTurn`。行内目标传 SDK 项和来源，菜单使用 `latest` 或 `previous`，显式命令使用零基 `index`。完整轮尾包含已持久化的工具结果。写入时交回 `historyBoundary`，回退还须交回确认过的 `expectedHead`。 |
+
+两个能力均支持可选建连要求。Space 在连接后按操作检查 Host 能力，使旧 Host 仍可提供已有的浏览及搜索原文。来源修订使用 SDK 返回的字符串；新保存的 view 项暂缺修订时，可以提交其稳定输入或输出身份由 SDK 验证。浏览与解析只读，均不调用模型。
+
 ## 2026-11-02 后续接手：默认方法与 Quick Ask（alpha.12 之后，未发布）
 
 已发布 alpha.12 及 Space `codex/sdk-alpha12-preparation` 的先行适配仍是各自历史基线；
@@ -72,7 +87,7 @@ Main/Renderer 不传该标记、不改 inputId，也不需自行迁移队列文�
 新 SDK 仍待发布；Space 升级后验收默认保持/变更、普通与显式 redirect、冷恢复和原账号
 保持，继续使用既有 API，不传内部队列标记，也不手改 pending 文件。
 
-2026-10-18 的 Space 核查样本安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，当时官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前开发树 `0.7.97-beta.1` 核对，不据此推断 Space 已升级；源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
+2026-10-18 的 Space 核查样本安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，当时官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前开发树 `0.7.97-beta.4` 核对，不据此推断 Space 已升级；源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
 
 ## 2026-10-29 未发布 SDK 接入补充
 

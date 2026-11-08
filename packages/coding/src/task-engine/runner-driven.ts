@@ -22,8 +22,8 @@ import type {
 import { waitForContextRecovery } from '../context-recovery-wait.js';
 import { resolveWorkMode, assertWorkModeAvailable } from '../work-mode.js';
 import { createScriptPilot } from '../agent-runtime/script/pilot.js';
-import { withScriptCells } from '../agent-runtime/script/run.js';
-import { SCRIPT_MODEL_LIMITS, SCRIPT_TOOL_NAME, withScriptModelTool, projectScriptModelTools, canReadWithModelTools } from '../agent-runtime/script/model.js';
+import { withScriptCells, createScriptReceiptReader } from '../agent-runtime/script/run.js';
+import { SCRIPT_MODEL_LIMITS, SCRIPT_TOOL_NAME, withScriptModelTool, projectScriptModelTools, canReadWithModelTools, closeScriptModelSession } from '../agent-runtime/script/model.js';
 import {
   Runner,
   collectGuardrails,
@@ -2293,12 +2293,12 @@ async function runManagedTaskViaRunnerInner(
     createScriptPilot({ ctx: baseCtx, events: {}, runtimeSessionState,
       activeToolNames: runtimeSessionState.activeTools.filter(name => chain.worker.tools?.some(tool => tool.name === name)),
     }, budget, chain.worker).tools,
-    async (code, caller) => withScriptCells({
+    async (code, caller, scope) => withScriptCells({
       options: { ...options, abortSignal: caller.abortSignal }, sessionId: resolvedSessionId,
       runId: scriptRunId!, ctx: baseCtx, state: runtimeSessionState,
       messages: [...caller.transcript ?? runnerInput], agent: caller.agent, toolObserver: scriptLeafObserver,
       save: () => persistManagedBoundary(caller.transcript ?? runnerInput),
-    }, SCRIPT_MODEL_LIMITS, runCell => runCell(code)),
+    }, SCRIPT_MODEL_LIMITS, runCell => runCell(code), scope), createScriptReceiptReader(runtimeSessionState),
   ) : chain.worker;
   if (scriptMode) inheritOrdinaryRootToolContract(chain.worker, entryAgent, options.context);
   const persistManagedBoundary = async (
@@ -2830,7 +2830,7 @@ async function runManagedTaskViaRunnerInner(
     const releaseRuntimeBinding = typeof releaseRuntimeBindingCandidate === 'function'
       ? releaseRuntimeBindingCandidate
       : undefined;
-
+    let runnerError: unknown;
     try {
       if (sessionRuntime) {
         // Storage-hydrated state is the baseline; hydrateSession runs after
@@ -2970,6 +2970,7 @@ async function runManagedTaskViaRunnerInner(
         return prepareImages;
       }, baseCtx.visualObservationOwner?.expectedImageHash?.bind(baseCtx.visualObservationOwner));
     } catch (error) {
+      runnerError = error;
       options.context?.interruptInput?.closeInputWindow();
       if (isRunnerIterationLimitError(error)) {
         // Persist the last legal managed state and wait for all earlier writes
@@ -2982,8 +2983,12 @@ async function runManagedTaskViaRunnerInner(
       }
       throw error;
     } finally {
-      releaseRuntimeBinding?.();
-      await cleanupUserInputDegradationCache(userInputDegradationCache);
+      try { await closeScriptModelSession(entryAgent); }
+      catch (error) {
+        if (runnerError !== undefined && error !== runnerError) throw new AggregateError([runnerError, error], 'Managed Run and Script cleanup both failed.');
+        throw error;
+      }
+      finally { releaseRuntimeBinding?.(); await cleanupUserInputDegradationCache(userInputDegradationCache); }
     }
   })();
 

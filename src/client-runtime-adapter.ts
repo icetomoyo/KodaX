@@ -1,4 +1,5 @@
 import type { ClientWorkflowRun, KodaXProductClient } from '@kodax-ai/coding/client-contract';
+import { KODAX_RUNTIME_SDK_CAPABILITIES, supportsRuntimeCapability, requireRuntimeCapability } from '@kodax-ai/coding/client-contract';
 import { memoryProposalRevision } from '@kodax-ai/agent';
 import type { KodaXRuntime } from './sdk-runtime.js';
 import { toClientConfig, toClientSessionSettings } from './client-settings.js';
@@ -14,6 +15,9 @@ export function toKodaXProductClient(
   runtime: KodaXRuntime,
   authorizeExecution?: KodaXClientHostAuthorization,
 ): KodaXProductClient {
+  const requireHistoryTurns = (): void => {
+    requireRuntimeCapability(runtime.capabilities, 'productHistoryTurnResolution', 2);
+  };
   const requirePromotionContract = (): void => {
     if ((runtime.capabilities?.sessionPromotion as { version?: number } | undefined)?.version !== 1) {
       throw Object.assign(new Error('Session promotion requires an upgraded Host.'), { code: 'daemon_upgrade_required' });
@@ -29,6 +33,10 @@ export function toKodaXProductClient(
       'workModePolicy', 'toolVisibilityPolicy', 'tools', 'binding', 'businessBinding', 'defaultSkill']) delete (input as unknown as Record<string, unknown>)[key];
     const authorization = await authorizeExecution?.({ ...request, input } as Request,
       createExecutionServices(runtime, 'sessionId' in input ? input.sessionId : undefined));
+    if (authorization?.profile?.requiredWorkMode !== undefined
+      && (runtime.capabilities?.productExecutionModeConstraint as { version?: number } | undefined)?.version !== 1) {
+      throw Object.assign(new Error('Execution mode constraints require an upgraded Host.'), { code: 'daemon_upgrade_required' });
+    }
     if ((authorization?.profile !== undefined || authorization?.tools !== undefined)
       && (runtime.capabilities?.productExecutionProfile as { version?: number } | undefined)?.version !== 2) {
       throw Object.assign(new Error('Execution profiles require an upgraded Host.'), { code: 'daemon_upgrade_required' });
@@ -40,6 +48,8 @@ export function toKodaXProductClient(
     return { ...input, ...(authorization === undefined ? {} : { authorization: structuredClone(authorization) }) };
   };
   return {
+    capabilities: { sdk: KODAX_RUNTIME_SDK_CAPABILITIES,
+      supports: (name, version) => supportsRuntimeCapability(runtime.capabilities, name, version) },
     statistics: runtime.statistics ?? {
       read: async () => { throw new Error('Execution facts require a compatible Host.'); },
       readRequests: async () => { throw new Error('Execution facts require a compatible Host.'); },
@@ -81,16 +91,20 @@ export function toKodaXProductClient(
       getSettings: async (sessionId) => toClientSessionSettings(await runtime.sessions.getSettings(sessionId)),
       getSettingsVersioned: async sessionId => {
         const snapshot = await runtime.sessions.getSettingsVersioned(sessionId);
-        return { revision: snapshot.revision, value: toClientSessionSettings(snapshot.value) };
+        return { revision: snapshot.revision, value: toClientSessionSettings(snapshot.value), workModeLocked: snapshot.workModeLocked };
       },
       updateSettingsVersioned: async (sessionId, patch, options) => {
         const snapshot = await runtime.sessions.updateSettingsVersioned(sessionId, patch, options);
-        return { revision: snapshot.revision, value: toClientSessionSettings(snapshot.value) };
+        return { revision: snapshot.revision, value: toClientSessionSettings(snapshot.value), workModeLocked: snapshot.workModeLocked };
       },
       updateSettings: async (sessionId, patch) => toClientSessionSettings(await runtime.sessions.updateSettings(sessionId, patch)),
       observe: (sessionId, onView, options) => runtime.sessions.observeView(sessionId, onView, options),
       readItem: (sessionId, itemId, options) => runtime.sessions.readViewItem(sessionId, itemId, options),
       readHistory: (sessionId, options) => runtime.sessions.readHistory(sessionId, options),
+      resolveHistoryTurn: async (sessionId, selector, options) => {
+        requireHistoryTurns();
+        return runtime.sessions.resolveHistoryTurn(sessionId, selector, options);
+      },
       readHistoryEntry: (sessionId, itemId, options) => runtime.sessions.readHistoryEntry(sessionId, itemId, options),
       searchHistory: (sessionId, input) => runtime.sessions.searchHistory(sessionId, input),
       readGoal: (sessionId) => runtime.sessions.readGoal(sessionId),
@@ -111,16 +125,18 @@ export function toKodaXProductClient(
           if (session === null) throw Object.assign(new Error('No lineage entry matches the selector.'), { code: 'conflict' as const });
           return session;
         }),
-      rewindSession: (sessionId, input) => runtime.sessions.rewind({ sessionId, ...input })
-        .then((session) => {
-          if (session === null) throw Object.assign(new Error('Rewind target no longer resolves.'), { code: 'conflict' as const });
-          return session;
-        }),
-      forkSession: (sessionId, input) => runtime.sessions.fork({ sessionId, ...(input ?? {}) })
-        .then((session) => {
-          if (session === null) throw Object.assign(new Error('Fork boundary no longer resolves.'), { code: 'conflict' as const });
-          return session;
-        }),
+      rewindSession: async (sessionId, input) => {
+        if (input.turn || input.historyBoundary) requireHistoryTurns();
+        const session = await runtime.sessions.rewind({ sessionId, ...input });
+        if (session === null) throw Object.assign(new Error('Rewind target no longer resolves.'), { code: 'conflict' as const });
+        return session;
+      },
+      forkSession: async (sessionId, input) => {
+        if (input?.turn || (input?.historyBoundary && (input.before !== true || 'kind' in input.historyBoundary))) requireHistoryTurns();
+        const session = await runtime.sessions.fork({ sessionId, ...(input ?? {}) });
+        if (session === null) throw Object.assign(new Error('Fork boundary no longer resolves.'), { code: 'conflict' as const });
+        return session;
+      },
       recoverSession: (sessionId, input) => runtime.sessions.recover({ sessionId, ...(input ?? {}) }),
       compact: async (sessionId, input) => {
         const authorized = await authorize({ kind: 'compaction', input: { ...input, sessionId } });
@@ -337,6 +353,14 @@ export function toKodaXProductClient(
       stop: (runId, options) => runtime.workflows.stop(runId, options),
     },
     catalog: {
+      inspectRepoIntelligence: async sessionId => {
+        if (!runtime.catalog.inspectRepoIntelligence) throw Object.assign(new Error('Repository diagnostics require an upgraded Host.'), { code: 'daemon_upgrade_required' });
+        return runtime.catalog.inspectRepoIntelligence(sessionId);
+      },
+      prewarmRepoIntelligence: async sessionId => {
+        if (!runtime.catalog.prewarmRepoIntelligence) throw Object.assign(new Error('Repository prewarm requires an upgraded Host.'), { code: 'daemon_upgrade_required' });
+        return runtime.catalog.prewarmRepoIntelligence(sessionId);
+      },
       extensions: async () => {
         const result = await runtime.catalog.extensions();
         const loaded = ({ path, label, loadSource }: { path: string; label: string; loadSource: string }) => ({ path, label, loadSource });

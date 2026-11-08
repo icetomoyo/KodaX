@@ -8,7 +8,7 @@ import type {
   KodaXSessionUiToolCall,
   KodaXSessionUiToolCallStatus,
 } from "@kodax-ai/agent";
-import { ToolCallStatus, type CreatableHistoryItem, type ToolCall } from "../types.js";
+import { ToolCallStatus, type CreatableHistoryItem, type ToolCall, type HistoryItemBase } from "../types.js";
 import { readTaskResultReports, type KodaXTaskResultMetadata, type KodaXTaskResultReport } from '@kodax-ai/agent';
 import {
   sanitizeToolInput,
@@ -26,7 +26,7 @@ export type RestoredHistorySeed = (
   | { type: 'task_result'; text: string; taskResult: KodaXTaskResultReport }
   | { type: "tool_summary"; text: string }
   | { type: "tool_group"; tools: KodaXSessionUiToolCall[] }
-) & { timestamp?: number; outputId?: string };
+) & { timestamp?: number; outputId?: string; historyBoundary?: HistoryItemBase['historyBoundary'] };
 
 /** Convert a RestoredHistorySeed to a CreatableHistoryItem. tool_summary / task_completed → event with icon. */
 export function seedToHistoryItem(
@@ -34,7 +34,7 @@ export function seedToHistoryItem(
 ): CreatableHistoryItem {
   if (seed.type === 'task_result') {
     const { summary, ...taskResult } = seed.taskResult;
-    return { type: 'event', text: summary, taskResult,
+    return { type: 'event', text: summary, taskResult, historyBoundary: seed.historyBoundary,
       ...(seed.timestamp === undefined ? {} : { timestamp: seed.timestamp }) };
   }
   if (seed.type === "tool_summary" || seed.type === "task_completed") {
@@ -42,6 +42,7 @@ export function seedToHistoryItem(
       type: "event" as const,
       text: seed.text,
       icon: 'tool',
+      historyBoundary: seed.historyBoundary,
       ...(seed.timestamp === undefined ? {} : { timestamp: seed.timestamp }),
     };
   }
@@ -49,6 +50,7 @@ export function seedToHistoryItem(
     return {
       type: "tool_group",
       tools: seed.tools.map(toolCallSeedToHistoryToolCall),
+      historyBoundary: seed.historyBoundary,
       ...(seed.timestamp === undefined ? {} : { timestamp: seed.timestamp }),
     };
   }
@@ -540,6 +542,7 @@ export function extractHistorySeedsFromMessage(
 export function extractHistorySeedsFromMessages(
   messages: readonly HistorySeedSourceMessage[],
   structuredTaskResults = false,
+  boundaries?: ReadonlyMap<HistorySeedSourceMessage, NonNullable<HistoryItemBase['historyBoundary']>>,
 ): RestoredHistorySeed[] {
   const seeds: RestoredHistorySeed[] = [];
 
@@ -548,10 +551,14 @@ export function extractHistorySeedsFromMessages(
     if (!message) {
       continue;
     }
+    const historyBoundary = boundaries?.get(message);
+    const append = (items: RestoredHistorySeed[]): void => {
+      seeds.push(...items.map(seed => historyBoundary ? { ...seed, historyBoundary } : seed));
+    };
     if (structuredTaskResults) {
       const reports = readTaskResultReports(message);
       if (reports.length > 0) {
-        seeds.push(...withMessageTimestamp(reports.map(taskResult => ({ type: 'task_result' as const,
+        append(withMessageTimestamp(reports.map(taskResult => ({ type: 'task_result' as const,
           text: taskResult.summary, taskResult })), message.timestamp));
         continue;
       }
@@ -563,8 +570,8 @@ export function extractHistorySeedsFromMessages(
         extractAssistantHistorySeeds(message.content, toolResults, message.outputId !== undefined),
         message.timestamp,
       );
-      seeds.push(
-        ...assistantSeeds
+      append(
+        assistantSeeds
           .map((seed) => (
             message.outputId && seed.type === 'tool_group'
               ? { ...seed, tools: seed.tools.map(tool => ({ ...tool, assistantOutputId: message.outputId })) }
@@ -581,7 +588,7 @@ export function extractHistorySeedsFromMessages(
       continue;
     }
 
-    seeds.push(...extractHistorySeedsFromMessage(message));
+    append(extractHistorySeedsFromMessage(message));
   }
 
   return seeds;

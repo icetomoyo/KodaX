@@ -7,6 +7,18 @@ import { resolveScriptWorkerUrl, runScriptCell } from './cell.js';
 
 const limits = { timeoutMs: 3_000, memoryBytes: 16 * 1024 * 1024, maxCalls: 8, maxTransferBytes: 128 * 1024 };
 
+it.each(['yield_control()', "text('')", "store('same', 1)"])(
+  'bounds empty or repeated control messages before Host persistence (%s)', async operation => {
+    let events = 0;
+    const persisted = async () => { events++; await new Promise(resolve => setTimeout(resolve, 5)); };
+    const result = await runScriptCell({ code: `for(let i=0;i<400;i++) ${operation}; return 42;`, toolNames: [],
+      limits: { ...limits, timeoutMs: 1000, maxCalls: 1, maxTransferBytes: 1024 }, invoke: vi.fn(),
+      onYield: persisted, onOutput: persisted, onStore: () => { events++; } });
+    expect(events).toBeLessThanOrEqual(32);
+    if (operation === 'yield_control()') { expect(events).toBe(1); expect(result.status).toBe('completed'); }
+    else expect(result.status).toBe('failed');
+  });
+
 it('evaluates isolated JavaScript and composes dependent calls in one cell', async () => {
   const invoke = vi.fn(async (name: string, input: Record<string, unknown>) => ({ content: name === 'read' ? 'one\ntwo' : String(input.value) }));
   const result = await runScriptCell({ code: 'const r = await tools.read({path:"x"}); return await tools.grep({value:r.content.split("\\n")[1]});',
@@ -15,6 +27,53 @@ it('evaluates isolated JavaScript and composes dependent calls in one cell', asy
   expect(result.value).toEqual({ content: 'two' });
   expect(result.receipts.map(receipt => receipt.name)).toEqual(['read', 'grep']);
   expect(invoke).toHaveBeenCalledTimes(2);
+});
+
+it('calls an authorized generic tool through the same bare alias and namespace function', async () => {
+  const invoke = vi.fn(async (_name: string, input: Record<string, unknown>) => ({ content: String(input.value) }));
+  const result = await runScriptCell({ limits, toolNames: ['lookup_record'], invoke,
+    code: 'const first = await lookup_record({value:21}); const second = await tools.lookup_record({value:42}); return {same:lookup_record===tools.lookup_record,values:[first.content,second.content]};' });
+  expect(result.status, result.error).toBe('completed');
+  expect(result.value).toEqual({ same: true, values: ['21', '42'] });
+  expect(result.receipts.map(receipt => ({ id: receipt.id, name: receipt.name, input: receipt.input })))
+    .toEqual([{ id: 1, name: 'lookup_record', input: { value: 21 } }, { id: 2, name: 'lookup_record', input: { value: 42 } }]);
+  expect(invoke).toHaveBeenCalledTimes(2);
+});
+
+it('has no inherited callable namespace entries while preserving authorized prototype names', async () => {
+  const invoke = vi.fn(async (name: string) => ({ content: name }));
+  const result = await runScriptCell({ limits, toolNames: ['constructor', '__proto__'], invoke, code: `
+    return { inherited: typeof tools.toString, prototype: Object.getPrototypeOf(tools), frozen: Object.isFrozen(tools),
+      values: [(await tools['constructor']({})).content, (await tools['__proto__']({})).content] };
+  ` });
+  expect(result.status, result.error).toBe('completed');
+  expect(result.value).toEqual({ inherited: 'undefined', prototype: null, frozen: true, values: ['constructor', '__proto__'] });
+  expect(result.receipts.map(receipt => receipt.name)).toEqual(['constructor', '__proto__']);
+  expect(invoke).toHaveBeenCalledTimes(2);
+});
+
+it('keeps controls and JavaScript globals intact while exposing every authorized name through tools', async () => {
+  const names = ['text', 'store', 'load', 'read_result', 'yield_control', 'tools', '__hostCall', '__store', '__load', '__emit',
+    'Object', 'Promise', 'JSON', 'Function', 'constructor', '__proto__', 'toString', 'await', 'default', 'eval', 'arguments',
+    'a-b', 'capability.inspect', '读取', '$lookup', '_lookup'];
+  const invoke = vi.fn(async (name: string) => ({ content: name }));
+  let yielded = 0;
+  const result = await runScriptCell({ limits: { ...limits, maxCalls: names.length }, toolNames: names, invoke,
+    onYield: () => { yielded++; }, code: `
+      store('answer', 42); text(load('answer')); yield_control();
+      const bare = [读取 === tools['读取'], $lookup === tools.$lookup, _lookup === tools._lookup];
+      const protectedNames = ${JSON.stringify(names.slice(0, -3))}.every(name => globalThis[name] !== tools[name]);
+      const results = [];
+      for (const name of ${JSON.stringify(names)}) results.push((await tools[name]({})).content);
+      return { bare, protectedNames, globals: [typeof Object, typeof Promise, typeof JSON.parse, typeof Function, typeof unlisted_tool], results };
+    ` });
+  expect(result.status, result.error).toBe('completed');
+  expect(result.value).toEqual({ bare: [true, true, true], protectedNames: true,
+    globals: ['function', 'function', 'function', 'function', 'undefined'], results: names });
+  expect(result.outputs).toEqual(['42']);
+  expect(yielded).toBe(1);
+  expect(result.receipts.map(receipt => receipt.name)).toEqual(names);
+  expect(invoke).toHaveBeenCalledTimes(names.length);
 });
 
 it('has no host globals, Node modules or host Function constructor escape', async () => {
@@ -26,6 +85,60 @@ it('has no host globals, Node modules or host Function constructor escape', asyn
   expect(result.status, result.error).toBe('completed');
   expect(result.value).toEqual(['undefined', 'undefined', 'undefined', 'undefined', 'undefined', 'undefined', 'denied']);
   expect(invoke).not.toHaveBeenCalled();
+});
+
+it.each(['require', 'process', 'Buffer', 'module', 'exports', '__dirname', '__filename'])(
+  'explains the missing %s global while preserving its original VM exception', async name => {
+    const invoke = vi.fn();
+    const result = await runScriptCell({ limits, toolNames: [], invoke, code: `return ${name};` });
+    expect(result.status).toBe('failed');
+    const [original, diagnostic] = result.error!.split('\nScript environment:');
+    expect(JSON.parse(original!.slice('Error: '.length))).toMatchObject({
+      name: 'ReferenceError', message: `'${name}' is not defined`, stack: expect.stringContaining('eval.js:'),
+    });
+    expect(diagnostic).toContain('QuickJS, not Node.js.');
+    expect(diagnostic).toContain('tools[name](input)');
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+it.each([
+  ['return missing_local;', 'ReferenceError'],
+  ['return require; let require;', 'ReferenceError'],
+  ["const require=1; require('fs');", 'TypeError'],
+  ["JSON.parse('{');", 'SyntaxError'],
+  ["throw new Error('ordinary failure');", 'Error'],
+])('keeps ordinary guest failures unchanged (%s)', async (code, name) => {
+  const result = await runScriptCell({ limits, toolNames: [], invoke: vi.fn(), code });
+  expect(result.status).toBe('failed');
+  expect(JSON.parse(result.error!.slice('Error: '.length))).toMatchObject({ name, stack: expect.any(String) });
+});
+
+it('preserves supported local and tool aliases, feature detection and non-Error rejections', async () => {
+  const invoke = vi.fn(async () => ({ content: 'authorized require tool' }));
+  const alias = await runScriptCell({ limits, toolNames: ['require'], invoke, code: 'return (await require({})).content;' });
+  expect(alias).toMatchObject({ status: 'completed', value: 'authorized require tool' });
+  const local = await runScriptCell({ limits, toolNames: [], invoke,
+    code: 'const process = () => 42; return [process(), typeof require];' });
+  expect(local).toMatchObject({ status: 'completed', value: [42, 'undefined'] });
+  const rejected = await runScriptCell({ limits, toolNames: [], invoke, code: 'throw undefined;' });
+  expect(rejected).toMatchObject({ status: 'failed', error: 'Error' });
+  expect(invoke).toHaveBeenCalledOnce();
+});
+
+it('does not evaluate guest globals to diagnose an error or displace original evidence for a hint', async () => {
+  const result = await runScriptCell({ limits, toolNames: [], invoke: vi.fn(), code: `
+    Object.defineProperty(globalThis, 'require', {get() { text('getter ran'); throw new ReferenceError("'require' is not defined"); }});
+    require('fs');
+  ` });
+  expect(result.status).toBe('failed');
+  expect(result.error).toContain('Script environment:');
+  expect(result.outputs).toEqual(['getter ran']);
+  const small = await runScriptCell({ limits: { ...limits, maxTransferBytes: 256 }, toolNames: [], invoke: vi.fn(), code: "require('fs');" });
+  expect(small.status).toBe('failed');
+  expect(JSON.parse(small.error!.slice('Error: '.length))).toMatchObject({
+    name: 'ReferenceError', message: "'require' is not defined", stack: expect.stringContaining('eval.js:'),
+  });
+  expect(Buffer.byteLength(small.error!)).toBeLessThanOrEqual(256);
 });
 
 it('denies hidden control/bridge calls even when the guest invokes the transport directly', async () => {
@@ -61,7 +174,7 @@ it('preserves confirmed effects after failure, and never automatically replays t
   expect(writes).toBe(1);
 });
 
-it('cancels the guest, waits for admitted tool cleanup and prevents queued effects', async () => {
+it.each(['tools.read', 'read'])('cancels %s, waits for admitted tool cleanup and prevents queued effects', async call => {
   const abort = new AbortController();
   const effects: string[] = [];
   let settled = false;
@@ -74,7 +187,7 @@ it('cancels the guest, waits for admitted tool cleanup and prevents queued effec
     return { content: '[Tool Error] cancelled', isError: true };
   });
   const result = await runScriptCell({ limits, toolNames: ['read'], invoke, signal: abort.signal,
-    code: 'await Promise.all([tools.read({path:"one"}), tools.read({path:"two"})]);' });
+    code: `await Promise.all([${call}({path:"one"}), ${call}({path:"two"})]);` });
   expect(result.status).toBe('cancelled');
   expect(settled).toBe(true);
   expect(effects).toEqual(['started', 'aborted']);
@@ -82,17 +195,43 @@ it('cancels the guest, waits for admitted tool cleanup and prevents queued effec
   expect(result.receipts).toHaveLength(1);
 });
 
-it('caps calls and transfer size rather than silently dropping errors or results', async () => {
+it.each(['tools.read', 'read'])('caps %s calls and transfer size rather than silently dropping errors or results', async call => {
   const invoke = vi.fn(async () => ({ content: 'ok' }));
   const called = await runScriptCell({ limits: { ...limits, maxCalls: 1 }, toolNames: ['read'], invoke,
-    code: 'await tools.read({path:"one"}); await tools.read({path:"two"});' });
+    code: `await ${call}({path:"one"}); await ${call}({path:"two"});` });
   expect(called.status).toBe('failed');
   expect(invoke).toHaveBeenCalledOnce();
   const oversized = await runScriptCell({ limits: { ...limits, maxTransferBytes: 128 }, toolNames: ['read'],
-    invoke: async () => ({ content: 'x'.repeat(256) }), code: 'return await tools.read({});' });
+    invoke: async () => ({ content: 'x'.repeat(256) }), code: `return await ${call}({});` });
   expect(oversized.status).toBe('failed');
   expect(oversized.error).toContain('transfer limit');
   expect(oversized.receipts[0]?.result.content).toHaveLength(256);
+});
+
+it('lets a cell page a durably settled large result and select data without losing warnings or invoking effects again', async () => {
+  let durable = false;
+  const result = { content: '界'.repeat(3000) + '\nWARNING: original source is incomplete', isError: true,
+    metadata: { warning: 'keep this original warning', truncated: true, actualInput: { original: 'retained' } } };
+  const invoke = vi.fn(async () => result);
+  const cell = await runScriptCell({ limits: { ...limits, maxTransferBytes: 2048 }, toolNames: ['host_large'], invoke,
+    onReceipt: async () => { durable = true; }, code: `
+      const result = await tools.host_large({});
+      let encoded = '', offset, pages = 0;
+      do { const page = await read_result(result.result_ref.callId, offset); encoded += page.text; pages++; offset = page.nextOffset; } while (offset !== undefined);
+      const original = JSON.parse(encoded);
+      return { status: result.status, isError: result.isError, warning: original.metadata.warning, truncated: original.metadata.truncated, length: original.content.length, pages };
+    ` });
+  expect(durable).toBe(true);
+  expect(cell.status, cell.error).toBe('completed');
+  expect(cell.value).toMatchObject({ status: 'settled', isError: true, warning: 'keep this original warning', truncated: true, length: result.content.length });
+  expect((cell.value as { pages: number }).pages).toBeGreaterThan(1);
+  expect(cell.receipts[0]?.result).toEqual(result);
+  expect(invoke).toHaveBeenCalledOnce();
+  const next = await runScriptCell({ limits, toolNames: [], invoke,
+    code: 'return await read_result(1);' });
+  expect(next.status).toBe('failed');
+  expect(next.error).toContain('from this cell');
+  expect(invoke).toHaveBeenCalledOnce();
 });
 
 it('rejects non-DTO host results without losing the original receipt', async () => {
@@ -123,6 +262,41 @@ it('does not mistake unawaited tools or invalid JSON arguments for a successful 
   expect(invalid.hadToolErrors).toBe(true);
   expect(invoke).not.toHaveBeenCalled();
 });
+
+it('explains outer async helper lifetime without losing effects or replaying them', async () => {
+  const invoke = vi.fn(async () => ({ content: 'effect recorded' }));
+  const input = { limits, toolNames: ['append_record'], invoke };
+  const result = await runScriptCell({ ...input,
+    code: "async function record(){return await tools.append_record({value:'sample'});} record();" });
+  expect(result.status).toBe('failed');
+  expect(invoke.mock.calls.length).toBeLessThanOrEqual(1);
+  expect(result.receipts).toHaveLength(invoke.mock.calls.length);
+  expect([...result.receipts, ...result.pendingCalls ?? []]).toEqual([
+    expect.objectContaining({ id: 1, name: 'append_record', input: { value: 'sample' } }),
+  ]);
+  for (const receipt of result.receipts) expect(receipt.result).toEqual({ content: 'effect recorded' });
+  for (const pending of result.pendingCalls ?? []) expect(pending.status).toBe('unknown');
+  const calls = invoke.mock.calls.length;
+  const next = await runScriptCell({ ...input, code: 'return "Inspect prior evidence before any new effect";' });
+  expect(next.status).toBe('completed');
+  expect(invoke).toHaveBeenCalledTimes(calls);
+  expect(result.error).toContain('effects must be reconciled from receipts');
+  expect(result.error).toMatch(/await or return.*async helper calls.*cell body/i);
+});
+
+it.each(['return record();', 'return await record();', 'const value=await record(); return value;'])(
+  'adopts async helper work before the body finishes (%s)', async completion => {
+    const invoke = vi.fn(async () => ({ content: 'recorded sample' }));
+    const result = await runScriptCell({ limits, toolNames: ['append_record'], invoke,
+      code: `async function record(){return (await tools.append_record({value:'sample'})).content;} ${completion}` });
+    expect(result.status, result.error).toBe('completed');
+    expect(result.value).toBe('recorded sample');
+    expect(result.hadToolErrors).toBe(false);
+    expect(result.pendingCalls).toBeUndefined();
+    expect(invoke).toHaveBeenCalledOnce();
+    expect(result.receipts).toEqual([{ id: 1, name: 'append_record', input: { value: 'sample' },
+      result: { content: 'recorded sample' } }]);
+  });
 
 it('rejects invalid limits and oversized source before creating a worker', async () => {
   const input = { code: 'return 42;', toolNames: [], invoke: vi.fn(), limits };

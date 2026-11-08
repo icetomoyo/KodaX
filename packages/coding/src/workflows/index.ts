@@ -27,3 +27,5 @@ export * from './author-via-worker.js';
 export * from './review-packet.js';
 export * from './scoped-review.js';
 export * from './cost-report.js';
+export { completeWorkflowRunCleanup, recoverWorkflowRunCleanups } from './cleanup.js';
+export { protectWorkflowProject, withWorkflowWorktreeProtection, isWorkflowProjectProtected } from './project-protection.js';

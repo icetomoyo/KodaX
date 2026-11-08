@@ -246,6 +246,8 @@ export interface WorkflowLimits {
  * fs/shell — all effects route through agent tools behind the backend.
  */
 export interface WorkflowApi {
+  /** Host-side cancellation; restricted scripts receive only the RPC facade. */
+  readonly signal?: AbortSignal;
   readonly runId: string;
   readonly args: unknown;
   readonly budget: WorkflowBudget;

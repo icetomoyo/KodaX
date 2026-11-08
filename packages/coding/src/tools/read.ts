@@ -1,7 +1,5 @@
 import fs from 'fs/promises';
-import { createReadStream } from 'fs';
 import path from 'node:path';
-import { createInterface } from 'readline';
 import type { KodaXToolResultContentItem } from '@kodax-ai/llm';
 import { prepareValidatedImageBlock, validateImageBytesInRun } from '@kodax-ai/llm';
 import type { KodaXToolExecutionContext } from '../types.js';
@@ -9,6 +7,7 @@ import { resolveExecutionPath } from '../runtime-paths.js';
 import { buildReadFileUnchangedStub } from '../multi-instance/read-file-state-cache.js';
 import { readTransientTextArtifact, recordTransientPageRead, transientPageTokenBudget } from '../transient-text-artifacts.js';
 import { countTokens } from '../tokenizer.js';
+import { readTextFilePage, type ReadLineContinuation as LineContinuation } from './read-text-page.js';
 import {
   DEFAULT_TOOL_OUTPUT_MAX_BYTES,
   formatSize,
@@ -40,14 +39,6 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
 // huge payloads.
 const READ_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 
-interface LineContinuation {
-  readonly lineNumber: number;
-  readonly start: number;
-  readonly end: number;
-  readonly total: number;
-  readonly nextOffset: number;
-}
-
 function buildReadNotes(options: {
   offset: number;
   linesShown: number;
@@ -74,7 +65,8 @@ function buildReadNotes(options: {
   if (lineContinuation) {
     notes.push(
       `[Line ${lineContinuation.lineNumber} is partial: showing Unicode characters `
-      + `${lineContinuation.start}-${lineContinuation.end} of ${lineContinuation.total}. `
+      + `${lineContinuation.start}-${lineContinuation.end}`
+      + (lineContinuation.total === undefined ? '. ' : ` of ${lineContinuation.total}. `)
       + `Continue with offset=${lineContinuation.lineNumber} limit=1 `
       + `line_offset=${lineContinuation.nextOffset}.]`,
     );
@@ -310,9 +302,10 @@ async function maybeRecordContentHash(
   if (!ctx.contentHashCache) return;
   if (fileSizeBytes > READ_HASH_MAX_BYTES) return;
   try {
-    const fullContent = await fs.readFile(filePath, 'utf-8');
+    const fullContent = await fs.readFile(filePath, { encoding: 'utf-8', signal: ctx.abortSignal });
     ctx.contentHashCache.recordRead(filePath, fullContent);
   } catch {
+    ctx.abortSignal?.throwIfAborted();
     // Swallow — see JSDoc.
   }
 }
@@ -321,6 +314,7 @@ export async function toolRead(
   input: Record<string, unknown>,
   ctx: KodaXToolExecutionContext,
 ): Promise<string | readonly KodaXToolResultContentItem[]> {
+  ctx.abortSignal?.throwIfAborted();
   const requestedPath = input.path as string;
   const transientContent = readTransientTextArtifact(requestedPath);
   if (transientContent !== undefined) {
@@ -419,79 +413,14 @@ export async function toolRead(
     }
   }
 
-  const lines: string[] = [];
-  const stream = createReadStream(filePath, { encoding: 'utf-8' });
-  const reader = createInterface({
-    input: stream,
-    crlfDelay: Infinity,
+  const page = await readTextFilePage({
+    filePath, offset, lineOffset, limit,
+    maxBytes: DEFAULT_TOOL_OUTPUT_MAX_BYTES, signal: ctx.abortSignal,
   });
-
-  let totalLines = 0;
-  let outputBytes = 0;
-  let hasMoreLines = false;
-  let lineContinuation: LineContinuation | undefined;
-  let lineOffsetError: string | undefined;
-
-  try {
-    for await (const rawLine of reader) {
-      totalLines++;
-      if (totalLines <= startLine) {
-        continue;
-      }
-
-      if (lines.length >= limit) {
-        hasMoreLines = true;
-        break;
-      }
-
-      const lineNumber = offset + lines.length;
-      const characters = Array.from(rawLine);
-      const currentLineOffset = lineNumber === offset ? lineOffset : 0;
-      if (currentLineOffset > characters.length) {
-        lineOffsetError =
-          `[Tool Error] line_offset ${currentLineOffset} is beyond end of line `
-          + `${lineNumber} (${characters.length} Unicode characters total)`;
-        break;
-      }
-      const visibleCharacters = characters.slice(
-        currentLineOffset,
-        currentLineOffset + READ_MAX_LINE_CHARS,
-      );
-      const displayLine = visibleCharacters.join('');
-      const nextLineOffset = currentLineOffset + visibleCharacters.length;
-      const nextLineContinuation = nextLineOffset < characters.length
-        ? {
-            lineNumber,
-            start: currentLineOffset,
-            end: nextLineOffset - 1,
-            total: characters.length,
-            nextOffset: nextLineOffset,
-          }
-        : undefined;
-      const numberedLine = `${lineNumber.toString().padStart(6)}\t${displayLine}`;
-      const lineBytes = Buffer.byteLength(numberedLine, 'utf-8') + (lines.length > 0 ? 1 : 0);
-
-      if (outputBytes + lineBytes > DEFAULT_TOOL_OUTPUT_MAX_BYTES) {
-        hasMoreLines = true;
-        break;
-      }
-
-      lines.push(numberedLine);
-      outputBytes += lineBytes;
-      if (nextLineContinuation) {
-        lineContinuation = nextLineContinuation;
-        hasMoreLines = true;
-        break;
-      }
-    }
-  } finally {
-    reader.close();
-    stream.destroy();
-  }
-
-  if (lineOffsetError) {
-    return lineOffsetError;
-  }
+  if (page.error) return page.error;
+  const { totalLines, hasMoreLines, lineContinuation } = page;
+  const lines = page.lines.map((line, index) => `${(offset + index).toString().padStart(6)}\t${line}`);
+  const textLines = ctx.toolCallId && ctx.recordToolResultProjection ? page.lines : undefined;
 
   if (totalLines < offset && !(totalLines === 0 && offset === 1)) {
     return `[Tool Error] Offset ${offset} is beyond end of file (${totalLines} lines total)`;
@@ -502,8 +431,64 @@ export async function toolRead(
       ? `[Large file: ${formatSize(stat.size)}. Read returns at most ${READ_DEFAULT_LIMIT} lines or ${formatSize(DEFAULT_TOOL_OUTPUT_MAX_BYTES)} per call. Use offset/limit or grep to narrow the scope.]`
       : '';
   let effectiveLines = [...lines];
+  let effectiveTextLines = textLines;
   let effectiveHasMoreLines = hasMoreLines;
   let effectiveLineContinuation = lineContinuation;
+
+  // This is an advisory per-call ceiling, not a reservation of the batch's
+  // capacity. The existing batch guardrail remains the admission owner.
+  const tokenBudget = ctx.toolResultCapacityTokens;
+  const fitsTokenBudget = (candidate: string[], continuation: LineContinuation | undefined, more: boolean): boolean => {
+    if (tokenBudget === undefined || !Number.isFinite(tokenBudget)) return true;
+    return countTokens(renderReadOutput(candidate, buildReadNotes({
+      offset, linesShown: candidate.length, limit, totalLines, hasMoreLines: more,
+      preflightNote, lineContinuation: continuation,
+    }))) <= Math.max(0, tokenBudget);
+  };
+  let budgetClipped = false;
+  if (!fitsTokenBudget(effectiveLines, effectiveLineContinuation, effectiveHasMoreLines)) {
+    budgetClipped = true;
+    // Only count bounded page candidates, logarithmically rather than once for
+    // every removed line. Continuation notes and line numbers count as input.
+    let low = 0;
+    let high = Math.max(0, lines.length - 1);
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (fitsTokenBudget(lines.slice(0, middle), undefined, true)) low = middle;
+      else high = middle - 1;
+    }
+    effectiveHasMoreLines = true;
+    effectiveLineContinuation = undefined;
+    effectiveLines = lines.slice(0, low);
+    effectiveTextLines = textLines?.slice(0, low);
+    if (low === 0 && page.lines.length > 0) {
+      // At most READ_MAX_LINE_CHARS code points: never materialize a giant line.
+      const characters = Array.from(page.lines[0]!);
+      const partial = (length: number): LineContinuation => ({
+        lineNumber: offset, start: lineOffset, end: lineOffset + length - 1,
+        nextOffset: lineOffset + length,
+        ...(lineContinuation?.lineNumber === offset
+          ? (lineContinuation.total === undefined ? {} : { total: lineContinuation.total })
+          : { total: lineOffset + characters.length }),
+      });
+      high = Math.max(0, characters.length - 1);
+      while (low < high) {
+        const middle = Math.ceil((low + high) / 2);
+        const candidate = `${offset.toString().padStart(6)}\t${characters.slice(0, middle).join('')}`;
+        if (fitsTokenBudget([candidate], partial(middle), true)) low = middle;
+        else high = middle - 1;
+      }
+      if (low > 0) {
+        const text = characters.slice(0, low).join('');
+        effectiveLines = [`${offset.toString().padStart(6)}\t${text}`];
+        effectiveTextLines = textLines ? [text] : undefined;
+        effectiveLineContinuation = partial(low);
+      }
+    }
+    if (effectiveLines.length === 0) {
+      return '[Tool Error] Remaining context capacity cannot fit a read page and its continuation. Compact context before retrying this range.';
+    }
+  }
 
   while (true) {
     const notes = buildReadNotes({
@@ -526,13 +511,27 @@ export async function toolRead(
       // turn sees the recorded hash. Errors swallowed inside the
       // helper; never affects tool output.
       await maybeRecordContentHash(ctx, filePath, stat.size);
+      ctx.abortSignal?.throwIfAborted();
       // FEATURE_177 v0.7.42 — record (filePath, offset, limit, mtime)
       // for the anti-loop dedup. The next re-read with these same
       // params + unchanged mtime returns a stub instead of paying disk
       // I/O and re-flooding the conversation with identical content.
-      if (lineOffset === 0) {
+      if (lineOffset === 0 && !budgetClipped) {
         ctx.readFileStateCache?.record(filePath, offset, limit, stat.mtimeMs);
       }
+      if (ctx.toolCallId) ctx.recordToolResultProjection?.(ctx.toolCallId, {
+        content: output, modelContent: notes.join('\n'),
+        ...(effectiveTextLines ? { data: {
+          kind: 'text' as const, text: effectiveTextLines.slice(0, effectiveLines.length).join('\n'), normalized: true as const,
+          offset, line_offset: lineOffset, lineCount: effectiveLines.length,
+          complete: offset === 1 && lineOffset === 0 && !effectiveHasMoreLines,
+          // Unlike the short human hint, keep the requested page size so a
+          // completed long line can share its next page with subsequent lines.
+          ...(effectiveLineContinuation ? { next: { offset: effectiveLineContinuation.lineNumber, limit,
+            line_offset: effectiveLineContinuation.nextOffset } }
+            : effectiveHasMoreLines ? { next: { offset: offset + effectiveLines.length, limit, line_offset: 0 } } : {}),
+        } } : {}),
+      });
       return output;
     }
 

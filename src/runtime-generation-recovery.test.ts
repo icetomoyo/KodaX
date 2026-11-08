@@ -1,9 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { captureGenerationResume, parseGenerationCheckpoint, rebindGenerationOptions } from './runtime-generation-recovery.js';
+import { captureGenerationResume, parseGenerationCheckpoint, rebindGenerationOptions, resolveGenerationRecoveryWorkMode } from './runtime-generation-recovery.js';
 import { createExecutionToolPolicy } from './execution-profile.js';
 import type { KodaXToolVisibilityPolicy } from '@kodax-ai/coding/client-contract';
 
 describe('generation recovery admission', () => {
+  it('recovers effective Coding from a serialized callback declaration rather than its requested Agent mode', () => {
+    const resume = captureGenerationResume({ prompt: 'Continue the original tool policy.', options: {
+      workMode: 'agent', context: { toolVisibilityPolicy: () => false },
+    } });
+    expect(resume.options.context).not.toHaveProperty('toolVisibilityPolicy');
+    expect(resolveGenerationRecoveryWorkMode(resume, 'coding')).toBe('coding');
+    expect(() => resolveGenerationRecoveryWorkMode(resume, 'agent')).toThrow(/persisted Run/);
+  });
+
+  it('preserves an intersected Agent mode and rejects contradictory persisted effective facts', () => {
+    const resume = captureGenerationResume({ prompt: 'Keep the Agent capability intersection.', options: {
+      workMode: 'agent', context: { workModePolicy: 'intersect', toolVisibilityPolicy: () => false },
+    } });
+    expect(resolveGenerationRecoveryWorkMode(resume, 'agent')).toBe('agent');
+    expect(() => resolveGenerationRecoveryWorkMode(resume, 'coding')).toThrow(/persisted Run/);
+  });
+
   it.each(['agent', 'coding', 'script'] as const)('preserves %s across generation recovery without rebinding it as authority', workMode => {
     const resume = captureGenerationResume({ prompt: 'Continue', options: { workMode } });
     expect(resume.options.workMode).toBe(workMode);

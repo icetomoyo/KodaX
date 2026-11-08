@@ -44,6 +44,7 @@ import type {
 } from '../types.js';
 import type { RepoPreturnBundle } from './protocol.js';
 import { REPOINTEL_CONTRACT_VERSION } from './protocol.js';
+import type { ClientRepoIntelligenceStatus } from '../client-contract.js';
 import {
   resolveRepoIntelligenceMode,
   resolveRepoIntelligenceRuntimeConfig,
@@ -185,6 +186,7 @@ type PreturnBundleCacheEntry = {
   pending: boolean;
   expiresAt: number;
   promise: Promise<RepoPreturnBundleResult>;
+  capability?: KodaXRepoIntelligenceCapability;
 };
 const preturnBundleCache = new Map<string, PreturnBundleCacheEntry>();
 
@@ -1081,6 +1083,7 @@ export async function getRepoPreturnBundle(
   let entry: PreturnBundleCacheEntry;
   const promise = fetchRepoPreturnBundleInner(context, options).then((result) => {
     entry.pending = false;
+    entry.capability = result.capability;
     entry.expiresAt = Date.now() + ROUTING_SIGNALS_CACHE_TTL_MS;
     return result;
   }).catch((error) => {
@@ -1175,9 +1178,13 @@ async function fetchRepoPreturnBundleInner(
     }).catch(() => ''),
   ]);
 
-  const capability = buildWorkerCapability('light', resolvedMode === 'full' ? 'limited' : 'ok', resolvedMode === 'full'
-    ? ['Full repo intelligence unavailable; used worker-isolated light context.']
-    : []);
+  const parts = [routingSignals.capability, moduleContext?.capability, impactEstimate?.capability];
+  const degraded = parts.some(part => part !== undefined && part.status !== 'ok');
+  const warnings = [...new Set([
+    ...(resolvedMode === 'full' ? ['Full repo intelligence unavailable; used worker-isolated light context.'] : []),
+    ...parts.flatMap(part => part?.warnings ?? []),
+  ])];
+  const capability = buildWorkerCapability('light', resolvedMode === 'full' || degraded ? 'limited' : 'ok', warnings);
   const recommendedFiles = [
     ...(moduleContext?.module?.entryFiles ?? []),
     ...(impactEstimate?.impactedSymbols?.slice(0, 4).map((symbol) => symbol.filePath) ?? []),
@@ -1204,6 +1211,39 @@ export {
   renderProcessContext,
   renderSymbolContext,
 };
+
+export function inspectRepoIntelligenceProject(context: RepoContext,
+  options: { mode?: KodaXRepoIntelligenceMode } = {}): ClientRepoIntelligenceStatus {
+  const config = resolveRepoIntelligenceRuntimeConfig(options.mode);
+  const configuredMode = config.mode;
+  const requestedMode = resolveRepoIntelligenceMode(configuredMode);
+  const entry = preturnBundleCache.get(JSON.stringify({ mode: requestedMode,
+    executionCwd: normalizeCachePath(context.executionCwd), gitRoot: normalizeCachePath(context.gitRoot),
+    targetPath: normalizePreturnTargetPath(context, '.') ?? '' }));
+  const current = entry && (entry.pending || entry.expiresAt > Date.now()) ? entry : undefined;
+  const capability = current?.capability;
+  return { configuredMode, requestedMode, effectiveEngine: capability?.engine ?? 'off',
+    status: requestedMode === 'off' ? 'disabled' : current?.pending ? 'warming' : capability?.status ?? 'unavailable',
+    initialized: capability !== undefined, warnings: [...config.warnings, ...(capability?.warnings ?? (requestedMode === 'off' ? []
+      : ['Repository intelligence has not completed initialization for this project.']))] };
+}
+
+/** Explicit Host prewarm, sharing both execution caches rather than building a second index. */
+export async function prepareRepoIntelligenceProject(context: RepoContext,
+  options: { mode?: KodaXRepoIntelligenceMode } = {}): Promise<ClientRepoIntelligenceStatus> {
+  if (resolveRepoIntelligenceMode(options.mode) === 'off'
+    || process.env.KODAX_PREWARM_REPO_INTELLIGENCE === REPO_INTELLIGENCE_PREWARM_DISABLED) {
+    return inspectRepoIntelligenceProject(context, options);
+  }
+  try {
+    await Promise.all([getRepoPreturnBundle(context, { ...options, targetPath: '.', refresh: false }),
+      getRepoRoutingSignals(context, { ...options, targetPath: '.', refresh: false })]);
+    return inspectRepoIntelligenceProject(context, options);
+  } catch (error: unknown) {
+    return { ...inspectRepoIntelligenceProject(context, options), status: 'unavailable',
+      warnings: [error instanceof Error ? error.message : String(error)] };
+  }
+}
 
 /**
  * v0.7.41 L2 - best-effort warm both session-level caches (routing signals +

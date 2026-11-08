@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { statSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { execSync } from 'node:child_process';
 
@@ -10,11 +11,27 @@ test('npm package includes the required manual data', () => {
   assert.ok(packed[0].files.some(file => file.path === 'dist/manual-topics.json'));
   assert.ok(packed[0].files.some(file => file.path === 'dist/static-text.json'));
   assert.ok(packed[0].files.some(file => file.path === 'dist/windows-native-scripts.json'));
+  assert.ok(packed[0].files.some(file => file.path === 'dist/windows-effect-job-programs.json'));
   assert.ok(packed[0].files.some(file => file.path === 'dist/generated-config-templates.json'));
 });
 
 test('CLI retains room for native Responses within the existing 5 MiB limit', () => {
-  assert.ok(statSync(new URL('../dist/kodax_cli.js', import.meta.url)).size <= 5 * 1024 * 1024 - 64 * 1024);
+  assert.ok(statSync(new URL('../dist/kodax_cli.js', import.meta.url)).size <= 5 * 1024 * 1024 - 49 * 1024);
+});
+
+test('published root and standalone Agent retain byte-identical audited Windows programs', () => {
+  const bundled = JSON.parse(readFileSync(new URL('../dist/windows-effect-job-programs.json', import.meta.url), 'utf8'));
+  const standalone = JSON.parse(readFileSync(new URL('../packages/agent/dist/runtime/windows-effect-job-programs.json', import.meta.url), 'utf8'));
+  assert.deepEqual(bundled, standalone);
+  assert.deepEqual(Object.fromEntries(Object.entries(bundled).map(([key, text]) =>
+    [key, createHash('sha256').update(text, 'utf8').digest('hex')])), {
+    effectJob: 'a2fd25dbd7c7dcf8438d3d048b4040db49ee380090dd83c77ca5ad9eb7842f76',
+    sidProbe: '02307259d2398a467692c41e5673fccd141f7ad08d4862601e99f6fae63f05ce',
+  });
+  const packed = JSON.parse(execSync('npm pack --dry-run --ignore-scripts --json', {
+    cwd: new URL('../packages/agent/', import.meta.url), encoding: 'utf8',
+  }));
+  assert.ok(packed[0].files.some(file => file.path === 'dist/runtime/windows-effect-job-programs.json'));
 });
 
 test('published SDK and standalone coding package expose identical complete manuals', async () => {

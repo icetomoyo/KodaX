@@ -296,17 +296,24 @@ export async function executeToolCall(
   );
   let result: ToolResult;
   try {
-    const execute = async () => {
+    let executionCall = toolCall;
+    const executeNative = async () => {
       let output = await (runScopedDefinition === undefined
-        ? executeTool(toolCall.name, toolCall.input ?? {}, ctxWithToolHooks)
-        : executeRunScopedTool(ctxWithToolHooks, runScopedDefinition, toolCall.input ?? {}));
+        ? executeTool(executionCall.name, executionCall.input ?? {}, ctxWithToolHooks)
+        : executeRunScopedTool(ctxWithToolHooks, runScopedDefinition, executionCall.input ?? {}));
       if (allowMcpFallback && toolResultText(output).startsWith('[Tool Error]') && ctxWithToolHooks.extensionRuntime) {
-        output = await tryMcpFallback(toolCall.name, toolCall.input ?? {}, ctxWithToolHooks) ?? output;
+        output = await tryMcpFallback(executionCall.name, executionCall.input ?? {}, ctxWithToolHooks) ?? output;
       }
       return output;
     };
+    const beforeInvoke = ctxWithToolHooks.beforeToolInvoke;
+    const execute = beforeInvoke ? async () => {
+      executionCall = { ...toolCall, input: structuredClone(toolCall.input ?? {}) };
+      await beforeInvoke({ ...executionCall, input: executionCall.input ?? {} });
+      return executeNative();
+    } : executeNative;
     result = await executeInExtensionScope(toolCall, ctxWithToolHooks, abortSignal, events, execute);
-    recordWrittenFile(ctx.writtenFiles, toolCall, result, resolveExecutionCwd(ctx));
+    recordWrittenFile(ctx.writtenFiles, executionCall, result, resolveExecutionCwd(ctx));
 
   } finally {
     events.onToolExecutionEnd?.(
@@ -628,7 +635,7 @@ export interface RunToolDispatchInput {
   /** Receives the post-rewrite call keyed by the immutable provider tool id. */
   readonly finalToolBlocks?: Map<string, KodaXToolUseBlock>;
   /** Fires after every before-guardrail settles and before any tool executes. */
-  readonly onToolCallsPrepared?: (blocks: readonly KodaXToolUseBlock[]) => void;
+  readonly onToolCallsPrepared?: (blocks: readonly KodaXToolUseBlock[]) => void | Promise<void>;
 }
 
 interface PreparedToolCall {
@@ -681,7 +688,7 @@ export async function runToolDispatch(
 
   // The host commits these canonical calls to transcript/session before any
   // observer, permission hook, or executor can consume them.
-  input.onToolCallsPrepared?.(
+  await input.onToolCallsPrepared?.(
     preparedCalls.map((prepared) => runnerCallToToolBlock(prepared.call)),
   );
 

@@ -60,7 +60,6 @@ KodaX/
 │   └── repl/                # Interactive terminal (Ink UI)
 ├── src/                     # CLI entry point
 ├── docs/                    # Documentation
-├── clients/                 # External clients / protocol adapters
 └── benchmark/               # Eval harness and datasets
 ```
 

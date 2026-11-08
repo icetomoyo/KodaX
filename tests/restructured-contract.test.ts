@@ -6,7 +6,7 @@ import { buildRunnerLlmAdapter } from '../packages/coding/src/task-engine/_inter
 import { buildFallbackRoutingDecision } from '../packages/coding/src/reasoning.js';
 import { inheritOrdinaryRootToolContract, markOrdinaryRootToolContract } from '../packages/coding/src/tools/managed-tool-contract.js';
 import { createScriptPilot } from '../packages/coding/src/agent-runtime/script/pilot.js';
-import { getScriptModelContracts, withScriptModelTool } from '../packages/coding/src/agent-runtime/script/model.js';
+import { buildScriptModelDescription, getScriptModelContracts, withScriptModelTool } from '../packages/coding/src/agent-runtime/script/model.js';
 import { buildRuntimeSessionState } from '../packages/coding/src/agent-runtime/runtime-session-state.js';
 import { createAgentActorController } from '../packages/agent/src/actors/index.js';
 import { buildMemoryRulesSection } from '../packages/coding/src/prompts/memory-rules.js';
@@ -66,7 +66,7 @@ async function fixture(script = false, historical = true): Promise<FrozenInput &
     // Current production requests are checked in managed-system-contract.test.ts.
     expect(system).toContain('TRUST AND SCOPE');
     captured = { messages, tools: historical ? historicalTools(tools) : tools,
-      system: historical ? replayAuditedWorkerCheckpoint(instructions(worker)) : instructions(worker) };
+      system: historical ? replayAuditedWorkerCheckpoint(instructions(worker)) : system };
     return { textBlocks: [{ text: 'fixture' }], toolBlocks: [] };
   });
   const originalInstructions = instructions(worker);
@@ -74,12 +74,33 @@ async function fixture(script = false, historical = true): Promise<FrozenInput &
     await adapter([{ role: 'system', content: originalInstructions }, { role: 'user', content: task }], entry);
   } finally { await controller.shutdown('Contract fixture finished'); }
   if (!captured) throw new Error('Missing real adapter request');
-  return { ...captured, ...(script ? { scriptContracts: getScriptModelContracts(entry, captured.tools) } : {}) };
+  const scriptContracts = script ? getScriptModelContracts(entry, captured.tools) : undefined;
+  if (historical && scriptContracts) {
+    // The frozen experiment predates native-bridge teaching. Reconstruct that
+    // presentation explicitly; never teach its projector to rewrite new bytes.
+    const historicalEntry = { ...scriptContracts.entry, description: buildScriptModelDescription(scriptContracts.leaves) };
+    return { ...captured, tools: captured.tools.map(tool => tool.name === 'script_exec' ? historicalEntry : tool),
+      scriptContracts: { ...scriptContracts, entry: historicalEntry } };
+  }
+  return { ...captured, ...(scriptContracts ? { scriptContracts } : {}) };
 }
 
 it('does not apply the frozen historical projector to newly evolved production tool contracts', async () => {
   const current = await fixture(false, false);
   expect(restructuredContractInput(current, true)).toBe(current);
+});
+
+it('shares current Worker decisions while preserving the discoverable native bridge and Script control protocol', async () => {
+  const ordinary = await fixture(false, false);
+  const script = await fixture(true, false);
+  expect(script.system).toBe(ordinary.system);
+  expect(script.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(['tool_call', 'script_exec', 'script_wait']));
+  expect(script.scriptContracts?.entry.description).toContain('Native tool_call({name,input})');
+  expect(script.scriptContracts?.entry.input_schema.properties).toMatchObject({
+    selected_output: { type: 'boolean' }, yield_time_ms: { type: 'integer' }, code: { type: 'string' },
+  });
+  expect(script.tools.find(tool => tool.name === 'script_exec')).toEqual(script.scriptContracts?.entry);
+  expect(restructuredContractInput(script, true, script.scriptContracts)).toBe(script);
 });
 
 it('uses structured Script contracts to share Worker decisions while retaining the exact execution protocol', async () => {

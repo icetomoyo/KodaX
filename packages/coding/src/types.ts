@@ -1921,6 +1921,8 @@ export interface KodaXContextOptions {
   workflowIntent?: 'explicit';
   /** Project root used for project-scoped prompts, permissions, and path policy. */
   gitRoot?: string | null;
+  /** Host-owned origin of project Markdown rules across isolated worktrees. */
+  projectRulesRoot?: string;
   /**
    * Explicit working directory used for prompt context, relative tool paths,
    * and shell execution. Defaults to `gitRoot`, then `process.cwd()`.
@@ -2665,6 +2667,32 @@ export type {
   AskUserSelectionAnswer,
 };
 
+/** Program text from a read window, not byte-exact file content. Lines are joined
+ * with LF; original line separators and a final newline are not preserved. */
+export interface ToolResultTextData {
+  readonly kind: 'text';
+  readonly text: string;
+  readonly normalized: true;
+  readonly offset: number;
+  readonly line_offset: number;
+  /** Number of source lines represented in this window, not the file total. */
+  readonly lineCount: number;
+  /** True only when this window covers the entire source from its beginning. */
+  readonly complete: boolean;
+  readonly next?: { readonly offset: number; readonly limit: number; readonly line_offset?: number };
+}
+
+export type ToolResultData = ToolResultTextData | { readonly kind: 'json'; readonly value: KodaXJsonValue };
+
+export interface ToolResultProjection {
+  readonly content: KodaXToolResultBlock['content'];
+  /** Original provider content, before display wrapping. Not parsed or classified. */
+  readonly sourceContent?: KodaXToolResultBlock['content'];
+  /** Only a trusted renderer may declare which model-visible notes replace a body. */
+  readonly modelContent?: string;
+  readonly data?: ToolResultData;
+}
+
 export interface KodaXToolExecutionContext {
   visualModelSelection?: () => { provider: string; model?: string };
   visualSource?: import('@kodax-ai/agent/media').VisualObservationSource;
@@ -2805,6 +2833,8 @@ export interface KodaXToolExecutionContext {
   loadSessionHistory?: () => Promise<KodaXSessionLineage | null>;
   /** Git root directory - Git 鏍圭洰褰?*/
   gitRoot?: string;
+  /** Host-owned origin of project Markdown rules across isolated worktrees. */
+  projectRulesRoot?: string;
   /**
    * FEATURE_247 (R7) — runtime-resolved session id for the run that owns this
    * tool call. Lets host-registered tools (Space artifact/source/KB) attribute a
@@ -2888,6 +2918,10 @@ export interface KodaXToolExecutionContext {
   resolveToolResultCapacityTokens?: (messages: readonly KodaXMessage[]) => number;
   /** Trusted side-channel for a tool-owned recovery artifact. */
   recordToolResultArtifact?: (toolCallId: string, outputPath: string) => void;
+  /** Trusted renderer separation of data from mandatory notes. Consumers must match the final content exactly. */
+  recordToolResultProjection?: (toolCallId: string, projection: ToolResultProjection) => void;
+  /** Optional Script durability fence, after permission hooks; execution uses this same input snapshot. */
+  beforeToolInvoke?: (call: { readonly id: string; readonly name: string; readonly input: Record<string, unknown> }) => Promise<void>;
   /** @internal Invocation-owned successful writes; reset by each execution path. */
   writtenFiles?: Map<string, KodaXWrittenFile>;
   /** Session-scoped directory for helper scripts and scratch outputs. */

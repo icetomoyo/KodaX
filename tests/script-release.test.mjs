@@ -64,6 +64,14 @@ test('actual npm tarball runs Script in a clean directory and fails explicitly o
       catch(error) { process.stdout.write(JSON.stringify({ready:false,error:String(error)})); process.exit(0); }
       assert.equal(KODAX_TOOLS.find(t=>t.name==='glob').description,'Find files matching a pattern.');
       let calls=0; let nativeCalls=0; let workMode='script'; let scriptShell; let scriptQuestion;
+      const originalSource='PACKED_SOURCE_VALUE';let hostCalls=0;
+      const extensionRuntime={
+        listRunTools:provider=>provider==='mcp'?[{name:'packed.source',description:'Read a source value.',
+          capabilityId:'mcp:packed:tool:source',inputSchema:{type:'object',properties:{}},sideEffect:'readonly',planModeAllowed:true}]:[],
+        executeCapability:async(provider,id,input)=>{assert.equal(provider,'mcp');assert.equal(id,'mcp:packed:tool:source');assert.deepEqual(input,{});
+          hostCalls++;return {kind:'tool',content:originalSource,structuredContent:{n:41}};},
+        searchCapabilities:async()=>[],describeCapability:async()=>undefined,readCapability:async()=>({kind:'resource',content:''}),
+        getCapabilityPrompt:async()=>undefined,getCapabilityPromptContext:async()=>undefined};
       function schemaStructure(value,properties=false) {
         if(Array.isArray(value)) return value.map(item=>schemaStructure(item));
         if(value && typeof value==='object') return Object.fromEntries(Object.entries(value)
@@ -104,12 +112,12 @@ test('actual npm tarball runs Script in a clean directory and fails explicitly o
               .find(b=>b.type==='tool_result' && b.tool_use_id==='packed-cell');
             const cell=JSON.parse(block.content);
             assert.match(JSON.stringify(cell.receipts),/PACKED_REAL_READ/);
-            assert.deepEqual(cell.value,{});
+            assert.deepEqual(cell.value,{source:originalSource,total:42});
             assert.deepEqual(cell.value_fields_from_receipts,{output:{id:1,field:'content'}});
             assert.match(cell.value_reference_note,/no additional tool call/);
           }
           return {textBlocks:first?[]:[{type:'text',text:'Read verified.'}],thinkingBlocks:[],
-            toolBlocks:first?[{type:'tool_use',id:'packed-cell',name:'script_exec',input:{code:"const read=await tools.read({path:'input.txt'});return {output:read.content};"}}]:[],
+            toolBlocks:first?[{type:'tool_use',id:'packed-cell',name:'script_exec',input:{code:"const read=await tools.read({path:'input.txt'});const source=await tools['packed.source']({});return {output:read.content,source:source.sourceContent,total:source.data.value.n+1};"}}]:[],
             stopReason:first?'tool_use':'end_turn'};
           } catch(error) { process.stderr.write(String(error.stack ?? error)); throw error; }
         }
@@ -118,13 +126,16 @@ test('actual npm tarball runs Script in a clean directory and fails explicitly o
       await writeFile('input.txt','PACKED_REAL_READ '.repeat(80));
       const storage=new FileSessionStorage({sessionsDir:path.join(process.cwd(),'sessions'),configHome:process.env.KODAX_HOME,cwd:process.cwd()});
       const controller=new AbortController();
-      const result=await runManagedTask({provider:'packed-script',workMode:'script',reasoningMode:'off',lsp:false,abortSignal:controller.signal,
+      const result=await runManagedTask({provider:'packed-script',workMode:'script',reasoningMode:'off',lsp:false,abortSignal:controller.signal,extensionRuntime,
         session:{storage},context:{executionCwd:process.cwd(),gitRoot:process.cwd(),repoIntelligenceMode:'off'},
-        events:{beforeToolExecute:async name=>name==='read'}},'Read input.txt and report.');
+        events:{beforeToolExecute:async name=>name==='read'||name==='packed.source'}},'Read input.txt and report.');
       controller.abort(); await awaitLatestCodingMemoryReviewDrain(5000);
       assert.equal(result.success,true); assert.equal(calls,2);
       const saved=await storage.load(result.sessionId);
-      assert.equal(saved.extensionRecords.filter(r=>r.type==='call.settled').length,1);
+      const receipts=saved.extensionRecords.filter(r=>r.type==='call.settled');
+      assert.equal(receipts.length,2);assert.equal(hostCalls,1);
+      assert.equal(receipts[1].data.data.result.sourceContent,originalSource);
+      assert.deepEqual(receipts[1].data.data.result.data,{kind:'json',value:{n:41}});
       const settled=saved.extensionRecords.find(r=>r.type==='cell.settled').data.data;
       assert.match(settled.value.output,/PACKED_REAL_READ/);
       assert.equal(settled.value_fields_from_receipts,undefined);

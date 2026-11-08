@@ -433,6 +433,8 @@ export type HistoryItemType =
  * History item base class - 历史项基类
  */
 export interface HistoryItemBase {
+  /** Ephemeral canonical provenance supplied by the Host reader; never a display checkpoint identity. */
+  historyBoundary?: { readonly entryId: string; readonly sourceRevision: string };
   /** Canonical task facts used by the Product projection; normal CLI ownership is unchanged. */
   taskResult?: Omit<import('@kodax-ai/agent').KodaXTaskResultReport, 'summary'>;
   outputId?: string;

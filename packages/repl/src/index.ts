@@ -365,6 +365,7 @@ export type {
   KodaXTaskResultMetadata,
   KodaXTaskResultSource,
 } from "@kodax-ai/agent";
+export { isConversationTurnInput, scanConversationToolPairing } from './session/conversation-history.js';
 export {
   listSessions,
   loadSession,

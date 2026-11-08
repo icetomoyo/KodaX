@@ -3,15 +3,17 @@ import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setKodaXDiagnosticSink, type KodaXDiagnostic } from '../diagnostics.js';
 
-const { spawnMock, spawnSyncMock } = vi.hoisted(() => ({
+const { spawnMock, spawnSyncMock, execFileMock } = vi.hoisted(() => ({
   spawnMock: vi.fn(),
   spawnSyncMock: vi.fn(),
+  execFileMock: vi.fn(),
 }));
 
 vi.mock('node:child_process', async (importOriginal) => ({
   ...(await importOriginal<typeof import('node:child_process')>()),
   spawn: spawnMock,
   spawnSync: spawnSyncMock,
+  execFile: execFileMock,
 }));
 
 const {
@@ -21,6 +23,7 @@ const {
   readProcessStartIdentity,
   isCurrentProcessWindowsJobContained,
   readCurrentProcessWindowsJobIdentity,
+  readWindowsJobActiveProcessCount,
   rememberChildProcessTree,
   rememberedChildProcessTreeIsComplete,
   trackChildProcessTreeContainment,
@@ -64,6 +67,64 @@ function snapshot(stdout: string) {
 }
 
 describe('Windows process-tree identity fences', () => {
+  it('keeps timers responsive while an asynchronous Job query is pending', async () => {
+    setWindows();
+    const name = 'Global\\KodaXDaemonJob-00000000-0000-4000-8000-000000000001';
+    let complete: ((error: null, stdout: string) => void) | undefined;
+    spawnSyncMock.mockReset().mockReturnValue(snapshot('0'));
+    execFileMock.mockReset().mockImplementation((_file, _args, _options, callback: typeof complete) => {
+      complete = callback;
+      return fakeChild(1);
+    });
+    const pending = readWindowsJobActiveProcessCount(name);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(execFileMock).toHaveBeenCalledTimes(1);
+    expect(spawnSyncMock).not.toHaveBeenCalled();
+    expect(pending).toBeInstanceOf(Promise);
+    complete!(null, '0');
+    await expect(pending).resolves.toBe(0);
+  });
+
+  it('reads fresh active-process counts for one exact global Job without terminating it', async () => {
+    setWindows();
+    const name = 'Global\\KodaXDaemonJob-00000000-0000-4000-8000-000000000001';
+    execFileMock.mockReset()
+      .mockImplementationOnce((_file, _args, _options, done) => { done(null, '2'); return fakeChild(1); })
+      .mockImplementationOnce((_file, _args, _options, done) => { done(null, '0'); return fakeChild(1); });
+    expect(await readWindowsJobActiveProcessCount(name)).toBe(2);
+    expect(await readWindowsJobActiveProcessCount(name)).toBe(0);
+    expect(execFileMock).toHaveBeenCalledTimes(2);
+    const options = execFileMock.mock.calls[0]?.[2] as { env: NodeJS.ProcessEnv; windowsHide: boolean };
+    expect(options.env.KODAX_INTERNAL_JOB_QUERY_NAME).toBe(name);
+    expect(options.windowsHide).toBe(true);
+  });
+
+  it.each(['', '-1', 'not-a-count', '4294967296', '0\nprivate-output'])(
+    'keeps an invalid Job query result unverified (%j)', async (output) => {
+      setWindows();
+      execFileMock.mockReset().mockImplementation((_file, _args, _options, done) => { done(null, output); return fakeChild(1); });
+      expect(await readWindowsJobActiveProcessCount('Global\\KodaXEffect-00000000-0000-4000-8000-000000000001')).toBeUndefined();
+    },
+  );
+
+  it.each(['EACCES', 'ETIMEDOUT'] as const)('keeps failed Job queries unverified (%s)', async (code) => {
+    setWindows();
+    execFileMock.mockReset().mockImplementation((_file, _args, _options, done) => {
+      done(Object.assign(new Error('query failed'), { code }), '0'); return fakeChild(1);
+    });
+    expect(await readWindowsJobActiveProcessCount('Global\\KodaXDaemonJob-00000000-0000-4000-8000-000000000001')).toBeUndefined();
+  });
+
+  it.each(['KodaXDaemonJob-00000000-0000-4000-8000-000000000001',
+    'Local\\KodaXDaemonJob-00000000-0000-4000-8000-000000000001', 'Global\\unrelated', 'injected; command'])(
+    'does not query an unverified Job name (%s)', async (name) => {
+      setWindows();
+      execFileMock.mockReset();
+      expect(await readWindowsJobActiveProcessCount(name)).toBeUndefined();
+      expect(execFileMock).not.toHaveBeenCalled();
+    },
+  );
+
   it('does not confirm a Job-backed child until the authoritative drain succeeds', async () => {
     setWindows();
     const child = fakeChild(4242);

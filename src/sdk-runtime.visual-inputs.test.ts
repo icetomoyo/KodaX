@@ -131,7 +131,8 @@ it.each<{ restart: boolean; toolRead: boolean; batch: boolean; delivery: 'after_
       append.mockRestore();
       await runtime.runs.withdrawInput(session.id, input.inputId);
       const closing = runtime.close(); release(); await closing; runtime = await open();
-      await expect(runtime.runs.acceptInput(input)).rejects.toThrow(/withdrawn/);
+      // Resubmitting a withdrawn input is an idempotent read of the withdrawal, never a revival.
+      await expect(runtime.runs.acceptInput(input)).resolves.toMatchObject({ state: 'withdrawn' });
       expect(await owner.list()).toEqual([]);
       expect(JSON.stringify(wires)).not.toContain(original.toString('base64'));
       return;

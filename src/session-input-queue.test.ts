@@ -2,6 +2,19 @@ import { expect, it, vi } from 'vitest';
 import { SessionInputQueue, type PendingSessionInput } from './session-input-queue.js';
 import { withProductExecution, type ProductExecutionContext } from './product-execution-authorization.js';
 
+it('keeps a restored mode floor as a batch boundary after rebinding both inputs to one static authority', () => {
+  const queue = new SessionInputQueue(() => {});
+  const plain = { sessionId: 's', inputId: 'plain', text: 'Plain original' };
+  const constrained = { sessionId: 's', inputId: 'agent-only', text: 'Agent original' };
+  queue.restore([{ input: plain, skill: false, principalId: 'owner' },
+    { input: constrained, skill: false, principalId: 'owner', requiredWorkMode: 'agent' }], true);
+  const fresh: ProductExecutionContext = { principalId: 'owner', key: 'fresh-static', bindRun: async input => input };
+  withProductExecution(fresh, () => { queue.rebind(plain); queue.rebind(constrained); });
+  expect(queue.batch('s').map(item => item.input.inputId)).toEqual(['plain']);
+  queue.submitBatch('s', ['plain'], 'coding-run');
+  expect(queue.batch('s')).toMatchObject([{ input: constrained, execution: { profile: { requiredWorkMode: 'agent' } } }]);
+});
+
 it.each([{}, { explicitSkill: null }, { explicitSkill: 'explicit-method' }, { explicitSkill: null, plainRunBoundary: true as const }])
   ('retains persisted Run-boundary and legacy Skill markers across JSON restore (%#)', marker => {
     const saved = [{ input: { sessionId: 's', inputId: 'pending', text: '/explicit-method Keep original arguments',

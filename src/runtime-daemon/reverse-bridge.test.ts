@@ -646,6 +646,7 @@ describe('runtime daemon reverse bridge', () => {
 
   it('materializes bound host tools as run-scoped definitions with fail-closed metadata', async () => {
     const bridge = createRuntimeDaemonReverseBridge(() => {});
+    const outputSchema = { type: 'object', properties: { report: { type: 'string', description: 'Only disclosed on demand' } } };
     bridge.registerHostTools({
       leaseId: 'space-tools',
       tools: [
@@ -653,6 +654,7 @@ describe('runtime daemon reverse bridge', () => {
           name: 'space_artifact_create',
           description: 'Create an artifact in Space',
           inputSchema: { type: 'object', properties: { title: { type: 'string' } } },
+            outputSchema,
           sideEffect: 'non_idempotent',
         },
         {
@@ -676,6 +678,10 @@ describe('runtime daemon reverse bridge', () => {
     });
     const definitions = runtime.listRunTools?.('mcp') ?? [];
     expect(definitions).toHaveLength(3);
+    expect(JSON.stringify(definitions)).not.toContain('Only disclosed on demand');
+    expect(JSON.stringify(await runtime.searchCapabilities('mcp', '', { kind: 'tool' }))).not.toContain('Only disclosed on demand');
+    expect(await runtime.getCapabilityPromptContext('mcp')).not.toContain('Only disclosed on demand');
+    await expect(runtime.describeCapability('mcp', 'host:space-tools:space_artifact_create')).resolves.toMatchObject({ outputSchema });
     expect(definitions.find((definition) => definition.name === 'space_artifact_create')).toMatchObject({
       capabilityId: 'host:space-tools:space_artifact_create',
       sideEffect: 'mutates-state',

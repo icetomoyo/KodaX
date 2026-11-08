@@ -723,6 +723,97 @@ describe('KodaXBaseProvider', () => {
     expect(task).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ['The input token count (72000) exceeds the maximum number of tokens allowed (65536)', 72_000, 65_536],
+    ['Your request exceeded model token limit: 65536 (requested: 72000)', undefined, 65_536],
+    ['Prompt has 72000 tokens, but the configured context size is 65536 tokens', 72_000, 65_536],
+    ['the request exceeds the available context size, try increasing it', undefined, undefined],
+    ['Range of input length should be [1, 65536]', undefined, 65_536],
+    ['Input is too long for requested model', undefined, undefined],
+  ])('classifies capacity dialect without ordinary retries: %s', async (message, inputTokens, contextWindow) => {
+    const provider = new TestProvider();
+    const task = vi.fn(async () => { throw Object.assign(new Error(message), { status: 400 }); });
+    const failure: unknown = await provider.exposeWithRateLimit(task, undefined, 1).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(KodaXContextOverflowError);
+    expect(failure).toMatchObject({ capacity: {
+      inputTokensKind: inputTokens === undefined ? 'unknown' : 'exact',
+      ...(inputTokens === undefined ? {} : { inputTokens }),
+      ...(contextWindow === undefined ? {} : { contextWindow }),
+    } });
+    expect(task).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['rate limit: too many tokens per minute', 429],
+    ['Your request exceeded model token limit: 65536 (requested: 72000)', 429],
+    ['invalid max_tokens: output token limit exceeded', 400],
+    ['insufficient quota: token balance exhausted', 402],
+  ])('keeps non-capacity errors outside recovery: %s', async (message, status) => {
+    const failure: unknown = await new TestProvider().exposeWithRateLimit(
+      async () => { throw Object.assign(new Error(message), { status }); }, undefined, 1,
+    ).catch((error: unknown) => error);
+    expect(failure).not.toBeInstanceOf(KodaXContextOverflowError);
+  });
+
+  it('preserves capacity classification when the server forbids retrying the request', async () => {
+    const task = vi.fn(async () => {
+      throw Object.assign(new Error("Input length (72000) exceeds model's maximum context length (65536)."), {
+        status: 400, headers: { 'x-should-retry': 'false' },
+      });
+    });
+    const onRetry = vi.fn();
+    const failure: unknown = await new TestProvider().exposeWithRateLimit(task, undefined, 3, onRetry)
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(KodaXContextOverflowError);
+    expect(failure).toMatchObject({ capacity: {
+      inputTokens: 72000, contextWindow: 65536, inputTokensKind: 'exact',
+    }, metadata: { retryable: false } });
+    expect(task).toHaveBeenCalledTimes(1);
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it('preserves existing capacity facts and identity under a no-retry header', async () => {
+    const classified = Object.assign(new KodaXContextOverflowError({
+      inputTokens: 72000, contextWindow: 65536, inputTokensKind: 'exact',
+    }, 'upstream'), { headers: { 'x-should-retry': 'false' } });
+    const task = vi.fn(async () => { throw classified; });
+    const failure: unknown = await new TestProvider().exposeWithRateLimit(task)
+      .catch((error: unknown) => error);
+    expect(failure).toBe(classified);
+    expect(task).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry an unchanged capacity rejection despite a retry hint', async () => {
+    const task = vi.fn(async () => {
+      throw Object.assign(new Error("Input length (72000) exceeds model's maximum context length (65536)."), {
+        status: 400, headers: { 'x-should-retry': 'true', 'retry-after-ms': '0' },
+      });
+    });
+    const onRetry = vi.fn();
+    const failure: unknown = await new TestProvider().exposeWithRateLimit(task, undefined, 3, onRetry)
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(KodaXContextOverflowError);
+    expect(task).toHaveBeenCalledTimes(1);
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { message: 'prompt too long; insufficient_quota', status: 402 },
+    { message: 'Your request exceeded model token limit: 65536 (requested: 72000)', status: 429 },
+    { message: 'invalid max_tokens: output token limit exceeded', status: 400 },
+    { message: 'service unavailable', status: 503 },
+  ])('honors no-retry for non-capacity failures: $message', async ({ message, status }) => {
+    const task = vi.fn(async () => {
+      throw Object.assign(new Error(message), { status, headers: { 'x-should-retry': 'false' } });
+    });
+    const failure: unknown = await new TestProvider().exposeWithRateLimit(task, undefined, 3)
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(KodaXProviderError);
+    expect(failure).not.toBeInstanceOf(KodaXContextOverflowError);
+    expect(failure).toMatchObject({ metadata: { retryable: false } });
+    expect(task).toHaveBeenCalledTimes(1);
+  });
+
   it('retries Chinese context-overflow errors immediately', async () => {
     const provider = new TestProvider();
     const onRateLimit = vi.fn();

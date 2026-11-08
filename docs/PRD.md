@@ -1,10 +1,10 @@
 # KodaX Product Requirements
 
-Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
+The `v0.7.97-beta.4` release repairs the Space SDK instruction and history client contracts: AGENTS-only editor loading beside a tagged instruction loader, history contract v2 with revision-fenced Fork/Rewind/Retry turn targets, bidirectional paging and cancellable reads, and typed capability checks with optional launcher requirements. See [release preparation](release.md#v0797-beta4-release-preparation). The `v0.7.97-beta.3` release added context-capacity recovery, durable independent Actor settlement, a first-Run work-mode lock, DOCX/LibreOffice evidence, scoped Markdown rule fragments, saved-history location and complete-turn resolution, verified interrupted-exit recovery, and bounded idle daemon maintenance.
 
-> Last updated: 2026-11-02
+> Last updated: 2026-11-08
 >
-> Current implementation baseline: `@kodax-ai/kodax@0.7.97-beta.1`.
+> Current implementation baseline: `@kodax-ai/kodax@0.7.97-beta.4`.
 > The GitHub release is automated from the release tag; npm publication
 > remains manual.
 > This baseline advertises Windows `sandboxRuntime:11`;

@@ -522,7 +522,7 @@ describe('runWorkflowModule', () => {
     expect(runJson.status).toBe('stopped');
   });
 
-  it('reclaims leftover run worktrees on the terminal path (FEATURE_217 Layer 2/3)', async () => {
+  it('retains worktrees until the Host confirms resources and durable final references', async () => {
     const calls: string[][] = [];
     const baseDir = join(dir, 'worktrees');
     const leftover = join(baseDir, '.kodax-worktree-wf-child-1');
@@ -554,11 +554,10 @@ describe('runWorkflowModule', () => {
     const removed = calls
       .filter((c) => c[0] === 'worktree' && c[1] === 'remove')
       .map((c) => c[2]);
-    expect(removed).toContain(leftover);
+    expect(removed).not.toContain(leftover);
     // The main repo worktree is never touched.
     expect(removed).not.toContain('/repo');
-    // Startup prune ran (Layer 3) in addition to the terminal sweep.
-    expect(calls.some((c) => c[0] === 'worktree' && c[1] === 'prune')).toBe(true);
+    expect(calls).toHaveLength(0);
   });
 
   it('writes a script snapshot when a generated workflow source is provided', async () => {

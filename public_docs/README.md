@@ -3,8 +3,22 @@
 Documentation for KodaX users, product-client integrators and trusted Host developers.
 
 This development tree implements the unified Product Client contract under
-FEATURE_298/299/301. The package version is `0.7.97-beta.1`;
-`v0.7.96` remains the last stable release. `v0.7.97-beta.1` completes the
+FEATURE_298/299/301. The package version is `0.7.97-beta.4`;
+`v0.7.96` remains the last stable release. `v0.7.97-beta.4` repairs the
+Space SDK instruction and history client contracts (AGENTS-only editor
+loading beside a tagged instruction loader, history contract v2 with
+revision-fenced Fork/Rewind/Retry turn targets, bidirectional paging and
+cancellable reads, typed capability checks and optional launcher
+requirements); `v0.7.97-beta.3` repairs
+long-context recovery (bounded reads, adaptive compaction budgets and strict
+complete-summary parsing), durable independent Actor settlement, the
+first-Run work-mode lock and saved Session history (`productHistoryLocation`
+and `productHistoryTurnResolution`), with verified interrupted-exit recovery
+and DOCX/LibreOffice evidence; `v0.7.97-beta.2` hardens Script
+execution reliability (collision-safe VM call paths with typed program data,
+native tool-name wire fidelity, optional sourceContent and on-demand
+outputSchema, missing-Node-global contextual guidance) with shared Host
+recovery and Workflow finalization fixes; `v0.7.97-beta.1` completes the
 Space-facing Host execution and Session seams (Main default Skills with
 consumption-time execution bindings, Quick Ask Session promotion,
 redirect-boundary recovery and atomic core-config publication);
@@ -33,7 +47,11 @@ question outcomes, saved original tool reads, structured task reports and
 estimated-token streaming progress shipped in `v0.7.97-alpha.11`; the unified
 Host cutover and provider/OAuth credential parity shipped in
 `v0.7.97-alpha.12`; the Space execution and session seams completed in
-`v0.7.97-beta.1`. Read the
+`v0.7.97-beta.1`; Script execution reliability hardening and shared Host
+recovery fixes shipped in `v0.7.97-beta.2`; long-context recovery, durable
+Actor settlement and saved-history location/turn resolution shipped in
+`v0.7.97-beta.3`; the instruction and history contract v2 repairs shipped in
+`v0.7.97-beta.4`. Read the
 [current SDK alignment](sdk/embedder-guide.md#post-alpha10-sdk-alignment)
 and [unified Host cutover](sdk/embedder-guide.md#unified-host-sdk-cutover-shipped-in-v0797-alpha12)
 for compatibility and standalone-library boundaries. Historical first-read

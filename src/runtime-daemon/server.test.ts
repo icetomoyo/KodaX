@@ -65,6 +65,34 @@ function restoreEnvironment(name: string, value: string | undefined): void {
 describe('runtime daemon dispatcher', () => {
   afterEach(() => setActiveExtensionRuntime(null));
 
+  it('preserves optional Host output schemas at the public registration boundary', async () => {
+    const dispatcher = createRuntimeDaemonDispatcher({ runtime: makeRuntime() });
+    try {
+      await initializeDispatcher(dispatcher);
+      const descriptor = { name: 'geometry.read-grid', description: 'Read a measured grid.',
+        inputSchema: { type: 'object', properties: {} }, sideEffect: 'none',
+        outputSchema: { type: 'object', properties: { axes: { type: 'array', items: { type: 'string' } } } } };
+      const registered = await dispatcher.handle(createRuntimeDaemonRequest('schema-register', 'host_tool.register', {
+        leaseId: 'schema-lease', tools: [descriptor],
+      }));
+      expect(isRuntimeDaemonSuccessResponse(registered), JSON.stringify(registered)).toBe(true);
+      expect(registered).toMatchObject({ kind: 'response', result: { tools: [descriptor] } });
+      const { outputSchema: _outputSchema, ...legacy } = descriptor;
+      const old = await dispatcher.handle(createRuntimeDaemonRequest('legacy-register', 'host_tool.register', {
+        leaseId: 'legacy-schema-lease', tools: [legacy],
+      }));
+      expect(old).toMatchObject({ kind: 'response', result: { tools: [legacy] } });
+      if (!isRuntimeDaemonSuccessResponse(old)) throw new Error('Legacy registration failed');
+      expect(old.result).toEqual({ id: 'legacy-schema-lease', tools: [legacy] });
+      for (const [index, value] of [null, [], false, 7, 'schema'].entries()) {
+        const invalid = await dispatcher.handle(createRuntimeDaemonRequest(`schema-invalid-${index}`, 'host_tool.register', {
+          leaseId: `invalid-schema-${index}`, tools: [{ ...descriptor, outputSchema: value }],
+        }));
+        expect(invalid).toMatchObject({ kind: 'error', error: { code: 'invalid_request' } });
+      }
+    } finally { dispatcher.close(); }
+  });
+
   it.each(['runtime', 'callback', 'management'] as const)('cancels the underlying %s daemon preflight scan', async (route) => {
     const runtime = makeRuntime();
     const original = runtime.status.preflight;
@@ -3332,6 +3360,7 @@ const METHOD_SMOKE_PARAMS = {
   },
   'session.transcript.search': { sessionId: 'session-1', query: 'historical detail' },
   'session.conversation': { sessionId: 'session-1' },
+  'session.history.resolveTurn': { sessionId: 'session-1', selector: { kind: 'latest' } },
   'session.conversation.page': { sessionId: 'session-1' },
   'session.conversation.entryChunk': {
     sessionId: 'session-1',
@@ -3556,9 +3585,16 @@ const METHOD_SMOKE_PARAMS = {
   'agents.wait': { sessionId: 'session-1', afterSequence: 0, timeoutMs: 1 },
 
   'tool.catalog': { sessionId: 'session-1' },
+  'repo.intelligence.inspect': { sessionId: 'session-1' },
+  'repo.intelligence.prewarm': { sessionId: 'session-1' },
 } satisfies Record<RuntimeDaemonMethod, unknown>;
 
 function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
+  const repoIntelligenceStatus = async (sessionId: string) => ({
+    runtimeId: 'runtime-test', sessionId, workspaceRoot: '/repo',
+    configuredMode: 'off' as const, requestedMode: 'off' as const, effectiveEngine: 'off' as const,
+    status: 'disabled' as const, initialized: false, warnings: [],
+  });
   const listeners: Array<{
     readonly filter: RuntimeEventFilter;
     readonly listener: RuntimeEventListener;
@@ -3679,6 +3715,7 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
         return { items: [], revision: 'sha256:' + '0'.repeat(64), sourceRevision: 'source', status: 'resolved', issues: [], oversized: [] };
       },
       async readHistoryEntry() { return null; },
+      async resolveHistoryTurn() { return { status: 'unavailable', reason: 'no_turns' }; },
       async searchHistory() {
         return { revision: 'sha256:' + '0'.repeat(64), hits: [] };
       },
@@ -4007,6 +4044,8 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
       },
     },
     catalog: {
+      inspectRepoIntelligence: repoIntelligenceStatus,
+      prewarmRepoIntelligence: repoIntelligenceStatus,
       executionTools: async () => [],
       async reasoningEfforts() { return ['auto', 'high']; },
       async probeReasoningEfforts(input) { return input.efforts.map((effort) => ({ effort, status: 'accepted' as const })); },

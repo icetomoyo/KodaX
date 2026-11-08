@@ -13,6 +13,8 @@ export interface ProductExecutionContext {
   readonly authorization?: RuntimeExecutionAuthorization;
   readonly bindingSnapshot?: RuntimeExecutionBindingSnapshot;
   readonly resolve?: (request: RuntimeExecutionBindingRequest, signal?: AbortSignal) => Promise<ProductExecutionContext>;
+  /** Captures the original authenticated Main connection, never a timeout heuristic. */
+  readonly bindingAvailable?: () => boolean;
   readonly principalId?: string;
   readonly sessionId?: string;
   readonly assertAdmission?: () => void;
@@ -21,6 +23,19 @@ export interface ProductExecutionContext {
 
 export function productExecutionIntentKey(context: ProductExecutionContext | undefined): string | undefined {
   return context?.intentKey ?? context?.key;
+}
+
+/** Replacing a connection cannot remove a mode constraint committed with pending intent. */
+export function retainExecutionWorkMode(context: ProductExecutionContext | undefined,
+  required: RuntimeExecutionProfile['requiredWorkMode']): ProductExecutionContext | undefined {
+  if (context === undefined || required === undefined) return context;
+  return { ...context, profile: { ...context.profile, requiredWorkMode: required },
+    ...(context.resolve === undefined ? {} : { resolve: async (request: RuntimeExecutionBindingRequest, signal?: AbortSignal) =>
+      retainExecutionWorkMode(await context.resolve!(request, signal), required)! }),
+    bindRun: async (input, runId, baseRuntime) => {
+      const bound = await context.bindRun(input, runId, baseRuntime);
+      return { ...bound, options: { ...bound.options, executionWorkMode: required } };
+    } };
 }
 
 export async function resolveProductExecution(input: ClientSubmitInput, context: ProductExecutionContext | undefined,

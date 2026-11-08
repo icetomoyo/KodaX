@@ -5225,7 +5225,7 @@ repo-intelligence 工具）都会弹出确认框。只读类 Tier-1（read/grep/
   [`auto-mode-bootstrap.ts:137-198`](../packages/repl/src/interactive/auto-mode-bootstrap.ts#L137-L198)
   构造 guardrail 时传了 `timeoutMs` 却**没传 `speculativeWindowMs`**，两个 host 都退回
   env / 默认值。这是 guardrail 默认值层面的问题，不是某个 surface 的接线遗漏。
-- 配置面缺失：[`config.example.jsonc`](../config.example.jsonc#L244-L247) 的 `autoMode`
+- 配置面缺失：[`config.example.jsonc`](../config-templates/config.example.jsonc) 的 `autoMode`
   段暴露了 `engine` / `classifierModel` / `timeoutMs`，**唯独 speculative window 没有
   config.json 面**，只能靠 `KODAX_AUTO_SPECULATIVE_WINDOW_MS` 环境变量，普通用户无从调。
 

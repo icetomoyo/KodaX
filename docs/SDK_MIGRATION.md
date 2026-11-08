@@ -1,8 +1,10 @@
 # SDK 统一 Client 契约迁移指南
 
-适用范围：当前工作树的 FEATURE_298/299/301 实现；本次核对的包版本为 `0.7.97-beta.1`。版本号不表示 npm 已发布当前工作树中的所有变更。接入前应核对所安装包的导出和 Host 能力。
+适用范围：当前工作树的 FEATURE_298/299/301 实现；本次核对的包版本为 `0.7.97-beta.4`，随 `v0.7.97-beta.4` 标签发布（npm 发布为手动步骤）。接入前应核对所安装包的导出和 Host 能力；下文带日期的 beta.1/beta.2/beta.3 记录保留各自历史范围。
 
 Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附件/统计与退出恢复范围见 [SDK/Host 接缝](SPACE_SDK_SEAMS.md)。
+
+从 beta.2 升级后，检查 Host 的 `productHistoryLocation` 和 `productHistoryTurnResolution` 再启用搜索定位和整轮操作。旧会话无需改写。保留 SDK 返回的字符串修订和确认时的分支头；收到过期结果时重新选择目标。
 
 2026-11-02 发布验收修复中，扩展 API `exec()` 的 PowerShell 启动改为
 `-NoLogo -NoProfile -NonInteractive`，避免隐式执行用户 profile 和交互提示。
@@ -14,6 +16,269 @@ Solo 和 Adaptive 都会向模型提供可用且已授权的 Skill 目录。运�
 目录共用 8,000 UTF-16 单元上限；省略目录项不会删除已绑定的授权。
 调用方显式设置的 `systemPromptOverride` 仍是 Solo 的完整提示覆盖，不自动追加
 可选 Skill 目录。`sa` 当前仍是可执行的 Solo 模式；`amaw` 才是归一为 `ama` 的旧别名。
+
+## 2026-11-03 beta.1 后续修复（未发布）
+
+本轮基线为 `v0.7.97-beta.1` / `e733e51f`，后续修复已随 `v0.7.97-beta.2` 发布
+（npm 发布为手动步骤）。截至 2026-11-07，`beta` 指向 beta.2、
+`latest` 指向稳定版 0.7.96，这是正常发布策略。下述后续修复须分别验证源码、
+正式包、实际运行 Host 和 Space 成品，不能用本地版本号推断旧 Host 已升级。
+
+- Promotion 提交后，已有/新增/第二客户端观察者须刷新元数据及历史边界；
+  保留原 Session、正文、附件和 ID。陈旧分页仍按原修订规则失效。
+- Pending 输入的原始意图与失效连接授权分开；仅原稳定 principal 可以重绑
+  未消费的原输入，并通过持久幂等撤回回执取回完整正文及附件。
+  共享接收状态不授予其他 principal 读取原输入全文的权力。
+- Script Stop、冷 Host 和 observe 后历史首读分别验证；内部写入收敛不放宽
+  真实并发变更/过期分页冲突。Issue 371 的历史加载性能继续独立验收。
+- Partner 的可信 Agent 模式要求在 Host 准入、消费和装配边界核验；模式要求
+  与 shell/write/子 Agent 权限正交，不通过禁止正常工具实现。
+- Script 分阶段补组合/安全并发、模型选择输出与完整证据、长任务观察及有界
+  跨 cell 数据；保留原生调用、权限、预算、guardrail、真实参数与取消清理。
+  性能及智能验收计入新增教学、回读、全部 Provider 请求和实际 usage。
+- Repo-intelligence 诊断/预热由实际执行 Host 返回，复用同一缓存；保留按需
+  初始化与失败回退，预热错误不归为 Provider 失败。Linux 既有指引先复验。
+- Workflow 保留 slash、进度、停止及会话最终结果；新增独立运行记录管理与
+  rename/delete/prune 公共接口需求撤回。Host 确认自身子任务/资源停止后，
+  持久完整结果、报告与历史引用，再释放运行状态和清理无引用临时资源。
+  结果/交付物、项目文件、保存定义、其他客户端及 unknown 运行受保护；
+  断连不等于取消，冷恢复只续清理不重放未知副作用。
+
+本节固定源码实施契约；每个切片的运行证据与未验边界记录在
+[本轮测试指南](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#2026-11-03-beta1-后续正确性与-scriptworkflow实施中)。
+真实账号、覆盖安装、跨平台和麒麟实机继续单列验收。
+
+### 输入恢复与模式约束
+
+`connectKodaXClient`/`ensureKodaXClient` 要求实际 Host 的
+`productInputRecovery:1`。Main 持久保留原 `instanceId`/`instanceSecret`，
+由认证连接派生稳定 principal；仅对尚未消费且旧连接 generation 已失效或 lease
+已撤销的输入，按原 inputId、全文、附件、delivery 和 target 重提交以重绑。
+同连接仍有效时不能用另一 lease 替换已接受的授权。
+
+`inputs.read` 继续共享接收状态；`inputs.withdraw` 的全文和幂等回执只属于原
+principal，外来身份返回 `permission_denied`。这是对旧跨 principal 撤回行为的
+必要收紧，不影响普通 Agent 工具权限。回执与移除 pending 原子提交；丢响应后
+按原 Session/inputId 重试 withdraw，返回原正文、附件 descriptor 及 delivery。
+已撤回 ID 再提交返回 withdrawn，不能再次执行。回执保留至 Session 释放/删除。
+旧数组队列继续读；新 envelope 使旧 Host 保守拒绝，坏文件仅阻断所属 Session。
+
+Partner 可在可信 Main 使用
+`services.createExecutionProfile({requiredWorkMode:'agent'})`，要求实际 Host 的
+`productExecutionModeConstraint:1`。Host 在准入、排队消费、安全点和最终装配
+核对模式，不匹配返回 `execution_mode_mismatch`，保留原问题。它不自动切换
+Session、不限制正常 shell/write/子 Agent；子 Agent 保留自己的模式声明。
+静态 pending 约束随原意图持久化，新连接省略字段不能放宽。
+根 Run generation checkpoint v3 保留约束并校验原身份/fresh authority；
+旧 Host 拒绝 v3。Main recovery.profile 可读取原约束，不应改成当前 UI 选择。
+
+### Repo-intelligence 诊断与预热
+
+在既有 Product catalog 使用
+`catalog.inspectRepoIntelligence(sessionId)` 和
+`catalog.prewarmRepoIntelligence(sessionId)`；实际 Host 须声明
+`repoIntelligenceDiagnostics:1`，旧 Host 在发送前明确拒绝。
+返回 runtimeId、sessionId、workspaceRoot、配置/请求模式、effectiveEngine、
+status、initialized 和 warnings。inspect 只看现有缓存，不执行 probe 或索引；
+未初始化不是 ready，prewarm 可等待当前共享缓存完成，另一客户端能读到同一事实。
+Host 根据受准入 Session 解析路径与有效设置，不接受 Renderer 自报缓存状态。
+off/禁用预热保持惰性；worker 降级保留 warnings，不触发 Provider 请求/失败。
+缓存过期或 Host generation 变化后应重新观察，不能沿用旧 ready。
+
+### Script 的分阶段契约
+
+参照 Code Mode 的可观察效果，保留 QuickJS，实现顺序为 S1 组合、S2 输出与证据、
+S3 长任务与 Run 内数据；不以 JavaScript 可执行或选择 Script 模式作为覆盖证明。
+这些阶段复用既有 Run、Host dispatcher、Session records 和共享预算，不建立第二个 Runtime。
+
+参照依据（2026-11-04 复核）：OpenAI 的 [Code Mode hooks 契约](https://learn.chatgpt.com/docs/hooks#tool-calls-from-code-mode)
+要求嵌套调用继续接受执行前阻断/参数改写，执行后拒绝不能撤销副作用；
+[配置文档](https://learn.chatgpt.com/docs/config-file/config-reference) 区分 direct、deferred
+和 code_mode 工具面。并发、取消 drain 与非持久 store 的实现参照为本地官方 Codex
+源码 `edd1ae37ec82650e8d7a97a7e84db39fd5722441`，不是所有已部署版本的能力声明。
+据此选择复用原 dispatcher 和权限路径、保留原生调用，并分别定义观察、完成与清理。
+
+- **S1 工具组合与顺序**：脚本中的 `tools.NAME(input)` 沿实际 registry、Host/MCP
+  已授权绑定、guardrail 和权限路径调用。只读且允许并发的独立调用可并行；写入与未知
+  副作用保留屏障顺序。真实参数在 guardrail/hook 修改后先持久再执行，不能只记录模型
+  原参数。并发准入后若工具被改为有副作用则拒绝，不能静默重试。原生 `tool_call` 仍可
+  调用同一能力，bash 保留原生入口；不强迫每个任务经过 Script。
+- **S2 完整证据与选择输出**：`cell.started/output/yielded/settled` 与
+  `call.started/prepared/settled` 写入同一 canonical Session。模型侧
+  `selected_output:true` 仅在可证明的正文/必要说明分离边界省略正文；失败、警告、
+  分页、截断和未决副作用不得消失，无法分类的结果保守完整返回。
+  `script_read({cell_id,call_id,offset})` 在同一 Session 回读原始参数及结果，
+  按 `nextOffset` 续页；unknown 不是执行失败或可重放证明。
+  单次传输过大的结果先保存完整 receipt，再向 cell 返回 `result_ref`，
+  `await read_result(callId,offset)` 只允许读取本 cell 已完成的结果，按页处理原始 JSON。
+  不截掉原文后伪称已完整处理，也不因回读再次执行工具。
+  Script 的文件读取返回程序可用的实际正文，不复用“模型已看过正文”的 native read
+  去重提示，也不把 guest 读取登记为模型已见原文；写入/编辑仍使原生读取缓存失效。
+  原生 read 保留原有去重，程序重复取数的必要 I/O 不宣称为效率收益。
+- **S3 观察、取消与数据生命周期**：`script_exec({code,yield_time_ms})` 和
+  `script_wait({cell_id,cursor,yield_time_ms,cancel})` 的等待窗口不延长执行截止。
+  yield 返回观察，不等于完成；取消先报告 cancelling，只有 `cleanupComplete`
+  才证明已准入调用及其清理收敛。父 Run 退出须取消并 drain 活动 cell，Stop 保留
+  interrupted 历史。每个 Run 同时一个活动 cell；独立 Run 互不加全局锁。
+  `store/load` 在该 Run 的 fresh VM cells 间传递 JSON，最多 128 项、合计 1 MiB，
+  `store(key,undefined)` 删除。结束或 Host 崩溃即丢失，不是恢复 checkpoint。
+  cell 默认 60 秒、64 次尝试调用、32 MiB VM、单次传输 1 MiB；控制消息另按现有
+  调用/字节限额派生总量上限，空消息也计费，重复 yield 合并，避免无界入队。
+
+这些实现不自动重放未知副作用，不放宽权限或增加模型评审调用。提示与工具契约的
+新增字节、实际脚本执行比例、任务正确性及全部请求/token/耗时分别报告；有界 smoke
+不能证明总体效率提升或模型智能无回退。
+
+### 2026-11-04 原文返回与按需输出描述（未发布）
+
+基线 `37258ec5c`。Host Run 工具与显式 `mcp_call` 的成功、未被后处理改写的
+Script 结果可增加 `sourceContent`：它直接保留 `CapabilityResult.content`，可为
+字符串（包括空串、空白和原行分隔）或普通 JSON 内容 blocks。它与已有展示
+`content`、结构化 `data.value` 分开，消费者无需从展示标题、行标签或拼接文本中
+反向提取原文。它不是警告分类器，也不代表传输或文件字节原文；普通文件 read
+的 `data.text` 规范化契约保持。本轮不扩展 resource/fallback 路径。
+
+原字段缺省、非普通 JSON blocks、容量不足、错误或后处理改写时，该可选视图
+可能缺省，不能据此推断来源为空或没有警告。未知 metadata 不会授予此字段。
+原生无投影监听方不新增复制；Script 字符串免复制，blocks 独立快照，guest 修改
+不改变持久原文。最终内容匹配和错误门禁防止绕过 hook/脱敏。可选快照容量失败
+记录诊断并保留原结果，监听和持久化异常仍传播，不变成 Provider 失败。
+
+VM 和完整 receipt 保留 sourceContent，额外字节计入原容量/传输限额。大结果
+继续按既有 result_ref/read_result 分页，Session 原文用 script_read 读取，不重复
+执行工具。模型回执仅在原文可回读、展示中已有完整副本且严格减少 UTF-8 字节时，
+使用 `sourceContentOmitted:true` 和 `original:{cell_id,call_id}` 引用；显式返回及
+未显示、空白、小值继续保留。该优化不等于模型必然选择最少上下文。
+
+Host 工具注册 descriptor 新增可选 `outputSchema`，经原 IPC 注册和已有
+`mcp_describe` 按需返回，同时完整显示 Host description/server。标准 MCP 原字段
+优先；默认搜索、RunScoped 工具合同和模型菜单不常驻大型输出 schema，不自动
+describe 或执行工具。未声明就是未知；这是工具方声明，不表示 SDK 已验证每个
+返回值符合 schema，也不是新的执行授权。旧 Host 可能尚不返回该可选元数据，
+接入时须核对实际 Host，不能只看 Main SDK 版本。
+
+SDK 保证受权返回视图与证据保真可读。消费者若要求交付物逐字保留来源，应直接
+使用原值、在交付前比对并回读验证；本轮不增加全局写入拦截或自动修改文件。
+既有模型样本的警告前缀失败继续保留，不以新接口保证任意模型的业务产物正确。
+
+### 2026-11-04 Script 调用路径与程序数据（未发布）
+
+基线为 `49da64f24`。前次真实样本的裸名调用和格式化文本解析失败，按通用调用与
+结果契约修复；生产说明只描述 API，不加入任务解法、文件扩展名分支或模型专属指令。
+原生工具、权限、预算和 fallback 继续独立可用。
+
+`tools["实际工具名"](input)` 是完整调用入口，每条 Script 工具合同将调用路径与
+原始名称、输入 schema 放在一起。可用作 JavaScript 标识符且不与全局对象、内建、
+控制函数或保留字冲突的工具，提供同一函数的裸名兼容；其他名称继续按原名使用括号
+调用。两种形式进入同一受权 dispatcher，不扩大工具集、改名或自动重试。
+
+成功的内置文件文本读取可提供 `result.data`，原 `content` 仍是完整显示结果：
+
+```ts
+{
+  kind: 'text',
+  text: string,
+  normalized: true,
+  offset: number,
+  line_offset: number,
+  lineCount: number,
+  complete: boolean,
+  next?: { offset: number; limit: number; line_offset?: number }
+}
+```
+
+`data.text` 是最终有效窗口的文本行以 LF 连接，不含展示行号、页尾或原始行分隔；
+不保留原文件末尾换行的存在信息。它是规范化文本窗口，不能作为字节原文。`lineCount` 只计
+当前窗口，可区分空文件与一个空行；`complete` 只在从源开头读到结尾时为真。
+读到 EOF 的后半段仍不完整；存在 `next` 时可将参数与原 `path` 合并继续读取，
+长行的 `line_offset` 以 Unicode 字符计。工具不自动解析 JSON 或猜测数据格式。
+
+文本数据由读取器在原有选窗和输出预算内生成，经最终后处理后仅在显示内容精确
+匹配时接受。内置 read 的图片、错误、transient artifact，以及没有受信投影的未知
+结果，不假造文本 `data`；消费者须处理它缺省的情况，并检查 `isError`、警告及续读证据。
+Native 读取不为这个契约额外读取文件；Script 仍保留内容哈希与写后缓存失效。
+
+Host Run 工具与显式 `mcp_call` 的既有 `structuredContent` 可提供另一种数据：
+`{kind:'json', value:KodaXJsonValue}`。它直接保留 JSON 类型，不从展示文本或外来
+metadata 猜测。对象、数组、有限数字、布尔值、字符串和 null 受支持；undefined
+不提供数据。MCP 显式 null 优先于旧 snake_case 字段，缺省时继续兼容原回退。
+消费者按 `kind` 使用 `text` 或 `value`；此范围不包含尚未接入的 fallback/resource 路径。
+
+仅有监听方时校验并快照 JSON 值及图文显示内容，防止原对象或 block 在后处理期间
+原位变化；最终内容不匹配或标错即撤销投影。可选快照超出运行时容量时记录诊断、
+保留原成功结果与完整证据，不把它改成工具或 Provider 失败。普通 native 没有这个
+额外遍历/复制。JSON 投影不将未知正文标作可省略，`selected_output` 保留全部原文、
+图片及不明警告，不以 typed data 的存在推断上游结果完整。
+
+VM 与持久回执保留 `content` 和完整 `data`，既有 `result_ref/read_result` 与
+`script_read` 可回读完整 DTO。模型侧回执可用原文引用省略重复的派生 `data.text`，
+保留窗口与续读信息；用户主动返回的值、输出以及失败/警告继续保留。
+这会增加持久化和 VM 传输字节，可能更早触发大结果引用，须计入实际性能结果。
+JSON 的模型回执只有在原文可回读、实际显示已包含副本且引用严格减少 UTF-8 字节时
+才省派生 value；null、未显示值及小值保留。选定文本隐藏继续遵守原有语义。
+
+Script 验收须显式配置 `workMode:'script'` 并核对实际 cell/leaf 回执。功能覆盖任务
+可以明确要求在 Script 中取数、计算和保存；这种覆盖不计作模型自主采用率。另用
+自然任务观察 Script 模式及原生 Coding 模式的实际选择、任务结果和成本，原生工具
+继续可用。模式已选中、JSON DTO 已进入 VM 或任务最终正确，都不能单独证明脚本
+实际完成了数据计算；需核对执行代码与输入到交付物的依赖。
+
+`code` 是 async 函数体，cell 的生命周期由该 body 的 Promise 决定。调用异步
+helper 时须在 body 内 await 或 return 其 Promise；仅在 helper 内 await 工具
+不足以等待整个 helper。未等待的工具调用仍会失败，yield 只影响观察，不自动
+接管脱离 body 的工作；已有或未知效果仍通过完整回执核对，不自动重放。
+
+本轮同时修复实际 Ark 使用的 Anthropic-compatible 原生工具名传输：不符合协议的
+名称使用可读片段加稳定摘要的合法别名，返回、流式 delta 与历史回放仍恢复 SDK
+原名，参数、权限和 canonical 记录不变。`kdx_` 是传输保留前缀，以它开头的合法
+SDK 名称也会编码，避免与生成别名冲突；普通合法名称及内置工具合同不变。
+别名不是执行授权，未知别名不越权解码，真正生效的 forced 名必须来自当前原名
+工具表，signed/opaque 协议原文保持。此修复限定该协议路径；OpenAI Chat 等其他
+协议没有由本轮获得同类兼容，已发现的 OpenAI Chat 同类透传限制仍待独立处理。
+
+### Workflow 的同 Host 收尾
+
+保留现有 slash 执行、进度、停止、读取与 Session 最终结果；本轮不新增公共
+rename/delete/prune，也不扩展独立运行记录产品。执行的同一 Host 先等待自身该 Workflow
+的子执行器真正停止，再原子持久完整 `result.json`、报告/manifest 和稳定的
+`workflow:<runId>:result` Session 输出及 artifactRefs，之后才发布终态并释放运行状态。
+合法 `undefined` 结果使用显式 envelope，与缺失原文区分；断连不触发取消。
+
+清理只处理 Host 已登记的、owner/终态/停止证据完整且无引用的临时资源。发布终态前
+先持久 cleanup receipt；重启仅读这个小型 pending 索引续清理，不扫描历史或重跑脚本。
+结果、报告、交付物、脏或未合入 worktree、项目文件、保存定义、其他客户端和状态未知
+运行继续保留；失败清理可续办，不能以按年龄删除或全局 git prune 冒充自动收尾。
+Space 通过公开 Host 结果/历史接口读取，不直接操作 Host 运行目录。
+
+其他 Session 将临时 worktree 或子目录用作项目/执行目录时，Host 在准入边界解析
+真实路径并持久登记项目引用；即便采用者空闲、Session 删除或 Host 重启，也不把已采用
+项目重新当垃圾。登记与删除共用每个 worktree 的文件锁，锁内重验目录身份；别名不会
+绕过保护。正常叶调用不逐次解析路径，也不为收尾增加全局 Session 扫描或全局锁。
+开始执行前的 host-owner 证据允许运行中安全采用；普通同形状目录缺少 Host 证据时
+继续按普通项目处理。
+
+临时分支的精确路径、名称和原 OID 在移树前持久登记，临时删除失败保留 warning 与
+pending；即便树已移除，冷恢复仍能继续。变更 OID 或被其他 checkout 使用的分支受保护，
+最终 ref 删除以原 OID 作 CAS，不盲删同名新分支。收尾仅额外移除精确的空协调目录，
+非空、未知或仍有等待者的目录保留。
+
+### 交付顺序与剩余验收
+
+1. 先交付本轮源码和独立 Host 回归，固定构建身份；本地源码通过不代表 npm 已更新。
+2. 后续正式发包须从该源码生成新 beta，复验真实 tarball 的 SDK、worker、协议数据与
+   原 CLI 体积门禁。继续保留稳定 `latest=0.7.96` 的通道策略，不用覆盖旧 beta.1 代替发布。
+3. Main 连接实际 Host 后核对上述能力键与 runtime generation；升级包后仍存活的旧 Host
+   必须先完成既有切换流程。运行中 Session、未消费输入及恢复授权按各自契约迁移。
+   新 Script 行为另做实际 Host smoke，不能只凭 SDK 版本或已有执行器能力声明判断。
+4. Space 再验 promotion/输入重绑/Agent 模式拒绝、预热状态、Workflow 原文与自动收尾，
+   通过共享 Host 接口接入。SDK 的独立双客户端通过不替代 Space 成品验收。
+
+Script 的源码机制与真实模型可用性分别推进：调用路径及程序数据修订已提供通用契约，
+CSV 样本实际消费文本数据，新的 Host 样本完成任务，但尚未观察到 VM 内用 JSON
+value 计算。旧 XML/日志样本未完成及警告改写也继续保留，不能把原生 fallback 或最终
+任务正确代替脚本数据处理及效率证据。保持显式选择和原生能力，后续使用独立问题、
+预算及受控样本评估智能与效率，再决定默认策略；生产说明不加入任务或模型专属解法。
+跨平台、麒麟、真实账号、覆盖安装和 Issue 371 仍由各自验收关闭。
 
 ## 统一 Host SDK 收口（未发布）
 
@@ -260,7 +525,7 @@ Space 或其他外部客户端已升级，也不要求独立库与 Product Clien
 
 | 当前能力 | SDK 消费要求 |
 | --- | --- |
-| Agent / Coding / 实验性 Script | 用 Session `workMode` 选择；安全空闲时切换，旧 Host 按能力键拒绝；独立 SDK 边界见下文 |
+| Agent / Coding / 实验性 Script | 用 Session `workMode` 在首轮前选择，之后固定；版本化设置快照的 `workModeLocked` 表示只读；独立 SDK 边界见下文 |
 | MCP/工具完整结果 | 工具项的 `outputPath` 标明 Host 保存的原文；使用 `readItem` 或 `readHistoryEntry` 的 `part:'original'`，不要在客户端直接打开路径 |
 | 任务报告 | Product 项用 `taskResult`；`/session` transcript 的 `taskResults` 用 `KodaXTaskResultReport[]`，允许未知状态与缺失 taskId |
 | 流式进度 | thinking 和有调用 ID 的 tool-input 均可带 `estimatedTokenCount`；显示 `~… tokens`，不能当成 Provider usage 或把 UTF-16 分页偏移改成 token |
@@ -297,7 +562,9 @@ TUI、桌面 UI、IDE、自动化应用接入共享 KodaX 时，以 `KodaXProduc
 
 根入口和上述底层导出尚未全部删除，也没有因为本次迁移就全部成为 TypeScript `@deprecated`。产品接入应迁走它们承担的业务职责；确需底层能力的受信任宿主仍可明确使用。客户端不能在连接失败时创建私有 Runtime，形成第二个 Session 写入者。
 
-工作模式使用 `sessions.updateSettings(id, { workMode: 'agent' | 'coding' | 'script' })`；Coding 默认，切换须等待 Run 结算。
+工作模式使用 `sessions.updateSettings(id, { workMode: 'agent' | 'coding' | 'script' })`；Coding 默认，仅首次 Run 被接纳前可选择，之后更换模式须新建 Session。`getSettingsVersioned` 返回只读 `workModeLocked`；旧 Host 缺少该字段时，产品 UI 应禁止修改并提示升级。
+
+旧格式 Session 可能没有模式记录，但旧 Run 已持久化原执行配置。通过原身份、已停止 owner、checkpoint 和 fresh authority 校验后，同一 Run/Turn 可按原有效模式恢复；它不回填 Session 模式，也不写新锁标记，因此再次 checkpoint/restart 仍能恢复。后续新 Run 与普通/versioned 设置仍受 Session 锁约束。profile 和工具策略会影响有效模式，不能仅采用请求中的 `workMode` 字符串；持久 Run 事实与原快照冲突时明确拒绝。显式新格式锁元数据不适用该兼容路径；generation checkpoint v3 表达 Agent authority，不代表新锁格式。
 产品 Host 能力由 `sharedSessionSettings.keys` 报告；旧 Host 不支持时明确拒绝，不静默丢弃。模型/权限设置与工作模式独立。
 独立 `/coding` 的 `runManagedTask({ workMode: 'script', session: { storage }, ... }, prompt)` 要求可写 Session storage；
 `persistedByHost:true` 的宿主须实现可选 `appendSessionRecords(id, records)` 原子追加接口，以免旧的全量快照覆盖宿主历史。
@@ -776,3 +1043,67 @@ LRU 淘汰或旧格式 cursor 返回 `conflict` 时，从第一页重取并按 I
 [接入契约](LLM_INTEGRATION.md)。全局工具输出自动清理是另一个存储能力：需要关闭
 Root/Space/分支/附件的引用与所有权链路。本轮没有加入 TTL 删除，旧工具原件保留；
 现有显式诊断不等于自动 GC 已完成。
+
+
+## Space SDK repair migration, 2026-11-08 (shipped in v0.7.97-beta.4)
+
+These source fixes after beta.3 ship with the `v0.7.97-beta.4` tag; npm
+publication is a separate maintainer step, and a tag is not a claim that a
+running Host has already been upgraded. Pin and validate the actual SDK package
+and Host bytes.
+
+- `loadAgentsFiles` again returns only AGENTS.md files for legacy editors/count
+  limits. Prompt consumers use the new `loadInstructionFiles` API, whose ordered
+  sources have `kind:'agents'|'rule'`. Keep `scope` for precedence, not file kind.
+  Existing rule order, whole-file budgets and prompt formatting are retained.
+  `onDiagnostic` reports skipped fragments with typed `RuleDiagnostic.code`,
+  source path and human-readable reason. It is available through the public
+  coding export. Previously overwritten AGENTS content needs backup/version
+  recovery; upgrading cannot reconstruct it.
+- Resolve history actions and pass the ready result as `{turn}`. Retry uses
+  `{turn,before:true}`. Rewind derives the confirmed expected head from that
+  result. Never send an observed tool item's message boundary as a turn end.
+  Handle `resync_required` using `error.data.reason` and reselect/reconfirm;
+  `status:'stale'` is replaced by the shared error contract in v2.
+  The SDK negotiates v2 on the wire; old SDKs retain their original response
+  shape and stale result, so strict beta.3 clients can coexist with an upgraded Host.
+- Keep both opaque neighbor cursors from each page. Do not combine `around` and
+  `cursor`. Pass AbortSignal and an optional timeout for cancellable reads.
+
+### Startup and self-healing
+
+Use `ensureKodaXClient` when the app owns local Host startup/update:
+
+```ts
+const client = await ensureKodaXClient({
+  requirements: { productHistoryTurnResolution: 2, productHistoryLocation: 2 },
+  onStartupProgress: renderStartupProgress,
+});
+```
+
+The existing launcher discovers the actual owner, upgrades a provably older
+idle Host (or changed bytes in the same installation), closes temporary clients,
+then reconnects with the original principal and requirements. No manual npm
+capability casts, private Host startup implementation or second Session writer
+is needed. Do not implement another upgrade/retry loop in the Renderer.
+
+Optional history contracts are not newly mandatory for a basic Client startup.
+Apps that can open before history editing is available may omit these optional
+requirements and check
+`client.capabilities.supports('productHistoryTurnResolution',2)` and
+`client.capabilities.supports('productHistoryLocation',2)` per feature. A missing
+turn contract fails before a new turn operation is sent. Module constants only
+check SDK adapter support; they cannot prove a live Host was upgraded.
+
+`connectKodaXClient` remains passive, accepts the same typed requirements, and
+does not start/replace a Host. `ensure` retains existing busy/owner/build fences:
+it never kills active work, replaces an unproven/newer foreign installation, or
+replays an uncertain write. Competing launchers and connected-client contention
+use the existing bounded startup wait/progress path. Active-work blockers are
+structured upgrade errors; preserve the running work and retry normal startup
+when idle. Do not treat such a blocker as corrupt SDK installation or reset the
+user's home/session data. A changed launcher process must reload the installed
+SDK bytes before retrying; do not weaken build proof to force startup.
+
+The versioned contract, reasons, revision domains and remaining cold-read limits
+are recorded in [Client contract](CLIENT_CONTRACT.md#2026-11-08-space-sdk-contract-repairs-shipped-in-v0797-beta4).

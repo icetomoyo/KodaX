@@ -11,17 +11,17 @@ import { promisify } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // Provision this exact public npm artifact outside the test. CI never downloads implicitly:
-// npm pack @kodax-ai/kodax@0.7.97-alpha.12 --ignore-scripts --pack-destination <temp>
-// KODAX_ALPHA12_TARBALL=<temp>/kodax-ai-kodax-0.7.97-alpha.12.tgz node --test <this file>
-const archive = process.env.KODAX_ALPHA12_TARBALL;
-const integrity = '1LlTrz4SxQh77EMoj9E7ZE/jKWIYSBjZJv8+4i8BAfPjcD3R1wMSgtAL0SFKMYZo3uRBa07q4SQ47J/9dfPNug==';
+// npm pack @kodax-ai/kodax@0.7.97-beta.3 --ignore-scripts --pack-destination <temp>
+// KODAX_BETA3_TARBALL=<temp>/kodax-ai-kodax-0.7.97-beta.3.tgz node --test <this file>
+const archive = process.env.KODAX_BETA3_TARBALL;
+const integrity = 'vrUtb5Co82moHgQI5zc06ZTjWONVvjmc02FxUWqiO2lzgPOsMc5O6WftsDhlmzorLDUha2SSBsii5o6uBJVQeg==';
 const repository = fileURLToPath(new URL('..', import.meta.url));
 const execute = promisify(execFile);
 
-test('real alpha.12 Host keeps busy work and upgrades in place without losing its Session', {
+test('real beta.3 Host keeps busy work and upgrades in place without losing its Session', {
   timeout: 180_000,
 }, async t => {
-  assert.ok(archive, 'Provide the integrity-pinned alpha.12 npm tarball through KODAX_ALPHA12_TARBALL.');
+  assert.ok(archive, 'Provide the integrity-pinned beta.3 npm tarball through KODAX_BETA3_TARBALL.');
   const bytes = await readFile(archive);
   assert.equal(createHash('sha512').update(bytes).digest('base64'), integrity);
   const root = await mkdtemp(path.join(await realpath(os.tmpdir()), 'kodax-historical-host-upgrade-'));
@@ -29,7 +29,7 @@ test('real alpha.12 Host keeps busy work and upgrades in place without losing it
   const homeDir = path.join(root, 'home');
   const configHome = path.join(homeDir, '.kodax');
   const profile = 'historical-upgrade';
-  const evidence = { historicalVersion: '0.7.97-alpha.12', integrity: `sha512-${integrity}`, stages: [], requests: [] };
+  const evidence = { historicalVersion: '0.7.97-beta.3', integrity: `sha512-${integrity}`, stages: [], requests: [] };
   const env = { ...process.env, KODAX_HOME: configHome, KODAX_TRACING: '0', KODAX_H05_TEST_KEY: 'local-fixture-only' };
   delete env.KODAX_VERSION;
   delete env.KODAX_BUNDLED;

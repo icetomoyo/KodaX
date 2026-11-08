@@ -100,8 +100,23 @@ void sourceRevision;
 const boundary = history.items[0]?.historyBoundary;
 if (boundary) {
   await client.sessions.forkSession(session.id, { historyBoundary: boundary, before: true });
+  // @ts-expect-error A message boundary cannot stand in for a complete turn.
+  await client.sessions.forkSession(session.id, { historyBoundary: boundary });
+  // @ts-expect-error Rewind needs a resolved turn boundary.
   await client.sessions.rewindSession(session.id, { historyBoundary: boundary, expectedHead: null });
 }
+// @ts-expect-error Position and cursor belong to mutually exclusive read modes.
+await client.sessions.readHistory(session.id, { cursor: 'opaque', around: { searchItemId: 'hit' } });
+const turn = await client.sessions.resolveHistoryTurn(session.id, { kind: 'latest' }, { signal: new AbortController().signal });
+if (turn.status === 'ready') {
+  await client.sessions.forkSession(session.id, { turn });
+  await client.sessions.forkSession(session.id, { turn, before: true });
+  await client.sessions.rewindSession(session.id, { turn });
+}
+await ensureKodaXClient({ requirements: { productHistoryTurnResolution: 2, productHistoryLocation: 2 } });
+const historySupport: boolean = client.capabilities.supports('productHistoryTurnResolution', 2);
+const sdkHistoryVersion: 2 = client.capabilities.sdk.productHistoryTurnResolution;
+void [historySupport, sdkHistoryVersion];
 const renderItem = (item: ClientViewItem): string => item.text;
 const renderActivity = (activity: ClientSessionActivity | undefined): number => activity?.parentContextTokens ?? 0;
 const observation: ClientObservation = await client.sessions.observe(session.id, (view: ClientSessionView) => {

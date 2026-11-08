@@ -364,6 +364,7 @@ export { prepareHistoryImages, prepareValidatedImageBlock, withPreparedImageHist
 export { inspectPreparedImage } from './providers/image-serialization.js';
 export { getRejectedImageHash } from './providers/rejected-image.js';
 export { getPreparedImageDiagnostic, validateImageBytesInRun, UNSUPPORTED_MODEL_IMAGE_PLACEHOLDER } from './providers/image-serialization.js';
+export { MISSING_IMAGE_PLACEHOLDER, UNSUPPORTED_TOOL_RESULT_IMAGE_PLACEHOLDER } from './providers/image-serialization.js';
 export { openOAuthSession, OAuthCredentialError } from './oauth/session.js';
 export type { OAuthService, OAuthTokens, OAuthSessionRecord, OAuthSessionStore, OAuthRefreshDriver, OAuthCredentialSession } from './oauth/session.js';
 export { createOAuthRefreshDriver } from './oauth/drivers.js';

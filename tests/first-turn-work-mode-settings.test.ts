@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
@@ -6,6 +6,8 @@ import { createKodaXRuntime } from "./runtime-fixture.js";
 import { KodaXBaseProvider, registerModelProvider, clearRuntimeModelProviders,
   type KodaXMessage, type KodaXToolDefinition, type KodaXStreamResult } from '@kodax-ai/llm';
 import { awaitLatestCodingMemoryReviewDrain } from '@kodax-ai/coding';
+import { FileSessionStorage } from '@kodax-ai/repl';
+import { resolveRuntimeDaemonPaths } from '../src/runtime-daemon/state.js';
 
 it('persists the selected work mode across restart and model changes without changing other sessions or defaults', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-mode-settings-'));
@@ -73,7 +75,7 @@ it('rejects an unavailable Script executor before changing settings or starting 
   }
 }, 30_000);
 
-it('switches the actual Run menu only while idle and executes Script through the Runtime owner', async () => {
+it('selects each work mode before the first Run and locks it after the Run settles', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-mode-settings-'));
   const fetcher = vi.fn(() => { throw new Error('No models or external requests'); });
   vi.stubGlobal('fetch', fetcher);
@@ -113,13 +115,14 @@ it('switches the actual Run menu only while idle and executes Script through the
     }
   }
   registerModelProvider('work-mode-offline', () => new Fixture());
-  const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'work-mode-offline', defaultModel: 'fixture' });
+  let runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'work-mode-offline', defaultModel: 'fixture' });
+  let lastSessionId = '';
   try {
     await writeFile(path.join(homeDir, 'fixture.txt'), 'Runtime Script evidence');
-    const session = await runtime.sessions.create({ projectPath: homeDir });
-    await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
     for (mode of ['coding', 'agent', 'script'] as const) {
-      if (mode !== 'coding') await runtime.sessions.updateSettings(session.id, { workMode: mode });
+      const session = await runtime.sessions.create({ projectPath: homeDir });
+      lastSessionId = session.id;
+      await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', workMode: mode });
       requests = 0;
       const entered = new Promise<void>(resolve => { enter = resolve; });
       gate = new Promise<void>(resolve => { release = resolve; });
@@ -127,16 +130,63 @@ it('switches the actual Run menu only while idle and executes Script through the
         options: { lsp: false, reasoningMode: 'off', context: { repoIntelligenceMode: 'off' } } });
       await Promise.race([entered, run.result.then(result => { throw new Error(`Run ended before fixture entry: ${JSON.stringify(result)}`); })]);
       const snapshot = await runtime.sessions.getSettingsVersioned(session.id);
-      await expect(runtime.sessions.updateSettings(session.id, { workMode: 'coding' })).rejects.toMatchObject({ code: 'conflict' });
-      await expect(runtime.sessions.updateSettingsVersioned(session.id, { workMode: 'coding' }, { expectedRevision: snapshot.revision }))
+      const otherMode = mode === 'coding' ? 'agent' : 'coding';
+      await expect(runtime.sessions.updateSettings(session.id, { workMode: otherMode })).rejects.toMatchObject({ code: 'conflict' });
+      await expect(runtime.sessions.updateSettingsVersioned(session.id, { workMode: otherMode }, { expectedRevision: snapshot.revision }))
         .rejects.toMatchObject({ code: 'conflict' });
+      await expect(runtime.sessions.updateSettings(session.id, { workMode: mode })).resolves.toMatchObject({ workMode: mode });
       expect((await runtime.sessions.getSettings(session.id)).workMode ?? 'coding').toBe(mode);
       release();
       await expect(run.result).resolves.toMatchObject({ phase: 'completed' });
       expect(requests).toBe(mode === 'script' ? 2 : 1);
       await awaitLatestCodingMemoryReviewDrain(5_000);
+      const settled = await runtime.sessions.getSettingsVersioned(session.id);
+      expect(settled).toMatchObject({ workModeLocked: true });
+      const nextMode = mode === 'coding' ? 'agent' : 'coding';
+      await expect(runtime.sessions.updateSettings(session.id, { workMode: nextMode }))
+        .rejects.toMatchObject({ code: 'conflict' });
+      await expect(runtime.sessions.updateSettingsVersioned(session.id, { workMode: nextMode }, { expectedRevision: settled.revision }))
+        .rejects.toMatchObject({ code: 'conflict' });
+      await expect(runtime.runs.start({ sessionId: session.id, mode: 'managed_task', prompt: 'Do not change modes.',
+        options: { workMode: nextMode } })).rejects.toMatchObject({ code: 'conflict' });
+      if (mode !== 'coding') {
+        await expect(runtime.sessions.updateSettings(session.id, { workMode: null }))
+          .rejects.toMatchObject({ code: 'conflict' });
+      }
+      await runtime.sessions.updateSettings(session.id, { workMode: mode, model: 'fixture' });
+      expect((await runtime.sessions.getSettings(session.id)).workMode).toBe(mode);
     }
-    await runtime.sessions.updateSettings(session.id, { workMode: 'coding' });
+    await runtime.close();
+    // A lock is a Session fact, independent of messages or the retained Run index.
+    const configHome = path.join(homeDir, '.kodax');
+    const storage = new FileSessionStorage({ sessionsDir: path.join(configHome, 'sessions'), configHome, cwd: homeDir });
+    const saved = await storage.load(lastSessionId);
+    expect(saved?.runtimeInfo).toMatchObject({ workModeLocked: true });
+    if (!saved) throw new Error('Missing fixture session');
+    const sessionsDir = path.join(configHome, 'sessions');
+    const sessionFile = (await readdir(sessionsDir, { recursive: true }))
+      .find(file => path.basename(file) === `${lastSessionId}.jsonl`);
+    if (!sessionFile) throw new Error('Missing fixture Session file');
+    const filePath = path.join(sessionsDir, sessionFile);
+    // Emulate an older Host's accepted Run with metadata but no message history.
+    const meta = JSON.parse((await readFile(filePath, 'utf8')).split('\n')[0]) as {
+      runtimeInfo: { workModeLocked?: boolean }; actorSnapshot?: unknown;
+    };
+    delete meta.runtimeInfo.workModeLocked;
+    delete meta.actorSnapshot;
+    await writeFile(filePath, JSON.stringify(meta) + '\n');
+    runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
+    expect(await runtime.sessions.getSettingsVersioned(lastSessionId)).toMatchObject({ workModeLocked: true });
+    await runtime.close();
+    expect((await storage.load(lastSessionId))?.messages).toEqual([]);
+    expect(await readFile(filePath, 'utf8')).toBe(JSON.stringify(meta) + '\n');
+    const runsDir = resolveRuntimeDaemonPaths(homeDir).runsDir;
+    if (!path.resolve(runsDir).startsWith(path.resolve(homeDir) + path.sep)) throw new Error('Unsafe fixture Run cleanup');
+    await rm(runsDir, { recursive: true, force: true, maxRetries: 3 });
+    runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
+    expect(await runtime.sessions.getSettingsVersioned(lastSessionId)).toMatchObject({ workModeLocked: true, value: { workMode: 'script' } });
+    await expect(runtime.sessions.updateSettings(lastSessionId, { workMode: 'agent' }))
+      .rejects.toMatchObject({ code: 'conflict' });
     expect(fetcher).not.toHaveBeenCalled();
   } finally {
     release(); await runtime.close(); await awaitLatestCodingMemoryReviewDrain(5_000);

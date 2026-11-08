@@ -556,6 +556,8 @@ export {
   getProcessContext,
   getImpactEstimate,
   prewarmRepoIntelligenceCaches,
+  inspectRepoIntelligenceProject,
+  prepareRepoIntelligenceProject,
 } from './repo-intelligence/runtime.js';
 
 export type {
@@ -929,12 +931,16 @@ export type { DenialRecord, DenialTracker } from './permissions/denial-tracker.j
 
 export {
   loadAgentsFiles,
+  loadInstructionFiles,
+  clearAgentsLoaderCache,
   formatAgentsForPrompt,
   getKodaxGlobalDir,
 } from './context/agents-loader.js';
+export type { RuleDiagnostic, RuleDiagnosticCode } from './context/rules-loader.js';
 
 export type {
   AgentsFile,
+  InstructionFile,
   LoadAgentsOptions,
 } from './context/agents-loader.js';
 

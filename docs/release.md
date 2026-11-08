@@ -8,6 +8,222 @@ Use [SDK_MIGRATION.md](SDK_MIGRATION.md) for the supported current surface.
 KodaX is distributed as **standalone binaries** built with `bun build --compile`.
 Target machines do **not** need Node.js or any runtime installed.
 
+## Current release execution
+
+This replaces the pre-flight dispatch followed by a tag push that each
+earlier preparation section describes; that flow ran the full matrix twice
+on one commit.
+
+- Commit the release candidate, documentation and feature-design submodule
+  pointer first, then run `tests/release-*` locally. A late test-expectation
+  commit cancels an in-flight run.
+- Dispatch the Release workflow on the release branch with `target=all` and
+  `release_tag=v<package version>`. Every build job rejects a mismatched tag
+  or a partial target in its first minutes.
+- The same run publishes once CI, all five archive checks and the npm
+  package checks are green: it creates the lightweight tag at the dispatched
+  commit and the GitHub Release from that run's own artifacts. It refuses to
+  move a tag that already exists. A tag created by the workflow token does
+  not start a second run.
+- If a job fails, re-run failed jobs on the same run; the publish job runs
+  when they pass. A source or workflow fix needs a new commit and dispatch.
+- Dispatch without `release_tag` for a candidate-only run. Pushing a `v*` tag
+  still publishes as before.
+- The portable Windows source tier runs as two vitest file shards (about 10
+  and 16 minutes of tests) instead of one ~26-minute serial job. The real
+  terminal PTY gate runs only in shard 1. The `build (win-x64)` and npm package chain
+  (~22 minutes) is now the longest path.
+- `test:bundle` bounds each test at three minutes, so a hang is still caught.
+  The step limit is ten minutes because the passing Windows suite alone takes
+  about 4.6 minutes.
+
+## v0.7.97-beta.4 release preparation
+
+Release state: `v0.7.97-beta.4` is a candidate awaiting multi-platform CI.
+npm publication has not occurred. The candidate is the fourth beta of the
+v0.7.97 line, repairing the Space SDK instruction and history client
+contracts: AGENTS-only editor loading returns beside a tagged instruction
+loader whose ordered sources carry `kind:'agents'|'rule'` with typed skip
+diagnostics; complete Fork/Rewind/Retry turn targets validate
+revision-fenced under the storage lock, `resync_required` replaces stale
+results through the shared error contract, and history reading gains
+bidirectional paging, cancellable budgeted reads and bounded source reuse
+without extra Provider requests. The SDK negotiates history contract v2 on
+the wire while strict beta.3 clients keep their original response shapes;
+typed capability checks and optional Product launcher requirements add no
+mandatory basic-startup gates, and model prompts are unchanged. Source
+validation — full build, source/test typechecks, all four test tiers
+(19,768 passed) and the real beta.2 in-place upgrade fixture — is recorded
+in the SDK migration notes and the FEATURE_298 test guide; the CI/Release
+upgrade gate now pins the published `0.7.97-beta.3` tarball (published
+2026-11-08T00:12:56.388Z, confirmed in the public npm registry) and that
+in-place upgrade passed locally against the real artifact. The CLI embeds
+its native manifest map compactly, without the single-manifest copies and
+`legal` entries the runtime never reads: the five-native universal build had
+ended 1,948 bytes past the audited 49 KiB headroom and is now 356 bytes under
+the unchanged gate; no reserve was lowered. The
+tag-triggered Release workflow runs the reusable CI workflow alongside the
+build matrix; ordinary branch pushes do not trigger it, while CI can also
+be dispatched manually. The `-beta` tag suffix marks the release as a
+GitHub pre-release automatically. npm registry publication remains a
+separate maintainer step. Cross-platform manual acceptance and installed
+Space/SDK acceptance remain separate from local evidence.
+
+### Release execution contract
+
+- Push the version tag only after the release candidate, documentation and
+  feature-design submodule commits are prepared. Ordinary branch pushes do not
+  run CI. A `v*` tag starts Release, including the reusable full CI workflow.
+- Full CI and all five native build jobs run concurrently. The GitHub Release
+  requires successful CI, all platform archive checks, and the universal npm
+  package checks. Manual dispatch builds candidates but never publishes a Release.
+- Each build validates its actual archive before the longer Electron checks.
+  Bundle and archive steps have five-minute process limits; the archive test
+  has a three-minute test budget, aborts pending waits and retains failure
+  evidence. Failed archive evidence is uploaded for seven days. No failed test
+  is converted into success or automatically retried.
+- Re-run failed jobs when diagnosing infrastructure failures on an unchanged
+  candidate. A source or workflow fix requires a new commit/run. Verify the
+  final tag SHA and every required job; an earlier green branch run is not
+  evidence for a different tagged commit.
+- Release assets comprise five platform archives and their checksums, one
+  universal npm tarball and its checksum, plus aggregated `SHA256SUMS`.
+  The maintainer publishes the audited tarball with `node scripts/release.mjs`;
+  this workflow never performs `npm publish`.
+
+The workflow contracts are covered by `tests/release-workflow.test.ts`.
+
+## v0.7.97-beta.3 release preparation
+
+Historical preparation record: the baseline and publication status below
+reflect preparation time. beta.3 was published on 2026-11-08 and the
+CI/Release upgrade gates now pin `0.7.97-beta.3`.
+
+Release state: `v0.7.97-beta.3` is a candidate awaiting multi-platform CI.
+npm publication has not occurred. The candidate is the third beta of the
+v0.7.97 line, a repair release for long-context recovery, durable Actor
+settlement and saved Session history. The release branch includes the
+integration candidate and the upstream daemon maintenance change. Merge
+`5057f7828` retains both saved-history entries and the idle maintenance
+scheduler in the packaged CLI. The last published Host-upgrade baseline is
+`0.7.97-beta.2`, confirmed in the public npm registry on 2026-11-07
+(published 2026-11-04T23:47:39.827Z). Tagging beta.3 does not advance it;
+bump the CI/Release upgrade gates only after the maintainer publishes beta.3
+to npm. The CI/Release upgrade fixture pins that public tarball by SHA-512.
+
+The candidate combines capacity recovery and complete-summary parsing,
+durable independent Actor settlement/restart reconciliation, the first-root-Run
+work-mode lock, and DOCX/LibreOffice evidence improvements. Mainline adds
+scoped Markdown rule fragments (`~/.kodax/rules`, `.kodax/rules`), the
+`productHistoryLocation` and `productHistoryTurnResolution` Host capabilities,
+verified-containment recovery of interrupted Host exits, Host build sharing
+across installations, bounded idle cleanup of abandoned daemon publications
+and a narrower Windows boot-identity query. A paged original input page
+replaced by capacity admission now stays unread. Complete audited
+Windows programs move into packaged resources so the CLI again preserves
+49 KiB beneath the unchanged 5 MiB limit. This remains below the 64 KiB
+reserve targeted for v0.7.99. LibreOffice may recalculate fields;
+conversion is not proof of Word/WPS pagination or current TOC values.
+
+Joint regression, artifact and bounded real-model results are recorded in
+[the integration readiness record](designs/beta3-integration-readiness-2026-11-07.md).
+Real-model probes use a 64K application budget on models with larger native
+windows; they do not validate native sub-100K models or arbitrary whole-document
+reading quality. Cross-platform native release gates and installed Space/SDK
+acceptance remain separate from local Windows candidate evidence. The remaining
+next-dev feature merge is deferred until after this repair release. The
+tag-triggered Release workflow runs the reusable CI workflow alongside the
+build matrix; ordinary branch pushes do not trigger it, while CI can also be
+dispatched manually. The `-beta` tag suffix marks the release as a GitHub
+pre-release automatically. npm registry publication remains a separate
+maintainer step.
+
+### Release execution contract
+
+- Push the version tag only after the release candidate, documentation and
+  feature-design submodule commits are prepared. Ordinary branch pushes do not
+  run CI. A `v*` tag starts Release, including the reusable full CI workflow.
+- Full CI and all five native build jobs run concurrently. The GitHub Release
+  requires successful CI, all platform archive checks, and the universal npm
+  package checks. Manual dispatch builds candidates but never publishes a Release.
+- Each build validates its actual archive before the longer Electron checks.
+  Bundle and archive steps have five-minute process limits; the archive test
+  has a three-minute test budget, aborts pending waits and retains failure
+  evidence. Failed archive evidence is uploaded for seven days. No failed test
+  is converted into success or automatically retried.
+- Re-run failed jobs when diagnosing infrastructure failures on an unchanged
+  candidate. A source or workflow fix requires a new commit/run. Verify the
+  final tag SHA and every required job; an earlier green branch run is not
+  evidence for a different tagged commit.
+- Release assets comprise five platform archives and their checksums, one
+  universal npm tarball and its checksum, plus aggregated `SHA256SUMS`.
+  The maintainer publishes the audited tarball with `node scripts/release.mjs`;
+  this workflow never performs `npm publish`.
+
+The workflow contracts are covered by `tests/release-workflow.test.ts`.
+
+## v0.7.97-beta.2 release preparation
+
+Historical preparation record: the publication status below predates the
+beta.2 publication confirmed in the beta.3 section above.
+
+Release state: `v0.7.97-beta.2` is a candidate awaiting multi-platform CI.
+npm publication has not occurred. The candidate is the second beta of the
+v0.7.97 line, hardening Script execution reliability: VM call paths expose
+complete collision-safe tool aliases beside original names with typed
+program data (normalized read windows and trusted structured JSON) and
+duplicate model output projected only while original receipts stay fully
+readable; native tool names are encoded at the Anthropic-compatible wire
+boundary restoring canonical identity, arguments, permissions and deltas;
+an isolated optional sourceContent view preserves original content beside
+display output, and Host tools may declare outputSchema served on demand
+through `mcp_describe` without enlarging default menus; missing Node
+globals gain bounded contextual guidance without displacing original
+QuickJS error JSON or settled receipts. Shared Host recovery refreshes
+promoted observers, preserves owner-bound pending input recovery with
+idempotent withdrawal receipts, reclaims proven dead history locks and
+enforces trusted Agent mode before execution; Host-owned repo
+diagnostics/prewarm and durable Workflow finalization with physical task
+draining, protected project references and precise cleanup retry land.
+Bounded real-model validation records Script model-facing reliability as
+recommend-iterate; no efficiency or general intelligence improvement is
+claimed. The published-alpha.12 in-place upgrade gates in CI and the
+Release workflow now pin the last npm-published version (`0.7.97-beta.1`,
+published 2026-11-02 under the `beta` dist-tag); bump them only after the
+maintainer publishes beta.2 to npm. The tag-triggered Release workflow
+runs the reusable CI workflow alongside the build matrix; ordinary branch
+pushes do not trigger it, while CI can also be dispatched manually. The
+eventual `-beta` tag suffix marks the release as a GitHub pre-release
+automatically. npm registry publication remains a separate maintainer
+step. Issue 371's remaining historical first-read latency, the fix list's
+still-open findings, Script model-facing reliability acceptance and
+cross-platform manual verification remain explicit. Existing dated
+release records below describe their own artifacts.
+
+### Release execution contract
+
+- Push the version tag only after the release candidate, documentation and
+  feature-design submodule commits are prepared. Ordinary branch pushes do not
+  run CI. A `v*` tag starts Release, including the reusable full CI workflow.
+- Full CI and all five native build jobs run concurrently. The GitHub Release
+  requires successful CI, all platform archive checks, and the universal npm
+  package checks. Manual dispatch builds candidates but never publishes a Release.
+- Each build validates its actual archive before the longer Electron checks.
+  Bundle and archive steps have five-minute process limits; the archive test
+  has a three-minute test budget, aborts pending waits and retains failure
+  evidence. Failed archive evidence is uploaded for seven days. No failed test
+  is converted into success or automatically retried.
+- Re-run failed jobs when diagnosing infrastructure failures on an unchanged
+  candidate. A source or workflow fix requires a new commit/run. Verify the
+  final tag SHA and every required job; an earlier green branch run is not
+  evidence for a different tagged commit.
+- Release assets comprise five platform archives and their checksums, one
+  universal npm tarball and its checksum, plus aggregated `SHA256SUMS`.
+  The maintainer publishes the audited tarball with `node scripts/release.mjs`;
+  this workflow never performs `npm publish`.
+
+The workflow contracts are covered by `tests/release-workflow.test.ts`.
+
 ## v0.7.97-beta.1 release preparation
 
 Release state: `v0.7.97-beta.1` is a candidate awaiting multi-platform CI.

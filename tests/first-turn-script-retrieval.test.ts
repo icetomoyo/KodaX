@@ -1,4 +1,4 @@
-import { createServer } from 'node:http';
+import type { Server } from 'node:http';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,13 +9,15 @@ import { buildRuntimeSessionState } from '../packages/coding/src/agent-runtime/r
 import { applyPostToolProcessing, runToolDispatch } from '../packages/coding/src/agent-runtime/tool-dispatch.js';
 import { emitActiveExtensionEvent } from '../packages/coding/src/extensions/runtime.js';
 import { executeTool, getToolDefinition } from '../packages/coding/src/tools/index.js';
+import * as nativeTools from '../packages/coding/src/tools/index.js';
 import { projectModelToolDefinition } from '../packages/coding/src/tools/model-tool-definition.js';
 import { wrapCodingToolAsRunnable } from '../packages/coding/src/task-engine/_internal/managed-task/tool-wrappers.js';
 import type { KodaXToolExecutionContext } from '../packages/coding/src/types.js';
+import { createFetchHttpFixture } from './fetch-http-fixture.js';
 
 const names = ['memory_recall', 'session_history_search', 'session_history_read', 'kodax_manual', 'web_search', 'web_fetch'];
 const limits = { timeoutMs: 5000, memoryBytes: 16 * 1024 * 1024, maxCalls: 12, maxTransferBytes: 128 * 1024 };
-const servers: ReturnType<typeof createServer>[] = [];
+const servers: Server[] = [];
 const directories: string[] = [];
 afterEach(async () => {
   vi.unstubAllEnvs();
@@ -33,7 +35,7 @@ afterEach(async () => {
 async function fixture(totalBudget = 12) {
   const requests: string[] = [];
   let page = '<html><title>Fixture</title><p>Evidence 中文</p></html>';
-  const server = createServer((request, response) => {
+  const { server, url } = await createFetchHttpFixture((request, response) => {
     requests.push(request.url ?? '');
     response.setHeader('Content-Type', 'text/html; charset=utf-8');
     if (request.url?.startsWith('/search')) {
@@ -44,10 +46,6 @@ async function fixture(totalBudget = 12) {
     } else response.end(page);
   });
   servers.push(server);
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('Missing local fixture address');
-  const url = `http://127.0.0.1:${address.port}`;
   vi.stubEnv('KODAX_WEB_SEARCH_ENDPOINT', `${url}/search`);
   const lineage = applySessionCompaction(createSessionLineage([
     { role: 'system', content: 'HIDDEN-SYSTEM-INSTRUCTION' },
@@ -106,7 +104,7 @@ it('preserves all six native retrieval contracts, complete content and provenanc
 });
 
 it.each(names)('%s preserves policy refusal and recovery without charging denied work', async name => {
-  const { budget, dispatch, inputs } = await fixture(1);
+  const { budget, dispatch, inputs, requests } = await fixture(1);
   let attempts = 0;
   const events = { beforeToolExecute: vi.fn(async () => ++attempts <= 2 ? '[Blocked] Retrieval policy' : true) };
   const baseline = await runToolDispatch({ ...dispatch, events, abortSignal: undefined,
@@ -116,7 +114,9 @@ it.each(names)('%s preserves policy refusal and recovery without charging denied
     if (!denied.isError) throw new Error('Expected refusal');
     return await tools.${name}(${JSON.stringify(inputs[name])});
   `, limits);
-  expect(result.receipts.map(receipt => receipt.result.isError)).toEqual([true, false]);
+  const evidence = JSON.stringify({ status: result.status, error: result.error, attempts, requests, receipts: result.receipts });
+  expect(result.status, evidence).toBe('completed');
+  expect(result.receipts.map(receipt => receipt.result.isError), evidence).toEqual([true, false]);
   expect(result.receipts[0]?.result.content).toBe(baseline.get('native-denied'));
   expect(result.receipts[1]?.input).toEqual(inputs[name]);
   expect(budget.spentBudget).toBe(1);
@@ -126,13 +126,20 @@ it.each(names)('%s drains admitted work after cancellation and does not start a 
   const { ctx, budget, dispatch, inputs, requests } = await fixture();
   const input = inputs[name]!;
   const nativeController = new AbortController();
+  let cancelling = nativeController;
+  const original = nativeTools.executeTool;
+  const executing = vi.spyOn(nativeTools, 'executeTool').mockImplementation((...args) => {
+    const work = original(...args); // The real handler, not its earlier admission notification, has started.
+    cancelling.abort();
+    return work;
+  });
   const baseline = await runToolDispatch({ ...dispatch, abortSignal: nativeController.signal,
-    events: { onToolExecutionStart: () => nativeController.abort() },
     toolBlocks: [{ type: 'tool_use', id: 'native-cancelled', name, input }] });
   const controller = new AbortController();
+  cancelling = controller;
   const ended = vi.fn();
   const pilot = createScriptPilot({ ...dispatch, abortSignal: controller.signal,
-    events: { onToolExecutionStart: () => controller.abort(), onToolExecutionEnd: ended } }, budget);
+    events: { onToolExecutionEnd: ended } }, budget);
   const result = await pilot.run(`await tools.${name}(${JSON.stringify(input)}); await tools.${name}(${JSON.stringify(input)});`, limits);
   expect(result.status).toBe('cancelled');
   expect(result.receipts).toHaveLength(1);
@@ -141,7 +148,22 @@ it.each(names)('%s drains admitted work after cancellation and does not start a 
   expect(budget.spentBudget).toBe(1);
   expect(await pilot.run('return 1;', limits)).toMatchObject({ status: 'cancelled', receipts: [] });
   expect(requests).toHaveLength(name.startsWith('web_') ? 2 : 0);
+  expect(executing).toHaveBeenCalledTimes(2);
   expect(ctx.memoryRecall).toBeDefined();
+});
+
+it('rejects cancellation at the admission notification before the actual native handler starts', async () => {
+  const { budget, dispatch, memoryRecall } = await fixture();
+  const controller = new AbortController();
+  const ended = vi.fn();
+  const result = await createScriptPilot({ ...dispatch, abortSignal: controller.signal,
+    events: { onToolExecutionStart: () => controller.abort(), onToolExecutionEnd: ended } }, budget)
+    .run('await tools.memory_recall({need:"prior evidence"}); await tools.memory_recall({need:"next"});', limits);
+  expect(result.status).toBe('cancelled');
+  expect(result.receipts).toHaveLength(1);
+  expect(result.receipts[0]?.result).toMatchObject({ isError: true, content: expect.stringContaining('AbortError') });
+  expect(memoryRecall).not.toHaveBeenCalled();
+  expect(ended).toHaveBeenCalledOnce();
 });
 
 it.each([2, 4])('shares native budget %i across dependent history search/read work', async total => {
@@ -262,13 +284,24 @@ it('preserves native capacity fallback and the complete acquired evidence in its
   expect(budget.spentBudget).toBe(1);
 });
 
-it('fails an undersized cell transfer explicitly and keeps the complete admitted receipt', async () => {
-  const { ctx, budget, dispatch, inputs, setPage } = await fixture(1);
+it('pages a large retrieval result by reference under a small transfer limit without another request', async () => {
+  const { ctx, budget, dispatch, inputs, setPage, requests } = await fixture(1);
   setPage('x'.repeat(8000));
   const baseline = await executeTool('web_fetch', inputs.web_fetch!, ctx);
-  const result = await createScriptPilot(dispatch, budget).run(`return await tools.web_fetch(${JSON.stringify(inputs.web_fetch)});`,
+  const admitted = vi.fn();
+  const result = await createScriptPilot({ ...dispatch, events: { onToolExecutionStart: admitted } }, budget).run(`
+    const r=await tools.web_fetch(${JSON.stringify(inputs.web_fetch)}),id=r.result_ref.callId;
+    const p=await read_result(id),q=await read_result(id),t=await read_result(id,r.result_ref.totalLength-10);
+    return {status:r.status,total:r.result_ref.totalLength,first:p.text,next:p.nextOffset,last:t.text,repeat:p.text===q.text};`,
     { ...limits, maxTransferBytes: 512 });
-  expect(result).toMatchObject({ status: 'failed', error: expect.stringContaining('transfer limit') });
+  expect(result.status, result.error).toBe('completed');
   expect(result.receipts[0]?.result.content).toBe(baseline);
+  const original = JSON.stringify(result.receipts[0]!.result);
+  const page = result.value as { next: number };
+  expect(page.next).toBeGreaterThan(0);
+  expect(result.value).toEqual({ status: 'settled', total: original.length, first: original.slice(0, page.next),
+    next: page.next, last: original.slice(-10), repeat: true });
+  expect(admitted).toHaveBeenCalledOnce();
+  expect(requests).toHaveLength(2); // Baseline plus one real fetch; page rereads make no network request.
   expect(budget.spentBudget).toBe(1);
 });
