@@ -247,7 +247,12 @@ if (existsSync(nativeRoot)) {
     if (!entry.isDirectory()) continue;
     const manifestPath = path.join(nativeRoot, entry.name, 'manifest.json');
     if (existsSync(manifestPath)) {
-      nativeManifestMap[entry.name] = readFileSync(manifestPath, 'utf8');
+      // The runtime JSON.parses embedded manifests but never reads their
+      // `legal` entries (files stay beside manifest.json in the package);
+      // strip them and pretty-printing to keep the audited CLI budget.
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+      delete manifest.legal;
+      nativeManifestMap[entry.name] = JSON.stringify(manifest);
     }
   }
 }
@@ -372,10 +377,12 @@ const commonOptions = {
     KODAX_NATIVE_MANIFESTS_JSON: nativeManifestsJson === undefined
       ? 'undefined'
       : JSON.stringify(nativeManifestsJson),
-    KODAX_NATIVE_MANIFEST_JSON: nativeManifestJson === undefined
+    // The runtime reads the single-manifest constants only when no manifest
+    // map is embedded; with a map they are unreachable copies of host data.
+    KODAX_NATIVE_MANIFEST_JSON: nativeManifestJson === undefined || nativeManifestsJson !== undefined
       ? 'undefined'
       : JSON.stringify(nativeManifestJson),
-    KODAX_WINDOWS_NATIVE_MANIFEST_JSON: nativeManifestJson === undefined
+    KODAX_WINDOWS_NATIVE_MANIFEST_JSON: nativeManifestJson === undefined || nativeManifestsJson !== undefined
       ? 'undefined'
       : JSON.stringify(nativeManifestJson),
     'process.env.DEV': '"false"',
