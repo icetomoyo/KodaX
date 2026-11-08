@@ -10,6 +10,10 @@ Target machines do **not** need Node.js or any runtime installed.
 
 ## v0.7.97-beta.3 release preparation
 
+Historical preparation record: the baseline and publication status below
+reflect preparation time. beta.3 was published on 2026-11-08 and the
+CI/Release upgrade gates now pin `0.7.97-beta.3`.
+
 Release state: `v0.7.97-beta.3` is a candidate awaiting multi-platform CI.
 npm publication has not occurred. The candidate is the third beta of the
 v0.7.97 line, a repair release for long-context recovery, durable Actor
