@@ -292,7 +292,10 @@ jobs:
   windows-source:
     name: Windows source (${{ matrix.tier }})
     runs-on: windows-latest
-    timeout-minutes: 30
+    # The portable tier's suite takes 20-30 minutes on slower Windows runners;
+    # per-test timeouts still catch hangs, so a 30-minute job wall cancelled
+    # otherwise passing runs.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
