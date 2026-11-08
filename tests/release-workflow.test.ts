@@ -97,6 +97,22 @@ describe('GitHub release workflow', () => {
     for (const run of runs) expect(run).toContain('--test-timeout=180000');
   });
 
+  it('splits the portable Windows tier into two shards and runs the PTY gate once', () => {
+    const workflow = parse(readFileSync(resolve('.github/workflows/ci.yml'), 'utf8')) as ReleaseWorkflow;
+    const job = workflow.jobs?.['windows-source'];
+    expect(job?.strategy?.matrix?.include).toEqual([
+      { tier: 'portable', shard: '1/2' },
+      { tier: 'portable', shard: '2/2' },
+      { tier: 'system', shard: '' },
+    ]);
+    const steps = job?.steps ?? [];
+    expect(steps.find(step => step.name === 'Windows recovery, credentials and permission contracts')?.run)
+      .toBe("npm run test:windows -- ${{ matrix.shard && format('--shard={0}', matrix.shard) || '' }}");
+    for (const name of ['Install isolated PTY acceptance tools', 'Windows real-terminal streaming history regression']) {
+      expect(steps.find(step => step.name === name)?.if).toBe("matrix.tier == 'portable' && matrix.shard == '1/2'");
+    }
+  });
+
   it('runs the complete serial system suite on its own Node 20 runner', () => {
     const workflow = parse(readFileSync(resolve('.github/workflows/ci.yml'), 'utf8')) as ReleaseWorkflow;
     const system = workflow.jobs?.system;

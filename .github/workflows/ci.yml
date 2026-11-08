@@ -290,16 +290,22 @@ jobs:
         run: npm run test:system -- --no-file-parallelism --maxWorkers=1
 
   windows-source:
-    name: Windows source (${{ matrix.tier }})
+    name: Windows source (${{ matrix.tier }}${{ matrix.shard && format(' {0}', matrix.shard) || '' }})
     runs-on: windows-latest
-    # The portable tier's suite takes 20-30 minutes on slower Windows runners;
-    # per-test timeouts still catch hangs, so a 30-minute job wall cancelled
-    # otherwise passing runs.
+    # The serial portable suite took 20-30 minutes on one runner and set the
+    # Release critical path, so it runs as two file shards. Per-test timeouts
+    # still catch hangs; the wall keeps headroom for slow Windows runners.
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        tier: [portable, system]
+        include:
+          - tier: portable
+            shard: 1/2
+          - tier: portable
+            shard: 2/2
+          - tier: system
+            shard: ''
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -313,21 +319,21 @@ jobs:
       - name: Windows recovery, credentials and permission contracts
         env:
           KODAX_WINDOWS_TEST_TIER: ${{ matrix.tier }}
-        run: npm run test:windows
+        run: npm run test:windows -- ${{ matrix.shard && format('--shard={0}', matrix.shard) || '' }}
 
       - name: Install isolated PTY acceptance tools
-        if: matrix.tier == 'portable'
+        if: matrix.tier == 'portable' && matrix.shard == '1/2'
         run: npm install --prefix "$env:RUNNER_TEMP/kodax-acceptance-tools" --no-save --package-lock=false --no-audit --no-fund node-pty@1.1.0 @xterm/headless@5.5.0 @xterm/addon-unicode11@0.9.0
 
       - name: Windows real-terminal streaming history regression
-        if: matrix.tier == 'portable'
+        if: matrix.tier == 'portable' && matrix.shard == '1/2'
         timeout-minutes: 3
         env:
           KODAX_ACCEPTANCE_TOOLS: ${{ runner.temp }}/kodax-acceptance-tools
         run: npm run test:repl-pty:built -- --streaming-scroll-only
 
       - name: Retain failed PTY evidence
-        if: failure() && matrix.tier == 'portable'
+        if: failure() && matrix.tier == 'portable' && matrix.shard == '1/2'
         uses: actions/upload-artifact@v6
         with:
           name: windows-repl-pty-failure

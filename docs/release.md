@@ -29,6 +29,10 @@ on one commit.
   when they pass. A source or workflow fix needs a new commit and dispatch.
 - Dispatch without `release_tag` for a candidate-only run. Pushing a `v*` tag
   still publishes as before.
+- The portable Windows source tier runs as two vitest file shards (about 10
+  and 16 minutes of tests) instead of one ~26-minute serial job. The real
+  terminal PTY gate runs only in shard 1. The `build (win-x64)` and npm package chain
+  (~22 minutes) is now the longest path.
 - `test:bundle` bounds each test at three minutes, so a hang is still caught.
   The step limit is ten minutes because the passing Windows suite alone takes
   about 4.6 minutes.
