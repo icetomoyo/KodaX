@@ -34,8 +34,10 @@ async function verifyArchiveHistory(client, storage, workspace, previouslyAdmitt
     { role: 'user', content: second }, { role: 'assistant', content: 'Second answer' },
   ] });
   if (previouslyAdmitted) await client.sessions.updateSettings(id, { permissionMode: 'full-access' });
-  assert.equal(client.capabilities.productHistoryLocation?.version, 1);
-  assert.equal(client.capabilities.productHistoryTurnResolution?.version, 1);
+  // The packaged Host advertises history contract v2 (8f1644c77); the
+  // runtime fork/rewind calls below still pass a resolved turn boundary.
+  assert.equal(client.capabilities.productHistoryLocation?.version, 2);
+  assert.equal(client.capabilities.productHistoryTurnResolution?.version, 2);
   const search = await client.sessions.searchHistory(id, { query: 'ARCHIVEHISTORYANCHOR7' });
   assert.equal(search.hits.length, 1);
   const page = await client.sessions.readHistory(id, { limit: 1, around: { searchItemId: search.hits[0].itemId } });
