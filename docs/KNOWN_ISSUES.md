@@ -95,10 +95,10 @@ still take precedence. No production code changed.
 ## Issue 386: Extension `exec` can take over 30 seconds on Windows
 
 - Priority: High
-- Status: ready
+- Status: Resolved
 - Introduced: observed in v0.7.97-beta.4 Release CI; first affected version unknown
-- Created: 2026-11-08
-- Fixed: —
+- Created / Resolved: 2026-11-08
+- Fixed: post-`v0.7.97-beta.4` (unreleased)
 
 `packages/coding/src/extensions/helpers.test.ts` ("exec > runs a simple command
 and returns stdout") timed out after 30 seconds running `exec('echo hello')`
@@ -121,6 +121,32 @@ needs timing from a Windows runner.
 Expected: a trivial command returns in a few seconds on a Windows runner. The
 environment must still exclude secrets: add only the non-secret variables
 PowerShell needs, and keep the existing API-key leak test green.
+
+Resolution (2026-11-08): two probe runs on `windows-latest` found the cause.
+Runs 42482422600 and 42484739752 were on the temporary branch
+`probe/issue-386`, since deleted. With `exec`'s environment, PowerShell
+`echo hello` took 22-25 seconds on every start; with the full runner
+environment it took 0.3 seconds. A binary search over the 146 extra runner
+variables isolated `PSModuleAnalysisCachePath`
+(`C:\PSModuleAnalysisCachePath\ModuleAnalysisCache` on the image). Adding only
+that variable brought a start down to 237 ms; `PSModulePath`, `TEMP` and
+`APPDATA` did not help. Without its module analysis cache, PowerShell rescans
+every installed module before resolving a command. `exit 42` was fast because
+it resolves no command. A local machine with few modules starts in about
+140 ms either way, which is why the failure was not reproducible here.
+
+`exec` now forwards `PSModuleAnalysisCachePath` and `LOCALAPPDATA`, the
+documented default cache location, on Windows. Both are paths, not secrets.
+On a user machine with many modules installed, every extension `exec` paid
+the same rescan. The Windows API-key leak test had used cmd-style `%VAR%`,
+which PowerShell does not expand, so it never read the variable. It now uses
+`$env:` and checks the key is absent.
+
+- Files changed: `packages/coding/src/extensions/helpers.ts`,
+  `packages/coding/src/extensions/helpers.test.ts`
+- Tests added: Windows-only check that both cache variables reach PowerShell
+  (failed with `"|"` before the fix)
+- Fixed: post-`v0.7.97-beta.4` (unreleased)
 
 ## Issue 376: Windows gate and recovery/credential/permission audit follow-up
 
@@ -2317,7 +2343,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 |----|----------|--------|-------|------------|-------|---------|----------|
 | 388 | Medium | Resolved | SDK history capacity fixture observes the parent before the worker on Windows | observed in v0.7.97-beta.3 Release CI; first affected version unknown | post-`v0.7.97-beta.4` (unreleased) | 2026-11-08 | 2026-11-08 |
 | 387 | Medium | Resolved | Busy-Session Ink attach fixture times out before the prompt renders on Windows | observed in v0.7.97-beta.4 Release CI; first affected version unknown | post-`v0.7.97-beta.4` (unreleased) | 2026-11-08 | 2026-11-08 |
-| 386 | High | ready | Extension `exec` can take over 30 seconds on Windows | observed in v0.7.97-beta.4 Release CI; first affected version unknown | — | 2026-11-08 | — |
+| 386 | High | Resolved | Extension `exec` can take over 30 seconds on Windows | observed in v0.7.97-beta.4 Release CI; first affected version unknown | post-`v0.7.97-beta.4` (unreleased) | 2026-11-08 | 2026-11-08 |
 | 375 | High | Resolved | Constrained Skill shell patterns admit extra effects | observed on aeb16fef; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
 | 374 | Medium | Resolved | Client question adapters lose unanswered semantics | observed on aeb16fef; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
 | 373 | Low | Resolved | Streaming progress mixes character and token units | observed in v0.7.97-alpha.10; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
@@ -17184,8 +17210,8 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 257 (38 Open, 219 Resolved, 0 Partially Resolved, 0 Won't Fix)
-- Ready: 1 (386)
+- Total: 257 (37 Open, 220 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
