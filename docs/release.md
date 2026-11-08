@@ -8,6 +8,31 @@ Use [SDK_MIGRATION.md](SDK_MIGRATION.md) for the supported current surface.
 KodaX is distributed as **standalone binaries** built with `bun build --compile`.
 Target machines do **not** need Node.js or any runtime installed.
 
+## Current release execution
+
+This replaces the pre-flight dispatch followed by a tag push that each
+earlier preparation section describes; that flow ran the full matrix twice
+on one commit.
+
+- Commit the release candidate, documentation and feature-design submodule
+  pointer first, then run `tests/release-*` locally. A late test-expectation
+  commit cancels an in-flight run.
+- Dispatch the Release workflow on the release branch with `target=all` and
+  `release_tag=v<package version>`. Every build job rejects a mismatched tag
+  or a partial target in its first minutes.
+- The same run publishes once CI, all five archive checks and the npm
+  package checks are green: it creates the lightweight tag at the dispatched
+  commit and the GitHub Release from that run's own artifacts. It refuses to
+  move a tag that already exists. A tag created by the workflow token does
+  not start a second run.
+- If a job fails, re-run failed jobs on the same run; the publish job runs
+  when they pass. A source or workflow fix needs a new commit and dispatch.
+- Dispatch without `release_tag` for a candidate-only run. Pushing a `v*` tag
+  still publishes as before.
+- `test:bundle` bounds each test at three minutes, so a hang is still caught.
+  The step limit is ten minutes because the passing Windows suite alone takes
+  about 4.6 minutes.
+
 ## v0.7.97-beta.4 release preparation
 
 Release state: `v0.7.97-beta.4` is a candidate awaiting multi-platform CI.

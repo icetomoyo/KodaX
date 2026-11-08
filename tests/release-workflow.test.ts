@@ -40,10 +40,37 @@ describe('GitHub release workflow', () => {
     expect(workflow.jobs?.build?.needs).toBeUndefined();
     expect(workflow.jobs?.['npm-package']?.needs).toBe('build');
     expect(workflow.jobs?.release?.needs).toEqual(['ci', 'build', 'npm-package']);
-    expect(workflow.jobs?.release?.if).toBe("github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')");
+    expect(workflow.jobs?.release?.if).toBe(
+      "(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))"
+      + " || (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != '')",
+    );
     expect(workflow.on?.push).toEqual({ tags: ['v*'] });
     const ci = parse(readFileSync(resolve('.github/workflows/ci.yml'), 'utf8')) as ReleaseWorkflow;
     expect(Object.keys(ci.on ?? {}).sort()).toEqual(['workflow_call', 'workflow_dispatch']);
+  });
+
+  it('publishes a dispatch release_tag from the same verified run without moving existing tags', () => {
+    const workflow = parse(readFileSync(resolve('.github/workflows/release.yml'), 'utf8')) as ReleaseWorkflow;
+    const dispatch = workflow.on?.workflow_dispatch as { inputs?: Record<string, { default?: string }> } | undefined;
+    expect(dispatch?.inputs?.release_tag?.default).toBe('');
+
+    const version = workflow.jobs?.build?.steps?.find(step => step.name === 'Determine version');
+    expect(version?.env?.RELEASE_TAG).toBe('${{ github.event.inputs.release_tag }}');
+    expect(version?.run).toContain('[ "$RELEASE_TAG" = "v$v" ]');
+    expect(version?.run).toContain('[ "$TARGET" = "all" ]');
+
+    const release = workflow.jobs?.release as (WorkflowJob & { env?: Record<string, string> }) | undefined;
+    expect(release?.env?.RELEASE_TAG)
+      .toBe("${{ github.event_name == 'push' && github.ref_name || github.event.inputs.release_tag }}");
+    const steps = release?.steps ?? [];
+    const guard = steps.findIndex(step => step.name === 'Refuse to move an existing tag');
+    const publish = steps.findIndex(step => step.name === 'Create GitHub Release');
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(publish);
+    expect(steps[guard]?.run).toContain('git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}"');
+    expect(steps[publish]?.with?.tag_name).toBe('${{ env.RELEASE_TAG }}');
+    expect(steps[publish]?.with?.target_commitish).toBe('${{ github.sha }}');
+    expect(steps.find(step => step.id === 'notes')?.run).not.toContain('GITHUB_REF');
   });
 
   it('fails archive checks before expensive Electron checks and bounds test processes', () => {
@@ -59,10 +86,15 @@ describe('GitHub release workflow', () => {
         if (!job?.steps) continue;
         expect(job['timeout-minutes'], `${file}: ${job.name}`).toBeGreaterThan(0);
         for (const step of job.steps.filter(step => step.run?.includes('npm run test:bundle'))) {
-          expect(step['timeout-minutes']).toBeLessThanOrEqual(5);
+          expect(step['timeout-minutes']).toBeLessThanOrEqual(10);
         }
       }
     }
+    // Per-test limits catch hangs; the step limit only bounds the whole suite.
+    const scripts = (JSON.parse(readFileSync(resolve('package.json'), 'utf8')) as { scripts: Record<string, string> }).scripts;
+    const runs = scripts['test:bundle']?.split('&&') ?? [];
+    expect(runs).toHaveLength(2);
+    for (const run of runs) expect(run).toContain('--test-timeout=180000');
   });
 
   it('runs the complete serial system suite on its own Node 20 runner', () => {

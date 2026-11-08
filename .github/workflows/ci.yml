@@ -74,7 +74,7 @@ jobs:
         run: npm run build:bundle
 
       - name: Bundled Provider credentials and daemon compaction
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: npm run test:bundle
 
       - name: Native trusted text transaction tests
@@ -375,7 +375,7 @@ jobs:
           -t "does not become ready before initial A2A reconciliation completes|concurrent launchers refresh a real idle older Host|explicitly makes it persistent|A2A serving inside|self-stops"
 
       - name: Bundled Provider credentials and daemon compaction
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: npm run test:bundle
 
       - name: Unified Host SDK historical migration and installed package gate

@@ -2,7 +2,8 @@ name: Release
 
 # Both trigger paths run full CI alongside the build matrix; publishing waits for both:
 #   1. Push a `v*` tag         → CI + build + auto-create GitHub Release with binaries
-#   2. workflow_dispatch (UI)  → CI + build, artifacts available for manual download
+#   2. workflow_dispatch (UI)  → CI + build, artifacts available for manual download;
+#      with `release_tag`, the green run also creates that tag and the GitHub Release
 #
 # No code signing; binaries are distributed as tar.gz (Linux/macOS) and zip (Windows)
 # with a sidecar `builtin/` directory next to the executable.
@@ -25,6 +26,11 @@ on:
           - linux-arm64
           - darwin-x64
           - darwin-arm64
+      release_tag:
+        description: 'Publish this tag (e.g. v1.2.3-beta.1) at the dispatched commit after every gate passes; leave empty for a candidate-only run'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: write   # Needed for softprops/action-gh-release on tag push
@@ -183,9 +189,18 @@ jobs:
         if: steps.filter.outputs.skip == 'false'
         id: version
         shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.release_tag }}
+          TARGET: ${{ github.event.inputs.target }}
         run: |
           v=$(node -p "require('./package.json').version")
           echo "version=$v" >> "$GITHUB_OUTPUT"
+          # Fail in minutes, not after the full matrix, when a publishing
+          # dispatch cannot produce a Release.
+          if [ -n "$RELEASE_TAG" ]; then
+            [ "$RELEASE_TAG" = "v$v" ] || { echo "release_tag $RELEASE_TAG does not match package version v$v" >&2; exit 1; }
+            [ "$TARGET" = "all" ] || { echo "release_tag requires target=all" >&2; exit 1; }
+          fi
           if [ "${{ github.event_name }}" = "push" ]; then
             tag="${GITHUB_REF#refs/tags/}"
             echo "tag=$tag" >> "$GITHUB_OUTPUT"
@@ -265,7 +280,7 @@ jobs:
         run: node --test tests/release-work-modes.test.mjs
 
       - name: Bundled Provider credentials and daemon compaction
-        timeout-minutes: 5
+        timeout-minutes: 10
         if: steps.filter.outputs.skip == 'false'
         run: npm run test:bundle
 
@@ -428,13 +443,28 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: [ci, build, npm-package]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+      || (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != '')
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # A publishing dispatch tags the exact commit this run already verified,
+      # so a release needs one full matrix instead of a pre-flight plus a tag run.
+      RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || github.event.inputs.release_tag }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0   # full history for changelog
+
+      - name: Refuse to move an existing tag
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            echo "Tag ${RELEASE_TAG} already exists; a publishing dispatch only creates new tags." >&2
+            exit 1
+          fi
 
       - name: Download all build artifacts
         # Pinned to v7 (Node 24 runtime, classic backend) — deliberately NOT v8,
@@ -463,16 +493,16 @@ jobs:
         id: notes
         shell: bash
         run: |
-          tag="${GITHUB_REF#refs/tags/}"
+          tag="${RELEASE_TAG}"
           # Find previous canonical release tag by date. `--list 'v*'`
           # restricts to tags matching the release naming convention,
           # excluding local experiment tags (e.g. 'v0.7.27-DSready') that
           # would otherwise pollute the changelog range.
           prev=$(git tag --list 'v[0-9]*' --sort=-creatordate | grep -v "^${tag}$" | head -1 || true)
           if [ -n "$prev" ]; then
-            range="${prev}..${tag}"
+            range="${prev}..HEAD"
           else
-            range="${tag}"
+            range="HEAD"
           fi
 
           {
@@ -494,6 +524,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
           files: |
             dist/release/*.tar.gz
             dist/release/*.zip
@@ -502,4 +534,4 @@ jobs:
             dist/release/SHA256SUMS
           body: ${{ steps.notes.outputs.body }}
           draft: false
-          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
+          prerelease: ${{ contains(env.RELEASE_TAG, '-rc') || contains(env.RELEASE_TAG, '-beta') || contains(env.RELEASE_TAG, '-alpha') }}
