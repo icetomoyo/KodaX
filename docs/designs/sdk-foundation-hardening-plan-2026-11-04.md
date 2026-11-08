@@ -1,14 +1,15 @@
 # KodaX SDK Foundation Hardening Plan (2026-11-04)
 
-> Status: approved 2026-11-04; Phase 1, the WP6 spike and WP8 are implemented and pushed. See section 0.
+> Status: approved 2026-11-04; Phase 1, WP6 (FEATURE_303), WP7 (FEATURE_304) and WP8 are implemented and pushed. See section 0.
 > Scope: work in the KodaX SDK repository (this worktree). The Space-side plan is a separate document:
 > [space-workbuddy-class-evolution-handoff-2026-11-04.md](space-workbuddy-class-evolution-handoff-2026-11-04.md).
 > Baseline: `@kodax-ai/kodax@0.7.97-beta.1`, branch `KodaX-next-dev` at `fc296bd56`.
 > Every `path:line` below was read on 2026-11-04. Re-check line numbers before editing.
 
-## 0. Implementation status (2026-11-04)
+## 0. Implementation status (updated 2026-11-08)
 
-Phase 1, the WP6 spike and WP8 are committed and pushed on `KodaX-next-dev`; nothing is released.
+Phase 1, WP6, WP7 and WP8 are committed and pushed on `KodaX-next-dev`; nothing is released.
+Follow-up fixes from the same review are Issues 382, 384 and 385.
 No tool description or system prompt changed, so prompt caching and model behavior are unaffected
 and no prompt eval is needed. The Node floor (section 10, decision 2) and ADR-071 were decided the same day.
 
@@ -19,8 +20,8 @@ and no prompt eval is needed. The Node floor (section 10, decision 2) and ADR-07
 | WP3 | Done | Issue 380 |
 | WP4 | Done | Issue 381 |
 | WP5 | Done (documentation; grants behavior settled, no code change) | `CLIENT_CONTRACT.md` "无人值守运行" |
-| WP6 | Spike done (Node and Bun); Node floor stays `>=20`; ready to implement | FEATURE_303, [v0.7.98](../features/v0.7.98.md#feature_303-proxy-and-private-ca-support) |
-| WP7 | ADR-071 Accepted; ready to implement | FEATURE_304, ADR-071 |
+| WP6 | Done 2026-11-05 (verified on Node 22 and Bun 1.4.4); Node floor stays `>=20` | FEATURE_303, [v0.7.98](../features/v0.7.98.md#feature_303-proxy-and-private-ca-support) |
+| WP7 | Done 2026-11-05; ADR-071 Accepted | FEATURE_304, ADR-071 |
 | WP8 | Done | see below |
 | WP9 | Not started; lives in the `KodaX-Extensions` repository | — |
 
