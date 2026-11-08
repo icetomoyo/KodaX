@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-01_
+_Last Updated: 2026-11-08_
 
 ---
 
@@ -26,6 +26,72 @@ documentation update.
 Published mainline Issues 340–344 keep their identities. Worktree-only Issues
 340/341/342/343/344 are now 348/349/350/351/352 respectively; their existing
 resolution evidence is retained. Issues 345–347 are unchanged.
+
+## Issue 388: SDK history capacity fixture observes the parent before the worker on Windows
+
+- Priority: Medium
+- Status: ready
+- Introduced: observed in v0.7.97-beta.3 Release CI; first affected version unknown
+- Created: 2026-11-08
+- Fixed: —
+
+`src/sdk-client.history.test.ts:22` ("projects the actual request compaction
+capacity including Memory reserve without enabling diagnostics") failed on the
+Windows portable tier in Release run 42390168306 attempt 1. The failure was
+`expected 'parent' to be 'worker'` after `Matcher did not succeed in time`.
+The same commit passed on rerun.
+
+Expected: the assertion waits for the projection it checks and passes
+regardless of which side answers first. A real ordering defect is not yet
+ruled out; it would surface as the parent's capacity being reported where the
+worker's is expected. Reproduce under a slow serial Windows run
+(`KODAX_WINDOWS_TEST_TIER=portable`, `maxWorkers: 1`). Failed tests are not
+automatically retried (see [release execution](release.md#current-release-execution)),
+so the fix belongs in the fixture or the code.
+
+## Issue 387: Busy-Session Ink attach fixture times out before the prompt renders on Windows
+
+- Priority: Medium
+- Status: ready
+- Introduced: observed in v0.7.97-beta.4 Release CI; first affected version unknown
+- Created: 2026-11-08
+- Fixed: —
+
+`src/sdk-client.repl-activity.test.ts:71` ("renders current Host activity and
+accepts follow-ups when attaching Ink to a busy Session") failed on the
+Windows portable tier in Release run 42456953165 attempt 1. The captured
+frame contained only the banner, and the `Type a message` assertion ended with
+`Matcher did not succeed in time`. The same commit passed on rerun.
+
+Expected: attaching Ink to a busy Session renders the input prompt and current
+activity on a slow runner. Determine whether the wait is too short or keyed to
+the wrong signal, or whether the attach path stalls before the prompt. A stall
+would be a user-visible REPL defect.
+
+## Issue 386: Extension `exec` can take over 30 seconds on Windows
+
+- Priority: High
+- Status: ready
+- Introduced: observed in v0.7.97-beta.4 Release CI; first affected version unknown
+- Created: 2026-11-08
+- Fixed: —
+
+`packages/coding/src/extensions/helpers.test.ts` ("exec > runs a simple command
+and returns stdout") timed out after 30 seconds running `exec('echo hello')`
+on the Windows portable tier in Release run 42456953165 attempt 1. The same
+commit passed on rerun.
+
+On Windows, `exec` (`packages/coding/src/extensions/helpers.ts`) launches
+PowerShell with a minimal environment: PATH, HOME, LANG, TERM, SYSTEMROOT,
+COMSPEC and PATHEXT. It omits `PSModulePath`, `TEMP`/`TMP`, `APPDATA`,
+`LOCALAPPDATA` and `USERPROFILE`. Dropping `PSModulePath` already made
+PowerShell start more than 15 seconds slower in the alpha.11 archive-gate
+failures, so this is the leading hypothesis. If confirmed, extension commands
+on users' Windows machines are slow too, not only in CI.
+
+Expected: a trivial command returns in a few seconds on a Windows runner. The
+environment must still exclude secrets: add only the non-secret variables
+PowerShell needs, and keep the existing API-key leak test green.
 
 ## Issue 376: Windows gate and recovery/credential/permission audit follow-up
 
@@ -2220,6 +2286,9 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 388 | Medium | ready | SDK history capacity fixture observes the parent before the worker on Windows | observed in v0.7.97-beta.3 Release CI; first affected version unknown | — | 2026-11-08 | — |
+| 387 | Medium | ready | Busy-Session Ink attach fixture times out before the prompt renders on Windows | observed in v0.7.97-beta.4 Release CI; first affected version unknown | — | 2026-11-08 | — |
+| 386 | High | ready | Extension `exec` can take over 30 seconds on Windows | observed in v0.7.97-beta.4 Release CI; first affected version unknown | — | 2026-11-08 | — |
 | 375 | High | Resolved | Constrained Skill shell patterns admit extra effects | observed on aeb16fef; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
 | 374 | Medium | Resolved | Client question adapters lose unanswered semantics | observed on aeb16fef; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
 | 373 | Low | Resolved | Streaming progress mixes character and token units | observed in v0.7.97-alpha.10; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
@@ -17086,8 +17155,8 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 254 (37 Open, 217 Resolved, 0 Partially Resolved, 0 Won't Fix)
-- Ready: 0
+- Total: 257 (40 Open, 217 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Ready: 3 (386, 387, 388)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
