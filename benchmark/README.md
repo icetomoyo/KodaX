@@ -32,7 +32,7 @@ provider request body, you need an eval.
 npm run test:eval
 
 # One eval file
-npx vitest run -c vitest.eval.config.ts tests/your-case.eval.ts
+npx vitest run -c tests/config/vitest.eval.config.ts tests/your-case.eval.ts
 ```
 
 Tests skip gracefully when their required `*_API_KEY` env var is absent.
@@ -287,7 +287,7 @@ Once you have a benchmark with a baseline:
 
 ## Conventions
 
-- **Eval files end in `.eval.ts`** — picked up by `vitest.eval.config.ts`,
+- **Eval files end in `.eval.ts`** — picked up by `tests/config/vitest.eval.config.ts`,
   excluded from default `npm test`. They may make real LLM calls and cost
   money. Never include `.eval.ts` files in CI default runs.
 - **Skip when no API key.** Use `availableAliases(...)` + `describe.skipIf`

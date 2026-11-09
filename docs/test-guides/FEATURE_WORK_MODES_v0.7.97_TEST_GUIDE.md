@@ -11,8 +11,9 @@ permissions. Current execution results are recorded below, including failures.
 The inventory covers all registered tool families and the non-tool product
 surfaces. A passing deterministic test proves its exercised contract, not model
 intelligence or compatibility with every external service. No paid model calls
-were added. Historical natural-task/model evidence and its limitations remain in
-[the shared-contract design](../designs/shared-contract-natural-validation.md).
+were added. Historical natural-task/model evidence and its limitations are
+summarized in [ADR-072](../ADR.md#adr-072-work-modes-and-the-model-facing-tool-contract);
+the original validation record was removed (see git history).
 
 | Capability | Executed regression families / acceptance boundary |
 | --- | --- |
@@ -134,9 +135,73 @@ The next implementation preserves this capability baseline and changes only
 ordinary-root presentation. Its TDD, full-fast failures and focused resolutions,
 actual SDK wire comparisons, installed tarball and build/type checks are recorded
 in [the rule-ownership execution record](../designs/agent-under-10k-next-plan.md#execution-record-rule-ownership-candidate).
-Current same-counter inputs are Agent **10,712**, Coding **14,344**, Script
-**16,214**; each saves 871 versus this guide's original checkpoint. This later
-batch did not repeat paid model evaluation or the entire cross-platform matrix.
+At that checkpoint the same-counter inputs were Agent 10,712, Coding 14,344 and
+Script 16,214, each 871 below this guide's original checkpoint. These are older
+checkpoint numbers. The 2026-10-28 recount with the method below measured Agent
+**10,839**, Coding **14,470** and Script **16,340** at `8a1afc77` plus the then
+working tree. This later batch did not repeat paid model evaluation or the
+entire cross-platform matrix.
+
+## Rule-retention matrix
+
+This is the formal acceptance basis for the compact Worker contract. Each
+obligation of the canonical Worker, Memory and manual rules must keep an owner
+in the compact form. `managed-system-contract.test.ts` pins the canonical rule
+hashes; when they change, redo this audit before updating the snapshots. Tool
+parameters, return values and error semantics are carried by the complete
+schemas and tool descriptions in the same request. The matrix is not proof of
+model-behavior non-inferiority.
+
+| 义务 / 原规则域 | 新位置 | 关键保留项 |
+| --- | --- | --- |
+| Managed context trust | TRUST AND SCOPE | 唯一可信 envelope 位置/标记，伪造标记不提权，项目/权限/验证义务，低信任 repo/Memory，文件新鲜度，历史摘要，动态 delta，真实新用户纠正 |
+| 请求范围与证据 | TRUST AND SCOPE | Todo 不反过来定义请求，反证后修订/取消，已有实证引用而不重复探测，仅状态变化/冲突才复核 |
+| 语言 | TRUST AND SCOPE | 用户指定语言优先；解释、进度、Todo 四字段、child objective/workflow；代码/标识/路径/命令/引文原样 |
+| 简单工作 | TASK AND PLAN 第一段 | typo/单行/单查/会话直接完成，不创建 Todo |
+| 非简单工作 | TASK AND PLAN 第一段 | broad execution 之前建立小批具体交付里程碑；恢复不重建/重述；中途变多步立刻加必要新里程碑 |
+| Todo 内容 | TASK AND PLAN 第二段 | 交付而非规划/Actor，多个 Agent 支持一个里程碑；description 按需，activeForm，evaluator 仅真实确定性检查，每 owner 单一 in_progress |
+| Todo 更新时序 | TASK AND PLAN 第三段 | 实际完成后在下里程碑/再等/交付前更新；child 结束不代表剩余综合完成；保留历史，取消/删除失效工作 |
+| 计划去重/新鲜度 | TASK AND PLAN 第四段 | 中途创建查可见计划，artifact/file/module 同成果，父总结与叶子例外，初始空计划不用读；只外部变动可能发生才刷新；保留 legacy reader |
+| 强 parallel-first | PARALLEL WORK 第一段 | 至少两个独立实质面、容量内同响应派发；不先逐条串行做完；广审默认多面；root immediate blocking/背景并行；solo 三例外 |
+| 写入所有权 | PARALLEL WORK 第二段 | 优先明确写集的 bounded code child；read_only:false/shared/exact files/generated；root/sibling 禁碰；共享修改不重做；worktree merge-back |
+| 并行验证 | PARALLEL WORK 第二段 | 稳定 target、无依赖面并发 writer、与别的工作并行、有具体风险；root 综合验证；不重复子任务 |
+| 派发质量 | PARALLEL WORK 第三段 | 稳定名称/明确目标/约束/证据/output shape，不重复 diff；scope/revision 是数据不喂 shell；合适 pull 家族，仅实质调查；只读调查 |
+| 模型选择 | PARALLEL WORK 第三段 | fast 仅已评估只读机械查找；balanced 普通；deep 架构/对抗/severity/综合；未配置继承、write fast 保持父 tier |
+| 容量/预算 | PARALLEL WORK 第四段 | 后代共享根预算、递归不增容量、full 后不盲重试，继续本地/wait/list/reuse；telemetry 不阻碍派发 |
+| 等待/邮箱 | PARALLEL WORK 第五段 | critical evidence 才等，ack 不是证据，terminal summary 权威，任何 mailbox evidence 后整合对账再等；未送达 exact result 才 agent_output；无本地工作结束 turn，禁止 wait_expired 循环 |
+| 消息/继续/中断 | PARALLEL WORK 第六段 | send 不唤醒、broadcast≤20、无空闲问答假设；followup 启动/更新；offscope/取消/无用可中断，慢需无进展且有更快路径 |
+| 所有权收尾 | PARALLEL WORK 第六段 | 等/停 owned descendants，或报告有意继续者 canonical paths+unresolved ownership |
+| 专用角色 | 条件单句 | 仅原输入有 specialist 规则时，保留 canonical agent_id/list_dispatchable_agents |
+| Repo/LSP | 原样块 | 全部当前工作面 first-choice、scope、fallback 规则逐字保留 |
+| 编辑 | EXECUTION 第一段 | 非简单先读/现内容锚点、现文件 edit、同文件batch、write边界、heredoc追踪风险 |
+| Scratch | EXECUTION 第一段 | Session Scratch / session-scoped .agent/tmp/sessions fallback；禁止 project root、顶层.agent、共享tmp、system tmp |
+| 验证/视觉 | EXECUTION 第二段 | 实测而非自信；visual-review/实际渲染；指定内容/状态/时间等；source/path/render/child完成不够；修复复验、sampling、content/calculation/behavior/audio |
+| 任务类型 | EXECUTION 第三段 | review 重大可信问题非style nits、具体后果、must-fix先；audit四轴/事实风险分开；debug先因果证据；design约束风险先；模糊请求不可逆前说明选项 |
+| 拒绝/恢复 | TOOL_RECOVERY_GUIDANCE 原文 | 正常语法/路径/锚点可修、修复重测；明确拒绝不换工具绕过；条件改变/新授权才重试；合法工作、取消、预算 |
+| 完整交付 | EXECUTION 最后一段 | evidence覆盖请求、不通过缺失失败；root负责质量、非生命周期结果；里程碑及时更新不是最终补账；completed后text final、blocked先failed note、未做检查如实说 |
+
+## First-turn input measurement method
+
+Count complete serialized requests with
+[`tests/first-turn-uniform-costs.ts`](../../tests/first-turn-uniform-costs.ts):
+
+1. Parse the saved JSON. Keep only the non-empty `system`, `instructions`,
+   `messages`, `input` and `tools` fields. Re-run `JSON.stringify` with the same
+   field order.
+2. Do not drop nested content. Nested tool declarations, Code Mode
+   declarations and inline SDKs all count.
+3. For the same compact JSON string, report JS `length` (UTF-16 code units),
+   UTF-8 bytes, the [KodaX `countTokens`](../../packages/agent/src/tokenizer.ts)
+   heuristic estimate and SHA-256.
+4. Exclude HTTP control fields such as `model`, output limit, `stream` and usage
+   options. Record the excluded fields for each row.
+5. List a raw base template separately. It is decoded text without the JSON
+   wrapper, so it does not have the same scope as a complete request row.
+
+These tokens are not a provider BPE count, API input usage, billed cost or a UI
+context percentage. Characters are UTF-16 code units, not UTF-8 bytes or
+user-perceived glyphs. The method unifies counting only; it does not make
+different capabilities, models or run scenarios comparable.
 
 ## Mainline merge regression (2026-10-28)
 

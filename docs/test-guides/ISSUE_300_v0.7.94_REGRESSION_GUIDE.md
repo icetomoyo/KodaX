@@ -5,10 +5,10 @@
 Run:
 
 ```text
-npx vitest run -c vitest.system.config.ts src/sandbox-runtime.test.ts
+npx vitest run -c tests/config/vitest.system.config.ts src/sandbox-runtime.test.ts
 npx vitest run packages/coding/src/tools/edit.test.ts
 npx vitest run packages/coding/src/tools/worktree.test.ts
-npx vitest run -c vitest.system.config.ts src/sdk-runtime.test.ts -t "starts a Run without a text sandbox"
+npx vitest run -c tests/config/vitest.system.config.ts src/sdk-runtime.test.ts -t "starts a Run without a text sandbox"
 ```
 
 Required assertions:
@@ -48,9 +48,9 @@ Run:
 
 ```text
 npx vitest run packages/coding/src/tools/worktree.test.ts packages/repl/src/interactive/storage.test.ts
-npx vitest run -c vitest.system.config.ts src/sandbox-runtime.test.ts -t "shares a newly registered workspace root"
-npx vitest run -c vitest.system.config.ts src/sdk-runtime.test.ts -t "migrates only Session-proven legacy worktrees"
-npx vitest run -c vitest.system.config.ts src/sdk-runtime.test.ts -t "registers a linked worktree created from a submodule Session root"
+npx vitest run -c tests/config/vitest.system.config.ts src/sandbox-runtime.test.ts -t "shares a newly registered workspace root"
+npx vitest run -c tests/config/vitest.system.config.ts src/sdk-runtime.test.ts -t "migrates only Session-proven legacy worktrees"
+npx vitest run -c tests/config/vitest.system.config.ts src/sdk-runtime.test.ts -t "registers a linked worktree created from a submodule Session root"
 ```
 
 Required assertions:

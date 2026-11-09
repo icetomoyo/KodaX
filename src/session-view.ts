@@ -276,6 +276,8 @@ export class SessionViewOwner {
       onToolResult: (result, meta) => {
         if (!isPrimary(meta)) { childActivity('tool', `${result.name} completed`, meta); return; }
         const previous = state.items.find((item) => item.id === toolItemId(result.id));
+        // Status comes from the executor's structured toolResult. The text-prefix
+        // checks only interpret legacy history saved without that field.
         const status = result.toolResult?.metadata?.cancelled === true ? 'cancelled'
           : result.toolResult ? (result.toolResult.is_error === true ? 'error' : 'success')
           : /^\[(?:Tool Error|Error)\]/.test(result.content) ? 'error'

@@ -6,11 +6,15 @@ name: CI
 # This matrix runs the build + fast suite on the engines floor (20) and the
 # build version (22), then runs the expensive contract/system tiers once on
 # the supported runtime floor (20). That catches Node-version regressions
-# without duplicating every subprocess and daemon test. Node 18 was dropped from the floor: the
+# without duplicating every subprocess and daemon test. The Node 20 unit and
+# contract tiers run on their own row beside the fast tier, so neither waits
+# behind the other. Node 18 was dropped from the floor: the
 # codebase relies on Node 20+ features (e.g. the RegExp `v` flag), so 18 is no
 # longer supported.
 
 # Run alongside release builds, or manually when an earlier check is needed.
+# Push/PR triggers are intentionally omitted to limit CI runs; regressions
+# surface at tag/release time. Do not add push or pull_request.
 on:
   workflow_call:
   workflow_dispatch:
@@ -22,13 +26,19 @@ concurrency:
 
 jobs:
   test:
-    name: test (node ${{ matrix.node }})
+    name: test (node ${{ matrix.node }} ${{ matrix.suite }})
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        node: ['20', '22']
+        include:
+          - node: '20'
+            suite: fast
+          - node: '20'
+            suite: unit
+          - node: '22'
+            suite: fast
     steps:
       - uses: actions/checkout@v6
 
@@ -74,6 +84,7 @@ jobs:
         run: npm run build:bundle
 
       - name: Bundled Provider credentials and daemon compaction
+        if: matrix.suite == 'unit' || matrix.node == '22'
         timeout-minutes: 10
         run: npm run test:bundle
 
@@ -96,6 +107,7 @@ jobs:
         run: npm run build:dts
 
       - name: Fast tests
+        if: matrix.suite == 'fast'
         run: npm run test:fast
 
       - name: Shared Host ownership recovery regressions
@@ -103,11 +115,11 @@ jobs:
         run: node node_modules/vitest/vitest.mjs run src/runtime-daemon/lifecycle.process-identity.test.ts src/runtime-daemon/process.owner-exit.test.ts src/sdk-runtime-daemon-upgrade.test.ts
 
       - name: Unit tests
-        if: matrix.node == '20'
+        if: matrix.suite == 'unit'
         run: npm run test:unit
 
       - name: Contract tests
-        if: matrix.node == '20'
+        if: matrix.suite == 'unit'
         run: npm run test:contract
 
       - name: Runtime daemon Unix socket gate
@@ -292,8 +304,8 @@ jobs:
   windows-source:
     name: Windows source (${{ matrix.tier }}${{ matrix.shard && format(' {0}', matrix.shard) || '' }})
     runs-on: windows-latest
-    # The serial portable suite took 20-30 minutes on one runner and set the
-    # Release critical path, so it runs as two file shards. Per-test timeouts
+    # The serial portable and system suites each took about 20 minutes on one
+    # runner and set the Release critical path, so each runs as two file shards. Per-test timeouts
     # still catch hangs; the wall keeps headroom for slow Windows runners.
     timeout-minutes: 40
     strategy:
@@ -305,7 +317,9 @@ jobs:
           - tier: portable
             shard: 2/2
           - tier: system
-            shard: ''
+            shard: 1/2
+          - tier: system
+            shard: 2/2
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -376,7 +390,7 @@ jobs:
 
       - name: Windows concurrent Host startup and rebuild refresh
         run: >-
-          node node_modules/vitest/vitest.mjs run -c vitest.system.config.ts
+          node node_modules/vitest/vitest.mjs run -c tests/config/vitest.system.config.ts
           src/kodax_cli.daemon-smoke.test.ts src/sdk-runtime.launcher.test.ts
           -t "does not become ready before initial A2A reconciliation completes|concurrent launchers refresh a real idle older Host|explicitly makes it persistent|A2A serving inside|self-stops"
 

@@ -29,10 +29,21 @@ on one commit.
   when they pass. A source or workflow fix needs a new commit and dispatch.
 - Dispatch without `release_tag` for a candidate-only run. Pushing a `v*` tag
   still publishes as before.
-- The portable Windows source tier runs as two vitest file shards (about 10
-  and 16 minutes of tests) instead of one ~26-minute serial job. The real
-  terminal PTY gate runs only in shard 1. The `build (win-x64)` and npm package chain
-  (~22 minutes) is now the longest path.
+- The portable and system Windows source tiers each run as two vitest file
+  shards instead of one ~20–26-minute serial job. The real terminal PTY gate
+  runs only in portable shard 1.
+- Node 20's unit and contract tiers run on their own `test (node 20 unit)`
+  row beside the fast tier. That row also runs Node 20's `test:bundle`.
+- `build (win-x64)` no longer repeats the Windows source-build gates (bundle,
+  native, trusted text, v2 sandbox, packaged Electron daemon). Full CI's
+  packaged Electron job runs the same gates on Windows from the same commit,
+  and publishing waits on Full CI. The win-x64 build keeps the archive checks:
+  binary smoke and the offline work-mode gate. Those gates first lived in the
+  build job because, before 2026-10-01, a Release did not run Full CI.
+- Bun is pinned (`bun-version` in `release.yml`) because it compiles the
+  shipped binaries. Bump it deliberately.
+- The packaged Electron job (~20 minutes) is the expected longest path; split
+  it only if the next run's timings confirm that.
 - `test:bundle` bounds each test at three minutes, so a hang is still caught.
   The step limit is ten minutes because the passing Windows suite alone takes
   about 4.6 minutes.
@@ -126,7 +137,7 @@ reserve targeted for v0.7.99. LibreOffice may recalculate fields;
 conversion is not proof of Word/WPS pagination or current TOC values.
 
 Joint regression, artifact and bounded real-model results are recorded in
-[the integration readiness record](designs/beta3-integration-readiness-2026-11-07.md).
+[the FEATURE_302 T12-J integration acceptance](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-j-local-main-integration--2026-10-31).
 Real-model probes use a 64K application budget on models with larger native
 windows; they do not validate native sub-100K models or arbitrary whole-document
 reading quality. Cross-platform native release gates and installed Space/SDK
@@ -297,9 +308,8 @@ provider connections, hidden API-key setup through CLI and REPL with Host
 scope fences), adding Claude 5.5 history fragments with per-message effort
 controls, moving manual data out of the CLI JavaScript budget, and shipping
 the 2026-11-01 full-chain audit's Windows recovery, credential and
-permission hardening (Issue 376; audit and fix list under
-[REVIEW_v0.7.97_FULL_CHAIN_AUDIT.md](REVIEW_v0.7.97_FULL_CHAIN_AUDIT.md) /
-[REVIEW_v0.7.97_FIX_LIST.md](REVIEW_v0.7.97_FIX_LIST.md)). The tag-triggered
+permission hardening (Issue 376 in [KNOWN_ISSUES.md](KNOWN_ISSUES.md), including
+the remaining audit findings). The tag-triggered
 Release workflow runs the reusable CI workflow alongside the build matrix;
 branch pushes do not trigger it, while CI can also be dispatched manually.
 The eventual `-alpha` tag suffix marks the release as a GitHub pre-release

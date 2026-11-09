@@ -233,7 +233,7 @@ npm run typecheck
 npm run test:fast -- --retry=0
 npm run test:unit -- --retry=0
 npm run test:contract -- --retry=0
-npx vitest run -c vitest.system.config.ts --maxWorkers=1 --retry=0
+npx vitest run -c tests/config/vitest.system.config.ts --maxWorkers=1 --retry=0
 $bundleFiles = ((Get-Content package.json -Raw | ConvertFrom-Json).scripts.'test:bundle' -replace '^node --test ', '') -split ' '
 node --test --test-concurrency=1 @bundleFiles
 ```

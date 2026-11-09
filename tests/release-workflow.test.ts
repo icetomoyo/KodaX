@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -78,7 +78,7 @@ describe('GitHub release workflow', () => {
     const steps = workflow.jobs?.build?.steps ?? [];
     const gate = steps.findIndex(step => step.name === 'Offline work-mode archive gate');
     expect(gate).toBeGreaterThan(-1);
-    expect(gate).toBeLessThan(steps.findIndex(step => step.name === 'Packaged Electron daemon release gate'));
+    expect(gate).toBeLessThan(steps.findIndex(step => step.name === 'Bundled Provider credentials and daemon compaction'));
     expect(steps[gate]?.['timeout-minutes']).toBeLessThanOrEqual(5);
     for (const file of ['ci.yml', 'release.yml']) {
       const candidate = parse(readFileSync(resolve('.github/workflows', file), 'utf8')) as ReleaseWorkflow;
@@ -97,13 +97,14 @@ describe('GitHub release workflow', () => {
     for (const run of runs) expect(run).toContain('--test-timeout=180000');
   });
 
-  it('splits the portable Windows tier into two shards and runs the PTY gate once', () => {
+  it('splits both Windows source tiers into two shards and runs the PTY gate once', () => {
     const workflow = parse(readFileSync(resolve('.github/workflows/ci.yml'), 'utf8')) as ReleaseWorkflow;
     const job = workflow.jobs?.['windows-source'];
     expect(job?.strategy?.matrix?.include).toEqual([
       { tier: 'portable', shard: '1/2' },
       { tier: 'portable', shard: '2/2' },
-      { tier: 'system', shard: '' },
+      { tier: 'system', shard: '1/2' },
+      { tier: 'system', shard: '2/2' },
     ]);
     const steps = job?.steps ?? [];
     expect(steps.find(step => step.name === 'Windows recovery, credentials and permission contracts')?.run)
@@ -111,6 +112,24 @@ describe('GitHub release workflow', () => {
     for (const name of ['Install isolated PTY acceptance tools', 'Windows real-terminal streaming history regression']) {
       expect(steps.find(step => step.name === name)?.if).toBe("matrix.tier == 'portable' && matrix.shard == '1/2'");
     }
+  });
+
+  it('runs Node 20 unit and contract tiers beside the fast tier instead of after it', () => {
+    const workflow = parse(readFileSync(resolve('.github/workflows/ci.yml'), 'utf8')) as ReleaseWorkflow;
+    const job = workflow.jobs?.test;
+    expect(job?.strategy?.matrix?.include).toEqual([
+      { node: '20', suite: 'fast' },
+      { node: '20', suite: 'unit' },
+      { node: '22', suite: 'fast' },
+    ]);
+    const steps = job?.steps ?? [];
+    const condition = (name: string) => steps.find(step => step.name === name)?.if;
+    expect(condition('Fast tests')).toBe("matrix.suite == 'fast'");
+    expect(condition('Unit tests')).toBe("matrix.suite == 'unit'");
+    expect(condition('Contract tests')).toBe("matrix.suite == 'unit'");
+    // Each Node version still runs the bundle gate once, off the slowest row.
+    expect(condition('Bundled Provider credentials and daemon compaction'))
+      .toBe("matrix.suite == 'unit' || matrix.node == '22'");
   });
 
   it('runs the complete serial system suite on its own Node 20 runner', () => {
@@ -228,36 +247,64 @@ describe('GitHub release workflow', () => {
     }
   });
 
-  it('builds once before the Windows Electron gate and binary packaging', () => {
+  it('builds once before binary packaging', () => {
     const source = readFileSync(resolve('.github/workflows/release.yml'), 'utf8');
     const workflow = parse(source) as ReleaseWorkflow;
     const steps = workflow.jobs?.build?.steps ?? [];
     const buildIndex = steps.findIndex((step) => step.name === 'Build');
-    const electronIndex = steps.findIndex(
-      (step) => step.name === 'Packaged Electron daemon release gate',
-    );
     const binaryIndex = steps.findIndex((step) => step.name?.startsWith('Build binary'));
     const smokeIndex = steps.findIndex((step) => step.name === 'Smoke test');
     const packageIndex = steps.findIndex((step) => step.name === 'Package archive');
 
     expect(steps.filter((step) => step.name === 'Build')).toHaveLength(1);
     expect(steps.find((step) => step.name === 'Build')?.run).toBe('npm run build');
-    expect(steps.find((step) => step.name === 'Packaged Electron daemon release gate')?.run)
-      .toBe('npm run test:electron-daemon:built');
-    expect(steps.find((step) => step.name === 'Activate Windows v2 sandbox for packaged Electron release gate')?.run)
-      .toBe('node scripts/prepare-windows-electron-sandbox.mjs');
-    expect(steps.find((step) => step.name === 'Windows v2 native policy concurrency gate'))
+    expect(steps.find((step) => step.name?.startsWith('Build binary'))?.run)
+      .toContain('--skip-tsc');
+    expect(buildIndex).toBeGreaterThan(-1);
+    expect(binaryIndex).toBeGreaterThan(buildIndex);
+    expect(smokeIndex).toBeGreaterThan(binaryIndex);
+    expect(packageIndex).toBeGreaterThan(smokeIndex);
+  });
+
+  it('runs the Windows source-build gates once, in CI, rather than again in the win-x64 build', () => {
+    const release = parse(readFileSync(resolve('.github/workflows/release.yml'), 'utf8')) as ReleaseWorkflow;
+    const ci = parse(readFileSync(resolve('.github/workflows/ci.yml'), 'utf8')) as ReleaseWorkflow;
+    // The release job waits on Full CI, so these source-build gates still block every Release.
+    expect(release.jobs?.release?.needs).toContain('ci');
+    const build = release.jobs?.build?.steps ?? [];
+    expect(build.some(step => /Electron|Windows v2|Windows trusted text/.test(step.name ?? ''))).toBe(false);
+    for (const name of ['Bundled Provider credentials and daemon compaction', 'Native trusted text transaction tests']) {
+      expect(build.find(step => step.name === name)?.if).toContain("matrix.target != 'win-x64'");
+    }
+    const electron = ci.jobs?.['packaged-electron-daemon']?.steps ?? [];
+    for (const run of [
+      'npm run test:bundle',
+      'npm run test:native',
+      'node scripts/prepare-windows-electron-sandbox.mjs',
+      'npm run test:electron-daemon:built',
+    ]) {
+      expect(electron.some(step => step.run === run), run).toBe(true);
+    }
+    expect(electron.find(step => step.name === 'Windows v2 native policy concurrency gate'))
       .toMatchObject({
         env: { KODAX_REAL_WINDOWS_SANDBOX_V2: '1' },
         run: expect.stringContaining('feature-295-windows-v2-policy.test.ts'),
       });
-    expect(steps.find((step) => step.name?.startsWith('Build binary'))?.run)
-      .toContain('--skip-tsc');
-    expect(buildIndex).toBeGreaterThan(-1);
-    expect(electronIndex).toBeGreaterThan(buildIndex);
-    expect(binaryIndex).toBeGreaterThan(buildIndex);
-    expect(smokeIndex).toBeGreaterThan(binaryIndex);
-    expect(packageIndex).toBeGreaterThan(smokeIndex);
+  });
+
+  it('points every direct vitest config reference at an existing file', () => {
+    for (const file of ['ci.yml', 'release.yml']) {
+      const source = readFileSync(resolve('.github/workflows', file), 'utf8');
+      for (const [, config] of source.matchAll(/vitest\.mjs run -c (\S+)/g)) {
+        expect(existsSync(resolve(config!)), `${file}: ${config}`).toBe(true);
+      }
+    }
+  });
+
+  it('pins the Bun compiler that produces the standalone binaries', () => {
+    const release = parse(readFileSync(resolve('.github/workflows/release.yml'), 'utf8')) as ReleaseWorkflow;
+    const bun = release.jobs?.build?.steps?.find(step => step.uses === 'oven-sh/setup-bun@v2');
+    expect(bun?.with?.['bun-version']).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
   it('rejects standalone binaries that emit more than one A2A document', () => {
@@ -277,17 +324,11 @@ describe('GitHub release workflow', () => {
     expect(source).toContain('inputPath.includes(`/${packagePath}`)');
   });
 
-  it('caches the packaged Electron smoke toolchain in CI and releases', () => {
-    const release = parse(
-      readFileSync(resolve('.github/workflows/release.yml'), 'utf8'),
-    ) as ReleaseWorkflow;
+  it('caches the packaged Electron smoke toolchain in CI', () => {
     const ci = parse(
       readFileSync(resolve('.github/workflows/ci.yml'), 'utf8'),
     ) as ReleaseWorkflow;
-    for (const steps of [
-      release.jobs?.build?.steps ?? [],
-      ci.jobs?.['packaged-electron-daemon']?.steps ?? [],
-    ]) {
+    for (const steps of [ci.jobs?.['packaged-electron-daemon']?.steps ?? []]) {
       const cache = steps.find((step) => step.name === 'Cache packaged Electron smoke toolchain');
       const install = steps.find((step) => step.name === 'Install packaged Electron smoke toolchain');
       const ensureBinary = steps.find((step) => step.name === 'Ensure packaged Electron binary');

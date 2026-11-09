@@ -42,7 +42,7 @@ If the user did not give a concrete task, read `README.md`, then check `docs/` f
 
 | Category | Technology | Version |
 |---|---|---|
-| Runtime | Node.js | >= 20.0.0 |
+| Runtime | Node.js | >= 20.16.0 |
 | Language | TypeScript | >= 5.7.0 (root uses 5.9.x) |
 | Package Manager | npm workspaces | — |
 | CLI Framework | Ink (React for CLI) | ^6.7.0 / React >= 19 |
@@ -67,10 +67,14 @@ Each workspace package must remain independently usable — never break layer in
 
 ## Documentation Layout
 
-Allowed `.md` files — anything else goes under `docs/`:
+Every tracked `.md` belongs to one of these categories:
 
-- **Root (required)**: `README.md`, `README_CN.md`, `AGENTS.md`, `CHANGELOG.md` — optional: `CLAUDE.md`, `CONTRIBUTING.md`
-- **`docs/` (required)**: `PRD.md`, `ADR.md`, `HLD.md`, `DD.md`, `FEATURE_LIST.md`, `features/v{VERSION}.md`, `test-guides/*.md` — optional: `KNOWN_ISSUES.md`
+- **Root**: `README.md`, `README_CN.md`, `AGENTS.md`, `CHANGELOG.md`, `packages/*/README.md` — optional: `CLAUDE.md`, `CONTRIBUTING.md` (contributor setup, architecture, code style)
+- **User docs (`public_docs/`, shipped in the npm package)**: guides for CLI users and SDK embedders; a user guide is `name.md` (English) plus `name.zh-CN.md` (Chinese)
+- **`docs/` core**: `PRD.md`, `ADR.md`, `HLD.md`, `DD.md`, `FEATURE_LIST.md`, `features/v{VERSION}.md` (git submodule), `test-guides/*.md` — optional: `KNOWN_ISSUES.md` and the `FEATURES_ARCHIVED.md` / `ISSUES_ARCHIVED.md` / `CHANGELOG_ARCHIVE.md` archives
+- **`docs/` SDK contracts (shipped in the npm package)**: `CLIENT_CONTRACT.md`, `SDK_MIGRATION.md`, `SPACE_SDK_SEAMS.md`, `ARTIFACT_SDK.md`, `LLM_INTEGRATION.md`; plus `release.md` for the release and binary pipeline
+- **`docs/designs/*.md`**: design and eval records for work in flight. When the work ships or is rejected, move the decision and rejected alternatives to ADR, the current design to HLD/DD, open problems to KNOWN_ISSUES and verification steps to a test guide, then delete the record. Git keeps the history.
+- **`docs/patches/*`**: upstream dependency patches and their notes
 - **Test guide naming**: `FEATURE_{ID}_{VERSION}_TEST_GUIDE.md` / `ISSUE_{ID}_{VERSION}_REGRESSION_GUIDE.md`
 
 `docs/research/` is local-only and ignored by Git. Do not commit research drafts,

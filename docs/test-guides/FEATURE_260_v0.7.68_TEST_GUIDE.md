@@ -24,7 +24,7 @@
 ```powershell
 npx vitest run --maxWorkers=3
 npm run build
-npx vitest run --config vitest.eval.config.ts tests/feature-260-memory-agent.eval.ts
+npx vitest run --config tests/config/vitest.eval.config.ts tests/feature-260-memory-agent.eval.ts
 ```
 
 已验证结果：

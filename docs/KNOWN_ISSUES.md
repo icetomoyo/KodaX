@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-08_
+_Last Updated: 2026-11-09_
 
 ---
 
@@ -46,6 +46,99 @@ This predates the child contract projection; the eval uses raw per-call usage,
 not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
+
+## Issue 394: Agent and Script whole-task non-inferiority is unproven
+
+- Priority: Medium
+- Status: Open
+- Introduced: work modes in v0.7.97 (ADR-072); evaluation gap, not a code regression
+- Created: 2026-11-09
+
+The work-mode task validation (r3, Windows, one sample per cell) shows the modes
+work, but not that Agent and Script finish whole tasks as well and as cheaply as
+Coding. Kimi Agent used 23 requests where historical Coding used 16. In the
+Script preset Kimi used `tool_search` plus `tool_call` bridge calls and ran 0
+`script_exec` cells and 0 leaf calls; it has never chosen Script on its own.
+Coding remains the default and Script stays explicit and experimental. Closing
+this needs a same-condition whole-task comparison per mode under
+[EVAL_GUIDELINES](../benchmark/EVAL_GUIDELINES.md). Linux and macOS native
+packages are also unvalidated. See
+[ADR-072](ADR.md#adr-072-work-modes-and-the-model-facing-tool-contract).
+
+## Issue 393: `worktree remove` reports a branch deleted when `branch -D` failed
+
+- Priority: Low
+- Status: Open
+- Introduced: unknown; present at `08ce2f742`
+- Created: 2026-11-09
+
+After `git worktree remove` succeeds, `packages/coding/src/tools/worktree.ts`
+(about lines 598–616) runs `git branch -D <branch>` and swallows any failure,
+for example when the branch is checked out elsewhere. The result still says
+"Worktree removed. Branch X deleted. Restored CWD.", so the model and user are
+told a branch is gone when it may remain. The rollback path in the same file
+collects such failures instead. A fix should report the branch outcome
+truthfully without failing the already completed worktree removal.
+
+## Issue 392: `cyclic_dependencies` prints a strongly connected component as a fake chain
+
+- Priority: Low
+- Status: Open
+- Introduced: unknown; present at `08ce2f742`
+- Created: 2026-11-09
+
+`findCyclicDependencies` in `packages/coding/src/repo-intelligence/cyclic-deps.ts`
+(about lines 85–93) takes each Tarjan SCC, reverses its pop order and renders it
+as `A -> B -> C -> A` (line 116). Members of an SCC are mutually reachable, but
+that order is not necessarily a sequence of real edges; for example, A↔B plus
+A↔C has no A→B→C→A path. The model may cite import edges that do not exist.
+`hopCount` is the SCC size, not a cycle length. A fix should either print the
+member set or reconstruct one real cycle from the adjacency.
+
+## Issue 391: `code_search` skips `.mts` and `.cts` files
+
+- Priority: Low
+- Status: Open
+- Introduced: unknown; present at `08ce2f742`
+- Created: 2026-11-09
+
+`SEARCHABLE_EXTENSIONS` in `packages/coding/src/tools/code-search.ts` (lines
+15–18) lists `.ts`, `.tsx`, `.mjs` and `.cjs` but not `.mts` or `.cts`, so local
+`code_search` never returns ESM/CJS TypeScript modules. `grep` with `type:ts`
+already includes them. The root model menu hides `code_search` in ordinary
+managed runs, but SDK, child and custom-host surfaces still expose it.
+
+## Issue 390: Skill-discovery natural eval cannot run without a Git-free temp root
+
+- Priority: Low
+- Status: Open
+- Introduced: eval harness limitation found 2026-10-28; not a product regression
+- Created: 2026-11-09
+
+Natural Runtime evals bind HOME/TEMP to a private fixture directory inside the
+workspace, so TEMP inherits the workspace `.git`. Moving it out is not enough:
+under the Node file permission model, probing a missing ancestor `.git` fails
+with `ERR_ACCESS_DENIED`, not `ENOENT`. Cases that require a Git-free temp root
+(currently skill discovery) therefore write `environment-preflight.json` with
+`eval-invalid` and stop before any model call
+(`tests/natural-eval-environment.test.ts`). The product's skill capability is
+unaffected. Re-enable the case only in an environment that keeps isolation and
+passes the reference implementation offline first.
+
+## Issue 389: Lone UTF-16 surrogates in tool text make GLM Coding return HTTP 500
+
+- Priority: Low
+- Status: Open
+- Introduced: observed 2026-09-14 on zhipu-coding and zai-coding; first affected version unknown
+- Created: 2026-11-09
+
+A tool result containing an unpaired UTF-16 surrogate is serialized as-is. Both
+GLM Coding endpoints reject the request with HTTP 500 (server-side UTF-8 encode
+failure), not 400, so the request-content text diagnosis does not apply, and
+every replay of that history fails the same way. The wire path has no
+well-formedness repair. Unverified: how often real tool output contains lone
+surrogates, how the 5xx is retried, and other Providers' behavior. A fix should
+replace lone surrogates with U+FFFD in the request projection only.
 
 ## Issue 388: SDK history capacity fixture observes the parent before the worker on Windows
 
@@ -615,12 +708,12 @@ read/write children, Workflow digest and structured-output repair runs.
 ## Issue 376: Windows gate and recovery/credential/permission audit follow-up
 
 - Priority: High
-- Status: Confirmed local code gaps repaired; offline acceptance complete with documented full-scan failures and whole-file replays; alpha.12 candidate awaits remote acceptance after its first failed tag run; native/live boundaries and separate GC capability remain; still-open findings tracked in [REVIEW_v0.7.97_FIX_LIST.md](REVIEW_v0.7.97_FIX_LIST.md)
+- Status: Confirmed local code gaps repaired; offline acceptance complete with documented full-scan failures and whole-file replays; alpha.12 candidate awaits remote acceptance after its first failed tag run; native/live boundaries, the separate GC capability and the remaining audit findings below stay open
 - Created: 2026-11-01
 
 The accepted first batch and its failure boundaries are recorded in the
 [regression guide](test-guides/ISSUE_376_v0.7.97_REGRESSION_GUIDE.md) and the
-[2026-11-01 full-chain audit](REVIEW_v0.7.97_FULL_CHAIN_AUDIT.md).
+2026-11-01 full-chain audit (git history).
 Unknown historical locks and interrupted reclamation claims remain fail-closed;
 corrupt credential/config/pending-input bytes are retained for explicit repair.
 Full Access opaque Host programs remain trusted code, outside OS isolation.
@@ -649,6 +742,57 @@ Main verification observed one intermittent packaged Shell cleanup failure;
 isolated, eight-way concurrent and complete bundled replays passed. Its cause
 remains unconfirmed; the retained evidence and improved failure diagnostic are
 recorded in the regression guide rather than classified as a repaired product bug.
+
+### Remaining audit findings (rechecked 2026-11-09)
+
+The 2026-11-01 audit report and fix list were removed (originals in git history).
+Still open at `08ce2f742`; F-ids match the removed list.
+
+- Untested paths: `tests/bundled-artifacts.test.mjs` and
+  `tests/repl-fixture-daemon.test.mjs` run in no script or workflow, and
+  `KODAX_ARTIFACT_TEST_BROWSER` is never set, so artifact browser/PDF render
+  tests always skip (F-04). No linter is configured, most package tests are not
+  type-checked, and `packages/repl/tsconfig.json` excludes
+  `terminal-emulator.ts` (F-43). No LLM-free test asserts every default model has
+  a rate and a model-level limit.
+- Prompt cache: SA adds git-context/project-snapshot only when
+  `messages.length === 1`, so the system prompt shifts on request two. The cost
+  is unmeasured; measure with `probe:prompt-cache` before changing it (F-18).
+- ADR-033 debt: quantitative thresholds in `static-text.json`
+  (`worker.repoIntelligenceTools`, `exit_plan_mode.properties.plan`), a compound
+  condition in `compact-worker-contract`, a bare "Read first." in the compact
+  edit description, and "≤40 lines, ≤3 bullet levels" in `managed-tool-text.ts`
+  (F-19). Eval added for denied-write recovery: `tests/feature-189-batch5-exit-plan-mode-rejection.eval.ts`
+  compares pre/post-2ee4a782d wording on a seeded rejection turn; run results are pending (F-46).
+- Metadata: the Codex CLI bridge declares `prompt-only`/128K while the
+  capability table says `codex-cli-effort`; which wins is unverified (F-20).
+- Public SDK surface: test-only resets (`_resetRuntimeForTesting`,
+  `_resetMessageQueueForTests`, `_resetPresetDispatchers`,
+  `_resetInvariantRegistry`, …) are exported and clear live process-wide
+  registries (F-27). Client contract types reference internal `DenialTracker` /
+  `CircuitBreaker` (F-29).
+- Duplication: `daemon_upgrade_required` is a bare string at 24 non-test sites,
+  outside `RuntimeDaemonErrorCode` (F-30). Two `process-tree.ts` copies (llm,
+  agent) are synced only by a header comment (F-40). The `auth.json` path is
+  assembled in about seven places; a rename can desynchronize sandbox deny rules
+  (F-41). Directory-level import cycles were not re-measured (F-31).
+- Dead or stale code: most of `packages/repl/src/tui/substrate/ink/` is
+  unreachable and tracks `.js.map` files (F-35). Unused
+  `ink-spinner`/`ink-text-input`, `ui/App.tsx`, `ToolGroup.tsx` (F-36).
+  `judges.ts`, `shellMemoryMutationDenial` and three unreferenced scripts have no
+  production callers (F-37). The `KodaXSessionLineage` "superseded" comment in
+  `packages/coding/src/index.ts` is inverted (F-42). Deprecated but still used:
+  `createWindowsTrustedTextMutationHost` and peers (F-38). Past-due compat: the
+  daemon schema accepts `sa`/`amaw`; `POST_COMPLETION_LINGER_MS` (F-39).
+- Unverified runtime: PID-only liveness when startup identity is missing
+  (`store-lock.ts`, `state.ts`); an extra node gate process and exit code 1 for
+  signalled targets outside a Job; bounded maintenance of quarantined
+  managed-child records; `daemon.log` has no rotation (F-09, F-21b).
+- Not debt, keep: DPAPI sealed storage (migration source), the tmux legacy
+  renderer, classic REPL, `legacy-tool-pairing.ts`, worker entry files, the
+  Runtime atomic writer and its EPERM retry, the `store-lock.ts` ticket queue,
+  run index rebuild, actor-owner TCP liveness, workflow worktree sweep,
+  managed-child quarantine, and `auth-file` proper-lockfile.
 
 ## Issue 375: Constrained Skill shell patterns admit extra effects
 
@@ -2232,7 +2376,7 @@ as `local_execution`. Image-capable OpenAI providers carry tool images in valid
 user image messages after paired tool responses; text-only providers retain
 the explicit unsupported fallback. Orphan/duplicate result images are excluded.
 
-See [the historical audit and repair status](multimodal-contract-audit.md).
+See [tool-result images and error state](DD.md#tool-result-images-and-error-state) for the current design.
 All audit probes are normal regressions now, with additional real PNG, Worker,
 MCP restart/resource, provider request and error lifecycle coverage. Not released.
 
@@ -2397,8 +2541,8 @@ Runtime/daemon status instead of surfacing as successes or provider faults.
 Delivered interrupt entry references remain valid across context rewrites,
 storage reads/saves, compaction, restart, and conversation pagination, with
 explicit provenance preserved, physical ancestor aliases resolved, and
-competing claims rejected. Full audit notes live in
-`docs/multimodal-contract-audit.md` and `docs/sdk-contract-repair-plan.md`.
+competing claims rejected. The current design is in
+[DD tool-result images and error state](DD.md#tool-result-images-and-error-state).
 
 ## v0.7.96-beta.6 Release Corrections
 
@@ -2444,13 +2588,11 @@ answers them with an explicit interrupted-tool marker so strict endpoints
 receive a wire-valid history without fabricated results.
 ## Resolved in working tree 2026-09-12 — 多客户端设置显示同步
 
-Host 视图、Run 和实时权限现在使用同一配置合并规则。Ink 与 classic 从共享视图更新显示；清除覆盖后恢复 Host 配置，没有明确值时显示 Host default，不把旧值写回。无参数设置查询也使用同一事实。真实 SDK + Windows PTY 已验证模型/权限修改、清除、默认值修改和显式再选择；见本轮复查报告。尚未发布。
+Host 视图、Run 和实时权限现在使用同一配置合并规则。Ink 与 classic 从共享视图更新显示；清除覆盖后恢复 Host 配置，没有明确值时显示 Host default，不把旧值写回。无参数设置查询也使用同一事实。真实 SDK + Windows PTY 已验证模型/权限修改、清除、默认值修改和显式再选择。尚未发布。
 
 ## Resolved in working tree 2026-09-12 — legacy 历史跳转
 
-Windows 下强制 `KODAX_FORCE_INK=1` 的 transcript 现在使用已有行窗口；长历史不再将搜索编辑区挤出屏幕，也不会将屏幕外目标误判为可见。普通输入保留原生 scrollback。独立真实 PTY 脚本 `tests/repl-legacy-search-acceptance.mjs` 已验证搜索后 Enter 目标在屏内、Ctrl+E 展开/收起、q 返回草稿及正常退出。
-
-证据与本轮已修复问题见 [复查报告](REVIEW_v0.7.97_FINAL.md)。该修复尚未发布。
+Windows 下强制 `KODAX_FORCE_INK=1` 的 transcript 现在使用已有行窗口；长历史不再将搜索编辑区挤出屏幕，也不会将屏幕外目标误判为可见。普通输入保留原生 scrollback。独立真实 PTY 脚本 `tests/repl-legacy-search-acceptance.mjs` 已验证搜索后 Enter 目标在屏内、Ctrl+E 展开/收起、q 返回草稿及正常退出。该修复尚未发布。
 
 ## v0.7.96-beta.4 Release Corrections
 
@@ -2805,6 +2947,12 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 394 | Medium | Open | Agent and Script whole-task non-inferiority is unproven | work modes in v0.7.97 | — | 2026-11-09 | — |
+| 393 | Low | Open | `worktree remove` reports a branch deleted when `branch -D` failed | unknown; present at 08ce2f742 | — | 2026-11-09 | — |
+| 392 | Low | Open | `cyclic_dependencies` prints a strongly connected component as a fake chain | unknown; present at 08ce2f742 | — | 2026-11-09 | — |
+| 391 | Low | Open | `code_search` skips `.mts` and `.cts` files | unknown; present at 08ce2f742 | — | 2026-11-09 | — |
+| 390 | Low | Open | Skill-discovery natural eval cannot run without a Git-free temp root | eval harness limitation found 2026-10-28 | — | 2026-11-09 | — |
+| 389 | Low | Open | Lone UTF-16 surrogates in tool text make GLM Coding return HTTP 500 | observed 2026-09-14; first affected version unknown | — | 2026-11-09 | — |
 | 388 | Medium | Resolved | SDK history capacity fixture observes the parent before the worker on Windows | observed in v0.7.97-beta.3 Release CI; first affected version unknown | post-`v0.7.97-beta.4` (unreleased) | 2026-11-08 | 2026-11-08 |
 | 387 | Medium | Resolved | Busy-Session Ink attach fixture times out before the prompt renders on Windows | observed in v0.7.97-beta.4 Release CI; first affected version unknown | post-`v0.7.97-beta.4` (unreleased) | 2026-11-08 | 2026-11-08 |
 | 386 | High | Resolved | Extension `exec` can take over 30 seconds on Windows | observed in v0.7.97-beta.4 Release CI; first affected version unknown | post-`v0.7.97-beta.4` (unreleased) | 2026-11-08 | 2026-11-08 |
@@ -3731,7 +3879,7 @@ acceptance gates.
 
 - **Priority**: High
 - **Status**: Resolved
-- **Release**: Source implementation only; not released
+- **Release**: `v0.7.96-rc.5` (fix commit `a10bba741`; included in `v0.7.96`)
 - **Introduced**: confirmed v0.7.96-rc.4; extension-based read branch dates to c76df9600 (2026-05-20); first affected release not established
 - **Created**: 2026-09-14
 
@@ -3778,8 +3926,8 @@ retained. See the [regression and release guide](test-guides/ISSUE_335_v0.7.96_R
 Space still pins published rc.4: new SDK release/integration and full cross-platform
 installer acceptance remain outstanding. No blind 400 retry or automatic re-encoding of valid images is enabled.
 A bounded main-Agent text diagnosis now handles residual native request-content 400/422
-errors; only verified, request-only repairs can resume. See the implementation and final
-review notes in `investigations/MAIN_AGENT_RECOVERY_IMPLEMENTATION_2026-09-14.md`.
+errors; only verified, request-only repairs can resume. See the regression guide's
+text-diagnosis section and the [placement rationale](ADR.md#issue-335-recovery-placement-rationale).
 
 **Expanded Compatibility Scope (2026-09-14)**: The same unvalidated-byte path exists for
 MCP image, embedded-resource and resource results, plus direct SDK image input. A local
@@ -3797,10 +3945,9 @@ enabling enforcement. A real GLM experiment replaced only the bad image in a req
 copy and eliminated the 400 on both endpoints, preserving the original history/file and
 a valid companion image. Auto-effort small-budget reply probes were inconclusive;
 low-effort controls subsequently returned visible OK responses on both endpoints.
-The investigation below predates the implementation above. See the
-[expanded scan and bounded recovery design](investigations/IMAGE_COMPATIBILITY_RECOVERY_2026-09-14.md).
-
-See [full investigation, evidence, and reproduction commands](investigations/GLM_CODING_400_2026-09-14.md).
+These findings predate the implementation above. Reproduction commands are in the
+[regression and release guide](test-guides/ISSUE_335_v0.7.96_REGRESSION_GUIDE.md);
+the separate lone-surrogate HTTP 500 is tracked as Issue 389.
 
 ### Issue 333: Windows sandbox ACL grants break host OpenSSH
 
@@ -17683,7 +17830,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 266 (38 Open, 228 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 272 (44 Open, 228 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md

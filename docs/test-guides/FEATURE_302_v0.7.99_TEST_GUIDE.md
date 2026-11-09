@@ -879,7 +879,7 @@ cache/strict/WS, catalog/pricing/identity and final published-package/full regre
 ## T10 native operations — scoped acceptance
 
 Baseline: T09 `e6247c3a`; pi reference `e7a0df27c`. Public SDK contracts and examples
-are in [LLM operations](../LLM_OPERATIONS.md). The standalone LLM package exports
+are in [LLM operations](../../packages/llm/README.md#独立操作). The standalone LLM package exports
 separate typed image, classification and deferred functions; chat result types
 and Auto permission classification remain unchanged.
 

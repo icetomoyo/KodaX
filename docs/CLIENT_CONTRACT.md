@@ -219,7 +219,7 @@ Session 可选 `workMode` 为 `agent | coding | script`，缺失或 `null` 清�
 旧格式 Session 的同一 Run/Turn generation 恢复延续原有效执行模式：原身份、已停止 owner、精确 checkpoint 和 fresh authority 均须通过现有校验。它不选择或回写 Session 模式，也不写入新的锁标记；后续新 Run 和设置 mutation 继续受 Session 锁约束。持久 Run 模式与原执行快照不一致时拒绝恢复；新绑定不能改变原有效模式。显式新格式锁元数据不享有该兼容路径。
 Script 选择及 Run 准入进行无工具、无模型的本地 VM 可用性检查；失败保留原选择，不能先生成再发现执行器缺失。
 首轮提供完整叶契约，原生控制项、undo 和支持后台命令的 bash 保留；回执与原生错误证据保留，未结算 cell 不自动重放。
-当前 Windows 离线证据及尚未验证的完整任务效果见 [工具总计划](designs/tool-portfolio-plan.md)。
+当前 Windows 离线证据及尚未验证的完整任务效果见 [Issue 394](KNOWN_ISSUES.md#issue-394-agent-and-script-whole-task-non-inferiority-is-unproven)。
 
 `catalog.extensions()` 返回 Host 已加载的扩展和注册诊断，只有纯数据，不包含处理函数或 Node 运行时对象。`mcp.status()` 只读当前连接状态，不唤醒 lazy server；`reloadServers()` 明确重建连接集合，`listTools({forceRefresh:true})` 明确刷新目录。REPL 的 `/extensions`、`/mcp` 使用这些相同入口，客户端无需另建 extension runtime。
 

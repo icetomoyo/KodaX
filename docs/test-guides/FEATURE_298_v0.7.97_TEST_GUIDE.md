@@ -2144,7 +2144,7 @@ npm run test:electron-daemon:built
 
 ## 结果与边界
 
-本轮执行与修复记录见 [真实产品入口自动化验收](../REVIEW_v0.7.97_FINAL.md#真实产品入口自动化验收)。确定性 Provider 让输入与交互断言可重复，不代表真实商业模型的任务质量验收。本指南也不替代 macOS/Linux 实机、剪贴板/输入法、视觉 GUI 和主观终端手感检查。
+确定性 Provider 让输入与交互断言可重复，不代表真实商业模型的任务质量验收。本指南也不替代 macOS/Linux 实机、剪贴板/输入法、视觉 GUI 和主观终端手感检查。
 
 多客户端设置反向同步已通过真实 Ink/classic 验收，包括清除覆盖与 Host 默认值变化。仍有一项已知缺口：强制 legacy 渲染器的搜索结果跳转可能无法显示屏幕外的历史消息。详见 [Known Issues](../KNOWN_ISSUES.md)。因此本指南的通过结果不代表整个 v0.7.97 无条件验收通过。
 
@@ -2174,7 +2174,7 @@ ACP 的共享 Host、文本/工具、Session MCP、权限、取消、并发请�
 
 ## Host 执行归属与统一业务入口回归
 
-这组验收对应 [Host 审查 H1–H5](../HOST_ARCHITECTURE_REVIEW.md) 和 [产品接口说明](../CLIENT_CONTRACT.md)。使用临时项目、独立 Host 与可计数离线 Provider；不重写用户的旧 Session，不把方法存在或类型通过当作实际执行通过。
+这组验收对应 [Host 执行边界](../ADR.md#host-execution-boundary) 和 [产品接口说明](../CLIENT_CONTRACT.md)。使用临时项目、独立 Host 与可计数离线 Provider；不重写用户的旧 Session，不把方法存在或类型通过当作实际执行通过。
 
 | 验收入口 | 必须核对的行为 |
 | --- | --- |

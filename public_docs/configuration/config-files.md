@@ -53,6 +53,27 @@ overrides:
 
 JSON names stay camelCase while environment names use `KODAX_UPPER_SNAKE_CASE`.
 
+## Proxy and private CA
+
+The KodaX Host reads these standard variables when it starts:
+
+- `NODE_EXTRA_CA_CERTS=/path/to/root.pem` adds a private root CA for model requests and `web_fetch`.
+- `HTTPS_PROXY` and `HTTP_PROXY` choose a proxy. Lowercase names also work.
+- `NO_PROXY` lists hosts that skip the proxy, such as `localhost,127.0.0.1,.corp.example`.
+
+On Node 22.21+ or 24.5+, also set `NODE_USE_ENV_PROXY=1`, because Node ignores the proxy variables without it. Node 20 and older 22/24 releases cannot use them; upgrade Node or use the standalone binary. The binary sends model requests through the proxy with no extra setting. Set `NODE_USE_ENV_PROXY=1` there as well if `web_fetch` must use the proxy.
+
+```bash
+export NODE_EXTRA_CA_CERTS=/etc/ssl/corp-root.pem
+export HTTPS_PROXY=http://proxy.corp.example:3128
+export NO_PROXY=localhost,127.0.0.1,.corp.example
+export NODE_USE_ENV_PROXY=1
+kodax daemon stop --profile default   # a running Host keeps the environment it started with
+kodax -p "Review this repository"
+```
+
+When a proxy variable is set but some requests would bypass it, the Host writes a `[runtime:network]` warning to `kodax daemon logs`. The warning names the variable and never prints its value.
+
 ## Shared Host ownership
 
 The product CLI uses a shared daemon Host. `runtimeMode`, `KODAX_RUNTIME_MODE`

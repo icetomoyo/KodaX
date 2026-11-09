@@ -227,7 +227,7 @@ scheduler 和并行外部任务投影。AMA 保留主动协作能力；Workflow 
 零成本 manifest 检查：
 
 ```powershell
-npx vitest run -c vitest.eval.config.ts tests/feature-270.eval.ts
+npx vitest run -c tests/config/vitest.eval.config.ts tests/feature-270.eval.ts
 ```
 
 原始五 case 合同已按顺序完成四调用 pilot、Layer 2 盲审/解盲、Layer 3

@@ -2,7 +2,7 @@
  * Layer 1 establishes runtime behavior. This probe only tests interpretation of its bytes.
  * prepare is offline; run requires the shared manifest/ledger and explicit main-session GO.
  * Historical outputs lack exact inputs; the r2 historical arm is a newly controlled reconstruction.
- * See docs/designs/beta3-document-pilot-r2-2026-11-07.md. No per-alias Boolean shipping gate.
+ * Results: docs/test-guides/ISSUE_322_v0.7.97_REGRESSION_GUIDE.md. No per-alias Boolean shipping gate.
  */
 import fs from 'node:fs/promises';
 import os from 'node:os';

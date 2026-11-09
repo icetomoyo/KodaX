@@ -119,7 +119,7 @@ npx vitest run packages/coding/src/agent-runtime/middleware/sidecar-verifier/
 
 可选（有 API key + ≥ $0.5 预算）：
 ```bash
-KODAX_F184_PROBE=pilot npx vitest run -c vitest.eval.config.ts \
+KODAX_F184_PROBE=pilot npx vitest run -c tests/config/vitest.eval.config.ts \
   tests/feature-184-sidecar-verifier.eval.ts
 ```
 

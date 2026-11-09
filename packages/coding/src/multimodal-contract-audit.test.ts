@@ -1,4 +1,5 @@
-// Regressions for the contract gaps recorded in docs/multimodal-contract-audit.md.
+// Regressions for text/image tool-result and error-state contracts
+// (docs/DD.md "Tool-result images and error state").
 // Real Worker/MCP transports and image bytes; no model requests.
 import fs from 'node:fs/promises';
 import os from 'node:os';

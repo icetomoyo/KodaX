@@ -60,7 +60,7 @@ When writing or modifying any LLM-facing prompt (role prompts in `packages/codin
 
 | Category | Technology | Version |
 |---|---|---|
-| Runtime | Node.js | >= 20.0.0 |
+| Runtime | Node.js | >= 20.16.0 |
 | Language | TypeScript | >= 5.7.0 (root uses 5.9.x) |
 | Package Manager | npm workspaces | — |
 | CLI Framework | Ink (React for CLI) | ^6.7.0 / React >= 19 |
@@ -85,31 +85,36 @@ Each workspace package must remain independently usable — never break layer in
 
 ## Documentation Layout
 
-Only the files in the tables below are allowed. Any other `.md` must go under `docs/`.
+Every tracked `.md` belongs to one of the categories below. Anything else (research drafts, scratch probes, review reports, handoffs) goes to the local-only, gitignored `docs/research/`.
+
+**Root**
+
+| File | Purpose | Required |
+|---|---|---|
+| `README.md` / `README_CN.md` | Project pitch, quick start, links into the docs | ✅ |
+| `AGENTS.md` | Agent development rules | ✅ |
+| `CLAUDE.md` | Claude Code project rules (this file) | ⚠️ Optional |
+| `CHANGELOG.md` | Release notes | ✅ |
+| `CONTRIBUTING.md` | Contributor setup, architecture, code style | ⚠️ Optional |
+| `packages/*/README.md` | Per-package usage | ✅ |
+
+**User docs (`public_docs/`, shipped in the npm package)**: guides for CLI users and SDK embedders. A user guide is `name.md` (English) plus `name.zh-CN.md` (Chinese).
 
 **Project docs (`docs/`)**
 
-| File | Purpose | Required |
+| Path | Purpose | Required |
 |---|---|---|
-| `PRD.md` | Product Requirements | ✅ |
-| `ADR.md` | Architecture Decision Records | ✅ |
-| `HLD.md` | High-Level Design | ✅ |
-| `DD.md` | Detailed Design | ✅ |
-| `FEATURE_LIST.md` | Feature tracking | ✅ |
-| `KNOWN_ISSUES.md` | Known issues / workarounds | ⚠️ Optional |
-| `features/v{VERSION}.md` | Per-version feature design | ✅ |
+| `PRD.md`, `ADR.md`, `HLD.md`, `DD.md`, `FEATURE_LIST.md` | Requirements, decisions, design, feature tracking | ✅ |
+| `KNOWN_ISSUES.md` | Open problems and workarounds | ⚠️ Optional |
+| `FEATURES_ARCHIVED.md`, `ISSUES_ARCHIVED.md`, `CHANGELOG_ARCHIVE.md` | Archives of the files above | ⚠️ Optional |
+| `features/v{VERSION}.md` | Per-version feature design (git submodule) | ✅ |
 | `test-guides/*.md` | Human test guides | ✅ |
+| `CLIENT_CONTRACT.md`, `SDK_MIGRATION.md`, `SPACE_SDK_SEAMS.md`, `ARTIFACT_SDK.md`, `LLM_INTEGRATION.md` | SDK contracts for embedders (shipped in the npm package) | ✅ |
+| `release.md` | Release and binary pipeline | ✅ |
+| `designs/*.md` | Design and eval records for work in flight | ⚠️ Optional |
+| `patches/*` | Upstream dependency patches and their notes | ⚠️ Optional |
 
-**Root docs**
-
-| File | Purpose | Required |
-|---|---|---|
-| `README.md` | Project overview / quick start | ✅ |
-| `README_CN.md` | Chinese README | ✅ |
-| `AGENTS.md` | Agent development rules (this file) | ✅ |
-| `CLAUDE.md` | Claude Code project rules | ⚠️ Optional |
-| `CHANGELOG.md` | Release notes | ✅ |
-| `CONTRIBUTING.md` | Contribution guidelines | ⚠️ Optional |
+**Design record lifecycle**: a `designs/` record lives only while its work is in flight. When the work ships or is rejected, move the decision and the rejected alternatives to ADR, the current design to HLD/DD, open problems to KNOWN_ISSUES and verification steps to a test guide, then delete the record. Git keeps the history.
 
 **Test guide naming**: `FEATURE_{ID}_{VERSION}_TEST_GUIDE.md` / `ISSUE_{ID}_{VERSION}_REGRESSION_GUIDE.md`
 

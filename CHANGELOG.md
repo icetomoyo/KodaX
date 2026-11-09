@@ -50,6 +50,17 @@ All notable changes to this project will be documented in this file.
   startup time through `runtime:windows` diagnostics, and reports startup
   failures and timeouts as warnings.
 - Move the README demo animation into `assets/`.
+- Move the Vitest tier configs, tier lists, and shared setup file into
+  `tests/config/`. The root `vitest.config.ts` and every `npm run test:*`
+  script are unchanged; direct runs now use
+  `npx vitest run -c tests/config/vitest.<tier>.config.ts`.
+- Remove the per-release notes from `README.md` and `README_CN.md`; every
+  removed release already has its entry in this changelog, which the READMEs
+  now link instead. The Chinese learned-Skill promotion guide moves into the
+  built-in Skills section, matching the English README.
+- Remove `docs/CLAUDE.md`, an outdated copy of the root `CLAUDE.md` that Claude
+  Code also loaded for work under `docs/`. The root file is the single rule
+  source.
 
 ### Removed
 

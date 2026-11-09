@@ -477,6 +477,46 @@ source-only Worker fallback resolution.
 
 Only `llm`, `agent`, `coding`, and `repl` are workspace package build roots.
 
+### CLI bundle budget
+
+`scripts/build-bundle.mjs` fails the build when `dist/kodax_cli.js` exceeds
+`5 * 1024 * 1024 - 49 * 1024` bytes (5,071 KiB = 5,192,704 bytes). The builder
+and `tests/bundled-manual-budget.test.mjs` use the same expression. There is no
+environment override and no automatic growth; the outer limit stays 5 MiB. The
+bare-resume entry (`dist/kodax_resume.js`) is limited to 160 KiB and has its own
+heavy-import and input boundaries.
+
+Checks that run before the size check: the eager heavy-import boundary
+(`STARTUP_HEAVY_IMPORTS`), exactly one provider-credential module, and lazy CLI
+externals.
+
+Complete static data stays in packaged, hash-verified resources rather than JS
+literals. The Windows Effect Job and Sandbox SID probe programs live in
+`packages/agent/src/runtime/windows-effect-job-programs.json`, unchanged byte
+for byte with unchanged argv. They are loaded lazily on first Windows use and
+checked against `WINDOWS_PROGRAM_HASHES`. A missing or modified file throws
+before any process starts, and non-Windows entry points never read it. The pack
+test checks the resource whitelist, that the root and standalone Agent copies
+are identical, and both hashes.
+
+To change the ceiling:
+
+1. Reproduce the failure on the real builder.
+2. Build a paired baseline that differs only in the changed modules, with the
+   same esbuild options, input count and external import set.
+3. Measure the native Windows manifest plus five-manifest builds selected from
+   Linux and Windows hosts. The synthesized non-Windows manifests check size
+   only, not native execution.
+4. Pick the smallest whole-KiB ceiling that fits, and attribute growth per
+   module.
+5. Prefer moving complete data to packaged resources over trimming behavior or
+   lowering the reserve.
+
+The release CI gate on the real universal artifact is authoritative. After
+beta.4 the five-native universal build had 356 bytes of headroom (CHANGELOG).
+v0.7.99 targets a reserve of at least 64 KiB
+([release notes](release.md), `docs/features/v0.7.99.md`).
+
 ## 3. Main Entry Points
 
 | Area | Current file(s) | Notes |
@@ -1472,6 +1512,25 @@ Coding consumes validation/enqueue helpers from this layer; file and video
 artifact contracts remain stable even when a provider route is not wired for
 send.
 
+### Tool-result images and error state
+
+Tool results may be text or text/image arrays. Every boundary preserves both
+the content structure and the error state: Worker RPC, MCP adaptation,
+dispatch, guardrails, capacity admission, history capacity recovery, compaction
+and provider serialization. Text summaries are only for classification, metrics
+and display.
+
+- MCP `data/mimeType` images are persisted as internal image paths; upstream
+  `isError` travels as a structured flag, never inferred from text.
+- History capacity recovery reclaims text and keeps images, reporting image
+  capacity debt. The legacy opt-in microcompaction keeps nested images.
+- OpenAI-compatible models with image input get the tool reply as text and its
+  images in a following user image message, after complete tool-call pairing;
+  orphan or duplicate results drop their images. Text-only models get an
+  explicit unsupported-image placeholder. This exists only in the request.
+- Explicit local execution failures are classified as `local_execution`, not
+  provider failures.
+
 ## 13. MCP And A2A
 
 MCP lives under `packages/agent/src/capabilities/mcp`.
@@ -2034,6 +2093,14 @@ can supply the same option when recreating instances. Cache strings are rejected
 efforts, `*` for rejected reasoning control, or `parameter:<name>` for a rejected budget
 or toggle parameter. No positive-support cache is inferred from success.
 
+Routing gateways can accept a reasoning control without applying it. With
+OpenRouter's default `provider.require_parameters: false`, a route without
+reasoning support ignores `reasoning_effort` and still returns 200; with `true`,
+such routes fail with a generic 404 "No endpoints found", which is not a
+capability rejection. `reasoning.exclude: true` / `include_reasoning: false`
+hide reasoning output; they do not disable it. `effort: "none"` is intent only.
+Missing reasoning fields or `reasoning_tokens: 0` do not prove no reasoning.
+
 `KodaXStreamResult.reasoningResolution` and `onReasoningResolved` report `provider`,
 `model`, `requestedEffort`, optional `sentEffort`, and `fallbacks` (`profile`,
 `unsupported-effort`, `unsupported-parameter`, or `cached-rejection`). `sentEffort`
@@ -2059,6 +2126,13 @@ npx vitest run packages/llm/src
 npx vitest run packages/coding/src/agent-runtime/reasoning-fallback.test.ts packages/coding/src/agent-runtime/__contract-tests__/cap-067-stream-handlers.contract.test.ts packages/coding/src/agent-runtime/__contract-tests__/cap-071-non-streaming-fallback.contract.test.ts
 npm run build:packages
 npm run typecheck
+```
+
+Explicit opt-in real-network smoke (billed; raw output stays in the OS temp dir):
+
+```sh
+npm run build:packages
+node scripts/openrouter-reasoning-live.mjs --run pilot|matrix|replay|rejection [model]
 ```
 
 ## 24. Related Documents

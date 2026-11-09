@@ -807,7 +807,7 @@ function assertStableSessionReadBoundary(sessionsDir: string, id: string): void 
   if (activePath !== undefined) {
     throw new SessionReadError(
       'data_changed',
-      `Session data changed during the read boundary: ${path.basename(activePath)}`,
+      `Session data changed during the read boundary: ${activePath}`,
     );
   }
 }
@@ -835,7 +835,7 @@ function assertSessionMigrationInactive(sessionsDir: string): void {
   if (activePath !== undefined) {
     throw new SessionReadError(
       'data_changed',
-      `Session layout migration is active: ${path.basename(activePath)}`,
+      `Session layout migration is active: ${activePath}`,
     );
   }
 }

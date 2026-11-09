@@ -501,6 +501,8 @@ export async function createRuntimeDaemonSocketServer(
 
     const send = (frame: RuntimeDaemonFrame): void => {
       if (socket.destroyed) return;
+      // Under backpressure only session.view notifications coalesce (each view is a
+      // full replacement); RPC responses and other notifications are never dropped.
       if (backpressured && frame.kind === 'notification' && frame.method === 'session.view') {
         const params = frame.params as { subscriptionId: string };
         pendingViews.set(params.subscriptionId, frame);
