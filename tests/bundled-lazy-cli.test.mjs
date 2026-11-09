@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { Readable, Writable } from 'node:stream';
@@ -10,8 +11,11 @@ import { ClientSideConnection, PROTOCOL_VERSION, ndJsonStream } from '@agentclie
 
 const cli = new URL('../scripts/kodax-bin.cjs', import.meta.url);
 const cliFile = (await import('node:url')).fileURLToPath(cli);
+// The archive gate reuses these assertions against its extracted standalone executable.
+const executable = process.env.KODAX_LAZY_CLI_BINARY ?? process.execPath;
+const prefix = process.env.KODAX_LAZY_CLI_BINARY ? [] : [cliFile];
 const run = (args, env) => {
-  const result = spawnSync(process.execPath, [cliFile, ...args], {
+  const result = spawnSync(executable, [...prefix, ...args], {
     env, encoding: 'utf8', windowsHide: true, timeout: 30_000, maxBuffer: 1024 * 1024,
   });
   assert.equal(result.status, 0, `${args.join(' ')}: ${result.error?.message ?? result.stderr}`);
@@ -39,7 +43,7 @@ test('bundled optional CLI roots retain populated help and real command parsing'
 test('bundled ACP loads its adapter and initializes the protocol without a model call', { timeout: 90_000 }, async t => {
   const home = await mkdtemp(path.join(os.tmpdir(), 'kodax-lazy-acp-'));
   const env = { ...process.env, KODAX_HOME: path.join(home, '.kodax'), KODAX_TRACING: '0' };
-  const child = spawn(process.execPath, [cliFile, 'acp', 'serve'], {
+  const child = spawn(executable, [...prefix, 'acp', 'serve'], {
     env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], signal: t.signal,
   });
   const closed = once(child, 'close');
@@ -62,5 +66,44 @@ test('bundled ACP loads its adapter and initializes the protocol without a model
       run(['daemon', 'stop', '--profile', 'default'], env);
       await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
+  }
+});
+
+test('bundled daemon loads hosted A2A with its configured card and authentication', { timeout: 90_000 }, async t => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'kodax-lazy-hosted-a2a-'));
+  const configHome = path.join(home, '.kodax');
+  const env = { ...process.env, KODAX_HOME: configHome, KODAX_TRACING: '0',
+    KODAX_LAZY_A2A_TOKEN: 'local-fixture-only' };
+  const profile = 'lazy-hosted';
+  const probe = createServer();
+  probe.listen(0, '127.0.0.1');
+  await once(probe, 'listening');
+  const port = probe.address().port;
+  await new Promise((resolve, reject) => probe.close(error => error ? reject(error) : resolve()));
+  try {
+    await mkdir(path.join(configHome, 'integrations'), { recursive: true });
+    await writeFile(path.join(configHome, 'integrations/a2a.json'), JSON.stringify({
+      version: 2, agents: {}, server: {
+        execution: { kind: 'runtime-default' },
+        published: { name: 'Lazy hosted fixture', description: 'Local artifact smoke', version: '1.0.0',
+          skills: [], inputModes: ['text/plain'], outputModes: ['text/plain'] },
+        listen: { hostname: '127.0.0.1', port },
+        authentication: { type: 'bearer-env', tokenEnv: 'KODAX_LAZY_A2A_TOKEN', principalId: 'fixture' },
+        dataDir: path.join(configHome, 'a2a-tasks'),
+      },
+    }));
+    run(['daemon', 'start', '--home', home, '--profile', profile, '--provider', 'mock-provider'], env);
+    const card = await fetch(`http://127.0.0.1:${port}/.well-known/agent-card.json`, { signal: t.signal });
+    assert.equal(card.status, 200);
+    assert.equal((await card.json()).name, 'Lazy hosted fixture');
+    const refused = await fetch(`http://127.0.0.1:${port}/a2a`, {
+      method: 'POST', signal: t.signal, headers: { 'content-type': 'application/json', 'a2a-version': '1.0' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 'fixture', method: 'SendMessage', params: {} }),
+    });
+    assert.equal(refused.status, 401);
+    await refused.arrayBuffer();
+  } finally {
+    try { run(['daemon', 'stop', '--home', home, '--profile', profile], env); }
+    finally { await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
   }
 });
