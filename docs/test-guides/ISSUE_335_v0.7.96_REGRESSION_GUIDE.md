@@ -65,7 +65,7 @@
 ```powershell
 npx vitest run packages/llm/src/providers packages/llm/src/image-validation.test.ts packages/llm/src/image-validation-availability.test.ts packages/agent/src/capabilities/mcp packages/coding/src/tools/read.test.ts
 $env:KODAX_IMAGE_COMPAT_AUDIT='1'
-npx vitest run -c vitest.integration.config.ts packages/llm/src/providers/image-compatibility-audit.integration.test.ts
+npx vitest run -c tests/config/vitest.integration.config.ts packages/llm/src/providers/image-compatibility-audit.integration.test.ts
 npm run typecheck
 npm run build:packages
 npm run build:bundle
@@ -78,7 +78,7 @@ node --test tests/image-codec-release.test.mjs
 
 ```powershell
 $env:KODAX_GLM_HISTORY_PROBE='1'
-npx vitest run -c vitest.integration.config.ts packages/llm/src/providers/glm-history-400.integration.test.ts -t sdk-image-projection
+npx vitest run -c tests/config/vitest.integration.config.ts packages/llm/src/providers/glm-history-400.integration.test.ts -t sdk-image-projection
 ```
 
 两次显式请求，无 SDK 自动重试：缺 SOF 的 JPEG 和正常 JPEG 同处旧工具历史，

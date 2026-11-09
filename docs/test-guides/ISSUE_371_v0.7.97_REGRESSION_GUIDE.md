@@ -397,7 +397,7 @@ an accepted instruction to reintroduce removed behavior.
 There is **no OAuth/credential-migration-named skip or TODO in these 117 rows**.
 That does not establish complete remote authentication coverage: six real-provider
 integration files are excluded by DEFAULT_TEST_FILES/INTEGRATION_TEST_FILES in
-[vitest.test-tiers.ts](../../vitest.test-tiers.ts), so they do not contribute to
+[tests/config/vitest.test-tiers.ts](../../tests/config/vitest.test-tiers.ts), so they do not contribute to
 the 98 skipped count. They are kimi-wire, glm-history-400, image-compatibility-audit,
 empty-content-wire-compat, ark-coding-image-routes, and verify-credential-integration.
 The manual live probes in this inventory are also not a substitute for the

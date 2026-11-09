@@ -31,7 +31,7 @@
  *
  * ## Run
  *
- *   npx vitest run -c vitest.eval.config.ts tests/feature-131-unicode-dataset-regression.eval.ts
+ *   npx vitest run -c tests/config/vitest.eval.config.ts tests/feature-131-unicode-dataset-regression.eval.ts
  */
 
 import { describe, expect, it } from 'vitest';

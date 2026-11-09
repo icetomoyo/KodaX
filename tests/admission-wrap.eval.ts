@@ -27,7 +27,7 @@
  *
  *   npm run test:eval -- admission-wrap
  *   # or:
- *   npx vitest run -c vitest.eval.config.ts tests/admission-wrap.eval.ts
+ *   npx vitest run -c tests/config/vitest.eval.config.ts tests/admission-wrap.eval.ts
  *
  * Skips per-alias when API key absent (FEATURE_104 standard pattern).
  *

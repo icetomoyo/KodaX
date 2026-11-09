@@ -2,7 +2,7 @@ import path from 'path';
 import { defineConfig, type Plugin } from 'vitest/config';
 
 const resolveFromRoot = (...segments: string[]): string =>
-  path.resolve(__dirname, ...segments);
+  path.resolve(__dirname, '..', '..', ...segments);
 
 function stripShebang(): Plugin {
   return {
@@ -20,10 +20,10 @@ function stripShebang(): Plugin {
  *
  * `.eval.ts` files opt INTO manual runs — they may call real LLM APIs,
  * cost money, or be slow. They are NOT included in the default `npm test`
- * runner (see `vitest.config.ts`).
+ * runner (see the root `vitest.config.ts`).
  *
  * Run all evals:           npm run test:eval
- * Run one eval file:       npx vitest run -c vitest.eval.config.ts tests/identity-roundtrip.eval.ts
+ * Run one eval file:       npx vitest run -c tests/config/vitest.eval.config.ts tests/identity-roundtrip.eval.ts
  */
 export default defineConfig({
   plugins: [stripShebang()],

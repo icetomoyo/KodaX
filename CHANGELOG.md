@@ -19,6 +19,10 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - Move the README demo animation into `assets/`.
+- Move the Vitest tier configs, tier lists, and shared setup file into
+  `tests/config/`. The root `vitest.config.ts` and every `npm run test:*`
+  script are unchanged; direct runs now use
+  `npx vitest run -c tests/config/vitest.<tier>.config.ts`.
 
 ---
 

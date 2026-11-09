@@ -2,7 +2,7 @@ import path from 'path';
 import { availableParallelism } from 'node:os';
 import { defineConfig, type Plugin } from 'vitest/config';
 
-import { DEFAULT_TEST_FILES, INTEGRATION_TEST_FILES } from './vitest.test-tiers.js';
+import { DEFAULT_TEST_FILES, INTEGRATION_TEST_FILES } from './tests/config/vitest.test-tiers.js';
 
 const resolveFromRoot = (...segments: string[]): string =>
   path.resolve(__dirname, ...segments);
@@ -86,8 +86,8 @@ export function createVitestConfig(options: TestSuiteOptions = {}) {
       // Linux CI retains eight workers, while coverage remains capped at four.
       maxWorkers: Math.min(isCoverageRun || process.platform === 'win32' ? 4 : 8, availableParallelism()),
       // FEATURE_159 (v0.7.40) — global MessageQueue singleton reset before
-      // each test. See `vitest.setup.queue.ts` for the rationale.
-      setupFiles: [resolveFromRoot('vitest.setup.queue.ts')],
+      // each test. See `tests/config/vitest.setup.queue.ts` for the rationale.
+      setupFiles: [resolveFromRoot('tests', 'config', 'vitest.setup.queue.ts')],
       include: options.include ?? DEFAULT_TEST_FILES,
       exclude: options.exclude ?? INTEGRATION_TEST_FILES,
     },

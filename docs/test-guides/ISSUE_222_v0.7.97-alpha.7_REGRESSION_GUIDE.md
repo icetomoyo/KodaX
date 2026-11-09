@@ -217,7 +217,7 @@ result, and verifies original-owner identity before checking CLI classification.
 Rerun the public CLI regression with:
 
 ```sh
-node node_modules/vitest/vitest.mjs run -c vitest.system.config.ts src/kodax_cli.daemon-smoke.test.ts -t "does not become ready before initial A2A reconciliation completes"
+node node_modules/vitest/vitest.mjs run -c tests/config/vitest.system.config.ts src/kodax_cli.daemon-smoke.test.ts -t "does not become ready before initial A2A reconciliation completes"
 ```
 
 The compiled 3,000-Session concurrent resume acceptance after this fix completed

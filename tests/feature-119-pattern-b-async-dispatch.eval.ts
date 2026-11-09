@@ -41,7 +41,7 @@
  *
  * ## Run
  *
- *   npx vitest run -c vitest.eval.config.ts tests/feature-119-pattern-b-async-dispatch.eval.ts
+ *   npx vitest run -c tests/config/vitest.eval.config.ts tests/feature-119-pattern-b-async-dispatch.eval.ts
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';

@@ -25,7 +25,7 @@ export default defineConfig({
     testTimeout: 30_000,
     hookTimeout: 30_000,
     maxWorkers: Math.min(isCoverageRun ? 4 : 8, availableParallelism()),
-    setupFiles: [path.resolve(__dirname, '..', '..', 'vitest.setup.queue.ts')],
+    setupFiles: [path.resolve(__dirname, '..', '..', 'tests', 'config', 'vitest.setup.queue.ts')],
     include: ['src/**/*.test.ts'],
   },
 });

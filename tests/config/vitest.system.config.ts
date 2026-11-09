@@ -1,6 +1,6 @@
 import { defineConfig, mergeConfig } from 'vitest/config';
 
-import { createVitestConfig } from './vitest.config.js';
+import { createVitestConfig } from '../../vitest.config.js';
 import { SYSTEM_TEST_FILES } from './vitest.test-tiers.js';
 
 // These tests compete for real subprocesses, daemon ports, repositories, and

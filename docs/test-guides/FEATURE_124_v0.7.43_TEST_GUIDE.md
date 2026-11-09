@@ -183,7 +183,7 @@
    ```
 2. 跑：
    ```bash
-   npx vitest run -c vitest.eval.config.ts tests/memory-smoke.eval.ts
+   npx vitest run -c tests/config/vitest.eval.config.ts tests/memory-smoke.eval.ts
    ```
 
 ### 期望结果
@@ -250,7 +250,7 @@ npx vitest run \
   tests/memory-prompt-injection.test.ts
 
 # Smoke eval（需 API key）
-ARK_CODING_API_KEY=<key> npx vitest run -c vitest.eval.config.ts tests/memory-smoke.eval.ts
+ARK_CODING_API_KEY=<key> npx vitest run -c tests/config/vitest.eval.config.ts tests/memory-smoke.eval.ts
 ```
 
 预期：单元+集成全绿（76 tests），smoke eval ≥ 8/12 cells PASS。

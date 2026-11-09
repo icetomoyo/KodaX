@@ -1,4 +1,4 @@
-import { createVitestConfig } from './vitest.config.js';
+import { createVitestConfig } from '../../vitest.config.js';
 import {
   CONTRACT_TEST_FILES,
   FAST_TEST_FILES,
