@@ -298,8 +298,8 @@ Still open at `08ce2f742`; F-ids match the removed list.
   (`worker.repoIntelligenceTools`, `exit_plan_mode.properties.plan`), a compound
   condition in `compact-worker-contract`, a bare "Read first." in the compact
   edit description, and "≤40 lines, ≤3 bullet levels" in `managed-tool-text.ts`
-  (F-19). The `exit_plan_mode` wording pilot is inconclusive for denied-write
-  recovery (F-46).
+  (F-19). Eval added for denied-write recovery: `tests/feature-189-batch5-exit-plan-mode-rejection.eval.ts`
+  compares pre/post-2ee4a782d wording on a seeded rejection turn; run results are pending (F-46).
 - Metadata: the Codex CLI bridge declares `prompt-only`/128K while the
   capability table says `codex-cli-effort`; which wins is unverified (F-20).
 - Public SDK surface: test-only resets (`_resetRuntimeForTesting`,

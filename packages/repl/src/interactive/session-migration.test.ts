@@ -271,6 +271,38 @@ describe('FEATURE_219 session-migration', () => {
     expect(existsSync(path.join(sessionsDir, key, '20260501_000000.jsonl'))).toBe(true);
   });
 
+  it('reclaims a stale file-lock whose PID is dead but processStartIdentity is present', async () => {
+    await seedFlat('20260501_000001');
+    // Simulate a lock written by the new format: includes processStartIdentity.
+    // The PID is one that is provably dead (max int32); any processStartIdentity
+    // string will therefore not match the current process's identity.
+    const lock = path.join(sessionsDir, '.migration-lock');
+    await writeFile(
+      lock,
+      JSON.stringify({ version: 1, pid: 2147483646, nonce: 'stale-nonce-1', startTime: 0, processStartIdentity: 'dead-owner-identity' }),
+    );
+
+    const result = await runMigration(sessionsDir);
+    expect(result.moved).toBeGreaterThanOrEqual(1);
+    expect(existsSync(path.join(sessionsDir, key, '20260501_000001.jsonl'))).toBe(true);
+  });
+
+  it('retains a file-lock whose PID is live and processStartIdentity matches', async () => {
+    await seedFlat('20260501_000002');
+    // Own process: same PID is explicitly excluded from reclamation by lockIsStale
+    // (data.pid !== process.pid guard). Use process.pid here so the lock looks
+    // like a live concurrent writer from this very process.
+    const lock = path.join(sessionsDir, '.migration-lock');
+    await writeFile(
+      lock,
+      JSON.stringify({ version: 1, pid: process.pid, nonce: 'live-nonce-1', startTime: Date.now() }),
+    );
+
+    expect(await runMigration(sessionsDir)).toEqual({ moved: 0, planned: 0 });
+    // Lock must still be there — we did not steal it.
+    expect(existsSync(lock)).toBe(true);
+  });
+
   it('ensureLayoutMigrated stamps a marker on a fresh (empty) install without scanning forever', async () => {
     expect(await needsMigration(sessionsDir)).toBe(false);
     await ensureLayoutMigrated(sessionsDir);

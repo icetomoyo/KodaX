@@ -21,7 +21,24 @@ import fsSync from 'fs';
 import path from 'path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import { readProcessStartIdentity } from '@kodax-ai/agent';
 import { claimConfigLockReclamation, publishConfigLock } from '../common/core-config-lock.js';
+
+// Immutable process start identity (creation timestamp / boot-time token),
+// cached for this process. A bare `process.kill(pid, 0)` only proves the PID
+// is live — it cannot distinguish a dead holder from a recycled PID now
+// owned by an unrelated process. Lock reclamation must verify the stored
+// `processStartIdentity` matches the current identity of that PID, the
+// same pattern `runtime-daemon/state.ts` uses for `owner-policy.lock`.
+let currentProcessStartIdentity: string | undefined;
+let currentProcessStartIdentityRead = false;
+function getCurrentProcessStartIdentity(): string | undefined {
+  if (!currentProcessStartIdentityRead) {
+    currentProcessStartIdentity = readProcessStartIdentity(process.pid);
+    currentProcessStartIdentityRead = true;
+  }
+  return currentProcessStartIdentity;
+}
 
 import { deriveProjectKeyFromData, UNKNOWN_PROJECT_KEY, type ProjectIdentity } from './project-key.js';
 import { publishProjectManifest } from './project-manifest.js';
@@ -272,6 +289,7 @@ async function lockIsStale(dir: string): Promise<boolean> {
     const raw = await readMigrationOwner(dir);
     const data = JSON.parse(raw) as {
       pid?: number;
+      processStartIdentity?: unknown;
       heartbeatAt?: number;
       version?: unknown;
       nonce?: unknown;
@@ -279,6 +297,21 @@ async function lockIsStale(dir: string): Promise<boolean> {
     if (!(await fs.lstat(lockDirPath(dir))).isDirectory()
       && (data.version !== 1 || typeof data.nonce !== 'string' || !data.nonce)) return false;
     if (typeof data.pid === 'number' && Number.isSafeInteger(data.pid) && data.pid > 0 && data.pid !== process.pid) {
+      // Check liveness via OS process-start identity, not just kill(pid,0).
+      // A recycled PID (new unrelated process reusing the number) passes the
+      // signal check but has a different processStartIdentity — it must not
+      // inherit deletion authority over a lock it did not create.
+      if (typeof data.processStartIdentity === 'string' && data.processStartIdentity) {
+        const currentIdentity = readProcessStartIdentity(data.pid);
+        if (currentIdentity === undefined || currentIdentity !== data.processStartIdentity) {
+          // PID is gone or belongs to a different process — provably stale.
+          return claimConfigLockReclamation(lockDirPath(dir), raw)
+            && await readMigrationOwner(dir) === raw;
+        }
+        return false; // Same process still alive.
+      }
+      // No processStartIdentity recorded (legacy lock written before this fix).
+      // Fall back to kill(pid,0) only.
       try {
         process.kill(data.pid, 0); // throws ESRCH if the holder is gone
       } catch (err) {
@@ -305,8 +338,16 @@ async function acquireLock(dir: string): Promise<string | undefined> {
   }
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const nonce = randomUUID();
+    const processStartIdentity = getCurrentProcessStartIdentity();
+    const ownerRecord = {
+      version: 1,
+      pid: process.pid,
+      nonce,
+      startTime: Date.now(),
+      ...(processStartIdentity === undefined ? {} : { processStartIdentity }),
+    };
     try {
-      if (publishConfigLock(lock, JSON.stringify({ version: 1, pid: process.pid, nonce, startTime: Date.now() }))) return nonce;
+      if (publishConfigLock(lock, JSON.stringify(ownerRecord))) return nonce;
     } catch (error) {
       if (error instanceof AggregateError) throw new SessionMigrationCleanupError('Migration owner publication cleanup failed.', { cause: error });
       throw error;
