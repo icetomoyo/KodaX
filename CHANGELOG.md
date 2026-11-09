@@ -77,6 +77,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Artifact clients can read PNG evidence after the Host pins it to a Session
+  archive, preserving exact invocation binding and original pixel checks.
 - User Skills load from the agent home (`KODAX_HOME` or `setAgentConfigHome()`)
   instead of always from `~/.kodax/skills`. `~/.agents/skills` is unchanged
   (Issue 382).

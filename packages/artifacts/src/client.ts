@@ -30,11 +30,15 @@ export function createKodaXArtifactPort(client: Pick<KodaXProductClient, 'runs' 
    if (payload.protocol !== 'kodax-artifact/1' || payload.operation !== request.operation) throw new Error('Artifact tool payload does not match the invocation.');
    const result = decodeArtifactWireResult(request, payload);
    if (!result.imageRef) return decodeArtifactResult(raw.operation, result);
+   // The Host pins pixels to its owner archive; the admitted raster keeps its source path.
+   const deliveredImages = typeof block.content === 'string' ? [] : block.content.filter(item => item.type === 'image');
+   if (deliveredImages.length !== 1) throw new Error('Artifact Host invocation must deliver exactly one PNG.');
+   const deliveredPath = deliveredImages[0]!.path;
    let items: readonly ClientViewItem[] = [];
    const observation = await client.sessions.observe(sessionId, view => { items = view.items; });
    try {
     const item = items.find(item => item.tool?.callId === call.id && item.tool.name === name && (!item.sourceRunId || item.sourceRunId === started.runId));
-    const attachmentIndex = item?.attachments?.findIndex(image => image.path === result.imageRef!.path);
+    const attachmentIndex = item?.attachments?.findIndex(image => image.path === deliveredPath);
     if (!item || attachmentIndex === undefined || attachmentIndex < 0) throw new Error('Artifact PNG is not attached to its Host invocation.');
     let offset = 0, bytes: Uint8Array | undefined;
     do {
