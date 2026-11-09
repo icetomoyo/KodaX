@@ -2947,6 +2947,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 395 | Medium | needs-info | Intermittent oversized-output Runtime test failure has no captured cause | unknown; observed at e37aef47a (v0.7.97-beta.4) | — | 2026-11-09 | — |
 | 394 | Medium | Open | Agent and Script whole-task non-inferiority is unproven | work modes in v0.7.97 | — | 2026-11-09 | — |
 | 393 | Low | Open | `worktree remove` reports a branch deleted when `branch -D` failed | unknown; present at 08ce2f742 | — | 2026-11-09 | — |
 | 392 | Low | Open | `cyclic_dependencies` prints a strongly connected component as a fake chain | unknown; present at 08ce2f742 | — | 2026-11-09 | — |
@@ -3227,6 +3228,71 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ---
 
 ## Issue Details
+
+### Issue 395: Intermittent oversized-output Runtime test failure has no captured cause
+
+- Priority: Medium
+- Status: needs-info — original callback assertion and tool receipts are missing;
+  no matching deterministic reproduction or confirmed cause
+- Introduced: unknown; observed on Windows at `e37aef47a`, v0.7.97-beta.4
+- Created: 2026-11-09
+- Fixed: not established
+
+**Original problem and comparison fingerprint.** On 2026-11-09, the next-dev
+fast suite's `tests/shared-contract-natural-runtime.test.ts` case
+`recovers oversized test output using the existing isolated output binding
+without permitting outside reads` failed after **5,058 ms** with
+`AssertionError: Provider request failed.` at the `record.error` assertion.
+The complete run recorded 3,721 passed / 1 failed / 57 skipped. A separate
+175-test storage/migration run started at the same **14:10:47**; its files were
+`packages/repl/src/interactive/session-migration.test.ts`,
+`packages/repl/src/interactive/storage.test.ts` and
+`packages/coding/src/multimodal-contract-audit.test.ts`.
+
+Expected: a real failing Node test's oversized stdout is saved, an in-scope
+`grep` finds `RECOVERY_FAILURE_SENTINEL`, the outside private-file read is
+denied, and the Run completes without replaying the command. This scenario
+uses a scripted provider, not an external model call. The old fixture deleted
+its temporary directory and did not print the inner callback assertion or
+individual receipts, so the historical cause cannot be reconstructed.
+
+**Confirmed facts and exclusions.** The outer error establishes a wrapped
+local assertion; 5,058 ms does not establish a five-second timeout. The original
+scenario subsequently passed **121** baseline/repeated runs, including 48 with
+pristine `f1c20b420` Bash source under the original concurrent 175-test workload.
+These passes do not prove contention caused the failure, and one failure out
+of the enclosing suite's total is not this scenario's failure probability.
+
+Commit `741278b77` fixes separately reproduced Shell defects: disposal before
+decoding after owner-cleanup failure, and oversized recovery fallback errors.
+The permanent-cleanup control takes a seven-second retry budget and is not a
+matching reproduction of this five-second occurrence. Do not close this issue
+as timing-only or fixed on that basis. The same commit moves this scenario's
+semantic assertions outside the provider callback and retains its directory
+on assertion failure. See the [diagnosis and verified scope](designs/output-recovery-cleanup-diagnosis-2026-11-09.md).
+
+**Next occurrence: capture before rerunning or cleaning.** Preserve the
+`artifactDirectory` reported by the assertion, especially `result.json`,
+`runtime-live.json` and actual stdout/stderr recovery files. Record the exact
+commit, OS/Node versions, worker count, concurrent commands and elapsed times.
+Compare the fixture-write receipt, Bash exit status and recovery paths,
+`KODAX_CAPTURE_COMPLETE` / incomplete markers, the grep receipt, outside-read
+denial and `calls[].error`. Check the actual stream bytes before attributing
+the failure to execution, persistence, permission binding or the test script.
+Keep the original failure evidence separate from subsequent rerun evidence.
+
+For comparison, the following focused command currently passes; it is not a
+deterministic reproduction:
+
+```powershell
+npx vitest run tests/shared-contract-natural-runtime.test.ts -t 'recovers oversized test output' --maxWorkers=4
+```
+
+Move to `ready` when a recurrence supplies the missing receipt/cause or a
+matching deterministic regression exists. Resolve only after that cause is
+fixed and verified; additional passing repetitions or a longer wait alone do
+not establish resolution. The 2026-11-09 mainline validation (20,442 tests
+passed / 93 skipped) is a regression baseline, not proof of this issue's cause.
 
 ### Issue 347: Off-window item reads truncate high-block canonical messages
 
@@ -17830,12 +17896,19 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 272 (44 Open, 228 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 273 (44 Open, 1 needs-info, 228 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-09: Issue 395 historical failure comparison record
+
+- Recorded the oversized-output Runtime test's original signature, concurrent
+  workload, missing evidence and recurrence capture procedure as `needs-info`.
+- Kept independently fixed Shell defects and successful repetitions separate
+  from the still-unclassified historical occurrence.
 
 ### 2026-11-04: Issues 378-385
 

@@ -5,6 +5,8 @@ full deterministic and package regressions passed.
 **The original intermittent failure remains unclassified.** Work
 is directly on `KodaX` in `C:/Works/GitProj/KodaX-AI/KodaX`, starting at
 `f1c20b420`. No new integration branch/worktree, publication or Space upgrade.
+The durable recurrence record is [Issue 395](../KNOWN_ISSUES.md#issue-395-intermittent-oversized-output-runtime-test-failure-has-no-captured-cause),
+which remains `needs-info` independently of the confirmed Shell fixes below.
 
 ## Historical evidence and limits
 
