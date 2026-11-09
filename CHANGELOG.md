@@ -77,6 +77,11 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Preserve closed Shell stdout/stderr when owner cleanup settlement fails,
+  keeping large output in sealed recovery files and retaining the Unknown
+  cleanup state and retry fence without replaying the command. Failed artifact
+  registration retains the recovery references; unavailable recovery storage
+  returns an explicit incomplete receipt instead of oversized inline output.
 - Artifact clients can read PNG evidence after the Host pins it to a Session
   archive, preserving exact invocation binding and original pixel checks.
 - User Skills load from the agent home (`KODAX_HOME` or `setAgentConfigHome()`)

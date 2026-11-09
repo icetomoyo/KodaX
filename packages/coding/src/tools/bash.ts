@@ -310,7 +310,17 @@ async function buildGuaranteedOversizeResult(
   if (!exceedsPolicy && !exceedsCapacity) return undefined;
 
   const recovery = startForegroundOutputRecovery(stdout, stderr);
-  if (!recovery.stdout.path || !recovery.stderr.path) return undefined;
+  if (!recovery.stdout.path || !recovery.stderr.path) {
+    finishForegroundOutputRecovery(recovery, stdout, stderr);
+    return [
+      `Command: ${command}`,
+      `Exit: ${exitCode}`,
+      ...(['stdout', 'stderr'] as const).map(stream => recovery[stream].path
+        ? `${stream} recovery: ${recovery[stream].path}`
+        : `${stream} recovery unavailable: ${recovery[stream].error ?? 'Recovery file could not be created.'}`),
+      `[${TOOL_RESULT_INCOMPLETE_MARKER}. Raw Bash output exceeded its capture budget and recovery creation failed; output was not materialized inline.]`,
+    ].join('\n');
+  }
   const stdoutComplete = finishBashOutputRecovery(stdout);
   const stderrComplete = finishBashOutputRecovery(stderr);
   const completion = stdoutComplete && stderrComplete
@@ -328,13 +338,20 @@ async function buildGuaranteedOversizeResult(
   } catch {
     // The sealed stream artifacts remain recoverable and are still surfaced.
   }
-  if (ctx.toolCallId) ctx.recordToolResultArtifact?.(ctx.toolCallId, recoveryPath);
+  let registrationWarning: string | undefined;
+  try {
+    if (ctx.toolCallId) ctx.recordToolResultArtifact?.(ctx.toolCallId, recoveryPath);
+  } catch (error: unknown) {
+    const detail = error instanceof Error ? error.message : String(error);
+    registrationWarning = `[warn] Bash recovery artifact registration failed: ${detail}`;
+  }
   return [
     `Command: ${command}`,
     `Exit: ${exitCode}`,
     `stdout recovery: ${recovery.stdout.path}`,
     `stderr recovery: ${recovery.stderr.path}`,
     completion,
+    ...(registrationWarning ? [registrationWarning] : []),
     `[${TOOL_RESULT_INCOMPLETE_MARKER}. Raw Bash output exceeded `
       + `${exceedsPolicy ? `the ${policy.maxBytes}-byte/${policy.maxLines}-line policy` : 'the active request capacity'} `
       + `and was not materialized inline. Full output saved to: ${recoveryPath}.]`,
@@ -1616,18 +1633,24 @@ async function executePreparedShellCommand(
           if (stopReason) return; // The stop result owns partial output and recovery artifacts.
           const message = error instanceof Error ? error.message : String(error);
           if (foregroundCommandRegistered) {
-            disposeCollectors();
-            let captured = '';
+            let captured = `Command: ${command}\nExit: ${code}`;
             try {
-              captured = stdoutDecoded?.text ?? decodeCollector(stdout).text;
-              const stderrText = stderrDecoded?.text ?? decodeCollector(stderr).text;
-              if (stderrText) captured += `\n[stderr]\n${stderrText}`;
-            } catch {
-              captured = '';
+              // Process streams have closed even when owner cleanup has not settled.
+              const oversized = await buildGuaranteedOversizeResult(command, code, stdout, stderr, ctx);
+              if (oversized) captured = oversized;
+              else {
+                const stdoutText = stdoutDecoded?.text ?? decodeCollector(stdout).text;
+                const stderrText = stderrDecoded?.text ?? decodeCollector(stderr).text;
+                if (stdoutText) captured += `\n${stdoutText}`;
+                if (stderrText) captured += `\n[stderr]\n${stderrText}`;
+              }
+            } catch (captureError: unknown) {
+              const detail = captureError instanceof Error ? captureError.message : String(captureError);
+              captured += `\n[warn] Captured shell output could not be delivered: ${detail}`;
             }
+            disposeCollectors();
             settle(
-              `Command: ${command}\nExit: ${code}`
-              + (captured ? `\n${captured}` : '')
+              captured
               + `\n[Unknown] Shell cleanup could not be verified: ${message}`,
             );
             return;

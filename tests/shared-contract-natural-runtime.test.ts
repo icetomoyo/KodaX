@@ -50,37 +50,54 @@ it('recovers oversized test output using the existing isolated output binding wi
   vi.stubEnv('KODAX_TOOL_OUTPUT_DIR', path.join(workspace, '.agent/tmp/tool-results'));
   const outside = path.join(directory, 'private.txt');
   await fs.writeFile(outside, 'PRIVATE_SENTINEL');
+  const receipt = (messages: readonly KodaXMessage[], id: string) => messages
+    .flatMap(message => Array.isArray(message.content) ? message.content : [])
+    .find(block => block.type === 'tool_result' && block.tool_use_id === id);
   const record = await runNaturalRuntime(directory, 'tenant-cache', async (input, _signal, index) => {
-    const receipt = (id: string) => input.messages.flatMap(message => Array.isArray(message.content) ? message.content : [])
-      .find(block => block.type === 'tool_result' && block.tool_use_id === id);
     if (index === 0) return result([tool('large-test', 'write', { path: 'tests/output-recovery.test.js', content:
       "import test from 'node:test';\ntest('large diagnostic', () => { process.stdout.write('noise\\n'.repeat(2200)); throw new Error('RECOVERY_FAILURE_SENTINEL'); });\n" })]);
-    if (index === 1) return result([tool('run-large-test', 'bash', { command: 'node --test' })]);
+    if (index === 1) {
+      const written = receipt(input.messages, 'large-test');
+      if (!written || written.type !== 'tool_result' || written.is_error) return result([], '测试文件准备失败；停止此脚本用例。');
+      return result([tool('run-large-test', 'bash', { command: 'node --test' })]);
+    }
     if (index === 2) {
-      const text = JSON.stringify(receipt('run-large-test'));
-      expect(text).toContain('Exit: 1');
-      const block = receipt('run-large-test');
-      if (!block || block.type !== 'tool_result' || typeof block.content !== 'string') throw new Error('Missing test output');
+      const block = receipt(input.messages, 'run-large-test');
+      if (!block || block.type !== 'tool_result' || typeof block.content !== 'string') return result([], '缺少测试输出；停止此脚本用例。');
       const artifact = block.content.match(/stdout recovery: ([^\r\n]+)/)?.[1];
-      if (!artifact) throw new Error('Expected real oversized output artifact');
-      expect(checkNaturalTool(workspace, 'read', { path: artifact }, false)).toBeNull();
+      if (!artifact || checkNaturalTool(workspace, 'read', { path: artifact }, false) !== null) return result([], '缺少隔离范围内的恢复文件；停止此脚本用例。');
       return result([
         tool('recover-output', 'grep', { path: artifact, pattern: 'RECOVERY_FAILURE_SENTINEL', output_mode: 'content' }),
         tool('outside-read', 'read', { path: outside }),
       ]);
     }
-    expect(index).toBe(3);
-    expect(receipt('recover-output')).toMatchObject({ is_error: false, content: expect.stringContaining('RECOVERY_FAILURE_SENTINEL') });
-    expect(receipt('outside-read')).toMatchObject({ is_error: true, content: expect.stringContaining('Path leaves the fixture workspace') });
-    expect(JSON.stringify(input.messages)).not.toContain('PRIVATE_SENTINEL');
     return result([], '测试失败；已读取原始诊断，未访问隔离范围外的文件。');
   }, { limits: { calls: 4, tools: 4, timeoutMs: 60000 } });
-  expect(record.error, JSON.stringify({
+  const evidence = JSON.stringify({
+    artifactDirectory: directory,
     calls: record.calls.map(({ index, error }) => ({ index, error })),
     receipts: record.events.filter(event => event.kind === 'result').map(({ id, name, content }) => ({ id, name, content })),
-  })).toBeNull();
-  expect(record.counts.requests).toBe(4);
-  expect(record.protectedUnchanged).toBe(true);
+  });
+  try {
+    expect(record.error, evidence).toBeNull();
+    expect(receipt(record.calls[1]?.input.messages ?? [], 'large-test'), evidence).toMatchObject({ is_error: false });
+    const output = receipt(record.calls[2]?.input.messages ?? [], 'run-large-test');
+    expect(output, evidence).toMatchObject({ type: 'tool_result', content: expect.stringContaining('Exit: 1') });
+    const artifact = output?.type === 'tool_result' && typeof output.content === 'string'
+      ? output.content.match(/stdout recovery: ([^\r\n]+)/)?.[1] : undefined;
+    expect(artifact, evidence).toBeDefined();
+    expect(checkNaturalTool(workspace, 'read', { path: artifact }, false), evidence).toBeNull();
+    expect(record.counts.requests, evidence).toBe(4);
+    const lastMessages = record.calls[3]?.input.messages ?? [];
+    expect(receipt(lastMessages, 'recover-output'), evidence).toMatchObject({ is_error: false, content: expect.stringContaining('RECOVERY_FAILURE_SENTINEL') });
+    expect(receipt(lastMessages, 'outside-read'), evidence).toMatchObject({ is_error: true, content: expect.stringContaining('Path leaves the fixture workspace') });
+    expect(JSON.stringify(lastMessages), evidence).not.toContain('PRIVATE_SENTINEL');
+    expect(record.protectedUnchanged, evidence).toBe(true);
+  } catch (error) {
+    // Preserve the actual requests, receipts and stream artifacts before afterEach cleanup.
+    roots.splice(roots.indexOf(directory), 1);
+    throw error;
+  }
 });
 
 // skill-discovery requires gitless temporary ancestry; its invalid topology is

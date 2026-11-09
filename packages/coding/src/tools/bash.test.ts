@@ -1280,6 +1280,135 @@ describe('toolBash', () => {
     expect(recordToolResultArtifact).toHaveBeenCalledWith('bash-oversize', manifestPath);
   });
 
+  it.each(['inline', 'oversized', 'artifact-registration-failed', 'recovery-unavailable'] as const)('preserves completed stdout and stderr when owner cleanup settlement is deferred: %s', async mode => {
+    let retryCleanup: (() => Promise<void>) | undefined;
+    let cleanupAttempts = 0;
+    let cleanupDrained = false;
+    let firstCleanup!: () => void;
+    const cleanupStarted = new Promise<void>(resolve => { firstCleanup = resolve; });
+    const releaseCleanup = vi.fn((outcome?: 'deferred') => {
+      if (outcome === 'deferred') return;
+      cleanupAttempts++;
+      if (cleanupAttempts === 1) {
+        // The real child has closed before its owner settles cleanup.
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        firstCleanup();
+      }
+      if (cleanupAttempts <= 4) throw new Error('Controlled cleanup receipt write failed.');
+      cleanupDrained = true;
+    });
+    const sandbox = passthroughShellSandbox();
+    const prepare = vi.fn(sandbox.prepare);
+    const stdout = Buffer.from('STDOUT_RETAINED_SENTINEL').toString('base64');
+    const stderr = Buffer.from('STDERR_RETAINED_SENTINEL').toString('base64');
+    const stdoutEnd = Buffer.from('STDOUT_RETAINED_END').toString('base64');
+    const stderrEnd = Buffer.from('STDERR_RETAINED_END').toString('base64');
+    const padding = mode === 'inline' ? 0 : 600 * 1024;
+    const command = `node -e "process.stdout.write(Buffer.from('${stdout}','base64').toString()+'x'.repeat(${padding})+Buffer.from('${stdoutEnd}','base64').toString()); process.stderr.write(Buffer.from('${stderr}','base64').toString()+'y'.repeat(${padding})+Buffer.from('${stderrEnd}','base64').toString())"`;
+    const recordToolResultArtifact = vi.fn((_id: string, _outputPath: string) => {
+      if (mode === 'artifact-registration-failed') throw new Error('Controlled artifact registration failed.');
+    });
+    if (mode === 'recovery-unavailable') {
+      const unavailableDirectory = path.join(tempDir, 'tool-output-is-a-file');
+      await fs.writeFile(unavailableDirectory, 'Existing ordinary file blocks recovery directory creation.');
+      vi.stubEnv('KODAX_TOOL_OUTPUT_DIR', unavailableDirectory);
+    }
+    const running = toolBash({ command }, {
+      backups: new Map(), executionCwd: tempDir,
+      shellSandbox: { ...sandbox, prepare },
+      runtimeRunId: 'run-deferred-output',
+      toolCallId: 'deferred-output', recordToolResultArtifact,
+      registerShellCleanup: (_reference, retry) => { retryCleanup = retry; return releaseCleanup; },
+    });
+    try {
+      await cleanupStarted;
+      await vi.advanceTimersByTimeAsync(7_000);
+      const output = await running;
+      expect(cleanupAttempts).toBe(4);
+      expect(releaseCleanup).toHaveBeenCalledWith('deferred');
+      expect(cleanupDrained).toBe(false);
+      expect(prepare).toHaveBeenCalledOnce();
+      expect(output).toContain('[Unknown] Shell cleanup could not be verified: Controlled cleanup receipt write failed.');
+      if (mode !== 'inline') {
+        expect(output.length).toBeLessThan(4_096);
+        if (mode === 'recovery-unavailable') {
+          expect(output).toContain('KODAX_RESULT_INCOMPLETE');
+          expect(output).toContain('stdout recovery unavailable:');
+          expect(output).toContain('stderr recovery unavailable:');
+          expect(output).not.toMatch(/(?:stdout|stderr) recovery: /);
+          expect(output).not.toContain('KODAX_CAPTURE_COMPLETE');
+          expect(recordToolResultArtifact).not.toHaveBeenCalled();
+        } else {
+          expect(recordToolResultArtifact).toHaveBeenCalledWith('deferred-output', expect.any(String));
+          for (const stream of ['stdout', 'stderr'] as const) {
+            const retained = await fs.readFile(parseRecoveryOutputPath(output, stream), 'utf-8');
+            expect(retained).toContain(`${stream.toUpperCase()}_RETAINED_SENTINEL`);
+            expect(retained).toContain(`${stream.toUpperCase()}_RETAINED_END`);
+            expect(retained).toContain('KODAX_CAPTURE_COMPLETE');
+          }
+          if (mode === 'artifact-registration-failed') {
+            expect(output).toContain('recovery artifact registration failed');
+          }
+        }
+      } else {
+        expect(output).toContain('STDOUT_RETAINED_SENTINEL');
+        expect(output).toContain('STDERR_RETAINED_SENTINEL');
+      }
+    } finally {
+      vi.useRealTimers();
+      try { await retryCleanup?.(); await running; }
+      finally { if (mode === 'recovery-unavailable') vi.unstubAllEnvs(); }
+    }
+    expect(cleanupDrained).toBe(true);
+    expect(cleanupAttempts).toBe(5);
+    expect(prepare).toHaveBeenCalledOnce();
+  }, 30_000);
+
+  it.each(['artifact-registration-failed', 'recovery-unavailable'] as const)('keeps normally completed oversized output bounded when %s', async mode => {
+    const sandbox = passthroughShellSandbox();
+    const prepare = vi.fn(sandbox.prepare);
+    const recordToolResultArtifact = vi.fn(() => { throw new Error('Controlled artifact registration failed.'); });
+    const stdout = Buffer.from('NORMAL_STDOUT_SENTINEL').toString('base64');
+    const stdoutEnd = Buffer.from('NORMAL_STDOUT_END').toString('base64');
+    const stderr = Buffer.from('NORMAL_STDERR_SENTINEL').toString('base64');
+    const command = `node -e "require('fs').appendFileSync('normal-output-executions.txt','x'); process.stdout.write(Buffer.from('${stdout}','base64').toString()+'x'.repeat(614400)+Buffer.from('${stdoutEnd}','base64').toString()); process.stderr.write(Buffer.from('${stderr}','base64'))"`;
+    if (mode === 'recovery-unavailable') {
+      const unavailableDirectory = path.join(tempDir, 'normal-output-is-a-file');
+      await fs.writeFile(unavailableDirectory, 'Recovery directory cannot replace this ordinary file.');
+      vi.stubEnv('KODAX_TOOL_OUTPUT_DIR', unavailableDirectory);
+    }
+    try {
+      const output = await toolBash({ command }, {
+        backups: new Map(), executionCwd: tempDir,
+        shellSandbox: { ...sandbox, prepare },
+        toolCallId: 'normal-bounded-output', recordToolResultArtifact,
+      });
+      expect(output.length).toBeLessThan(4_096);
+      expect(output).toContain('Exit: 0');
+      expect(output).toContain('KODAX_RESULT_INCOMPLETE');
+      expect(output).not.toContain('[Unknown] Shell cleanup');
+      expect(prepare).toHaveBeenCalledOnce();
+      expect(await fs.readFile(path.join(tempDir, 'normal-output-executions.txt'), 'utf-8')).toBe('x');
+      if (mode === 'recovery-unavailable') {
+        expect(output).toContain('stdout recovery unavailable:');
+        expect(output).toContain('stderr recovery unavailable:');
+        expect(output).not.toMatch(/(?:stdout|stderr) recovery: /);
+        expect(output).not.toContain('KODAX_CAPTURE_COMPLETE');
+        expect(recordToolResultArtifact).not.toHaveBeenCalled();
+      } else {
+        expect(output).toContain('recovery artifact registration failed');
+        expect(recordToolResultArtifact).toHaveBeenCalledOnce();
+        const retainedStdout = await fs.readFile(parseRecoveryOutputPath(output, 'stdout'), 'utf-8');
+        const retainedStderr = await fs.readFile(parseRecoveryOutputPath(output, 'stderr'), 'utf-8');
+        expect(retainedStdout).toContain('NORMAL_STDOUT_SENTINEL');
+        expect(retainedStdout).toContain('NORMAL_STDOUT_END');
+        expect(retainedStderr).toContain('NORMAL_STDERR_SENTINEL');
+        expect(retainedStdout).toContain('KODAX_CAPTURE_COMPLETE');
+        expect(retainedStderr).toContain('KODAX_CAPTURE_COMPLETE');
+      }
+    } finally { if (mode === 'recovery-unavailable') vi.unstubAllEnvs(); }
+  }, 30_000);
+
   it('strips ANSI escape codes from completed command output while preserving the bash header', async () => {
     const command = 'node -e "const e=String.fromCharCode(27); process.stdout.write(e+\'[31mred\'+e+\'[0m\\n\'); process.stderr.write(e+\'[33mwarn\'+e+\'[0m\\n\')"';
     const result = await toolBash({ command }, {
