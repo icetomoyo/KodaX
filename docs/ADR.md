@@ -7390,3 +7390,68 @@ installs that one package and enables the existing trusted extension. Actual
 Space/Electron deployment, other-OS acceptance and prior visual fidelity/model
 limits remain separately unverified. New subpaths require a future npm release;
 the already published alpha.7 cannot be replaced in place.
+
+---
+
+## ADR-073: Skill Support Files Are Located, Not Declared or Pre-Loaded
+
+**Status**: Accepted (2026-11-09). Implemented by `c50d24c27` (complete
+inventory and skill directory variables) and `6b9377b61` (Issues 396 and 397).
+
+**Context**: A Skill bundles scripts, references and templates next to its
+`SKILL.md`. The model can only use them if activation tells it where they are.
+Before `c50d24c27`, the activation block listed only five conventional folders,
+so a root-level `REFERENCE.md` or `agents/grader.md` had no path, and a relative
+path in the body resolved against the project directory instead. Skill bodies
+were also cached until `/reload`, so an edited Skill stayed stale for the rest
+of a REPL session.
+
+We compared KodaX with Codex, pi and deepseek-harness. Codex tells the model to
+resolve relative paths against the `SKILL.md` directory. It reads optional
+`agents/openai.yaml` metadata that declares tool dependencies, and ignores that
+metadata with a warning when it is invalid. Codex also cuts injected Skill text
+at 8,000 bytes. pi turns an invalid Skill into a warning and skips it.
+
+**Decision**: Activation gives the model the location of every support file.
+The model then reads or runs each file with its normal tools, under normal
+permissions, when the task needs it.
+
+1. The activation block names the Skill root and lists every bundled file with
+   its absolute path, up to 120 entries.
+2. `${CLAUDE_SKILL_DIR}` and `${KODAX_SKILL_DIR}` in a body resolve to the Skill
+   root, written with forward slashes.
+3. The body is injected in full.
+4. A Host refreshes the registry between Runs when a Skill source changed. A
+   Run that is already in progress keeps the bodies it activated.
+5. `skillRevision` and the isolated script snapshot still cover the five
+   conventional folders only.
+
+**Consequences**:
+
+- A Skill works with any file layout, including layouts written for other
+  agents.
+- Support files cost no context until the model opens one.
+- An unchanged refresh check re-stats only the recorded paths, so a Run start
+  costs well under a millisecond.
+
+**Rejected alternatives**:
+
+- **Read dependencies from `agents/openai.yaml`.** That file declares tool
+  dependencies for Codex's own ecosystem, and frontmatter already carries
+  `allowed-tools`. No KodaX Skill needs a second declaration. The file still
+  appears in the inventory, so the model can read it.
+- **Cap the injected body.** A cap silently drops whatever comes last. That is
+  often the routing that tells the model which reference to load. Long material
+  belongs in reference files, which cost nothing until they are read.
+- **Turn activation policy failures into a warning and continue.** The policy
+  rejects a body that changed while it was loading or after activation.
+  Continuing would let the model follow content that was never admitted.
+  Discovery already skips an invalid Skill with a diagnostic, which is the part
+  of pi's behavior that fits.
+- **Offer `run_skill_script` in interactive sessions.** It exists for isolated
+  managed Runs, and it fails on Windows. Interactive sessions already run
+  scripts through the shell tool and its permission flow, so a second path
+  would add no capability.
+- **Watch Skill folders with `fs.watch`.** Watchers behave differently on each
+  platform and fire while a file is half-written. A stat check at Run start
+  covers the same edits, with no background work.
