@@ -16,7 +16,7 @@ import type {
   SkillPathsConfig,
 } from './types.js';
 import { emitKodaXDiagnostic } from '../../diagnostics.js';
-import { discoverSkills } from './discovery.js';
+import { discoverSkills, readSkillSourceStamp } from './discovery.js';
 import { loadFullSkill } from './skill-loader.js';
 import { resolveSkillContent } from './skill-resolver.js';
 
@@ -83,6 +83,7 @@ export class SkillRegistry implements ISkillRegistry {
   private readonly skillsByName = new Map<string, SkillMetadata>();
   private readonly fullSkillsByName = new Map<string, Skill>();
   private incompleteDiscovery = false;
+  private sourceStamps: ReadonlyMap<string, string> = new Map();
   get discoveryIncomplete(): boolean { return this.incompleteDiscovery; }
   private readonly projectRoot?: string;
   private readonly customPaths?: Readonly<Partial<SkillPathsConfig>>;
@@ -98,6 +99,7 @@ export class SkillRegistry implements ISkillRegistry {
   async discover(): Promise<void> {
     const result = await discoverSkills(this.projectRoot, this.customPaths);
     this.incompleteDiscovery = result.errors.length > 0;
+    this.sourceStamps = result.sourceStamps;
     // A published catalog and its bodies must describe the same discovery.
     this.fullSkillsByName.clear();
     this.skillsByName.clear();
@@ -185,6 +187,19 @@ export class SkillRegistry implements ISkillRegistry {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  /**
+   * Rediscover when a scanned Skill directory or SKILL.md changed since the
+   * last discovery. Hosts call this between Runs; an in-flight Run keeps the
+   * bodies it activated. Returns whether a rediscovery happened.
+   */
+  async refreshIfChanged(): Promise<boolean> {
+    const stamps = [...this.sourceStamps];
+    const current = await Promise.all(stamps.map(([path]) => readSkillSourceStamp(path)));
+    if (current.every((stamp, index) => stamp === stamps[index]![1])) return false;
+    await this.discover();
+    return true;
   }
 
   /**

@@ -88,6 +88,7 @@ import {
 } from '@kodax-ai/agent';
 import {
   assertSingleKnownUserSkillReference,
+  loadCurrentSkillRegistry,
   prepareUserSkillInvocation,
   resolveUserSkillReference,
   MultipleUserSkillReferencesError,
@@ -2051,7 +2052,7 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log();
       console.log(chalk.bold('Examples:'));
       console.log(chalk.dim('  /skill                    ') + '# List all skills');
-      console.log(chalk.dim('  /skill reload             ') + '# Reload skills after editing ~/.kodax/skills');
+      console.log(chalk.dim('  /skill reload             ') + '# Rescan every skill source now');
       console.log(chalk.dim('  /code-review src/         ') + '# Invoke code-review skill');
       console.log(chalk.dim('  /skill:code-review src/   ') + '# Compatibility form');
       console.log(chalk.dim('  /skill:tdd auth           ') + '# Invoke TDD skill');
@@ -3199,10 +3200,7 @@ export async function executeCommand(
   }
 
   if (rawInput !== undefined) {
-    let skillRegistry = getSkillRegistry(context.gitRoot);
-    if (skillRegistry.size === 0) {
-      skillRegistry = await initializeSkillRegistry(context.gitRoot);
-    }
+    const skillRegistry = await loadCurrentSkillRegistry(context.gitRoot);
     try {
       assertSingleKnownUserSkillReference(rawInput, (name) => skillRegistry.has(name));
     } catch (error: unknown) {
@@ -3318,11 +3316,7 @@ async function resolveDirectSkillCommand(
   name: string,
   context: InteractiveContext
 ): Promise<SkillMetadata | undefined> {
-  let registry = getSkillRegistry(context.gitRoot);
-  if (registry.size === 0) {
-    registry = await initializeSkillRegistry(context.gitRoot);
-  }
-
+  const registry = await loadCurrentSkillRegistry(context.gitRoot);
   const skill = registry.get(name);
   return skill;
 }
@@ -3333,13 +3327,9 @@ async function executeSkillCommand(
   context: InteractiveContext,
   callbacks?: CommandCallbacks
 ): Promise<CommandResult> {
-  let registry = getSkillRegistry(context.gitRoot);
+  const registry = await loadCurrentSkillRegistry(context.gitRoot);
   const skillName = parsed.command;
   const skillArgs = parsed.args.join(' ');
-
-  if (registry.size === 0) {
-    registry = await initializeSkillRegistry(context.gitRoot);
-  }
 
   try {
     const skill = registry.get(skillName);

@@ -3,6 +3,7 @@ import {
   getSkillRegistry,
   initializeSkillRegistry,
   type SkillContext,
+  type SkillRegistry,
 } from '@kodax-ai/agent';
 import {
   parseBareInlineSlashReferences,
@@ -18,6 +19,14 @@ function collectSkillReferences(input: string): readonly InlineSkillReference[] 
     ...parseInlineSkillReferences(input),
     ...parseBareInlineSlashReferences(input),
   ].sort((left, right) => left.start - right.start);
+}
+
+/** The shared registry, rediscovered when its Skill sources changed since the last request. */
+export async function loadCurrentSkillRegistry(projectRoot: string | undefined): Promise<SkillRegistry> {
+  const registry = getSkillRegistry(projectRoot);
+  if (registry.size === 0) return initializeSkillRegistry(projectRoot);
+  await registry.refreshIfChanged();
+  return registry;
 }
 
 export class MultipleUserSkillReferencesError extends Error {
@@ -72,10 +81,7 @@ export async function resolveUserSkillReference(
   context: SkillContext,
 ): Promise<UserSkillReference | undefined> {
   const projectRoot = context.projectRoot ?? context.workingDirectory;
-  let registry = getSkillRegistry(projectRoot);
-  if (registry.size === 0) {
-    registry = await initializeSkillRegistry(projectRoot);
-  }
+  const registry = await loadCurrentSkillRegistry(projectRoot);
   return assertSingleKnownUserSkillReference(input, (name) => registry.has(name));
 }
 
@@ -85,10 +91,7 @@ export async function createUserSkillInvocation(
   context: SkillContext,
 ): Promise<CommandInvocationRequest | undefined> {
   const projectRoot = context.projectRoot ?? context.workingDirectory;
-  let registry = getSkillRegistry(projectRoot);
-  if (registry.size === 0) {
-    registry = await initializeSkillRegistry(projectRoot);
-  }
+  const registry = await loadCurrentSkillRegistry(projectRoot);
   if (!registry.has(name)) return undefined;
 
   const skill = await registry.loadFull(name);

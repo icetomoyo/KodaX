@@ -8781,6 +8781,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
     // Issue 064: Pass projectRoot to prevent singleton reset
     const skillRegistry = getSkillRegistry(context.gitRoot);
+    await skillRegistry.refreshIfChanged();
     const skillsPrompt = skillRegistry.getSystemPromptSnippet();
     const managedRunContext = buildManagedRunContext(
       opts.context,

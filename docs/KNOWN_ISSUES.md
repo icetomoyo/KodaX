@@ -2947,8 +2947,8 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 397 | Low | ready | Builtin skill-creator activation lists 14 `.d.ts` typing files | v0.7.97-beta.4 (c50d24c27) | — | 2026-11-09 | — |
-| 396 | Medium | ready | Skill edits in a running REPL session need `/reload` to take effect | unknown; present at v0.7.97-beta.4 | — | 2026-11-09 | — |
+| 397 | Low | Resolved | Builtin skill-creator activation lists 14 `.d.ts` typing files | v0.7.97-beta.4 (c50d24c27) | v0.7.97 (Unreleased) | 2026-11-09 | 2026-11-09 |
+| 396 | Medium | Resolved | Skill edits in a running REPL session need `/reload` to take effect | unknown; present at v0.7.97-beta.4 | v0.7.97 (Unreleased) | 2026-11-09 | 2026-11-09 |
 | 395 | Medium | needs-info | Intermittent oversized-output Runtime test failure has no captured cause | unknown; observed at e37aef47a (v0.7.97-beta.4) | — | 2026-11-09 | — |
 | 394 | Medium | Open | Agent and Script whole-task non-inferiority is unproven | work modes in v0.7.97 | — | 2026-11-09 | — |
 | 393 | Low | Open | `worktree remove` reports a branch deleted when `branch -D` failed | unknown; present at 08ce2f742 | — | 2026-11-09 | — |
@@ -3234,10 +3234,10 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ### Issue 397: Builtin skill-creator activation lists 14 `.d.ts` typing files
 
 - Priority: Low
-- Status: ready
+- Status: Resolved
 - Introduced: v0.7.97-beta.4 (`c50d24c27` made the activation inventory list every bundled file)
 - Created: 2026-11-09
-- Fixed: —
+- Fixed: v0.7.97 (Unreleased)
 
 **Problem.** `builtin/skill-creator/scripts/` ships a `.d.ts` file next to each
 of its 14 `.js` helpers. Activating `skill-creator` lists all 28 files in the
@@ -3255,13 +3255,23 @@ legitimately ship such files.
 scripts. `scripts/build-bundle.mjs` copies builtin skills from the agent `dist`,
 so the bundle and the binary pick up the same filtered tree.
 
+**Resolution (2026-11-09).** `copy:builtin` now clears
+`dist/capabilities/skills/builtin` and copies the source tree without `*.d.ts`
+files. Clearing first also drops files that were removed from the source. The
+packaged `skill-creator` inventory went from 33 lines to 19. The source tree,
+the loader and `skillRevision` are unchanged.
+
+- Files changed: `packages/agent/package.json`
+- Verification: after `npm run copy:builtin -w @kodax-ai/agent`, the built tree
+  has the 24 non-typing source files and no `.d.ts` file
+
 ### Issue 396: Skill edits in a running REPL session need `/reload` to take effect
 
 - Priority: Medium
-- Status: ready
+- Status: Resolved
 - Introduced: unknown; present at v0.7.97-beta.4
 - Created: 2026-11-09
-- Fixed: —
+- Fixed: v0.7.97 (Unreleased)
 
 **Problem.** `SkillRegistry.loadFull` caches each skill body until
 `reload()`, and the REPL builds the skill catalog from the registry that was
@@ -3281,6 +3291,27 @@ body, start a new Run and invoke it again: the old body is returned.
 skill source directories and their `SKILL.md` files with the previous one, and
 calls `registry.reload()` when it differs. An unchanged fingerprint keeps the
 registry and catalog untouched, so the prompt cache stays stable.
+
+**Resolution (2026-11-09).** Discovery records a stat stamp of every directory
+it scans and every `SKILL.md` it reads, taken before reading.
+`SkillRegistry.refreshIfChanged()` re-stats only those paths and rediscovers
+through `discover()` when one differs. `discover()` swaps the catalog in one
+step, so a concurrent Run never sees an empty registry. The REPL calls it at
+the Ink and classic Run starts, at the start of slash commands, and when it
+resolves an inline Skill reference. Nothing calls it inside a Run, so the
+invocation policy's within-Run checks are unchanged. With 27 Skills, an
+unchanged check takes about 0.4 ms against 34 ms for a full discovery.
+`/reload` and `/skill reload` still force a full rediscovery. Learned Skills
+are not stamped; they still need `/reload`.
+
+- Files changed: `packages/agent/src/capabilities/skills/discovery.ts`,
+  `skill-registry.ts`; `packages/repl/src/interactive/repl.ts`, `commands.ts`,
+  `user-skill-invocation.ts`; `packages/repl/src/ui/InkREPL.tsx`
+- Tests added: `skill-registry.test.ts` (unchanged sources keep cached bodies;
+  edit, add and remove; source folder created later),
+  `user-skill-invocation.test.ts`, `repl-skills-prompt.test.ts`,
+  `commands-skill-direct.test.ts` (the old test that required `/skill reload`
+  now asserts the new contract)
 
 ### Issue 395: Intermittent oversized-output Runtime test failure has no captured cause
 
@@ -17949,8 +17980,8 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 275 (44 Open, 1 needs-info, 2 ready, 228 Resolved, 0 Partially Resolved, 0 Won't Fix)
-- Ready: 2 (396, 397)
+- Total: 275 (44 Open, 1 needs-info, 230 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 

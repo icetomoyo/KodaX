@@ -32,6 +32,19 @@ import { emitKodaXDiagnostic } from '../../diagnostics.js';
 export interface DiscoveryResult {
   skills: Map<string, SkillMetadata>;
   errors: Array<{ path: string; error: string }>;
+  /** Stat stamp of every scanned directory and SKILL.md, taken before it was read. */
+  sourceStamps: ReadonlyMap<string, string>;
+}
+
+/** Cheap change marker for a Skill source path; a missing path is a stable state. */
+export async function readSkillSourceStamp(path: string): Promise<string> {
+  try {
+    const info = await stat(path);
+    return `${info.mtimeMs}:${info.size}`;
+  } catch (error) {
+    // Discovery reports unreadable sources itself; the stamp only has to change when they do.
+    return typeof error === 'object' && error !== null && 'code' in error ? `error:${String(error.code)}` : 'error';
+  }
 }
 
 /**
@@ -43,6 +56,7 @@ export async function discoverSkills(
 ): Promise<DiscoveryResult> {
   const skills = new Map<string, SkillMetadata>();
   const errors: Array<{ path: string; error: string }> = [];
+  const sourceStamps = new Map<string, string>();
   const register = (skill: SkillMetadata) => {
     const selected = skills.get(skill.name);
     if (!selected) skills.set(skill.name, skill);
@@ -66,7 +80,7 @@ export async function discoverSkills(
   // Scan each path in priority order
   for (const { path, source } of pathsFlat) {
     try {
-      const discovered = await scanSkillDirectory(path, source, errors);
+      const discovered = await scanSkillDirectory(path, source, errors, sourceStamps);
 
       for (const skill of discovered) {
         register(skill);
@@ -86,7 +100,7 @@ export async function discoverSkills(
     }
   }
 
-  return { skills, errors };
+  return { skills, errors, sourceStamps };
 }
 
 async function scanRecordGatedLearnedArea(
@@ -286,16 +300,20 @@ async function scanSkillDirectory(
   dirPath: string,
   source: ResolvedSkillSource,
   errors: DiscoveryResult['errors'],
+  sourceStamps: Map<string, string>,
 ): Promise<SkillMetadata[]> {
   const skills: SkillMetadata[] = [];
   const visited = new Set<string>();
   async function visit(directory: string): Promise<void> {
     try {
+      sourceStamps.set(directory, await readSkillSourceStamp(directory));
       const physicalPath = comparablePath(await realpath(directory));
       if (visited.has(physicalPath)) return;
       visited.add(physicalPath);
       const entries = await readdir(directory, { withFileTypes: true });
       if (entries.some(entry => entry.name === 'SKILL.md')) {
+        const skillFile = join(directory, 'SKILL.md');
+        sourceStamps.set(skillFile, await readSkillSourceStamp(skillFile));
         const metadata = await loadSkillMetadata(directory, source);
         if (metadata) skills.push(metadata);
         else errors.push({ path: join(directory, 'SKILL.md'), error: 'Skill metadata could not be loaded.' });

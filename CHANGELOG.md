@@ -85,6 +85,12 @@ All notable changes to this project will be documented in this file.
   `REFERENCE.md` or `agents/grader.md`, with their absolute paths. Before, the
   model got no path for them, and child agents could not find them. Skill
   revisions and isolated script snapshots are unchanged.
+- In the REPL, edited, added and removed Skills take effect on the next request
+  without `/reload`. A Run that is already in progress keeps the Skill bodies it
+  activated. `SkillRegistry.refreshIfChanged()` exposes the same check to SDK
+  hosts.
+- The packaged `skill-creator` Skill no longer ships its `.d.ts` typing files,
+  which added 14 unused lines to its activation file list.
 - Preserve closed Shell stdout/stderr when owner cleanup settlement fails,
   keeping large output in sealed recovery files and retaining the Unknown
   cleanup state and retry fence without replaying the command. Failed artifact

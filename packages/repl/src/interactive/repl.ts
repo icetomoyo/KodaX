@@ -250,11 +250,12 @@ export async function buildClassicCliSkillsPrompt(gitRoot?: string): Promise<str
   return registry.getSystemPromptSnippet();
 }
 
-function syncClassicCliSkillsPrompt(
+export async function syncClassicCliSkillsPrompt(
   gitRoot: string | undefined,
   options: KodaXOptions,
-): void {
+): Promise<void> {
   const registry = getSkillRegistry(gitRoot);
+  await registry.refreshIfChanged();
   options.context = {
     ...options.context,
     skillsPrompt: registry.getSystemPromptSnippet(),
@@ -2864,7 +2865,7 @@ async function runAgentRound(
     },
   };
 
-  syncClassicCliSkillsPrompt(context.gitRoot, options);
+  await syncClassicCliSkillsPrompt(context.gitRoot, options);
 
   const runOptions: KodaXOptions = {
     ...options,

@@ -300,6 +300,53 @@ Updated project skill
     expect(secondLoad.content).toContain("Updated project skill with longer text");
   });
 
+  it('refreshIfChanged keeps cached bodies while no Skill source changed', async () => {
+    const root = await createTempDir('kodax-skill-refresh-same-');
+    tempDirs.push(root);
+    await writeSkill(root, 'project', 'steady', 'Steady body');
+    const registry = new SkillRegistry(root, { projectPaths: [join(root, 'project')],
+      userPaths: [join(root, 'user-absent')], pluginPaths: [], builtinPath: join(root, 'builtin') });
+    await registry.discover();
+    const first = await registry.loadFull('steady');
+    await expect(registry.refreshIfChanged()).resolves.toBe(false);
+    expect(await registry.loadFull('steady')).toBe(first);
+  });
+
+  it('refreshIfChanged picks up an edited body, an added Skill and a removed Skill', async () => {
+    const root = await createTempDir('kodax-skill-refresh-change-');
+    tempDirs.push(root);
+    await writeSkill(root, 'project', 'edited', 'Old body');
+    const registry = new SkillRegistry(root, { projectPaths: [join(root, 'project')],
+      userPaths: [], pluginPaths: [], builtinPath: join(root, 'builtin') });
+    await registry.discover();
+    await registry.loadFull('edited');
+
+    await writeSkill(root, 'project', 'edited', 'New and longer body');
+    await expect(registry.refreshIfChanged()).resolves.toBe(true);
+    expect((await registry.loadFull('edited')).content).toContain('New and longer body');
+
+    await writeSkill(root, 'project', 'added', 'Added body');
+    await expect(registry.refreshIfChanged()).resolves.toBe(true);
+    expect(registry.has('added')).toBe(true);
+
+    await unlink(join(root, 'project', 'added', 'SKILL.md'));
+    await expect(registry.refreshIfChanged()).resolves.toBe(true);
+    expect(registry.has('added')).toBe(false);
+    await expect(registry.refreshIfChanged()).resolves.toBe(false);
+  });
+
+  it('refreshIfChanged notices a Skill source folder created after discovery', async () => {
+    const root = await createTempDir('kodax-skill-refresh-root-');
+    tempDirs.push(root);
+    const registry = new SkillRegistry(root, { projectPaths: [join(root, 'project')],
+      userPaths: [], pluginPaths: [], builtinPath: join(root, 'builtin') });
+    await registry.discover();
+    expect(registry.size).toBe(0);
+    await writeSkill(root, 'project', 'late', 'Late body');
+    await expect(registry.refreshIfChanged()).resolves.toBe(true);
+    expect(registry.has('late')).toBe(true);
+  });
+
   it("getSystemPromptSnippet routes skill invocation through the `skill` tool", async () => {
     const rootDir = await createTempDir("kodax-skill-snippet-");
     tempDirs.push(rootDir);

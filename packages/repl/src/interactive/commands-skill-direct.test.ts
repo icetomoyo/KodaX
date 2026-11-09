@@ -190,7 +190,7 @@ describe('direct skill slash invocation', () => {
     });
   });
 
-  it('requires /skill reload before newly added skills enter an initialized registry', async () => {
+  it('resolves skills added after startup without an explicit reload', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-skill-reload-command-'));
     tempDirs.push(root);
     await writeProjectSkill(root, 'existing-skill', 'Existing skill.');
@@ -201,34 +201,14 @@ describe('direct skill slash invocation', () => {
 
     await writeProjectSkill(root, 'new-skill', 'New skill added after startup.');
 
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-
-    const beforeReload = await executeCommand(
-      { command: 'new-skill', args: [] },
-      buildContext(root) as never,
-      {} as CommandCallbacks,
-      {} as never,
-    );
-    expect(beforeReload).toBe(false);
-    expect(logSpy.mock.calls.flat().join('\n')).toContain('Unknown command');
-
-    logSpy.mockClear();
-    await executeCommand(
-      { command: 'skill', args: ['reload'] },
-      buildContext(root) as never,
-      {} as CommandCallbacks,
-      {} as never,
-    );
-    expect(logSpy.mock.calls.flat().join('\n')).toContain('Skills reloaded');
-
-    const afterReload = await executeCommand(
+    const result = await executeCommand(
       { command: 'new-skill', args: [] },
       buildContext(root) as never,
       {} as CommandCallbacks,
       {} as never,
     );
 
-    expect(afterReload).toMatchObject({
+    expect(result).toMatchObject({
       invocation: {
         source: 'skill',
         displayName: 'new-skill',
@@ -237,5 +217,22 @@ describe('direct skill slash invocation', () => {
         },
       },
     });
+  });
+
+  it('keeps /skill reload as an explicit full rediscovery', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-skill-reload-command-'));
+    tempDirs.push(root);
+    await writeProjectSkill(root, 'existing-skill', 'Existing skill.');
+    await getSkillRegistry(root).discover();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await executeCommand(
+      { command: 'skill', args: ['reload'] },
+      buildContext(root) as never,
+      {} as CommandCallbacks,
+      {} as never,
+    );
+
+    expect(logSpy.mock.calls.flat().join('\n')).toContain('Skills reloaded');
   });
 });

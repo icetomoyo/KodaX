@@ -135,6 +135,23 @@ describe('resolveUserSkillInvocation', () => {
     expect(combinedWireSources.match(/<skill name="writing-great-skills"/g)).toHaveLength(1);
   });
 
+  it('picks up Skill edits and additions made after the registry was discovered', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-fresh-skill-'));
+    tempDirs.push(root);
+    await writeProjectSkill(root, 'evolving');
+    const context = { workingDirectory: root, projectRoot: root, disableDynamicContext: true };
+    const before = await resolveUserSkillInvocation('/evolving go', context);
+    expect(before?.skillInvocation?.expandedContent).toContain('Handle this request: go');
+
+    await writeFile(path.join(root, '.kodax', 'skills', 'evolving', 'SKILL.md'),
+      ['---', 'name: evolving', 'description: Edited skill', '---', '', 'Revised instructions: $ARGUMENTS', ''].join('\n'), 'utf8');
+    await writeProjectSkill(root, 'added-later');
+
+    const after = await resolveUserSkillInvocation('/evolving go', context);
+    expect(after?.skillInvocation?.expandedContent).toContain('Revised instructions: go');
+    expect(await resolveUserSkillReference('/added-later now', context)).toMatchObject({ name: 'added-later' });
+  });
+
   it('recognizes a known queued Skill without expanding dynamic context', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-queued-skill-ref-'));
     tempDirs.push(root);

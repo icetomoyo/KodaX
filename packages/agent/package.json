@@ -70,7 +70,7 @@
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "test": "vitest run",
     "test:watch": "vitest",
-    "copy:builtin": "node -e \"require('fs').cpSync('src/capabilities/skills/builtin','dist/capabilities/skills/builtin',{recursive:true})\"",
+    "copy:builtin": "node -e \"const fs=require('fs'),out='dist/capabilities/skills/builtin';fs.rmSync(out,{recursive:true,force:true});fs.cpSync('src/capabilities/skills/builtin',out,{recursive:true,filter:p=>!p.endsWith('.d.ts')})\"",
     "copy:runtime-programs": "node -e \"require('fs').mkdirSync('dist/runtime',{recursive:true});require('fs').copyFileSync('src/runtime/windows-effect-job-programs.json','dist/runtime/windows-effect-job-programs.json')\""
   },
   "dependencies": {
