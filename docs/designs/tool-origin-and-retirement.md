@@ -94,7 +94,7 @@ FEATURE_250 的记录与 [adoption driver](../../tests/deferred-tool-hard-case-t
 - DSH 可选 `str_replace_editor` 有按行 insert，但不是 KodaX 唯一锚点语义，也不是 Standard 必带的工具。[实现](C:/Works/PubProj/deepseek-harness/packages/fs/tool-str-replace-editor/src/index.ts:430)
 - pi 的工具集合提供 read/bash/powershell/edit/write/grep/find/ls，不需要独立 local code_search 名字；集合可用不等于每项默认启用。[工具集合](C:/Works/PubProj/pi/packages/coding-agent/src/core/tools/index.ts:96)
 
-另一个过期前提：当前 RepoIntel 已内置 full/light；旧 premium/oss/独立 daemon 控制不再决定运行行为。不能继续按“社区版没有这些能力”判断是否曝光，应看真实 mode/host/capability。[当前契约](../REPOINTEL.md:3)
+另一个过期前提：当前 RepoIntel 已内置 full/light；旧 premium/oss/独立 daemon 控制不再决定运行行为。不能继续按“社区版没有这些能力”判断是否曝光，应看真实 mode/host/capability。[当前契约](../HLD.md#5-coding-runtime)
 
 ## 其他差异工具：历史问题是否仍然存在
 

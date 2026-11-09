@@ -43,6 +43,8 @@ the SDK contracts, the allowance first became 5 MiB + 16 KiB from the committed
 5 MiB baseline; 5 MiB + 8 KiB was an intermediate local allowance. The subsequent
 Host view-read close fence brought the measured CLI to 5,259,331 bytes, 67 bytes
 above that allowance. A further 1 KiB brings the final budget to 5 MiB + 17 KiB.
+(Superseded: the CLI limit is now 5 MiB − 49 KiB; see
+[DD CLI bundle budget](DD.md#cli-bundle-budget).)
 These changes add no third-party dependency; the eager-dependency and cold-entry
 fences remain.
 The gate's bootstrap cannot load target runtime preloads or Bun project config;
@@ -149,6 +151,31 @@ See the [accepted slices](features/v0.7.97.md#2026-10-29-统一-host-sdk-收口�
 [validation record](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md).
 
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
+
+### Host execution boundary
+
+Process ownership alone does not unify the product; the Host must also own
+admission, trusted preparation and result facts.
+
+- Skill discovery and metadata validation are pure reads. Dynamic context and
+  command hooks run only after the input is admitted and saved, inside the
+  owning Run's tool context, permission path and abort signal. A busy Session or
+  failed save rejects before any tool executes. Preparation counts as a mutation
+  for scope and shutdown draining.
+- Tool status comes from the executor's structured `toolResult`. Text prefixes
+  such as `[Tool Error]` are read only for legacy history lacking that field.
+- Product operations that are not user input (compact, Memory, review,
+  registered commands) use specific Client methods with their own results.
+- Deliberately not added: a generic operation ledger, input `preparing/handled`
+  states, replaying recovery, a new shell backend, or a "sandbox unavailable,
+  run unsandboxed" fallback. Unknown outcomes stay unknown; a lost reply is
+  never replayed. Reconnecting to a live Host and recovering after Host death
+  are different guarantees.
+- From Codex, deepseek-harness and pi we adopted owner-side input arbitration,
+  structured result facts, permission/cancellation checks before dispatch and a
+  current-state baseline on reconnect. We rejected in-memory fallbacks in place
+  of a shared Host, sandbox-failure fallback to local bash, and treating
+  write-behind event append as crash-durable.
 
 > Last updated: 2026-10-29
 >
@@ -1203,7 +1230,9 @@ Consequence:
 
 ## ADR-012: `Project` and `SA / AMA` Are Orthogonal Dimensions
 
-**Status**: Accepted
+**Status**: Accepted; the user-facing SA/AMA switch is superseded by
+[ADR-072](#adr-072-work-modes-and-the-model-facing-tool-contract). CLI and REPL
+use AMA; SA remains only for explicit SDK Runs and Runs that already captured it.
 
 `Project` 描述任务语境，`SA / AMA` 描述执行拓扑；二者可以合法组合。
 
@@ -1335,7 +1364,7 @@ Reasoning:
 
 **Status**: Accepted
 
-KodaX 的 SA 与 AMA 用户切换是永久产品决策（ADR-003 / ADR-012），但**实现层不再保留两套独立的 agent 执行路径**。所有 agent 调用 —— SA 直达、AMA 的 Scout/Planner/Generator/Evaluator、subagent fan-out —— 都通过同一个 Runner 帧、同一个 executor、同一套 Layer-A primitives 执行。
+KodaX 的 SA 与 AMA 用户切换曾是永久产品决策（ADR-003 / ADR-012；用户切换已由 ADR-072 退役），但**实现层不再保留两套独立的 agent 执行路径**。所有 agent 调用 —— SA 直达、AMA 的 Scout/Planner/Generator/Evaluator、subagent fan-out —— 都通过同一个 Runner 帧、同一个 executor、同一套 Layer-A primitives 执行。
 
 核心区分：
 
@@ -5227,6 +5256,31 @@ recovery cases. In-place cross-version downgrade requires a versioned owner
 schema understood by both versions plus a tested reversible migration; backups
 and active-turn fencing remain mandatory until then.
 
+### ADR-055 addendum (2026-11-07): independent Actor Run settlement
+
+An independent Run was marked `completed` before the Actor's canonical terminal
+was committed, so a restart could observe a completed Run while the Actor was
+still running. The five-second test wait in `64dab173a` hid this race and is not
+a fix.
+
+Run settlement is now an idempotent projection of the canonical Turn onto the
+Run, driven by the Controller's internal `onEventCommitted` hook. The exact
+binding (`_runtime.actor`: actor path, turn ID, created-at) is persisted with
+the first Run state before dispatch. `environment.release` only captures the
+executor's facts and never waits for its own terminal. Reconciliation runs at
+startup and whenever owner death is observed later; it reads the persisted
+Actor snapshot, repairs only the Run, and never re-executes. Writes are guarded
+by owner and revision compare-and-swap. Exits without a terminal event settle
+as unknown, a suspended generation keeps its short-circuit, and the Shell
+cleanup barrier still applies. Legacy Runs without a binding are not corrected
+automatically.
+
+Rejected: a separate Host finalizer, which adds a second writer and a polling
+loop, and longer production deadlines, which hide the race. Implemented in
+`c68e7abc8`, `0c37a4eb7`, `031215c63`, `ef1af6fe9` and `918f526d0`; regression
+entry points are listed in the
+[Issue 322 regression guide](test-guides/ISSUE_322_v0.7.97_REGRESSION_GUIDE.md#2026-11-07-分阶段修复与最终验证入口).
+
 ---
 
 ## ADR-056: Runtime Owns Auto-Mode Permission Decisions and Host Capability Exposure
@@ -6318,6 +6372,43 @@ concurrency/recovery reviews on 2026-08-26.
 
 ## ADR-067: Capacity-Debt Admission with a Bounded Recovery Ladder Supersedes the Issue 158 Hard Gate
 
+### ADR-067 follow-up (2026-11-06): small-context reliability
+
+The existing chain is strengthened; no parallel framework is added.
+
+- A summary that stops at its output limit (`max_tokens` / `length`) is rejected
+  rather than committed truncated, even when its closing tag is present. The
+  original history stays and existing capacity recovery continues.
+- Every summary request carries its planned output limit on the wire
+  (`maxOutputTokensOverride`), so planning and transport use the same budget.
+- Oversized history is reduced by bounded group-merge over the mapped units.
+  Each reduce consumes at least two units and must strictly shrink the token
+  count; a singleton carries forward, so N units need at most N−1 reduces. A
+  reduce without progress fails into the existing recovery path. Intermediate
+  map/reduce results never become canonical history: there is one final commit
+  and no cross-restart intermediate cache. Rolling or recursive single-summary
+  rewriting is rejected because the earliest facts drift with every pass.
+- The exact user query ledger is merged into the final checkpoint and is not
+  dropped to save tokens.
+- Ordinary text reads use a bounded scanner: memory follows the displayed page,
+  giant lines are paged with `line_offset`, abort is honored, and unknown totals
+  are not invented. There is no global file index.
+- `toolResultCapacityTokens` is the capacity of the whole tool-result batch. A
+  read uses it only as an advisory ceiling; the batch guardrail owns admission.
+  A budget-clipped read is not recorded in the read dedup cache, and pages whose
+  text the batch projection changed are invalidated.
+- Explicit input-capacity dialects map to the context-overflow error before
+  generic "limit" matching. HTTP 429, TPM and quota errors keep rate-limit
+  semantics, and an `x-should-retry` hint never re-sends a capacity error.
+- PDF reads are bounded (by default 4 pages / 16,000 characters with page
+  continuation). This lives in the Extensions repository, `0e18e07`, and was not
+  re-verified in this repository.
+
+Commits `37baedc7c`, `1eca089ba`, `14e1da985`, `64b218be8`, `cc48eea79`,
+`a856136fc`, `d723d8352`, `7823443e0`, `dcda31e11`, `69b196400`, `ada535a13`.
+Acceptance and the small-context pilot are recorded in the
+[Issue 322 regression guide](test-guides/ISSUE_322_v0.7.97_REGRESSION_GUIDE.md#2026-11-06-small-context-document-pipeline-acceptance).
+
 **2026-10-21 local implementation follow-up (after `87502cb9`, unreleased):**
 Issue 322 preserves prior summary failures on irreducible input. Capacity recovery
 now also pages older assistant text and cumulative user input, reduces excessive
@@ -6939,6 +7030,28 @@ with narrower sets; they did not establish a deployable replacement token or
 global write isolation. Keep the existing same-root concurrent-read/write and
 warm-admission regressions. See the [scope, probe limitations and validation](test-guides/ISSUE_333_v0.7.96_REGRESSION_GUIDE.md).
 
+### Issue 335 recovery placement rationale
+
+Residual native request-content errors (HTTP 400/422) are recovered by one
+text-only diagnosis on the current Agent and Provider, not a separate sidecar.
+Probes on four Coding routes showed the same model can pick the defective
+attachment from a text projection of the failed request; a sidecar would add a
+second identity, credential scope and retry loop without better evidence.
+
+- The model proposes; the runtime accepts only: omit an exactly located invalid
+  attachment, tidy tool history without loss, or clear a specific thinking
+  block. Free-form patches and natural-language-justified deletions are rejected.
+- Evidence is a wire position from the upstream error bound to the sent payload
+  digest, or a local decode of the snapshot actually sent. A bare `1210`/400 is
+  not evidence.
+- Diagnosis and resume each use one existing retry slot, at most once per run;
+  a failed diagnosis is not re-diagnosed. New user input invalidates the plan.
+- Repairs live only in the request projection; Session history and files are
+  never rewritten, and completed or unknown-execution tool records are kept.
+
+Out of scope: other error classes, auth/quota/transport failures, crash-restart
+recovery, automatic Provider fallback, and re-encoding locally valid images.
+
 ### FEATURE_299 v0.7.96 — admitted control and extension execution
 
 Session Stop is a control operation over admitted Run/Session/Profile and owner
@@ -6975,6 +7088,129 @@ Rejected alternatives: history retries before Stop, swallowed control errors,
 optimistic stopped UI, client-side list/abort loops, global workflow cancellation,
 mode-blind dangerous-command blocks, interpreter rewrites after explicit denial,
 and a separate extension permission or lifecycle engine.
+
+---
+
+## ADR-072: Work Modes and the Model-Facing Tool Contract
+
+**Status**: Accepted (shared compact contract `c5c296ff`, 2026-10-27; production
+baseline `490ea6de`, 2026-10-28)
+**Driver**: first-turn input of about 23–26K tokens and 78 builtin entries
+(54 native, `code_search`, 5 aliases, 18 conditional) made every task pay for
+capability it rarely used, while removing tools risked task quality.
+
+**Context**: Earlier experiments mixed three separate questions: what a Run may
+do (capability and permission), what the model sees (presentation), and how a
+tool is invoked (native call, bridge, or Script cell). Whole-candidate trims
+could not be attributed to a single change and regressed specific models.
+
+**Decision**:
+
+1. One authoritative capability catalog with three user presets: Coding
+   (default), Agent, and Script (explicit, experimental). Precedence is an
+   explicit SDK Run, then the Session, then Coding. CLI `--work-mode` and REPL
+   `/work-mode` select the mode; `/mode` remains the permission control. There
+   is no task classifier and no automatic mode switching.
+2. A mode changes only at an idle boundary. A busy switch is rejected, not
+   queued. The change applies to the next Run and is persisted in the Session.
+   Children keep their own assembly. An agent profile, system-prompt override
+   or visibility policy without `workModePolicy: 'intersect'` resolves to
+   Coding.
+3. Capability, presentation and invocation are independent. Hiding is
+   presentation only: it never grants or removes permission, it is not
+   deferral, and it must not use exclude or visibility policy, which would stop
+   the bridge from reaching the tool. Agent hides the builtins tagged
+   `workSurface: 'coding'`; the agent package does not know coding tool names.
+   Hiding an entry does not stop pre-turn indexing.
+4. A model-facing alias (`multi_edit`, `changed_diff_bundle`, `tool_describe`,
+   `todo_get`, `lsp_prepare_call_hierarchy`) disappears only when its builtin
+   replacement is present; handlers remain for SDK callers. The root local
+   `code_search` entry is hidden only for an unprofiled root that has builtin
+   grep, glob, read, `tool_search` and `tool_call` and no extension search.
+   SDK and custom-host contracts keep native search.
+5. A tool is retired only when its responsibility is shown to be covered.
+   Adoption rate and tool count are not evidence. For example,
+   `relationship_scan` does not losslessly replace module, symbol, process or
+   impact context, so Coding keeps all of them.
+6. Script runs one bounded, synchronous `script_exec` cell in a real sandbox,
+   not `node:vm`. Each leaf call is permission-checked, charged to the budget
+   once, and recorded with provenance. Partial completion returns receipts; the
+   whole cell is never replayed. A restart does not restore the VM. Results
+   keep the leaf tools' real format, and failures, refusals and partial writes
+   are reported even when the cell prints nothing. If Script is unavailable the
+   Run is refused with no fallback; low-level `runKodaX` and Hosts without the
+   work-mode capability reject it. Script's value is data-dependent
+   composition, not first-turn tokens.
+7. All managed modes use one compact shared contract by default, with no
+   switch (`projectManagedSystemContract` / `projectManagedToolContracts` in
+   `managed-task/llm-adapter.ts`). It applies only to ordinary managed roots;
+   a same-name host override keeps its own contract. The first request,
+   retries, continuations and request measurement share one projection. Tool
+   fitting is budgeted against the full original system, and the canonical
+   transcript is never rewritten. Tool schemas own parameter semantics; the
+   Worker owns planning, scope, collaboration, resume and verification. Prompts
+   are never shortened by making the model discover something, load a Skill or
+   fail first. Changing the Worker, Memory or manual rules requires a
+   rule-retention audit against the
+   [rule-retention matrix](test-guides/FEATURE_WORK_MODES_v0.7.97_TEST_GUIDE.md#rule-retention-matrix).
+8. After a policy or permission refusal the model must not pursue the same
+   effect through another command, shell or tool; it corrects invalid syntax,
+   paths or stale anchors from current evidence instead
+   (`TOOL_RECOVERY_GUIDANCE`).
+9. A candidate is adopted when task quality holds, first-turn and whole-task
+   tokens fall, and whole-task round trips stay roughly flat. "Never one extra
+   request per sample" is not required; an occasional extra request is judged
+   against completion quality. Incomplete samples are not savings. "Under 10K"
+   is a goal, not a rule-deletion metric. Every new trim must name the
+   information it removes and the layer that now owns it.
+
+**Rejected alternatives**:
+
+- Per-mode tool arrays, or presets that mix surface with invocation: they
+  triplicate state and drift.
+- A task classifier or automatic mode switching: the user's choice stays
+  explicit and predictable.
+- A fourth "Minimal" mode, or a shell-only Agent: no unmet need, and capability
+  is lost.
+- Deferring low-frequency tools by default: Kimi preflight grew from 2 requests
+  / 34,573 tokens to 3 / 49,740.
+- Bridge, PTC or Code Mode as the default: not cheaper (DSH PTC SDK about 8.7K;
+  Codex direct/mixed 15,174 / 18,476), and the bridge was no more efficient
+  than native calls.
+- The whole compact candidate (16,352 → 10,689): unattributable; Kimi did extra
+  work and GLM skipped Todo.
+- Worker teaching dedup (−254 tokens): Kimi did extra reconnaissance.
+- Deferring five full schemas or shortening `spawn_agent` text: GLM delegated
+  less in parallel.
+- Merging ask's single and batch forms: their callbacks and returns differ.
+- `/goal`-only Goal creation (−526–548 tokens): it removes natural-language
+  creation.
+- Deleting `multi_edit` or force-merging tools: atomic multi-hunk edits are
+  lost.
+- Forced reads, automatic edit-range rewriting, removing child review, or
+  general evidence-gathering teaching: task quality regressed.
+- Typed declarations for Script (−756 tokens), recursive receipt compression,
+  or a Script result-summary filter: no non-inferiority evidence.
+
+**Consequences**: Existing users stay on Coding. The SA/AMA user switch that
+ADR-012 called permanent is retired: CLI and REPL use AMA, and an explicit SDK
+SA Run or an in-flight Run keeps its captured engine. Known gaps are tracked
+as Issue 394: Kimi has never chosen `script_exec` on its own, and whole-task
+non-inferiority of Agent and Script is unproven. Linux and macOS native
+packages are untested.
+
+**Baselines** (historical; not re-measured at HEAD; no test gates them):
+
+| Measure | Value | Basis |
+|---|---|---|
+| First-turn input, Agent / Coding / Script | 10,839 / 14,470 / 16,340 | `8a1afc77` plus workspace, full Host estimate |
+| Whole-task tokens, fixed task set | 3,215,448 → 1,499,058 (−53.4%) | `bd4479d` → `8a1afc77` |
+| First API input | about 23–26K → 10–12K | same |
+| Offline oracle passes | 2/6 → 4/6 | same |
+| R15 first-request API input | about −55% on GLM, Kimi and DeepSeek Flash | Windows, one sample per cell, not statistical |
+| R15 whole-task tokens | −63.8% GLM, −60.8% Kimi | same; both versions missed the same contract details, so this is not an all-green same-quality claim |
+
+R15 data and limits: [baseline test guide](test-guides/FEATURE_WORK_MODES_ORIGINAL_BASELINE_TEST_GUIDE.md#r15-结果与默认采用建议).
 
 ## 2026-10-11 — Main-agent result verification replaces Sidecar Verifier
 

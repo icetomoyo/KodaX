@@ -521,7 +521,7 @@ model-quality equivalence for the integrated revision.
 
 ## 2026-11-06: Small-context document pipeline acceptance
 
-日期：2026-11-06。关联：[容量可靠性方案](../designs/context-capacity-reliability-plan-2026-11-06.md)、[Eval Guidelines](../../benchmark/EVAL_GUIDELINES.md)。
+日期：2026-11-06。关联：[ADR-067 小上下文可靠性补充](../ADR.md#adr-067-follow-up-2026-11-06-small-context-reliability)、[Eval Guidelines](../../benchmark/EVAL_GUIDELINES.md)。
 
 ### 离线集成验收
 
@@ -540,6 +540,16 @@ node node_modules/vitest/vitest.mjs run tests/small-context-document-recovery.te
 本测试证明受控运行链路的工程行为，不证明模型理解或自主选择读取范围的能力。固定 system/schema 特意较小；8K/16K 通过不代表生产任意完整工具菜单均能容纳。Provider 计数、摘要正文和下一步工具选择均受控，不能作为真实模型准确率或吞吐量报告。PDF/OCR 使用 Extensions 独立测试，不由本矩阵代替。
 
 ### 真实模型 pilot：拟定，未执行
+
+> **2026-11-07 执行结果**（本节下方 r1 协议保留为历史）：r2/r3 修订已在 DeepSeek Flash
+> 与 GLM 5.3 Flash 上执行，结论 **recommend-iterate**，不是布尔发布门。64K 为人为设定的应用预算，
+> 所选模型原生窗口更大。r3 两条路线都完成 RUNBOOK_A 的两次真实生产压缩，压缩与未压缩答案在纠正事实、
+> 例外范围、四个出处、已完成动作不重放和未读范围上打平，属于保持而非质量提升；GLM 两版都未满足
+> 纯 JSON 输出格式。第二个 fixture 被 2,048 输出上限截断，记为删失，不外推。DOCX R4 小面板证据混合，
+> 支持保留转换/诊断工程改动，不证明视觉通过或 Word/WPS 等价。全部阶段合计 24 次物理请求、
+> 145,003 token，原 40 次/600,000 token/US$5 上限未重置，账本已关闭。未验证：原生 100K 以下模型、
+> 自主整本阅读、全部文档格式与 DOCX 模型视觉判断。r2 中仅评测使用的闭合标签门比生产解析器更严，
+> 导致假失败，已记入 [EVAL_GUIDELINES](../../benchmark/EVAL_GUIDELINES.md)。
 
 状态：**未执行，不计为通过**。当前阶段不启动付费调用。以下是 `small-context-document-pilot-r1` 的预算与协议冻结；实际模型 ID、价格核验、精确 fixture 字节/hash 与生产提示快照在执行前补齐 manifest，任何变更均建立新 revision，不能边跑边扩样本。
 
@@ -599,13 +609,13 @@ Vitest 4.1.11 的 `vi.waitFor` 默认 timeout 为 1,000ms；外层测试的 20,0
 
 这确认了需要修复的独立 Run 结算屏障，不能继续将 `64dab173a` 的五秒等待解释为完整生产修复；历史全量失败仍不能唯一归因为人工慢落盘。门控与硬崩溃 raw 位于 OS 临时目录 `kodax-actor-root-cause-20261107`，没有提交 raw 或一次性探针。
 
-具体根因、证据边界、拟定的最小修复及验收门见 [Actor 重启结算分析](../designs/actor-restart-settlement-analysis-2026-11-07.md)。该方案尚未实施，验收门未计为通过。work mode 锁定机制及生产源码保持不变。
+（历史记录）具体根因、证据边界、拟定的最小修复及验收门当时记录在 Actor 重启结算分析中（已删除，见 git 历史；结论见 [ADR-055 增补](../ADR.md#adr-055-addendum-2026-11-07-independent-actor-run-settlement)）。该方案当时尚未实施，验收门未计为通过。work mode 锁定机制及生产源码保持不变。
 
 第二轮方案复核优先采用内部 committed-event hook 驱动 Run 结算，替代另建 Host 等待 finalizer；补充首次 dispatch 前持久关联，以及启动/后续 owner-death 两处对账。P0 必须同时覆盖 Actor 提交前和 Actor 已提交、Run 尚未提交两个硬崩溃停点，并包含基础 unknown、Run 写入失败、checkpoint 关闭收敛及撤销五秒等待；P1 扩大竞争和故障组合。反向停点本轮仅确认启动代码缺少对账，尚未执行该停点的硬崩溃验收，不计为通过。
 
 ### 2026-11-07 分阶段修复与最终验证入口
 
-前文“尚未实施/未执行”是调查阶段的历史状态。P0-A 已提交 `c68e7abc8`，P0-B 及必要异常出口已提交 `0c37a4eb7`。具体实现、有效 RED→GREEN 和验证范围见 [实施记录](../designs/actor-restart-settlement-analysis-2026-11-07.md#11-分阶段实施记录)。容量修复、work mode 锁定及 next-dev 整体合并继续独立管理，没有发布安装包。
+前文“尚未实施/未执行”是调查阶段的历史状态。P0-A 已提交 `c68e7abc8`，P0-B 及必要异常出口已提交 `0c37a4eb7`。具体实现、有效 RED→GREEN 和验证范围见 [ADR-055 增补](../ADR.md#adr-055-addendum-2026-11-07-independent-actor-run-settlement) 及下文回归入口。容量修复、work mode 锁定及 next-dev 整体合并继续独立管理，没有发布安装包。
 
 新增源码回归入口：
 
@@ -621,7 +631,7 @@ Vitest 4.1.11 的 `vi.waitFor` 默认 timeout 为 1,000ms；外层测试的 20,0
 
 原 generation-actors 文件的五处五秒完成期限已撤除。等待按精确 `agents.output` 判定，终态错误立即失败，`agents.wait(...,100,{signal})` 仅作唤醒，保留外层预算。失败 hook 输出最近 output/Run/event、执行次数、有界 `coding:actors` sink 和真实 save-attempt 阶段诊断，不在失败 hook 再访问 SDK 或磁盘。既有 1,200ms 延迟场景保留为附加慢存储回归；它不替代精确 terminal-save gate 或硬崩溃证据。
 
-生产冻结点 SDK blob 为 `adf5fded8ca0141d1aceac2ebc69effe54ea4dce`，另两生产模块及 CLI 增量记录于 [构建预算审计](../designs/actor-settlement-bundle-audit-2026-11-07.md)。最终结果如下，不把中间专项或旧构建当成最终通过。
+生产冻结点 SDK blob 为 `adf5fded8ca0141d1aceac2ebc69effe54ea4dce`，CLI 体积上限与核对方法见 [DD CLI bundle budget](../DD.md#cli-bundle-budget)（逐模块增量审计已删除，见 git 历史）。最终结果如下，不把中间专项或旧构建当成最终通过。
 
 P1 追加 2 文件 / 3 项独立执行全部通过；它们在默认全仓启动后加入，不归入那次预先收集的文件清单。generation 等待诊断顺序经复审调整后，完整文件另跑 10/10 通过。两项只改测试，生产冻结点保持不变。标准轴与需求轴交叉复审最终均无剩余发现。
 

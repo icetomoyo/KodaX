@@ -1,18 +1,26 @@
-/** Manual, frozen L2/L3 experiment. No model-selected tool is executed. */
+/**
+ * **ARCHIVED — DO NOT RUN.** Retired 2026-11-09: the whole compact candidate it
+ * froze (revision compact-contract-r3-20261025) was rejected; the shared compact
+ * contract (c5c296ff) superseded it. Rationale lives in docs/ADR.md ADR-072.
+ * Its frozen manifest also hashed design notes that have since been removed, so
+ * the recorded revision can no longer be resumed.
+ *
+ * Manual, frozen L2/L3 experiment. No model-selected tool is executed.
+ */
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomInt } from 'node:crypto';
-import { getProvider, getProviderModels, getCostRate, calculateCost } from '../packages/llm/src/index.js';
-import type { KodaXMessage, KodaXStreamResult, KodaXToolDefinition } from '../packages/llm/src/types.js';
-import { observeProviderOperation, runWithProviderRequestObserver, type ProviderRequestObservation } from '../packages/llm/src/provider-request-observation.js';
-import { buildWorkerActorCapacityContract, buildWorkerRoutingContext } from '../packages/coding/src/agents/worker-role-prompt.js';
-import { buildFallbackRoutingDecision } from '../packages/coding/src/reasoning.js';
-import { FirstTurnBudget, inputHash, firstTurnReasoningFor, type BudgetSnapshot, type FrozenInput } from './first-turn-eval-support.js';
-import { semanticProbeEvidence } from './compact-teaching-eval-support.js';
-import { compactContractInput } from './first-turn-compact-contract.js';
-import { prepareContractFixture } from './first-turn-compact-contract-fixture.js';
-import { controlledActionKind, type ContractCase } from './first-turn-compact-contract-cases.js';
+import { getProvider, getProviderModels, getCostRate, calculateCost } from '../../packages/llm/src/index.js';
+import type { KodaXMessage, KodaXStreamResult, KodaXToolDefinition } from '../../packages/llm/src/types.js';
+import { observeProviderOperation, runWithProviderRequestObserver, type ProviderRequestObservation } from '../../packages/llm/src/provider-request-observation.js';
+import { buildWorkerActorCapacityContract, buildWorkerRoutingContext } from '../../packages/coding/src/agents/worker-role-prompt.js';
+import { buildFallbackRoutingDecision } from '../../packages/coding/src/reasoning.js';
+import { FirstTurnBudget, inputHash, firstTurnReasoningFor, type BudgetSnapshot, type FrozenInput } from '../first-turn-eval-support.js';
+import { semanticProbeEvidence } from '../compact-teaching-eval-support.js';
+import { compactContractInput } from '../first-turn-compact-contract.js';
+import { prepareContractFixture } from '../first-turn-compact-contract-fixture.js';
+import { assertFrozenCell, continuation, emptyResponse } from '../first-turn-compact-contract-replay.js';
 
 const REVISION = 'compact-contract-r3-20261025';
 const ROOT = path.join(os.tmpdir(), 'kodax-eval-dumps', REVISION);
@@ -39,11 +47,6 @@ interface Cell {
 }
 interface Manifest { revision: string; limits: typeof LIMITS; cellsHash: string; fixtureHash: string; sourceHashes: Record<string, string>; rates: Record<string, unknown> }
 
-export function assertFrozenCell(frozen: unknown, current: unknown): void {
-  if (inputHash(frozen) !== inputHash(current)) throw new Error('Frozen cell changed before dispatch');
-}
-export const emptyResponse = (row: Pick<Row, 'text' | 'toolCalls'>): boolean => !row.text.trim() && row.toolCalls.length === 0;
-
 async function prepare() {
   const capture = process.env.KODAX_CONTRACT_CAPTURE;
   if (!capture) throw new Error('Explicit baseline wire capture required');
@@ -53,7 +56,7 @@ async function prepare() {
   const fixture = await prepareContractFixture(ROOT);
   const sources = ['tests/first-turn-eval-support.ts', 'tests/compact-teaching-eval-support.ts', 'benchmark/EVAL_GUIDELINES.md',
     'src/windows-text-transaction.ts', 'src/windows-native-artifacts.ts',
-    'docs/designs/compact-contract-plan.md', 'docs/designs/compact-contract-validation-cases.md', 'package-lock.json',
+    'package-lock.json', 'tests/_archive/first-turn-compact-contract.eval.ts',
     ...(await fs.readdir('tests')).filter(file => file.startsWith('first-turn-compact-contract') && file.endsWith('.ts')).map(file => `tests/${file}`)];
   for (const base of ['packages/llm/src', 'packages/coding/src/prompts', 'packages/coding/src/agents', 'benchmark/datasets/search-entry-complex']) {
     sources.push(...(await fs.readdir(base, { recursive: true })).filter(file => /\.(ts|json)$/.test(file)).map(file => `${base}/${file.replaceAll('\\', '/')}`));
@@ -90,22 +93,6 @@ async function prepare() {
   await save('budgets.json', Object.fromEntries(ROUTES.map(route => [route.id, new FirstTurnBudget(undefined, LIMITS.perRoute).state])), true);
   process.stdout.write(JSON.stringify({ directory: ROOT, manifestHash: inputHash(manifest), externalCalls: 0,
     routes: ROUTES.map(route => ({ ...route, credentialPresent: Boolean(process.env[route.env]), modelKnown: getProviderModels(route.provider).includes(route.model), rate: getCostRate(route.provider, route.model) })) }) + '\n');
-}
-
-/** Only preregistered paths receive frozen real handler receipts; no invocation or argument rewrite. */
-export function continuation(cell: Pick<Cell, 'caseId' | 'completed' | 'read' | 'edited'>, calls: Row['toolCalls'], fixture: Fixture): KodaXMessage {
-  const content = calls.map(call => {
-    const kind = controlledActionKind(cell.caseId, call);
-    let result: string;
-    if (kind === 'todo-complete') { cell.completed = true; result = fixture.receipts.complete; }
-    else if (kind === 'todo-list') result = (cell.completed ? fixture.receipts.listAfter : fixture.receipts.listBefore)[call.input.id ? 'item' : 'all'];
-    else if (kind === 'read' && !cell.edited) { cell.read = true; result = fixture.receipts.read; }
-    else if (kind === 'edit' && cell.read && !cell.edited) { cell.edited = true; result = fixture.receipts.edit; }
-    else if (kind === 'test' && cell.edited) result = fixture.receipts.test;
-    else throw new Error(`Unregistered continuation: ${call.name}; preserved for task-validity review`);
-    return { type: 'tool_result' as const, tool_use_id: call.id, content: result };
-  });
-  return { role: 'user', content };
 }
 
 async function run(command: 'pilot' | 'panel') {

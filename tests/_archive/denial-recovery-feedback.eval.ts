@@ -1,16 +1,23 @@
-/** Manual single-response probes; never execute generated tools or retry cells. */
+/**
+ * **ARCHIVED — DO NOT RUN.** Retired 2026-11-09: the recovery rule it validated
+ * (TOOL_RECOVERY_GUIDANCE) is adopted, and prepare requires the historical
+ * Worker to equal the current Worker minus that rule, which no longer holds.
+ * Rationale lives in docs/ADR.md ADR-072.
+ *
+ * Manual single-response probes; never execute generated tools or retry cells.
+ */
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { randomInt } from 'node:crypto';
-import { getProvider, getCostRate, calculateCost } from '../packages/llm/src/index.js';
-import type { KodaXStreamResult } from '../packages/llm/src/types.js';
-import { observeProviderOperation, runWithProviderRequestObserver, type ProviderRequestObservation } from '../packages/llm/src/provider-request-observation.js';
-import { buildWorkerStableInstructions } from '../packages/coding/src/agents/worker-role-prompt.js';
-import { TOOL_RECOVERY_GUIDANCE } from '../packages/coding/src/prompts/execution-guidance.js';
-import { checkComplexTool } from './first-turn-complex-guard.js';
-import { FirstTurnBudget, firstTurnReasoningFor, inputHash, type BudgetSnapshot, type FrozenInput } from './first-turn-eval-support.js';
-import { semanticProbeEvidence } from './compact-teaching-eval-support.js';
+import { getProvider, getCostRate, calculateCost } from '../../packages/llm/src/index.js';
+import type { KodaXStreamResult } from '../../packages/llm/src/types.js';
+import { observeProviderOperation, runWithProviderRequestObserver, type ProviderRequestObservation } from '../../packages/llm/src/provider-request-observation.js';
+import { buildWorkerStableInstructions } from '../../packages/coding/src/agents/worker-role-prompt.js';
+import { TOOL_RECOVERY_GUIDANCE } from '../../packages/coding/src/prompts/execution-guidance.js';
+import { checkComplexTool } from '../first-turn-complex-guard.js';
+import { FirstTurnBudget, firstTurnReasoningFor, inputHash, type BudgetSnapshot, type FrozenInput } from '../first-turn-eval-support.js';
+import { semanticProbeEvidence } from '../compact-teaching-eval-support.js';
 
 const root = path.join(os.tmpdir(), 'kodax-eval-dumps/denial-recovery-r2-20261026');
 const prior = path.join(os.tmpdir(), 'kodax-eval-dumps/compact-contract-full-complex-20261025-r2');
@@ -64,8 +71,8 @@ if (phase === 'prepare') {
       { route: route.id, caseId: scenario.id, arm: 'B', input: reversed ? scenario.input : candidate });
     map.push({ route: route.id, caseId: scenario.id, A: reversed ? 'candidate' : 'baseline', B: reversed ? 'baseline' : 'candidate' });
   }
-  const files = ['tests/denial-recovery-feedback.eval.ts', 'tests/first-turn-complex-guard.ts', 'tests/first-turn-eval-support.ts',
-    'tests/compact-teaching-eval-support.ts', 'package-lock.json', 'docs/designs/denial-recovery-validation.md'];
+  const files = ['tests/_archive/denial-recovery-feedback.eval.ts', 'tests/first-turn-complex-guard.ts', 'tests/first-turn-eval-support.ts',
+    'tests/compact-teaching-eval-support.ts', 'package-lock.json'];
   for (const dir of ['packages/llm/src', 'packages/coding/src/prompts', 'packages/coding/src/agents']) {
     files.push(...(await fs.readdir(dir, { recursive: true })).filter(file => file.endsWith('.ts')).map(file => `${dir}/${file.replaceAll('\\', '/')}`));
   }

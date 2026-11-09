@@ -147,10 +147,8 @@ npx vitest run -c tests/config/vitest.integration.config.ts packages/llm/src/pro
 4. 定义的本地预算/后端不可用走保留原字节的兼容路径，可能仍被上游拒绝；
    不能把 unverified 等同于通过校验。原文件不可读也不会冒充已损坏而静默忽略。
 
-调查与 pi/codex 比较见 [兼容性报告](../investigations/IMAGE_COMPATIBILITY_RECOVERY_2026-09-14.md)。
-
-通用恢复 sidecar 仅形成 [讨论稿](../investigations/GENERAL_RECOVERY_SIDECAR_DESIGN_2026-09-14.md)，
-未加入运行时，不应将设计中的报错后自动修订/重试列为当前已实现能力。
+通用恢复 sidecar 未采用，原因与边界见 [ADR](../ADR.md#issue-335-recovery-placement-rationale)；
+不应将报错后自动修订/重试列为当前已实现能力。
 
 ## 主 Agent 文字诊断恢复（本次增量）
 
@@ -169,7 +167,7 @@ npx vitest run -c tests/config/vitest.integration.config.ts packages/llm/src/pro
 npx vitest run packages/coding/src/agent-runtime/text-recovery.integration.test.ts packages/coding/src/resilience/text-recovery.test.ts packages/llm/src/providers/rejected-image.test.ts
 ```
 
-四 Provider 受控验证见 `MAIN_AGENT_RECOVERY_IMPLEMENTATION_2026-09-14.md` 的最终结果。
+四 Provider 受控验证的运行方法见下文“真实模型探针”。
 Space 已有 recovery 事件桥接接受 text_diagnosis；本地开发 link 与安装包版本更新分别验收。
 这不是“所有错误必定自愈”，也不会替代模型对最终文案准确性的责任。
 
@@ -179,3 +177,14 @@ Space 已有 recovery 事件桥接接受 text_diagnosis；本地开发 link 与�
 续轮检查：一次思考修复后，新生成的有效 thinking/signature 必须继续发送；工具修复后，
 后来新增的工具调用及完成结果仍须保留。对应 helper 回归固定这两个边界，不能使用永久
 布尔开关清掉此运行里所有未来内容。
+
+### 真实模型探针（显式开启，计费）
+
+先 `npm run build:packages` 再 `npm run build:bundle`（探针读取 `dist/sdk-llm.js`）。
+离线：`node tests/text-recovery-probe.mjs`。真实请求需 `KODAX_TEXT_RECOVERY_LIVE=1`；
+追加 DeepSeek / Kimi Code 用 `--additional-providers`；只重放某条已记录的继续请求用
+`--resume-record <record.json>`。产物在 `os.tmpdir()/kodax-eval-dumps/text-recovery-20260914/`。
+
+`status: continued` 只表示恢复后的请求有响应；任务是否完成须另查 stop_reason 与正文。
+输出预算过小或 effort 映射提高思考量会截断。恢复后模型可能加入用户未要求的内容，
+仍需按正常任务审阅。

@@ -757,11 +757,21 @@ it to `prompt_cache_key`. Unverified compatible endpoints remain unchanged.
 The coding runtime is the only layer that knows about KodaX's coding-product
 tool bundle and user-facing task semantics.
 
-The [first-turn input contract](designs/first-turn-input-optimization.md) separates
-the raw SDK registry from the smaller model-facing todo interface. Tool schemas
-own parameter semantics; Worker instructions retain planning, scope, collaboration,
-resume and verification. Capability-aware guidance uses the executable tool set;
-it does not replace execution permissions.
+The model-facing tool contract is smaller than the raw SDK registry. Models see
+`edit(path, edits[])` and `changed_diff(paths[])` and a stable-id todo patch
+interface. The legacy `multi_edit` and `changed_diff_bundle` names disappear only
+when both builtin entries are present; their handlers and legacy parameters stay
+executable for SDK callers and existing histories. A multi-item edit is applied
+sequentially in memory: a match failure writes nothing, and success is one
+trusted commit. Discovery, descriptions and tool tables share the executable
+inventory and the host ceiling, and never grant execution permission. Lazy LSP
+startup does not mean the capability is absent. `todo_get` returns existing
+owner provenance without assigning owners. Tool schemas own parameter
+semantics; Worker instructions keep planning, scope, collaboration, resume and
+verification. Capability-aware guidance follows the executable tool set and
+does not replace execution permissions. Work modes and the shared compact
+contract are decided in
+[ADR-072](ADR.md#adr-072-work-modes-and-the-model-facing-tool-contract).
 
 Generated constructed handlers are a narrower coding-layer isolation case.
 Each active handler runs in a persistent Worker, while `ctx.tools.*` calls
