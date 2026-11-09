@@ -262,7 +262,9 @@ const nativeManifestsJson = Object.keys(nativeManifestMap).length === 0
 
 // Sub-packages must be built first so esbuild can resolve their dist/.
 // We rely on `npm run build:packages` having been run upstream; check
-// for the canary file packages/coding/dist/index.js.
+// for the canary file packages/coding/dist/index.js. A present but stale
+// dist is not detected: after package source changes, rerun build:packages
+// or the bundle silently ships the old package code.
 const codingDistEntry = path.join(repoRoot, 'packages/coding/dist/index.js');
 try {
   readFileSync(codingDistEntry);

@@ -136,8 +136,8 @@ export async function prepareDocumentPilotR3(directory: string): Promise<Documen
     if (!changedHarness.has(file) && pilotHash(await fs.readFile(file, 'utf8')) !== hash) throw new Error(`Production source changed since r2: ${file}`);
   }
   const sourceHashes = { ...previous.sourceHashes };
-  for (const file of [...changedHarness, 'packages/coding/src/prompts/static-text.json', 'packages/coding/src/prompts/static-text.ts',
-    'docs/designs/beta3-document-pilot-r3-2026-11-07.md']) sourceHashes[file] = pilotHash(await fs.readFile(file, 'utf8'));
+  for (const file of [...changedHarness, 'packages/coding/src/prompts/static-text.json', 'packages/coding/src/prompts/static-text.ts'])
+    sourceHashes[file] = pilotHash(await fs.readFile(file, 'utf8'));
   const capture: DocumentPilotCapture = { ...previous, revision: DOCUMENT_PILOT_REVISION,
     sourceRevision: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true }).trim(), sourceHashes,
     derivedFrom: { revision: previous.revision, sourceRevision: previous.sourceRevision,

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { expect, it } from 'vitest';
 import { prepareContractFixture } from './first-turn-compact-contract-fixture.js';
 import { controlledActionKind } from './first-turn-compact-contract-cases.js';
-import { continuation, assertFrozenCell, emptyResponse } from './first-turn-compact-contract.eval.js';
+import { continuation, assertFrozenCell, emptyResponse } from './first-turn-compact-contract-replay.js';
 
 it('prepares real refusal, edit, failing-before/passing-after test and Todo receipts without a model', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-compact-contract-fixture-'));

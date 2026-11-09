@@ -13,6 +13,8 @@ name: CI
 # longer supported.
 
 # Run alongside release builds, or manually when an earlier check is needed.
+# Push/PR triggers are intentionally omitted to limit CI runs; regressions
+# surface at tag/release time. Do not add push or pull_request.
 on:
   workflow_call:
   workflow_dispatch:
