@@ -2947,6 +2947,8 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 397 | Low | ready | Builtin skill-creator activation lists 14 `.d.ts` typing files | v0.7.97-beta.4 (c50d24c27) | — | 2026-11-09 | — |
+| 396 | Medium | ready | Skill edits in a running REPL session need `/reload` to take effect | unknown; present at v0.7.97-beta.4 | — | 2026-11-09 | — |
 | 395 | Medium | needs-info | Intermittent oversized-output Runtime test failure has no captured cause | unknown; observed at e37aef47a (v0.7.97-beta.4) | — | 2026-11-09 | — |
 | 394 | Medium | Open | Agent and Script whole-task non-inferiority is unproven | work modes in v0.7.97 | — | 2026-11-09 | — |
 | 393 | Low | Open | `worktree remove` reports a branch deleted when `branch -D` failed | unknown; present at 08ce2f742 | — | 2026-11-09 | — |
@@ -3228,6 +3230,57 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ---
 
 ## Issue Details
+
+### Issue 397: Builtin skill-creator activation lists 14 `.d.ts` typing files
+
+- Priority: Low
+- Status: ready
+- Introduced: v0.7.97-beta.4 (`c50d24c27` made the activation inventory list every bundled file)
+- Created: 2026-11-09
+- Fixed: —
+
+**Problem.** `builtin/skill-creator/scripts/` ships a `.d.ts` file next to each
+of its 14 `.js` helpers. Activating `skill-creator` lists all 28 files in the
+`Support file inventory`, so 14 lines describe typing files that the model never
+needs to read or run.
+
+**Constraint.** The `.d.ts` files must stay in the source tree because
+`skill-creator-dispatcher.ts` and the skill-creator tests import the `.js`
+helpers and rely on them for type checking. The skill loader must not filter
+them either: its `scripts` field feeds `skillRevision`, and a user skill may
+legitimately ship such files.
+
+**Planned fix.** Skip `*.d.ts` in the `copy:builtin` step of
+`packages/agent/package.json`. No emitted declaration references the helper
+scripts. `scripts/build-bundle.mjs` copies builtin skills from the agent `dist`,
+so the bundle and the binary pick up the same filtered tree.
+
+### Issue 396: Skill edits in a running REPL session need `/reload` to take effect
+
+- Priority: Medium
+- Status: ready
+- Introduced: unknown; present at v0.7.97-beta.4
+- Created: 2026-11-09
+- Fixed: —
+
+**Problem.** `SkillRegistry.loadFull` caches each skill body until
+`reload()`, and the REPL builds the skill catalog from the registry that was
+discovered at start-up. A user who edits a `SKILL.md` body, or adds or removes
+a skill, mid-session keeps getting the old body and the old catalog until they
+run `/reload`. Nothing tells them that a reload is needed.
+
+**Expected.** The next Run after an edit uses the current files. A Run that is
+already in progress keeps the body it activated, because the invocation policy
+rejects a skill that changes after activation.
+
+**Reproduction.** Start the REPL, invoke a project skill, edit its `SKILL.md`
+body, start a new Run and invoke it again: the old body is returned.
+
+**Planned fix.** Before each Run, `syncClassicCliSkillsPrompt`
+(`packages/repl/src/interactive/repl.ts`) compares a stat fingerprint of the
+skill source directories and their `SKILL.md` files with the previous one, and
+calls `registry.reload()` when it differs. An unchanged fingerprint keeps the
+registry and catalog untouched, so the prompt cache stays stable.
 
 ### Issue 395: Intermittent oversized-output Runtime test failure has no captured cause
 
@@ -17896,8 +17949,8 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 273 (44 Open, 1 needs-info, 228 Resolved, 0 Partially Resolved, 0 Won't Fix)
-- Ready: 0
+- Total: 275 (44 Open, 1 needs-info, 2 ready, 228 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Ready: 2 (396, 397)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
