@@ -29,10 +29,21 @@ on one commit.
   when they pass. A source or workflow fix needs a new commit and dispatch.
 - Dispatch without `release_tag` for a candidate-only run. Pushing a `v*` tag
   still publishes as before.
-- The portable Windows source tier runs as two vitest file shards (about 10
-  and 16 minutes of tests) instead of one ~26-minute serial job. The real
-  terminal PTY gate runs only in shard 1. The `build (win-x64)` and npm package chain
-  (~22 minutes) is now the longest path.
+- The portable and system Windows source tiers each run as two vitest file
+  shards instead of one ~20–26-minute serial job. The real terminal PTY gate
+  runs only in portable shard 1.
+- Node 20's unit and contract tiers run on their own `test (node 20 unit)`
+  row beside the fast tier. That row also runs Node 20's `test:bundle`.
+- `build (win-x64)` no longer repeats the Windows source-build gates (bundle,
+  native, trusted text, v2 sandbox, packaged Electron daemon). Full CI's
+  packaged Electron job runs the same gates on Windows from the same commit,
+  and publishing waits on Full CI. The win-x64 build keeps the archive checks:
+  binary smoke and the offline work-mode gate. Those gates first lived in the
+  build job because, before 2026-10-01, a Release did not run Full CI.
+- Bun is pinned (`bun-version` in `release.yml`) because it compiles the
+  shipped binaries. Bump it deliberately.
+- The packaged Electron job (~20 minutes) is the expected longest path; split
+  it only if the next run's timings confirm that.
 - `test:bundle` bounds each test at three minutes, so a hang is still caught.
   The step limit is ten minutes because the passing Windows suite alone takes
   about 4.6 minutes.

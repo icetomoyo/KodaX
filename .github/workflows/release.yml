@@ -104,10 +104,12 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
+      # Pinned: Bun compiles the shipped binaries, so a new Bun release must not
+      # change a Release (or break it) without a reviewed bump.
       - uses: oven-sh/setup-bun@v2
         if: steps.filter.outputs.skip == 'false'
         with:
-          bun-version: latest
+          bun-version: 1.4.4
 
       - name: Install dependencies
         if: steps.filter.outputs.skip == 'false'
@@ -139,22 +141,6 @@ jobs:
             darwin-arm64) triple=aarch64-apple-darwin ;;
           esac
           rustup target add "$triple"
-
-      - name: Cache packaged Electron smoke toolchain
-        if: steps.filter.outputs.skip == 'false' && matrix.target == 'win-x64'
-        id: electron-smoke-cache
-        uses: actions/cache@v5
-        with:
-          path: .electron-smoke/node_modules
-          key: electron-smoke-${{ runner.os }}-electron-42.5.0-builder-25.1.8
-
-      - name: Install packaged Electron smoke toolchain
-        if: steps.filter.outputs.skip == 'false' && matrix.target == 'win-x64' && steps.electron-smoke-cache.outputs.cache-hit != 'true'
-        run: npm install --prefix .electron-smoke --no-save --package-lock=false --no-audit --no-fund electron@42.5.0 electron-builder@25.1.8
-
-      - name: Ensure packaged Electron binary
-        if: steps.filter.outputs.skip == 'false' && matrix.target == 'win-x64'
-        run: node .electron-smoke/node_modules/electron/install.js
 
       - name: Compile Linux native authority for glibc 2.28
         if: steps.filter.outputs.skip == 'false' && runner.os == 'Linux'
@@ -279,9 +265,12 @@ jobs:
           KODAX_MODE_RELEASE_EVIDENCE: ${{ runner.temp }}/release-mode-evidence
         run: node --test tests/release-work-modes.test.mjs
 
+      # win-x64 skips the source-build gates below: Full CI's packaged Electron
+      # job runs them on Windows from the same commit, and the release job waits
+      # on Full CI. Archive-level checks (smoke, offline modes) stay here.
       - name: Bundled Provider credentials and daemon compaction
         timeout-minutes: 10
-        if: steps.filter.outputs.skip == 'false'
+        if: steps.filter.outputs.skip == 'false' && matrix.target != 'win-x64'
         run: npm run test:bundle
 
       - name: Enforce Linux glibc 2.28 ABI
@@ -289,7 +278,7 @@ jobs:
         run: node scripts/check-native-glibc.mjs --max 2.28 dist/native/${{ matrix.native_dir }}/kodax-text-transaction.node
 
       - name: Native trusted text transaction tests
-        if: steps.filter.outputs.skip == 'false' && matrix.smoke
+        if: steps.filter.outputs.skip == 'false' && matrix.smoke && matrix.target != 'win-x64'
         run: npm run test:native
 
       - name: Real POSIX per-command sandbox concurrency gate
@@ -298,32 +287,6 @@ jobs:
           KODAX_REAL_POSIX_SANDBOX: '1'
           SRT_DEBUG: '1'
         run: node node_modules/vitest/vitest.mjs run tests/feature-295-posix-shell-policy.test.ts
-
-      - name: Windows trusted text integration and dependency boundary
-        if: steps.filter.outputs.skip == 'false' && matrix.target == 'win-x64'
-        run: node node_modules/vitest/vitest.mjs run src/windows-text-transaction.test.ts tests/feature-295-text-tool-boundary.test.ts
-
-      - name: Activate Windows v2 sandbox for packaged Electron release gate
-        if: steps.filter.outputs.skip == 'false' && matrix.target == 'win-x64'
-        env:
-          KODAX_HOME: ${{ runner.temp }}\kodax-electron-smoke-home\.kodax
-        run: node scripts/prepare-windows-electron-sandbox.mjs
-
-      - name: Windows v2 native policy concurrency gate
-        if: steps.filter.outputs.skip == 'false' && matrix.target == 'win-x64'
-        env:
-          KODAX_HOME: ${{ runner.temp }}\kodax-electron-smoke-home\.kodax
-          KODAX_REAL_WINDOWS_SANDBOX_V2: '1'
-        run: node node_modules/vitest/vitest.mjs run tests/feature-295-windows-v2-policy.test.ts
-
-      - name: Packaged Electron daemon release gate
-        if: steps.filter.outputs.skip == 'false' && matrix.target == 'win-x64'
-        env:
-          KODAX_HOME: ${{ runner.temp }}\kodax-electron-smoke-home\.kodax
-          KODAX_ELECTRON_SMOKE_HOME: ${{ runner.temp }}\kodax-electron-smoke-home
-          KODAX_ELECTRON_DIST: ${{ github.workspace }}\.electron-smoke\node_modules\electron\dist
-          KODAX_ELECTRON_BUILDER_CLI: ${{ github.workspace }}\.electron-smoke\node_modules\electron-builder\out\cli\cli.js
-        run: npm run test:electron-daemon:built
 
       - name: Upload artifact
         if: steps.filter.outputs.skip == 'false'
