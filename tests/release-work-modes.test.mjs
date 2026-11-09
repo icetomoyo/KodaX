@@ -241,7 +241,7 @@ test('release archive preserves work modes, partial effects, cancellation and re
       const windowsPrograms = JSON.parse(await readFile(path.join(packageDir, 'windows-effect-job-programs.json'), 'utf8'));
       assert.deepEqual(Object.fromEntries(Object.entries(windowsPrograms).map(([name, text]) =>
         [name, createHash('sha256').update(text, 'utf8').digest('hex')])), {
-        effectJob: 'a2fd25dbd7c7dcf8438d3d048b4040db49ee380090dd83c77ca5ad9eb7842f76',
+        effectJob: 'c9696ac7595a83d47d40f8e714f76ae6d1991836c39b163251a97a1b4097fe61',
         sidProbe: '02307259d2398a467692c41e5673fccd141f7ad08d4862601e99f6fae63f05ce',
       });
       if (process.platform === 'win32') for (const runtime of ['node', 'bun']) {
