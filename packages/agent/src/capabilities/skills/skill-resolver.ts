@@ -204,6 +204,11 @@ export class VariableResolver implements IVariableResolver {
       KODAX_SESSION_ID: this.context.sessionId ?? '',
       KODAX_WORKING_DIR: this.context.workingDirectory,
     };
+    if (this.context.skillDir) {
+      const skillDir = this.context.skillDir.replace(/\\/g, '/');
+      env.CLAUDE_SKILL_DIR = skillDir;
+      env.KODAX_SKILL_DIR = skillDir;
+    }
 
     return content.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (match, varName: string) => {
       return env[varName] ?? match;

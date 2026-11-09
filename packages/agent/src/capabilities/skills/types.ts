@@ -101,6 +101,13 @@ export interface Skill extends SkillFrontmatter {
   assets?: SkillFile[];
   templates?: SkillFile[];
   resources?: SkillFile[];
+  /**
+   * Bundled files outside the five folders above, such as a root-level
+   * `REFERENCE.md` or `agents/grader.md`. `relativePath` is relative to the
+   * skill root. Only the model-facing inventory uses it; revisions and
+   * isolated script snapshots keep using the five folders.
+   */
+  otherFiles?: SkillFile[];
 
   /** Runtime state */
   loaded: boolean;
@@ -218,6 +225,12 @@ export interface SkillContext {
    * literal `${...}` to the LLM.
    */
   sessionId?: string;
+  /**
+   * Skill root, substituted for `${CLAUDE_SKILL_DIR}` / `${KODAX_SKILL_DIR}`
+   * with forward slashes so shells on every platform accept it. When absent,
+   * those variables stay literal.
+   */
+  skillDir?: string;
   environment?: Record<string, string>;
   messages?: unknown[];
   /**

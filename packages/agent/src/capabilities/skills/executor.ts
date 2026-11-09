@@ -72,7 +72,7 @@ export class SkillExecutor {
       const resolvedContent = await resolveSkillContent(
         skill.content,
         args,
-        this.context
+        { ...this.context, skillDir: skill.path }
       );
 
       // Execute based on mode

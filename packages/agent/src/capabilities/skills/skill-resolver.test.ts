@@ -15,6 +15,13 @@ describe('resolveSkillContent', () => {
     expect(resolved).toBe('Output: [Error: Skill policy refused execution]');
     expect(execute).not.toHaveBeenCalled();
   });
+  it('substitutes skill directory variables only when the skill root is known', async () => {
+    const content = 'Run ${CLAUDE_SKILL_DIR}/a.js and ${KODAX_SKILL_DIR}/b.js';
+    await expect(resolveSkillContent(content, '', { workingDirectory: process.cwd(), skillDir: 'C:\\skills\\demo' }))
+      .resolves.toBe('Run C:/skills/demo/a.js and C:/skills/demo/b.js');
+    await expect(resolveSkillContent(content, '', { workingDirectory: process.cwd() }))
+      .resolves.toBe(content);
+  });
   it('blocks unsafe dynamic context commands', async () => {
     const environment = Object.fromEntries(
       Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),

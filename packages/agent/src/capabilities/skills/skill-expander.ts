@@ -44,14 +44,30 @@ function formatDisplayPath(filePath: string): string {
   return filePath.replace(/\\/g, '/');
 }
 
-function collectSupportFiles(skill: Skill): Array<{ folder: string; file: SkillFile }> {
+/** Support files as `[path relative to the skill root, file]`, in inventory order. */
+function collectSupportFiles(skill: Skill): Array<[string, SkillFile]> {
+  const inFolder = (folder: string, files: SkillFile[] | undefined) =>
+    (files ?? []).map((file): [string, SkillFile] => [`${folder}/${file.relativePath}`, file]);
   return [
-    ...(skill.references ?? []).map((file) => ({ folder: 'references', file })),
-    ...(skill.scripts ?? []).map((file) => ({ folder: 'scripts', file })),
-    ...(skill.assets ?? []).map((file) => ({ folder: 'assets', file })),
-    ...(skill.templates ?? []).map((file) => ({ folder: 'templates', file })),
-    ...(skill.resources ?? []).map((file) => ({ folder: 'resources', file })),
+    ...inFolder('references', skill.references),
+    ...inFolder('scripts', skill.scripts),
+    ...(skill.otherFiles ?? []).map((file): [string, SkillFile] => [file.relativePath, file]),
+    ...inFolder('assets', skill.assets),
+    ...inFolder('templates', skill.templates),
+    ...inFolder('resources', skill.resources),
   ];
+}
+
+function countFilesByTopFolder(supportFiles: Array<[string, SkillFile]>): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const [relativePath] of supportFiles) {
+    const slash = relativePath.indexOf('/');
+    if (slash > 0) {
+      const folder = relativePath.slice(0, slash);
+      counts.set(folder, (counts.get(folder) ?? 0) + 1);
+    }
+  }
+  return counts;
 }
 
 function buildSupportFileContext(skill: Skill): string[] {
@@ -60,29 +76,22 @@ function buildSupportFileContext(skill: Skill): string[] {
     return [];
   }
 
-  const roots = [
-    ['references', skill.references],
-    ['scripts', skill.scripts],
-    ['assets', skill.assets],
-    ['templates', skill.templates],
-    ['resources', skill.resources],
-  ] as const;
-
   const lines = [
-    'Skill support files are rooted at the skill root above. When the skill references `references/...`, `assets/...`, `scripts/...`, `templates/...`, or `resources/...`, read it from this skill root.',
-    '',
-    'Support roots:',
+    'Skill support files are rooted at the skill root above.',
+    'When the skill mentions a file listed below by a relative path, use the listed absolute path, because tool calls resolve relative paths against the project working directory.',
   ];
 
-  for (const [folder, files] of roots) {
-    if (files?.length) {
-      lines.push(`- ${folder}/: ${formatDisplayPath(`${skill.path}/${folder}`)} (${files.length} files)`);
+  const folderCounts = countFilesByTopFolder(supportFiles);
+  if (folderCounts.size > 0) {
+    lines.push('', 'Support roots:');
+    for (const [folder, count] of folderCounts) {
+      lines.push(`- ${folder}/: ${formatDisplayPath(`${skill.path}/${folder}`)} (${count} files)`);
     }
   }
 
   lines.push('', 'Support file inventory:');
-  for (const { folder, file } of supportFiles.slice(0, SUPPORT_FILE_LINE_LIMIT)) {
-    lines.push(`- ${folder}/${file.relativePath}: ${formatDisplayPath(file.path)}`);
+  for (const [relativePath, file] of supportFiles.slice(0, SUPPORT_FILE_LINE_LIMIT)) {
+    lines.push(`- ${relativePath}: ${formatDisplayPath(file.path)}`);
   }
 
   if (supportFiles.length > SUPPORT_FILE_LINE_LIMIT) {
@@ -162,7 +171,7 @@ export async function expandSkillForLLM(
   context: SkillContext
 ): Promise<SkillExpansionResult> {
   // Resolve variables in skill content
-  const resolvedContent = await resolveSkillContent(skill.content, args, context);
+  const resolvedContent = await resolveSkillContent(skill.content, args, { ...context, skillDir: skill.path });
 
   // Create skill block with metadata
   const skillBlock = buildSkillBlock(skill, resolvedContent, args);

@@ -171,7 +171,7 @@ export class SkillRegistry implements ISkillRegistry {
       const resolvedContent = await resolveSkillContent(
         skill.content,
         args,
-        context
+        { ...context, skillDir: skill.path }
       );
 
       return {

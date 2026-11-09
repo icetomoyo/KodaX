@@ -114,12 +114,13 @@ export async function loadFullSkill(
 
     // Load support files. Support both Agent Skills-style folders
     // (`references`, `assets`) and KodaX's older compatibility folders.
-    const [scripts, references, assets, templates, resources] = await Promise.all([
+    const [scripts, references, assets, templates, resources, otherFiles] = await Promise.all([
       loadSkillFiles(join(skillDir, 'scripts')),
       loadSkillFiles(join(skillDir, 'references')),
       loadSkillFiles(join(skillDir, 'assets')),
       loadSkillFiles(join(skillDir, 'templates')),
       loadSkillFiles(join(skillDir, 'resources')),
+      loadOtherSkillFiles(skillDir),
     ]);
 
     const skill: Skill = {
@@ -138,6 +139,7 @@ export async function loadFullSkill(
       ...(assets.length > 0 && { assets }),
       ...(templates.length > 0 && { templates }),
       ...(resources.length > 0 && { resources }),
+      ...(otherFiles.length > 0 && { otherFiles }),
     };
 
     return skill;
@@ -188,6 +190,40 @@ async function loadSkillFiles(
     // Directory doesn't exist, return empty
   }
 
+  return files;
+}
+
+const CONVENTIONAL_SUPPORT_FOLDERS = new Set(['scripts', 'references', 'assets', 'templates', 'resources']);
+
+/**
+ * Load bundled files outside the conventional folders. Dot entries and
+ * `node_modules` are skipped because they are tooling state, not content the
+ * skill asks the model to use. Files are listed before subfolders at each level.
+ */
+async function loadOtherSkillFiles(skillDir: string, dirPath: string = skillDir): Promise<SkillFile[]> {
+  let entries;
+  try {
+    entries = await readdir(dirPath, { withFileTypes: true });
+  } catch (error) {
+    // The inventory is best effort; an unreadable folder must not fail the skill.
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      emitKodaXDiagnostic({ source: 'agent:skills', level: 'warn',
+        message: `Skipped unreadable skill folder ${dirPath}.`, detail: error });
+    }
+    return [];
+  }
+  entries.sort((a, b) => a.name.localeCompare(b.name));
+  const isRoot = dirPath === skillDir;
+  const visible = entries.filter((entry) => !entry.name.startsWith('.') && entry.name !== 'node_modules'
+    && !(isRoot && (entry.name === 'SKILL.md' || CONVENTIONAL_SUPPORT_FOLDERS.has(entry.name))));
+
+  const files: SkillFile[] = visible.filter((entry) => entry.isFile()).map((entry) => {
+    const filePath = join(dirPath, entry.name);
+    return { name: entry.name, path: filePath, relativePath: relative(skillDir, filePath).replace(/\\/g, '/') };
+  });
+  for (const entry of visible.filter((item) => item.isDirectory())) {
+    files.push(...await loadOtherSkillFiles(skillDir, join(dirPath, entry.name)));
+  }
   return files;
 }
 

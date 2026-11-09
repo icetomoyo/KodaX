@@ -8,6 +8,9 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Skills can use `${CLAUDE_SKILL_DIR}` or `${KODAX_SKILL_DIR}` for the skill
+  root, written with forward slashes, for example
+  `node ${CLAUDE_SKILL_DIR}/scripts/check.js`.
 - Proxy and private CA support (FEATURE_303). The OpenAI Responses WebSocket
   follows `HTTPS_PROXY`/`HTTP_PROXY` and `NO_PROXY`: on Node 22.21+ or 24.5+
   with `NODE_USE_ENV_PROXY=1`, and in the standalone binary. When a proxy
@@ -77,6 +80,11 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Skill activation now lists support files outside `scripts/`, `references/`,
+  `assets/`, `templates/` and `resources/`, such as a root-level
+  `REFERENCE.md` or `agents/grader.md`, with their absolute paths. Before, the
+  model got no path for them, and child agents could not find them. Skill
+  revisions and isolated script snapshots are unchanged.
 - Preserve closed Shell stdout/stderr when owner cleanup settlement fails,
   keeping large output in sealed recovery files and retaining the Unknown
   cleanup state and retry fence without replaying the command. Failed artifact

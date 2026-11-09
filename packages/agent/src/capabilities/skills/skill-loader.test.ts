@@ -101,6 +101,46 @@ Use this skill for tests.
     expect(skill?.assets?.map((file) => file.relativePath)).toEqual(['template.md']);
   });
 
+  it('loads files outside the conventional folders without changing those folders', async () => {
+    const skillDir = await createTempDir('kodax-skill-');
+    tempDirs.push(skillDir);
+
+    await mkdir(join(skillDir, 'scripts'), { recursive: true });
+    await mkdir(join(skillDir, 'agents'), { recursive: true });
+    await mkdir(join(skillDir, 'demos', 'node_modules', 'pkg'), { recursive: true });
+    await mkdir(join(skillDir, '.git'), { recursive: true });
+    await writeFile(join(skillDir, 'SKILL.md'), '---\nname: root-files\ndescription: Root files\n---\n\nSee REFERENCE.md.\n', 'utf8');
+    await writeFile(join(skillDir, 'REFERENCE.md'), '# Reference', 'utf8');
+    await writeFile(join(skillDir, '.env'), 'SECRET=1', 'utf8');
+    await writeFile(join(skillDir, 'agents', 'grader.md'), '# Grader', 'utf8');
+    await writeFile(join(skillDir, 'demos', 'index.html'), '<html></html>', 'utf8');
+    await writeFile(join(skillDir, 'demos', 'node_modules', 'pkg', 'index.js'), '', 'utf8');
+    await writeFile(join(skillDir, '.git', 'HEAD'), 'ref', 'utf8');
+    await writeFile(join(skillDir, 'scripts', 'check.js'), '', 'utf8');
+
+    const skill = await loadFullSkill(skillDir, 'user');
+
+    expect(skill?.otherFiles?.map((file) => file.relativePath)).toEqual([
+      'REFERENCE.md',
+      'agents/grader.md',
+      'demos/index.html',
+    ]);
+    expect(skill?.otherFiles?.[0]?.path).toBe(join(skillDir, 'REFERENCE.md'));
+    expect(skill?.scripts?.map((file) => file.relativePath)).toEqual(['check.js']);
+  });
+
+  it('omits otherFiles when the skill has only SKILL.md and conventional folders', async () => {
+    const skillDir = await createTempDir('kodax-skill-');
+    tempDirs.push(skillDir);
+    await mkdir(join(skillDir, 'references'), { recursive: true });
+    await writeFile(join(skillDir, 'SKILL.md'), '---\nname: plain\ndescription: Plain\n---\n\nBody\n', 'utf8');
+    await writeFile(join(skillDir, 'references', 'a.md'), '# A', 'utf8');
+
+    const skill = await loadFullSkill(skillDir, 'user');
+
+    expect(skill).not.toHaveProperty('otherFiles');
+  });
+
   it('treats every loaded skill as explicitly user-invocable', async () => {
     const skillDir = await createTempDir('kodax-explicit-skill-');
     tempDirs.push(skillDir);
