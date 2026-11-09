@@ -4,7 +4,7 @@ import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 
-import { emitKodaXDiagnostic } from '@kodax-ai/agent';
+import { emitKodaXDiagnostic, tryAcquireStorageFileLock } from '@kodax-ai/agent';
 
 import type {
   RuntimeAgentBindingService,
@@ -59,6 +59,15 @@ interface PreparedA2AExecution {
 interface PreparedA2AServerOptions extends A2AServerOptions {
   readonly preparedExecution?: PreparedA2AExecution;
 }
+
+/** @internal Keep the lazy transport on its Host's diagnostics and lock owner. */
+export interface A2AServerDependencies {
+  readonly emitDiagnostic: typeof emitKodaXDiagnostic;
+  readonly acquireStorageLock: typeof tryAcquireStorageFileLock;
+}
+const defaultDependencies: A2AServerDependencies = {
+  emitDiagnostic: emitKodaXDiagnostic, acquireStorageLock: tryAcquireStorageFileLock,
+};
 
 const TERMINAL_STATES = new Set<A2ATaskState>([
   'TASK_STATE_COMPLETED',
@@ -605,10 +614,10 @@ class KodaXA2AServerRuntime implements KodaXA2AServer {
   #card: A2AAgentCard;
   #listeningBaseUrl: string | undefined;
 
-  constructor(private options: PreparedA2AServerOptions) {
+  constructor(private options: PreparedA2AServerOptions, private readonly dependencies = defaultDependencies) {
     securityRealm(options.authentication);
     this.#now = options.now ?? (() => new Date());
-    this.#store = new A2AFileTaskStore(options.dataDir);
+    this.#store = new A2AFileTaskStore(options.dataDir, dependencies.acquireStorageLock);
     try {
       this.#card = buildCard(options);
     } catch (error: unknown) {
@@ -1714,7 +1723,7 @@ class KodaXA2AServerRuntime implements KodaXA2AServer {
           this.finishRun(record.taskId, { runId, sessionId: record.sessionId, phase: status.phase }, options);
         }
       } catch (error: unknown) {
-        emitKodaXDiagnostic({
+        this.dependencies.emitDiagnostic({
           source: 'a2a.server',
           level: 'warn',
           message: 'A2A task recovery could not reattach to its Runtime run.',
@@ -1730,8 +1739,8 @@ class KodaXA2AServerRuntime implements KodaXA2AServer {
   }
 }
 
-export function createKodaXA2AServer(options: A2AServerOptions): KodaXA2AServer {
-  return new KodaXA2AServerRuntime(options);
+export function createKodaXA2AServer(options: A2AServerOptions, dependencies = defaultDependencies): KodaXA2AServer {
+  return new KodaXA2AServerRuntime(options, dependencies);
 }
 
 async function prepareExecution(options: A2AServerOptions): Promise<PreparedA2AExecution> {
@@ -1804,10 +1813,10 @@ async function prepareExecution(options: A2AServerOptions): Promise<PreparedA2AE
 }
 
 /** Prepare an immutable Runtime execution binding before exposing an A2A handler. */
-export async function prepareKodaXA2AServer(options: A2AServerOptions): Promise<KodaXA2AServer> {
+export async function prepareKodaXA2AServer(options: A2AServerOptions, dependencies = defaultDependencies): Promise<KodaXA2AServer> {
   const preparedExecution = await prepareExecution(options);
   try {
-    const server = new KodaXA2AServerRuntime({ ...options, preparedExecution });
+    const server = new KodaXA2AServerRuntime({ ...options, preparedExecution }, dependencies);
     await server.whenReady();
     return server;
   } catch (error: unknown) {

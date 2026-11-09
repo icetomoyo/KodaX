@@ -23,6 +23,7 @@ import {
   KodaXCommand,
 } from '../src/kodax_cli.js';
 import { normalizeCliSessionFlags } from '../src/cli_option_helpers.js';
+import { configureLazyIntegrationCommands } from '../src/integration-cli-lazy.js';
 
 // 默认 provider
 // ============== 模拟测试环境 ==============
@@ -401,6 +402,31 @@ describe('CLI Entry Point', () => {
 function createTestCommand(): Command {
   return configureKodaXRootCommand(new Command().name('kodax').version('0.0.0'));
 }
+
+it('populates lazy integration help before the custom root help hook exits', async () => {
+  let output = '', loaded = 0;
+  const program = createTestCommand().exitOverride().configureOutput({ writeOut: text => { output += text; } });
+  configureLazyIntegrationCommands(program, { version: 'fixture' }, async () => ({
+    configureIntegrationCommand(command) {
+      loaded++;
+      command.command('inspect <source>').description('Inspect one source.');
+    },
+  }));
+  await expect(program.parseAsync(['node', 'kodax', 'mcp', '--help'])).rejects.toMatchObject({ exitCode: 0 });
+  expect(loaded).toBe(1);
+  expect(output).toContain('inspect <source>');
+});
+
+it('keeps help words in an ordinary root prompt rather than adding a new reserved command', async () => {
+  const program = createTestCommand().exitOverride().configureOutput({ writeOut: () => {} });
+  let loaded = false;
+  configureLazyIntegrationCommands(program, { version: 'fixture' }, async () => ({
+    configureIntegrationCommand(command) { loaded = true; command.command('inspect'); },
+  }));
+  await program.parseAsync(['node', 'kodax', 'help', 'mcp']);
+  expect(program.args).toEqual(['help', 'mcp']);
+  expect(loaded).toBe(false);
+});
 
 // ============== CLI 选项解析测试 ==============
 

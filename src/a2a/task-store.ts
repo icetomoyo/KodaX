@@ -124,7 +124,7 @@ export class A2AFileTaskStore {
   readonly #lockPath: string;
   readonly #lock: StorageFileLock;
 
-  constructor(root: string) {
+  constructor(root: string, private readonly acquireStorageLock = tryAcquireStorageFileLock) {
     const resolved = path.resolve(root);
     fs.mkdirSync(resolved, { recursive: true, mode: 0o700 });
     this.#file = path.join(resolved, 'tasks.json');
@@ -271,7 +271,7 @@ export class A2AFileTaskStore {
   }
 
   private acquireLock(): StorageFileLock {
-    const lock = tryAcquireStorageFileLock(this.#lockPath, { legacyPidRecord: true });
+    const lock = this.acquireStorageLock(this.#lockPath, { legacyPidRecord: true });
     if (!lock) throw new Error('A2A task store is already owned by another server or has unverified lock ownership.');
     return lock;
   }

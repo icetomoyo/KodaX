@@ -425,10 +425,11 @@ const cliResult = await build({
   ...commonOptions,
   metafile: true,
   entryPoints: [path.join(repoRoot, 'src/kodax_cli.ts')],
-  external: [...external, './provider-auth-cli.js', './storage-repair-cli.js', './kodax_doctor.js', './one-shot-task.js', './history-turn.js', './client-history.js', './maintenance-scheduler.js'],
+  external: [...external, './provider-auth-cli.js', './storage-repair-cli.js', './kodax_doctor.js', './one-shot-task.js', './history-turn.js', './client-history.js', './maintenance-scheduler.js', './acp_server.js', './integration-cli.js'],
   plugins: [...commonOptions.plugins, {
     name: 'lazy-cli-history-reader',
     setup(builder) {
+      builder.onResolve({ filter: /^\.\/a2a\/server\.js$/ }, () => ({ path: './sdk-a2a.js', external: true }));
       // client.ts is bundled into the root CLI, so its parent-relative import
       // must target the same private sibling as the Host-side import.
       builder.onResolve({ filter: /^\.\.\/client-history\.js$/ }, () => ({ path: './client-history.js', external: true }));
@@ -513,6 +514,8 @@ sdkEntryPoints['one-shot-task'] = path.join(repoRoot, 'src/one-shot-task.ts');
 sdkEntryPoints['history-turn'] = path.join(repoRoot, 'src/history-turn.ts');
 sdkEntryPoints['client-history'] = path.join(repoRoot, 'src/client-history.ts');
 sdkEntryPoints['maintenance-scheduler'] = path.join(repoRoot, 'src/runtime-daemon/maintenance-scheduler.ts');
+sdkEntryPoints.acp_server = path.join(repoRoot, 'src/acp_server.ts');
+sdkEntryPoints['integration-cli'] = path.join(repoRoot, 'src/integration-cli.ts');
 
 log(`Building ${sdkEntryNames.length} SDK entries (splitting on)…`);
 const sdkResult = await build({

@@ -13,6 +13,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { Command } from "commander";
+import { configureLazyIntegrationCommands } from './integration-cli-lazy.js';
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 let configHome = "";
@@ -93,6 +94,22 @@ function legacyTaskRecord(
 }
 
 describe("integration CLI", () => {
+  it.each(['config', 'integrations', 'mcp', 'extensions', 'a2a', 'sandbox'])(
+    'preserves the complete %s help tree through lazy registration', async name => {
+      const outputs: string[] = [];
+      for (const lazy of [false, true]) {
+        let output = '';
+        const program = new Command().name('kodax').exitOverride()
+          .configureOutput({ writeOut: text => { output += text; } });
+        const options = { version: '0.7.69' };
+        if (lazy) configureLazyIntegrationCommands(program, options, () => import('./integration-cli.js'));
+        else configureIntegrationCommands(program, options);
+        await expect(program.parseAsync(['node', 'kodax', name, '--help'])).rejects.toMatchObject({ exitCode: 0 });
+        outputs.push(output);
+      }
+      expect(outputs[1]).toBe(outputs[0]);
+    },
+  );
   it("prints a canonical template without creating active or example files", async () => {
     const output = await runCommand(["config", "template", "a2a"]);
 

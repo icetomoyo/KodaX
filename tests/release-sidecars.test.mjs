@@ -21,7 +21,7 @@ test('the actual npm pack inventory includes runtime data sidecars and lazy hist
     { cwd: path.resolve(import.meta.dirname, '..'), windowsHide: true, timeout: 60_000, maxBuffer: 8 * 1024 * 1024 });
   const [manifest] = JSON.parse(packed.stdout);
   const files = new Set(manifest.files.map(entry => entry.path));
-  for (const name of [...required, 'client-history.js', 'history-turn.js']) {
+  for (const name of [...required, 'client-history.js', 'history-turn.js', 'acp_server.js', 'integration-cli.js', 'sdk-a2a.js']) {
     assert.ok(files.has(`dist/${name}`), `npm package omitted ${name}`);
   }
 });

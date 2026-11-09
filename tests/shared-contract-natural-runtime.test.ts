@@ -75,7 +75,11 @@ it('recovers oversized test output using the existing isolated output binding wi
     expect(JSON.stringify(input.messages)).not.toContain('PRIVATE_SENTINEL');
     return result([], '测试失败；已读取原始诊断，未访问隔离范围外的文件。');
   }, { limits: { calls: 4, tools: 4, timeoutMs: 60000 } });
-  expect(record.error).toBeNull(); expect(record.counts.requests).toBe(4);
+  expect(record.error, JSON.stringify({
+    calls: record.calls.map(({ index, error }) => ({ index, error })),
+    receipts: record.events.filter(event => event.kind === 'result').map(({ id, name, content }) => ({ id, name, content })),
+  })).toBeNull();
+  expect(record.counts.requests).toBe(4);
   expect(record.protectedUnchanged).toBe(true);
 });
 

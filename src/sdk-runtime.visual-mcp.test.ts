@@ -3,7 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { Jimp } from 'jimp';
 import { expect, it, vi } from 'vitest';
-import { clearRuntimeModelProviders, createCustomProvider, registerModelProvider } from '@kodax-ai/llm';
+import { clearRuntimeModelProviders, createCustomProvider, KodaXBaseProvider, registerModelProvider, type KodaXProviderConfig, type KodaXStreamResult } from '@kodax-ai/llm';
+import { getActiveExtensionRuntime } from '@kodax-ai/coding';
 import { createSessionManager, FileSessionStorage, parseMcpIntegrationDocument, writeIntegrationDocument } from '@kodax-ai/repl';
 import { NATIVE_PROVIDER_CAPABILITY_PROFILE } from '../packages/llm/src/providers/capability-profile.js';
 import { createKodaXRuntime } from '../tests/runtime-fixture.js';
@@ -123,3 +124,70 @@ it.each(cells)('admits MCP typed bytes with exact call ordinals, permission and 
     }
   } finally { await runtime.close(); clearRuntimeModelProviders(); vi.unstubAllEnvs(); await rm(homeDir, { recursive: true, force: true }); }
 }, 45_000);
+
+it('uses final read arguments once for MCP fallback and never calls it after an extension block or ask denial', async () => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-mcp-final-read-'));
+  const callsPath = path.join(homeDir, 'calls.jsonl');
+  const originalPath = path.join(homeDir, 'missing-original.png');
+  const finalPath = path.join(homeDir, 'missing-final.png');
+  const png = await new Jimp({ width: 1, height: 1, color: 0x00ff00ff }).getBuffer('image/png');
+  const server = path.join(homeDir, 'server.cjs');
+  await writeFile(callsPath, '');
+  await writeFile(server, `const fs=require('node:fs'); require('node:readline').createInterface({input:process.stdin}).on('line', line=>{
+    const m=JSON.parse(line); if(m.id===undefined)return; let result={};
+    if(m.method==='initialize')result={protocolVersion:'2025-11-25',capabilities:{tools:{}},serverInfo:{name:'final-read',version:'1'}};
+    if(m.method==='tools/list')result={tools:[{name:'read',description:'Read a controlled PNG.',inputSchema:{type:'object',properties:{path:{type:'string'}},required:['path']}}]};
+    if(m.method==='tools/call'){fs.appendFileSync(${JSON.stringify(callsPath)},JSON.stringify(m.params.arguments)+'\\n');
+      result={content:[{type:'image',mimeType:'image/png',data:'${png.toString('base64')}'}]};}
+    process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');});`);
+  writeIntegrationDocument({ domain: 'mcp', configHome: path.join(homeDir, '.kodax'), validate: parseMcpIntegrationDocument,
+    document: { version: 1, servers: { visual: { type: 'stdio', command: process.execPath, args: [server] } } } });
+  let policy: 'allow' | 'block' | 'ask' = 'allow'; let turn = 0;
+  const hookInputs: string[] = [];
+  vi.stubEnv('KODAX_MCP_FINAL_READ', 'offline');
+  class Provider extends KodaXBaseProvider {
+    readonly name = 'mcp-final-read'; readonly supportsThinking = false;
+    protected readonly config: KodaXProviderConfig = { apiKeyEnv: 'KODAX_MCP_FINAL_READ', model: 'fixture', supportsThinking: false,
+      capabilityProfile: { ...NATIVE_PROVIDER_CAPABILITY_PROFILE, multimodalSupport: 'image-input' } };
+    async stream(_messages: import('@kodax-ai/llm').KodaXMessage[], tools: import('@kodax-ai/llm').KodaXToolDefinition[]): Promise<KodaXStreamResult> {
+      if (tools.some(tool => tool.name === 'todo_update') && turn++ === 0) return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use',
+        toolBlocks: [{ type: 'tool_use', id: 'read-final-path', name: 'read', input: { path: originalPath } }] };
+      return { textBlocks: [{ type: 'text', text: 'Done.' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
+    }
+  }
+  registerModelProvider('mcp-final-read', () => new Provider());
+  const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'mcp-final-read', defaultModel: 'fixture' });
+  const extension = getActiveExtensionRuntime()!;
+  const removeHook = extension.registerHook('tool:before', ({ name, input }) => {
+    if (name !== 'read') return;
+    hookInputs.push(String(input.path)); input.path = finalPath;
+    if (policy === 'block') return 'Controlled read is blocked.';
+    if (policy === 'ask') return { decision: 'ask', reason: 'Approve the controlled image read.' };
+  }, { source: { kind: 'runtime', id: 'final-read-guard', label: 'final-read-guard' } });
+  try {
+    const session = await runtime.sessions.create({ projectPath: homeDir });
+    await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', workMode: 'coding', permissionMode: 'full-access' });
+    const store = createSessionManager({ sessionsDir: path.join(homeDir, '.kodax', 'sessions'), configHome: path.join(homeDir, '.kodax') });
+    for (policy of ['allow', 'block', 'ask'] as const) {
+      turn = 0;
+      const runId = (await runtime.runs.acceptInput({ sessionId: session.id, inputId: policy, text: 'Read the controlled image.' })).runId!;
+      if (policy === 'ask') {
+        const pending = await vi.waitFor(async () => {
+          const requests = await runtime.permissions.listPending({ runId });
+          expect(requests).toHaveLength(1); return requests;
+        });
+        expect(pending[0]).toMatchObject({ toolName: 'read', reason: expect.stringContaining('Approve the controlled image read.') });
+        expect(await readFile(callsPath, 'utf8')).toBe(`${JSON.stringify({ path: finalPath })}\n`);
+        await runtime.permissions.respond(pending[0]!.id, { type: 'reject', reason: 'Read denied.' });
+      }
+      expect((await runtime.runs.await(runId)).phase).toBe('completed');
+      expect(hookInputs).toEqual(Array(hookInputs.length).fill(originalPath));
+      expect(hookInputs).toHaveLength(policy === 'allow' ? 1 : policy === 'block' ? 2 : 3);
+      expect(await readFile(callsPath, 'utf8')).toBe(`${JSON.stringify({ path: finalPath })}\n`);
+      const observations = (await store.loadSession(session.id))!.extensionRecords?.filter(record =>
+        record.extensionId === 'kodax.visual' && record.type === 'observation') ?? [];
+      expect(observations).toHaveLength(1);
+      expect(observations[0]!.data).toMatchObject({ sourceKey: 'mcp:visual:tool:read' });
+    }
+  } finally { removeHook(); await runtime.close(); clearRuntimeModelProviders(); vi.unstubAllEnvs(); await rm(homeDir, { recursive: true, force: true }); }
+}, 30_000);

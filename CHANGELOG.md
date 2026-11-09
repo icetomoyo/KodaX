@@ -43,6 +43,9 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Load optional CLI integration commands, ACP, and hosted A2A serving when
+  selected, preserving command help and Host lock/diagnostic ownership while
+  retaining the existing 49 KiB CLI bundle reserve.
 - The official sandbox extension asks a person before a recursive delete or a
   delete outside the workspace, instead of blocking `rm -rf` and
   `Remove-Item -Recurse` outright. `git reset --hard` is still blocked.

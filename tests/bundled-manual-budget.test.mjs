@@ -25,7 +25,7 @@ test('published root and standalone Agent retain byte-identical audited Windows 
   assert.deepEqual(bundled, standalone);
   assert.deepEqual(Object.fromEntries(Object.entries(bundled).map(([key, text]) =>
     [key, createHash('sha256').update(text, 'utf8').digest('hex')])), {
-    effectJob: 'a2fd25dbd7c7dcf8438d3d048b4040db49ee380090dd83c77ca5ad9eb7842f76',
+    effectJob: 'c9696ac7595a83d47d40f8e714f76ae6d1991836c39b163251a97a1b4097fe61',
     sidProbe: '02307259d2398a467692c41e5673fccd141f7ad08d4862601e99f6fae63f05ce',
   });
   const packed = JSON.parse(execSync('npm pack --dry-run --ignore-scripts --json', {
@@ -46,5 +46,8 @@ test('published SDK preserves standalone built-in tool definitions after prompt 
   const standalone = await import('../packages/coding/dist/index.js');
   const bundled = await import('../dist/sdk-coding.js');
   assert.deepEqual(JSON.parse(JSON.stringify(bundled.KODAX_TOOLS)), JSON.parse(JSON.stringify(standalone.KODAX_TOOLS)));
-  assert.equal(bundled.KODAX_TOOLS.length, 78);
+  assert.equal(bundled.KODAX_TOOLS.length, 81);
+  for (const name of ['visual_history', 'visual_inspect', 'visual_read_pixels']) {
+    assert.ok(bundled.KODAX_TOOLS.some(tool => tool.name === name));
+  }
 });

@@ -31,6 +31,7 @@ import {
   writeIntegrationDocument,
 } from "@kodax-ai/repl";
 import type { Command } from "commander";
+import { INTEGRATION_COMMAND_DESCRIPTIONS } from './integration-cli-lazy.js';
 
 import {
   migrateA2AIntegrationV1,
@@ -394,10 +395,8 @@ async function callConfiguredAgent(
   }
 }
 
-function configureConfigCommands(program: Command): void {
-  const config = program
-    .command("config")
-    .description("Inspect canonical KodaX configuration templates");
+function configureConfigCommands(program: Command, root?: Command): void {
+  const config = root ?? program.command('config').description(INTEGRATION_COMMAND_DESCRIPTIONS.config);
   config
     .command("template [domain]")
     .description("Print the canonical core, mcp, a2a, or extensions template")
@@ -485,10 +484,8 @@ function integrationStatus(): readonly IntegrationDiskStatus[] {
   });
 }
 
-function configureIntegrationManagement(program: Command): void {
-  const integrations = program
-    .command("integrations")
-    .description("Validate, migrate, and inspect split integration config");
+function configureIntegrationManagement(program: Command, root?: Command): void {
+  const integrations = root ?? program.command('integrations').description(INTEGRATION_COMMAND_DESCRIPTIONS.integrations);
   integrations.command("status").action(() => json(integrationStatus()));
   integrations.command("validate").action(() => {
     const domains = integrationStatus();
@@ -527,10 +524,8 @@ function configureIntegrationManagement(program: Command): void {
     });
 }
 
-function configureMcpCommands(program: Command): void {
-  const mcp = program
-    .command("mcp")
-    .description("Manage MCP servers in integrations/mcp.json");
+function configureMcpCommands(program: Command, root?: Command): void {
+  const mcp = root ?? program.command('mcp').description(INTEGRATION_COMMAND_DESCRIPTIONS.mcp);
   mcp
     .command("list")
     .action(() => json(readMcpIntegration(KODAX_DIR).document.servers));
@@ -603,10 +598,8 @@ async function validateExtensions(paths: readonly string[]): Promise<void> {
   }
 }
 
-function configureExtensionCommands(program: Command): void {
-  const extensions = program
-    .command("extensions")
-    .description("Manage extensions in integrations/extensions.json");
+function configureExtensionCommands(program: Command, root?: Command): void {
+  const extensions = root ?? program.command('extensions').description(INTEGRATION_COMMAND_DESCRIPTIONS.extensions);
   extensions
     .command("list")
     .action(() => json(readExtensionsIntegration(KODAX_DIR).document.paths));
@@ -971,10 +964,9 @@ function configureA2ACommands(
   program: Command,
   version: string,
   serveDaemonHost?: (input: A2AServeDelegateInput) => Promise<void>,
+  root?: Command,
 ): void {
-  const a2a = program
-    .command("a2a")
-    .description("Call third-party A2A Agents or expose KodaX as an A2A Agent");
+  const a2a = root ?? program.command('a2a').description(INTEGRATION_COMMAND_DESCRIPTIONS.a2a);
   a2a
     .command("migrate")
     .description(
@@ -1294,12 +1286,8 @@ function configureA2ACommands(
     );
 }
 
-function configureSandboxCommands(program: Command): void {
-  const sandbox = program
-    .command("sandbox")
-    .description(
-      "Inspect or provision the ASRT Skill-script isolation backend",
-    );
+function configureSandboxCommands(program: Command, root?: Command): void {
+  const sandbox = root ?? program.command('sandbox').description(INTEGRATION_COMMAND_DESCRIPTIONS.sandbox);
   sandbox
     .command("doctor")
     .action(async () => {
@@ -1331,14 +1319,27 @@ export interface A2AServeDelegateInput {
   readonly model?: string;
 }
 
-export function configureIntegrationCommands(
-  program: Command,
-  options: {
-    readonly version: string;
-    /** FEATURE_298 T21 — runs the daemon Host in the foreground; the Host owns A2A serving. */
-    readonly serveDaemonHost?: (input: A2AServeDelegateInput) => Promise<void>;
-  },
-): void {
+export interface IntegrationCommandOptions {
+  readonly version: string;
+  /** FEATURE_298 T21 — runs the daemon Host in the foreground; the Host owns A2A serving. */
+  readonly serveDaemonHost?: (input: A2AServeDelegateInput) => Promise<void>;
+}
+
+export function configureIntegrationCommand(command: Command, options: IntegrationCommandOptions): void {
+  const parent = command.parent;
+  if (!parent) throw new Error('Integration command must belong to its CLI root.');
+  switch (command.name()) {
+    case 'config': return configureConfigCommands(parent, command);
+    case 'integrations': return configureIntegrationManagement(parent, command);
+    case 'mcp': return configureMcpCommands(parent, command);
+    case 'extensions': return configureExtensionCommands(parent, command);
+    case 'a2a': return configureA2ACommands(parent, options.version, options.serveDaemonHost, command);
+    case 'sandbox': return configureSandboxCommands(parent, command);
+    default: throw new Error(`Unknown integration command: ${command.name()}`);
+  }
+}
+
+export function configureIntegrationCommands(program: Command, options: IntegrationCommandOptions): void {
   configureConfigCommands(program);
   configureIntegrationManagement(program);
   configureMcpCommands(program);

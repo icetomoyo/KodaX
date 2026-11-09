@@ -35,6 +35,20 @@ import { A2AFileTaskStore } from './task-store.js';
 
 const roots: string[] = [];
 
+it('honors Host-owned lock refusal before opening a lazily loaded A2A server', async () => {
+  const root = temporaryRoot();
+  const acquireStorageLock = vi.fn(() => undefined);
+  let server: ReturnType<typeof createKodaXA2AServer> | undefined;
+  try {
+    expect(() => {
+      server = createKodaXA2AServer(serverOptions(fakeRuntime(), root), {
+        acquireStorageLock, emitDiagnostic: vi.fn(),
+      });
+    }).toThrow(/owned|unverified/i);
+    expect(acquireStorageLock).toHaveBeenCalledTimes(1);
+  } finally { await server?.close(); }
+});
+
 it.each([
   // Unknown execution effects map to protocol failure; tool effects may still have occurred.
   ['unknown', 'TASK_STATE_FAILED'],

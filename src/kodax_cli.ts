@@ -186,6 +186,7 @@ import {
   cleanupRegisteredManagedChildren,
   createMemoryControlPlane,
   emitKodaXDiagnostic,
+  tryAcquireStorageFileLock,
   isCurrentProcessWindowsJobContained,
   killPidTree,
   readProcessStartIdentity,
@@ -223,7 +224,7 @@ import {
   type SessionDedupeReport,
 } from '@kodax-ai/repl';
 import type { AcpPermissionMode } from './acp_server.js';
-import { configureIntegrationCommands } from './integration-cli.js';
+import { configureLazyIntegrationCommands, prepareLazyIntegrationCommand } from './integration-cli-lazy.js';
 import { configureKodaXExecPolicyCommand } from './exec-policy-cli.js';
 import {
   createIntegrationEventBridge,
@@ -244,7 +245,7 @@ import {
   createA2AServerHotOptions,
   createA2AServerOptionsFromConfig,
 } from './a2a/product.js';
-import { prepareKodaXA2AServer } from './a2a/server.js';
+import type { prepareKodaXA2AServer } from './a2a/server.js';
 import { createReplLearningBinding } from './repl-learning-binding.js';
 import {
   renderMissingProviderCredentialGuide,
@@ -915,12 +916,14 @@ async function serveDaemonCommand(input: {
             // A busy listen port fails the whole Host startup: serving was
             // explicitly enabled by bootstrap config, so silently serving
             // nowhere would hide the misconfiguration.
+            const { prepareKodaXA2AServer } = await loadCliComponent('./sdk-a2a.js', () => import('./a2a/server.js'));
             hostedA2AServer = await prepareKodaXA2AServer(
               createA2AServerOptionsFromConfig({
                 runtime,
                 config: serverConfig,
                 listenBaseUrl: `http://${hostname.includes(':') ? `[${hostname}]` : hostname}:${port}`,
               }),
+              { emitDiagnostic: emitKodaXDiagnostic, acquireStorageLock: tryAcquireStorageFileLock },
             );
             commitStartup();
             const baseUrl = await hostedA2AServer.listen({
@@ -2194,6 +2197,7 @@ export function configureKodaXRootCommand(program: Command): Command {
   // Stop before any nested action or argument validation can run.
   configured.hook('preSubcommand', async (root, command) => {
     if (root.opts().help === undefined) return;
+    await prepareLazyIntegrationCommand(command);
     if (command.name() === 'auth' && command.commands.length === 0) (await loadProviderAuth()).configureProviderAuthCommand(root, command);
     let target = command;
     for (const name of root.args.slice(1)) {
@@ -3340,7 +3344,7 @@ async function runCliMain(startupProgress?: CliStartupProgress) {
       .description('KodaX - Intelligent Coding Agent')
       .version(version),
   );
-  configureIntegrationCommands(program, {
+  configureLazyIntegrationCommands(program, {
     version,
     serveDaemonHost: (input) => serveDaemonCommand({
       profile: input.profile,
@@ -3348,7 +3352,7 @@ async function runCliMain(startupProgress?: CliStartupProgress) {
       provider: input.provider,
       model: input.model,
     }),
-  });
+  }, () => loadCliComponent('./integration-cli.js', () => import('./integration-cli.js')));
 
   configureKodaXSetupCommand(program);
   const auth = program.command('auth').description('Save API keys, login, inspect or revoke provider credentials');
@@ -3687,7 +3691,7 @@ complete -c kodax -l version -d 'Show version'`);
         if (options.repoIntelligenceTrace === true) {
           process.env.KODAX_REPO_INTELLIGENCE_TRACE = '1';
         }
-        const { runAcpServer } = await import('./acp_server.js');
+        const { runAcpServer } = await loadCliComponent('./acp_server.js', () => import('./acp_server.js'));
         await runAcpServer({
           cwd: options.cwd,
           provider: options.provider,
