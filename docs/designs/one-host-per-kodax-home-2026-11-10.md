@@ -1,6 +1,7 @@
 # One Host per `KODAX_HOME` — design draft, 2026-11-10
 
 Status: **accepted 2026-11-10, not implemented**. Review decisions are in §8.
+Tracked as [FEATURE_305](../features/v0.7.98.md#feature_305-one-host-per-kodax_home) (tickets T1–T7).
 Decision record:
 [ADR-075](../ADR.md#adr-075-one-host-per-kodax_home-profile-is-not-host-identity). Tracks [Issue 407](../KNOWN_ISSUES.md#issue-407-passive-connections-and-exit-receipts-ignore-the-session-storage-owner);
 [Issue 406](../KNOWN_ISSUES.md#issue-406-a-cli-redirected-to-spaces-host-fails-daemon-start-verification-and-provider-credential-authorization)

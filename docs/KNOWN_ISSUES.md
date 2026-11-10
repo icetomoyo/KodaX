@@ -3248,7 +3248,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
   separately)
 - Introduced: v0.7.97-alpha.7 (d45938b90, storage-owner redirect)
 - Created: 2026-11-10
-- Related: Issue 406, Issue 405
+- Related: Issue 406, Issue 405, FEATURE_305, ADR-075
 
 **Original problem.** A Host has two identity keys: the profile name
 (`runtime/daemon/<profile>/`: lock, descriptor, pipe, token, logs) and the
