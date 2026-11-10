@@ -93,8 +93,13 @@ The first publishing dispatch (run 42774928059 at `38a6c26f2`) passed every
 job except `test (node 20 unit)`. `benchmark/visual-harness/native-task-cell.test.ts`
 stubbed `KIMI_API_KEY`, but kimi-code reads `KIMI_CODE_API_KEY`, so the file
 had passed only on machines holding a real key. That run skipped its publish
-job and created no tag; `6a6fa5465` stubs the provider's variable, and the
-release is dispatched again from the corrected commit.
+job and created no tag; `6a6fa5465` stubs the provider's variable. The
+second dispatch (run 42779240164 at `a28bdb7f2`) then hit two Windows
+runner flakes in the packaged Electron job across three attempts: the
+hosted-A2A bundle test missed `daemon start`'s default 5-second readiness
+wait (attempts 1 and 3; `913cd6d81` gives the fixture a 25-second budget),
+and attempt 2 hit the documented host-recovery timing flake. No tag was
+created; the release is dispatched again from the corrected commit.
 
 ## v0.7.97-beta.4 release preparation
 
