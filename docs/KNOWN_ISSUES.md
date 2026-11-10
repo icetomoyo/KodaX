@@ -2947,6 +2947,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 405 | High | Resolved | Space and the CLI refuse to share a compatible Host from another installation or version | v0.7.97-alpha.1 (Host build refresh); busy older-Host refusal since v0.7.79 | post-v0.7.97-beta.5 (unreleased) | 2026-11-10 | 2026-11-10 |
 | 404 | High | Resolved | Linux kernels before 5.8 reject every trusted text write | v0.7.96 (FEATURE_295) | post-v0.7.97-beta.5 (unreleased) | 2026-11-10 | 2026-11-10 |
 | 403 | High | Resolved | Linux native text authority cannot load on glibc 2.17 hosts | v0.7.96 (FEATURE_295); 2.28 floor since Issue 328 | post-v0.7.97-beta.5 (unreleased) | 2026-11-10 | 2026-11-10 |
 | 402 | High | Resolved | A failed native text addon load crashes the next tracked write | v0.7.96 (FEATURE_295) | post-v0.7.97-beta.5 (unreleased) | 2026-11-10 | 2026-11-10 |
@@ -3237,6 +3238,72 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ---
 
 ## Issue Details
+
+### Issue 405: Space and the CLI refuse to share a compatible Host from another installation or version
+
+- Priority: High
+- Status: Resolved
+- Introduced: same-version cross-installation refusal in v0.7.97-alpha.1 (Host
+  build refresh); busy older-Host refusal with the startup upgrade path in v0.7.79
+- Created: 2026-11-10
+- Fixed: post-v0.7.97-beta.5 working tree (unreleased)
+- Related: 0a3728e9c (identical builds across installations share one Host)
+
+**Original problem.** A Windows user ran KodaX Space 0.1.47-alpha.5 (bundled SDK
+0.7.97-beta.4) and a KodaX CLI that also reported 0.7.97-beta.4. Whichever
+started second failed. The CLI printed `A different KodaX installation owns this
+profile. Connect passively to use that Host, or stop it explicitly before
+starting this installation.`; Space showed its assistant startup failure with
+`daemon_capability_upgrade_required`. The 0a3728e9c fix was in both builds, but
+it only shares a Host whose fingerprint matches byte for byte. The user's CLI
+was downloaded from the GitHub Release page for v0.7.97-beta.4 (a pre-release
+that ships both `kodax-ai-kodax-0.7.97-beta.4.tgz` and
+`kodax-v0.7.97-beta.4-win-x64.zip`); on Windows this is most likely the Bun
+single binary. A binary's identity hashes `kodax.exe` and its sidecars, while
+Space bundles the npm JS module build, so the two can never share a
+fingerprint even from the same commit. A registry npm install of beta.4 and
+Space's packaged SDK do match (verified: same 185 files, same SHA-256). Source
+builds, `npm link` and locally packed tarballs also never match, because the
+fingerprint covers `package-lock.json`, `src` or stale `dist` chunks.
+
+The root cause was broader. `ensureKodaXRuntime` used version and build to decide
+both whether it may use a Host and whether it should replace it:
+
+- Same version, different origin and fingerprint: always thrown, although the
+  Host satisfied every capability and a newer Host from the same installation
+  would have been accepted.
+- Older version or changed build of this installation, compatible but busy
+  (`connected_clients`, `active_runs`): the launcher retried replacement until
+  the startup deadline (60 s by default) and then failed. A CLI one release
+  ahead of Space's bundled SDK would hit this whenever Space was open.
+
+**Resolution (2026-11-10).** Only protocol and required capabilities decide
+whether a launcher can use a Host. Version and build only decide replacement:
+
+- A same-version Host from another installation is never replaced; the launcher
+  attaches to it.
+- When a refresh-only replacement (`runtimeVersion` or `runtimeBuild`) is
+  blocked because the Host cannot stop, the launcher attaches again with its
+  real client identity instead of the temporary launcher identity. It does not
+  wait for the deadline.
+- Both paths emit a `runtime.daemon.compatible-host` warning diagnostic with the
+  reason, both versions, both builds and any blockers.
+- Missing required capabilities, legacy same-version Hosts without build
+  identity, and idle older or rebuilt Hosts keep their existing behavior
+  (replace or explicit error).
+
+`CLIENT_CONTRACT.md` now states the split. It also requires every
+client-visible Host behavior change to raise a capability version, because
+version and build no longer gate compatibility.
+
+- Files changed: `src/sdk-runtime.ts`, `docs/CLIENT_CONTRACT.md`
+- Tests: `src/sdk-runtime-daemon-upgrade.test.ts` covers attaching a foreign
+  same-version build without stopping it, attaching a busy older Host from
+  another installation and a busy rebuilt Host of this installation with the
+  real client identity, and the unchanged refusal for a Host without build
+  identity. It, `runtime-build-identity.test.ts` and six launcher/CLI startup
+  suites pass; source and test typechecks pass. The bundled `tests/*.mjs` suites
+  were not run in this change.
 
 ### Issue 404: Linux kernels before 5.8 reject every trusted text write
 
@@ -18327,12 +18394,18 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 282 (46 Open including 1 needs-info, 236 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 283 (46 Open including 1 needs-info, 237 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-10: Issue 405
+
+- Recorded and resolved the Space/CLI Host sharing report: a launcher now uses
+  any Host that satisfies its capabilities, and version or build differences
+  only trigger replacement when that is possible.
 
 ### 2026-11-10: Issues 402-404
 

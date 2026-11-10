@@ -6231,12 +6231,30 @@ function requiresRuntimeBuildRefresh(identity: RuntimeIdentity): boolean {
   }
   if (identity.build.fingerprint === LOCAL_RUNTIME_BUILD.fingerprint) return false;
   if (identity.build.origin !== LOCAL_RUNTIME_BUILD.origin) {
-    throw new RuntimeDaemonCapabilityUpgradeError(
-      'A different KodaX installation owns this profile. Connect passively to use that Host, or stop it explicitly before starting this installation.',
-      undefined, undefined, 'runtimeBuild',
-    );
+    // Another installation's Host is never ours to replace. Capabilities
+    // already proved it compatible, so use it as it is (Issue 405).
+    reportCompatibleHostAttach('runtimeBuild', identity);
+    return false;
   }
   return true;
+}
+
+/** Version and build only decide replacement; a compatible Host stays usable. */
+function isHostRefreshOnly(upgrade: string): upgrade is 'runtimeVersion' | 'runtimeBuild' {
+  return upgrade === 'runtimeVersion' || upgrade === 'runtimeBuild';
+}
+
+function reportCompatibleHostAttach(
+  reason: 'runtimeVersion' | 'runtimeBuild',
+  identity: RuntimeIdentity,
+  blockers?: readonly string[],
+): void {
+  emitKodaXDiagnostic({
+    source: 'runtime.daemon.compatible-host', level: 'warn',
+    message: 'Using a compatible Host from a different KodaX version or build without replacing it.',
+    detail: { reason, hostVersion: identity.version, localVersion: replApi.KODAX_VERSION,
+      hostBuild: identity.build, localBuild: LOCAL_RUNTIME_BUILD, ...(blockers ? { blockers } : {}) },
+  });
 }
 
 function assertCurrentLauncherBuild(): void {
@@ -6485,6 +6503,7 @@ async function connectKodaXRuntimeInternal(
   startupDeadline = Date.now() + (options.daemonStartupTimeoutMs ?? 60_000),
   contentionAttempt = 0,
   reportProgress = createClientStartupProgressReporter(options.onStartupProgress),
+  acceptCompatibleHost = false,
 ): Promise<KodaXDaemonRuntime> {
   if (allowCapabilityUpgrade && options.autoStart === true) assertCurrentLauncherBuild();
   assertRuntimeTimeout(
@@ -6634,7 +6653,7 @@ async function connectKodaXRuntimeInternal(
           probedDaemon.identity,
           probedDaemon.capabilities,
           requirements,
-          allowCapabilityUpgrade && options.autoStart === true,
+          allowCapabilityUpgrade && options.autoStart === true && !acceptCompatibleHost,
         );
     const requestedClientInfo: RuntimeClientInfo = {
       name: options.clientInfo?.name ?? "kodax-sdk",
@@ -6717,7 +6736,7 @@ async function connectKodaXRuntimeInternal(
       identity,
       daemonCapabilities,
       requirements,
-      allowCapabilityUpgrade && options.autoStart === true,
+      allowCapabilityUpgrade && options.autoStart === true && !acceptCompatibleHost,
     );
     if (
       probedDaemon !== undefined
@@ -6784,6 +6803,17 @@ async function connectKodaXRuntimeInternal(
           reportProgress,
         });
       } catch (error: unknown) {
+        if (
+          isHostRefreshOnly(requiredUpgrade.name)
+          && error instanceof RuntimeDaemonCapabilityUpgradeError
+          && error.preflight?.canStop === false
+        ) {
+          // A busy Host that satisfies every capability is still usable. Attach
+          // again with the real client identity instead of waiting out startup.
+          reportCompatibleHostAttach(requiredUpgrade.name, identity, error.preflight.blockers);
+          return connectKodaXRuntimeInternal(options, true, ownerBootstrap, startupRetries,
+            startupDeadline, contentionAttempt, reportProgress, true);
+        }
         if (
           error instanceof RuntimeDaemonCapabilityUpgradeError
           && (error instanceof RuntimeDaemonInspectionInterruptedError

@@ -19,6 +19,12 @@ All notable changes to this project will be documented in this file.
 - Trusted text writes work on Linux kernels older than 5.8, such as 4.18 and
   4.19. Those kernels do not report mount IDs through `statx`, so the authority
   reads the same mount ID from `/proc/self/fdinfo` (Issue 404).
+- KodaX Space and the CLI can run together when they come from different
+  installations, such as a source build, a local package or a newer CLI next to
+  Space's bundled SDK. A launcher now uses any running Host that supports the
+  capabilities it needs. A launcher replaces only an idle Host, and only when that
+  Host runs an older version or a stale build of the same installation. A busy
+  Host is no longer retried until the 60-second startup deadline (Issue 405).
 
 ### Compatibility
 

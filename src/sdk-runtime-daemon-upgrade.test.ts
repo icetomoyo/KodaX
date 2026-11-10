@@ -878,23 +878,75 @@ describe('product Host startup and passive connection', () => {
     } finally { await runtime?.close(); random.mockRestore(); vi.useRealTimers(); }
   });
 
-  it.each([
-    { name: 'busy changed build', build: { ...LOCAL_RUNTIME_BUILD, fingerprint: '0'.repeat(64) }, busy: true },
-    { name: 'different build from another installation', build: { origin: '/other/kodax_cli.js', fingerprint: '0'.repeat(64) }, busy: false },
-    { name: 'legacy missing identity', build: undefined, busy: false },
-  ])('does not silently attach or stop a $name', async ({ build, busy }) => {
+  it('does not silently attach or stop a same-version Host without build identity', async () => {
     const calls: string[] = [];
     const current = await createCurrentTransport([], async () => undefined).request('initialize') as { capabilities: Record<string, unknown> };
     upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(createLegacyTransport({
-      preflight: createPreflight(busy ? { canStop: false, blockers: ['active_runs'] } : {}),
-      calls, close: async () => undefined, runtimeVersion: KODAX_VERSION, capabilities: current.capabilities, build,
+      preflight: createPreflight(), calls, close: async () => undefined,
+      runtimeVersion: KODAX_VERSION, capabilities: current.capabilities, build: undefined,
     })));
     await expect(ensureKodaXRuntime({ profile: PROFILE })).rejects.toMatchObject({
       code: 'daemon_capability_upgrade_required',
-      ...(busy ? { preflight: { blockers: ['active_runs'] } } : {}),
     });
     expect(calls).not.toContain('old:runtime.shutdown');
     expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(1);
+  });
+
+  // Issue 405: compatibility comes from the protocol and capabilities. Version
+  // and build only decide whether this launcher should replace the Host.
+  it('attaches a compatible same-version Host built by another installation without stopping it', async () => {
+    const calls: string[] = [];
+    const diagnostics: KodaXDiagnostic[] = [];
+    const restore = setKodaXDiagnosticSink(diagnostic => { diagnostics.push(diagnostic); });
+    const foreign = { origin: '/other/kodax_cli.js', fingerprint: '0'.repeat(64) };
+    const current = await createCurrentTransport([], async () => undefined).request('initialize') as { capabilities: Record<string, unknown> };
+    upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(createLegacyTransport({
+      preflight: createPreflight(), calls, close: async () => undefined,
+      runtimeVersion: KODAX_VERSION, capabilities: current.capabilities, build: foreign,
+    })));
+    const runtime = await ensureKodaXRuntime({ profile: PROFILE });
+    try {
+      expect(runtime.identity.runtimeId).toBe(RUNTIME_ID);
+      expect(calls).toEqual(['old:initialize']);
+      expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(1);
+      expect(diagnostics).toContainEqual(expect.objectContaining({
+        source: 'runtime.daemon.compatible-host',
+        detail: expect.objectContaining({ reason: 'runtimeBuild', hostBuild: foreign }),
+      }));
+    } finally { restore(); await runtime.close(); }
+  });
+
+  it.each([
+    { name: 'older version kept by other clients', runtimeVersion: OLDER_RUNTIME_VERSION,
+      build: { origin: '/other/kodax_cli.js', fingerprint: '0'.repeat(64) }, blockers: ['connected_clients'] as RuntimeDaemonPreflight['blockers'], reason: 'runtimeVersion' },
+    { name: 'changed build of this installation with active runs', runtimeVersion: KODAX_VERSION,
+      build: { ...LOCAL_RUNTIME_BUILD, fingerprint: '0'.repeat(64) }, blockers: ['active_runs'] as RuntimeDaemonPreflight['blockers'], reason: 'runtimeBuild' },
+  ])('attaches a compatible $name instead of waiting for the startup deadline', async ({ runtimeVersion, build, blockers, reason }) => {
+    const calls: string[] = [];
+    const clients: unknown[] = [];
+    const diagnostics: KodaXDiagnostic[] = [];
+    const restore = setKodaXDiagnosticSink(diagnostic => { diagnostics.push(diagnostic); });
+    const current = await createCurrentTransport([], async () => undefined).request('initialize') as { capabilities: Record<string, unknown> };
+    const busyHost = () => createLease(createLegacyTransport({
+      preflight: createPreflight({ canStop: false, blockers }), calls, close: async () => undefined,
+      runtimeVersion, capabilities: current.capabilities, build,
+      onInitialize: params => { clients.push((params as { clientInfo?: unknown }).clientInfo); },
+    }));
+    upgradeMocks.acquireProcessLease.mockResolvedValueOnce(busyHost()).mockResolvedValueOnce(busyHost())
+      .mockRejectedValue(new Error('unexpected third attach'));
+    upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
+    const runtime = await ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 5_000,
+      clientInfo: { name: 'space', instanceId: 'space_fixture' } });
+    try {
+      expect(runtime.identity.runtimeId).toBe(RUNTIME_ID);
+      expect(calls).not.toContain('old:runtime.shutdown');
+      expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(2);
+      expect(clients.at(-1)).toMatchObject({ name: 'space', instanceId: 'space_fixture' });
+      expect(diagnostics).toContainEqual(expect.objectContaining({
+        source: 'runtime.daemon.compatible-host',
+        detail: expect.objectContaining({ reason, blockers }),
+      }));
+    } finally { restore(); await runtime.close(); }
   });
 
   it('keeps passive clients compatible with a different build without replacing it', async () => {

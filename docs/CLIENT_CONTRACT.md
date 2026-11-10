@@ -86,7 +86,7 @@ CLI 用同一通知驱动加载动画，模块加载、旧子进程清理、Sess
 
 同一实际 sessions 存储根只能由一个独立 Host 写入；profile 是连接/配置名称，不是绕过存储所有权的手段。启动器需要区分包版本、运行中的 Host 实例以及实际加载的构建：相同版本号并不证明 clean/build 前后的代码相同。内部 `RuntimeIdentity.build` 的 origin/fingerprint 用于启动器比较与诊断，不进入业务 view，UI 不据每次补丁维护能力矩阵。
 
-启动器先验证当前磁盘构建与自身加载时冻结的构建一致；长寿命旧 SDK 在磁盘被重建后明确拒绝代为更新。相同版本、相同 origin、不同 fingerprint 的 Host 才可据构建差异执行正常空闲更新。相同版本但 origin 不同的 Host 归属另一安装，即使 fingerprint 相同也明确拒绝由本启动器接管；缺少构建身份的同版本旧 Host 同样须明确报错。能够证明语义版本较旧的原更新路径仍保留。被动 connect 不因本机构建不同要求替换兼容 Host，从而允许其他版本客户端及未来 Web 连接。
+启动器把"能否使用"与"是否替换"分开判定。能否使用只看协议与必需 capability：缺少必需 capability 才是不兼容，须在可安全替换时替换，否则明确报错。包版本与构建身份只决定是否替换：启动器先验证当前磁盘构建与自身加载时冻结的构建一致，长寿命旧 SDK 在磁盘被重建后明确拒绝代为更新；能够证明语义版本较旧的 Host，以及相同版本、相同 origin、不同 fingerprint 的 Host，在空闲时执行正常更新。替换因 Host 忙碌或仍有其他客户端连接而无法进行时，启动器以真实客户端身份直接使用该兼容 Host，不等待启动期限耗尽。相同版本但 origin 不同的 Host 归属另一安装，本启动器从不接管它，而是直接使用；fingerprint 不同时记录 `runtime.daemon.compatible-host` 诊断。缺少构建身份的同版本旧 Host 仍须明确报错。被动 connect 不因本机构建不同要求替换兼容 Host，从而允许其他版本客户端及未来 Web 连接。因此，任何客户端可观察的 Host 行为变化都必须提升对应 capability 版本，不能只依赖包版本或构建差异表达。
 
 构建身份按实际文件字节计算，不判定代码是否语义等价。origin 是实际启动入口的规范路径（Windows 统一大小写），fingerprint 是有序运行文件路径、大小和内容的 SHA-256。源码启动覆盖 `src` 生产代码、四个 workspace 的实际 `dist`、当前平台的 native 产物、包及锁文件和运行所需配置模板/启动脚本；dist 启动覆盖实际 bundle、分块与随附运行资产；binary 启动覆盖实际可执行文件及 builtin/vendor/native/worker 等 sidecar。它不读取用户配置，不创建 build manifest 或新配置。
 
