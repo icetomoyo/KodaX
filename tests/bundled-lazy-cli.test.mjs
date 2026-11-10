@@ -92,7 +92,13 @@ test('bundled daemon loads hosted A2A with its configured card and authenticatio
         dataDir: path.join(configHome, 'a2a-tasks'),
       },
     }));
-    run(['daemon', 'start', '--home', home, '--profile', profile, '--provider', 'mock-provider'], env);
+    // `daemon start` defaults to a 5s readiness wait, sized for interactive
+    // use. On a cold Windows CI runner (this suite runs right after the full
+    // build) the first start can need longer, which surfaced as Release flakes
+    // (run 42779240164 attempts 1 and 3). Ask for a CI-sized budget; the
+    // spawnSync cap in run() stays the outer bound.
+    run(['daemon', 'start', '--home', home, '--profile', profile, '--provider', 'mock-provider',
+      '--timeout-ms', '25000'], env);
     const card = await fetch(`http://127.0.0.1:${port}/.well-known/agent-card.json`, { signal: t.signal });
     assert.equal(card.status, 200);
     assert.equal((await card.json()).name, 'Lazy hosted fixture');
