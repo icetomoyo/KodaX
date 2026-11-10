@@ -50,6 +50,10 @@ on one commit.
 
 ## v0.7.97-beta.4 release preparation
 
+Historical preparation record: the baseline and publication status below
+reflect preparation time. beta.4 was published on 2026-11-08 and the
+CI/Release upgrade gates now pin `0.7.97-beta.4`.
+
 Release state: `v0.7.97-beta.4` is a candidate awaiting multi-platform CI.
 npm publication has not occurred. The candidate is the fourth beta of the
 v0.7.97 line, repairing the Space SDK instruction and history client
