@@ -24,6 +24,22 @@ All notable changes to this project will be documented in this file.
   and no grant suggestions, so it can only be allowed once or rejected. Hosts
   implement the new optional `KodaXEvents.requestToolApproval`; without it an
   ask blocks the call. Runtimes advertise `toolHookAsk: { version: 1 }`.
+- `read` pins each accepted image as a durable observation and returns its
+  `observationId` with the image. Three new tools work on accepted
+  observations: `visual_history` pages them, `visual_inspect` re-displays one
+  to four whole images or regions in order, with optional nearest-neighbor
+  enlargement, and `visual_read_pixels` returns exact grid-center RGBA samples
+  as text. Regions, enlargement and sampling accept static 8-bit RGB/RGBA PNG
+  only; other formats re-display whole.
+- Accepted observations survive Host restarts, repeated compaction and Session
+  forks. Originals are stored under `<sessions>/.media/`, forks copy them to
+  the child Session, and a restored Run re-verifies the stored bytes against
+  their hash. An image queued while a Run is busy is pinned when the input is
+  accepted, so later delivery never rereads the original file.
+- Typed images in MCP tool results and `mcp_read_resource` responses become
+  observations, with the same output-capacity checks, when the call runs in a
+  Runtime-owned Session. Sessions without a visual owner keep the previous
+  inline images.
 
 ### Security
 
@@ -55,6 +71,25 @@ All notable changes to this project will be documented in this file.
 - The Windows effect Job supervisor reports its `Add-Type` compile time and
   startup time through `runtime:windows` diagnostics, and reports startup
   failures and timeouts as warnings.
+- A follow-up Run in the same Session keeps the earlier Managed Run Context in
+  place and appends a short context update instead of a new full envelope, so
+  the prompt prefix stays stable and providers with prompt caching can reuse
+  it. Forks, reopened Runtimes and changed history still install a full
+  envelope.
+- Scoped tool contracts appear when they become relevant: `worktree_create`,
+  `worktree_remove` and `session_history_read` are described inside
+  `tool_call` until the model uses them, `visual_inspect` and
+  `visual_read_pixels` stay hidden until the Session holds image evidence, and
+  `exit_plan_mode` is hidden outside Plan mode. The Skill catalog and
+  Actor-capacity text are compacted. Only the request changes; measured
+  offline, first requests are about 1.4K–1.5K tokens smaller in each work mode.
+- Deferred-tool hints say each resident schema can be called directly, and
+  past `tool_search` results drop parameter blocks the current tool contracts
+  already carry. `tool_search` remains available; receipts and persisted
+  evidence stay complete.
+- Builtin child Agent requests use a compact projection of their audited tool
+  contracts plus the shared `spawn_agent`, `wait_agent` and Todo obligations.
+  SDK inputs, live permissions and persisted contracts stay canonical.
 - Move the README demo animation into `assets/`.
 - Move the Vitest tier configs, tier lists, and shared setup file into
   `tests/config/`. The root `vitest.config.ts` and every `npm run test:*`
@@ -104,6 +139,38 @@ All notable changes to this project will be documented in this file.
 - Nested `wf.workflow(name)` calls and `kodax "/name"` print mode read personal
   workflows and commands from the agent home, the same place the REPL saves
   them (Issue 384).
+- On Windows, sandboxed commands stay sandboxed after another program replaces
+  a profile file such as `~/.claude.json` or `~/.gitconfig`. The replaced file
+  gets its sandbox access back at the next command, and a setup-owned
+  directory that lost its access becomes unreadable for that command instead
+  of moving every command to host execution. The REPL footer reports
+  `Sandbox cannot read <dir>; run kodax sandbox setup` (Issue 399).
+- A cold shared Host start no longer rereads Run child records whose owner and
+  every recorded process are gone; they move unchanged to `.unresolved/`. On
+  one home with about 1,300 such records this removed about 6 seconds from
+  each cold start (Issue 398).
+- The idle Host expires agent-home state that no current code reads: retired
+  Run event journals, filesystem-effect ledgers, sandbox request files and the
+  old sandbox runner copy after 30 days untouched, and `.unresolved` child
+  records after 90 days. `daemon.log` rotates to `daemon.log.1` at 2 MiB and
+  `kodax daemon logs` reads both; `debug` diagnostics are no longer written to
+  it. Deleting a Session also removes its settings, order counter, empty
+  pending-input file and execution facts (Issue 400, ADR-074).
+- Extension `exec` on Windows passes `PSModuleAnalysisCachePath` and
+  `LOCALAPPDATA` to PowerShell, so it keeps its module analysis cache instead
+  of rescanning every installed module on each call, which took over 20
+  seconds on CI runners (Issue 386).
+- The Session layout migration lock records the owner's process start
+  identity, so a reused PID no longer keeps a stale lock alive. Migration and
+  read-boundary errors show the full lock path.
+- Child Agents no longer see `get_goal`, `create_goal` or `update_goal`, and
+  their provider usage is charged once to the root goal budget (Issue 377).
+- `session_history_search` hits carry an `entryRevision` that
+  `session_history_read` accepts, so ordinary appends to the Session tail no
+  longer make the read stale. The whole-history `revision` stays strict.
+- Stale temporary transcript snapshots are cleaned asynchronously within the
+  existing read budget, so concurrent Session reads no longer wait for the
+  scan.
 
 ### Compatibility
 
@@ -122,6 +189,20 @@ All notable changes to this project will be documented in this file.
 - With `KODAX_HOME` set, user Skills, personal workflows and commands in
   `~/.kodax` are no longer found. Move them to `<KODAX_HOME>/skills`,
   `<KODAX_HOME>/workflows` and `<KODAX_HOME>/commands`.
+- `visual_history` is in the default tool list of Runtime-owned Sessions, and
+  `read` labels each accepted image with an `observationId`. Observation IDs
+  are opaque: file names, paths and view labels are not accepted. Sessions
+  without a visual owner see no visual tools, and `read` behaves as before.
+- The Host deletes the retired agent-home state listed under Issue 400 by
+  itself. Only that exact list is ever removed; Sessions, Run records, tool
+  results and memory are kept, and `daemon.log` keeps at most two
+  generations. A Host downgraded to v0.7.96 finds no Run event journal for
+  Runs older than 30 days.
+- `ClientSessionView.sandbox` is a new optional field with the Session's
+  latest shell sandbox health; on Windows an applied observation can list
+  `degradedReadRoots`.
+- `session_history_search` hits and read results add `entryRevision`; callers
+  that ignore it keep the strict whole-history `revision` behavior.
 
 ---
 
