@@ -36,7 +36,7 @@ function nativeResponse(content: Record<string, unknown>[], streaming: boolean):
 }
 
 it('continues an interrupted persisted session without replaying its real history or compaction', async () => {
-  vi.stubEnv('KIMI_API_KEY', 'offline-test-key');
+  vi.stubEnv('KIMI_CODE_API_KEY', 'offline-test-key');
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-native-continuation-'));
   const home = path.join(directory, 'home');
   let primaryCalls = 0;
@@ -79,7 +79,7 @@ it('continues an interrupted persisted session without replaying its real histor
 }, 60_000);
 
 it('records an accounted truncated optional review after history and still completes the remaining real history and main task', async () => {
-  vi.stubEnv('KIMI_API_KEY', 'offline-test-key');
+  vi.stubEnv('KIMI_CODE_API_KEY', 'offline-test-key');
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-native-history-review-integration-'));
   const workspace = path.join(directory, 'workspace');
   const ledgerDirectory = path.join(directory, 'ledger');
@@ -153,7 +153,7 @@ it('records an accounted truncated optional review after history and still compl
 }, 60_000);
 
 it('finishes a historical round beyond four responses before the second round, real compaction, and the main task', async () => {
-  vi.stubEnv('KIMI_API_KEY', 'offline-test-key');
+  vi.stubEnv('KIMI_CODE_API_KEY', 'offline-test-key');
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-native-history-twenty-four-'));
   let primaryCalls = 0;
   try {
@@ -195,7 +195,7 @@ it('finishes a historical round beyond four responses before the second round, r
 }, 60_000);
 
 it('continues the real Runtime after its production stall sidequery times out without losing call or reserve accounting', async () => {
-  vi.stubEnv('KIMI_API_KEY', 'offline-test-key');
+  vi.stubEnv('KIMI_CODE_API_KEY', 'offline-test-key');
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-native-stall-integration-'));
   const workspace = path.join(directory, 'workspace');
   const ledgerDirectory = path.join(directory, 'ledger');
@@ -258,7 +258,7 @@ it('continues the real Runtime after its production stall sidequery times out wi
 }, 60_000);
 
 it('preserves successful foreground output and timing when default background work fails', async () => {
-  vi.stubEnv('KIMI_API_KEY', 'offline-test-key');
+  vi.stubEnv('KIMI_CODE_API_KEY', 'offline-test-key');
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-native-background-failure-'));
   let primaryCalls = 0;
   let backgroundCalls = 0;
@@ -288,7 +288,7 @@ it('preserves successful foreground output and timing when default background wo
 }, 60_000);
 
 it('returns captured historical evidence and a phase error when history fails before the main task', async () => {
-  vi.stubEnv('KIMI_API_KEY', 'offline-test-key');
+  vi.stubEnv('KIMI_CODE_API_KEY', 'offline-test-key');
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-native-history-failure-'));
   let primaryCalls = 0;
   try {
@@ -321,7 +321,7 @@ it('returns captured historical evidence and a phase error when history fails be
 }, 60_000);
 
 it('runs four-response history rounds and more than twelve main responses under the explicit r5 limits', async () => {
-  vi.stubEnv('KIMI_API_KEY', 'offline-test-key');
+  vi.stubEnv('KIMI_CODE_API_KEY', 'offline-test-key');
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-native-r5-limits-'));
   const limits = { mainResponses: 24 as const, historyResponsesPerRound: 4 as const, maxTools: 64 as const,
     toolTimeoutMs: 90_000 as const, cellTimeoutMs: 1_500_000 as const, maxOutputTokens: 8192 as const };
@@ -367,7 +367,7 @@ it('runs four-response history rounds and more than twelve main responses under 
 }, 60_000);
 
 it('completes nine real evidence reads and a final answer within the frozen twelve-response allowance', async () => {
-  vi.stubEnv('KIMI_API_KEY', 'offline-test-key');
+  vi.stubEnv('KIMI_CODE_API_KEY', 'offline-test-key');
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-native-twelve-responses-'));
   let primaryCalls = 0;
   try {
@@ -396,7 +396,7 @@ it('completes nine real evidence reads and a final answer within the frozen twel
 }, 60_000);
 
 it('uses the native provider and real Runtime tools, preserving requests, responses and settlement', async () => {
-  vi.stubEnv('KIMI_API_KEY', 'offline-test-key');
+  vi.stubEnv('KIMI_CODE_API_KEY', 'offline-test-key');
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-native-cell-'));
   const originalFetch = globalThis.fetch;
   let main = 0;
@@ -430,7 +430,7 @@ it('uses the native provider and real Runtime tools, preserving requests, respon
 }, 60_000);
 
 it('sends the explicitly frozen 8192 output cap through the native provider request', async () => {
-  vi.stubEnv('KIMI_API_KEY', 'offline-test-key');
+  vi.stubEnv('KIMI_CODE_API_KEY', 'offline-test-key');
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-native-output-cap-'));
   let wire: Record<string, unknown> | undefined;
   try {
@@ -451,7 +451,7 @@ it('sends the explicitly frozen 8192 output cap through the native provider requ
 }, 60_000);
 
 it('accepts legal multi-line native SSE data without changing the response bytes', async () => {
-  vi.stubEnv('KIMI_API_KEY', 'offline-test-key');
+  vi.stubEnv('KIMI_CODE_API_KEY', 'offline-test-key');
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-native-multiline-'));
   let original = '';
   try {
@@ -468,7 +468,7 @@ it('accepts legal multi-line native SSE data without changing the response bytes
 }, 60_000);
 
 it('caps executed tools across responses while preserving the 32 completed results', async () => {
-  vi.stubEnv('KIMI_API_KEY', 'offline-test-key');
+  vi.stubEnv('KIMI_CODE_API_KEY', 'offline-test-key');
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-native-tool-limit-'));
   let calls = 0;
   try {
@@ -493,7 +493,7 @@ it('caps executed tools across responses while preserving the 32 completed resul
 }, 60_000);
 
 it('blocks host-file reads but allows recovery using a workspace file', async () => {
-  vi.stubEnv('KIMI_API_KEY', 'offline-test-key');
+  vi.stubEnv('KIMI_CODE_API_KEY', 'offline-test-key');
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-native-scope-'));
   let calls = 0;
   try {
@@ -514,7 +514,7 @@ it('blocks host-file reads but allows recovery using a workspace file', async ()
 }, 60_000);
 
 it('rejects an oversized native streamed tool batch before it writes any files', async () => {
-  vi.stubEnv('KIMI_API_KEY', 'offline-test-key');
+  vi.stubEnv('KIMI_CODE_API_KEY', 'offline-test-key');
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-native-budget-'));
   let calls = 0;
   try {
@@ -533,7 +533,7 @@ it('rejects an oversized native streamed tool batch before it writes any files',
 }, 60_000);
 
 it('establishes both history rounds through real image admission and generated replies before real compaction', async () => {
-  vi.stubEnv('KIMI_API_KEY', 'offline-test-key');
+  vi.stubEnv('KIMI_CODE_API_KEY', 'offline-test-key');
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-native-history-'));
   let main = 0;
   const wires: string[] = [];
@@ -567,7 +567,7 @@ it.each([
   { name: 'spawn_agent', input: { task: 'make another call' } },
   { name: 'tool_call', input: { tool_name: 'spawn_agent', arguments: { task: 'make another call' } } },
 ])('blocks child generation at execution, including bridge aliases: $name', async tool => {
-  vi.stubEnv('KIMI_API_KEY', 'offline-test-key');
+  vi.stubEnv('KIMI_CODE_API_KEY', 'offline-test-key');
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-native-child-'));
   let calls = 0;
   try {
@@ -583,7 +583,7 @@ it.each([
 }, 60_000);
 
 it('allows each historical round to read real evidence and answer before compaction and the final task', async () => {
-  vi.stubEnv('KIMI_API_KEY', 'offline-test-key');
+  vi.stubEnv('KIMI_CODE_API_KEY', 'offline-test-key');
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-native-history-tools-'));
   let primaryCalls = 0;
   try {
