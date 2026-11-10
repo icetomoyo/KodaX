@@ -55,7 +55,7 @@ describe.runIf(process.platform === 'win32')('Windows cleanup with real process 
         && argument.includes('::TerminateExact(') && argument.includes('::ReadRows()')))).toBe(true);
   });
 
-  it('keeps 122 unresolved historical records without starting PowerShell on repeated exit sweeps', async () => {
+  it('isolates 122 unresolved historical records once without starting PowerShell on repeated exit sweeps', async () => {
     home = await mkdtemp(path.join(tmpdir(), 'kodax-exit-registry-'));
     setAgentConfigHome(home);
     const directory = path.join(home, 'runtime', 'processes', 'children');
@@ -81,11 +81,11 @@ describe.runIf(process.platform === 'win32')('Windows cleanup with real process 
     syncBuiltinESMExports();
     for (let attempt = 0; attempt < 2; attempt += 1) {
       await expect(cleanupRegisteredManagedChildren({ includeCurrentOwner: true }))
-        .resolves.toEqual({ killed: 0, pruned: 0, skipped: 122 });
+        .resolves.toEqual({ killed: 0, pruned: 0, skipped: attempt === 0 ? 122 : 0 });
       expect(queries).not.toHaveBeenCalled();
-      expect(await readdir(directory)).toHaveLength(122);
+      expect(await readdir(directory)).toEqual(['.unresolved']);
       for (const [file, contents] of originals) {
-        expect(await readFile(file, 'utf8')).toBe(contents);
+        expect(await readFile(path.join(directory, '.unresolved', path.basename(file)), 'utf8')).toBe(contents);
       }
     }
   });

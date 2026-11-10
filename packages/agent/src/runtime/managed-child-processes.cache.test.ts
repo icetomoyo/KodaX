@@ -280,6 +280,61 @@ describe.runIf(process.platform === 'win32')('managed child cleanup query reuse'
     }
   });
 
+  it('isolates unresolvable Run records of exited owners whose recorded PIDs are gone', async () => {
+    tempHome = await mkdtemp(path.join(tmpdir(), 'kodax-managed-extinct-run-'));
+    const signal = vi.spyOn(process, 'kill').mockImplementation((_pid, value) => {
+      if (value !== 0) throw new Error('Extinct Run records must not signal a process');
+      throw Object.assign(new Error('gone'), { code: 'ESRCH' });
+    });
+    const directory = path.join(tempHome, 'runtime', 'processes', 'children');
+    await mkdir(directory, { recursive: true });
+    const registrationId = '95bc0da4-8673-43c6-a8e7-a2c081da6dce';
+    const run = { version: 4, registrationId, ownerPid: 94_000, registeredAtMs: 100,
+      ownerProcessStartIdentity: 'windows:retired-owner', kind: 'bash', command: 'retired-node.exe',
+      runtimeRunId: 'run-a', runCleanupRequired: true, processTreeComplete: false };
+    const records = [
+      { pid: 94_001, extra: {} },
+      { pid: 94_002, extra: { processStartIdentity: '111',
+        processTreeIdentities: [{ pid: 94_002, creationTime: '111' }] } },
+    ].map(({ pid, extra }) => ({ file: `${pid}.${registrationId}.json`,
+      bytes: JSON.stringify({ ...run, pid, ...extra }) }));
+    await Promise.all(records.map(record => writeFile(path.join(directory, record.file), record.bytes)));
+
+    await expect(cleanupRegisteredManagedChildren({ configHome: tempHome })).resolves.toEqual({
+      killed: 0, pruned: 0, skipped: records.length,
+    });
+    expect(spawnSyncMock).not.toHaveBeenCalled();
+    expect(signal.mock.calls.every(([, value]) => value === 0)).toBe(true);
+    for (const record of records) {
+      await expect(readFile(path.join(directory, '.unresolved', record.file), 'utf8')).resolves.toBe(record.bytes);
+    }
+  });
+
+  it('keeps an exited owner Run record while a retained descendant PID is unprovable', async () => {
+    tempHome = await mkdtemp(path.join(tmpdir(), 'kodax-managed-run-descendant-'));
+    vi.spyOn(process, 'kill').mockImplementation((pid, value) => {
+      if (value !== 0) throw new Error('Unverified descendants must not be signalled');
+      if (pid === 95_003) throw Object.assign(new Error('denied'), { code: 'EPERM' });
+      throw Object.assign(new Error('gone'), { code: 'ESRCH' });
+    });
+    spawnSyncMock.mockReturnValue({ status: 0, stdout: '4,0,0' });
+    const directory = path.join(tempHome, 'runtime', 'processes', 'children');
+    await mkdir(directory, { recursive: true });
+    const registrationId = '95bc0da4-8673-43c6-a8e7-a2c081da6dce';
+    const file = path.join(directory, `95001.${registrationId}.json`);
+    const bytes = JSON.stringify({ version: 4, registrationId, pid: 95_001, ownerPid: 95_000,
+      registeredAtMs: 100, ownerProcessStartIdentity: 'windows:retired-owner', kind: 'bash',
+      command: 'retired-node.exe', runtimeRunId: 'run-a', runCleanupRequired: true,
+      processStartIdentity: '111', processTreeComplete: false,
+      processTreeIdentities: [{ pid: 95_001, creationTime: '111' }, { pid: 95_003, creationTime: '333' }] });
+    await writeFile(file, bytes);
+
+    await expect(cleanupRegisteredManagedChildren({ configHome: tempHome })).resolves.toEqual({
+      killed: 0, pruned: 0, skipped: 1,
+    });
+    await expect(readFile(file, 'utf8')).resolves.toBe(bytes);
+  });
+
   it.each(['unreadable', 'permission-denied', 'missing'] as const)(
     'preserves incomplete Run trees with %s live identities without attempting termination',
     async evidence => {

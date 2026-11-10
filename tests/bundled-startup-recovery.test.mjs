@@ -124,6 +124,9 @@ test('concurrent resume clients recover exited Windows trees without per-record 
     const pendingRegistration = randomUUID();
     const pendingName = `${pendingPid}.${pendingRegistration}.json`;
     const pendingFile = path.join(registry, pendingName);
+    // The owner and every recorded PID are gone, so recovery isolates the
+    // unresolvable Run evidence instead of rereading it on each cold start.
+    const isolatedPendingFile = path.join(registry, '.unresolved', pendingName);
     const pendingContents = JSON.stringify({
       version: 4, registrationId: pendingRegistration, pid: pendingPid, ownerPid,
       registeredAtMs: Date.now(), kind: 'bash', command: 'no-command-is-executed',
@@ -150,8 +153,8 @@ test('concurrent resume clients recover exited Windows trees without per-record 
     const readyMs = Math.round(performance.now() - started);
     t.diagnostic(`220 exited trees: ready ${readyMs} ms`);
     assert.ok(readyMs < 10_000, `Cold recovery took ${readyMs} ms for 220 exited trees`);
-    assert.deepEqual((await readdir(registry)).filter(file => file.endsWith('.json')), [pendingName]);
-    assert.equal(await readFile(pendingFile, 'utf8'), pendingContents, 'Unresolved Run evidence must survive recovery');
+    assert.deepEqual((await readdir(registry)).filter(file => file.endsWith('.json')), []);
+    assert.equal(await readFile(isolatedPendingFile, 'utf8'), pendingContents, 'Unresolved Run evidence must survive recovery');
 
     const readStarted = performance.now();
     await Promise.all(clients.map(async client => {
@@ -172,7 +175,7 @@ test('concurrent resume clients recover exited Windows trees without per-record 
     assert.equal((await restarted.sessions.read(sessionId)).msgCount, messages.length);
     const history = await restarted.sessions.readHistory(sessionId, { limit: 10 });
     assert.ok(history.items.some(item => item.text.includes('resume fixture 399')));
-    assert.equal(await readFile(pendingFile, 'utf8'), pendingContents);
+    assert.equal(await readFile(isolatedPendingFile, 'utf8'), pendingContents);
     const restartMs = Math.round(performance.now() - restartedAt);
     assert.ok(restartMs < 10_000, `Resume after verified shutdown took ${restartMs} ms`);
     const saved = await new FileSessionStorage({ sessionsDir: path.join(configHome, 'sessions'), configHome }).load(sessionId);

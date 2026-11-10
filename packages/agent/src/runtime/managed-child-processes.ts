@@ -394,6 +394,20 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
+/** Only ESRCH proves absence; EPERM or a live reused PID may still be a retained descendant. */
+function recordedPidsAreExtinct(record: ManagedChildProcessRecord): boolean {
+  const pids = [record.pid, ...(record.processTreeIdentities ?? []).map(({ pid }) => pid)];
+  return pids.every((pid) => {
+    if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch (error: unknown) {
+      return (error as NodeJS.ErrnoException).code === 'ESRCH';
+    }
+  });
+}
+
 function commandNeedle(command: string): string {
   return path.basename(command).toLowerCase();
 }
@@ -1101,8 +1115,18 @@ async function cleanupRegisteredManagedChildrenInSharedSnapshotScope(
       }
       const result = await cleanupManagedRunChildProcessWithOwnerIdentity({ runtimeRunId: record.runtimeRunId,
         pid: record.pid, registrationId: record.registrationId }, readOwnerStartIdentity, record);
-      if (result.status === 'verified') killed += 1;
-      else skip(record.ownerPid);
+      if (result.status === 'verified') {
+        killed += 1;
+        continue;
+      }
+      // Run recovery already defers a missing record as unknown; isolating an
+      // extinct one keeps every later cold start from rereading it (Issue 398).
+      if (
+        managedOwnerState(record, readOwnerStartIdentity) === 'gone'
+        && recordedPidsAreExtinct(record)
+        && quarantineRecord(filePath)
+      ) quarantined += 1;
+      skip(record.ownerPid);
       continue;
     }
 

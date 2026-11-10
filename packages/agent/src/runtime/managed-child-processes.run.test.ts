@@ -94,7 +94,7 @@ async function persistedRunChild(ownerPid = 91235): Promise<ManagedRunChildProce
   return reference;
 }
 
-it.runIf(process.platform === 'win32')('keeps 122 extinct incomplete Run records unchanged without process-tree queries', async () => {
+it.runIf(process.platform === 'win32')('isolates 122 extinct incomplete Run records unchanged without process-tree queries', async () => {
   const reference = await persistedRunChild(91233);
   const directory = path.join(home, 'runtime', 'processes', 'children');
   const originalFile = path.join(directory, `${reference.pid}.${reference.registrationId}.json`);
@@ -116,7 +116,9 @@ it.runIf(process.platform === 'win32')('keeps 122 extinct incomplete Run records
   expect(processTree.capture).not.toHaveBeenCalled();
   expect(processTree.killPid).not.toHaveBeenCalled();
   expect(processTree.killChild).not.toHaveBeenCalled();
-  for (const { file, bytes } of records) await expect(readFile(file, 'utf8')).resolves.toBe(bytes);
+  for (const { file, bytes } of records) {
+    await expect(readFile(path.join(directory, '.unresolved', path.basename(file)), 'utf8')).resolves.toBe(bytes);
+  }
 });
 
 it.runIf(process.platform === 'win32').each([
@@ -282,7 +284,8 @@ it.each([false, true])('retains POSIX dead-owner evidence without inventing iden
     expect(await cleanupRegisteredManagedChildren()).toEqual({ killed: 0, pruned: 0, skipped: 1 });
     expect(await cleanupManagedRunChildProcess(reference)).toEqual({ status: 'unknown' });
     expect(processTree.killPid).not.toHaveBeenCalled();
-    expect(JSON.parse(await readFile(file, 'utf8')).cleanupVerified).toBeUndefined();
+    const retained = rootAlive ? file : path.join(path.dirname(file), '.unresolved', path.basename(file));
+    expect(JSON.parse(await readFile(retained, 'utf8')).cleanupVerified).toBeUndefined();
   } finally { Object.defineProperty(process, 'platform', platform); }
 });
 

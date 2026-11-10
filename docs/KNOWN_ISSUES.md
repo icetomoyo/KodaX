@@ -2948,6 +2948,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
 | 399 | High | Resolved | A replaced profile file silently moves every Windows sandbox command to the host | setup-owned profile roots since v0.7.96 (`ea4d796ee`); observed at v0.7.97-beta.4 | v0.7.97 (Unreleased) | 2026-11-10 | 2026-11-10 |
+| 398 | Medium | Resolved | Cold shared Host start rereads every unresolvable Run child record | Run-record retention since v0.7.97-alpha.12; slow cold starts observed from 2026-10-31 | v0.7.97 (Unreleased) | 2026-11-10 | 2026-11-10 |
 | 397 | Low | Resolved | Builtin skill-creator activation lists 14 `.d.ts` typing files | v0.7.97-beta.4 (c50d24c27) | v0.7.97 (Unreleased) | 2026-11-09 | 2026-11-09 |
 | 396 | Medium | Resolved | Skill edits in a running REPL session need `/reload` to take effect | unknown; present at v0.7.97-beta.4 | v0.7.97 (Unreleased) | 2026-11-09 | 2026-11-09 |
 | 395 | Medium | needs-info | Intermittent oversized-output Runtime test failure has no captured cause | unknown; observed at e37aef47a (v0.7.97-beta.4) | — | 2026-11-09 | — |
@@ -3328,6 +3329,68 @@ resumed at 16:06:29, 2.1 s after `~/.claude.json` was rewritten (16:06:26.96).
   - The affected TS suites pass: 146 files, 1,922 tests. The one failure is the
     concurrent, still uncommitted Session-delete cascade test in
     `sdk-runtime.test.ts`; that work is unrelated to the sandbox.
+
+### Issue 398: Cold shared Host start rereads every unresolvable Run child record
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: Run-record retention in the historical sweep since v0.7.97-alpha.12
+  (`fee13b700`, `141446d2f`); every cold Host start observed slow from 2026-10-31
+- Created: 2026-11-10
+- Fixed: v0.7.97 (Unreleased)
+- Follow-up of Issue 371
+
+**Original problem.** The first `kodax -r` after `npm run build` took about 7.6 s;
+the next start was normal. This is not a v0.7.97-beta.4 regression. The Host's
+`bootstrap.log` shows its first `recovery` phase (the historical managed-child
+sweep, `cleanupRegisteredManagedChildren`) taking 5.8–7.6 s on every cold start
+from 2026-10-31 13:20Z to 2026-11-09, and 0.36–1.1 s before that. A start 40
+minutes after a slow one took 468 ms.
+
+**Cause.** The sweep reads every top-level record under
+`runtime/processes/children/` before the Host becomes ready. Unresolvable
+non-Run records are moved to `.unresolved/`, but a Run child record
+(`runCleanupRequired`) whose cleanup stays `unknown` is only skipped, so it stays
+at the top level forever. The machine had 1,356 such records, all v4 Run records
+of exited owners from 2026-09-22 to 2026-10-31: 640 had no root
+`processStartIdentity` and 716 had an incomplete, root-only tree. Neither class
+can ever be verified. Reading an old small file for the first time costs about
+4 ms on this Windows machine (1,500 untouched files: 6,009 ms first, 72 ms
+second), so the sweep cost about 6 s whenever the files were not cached.
+
+**Evidence.** A real isolated Host (temporary home) with an empty registry spent
+4 ms in the sweep and was ready in 2.0 s. With the same records not yet in cache,
+the sweep took 2.2–6.1 s, almost all in the record reads; with them already
+cached it took 432 ms. The loop over records took about 120 ms either way.
+
+**Expected.** A Run record whose owner has exited and whose recorded PIDs (the
+root and every retained descendant) no longer exist is isolated into
+`.unresolved/` like the non-Run case, so later cold starts do not reread it.
+Records whose root or descendant PID is alive or unprovable (EPERM, reused PID)
+stay where they are. Run recovery already treats a missing record as `unknown`
+and defers the Shell cleanup, which is the same outcome these records produce
+today.
+
+**Workaround applied on the reporting machine.** The 1,356 records were moved
+to `~/.kodax/runtime/processes/children-stale-backup-20261110/`.
+
+**Resolution (2026-11-10).** In the historical sweep, a Run record whose cleanup
+is not verified is now moved to `.unresolved/` when its owner is gone and every
+recorded PID (the root and each retained descendant) returns `ESRCH`. The bytes
+are unchanged and no termination is attempted. `EPERM` and live PIDs count as
+unprovable, so those records stay at the top level as before. Run recovery
+already treats a missing record as `unknown` and defers the Shell cleanup, so
+its outcome does not change.
+
+- Files changed: `packages/agent/src/runtime/managed-child-processes.ts`
+- Tests: two new cases in `managed-child-processes.cache.test.ts` (extinct
+  records without identity or with a root-only tree are isolated; an `EPERM`
+  descendant keeps the record in place). The run test, the Windows integration
+  test and `tests/bundled-startup-recovery.test.mjs` now expect the extinct
+  records in `.unresolved/` with identical bytes.
+- Verification: `packages/agent/src/runtime/` and `src/sdk-runtime*` (73 files,
+  1017 tests) pass. After `npm run build`, `tests/bundled-startup-recovery.test.mjs`
+  passes (2/2; 220 exited trees ready in 2.3 s).
 
 ### Issue 397: Builtin skill-creator activation lists 14 `.d.ts` typing files
 
@@ -18078,7 +18141,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 276 (44 Open, 0 ready, 1 needs-info, 231 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 277 (44 Open, 0 ready, 1 needs-info, 232 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
@@ -18091,6 +18154,12 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
   replaced a top-level profile file. File roots are now re-applied at
   admission. A directory with missing ACEs degrades to unreadable for one
   command. The REPL shows one footer notice that changes only with the state.
+
+### 2026-11-10: Issue 398
+
+- Recorded and resolved the slow cold Host start caused by rereading
+  unresolvable Run child records; extinct ones are now isolated in
+  `.unresolved/`.
 
 ### 2026-11-09: Issue 395 historical failure comparison record
 
