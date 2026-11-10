@@ -89,6 +89,13 @@ GitHub pre-release from that run's artifacts. Ordinary branch pushes do not
 run CI. Cross-platform manual acceptance, installed Space/SDK acceptance and
 npm registry publication remain separate maintainer steps.
 
+The first publishing dispatch (run 42774928059 at `38a6c26f2`) passed every
+job except `test (node 20 unit)`. `benchmark/visual-harness/native-task-cell.test.ts`
+stubbed `KIMI_API_KEY`, but kimi-code reads `KIMI_CODE_API_KEY`, so the file
+had passed only on machines holding a real key. That run skipped its publish
+job and created no tag; `6a6fa5465` stubs the provider's variable, and the
+release is dispatched again from the corrected commit.
+
 ## v0.7.97-beta.4 release preparation
 
 Historical preparation record: the baseline and publication status below
