@@ -6193,6 +6193,7 @@ function firstRequiredDaemonUpgrade(
   capabilities: Readonly<Record<string, unknown>>,
   requirements: RuntimeCapabilityRequirements,
   requireCurrentVersion: boolean,
+  reportCompatibleHost = false,
 ): { readonly name: string; readonly version: number } | undefined {
   const currentVersion = replApi.KODAX_VERSION;
   // A daemon that reports the "0.0.0" development sentinel has no provable
@@ -6214,7 +6215,7 @@ function firstRequiredDaemonUpgrade(
   if (capability !== undefined) return capability;
   if (!requireCurrentVersion) return undefined;
   if (versionOrder === 1) return undefined;
-  if (versionOrder === 0 && requiresRuntimeBuildRefresh(identity)) {
+  if (versionOrder === 0 && requiresRuntimeBuildRefresh(identity, reportCompatibleHost)) {
     return { name: 'runtimeBuild', version: 1 };
   }
   return currentVersion !== "0.0.0" && versionOrder === -1
@@ -6222,7 +6223,7 @@ function firstRequiredDaemonUpgrade(
     : undefined;
 }
 
-function requiresRuntimeBuildRefresh(identity: RuntimeIdentity): boolean {
+function requiresRuntimeBuildRefresh(identity: RuntimeIdentity, reportCompatibleHost: boolean): boolean {
   if (!identity.build) {
     throw new RuntimeDaemonCapabilityUpgradeError(
       'This Host predates build identification. Finish its work and perform one normal daemon restart; its loaded code cannot be verified.',
@@ -6233,7 +6234,7 @@ function requiresRuntimeBuildRefresh(identity: RuntimeIdentity): boolean {
   if (identity.build.origin !== LOCAL_RUNTIME_BUILD.origin) {
     // Another installation's Host is never ours to replace. Capabilities
     // already proved it compatible, so use it as it is (Issue 405).
-    reportCompatibleHostAttach('runtimeBuild', identity);
+    if (reportCompatibleHost) reportCompatibleHostAttach('runtimeBuild', identity);
     return false;
   }
   return true;
@@ -6732,11 +6733,13 @@ async function connectKodaXRuntimeInternal(
       diagnoseStaleGitSafeDirectory(daemonCapabilities);
     }
     grantedScopes = parseRuntimeGrantedScopes(initialized.grantedScopes);
+    // Only this authenticated decision reports; the probe decision stays silent.
     const requiredUpgrade = firstRequiredDaemonUpgrade(
       identity,
       daemonCapabilities,
       requirements,
       allowCapabilityUpgrade && options.autoStart === true && !acceptCompatibleHost,
+      true,
     );
     if (
       probedDaemon !== undefined

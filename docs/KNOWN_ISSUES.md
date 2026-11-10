@@ -3286,8 +3286,9 @@ whether a launcher can use a Host. Version and build only decide replacement:
   blocked because the Host cannot stop, the launcher attaches again with its
   real client identity instead of the temporary launcher identity. It does not
   wait for the deadline.
-- Both paths emit a `runtime.daemon.compatible-host` warning diagnostic with the
-  reason, both versions, both builds and any blockers.
+- Both paths emit one `runtime.daemon.compatible-host` warning diagnostic per
+  connection with the reason, both versions, both builds and any blockers. The
+  probe-time decision stays silent; only the authenticated decision reports.
 - Missing required capabilities, legacy same-version Hosts without build
   identity, and idle older or rebuilt Hosts keep their existing behavior
   (replace or explicit error).
@@ -3296,14 +3297,24 @@ whether a launcher can use a Host. Version and build only decide replacement:
 client-visible Host behavior change to raise a capability version, because
 version and build no longer gate compatibility.
 
-- Files changed: `src/sdk-runtime.ts`, `docs/CLIENT_CONTRACT.md`
+- Files changed: `src/sdk-runtime.ts`, `docs/CLIENT_CONTRACT.md`,
+  `tests/bundled-historical-host-upgrade.test.mjs`
 - Tests: `src/sdk-runtime-daemon-upgrade.test.ts` covers attaching a foreign
-  same-version build without stopping it, attaching a busy older Host from
-  another installation and a busy rebuilt Host of this installation with the
-  real client identity, and the unchanged refusal for a Host without build
-  identity. It, `runtime-build-identity.test.ts` and six launcher/CLI startup
-  suites pass; source and test typechecks pass. The bundled `tests/*.mjs` suites
-  were not run in this change.
+  same-version build without stopping it (exactly one diagnostic with a real
+  probe), attaching a busy older Host from another installation and a busy
+  rebuilt Host of this installation with the real client identity, and the
+  unchanged refusal for a Host without build identity. The real beta.4
+  historical upgrade suite now expects the updated installation to attach to
+  the busy beta.4 Host (same runtimeId, `runtimeVersion` diagnostic with
+  `active_runs`) and still upgrade in place once idle. `test:bundle`,
+  `test:host-upgrade`, `test:host-cutover`, source and test typechecks pass.
+- End-to-end (Windows, isolated `KODAX_HOME`, OpenAI-compatible fixture): the
+  released GitHub beta.4 win-x64 binary and npm beta.4 module (Space layout)
+  reproduce the refusal in both start orders. Fixed Bun binary and fixed module
+  of the same version share one Host in both orders and while the CLI has an
+  active run; Runs from both sides complete and the Host PID never changes. A
+  fixed module attaches to a busy released beta.4 binary Host within about 1 s,
+  replaces it when idle, and the released beta.4 CLI then joins the newer Host.
 
 ### Issue 404: Linux kernels before 5.8 reject every trusted text write
 

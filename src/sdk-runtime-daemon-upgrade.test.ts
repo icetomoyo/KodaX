@@ -900,19 +900,21 @@ describe('product Host startup and passive connection', () => {
     const restore = setKodaXDiagnosticSink(diagnostic => { diagnostics.push(diagnostic); });
     const foreign = { origin: '/other/kodax_cli.js', fingerprint: '0'.repeat(64) };
     const current = await createCurrentTransport([], async () => undefined).request('initialize') as { capabilities: Record<string, unknown> };
-    upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(createLegacyTransport({
-      preflight: createPreflight(), calls, close: async () => undefined,
+    const foreignHost = (hostCalls: string[]) => createLegacyTransport({
+      preflight: createPreflight(), calls: hostCalls, close: async () => undefined,
       runtimeVersion: KODAX_VERSION, capabilities: current.capabilities, build: foreign,
-    })));
+    });
+    // A real lease carries the probe, so the decision runs before and after initialization.
+    const probe = await foreignHost([]).request('initialize');
+    upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(foreignHost(calls), probe));
     const runtime = await ensureKodaXRuntime({ profile: PROFILE });
     try {
       expect(runtime.identity.runtimeId).toBe(RUNTIME_ID);
       expect(calls).toEqual(['old:initialize']);
       expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(1);
-      expect(diagnostics).toContainEqual(expect.objectContaining({
-        source: 'runtime.daemon.compatible-host',
-        detail: expect.objectContaining({ reason: 'runtimeBuild', hostBuild: foreign }),
-      }));
+      const reports = diagnostics.filter(item => item.source === 'runtime.daemon.compatible-host');
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).toMatchObject({ detail: expect.objectContaining({ reason: 'runtimeBuild', hostBuild: foreign }) });
     } finally { restore(); await runtime.close(); }
   });
 

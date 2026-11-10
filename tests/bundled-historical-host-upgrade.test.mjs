@@ -172,8 +172,11 @@ test('real beta.4 Host keeps busy work and upgrades in place without losing its 
     await cp(path.join(repository, 'package.json'), path.join(installation, 'package.json'));
     currentFilesInstalled = true;
     const busy = await runDriver('busy');
-    assert.equal(busy.accepted, false);
-    assert.ok(busy.blockers.includes('active_runs') || busy.blockers.includes('active_agent_turns'), JSON.stringify(busy));
+    // A busy older Host stays usable: the updated installation attaches without replacing it (Issue 405).
+    assert.equal(busy.accepted, true, JSON.stringify(busy));
+    assert.equal(busy.identity.runtimeId, oldIdentity.runtimeId);
+    assert.equal(busy.compatibleHost?.reason, 'runtimeVersion', JSON.stringify(busy));
+    assert.ok(busy.compatibleHost.blockers.includes('active_runs') || busy.compatibleHost.blockers.includes('active_agent_turns'), JSON.stringify(busy));
     const descriptorPath = path.join(configHome, 'runtime/daemon', profile, 'daemon.json');
     assert.equal(JSON.parse(await readFile(descriptorPath, 'utf8')).runtimeId, oldIdentity.runtimeId);
     assert.doesNotThrow(() => process.kill(oldOwner.pid, 0));
@@ -243,7 +246,14 @@ const progress = [];
 let result;
 try {
   if (action === 'busy') {
-    try { runtime = await sdk.ensureKodaXRuntime({ homeDir, profile, daemonStartupTimeoutMs: 10000 }); result = { accepted: true }; }
+    const diagnostics = [];
+    const agent = await import(pathToFileURL(path.join(installation, 'dist/sdk-agent.js')).href);
+    agent.setKodaXDiagnosticSink(diagnostic => diagnostics.push(diagnostic));
+    try {
+      runtime = await sdk.ensureKodaXRuntime({ homeDir, profile, daemonStartupTimeoutMs: 10000 });
+      const compatibleHost = diagnostics.find(item => item.source === 'runtime.daemon.compatible-host')?.detail;
+      result = { accepted: true, identity: runtime.identity, compatibleHost };
+    }
     catch (error) { result = { accepted: false, code: error.code, blockers: error.preflight?.blockers ?? [], message: error.message }; }
   } else if (action === 'cleanup') {
     runtime = await sdk.connectKodaXRuntime({ homeDir, profile });
