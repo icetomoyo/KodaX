@@ -7545,8 +7545,8 @@ DD §10 "Agent-home retention" lists every path and the paths that are kept.
 
 ## ADR-075: One Host per KODAX_HOME; Profile Is Not Host Identity
 
-**Status**: Proposed (2026-11-10). Draft for review; see the
-[design draft](designs/one-host-per-kodax-home-2026-11-10.md). Tracks Issue 407.
+**Status**: Accepted (2026-11-10), not implemented. See the
+[design](designs/one-host-per-kodax-home-2026-11-10.md). Tracks Issue 407.
 
 **Context**: A Host is identified by its profile name (`runtime/daemon/<profile>/`,
 `runtime/profiles/<profile>/`) and, since v0.7.97-alpha.7, also by the Session
@@ -7564,16 +7564,22 @@ directory on the data root and never split process or storage by profile.
 **Decision**:
 
 1. The data root (`KODAX_HOME`, default `~/.kodax`) is the Host identity. One
-   Host serves it, in one canonical slot.
-2. The `profile` option and `--profile` flag stop selecting a Host. They are
-   accepted, ignored for location, and emit a deprecation diagnostic when not
-   `default`. The `identity.profile` wire field stays for older clients.
+   Host serves it, in one canonical slot that keeps the existing `default`
+   directory names, so older clients find it without a redirect.
+2. The Host-location `profile` SDK option and the `daemon --profile` flag are
+   removed in the same release, not deprecated. Passing either fails with an
+   explicit error that points to `docs/SDK_MIGRATION.md`, which ships in the
+   npm package with the `CHANGELOG.md` entry. The `identity.profile` wire field
+   stays, always `default`, for older clients.
 3. Per-Session Runtime state lives once per data root. State left under other
    profiles is merged once at Host startup with fixed rules and a diagnostic.
+   Session-scoped permission grants are imported; global grants are not,
+   because they would extend approvals given in one product to every Session.
 4. `owner.lock` remains the single-writer fence and the redirect remains, but
    only to reach a legacy Host in another slot until it is idle and replaced.
-5. Credential profile (the account namespace in `auth.json`) is unchanged and
-   is not compared with any Host property.
+5. Credential profile (the account namespace in `auth.json`), Agent/execution
+   profiles and Session `profileId` are unchanged. The credential profile is
+   not compared with any Host property.
 
 **Consequences**:
 
@@ -7583,7 +7589,11 @@ directory on the data root and never split process or storage by profile.
   idempotent and keeps the source for 30 days.
 - Two isolated Host environments in one account now require two data roots
   (`KODAX_HOME`), which is how tests and the Space test override already work.
-- Profile remains in public signatures until the next major SDK version.
+- SDK users must remove the `profile` option when they upgrade. This is a
+  breaking change inside the 0.7.97 line; the users are one closely connected
+  team in the same refactoring period, so they change in step with the
+  release instead of carrying a deprecated option.
+- Users who approved a global "always allow" in Space approve it once more.
 
 **Rejected alternatives**:
 
@@ -7595,3 +7605,10 @@ directory on the data root and never split process or storage by profile.
   keys whenever a client passes a custom directory.
 - **Space uses profile `default`.** It removes today's collision but keeps the
   profile key, so any other client with another profile repeats it.
+- **A new slot name such as `runtime/host/`.** Older clients only look under
+  `runtime/daemon/<profile>/`. They would start a second Host and fail on the
+  storage owner (Issue 405 again) unless the Host also wrote a descriptor in
+  the old place, which restores two identities. It also migrates every CLI
+  user's state.
+- **Deprecate `profile` and remove it in a later major version.** It keeps a
+  public option with no meaning and a second code path to test until then.

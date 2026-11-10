@@ -25,6 +25,12 @@ All notable changes to this project will be documented in this file.
   capabilities it needs. A launcher replaces only an idle Host, and only when that
   Host runs an older version or a stale build of the same installation. A busy
   Host is no longer retried until the 60-second startup deadline (Issue 405).
+- A CLI started while KodaX Space is open now works with Space's Host. Before,
+  `kodax daemon start` failed with `The Host owner changed while startup was
+  being verified`, and every model request failed with `Provider credential
+  authorization requires the approved Host profile`. `daemon start` now
+  verifies the Host it actually attached to. Provider credential leases are
+  bound to the authenticated Host only, not to its profile name (Issue 406).
 
 ### Compatibility
 

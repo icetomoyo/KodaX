@@ -1,8 +1,8 @@
 # One Host per `KODAX_HOME` — design draft, 2026-11-10
 
-Status: **draft for review**. Nothing here is implemented. Decision record:
-[ADR-075](../ADR.md#adr-075-one-host-per-kodax_home-profile-is-not-host-identity)
-(Proposed). Tracks [Issue 407](../KNOWN_ISSUES.md#issue-407-passive-connections-and-exit-receipts-ignore-the-session-storage-owner);
+Status: **accepted 2026-11-10, not implemented**. Review decisions are in §8.
+Decision record:
+[ADR-075](../ADR.md#adr-075-one-host-per-kodax_home-profile-is-not-host-identity). Tracks [Issue 407](../KNOWN_ISSUES.md#issue-407-passive-connections-and-exit-receipts-ignore-the-session-storage-owner);
 [Issue 406](../KNOWN_ISSUES.md#issue-406-a-cli-redirected-to-spaces-host-fails-daemon-start-verification-and-provider-credential-authorization)
 is already fixed on its own and is a precondition.
 
@@ -56,21 +56,27 @@ profile.
 
 - The Host identity is the data root (`KODAX_HOME`, default `~/.kodax`). One
   Host serves it. No client option selects another Host in the same home.
-- The Host always uses the canonical slot. **Recommendation: reuse the
-  existing names** `runtime/daemon/default/` and `runtime/profiles/default/`.
-  Every CLI user's state is already there, and clients from v0.7.97-alpha.7
-  onward reach it directly or through the redirect. A rename to
-  `runtime/host/` reads better but migrates every user and breaks older
-  clients. See open question Q1.
-- `profile` stops being Host identity:
-  - `--profile` on `daemon` commands and `profile` in `ensureKodaXRuntime`,
-    `connectKodaXClient` and `readKodaXClientExits` are accepted and ignored
-    for location. A non-default value emits one deprecation diagnostic per
-    process. They are removed in a later major SDK version.
-  - The `identity.profile` wire field stays (always `default`) so older
-    clients' `expectedProfile` checks pass.
-- Credential profile (the account namespace inside `auth.json`: API-key
-  bindings, OAuth registrations) is unchanged. It is not Host identity.
+- The Host always uses the canonical slot, which keeps the existing names
+  `runtime/daemon/default/` and `runtime/profiles/default/` (Q1). One constant
+  names the slot, with a comment that `default` is a fixed location, not a
+  profile. Every CLI user's state is already there, and every older client
+  looks there directly or reaches it through the redirect.
+- The Host-location `profile` is **removed now** (Q3), not deprecated:
+  - Removed from the public SDK options of `ensureKodaXRuntime`,
+    `connectKodaXRuntime`, `connectKodaXClient` and `readKodaXClientExits`,
+    and from the `daemon` command flags (`--profile`).
+  - TypeScript callers get a compile error. JavaScript callers that still
+    pass `profile`, and CLI users who pass `--profile`, get an explicit error
+    that names the removal, says what to do instead (drop it; use a separate
+    `homeDir`/`KODAX_HOME` for isolation) and points to the migration section
+    in `docs/SDK_MIGRATION.md`, which ships in the npm package. Nothing is
+    silently ignored.
+  - The `identity.profile` wire field stays, always `default`, because older
+    clients check it on connect. It is marked deprecated for readers.
+- Unaffected, and the migration text must say so because they share the
+  word: credential profile (the account namespace inside `auth.json`: API-key
+  bindings, OAuth registrations), Agent/execution profiles
+  (`KodaXAgentProfile`, `createExecutionProfile`) and Session `profileId`.
 - `sessions/.product-host/owner.lock` stays as the single-writer fence and
   keeps being written, because older clients redirect through it.
 
@@ -90,8 +96,8 @@ current products meet.
 
 ### 4.2 `daemon start | stop | status`
 
-They act on the canonical slot. If a legacy Host owns storage they report and
-stop that Host, with `profile` shown in the output.
+They act on the canonical slot and take no `--profile`. If a legacy Host owns
+storage they report and stop that Host, and the output names its legacy slot.
 
 ### 4.3 State migration (one time, idempotent)
 
@@ -105,7 +111,7 @@ owner. Per source profile `p` ≠ `default`:
 | `session-settings/<sid>.json` | move if absent; if both exist keep the newer mtime and log both revisions (revisions are per-store counters and are not comparable) |
 | `session-orders/<sid>.json` | write `max(source, target)`; the counter must stay monotonic |
 | `pending-inputs/<sid>` | move if absent; if both exist keep both entries, deduplicated by input id |
-| `permission-grants.json` | see open question Q2 (recommendation: do not import) |
+| `permission-grants.json` | import grants scoped to one Session (`scope.sessionId` set), skipping ids already present; drop grants without a Session scope and report their count, because importing them would extend approvals given in Space to every CLI Session (Q2) |
 | `run-status-index.json` | delete the target index after merging Runs; the existing fail-closed scan rebuilds it |
 
 Afterwards the source is renamed to `runtime/profiles/<p>.merged-<date>/`.
@@ -136,9 +142,28 @@ KodaX:
   hook at Host startup.
 - `sdk-client.ts`: `connectKodaXClient` and `readKodaXClientExits` resolve the
   canonical slot, falling back to the storage owner's slot.
-- `kodax_cli.ts`: `daemon` commands, deprecation of `--profile`.
+- `kodax_cli.ts`: `daemon` commands without `--profile`; explicit error when
+  it is passed.
 - `home-retention.ts`: one rule for `runtime/profiles/*.merged-*`.
-- Docs: `CLIENT_CONTRACT.md`, `SDK_MIGRATION.md`, DD runtime layout, ADR-075.
+- Public type declarations: remove the option fields; mark
+  `RuntimeIdentity.profile` `@deprecated` with the reason in its JSDoc.
+
+Documentation for SDK users. All of these ship in the npm package, so a user
+who installs the new version sees them under `node_modules/@kodax-ai/kodax/`:
+
+- `CHANGELOG.md` `[Unreleased]`: a breaking-change entry at the top that
+  lists the removed options and flag, the error text, the one-line fix and a
+  link to the migration section.
+- `docs/SDK_MIGRATION.md`: a section "One Host per KODAX_HOME (`profile`
+  removed)" with before/after code for each removed option, isolation through
+  `homeDir`/`KODAX_HOME`, the meaning of `identity.profile`, the one-time state
+  merge and its permission-grant rule, the three unaffected "profile"
+  concepts, and what an older Space or CLI does next to the new Host.
+- `docs/CLIENT_CONTRACT.md`: replace the `profile?: string` connection row and
+  the "profile is a connection name" text with the data-root identity.
+- `public_docs/sdk/embedder-guide.md`: update the `profile` examples.
+- The thrown error messages link the migration section by name.
+- Internal: DD runtime layout, ADR-075.
 
 Space (after the bundled SDK carries the change):
 
@@ -153,18 +178,30 @@ Space (after the bundled SDK carries the change):
 - Two launchers with different `profile` values in one home share one Host and
   one Runtime state directory (start order both ways).
 - Passive connect and exit receipts find a legacy-slot Host that owns storage.
+- Passing `profile` to each removed SDK option, and `--profile` to each
+  `daemon` command, fails with the migration error; type tests confirm the
+  fields are gone from the declarations.
 - Migration: each table row, idempotence after a crash between steps, skip on
   a live legacy owner, diagnostic contents.
 - Old/new matrix with the real released beta.4 binary and Space packaged E2E
   (scenarios A–D from the Issue 405/406 run), provider API keys scrubbed.
 
-## 8. Open questions for review
+## 8. Review decisions (2026-11-10)
 
-- **Q1. Slot name.** Keep `default` (recommended, no migration for CLI users,
-  older clients work) or rename to `runtime/host/` (clearer, costs one more
-  migration and breaks pre-alpha.7 clients).
-- **Q2. Permission grants from `coder`.** Not importing is safe and costs some
-  repeated approval prompts in Space. Importing keeps them but merges two
-  approval histories into one store. Recommendation: do not import.
-- **Q3. Removing `profile` from the public SDK.** Deprecate now, remove in the
-  next major SDK version (recommended), or remove now.
+- **Q1. Slot name: keep `default`.** A new name such as `runtime/host/` would
+  migrate every CLI user's state as well, and older clients only look under
+  `runtime/daemon/<profile>/`. They would not see the Host, start their own
+  and fail on the storage owner, which is Issue 405 again. Avoiding that
+  needs a second descriptor in the old place, which brings back two
+  identities.
+- **Q2. Permission grants: import Session-scoped grants, drop global ones.**
+  Either choice was acceptable to the owner. A Session-scoped grant affects
+  only its Session. A global grant approved in Space would silently apply to
+  every CLI Session after the merge. Dropped global grants cost one more
+  approval each. New grants after the merge apply to every client, which is
+  the intended meaning of one Host.
+- **Q3. Remove the Host-location `profile` now.** The SDK has other users,
+  but they are a closely connected team in the same refactoring period, so
+  they change in step with this release. The removal needs full
+  documentation that npm users can see (§6) and explicit errors instead of
+  silent acceptance (§3).
