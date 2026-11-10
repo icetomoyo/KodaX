@@ -7542,3 +7542,56 @@ DD §10 "Agent-home retention" lists every path and the paths that are kept.
 - **Pattern rules such as "any `events.jsonl` older than N days".** Agent task
   and Workflow ledgers use the same file name and are live. Rules name exact
   locations instead.
+
+## ADR-075: One Host per KODAX_HOME; Profile Is Not Host Identity
+
+**Status**: Proposed (2026-11-10). Draft for review; see the
+[design draft](designs/one-host-per-kodax-home-2026-11-10.md). Tracks Issue 407.
+
+**Context**: A Host is identified by its profile name (`runtime/daemon/<profile>/`,
+`runtime/profiles/<profile>/`) and, since v0.7.97-alpha.7, also by the Session
+storage owner (`sessions/.product-host/owner.lock`). Packaged Space uses profile
+`coder` and the CLI uses `default`, with one shared sessions directory. Only
+one Host may own that directory, so the second product is redirected to the
+first product's Host. Each path that still keys on the requested profile then
+breaks: `daemon start` verification and the credential profile fence (Issue
+406), passive connect and exit receipts (Issue 407), Space's hard-coded
+`coder` stop and recovery paths, and per-Session Runtime state that is split
+by whichever profile served the Session. Profile selects no configuration; it
+only names directories. codex, opencode and pi each key one service or agent
+directory on the data root and never split process or storage by profile.
+
+**Decision**:
+
+1. The data root (`KODAX_HOME`, default `~/.kodax`) is the Host identity. One
+   Host serves it, in one canonical slot.
+2. The `profile` option and `--profile` flag stop selecting a Host. They are
+   accepted, ignored for location, and emit a deprecation diagnostic when not
+   `default`. The `identity.profile` wire field stays for older clients.
+3. Per-Session Runtime state lives once per data root. State left under other
+   profiles is merged once at Host startup with fixed rules and a diagnostic.
+4. `owner.lock` remains the single-writer fence and the redirect remains, but
+   only to reach a legacy Host in another slot until it is idle and replaced.
+5. Credential profile (the account namespace in `auth.json`) is unchanged and
+   is not compared with any Host property.
+
+**Consequences**:
+
+- Space and the CLI meet in one Host by construction; no redirect is needed
+  between current versions. Session settings no longer depend on start order.
+- A one-time migration must run on every machine that ever ran Space. It is
+  idempotent and keeps the source for 30 days.
+- Two isolated Host environments in one account now require two data roots
+  (`KODAX_HOME`), which is how tests and the Space test override already work.
+- Profile remains in public signatures until the next major SDK version.
+
+**Rejected alternatives**:
+
+- **Keep per-profile Hosts and patch each path to follow the storage owner.**
+  It fixes the symptoms one at a time and keeps two identity keys, so every
+  new path can repeat the bug. It does not fix the split Runtime state.
+- **One Host per sessions directory.** The sessions directory is a setting of
+  the data root, not an independent identity; making it the key keeps two
+  keys whenever a client passes a custom directory.
+- **Space uses profile `default`.** It removes today's collision but keeps the
+  profile key, so any other client with another profile repeats it.
