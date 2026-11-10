@@ -1,3 +1,4 @@
+import type { KodaXShellSandboxObservation } from "@kodax-ai/coding";
 import { buildMessageActionsText } from "../components/MessageActions.js";
 import type { TranscriptViewportSelectionState } from "../components/TranscriptViewport.js";
 import {
@@ -49,6 +50,27 @@ export function buildFooterNotifications(
   }
 
   return notifications;
+}
+
+/**
+ * The footer reflects the latest sandbox state instead of logging each command,
+ * so a session stuck on host fallback shows one line rather than one per call.
+ * `not_selected` carries no sandbox health, so it keeps the current notice.
+ */
+export function nextSandboxFooterNotice(
+  current: string | undefined,
+  observation: KodaXShellSandboxObservation,
+): string | undefined {
+  if (observation.state === "fallback") {
+    return "Sandbox unavailable: shell commands run with host permissions (kodax sandbox doctor)";
+  }
+  if (observation.state !== "applied") return current;
+  const degraded = observation.degradedReadRoots ?? [];
+  const [firstRoot] = degraded;
+  if (firstRoot === undefined) return undefined;
+  const first = firstRoot.split(/[\\/]/).filter(Boolean).at(-1) ?? firstRoot;
+  const more = degraded.length > 1 ? ` (+${degraded.length - 1} more)` : "";
+  return `Sandbox cannot read ${first}${more}; run kodax sandbox setup`;
 }
 
 export interface BuildBaseFooterNoticesOptions {

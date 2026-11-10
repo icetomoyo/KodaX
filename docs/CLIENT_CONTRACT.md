@@ -345,6 +345,7 @@ Interaction 的 kind 决定 options 和 response：单选问题、多问题、�
 | `contextBudget?` | Host 解析当前父 Session 选择对应的有效配置，见下方预算规则 | 缺失表示预算未知；不能从客户端 Provider 或启动快照补算 |
 | `parentContextTokens?` | Host 对已保存父会话 data.messages 的 token 估计；非历史重读时可沿用上次值 | 空闲/resume 时也可显示；不是账单用量或 transcript 总长度 |
 | `activity?` | Host 收集到的最近 Run 的显示活动 | 可缺失、可保留最近终态活动；存在不证明仍在运行 |
+| `sandbox?` | 本 Session 最近一次 Shell 沙箱健康观测（`applied`/`fallback`），跨 Run 保留，`not_selected` 不覆盖 | 只在状态变化时推送；`fallback` 表示命令以宿主权限执行，`applied.degradedReadRoots` 列出本次不可读的 setup 目录。缺失表示尚未观测，不等于健康 |
 
 ### 显示项、流式文本与工具
 
@@ -477,7 +478,7 @@ original 每块最多 65,536 个 UTF-16 单元，沿 nextOffset 继续；没有 
 
 图片附件通过 `readItem(sessionId, itemId, {part:'attachment', attachmentIndex, attachmentOffset, expectedImageSha256})` 读取，返回 `ClientItemContent.image`。`attachmentIndex` 是该项附件索引；`attachmentOffset` 默认 0，按图片字节计数，独立于正文的 UTF-16 `offset`。可选 `expectedImageSha256` 要求完整图片身份不变。Host 只读该 Session 项已持有的附件引用，验证实际 PNG，不接受任意客户端路径。当前每块最多 512 KiB、整张最多 10 MiB；返回 `dataBase64/sha256/width/height/offset/totalLength/nextOffset`。调用方分别解码各块，验证同一哈希、尺寸、总长及连续偏移，拼接后校验完整 SHA256；缺项、无进展、图片变化或缺 Host 能力均不能回退到 UI 文件读取。Artifact Client port 已封装这些检查，见 [SDK](ARTIFACT_SDK.md)。图片字节不作为正文、历史文本或日志返回。
 
-`sessions.observe` 先交付当前 `ClientSessionView`，以后交付完整替换视图。它不是文本 delta 或可回放事件日志；客户端替换当前展示投影，不自行将每帧追加成历史。view 包含 Session、settings、items、queue、interactions、runs，以及可选的 contextBudget/activity/parentContextTokens。Activity 的父上下文与 worker 上下文不可混为一个计数。
+`sessions.observe` 先交付当前 `ClientSessionView`，以后交付完整替换视图。它不是文本 delta 或可回放事件日志；客户端替换当前展示投影，不自行将每帧追加成历史。view 包含 Session、settings、items、queue、interactions、runs，以及可选的 contextBudget/activity/parentContextTokens/sandbox。Activity 的父上下文与 worker 上下文不可混为一个计数。
 
 输入接收结果与正文视图异步更新，不保证同一帧到达。已提交输入可能稍后才出现在观察视图中；消费结果以 inputId 的接收记录为准，不能因首帧尚未显示正文就重交输入。后续 view 应自然收敛，不需要客户端额外读取或重新提交来推动刷新。
 

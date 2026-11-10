@@ -335,6 +335,12 @@ export type KodaXShellSandboxObservation =
       readonly state: 'applied';
       readonly backend: KodaXShellSandboxBackend;
       readonly policyId: 'kodax-workspace-shell-v1';
+      /**
+       * Windows setup read roots whose setup ACLs disappeared. The command
+       * stayed sandboxed but could not read them; `kodax sandbox setup`
+       * restores them.
+       */
+      readonly degradedReadRoots?: readonly string[];
     }
   | {
       readonly version: 1;

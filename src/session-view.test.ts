@@ -685,3 +685,28 @@ it('keeps a still-streaming live output that has no canonical counterpart yet', 
   expect(merged.filter(item => item.type === 'assistant').map(item => item.id))
     .toEqual(['run-1:req-1:assistant']);
 });
+
+it('keeps the latest sandbox health across Runs and pushes only when it changes', async () => {
+  const owner = new SessionViewOwner(async () => ({ session: { id: 'session', title: 'Sandbox' },
+    settings: {}, items: [], queue: [], interactions: [], runs: [] }), async () => undefined);
+  const views: ClientSessionView[] = [];
+  const observation = await owner.observe('session', view => views.push(view));
+  const fallback = { version: 1, state: 'fallback', reason: 'prepare_failed', execution: 'normal_permission_policy' } as const;
+  const applied = { version: 1, state: 'applied', backend: 'windows-restricted-user', policyId: 'kodax-workspace-shell-v1' } as const;
+  try {
+    const first = owner.events('session', 'first');
+    first.onToolSandboxObservation?.({ id: 'a', observation: fallback });
+    await expect.poll(() => views.at(-1)?.sandbox).toEqual(fallback);
+    const pushed = views.length;
+    first.onToolSandboxObservation?.({ id: 'b', observation: fallback });
+    first.onToolSandboxObservation?.({ id: 'c', observation: { version: 1, state: 'not_selected' } });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(views.length).toBe(pushed);
+    const second = owner.events('session', 'second');
+    second.onIterationStart?.(1, 10);
+    await expect.poll(() => views.at(-1)?.activity?.runId).toBe('second');
+    expect(views.at(-1)?.sandbox).toEqual(fallback);
+    second.onToolSandboxObservation?.({ id: 'd', observation: applied });
+    await expect.poll(() => views.at(-1)?.sandbox).toEqual(applied);
+  } finally { observation.close(); await owner.close(); }
+});

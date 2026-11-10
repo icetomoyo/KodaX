@@ -548,6 +548,7 @@ import {
   buildPromptFooterNotices,
   buildStashNoticeText,
   buildTranscriptFooterViewModel,
+  nextSandboxFooterNotice,
 } from "./view-models/surface-chrome.js";
 import {
   buildAmaSummaryViewModel,
@@ -1965,6 +1966,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     readonly text: string;
     readonly at: number;
   }[]>([]);
+  // Same-string updates bail out of rendering, so per-command observations
+  // cost nothing until the sandbox state actually changes.
+  const [sandboxFooterNotice, setSandboxFooterNotice] = useState<string | undefined>();
   const pushClientPlaneNotice = useCallback((id: string, text: string): void => {
     const expire = (): void => {
       setClientPlaneNotices((prev) => (prev.length === 0 ? prev : prev.filter((notice) => Date.now() - notice.at < CLIENT_PLANE_NOTICE_TTL_MS)));
@@ -4827,6 +4831,10 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       pendingInputCount: displayPendingInputs.length,
     });
   }, [historySearchQuery, displayPendingInputs.length]);
+  const clientSandbox = sessionView?.sandbox;
+  const shownSandboxNotice = useMemo(() => options.clientPlane
+    ? clientSandbox && nextSandboxFooterNotice(undefined, clientSandbox)
+    : sandboxFooterNotice, [options.clientPlane, clientSandbox, sandboxFooterNotice]);
   const footerNotifications = useMemo(() => {
     const base = buildFooterNotifications({
       historySearchQuery,
@@ -4843,7 +4851,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       : clientObservationStatus?.state === 'closed' && clientObservationStatus.reason === 'unavailable'
         ? 'Host observation unavailable; displayed state may be outdated.' : undefined;
     return [...base, ...learningNotices, ...clientPlaneNotices,
-      ...(observationNotice ? [{ id: 'host-observation', text: observationNotice }] : [])];
+      ...(observationNotice ? [{ id: 'host-observation', text: observationNotice }] : []),
+      ...(shownSandboxNotice ? [{ id: 'sandbox', text: shownSandboxNotice }] : [])];
   }, [
     historySearchMatches.length,
     historySearchQuery,
@@ -4851,6 +4860,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     learningNotices,
     clientPlaneNotices,
     clientObservationStatus,
+    shownSandboxNotice,
     displayPendingInputs.length,
   ]);
   const footerNotificationSummary = useMemo(
@@ -7480,6 +7490,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           formatManagedLiveToolLabel(finalizedTool, managedTaskStatusRef.current?.activeWorkerTitle),
         );
       }
+    },
+    onToolSandboxObservation: (update) => {
+      setSandboxFooterNotice((current) => nextSandboxFooterNotice(current, update.observation));
     },
     onToolProgress: (update: { id: string; message: string }, meta?: KodaXToolEventMeta) => {
       if (userInterruptedRef.current) return;

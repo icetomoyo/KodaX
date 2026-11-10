@@ -3825,6 +3825,77 @@ describe.runIf(process.platform === 'win32')('Windows v2 account cutover', () =>
     await reused.cleanup({ execution: 'not_started' });
   });
 
+  it('reports setup read roots the native host degraded for one command', async () => {
+    const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-degraded-read-'));
+    tempRoots.push(root);
+    const sandbox = createAsrtShellSandbox({ workspaceRoot: root, shouldSandbox: () => true });
+    const invocation = await sandbox.prepare({
+      toolCallId: 'degraded-read-roots',
+      toolInput: { command: 'node --version' },
+      command: 'node --version',
+      executable: process.execPath,
+      args: ['--version'],
+      cwd: root,
+      env: process.env,
+      fallbackToNormalExecution: false,
+    });
+    if (invocation?.processControl === undefined) throw new Error('expected process control');
+    const requestFile = invocation.args.at(-1);
+    if (requestFile === undefined) throw new Error('expected a native request file');
+    const request = JSON.parse(readFileSync(requestFile, 'utf8')) as {
+      readonly terminalRecordPath: string;
+      readonly terminalNonce: string;
+    };
+    const recordIdentity = path.basename(request.terminalRecordPath)
+      .slice('windows-terminal-'.length);
+    stubbornBroker.mode = 'silent';
+    const child = spawn(invocation.executable, [...invocation.args], {
+      cwd: root,
+      env: invocation.env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    const deadlineAt = Date.now() + 5_000;
+    await invocation.processControl.closeInput?.(child, undefined, deadlineAt);
+    const degradedRoot = path.join(os.homedir(), '.cargo');
+    await writeFile(path.join(
+      path.dirname(request.terminalRecordPath),
+      `windows-started-${recordIdentity}`,
+    ), JSON.stringify({
+      protocol: 10,
+      nonce: request.terminalNonce,
+      targetPid: process.pid,
+      jobContained: true,
+      degradedReadRoots: [degradedRoot],
+    }), 'utf8');
+    await writeFile(request.terminalRecordPath, JSON.stringify({
+      protocol: 10,
+      nonce: request.terminalNonce,
+      jobDrained: true,
+      targetExitCode: 0,
+      terminationRequested: false,
+      brokerRetirementRecommended: false,
+      denyReadCleanupDeferred: false,
+    }), 'utf8');
+    await expect(
+      invocation.processControl.attestStart?.(child, undefined, deadlineAt),
+    ).resolves.toEqual({ state: 'started' });
+    Reflect.set(child, 'exitCode', 0);
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    child.emit('exit', 0, null);
+    child.emit('close', 0, null);
+    stubbornBroker.mode = 'none';
+
+    await expect(invocation.cleanup({ execution: 'started_or_unknown' })).resolves.toEqual({
+      version: 1,
+      state: 'applied',
+      backend: 'windows-restricted-user',
+      policyId: 'kodax-workspace-shell-v1',
+      degradedReadRoots: [degradedRoot],
+    });
+  });
+
   it('keeps a healthy broker after a native-host bootstrap-delivery timeout', async () => {
     const root = await createTestDirectory(path.join(os.tmpdir(), 'kodax-v2-bootstrap-timeout-'));
     tempRoots.push(root);

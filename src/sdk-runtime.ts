@@ -21096,6 +21096,7 @@ function wrapKodaXEvents(input: {
       externalCallbacks()?.onToolProgress?.(update, meta);
     },
     onToolSandboxObservation(update, meta) {
+      input.display.onToolSandboxObservation?.(update, meta);
       input.executionFacts?.tool(record.sessionId, targetFromMeta(meta), toolIdentity(update.id, meta), update.id, undefined, { observation: update.observation });
       emit("tool.sandbox", { update, meta }, meta);
       externalCallbacks()?.onToolSandboxObservation?.(update, meta);

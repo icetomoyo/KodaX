@@ -254,6 +254,8 @@ pub struct StartedRecord {
     pub nonce: String,
     pub target_pid: u32,
     pub job_contained: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub degraded_read_roots: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

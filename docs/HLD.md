@@ -239,7 +239,11 @@ generation before creating its REPL Runtime. A stale generation reuses that
 setup-only boundary; concurrent starters serialize only the repair and followers
 recheck the completed state. One no-side-effect target start and exit proves the
 new generation before startup reports ready. Non-interactive Runtime/daemon/SDK
-startup remains verify-only. Shell Temp variables use an empty per-command child
+startup remains verify-only. Only profile directories are setup-owned: admission
+re-applies a replaced top-level profile file, and a setup-owned directory with
+missing ACEs is left out of that command's token and reported as
+`degradedReadRoots`. It fails instead when a write root of the command reaches it
+(ADR Issue 399 note). Shell Temp variables use an empty per-command child
 under system TMP, so command admission never rewrites the shared Temp/AppData root;
 ordinary command admission never invokes UAC, that migration, or
 revokes shared ACL state. New sandbox policy grants broad

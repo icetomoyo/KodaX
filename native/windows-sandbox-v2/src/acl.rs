@@ -762,6 +762,10 @@ pub fn verify_setup_read_capabilities(
         .collect();
     for (target, operations) in open_grouped_operations(operations, &generation, sandbox_user_sid)?
     {
+        // Admission re-applies file roots, so only directories need setup.
+        if !target.directory {
+            continue;
+        }
         ensure!(
             target_satisfies_operations(&target, &operations, sandbox_user_sid)?,
             "[windows_v2_setup_required] Setup filesystem capabilities are missing or unsafe at {}; run \"kodax sandbox setup\"",
@@ -2050,11 +2054,19 @@ pub fn verify_control_directory_boundary(
     Ok(())
 }
 
+/// Capabilities admitted for one command. `degraded_read_roots` lists setup-owned
+/// directories whose setup ACEs disappeared; the target cannot read them.
+#[derive(Debug, Default)]
+pub struct PolicyAdmission {
+    pub capability_sids: Vec<String>,
+    pub degraded_read_roots: Vec<String>,
+}
+
 pub fn ensure_policy_aces_until(
     request: &RunRequest,
     runner_directory: &Path,
     operation_deadline_unix_ms: u64,
-) -> Result<Vec<String>> {
+) -> Result<PolicyAdmission> {
     let canonical_request = canonical_policy_request(request)?;
     validate_explicit_allows_do_not_override_inherited_denies(&canonical_request)?;
     let host = current_token()?;
@@ -2072,26 +2084,24 @@ pub fn ensure_policy_aces_until(
             .any(|allowed| allowed.eq_ignore_ascii_case(path))),
         "Windows sandbox preinstalledReadRoots must also be allowRead roots",
     );
-    let (setup_owned_operations, mutable_operations): (Vec<_>, Vec<_>) =
+    let (setup_owned_operations, mut mutable_operations): (Vec<_>, Vec<_>) =
         policy_operations(&canonical_request, runner_directory, &host_sid)
             .into_iter()
             .partition(|operation| {
                 setup_owned_roots.contains(&operation.path.to_string_lossy().to_ascii_lowercase())
             });
     let mut capability_sids = BTreeSet::new();
+    let mut degraded_read_roots = Vec::new();
 
     if !setup_owned_operations.is_empty() {
-        let installed = satisfied_policy_capability_sids(
+        let setup_owned = admit_setup_owned_operations(
             setup_owned_operations,
             &capability_generation,
-            &canonical_request.sandbox_user_sid,
-        )?
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "[windows_v2_setup_required] A setup-owned Windows sandbox read capability is missing; run \"kodax sandbox setup\""
-            )
-        })?;
-        capability_sids.extend(installed);
+            &canonical_request,
+        )?;
+        capability_sids.extend(setup_owned.capability_sids);
+        mutable_operations.extend(setup_owned.file_operations);
+        degraded_read_roots = setup_owned.degraded_read_roots;
     }
 
     if !mutable_operations.is_empty() {
@@ -2114,12 +2124,89 @@ pub fn ensure_policy_aces_until(
     let mut capability_sids = capability_sids.into_iter().collect::<Vec<_>>();
     capability_sids
         .retain(|sid| !sid.eq_ignore_ascii_case(&canonical_request.policy_capability_sid));
-    Ok(capability_sids)
+    Ok(PolicyAdmission {
+        capability_sids,
+        degraded_read_roots,
+    })
+}
+
+#[derive(Default)]
+struct SetupOwnedAdmission {
+    capability_sids: Vec<String>,
+    file_operations: Vec<PlannedAclOperation>,
+    degraded_read_roots: Vec<String>,
+}
+
+/// Setup owns directory read roots because re-propagating their inherited ACEs
+/// could walk a large tree inside a command deadline. A file root has no
+/// descendants, so admission re-applies it like a mutable root after another
+/// program replaces the file. A directory whose setup ACEs disappeared drops
+/// out of this command's token instead of moving the whole command to the host.
+fn admit_setup_owned_operations(
+    operations: Vec<PlannedAclOperation>,
+    generation: &str,
+    request: &RunRequest,
+) -> Result<SetupOwnedAdmission> {
+    let mut planned = BTreeMap::<String, Vec<PlannedAclOperation>>::new();
+    for operation in &operations {
+        planned
+            .entry(operation.path.to_string_lossy().to_ascii_lowercase())
+            .or_default()
+            .push(operation.clone());
+    }
+    let mut admission = SetupOwnedAdmission::default();
+    for (target, owned) in
+        open_grouped_operations(operations, generation, &request.sandbox_user_sid)?
+    {
+        if !target.directory {
+            let file_operations = planned
+                .remove(&target.canonical_path.to_ascii_lowercase())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Windows sandbox setup-owned file root changed during admission: {}",
+                        target.canonical_path,
+                    )
+                })?;
+            admission.file_operations.extend(file_operations);
+            continue;
+        }
+        if target_satisfies_operations(&target, &owned, &request.sandbox_user_sid)? {
+            admission.capability_sids.extend(
+                owned
+                    .iter()
+                    .filter(|operation| {
+                        operation.pass == AccessPass::Restricted && operation.active_in_token
+                    })
+                    .map(|operation| operation.sid.clone()),
+            );
+            continue;
+        }
+        // Dropping a read root removes its deny-write clause too. That is only
+        // restrict-only when no write root of this command reaches the directory.
+        ensure!(
+            !request
+                .allow_write
+                .iter()
+                .any(|root| canonical_path_is_same_or_inside(root, &target.canonical_path)),
+            "[windows_v2_setup_required] A setup-owned Windows sandbox read capability is missing at {}; run \"kodax sandbox setup\"",
+            target.canonical_path,
+        );
+        admission.degraded_read_roots.push(target.canonical_path);
+    }
+    Ok(admission)
+}
+
+#[cfg(test)]
+fn ensure_policy_admission(
+    request: &RunRequest,
+    runner_directory: &Path,
+) -> Result<PolicyAdmission> {
+    ensure_policy_aces_until(request, runner_directory, test_operation_deadline_unix_ms())
 }
 
 #[cfg(test)]
 fn ensure_policy_aces(request: &RunRequest, runner_directory: &Path) -> Result<Vec<String>> {
-    ensure_policy_aces_until(request, runner_directory, test_operation_deadline_unix_ms())
+    ensure_policy_admission(request, runner_directory).map(|admission| admission.capability_sids)
 }
 
 #[cfg(test)]
@@ -2711,7 +2798,7 @@ mod tests {
     }
 
     #[test]
-    fn setup_owned_read_root_is_verify_only_during_admission() {
+    fn missing_setup_owned_directory_degrades_only_that_root() {
         let root = temporary_directory("setup-owned-read-root");
         let root_text = root.to_string_lossy().into_owned();
         let mut request = request(&root);
@@ -2720,55 +2807,100 @@ mod tests {
         request.allow_write.clear();
         request.deny_read.clear();
         request.deny_write.clear();
+        let canonical = inspect_acl_target(&root).unwrap().canonical_path;
 
         let before = open_acl_target(&root).unwrap().read_aces().unwrap().aces;
-        assert!(
-            verify_setup_read_capabilities(
-                &request.allow_read,
-                &request.sandbox_user_sid,
-                &request.sandbox_group_sid,
-                &request.filesystem_capability_nonce
-            )
-            .is_err()
+        let verify_missing = verify_setup_read_capabilities(
+            &request.allow_read,
+            &request.sandbox_user_sid,
+            &request.sandbox_group_sid,
+            &request.filesystem_capability_nonce,
         );
-        assert_eq!(
-            open_acl_target(&root).unwrap().read_aces().unwrap().aces,
-            before
-        );
-        let missing = ensure_policy_aces(&request, &root);
+        let missing = ensure_policy_admission(&request, &root);
         let after_missing = open_acl_target(&root).unwrap().read_aces().unwrap().aces;
-        if missing.is_err() && before == after_missing {
-            ensure_setup_acl_roots(
-                &request.allow_read,
-                &[],
-                &request.sandbox_group_sid,
-                &request.filesystem_capability_nonce,
-            )
-            .unwrap();
-            let installed = open_acl_target(&root).unwrap().read_aces().unwrap().aces;
-            verify_setup_read_capabilities(
-                &request.allow_read,
-                &request.sandbox_user_sid,
-                &request.sandbox_group_sid,
-                &request.filesystem_capability_nonce,
-            )
-            .unwrap();
-            assert_eq!(
-                open_acl_target(&root).unwrap().read_aces().unwrap().aces,
-                installed
-            );
-            for _ in 0..100 {
-                let capabilities = ensure_policy_aces(&request, &root).unwrap();
-                assert_eq!(capabilities.len(), 2);
-            }
-            let after_admission = open_acl_target(&root).unwrap().read_aces().unwrap().aces;
-            assert_eq!(after_admission, installed);
-        }
+        ensure_setup_acl_roots(
+            &request.allow_read,
+            &[],
+            &request.sandbox_group_sid,
+            &request.filesystem_capability_nonce,
+        )
+        .unwrap();
+        let installed = open_acl_target(&root).unwrap().read_aces().unwrap().aces;
+        let admissions = (0..100)
+            .map(|_| ensure_policy_admission(&request, &root))
+            .collect::<Vec<_>>();
+        let after_admission = open_acl_target(&root).unwrap().read_aces().unwrap().aces;
         fs::remove_dir_all(&root).unwrap();
 
-        let diagnostic = format!("{:#}", missing.unwrap_err());
+        assert!(verify_missing.is_err());
+        let missing = missing.expect("a missing setup-owned directory must not fail the command");
+        assert!(missing.capability_sids.is_empty());
+        assert_eq!(missing.degraded_read_roots, vec![canonical]);
+        assert_eq!(
+            after_missing, before,
+            "degraded admission must not write the ACL"
+        );
+        for admission in admissions {
+            let admission = admission.unwrap();
+            assert_eq!(admission.capability_sids.len(), 2);
+            assert!(admission.degraded_read_roots.is_empty());
+        }
+        assert_eq!(after_admission, installed);
+    }
+
+    #[test]
+    fn missing_setup_owned_directory_inside_a_write_root_still_requires_setup() {
+        let writable = temporary_directory("setup-owned-under-write-root");
+        let readable = writable.join("read-only");
+        fs::create_dir(&readable).unwrap();
+        let readable_text = readable.to_string_lossy().into_owned();
+        let mut request = request(&writable);
+        request.allow_read = vec![readable_text.clone()];
+        request.preinstalled_read_roots = vec![readable_text];
+        request.allow_write = vec![writable.to_string_lossy().into_owned()];
+        request.deny_read.clear();
+        request.deny_write.clear();
+
+        let result = ensure_policy_admission(&request, &writable);
+        fs::remove_dir_all(&writable).unwrap();
+
+        let diagnostic = format!("{:#}", result.unwrap_err());
         assert!(diagnostic.contains("[windows_v2_setup_required]"));
-        assert_eq!(after_missing, before);
+    }
+
+    #[test]
+    fn replaced_setup_owned_file_is_reapplied_during_admission() {
+        let root = temporary_directory("setup-owned-file");
+        let file = root.join("profile.json");
+        fs::write(&file, b"{}").unwrap();
+        let file_text = file.to_string_lossy().into_owned();
+        let mut request = request(&root);
+        request.allow_read = vec![file_text.clone()];
+        request.preinstalled_read_roots = vec![file_text.clone()];
+        request.allow_write.clear();
+        request.deny_read.clear();
+        request.deny_write.clear();
+
+        let verify_missing = verify_setup_read_capabilities(
+            &request.allow_read,
+            &request.sandbox_user_sid,
+            &request.sandbox_group_sid,
+            &request.filesystem_capability_nonce,
+        );
+        let admission = ensure_policy_admission(&request, &root);
+        let verify_admitted = satisfied_policy_capability_sids(
+            stable_root_operations(file.clone(), &request.sandbox_group_sid, true, false, true)
+                .into(),
+            &filesystem_capability_generation(&request),
+            &request.sandbox_user_sid,
+        );
+        fs::remove_dir_all(&root).unwrap();
+
+        verify_missing.expect("startup verification must not require setup for a file root");
+        let admission = admission.expect("a replaced setup-owned file must be admitted");
+        assert_eq!(admission.capability_sids.len(), 2);
+        assert!(admission.degraded_read_roots.is_empty());
+        assert!(verify_admitted.unwrap().is_some());
     }
 
     #[test]

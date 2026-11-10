@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-09_
+_Last Updated: 2026-11-10_
 
 ---
 
@@ -2947,6 +2947,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 399 | High | Resolved | A replaced profile file silently moves every Windows sandbox command to the host | setup-owned profile roots since v0.7.96 (`ea4d796ee`); observed at v0.7.97-beta.4 | v0.7.97 (Unreleased) | 2026-11-10 | 2026-11-10 |
 | 397 | Low | Resolved | Builtin skill-creator activation lists 14 `.d.ts` typing files | v0.7.97-beta.4 (c50d24c27) | v0.7.97 (Unreleased) | 2026-11-09 | 2026-11-09 |
 | 396 | Medium | Resolved | Skill edits in a running REPL session need `/reload` to take effect | unknown; present at v0.7.97-beta.4 | v0.7.97 (Unreleased) | 2026-11-09 | 2026-11-09 |
 | 395 | Medium | needs-info | Intermittent oversized-output Runtime test failure has no captured cause | unknown; observed at e37aef47a (v0.7.97-beta.4) | — | 2026-11-09 | — |
@@ -3230,6 +3231,103 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ---
 
 ## Issue Details
+
+### Issue 399: A replaced profile file silently moves every Windows sandbox command to the host
+
+- Priority: High
+- Status: Resolved
+- Introduced: setup-owned profile read roots since v0.7.96 (`ea4d796ee`, protocol 10);
+  observed at v0.7.97-beta.4
+- Created: 2026-11-10
+- Fixed: v0.7.97 (Unreleased)
+- Related: Issue 372 (same diagnostic, different trigger)
+
+**Original problem.** In a REPL session (`20261008_104354_7r848c8cf21187`) every
+Bash call of one turn ran as `desktop-akb7dpk\admin` with the shared Temp, and
+`tasklist` succeeded. The Bash results said nothing about it; the model found out
+only through its own `whoami` probe. After quitting and resuming, commands were
+sandboxed again. Another session on the same Host failed the same way.
+
+**Cause.** Setup grants the sandbox read access by writing explicit ACEs on each
+top-level entry of the user profile (71 entries here, files included) and
+records them as setup-owned roots. Admission only verifies those roots, never
+repairs them, and one missing root fails the whole command with
+`[windows_v2_setup_required] A setup-owned Windows sandbox read capability is
+missing` (`native/windows-sandbox-v2/src/acl.rs`). Programs that save a file by
+writing a temporary file and renaming it over the original create a new file
+that only inherits the profile ACL. Claude Code saves `~/.claude.json` this way;
+git does the same for `.gitconfig`. After such a save every sandboxed command
+falls back to Auto-approved host execution. A running Host never recovers; only
+a new interactive start runs the setup check that reinstalls the ACEs.
+A file created after setup is not affected: it is not a setup-owned root, and
+admission adds its ACEs.
+
+**Evidence.** Host `daemon.log` on 2026-11-09 (UTC): 52 pre-start failures with
+that diagnostic from 15:53:58 to 15:55:07 in two sessions; the setup marker was
+rewritten at 16:00:43 after a restart; 128 admissions then succeeded; failures
+resumed at 16:06:29, 2.1 s after `~/.claude.json` was rewritten (16:06:26.96).
+`icacls` showed only inherited ACEs on `.claude.json`, while `.gitconfig` and
+`.npmrc` kept their explicit sandbox ACEs.
+
+**Expected.**
+- A replaced top-level profile file gets its ACEs back at the next admission,
+  the way a new file already does. Only directories stay setup-owned, because
+  adding inheritable ACEs to a large tree is too slow for admission.
+- A setup-owned directory with missing ACEs makes only that directory
+  unreadable for the command. Other commands keep running sandboxed, and the
+  path is reported so `kodax sandbox setup` can be run.
+- Host fallback and a degraded directory are reported once when the state
+  changes, not on every command, and the report gives the cause.
+
+**Resolution (2026-11-10).**
+- Admission now treats only setup-owned directories as verify-only. It uses the
+  `directory` flag of the target it already opened. A setup-owned file root is
+  applied additively with read-back, like a mutable root, so a replaced
+  `~/.claude.json` gets its ACEs back at the next command. The interactive
+  startup setup check ignores files, so a replaced file never asks for setup.
+- A setup-owned directory with missing ACEs contributes no capability SIDs. For
+  that command it behaves like a path outside the policy, so it is unreadable.
+  The host reports it in the started record as `degradedReadRoots`, and the
+  applied observation carries it.
+- Degrading is refused when a write root of the command equals or contains the
+  directory, because dropping its deny-write capability could then expose
+  writes. Admission still fails with `windows_v2_setup_required` in that case.
+- No stat calls or file reads were added. The Host diagnostic is logged once
+  per change of the degraded set.
+- `ClientSessionView.sandbox` keeps the latest non-`not_selected` observation
+  across Runs. It is pushed only when its value changes.
+- The REPL shows one footer line, not transcript lines. It reads either
+  `Sandbox unavailable: shell commands run with host permissions (kodax sandbox
+  doctor)` or `Sandbox cannot read <dir> (+N more); run kodax sandbox setup`.
+  The line clears when an applied observation reports no degraded roots.
+- No model-facing text changed.
+
+- Files changed:
+  - `native/windows-sandbox-v2/src/{acl,host,model}.rs`
+  - `src/sandbox-runtime.ts`
+  - `src/session-view.ts`
+  - `src/sdk-runtime.ts` (the session view also receives sandbox observations)
+  - `packages/coding/src/{types,client-contract}.ts`
+  - `packages/repl/src/ui/view-models/surface-chrome.ts`
+  - `packages/repl/src/ui/InkREPL.tsx`
+  - docs: ADR-069 correction, HLD, `CLIENT_CONTRACT.md`, and
+    `docs/test-guides/ISSUE_399_v0.7.97_REGRESSION_GUIDE.md`
+- Tests:
+  - Native: `missing_setup_owned_directory_degrades_only_that_root`,
+    `missing_setup_owned_directory_inside_a_write_root_still_requires_setup`,
+    `replaced_setup_owned_file_is_reapplied_during_admission`. The file test
+    failed while files were still verify-only.
+  - `sandbox-runtime.test.ts`: the degraded roots reach the applied observation.
+  - `session-view.test.ts`: sandbox health persists across Runs, with no push
+    for duplicate or `not_selected` observations.
+  - `surface-chrome.test.ts`: footer text for fallback, degraded and recovered
+    states.
+- Verification:
+  - `cargo test` passes (91), and `cargo clippy -D warnings` is clean.
+  - `npm run typecheck` and `npm run build:native` pass.
+  - The affected TS suites pass: 146 files, 1,922 tests. The one failure is the
+    concurrent, still uncommitted Session-delete cascade test in
+    `sdk-runtime.test.ts`; that work is unrelated to the sandbox.
 
 ### Issue 397: Builtin skill-creator activation lists 14 `.d.ts` typing files
 
@@ -17980,12 +18078,19 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 275 (44 Open, 1 needs-info, 230 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 276 (44 Open, 0 ready, 1 needs-info, 231 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-10: Issue 399
+
+- Recorded and resolved Windows sandbox host fallback after an external program
+  replaced a top-level profile file. File roots are now re-applied at
+  admission. A directory with missing ACEs degrades to unreadable for one
+  command. The REPL shows one footer notice that changes only with the state.
 
 ### 2026-11-09: Issue 395 historical failure comparison record
 

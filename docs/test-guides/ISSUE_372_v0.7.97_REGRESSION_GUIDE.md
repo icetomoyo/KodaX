@@ -19,7 +19,7 @@ is replayed. Persist the cause of a pre-start sandbox failure in diagnostics.
 ```powershell
 npx vitest run src/sandbox-runtime.test.ts
 npx vitest run packages/coding/src/tools/bash.test.ts src/kodax_cli.sandbox-startup.test.ts src/sandbox-runtime.boot-diagnostics.test.ts
-cargo test --manifest-path native/windows-sandbox-v2/Cargo.toml --locked setup_owned_read_root_is_verify_only_during_admission
+cargo test --manifest-path native/windows-sandbox-v2/Cargo.toml --locked missing_setup_owned_directory_degrades_only_that_root
 npm run typecheck
 npm run build:packages
 npm run build:native

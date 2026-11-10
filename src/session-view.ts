@@ -3,7 +3,7 @@ import { countTokens, emitKodaXDiagnostic, getSessionLineagePath } from '@kodax-
 import { redactScopedProviderCredential } from '@kodax-ai/llm';
 import type { KodaXMessage, KodaXSessionUiHistoryItem, KodaXSessionData } from '@kodax-ai/agent';
 import { createOutputSegmentProjection, reduceOutputSegmentProjection, effectiveOutputSegmentText } from '@kodax-ai/coding';
-import type { KodaXEvents, KodaXOutputSegmentProjection, KodaXActivityEventMeta } from '@kodax-ai/coding';
+import type { KodaXEvents, KodaXOutputSegmentProjection, KodaXActivityEventMeta, KodaXShellSandboxObservation } from '@kodax-ai/coding';
 import type { CreatableHistoryItem } from '@kodax-ai/repl';
 import { createRetryHistoryItem, buildManagedLiveEventDrafts, restoreHistoryItemsFromSession,
   childActivityId, childActivityLabel, childActivitySource, truncateChildActivityDetail, suppressesChurnOverToolAction,
@@ -47,6 +47,7 @@ interface ObservedSession {
   persistFailure?: unknown;
   activity?: ClientSessionActivity;
   activityRunId?: string;
+  sandbox?: KodaXShellSandboxObservation;
   toolInputTexts?: Map<string, string>;
   costReport?: NonNullable<KodaXEvents['getCostReport']>;
 }
@@ -174,6 +175,13 @@ export class SessionViewOwner {
       getCostReport: costReport,
       ...notices,
       ...sessionActivityEvents(activity, notices),
+      // Sandbox health outlives one Run; repeated observations stay silent.
+      onToolSandboxObservation: ({ observation }) => {
+        if (observation.state === 'not_selected') return;
+        if (JSON.stringify(state.sandbox) === JSON.stringify(observation)) return;
+        state.sandbox = observation;
+        this.changed(sessionId);
+      },
       onOutputNotice: (notice, meta) => {
         if (!isPrimary(meta) || (meta && currentReasoningRequest(meta))) notices.onOutputNotice?.(notice, meta);
       },
@@ -540,7 +548,8 @@ export class SessionViewOwner {
         }
       }
       const { committedOutputIds: _committed, ...publicView } = view;
-      state.view = { ...publicView, ...(state.activity ? { activity: { ...state.activity, ...(costReport ? { costReport } : {}) } } : {}), items: boundedViewItems(items) };
+      state.view = { ...publicView, ...(state.activity ? { activity: { ...state.activity, ...(costReport ? { costReport } : {}) } } : {}),
+        ...(state.sandbox ? { sandbox: state.sandbox } : {}), items: boundedViewItems(items) };
       for (const [listener, report] of state.listeners) {
         try { listener(structuredClone(state.view)); report({ state: 'live' }); }
         catch (error: unknown) {

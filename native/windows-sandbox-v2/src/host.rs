@@ -20,7 +20,7 @@ use windows::Win32::Storage::FileSystem::{
     GetFileInformationByHandleEx,
 };
 
-use crate::acl::{ensure_policy_aces_until, verify_control_directory_boundary};
+use crate::acl::{PolicyAdmission, ensure_policy_aces_until, verify_control_directory_boundary};
 use crate::model::{
     BootstrapRequest, ErrorMessage, ExitMessage, HelloMessage, ReadyMessage, RunRequest,
     SpawnMessage, StartedMessage, StartedRecord, TerminalRecord, controller_pipe_server_pid,
@@ -836,7 +836,7 @@ pub fn run(request_path: &Path) -> Result<u32> {
         .parent()
         .ok_or_else(|| anyhow!("Windows sandbox executable has no parent"))?;
     deadline.ensure("ACL authorization")?;
-    let filesystem_capability_sids = ensure_policy_aces_until(
+    let admission = ensure_policy_aces_until(
         &request,
         runner_directory,
         request.operation_deadline_unix_ms,
@@ -930,7 +930,7 @@ pub fn run(request_path: &Path) -> Result<u32> {
             &request,
             hello,
             bootstrap,
-            filesystem_capability_sids,
+            admission,
             controller_monitor,
             target_watchdog,
             deadline,
@@ -1016,7 +1016,7 @@ fn relay_after_hello(
     request: &RunRequest,
     hello: HelloMessage,
     bootstrap: BootstrapRequest,
-    filesystem_capability_sids: Vec<String>,
+    admission: PolicyAdmission,
     controller_monitor: ControllerMonitor,
     launch_watchdog: LaunchWatchdog,
     deadline: LaunchDeadline,
@@ -1037,7 +1037,7 @@ fn relay_after_hello(
             target_argv: request.target_argv.clone(),
             cwd: request.cwd.clone(),
             policy_capability_sid: request.policy_capability_sid.clone(),
-            filesystem_capability_sids,
+            filesystem_capability_sids: admission.capability_sids,
             session_nonce: hello.session_nonce.clone(),
             target_environment: bootstrap.target_environment,
         },
@@ -1056,6 +1056,7 @@ fn relay_after_hello(
         nonce: request.terminal_nonce.clone(),
         target_pid: ready.pid,
         job_contained: ready.job_contained,
+        degraded_read_roots: admission.degraded_read_roots,
     };
     write_launch_record(resume_record_path, &launch_record)?;
     deadline.ensure("Resume attestation")?;

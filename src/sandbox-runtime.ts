@@ -2945,6 +2945,7 @@ function sandboxAbortError(signal: AbortSignal): Error {
 
 interface WindowsV2ProcessControl extends KodaXShellSandboxProcessControl {
   getPreStartUnavailableDiagnostic(): string | undefined;
+  getDegradedReadRoots(): readonly string[];
   shouldRetireBrokerAfterStartFailure(): boolean;
   waitForTerminalObservation(): Promise<void>;
 }
@@ -2970,6 +2971,7 @@ function createWindowsV2ProcessControl(
   >();
   const phases = new WeakMap<ReturnType<typeof spawn>, ControlPhase>();
   let preStartUnavailableDiagnostic: string | undefined;
+  let degradedReadRoots: readonly string[] = [];
   let startAttestationFailureDiagnostic: string | undefined;
   let retireBrokerAfterStartFailure = false;
   let terminalObservation: Promise<void> | undefined;
@@ -3115,7 +3117,7 @@ function createWindowsV2ProcessControl(
     }
   };
 
-  const verifyLaunchRecord = async (recordPath: string): Promise<void> => {
+  const verifyLaunchRecord = async (recordPath: string): Promise<unknown> => {
     const raw = await readFile(recordPath, 'utf8');
     const value = JSON.parse(raw) as unknown;
     if (
@@ -3129,9 +3131,15 @@ function createWindowsV2ProcessControl(
     ) {
       throw new Error('Native sandbox target-start record was invalid.');
     }
+    return value;
   };
 
-  const verifyStartedRecord = () => verifyLaunchRecord(startedRecordPath);
+  const verifyStartedRecord = async (): Promise<void> => {
+    const roots = Reflect.get(await verifyLaunchRecord(startedRecordPath) as object, 'degradedReadRoots');
+    degradedReadRoots = Array.isArray(roots)
+      ? roots.filter((root): root is string => typeof root === 'string')
+      : [];
+  };
 
   const attestStart: NonNullable<KodaXShellSandboxProcessControl['attestStart']> = (
     child,
@@ -3432,6 +3440,7 @@ function createWindowsV2ProcessControl(
     attestStart,
     terminate,
     getPreStartUnavailableDiagnostic: () => preStartUnavailableDiagnostic,
+    getDegradedReadRoots: () => degradedReadRoots,
     shouldRetireBrokerAfterStartFailure: () => retireBrokerAfterStartFailure,
     async waitForTerminalObservation() {
       const active = terminalObservation;
@@ -4080,6 +4089,23 @@ async function removeWorkspaceShellTempDirectory(tempDirectory: string): Promise
     force: true,
     maxRetries: process.platform === 'win32' ? 2 : 0,
     retryDelay: 50,
+  });
+}
+
+let lastReportedDegradedReadRoots = '';
+
+// Concurrent sessions share one daemon log; record each degraded-root set once.
+function reportWindowsDegradedReadRoots(roots: readonly string[]): void {
+  const key = roots.join('\0');
+  if (key === lastReportedDegradedReadRoots) return;
+  lastReportedDegradedReadRoots = key;
+  emitKodaXDiagnostic({
+    source: 'sandbox:windows-v2',
+    level: roots.length === 0 ? 'info' : 'warn',
+    message: roots.length === 0
+      ? 'Windows sandbox setup read roots are complete again.'
+      : 'Windows sandbox setup read roots lost their ACLs; commands cannot read them until "kodax sandbox setup" runs.',
+    detail: { degradedReadRoots: roots },
   });
 }
 
@@ -5825,11 +5851,14 @@ async function prepareWindowsV2Invocation(input: {
               diagnostic: preStartDiagnostic,
             };
           }
+          const degradedReadRoots = processControl.getDegradedReadRoots();
+          reportWindowsDegradedReadRoots(degradedReadRoots);
           return {
             version: 1,
             state: 'applied',
             backend: 'windows-restricted-user',
             policyId: 'kodax-workspace-shell-v1',
+            ...(degradedReadRoots.length === 0 ? {} : { degradedReadRoots }),
           };
         })();
         return cleanupPromise;

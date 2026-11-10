@@ -7,6 +7,7 @@ import {
   buildTranscriptFooterBudgetNotices,
   buildTranscriptFooterSecondaryText,
   buildTranscriptFooterViewModel,
+  nextSandboxFooterNotice,
 } from "./surface-chrome.js";
 
 describe("surface-chrome", () => {
@@ -151,5 +152,39 @@ describe("surface-chrome", () => {
       isTranscriptMode: false,
       isHistorySearchActive: false,
     })).toBeUndefined();
+  });
+});
+
+describe("nextSandboxFooterNotice", () => {
+  const applied = {
+    version: 1,
+    state: "applied",
+    backend: "windows-restricted-user",
+    policyId: "kodax-workspace-shell-v1",
+  } as const;
+  const fallback = {
+    version: 1,
+    state: "fallback",
+    reason: "prepare_failed",
+    execution: "normal_permission_policy",
+  } as const;
+
+  it("shows host fallback until a sandboxed command succeeds", () => {
+    const shown = nextSandboxFooterNotice(undefined, fallback);
+    expect(shown).toBe("Sandbox unavailable: shell commands run with host permissions (kodax sandbox doctor)");
+    expect(nextSandboxFooterNotice(shown, fallback)).toBe(shown);
+    expect(nextSandboxFooterNotice(shown, { version: 1, state: "not_selected" })).toBe(shown);
+    expect(nextSandboxFooterNotice(shown, applied)).toBeUndefined();
+  });
+
+  it("names degraded setup folders briefly", () => {
+    expect(nextSandboxFooterNotice(undefined, {
+      ...applied,
+      degradedReadRoots: ["C:\\Users\\me\\.cargo", "C:\\Users\\me\\.npm"],
+    })).toBe("Sandbox cannot read .cargo (+1 more); run kodax sandbox setup");
+    expect(nextSandboxFooterNotice(undefined, {
+      ...applied,
+      degradedReadRoots: ["C:\\Users\\me\\.cargo"],
+    })).toBe("Sandbox cannot read .cargo; run kodax sandbox setup");
   });
 });

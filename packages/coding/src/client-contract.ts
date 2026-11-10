@@ -736,6 +736,8 @@ export interface ClientSessionView {
   /** Host estimate of the saved parent context, available without a live Run. */
   readonly parentContextTokens?: number;
   readonly activity?: ClientSessionActivity;
+  /** Latest shell sandbox health in this Session; it outlives Runs and ignores `not_selected`. */
+  readonly sandbox?: KodaXShellSandboxObservation;
   readonly queue: readonly ClientQueuedInput[];
   readonly session: ClientSession;
   readonly items: readonly ClientViewItem[];

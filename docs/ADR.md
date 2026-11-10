@@ -6869,6 +6869,26 @@ capability installation filters out paths that no longer exist. Historical
 registry transaction files cannot block a fresh setup by being merged back
 into every installation request. Other filesystem failures remain errors.
 
+**2026-11-10 setup-owned root correction (Issue 399)**: Programs that save by
+rename (Claude Code's `~/.claude.json`, git's `.gitconfig`) replace a top-level
+profile file with one that only inherits the profile ACL. Because a setup-owned
+root was verify-only and all-or-nothing, one such save sent every sandboxed
+command to Auto-approved host execution until the next interactive start. Only
+directories are now setup-owned: they stay verify-only because re-propagating an
+inheritable ACE over a large tree does not fit a command deadline. A file has no
+descendants, so admission re-applies it like any mutable root, and the startup
+setup check ignores files. A setup-owned directory whose ACEs are missing drops
+out of that command's token and is reported in `applied.degradedReadRoots`;
+the command still runs sandboxed. The directory is then unlisted, like any other
+path outside the policy. A degraded read root also loses its deny-write clause,
+so a directory reached by one of the command's write roots still fails with
+`windows_v2_setup_required` instead of degrading. Clients show host fallback
+and degraded directories as Session state (`ClientSessionView.sandbox`), pushed
+only when the state changes, not as per-command transcript text. Rejected:
+repairing setup-owned directories during admission (unbounded propagation, the
+reason they are setup-owned); one model-facing note per command (repeats on
+every call and changes LLM-facing output without an eval).
+
 **Rejected alternatives**: keeping permission-before-sandbox (retains noisy
 reviews and the unsafe fallthrough split); moving a complete deterministic
 operation analyzer before the sandbox (makes the sandbox largely redundant and
