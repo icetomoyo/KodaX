@@ -5,8 +5,8 @@
 > daemons are retired. Internal Runtime and independent libraries remain. See
 > [migration and ownership limits](SDK_MIGRATION.md#统一-host-sdk-收口未发布).
 
-Last updated: 2026-11-08. Current development tree: FEATURE_298/299/301/302 on package
-`0.7.97-beta.4`; `v0.7.96` is the last stable release.
+Last updated: 2026-11-10. Current development tree: FEATURE_298/299/301/302/303/304 on package
+`0.7.97-beta.5`; `v0.7.96` is the last stable release.
 
 The [Client contract](CLIENT_CONTRACT.md) and [SDK migration guide](SDK_MIGRATION.md)
 define current product integration. Version-labelled release context below does
@@ -123,7 +123,7 @@ reference and does not duplicate every type. It should answer three questions:
 
 ## 2. Published Package And Build Entries
 
-The development package version is `@kodax-ai/kodax@0.7.97-beta.4`, which includes the v2
+The development package version is `@kodax-ai/kodax@0.7.97-beta.5`, which includes the v2
 scoped Provider credential broker (ADR-068) and bounded daemon client
 inventory on top of the v0.7.96-alpha.1 feature set and the v0.7.96-alpha.2
 Windows boot-identity hotfix. The v0.7.96-alpha.1
@@ -514,6 +514,9 @@ To change the ceiling:
 
 The release CI gate on the real universal artifact is authoritative. After
 beta.4 the five-native universal build had 356 bytes of headroom (CHANGELOG).
+For beta.5, loading optional CLI integrations, ACP and hosted A2A on demand
+left 28,034 bytes in the five-manifest composition measured at the next-dev
+integration ([record](designs/next-dev-integration-execution-2026-11-09.md)).
 v0.7.99 targets a reserve of at least 64 KiB
 ([release notes](release.md), `docs/features/v0.7.99.md`).
 

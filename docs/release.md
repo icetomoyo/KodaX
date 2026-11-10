@@ -48,6 +48,47 @@ on one commit.
   The step limit is ten minutes because the passing Windows suite alone takes
   about 4.6 minutes.
 
+## v0.7.97-beta.5 release preparation
+
+Release state: `v0.7.97-beta.5` is a candidate awaiting the publishing
+Release dispatch. npm publication has not occurred. The candidate is the
+fifth beta of the v0.7.97 line: the `KodaX-next-dev` integration (SDK
+foundation hardening for Issues 378–385, FEATURE_303 proxy and private CA
+support, FEATURE_304 extension asks, durable visual observations, Managed
+Run Context reuse, scoped tool contracts and the root goal budget for child
+usage) plus post-integration repairs: Windows sandboxing after a profile
+file is replaced (Issue 399), extinct Run child records at cold Host start
+(Issue 398), idle agent-home retention with `daemon.log` rotation
+(Issue 400), the PowerShell module cache in extension `exec` (Issue 386)
+and Host-owned PNG evidence reads. Integration acceptance and its limits
+are recorded in the
+[next-dev integration record](designs/next-dev-integration-execution-2026-11-09.md);
+the visual tools' whole-task value remains unproven.
+
+Local candidate validation on Windows with Node 22.23.1: full build, source
+and test typechecks, the unit (13,959 passed) and contract (1,072 passed)
+tiers, the fast tier (3,734 passed; its one failure was the KNOWN_ISSUES
+summary line that `371709bcf` wrote outside the tracker format, fixed in
+`01e29b96e`), `tests/release-workflow.test.ts` (28 passed),
+`test:bundle` (110 passed), `test:host-cutover` (3 passed) and the real
+published beta.4 Host in-place upgrade (1 passed). The system tier runs in
+Release CI. The local Windows CLI is
+5,168,525 bytes, 24,179 bytes under the unchanged 5 MiB minus 49 KiB gate;
+the five-manifest universal build in Release CI is authoritative. The
+CI/Release upgrade gates now pin the published `0.7.97-beta.4` tarball
+(published 2026-11-08T12:10:43.135Z; its registry integrity equals the
+beta.4 GitHub Release asset). Run that fixture locally with Windows
+`tar.exe` ahead of Git's GNU `tar` on `PATH`: GNU `tar` reads the `C:`
+drive in the archive path as a remote host.
+
+This is the first release through the single publishing dispatch described
+under [Current release execution](#current-release-execution): `target=all`
+with `release_tag=v0.7.97-beta.5` runs Full CI, all five archive builds and
+the npm package gates, then creates the tag at the dispatched commit and the
+GitHub pre-release from that run's artifacts. Ordinary branch pushes do not
+run CI. Cross-platform manual acceptance, installed Space/SDK acceptance and
+npm registry publication remain separate maintainer steps.
+
 ## v0.7.97-beta.4 release preparation
 
 Historical preparation record: the baseline and publication status below

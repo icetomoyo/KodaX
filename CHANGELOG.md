@@ -6,6 +6,31 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-beta.5] - 2026-11-10
+
+Fifth beta of the v0.7.97 line: the `KodaX-next-dev` integration plus
+post-beta.4 repairs. Extension `tool:before` applies on every dispatch
+path, fails closed, and can ask a person to approve one call (FEATURE_304);
+the Responses WebSocket follows the environment proxy and private root CAs
+are documented (FEATURE_303); model writes to agent-home extensions and
+integrations, cloud metadata reads and public-to-private `web_fetch`
+redirects are refused (Issues 378–385). `read` pins accepted images as
+durable observations that `visual_history`, `visual_inspect` and
+`visual_read_pixels` page, re-display and sample across restarts,
+compaction and forks; their whole-task value remains unproven. Follow-up
+Runs keep the Managed Run Context in place, scoped tool contracts appear
+when relevant, and child usage is charged to the root goal budget. Windows
+commands stay sandboxed after a profile file is replaced, cold Host starts
+skip extinct Run child records, and the idle Host expires retired
+agent-home state and rotates `daemon.log`. Optional CLI integrations, ACP
+and hosted A2A load on demand, keeping the audited 49 KiB headroom under
+the unchanged 5 MiB limit. Every v0.7.96 stable and v0.7.97-alpha.1
+through beta.4 client contract is retained; the security-driven behavior
+changes are listed under Compatibility. npm publication remains a manual
+maintainer action.
+
 ### Added
 
 - Skills can use `${CLAUDE_SKILL_DIR}` or `${KODAX_SKILL_DIR}` for the skill

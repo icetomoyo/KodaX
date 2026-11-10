@@ -1,10 +1,10 @@
 # KodaX Product Requirements
 
-The `v0.7.97-beta.4` release repairs the Space SDK instruction and history client contracts: AGENTS-only editor loading beside a tagged instruction loader, history contract v2 with revision-fenced Fork/Rewind/Retry turn targets, bidirectional paging and cancellable reads, and typed capability checks with optional launcher requirements. See [release preparation](release.md#v0797-beta4-release-preparation). The `v0.7.97-beta.3` release added context-capacity recovery, durable independent Actor settlement, a first-Run work-mode lock, DOCX/LibreOffice evidence, scoped Markdown rule fragments, saved-history location and complete-turn resolution, verified interrupted-exit recovery, and bounded idle daemon maintenance.
+The `v0.7.97-beta.5` release integrates the SDK foundation hardening (extension `tool:before` on every dispatch path and failing closed, agent-home extension/integration write protection, `web_fetch` metadata and private-redirect refusal), proxy and private CA support, extension asks for one-call human approval, durable visual observations, Managed Run Context reuse and scoped tool contracts, plus Windows sandbox, cold-start and agent-home retention repairs. See [release preparation](release.md#v0797-beta5-release-preparation). The `v0.7.97-beta.4` release repaired the Space SDK instruction and history client contracts: AGENTS-only editor loading beside a tagged instruction loader, history contract v2 with revision-fenced Fork/Rewind/Retry turn targets, bidirectional paging and cancellable reads, and typed capability checks with optional launcher requirements. The `v0.7.97-beta.3` release added context-capacity recovery, durable independent Actor settlement, a first-Run work-mode lock, DOCX/LibreOffice evidence, scoped Markdown rule fragments, saved-history location and complete-turn resolution, verified interrupted-exit recovery, and bounded idle daemon maintenance.
 
-> Last updated: 2026-11-08
+> Last updated: 2026-11-10
 >
-> Current implementation baseline: `@kodax-ai/kodax@0.7.97-beta.4`.
+> Current implementation baseline: `@kodax-ai/kodax@0.7.97-beta.5`.
 > The GitHub release is automated from the release tag; npm publication
 > remains manual.
 > This baseline advertises Windows `sandboxRuntime:11`;

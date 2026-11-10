@@ -11,16 +11,16 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.97-beta.4` (Git tag); `v0.7.96` remains the last stable release |
-| Current package version | `@kodax-ai/kodax@0.7.97-beta.4`; npm `beta` is `0.7.97-beta.3` until the maintainer publishes beta.4 (publication remains manual) |
+| Current released version | `v0.7.97-beta.5` (Git tag); `v0.7.96` remains the last stable release |
+| Current package version | `@kodax-ai/kodax@0.7.97-beta.5`; npm `beta` is `0.7.97-beta.4` until the maintainer publishes beta.5 (publication remains manual) |
 | Workspace baseline | `llm / agent / coding / repl` 4 core packages + private optional `artifacts` source workspace; one public npm package |
 | Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4` and extended with the unified Artifact SDK in `v0.7.97-alpha.5`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3` and extended with startup streamlining, Session recency ordering, draft admission, concurrent-launch recovery and shared-Session Host ownership resolution through `v0.7.97-alpha.7`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
 | Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement released in alpha.4; missing visual capabilities remain unverified; [design](ADR.md#verification-responsibility-and-tradeoffs) |
 | Artifact distribution revision | `2026-10-18` — one `@kodax-ai/kodax` npm package; four `/artifacts` subpaths and resources staged in the main tarball; local implementation, not yet published |
 | Current Artifact SDK additions | Unified visual evidence SDK and format backends released in `v0.7.97-alpha.5`: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
-| Current development | `v0.7.97-beta.4` Space SDK contract repair — AGENTS-only editor loading beside a tagged instruction loader, history contract v2 (revision-fenced Fork/Rewind/Retry turn targets, `resync_required`, bidirectional paging, cancellable budgeted reads), typed capability checks and optional launcher requirements, on top of the beta.3 repair release; [release preparation](release.md#v0797-beta4-release-preparation). Cross-platform manual acceptance, installed Space/SDK acceptance and the original slow first resume after rebuild remain open; `KodaX-next-dev` carries the unreleased SDK hardening (Issues 378–385) and FEATURE_303/304 on top of beta.4. |
-| Visual harness implementation | P3/P4/P5/P6 implemented within declared scope; [final ID/receipt contract delivery](designs/visual-harness-id-contract-delivery-2026-10-30.md). P7 task-value evaluation concluded **mixed; net task-quality/token value unproven**, against optimized pre-visual 1826cc22; [final review and limits](designs/visual-harness-current-version-closure-2026-10-30.md). The 2026-10-29 plan's "not executed" state and old r3 single-response results are historical, not the current outcome. Historical default suite 18,094 passed / 0 failed; earlier failures and unlocated causes remain recorded, not acceptance of the new mainline integration. No new feature ID/version assigned |
-| Roadmap updated | `2026-11-08` — beta.4 Space SDK contract repair prepared on top of the published beta.3; FEATURE_300 remains Planned; `KodaX-next-dev` merged beta.4 the same day |
+| Current development | `v0.7.97-beta.5` next-dev integration — SDK foundation hardening (Issues 378–385), FEATURE_303 proxy/private CA, FEATURE_304 extension asks, durable visual observations, Managed Run Context reuse, scoped tool contracts and the root goal budget for child usage, plus Windows sandbox profile-file, cold-start child-record and agent-home retention repairs (Issues 398–400), on top of the beta.4 Space SDK contract repair; [release preparation](release.md#v0797-beta5-release-preparation). Cross-platform manual acceptance, installed Space/SDK acceptance and the original slow first resume after rebuild remain open; Issue 395's intermittent failure cause and Issue 394's whole-task non-inferiority remain unproven. |
+| Visual harness implementation | P3/P4/P5/P6 implemented within declared scope and released in `v0.7.97-beta.5` through the next-dev integration; [final ID/receipt contract delivery](designs/visual-harness-id-contract-delivery-2026-10-30.md). P7 task-value evaluation concluded **mixed; net task-quality/token value unproven**, against optimized pre-visual 1826cc22; [final review and limits](designs/visual-harness-current-version-closure-2026-10-30.md). The 2026-10-29 plan's "not executed" state and old r3 single-response results are historical, not the current outcome. Historical default suite 18,094 passed / 0 failed; earlier failures and unlocated causes remain recorded; [mainline integration acceptance](designs/next-dev-integration-execution-2026-11-09.md). No new feature ID/version assigned |
+| Roadmap updated | `2026-11-10` — beta.5 next-dev integration release prepared on top of the published beta.4; FEATURE_300 remains Planned |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
 | Total tracked features | `88` |
 | InProgress | `2` |
@@ -554,6 +554,32 @@ Final frozen package **80** and historical/real-alpha.11 Host gates **4** passed
 and build fingerprints remained unchanged throughout. See the J guide for exact checkpoints.
 Space stays independently at `da531f0a`; its historical I counts do not certify a newly paired
 Space build. No push/publication.
+
+## v0.7.97-beta.5 Release Record
+
+`v0.7.97-beta.5` is the fifth beta of the v0.7.97 line: the `KodaX-next-dev`
+integration plus post-beta.4 repairs. It ships the SDK foundation hardening
+(Issues 378–385: extension `tool:before` on every dispatch path and failing
+closed, agent-home `extensions/` and `integrations/` protected from model
+writes, `web_fetch` metadata and public-to-private redirect refusal, user
+Skills and personal workflows from the agent home), FEATURE_303 proxy and
+private CA support and FEATURE_304 extension asks, both originally targeted
+at `v0.7.98`. It also ships durable visual observations (`visual_history`,
+`visual_inspect`, `visual_read_pixels`) whose whole-task value remains
+unproven, Managed Run Context reuse across Runs, scoped tool contracts and
+the root goal budget for child usage (Issue 377). Post-integration repairs
+cover Windows sandboxing after profile-file replacement (Issue 399),
+extinct Run child records at cold Host start (Issue 398), idle agent-home
+retention with `daemon.log` rotation (Issue 400), PowerShell module cache
+reuse in extension `exec` (Issue 386), on-demand optional CLI components
+within the unchanged 49 KiB headroom, and Host-owned PNG evidence reads.
+The CI/Release in-place upgrade gate now pins the published beta.4 tarball.
+Integration evidence is recorded in the
+[next-dev integration record](designs/next-dev-integration-execution-2026-11-09.md).
+Every v0.7.96 stable and v0.7.97-alpha.1 through beta.4 client contract is
+retained; the security-driven behavior changes are listed in the
+[CHANGELOG](../CHANGELOG.md). Cross-platform manual acceptance, installed
+Space/SDK acceptance and npm publication remain manual maintainer steps.
 
 ## v0.7.97-beta.4 Release Record
 
@@ -2261,7 +2287,8 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 ## 2026-11-04 FEATURE_303 and FEATURE_304 Addition
 
-- Status: target `v0.7.98`. FEATURE_303 and FEATURE_304 completed 2026-11-05.
+- Status: target `v0.7.98`. FEATURE_303 and FEATURE_304 completed 2026-11-05 and shipped
+  early in `v0.7.97-beta.5` through the `KodaX-next-dev` integration.
 - Source: WP6 and WP7 of the [SDK foundation hardening plan](designs/sdk-foundation-hardening-plan-2026-11-04.md).
   The plan's Phase 1 defects are Issues 378-381.
 - FEATURE_303: proxy and private CA support. The spike found that Node 22 and 24 honor

@@ -1,6 +1,6 @@
 # SDK 统一 Client 契约迁移指南
 
-适用范围：当前工作树的 FEATURE_298/299/301 实现；本次核对的包版本为 `0.7.97-beta.4`，随 `v0.7.97-beta.4` 标签发布（npm 发布为手动步骤）。接入前应核对所安装包的导出和 Host 能力；下文带日期的 beta.1/beta.2/beta.3 记录保留各自历史范围。
+适用范围：当前工作树的 FEATURE_298/299/301/303/304 实现；本次核对的包版本为 `0.7.97-beta.5`，随 `v0.7.97-beta.5` 标签发布（npm 发布为手动步骤）。接入前应核对所安装包的导出和 Host 能力；下文带日期的 beta.1/beta.2/beta.3/beta.4 记录保留各自历史范围，beta.5 的变化见 [SDK hardening migration](#sdk-hardening-migration-shipped-in-v0797-beta5)。
 
 Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附件/统计与退出恢复范围见 [SDK/Host 接缝](SPACE_SDK_SEAMS.md)。
 
@@ -1107,3 +1107,46 @@ SDK bytes before retrying; do not weaken build proof to force startup.
 
 The versioned contract, reasons, revision domains and remaining cold-read limits
 are recorded in [Client contract](CLIENT_CONTRACT.md#2026-11-08-space-sdk-contract-repairs-shipped-in-v0797-beta4).
+
+
+## SDK hardening migration (shipped in v0.7.97-beta.5)
+
+These changes ship with the `v0.7.97-beta.5` tag; npm publication is a separate
+maintainer step. Check the installed package and the connected Host before
+relying on them.
+
+- Extension `tool:before` now runs on every dispatch path, including AMA without
+  `events` and nested constructed-tool calls. An early allow no longer ends
+  evaluation, and a handler that throws or does not answer within 10 seconds
+  blocks the call. Review hooks that relied on fail-open behavior.
+- A handler may return `{ decision: 'ask', reason }`. Inline hosts answer it
+  through the optional `KodaXEvents.requestToolApproval`; without it the ask
+  blocks. Product clients receive an ordinary permission Interaction whose
+  `reason` names the extension, with no grant suggestions: answer `allow_once`
+  or `reject`. Hosts advertise `toolHookAsk: { version: 1 }`.
+- With `KODAX_HOME` set, user Skills, personal workflows and commands load from
+  `<KODAX_HOME>/skills`, `<KODAX_HOME>/workflows` and `<KODAX_HOME>/commands`,
+  not `~/.kodax`. Move existing files. `~/.agents/skills` is unchanged.
+  `SkillRegistry.refreshIfChanged()` applies on-disk Skill edits between requests.
+- The model cannot write `<agent home>/extensions` or `<agent home>/integrations`,
+  including the home of an inline Runtime built with `homeDir`. Install
+  integrations through `kodax mcp add`, the integration commands or a Host UI.
+- `ClientSessionView.sandbox` is an optional field with the latest shell sandbox
+  health; Windows `applied` observations may list `degradedReadRoots`. Treat a
+  missing field as not yet observed, not as healthy.
+- `session_history_search` hits add `entryRevision`, which
+  `session_history_read` accepts so tail appends do not make the read stale.
+  Callers that ignore it keep the strict whole-history `revision`.
+- In Runtime-owned Sessions, `read` returns an `observationId` with each
+  accepted image and the visual tools join the tool list. Treat observation IDs
+  as opaque.
+- The idle Host expires retired agent-home state after 30 days (unresolved
+  child records after 90) and rotates `daemon.log` at 2 MiB. Do not depend on
+  Run event journals or filesystem-effect ledgers; neither is read by current
+  code. A Host downgraded to v0.7.96 finds no Run event journal for Runs older
+  than 30 days.
+- The daemon Host copies its environment at start, including `HTTPS_PROXY`,
+  `NO_PROXY` and `NODE_EXTRA_CA_CERTS`; restart it after changing them.
+
+See the [Client contract](CLIENT_CONTRACT.md) unattended-run and permission
+sections and [ADR-071](ADR.md) for the ask decision.

@@ -146,7 +146,7 @@ replace lone surrogates with U+FFFD in the request projection only.
 - Status: Resolved
 - Introduced: observed in v0.7.97-beta.3 Release CI; first affected version unknown
 - Created / Resolved: 2026-11-08
-- Fixed: post-`v0.7.97-beta.4` (unreleased)
+- Fixed: `v0.7.97-beta.5`
 
 `src/sdk-client.history.test.ts:22` ("projects the actual request compaction
 capacity including Memory reserve without enabling diagnostics") failed on the
@@ -172,7 +172,7 @@ still take precedence. No production code changed.
 - Files changed: `vitest.config.ts`
 - Tests added: `tests/vitest-poll-budget.test.ts` (a projection settling after
   1.5 s failed with "Matcher did not succeed in time" before the change)
-- Fixed: post-`v0.7.97-beta.4` (unreleased)
+- Fixed: `v0.7.97-beta.5`
 
 ## Issue 387: Busy-Session Ink attach fixture times out before the prompt renders on Windows
 
@@ -180,7 +180,7 @@ still take precedence. No production code changed.
 - Status: Resolved
 - Introduced: observed in v0.7.97-beta.4 Release CI; first affected version unknown
 - Created / Resolved: 2026-11-08
-- Fixed: post-`v0.7.97-beta.4` (unreleased)
+- Fixed: `v0.7.97-beta.5`
 
 `src/sdk-client.repl-activity.test.ts:71` ("renders current Host activity and
 accepts follow-ups when attaching Ink to a busy Session") failed on the
@@ -203,7 +203,7 @@ still take precedence. No production code changed.
 - Files changed: `vitest.config.ts`
 - Tests added: `tests/vitest-poll-budget.test.ts` (a projection settling after
   1.5 s failed with "Matcher did not succeed in time" before the change)
-- Fixed: post-`v0.7.97-beta.4` (unreleased)
+- Fixed: `v0.7.97-beta.5`
 
 ## Issue 386: Extension `exec` can take over 30 seconds on Windows
 
@@ -211,7 +211,7 @@ still take precedence. No production code changed.
 - Status: Resolved
 - Introduced: observed in v0.7.97-beta.4 Release CI; first affected version unknown
 - Created / Resolved: 2026-11-08
-- Fixed: post-`v0.7.97-beta.4` (unreleased)
+- Fixed: `v0.7.97-beta.5`
 
 `packages/coding/src/extensions/helpers.test.ts` ("exec > runs a simple command
 and returns stdout") timed out after 30 seconds running `exec('echo hello')`
@@ -259,7 +259,7 @@ which PowerShell does not expand, so it never read the variable. It now uses
   `packages/coding/src/extensions/helpers.test.ts`
 - Tests added: Windows-only check that both cache variables reach PowerShell
   (failed with `"|"` before the fix)
-- Fixed: post-`v0.7.97-beta.4` (unreleased)
+- Fixed: `v0.7.97-beta.5`
 
 ## Issue 385: Inline Runtime agent home is outside model write protection
 
@@ -267,7 +267,7 @@ which PowerShell does not expand, so it never read the variable. It now uses
 - Status: Resolved
 - Introduced: inline `homeDir` Runtimes predate Issue 380; the gap became visible with it
 - Created / Resolved: 2026-11-05
-- Fixed: KodaX-next-dev (unreleased)
+- Fixed: `v0.7.97-beta.5` (KodaX-next-dev integration)
 
 ### Original Problem
 
@@ -325,7 +325,7 @@ set `KODAX_HOME` to their agent home.
 - Status: Resolved
 - Introduced: nested resolver in FEATURE_246 Part E; CLI commands predate FEATURE_145
 - Created / Resolved: 2026-11-04
-- Fixed: KodaX-next-dev (unreleased)
+- Fixed: `v0.7.97-beta.5` (KodaX-next-dev integration)
 
 ### Original Problem
 
@@ -394,7 +394,7 @@ address directly.
 - Status: Resolved
 - Introduced: present since FEATURE_194 v0.7.43 (`88f2faa96`); first affected version unknown
 - Created / Resolved: 2026-11-04
-- Fixed: KodaX-next-dev working tree (unreleased)
+- Fixed: `v0.7.97-beta.5` (KodaX-next-dev integration)
 
 ### Original Problem
 
@@ -434,7 +434,7 @@ that intentionally skip the resolver; user Skills are not among them.
 - Status: Resolved
 - Introduced: first affected version unknown (observed on `fc296bd56`)
 - Created / Resolved: 2026-11-04
-- Fixed: KodaX-next-dev working tree (unreleased)
+- Fixed: `v0.7.97-beta.5` (KodaX-next-dev integration)
 
 ### Original Problem
 
@@ -504,7 +504,7 @@ proxied requests, for HTTP or HTTPS, and that refusing a reused socket on its
 - Status: Resolved
 - Introduced: first affected version unknown (observed on `fc296bd56`)
 - Created / Resolved: 2026-11-04
-- Fixed: KodaX-next-dev working tree (unreleased)
+- Fixed: `v0.7.97-beta.5` (KodaX-next-dev integration)
 
 ### Original Problem
 
@@ -565,7 +565,7 @@ host runs, and through a canonical target. The existing
 - Status: Resolved
 - Introduced: first affected version unknown (observed on `fc296bd56`)
 - Created / Resolved: 2026-11-04
-- Fixed: KodaX-next-dev working tree (unreleased)
+- Fixed: `v0.7.97-beta.5` (KodaX-next-dev integration)
 
 ### Original Problem
 
@@ -610,7 +610,7 @@ allow, a throwing global hook through a combined runtime, and a fail-open
 - Status: Resolved
 - Introduced: first affected version unknown (observed on `fc296bd56`)
 - Created / Resolved: 2026-11-04
-- Fixed: KodaX-next-dev working tree (unreleased)
+- Fixed: `v0.7.97-beta.5` (KodaX-next-dev integration)
 
 ### Original Problem
 
@@ -658,7 +658,7 @@ depth limit. Child Agents and Script leaf calls use the same entry points.
 - Status: Resolved
 - Introduced: FEATURE_192 v0.7.44 (`/goal`); first affected version unknown
 - Created / Resolved: 2026-10-31
-- Fixed: post-v0.7.97-alpha.10 working tree (unreleased)
+- Fixed: `v0.7.97-beta.5` (KodaX-next-dev integration)
 
 ### Original Problem
 
@@ -2948,11 +2948,11 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
 | 401 | Low | Open | Memory review inbox keeps every finished job's files and test-made jobs | unknown; observed at v0.7.97-beta.4 | — | 2026-11-10 | — |
-| 400 | Medium | Resolved | Agent home keeps retired runtime state forever and `daemon.log` grows without bound | retired writers in v0.7.96 and v0.7.97-alpha.1/alpha.12; observed at v0.7.97-beta.4 | v0.7.97 (Unreleased) | 2026-11-10 | 2026-11-10 |
-| 399 | High | Resolved | A replaced profile file silently moves every Windows sandbox command to the host | setup-owned profile roots since v0.7.96 (`ea4d796ee`); observed at v0.7.97-beta.4 | v0.7.97 (Unreleased) | 2026-11-10 | 2026-11-10 |
-| 398 | Medium | Resolved | Cold shared Host start rereads every unresolvable Run child record | Run-record retention since v0.7.97-alpha.12; slow cold starts observed from 2026-10-31 | v0.7.97 (Unreleased) | 2026-11-10 | 2026-11-10 |
-| 397 | Low | Resolved | Builtin skill-creator activation lists 14 `.d.ts` typing files | v0.7.97-beta.4 (c50d24c27) | v0.7.97 (Unreleased) | 2026-11-09 | 2026-11-09 |
-| 396 | Medium | Resolved | Skill edits in a running REPL session need `/reload` to take effect | unknown; present at v0.7.97-beta.4 | v0.7.97 (Unreleased) | 2026-11-09 | 2026-11-09 |
+| 400 | Medium | Resolved | Agent home keeps retired runtime state forever and `daemon.log` grows without bound | retired writers in v0.7.96 and v0.7.97-alpha.1/alpha.12; observed at v0.7.97-beta.4 | `v0.7.97-beta.5` | 2026-11-10 | 2026-11-10 |
+| 399 | High | Resolved | A replaced profile file silently moves every Windows sandbox command to the host | setup-owned profile roots since v0.7.96 (`ea4d796ee`); observed at v0.7.97-beta.4 | `v0.7.97-beta.5` | 2026-11-10 | 2026-11-10 |
+| 398 | Medium | Resolved | Cold shared Host start rereads every unresolvable Run child record | Run-record retention since v0.7.97-alpha.12; slow cold starts observed from 2026-10-31 | `v0.7.97-beta.5` | 2026-11-10 | 2026-11-10 |
+| 397 | Low | Resolved | Builtin skill-creator activation lists 14 `.d.ts` typing files | v0.7.97-beta.4 (c50d24c27) | `v0.7.97-beta.5` | 2026-11-09 | 2026-11-09 |
+| 396 | Medium | Resolved | Skill edits in a running REPL session need `/reload` to take effect | unknown; present at v0.7.97-beta.4 | `v0.7.97-beta.5` | 2026-11-09 | 2026-11-09 |
 | 395 | Medium | needs-info | Intermittent oversized-output Runtime test failure has no captured cause | unknown; observed at e37aef47a (v0.7.97-beta.4) | — | 2026-11-09 | — |
 | 394 | Medium | Open | Agent and Script whole-task non-inferiority is unproven | work modes in v0.7.97 | — | 2026-11-09 | — |
 | 393 | Low | Open | `worktree remove` reports a branch deleted when `branch -D` failed | unknown; present at 08ce2f742 | — | 2026-11-09 | — |
@@ -2960,18 +2960,18 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 | 391 | Low | Open | `code_search` skips `.mts` and `.cts` files | unknown; present at 08ce2f742 | — | 2026-11-09 | — |
 | 390 | Low | Open | Skill-discovery natural eval cannot run without a Git-free temp root | eval harness limitation found 2026-10-28 | — | 2026-11-09 | — |
 | 389 | Low | Open | Lone UTF-16 surrogates in tool text make GLM Coding return HTTP 500 | observed 2026-09-14; first affected version unknown | — | 2026-11-09 | — |
-| 388 | Medium | Resolved | SDK history capacity fixture observes the parent before the worker on Windows | observed in v0.7.97-beta.3 Release CI; first affected version unknown | post-`v0.7.97-beta.4` (unreleased) | 2026-11-08 | 2026-11-08 |
-| 387 | Medium | Resolved | Busy-Session Ink attach fixture times out before the prompt renders on Windows | observed in v0.7.97-beta.4 Release CI; first affected version unknown | post-`v0.7.97-beta.4` (unreleased) | 2026-11-08 | 2026-11-08 |
-| 386 | High | Resolved | Extension `exec` can take over 30 seconds on Windows | observed in v0.7.97-beta.4 Release CI; first affected version unknown | post-`v0.7.97-beta.4` (unreleased) | 2026-11-08 | 2026-11-08 |
-| 385 | Low | Resolved | Inline Runtime agent home is outside model write protection | inline `homeDir` Runtimes; visible with Issue 380 | KodaX-next-dev (unreleased) | 2026-11-05 | 2026-11-05 |
-| 384 | Low | Resolved | Nested workflows and CLI print-mode commands ignore KODAX_HOME | FEATURE_246 Part E; CLI commands earlier | KodaX-next-dev (unreleased) | 2026-11-04 | 2026-11-04 |
+| 388 | Medium | Resolved | SDK history capacity fixture observes the parent before the worker on Windows | observed in v0.7.97-beta.3 Release CI; first affected version unknown | `v0.7.97-beta.5` | 2026-11-08 | 2026-11-08 |
+| 387 | Medium | Resolved | Busy-Session Ink attach fixture times out before the prompt renders on Windows | observed in v0.7.97-beta.4 Release CI; first affected version unknown | `v0.7.97-beta.5` | 2026-11-08 | 2026-11-08 |
+| 386 | High | Resolved | Extension `exec` can take over 30 seconds on Windows | observed in v0.7.97-beta.4 Release CI; first affected version unknown | `v0.7.97-beta.5` | 2026-11-08 | 2026-11-08 |
+| 385 | Low | Resolved | Inline Runtime agent home is outside model write protection | inline `homeDir` Runtimes; visible with Issue 380 | `v0.7.97-beta.5` | 2026-11-05 | 2026-11-05 |
+| 384 | Low | Resolved | Nested workflows and CLI print-mode commands ignore KODAX_HOME | FEATURE_246 Part E; CLI commands earlier | `v0.7.97-beta.5` | 2026-11-04 | 2026-11-04 |
 | 383 | Low | Open | Volcengine instance metadata address is not confirmed | Issue 381 metadata set | — | 2026-11-04 | — |
-| 382 | Low | Resolved | User Skill discovery ignores KODAX_HOME | FEATURE_194 v0.7.43 or earlier | KodaX-next-dev (unreleased) | 2026-11-04 | 2026-11-04 |
-| 381 | High | Resolved | `web_fetch` can read cloud metadata and follow public redirects into the private network | first affected version unknown | KodaX-next-dev (unreleased) | 2026-11-04 | 2026-11-04 |
-| 380 | High | Resolved | Model writes can install Host-loaded extensions and integrations | first affected version unknown | KodaX-next-dev (unreleased) | 2026-11-04 | 2026-11-04 |
-| 379 | High | Resolved | Extension `tool:before` fails open on a throw or hang | first affected version unknown | KodaX-next-dev (unreleased) | 2026-11-04 | 2026-11-04 |
-| 378 | High | Resolved | Extension tool policy is skipped or doubled on some dispatch paths | first affected version unknown | KodaX-next-dev (unreleased) | 2026-11-04 | 2026-11-04 |
-| 377 | Medium | Resolved | Child Agents expose failing Goal tools and bypass the root goal budget | FEATURE_192 v0.7.44; first affected version unknown | post-v0.7.97-alpha.10 working tree (unreleased) | 2026-10-31 | 2026-10-31 |
+| 382 | Low | Resolved | User Skill discovery ignores KODAX_HOME | FEATURE_194 v0.7.43 or earlier | `v0.7.97-beta.5` | 2026-11-04 | 2026-11-04 |
+| 381 | High | Resolved | `web_fetch` can read cloud metadata and follow public redirects into the private network | first affected version unknown | `v0.7.97-beta.5` | 2026-11-04 | 2026-11-04 |
+| 380 | High | Resolved | Model writes can install Host-loaded extensions and integrations | first affected version unknown | `v0.7.97-beta.5` | 2026-11-04 | 2026-11-04 |
+| 379 | High | Resolved | Extension `tool:before` fails open on a throw or hang | first affected version unknown | `v0.7.97-beta.5` | 2026-11-04 | 2026-11-04 |
+| 378 | High | Resolved | Extension tool policy is skipped or doubled on some dispatch paths | first affected version unknown | `v0.7.97-beta.5` | 2026-11-04 | 2026-11-04 |
+| 377 | Medium | Resolved | Child Agents expose failing Goal tools and bypass the root goal budget | FEATURE_192 v0.7.44; first affected version unknown | `v0.7.97-beta.5` | 2026-10-31 | 2026-10-31 |
 | 375 | High | Resolved | Constrained Skill shell patterns admit extra effects | observed on aeb16fef; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
 | 374 | Medium | Resolved | Client question adapters lose unanswered semantics | observed on aeb16fef; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
 | 373 | Low | Resolved | Streaming progress mixes character and token units | observed in v0.7.97-alpha.10; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
@@ -3268,7 +3268,7 @@ needs its own decision about re-review.
   (`2f6751d19`, v0.7.96), sandbox request files (`c7d31f954`, `80a205022`,
   v0.7.96) and the home runner staging copy (`27bb8536e`, v0.7.97-alpha.12)
 - Created: 2026-11-10
-- Fixed: v0.7.97 (Unreleased)
+- Fixed: `v0.7.97-beta.5`
 - Related: Issue 398 (`.unresolved/` grows with every isolated record)
 
 **Original problem.** `~/.kodax` on the reporting machine was 4.1 GB. About
@@ -3326,7 +3326,7 @@ the rules, and DD §10 lists every path.
 - Introduced: setup-owned profile read roots since v0.7.96 (`ea4d796ee`, protocol 10);
   observed at v0.7.97-beta.4
 - Created: 2026-11-10
-- Fixed: v0.7.97 (Unreleased)
+- Fixed: `v0.7.97-beta.5`
 - Related: Issue 372 (same diagnostic, different trigger)
 
 **Original problem.** In a REPL session (`20261008_104354_7r848c8cf21187`) every
@@ -3423,7 +3423,7 @@ resumed at 16:06:29, 2.1 s after `~/.claude.json` was rewritten (16:06:26.96).
 - Introduced: Run-record retention in the historical sweep since v0.7.97-alpha.12
   (`fee13b700`, `141446d2f`); every cold Host start observed slow from 2026-10-31
 - Created: 2026-11-10
-- Fixed: v0.7.97 (Unreleased)
+- Fixed: `v0.7.97-beta.5`
 - Follow-up of Issue 371
 
 **Original problem.** The first `kodax -r` after `npm run build` took about 7.6 s;
@@ -3484,7 +3484,7 @@ its outcome does not change.
 - Status: Resolved
 - Introduced: v0.7.97-beta.4 (`c50d24c27` made the activation inventory list every bundled file)
 - Created: 2026-11-09
-- Fixed: v0.7.97 (Unreleased)
+- Fixed: `v0.7.97-beta.5`
 
 **Problem.** `builtin/skill-creator/scripts/` ships a `.d.ts` file next to each
 of its 14 `.js` helpers. Activating `skill-creator` lists all 28 files in the
@@ -3518,7 +3518,7 @@ the loader and `skillRevision` are unchanged.
 - Status: Resolved
 - Introduced: unknown; present at v0.7.97-beta.4
 - Created: 2026-11-09
-- Fixed: v0.7.97 (Unreleased)
+- Fixed: `v0.7.97-beta.5`
 
 **Problem.** `SkillRegistry.loadFull` caches each skill body until
 `reload()`, and the REPL builds the skill catalog from the registry that was

@@ -170,10 +170,12 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('may canonicalize DACL protection/inheritance control at commit');
     expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
     expect(sandbox).toContain('nonce-bound per-policy private desktop');
-    expect(sandbox).toContain('v0.7.97-beta.4 release uses Windows native shell protocol 10');
+    expect(sandbox).toContain('v0.7.97-beta.5 release uses Windows native shell protocol 10');
     expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
     expect(sandbox).toContain('nonce-bound terminal record');
     expect(sandbox).toContain('protected host/SYSTEM-only control directory');
+    expect(sandbox).toContain('re-applies a replaced top-level profile file root');
+    expect(sandbox).toContain('reported as `degradedReadRoots`, unless a write root of the command reaches it');
     expect(sandbox).toContain('Non-interactive Runtime/daemon startup readiness remains verify-only');
     expect(sandbox).toContain('Interactive Windows CLI startup performs one setup-generation check');
     expect(sandbox).toContain('host control-plane command');
@@ -194,11 +196,31 @@ describe('FEATURE_218 manual registry', () => {
     expect(tools).toContain('Shell writes do not join that lock');
   });
 
+  it('documents the v0.7.97-beta.5 Skill, visual, extension policy and Host log behavior', () => {
+    const skills = resolveKodaXManual({ topic: 'skills' }).content;
+    const tools = resolveKodaXManual({ topic: 'tools' }).content;
+    const extensions = resolveKodaXManual({ topic: 'extensions' }).content;
+    const troubleshooting = resolveKodaXManual({ topic: 'troubleshooting' }).content;
+
+    expect(skills).toContain('User Skills load from `<agent home>/skills` (`KODAX_HOME`, default `~/.kodax`)');
+    expect(skills).toContain('`${CLAUDE_SKILL_DIR}` expand to the Skill root with forward slashes.');
+    expect(skills).toContain('removed Skills apply on the next request without /reload');
+    expect(tools).toContain('`read` pins each accepted image as a durable observation and returns its `observationId`.');
+    expect(tools).toContain('`visual_read_pixels` returns exact grid-center RGBA samples as text.');
+    expect(tools).toContain('`web_fetch` refuses cloud metadata addresses on every hop');
+    expect(extensions).toContain('`tool:before` runs on every dispatch path, after saved-grant matching.');
+    expect(extensions).toContain('may return `{ decision: \'ask\', reason }` so a person approves that one call');
+    expect(extensions).toContain('The model cannot write `<agent home>/extensions` or `<agent home>/integrations`.');
+    expect(troubleshooting).toContain('`NODE_USE_ENV_PROXY=1`');
+    expect(troubleshooting).toContain('`NODE_EXTRA_CA_CERTS` (private root CA)');
+    expect(troubleshooting).toContain('(`daemon.log.1`, rotated at 2 MiB)');
+  });
+
   it('documents the v0.7.96 release capability and capacity-debt contracts', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(sdk).toContain('The v0.7.97-beta.4 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The v0.7.97-beta.5 release advertises Windows `sandboxRuntime:11`');
     expect(sdk).toContain('The v0.7.97-alpha.10 release resumes checkpointed Runs and task trees after Host');
     expect(sdk).toContain('The v0.7.97-alpha.11 release adds explicit Agent, Coding and experimental Script work modes');
     expect(sdk).toContain('Script runs supported leaf tools through existing permission and receipt boundaries.');
@@ -231,6 +253,11 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('replaces stale results with the shared `resync_required` error contract, and adds ordinary');
     expect(sdk).toContain('requirements add no mandatory basic-startup gates, and model prompts are unchanged.');
     expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through beta.3 contract is retained.');
+    expect(sdk).toContain('The v0.7.97-beta.5 release integrates SDK foundation hardening, durable visual observations');
+    expect(sdk).toContain('may return `{ decision: \'ask\', reason }` so a person approves');
+    expect(sdk).toContain('`visual_history`, `visual_inspect` and `visual_read_pixels` page, re-display and sample them');
+    expect(sdk).toContain('`daemon.log` at 2 MiB. The visual tools\' whole-task value remains unproven.');
+    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through beta.4 contract is retained.');
     expect(sdk).toContain('wait in `recovering`');
     expect(sdk).toContain('Kimi K3.1 provider routes join the registry with all seven effort levels mapped');
     expect(sdk).toContain('skip or Host timeout returns `unanswered` with its reason.');
