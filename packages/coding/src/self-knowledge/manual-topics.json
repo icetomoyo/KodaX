@@ -1644,7 +1644,7 @@
       "`runtimeExitSettlement:2`; `crashOutcomeModel:2` is unchanged and publication remains manual.",
       "The v0.7.97-beta.5 release advertises Windows `sandboxRuntime:11`; setup generation 11;",
       "`runtimeExitSettlement:2` is retired; `crashOutcomeModel:2` remains current. Linux native text authorities build in digest-pinned",
-      "`manylinux_2_28` images and require no `GLIBC_*` symbol newer than 2.28 (Issue 328).",
+      "`manylinux2014` images and require no `GLIBC_*` symbol newer than 2.17 (Issues 328 and 403).",
       "The v0.7.97-alpha.10 release resumes checkpointed Runs and task trees after Host",
       "restart with fresh scoped authority, preserving original history, tool receipts,",
       "pending input intent and iteration budgets. Live context-capacity recovery reaches",

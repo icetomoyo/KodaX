@@ -380,7 +380,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('The rc.1 release unifies trusted text authority across Runtime Sessions and direct SDK entries');
     expect(sdk).toContain('without granting a directory or reusing an approval across');
     expect(sdk).toContain('capability 6 fences older daemon authority');
-    expect(sdk).toContain('`manylinux_2_28` images and require no `GLIBC_*` symbol newer than 2.28');
+    expect(sdk).toContain('`manylinux2014` images and require no `GLIBC_*` symbol newer than 2.17');
     expect(sdk).toContain('one generation retry after persisted history reduction without replaying tools');
     expect(sdk).toContain('Bundled Provider credential scopes stay shared');
     expect(sdk).toContain('omit empty `tools` arrays for strict vLLM gateways');

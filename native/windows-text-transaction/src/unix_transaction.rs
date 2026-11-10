@@ -34,6 +34,11 @@ thread_local! {
     static FAIL_NEXT_TEMPORARY_CLEANUP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+#[cfg(all(test, target_os = "linux"))]
+thread_local! {
+    static FORCE_FDINFO_MOUNT_ID: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 #[cfg(test)]
 fn take_fail_next_directory_sync() -> bool {
     FAIL_NEXT_DIRECTORY_SYNC.with(|flag| flag.replace(false))
@@ -53,35 +58,92 @@ struct FileIdentity {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct MountIdentity(u64);
 
+/// Set once statx proves it cannot report mount IDs on this kernel, so later
+/// checks go straight to fdinfo. Both sources expose the same kernel mount ID.
+#[cfg(target_os = "linux")]
+static STATX_MOUNT_ID_UNAVAILABLE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 #[cfg(target_os = "linux")]
 fn mount_identity(file: &File) -> Result<MountIdentity, TextTransactionError> {
+    if !statx_mount_id_unavailable() {
+        if let Some(mount_id) = statx_mount_id(file)? {
+            return Ok(MountIdentity(mount_id));
+        }
+        STATX_MOUNT_ID_UNAVAILABLE.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    fdinfo_mount_id(file).map(MountIdentity)
+}
+
+#[cfg(target_os = "linux")]
+fn statx_mount_id_unavailable() -> bool {
+    #[cfg(test)]
+    if FORCE_FDINFO_MOUNT_ID.with(std::cell::Cell::get) {
+        return true;
+    }
+    STATX_MOUNT_ID_UNAVAILABLE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Uses the raw syscall because glibc only wraps statx from 2.28. Returns
+/// `None` when statx is missing (Linux < 4.11), filtered by seccomp, or cannot
+/// report STATX_MNT_ID (Linux < 5.8).
+#[cfg(target_os = "linux")]
+fn statx_mount_id(file: &File) -> Result<Option<u64>, TextTransactionError> {
     let mut stats: libc::statx = unsafe { zeroed() };
     let empty = c"";
-    if unsafe {
-        libc::statx(
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_statx,
             file.as_raw_fd(),
             empty.as_ptr(),
             libc::AT_EMPTY_PATH | libc::AT_SYMLINK_NOFOLLOW,
             libc::STATX_MNT_ID,
-            &mut stats,
+            &mut stats as *mut libc::statx,
         )
-    } != 0
-    {
-        return Err(TextTransactionError::os(
-            TextTransactionErrorCode::UnsupportedFilesystem,
-            "cannot prove trusted text mount identity",
-            std::io::Error::last_os_error()
-                .raw_os_error()
-                .unwrap_or_default() as u32,
-        ));
+    };
+    if result != 0 {
+        let error = std::io::Error::last_os_error();
+        return match error.raw_os_error() {
+            Some(libc::ENOSYS | libc::EPERM) => Ok(None),
+            code => Err(TextTransactionError::os(
+                TextTransactionErrorCode::UnsupportedFilesystem,
+                "cannot prove trusted text mount identity",
+                code.unwrap_or_default() as u32,
+            )),
+        };
     }
-    if stats.stx_mask & libc::STATX_MNT_ID == 0 {
-        return Err(TextTransactionError::new(
+    Ok((stats.stx_mask & libc::STATX_MNT_ID != 0).then_some(stats.stx_mnt_id))
+}
+
+/// Reads the mount ID the kernel has published in fdinfo since Linux 3.15.
+#[cfg(target_os = "linux")]
+fn fdinfo_mount_id(file: &File) -> Result<u64, TextTransactionError> {
+    const PROC_SUPER_MAGIC: u64 = 0x9fa0;
+    let unproven = || {
+        TextTransactionError::new(
             TextTransactionErrorCode::UnsupportedFilesystem,
             "trusted text filesystem does not report mount identity",
-        ));
+        )
+    };
+    let mut info =
+        File::open(format!("/proc/self/fdinfo/{}", file.as_raw_fd())).map_err(|_| unproven())?;
+    // Only a real procfs may vouch for the mount boundary.
+    let mut stats: libc::statfs = unsafe { zeroed() };
+    if unsafe { libc::fstatfs(info.as_raw_fd(), &mut stats) } != 0
+        || stats.f_type as u64 != PROC_SUPER_MAGIC
+    {
+        return Err(unproven());
     }
-    Ok(MountIdentity(stats.stx_mnt_id))
+    let mut text = String::new();
+    info.read_to_string(&mut text).map_err(|_| unproven())?;
+    parse_fdinfo_mount_id(&text).ok_or_else(unproven)
+}
+
+#[cfg(target_os = "linux")]
+fn parse_fdinfo_mount_id(text: &str) -> Option<u64> {
+    text.lines()
+        .find_map(|line| line.strip_prefix("mnt_id:"))
+        .and_then(|value| value.trim().parse().ok())
 }
 
 #[cfg(target_os = "macos")]
@@ -1679,6 +1741,51 @@ mod tests {
             .permissions(fs::Permissions::from_mode(0o700))
             .tempdir()
             .unwrap()
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn fdinfo_parser_reads_only_the_mount_id_line() {
+        assert_eq!(
+            parse_fdinfo_mount_id("pos:\t0\nflags:\t02100002\nmnt_id:\t26\nino:\t9\n"),
+            Some(26)
+        );
+        assert_eq!(parse_fdinfo_mount_id("pos:\t0\nflags:\t02\n"), None);
+        assert_eq!(parse_fdinfo_mount_id("mnt_id:\tunknown\n"), None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn fdinfo_reports_the_mount_id_that_statx_reports() {
+        let directory = tempdir().unwrap();
+        let file = File::open(directory.path()).unwrap();
+        let fdinfo = fdinfo_mount_id(&file).unwrap();
+        if let Some(statx) = statx_mount_id(&file).unwrap() {
+            assert_eq!(statx, fdinfo);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn commits_when_only_fdinfo_reports_mount_identity() {
+        FORCE_FDINFO_MOUNT_ID.with(|flag| flag.set(true));
+        let directory = tempdir().unwrap();
+        let state = private_tempdir();
+        let root = TrustedRoot::open(
+            directory.path().to_str().unwrap(),
+            state.path().to_str().unwrap(),
+        )
+        .unwrap();
+        let target = directory.path().join("old-kernel.md");
+        let target = target.to_str().unwrap();
+        let snapshot = root.snapshot(target).unwrap();
+        assert!(matches!(
+            root.commit(target, &snapshot.revision, "written", false, 5_000)
+                .unwrap(),
+            CommitOutcome::Written(_)
+        ));
+        assert_eq!(fs::read_to_string(target).unwrap(), "written");
+        FORCE_FDINFO_MOUNT_ID.with(|flag| flag.set(false));
     }
 
     #[test]

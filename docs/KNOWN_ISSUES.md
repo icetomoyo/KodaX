@@ -2947,6 +2947,9 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 404 | High | Resolved | Linux kernels before 5.8 reject every trusted text write | v0.7.96 (FEATURE_295) | post-v0.7.97-beta.5 (unreleased) | 2026-11-10 | 2026-11-10 |
+| 403 | High | Resolved | Linux native text authority cannot load on glibc 2.17 hosts | v0.7.96 (FEATURE_295); 2.28 floor since Issue 328 | post-v0.7.97-beta.5 (unreleased) | 2026-11-10 | 2026-11-10 |
+| 402 | High | Resolved | A failed native text addon load crashes the next tracked write | v0.7.96 (FEATURE_295) | post-v0.7.97-beta.5 (unreleased) | 2026-11-10 | 2026-11-10 |
 | 401 | Low | Open | Memory review inbox keeps every finished job's files and test-made jobs | unknown; observed at v0.7.97-beta.4 | — | 2026-11-10 | — |
 | 400 | Medium | Resolved | Agent home keeps retired runtime state forever and `daemon.log` grows without bound | retired writers in v0.7.96 and v0.7.97-alpha.1/alpha.12; observed at v0.7.97-beta.4 | `v0.7.97-beta.5` | 2026-11-10 | 2026-11-10 |
 | 399 | High | Resolved | A replaced profile file silently moves every Windows sandbox command to the host | setup-owned profile roots since v0.7.96 (`ea4d796ee`); observed at v0.7.97-beta.4 | `v0.7.97-beta.5` | 2026-11-10 | 2026-11-10 |
@@ -3234,6 +3237,103 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ---
 
 ## Issue Details
+
+### Issue 404: Linux kernels before 5.8 reject every trusted text write
+
+- Priority: High
+- Status: Resolved
+- Introduced: trusted text mount checks in v0.7.96 (FEATURE_295)
+- Created: 2026-11-10
+- Fixed: post-v0.7.97-beta.5 working tree (unreleased)
+- Related: Issue 403 (same customer host)
+
+**Original problem.** The native text authority proved mount identity only
+through `statx(STATX_MNT_ID)`. Linux added that field in 5.8. On the customer's
+Anolis 7 host (kernel 4.18) and other distribution kernels older than 5.8, such
+as RHEL 8 and Kylin V10, it is missing. Every `write`, `edit` and `multi_edit`
+would then fail with `trusted text filesystem does not report mount identity`
+even after the addon loaded.
+
+**Resolution (2026-11-10).** `mount_identity` tries `statx` first. If statx is
+missing, filtered by seccomp, or omits `STATX_MNT_ID`, it reads the `mnt_id:`
+line of `/proc/self/fdinfo/<fd>` (Linux 3.15+). Both sources report the same
+kernel mount ID, so mount-boundary checks keep their meaning. Before trusting
+fdinfo, the addon checks that `/proc` really is procfs (fstatfs magic `0x9fa0`).
+After the first fallback, the process goes straight to fdinfo. Kernels with
+`STATX_MNT_ID` take the same path as before. On older kernels each check costs
+one extra procfs read.
+
+- Files changed: `native/windows-text-transaction/src/unix_transaction.rs`
+- Tests: Rust unit tests compare fdinfo with statx on the same descriptor,
+  parse fdinfo text, and commit a full transaction with only the fdinfo path
+  enabled. They run in the Linux CI `test:native` lanes.
+
+### Issue 403: Linux native text authority cannot load on glibc 2.17 hosts
+
+- Priority: High
+- Status: Resolved
+- Introduced: Linux native text authority in v0.7.96 (FEATURE_295); the glibc
+  2.28 floor dates from Issue 328
+- Created: 2026-11-10
+- Fixed: post-v0.7.97-beta.5 working tree (unreleased)
+- Related: Issues 328, 402 and 404
+
+**Original problem.** A customer runs the standalone Linux binary on Anolis 7
+(RHEL/CentOS 7 family, glibc 2.17, kernel 4.18). Loading
+`kodax-text-transaction.node` fails because the addon needs `GLIBC_2.28`, so no
+trusted text write can succeed. The addon was linked against glibc 2.28 in
+`manylinux_2_28` builders. `statx` is a hard `GLIBC_2.28` reference, and Rust
+std's weak `getrandom` and `__cxa_thread_atexit_impl` references also carried
+the 2.25 and 2.18 version requirements. The Bun-compiled binary itself starts on
+glibc 2.17. The npm package still needs a Node build for that host, and official
+Node 20 requires glibc 2.28.
+
+**Resolution (2026-11-10).** Linux x64 and arm64 addons now build with the same
+Rust 1.98.0 inside digest-pinned `manylinux2014` (glibc 2.17) images. Rust 1.98
+officially supports glibc 2.17. The addon calls statx through `syscall(2)`
+instead of the glibc 2.28 wrapper. Std's weak symbols resolve at run time as
+they do on any glibc 2.17 build. CI and release lanes now reject any staged
+Linux addon that needs a `GLIBC_*` version newer than 2.17. Transaction, CAS,
+lock, atomic replace and receipt code is unchanged.
+
+- Files changed: `scripts/build-linux-native.mjs`, `scripts/build-native.mjs`,
+  `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `.gitignore`,
+  `native/windows-text-transaction/src/unix_transaction.rs`, `docs/release.md`,
+  self-knowledge manual
+- Tests: `tests/native-glibc-compatibility.test.ts` (2.17 gate),
+  `tests/release-workflow.test.ts` (builder images and the CI/release 2.17 gates)
+- Verification still owed: the first CI run must build in the new images and
+  pass the 2.17 gate, and the customer's Anolis 7 host must pass the regression
+  guide.
+
+### Issue 402: A failed native text addon load crashes the next tracked write
+
+- Priority: High
+- Status: Resolved
+- Introduced: process-level native binding cache in v0.7.96 (FEATURE_295)
+- Created: 2026-11-10
+- Fixed: post-v0.7.97-beta.5 working tree (unreleased)
+- Related: Issue 403 (the load failure that exposed it)
+
+**Original problem.** On the glibc 2.17 host, the first `edit`, `write` or
+`multi_edit` reported the addon load failure. The second one in the same
+process always crashed KodaX with a segmentation fault. The loader remembered
+only successful loads, so every write called `process.dlopen` again on the same
+object. KodaX's JavaScript holds no native handle, and Bun's dlopen error path
+keeps no pending state. The crash is most likely glibc 2.17 failing to roll
+back the first failed dlopen. This is inferred from the report; it was not
+reproduced locally.
+
+**Resolution (2026-11-10).** The first dlopen (or Windows `require`) failure is
+recorded for the process. Every later snapshot, commit and
+`kodax doctor --native-text` probe fails closed with the same error. The error
+includes the loader message and says the binding will not be retried in this
+process. Path, hash and manifest checks before dlopen still run on each call.
+Restarting KodaX after the host is fixed loads the binding again.
+
+- Files changed: `src/windows-text-transaction.ts`
+- Tests: `src/windows-text-transaction.test.ts` (three commits plus the doctor
+  probe after one failed load call dlopen exactly once and create no file)
 
 ### Issue 401: Memory review inbox keeps every finished job's files and test-made jobs
 
@@ -18227,12 +18327,18 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 279 (46 Open including 1 needs-info, 233 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 282 (46 Open including 1 needs-info, 236 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-10: Issues 402-404
+
+- Recorded and resolved the Anolis 7 report (glibc 2.17, kernel 4.18): a failed
+  native text addon load is final for the process, Linux addons build against
+  glibc 2.17, and kernels before 5.8 prove mount identity through procfs fdinfo.
 
 ### 2026-11-10: Issues 400-401
 

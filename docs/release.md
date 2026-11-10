@@ -542,12 +542,17 @@ moved or archived as one unit.
 | Target          | OS / Arch                       | CI runner          |
 | --------------- | ------------------------------- | ------------------ |
 | `win-x64`       | Windows 10 1809+ / x64          | `windows-latest`   |
-| `linux-x64`     | Linux glibc 2.28+ / x64         | `ubuntu-24.04`     |
-| `linux-arm64`   | Linux glibc 2.28+ / aarch64     | `ubuntu-24.04-arm` |
+| `linux-x64`     | Linux glibc 2.17+ / x64         | `ubuntu-24.04`     |
+| `linux-arm64`   | Linux glibc 2.17+ / aarch64     | `ubuntu-24.04-arm` |
 | `darwin-x64`    | macOS 11+ / Intel               | `macos-15-intel`   |
 | `darwin-arm64`  | macOS 11+ / Apple Silicon       | `macos-15`         |
 
-Win7 and pre-glibc-2.28 distros (NeoKylin v7, CentOS 6/7) are **not supported**.
+The standalone binary's native text authority loads on glibc 2.17 and newer, so
+RHEL/CentOS 7-family hosts such as Anolis 7 are supported (Issue 403). The npm
+package still needs a Node build for the host; official Node 20 requires glibc
+2.28. On kernels before 5.8 the authority reads mount identity from procfs
+fdinfo instead of `statx` (Issue 404). Win7 and pre-glibc-2.17 distros (CentOS 6)
+are **not supported**.
 LoongArch64 / MIPS are **not supported** (Bun has no toolchain for them).
 
 ## Local builds (manual testing)
@@ -584,8 +589,8 @@ node scripts/build-binary.mjs --clean
 Output lives under `dist/binary/<target>/`. Native bindings built by the local
 commands above are executed on a matching OS/architecture. Official Linux
 artifacts are instead compiled by
-`scripts/build-linux-native.mjs` in digest-pinned `manylinux_2_28` builders and
-must pass the ELF glibc 2.28 ABI gate. The release workflow's five native
+`scripts/build-linux-native.mjs` in digest-pinned `manylinux2014` builders and
+must pass the ELF glibc 2.17 ABI gate. The release workflow's five native
 runners aggregate the npm package afterward. The build runs the local artifact
 with an isolated `KODAX_HOME` and requires `a2a list` to emit exactly one A2A
 v2 JSON document. A supplementary manual version smoke is:

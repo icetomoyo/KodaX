@@ -69,6 +69,9 @@ const require = createRequire(import.meta.url);
 const LOCK_TIMEOUT_MS = 30_000;
 
 let loadedBinding: NativeTextTransactionBinding | undefined;
+// A failed dlopen is final for the process: glibc 2.17 segfaulted when the
+// same object was reopened after a failed load (Issue 402).
+let bindingLoadFailure: Error | undefined;
 
 export type TrustedTextNativeBindingProbe =
   | { readonly ready: true; readonly protocol: number }
@@ -201,6 +204,7 @@ function loadNativeBinding(
 ): NativeTextTransactionBinding {
   assertTrustedTextNativeStateNotDirectlyWritable(mutationTargets);
   if (loadedBinding !== undefined) return loadedBinding;
+  if (bindingLoadFailure !== undefined) throw bindingLoadFailure;
   const bindingPath = resolveTrustedTextNativeArtifact(
     import.meta.url,
     TRUSTED_TEXT_TRANSACTION_PROTOCOL,
@@ -244,9 +248,24 @@ function validateNativeBinding(
   return candidate as NativeTextTransactionBinding;
 }
 
+function openNativeLibrary(
+  open: () => Partial<NativeTextTransactionBinding>,
+): Partial<NativeTextTransactionBinding> {
+  try {
+    return open();
+  } catch (cause: unknown) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    bindingLoadFailure = new Error(
+      `The KodaX trusted text native binding failed to load and will not be retried in this process: ${detail}`,
+      { cause },
+    );
+    throw bindingLoadFailure;
+  }
+}
+
 function loadNativeBindingFile(bindingPath: string): Partial<NativeTextTransactionBinding> {
   if (process.platform === 'win32') {
-    return require(bindingPath) as Partial<NativeTextTransactionBinding>;
+    return openNativeLibrary(() => require(bindingPath) as Partial<NativeTextTransactionBinding>);
   }
   const descriptor = fs.openSync(
     bindingPath,
@@ -267,8 +286,10 @@ function loadNativeBindingFile(bindingPath: string): Partial<NativeTextTransacti
     const descriptorPath = process.platform === 'linux'
       ? `/proc/self/fd/${descriptor}`
       : `/dev/fd/${descriptor}`;
-    process.dlopen(container, descriptorPath);
-    return container.exports as Partial<NativeTextTransactionBinding>;
+    return openNativeLibrary(() => {
+      process.dlopen(container, descriptorPath);
+      return container.exports as Partial<NativeTextTransactionBinding>;
+    });
   } finally {
     fs.closeSync(descriptor);
   }

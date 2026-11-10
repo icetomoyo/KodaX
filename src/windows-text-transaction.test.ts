@@ -1,4 +1,5 @@
 import { execFile as execFileCallback } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import os from 'node:os';
@@ -574,5 +575,60 @@ describe('Windows trusted text transaction integration', () => {
       root,
       [policyPath],
     )).not.toThrow();
+  });
+});
+
+describe('trusted text native binding load failure', () => {
+  let root = '';
+
+  beforeEach(async () => {
+    root = await createIntegrationTestRoot();
+  });
+
+  afterEach(async () => {
+    vi.doUnmock('./windows-native-artifacts.js');
+    vi.restoreAllMocks();
+    vi.resetModules();
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  // Reopening an object whose first dlopen failed has crashed old glibc
+  // loaders (glibc 2.17 segfaulted on the next edit), so a failure is final.
+  it('fails later mutations and the doctor probe closed without reopening the binding', async () => {
+    const bytes = Buffer.from('not a native addon');
+    const bindingDirectory = path.join(root, createHash('sha256').update(bytes).digest('hex'));
+    const bindingPath = path.join(bindingDirectory, 'kodax-text-transaction.node');
+    await fs.mkdir(bindingDirectory);
+    await fs.writeFile(bindingPath, bytes);
+    const workspace = path.join(root, 'workspace');
+    await fs.mkdir(workspace);
+    vi.resetModules();
+    vi.doMock('./windows-native-artifacts.js', async (importOriginal) => ({
+      ...await importOriginal<typeof import('./windows-native-artifacts.js')>(),
+      resolveTrustedTextNativeArtifact: () => bindingPath,
+    }));
+    const dlopen = vi.spyOn(process, 'dlopen').mockImplementation(() => {
+      throw new Error("/lib64/libc.so.6: version `GLIBC_2.28' not found");
+    });
+    const { createTrustedTextMutationHost, probeTrustedTextNativeBinding } = await import(
+      './windows-text-transaction.js'
+    );
+    const host = createTrustedTextMutationHost(() => [workspace], authorizeOrdinaryCanonicalTarget);
+    const target = path.join(workspace, 'notes.txt');
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await expect(host.commit({
+        path: target, expectedRevision: 'missing:0', content: 'after', createParentDirectories: false,
+      })).rejects.toMatchObject({
+        code: 'text_mutation_io_failed',
+        message: expect.stringMatching(/not be retried.*GLIBC_2\.28/s),
+      });
+    }
+    expect(probeTrustedTextNativeBinding()).toMatchObject({
+      ready: false,
+      error: expect.stringContaining('GLIBC_2.28'),
+    });
+    expect(dlopen).toHaveBeenCalledTimes(1);
+    await expect(fs.access(target)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

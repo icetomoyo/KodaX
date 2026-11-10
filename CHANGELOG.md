@@ -6,6 +6,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- A failed load of the native text addon no longer crashes KodaX on the next
+  `edit`, `write` or `multi_edit`. The first failure is final for the process.
+  Later writes and `kodax doctor --native-text` report the same loader error
+  without loading the addon again (Issue 402).
+- The Linux standalone binary's native text authority now loads on glibc 2.17
+  hosts such as Anolis 7 and other RHEL/CentOS 7-family systems. Linux addons
+  build in digest-pinned `manylinux2014` images, and CI rejects any addon that
+  needs a `GLIBC_*` version newer than 2.17 (Issue 403).
+- Trusted text writes work on Linux kernels older than 5.8, such as 4.18 and
+  4.19. Those kernels do not report mount IDs through `statx`, so the authority
+  reads the same mount ID from `/proc/self/fdinfo` (Issue 404).
+
+### Compatibility
+
+- The supported Linux glibc floor drops from 2.28 to 2.17 for the standalone
+  binary. The npm package still needs a Node build for the host, and official
+  Node 20 requires glibc 2.28.
+
 ---
 
 ## [0.7.97-beta.5] - 2026-11-10

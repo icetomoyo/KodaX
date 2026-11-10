@@ -93,7 +93,7 @@ const textLibrary = process.platform === 'win32'
   : process.platform === 'darwin'
     ? 'libkodax_windows_text_transaction.dylib'
     : 'libkodax_windows_text_transaction.so';
-const textTargetDirectory = usePrebuiltLinuxText ? 'target-manylinux-2.28' : 'target';
+const textTargetDirectory = usePrebuiltLinuxText ? 'target-manylinux-2.17' : 'target';
 copyFileSync(
   path.join(
     textCrate,
