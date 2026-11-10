@@ -481,6 +481,7 @@ function makeRuntime(
       async observe(sessionId) {
         return createTestObservation(sessionId);
       },
+      async openSide() { return { id: 'side-1', title: 'Side chat' }; },
       async fork() {
         return null;
       },

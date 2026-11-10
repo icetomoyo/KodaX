@@ -245,6 +245,12 @@ Ink 的命令结果和设置快捷键反馈通过既有 `sessions.appendNotice` 
 
 手动 compact 和领域修改丢失回复后不能自动重放。调用方应读当前历史、预览或领域状态；`compacted: false` 的 `reason` 需原样处理，不能把 Provider 失败显示为“无需压缩”。
 
+### 侧聊与发给父会话的留言
+
+支持 `sideChat: 1` 的 Host 提供 `client.sessions.openSide(parentSessionId)`。返回的 `ClientSession.sideChat` 包含 `parentSessionId` 和 `boundary`，空历史时边界为 `null`。并发打开同一主体、父 Session 和分支会复用同一子 Session。后续通过 `inputs.submit`、`sessions.observe` 和 `runs.stop` 使用子 ID。恢复跨连接私聊需要保留客户端的原有主体身份。普通 Session 列表隐藏侧聊。
+
+侧 Run 的可用工作区工具限于执行策略允许的 `read`、`glob`、`grep`。Host 为该 Run 绑定 `send_to_parent({text, wake?})` 的唯一收件人。工具的回执可为 `queued` 或 `delivered`；后者表示已进入父模型上下文。父会话的 canonical 记录带有 `_synthetic: true`、`_source: 'side-chat'` 和发送者、消息 ID、正文。Provider 使用其支持的消息角色；模型通过固定的侧 Agent 署名与正文中的来源 ID 识别留言。父侧视图提供署名回执。Host 用侧 Run 和工具调用 ID 对账。旧 Host 经能力协商返回不支持；需要受限凭证的空闲父会话等待其调用方重新准入。
+
 ## 身份、状态与事实权威
 
 普通提问由 Host 默认无限等待，允许用户明确跳过，不设置 `required` 作答约束。

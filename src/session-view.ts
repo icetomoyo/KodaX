@@ -55,6 +55,7 @@ interface ObservedSession {
 interface SessionViewReadResult extends ClientSessionView {
   /** Internal ownership facts, including messages outside the visible window. */
   readonly committedOutputIds?: readonly string[];
+  readonly sideReceipts?: readonly ClientViewItem[];
 }
 
 function outputItemId(sessionId: string, outputId: string, kind: string, ordinal = 0): string {
@@ -547,9 +548,9 @@ export class SessionViewOwner {
           state.activity = { ...state.activity, streaming: { ...streaming, estimatedTokenCount: countTokens(text) } };
         }
       }
-      const { committedOutputIds: _committed, ...publicView } = view;
+      const { committedOutputIds: _committed, sideReceipts, ...publicView } = view;
       state.view = { ...publicView, ...(state.activity ? { activity: { ...state.activity, ...(costReport ? { costReport } : {}) } } : {}),
-        ...(state.sandbox ? { sandbox: state.sandbox } : {}), items: boundedViewItems(items) };
+        ...(state.sandbox ? { sandbox: state.sandbox } : {}), items: boundedViewItems([...items, ...(sideReceipts ?? []).slice(-8)]) };
       for (const [listener, report] of state.listeners) {
         try { listener(structuredClone(state.view)); report({ state: 'live' }); }
         catch (error: unknown) {

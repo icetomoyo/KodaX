@@ -17,6 +17,8 @@ export interface ProductExecutionContext {
   readonly bindingAvailable?: () => boolean;
   readonly principalId?: string;
   readonly sessionId?: string;
+  /** Fresh Host-default admission for a different Session on this same connection. */
+  readonly defaultForSession?: (sessionId: string) => ProductExecutionContext;
   readonly assertAdmission?: () => void;
   readonly bindRun: (input: RuntimeStartRunInput, runId: string, baseRuntime?: ExtensionRuntimeContract) => Promise<RuntimeStartRunInput>;
 }

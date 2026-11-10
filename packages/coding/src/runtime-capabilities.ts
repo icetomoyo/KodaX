@@ -1,5 +1,6 @@
 /** Shared SDK/Host capability vocabulary. No Host startup or Node imports. */
 export interface RuntimeCapabilityRequirements {
+  readonly sideChat?: 1;
   readonly productHistoryTurnResolution?: 1 | 2;
   readonly productHistoryLocation?: 1 | 2;
   readonly productExitControl?: 1;
@@ -80,6 +81,7 @@ export interface RuntimeCapabilityRequirements {
 
 /** Implemented SDK contracts; Host availability is checked separately. */
 export const KODAX_RUNTIME_SDK_CAPABILITIES = Object.freeze({
+  sideChat: 1,
   productHistoryTurnResolution: 2,
   productHistoryLocation: 2,
   productExitControl: 1,

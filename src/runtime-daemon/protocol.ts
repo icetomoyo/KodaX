@@ -39,6 +39,7 @@ export type RuntimeDaemonMethod =
   | 'session.view.item'
   | 'session.history.resolveTurn'
   | 'session.diagnostics'
+  | 'session.side.open'
   | 'session.fork'
   | 'session.recover'
   | 'session.notice.append'
@@ -230,6 +231,7 @@ export type RuntimeDaemonMutationMethod =
   | 'session.goal.clear'
   | 'session.create'
   | 'session.promote'
+  | 'session.side.open'
   | 'session.fork'
   | 'session.recover'
   | 'session.notice.append'
@@ -414,6 +416,7 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'session.view.item',
   'session.history.resolveTurn',
   'session.diagnostics',
+  'session.side.open',
   'session.fork',
   'session.recover',
   'session.notice.append',
@@ -587,6 +590,7 @@ export const RUNTIME_DAEMON_MUTATION_METHODS: readonly RuntimeDaemonMutationMeth
   'session.goal.clear',
   'session.create',
   'session.promote',
+  'session.side.open',
   'session.fork',
   'session.recover',
   'session.notice.append',

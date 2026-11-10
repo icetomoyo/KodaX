@@ -25,6 +25,7 @@ import React, {
   useMemo,
 } from "react";
 import { usePromptHistoryBrowse } from './hooks/usePromptHistoryBrowse.js';
+import { SideChatPanel, sideCommand } from './components/SideChatPanel.js';
 import { useEffortShortcut } from './hooks/useEffortShortcut.js';
 import { capturePromptBrowseAnchor, resolvePromptBrowseAnchor } from './utils/prompt-history-browse.js';
 import { applyClientSessionViewSettings, changedClientSessionSettings, clientSessionSettings } from './client-session-settings.js';
@@ -2311,6 +2312,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   }, [options.learning]);
   const [isInputEmpty, setIsInputEmpty] = useState(true); // Track if input is empty for ? shortcut
   const [inputText, setInputText] = useState("");
+  const [sideFocus, setSideFocus] = useState<import('@kodax-ai/coding/client-contract').ClientSession>();
+  const sideFocused = useRef(false);
+  const [sideDraftRestore, setSideDraftRestore] = useState(0);
+  const sideDrafts = useRef(new Map<string, string>());
+  const closeSide = () => { sideFocused.current = false; setSideFocus(undefined); };
   const [transcriptDisplayState, setTranscriptDisplayState] = useState(() => (
     createTranscriptDisplayState(terminalHostProfile, {
       rendererMode,
@@ -6271,6 +6277,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   useKeypress(
     KeypressHandlerPriority.Critical,
     (key) => {
+      if (sideFocused.current) return false;
       const isEscapeKey = key.name === "escape";
       const now = Date.now();
       const canEscapeInterrupt = isEscapeKey
@@ -6376,6 +6383,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   useKeypress(
     KeypressHandlerPriority.Critical,
     (key) => {
+      if (sideFocused.current) return false;
       const hasTranscript = hasTranscriptInputActivity({
         itemsLength: currentSurfaceItems.length,
         currentResponse: currentSurfaceStreamingState.currentResponse,
@@ -6734,7 +6742,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   // Confirmation dialog keyboard handler.
   useKeypress(
     (key) => {
-      if (!confirmRequest) return false;
+      if (sideFocused.current || !confirmRequest) return false;
 
       const answer = key.sequence.trim().toLowerCase();
       const runtimeSessionGrant = confirmRequest.runtimeGrantSuggestions
@@ -7005,6 +7013,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     (key) => {
       // Read from ref to avoid stale closure — the registered handler is NOT
       // re-created when uiRequest state changes (useKeypress deps don't include it).
+      if (sideFocused.current) return false;
       const req = uiRequestRef.current;
       if (!req) return false;
 
@@ -9932,6 +9941,28 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const handleSubmit = useCallback(
     async (payload: PromptSubmitPayload) => {
       const { displayText, fullText, pastedContents } = payload;
+      const sideCommandInput = sideCommand(fullText);
+      if (sideCommandInput && isRunning) {
+        if (sideFocused.current) return;
+        sideFocused.current = true;
+        try {
+          const plane = options.clientPlane;
+          if (!plane?.openSide) throw new Error('Side chat requires a Host with side-chat support.');
+          const side = await plane.openSide(context.sessionId);
+          if (sideCommandInput.question) {
+            const active = await plane.activeRun(side.id);
+            await plane.submit({ sessionId: side.id, text: sideCommandInput.question,
+              inputId: crypto.randomUUID(), delivery: active ? 'after_turn' : 'immediate' });
+          }
+          setInputText(''); setIsInputEmpty(true); setSubmitCounter(n => n + 1);
+          setSideFocus(side);
+        } catch (error) {
+          sideFocused.current = false;
+          setInputText(fullText); setSideDraftRestore(n => n + 1);
+          emitInfoItemToCorrectLayer({ type: 'info', text: String(error) }, 'side-chat');
+        }
+        return;
+      }
       // Prevent concurrent execution: ignore input if agent is busy or waiting for tool confirmation
       // Prevent concurrent execution while the agent is busy or awaiting confirmation.
       if (!fullText.trim() || !isRunning || confirmRequest || uiRequest) return;
@@ -11666,6 +11697,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
       composer={(
         <PromptComposer
+          key={sideDraftRestore}
           sessionId={context.sessionId}
           initialValue={inputText}
           onSubmit={handleSubmit}
@@ -11881,7 +11913,12 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     ? transcriptFooterSurface
     : promptFooterSurface;
   const shouldFillShellHeight = fullscreenPolicy.enabled && useRendererViewportShell;
-  const shellBody = (
+  const shellBody = sideFocus && options.clientPlane ? (
+    <SideChatPanel key={sideFocus.id} session={sideFocus} plane={options.clientPlane}
+      parentNeedsInput={Boolean(confirmRequest || uiRequest || clientView?.interactions.length)}
+      draft={sideDrafts.current.get(sideFocus.id) ?? ''}
+      saveDraft={value => sideDrafts.current.set(sideFocus.id, value)} close={closeSide} />
+  ) : (
     <Box
       flexDirection="column"
       width={terminalWidth}

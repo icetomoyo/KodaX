@@ -23,6 +23,7 @@ const artifacts = await mkdtemp(path.join(os.tmpdir(), 'kodax-repl-acceptance-')
 const results = [];
 const sourceEntry = process.argv.includes('--source');
 const longHistoryOnly = process.argv.includes('--long-history-only');
+const sideChatOnly = process.argv.includes('--side-chat-only');
 const queueBoundaryOnly = process.argv.includes('--queue-boundary-only');
 const consumerOnly = process.argv.includes('--consumer-only');
 const exposureOnly = process.argv.includes('--exposure-only');
@@ -149,6 +150,13 @@ async function respondToModelRequest(state, request, response) {
         id: `${token}-${index}`, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.input) },
       })) }, finish_reason: 'tool_calls' }],
     })}\n\ndata: [DONE]\n\n`);
+    return;
+  }
+  if (token === 'ACCEPT_SIDE_SEND' && data.messages.at(-1).role !== 'tool') {
+    response.end('data: ' + JSON.stringify({ id: token, object: 'chat.completion.chunk',
+      choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'side-report', type: 'function',
+        function: { name: 'send_to_parent', arguments: JSON.stringify({ text: 'Selected conclusion B' }) },
+      }] }, finish_reason: 'tool_calls' }] }) + '\n\ndata: [DONE]\n\n');
     return;
   }
   if (token === 'ACCEPT_QUESTION' && data.messages.at(-1).role !== 'tool') {
@@ -938,6 +946,37 @@ async function checkStop(state) {
   'Stopping must not leave duplicate query rows in the terminal');
 }
 
+async function checkSideChat(state) {
+  await writeFile(path.join(state.homeDir, 'boundary.txt'), 'BOUNDARY_TOOL_COMPLETED');
+  await state.terminal.submit('ACCEPT_BOUNDARY_HOLD');
+  await waitFor('parent streaming', () => state.pending.has('boundary-tool'));
+  const parentRunId = await waitFor('parent Run identity', () => state.view.runs.find(run => run.phase === 'running')?.runId);
+  try {
+    await state.terminal.submit('/btw ACCEPT_SIDE_PRIVATE');
+    await waitFor('first private answer in side panel', () => state.terminal.screen().includes('END_ACCEPT_SIDE_PRIVATE'));
+    await state.terminal.submit('ACCEPT_SIDE_FOLLOWUP');
+    await waitFor('second private answer', () => state.terminal.screen().includes('END_ACCEPT_SIDE_FOLLOWUP'));
+    const follow = state.requests.find(r => lastUserText(r.messages) === 'ACCEPT_SIDE_FOLLOWUP');
+    assert.ok(JSON.stringify(follow.messages).includes('END_ACCEPT_SIDE_PRIVATE'));
+    await state.terminal.submit('ACCEPT_SIDE_SEND');
+    await waitFor('side agent reports the delivery', () => state.terminal.screen().includes('END_ACCEPT_SIDE_SEND'));
+    await waitFor('parent observer sees only the selected queued report', () =>
+      state.view.items.some(item => item.text === 'From side chat (queued): Selected conclusion B'));
+    assert.equal((await state.client.runs.read(parentRunId)).phase, 'running');
+    await state.terminal.submit('/side');
+    await waitFor('parent focus restored', () => !state.terminal.screen().includes('/side to return'));
+  } finally {
+    state.pending.get('boundary-tool')?.();
+  }
+  await waitFor('selected side message reaches the parent provider', () => state.requests.some(r =>
+    !r.tools?.some(t => t.function?.name === 'send_to_parent') && lastUserText(r.messages).includes('Selected conclusion B')));
+  const parentRequest = state.requests.find(r => lastUserText(r.messages).includes('Selected conclusion B'));
+  assert.ok(!JSON.stringify(parentRequest.messages).includes('ACCEPT_SIDE_PRIVATE'));
+  await waitFor('original parent run completion', async () => (await state.client.runs.read(parentRunId)).phase === 'completed');
+  await waitFor('parent delivery receipt', () => state.view.items.some(item => item.text === 'From side chat (delivered): Selected conclusion B'));
+  assert.ok(!JSON.stringify(state.view.items).includes('ACCEPT_SIDE_FOLLOWUP'));
+}
+
 async function checkQueueModelBoundary(state) {
   assert.equal(state.mode, 'ink', 'Busy keyboard queue admission is an Ink interaction');
   // The standalone entry has not run the wide settings check used by the full suite.
@@ -1441,6 +1480,11 @@ async function run(mode) {
     if (checkpointResumeOnly) await seedCheckpointResumeHistory(state);
     state.terminal = openTerminal(state.homeDir, mode, state.fixtureSessionId ? ['--resume', state.fixtureSessionId] : []);
     await check(state, 'startup', checkStartup);
+    if (sideChatOnly) {
+      await check(state, 'concurrent-side-chat-selective-relay', checkSideChat);
+      await check(state, 'exit', checkExit);
+      return;
+    }
     if (mode === 'ink' && !streamingTokensOnly && !checkpointResumeOnly && !streamingScrollOnly && !modelNoticesOnly && !longHistoryOnly && !queueBoundaryOnly && !consumerOnly && !exposureOnly) {
       await check(state, 'short-history-wheel-return-to-live', checkShortPromptScroll);
     }
@@ -1531,8 +1575,8 @@ async function run(mode) {
 }
 
 try {
-  const requestedModes = process.argv.slice(2).filter(argument => !['--source', '--long-history-only', '--queue-boundary-only', '--consumer-only', '--exposure-only', '--prompt-scroll-only', '--streaming-scroll-only', '--checkpoint-resume-only', '--model-notices-only', '--streaming-tokens-only'].includes(argument));
-  const modes = requestedModes.length ? requestedModes : longHistoryOnly || queueBoundaryOnly || promptScrollOnly || streamingScrollOnly || checkpointResumeOnly || modelNoticesOnly ? ['ink'] : ['ink', 'classic'];
+  const requestedModes = process.argv.slice(2).filter(argument => !['--source', '--side-chat-only', '--long-history-only', '--queue-boundary-only', '--consumer-only', '--exposure-only', '--prompt-scroll-only', '--streaming-scroll-only', '--checkpoint-resume-only', '--model-notices-only', '--streaming-tokens-only'].includes(argument));
+  const modes = requestedModes.length ? requestedModes : sideChatOnly || longHistoryOnly || queueBoundaryOnly || promptScrollOnly || streamingScrollOnly || checkpointResumeOnly || modelNoticesOnly ? ['ink'] : ['ink', 'classic'];
   assert.ok(modes.every(mode => ['ink', 'classic'].includes(mode)), 'Modes must be ink or classic');
   for (const mode of modes) await run(mode);
 } catch (error) {

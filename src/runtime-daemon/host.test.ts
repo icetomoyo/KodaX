@@ -1518,6 +1518,7 @@ function makeRuntime(
           },
         };
       },
+      async openSide() { return { id: 'side-1', title: 'Side chat' }; },
       async fork() {
         return { id: "fork-1", title: "Forked Session" };
       },

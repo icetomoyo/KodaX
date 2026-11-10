@@ -1089,6 +1089,20 @@ async function runSubstrateInContext(
   if (messageQueueAgentId !== undefined && ctx.actorControl?.callerPath === '/root') {
     releaseActiveRootQueueRoute = registerActiveRootQueueRoute(messageQueueAgentId);
   }
+  const appendSideMessages = async (incoming: readonly KodaXMessage[]): Promise<void> => {
+    const start = messages.length;
+    messages.push(...incoming);
+    try {
+      await saveRequiredSessionSnapshot(options, sessionId, {
+        messages, title, gitRoot: options.context?.gitRoot ?? undefined, runtimeSessionState,
+      });
+    } catch (error) {
+      messages.splice(start, incoming.length);
+      throw error;
+    }
+  };
+  const consumeSideMessages = () => (!ctx.actorControl || ctx.actorControl.callerPath === '/root') &&
+    options.context?.interruptInput?.consumeSideMessages?.(messages, appendSideMessages);
   const appendInterruptPrompts = async (prompts: readonly import('@kodax-ai/agent').QueuedMessage[]): Promise<KodaXMessage[]> => {
     const prepared = prompts.map(queued => {
       const inputArtifacts = toKodaXInputArtifacts(queued.inputArtifacts);
@@ -1153,7 +1167,8 @@ async function runSubstrateInContext(
     const hostPrompts = !allowHost || (ctx.actorControl && ctx.actorControl.callerPath !== '/root') ? []
       : await inputPort.consumePendingInputs?.(async inputs => { appended = await appendInterruptPrompts(inputs); }) ?? [];
     notify(hostPrompts, appended);
-    return prompts.length > 0 || hostPrompts.length > 0;
+    const received = allowHost && await consumeSideMessages();
+    return prompts.length > 0 || hostPrompts.length > 0 || received === true;
   };
 
   let contextTokenSnapshot = rebaseContextTokenSnapshot(
@@ -1661,6 +1676,7 @@ async function runSubstrateInContext(
       events.getCostReport.current = () => formatCostReport(getSummary(turnState.costTracker));
     }
 
+    await consumeSideMessages();
     for (let iter = 0; iter < iterationLimit; iter++) {
     const goalTurnStartedAt = Date.now();
     let generationPending = true;

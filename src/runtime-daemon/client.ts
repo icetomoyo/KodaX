@@ -664,6 +664,10 @@ export function createRuntimeDaemonClient(
           runtimeMode: options.identity.mode,
         }));
       },
+      openSide(sessionId) {
+        requireRuntimeCapability(options.capabilities, 'sideChat', 1);
+        return request('session.side.open', { sessionId }) as Promise<RuntimeSession>;
+      },
       async fork(input) {
         if (input.turn || (input.historyBoundary && (input.before !== true || 'kind' in input.historyBoundary))) requireRuntimeCapability(options.capabilities, 'productHistoryTurnResolution', 2);
         return request('session.fork', input) as Promise<RuntimeSession | null>;

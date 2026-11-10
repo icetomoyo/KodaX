@@ -5631,6 +5631,62 @@ export class FileSessionStorage implements KodaXSessionStorage {
     return result;
   }
 
+  /** Seed only the committed model history. Never copy a parent's active task, approvals or Actor tree. */
+  async saveSideSnapshot(parent: string, child: string, source: SessionData): Promise<string | null> {
+    const lineage = source.lineage ?? createSessionLineage(source.messages);
+    const pending = new Set<string>();
+    let boundary: string | null = null;
+    for (const entry of getSessionLineagePath(lineage)) {
+      if (entry.type === 'message' && Array.isArray(entry.message.content)) {
+        for (const block of entry.message.content) {
+          if (block.type === 'tool_use') {
+            if (pending.has(block.id)) throw new Error('Side conversation contains a duplicate active tool call.');
+            pending.add(block.id);
+          }
+          if (block.type === 'tool_result' && !pending.delete(block.tool_use_id)) {
+            throw new Error('Side conversation history contains an unmatched tool result.');
+          }
+        }
+      }
+      if (pending.size === 0) boundary = entry.id;
+    }
+    const prefix = boundary === null ? createSessionLineage([]) : forkSessionLineage(lineage, boundary);
+    if (!prefix) throw new Error('Side conversation history boundary is unavailable.');
+    let visual: Awaited<ReturnType<typeof prepareVisualSessionFork>> | undefined;
+    if (source.extensionRecords?.some(record => record.extensionId === 'kodax.visual')) {
+      visual = await prepareVisualSessionFork({ sessionsDir: this.sessionsDir, parentId: parent, childId: child,
+        records: source.extensionRecords, sourceLineage: lineage, lineage: prefix });
+    }
+    const history = visual?.lineage ?? prefix;
+    history.entries = history.entries.filter(entry => entry.type !== 'goal' && entry.type !== 'label');
+    const reference = (message: KodaXMessage): KodaXMessage => {
+      const content = typeof message.content === 'string' ? message.content
+        : message.content.filter(block => block.type !== 'thinking' && block.type !== 'redacted_thinking');
+      return { role: message.role === 'system' ? 'user' : message.role,
+        content: content.length > 0 ? content : '[Earlier reasoning omitted]' };
+    };
+    // Keep logical entry identities so fork-owned visual observations remain addressable.
+    for (const entry of history.entries) {
+      if (entry.type === 'message') entry.message = reference(entry.message);
+      if (entry.type === 'compaction' && entry.postCompactAttachments) {
+        entry.postCompactAttachments = entry.postCompactAttachments.map(reference);
+      }
+    }
+    const messages = getSessionMessagesFromLineage(history);
+    messages.push({ role: 'user', _synthetic: true, _source: 'side-boundary',
+      content: 'Side conversation boundary. Everything above is inherited reference material. Only subsequent user requests are active.' });
+    const { temporary: _temporary, sessionPromotion: _promotion, workModeLocked: _locked, ...runtimeInfo } = source.runtimeInfo ?? {};
+    try {
+      await this.save(child, { title: 'Side chat', gitRoot: source.gitRoot, runtimeInfo, messages,
+        lineage: createSessionLineage(messages, history),
+        ...(visual ? { extensionRecords: visual.records.filter(record => record.extensionId === 'kodax.visual') } : {}) });
+    } catch (error) {
+      if (visual && !await this.readSession(child)) await discardVisualSessionFork(this.sessionsDir, child);
+      throw error;
+    }
+    return boundary;
+  }
+
   async fork(
     id: string,
     selector?: string,

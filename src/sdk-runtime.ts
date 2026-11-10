@@ -6,6 +6,7 @@
  * process manager without introducing a daemon or a fifth workspace package.
  */
 
+import { SIDE_INSTRUCTIONS, SideChats, isSideId, sideRequester, sideBranch, sideCanDeliver, sideMessage, sideToolRuntime } from './side-chat.js';
 import { createClientStartupProgressReporter } from './client-startup-progress.js';
 import { sessionMetadataRevision, promoteSessionMetadata } from '@kodax-ai/agent';
 import type { ClientStartupProgress } from '@kodax-ai/coding/client-contract';
@@ -1907,6 +1908,7 @@ export interface RuntimeSessionService {
   diagnostics(
     input: RuntimeSessionDiagnosticsInput,
   ): Promise<RuntimeSessionDiagnostics>;
+  openSide(sessionId: string): Promise<RuntimeSession>;
   fork(input: RuntimeForkSessionInput): Promise<RuntimeSession | null>;
   recover(input: RuntimeRecoverSessionInput): Promise<RuntimeSession>;
   getSettings(sessionId: string): Promise<RuntimeSessionSettings>;
@@ -2216,6 +2218,8 @@ export interface RuntimeContextRecoveryWait {
 }
 
 export interface RuntimeRunStatus {
+  /** Present only for product Runs that did not require a caller-bound execution grant. */
+  readonly sideWakeWithHostDefaults?: true;
   readonly requiredWorkMode?: RuntimeExecutionProfile['requiredWorkMode'];
   readonly executionBinding?: RuntimeExecutionBindingSnapshot;
   readonly effectiveConfig?: import('@kodax-ai/coding').KodaXEffectiveTaskConfig;
@@ -3726,6 +3730,7 @@ interface RuntimeRunRecord {
   readonly actorSession?: CodingActorSession;
   readonly admittedSessionContext?: RuntimeAdmittedSessionContext;
   interruptInputOpen: boolean;
+  pendingSideReport?: boolean;
   releaseAbortSignalSubscription?: () => void;
   start?: PendingRunStart;
   executorTerminalSignal?: {
@@ -3942,6 +3947,7 @@ interface RuntimeInternalEventService {
 }
 
 interface RuntimePersistence {
+  readonly sideChats: SideChats;
   readonly configHome: string;
   readonly runtimeDir: string;
   savePendingInputs(sessionId: string, inputs: readonly import('./session-input-queue.js').PendingSessionInput[],
@@ -4298,6 +4304,7 @@ async function createKodaXRuntimeInternal(
     productExecutionModeConstraint: { version: 1 },
     sessionDrafts: { version: 1 },
     productHistoryBoundaries: { version: 1 },
+    sideChat: { version: 1 },
     productHistoryTurnResolution: { version: 2 },
     productHistoryLocation: { version: 2 },
     productExecutionAuthorization: { version: 2 },
@@ -4428,11 +4435,6 @@ async function createKodaXRuntimeInternal(
   const sessionManager = createSessionManager(
     sessionsDir ? { sessionsDir, configHome } : { configHome },
   );
-  const sessionAdmission = createRuntimeSessionAdmission(
-    identity.profile,
-    sessionManager,
-    options.sharedDaemonHost === true,
-  );
   const sessionOperations = createRuntimeSessionOperationGate();
   const configFile = resolveRuntimeConfigFile(options);
   registerRuntimeConfiguredCustomProviders(configFile);
@@ -4471,6 +4473,12 @@ async function createKodaXRuntimeInternal(
     livenessPort: ownerLiveness.port,
   };
   const persistence = createRuntimePersistence(options, runOwner);
+  const sessionAdmission = createRuntimeSessionAdmission(
+    identity.profile,
+    sessionManager,
+    options.sharedDaemonHost === true,
+    id => persistence.sideChats.admits(id),
+  );
   const executionFacts = createExecutionFactsStore(configHome, runOwner, sessionsDir);
     if (options.externalAgents) agentStore = createRuntimeAgentExecutorPlaneStore(path.join(persistence.runtimeDir, "agents"), { exclusive: true });
     agentPlane = options.externalAgents
@@ -4625,7 +4633,17 @@ async function createKodaXRuntimeInternal(
     const settings = { ...resolveEffectiveRuntimeSessionSettings(config, rawSettings, true),
       ...(activeRun ? { agentMode: activeRun.mode === 'coding' ? 'sa' as const : 'ama' as const } : {}) };
     const contextBudget = resolveClientContextBudget(config, settings, options.defaultProvider, options.defaultModel);
-    return { session, settings: toClientSessionSettings(settings), contextBudget, items: restoreSessionViewItems(sessionId, data, conversation?.messages, liveItems, conversation?.boundaries),
+    const side = persistence.sideChats.get(sessionId);
+    const receipts = side ? [side] : persistence.sideChats.forParent(sessionId);
+    const sourceId = side?.parent ?? sessionId;
+    const source = includeHistory && side?.letters.length ? await sessionManager.storage.load(sourceId) : data;
+    const reportLineage = includeHistory && receipts.some(b => b.letters.length)
+      ? await fullSideLineage(sessionManager, sourceId, source?.lineage) : undefined;
+    persistence.sideChats.reconcile(receipts, reportLineage);
+    const currentReceipts = receipts.flatMap(b => persistence.sideChats.get(b.id) ?? []);
+    const sideReceipts = includeHistory ? persistence.sideChats.receipts(currentReceipts, reportLineage, !!side)
+      : previous?.items.filter(item => item.id.startsWith('side-report:'));
+    return { session, settings: toClientSessionSettings(settings), contextBudget, sideReceipts, items: restoreSessionViewItems(sessionId, data, conversation?.messages, liveItems, conversation?.boundaries),
       ...(data ? { committedOutputIds: [...committedSessionOutputIds(data, conversation?.messages ?? [])] } : {}),
       parentContextTokens: data ? estimateTokens(data.messages) : previous?.parentContextTokens,
       queue: runService.queuedInputs(sessionId),
@@ -4697,6 +4715,7 @@ async function createKodaXRuntimeInternal(
   const userInputs = createRuntimeUserInputRegistry(
     bus,
     options.userInputTimeoutMs ?? DEFAULT_USER_INPUT_TIMEOUT_MS,
+    id => persistence.sideChats.admits(id),
   );
   const interactionRegistries = {
     userInputs: userInputs.service,
@@ -5604,7 +5623,11 @@ async function createKodaXRuntimeInternal(
     capabilities: embeddedCapabilities,
     sessions: sessionService,
     runs: runService,
-    events: bus.service,
+    events: { subscribe(filter, listener) {
+      const principal = sideRequester.getStore();
+      if (!persistence.sideChats.admits(filter.sessionId, principal)) throw new Error('Side session is not admitted.');
+      return bus.service.subscribe(filter, listener);
+    } },
     permissions: permissions.service,
     userInputs: userInputs.service,
     interactions,
@@ -5873,7 +5896,7 @@ function assertRuntimeCapabilities(
     requirements?.sandboxRuntime === undefined &&
     requirements?.runtimeAutoModeGuardrail === undefined &&
     requirements?.sessionDrafts === undefined && requirements?.sessionPromotion === undefined && requirements?.productExecutionBinding === undefined && requirements?.productInputRecovery === undefined && requirements?.productExecutionModeConstraint === undefined && requirements?.productClient === undefined &&
-    requirements?.productHistoryBoundaries === undefined && requirements?.productHistoryTurnResolution === undefined && requirements?.productHistoryLocation === undefined &&
+    requirements?.sideChat === undefined && requirements?.productHistoryBoundaries === undefined && requirements?.productHistoryTurnResolution === undefined && requirements?.productHistoryLocation === undefined &&
     requirements?.productExecutionAuthorization === undefined && requirements?.productExitControl === undefined
     && requirements?.productExecutionFacts === undefined && requirements?.productActorAuthorization === undefined
   )
@@ -5895,6 +5918,7 @@ function assertRuntimeCapabilities(
     ['productInputRecovery', requirements.productInputRecovery],
     ['productExecutionModeConstraint', requirements.productExecutionModeConstraint],
     ["productHistoryBoundaries", requirements.productHistoryBoundaries],
+    ['sideChat', requirements.sideChat],
     ['productHistoryTurnResolution', requirements.productHistoryTurnResolution],
     ['productHistoryLocation', requirements.productHistoryLocation],
     ["productExecutionAuthorization", requirements.productExecutionAuthorization],
@@ -6155,6 +6179,7 @@ function firstUpgradeableCapability(
     'productInputRecovery',
     'productExecutionModeConstraint',
     "productHistoryBoundaries",
+    'sideChat',
     'productHistoryTurnResolution',
     'productHistoryLocation',
     "productExecutionAuthorization", 'productExitControl', 'productExecutionFacts', 'productActorAuthorization',
@@ -7195,6 +7220,7 @@ function createRuntimeSessionService(
     createdAt?: string,
   ): RuntimeSession => ({
     id,
+    ...persistence.sideChats.metadata(id),
     metadataRevision: sessionMetadataRevision(id, data),
     title: data.title,
     msgCount: data.messages.length,
@@ -8446,6 +8472,13 @@ function createRuntimeSessionService(
       const session = await admission.loadRequired(sessionId);
       if (temporaryOnly && session.runtimeInfo?.temporary !== true) return;
       assertSessionMutationAllowed(sessionId, sessionMutationOwner);
+      const children = persistence.sideChats.forParent(sessionId);
+      for (const child of children) assertSessionMutationAllowed(child.id, sessionMutationOwner);
+      for (const child of children) {
+        if (child.preparing) await manager.storage.delete(child.id);
+        else await sideRequester.exit(() => deleteSession(child.id, false));
+        persistence.sideChats.remove(child);
+      }
       await sessionViews.flush(sessionId);
       await withActorSessionFileMutation(sessionId, "delete", async (ownerId) => {
         if (!ownerId) {
@@ -8652,7 +8685,7 @@ function createRuntimeSessionService(
       admission.assertFilter(filter);
       const summaries = await manager.listSessions({ ...filter, limit: Number.MAX_SAFE_INTEGER });
       return summaries
-        .filter(admission.admitsSummary)
+        .filter(summary => admission.admitsSummary(summary) && !isSideId(summary.id))
         .slice(0, filter?.limit ?? 50)
         .map(toRuntimeSessionSummary);
     },
@@ -9377,8 +9410,41 @@ function createRuntimeSessionService(
       );
     },
 
+    async openSide(parent) {
+      ensureOpen();
+      return sessionOperations.run(parent, async () => {
+        if (isSideId(parent)) throw sessionCommandError("conflict", "A side chat cannot open another side chat.");
+        const capture = await readSessionCapture(parent, createRuntimeReadBudget(undefined));
+        const source = { ...capture.data, lineage: capture.transcript.lineage };
+        if (await manager.storage.isArchived(parent)) throw createSessionArchivedError(parent);
+        const branch = sideBranch(source.lineage);
+        const existing = persistence.sideChats.forParent(parent).find(binding => binding.branch === branch && binding.owner === sideRequester.getStore());
+        if (existing && !existing.preparing) return toRuntimeSession(existing.id, await admission.loadExecutable(existing.id));
+        if (existing) {
+          await manager.storage.delete(existing.id);
+          persistence.sideChats.remove(existing);
+        }
+        const side = persistence.sideChats.allocate(parent, branch, null);
+        persistence.sideChats.save({ ...side, preparing: true });
+        try {
+          side.boundary = await manager.storage.saveSideSnapshot(parent, side.id, source);
+          const settings = await settingsOwner.read(parent);
+          persistence.saveSessionSettingsVersioned(side.id, { ...settings, value: { ...settings.value, agentMode: "sa", workMode: "coding" } });
+          persistence.sideChats.save(side);
+        } catch (error) {
+          await manager.storage.delete(side.id);
+          persistence.sideChats.remove(side);
+          throw error;
+        }
+        const session = toRuntimeSession(side.id, await admission.loadRequired(side.id));
+        bus.emit("session.created", session, { sessionId: side.id, runId: side.id });
+        return session;
+      });
+    },
+
     async fork(input) {
       ensureOpen();
+      if (isSideId(input.sessionId)) throw sessionCommandError("conflict", "A side conversation cannot be forked.");
       if (input.turn) {
         if (input.historyBoundary !== undefined || input.selector !== undefined) throw Object.assign(new Error('Conflicting turn selectors.'), { code: 'invalid_params' });
         input = { ...input, historyBoundary: runtimeTurnBoundary(input.sessionId, input.turn, input.before) };
@@ -9455,6 +9521,7 @@ function createRuntimeSessionService(
 
     async recover(input) {
       ensureOpen();
+      if (isSideId(input.sessionId)) throw sessionCommandError("conflict", "Side conversations resume through openSide.");
       assertSessionMutationAllowed(input.sessionId, sessionMutationOwner);
       await sessionViews.flush(input.sessionId);
       const source = await admission.loadRequired(input.sessionId);
@@ -10005,7 +10072,15 @@ function createRuntimeSessionService(
       });
     },
 
-    delete: (sessionId) => deleteSession(sessionId, false),
+    async delete(sessionId) {
+      const side = persistence.sideChats.get(sessionId);
+      if (!side) return deleteSession(sessionId, false);
+      await sessionOperations.run(side.parent, async () => {
+        await deleteSession(sessionId, false);
+        persistence.sideChats.remove(side);
+        sessionViews.changed(side.parent, true);
+      });
+    },
     deleteTemporary: (sessionId) => deleteSession(sessionId, true),
   };
   return service;
@@ -11625,7 +11700,34 @@ async function createRuntimeRunService(deps: {
       provider: record.provider,
       record,
       sessionManager: deps.sessionManager,
-      hasPendingInputs: () => productQueue.list(record.sessionId).length > 0,
+      hasPendingInputs: () => record.pendingSideReport === true || productQueue.list(record.sessionId).length > 0,
+      consumeSideMessages: async (history, persist) => {
+        const groups = deps.persistence.sideChats;
+        const pending = () => groups.forParent(record.sessionId).filter(b => b.letters.some(l =>
+          !l.deliveredRunId && l.principalId === record.origin?.principalId));
+        if (!pending().length) return false;
+        return deps.sessionOperations.run(record.sessionId, async () => {
+          if (activeRunBySession.get(record.sessionId) !== record.runId || record.stop || record.abortController?.signal.aborted) return false;
+          const parent = await deps.sessionAdmission.loadExecutable(record.sessionId);
+          const lineage = await fullSideLineage(deps.sessionManager, record.sessionId, parent.lineage);
+          groups.reconcile(pending(), lineage);
+          let received = false;
+          for (const binding of pending()) {
+            if (!sideCanDeliver(binding, lineage)) continue;
+            const letters = binding.letters.filter(l => !l.deliveredRunId && l.principalId === record.origin?.principalId);
+            const incoming = letters.map(l => sideMessage(binding, l, record.runId)).filter(m => !history.some(h =>
+              h._source === 'side-chat' && h.content === m.content) && !lineage?.entries.some(e =>
+              e.type === 'message' && e.message._source === 'side-chat' && e.message.content === m.content));
+            if (incoming.length) await persist(incoming);
+            groups.save({ ...binding, letters: binding.letters.map(l => letters.includes(l) ? { ...l, deliveredRunId: record.runId } : l) });
+            deps.sessionViews.changed(binding.id, true);
+            received ||= incoming.length > 0;
+          }
+          record.pendingSideReport = false;
+          if (received) deps.sessionViews.changed(record.sessionId, true);
+          return received;
+        });
+      },
       consumePendingInputs: persist => deps.sessionOperations.run(record.sessionId, async () => {
         if (deps.isClosed() || activeRunBySession.get(record.sessionId) !== record.runId
           || !isActiveRunPhase(record.phase) || record.stop !== undefined || record.abortController?.signal.aborted) return [];
@@ -12299,6 +12401,7 @@ async function createRuntimeRunService(deps: {
     operation: RuntimeRunInputOperation,
     recovery?: { readonly persisted: PersistedRuntimeRunStatus; readonly data: RuntimeGenerationRecovery;
       readonly workMode: ReturnType<typeof resolveWorkMode> },
+    sideWake = false,
   ): Promise<RuntimeRunHandle> => {
     deps.ensureOpen();
     let trustedInput = input as RuntimeTrustedStartRunInput;
@@ -12399,6 +12502,69 @@ async function createRuntimeRunService(deps: {
       normalizedInput.inputArtifacts,
       admittedSessionContext,
     );
+    const side = deps.persistence.sideChats.get(input.sessionId);
+    if (side) {
+      const allowed = ['read', 'glob', 'grep', 'send_to_parent'];
+      const excluded = [...getAllRegisteredTools(), ...listRunScopedTools(options.extensionRuntime)]
+        .filter(tool => !allowed.includes(tool.name)).map(tool => tool.name);
+      if ((!productInput && !recovery?.persisted.status.productInput) || options.toolInvocation || trustedInput.prepare ||
+          trustedInput.workflow || trustedInput.commandInput) throw new Error('Side conversations accept chat input only.');
+      const principalId = trustedInput.origin?.principalId;
+      const extensionRuntime = sideToolRuntime((callId, content, wake) => deps.sessionOperations.run(side.parent, async () => {
+        const sender = deps.runs.get(runId);
+        if (!sender || !isActiveRunPhase(sender.phase) || sender.stop || sender.abortController?.signal.aborted) throw new Error('Side run has ended.');
+        execution?.assertAdmission?.();
+        const parent = await deps.sessionAdmission.loadExecutable(side.parent);
+        const binding = deps.persistence.sideChats.get(side.id);
+        if (!binding || !sideCanDeliver(binding, await fullSideLineage(deps.sessionManager, side.parent, parent.lineage))) throw new Error('Parent history has changed. Message was not sent.');
+        const activeId = activeRunBySession.get(binding.parent);
+        const active = activeId ? getRecord(activeId) : undefined;
+        if (active && active.origin?.principalId !== principalId) throw new Error('Parent run belongs to a different principal.');
+        const id = JSON.stringify([runId, callId]);
+        let letter = binding.letters.find(l => l.id === id);
+        if (letter && (letter.content !== content || letter.wake !== wake)) throw new Error('Conflicting side message retry.');
+        if (!letter) {
+          letter = { id, content, wake, principalId };
+          deps.persistence.sideChats.save({ ...binding, letters: [...binding.letters, letter] });
+          if (active) active.pendingSideReport = true;
+          deps.sessionViews.changed(binding.parent, true);
+          deps.sessionViews.changed(binding.id, true);
+        }
+        const receipt = { messageId: id, text: content, state: letter.deliveredRunId ? 'delivered' : 'queued' };
+        if (!wake || active || letter.deliveredRunId) return receipt;
+        const wakeRunId = 'run_' + createHash('sha256').update('side-wake:' + id).digest('hex');
+        if (deps.persistence.loadRunStatus(wakeRunId)) return { ...receipt, wakeRunId };
+        // A scoped lease belongs to its original Session. A fresh binding
+        // for such a parent must come from its own client on the next run.
+        const previous = [...deps.runs.values()].filter(r => r.sessionId === binding.parent)
+          .sort((a, b) => b.sessionOrder - a.sessionOrder)[0];
+        const previousStatus = previous ? (deps.persistence.loadRunStatus(previous.runId)?.status ?? statusFromRecord(previous)) : deps.persistence.loadRunStatuses()
+          .map(r => r.status).filter(r => r.sessionId === binding.parent)
+          .sort((a, b) => (b.sessionOrder ?? 0) - (a.sessionOrder ?? 0))[0];
+        const pending = await Promise.all([deps.permissions.service.listPending({ sessionId: binding.parent }),
+          deps.userInputs.service.listPending({ sessionId: binding.parent })]);
+        if (pending.some(items => items.length) || previousStatus?.stop ||
+          (previousStatus && (!previousStatus.sideWakeWithHostDefaults || previousStatus.origin?.principalId !== principalId)) ||
+          (execution && !execution.defaultForSession)) {
+          return { ...receipt, reason: 'Waiting for the next authorized parent run.' };
+        }
+        try {
+          const parentInput: RuntimeTrustedStartRunInput = { sessionId: binding.parent, trustedRunId: wakeRunId,
+            prompt: 'The user requested that this session resume to consider the side agent report.', productSession: true,
+            origin: trustedInput.origin };
+          const handle = await withProductExecution(execution?.defaultForSession?.(binding.parent),
+            () => startRun(parentInput, 'runtime.runs.start', undefined, true));
+          return { ...receipt, wakeRunId: handle.runId };
+        } catch (error) {
+          return { ...receipt, reason: normalizeError(error).message };
+        }
+      }));
+      options = { ...options, extensionRuntime, agentMode: 'sa', workMode: 'coding', context: { ...options.context,
+        systemPromptOverride: SIDE_INSTRUCTIONS,
+        toolVisibilityPolicy: createExecutionToolPolicy({ tools: allowed }, options.context?.toolVisibilityPolicy),
+        excludeTools: [...new Set([...(options.context?.excludeTools ?? []), ...excluded])],
+      } };
+    }
     if (recovery) options = { ...options, session: { ...options.session, generationCheckpoint: recovery.data.checkpoint } };
     await protectRuntimeWorkflowProject(options.context?.executionCwd);
     assertExecutionWorkMode(options.executionWorkMode, resolveWorkMode(options));
@@ -12679,7 +12845,7 @@ async function createRuntimeRunService(deps: {
       ownedByRuntime: true,
     };
     const canonicalInputId = productInput?.inputId
-      ?? (deps.sessionManager.storage.isDraft(input.sessionId) ? runId : undefined);
+      ?? (sideWake || deps.sessionManager.storage.isDraft(input.sessionId) ? runId : undefined);
     if (canonicalInputId !== undefined && !recovery) {
       const session = await deps.sessionAdmission.loadExecutable(input.sessionId);
       const originalContent = buildPromptMessageContent(normalizedInput.prompt, effectiveOptions.context?.inputArtifacts);
@@ -12697,6 +12863,7 @@ async function createRuntimeRunService(deps: {
         role: "user",
         content,
         inputId: canonicalInputId,
+        ...(sideWake ? { _synthetic: true, _source: 'side-wake' } : {}),
         ...(trustedInput.productBatch ? { inputIds: trustedInput.productBatch } : {}),
         timestamp: startedAt,
       }];
@@ -12825,6 +12992,10 @@ async function createRuntimeRunService(deps: {
   // policy; unknown references fall back to the raw user text.
   const resolveSkillInput = async (sessionId: string, text: string,
     defaultSkill?: import('./client-host-authorization.js').RuntimeDefaultSkill, expectedSkill?: string, legacyExplicit = false) => {
+    if (isSideId(sessionId)) {
+      if (defaultSkill || expectedSkill || legacyExplicit) throw new Error('Side chat does not execute skills.');
+      return undefined;
+    }
     const references = [
       ...parseInlineSkillReferences(text),
       ...parseBareInlineSlashReferences(text),
@@ -15280,6 +15451,7 @@ function managedContextRetentionFor(sessionManager: SessionManager, sessionId: s
 
 function buildRunOptions(input: {
   readonly hasPendingInputs: () => boolean;
+  readonly consumeSideMessages?: NonNullable<NonNullable<KodaXOptions['context']>['interruptInput']>['consumeSideMessages'];
   readonly consumePendingInputs: NonNullable<NonNullable<KodaXOptions['context']>['interruptInput']>['consumePendingInputs'];
   readonly agentPlane?: AgentExecutorPlane;
   readonly authorizeForcedPermission: (
@@ -15521,6 +15693,7 @@ function buildRunOptions(input: {
       ...(record.actorSession ? { actorSession: record.actorSession } : {}),
       ...(record.actorSession || !isForkInvocation ? { interruptInput: {
         ...(!isForkInvocation ? {
+          consumeSideMessages: input.consumeSideMessages,
           consumePendingInputs: input.consumePendingInputs,
           hasPendingInputs: input.hasPendingInputs,
         } : {}),
@@ -17669,6 +17842,7 @@ function createRuntimePersistence(
 
   return {
     runtimeDir,
+    sideChats: new SideChats(path.join(runtimeDir, "side-chats"), writeRuntimeJsonAtomic),
     configHome: options.homeDir ? path.join(path.resolve(options.homeDir), '.kodax') : replApi.KODAX_DIR,
     close() {
       fs.mkdirSync(runtimeDir, { recursive: true });
@@ -19031,6 +19205,7 @@ function parseRuntimeRunStatus(value: unknown): RuntimeRunStatus | undefined {
     return undefined;
   }
   return {
+    ...(value.sideWakeWithHostDefaults === true ? { sideWakeWithHostDefaults: true as const } : {}),
     ...(executionBinding === undefined ? {} : { executionBinding }),
     ...(value.requiredWorkMode === 'agent' ? { requiredWorkMode: 'agent' } : {}),
     ...(isRecord(value.contextRecovery) && typeof value.contextRecovery.waitingSince === 'string'
@@ -19785,6 +19960,7 @@ function runtimeDeadlineReached(expiresAt: string | undefined): boolean {
 function createRuntimeUserInputRegistry(
   bus: RuntimeEventBus,
   defaultTimeoutMs: number,
+  admits: (sessionId: string) => boolean,
 ) {
   const pending = new Map<string, PendingUserInput>();
 
@@ -19922,18 +20098,22 @@ function createRuntimeUserInputRegistry(
         .map((item) => item.request)
         .filter(
           (request) =>
-            (filter?.sessionId === undefined ||
+            admits(request.sessionId) && (filter?.sessionId === undefined ||
               request.sessionId === filter.sessionId) &&
             (filter?.runId === undefined || request.runId === filter.runId),
         );
     },
     async respond(requestId, answer, options) {
+      const item = pending.get(requestId);
+      if (!item || !admits(item.request.sessionId)) return { requestId, accepted: false, status: 'already_resolved' };
       if (isAskUserUnanswered(answer) && answer.reason !== "timeout") {
         return resolvePending(requestId, { status: "unanswered", reason: answer.reason }, options);
       }
       return resolvePending(requestId, { status: "answered", answer }, options);
     },
     async dismiss(requestId, options) {
+      const item = pending.get(requestId);
+      if (!item || !admits(item.request.sessionId)) return { requestId, accepted: false, status: 'already_resolved' };
       return resolvePending(
         requestId,
         { status: "unanswered", reason: "skipped" },
@@ -20097,17 +20277,20 @@ function createRuntimePermissionRegistry(
     async listPending(filter) {
       return [...pending.values()]
         .map((item) => item.request)
-        .filter((request) => permissionMatchesFilter(request, filter));
+        .filter((request) => persistence.sideChats.admits(request.sessionId) && permissionMatchesFilter(request, filter));
     },
 
     async respond(requestId, decision, options) {
+      const item = pending.get(requestId);
+      if (!item || !persistence.sideChats.admits(item.request.sessionId)) return false;
       return resolvePending(requestId, decision, options?.runId);
     },
     async listGrants() {
       const persistent = loadPersistentPermissionGrants();
       return {
         revision: grantRevision,
-        value: [...persistent.value, ...sessionGrants.values()],
+        value: [...persistent.value, ...sessionGrants.values()].filter(grant =>
+          !grant.scope.sessionId || persistence.sideChats.admits(grant.scope.sessionId)),
       };
     },
     async revokeGrant(grantId, expectedRevision) {
@@ -20119,6 +20302,8 @@ function createRuntimePermissionRegistry(
         );
       }
       const sessionGrant = sessionGrants.get(grantId);
+      const target = sessionGrant ?? persistent.value.find(grant => grant.id === grantId);
+      if (target?.scope.sessionId && !persistence.sideChats.admits(target.scope.sessionId)) return false;
       if (sessionGrant !== undefined) {
         sessionGrants.delete(grantId);
         grantRevision += 1;
@@ -22308,10 +22493,18 @@ async function yieldToRuntimeReadBudget(
   sessionReadOptionsFromBudget(budget);
 }
 
+async function fullSideLineage(manager: SessionManager, id: string, lineage: KodaXSessionData['lineage']) {
+  if (!lineage?.entries.some(e => e.type === 'archive_marker')) return lineage;
+  const snapshot = await manager.storage.readFullSnapshot(id);
+  if (!snapshot?.lineage) throw new Error('Parent lineage could not be verified.');
+  return snapshot.lineage;
+}
+
 function createRuntimeSessionAdmission(
   profile: string,
   manager: SessionManager,
   enforced: boolean,
+  admitsSide: (sessionId: string) => boolean,
 ): RuntimeSessionAdmission {
   const admitted = (
     surface: string | undefined,
@@ -22337,6 +22530,7 @@ function createRuntimeSessionAdmission(
     options?: RuntimeReadOptions,
     executable = false,
   ): Promise<KodaXSessionData> => {
+    if (!admitsSide(sessionId)) reject(sessionId);
     const data = executable
       ? await manager.loadSession(sessionId)
       : await loadRequiredSession(manager, sessionId, options);
@@ -22350,6 +22544,7 @@ function createRuntimeSessionAdmission(
   };
   return {
     assertCreate(input) {
+      if (input.sessionId && isSideId(input.sessionId)) reject(input.sessionId);
       if (!admitted(input.surface, input.profileId))
         reject(input.sessionId ?? "<new>");
     },
@@ -22371,9 +22566,11 @@ function createRuntimeSessionAdmission(
       );
     },
     assertCachedIdentity(sessionId, identity) {
+      if (!admitsSide(sessionId)) reject(sessionId);
       if (!admitted(identity.surface, identity.profileId)) reject(sessionId);
     },
     async admitsSession(sessionId) {
+      if (!admitsSide(sessionId)) return false;
       if (!enforced) return true;
       // Admission depends on canonical identity metadata, not transcript bytes.
       // A historical body's read failure must not block global Run inspection.
@@ -22384,6 +22581,7 @@ function createRuntimeSessionAdmission(
       );
     },
     async assertRunAccess(sessionId) {
+      if (!admitsSide(sessionId)) reject(sessionId);
       if (!enforced) return;
       await loadAdmitted(sessionId);
     },
@@ -22391,6 +22589,7 @@ function createRuntimeSessionAdmission(
       return loadAdmitted(sessionId, options);
     },
     async captureRequired(sessionId, options) {
+      if (!admitsSide(sessionId)) reject(sessionId);
       const capture = await manager.readSessionCapture(sessionId, options);
       if (capture === null) {
         throw new Error(`Session not found: ${sessionId}`);
@@ -22428,7 +22627,7 @@ async function filterAdmittedRunStatuses(
       // As in Actor preflight, a claimed live controller already passed Session
       // admission. Its fence survives Run completion and trailing persistence.
       // Unclaimed Sessions still require strict canonical metadata admission.
-      admitted = actors.ownsAdmittedSession(status.sessionId)
+      admitted = (!isSideId(status.sessionId) && actors.ownsAdmittedSession(status.sessionId))
         || await admission.admitsSession(status.sessionId);
       admittedBySession.set(status.sessionId, admitted);
     }
@@ -24240,6 +24439,7 @@ function runtimeInterruptInputStatus(
 
 function statusFromRecord(run: RuntimeRunRecord): RuntimeRunStatus {
   return {
+    ...(run.productSession && !run.productExecutionKey ? { sideWakeWithHostDefaults: true as const } : {}),
     ...(run.requiredWorkMode === undefined ? {} : { requiredWorkMode: run.requiredWorkMode }),
     ...(run.executionBinding === undefined ? {} : { executionBinding: structuredClone(run.executionBinding) }),
     ...(run.workMode !== undefined ? { workMode: run.workMode } : {}),

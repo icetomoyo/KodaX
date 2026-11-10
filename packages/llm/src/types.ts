@@ -202,6 +202,8 @@ export interface KodaXMessage {
    * and session-load APIs for SDK consumers.
    */
   _source?: string;
+  /** Host delivery witness used to reconcile a side report with its receiving Run. */
+  _sideReport?: { readonly messageId: string; readonly sender: string; readonly receivedByRunId: string };
   /** Structured task/workflow result metadata for synthetic completion messages. */
   _taskResult?: KodaXTaskResultMetadata;
   /** Multiple task results when one synthetic wake message contains several banners. */

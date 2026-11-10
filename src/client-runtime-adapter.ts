@@ -131,6 +131,10 @@ export function toKodaXProductClient(
         if (session === null) throw Object.assign(new Error('Rewind target no longer resolves.'), { code: 'conflict' as const });
         return session;
       },
+      openSide: sessionId => {
+        requireRuntimeCapability(runtime.capabilities, 'sideChat', 1);
+        return runtime.sessions.openSide(sessionId);
+      },
       forkSession: async (sessionId, input) => {
         if (input?.turn || (input?.historyBoundary && (input.before !== true || 'kind' in input.historyBoundary))) requireHistoryTurns();
         const session = await runtime.sessions.fork({ sessionId, ...(input ?? {}) });

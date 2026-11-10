@@ -95,6 +95,7 @@ export interface ClientExtensionDiagnostics {
 }
 
 export interface ClientSession {
+  readonly sideChat?: { readonly parentSessionId: string; readonly boundary: string | null };
   /** Opaque metadata CAS revision; independent of conversation and settings revisions. */
   readonly metadataRevision?: string;
   readonly executionCwd?: string;
@@ -214,6 +215,7 @@ export interface KodaXProductClient {
     /** Move the head back to an entry; idle sessions only, and file effects are never rolled back. */
     rewindSession(sessionId: string, input: ClientSessionRewindInput): Promise<ClientSession>;
     /** Derive a new Session from this idle session's history; the source stays unchanged. */
+    openSide(sessionId: string): Promise<ClientSession>;
     forkSession(sessionId: string, input?: ClientSessionForkInput): Promise<ClientSession>;
     /** Derive a new Session from a deterministic recovery seed (no LLM call); continue with a normal input submit. */
     recoverSession(sessionId: string, input?: ClientSessionRecoverInput): Promise<ClientSession>;

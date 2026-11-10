@@ -3,6 +3,7 @@ import { RUNTIME_AUTO_MODE_GUARDRAIL_CAPABILITY } from '../runtime-capability-fa
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from 'node:util';
 import { runtimeClientPrincipal, type RuntimeClientLifecycleController } from './client-lifecycle.js';
+import { isSideId, sideRequester } from '../side-chat.js';
 import { withProductExecution, currentProductExecution, type ProductExecutionContext } from '../product-execution-authorization.js';
 import { parseExecutionBindingSnapshot } from '../execution-binding-snapshot.js';
 import type { RuntimeExecutionProfile } from '../client-host-authorization.js';
@@ -278,6 +279,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "invocations.prepareReview",
     "session.create",
     "session.promote",
+    "session.side.open",
     "session.fork",
     "session.recover",
     "session.notice.append",
@@ -743,7 +745,7 @@ export function createRuntimeDaemonDispatcher(
         );
       let dispatched: unknown;
       try {
-        const execute = () => dispatchMutation(request, options, dispatch);
+        const execute = () => sideRequester.run(principalId, () => dispatchMutation(request, options, dispatch));
         const ownedAdmission = ['input.submit', 'run.start', 'run.recover', 'run.input.submit', 'workflow.start', 'agents.spawn', 'agents.followup',
           'session.compact', 'invocations.executeCommand', 'invocations.startReview', 'invocations.startAgentsLean',
           'credential.register', 'credential.resume', 'hostTool.register', 'hostTool.resume'].includes(request.method);
@@ -1025,6 +1027,8 @@ async function dispatchRuntimeDaemonRequest(
   const persistentDaemon = retention !== undefined || options.management?.lifecycle === 'persistent';
 
   const dispatch = async (): Promise<unknown> => {
+  const target = isRecord(request.params) ? request.params.sessionId : undefined;
+  if (typeof target === 'string' && isSideId(target)) await runtime.sessions.load(target);
   switch (request.method) {
     case "initialize":
     case "runtime.initialize":
@@ -1763,6 +1767,9 @@ async function dispatchRuntimeDaemonRequest(
           request.params,
         ) as unknown as RuntimeSessionDiagnosticsInput,
       );
+    case "session.side.open":
+      await assertAdmittedSessionId(runtime, requireStringField(requireRecord(request.params), "sessionId"));
+      return runtime.sessions.openSide(requireStringField(requireRecord(request.params), "sessionId"));
     case "session.fork": {
       const params = requireRecord(request.params);
       await assertAdmittedSessionId(
@@ -2109,8 +2116,10 @@ async function dispatchRuntimeDaemonRequest(
     case "run.await": {
       const runId = requireStringParam(request.params, "runId");
       const result = runResults.get(runId);
-      if (result) return result;
-      return runtime.runs.await(runId);
+      if (!result) return runtime.runs.await(runId);
+      const settled = await result;
+      if (isSideId(settled.sessionId)) await runtime.sessions.load(settled.sessionId);
+      return settled;
     }
     case "run.abort":
       return runtime.runs.abort(requireStringParam(request.params, "runId"));
@@ -2484,10 +2493,10 @@ async function dispatchRuntimeDaemonRequest(
   if (authorization !== undefined && (params.credential !== undefined || params.hostTools !== undefined)) {
     throw daemonError('invalid_params', 'Use one execution authorization binding.');
   }
-  const sessionId = request.method === 'run.recover' ? (await runtime.runs.get(requireStringField(params, 'runId'))).sessionId
+  const requestSessionId = request.method === 'run.recover' ? (await runtime.runs.get(requireStringField(params, 'runId'))).sessionId
     : optionalStringField(params, 'sessionId');
   const assertAdmission = () => options.clientLifecycle?.assertAdmission(principalId);
-  const createContext = (approved: Record<string, unknown> | undefined, intentKey?: string): ProductExecutionContext => {
+  const createContext = (approved: Record<string, unknown> | undefined, intentKey?: string, sessionId = requestSessionId): ProductExecutionContext => {
     const deferred = optionalRecord(approved?.binding);
     if (deferred !== undefined) {
       if (!sessionId || !['input.submit', 'run.recover'].includes(request.method)
@@ -2530,6 +2539,7 @@ async function dispatchRuntimeDaemonRequest(
     return { key, intentKey, principalId, sessionId, profile, bindingSnapshot,
       bindingAvailable: reverseBridge.executionBindings.captureAvailability(),
       authorization: approved as import('../client-host-authorization.js').RuntimeExecutionAuthorization | undefined,
+      ...(!approved && !credential && !hostTools ? { defaultForSession: (target: string) => createContext(undefined, undefined, target) } : {}),
       defaultSkill: profile?.defaultSkill, assertAdmission,
       async bindRun(runInput, runId, baseExtensionRuntime) {
         assertAdmission();
@@ -2786,6 +2796,7 @@ function runtimeDaemonCapabilities(
   delete safeOverrides.productExecutionBinding;
   delete safeOverrides.productInputRecovery;
   delete safeOverrides.productExecutionModeConstraint;
+  delete safeOverrides.sideChat;
   delete safeOverrides.productHistoryBoundaries;
   delete safeOverrides.productHistoryTurnResolution;
   delete safeOverrides.productHistoryLocation;
@@ -2827,6 +2838,7 @@ function runtimeDaemonCapabilities(
       ? { workflowSettingsDefaults: { version: 1 } } : {}),
     ...(isRecord(productClient) && productClient.version === 1
       ? { productClient: { version: 1 } } : {}),
+    ...(isRecord(ownerCapabilities.sideChat) && ownerCapabilities.sideChat.version === 1 ? { sideChat: { version: 1 } } : {}),
     ...(isRecord(productHistoryBoundaries) && productHistoryBoundaries.version === 1
       ? { productHistoryBoundaries: { version: 1 } } : {}),
     ...(isRecord(productHistoryTurnResolution) && (productHistoryTurnResolution.version === 1 || productHistoryTurnResolution.version === 2)

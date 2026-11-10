@@ -79,6 +79,7 @@ export interface CapabilityRuntimeContract {
     providerId: string,
     capabilityId: string,
     input: Record<string, unknown>,
+    call?: { readonly toolCallId?: string },
   ): Promise<CapabilityResult>;
 
   readCapability(

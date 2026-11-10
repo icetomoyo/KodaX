@@ -93,6 +93,7 @@ export async function executeRunScopedTool(
       'mcp',
       definition.capabilityId,
       input,
+      ...(ctx.toolCallId ? [{ toolCallId: ctx.toolCallId }] : []),
     );
     return renderCapabilityToolResult(result, (content) => renderRetrievalResult({
       tool: 'mcp_call',

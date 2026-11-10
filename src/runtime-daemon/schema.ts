@@ -266,6 +266,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
     }, ['sessionId']),
     result: sessionDiagnosticsSchema(),
   },
+  'session.side.open': { params: objectSchema({ sessionId: stringSchema }, ['sessionId']), result: sessionSchema() },
   'session.fork': { params: forkSessionParamsSchema(), result: nullableSchema(sessionSchema()) },
   'session.recover': {
     params: objectSchema({ sessionId: stringSchema, title: stringSchema, reason: stringSchema }, ['sessionId']),
@@ -1127,6 +1128,7 @@ function createSessionParamsSchema(): RuntimeDaemonJsonSchema {
 
 function sessionSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
+    sideChat: objectSchema({ parentSessionId: stringSchema, boundary: nullableSchema(stringSchema) }, ['parentSessionId', 'boundary']),
     id: stringSchema,
     cursor: stringSchema,
     title: stringSchema,

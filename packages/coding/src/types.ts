@@ -1919,6 +1919,8 @@ export interface KodaXContextOptions {
     closeInputWindow(): void;
     reopenInputWindow(): void;
     /** Host retains the batch until the supplied canonical persistence succeeds. */
+    /** Host-owned cross-session agent reports, committed at model boundaries. */
+    consumeSideMessages?(history: readonly KodaXMessage[], persist: (messages: readonly KodaXMessage[]) => Promise<void>): Promise<boolean>;
     consumePendingInputs?(persist: (inputs: readonly QueuedMessage[]) => Promise<void>): Promise<readonly QueuedMessage[]>;
     /** Read-only Host queue fact for invalidating a recovery plan; does not request end-of-turn yielding. */
     hasPendingInputs?(): boolean;

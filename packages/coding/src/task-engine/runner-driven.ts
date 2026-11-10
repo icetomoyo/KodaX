@@ -2312,6 +2312,10 @@ async function runManagedTaskViaRunnerInner(
     });
   };
   await persistManagedBoundary(runnerInput);
+  await options.context?.interruptInput?.consumeSideMessages?.(runnerInput, async incoming => {
+    await persistManagedBoundary([...runnerInput, ...incoming]);
+    runnerInput.push(...incoming);
+  });
   liveTurnController.markInitialInputDurable();
   const compactionHook = await buildManagedTaskCompactionHook(options, {
     executionContext: baseCtx,
@@ -2694,6 +2698,12 @@ async function runManagedTaskViaRunnerInner(
     const hostMessages = hostTurn?.messages ?? [];
     hostTurn?.start();
     notifyMidTurnPromptMessages(hostPrompts, hostMessages);
+    const sideMessages: KodaXMessage[] = [];
+    const beforeSide = [...turnCtx.transcript, ...promptMessages, ...hostMessages];
+    await options.context?.interruptInput?.consumeSideMessages?.(beforeSide, async incoming => {
+      await persistManagedBoundary([...beforeSide, ...incoming]);
+      sideMessages.push(...incoming);
+    });
     const syntheticMessage = await composeMidTurnMailboxMessage(
       mailbox,
       turnCtx.transcript,
@@ -2705,6 +2715,7 @@ async function runManagedTaskViaRunnerInner(
       ...(syntheticMessage ? [syntheticMessage] : []),
       ...promptMessages,
       ...hostMessages,
+      ...sideMessages,
     ];
   };
   const { beforeNextTurn, stopHook } = buildRunnerGoalAdapter({

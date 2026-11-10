@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -10,6 +11,8 @@ import {
 import type { ClientLineageSummary, ClientSessionView } from '@kodax-ai/coding/client-contract';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { FileSessionStorage } from '@kodax-ai/repl';
+import { createSessionLineage, applySessionCompaction, COMPACTION_SUMMARY_PREFIX, COMPACTED_HISTORY_RECOVERY_GUIDANCE, getSessionMessagesFromLineage } from '@kodax-ai/agent';
+import { SideChats } from './side-chat.js';
 import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
@@ -22,6 +25,8 @@ class LineageProvider extends KodaXBaseProvider {
   };
   async stream(...args: Parameters<KodaXBaseProvider['stream']>): Promise<KodaXStreamResult> {
     const messages = args[0];
+    const scripted = await sideScript?.(...args);
+    if (scripted) return scripted;
     requests.push(structuredClone(messages));
     const lastUser = [...messages].reverse().find((message) => message.role === 'user');
     const userText = typeof lastUser?.content === 'string' ? lastUser.content : '';
@@ -30,6 +35,7 @@ class LineageProvider extends KodaXBaseProvider {
   }
 }
 
+let sideScript: KodaXBaseProvider['stream'] | undefined;
 let requests: KodaXMessage[][] = [];
 let homeDir: string;
 let runtime: Awaited<ReturnType<typeof createKodaXRuntime>>;
@@ -40,8 +46,13 @@ let second: Awaited<ReturnType<typeof connectKodaXClient>>;
 beforeEach(async () => {
   homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-lineage-'));
   requests = [];
+  sideScript = undefined;
   registerModelProvider('product-lineage-test', () => new LineageProvider());
   vi.stubEnv('KODAX_PRODUCT_LINEAGE_TEST_KEY', 'test-only');
+  await openHost();
+});
+
+async function openHost() {
   runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'product-lineage-test' });
   const paths = resolveRuntimeDaemonPaths(homeDir);
   const lock = tryAcquireRuntimeDaemonLock(paths, {
@@ -55,9 +66,10 @@ beforeEach(async () => {
     ? { kind: 'pipe' as const, path: endpointPath }
     : { kind: 'unix' as const, path: endpointPath };
   host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
-  first = await connectKodaXClient({ homeDir, endpoint: endpointPath });
+  first = await connectKodaXClient({ homeDir, endpoint: endpointPath, clientInfo: {
+    name: 'lineage', instanceId: 'lineage-first', instanceSecret: 'lineage-fixture-persistent-client-secret' } });
   second = await connectKodaXClient({ homeDir, endpoint: endpointPath });
-});
+}
 
 afterEach(async () => {
   await Promise.all([first.disconnect(), second.disconnect()]);
@@ -78,6 +90,187 @@ function firstUserEntryId(lineage: ClientLineageSummary): string {
   if (entry === undefined) throw new Error('No root message entry in lineage.');
   return entry.id;
 }
+
+it('relays only the selected conclusion while a real parent tool remains in flight', async () => {
+  const parent = await first.sessions.create({ projectPath: homeDir });
+  await runtime.sessions.updateSettings(parent.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  const probe = path.join(homeDir, 'parent-only.txt');
+  await fs.writeFile(probe, 'parent tool finished');
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let reads = 0;
+  const original = fs.stat.bind(fs);
+  const blocked = vi.spyOn(fs, 'stat').mockImplementation(async (...args: Parameters<typeof fs.stat>) => {
+    if (String(args[0]) === probe && reads++ === 0) await gate;
+    return original(...args);
+  });
+  const mainFrames: KodaXMessage[][] = [];
+  const sideTools: string[][] = [];
+  const tool = (name: string, input: Record<string, unknown>): KodaXStreamResult => ({
+    thinkingBlocks: [], textBlocks: [], toolBlocks: [{ type: 'tool_use', name, input, id: name + '-1' }], stopReason: 'tool_use',
+  });
+  sideScript = async (messages, tools, system) => {
+    const last = messages.at(-1);
+    if (last?.content === 'Read parent probe') {
+      mainFrames.push(messages);
+      return tool('read', { path: probe });
+    }
+    if (last?.content === 'Send only finding B') {
+      sideTools.push(tools.map(t => t.name));
+      return tool('send_to_parent', { text: 'Selected finding B' });
+    }
+    if (!system.includes('independent side conversation') && JSON.stringify(messages).includes('Read parent probe')) {
+      mainFrames.push(structuredClone(messages));
+    }
+    return { thinkingBlocks: [], toolBlocks: [], textBlocks: [{ type: 'text', text: 'Acknowledged' }], stopReason: 'end_turn' };
+  };
+  try {
+    const running = await first.inputs.submit({ sessionId: parent.id, inputId: 'parent', text: 'Read parent probe' });
+    await expect.poll(() => reads, { timeout: 15_000 }).toBeGreaterThan(0);
+    const side = await first.sessions.openSide(parent.id);
+    for (const [index, text] of ['Private finding A', 'Consider finding B', 'Send only finding B'].entries()) {
+      const submitted = await first.inputs.submit({ sessionId: side.id, inputId: 'side-' + index, text });
+      expect((await runtime.runs.await(submitted.runId!)).phase).toBe('completed');
+    }
+    expect(sideTools.flat()).toContain('send_to_parent');
+    expect(sideTools.flat()).not.toContain('bash');
+    const sideTrace = JSON.stringify((await runtime.sessions.transcript(side.id))?.activeMessages);
+    expect(sideTrace).toContain('queued');
+    release();
+    expect((await runtime.runs.await(running.runId!)).phase).toBe('completed');
+    const delivered = mainFrames.at(-1)!.filter(m => m._source === 'side-chat');
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]?.content).toContain('Selected finding B');
+    expect(JSON.stringify(mainFrames)).not.toContain('Private finding A');
+    const view = await runtime.sessions.transcript(parent.id);
+    expect(JSON.stringify(view)).not.toContain('Consider finding B');
+  } finally {
+    release();
+    blocked.mockRestore();
+  }
+}, 60_000);
+
+it('keeps an idle parent asleep until an explicitly requested wake delivers both reports', async () => {
+  const parent = await first.sessions.create({ projectPath: homeDir });
+  await runtime.sessions.updateSettings(parent.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runRound(parent.id, 1);
+  const side = await first.sessions.openSide(parent.id);
+  sideScript = async (messages, _tools, system) => {
+    requests.push(structuredClone(messages));
+    const text = messages.at(-1)?.content;
+    if (system.includes('independent side conversation') && (text === 'Leave note' || text === 'Send and resume')) {
+      return { thinkingBlocks: [], textBlocks: [], toolBlocks: [{ type: 'tool_use', name: 'send_to_parent',
+        id: 'send', input: { text, wake: text === 'Send and resume' } }], stopReason: 'tool_use' };
+    }
+    return { thinkingBlocks: [], textBlocks: [{ type: 'text', text: 'Done' }], toolBlocks: [], stopReason: 'end_turn' };
+  };
+  const send = async (text: string) => {
+    const receipt = await first.inputs.submit({ sessionId: side.id, inputId: text, text });
+    expect((await runtime.runs.await(receipt.runId!)).phase).toBe('completed');
+  };
+  const parentReports = () => requests.filter(messages => messages.some(m => m._source === 'side-chat'));
+  await send('Leave note');
+  expect(parentReports()).toHaveLength(0);
+  await Promise.all([first.disconnect(), second.disconnect()]);
+  await host.close();
+  await runtime.close();
+  await openHost();
+  await send('Send and resume');
+  const wakeResult = (await runtime.sessions.transcript(side.id))?.activeMessages.filter(message =>
+    Array.isArray(message.content) && message.content.some(block => block.type === 'tool_result')).at(-1);
+  expect(JSON.stringify(wakeResult)).toContain('wakeRunId');
+  await expect.poll(() => parentReports().length).toBe(1);
+  expect(parentReports()[0]?.filter(m => m._source === 'side-chat')).toHaveLength(2);
+}, 60_000);
+
+it('opens one independent side conversation and retains its own follow-up history', async () => {
+  const parent = await first.sessions.create({ projectPath: homeDir });
+  await runtime.sessions.updateSettings(parent.id, { agentMode: 'sa' });
+  await runRound(parent.id, 1);
+  const [side, reopened] = await Promise.all([
+    first.sessions.openSide(parent.id), first.sessions.openSide(parent.id),
+  ]);
+  expect(reopened.id).toBe(side.id);
+  expect(side.id).not.toBe(parent.id);
+  const foreign = await second.sessions.openSide(parent.id);
+  expect(foreign.id).not.toBe(side.id);
+  await expect(second.sessions.read(side.id)).rejects.toThrow();
+  await runRound(side.id, 2);
+  await runRound(side.id, 3);
+  const thirdFrame = requests.find(messages => messages.at(-1)?.content === 'Ask round 3');
+  expect(JSON.stringify(thirdFrame)).toContain('Ask round 1');
+  expect(JSON.stringify(thirdFrame)).toContain('REPLY 2');
+  const parentHistory = await runtime.sessions.transcript(parent.id);
+  expect(JSON.stringify(parentHistory)).not.toContain('Ask round 2');
+  expect((await first.sessions.list()).map(session => session.id)).not.toContain(side.id);
+});
+
+it('reconciles a missing delivery acknowledgement after a cold Host restart', async () => {
+  const parent = await first.sessions.create({ projectPath: homeDir });
+  await runtime.sessions.updateSettings(parent.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  const side = await first.sessions.openSide(parent.id);
+  sideScript = async (messages) => {
+    if (messages.at(-1)?.content === 'Send only B') return { textBlocks: [], thinkingBlocks: [],
+      toolBlocks: [{ type: 'tool_use', id: 'report', name: 'send_to_parent', input: { text: 'Chosen B only' } }],
+      stopReason: 'tool_use' };
+    return { textBlocks: [{ type: 'text', text: 'Acknowledged' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
+  };
+  const sent = await first.inputs.submit({ sessionId: side.id, inputId: 'send', text: 'Send only B' });
+  expect((await runtime.runs.await(sent.runId!)).phase).toBe('completed');
+  const write = SideChats.prototype.save;
+  let lost = 0;
+  const lostAck = vi.spyOn(SideChats.prototype, 'save').mockImplementation(function (this: SideChats, binding) {
+    if (binding.letters.some(l => l.deliveredRunId)) { lost++; return; }
+    write.call(this, binding);
+  });
+  try {
+    await runRound(parent.id, 1);
+    expect(lost).toBeGreaterThan(0);
+  } finally { lostAck.mockRestore(); }
+  await Promise.all([first.disconnect(), second.disconnect()]);
+  await host.close();
+  await runtime.close();
+  await openHost();
+  expect((await first.sessions.openSide(parent.id)).id).toBe(side.id);
+  const observed: ClientSessionView[] = [];
+  const observation = await first.sessions.observe(parent.id, view => observed.push(view));
+  expect(observed.at(-1)?.items.some(item => item.text === 'From side chat (delivered): Chosen B only')).toBe(true);
+  observation.close();
+  await runRound(parent.id, 2);
+  const reports = (await runtime.sessions.transcript(parent.id))!.activeMessages.filter(m => m._source === 'side-chat');
+  expect(reports).toHaveLength(1);
+  expect(reports[0]?.content).toContain('Chosen B only');
+}, 60_000);
+
+it('resumes the same side branch after committed parent history moves to a compaction archive', async () => {
+  const parent = { id: 'compacted-parent' };
+  const storage = new FileSessionStorage({ sessionsDir: path.join(homeDir, '.kodax', 'sessions'), configHome: path.join(homeDir, '.kodax') });
+  const messages: KodaXMessage[] = [{ role: 'user', content: 'Prior question' }, { role: 'assistant', content: 'Prior answer' }];
+  await storage.createGenerated(parent.id, { title: 'Compaction', gitRoot: homeDir, messages, lineage: createSessionLineage(messages) });
+  const side = await first.sessions.openSide(parent.id);
+  const previous = await storage.load(parent.id);
+  if (!previous?.lineage) throw new Error('Missing source lineage');
+  const summary = 'Parent round finished.';
+  const lineage = applySessionCompaction(previous.lineage, [{ role: 'user',
+    content: COMPACTION_SUMMARY_PREFIX + summary + COMPACTED_HISTORY_RECOVERY_GUIDANCE,
+    _synthetic: true, _source: 'compaction-checkpoint' }], { summary });
+  await storage.save(parent.id, { ...previous, lineage, messages: getSessionMessagesFromLineage(lineage) });
+  const stored = await storage.readFullSnapshot(parent.id);
+  const kinds = stored?.data.lineage?.entries.map(e => [e.type, e.id, e.parentId]);
+  expect(kinds?.some(e => e[0] === 'archive_marker'), JSON.stringify({ kinds, full: stored?.lineage?.entries.map(e => e.type) })).toBe(true);
+
+  expect((await first.sessions.openSide(parent.id)).id).toBe(side.id);
+}, 60_000);
+
+it('reopens after deleting the child and removes its private history when the parent is deleted', async () => {
+  const parent = await first.sessions.create({ projectPath: homeDir });
+  const original = await first.sessions.openSide(parent.id);
+  await first.sessions.delete(original.id);
+  const replacement = await first.sessions.openSide(parent.id);
+  expect(replacement.id).not.toBe(original.id);
+  await first.sessions.delete(parent.id);
+  await expect(first.sessions.read(replacement.id)).rejects.toThrow();
+});
 
 it('waits for the completed run display checkpoint before opening a transcript boundary', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
