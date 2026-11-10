@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { startRuntimeDaemonHostMaintenance, startRuntimeDaemonMaintenanceScheduler } from './maintenance-scheduler.js';
 import * as daemonMaintenance from './maintenance.js';
+import * as homeRetention from './home-retention.js';
 import { resolveRuntimeDaemonPaths } from './state.js';
 import type { RuntimeDaemonPreflight } from '../sdk-runtime.js';
 
@@ -125,6 +126,8 @@ it.each([
   const runOnce = vi.fn().mockResolvedValue({ scanned: 0, removed: 0 });
   const close = vi.fn().mockResolvedValue(undefined);
   vi.spyOn(daemonMaintenance, 'createRuntimeDaemonMaintenance').mockReturnValue({ runOnce, close });
+  const retain = vi.fn().mockResolvedValue({ examined: 0, removed: 0, retained: 0, passComplete: true });
+  vi.spyOn(homeRetention, 'createHomeRetention').mockReturnValue({ runOnce: retain });
   const preflight = vi.fn(async (): Promise<RuntimeDaemonPreflight> => ({
     runtimeId: 'Host', clientCount: 2, activeRuns: [], queuedRuns: [], activeWorkflows: [],
     activeAgentTurns: [], activeAgentTasks: [], pendingPermissions: [], pendingUserInputs: [],
@@ -135,6 +138,7 @@ it.each([
   await vi.advanceTimersByTimeAsync(0);
   expect(preflight).toHaveBeenCalledTimes(1);
   expect(runOnce).toHaveBeenCalledTimes(expected);
+  expect(retain).toHaveBeenCalledTimes(expected);
   await maintenance.close();
   expect(close).toHaveBeenCalledTimes(1);
 });

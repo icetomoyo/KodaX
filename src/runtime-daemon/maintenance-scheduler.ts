@@ -2,6 +2,7 @@ import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 import type { RuntimeDaemonManagementController } from './management.js';
 import type { RuntimeDaemonLockOwner, RuntimeDaemonPaths } from './state.js';
 import { createRuntimeDaemonMaintenance } from './maintenance.js';
+import { createHomeRetention } from './home-retention.js';
 
 /** Kept behind the Host's post-ready dynamic import to preserve the CLI startup budget. */
 export function startRuntimeDaemonHostMaintenance(
@@ -11,6 +12,7 @@ export function startRuntimeDaemonHostMaintenance(
   onError: (error: unknown) => void,
 ): { close(): Promise<void> } {
   const collector = createRuntimeDaemonMaintenance(paths, owner);
+  const retention = createHomeRetention(paths.configHome);
   const scheduler = startRuntimeDaemonMaintenanceScheduler({
     canSweep: async (signal) => {
       try {
@@ -28,6 +30,11 @@ export function startRuntimeDaemonHostMaintenance(
       if (result.removed > 0) emitKodaXDiagnostic({
         source: 'runtime.daemon.maintenance', level: 'info',
         message: 'Runtime daemon abandoned temporary files removed.', detail: result,
+      });
+      const retained = await retention.runOnce(signal);
+      if (retained.removed > 0 || retained.retained > 0) emitKodaXDiagnostic({
+        source: 'runtime.daemon.maintenance', level: 'info',
+        message: 'Unused agent-home state past its retention period was removed.', detail: retained,
       });
     },
     onError,

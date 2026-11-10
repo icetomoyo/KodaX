@@ -1252,6 +1252,86 @@ they are context-silent: `loadSession()` and `loadFullTranscript().messages`
 exclude them. The public `/session` subpath also exposes `compactSession` for
 host-triggered imperative compaction.
 
+### Agent-home retention (ADR-074, Issue 400)
+
+Agent-home state is removed in only three ways. Any path not listed here is
+never removed automatically.
+
+**Automatic expiry** (`src/runtime-daemon/home-retention.ts`,
+`HOME_RETENTION_RULES`). The ready Host runs it in its idle maintenance round,
+after the abandoned-publication sweep and behind the same preflight gate. The
+round runs only when attached clients are the only blocker and no background
+work is pending. Paths are relative to the agent home (`~/.kodax`); `*` is any
+real child directory.
+
+| Path | Kind | Untouched for | Why nothing reads it |
+|---|---|---|---|
+| `runtime/profiles/*/runs/*/events.jsonl` | file | 30 days | Run event journal retired by `01d8a487d` |
+| `runtime/profiles/*/runs/*/event-journals.json` | file | 30 days | same |
+| `runtime/profiles/*/runs/*/events.watermark` | file | 30 days | same |
+| `runtime/profiles/*/session-events/` | directory | 30 days | same |
+| `runtime/profiles/*/event-sequence` | file | 30 days | same |
+| `runtime/test-filesystem-effects-*/` | directory | 30 days | filesystem-effect ledger retired by `2f6751d19` |
+| `runtime/model-filesystem-effects.json` | file | 30 days | same |
+| `runtime/model-filesystem-effects.lock.queue/`, `runtime/model-filesystem-effect.lock.queue/` | directory | 30 days | same |
+| `sandbox-runtime/kodax-asrt-{observation,shell}-<pid>-<uuid>.json` | file | 30 days | writers removed by `c7d31f954` |
+| `sandbox-runtime/workspace-<pid>-<uuid>.json` | file | 30 days | writer removed by `80a205022` |
+| `sandbox-runtime/runner/` | directory | 30 days | runner moved to `%LOCALAPPDATA%\KodaXNativeArtifactsV3` (`27bb8536e`) |
+| `runtime/processes/children/.unresolved/<pid>.<uuid>.json` | file | 90 days | evidence only; no code reads it back (Issue 398) |
+
+- Age is the newest modification time anywhere in the target. A rename keeps
+  the mtime, so an `.unresolved` record ages from when its child was registered.
+- The walk uses `lstat` and never follows a link or junction. A target of the
+  wrong kind is skipped.
+- Each round examines at most 256 targets and resumes the walk in the next
+  round. A completed pass starts again after 24 hours of Host time.
+- Several profile Hosts may expire the same target. `ENOENT` counts as already
+  done; `EBUSY`, `EPERM`, `EACCES` and `ENOTEMPTY` are counted as `retained` and
+  retried on the next pass. Any other error ends the pass, is reported, and the
+  next round starts a fresh walk.
+- Never matched, even beside an expired path: `status.json`,
+  `generation-recovery.json` and the Run directories themselves,
+  `agents/tasks/*/events.jsonl`, `workflow-runs/*/events.jsonl`,
+  `sandbox-runtime/kodax-asrt-gate-*`, `acl-poison*`, `acl-recovery.lock.queue`,
+  `recovered-markers`, `read-policy-v2.json` and active `children/*.json`
+  registrations.
+
+**Writer bounds** (`src/runtime-daemon/state.ts`, `host.ts`). `daemon.log` is
+renamed to `daemon.log.1` once it reaches `RUNTIME_DAEMON_LOG_MAX_BYTES`
+(2 MiB). The active file is never truncated, because several serve processes
+append to it. A Windows sharing denial leaves the cap soft for one append.
+`readRuntimeDaemonLogLines` reads `.1` and then the active file. The Host
+persists `info` and above; `debug` goes to stderr only with
+`KODAX_DIAGNOSTICS_STDERR=1`.
+
+**Explicit Session delete** (`removeDeletedSessionRuntimeState` in
+`src/sdk-runtime.ts`). This applies only to the Host's `sessions.delete` path,
+after the Session file is gone and `onSessionDeleted` has released the input
+queue. It removes the following in the Host's runtime directory and storage
+root:
+
+- `session-settings/<id>.json`;
+- `session-orders/<id>.json`;
+- `pending-inputs/<id>.json`, only if its list is empty, so inputs another Host
+  queued are kept for it to report;
+- the Session's execution-fact folder. On the default storage root this
+  includes the legacy v1 file.
+
+It keeps:
+
+- `runs/<runId>`: Run records are addressable by `runId`, and they anchor the
+  order fallback scan, so a recreated Session id keeps numbering monotonic;
+- `session-stops`;
+- tool results: a file name cannot prove which Sessions reference it, and the
+  REPL already removes unreferenced artifacts after a reference scan;
+- `media/mcp` and `.traces`: not keyed by Session;
+- the memory review inbox (Issue 401);
+- every other profile and storage root.
+
+Each step that fails emits a `warn` diagnostic and the delete still succeeds.
+Other delete paths keep their existing behavior: `kodax -s delete`, the public
+`deleteSession`, the REPL fallback, retention and dedupe.
+
 ## 11. Skills
 
 Skills live under `packages/agent/src/capabilities/skills`.

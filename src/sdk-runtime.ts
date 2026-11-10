@@ -3949,6 +3949,7 @@ interface RuntimePersistence {
   loadInputState(): import('./session-input-queue.js').SessionInputState;
   hasPendingInputs(sessionId: string): boolean;
   assertPendingInputsReadable(sessionId: string): void;
+  removeDeletedSessionState(sessionId: string): void;
   close(): void;
   nextSessionOrder(sessionId: string): number;
   saveRunStatus(status: RuntimeRunStatus, actor?: RuntimeIndependentActorRef,
@@ -7170,6 +7171,24 @@ function createRuntimeSessionService(
     sessionId: string,
   ): "local" | "foreign" | undefined =>
     activeCompactions.has(sessionId) ? "local" : activeRunOwner(sessionId);
+  // Runs after the Session file is gone: a failure only leaves the leftovers
+  // every delete left before, so it is reported instead of failing the delete.
+  const removeDeletedSessionRuntimeState = (sessionId: string): void => {
+    const steps = [
+      () => persistence.removeDeletedSessionState(sessionId),
+      () => executionFacts.deleted(sessionId),
+    ];
+    for (const step of steps) {
+      try { step(); } catch (error: unknown) {
+        emitKodaXDiagnostic({
+          source: "runtime.sessions",
+          level: "warn",
+          message: "Deleted Session runtime state was partly retained.",
+          detail: { sessionId, error: normalizeError(error).message },
+        });
+      }
+    }
+  };
   const toRuntimeSession = (
     id: string,
     data: KodaXSessionData,
@@ -8475,6 +8494,8 @@ function createRuntimeSessionService(
       settingsOwner.release(sessionId);
       sessionMcpStore.remove(sessionId);
       onSessionDeleted(sessionId);
+      // After onSessionDeleted: releasing the input queue rewrites an empty pending file.
+      removeDeletedSessionRuntimeState(sessionId);
     });
   };
 
@@ -17677,6 +17698,23 @@ function createRuntimePersistence(
     },
     hasPendingInputs(sessionId) { return fs.existsSync(path.join(pendingInputsDir, `${encodeURIComponent(sessionId)}.json`)); },
     assertPendingInputsReadable,
+    removeDeletedSessionState(sessionId) {
+      // Run records stay: they are addressable by runId and anchor the order
+      // fallback scan, so a recreated Session id keeps numbering monotonic.
+      fs.rmSync(sessionSettingsFile(sessionId), { force: true });
+      fs.rmSync(sessionOrderFile(sessionId), { force: true });
+      const name = `${encodeURIComponent(sessionId)}.json`;
+      const file = path.join(pendingInputsDir, name);
+      if (unreadablePendingInputFiles.has(name) || !fs.existsSync(file)) return;
+      withRuntimeStatusFileLock(file, () => {
+        const stored: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+        const pending: unknown = Array.isArray(stored) ? stored : isRecord(stored) ? stored.pending : undefined;
+        // Inputs another Host queued after the release are retained for it to report.
+        if (!Array.isArray(pending) || pending.length > 0) return;
+        fs.rmSync(file, { force: true });
+        pendingInputDigests.delete(sessionId);
+      });
+    },
     loadInputState() {
       const pending: import('./session-input-queue.js').PendingSessionInput[] = [];
       const withdrawn: import('./session-input-queue.js').WithdrawnSessionInput[] = [];

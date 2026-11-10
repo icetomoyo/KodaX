@@ -653,16 +653,42 @@ export function appendRuntimeDaemonLog(
     message,
     ...(data !== undefined ? { data } : {}),
   };
+  rotateRuntimeDaemonLog(paths.logFile);
   fs.appendFileSync(paths.logFile, `${JSON.stringify(entry)}\n`, 'utf8');
+}
+
+export const RUNTIME_DAEMON_LOG_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Serve processes append concurrently, so the active file is only renamed, never
+ * truncated; each append reopens by path and moves to the new file.
+ */
+function rotateRuntimeDaemonLog(logFile: string): void {
+  try {
+    if (fs.statSync(logFile).size < RUNTIME_DAEMON_LOG_MAX_BYTES) return;
+    fs.renameSync(logFile, `${logFile}.1`);
+  } catch (error: unknown) {
+    // ENOENT: nothing to rotate, or another writer rotated first. A Windows
+    // sharing denial leaves the cap soft until the next append retries; it is
+    // not reported because reporting would append to this same log again.
+    if (!isNodeFileError(error) || !['ENOENT', 'EPERM', 'EBUSY', 'EACCES'].includes(error.code ?? '')) throw error;
+  }
+}
+
+/** Lines of the previous generation followed by the active log, oldest first. */
+export function readRuntimeDaemonLogLines(paths: RuntimeDaemonPaths): readonly string[] {
+  return [`${paths.logFile}.1`, paths.logFile].flatMap((file) => {
+    if (!fs.existsSync(file)) return [];
+    return fs.readFileSync(file, 'utf8').split(/\r?\n/).filter((line) => line.trim().length > 0);
+  });
 }
 
 export function readRuntimeDaemonLog(
   paths: RuntimeDaemonPaths,
   limit = 200,
 ): readonly RuntimeDaemonLogEntry[] {
-  if (!fs.existsSync(paths.logFile)) return [];
   const entries: RuntimeDaemonLogEntry[] = [];
-  const lines = fs.readFileSync(paths.logFile, 'utf8').split(/\r?\n/).filter((line) => line.trim().length > 0);
+  const lines = readRuntimeDaemonLogLines(paths);
   for (const line of lines.slice(-limit)) {
     try {
       const parsed: unknown = JSON.parse(line);

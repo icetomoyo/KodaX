@@ -83,6 +83,7 @@ import {
   isSameRuntimeDaemonPath,
   resolveRuntimeDaemonPaths,
   resolveRuntimeDaemonPathsFromConfigHome,
+  readRuntimeDaemonLogLines,
   writeRuntimeDaemonShutdownOutcome,
   type RuntimeDaemonHealth,
   type RuntimeDaemonState,
@@ -1764,16 +1765,8 @@ function readDaemonLogs(input: {
     profile: paths.profile,
     logFile: paths.logFile,
     exists: true,
-    lines: tailTextFile(paths.logFile, input.lines),
+    lines: input.lines <= 0 ? [] : readRuntimeDaemonLogLines(paths).slice(-input.lines),
   };
-}
-
-function tailTextFile(file: string, lineCount: number): readonly string[] {
-  if (lineCount <= 0) return [];
-  const content = fsSync.readFileSync(file, 'utf8');
-  const lines = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-  if (lines.at(-1) === '') lines.pop();
-  return lines.slice(-lineCount);
 }
 
 async function waitForDaemonProcessExit(

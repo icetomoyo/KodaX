@@ -34,7 +34,7 @@ import {
   respondToClientInteraction,
   type ClientInteractionRegistries,
 } from "../client-interactions.js";
-import { startRuntimeDaemonHost } from "./host.js";
+import { appendRuntimeDiagnostic, startRuntimeDaemonHost } from "./host.js";
 import * as daemonMaintenance from './maintenance.js';
 import { createRuntimeDaemonClient, type RuntimeDaemonClientTransport } from "./client.js";
 import {
@@ -183,6 +183,16 @@ afterEach(async () => {
 });
 
 describe("runtime daemon host", () => {
+  it('persists info and above to daemon.log but never debug diagnostics', () => {
+    const paths = resolveRuntimeDaemonPaths(tempHome(), 'diagnostic-levels');
+    for (const level of ['debug', 'info', 'warn', 'error'] as const) {
+      appendRuntimeDiagnostic(paths, { source: 'runtime:windows', level, message: `${level} probe` });
+    }
+    const messages = fs.readFileSync(paths.logFile, 'utf8').trim().split(/\r?\n/)
+      .map(line => (JSON.parse(line) as { message: string }).message);
+    expect(messages).toEqual(['[runtime:windows] info probe', '[runtime:windows] warn probe', '[runtime:windows] error probe']);
+  });
+
   it('starts temporary-file maintenance after ready and joins it before closing Runtime', async () => {
     const paths = resolveRuntimeDaemonPaths(tempHome(), 'host-maintenance');
     const runtime = makeRuntime();

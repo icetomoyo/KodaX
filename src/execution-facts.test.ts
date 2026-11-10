@@ -190,3 +190,25 @@ it('preserves a terminal fact saved while an owner recovery probe is pending', a
     expect((await store.service.read('session')).usage.totalTokens).toBe(5);
   } finally { finish?.(false); await rm(dir, { recursive: true, force: true }); }
 });
+
+it('removes only the deleted Session facts in this storage root', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'kodax-facts-delete-'));
+  const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+  try {
+    const store = createExecutionFactsStore(dir, owner);
+    const other = createExecutionFactsStore(dir, owner, path.join(dir, 'sessions-b'));
+    for (const sessionId of ['session', 'kept']) store.provider(sessionId, target, { ...request, state: 'succeeded' });
+    other.provider('session', target, { ...request, state: 'succeeded' });
+    const legacy = path.join(dir, 'execution-facts', `${hash('session')}.json`);
+    await writeFile(legacy, '{}');
+
+    store.deleted('session');
+
+    expect(fs.existsSync(legacy)).toBe(false);
+    expect((await store.service.read('session')).requestCount).toBe(0);
+    expect((await store.service.read('kept')).requestCount).toBe(1);
+    expect((await createExecutionFactsStore(dir, owner, path.join(dir, 'sessions-b')).service.read('session')).requestCount).toBe(1);
+    store.created('session');
+    expect(await store.service.read('session')).toMatchObject({ revision: 1, coverage: 'complete', requestCount: 0 });
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

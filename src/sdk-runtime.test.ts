@@ -4832,6 +4832,45 @@ describe("createKodaXRuntime", () => {
     }
   });
 
+  it("removes only the deleted Session's own runtime state and keeps shared and Run evidence", async () => {
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
+    const sessionsDir = path.join(tempRoot, "cascade-delete-sessions");
+    const runtimeDir = path.join(tempRoot, ".kodax", "runtime");
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir });
+    const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+    try {
+      const ids = ["cascade-deleted", "cascade-kept"];
+      for (const sessionId of ids) await runtime.sessions.create({ sessionId });
+      const factsRoot = path.join(tempRoot, ".kodax", "execution-facts", "v2", hash(await nodeFsPromises.realpath(sessionsDir)));
+      const owned = (sessionId: string) => [
+        [path.join(runtimeDir, "session-settings", `${sessionId}.json`), '{"revision":1,"value":{}}'],
+        [path.join(runtimeDir, "session-orders", `${sessionId}.json`), "3"],
+        [path.join(runtimeDir, "pending-inputs", `${sessionId}.json`), "[]"],
+        [path.join(factsRoot, hash(sessionId), `${randomUUID()}.jsonl`), ""],
+      ] as const;
+      const retained = [
+        [path.join(runtimeDir, "runs", "cascade-run", "status.json"), '{"retained":true}'],
+        [path.join(runtimeDir, "session-stops", `${hash("cascade-deleted")}.json`), '{"retained":true}'],
+      ] as const;
+      const [deleted, kept] = ids.map(owned);
+      for (const [file, content] of [...deleted, ...kept, ...retained]) {
+        nodeFs.mkdirSync(path.dirname(file), { recursive: true });
+        nodeFs.writeFileSync(file, content);
+      }
+
+      await runtime.sessions.delete("cascade-deleted");
+
+      expect(deleted.map(([file]) => nodeFs.existsSync(file)))
+        .toEqual([false, false, false, false]);
+      expect(nodeFs.existsSync(path.join(factsRoot, hash("cascade-deleted")))).toBe(false);
+      for (const [file, content] of kept.slice(0, 3)) expect(nodeFs.readFileSync(file, "utf8")).toBe(content);
+      expect(nodeFs.readdirSync(path.join(factsRoot, hash("cascade-kept")))).toContain(path.basename(kept[3][0]));
+      for (const [file, content] of retained) expect(nodeFs.readFileSync(file, "utf8")).toBe(content);
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("does not join a post-delete fresh read to an older materialization flight", async () => {
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({

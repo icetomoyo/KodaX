@@ -413,6 +413,9 @@ function normalizeDiagnosticDetail(detail: unknown, seen = new Set<unknown>()): 
 }
 /** @internal Also used before host publication for the existing owner identity probes. */
 export function appendRuntimeDiagnostic(paths: RuntimeDaemonPaths, diagnostic: KodaXDiagnostic): void {
+  // Debug traces (e.g. every cached Job probe) dominated the persisted log;
+  // KODAX_DIAGNOSTICS_STDERR=1 still shows them live.
+  if (diagnostic.level === 'debug') return;
   try {
     appendRuntimeDaemonLog(
       paths,

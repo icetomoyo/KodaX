@@ -294,6 +294,13 @@ export function createExecutionFactsStore(configHome: string, owner: AgentActorO
         return [{ kind: 'created' }];
       }); } catch { reportFailure(sessionId); }
     },
+    /** Explicit Session deletion only: other Sessions and storage roots keep their facts. */
+    deleted(sessionId: string): void {
+      projections.delete(sessionId);
+      incomplete.delete(sessionId);
+      fs.rmSync(path.join(root, hash(sessionId)), { recursive: true, force: true });
+      if (legacyAllowed) fs.rmSync(path.join(configHome, 'execution-facts', `${hash(sessionId)}.json`), { force: true });
+    },
     provider(sessionId: string, target: ClientExecutionTarget, observation: ProviderRequestObservation): void {
       change(sessionId, (facts, projection) => {
         const existing = projection.requests.get(observation.requestId) ?? -1;

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  appendRuntimeDaemonLog,
   claimRuntimeDaemonOwnership,
   classifyRuntimeDaemonHealth,
   clearRuntimeDaemonShutdownOutcome,
@@ -15,7 +16,10 @@ import {
   readRuntimeDaemonShutdownOutcome,
   readRuntimeOwnerPolicy,
   readRuntimeDaemonLockOwner,
+  readRuntimeDaemonLog,
+  readRuntimeDaemonLogLines,
   readRuntimeDaemonState,
+  RUNTIME_DAEMON_LOG_MAX_BYTES,
   readRuntimeDaemonToken,
   releaseRuntimeDaemonLock,
   releaseRuntimeDaemonOwnership,
@@ -240,6 +244,36 @@ describe('runtime daemon state paths', () => {
     expect(paths.lockFile.endsWith('daemon.lock')).toBe(true);
     expect(paths.tokenFile.endsWith('daemon.token')).toBe(true);
     expect(paths.ownerPolicyLockFile.endsWith('owner-policy.lock')).toBe(true);
+  });
+
+  it('rotates an oversized daemon log by rename and keeps the newest entries readable', () => {
+    const paths = resolveRuntimeDaemonPaths(tempHome(), 'log-rotation');
+    appendRuntimeDaemonLog(paths, 'info', 'old entry');
+    const old = fs.readFileSync(paths.logFile, 'utf8');
+    const filler = `${JSON.stringify({ time: new Date(0).toISOString(), level: 'info', message: 'x'.repeat(200) })}\n`;
+    fs.appendFileSync(paths.logFile, filler.repeat(Math.ceil(RUNTIME_DAEMON_LOG_MAX_BYTES / filler.length)));
+    const rotated = fs.readFileSync(paths.logFile);
+
+    appendRuntimeDaemonLog(paths, 'warn', 'new entry');
+
+    // Rename-only rotation never truncates a file another serve process may be appending to.
+    expect(fs.readFileSync(`${paths.logFile}.1`).equals(rotated)).toBe(true);
+    expect(fs.readFileSync(paths.logFile, 'utf8').trim().split('\n')).toHaveLength(1);
+    expect(readRuntimeDaemonLog(paths, 2).map(entry => entry.message)).toEqual(['x'.repeat(200), 'new entry']);
+    expect(readRuntimeDaemonLogLines(paths)[0]).toBe(old.trim());
+  });
+
+  it('keeps a single previous daemon log generation', () => {
+    const paths = resolveRuntimeDaemonPaths(tempHome(), 'log-generations');
+    fs.mkdirSync(paths.rootDir, { recursive: true });
+    fs.writeFileSync(`${paths.logFile}.1`, 'stale generation\n');
+    fs.writeFileSync(paths.logFile, 'y'.repeat(RUNTIME_DAEMON_LOG_MAX_BYTES));
+
+    appendRuntimeDaemonLog(paths, 'info', 'after rotation');
+
+    expect(fs.readFileSync(`${paths.logFile}.1`, 'utf8')).toBe('y'.repeat(RUNTIME_DAEMON_LOG_MAX_BYTES));
+    expect(fs.readdirSync(paths.rootDir).filter(name => name.startsWith('daemon.log')).sort())
+      .toEqual(['daemon.log', 'daemon.log.1']);
   });
 
   it('resolves daemon files from an explicit config home without basename inference', () => {

@@ -2947,6 +2947,8 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 401 | Low | Open | Memory review inbox keeps every finished job's files and test-made jobs | unknown; observed at v0.7.97-beta.4 | — | 2026-11-10 | — |
+| 400 | Medium | Resolved | Agent home keeps retired runtime state forever and `daemon.log` grows without bound | retired writers in v0.7.96 and v0.7.97-alpha.1/alpha.12; observed at v0.7.97-beta.4 | v0.7.97 (Unreleased) | 2026-11-10 | 2026-11-10 |
 | 399 | High | Resolved | A replaced profile file silently moves every Windows sandbox command to the host | setup-owned profile roots since v0.7.96 (`ea4d796ee`); observed at v0.7.97-beta.4 | v0.7.97 (Unreleased) | 2026-11-10 | 2026-11-10 |
 | 398 | Medium | Resolved | Cold shared Host start rereads every unresolvable Run child record | Run-record retention since v0.7.97-alpha.12; slow cold starts observed from 2026-10-31 | v0.7.97 (Unreleased) | 2026-11-10 | 2026-11-10 |
 | 397 | Low | Resolved | Builtin skill-creator activation lists 14 `.d.ts` typing files | v0.7.97-beta.4 (c50d24c27) | v0.7.97 (Unreleased) | 2026-11-09 | 2026-11-09 |
@@ -3232,6 +3234,90 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ---
 
 ## Issue Details
+
+### Issue 401: Memory review inbox keeps every finished job's files and test-made jobs
+
+- Priority: Low
+- Status: Open
+- Introduced: unknown; observed at v0.7.97-beta.4
+- Created: 2026-11-10
+- Found while resolving Issue 400; deliberately left out of its retention rules
+
+**Problem.** `~/.kodax/memory-review-inbox/` held 13,046 files on the reporting
+machine: 7,980 `state.json`, 3,922 receipts, 565 `branch-authority.json`, 403
+`review-input.json` and 165 `decision.json`. The content is 12 MB, but small
+files take 104 MB on disk. About 3,500 jobs are still `pending`. An earlier
+sample traced most pending jobs to test runs that wrote into the real home.
+
+**Why Issue 400 does not expire it.** A finished job's `state.json` is a
+deduplication tombstone. Job IDs are deterministic and `persist` returns early
+for a completed job, so deleting `state.json` would let the same review be
+queued again. Deleting `.session-authority` lock queues races their owners.
+
+**Expected.** At completion, a job keeps only its `state.json` tombstone; its
+`review-input`, `decision`, `actions` and receipt files are removed. Tests must
+not write into the real agent home. A bounded expiry for very old tombstones
+needs its own decision about re-review.
+
+### Issue 400: Agent home keeps retired runtime state forever and `daemon.log` grows without bound
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: writers retired without removing their data: the Run event
+  journal (`01d8a487d`, v0.7.97-alpha.1), filesystem-effect ledgers
+  (`2f6751d19`, v0.7.96), sandbox request files (`c7d31f954`, `80a205022`,
+  v0.7.96) and the home runner staging copy (`27bb8536e`, v0.7.97-alpha.12)
+- Created: 2026-11-10
+- Fixed: v0.7.97 (Unreleased)
+- Related: Issue 398 (`.unresolved/` grows with every isolated record)
+
+**Original problem.** `~/.kodax` on the reporting machine was 4.1 GB. About
+2 GB of it was state that no current code reads:
+
+- 1.9 GB of Run event journals under `runtime/profiles/*/runs/*/`, plus
+  profile-level `session-events/` and `event-sequence`;
+- 1,286 `runtime/test-filesystem-effects-*` directories and the
+  `model-filesystem-effects` ledger and lock queues;
+- `sandbox-runtime/runner/` (86 MB) and 36 sandbox request files.
+
+Other state grew without a bound:
+
+- `daemon.log` was never rotated. One profile's log reached 48 MB, mostly
+  `debug` cache-probe lines.
+- `runtime/processes/children/.unresolved/` grows with every isolated record.
+- Deleting a Session left its settings, order counter, empty pending-input
+  file and execution facts behind.
+
+**Resolution (2026-11-10).** Retention now follows three rules. ADR-074 records
+the rules, and DD §10 lists every path.
+
+1. **Automatic expiry.** The Host expires an exact allow-list of retired paths
+   while it is idle. It does this in its existing post-ready maintenance and
+   only when attached clients are the only blocker. Retired data must be
+   untouched for 30 days. Unresolved child evidence is kept for 90 days. Each
+   round examines at most 256 targets, without following links, and a full pass
+   runs once per Host day.
+2. **Bounded at the writer.** `daemon.log` is renamed to `daemon.log.1` at
+   2 MiB, so at most two generations exist. `debug` diagnostics are no longer
+   persisted; `KODAX_DIAGNOSTICS_STDERR=1` still shows them. `kodax daemon logs`
+   and the Host's `logs` management call read both generations.
+3. **Removed with an explicit Session delete.** After the Host deletes the
+   Session file, it removes that Session's settings, order counter, empty
+   pending-input file and execution facts in the same storage root. Run records,
+   Session stops, tool results, media, traces and memory stay. A failure is
+   reported as a warning and does not fail the delete.
+
+- Files changed: `src/runtime-daemon/home-retention.ts` (new),
+  `src/runtime-daemon/maintenance-scheduler.ts`, `src/runtime-daemon/state.ts`,
+  `src/runtime-daemon/host.ts`, `src/kodax_cli.ts`, `src/execution-facts.ts`,
+  `src/sdk-runtime.ts`
+- Tests: `home-retention.test.ts` (7 cases; mutation-checked for the
+  link and age guards), the preflight gate in `maintenance-scheduler.test.ts`,
+  log rotation in `state.test.ts`, the debug filter in `host.test.ts`,
+  per-Session fact removal in `execution-facts.test.ts`, and the delete cascade
+  in `sdk-runtime.test.ts`.
+- Verification: applied once to the reporting machine with the new module:
+  2,891 targets removed, none refused, `~/.kodax` 4.0 GB to 2.0 GB.
 
 ### Issue 399: A replaced profile file silently moves every Windows sandbox command to the host
 
@@ -18141,12 +18227,19 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 277 (44 Open, 0 ready, 1 needs-info, 232 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 279 (45 Open, 0 ready, 1 needs-info, 233 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-10: Issues 400-401
+
+- Recorded and resolved agent-home growth: retired runtime state expires in Host
+  idle maintenance, `daemon.log` rotates at 2 MiB, and an explicit Session
+  delete removes that Session's own runtime state.
+- Recorded the memory review inbox retention gap as Issue 401 (Open).
 
 ### 2026-11-10: Issue 399
 
