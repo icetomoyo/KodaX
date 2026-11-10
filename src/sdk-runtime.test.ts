@@ -836,8 +836,8 @@ describe("createKodaXRuntime", () => {
       "initialize",
       "session.create",
     ]);
+    expect(calls[0]?.params).not.toHaveProperty("profile");
     expect(calls[0]?.params).toMatchObject({
-      profile: "default",
       token: "token-sdk",
       clientInfo: {
         name: "sdk-test",
@@ -906,13 +906,13 @@ describe("createKodaXRuntime", () => {
     }
   });
 
-  it("connects daemon-mode SDK clients through the default home/profile endpoint", async () => {
+  it("connects daemon-mode SDK clients through the home's Host endpoint", async () => {
     const { createRuntimeDaemonSuccessResponse } =
       await import("./runtime-daemon/protocol.js");
     const { createRuntimeDaemonSocketServer, defaultRuntimeDaemonEndpoint } =
       await import("./runtime-daemon/transport.js");
     const { createKodaXRuntime } = await import("./sdk-runtime-public.js");
-    const profile = `sdk-default-${randomUUID()}`;
+    const profile = "default";
     const endpoint = defaultRuntimeDaemonEndpoint(profile, tempRoot);
     const requests: Array<{
       readonly method: string;
@@ -951,7 +951,6 @@ describe("createKodaXRuntime", () => {
       runtime = await createKodaXRuntime({
         mode: "daemon",
         homeDir: tempRoot,
-        profile,
         autoStartDaemon: false,
       });
       const session = await runtime.sessions.create({
@@ -977,35 +976,53 @@ describe("createKodaXRuntime", () => {
     }
   });
 
-  it("rejects daemon endpoints that report a different profile", async () => {
+  it("rejects a home Host endpoint that reports another slot", async () => {
+    const { createRuntimeDaemonSuccessResponse } =
+      await import("./runtime-daemon/protocol.js");
+    const { createRuntimeDaemonSocketServer, defaultRuntimeDaemonEndpoint } =
+      await import("./runtime-daemon/transport.js");
     const { connectKodaXRuntime } = await import("./sdk-runtime-public.js");
+    const server = await createRuntimeDaemonSocketServer({
+      endpoint: defaultRuntimeDaemonEndpoint("default", tempRoot),
+      createDispatcher: () => ({
+        async handle(request) {
+          return createRuntimeDaemonSuccessResponse(request.id, {
+            identity: wrongSlotIdentity,
+            capabilities: SESSION_EVENT_JOURNAL_CAPABILITY,
+          });
+        },
+        close() {},
+      }),
+    });
+    try {
+      await expect(connectKodaXRuntime({ homeDir: tempRoot, autoStart: false }))
+        .rejects.toThrow("Runtime daemon profile mismatch: expected default, got coder");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("does not check the slot of a Host named by an explicit transport", async () => {
+    const { connectKodaXRuntime } = await import("./sdk-runtime-public.js");
+    const initializeParams: unknown[] = [];
     const transport: RuntimeDaemonClientTransport = {
-      async request(method) {
-        expect(method).toBe("initialize");
-        return {
-          identity: {
-            runtimeId: "wrong-profile-runtime",
-            mode: "daemon",
-            profile: "default",
-            startedAt: "2026-07-09T00:00:00.000Z",
-            version: KODAX_VERSION,
-          },
-          capabilities: SESSION_EVENT_JOURNAL_CAPABILITY,
-        };
+      async request(method, params) {
+        if (method !== "initialize") return null;
+        initializeParams.push(params);
+        return { identity: wrongSlotIdentity, capabilities: SESSION_EVENT_JOURNAL_CAPABILITY };
       },
       subscribe() {
         return { close() {} };
       },
     };
 
-    await expect(
-      connectKodaXRuntime({
-        profile: "space",
-        transport,
-      }),
-    ).rejects.toThrow(
-      "Runtime daemon profile mismatch: expected space, got default",
-    );
+    const runtime = await connectKodaXRuntime({ transport });
+    try {
+      expect(runtime.identity.profile).toBe("coder");
+      expect(initializeParams[0]).not.toHaveProperty("profile");
+    } finally {
+      await runtime.close();
+    }
   });
 
   it("auto-starts a local daemon host by default for daemon-mode SDK clients", async () => {
@@ -1021,11 +1038,10 @@ describe("createKodaXRuntime", () => {
       mode: "daemon",
       homeDir: tempRoot,
       sessionsDir,
-      profile: "sdk-auto",
       defaultProvider: "mock-provider",
     });
 
-    const paths = resolveRuntimeDaemonPaths(tempRoot, "sdk-auto");
+    const paths = resolveRuntimeDaemonPaths(tempRoot);
     let peer: Awaited<ReturnType<typeof connectKodaXRuntime>> | undefined;
     try {
       const session = await runtime.sessions.create({
@@ -1036,12 +1052,12 @@ describe("createKodaXRuntime", () => {
 
       expect(runtime.identity).toMatchObject({
         mode: "daemon",
-        profile: "sdk-auto",
+        profile: "default",
       });
       expect(session.title).toBe("Auto Daemon Session");
       expect(readRuntimeDaemonState(paths)).toMatchObject({
         runtimeId: runtime.identity.runtimeId,
-        profile: "sdk-auto",
+        profile: "default",
         status: "ready",
       });
       expect(readRuntimeDaemonLockOwner(paths.lockFile)).toMatchObject({
@@ -1050,7 +1066,6 @@ describe("createKodaXRuntime", () => {
 
       peer = await connectKodaXRuntime({
         homeDir: tempRoot,
-        profile: "sdk-auto",
       });
       await runtime.close();
 
@@ -1064,7 +1079,7 @@ describe("createKodaXRuntime", () => {
     } finally {
       await peer?.close();
       await runtime.close();
-      await shutdownRuntimeDaemon(tempRoot, "sdk-auto");
+      await shutdownRuntimeDaemon(tempRoot);
     }
 
     expect(readRuntimeDaemonState(paths)).toBeUndefined();
@@ -1107,12 +1122,10 @@ describe("createKodaXRuntime", () => {
       await import("./sdk-runtime-public.js");
     const { resolveRuntimeDaemonPaths } =
       await import("./runtime-daemon/state.js");
-    const profile = `sdk-owner-policy-${randomUUID()}`;
-    const paths = resolveRuntimeDaemonPaths(tempRoot, profile);
+    const paths = resolveRuntimeDaemonPaths(tempRoot);
     const owner = await createKodaXRuntime({
       mode: "daemon",
       homeDir: tempRoot,
-      profile,
       defaultProvider: "mock-provider",
       execPolicy: {
         adminRules: [{
@@ -1140,7 +1153,6 @@ describe("createKodaXRuntime", () => {
       const contender = await createKodaXRuntime({
         mode: "daemon",
         homeDir: tempRoot,
-        profile,
         execPolicy: { trustedProjectRoots: [path.join(tempRoot, "other")] },
       }).then(
         (runtime) => ({ runtime }),
@@ -1151,12 +1163,11 @@ describe("createKodaXRuntime", () => {
         message: expect.stringMatching(/cannot be applied to an existing daemon/i),
       });
 
-      peer = await connectKodaXRuntime({ homeDir: tempRoot, profile });
+      peer = await connectKodaXRuntime({ homeDir: tempRoot });
       expect(peer.identity.runtimeId).toBe(owner.identity.runtimeId);
       emptyPolicyPeer = await createKodaXRuntime({
         mode: "daemon",
         homeDir: tempRoot,
-        profile,
         execPolicy: { adminRules: [], trustedProjectRoots: [] },
         autoReview: {},
       });
@@ -1165,7 +1176,7 @@ describe("createKodaXRuntime", () => {
       await emptyPolicyPeer?.close();
       await peer?.close();
       await owner.close();
-      await shutdownRuntimeDaemon(tempRoot, profile);
+      await shutdownRuntimeDaemon(tempRoot);
     }
   }, 60_000);
 
@@ -1191,11 +1202,9 @@ describe("createKodaXRuntime", () => {
       await embedded.close();
     }
 
-    const daemonProfile = `home-sessions-${randomUUID()}`;
     const daemon = await createKodaXRuntime({
       mode: "daemon",
       homeDir: daemonHome,
-      profile: daemonProfile,
       defaultProvider: "mock-provider",
     });
     try {
@@ -1212,7 +1221,7 @@ describe("createKodaXRuntime", () => {
       ).toBe(true);
     } finally {
       await daemon.close();
-      await shutdownRuntimeDaemon(daemonHome, daemonProfile);
+      await shutdownRuntimeDaemon(daemonHome);
     }
   });
 
@@ -1303,7 +1312,6 @@ describe("createKodaXRuntime", () => {
   it("shares Space-style SDK control-plane access across daemon clients", async () => {
     const { connectKodaXRuntime, createKodaXRuntime } =
       await import("./sdk-runtime-public.js");
-    const profile = `space-${randomUUID()}`;
     const capabilities = {
       richEvents: true,
       permissionPrompts: true,
@@ -1316,7 +1324,6 @@ describe("createKodaXRuntime", () => {
     const space = await createKodaXRuntime({
       mode: "daemon",
       homeDir: tempRoot,
-      profile,
       defaultProvider: "mock-provider",
       clientInfo: {
         name: "kodax-space",
@@ -1330,7 +1337,6 @@ describe("createKodaXRuntime", () => {
     try {
       ide = await connectKodaXRuntime({
         homeDir: tempRoot,
-        profile,
         clientInfo: {
           name: "kodax-ide",
           title: "KodaX IDE Adapter",
@@ -1391,22 +1397,20 @@ describe("createKodaXRuntime", () => {
       expect(Array.isArray(commands)).toBe(true);
       expect(Array.isArray(skills)).toBe(true);
       expect(status.runtimeId).toBe(space.identity.runtimeId);
-      expect(status.profile).toBe(profile);
+      expect(status.profile).toBe("default");
       expect(status.sessions.some((item) => item.id === session.id)).toBe(true);
     } finally {
       await ide?.close();
       await space.close();
-      await shutdownRuntimeDaemon(tempRoot, profile);
+      await shutdownRuntimeDaemon(tempRoot);
     }
   });
 
   it("retires client-minted permission requests on the daemon wire (T14)", async () => {
     const { createKodaXRuntime, waitForRuntimeDaemonShutdown } = await import("./sdk-runtime-public.js");
-    const profile = `space-permission-${randomUUID()}`;
     const worker = await createKodaXRuntime({
       mode: "daemon",
       homeDir: tempRoot,
-      profile,
       defaultProvider: "mock-provider",
       clientInfo: {
         name: "kodax-repl",
@@ -1449,7 +1453,7 @@ describe("createKodaXRuntime", () => {
         if (!owner) throw new Error('Expected the private fixture daemon owner');
         await daemon.shutdown();
         await expect(waitForRuntimeDaemonShutdown({ configHome: path.join(tempRoot, '.kodax'),
-          profile, owner })).resolves.toMatchObject({ status: 'succeeded' });
+          owner })).resolves.toMatchObject({ status: 'succeeded' });
       } finally {
         await worker.close();
       }
@@ -20446,10 +20450,15 @@ async function waitForCondition(
   }
 }
 
-async function shutdownRuntimeDaemon(
-  homeDir: string,
-  profile: string,
-): Promise<void> {
+const wrongSlotIdentity = {
+  runtimeId: "wrong-slot-runtime",
+  mode: "daemon",
+  profile: "coder",
+  startedAt: "2026-07-09T00:00:00.000Z",
+  version: KODAX_VERSION,
+} as const;
+
+async function shutdownRuntimeDaemon(homeDir: string): Promise<void> {
   const {
     readRuntimeDaemonLockOwner,
     readRuntimeDaemonState,
@@ -20457,7 +20466,7 @@ async function shutdownRuntimeDaemon(
     resolveRuntimeDaemonPaths,
   } = await import("./runtime-daemon/state.js");
   const state = readRuntimeDaemonState(
-    resolveRuntimeDaemonPaths(homeDir, profile),
+    resolveRuntimeDaemonPaths(homeDir),
   );
   if (!state) return;
   const { runtimeDaemonEndpointFromState } =
@@ -20466,13 +20475,13 @@ async function shutdownRuntimeDaemon(
     createRuntimeDaemonSocketClientTransport,
     isRuntimeDaemonTransportError,
   } = await import("./runtime-daemon/transport.js");
-  const paths = resolveRuntimeDaemonPaths(homeDir, profile);
+  const paths = resolveRuntimeDaemonPaths(homeDir);
   const transport = await createRuntimeDaemonSocketClientTransport(
     runtimeDaemonEndpointFromState(state),
   );
   try {
     await transport.request("initialize", {
-      profile,
+      profile: paths.profile,
       token: readRuntimeDaemonToken(paths),
     });
     const deadline = Date.now() + 10_000;

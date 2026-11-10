@@ -45,6 +45,7 @@ import {
   runtimeOwnerProcessState,
   resolveRuntimeDaemonEndpointScope,
   resolveRuntimeDaemonPathsFromConfigHome,
+  RUNTIME_HOST_SLOT,
   type RuntimeDaemonHealthObservation,
   type RuntimeDaemonPaths,
 } from "./state.js";
@@ -458,6 +459,12 @@ export async function acquireRuntimeDaemonProcessLease(
   }
 
   if (Date.now() >= startupDeadline) throw runtimeDaemonStartupTimeout(paths);
+  if (paths.profile !== RUNTIME_HOST_SLOT) {
+    // A legacy slot is only attached to; a new Host always uses the canonical slot.
+    throw Object.assign(new Error(`The Host in legacy slot "${paths.profile}" is gone; retry to start the canonical Host.`), {
+      code: 'session_storage_owned' as const, retryable: true,
+    });
+  }
   const ownerBootstrapFile = options.ownerBootstrap === undefined
     ? undefined
     : createRuntimeDaemonOwnerBootstrapFile(paths, options.ownerBootstrap);
@@ -465,7 +472,6 @@ export async function acquireRuntimeDaemonProcessLease(
     reportProgress({ stage: 'starting' });
     if (options.startupSignal?.aborted) throw runtimeDaemonStartupCancelled();
     const child = await spawnRuntimeDaemonServeProcess({
-      profile: paths.profile,
       homeDir,
       configHome,
       defaultProvider: options.defaultProvider,
@@ -814,9 +820,9 @@ function runtimeDaemonStartupTimeout(
   );
 }
 
+/** A new Host always serves the canonical slot; `daemon serve` has no `--profile` (FEATURE_305). */
 export interface RuntimeDaemonServeProcessInput {
   readonly startupProgressId?: string;
-  readonly profile: string;
   readonly homeDir: string;
   readonly configHome: string;
   readonly defaultProvider?: string;
@@ -843,8 +849,6 @@ export function buildRuntimeDaemonServeArgs(
     ...(entry !== undefined ? [entry] : []),
     "daemon",
     "serve",
-    "--profile",
-    input.profile,
     "--home",
     input.homeDir,
     "--config-home",
@@ -885,10 +889,7 @@ export async function spawnRuntimeDaemonServeProcess(
     }),
     isElectron: process.versions.electron !== undefined,
   });
-  const paths = resolveRuntimeDaemonPathsFromConfigHome(
-    input.configHome,
-    input.profile,
-  );
+  const paths = resolveRuntimeDaemonPathsFromConfigHome(input.configHome);
   const bootstrapLog = openRuntimeDaemonBootstrapLog(paths);
   let child: ChildProcess;
   let daemonPid: number | undefined;

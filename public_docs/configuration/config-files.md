@@ -68,7 +68,7 @@ export NODE_EXTRA_CA_CERTS=/etc/ssl/corp-root.pem
 export HTTPS_PROXY=http://proxy.corp.example:3128
 export NO_PROXY=localhost,127.0.0.1,.corp.example
 export NODE_USE_ENV_PROXY=1
-kodax daemon stop --profile default   # a running Host keeps the environment it started with
+kodax daemon stop   # a running Host keeps the environment it started with
 kodax -p "Review this repository"
 ```
 
@@ -85,7 +85,7 @@ embedded Runtime is removed. See the [SDK migration guide](../../docs/SDK_MIGRAT
 ```bash
 kodax daemon start
 kodax -p "Review this repository"
-kodax daemon stop --profile default
+kodax daemon stop
 ```
 
 By default, daemon state, config, and runtime session storage use the exact

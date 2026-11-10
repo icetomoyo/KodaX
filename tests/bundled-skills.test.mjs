@@ -72,12 +72,12 @@ for (const agentMode of ['sa', 'ama']) for (const kind of ['default', 'profile']
       }
     });
     let runtime, owner;
-    const connection = { homeDir: root, profile: 'skill-catalog', daemonOrphanExitMs: 1000 };
+    const connection = { homeDir: root, daemonOrphanExitMs: 1000 };
     t.after(async () => {
       try {
         try { await runtime?.daemon.shutdown(); }
         finally { await runtime?.close(); }
-        if (owner) assert.equal((await waitForRuntimeDaemonShutdown({ configHome, profile: connection.profile, owner })).status, 'succeeded');
+        if (owner) assert.equal((await waitForRuntimeDaemonShutdown({ configHome, owner })).status, 'succeeded');
       } finally {
         server.closeAllConnections();
         if (server.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));

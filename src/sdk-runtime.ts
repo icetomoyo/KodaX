@@ -471,7 +471,8 @@ import {
   type RuntimeDaemonOwnerBootstrap,
   type RuntimeDaemonProcessLease,
 } from "./runtime-daemon/process.js";
-export { waitForRuntimeDaemonShutdown } from "./runtime-daemon/shutdown-verifier.js";
+import { waitForRuntimeDaemonShutdown as waitForRuntimeDaemonSlotShutdown } from "./runtime-daemon/shutdown-verifier.js";
+import type { RuntimeDaemonShutdownVerification, RuntimeDaemonShutdownVerificationInput } from "./runtime-daemon/shutdown-verifier.js";
 export type {
   RuntimeDaemonShutdownVerification,
   RuntimeDaemonShutdownVerificationInput,
@@ -497,6 +498,7 @@ import {
   tryAcquireRuntimeSessionStorageStartup,
   resolveRuntimeDaemonEndpointScope,
   resolveRuntimeDaemonPathsFromConfigHome,
+  RUNTIME_HOST_SLOT,
   updateRuntimeOwnerPolicy,
 } from "./runtime-daemon/state.js";
 export {
@@ -533,6 +535,24 @@ export class RuntimeHostMigrationRequiredError extends Error {
     super(message);
     this.name = "RuntimeHostMigrationRequiredError";
   }
+}
+
+/** Waits until the given owner of this home's Host has exited. */
+export async function waitForRuntimeDaemonShutdown(
+  input: RuntimeDaemonShutdownVerificationInput,
+): Promise<RuntimeDaemonShutdownVerification> {
+  rejectRemovedHostProfile("waitForRuntimeDaemonShutdown", input);
+  return waitForRuntimeDaemonSlotShutdown(input);
+}
+
+/** @internal One Host serves each KODAX_HOME; JavaScript callers still passing `profile` fail loudly (FEATURE_305). */
+export function rejectRemovedHostProfile(api: string, options: unknown): void {
+  if (!isRecord(options) || options.profile === undefined) return;
+  throw new RuntimeHostMigrationRequiredError(
+    `${api} no longer accepts "profile": one Host serves each KODAX_HOME. Remove "profile"; `
+    + 'to isolate Hosts, use a separate homeDir or KODAX_HOME. '
+    + 'See "One Host per KODAX_HOME (profile removed)" in docs/SDK_MIGRATION.md.',
+  );
 }
 
 /** A recoverable Auto LLM configuration error that must never become approval work. */
@@ -717,13 +737,10 @@ export function acquireKodaXInlineOwner(
 export function getKodaXRuntimeOwnerState(
   input: {
     readonly homeDir?: string;
-    readonly profile?: string;
   } = {},
 ): RuntimeOwnerState {
-  const { paths } = resolveRuntimeDaemonClientPaths(
-    input.homeDir,
-    input.profile,
-  );
+  rejectRemovedHostProfile("getKodaXRuntimeOwnerState", input);
+  const { paths } = resolveRuntimeDaemonClientPaths(input.homeDir);
   const owner = readRuntimeDaemonLockOwner(paths.lockFile);
   const policy = readRuntimeOwnerPolicy(paths);
   return {
@@ -843,6 +860,11 @@ type RuntimeConfigPatchKey = (typeof RUNTIME_CONFIG_PATCH_KEYS)[number];
 export interface RuntimeIdentity {
   readonly runtimeId: string;
   readonly mode: KodaXRuntimeMode;
+  /**
+   * @deprecated Host directory name kept on the wire because older clients check it on connect.
+   * A current Host always reports `default`; a Host started by an older client may report its own
+   * profile. One Host serves each KODAX_HOME (ADR-075), so this never selects or isolates a Host.
+   */
   readonly profile: string;
   readonly startedAt: string;
   readonly version: string;
@@ -917,7 +939,6 @@ export interface CreateKodaXRuntimeOptions {
   readonly mode: "daemon";
   /** Base directory that owns `.kodax`, matching CLI `--home`; not the `.kodax` directory used by `KODAX_HOME`. */
   readonly homeDir?: string;
-  readonly profile?: string;
   readonly sessionsDir?: string;
   readonly defaultProvider?: string;
   readonly defaultModel?: string;
@@ -953,6 +974,8 @@ export interface CreateKodaXRuntimeOptions {
 export interface CreateKodaXHostRuntimeOptions extends Omit<CreateKodaXRuntimeOptions, "mode"> {
   /** Retained only for existing internal core fixtures. */
   readonly mode?: "embedded";
+  /** Daemon slot this Host serves; defaults to the canonical slot. Only test Hosts stand in for a legacy slot (ADR-075). */
+  readonly profile?: string;
   readonly sharedDaemonHost?: boolean;
   readonly daemonHostRuntimeId?: string;
   readonly externalAgents?: RuntimeExternalAgentsOptions;
@@ -998,7 +1021,6 @@ function runtimeDaemonOwnerBootstrap(
 export interface ConnectKodaXRuntimeOptions {
   /** Local stage changes; observer work is not awaited. Failures are diagnosed without affecting startup. */
   readonly onStartupProgress?: (progress: ClientStartupProgress) => void | Promise<void>;
-  readonly profile?: string;
   /** @deprecated Connect is passive. Use ensureKodaXRuntime for startup; true is rejected here. */
   readonly autoStart?: boolean;
   readonly endpoint?: string | RuntimeDaemonEndpoint;
@@ -4142,6 +4164,7 @@ export async function createKodaXRuntime(
       );
     }
   }
+  rejectRemovedHostProfile("createKodaXRuntime", options);
   assertRuntimeTimeout("permissionTimeoutMs", options.permissionTimeoutMs, 0);
   assertRuntimeTimeout("userInputTimeoutMs", options.userInputTimeoutMs, 0);
   const autoStart =
@@ -4159,7 +4182,6 @@ export async function createKodaXRuntime(
   }
   return connectKodaXRuntimeWithStartupCoordination({
     onStartupProgress: options.onStartupProgress,
-    profile: options.profile,
     transport: options.daemonTransport,
     endpoint: options.daemonEndpoint,
     autoStart,
@@ -5965,6 +5987,7 @@ function assertVersionedRuntimeCapability(
 export async function connectKodaXRuntime(
   options: ConnectKodaXRuntimeOptions = {},
 ): Promise<KodaXDaemonRuntime> {
+  rejectRemovedHostProfile("connectKodaXRuntime", options);
   if (options.autoStart === true) {
     throw new Error("connectKodaXRuntime is passive; use ensureKodaXRuntime to start or update a Host.");
   }
@@ -5978,6 +6001,7 @@ export async function connectKodaXRuntime(
 export async function ensureKodaXRuntime(
   options: Omit<ConnectKodaXRuntimeOptions, "autoStart" | "transport"> = {},
 ): Promise<KodaXDaemonRuntime> {
+  rejectRemovedHostProfile("ensureKodaXRuntime", options);
   return connectKodaXRuntimeWithStartupCoordination({ ...options, autoStart: true }, true);
 }
 
@@ -6557,9 +6581,12 @@ async function connectKodaXRuntimeInternal(
       options.sessionsDir ?? path.join(daemonLocation.configHome, 'sessions'),
       startupDeadline, options.daemonStartupSignal, reportProgress)
     : undefined;
-  const connectionProfile = sharedHost?.profile ?? options.profile ?? 'default';
+  const connectionProfile = sharedHost?.profile ?? RUNTIME_HOST_SLOT;
+  // A caller that names the Host by endpoint or transport has chosen it; only
+  // a slot-derived endpoint must prove it reached that slot's Host.
+  const slotDerived = explicitEndpoint === undefined && options.transport === undefined;
   if (sharedHost) {
-    const requestedPaths = resolveRuntimeDaemonPathsFromConfigHome(daemonLocation.configHome, options.profile ?? 'default');
+    const requestedPaths = resolveRuntimeDaemonPathsFromConfigHome(daemonLocation.configHome, RUNTIME_HOST_SLOT);
     if (connectionProfile !== requestedPaths.profile) {
       prepareRuntimeDaemonOwner(requestedPaths,
         options.sessionsDir ?? path.join(daemonLocation.configHome, 'sessions'), sharedHost);
@@ -6568,7 +6595,7 @@ async function connectKodaXRuntimeInternal(
   if (sharedHost && contentionAttempt === 0) emitKodaXDiagnostic({
     source: 'runtime.daemon.storage-owner', level: 'info',
     message: `Session storage is owned by Host profile ${sharedHost.profile}.`,
-    detail: { requestedProfile: options.profile ?? 'default', ownerProfile: sharedHost.profile,
+    detail: { requestedProfile: RUNTIME_HOST_SLOT, ownerProfile: sharedHost.profile,
       runtimeId: sharedHost.owner.runtimeId, pid: sharedHost.owner.pid },
   });
   let lease: RuntimeDaemonProcessLease | undefined;
@@ -6603,6 +6630,11 @@ async function connectKodaXRuntimeInternal(
       ? await waitForRuntimeSessionStorageHost(daemonLocation.configHome,
         options.sessionsDir ?? path.join(daemonLocation.configHome, 'sessions'),
         startupDeadline, options.daemonStartupSignal, reportProgress) : undefined;
+    // The redirected-to legacy Host exited: retry, which starts the canonical Host.
+    if (sharedHost && !winner && startupRetries > 0) {
+      return connectKodaXRuntimeInternal(options, true, ownerBootstrap, startupRetries - 1,
+        startupDeadline, contentionAttempt, reportProgress);
+    }
     if (!winner || winner.owner.runtimeId === sharedHost?.owner.runtimeId) throw error;
     if (startupRetries > 0 && Date.now() < startupDeadline) {
       return connectKodaXRuntimeInternal(options, true, ownerBootstrap, startupRetries - 1,
@@ -6638,7 +6670,7 @@ async function connectKodaXRuntimeInternal(
       "connectKodaXRuntime requires a daemon transport, endpoint, or autoStart: true.",
     );
   }
-  const token = resolveConnectDaemonToken({ ...options, profile: connectionProfile });
+  const token = resolveConnectDaemonToken(options, connectionProfile);
   let identity: RuntimeIdentity;
   let daemonCapabilities: Readonly<Record<string, unknown>> = {};
   let grantedScopes: readonly RuntimeGrantedScope[] | undefined;
@@ -6682,7 +6714,7 @@ async function connectKodaXRuntimeInternal(
       : capabilityUpgradeClientInfo();
     const clientInfo = upgradeClientInfo ?? requestedClientInfo;
     const initializeParams = {
-      profile: connectionProfile,
+      ...(slotDerived ? { profile: connectionProfile } : {}),
       connectionPurpose: "client",
       autoStart: options.autoStart === true,
       ...(options.daemonLifecycle === 'persistent' && upgradeClientInfo === undefined
@@ -6697,10 +6729,9 @@ async function connectKodaXRuntimeInternal(
       : transport.request('initialize', initializeParams)));
     attaching = false;
     identity = parseRuntimeIdentity(initialized.identity);
-    const expectedProfile = connectionProfile;
-    if (identity.profile !== expectedProfile) {
+    if (slotDerived && identity.profile !== connectionProfile) {
       throw new Error(
-        `Runtime daemon profile mismatch: expected ${expectedProfile}, got ${identity.profile}`,
+        `Runtime daemon profile mismatch: expected ${connectionProfile}, got ${identity.profile}`,
       );
     }
     let currentSharedHost = sharedHost;
@@ -6967,12 +6998,13 @@ function isRuntimeGrantedScope(value: string): value is RuntimeGrantedScope {
 
 function resolveConnectDaemonToken(
   options: ConnectKodaXRuntimeOptions,
+  profile: string,
 ): string | undefined {
   if (options.daemonToken !== undefined) return options.daemonToken;
   if (options.transport !== undefined && options.autoStart !== true)
     return undefined;
   return readRuntimeDaemonToken(
-    resolveRuntimeDaemonClientPaths(options.homeDir, options.profile).paths,
+    resolveRuntimeDaemonClientPaths(options.homeDir, profile).paths,
   );
 }
 

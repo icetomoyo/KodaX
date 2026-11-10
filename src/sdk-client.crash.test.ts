@@ -103,15 +103,13 @@ interface CrashScenario {
   readonly runId: string;
   readonly paths: RuntimeDaemonPaths;
   readonly homeDir: string;
-  readonly profile: string;
 }
 
 async function startScenario(inputText: string): Promise<CrashScenario> {
-  const profile = 'crash';
-  const paths = resolveRuntimeDaemonPaths(homeDir, profile);
+  const paths = resolveRuntimeDaemonPaths(homeDir);
   fs.mkdirSync(paths.configHome, { recursive: true });
-  const first = await ensureKodaXRuntime({ homeDir, profile, daemonStartupTimeoutMs: 60_000 });
-  const client = await connectKodaXClient({ homeDir, profile });
+  const first = await ensureKodaXRuntime({ homeDir, daemonStartupTimeoutMs: 60_000 });
+  const client = await connectKodaXClient({ homeDir });
   const session = await client.sessions.create({ projectPath: homeDir });
   await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
   const accepted = await client.inputs.submit({
@@ -119,7 +117,7 @@ async function startScenario(inputText: string): Promise<CrashScenario> {
   });
   expect(accepted).toMatchObject({ state: 'submitted' });
   liveScenarioPaths.push(paths);
-  return { first, client, sessionId: session.id, runId: accepted.runId!, paths, homeDir, profile };
+  return { first, client, sessionId: session.id, runId: accepted.runId!, paths, homeDir };
 }
 
 async function killHostAndRestart(scenario: CrashScenario): Promise<{
@@ -135,7 +133,7 @@ async function killHostAndRestart(scenario: CrashScenario): Promise<{
   let restarted: Awaited<ReturnType<typeof ensureKodaXRuntime>>;
   try {
     restarted = await ensureKodaXRuntime({
-      homeDir: scenario.homeDir, profile: scenario.profile, daemonStartupTimeoutMs: 60_000,
+      homeDir: scenario.homeDir, daemonStartupTimeoutMs: 60_000,
     });
   } catch (cause: unknown) {
     const log = path.join(scenario.paths.rootDir, 'bootstrap.log');
@@ -143,7 +141,7 @@ async function killHostAndRestart(scenario: CrashScenario): Promise<{
     throw new Error(`Crash restart failed. Bootstrap diagnostics: ${diagnostics}`, { cause });
   }
   const survivor = await connectKodaXClient({
-    homeDir: scenario.homeDir, profile: scenario.profile,
+    homeDir: scenario.homeDir,
   });
   expect(restarted.identity.runtimeId).not.toBe(scenario.first.identity.runtimeId);
   return { survivor, restarted };
@@ -233,11 +231,11 @@ it.skipIf(process.platform !== 'win32')('recovers an interrupted exit on one Hos
     await scenario.client.disconnect();
     await scenario.first.close();
     await waitForRuntimeDaemonOwnerExit(owner, 30_000);
-    await vi.waitFor(async () => expect((await readKodaXClientExits({ homeDir, profile: scenario.profile, clientInfo }))[0])
+    await vi.waitFor(async () => expect((await readKodaXClientExits({ homeDir, clientInfo }))[0])
       .toMatchObject({ cleanup: { state: 'unknown', runIds: [scenario.runId] }, host: { state: 'unknown' },
         recovery: { state: 'ready', reason: 'host_generation_terminated' } }), { timeout: 30_000 });
-    const launches = await Promise.allSettled([scenario.profile, 'coder'].map(async profile => {
-      const client = await ensureKodaXRuntime({ homeDir, profile, daemonStartupTimeoutMs: 60_000 });
+    const launches = await Promise.allSettled([0, 1].map(async () => {
+      const client = await ensureKodaXRuntime({ homeDir, daemonStartupTimeoutMs: 60_000 });
       clients.push(client);
       return client;
     }));
@@ -245,7 +243,7 @@ it.skipIf(process.platform !== 'win32')('recovers an interrupted exit on one Hos
     expect(clients).toHaveLength(2);
     expect(clients[0]!.identity.runtimeId).toBe(clients[1]!.identity.runtimeId);
     expect(clients[0]!.identity.runtimeId).not.toBe(owner.runtimeId);
-    survivor = await connectKodaXClient({ homeDir, profile: clients[0]!.identity.profile });
+    survivor = await connectKodaXClient({ homeDir });
     expect(await readAfterCrashBoundary(() => survivor!.sessions.read(scenario.sessionId))).toMatchObject({ id: scenario.sessionId });
     const run = await readAfterCrashBoundary(() => survivor!.runs.read(scenario.runId));
     expect(['interrupted', 'unknown']).toContain(run.phase);
@@ -256,7 +254,6 @@ it.skipIf(process.platform !== 'win32')('recovers an interrupted exit on one Hos
     await survivor?.disconnect();
     await Promise.all(clients.map(client => client.close()));
     killRemainingOwner(scenario.paths);
-    killRemainingOwner(resolveRuntimeDaemonPaths(homeDir, 'coder'));
   }
 }, 180_000);
 

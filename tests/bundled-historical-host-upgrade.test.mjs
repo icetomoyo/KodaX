@@ -28,7 +28,6 @@ test('real beta.4 Host keeps busy work and upgrades in place without losing its 
   const installation = path.join(root, 'package');
   const homeDir = path.join(root, 'home');
   const configHome = path.join(homeDir, '.kodax');
-  const profile = 'historical-upgrade';
   const evidence = { historicalVersion: '0.7.97-beta.4', integrity: `sha512-${integrity}`, stages: [], requests: [] };
   const env = { ...process.env, KODAX_HOME: configHome, KODAX_TRACING: '0', KODAX_H05_TEST_KEY: 'local-fixture-only' };
   delete env.KODAX_VERSION;
@@ -80,7 +79,7 @@ test('real beta.4 Host keeps busy work and upgrades in place without losing its 
   let passed = false;
   const driver = path.join(root, 'driver.mjs');
   const runDriver = async action => {
-    const result = await execute(process.execPath, [driver, action, installation, homeDir, profile], {
+    const result = await execute(process.execPath, [driver, action, installation, homeDir], {
       env, windowsHide: true, timeout: 80_000, maxBuffer: 1024 * 1024,
       signal: action === 'cleanup' ? undefined : t.signal,
     });
@@ -96,7 +95,7 @@ test('real beta.4 Host keeps busy work and upgrades in place without losing its 
       await runtime?.close(); runtime = undefined;
       if (currentFilesInstalled) evidence.cleanup = await runDriver('cleanup');
       else if (historical && oldOwner) {
-        runtime = await historical.connectKodaXRuntime({ homeDir, profile });
+        runtime = await historical.connectKodaXRuntime({ homeDir });
         for (const run of await runtime.runs.list({})) {
           if (!['completed', 'failed', 'cancelled', 'interrupted'].includes(run.phase)) {
             await runtime.runs.abort(run.runId);
@@ -104,7 +103,7 @@ test('real beta.4 Host keeps busy work and upgrades in place without losing its 
           }
         }
         await runtime.daemon.shutdown(); await runtime.close(); runtime = undefined;
-        evidence.cleanup = await historical.waitForRuntimeDaemonShutdown({ configHome, profile, owner: oldOwner });
+        evidence.cleanup = await historical.waitForRuntimeDaemonShutdown({ configHome, owner: oldOwner });
         assert.equal(evidence.cleanup.status, 'succeeded');
       }
     } catch (error) {
@@ -143,7 +142,7 @@ test('real beta.4 Host keeps busy work and upgrades in place without losing its 
     process.env.KODAX_H05_TEST_KEY = env.KODAX_H05_TEST_KEY;
     try {
       historical = await import(pathToFileURL(path.join(installation, 'dist/sdk-runtime.js')).href);
-      runtime = await historical.ensureKodaXRuntime({ homeDir, profile, daemonLifecycle: 'persistent' });
+      runtime = await historical.ensureKodaXRuntime({ homeDir, daemonLifecycle: 'persistent' });
     } finally {
       if (originalHome === undefined) delete process.env.KODAX_HOME; else process.env.KODAX_HOME = originalHome;
       if (originalKey === undefined) delete process.env.KODAX_H05_TEST_KEY; else process.env.KODAX_H05_TEST_KEY = originalKey;
@@ -177,12 +176,12 @@ test('real beta.4 Host keeps busy work and upgrades in place without losing its 
     assert.equal(busy.identity.runtimeId, oldIdentity.runtimeId);
     assert.equal(busy.compatibleHost?.reason, 'runtimeVersion', JSON.stringify(busy));
     assert.ok(busy.compatibleHost.blockers.includes('active_runs') || busy.compatibleHost.blockers.includes('active_agent_turns'), JSON.stringify(busy));
-    const descriptorPath = path.join(configHome, 'runtime/daemon', profile, 'daemon.json');
+    const descriptorPath = path.join(configHome, 'runtime/daemon/default/daemon.json');
     assert.equal(JSON.parse(await readFile(descriptorPath, 'utf8')).runtimeId, oldIdentity.runtimeId);
     assert.doesNotThrow(() => process.kill(oldOwner.pid, 0));
     evidence.stages.push({ busy });
     finish();
-    runtime = await historical.connectKodaXRuntime({ homeDir, profile });
+    runtime = await historical.connectKodaXRuntime({ homeDir });
     assert.equal((await runtime.runs.await(run.runId)).phase, 'completed');
     const before = await runtime.sessions.transcript(session.id);
     const sessionBefore = await runtime.sessions.load(session.id);
@@ -238,7 +237,7 @@ async function waitForFixtureRequest(requestReceived, runResult, signal) {
 const DRIVER = `import { pathToFileURL } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-const [action, installation, homeDir, profile] = process.argv.slice(2);
+const [action, installation, homeDir] = process.argv.slice(2);
 const sdk = await import(pathToFileURL(path.join(installation, 'dist/sdk-runtime.js')).href);
 const ids = JSON.parse(await readFile(path.join(path.dirname(installation), 'ids.json'), 'utf8'));
 let runtime;
@@ -250,23 +249,23 @@ try {
     const agent = await import(pathToFileURL(path.join(installation, 'dist/sdk-agent.js')).href);
     agent.setKodaXDiagnosticSink(diagnostic => diagnostics.push(diagnostic));
     try {
-      runtime = await sdk.ensureKodaXRuntime({ homeDir, profile, daemonStartupTimeoutMs: 10000 });
+      runtime = await sdk.ensureKodaXRuntime({ homeDir, daemonStartupTimeoutMs: 10000 });
       const compatibleHost = diagnostics.find(item => item.source === 'runtime.daemon.compatible-host')?.detail;
       result = { accepted: true, identity: runtime.identity, compatibleHost };
     }
     catch (error) { result = { accepted: false, code: error.code, blockers: error.preflight?.blockers ?? [], message: error.message }; }
   } else if (action === 'cleanup') {
-    runtime = await sdk.connectKodaXRuntime({ homeDir, profile });
+    runtime = await sdk.connectKodaXRuntime({ homeDir });
     const owner = (await runtime.daemon.inspect()).owner;
     for (const run of await runtime.runs.list({})) if (!['completed','failed','cancelled','interrupted'].includes(run.phase)) {
       await runtime.runs.abort(run.runId); await runtime.runs.await(run.runId);
     }
     await runtime.daemon.shutdown(); await runtime.close(); runtime = undefined;
-    result = await sdk.waitForRuntimeDaemonShutdown({ configHome: path.join(homeDir, '.kodax'), profile, owner });
+    result = await sdk.waitForRuntimeDaemonShutdown({ configHome: path.join(homeDir, '.kodax'), owner });
     if (result.status !== 'succeeded') throw new Error(JSON.stringify(result));
   } else {
-    runtime = await sdk.ensureKodaXRuntime({ homeDir, profile, daemonStartupTimeoutMs: 60000, onStartupProgress: event => progress.push(event.stage) });
-    const peer = await sdk.connectKodaXRuntime({ homeDir, profile });
+    runtime = await sdk.ensureKodaXRuntime({ homeDir, daemonStartupTimeoutMs: 60000, onStartupProgress: event => progress.push(event.stage) });
+    const peer = await sdk.connectKodaXRuntime({ homeDir });
     try { result = { identity: runtime.identity, session: await runtime.sessions.load(ids.sessionId),
       settings: await runtime.sessions.getSettings(ids.sessionId), transcript: await runtime.sessions.transcript(ids.sessionId),
       run: await runtime.runs.get(ids.runId), peerRuntimeId: peer.identity.runtimeId, progress }; }

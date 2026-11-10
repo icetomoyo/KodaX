@@ -23,9 +23,8 @@ import {
 
 it('accepts an idle Host shutdown without changing its owner mode', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-client-lifecycle-'));
-  const profile = 'lifecycle';
-  const runtime = await createKodaXRuntime({ homeDir, profile, sharedDaemonHost: true });
-  const paths = resolveRuntimeDaemonPaths(homeDir, profile);
+  const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
+  const paths = resolveRuntimeDaemonPaths(homeDir);
   try {
     const lock = tryAcquireRuntimeDaemonLock(paths, {
       runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
@@ -36,7 +35,7 @@ it('accepts an idle Host shutdown without changing its owner mode', async () => 
       : { kind: 'unix' as const, path: path.join(homeDir, 'host.sock') };
     const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
     try {
-      const client = await connectKodaXClient({ homeDir, profile, endpoint: endpoint.path });
+      const client = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
       try {
         await expect(client.host.shutdown()).resolves.toEqual({ accepted: true });
         await host.closed;
@@ -60,10 +59,9 @@ it('reports a busy Host and lets another client observe work after the submittin
   const working = deferred();
   registerModelProvider('lifecycle-test', () => new LifecycleProvider(working.resolve, finished.promise));
   vi.stubEnv('KODAX_LIFECYCLE_TEST_KEY', 'test-only');
-  const profile = 'detach';
-  const runtime = await createKodaXRuntime({ homeDir, profile, sharedDaemonHost: true, defaultProvider: 'lifecycle-test' });
+  const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'lifecycle-test' });
   try {
-    const paths = resolveRuntimeDaemonPaths(homeDir, profile);
+    const paths = resolveRuntimeDaemonPaths(homeDir);
     const lock = tryAcquireRuntimeDaemonLock(paths, {
       runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
     });
@@ -73,7 +71,7 @@ it('reports a busy Host and lets another client observe work after the submittin
       : { kind: 'unix' as const, path: path.join(homeDir, 'host.sock') };
     const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
     try {
-      const options = { homeDir, profile, endpoint: endpoint.path };
+      const options = { homeDir, endpoint: endpoint.path };
       const first = await connectKodaXClient(options);
       const second = await connectKodaXClient(options);
       try {
@@ -171,9 +169,8 @@ it('acknowledges shutdown while the Host still owns cleanup of its actual execut
     },
     effects: { remote: 'read', workspace: 'proposal' },
   };
-  const profile = 'helper';
   const runtime = await createKodaXRuntime({
-    homeDir, profile, sharedDaemonHost: true,
+    homeDir, sharedDaemonHost: true,
     externalAgents: { factories: [factory], policy: async () => ({ allowed: true }) },
   });
   try {
@@ -185,7 +182,7 @@ it('acknowledges shutdown while the Host still owns cleanup of its actual execut
     });
     await expect.poll(async () => (await runtime.agents.output(session.id, '/root/helper', task.turnId)).state)
       .toBe('completed');
-    const paths = resolveRuntimeDaemonPaths(homeDir, profile);
+    const paths = resolveRuntimeDaemonPaths(homeDir);
     const lock = tryAcquireRuntimeDaemonLock(paths, {
       runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
     });
@@ -195,7 +192,7 @@ it('acknowledges shutdown while the Host still owns cleanup of its actual execut
       : { kind: 'unix' as const, path: path.join(homeDir, 'host.sock') };
     const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
     try {
-      const client = await connectKodaXClient({ homeDir, profile, endpoint: endpoint.path });
+      const client = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
       try {
         await expect(client.host.shutdown()).resolves.toEqual({ accepted: true });
         await disposing.promise;

@@ -9,15 +9,14 @@ import { waitForRuntimeDaemonOwnerExit } from './runtime-daemon/process.js';
 
 it('starts one Host through the product SDK and shares its Session with passive clients', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-startup-'));
-  const profile = 'product-startup';
   let client: Awaited<ReturnType<typeof sdk.connectKodaXClient>> | undefined;
   try {
     const failedProgress: sdk.ClientStartupProgress[] = [];
-    await expect(sdk.connectKodaXClient({ homeDir, profile,
+    await expect(sdk.connectKodaXClient({ homeDir,
       onStartupProgress: (event) => { failedProgress.push(event); }, })).rejects.toThrow();
     expect(failedProgress).toEqual([{ stage: 'connecting' }]);
     const progress: sdk.ClientStartupProgress[] = [];
-    client = await sdk.ensureKodaXClient({ homeDir, profile, daemonStartupTimeoutMs: 60_000,
+    client = await sdk.ensureKodaXClient({ homeDir, daemonStartupTimeoutMs: 60_000,
       onStartupProgress: (event) => { progress.push(event); }, });
     expect(progress.some(event => event.stage === 'initializing')).toBe(true);
     expect(progress.filter(event => event.stage !== 'initializing')).toEqual([
@@ -26,14 +25,14 @@ it('starts one Host through the product SDK and shares its Session with passive 
     ]);
     const session = await client.sessions.create({ title: 'Shared product Session', projectPath: homeDir });
     const attachedProgress: sdk.ClientStartupProgress[] = [];
-    const observer = await sdk.connectKodaXClient({ homeDir, profile,
+    const observer = await sdk.connectKodaXClient({ homeDir,
       onStartupProgress: (event) => { attachedProgress.push(event); }, });
     try {
       expect(attachedProgress).toEqual([{ stage: 'connecting' }, { stage: 'ready' }]);
       await expect(observer.sessions.read(session.id)).resolves.toMatchObject({ id: session.id, title: session.title });
     } finally { await observer.disconnect(); }
     const ensuredProgress: sdk.ClientStartupProgress[] = [];
-    const ensured = await sdk.ensureKodaXClient({ homeDir, profile,
+    const ensured = await sdk.ensureKodaXClient({ homeDir,
       onStartupProgress: (event) => { ensuredProgress.push(event); }, });
     try {
       expect(ensuredProgress).toEqual([{ stage: 'checking' }, { stage: 'connecting' }, { stage: 'ready' }]);
@@ -41,7 +40,7 @@ it('starts one Host through the product SDK and shares its Session with passive 
     } finally { await ensured.disconnect(); }
   } finally {
     if (client) {
-      const owner = readRuntimeDaemonLockOwner(resolveRuntimeDaemonPaths(homeDir, profile).lockFile);
+      const owner = readRuntimeDaemonLockOwner(resolveRuntimeDaemonPaths(homeDir).lockFile);
       await client.host.shutdown();
       await client.disconnect();
       if (owner) await waitForRuntimeDaemonOwnerExit(owner, 30_000);
@@ -52,7 +51,6 @@ it('starts one Host through the product SDK and shares its Session with passive 
 
 it('reports MCP initialization while a configured server is still starting', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-slow-startup-'));
-  const profile = 'slow-startup';
   const script = path.join(homeDir, 'server.cjs');
   const release = path.join(homeDir, 'release');
   const entered = path.join(homeDir, 'entered');
@@ -76,7 +74,7 @@ readline.createInterface({ input: process.stdin }).on('line', async line => {
       connect: 'prewarm', startupTimeoutMs: 20_000 } },
   }));
   const progress: sdk.ClientStartupProgress[] = [];
-  const startup = sdk.ensureKodaXClient({ homeDir, profile, daemonStartupTimeoutMs: 60_000,
+  const startup = sdk.ensureKodaXClient({ homeDir, daemonStartupTimeoutMs: 60_000,
     onStartupProgress: event => { progress.push(event); } });
   void startup.catch(() => undefined); // The finally block joins startup even if an assertion fails.
   try {
@@ -92,7 +90,7 @@ readline.createInterface({ input: process.stdin }).on('line', async line => {
     const result = await Promise.allSettled([startup]);
     if (result[0]!.status === 'fulfilled') {
       const client = result[0]!.value;
-      const owner = readRuntimeDaemonLockOwner(resolveRuntimeDaemonPaths(homeDir, profile).lockFile);
+      const owner = readRuntimeDaemonLockOwner(resolveRuntimeDaemonPaths(homeDir).lockFile);
       await client.host.shutdown();
       await client.disconnect();
       if (owner) await waitForRuntimeDaemonOwnerExit(owner, 30_000);

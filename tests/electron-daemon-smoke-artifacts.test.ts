@@ -72,7 +72,7 @@ describe('packaged Electron public Host shutdown contract', () => {
       const last = source.indexOf('async function waitForJson(', first);
       assert.ok(first >= 0 && last > first, 'The packaged gate needs public exact-Host shutdown verification.');
       return runInNewContext(`${source.slice(first, last)}\nverifyDaemonOwnerReleased(sdk, owner)`, {
-        sdk, owner, assert, path, homeDir: '/fixture-home', profile: 'fixture',
+        sdk, owner, assert, path, homeDir: '/fixture-home',
       });
     });
     return { result, verifyShutdown };
@@ -82,7 +82,7 @@ describe('packaged Electron public Host shutdown contract', () => {
     const { result, verifyShutdown } = verifyRelease();
     await expect(result).resolves.toBeUndefined();
     expect(verifyShutdown).toHaveBeenCalledExactlyOnceWith({ configHome: path.join('/fixture-home', '.kodax'),
-      profile: 'fixture', owner, timeoutMs: 300_000 });
+      owner, timeoutMs: 300_000 });
   });
 
   it.each(['unverified', 'replacement_running', 'failed'])('rejects %s shutdown instead of claiming release', async (status) => {

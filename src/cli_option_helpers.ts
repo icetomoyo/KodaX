@@ -1,4 +1,4 @@
-import { Command, InvalidArgumentError } from 'commander';
+import { Command, InvalidArgumentError, Option } from 'commander';
 import {
   KodaXAgentMode,
   KodaXOptions,
@@ -15,6 +15,17 @@ import {
   FileSessionStorage,
 } from '@kodax-ai/repl';
 import type { AcpPermissionMode } from './acp_server.js';
+
+/** Hidden `--profile` that explains its removal instead of failing as an unknown option (FEATURE_305). */
+export function removedHostProfileOption(command: string): Option {
+  return new Option('--profile <name>').hideHelp().argParser(() => {
+    throw new InvalidArgumentError(
+      `${command} no longer accepts --profile: one Host serves each KODAX_HOME. Remove --profile; `
+      + 'to isolate Hosts, use a separate --home or KODAX_HOME. '
+      + 'See "One Host per KODAX_HOME (profile removed)" in docs/SDK_MIGRATION.md.',
+    );
+  });
+}
 
 export const ACP_PERMISSION_MODES: AcpPermissionMode[] = [
   'plan',

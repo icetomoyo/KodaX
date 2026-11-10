@@ -175,16 +175,22 @@ export type RuntimeDaemonOwnershipDecision =
       readonly lockOwner?: RuntimeDaemonLockOwner;
     };
 
+/**
+ * The fixed directory name of the one Host per KODAX_HOME (ADR-075). It is a
+ * location, not a profile; older clients find the Host here.
+ */
+export const RUNTIME_HOST_SLOT = 'default';
+
 export function resolveRuntimeDaemonPaths(
   homeDir: string,
-  profile = 'default',
+  profile = RUNTIME_HOST_SLOT,
 ): RuntimeDaemonPaths {
   return resolveRuntimeDaemonPathsFromConfigHome(path.join(path.resolve(homeDir), '.kodax'), profile);
 }
 
 export function resolveRuntimeDaemonPathsFromConfigHome(
   configHome: string,
-  profile = 'default',
+  profile = RUNTIME_HOST_SLOT,
 ): RuntimeDaemonPaths {
   const normalizedProfile = normalizeRuntimeDaemonProfile(profile);
   const resolvedConfigHome = path.resolve(configHome);

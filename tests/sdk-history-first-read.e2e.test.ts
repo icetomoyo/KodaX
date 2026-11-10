@@ -10,7 +10,6 @@ import { getKodaXRuntimeOwnerState, waitForRuntimeDaemonShutdown } from '../src/
 
 it('reads fresh history after cold topology recovery, observation and a second Host generation', async () => {
   const homeDir = await mkdtemp(path.join(await realpath(os.tmpdir()), 'kodax-cold-history-'));
-  const profile = 'cold-history';
   const configHome = path.join(homeDir, '.kodax');
   const sessionsDir = path.join(configHome, 'sessions');
   const storage = new FileSessionStorage({ configHome, sessionsDir });
@@ -23,10 +22,10 @@ it('reads fresh history after cold topology recovery, observation and a second H
     lock, pathToFileURL(path.resolve('packages/agent/src/learning/store-lock.ts')).href],
   { windowsHide: true });
   expect(owner.status).toBe(1);
-  let client = await ensureKodaXClient({ homeDir, profile });
+  let client = await ensureKodaXClient({ homeDir });
   try {
     for (let generation = 0; generation < 2; generation += 1) {
-      const peer = await connectKodaXClient({ homeDir, profile });
+      const peer = await connectKodaXClient({ homeDir });
       try {
         const observation = await peer.sessions.observe('cold-history', () => undefined);
         try {
@@ -39,17 +38,17 @@ it('reads fresh history after cold topology recovery, observation and a second H
         } finally { observation.close(); }
       } finally { await peer.disconnect(); }
       if (generation === 0) {
-        const previous = getKodaXRuntimeOwnerState({ homeDir, profile }).owner!;
+        const previous = getKodaXRuntimeOwnerState({ homeDir }).owner!;
         await client.host.shutdown(); await client.disconnect();
-        expect(await waitForRuntimeDaemonShutdown({ configHome, profile, owner: previous })).toMatchObject({ status: 'succeeded' });
-        client = await ensureKodaXClient({ homeDir, profile });
+        expect(await waitForRuntimeDaemonShutdown({ configHome, owner: previous })).toMatchObject({ status: 'succeeded' });
+        client = await ensureKodaXClient({ homeDir });
       }
     }
     expect((await storage.load('cold-history'))?.messages.map(message => message.content)).toEqual(messages.map(message => message.content));
   } finally {
-    const current = getKodaXRuntimeOwnerState({ homeDir, profile }).owner;
+    const current = getKodaXRuntimeOwnerState({ homeDir }).owner;
     await client.host.shutdown(); await client.disconnect();
-    if (current) expect(await waitForRuntimeDaemonShutdown({ configHome, profile, owner: current })).toMatchObject({ status: 'succeeded' });
+    if (current) expect(await waitForRuntimeDaemonShutdown({ configHome, owner: current })).toMatchObject({ status: 'succeeded' });
     await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 120_000);

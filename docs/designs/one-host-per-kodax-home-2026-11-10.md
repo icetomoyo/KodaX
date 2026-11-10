@@ -1,6 +1,6 @@
 # One Host per `KODAX_HOME` — design draft, 2026-11-10
 
-Status: **accepted 2026-11-10, not implemented**. Review decisions are in §8.
+Status: **accepted 2026-11-10; T1+T2 implemented**. Review decisions are in §8.
 Tracked as [FEATURE_305](../features/v0.7.98.md#feature_305-one-host-per-kodax_home) (tickets T1–T7).
 Decision record:
 [ADR-075](../ADR.md#adr-075-one-host-per-kodax_home-profile-is-not-host-identity). Tracks [Issue 407](../KNOWN_ISSUES.md#issue-407-passive-connections-and-exit-receipts-ignore-the-session-storage-owner);
@@ -146,6 +146,13 @@ KodaX:
 - `kodax_cli.ts`: `daemon` commands without `--profile`; explicit error when
   it is passed.
 - `home-retention.ts`: one rule for `runtime/profiles/*.merged-*`.
+- Also removed in T1+T2: `profile` on `ensureKodaXClient`, `createKodaXRuntime`,
+  `getKodaXRuntimeOwnerState` and `waitForRuntimeDaemonShutdown`, and
+  `kodax a2a serve --profile`. Internal APIs (`createKodaXHostRuntime`,
+  `acquireRuntimeDaemonLease`, the state.ts resolvers) keep a slot argument so
+  tests can stand in for a legacy Host. On Windows such a test Host must run
+  inside a Job, because current clients require `daemonShutdownVerification`
+  and a Host advertises it only when it is Job-contained.
 - Public type declarations: remove the option fields; mark
   `RuntimeIdentity.profile` `@deprecated` with the reason in its JSDoc.
 

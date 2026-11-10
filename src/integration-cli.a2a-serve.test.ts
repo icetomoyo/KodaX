@@ -84,7 +84,6 @@ describe('A2A serve delegates serving to the daemon Host (T21)', () => {
     const server = readA2AIntegration(configHome).document.server;
     expect(server?.listen).toEqual({ hostname: '127.0.0.1', port: 9310 });
     expect(delegateCapture.input).toEqual({
-      profile: 'a2a-server',
       homeDir: undefined,
       provider: undefined,
       model: undefined,
@@ -97,7 +96,6 @@ describe('A2A serve delegates serving to the daemon Host (T21)', () => {
     ]);
 
     expect(delegateCapture.input).toEqual({
-      profile: 'a2a-server',
       homeDir: undefined,
       provider: 'zai-coding',
       model: 'glm-5.2',
@@ -111,6 +109,18 @@ describe('A2A serve delegates serving to the daemon Host (T21)', () => {
 
     expect(delegateCapture.input?.provider).toBe('root-provider');
     expect(delegateCapture.input?.model).toBe('root-model');
+  });
+
+  it('rejects the removed --profile with migration guidance before serving (FEATURE_305)', async () => {
+    const program = configureKodaXRootCommand(new Command().name('kodax').exitOverride()
+      .configureOutput({ writeErr: () => undefined }));
+    configureIntegrationCommands(program, {
+      version: '0.7.97',
+      serveDaemonHost: async (input) => { delegateCapture.input = input; },
+    });
+    await expect(program.parseAsync(['node', 'kodax', 'a2a', 'serve', '--profile', 'a2a-server']))
+      .rejects.toThrow(/no longer accepts --profile.*docs\/SDK_MIGRATION\.md/);
+    expect(delegateCapture.input).toBeUndefined();
   });
 
   it('requires the runtime daemon host when no delegate is wired', async () => {

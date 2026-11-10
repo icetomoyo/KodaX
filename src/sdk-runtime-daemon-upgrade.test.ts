@@ -72,7 +72,10 @@ import { ensureKodaXClient } from './sdk-client.js';
 import type { RuntimeDaemonProcessLease } from './runtime-daemon/process.js';
 import type { RuntimeDaemonPaths } from './runtime-daemon/state.js';
 
-const PROFILE = 'upgrade-test';
+/** The canonical Host slot (ADR-075). */
+const PROFILE = 'default';
+/** A Host started by an older client under its own profile. */
+const LEGACY_SLOT = 'coder';
 const RUNTIME_ID = 'runtime_legacy';
 const CURRENT_VERSION_CORE = /^(\d+)\.(\d+)\.(\d+)/.exec(KODAX_VERSION);
 if (CURRENT_VERSION_CORE === null) {
@@ -124,7 +127,7 @@ describe('product Host startup and passive connection', () => {
       upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(old))
         .mockResolvedValueOnce(createLease(createCurrentTransport(calls, async () => undefined)));
       upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
-      const client = await ensureKodaXClient({ profile: PROFILE, requirements: { [capability]: 2 } });
+      const client = await ensureKodaXClient({ requirements: { [capability]: 2 } });
       try {
         expect(client.capabilities.supports(capability, 2)).toBe(true);
         expect(calls.filter(call => call === 'old:runtime.shutdown')).toHaveLength(1);
@@ -137,7 +140,7 @@ describe('product Host startup and passive connection', () => {
     const controller = new AbortController();
     const reason = new Error('cancel queued launcher');
     upgradeMocks.acquireStartup.mockReturnValue(undefined);
-    const starting = ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 30,
+    const starting = ensureKodaXRuntime({ daemonStartupTimeoutMs: 30,
       daemonStartupSignal: controller.signal });
     const rejected = mode === 'cancel' ? expect(starting).rejects.toBe(reason)
       : expect(starting).rejects.toThrow(/startup timed out/i);
@@ -151,7 +154,6 @@ describe('product Host startup and passive connection', () => {
     const progress: unknown[] = [];
     const calls: string[] = [];
     const runtime = await connectKodaXRuntime({
-      profile: PROFILE,
       transport: createCurrentTransport(calls, async () => undefined),
       onStartupProgress: (event) => { progress.push(event); },
     });
@@ -173,7 +175,6 @@ describe('product Host startup and passive connection', () => {
     let runtime: Awaited<ReturnType<typeof connectKodaXRuntime>> | undefined;
     try {
       runtime = await connectKodaXRuntime({
-        profile: PROFILE,
         transport: createCurrentTransport([], async () => undefined),
         onStartupProgress: () => {
           if (mode === 'throw') throw new Error('Observer failure');
@@ -210,7 +211,7 @@ describe('product Host startup and passive connection', () => {
         return result;
       },
     }));
-    const runtime = await ensureKodaXRuntime({ profile: PROFILE, daemonLifecycle: 'interactive' });
+    const runtime = await ensureKodaXRuntime({ daemonLifecycle: 'interactive' });
     try {
       expect(runtime.identity.runtimeId).toBe('runtime_current');
       expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ orphanExitMs: 30_000 }));
@@ -233,7 +234,7 @@ describe('product Host startup and passive connection', () => {
       } }))
       .mockResolvedValueOnce(createLease(createCurrentTransport(calls, async () => undefined)));
     upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
-    const starting = ensureKodaXRuntime({ profile: PROFILE, daemonOrphanExitMs: 30_000 });
+    const starting = ensureKodaXRuntime({ daemonOrphanExitMs: 30_000 });
     try {
       await expect(starting).rejects.toMatchObject({ capability: 'daemonOrphanExit', message: expect.stringMatching(/retained/) });
       expect(calls).not.toContain('old:runtime.shutdown');
@@ -255,7 +256,7 @@ describe('product Host startup and passive connection', () => {
       .mockResolvedValueOnce(createLease(createCurrentTransport(calls, async () => undefined)));
     upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
     const runtime = await ensureKodaXRuntime({
-      profile: PROFILE, daemonLifecycle: 'interactive', requirements: { daemonOrphanExit: 1 },
+      daemonLifecycle: 'interactive', requirements: { daemonOrphanExit: 1 },
     });
     try {
       expect(upgradeMocks.acquireProcessLease.mock.calls[1]?.[0]).toMatchObject({ orphanExitMs: 30_000 });
@@ -278,7 +279,7 @@ describe('product Host startup and passive connection', () => {
       .mockResolvedValueOnce(createLease(createCurrentTransport(calls, async () => undefined)));
     upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
     const runtime = await ensureKodaXRuntime({
-      profile: PROFILE, daemonOrphanExitMs: 30_000, requirements: { daemonOrphanExit: 1 },
+      daemonOrphanExitMs: 30_000, requirements: { daemonOrphanExit: 1 },
     });
     try {
       expect(runtime.identity.runtimeId).toBe('runtime_current');
@@ -297,17 +298,17 @@ describe('product Host startup and passive connection', () => {
       preflight: createPreflight({ canStop: false, blockers: ['active_runs'] }), calls,
       close: async () => undefined, runtimeVersion: KODAX_VERSION, build: LOCAL_RUNTIME_BUILD, capabilities,
     })));
-    await expect(ensureKodaXRuntime({ profile: PROFILE, daemonOrphanExitMs: 30_000 }))
+    await expect(ensureKodaXRuntime({ daemonOrphanExitMs: 30_000 }))
       .rejects.toMatchObject({ capability: 'daemonOrphanExit', retryable: true, ownerProfile: PROFILE, preflight: { blockers: ['active_runs'] } });
     expect(calls).not.toContain('old:runtime.shutdown');
     expect(upgradeMocks.waitOwnerExit).not.toHaveBeenCalled();
   });
 
-  it('attaches the same build from another installation and profile without restarting its work', async () => {
+  it('attaches the same build from another installation and legacy slot without restarting its work', async () => {
     const calls: string[] = [];
     const diagnostics: KodaXDiagnostic[] = [];
     const restore = setKodaXDiagnosticSink(diagnostic => { diagnostics.push(diagnostic); });
-    const sharedHost = { profile: 'default', ownerFile: '/fixture/sessions/.product-host/owner.lock', owner: { runtimeId: 'runtime_current' } };
+    const sharedHost = { profile: LEGACY_SLOT, ownerFile: '/fixture/sessions/.product-host/owner.lock', owner: { runtimeId: 'runtime_current' } };
     const sessionsDir = path.resolve('/fixture/sessions');
     upgradeMocks.findSharedHost.mockReturnValue(sharedHost);
     const base = createCurrentTransport(calls, async () => undefined);
@@ -315,21 +316,21 @@ describe('product Host startup and passive connection', () => {
       ...base,
       async request(method, params) {
         const result = await base.request(method, params) as { identity: Record<string, unknown> };
-        return { ...result, identity: { ...result.identity, profile: 'default',
+        return { ...result, identity: { ...result.identity, profile: LEGACY_SLOT,
           build: { ...LOCAL_RUNTIME_BUILD, origin: '/desktop/sdk/dist/kodax_cli.js' } } };
       },
     }));
-    const runtime = await ensureKodaXRuntime({ profile: PROFILE, sessionsDir });
+    const runtime = await ensureKodaXRuntime({ sessionsDir });
     try {
-      expect(runtime.identity.profile).toBe('default');
+      expect(runtime.identity.profile).toBe(LEGACY_SLOT);
       expect(upgradeMocks.prepareDaemonOwner).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({ profile: PROFILE }), sessionsDir, sharedHost,
       );
-      expect(upgradeMocks.acquireProcessLease.mock.calls[0]?.[0]).toMatchObject({ profile: 'default' });
+      expect(upgradeMocks.acquireProcessLease.mock.calls[0]?.[0]).toMatchObject({ profile: LEGACY_SLOT });
       expect(calls).toEqual(['new:initialize']);
       expect(diagnostics).toContainEqual(expect.objectContaining({
         source: 'runtime.daemon.storage-owner',
-        detail: expect.objectContaining({ requestedProfile: PROFILE, ownerProfile: 'default', runtimeId: 'runtime_current' }),
+        detail: expect.objectContaining({ requestedProfile: PROFILE, ownerProfile: LEGACY_SLOT, runtimeId: 'runtime_current' }),
       }));
     } finally { await runtime.close(); restore(); }
   });
@@ -346,7 +347,7 @@ describe('product Host startup and passive connection', () => {
     upgradeMocks.acquireProcessLease.mockImplementation(async () =>
       createLease(createCurrentTransport(calls, async () => undefined)));
 
-    const runtime = await ensureKodaXRuntime({ profile: PROFILE });
+    const runtime = await ensureKodaXRuntime({});
     try {
       expect(runtime.identity.runtimeId).toBe('runtime_current');
       expect(calls).toEqual(['new:initialize', 'new:close', 'new:initialize']);
@@ -370,7 +371,7 @@ describe('product Host startup and passive connection', () => {
         const result = await base.request(method, params) as { identity: Record<string, unknown> };
         return { ...result, identity: { ...result.identity, profile: 'default' } };
       } }));
-    const runtime = await ensureKodaXRuntime({ profile: PROFILE });
+    const runtime = await ensureKodaXRuntime({});
     try {
       expect(runtime.identity.profile).toBe('default');
       expect(calls).toEqual(['new:initialize']);
@@ -384,30 +385,29 @@ describe('product Host startup and passive connection', () => {
     upgradeMocks.findSharedHost.mockReturnValueOnce(host).mockReturnValue({ ...host, owner: { runtimeId: 'another-owner' } });
     upgradeMocks.acquireProcessLease.mockImplementation(async () =>
       createLease(createCurrentTransport(calls, async () => undefined)));
-    await expect(ensureKodaXRuntime({ profile: PROFILE })).rejects.toMatchObject({ code: 'session_storage_owned', retryable: true });
+    await expect(ensureKodaXRuntime({})).rejects.toMatchObject({ code: 'session_storage_owned', retryable: true });
     expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(3);
     expect(calls).toEqual(Array.from({ length: 3 }, () => ['new:initialize', 'new:close']).flat());
     expect(upgradeMocks.waitOwnerExit).not.toHaveBeenCalled();
   });
 
-  it('rediscovers a replacement in a different profile after closing the stale connection', async () => {
+  it('rediscovers a canonical replacement of a legacy-slot Host after closing the stale connection', async () => {
     const calls: string[] = [];
     const host = { profile: 'default', ownerFile: '/fixture/owner.lock', owner: { runtimeId: 'runtime_current' } };
-    upgradeMocks.findSharedHost.mockReturnValueOnce({ ...host, profile: PROFILE, owner: { runtimeId: RUNTIME_ID } });
+    upgradeMocks.findSharedHost.mockReturnValueOnce({ ...host, profile: LEGACY_SLOT, owner: { runtimeId: RUNTIME_ID } });
     upgradeMocks.findSharedHost.mockImplementation(() => {
       expect(calls).toContain('new:close');
       return host;
     });
     const base = createCurrentTransport(calls, async () => undefined);
-    upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(base))
-      .mockResolvedValue(createLease({ ...base, async request(method, params) {
-        const result = await base.request(method, params) as { identity: Record<string, unknown> };
-        return { ...result, identity: { ...result.identity, profile: 'default' } };
-      } }));
-    const runtime = await ensureKodaXRuntime({ profile: PROFILE });
+    upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease({ ...base, async request(method, params) {
+      const result = await base.request(method, params) as { identity: Record<string, unknown> };
+      return { ...result, identity: { ...result.identity, profile: LEGACY_SLOT } };
+    } })).mockResolvedValue(createLease(base));
+    const runtime = await ensureKodaXRuntime({});
     try {
       expect(runtime.identity).toMatchObject({ runtimeId: 'runtime_current', profile: 'default' });
-      expect(upgradeMocks.acquireProcessLease.mock.calls.map(([options]) => options.profile)).toEqual([PROFILE, 'default']);
+      expect(upgradeMocks.acquireProcessLease.mock.calls.map(([options]) => options.profile)).toEqual([LEGACY_SLOT, PROFILE]);
       expect(calls).toEqual(['new:initialize', 'new:close', 'new:initialize']);
     } finally { await runtime.close(); }
   });
@@ -420,7 +420,7 @@ describe('product Host startup and passive connection', () => {
     upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(transport,
       { ...current, identity: { ...current.identity, runtimeId: 'previous-owner' } }))
       .mockResolvedValueOnce(createLease(createCurrentTransport(calls, async () => undefined)));
-    const runtime = await ensureKodaXRuntime({ profile: PROFILE });
+    const runtime = await ensureKodaXRuntime({});
     try {
       expect(runtime.identity.runtimeId).toBe('runtime_current');
       expect(calls).toEqual(['new:initialize', 'new:close', 'new:initialize']);
@@ -437,7 +437,7 @@ describe('product Host startup and passive connection', () => {
     upgradeMocks.acquireProcessLease.mockImplementation(async () =>
       createLease(createCurrentTransport(calls, async () => { elapsed += 10; })));
     try {
-      await expect(ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 15 }))
+      await expect(ensureKodaXRuntime({ daemonStartupTimeoutMs: 15 }))
         .rejects.toMatchObject({ code: 'session_storage_owned', retryable: true });
       expect(upgradeMocks.acquireProcessLease.mock.calls.map(([options]) => options.startupTimeoutMs)).toEqual([15, 5]);
       expect(calls).toEqual(['new:initialize', 'new:close', 'new:initialize', 'new:close']);
@@ -455,7 +455,7 @@ describe('product Host startup and passive connection', () => {
       throw failure;
     });
     try {
-      await expect(ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 100 })).rejects.toBe(failure);
+      await expect(ensureKodaXRuntime({ daemonStartupTimeoutMs: 100 })).rejects.toBe(failure);
       expect(upgradeMocks.findSharedHost).toHaveBeenCalledOnce();
       expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledOnce();
     } finally { clock.mockRestore(); }
@@ -475,7 +475,7 @@ describe('product Host startup and passive connection', () => {
     });
     upgradeMocks.acquireProcessLease.mockResolvedValue(createLease(createCurrentTransport(calls, async () => undefined)));
     try {
-      const starting = ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 100,
+      const starting = ensureKodaXRuntime({ daemonStartupTimeoutMs: 100,
         daemonStartupSignal: controller.signal, onStartupProgress: event => { progress.push(event); } });
       if (mode === 'cancel') await expect(starting).rejects.toBe(reason);
       else await expect(starting).rejects.toMatchObject({ code: 'daemon_startup_failed', reason: 'timeout' });
@@ -496,7 +496,7 @@ describe('product Host startup and passive connection', () => {
     });
     upgradeMocks.acquireProcessLease.mockResolvedValue(createLease(createCurrentTransport([], async () => undefined)));
     try {
-      const starting = ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 100, daemonStartupSignal: controller.signal });
+      const starting = ensureKodaXRuntime({ daemonStartupTimeoutMs: 100, daemonStartupSignal: controller.signal });
       if (mode === 'cancel') await expect(starting).rejects.toBe(reason);
       else await expect(starting).rejects.toMatchObject({ code: 'daemon_startup_failed', reason: 'timeout' });
       expect(upgradeMocks.acquireProcessLease).not.toHaveBeenCalled();
@@ -509,7 +509,7 @@ describe('product Host startup and passive connection', () => {
     const calls: string[] = [];
     upgradeMocks.findSharedHost.mockReturnValue({ profile: PROFILE, ownerFile: '/fixture/owner.lock', owner: { runtimeId: 'previous-owner' } });
     upgradeMocks.acquireProcessLease.mockResolvedValue(createLease(createCurrentTransport(calls, async () => controller.abort(reason))));
-    await expect(ensureKodaXRuntime({ profile: PROFILE, daemonStartupSignal: controller.signal })).rejects.toBe(reason);
+    await expect(ensureKodaXRuntime({ daemonStartupSignal: controller.signal })).rejects.toBe(reason);
     expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(1);
     expect(calls).toEqual(['new:initialize', 'new:close']);
   });
@@ -531,7 +531,7 @@ describe('product Host startup and passive connection', () => {
         entered();
         return hanging;
       } }));
-    const starting = ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 100,
+    const starting = ensureKodaXRuntime({ daemonStartupTimeoutMs: 100,
       daemonStartupSignal: controller.signal });
     const result = starting.then(() => 'unexpected success', error => error as unknown);
     try {
@@ -557,7 +557,7 @@ describe('product Host startup and passive connection', () => {
     }).mockReturnValue(undefined);
     upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(createCurrentTransport(calls, async () => undefined)));
     const progress: unknown[] = [];
-    const runtime = await ensureKodaXRuntime({ profile: PROFILE, onStartupProgress: event => { progress.push(event); } });
+    const runtime = await ensureKodaXRuntime({ onStartupProgress: event => { progress.push(event); } });
     try {
       expect(progress).toContainEqual({ stage: 'waiting', reason: 'host_starting' });
       expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(1);
@@ -570,7 +570,7 @@ describe('product Host startup and passive connection', () => {
     upgradeMocks.findSharedHost.mockImplementation(() => {
       throw Object.assign(new Error('Shared owner is still starting'), { code: 'session_storage_owned', retryable: true });
     });
-    await expect(ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 30 }))
+    await expect(ensureKodaXRuntime({ daemonStartupTimeoutMs: 30 }))
       .rejects.toMatchObject({ code: 'session_storage_owned', retryable: true });
     expect(upgradeMocks.acquireProcessLease).not.toHaveBeenCalled();
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(15);
@@ -587,7 +587,7 @@ describe('product Host startup and passive connection', () => {
         return createLease(createCurrentTransport(calls, async () => undefined));
       });
     upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
-    const runtime = await ensureKodaXRuntime({ profile: PROFILE, onStartupProgress: (event) => { progress.push(event); } });
+    const runtime = await ensureKodaXRuntime({ onStartupProgress: (event) => { progress.push(event); } });
     expect(progress).toEqual([
       { stage: 'connecting' }, { stage: 'upgrading' },
       { stage: 'waiting', reason: 'host_stopping' }, { stage: 'connecting' }, { stage: 'ready' },
@@ -610,7 +610,7 @@ describe('product Host startup and passive connection', () => {
       throw new Error('sink failure');
     });
     try {
-      await expect(ensureKodaXRuntime({ profile: PROFILE,
+      await expect(ensureKodaXRuntime({
         homeDir: path.join('C:', 'kodax-upgrade-test'), daemonToken: 'private-token',
       })).rejects.toMatchObject({ code: 'daemon_capability_upgrade_required', capability: 'runtimeAutoModeGuardrail' });
       expect(diagnostics).toContainEqual(expect.objectContaining({ detail: {
@@ -636,7 +636,7 @@ describe('product Host startup and passive connection', () => {
         },
       }));
       upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
-      await expect(ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 500 }))
+      await expect(ensureKodaXRuntime({ daemonStartupTimeoutMs: 500 }))
         .rejects.toThrow('Host startup timed out before owner exit could be confirmed');
       expect(upgradeMocks.waitOwnerExit).not.toHaveBeenCalled();
       expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(1);
@@ -650,7 +650,7 @@ describe('product Host startup and passive connection', () => {
       .mockResolvedValueOnce(createLease(createLegacyTransport({ preflight: createPreflight(), calls, close: async () => undefined })))
       .mockResolvedValueOnce(createLease(createCurrentTransport(calls, async () => undefined)));
     upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
-    const runtime = await createKodaXRuntime({ mode: 'daemon', profile: PROFILE });
+    const runtime = await createKodaXRuntime({ mode: 'daemon' });
     expect(calls).toContain('old:runtime.shutdown');
     expect(upgradeMocks.waitOwnerExit).toHaveBeenCalledTimes(1);
     await runtime.close();
@@ -687,7 +687,7 @@ describe('product Host startup and passive connection', () => {
         return next.request(method, params);
       } }));
     upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
-    const runtime = await ensureKodaXRuntime({ profile: PROFILE, daemonLifecycle: request });
+    const runtime = await ensureKodaXRuntime({ daemonLifecycle: request });
     try {
       expect(calls.filter(call => call === 'old:runtime.shutdown')).toHaveLength(1);
       expect(upgradeMocks.acquireProcessLease.mock.calls[1]?.[0]).toMatchObject({
@@ -709,7 +709,7 @@ describe('product Host startup and passive connection', () => {
       })))
       .mockResolvedValueOnce(createLease(createCurrentTransport(calls, async () => undefined)));
     upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
-    const runtime = await ensureKodaXRuntime({ profile: PROFILE });
+    const runtime = await ensureKodaXRuntime({});
     try {
       expect(calls).toContain('old:runtime.shutdown');
       expect(upgradeMocks.waitOwnerExit).toHaveBeenCalledTimes(1);
@@ -728,7 +728,7 @@ describe('product Host startup and passive connection', () => {
       .mockResolvedValueOnce(createLease(idle))
       .mockResolvedValueOnce(createLease(createCurrentTransport(calls, async () => undefined)));
     upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
-    const runtime = await ensureKodaXRuntime({ profile: PROFILE });
+    const runtime = await ensureKodaXRuntime({});
     expect(calls.filter((call) => call === 'old:runtime.shutdown')).toHaveLength(1);
     await runtime.close();
   });
@@ -759,8 +759,8 @@ describe('product Host startup and passive connection', () => {
         return createLease(createCurrentTransport(calls, async () => undefined));
       });
     const runtimes = await Promise.all([
-      ensureKodaXRuntime({ profile: PROFILE }),
-      ensureKodaXRuntime({ profile: PROFILE }),
+      ensureKodaXRuntime({}),
+      ensureKodaXRuntime({}),
     ]);
     try {
       expect(runtimes.map(runtime => runtime.identity.runtimeId)).toEqual(['runtime_current', 'runtime_current']);
@@ -789,7 +789,7 @@ describe('product Host startup and passive connection', () => {
     try {
       const startedAt = Date.now();
       if (mode === 'cancel') setTimeout(() => controller.abort(), 25);
-      const pending = ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 500, daemonStartupSignal: controller.signal })
+      const pending = ensureKodaXRuntime({ daemonStartupTimeoutMs: 500, daemonStartupSignal: controller.signal })
         .then(() => { throw new Error('Unstable Host unexpectedly accepted'); }, error => ({ error: error as unknown, settledAt: Date.now() }));
       await vi.advanceTimersByTimeAsync(500);
       const outcome = await pending;
@@ -818,7 +818,7 @@ describe('product Host startup and passive connection', () => {
         },
       }))
       .mockResolvedValueOnce(createLease(createCurrentTransport(calls, async () => undefined)));
-    const runtime = await ensureKodaXRuntime({ profile: PROFILE });
+    const runtime = await ensureKodaXRuntime({});
     try {
       expect(runtime.identity.runtimeId).toBe('runtime_current');
       expect(calls).not.toContain('old:runtime.shutdown');
@@ -837,7 +837,7 @@ describe('product Host startup and passive connection', () => {
         return base.request(method, params);
       },
     }));
-    await expect(ensureKodaXRuntime({ profile: PROFILE })).rejects.toThrow('Corrupt canonical metadata');
+    await expect(ensureKodaXRuntime({})).rejects.toThrow('Corrupt canonical metadata');
     expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(1);
     expect(calls.filter(call => call === 'old:close')).toHaveLength(1);
     expect(calls).not.toContain('old:runtime.shutdown');
@@ -869,7 +869,7 @@ describe('product Host startup and passive connection', () => {
     });
     let runtime: Awaited<ReturnType<typeof ensureKodaXRuntime>> | undefined;
     try {
-      const pending = ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 5_000 })
+      const pending = ensureKodaXRuntime({ daemonStartupTimeoutMs: 5_000 })
         .then(value => { runtime = value; return { error: undefined }; }, error => ({ error: error as unknown }));
       await vi.advanceTimersByTimeAsync(7_000);
       expect((await pending).error).toBeUndefined();
@@ -885,7 +885,7 @@ describe('product Host startup and passive connection', () => {
       preflight: createPreflight(), calls, close: async () => undefined,
       runtimeVersion: KODAX_VERSION, capabilities: current.capabilities, build: undefined,
     })));
-    await expect(ensureKodaXRuntime({ profile: PROFILE })).rejects.toMatchObject({
+    await expect(ensureKodaXRuntime({})).rejects.toMatchObject({
       code: 'daemon_capability_upgrade_required',
     });
     expect(calls).not.toContain('old:runtime.shutdown');
@@ -907,7 +907,7 @@ describe('product Host startup and passive connection', () => {
     // A real lease carries the probe, so the decision runs before and after initialization.
     const probe = await foreignHost([]).request('initialize');
     upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(foreignHost(calls), probe));
-    const runtime = await ensureKodaXRuntime({ profile: PROFILE });
+    const runtime = await ensureKodaXRuntime({});
     try {
       expect(runtime.identity.runtimeId).toBe(RUNTIME_ID);
       expect(calls).toEqual(['old:initialize']);
@@ -937,7 +937,7 @@ describe('product Host startup and passive connection', () => {
     upgradeMocks.acquireProcessLease.mockResolvedValueOnce(busyHost()).mockResolvedValueOnce(busyHost())
       .mockRejectedValue(new Error('unexpected third attach'));
     upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
-    const runtime = await ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 5_000,
+    const runtime = await ensureKodaXRuntime({ daemonStartupTimeoutMs: 5_000,
       clientInfo: { name: 'space', instanceId: 'space_fixture' } });
     try {
       expect(runtime.identity.runtimeId).toBe(RUNTIME_ID);
@@ -954,7 +954,7 @@ describe('product Host startup and passive connection', () => {
   it('keeps passive clients compatible with a different build without replacing it', async () => {
     const calls: string[] = [];
     const current = await createCurrentTransport([], async () => undefined).request('initialize') as { capabilities: Record<string, unknown> };
-    const runtime = await connectKodaXRuntime({ profile: PROFILE, transport: createLegacyTransport({
+    const runtime = await connectKodaXRuntime({ transport: createLegacyTransport({
       preflight: createPreflight(), calls, close: async () => undefined, runtimeVersion: KODAX_VERSION,
       capabilities: current.capabilities, build: { ...LOCAL_RUNTIME_BUILD, fingerprint: '0'.repeat(64) },
     }) });
@@ -973,7 +973,7 @@ describe('product Host startup and passive connection', () => {
     upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
     upgradeMocks.readBuild.mockReturnValueOnce(LOCAL_RUNTIME_BUILD)
       .mockReturnValue({ ...LOCAL_RUNTIME_BUILD, fingerprint: 'b'.repeat(64) });
-    await expect(ensureKodaXRuntime({ profile: PROFILE })).rejects.toThrow('Restart the calling process');
+    await expect(ensureKodaXRuntime({})).rejects.toThrow('Restart the calling process');
     expect(calls).toContain('old:daemon.management.get');
     expect(calls).not.toContain('old:runtime.shutdown');
     expect(upgradeMocks.waitOwnerExit).not.toHaveBeenCalled();
@@ -991,11 +991,11 @@ describe('product Host startup and passive connection', () => {
       .mockResolvedValueOnce(createLease(createCurrentTransport(calls, async () => undefined)));
     if (mode === 'connect') {
       upgradeMocks.createSocketTransport.mockResolvedValue(conflicting);
-      await expect(connectKodaXRuntime({ profile: PROFILE })).rejects.toBe(conflict);
+      await expect(connectKodaXRuntime({})).rejects.toBe(conflict);
       expect(upgradeMocks.acquireProcessLease).not.toHaveBeenCalled();
       expect(upgradeMocks.createSocketTransport).toHaveBeenCalledTimes(1);
     } else {
-      const client = await ensureKodaXRuntime({ profile: PROFILE });
+      const client = await ensureKodaXRuntime({});
       expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(2);
       await client.close();
     }
@@ -1004,7 +1004,7 @@ describe('product Host startup and passive connection', () => {
 
   it('refuses an already loaded launcher after its installation changes', async () => {
     upgradeMocks.readBuild.mockReturnValue({ ...LOCAL_RUNTIME_BUILD, fingerprint: '0'.repeat(64) });
-    await expect(ensureKodaXRuntime({ profile: PROFILE })).rejects.toMatchObject({ capability: 'launcherBuild' });
+    await expect(ensureKodaXRuntime({})).rejects.toMatchObject({ capability: 'launcherBuild' });
     expect(upgradeMocks.acquireProcessLease).not.toHaveBeenCalled();
   });
 
@@ -1014,7 +1014,7 @@ describe('product Host startup and passive connection', () => {
       upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(createLegacyTransport({
         preflight: createPreflight({ blockers: [blocker], canStop: false }), calls, close: async () => undefined,
       })));
-      await expect(ensureKodaXRuntime({ profile: PROFILE })).rejects.toMatchObject({
+      await expect(ensureKodaXRuntime({})).rejects.toMatchObject({
         code: 'daemon_capability_upgrade_required', preflight: { blockers: [blocker] },
       });
       expect(calls).toEqual(['old:initialize', 'old:daemon.management.get', 'old:close']);
@@ -1038,7 +1038,7 @@ describe('product Host startup and passive connection', () => {
     })));
     try {
       const startedAt = Date.now();
-      const pending = ensureKodaXRuntime({ profile: PROFILE, daemonStartupTimeoutMs: 500,
+      const pending = ensureKodaXRuntime({ daemonStartupTimeoutMs: 500,
         onStartupProgress: (event) => { progress.push(event); }, })
         .then(() => { throw new Error('Busy Host unexpectedly accepted'); }, error => ({ error, settledAt: Date.now() }));
       await vi.advanceTimersByTimeAsync(500);
@@ -1066,7 +1066,7 @@ describe('product Host startup and passive connection', () => {
       close: async () => { setTimeout(() => controller.abort(), 25); },
     })));
     try {
-      const pending = ensureKodaXRuntime({ profile: PROFILE, daemonStartupSignal: controller.signal })
+      const pending = ensureKodaXRuntime({ daemonStartupSignal: controller.signal })
         .then(() => { throw new Error('Cancelled launcher unexpectedly accepted'); }, error => error as unknown);
       await vi.advanceTimersByTimeAsync(1000);
       expect(await pending).toMatchObject({ name: 'AbortError' });
@@ -1085,7 +1085,7 @@ describe('product Host startup and passive connection', () => {
         return { ...result, identity: { ...result.identity, version: OLDER_RUNTIME_VERSION } };
       },
     };
-    const runtime = await connectKodaXRuntime({ profile: PROFILE, transport });
+    const runtime = await connectKodaXRuntime({ transport });
     expect(runtime.identity.version).toBe(OLDER_RUNTIME_VERSION);
     expect(upgradeMocks.acquireProcessLease).not.toHaveBeenCalled();
     await runtime.close();
@@ -1094,7 +1094,7 @@ describe('product Host startup and passive connection', () => {
   it('rejects an incompatible passive connection without stopping its Host', async () => {
     const calls: string[] = [];
     const transport = createLegacyTransport({ preflight: createPreflight(), calls, close: async () => undefined });
-    await expect(connectKodaXRuntime({ profile: PROFILE, transport })).rejects.toMatchObject({ code: 'daemon_capability_upgrade_required' });
+    await expect(connectKodaXRuntime({ transport })).rejects.toMatchObject({ code: 'daemon_capability_upgrade_required' });
     expect(calls).toEqual(['old:initialize', 'old:close']);
   });
 
@@ -1104,7 +1104,7 @@ describe('product Host startup and passive connection', () => {
       upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(createLegacyTransport({
         preflight: createPreflight(), calls, close: async () => undefined, runtimeVersion,
       })));
-      await expect(ensureKodaXRuntime({ profile: PROFILE })).rejects.toMatchObject({ code: 'daemon_capability_upgrade_required' });
+      await expect(ensureKodaXRuntime({})).rejects.toMatchObject({ code: 'daemon_capability_upgrade_required' });
       expect(calls).not.toContain('old:runtime.shutdown');
       expect(upgradeMocks.waitOwnerExit).not.toHaveBeenCalled();
       expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(1);
@@ -1122,7 +1122,7 @@ describe('product Host startup and passive connection', () => {
         },
       };
       upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(transport));
-      const runtime = await ensureKodaXRuntime({ profile: PROFILE });
+      const runtime = await ensureKodaXRuntime({});
       expect(runtime.identity.version).toBe(version);
       expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(1);
       expect(upgradeMocks.waitOwnerExit).not.toHaveBeenCalled();
@@ -1135,7 +1135,7 @@ describe('product Host startup and passive connection', () => {
     upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(createLegacyTransport({
       preflight: createPreflight(), calls, close: async () => undefined, capabilities: {},
     })));
-    await expect(ensureKodaXRuntime({ profile: PROFILE })).rejects.toThrow('normal managed shutdown');
+    await expect(ensureKodaXRuntime({})).rejects.toThrow('normal managed shutdown');
     expect(calls).toEqual(['old:initialize', 'old:close']);
   });
 
@@ -1144,7 +1144,7 @@ describe('product Host startup and passive connection', () => {
       const calls: string[] = [];
       upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(createLegacyTransport({ preflight: createPreflight(), calls, close: async () => undefined })));
       upgradeMocks.readLockOwner.mockReturnValue(owner);
-      await expect(ensureKodaXRuntime({ profile: PROFILE })).rejects.toThrow('process identity');
+      await expect(ensureKodaXRuntime({})).rejects.toThrow('process identity');
       expect(calls).not.toContain('old:runtime.shutdown');
       expect(upgradeMocks.waitOwnerExit).not.toHaveBeenCalled();
     },
@@ -1155,7 +1155,7 @@ describe('product Host startup and passive connection', () => {
     upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(createLegacyTransport({ preflight: createPreflight(), calls, close: async () => undefined })));
     upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
     upgradeMocks.waitOwnerExit.mockRejectedValueOnce(new Error('Host is still running'));
-    await expect(ensureKodaXRuntime({ profile: PROFILE })).rejects.toThrow('still running');
+    await expect(ensureKodaXRuntime({})).rejects.toThrow('still running');
     expect(calls).toContain('old:runtime.shutdown');
     expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(1);
     expect(upgradeMocks.enableDaemonOwner).not.toHaveBeenCalled();
@@ -1173,7 +1173,7 @@ describe('product Host startup and passive connection', () => {
     };
     upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(transport));
     upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
-    await expect(ensureKodaXRuntime({ profile: PROFILE })).rejects.toThrow('Host became busy');
+    await expect(ensureKodaXRuntime({})).rejects.toThrow('Host became busy');
     expect(upgradeMocks.acquireProcessLease).toHaveBeenCalledTimes(1);
     expect(upgradeMocks.waitOwnerExit).not.toHaveBeenCalled();
   });

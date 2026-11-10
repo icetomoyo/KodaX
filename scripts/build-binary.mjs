@@ -308,7 +308,7 @@ async function verifyBundledProviderRuntime(binaryPath, smokeHome) {
     // explicitly — a best effort, since the last probe may have already
     // stopped it.
     try {
-      await runCapturedCommand(binaryPath, ['daemon', 'stop', '--profile', 'default'], {
+      await runCapturedCommand(binaryPath, ['daemon', 'stop'], {
         cwd: dirname(binaryPath),
         encoding: 'utf8',
         env: { ...process.env, KODAX_HOME: smokeHome, KODAX_TRACING: '0' },

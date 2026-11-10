@@ -84,6 +84,7 @@ import {
   isSameRuntimeDaemonPath,
   resolveRuntimeDaemonPaths,
   resolveRuntimeDaemonPathsFromConfigHome,
+  RUNTIME_HOST_SLOT,
   readRuntimeDaemonLogLines,
   writeRuntimeDaemonShutdownOutcome,
   type RuntimeDaemonHealth,
@@ -130,6 +131,7 @@ import {
   type CliOutputMode,
   type CliOptions,
   validateCliModeSelection,
+  removedHostProfileOption,
 } from './cli_option_helpers.js';
 import {
   consumeInternalSkillDispatchFlag,
@@ -762,7 +764,6 @@ async function getDaemonStartResult(input: {
   const cancellation = createDaemonStartupCancellation();
   try {
     const runtime = await ensureKodaXRuntime({
-      profile: requested.profile,
       // Omitted Home retains the existing KODAX_HOME override for the default location.
       homeDir: isSameRuntimeDaemonPath(input.configHome, path.join(input.homeDir, '.kodax')) ? input.homeDir : undefined,
       defaultProvider: input.provider,
@@ -2861,7 +2862,7 @@ export function configureKodaXDaemonCommand(program: Command): Command {
   daemonCommand
     .command('start')
     .description('Start the runtime daemon in a detached background process')
-    .option('--profile <name>', 'Daemon profile', 'default')
+    .addOption(removedHostProfileOption('kodax daemon start'))
     .option(
       '--home <dir>',
       HELP_DAEMON_HOME,
@@ -2878,7 +2879,6 @@ export function configureKodaXDaemonCommand(program: Command): Command {
     .action(
       async (
         localOptions: {
-          profile?: string;
           home?: string;
           provider?: string;
           model?: string;
@@ -2889,7 +2889,7 @@ export function configureKodaXDaemonCommand(program: Command): Command {
       ) => {
         const options = mergeCommandOptionsWithGlobals(localOptions, command);
         await startDaemonCommand({
-          profile: options.profile ?? 'default',
+          profile: RUNTIME_HOST_SLOT,
           ...resolveCliRuntimeDaemonLocation(options.home),
           provider: options.provider,
           model: options.model,
@@ -2902,7 +2902,7 @@ export function configureKodaXDaemonCommand(program: Command): Command {
   daemonCommand
     .command('stop')
     .description('Stop a healthy runtime daemon')
-    .option('--profile <name>', 'Daemon profile', 'default')
+    .addOption(removedHostProfileOption('kodax daemon stop'))
     .option(
       '--home <dir>',
       HELP_DAEMON_HOME,
@@ -2920,14 +2920,13 @@ export function configureKodaXDaemonCommand(program: Command): Command {
     .option('--json', 'Output machine-readable JSON')
     .action(
       async (subOpts: {
-        profile?: string;
         home?: string;
         timeoutMs?: number;
         force?: boolean;
         json?: boolean;
       }) => {
         await stopDaemonCommand({
-          profile: subOpts.profile ?? 'default',
+          profile: RUNTIME_HOST_SLOT,
           ...resolveCliRuntimeDaemonLocation(subOpts.home),
           timeoutMs: subOpts.timeoutMs ?? 5_000,
           force: subOpts.force === true,
@@ -2939,7 +2938,7 @@ export function configureKodaXDaemonCommand(program: Command): Command {
   daemonCommand
     .command('restart')
     .description('Restart the runtime daemon')
-    .option('--profile <name>', 'Daemon profile', 'default')
+    .addOption(removedHostProfileOption('kodax daemon restart'))
     .option(
       '--home <dir>',
       HELP_DAEMON_HOME,
@@ -2956,7 +2955,6 @@ export function configureKodaXDaemonCommand(program: Command): Command {
     .action(
       async (
         localOptions: {
-          profile?: string;
           home?: string;
           provider?: string;
           model?: string;
@@ -2967,7 +2965,7 @@ export function configureKodaXDaemonCommand(program: Command): Command {
       ) => {
         const options = mergeCommandOptionsWithGlobals(localOptions, command);
         await restartDaemonCommand({
-          profile: options.profile ?? 'default',
+          profile: RUNTIME_HOST_SLOT,
           ...resolveCliRuntimeDaemonLocation(options.home),
           provider: options.provider,
           model: options.model,
@@ -2980,7 +2978,7 @@ export function configureKodaXDaemonCommand(program: Command): Command {
   daemonCommand
     .command('logs')
     .description('Print the daemon log path and recent lines')
-    .option('--profile <name>', 'Daemon profile', 'default')
+    .addOption(removedHostProfileOption('kodax daemon logs'))
     .option(
       '--home <dir>',
       HELP_DAEMON_HOME,
@@ -2994,13 +2992,12 @@ export function configureKodaXDaemonCommand(program: Command): Command {
     .option('--json', 'Output machine-readable JSON')
     .action(
       async (subOpts: {
-        profile?: string;
         home?: string;
         lines?: number;
         json?: boolean;
       }) => {
         await printDaemonLogs({
-          profile: subOpts.profile ?? 'default',
+          profile: RUNTIME_HOST_SLOT,
           ...resolveCliRuntimeDaemonLocation(subOpts.home),
           lines: subOpts.lines ?? 80,
           json: subOpts.json === true,
@@ -3011,7 +3008,7 @@ export function configureKodaXDaemonCommand(program: Command): Command {
   daemonCommand
     .command('serve')
     .description('Run the runtime daemon host in the foreground')
-    .option('--profile <name>', 'Daemon profile', 'default')
+    .addOption(removedHostProfileOption('kodax daemon serve'))
     .option(
       '--home <dir>',
       HELP_DAEMON_HOME,
@@ -3038,7 +3035,6 @@ export function configureKodaXDaemonCommand(program: Command): Command {
     .action(
       async (
         localOptions: {
-          profile?: string;
           home?: string;
           provider?: string;
           model?: string;
@@ -3052,7 +3048,7 @@ export function configureKodaXDaemonCommand(program: Command): Command {
       ) => {
         const options = mergeCommandOptionsWithGlobals(localOptions, command);
         await serveDaemonCommand({
-          profile: options.profile ?? 'default',
+          profile: RUNTIME_HOST_SLOT,
           ...resolveCliRuntimeDaemonLocation(options.home, options.configHome),
           provider: options.provider,
           model: options.model,
@@ -3067,16 +3063,16 @@ export function configureKodaXDaemonCommand(program: Command): Command {
   daemonCommand
     .command('status')
     .description('Inspect daemon state and endpoint health')
-    .option('--profile <name>', 'Daemon profile', 'default')
+    .addOption(removedHostProfileOption('kodax daemon status'))
     .option(
       '--home <dir>',
       HELP_DAEMON_HOME,
     )
     .option('--json', 'Output machine-readable JSON')
     .action(
-      async (subOpts: { profile?: string; home?: string; json?: boolean }) => {
+      async (subOpts: { home?: string; json?: boolean }) => {
         await printDaemonStatus({
-          profile: subOpts.profile ?? 'default',
+          profile: RUNTIME_HOST_SLOT,
           ...resolveCliRuntimeDaemonLocation(subOpts.home),
           json: subOpts.json === true,
         });
@@ -3352,7 +3348,7 @@ async function runCliMain(startupProgress?: CliStartupProgress) {
   configureLazyIntegrationCommands(program, {
     version,
     serveDaemonHost: (input) => serveDaemonCommand({
-      profile: input.profile,
+      profile: RUNTIME_HOST_SLOT,
       ...resolveCliRuntimeDaemonLocation(input.homeDir, KODAX_DIR),
       provider: input.provider,
       model: input.model,
@@ -4427,7 +4423,6 @@ complete -c kodax -l version -d 'Show version'`);
     // the A2A plane; embedded construction remains a low-level SDK path
     // and is never a product fallback.
     cliRuntime = await ensureRecoveringKodaXRuntime({
-      profile: 'default',
       daemonLifecycle: 'interactive',
       requirements: { productClient: 1, sessionDrafts: 1, productExecutionAuthorization: 2, productActorAuthorization: 1, providerProbeAuthorization: 1, providerCredentialConnectionBinding: 1 },
       onStartupProgress: startupProgress === undefined ? undefined

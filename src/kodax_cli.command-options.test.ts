@@ -59,7 +59,8 @@ describe('KodaX root/subcommand option ownership', () => {
     expect(action).not.toHaveBeenCalled();
     expect(result).toMatchObject({ exitCode: 0 });
     expect(output).toContain('Usage: kodax daemon start');
-    expect(output).toContain('--profile');
+    expect(output).toContain('--home');
+    expect(output).not.toContain('--profile');
   });
 
   const daemonNames = ['start', 'stop', 'restart', 'logs', 'serve', 'status'] as const;
@@ -67,7 +68,7 @@ describe('KodaX root/subcommand option ownership', () => {
     { name, args: ['daemon', name, '--help'] },
     { name, args: ['daemon', name, '-h'] },
     { name, args: ['--provider', 'root-provider', 'daemon', name, '--help'] },
-    { name, args: ['daemon', name, '--home', '/help-only', '--profile', 'help-only', '-h'] },
+    { name, args: ['daemon', name, '--home', '/help-only', '-h'] },
     { name, args: ['daemon', name, '--help=topic'] },
     { name, args: ['daemon', name, '--help='] },
     { name, args: ['daemon', name, '-yh'] },
@@ -108,9 +109,25 @@ describe('KodaX root/subcommand option ownership', () => {
     const daemon = configureKodaXDaemonCommand(program);
     const action = vi.fn();
     for (const command of daemon.commands) command.action(action);
-    await program.parseAsync(['node', 'kodax', 'daemon', name, '--profile=--help', '--home=/help-only']);
+    await program.parseAsync(['node', 'kodax', 'daemon', name, '--home=--help']);
     expect(action).toHaveBeenCalledTimes(1);
-    expect(action.mock.calls[0]![0]).toMatchObject({ profile: '--help', home: '/help-only' });
+    expect(action.mock.calls[0]![0]).toMatchObject({ home: '--help' });
+  });
+
+  it.each(daemonNames)('rejects the removed daemon %s --profile with migration guidance (FEATURE_305)', async name => {
+    let output = '';
+    const program = configureKodaXRootCommand(new Command().name('kodax').exitOverride()
+      .configureOutput({ writeOut: text => { output += text; }, writeErr: text => { output += text; } }));
+    const daemon = configureKodaXDaemonCommand(program);
+    const action = vi.fn();
+    for (const command of daemon.commands) command.action(action);
+    const result = await program.parseAsync(['node', 'kodax', 'daemon', name, '--profile', 'coder'])
+      .then(() => undefined, (error: unknown) => error);
+    expect(action).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ code: 'commander.invalidArgument', exitCode: 1 });
+    expect(output).toContain('no longer accepts --profile');
+    expect(output).toContain('--home or KODAX_HOME');
+    expect(output).toContain('docs/SDK_MIGRATION.md');
   });
 
   it('does not interpret a literal help argument after -- as a help option', async () => {

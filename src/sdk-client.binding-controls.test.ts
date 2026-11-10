@@ -17,7 +17,6 @@ function gate() {
 async function bindingFixture() {
   const homeDir = await mkdtemp(path.join(await realpath(os.tmpdir()), 'kodax-binding-controls-'));
   const configHome = path.join(homeDir, '.kodax');
-  const profile = 'controls';
   const requests: string[] = [];
   const resolutions: RuntimeExecutionBindingRequest[] = [];
   const selection = { defaultSkill: 'default-method' };
@@ -45,7 +44,7 @@ async function bindingFixture() {
   let bindingId: string | undefined;
   let original: ResolvedAuthorization | undefined;
   let revokeBinding: (() => Promise<boolean>) | undefined;
-  const client = await ensureKodaXClient({ homeDir, profile,
+  const client = await ensureKodaXClient({ homeDir,
     clientInfo: { name: 'Binding controls', instanceId: 'binding-controls', instanceSecret: 'b'.repeat(64) },
     async authorizeExecution(_request, services) {
       bindingId ??= (await services.executionBindings.register(async (input, scoped) => {
@@ -64,17 +63,17 @@ async function bindingFixture() {
   });
   const session = await client.sessions.create({ projectPath: homeDir, surface: 'partner' });
   await client.sessions.updateSettings(session.id, { provider: 'controls-fixture', model: 'fixture', workMode: 'agent', agentMode: 'ama', permissionMode: 'full-access' });
-  return { client, session, requests, resolutions, selection, behavior, firstRequest, homeDir, profile, configHome,
+  return { client, session, requests, resolutions, selection, behavior, firstRequest, homeDir, configHome,
     get authorization() { if (!original) throw new Error('Run authority was not resolved.'); return original; },
     async revokeBinding() { if (!revokeBinding) throw new Error('Binding was not registered.'); return revokeBinding(); },
     gate() { const pending = gate(); releases.push(pending.release); return pending; },
     holdNextResponse() { const pending = gate(); responseGates[requests.length] = pending; releases.push(pending.release); return pending; },
     async close() {
       for (const release of releases) release();
-      const owner = getKodaXRuntimeOwnerState({ homeDir, profile }).owner;
+      const owner = getKodaXRuntimeOwnerState({ homeDir }).owner;
       await client.lifecycle.requestExit({ requestId: 'fixture-close', shutdownHost: true });
       await client.disconnect();
-      if (owner) expect((await waitForRuntimeDaemonShutdown({ configHome, profile, owner })).status).toBe('succeeded');
+      if (owner) expect((await waitForRuntimeDaemonShutdown({ configHome, owner })).status).toBe('succeeded');
       wire.closeAllConnections();
       await new Promise<void>((resolve, reject) => wire.close(error => error ? reject(error) : resolve()));
       await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
@@ -106,7 +105,7 @@ it('resolves steer bindings before comparing authority and rejects replacements 
     const resolvedCount = resolutions.length;
     await expect(client.inputs.submit({ ...steer, inputId: 'wrong-target', targetRunId: 'run_missing' })).rejects.toMatchObject({ code: 'conflict' });
     expect(resolutions).toHaveLength(resolvedCount);
-    const foreign = await ensureKodaXClient({ homeDir: fixture.homeDir, profile: fixture.profile,
+    const foreign = await ensureKodaXClient({ homeDir: fixture.homeDir,
       clientInfo: { name: 'Foreign controls', instanceId: 'foreign-controls', instanceSecret: 'f'.repeat(64) },
       authorizeExecution: async () => fixture.authorization });
     try {

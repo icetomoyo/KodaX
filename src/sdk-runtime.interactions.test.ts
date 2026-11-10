@@ -351,7 +351,7 @@ describe("handleRuntimePermissionRequest", () => {
 
 describe("Runtime user-input timeout validation", () => {
   it("rejects invalid values before embedded or daemon startup", async () => {
-    const modes: readonly NonNullable<Parameters<typeof createKodaXRuntime>[0]>[] = [
+    const modes: readonly object[] = [
       {},
       { mode: "daemon", autoStartDaemon: false },
     ];
@@ -362,14 +362,16 @@ describe("Runtime user-input timeout validation", () => {
       Number.POSITIVE_INFINITY,
       2_147_483_648,
     ];
+    // A union of embedded and daemon options matches no single fixture overload.
+    const create = createKodaXRuntime as (input: object) => Promise<unknown>;
     for (const mode of modes) {
       for (const timeoutMs of invalidTimeouts) {
-        await expect(createKodaXRuntime({
+        await expect(create({
           ...mode,
           userInputTimeoutMs: timeoutMs,
         })).rejects.toThrow("userInputTimeoutMs must be a non-negative integer no greater than 2147483647.");
         if (timeoutMs !== 0) {
-          await expect(createKodaXRuntime({
+          await expect(create({
             ...mode,
             permissionTimeoutMs: timeoutMs,
           })).rejects.toThrow("permissionTimeoutMs must be a non-negative integer no greater than 2147483647.");

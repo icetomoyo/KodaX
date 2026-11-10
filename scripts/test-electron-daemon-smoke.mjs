@@ -24,7 +24,6 @@ const programDataDir = path.resolve(
 const homeDir = process.env.KODAX_ELECTRON_SMOKE_HOME
   ?? path.join(temporaryRoot, 'home');
 const externalHomeDir = process.env.KODAX_ELECTRON_SMOKE_HOME !== undefined;
-const profile = `electron-smoke-${process.pid}-${Date.now()}`;
 const ordinaryQueryCount = 20;
 let electronProcess;
 let electronSpawnError;
@@ -500,7 +499,6 @@ function startElectron(executable, files) {
       ProgramData: programDataDir,
       KODAX_HOME: path.join(homeDir, '.kodax'),
       KODAX_SMOKE_HOME: homeDir,
-      KODAX_SMOKE_PROFILE: profile,
       KODAX_SMOKE_RESULT: files.resultFile,
       KODAX_SMOKE_DETACH: files.detachFile,
       KODAX_SMOKE_GUI_COUNT: files.guiCountFile,
@@ -541,7 +539,6 @@ async function verifyAttachDetachAndOwnerFence(
 ) {
   const attached = await sdk.connectKodaXRuntime({
     homeDir,
-    profile,
     autoStart: false,
     clientInfo: { name: 'node-smoke', instanceId: 'node-smoke' },
     requirements: { daemonManagement: 1 },
@@ -553,10 +550,10 @@ async function verifyAttachDetachAndOwnerFence(
   await waitForExit(electronProcess, 15_000);
   assert.equal((await readFile(guiCountFile, 'utf8')).trim().split(/\r?\n/).length, 1);
 
-  const management = await sdk.connectKodaXRuntime({ homeDir, profile, autoStart: false, requirements: { daemonManagement: 1 } });
+  const management = await sdk.connectKodaXRuntime({ homeDir, autoStart: false, requirements: { daemonManagement: 1 } });
   assert.equal(management.identity.runtimeId, runtimeId, 'Electron close must detach without stopping the daemon.');
   await waitForClientCount(management, 1);
-  const owner = sdk.getKodaXRuntimeOwnerState({ homeDir, profile }).owner;
+  const owner = sdk.getKodaXRuntimeOwnerState({ homeDir }).owner;
   assert.equal(owner?.runtimeId, runtimeId);
   await management.daemon.shutdown();
   await management.close();
@@ -589,7 +586,7 @@ async function verifyAttachDetachAndOwnerFence(
   assert.equal(restartResult.environmentProof?.shellProbeExitCode, 0);
   assert.equal(restartResult.environmentProof?.shellProbe, 'shell-probe-ok');
 
-  const restarted = await sdk.connectKodaXRuntime({ homeDir, profile, autoStart: false, requirements: { daemonManagement: 1 } });
+  const restarted = await sdk.connectKodaXRuntime({ homeDir, autoStart: false, requirements: { daemonManagement: 1 } });
   assert.equal(restarted.identity.runtimeId, restartResult.runtimeId);
   await waitForClientCount(restarted, 2);
   await restarted.close();
@@ -597,9 +594,9 @@ async function verifyAttachDetachAndOwnerFence(
   await waitForExit(electronProcess, 15_000);
   assert.equal((await readFile(guiCountFile, 'utf8')).trim().split(/\r?\n/).length, 2);
 
-  const restartManagement = await sdk.connectKodaXRuntime({ homeDir, profile, autoStart: false, requirements: { daemonManagement: 1 } });
+  const restartManagement = await sdk.connectKodaXRuntime({ homeDir, autoStart: false, requirements: { daemonManagement: 1 } });
   await waitForClientCount(restartManagement, 1);
-  const restartedOwner = sdk.getKodaXRuntimeOwnerState({ homeDir, profile }).owner;
+  const restartedOwner = sdk.getKodaXRuntimeOwnerState({ homeDir }).owner;
   assert.equal(restartedOwner?.runtimeId, restartResult.runtimeId);
   await restartManagement.daemon.shutdown();
   await restartManagement.close();
@@ -625,10 +622,10 @@ async function waitForClientCount(runtime, expected) {
 async function verifyDaemonOwnerReleased(sdk, owner) {
   assert.ok(owner, 'The exact Runtime owner must be captured before shutdown.');
   const result = await sdk.waitForRuntimeDaemonShutdown({
-    configHome: path.join(homeDir, '.kodax'), profile, owner, timeoutMs: 300_000,
+    configHome: path.join(homeDir, '.kodax'), owner, timeoutMs: 300_000,
   });
   assert.equal(result.status, 'succeeded', 'The exact packaged Host and its Job must exit.');
-  const state = sdk.getKodaXRuntimeOwnerState({ homeDir, profile });
+  const state = sdk.getKodaXRuntimeOwnerState({ homeDir });
   assert.equal(state.ownerStatus, 'unowned');
   assert.equal(state.policy.mode, 'daemon', 'Unified Host policy must survive shutdown without an owner-mode mutation.');
 }
@@ -732,7 +729,7 @@ async function stopDaemonBestEffort() {
   const cli = path.join(repoRoot, 'dist', 'kodax_cli.js');
   if (!existsSync(cli)) return;
   try {
-    await run(process.execPath, [cli, 'daemon', 'stop', '--home', homeDir, '--profile', profile, '--timeout-ms', '3000', '--json'], repoRoot, 10_000);
+    await run(process.execPath, [cli, 'daemon', 'stop', '--home', homeDir, '--timeout-ms', '3000', '--json'], repoRoot, 10_000);
   } catch (error) {
     process.stderr.write(`[electron-daemon-smoke] cleanup warning: ${String(error)}\n`);
   }

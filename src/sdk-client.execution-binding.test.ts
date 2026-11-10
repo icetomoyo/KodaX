@@ -40,8 +40,7 @@ it('resolves the last committed expert at actual queued consumption without adop
   let bindingId: string | undefined;
   let credentialId: string | undefined;
   let useDefault = true;
-  const profile = 'binding';
-  const client = await ensureKodaXClient({ homeDir, profile, async authorizeExecution(_request, services) {
+  const client = await ensureKodaXClient({ homeDir, async authorizeExecution(_request, services) {
     bindingId ??= (await services.executionBindings.register(async (request, scoped) => {
       if (request.input?.inputId === 'denied-sixth') throw new Error('Expert was disabled before consumption.');
       resolutions.push(`${request.phase}:${committed.id}`);
@@ -120,9 +119,9 @@ it('resolves the last committed expert at actual queued consumption without adop
       if (input?.runId) await client.runs.await(input.runId);
       else if (input?.state === 'queued') await client.inputs.withdraw(sessionId, inputId);
     }
-    const owner = getKodaXRuntimeOwnerState({ homeDir, profile }).owner;
+    const owner = getKodaXRuntimeOwnerState({ homeDir }).owner;
     await client.host.shutdown(); await client.disconnect();
-    if (owner) expect(await waitForRuntimeDaemonShutdown({ configHome, profile, owner })).toMatchObject({ status: 'succeeded' });
+    if (owner) expect(await waitForRuntimeDaemonShutdown({ configHome, owner })).toMatchObject({ status: 'succeeded' });
     await new Promise<void>((resolve, reject) => wire.close(error => error ? reject(error) : resolve()));
     await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }

@@ -31,13 +31,12 @@ class SettingsTestProvider extends KodaXBaseProvider {
 
 it('applies Session settings to the next actual request without changing another Session or saved defaults', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-settings-'));
-  const profile = 'settings-contract';
   const requestedModels: (string | undefined)[] = [];
   registerModelProvider('product-settings-test', () => new SettingsTestProvider(requestedModels));
   vi.stubEnv('KODAX_PRODUCT_SETTINGS_TEST_KEY', 'test-only');
-  const runtime = await createKodaXRuntime({ homeDir, profile, sharedDaemonHost: true });
+  const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
   try {
-    const paths = resolveRuntimeDaemonPaths(homeDir, profile);
+    const paths = resolveRuntimeDaemonPaths(homeDir);
     const lock = tryAcquireRuntimeDaemonLock(paths, {
       runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
     });
@@ -47,7 +46,7 @@ it('applies Session settings to the next actual request without changing another
       : { kind: 'unix' as const, path: path.join(homeDir, 'host.sock') };
     const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
     try {
-      const client = await connectKodaXClient({ homeDir, profile, endpoint: endpoint.path });
+      const client = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
       try {
         const first = await client.sessions.create({ title: 'First', projectPath: homeDir });
         const second = await client.sessions.create({ title: 'Second', projectPath: homeDir });

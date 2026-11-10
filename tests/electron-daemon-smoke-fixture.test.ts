@@ -127,7 +127,6 @@ function generateExtension(
         env: {
           ...process.env,
           KODAX_SMOKE_HOME: temporaryRoot,
-          KODAX_SMOKE_PROFILE: 'fixture',
           KODAX_SMOKE_RESULT: path.join(temporaryRoot, 'result.json'),
           KODAX_SMOKE_DETACH: path.join(temporaryRoot, 'detach'),
           KODAX_SMOKE_GUI_COUNT: path.join(temporaryRoot, 'gui-count'),

@@ -45,50 +45,49 @@ import {
 } from './runtime-daemon/state.js';
 import { createRuntimeDaemonSocketClientTransport } from './runtime-daemon/transport.js';
 
-it('cuts over requested legacy profiles when reusing a real Host and preserves a live requested owner', async () => {
-  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-profile-cutover-'));
-  const hostPaths = resolveRuntimeDaemonPaths(homeDir, 'host-a');
-  const legacy = resolveRuntimeDaemonPaths(homeDir, 'legacy-b');
-  const protectedPaths = resolveRuntimeDaemonPaths(homeDir, 'protected-b');
-  updateRuntimeOwnerPolicy(legacy, 'inline', 0);
-  updateRuntimeOwnerPolicy(protectedPaths, 'inline', 0);
-  const protectedOwner = tryAcquireRuntimeDaemonLock(protectedPaths, {
-    runtimeId: 'live-old-inline', pid: process.pid, createdAt: new Date().toISOString(), kind: 'inline',
-  });
+it('reuses the canonical Host for every launcher and cuts its slot over to the shared Host', async () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-host-reuse-'));
+  const hostPaths = resolveRuntimeDaemonPaths(homeDir);
+  updateRuntimeOwnerPolicy(hostPaths, 'inline', 0);
   const clients: Awaited<ReturnType<typeof ensureKodaXRuntime>>[] = [];
   try {
-    const first = await ensureKodaXRuntime({ homeDir, profile: 'host-a', daemonStartupTimeoutMs: 60_000 });
-    clients.push(first);
-    const canonical = await ensureKodaXRuntime({ homeDir, profile: ' host-a ', daemonStartupTimeoutMs: 60_000 });
-    clients.push(canonical);
-    expect(canonical.identity.runtimeId).toBe(first.identity.runtimeId);
-    const second = await ensureKodaXRuntime({ homeDir, profile: 'legacy-b', daemonStartupTimeoutMs: 60_000 });
-    clients.push(second);
-    expect(second.identity.runtimeId).toBe(first.identity.runtimeId);
-    expect(readRuntimeOwnerPolicy(legacy)).toMatchObject({ unified: true, revision: 2 });
-    const repeated = await ensureKodaXRuntime({ homeDir, profile: 'legacy-b', daemonStartupTimeoutMs: 60_000 });
-    clients.push(repeated);
-    expect(repeated.identity.runtimeId).toBe(first.identity.runtimeId);
-    expect(readRuntimeOwnerPolicy(legacy).revision).toBe(2);
-    await expect(ensureKodaXRuntime({ homeDir, profile: 'protected-b', daemonStartupTimeoutMs: 60_000 }))
-      .rejects.toThrow(/owner.*active|liveness/i);
-    expect(readRuntimeOwnerPolicy(protectedPaths)).toMatchObject({ mode: 'inline', revision: 1 });
+    for (let launch = 0; launch < 3; launch += 1) {
+      clients.push(await ensureKodaXRuntime({ homeDir, daemonStartupTimeoutMs: 60_000 }));
+    }
+    expect(new Set(clients.map(client => client.identity.runtimeId)).size).toBe(1);
+    expect(clients[0]!.identity.profile).toBe('default');
+    expect(readRuntimeOwnerPolicy(hostPaths)).toMatchObject({ unified: true });
     expect((await observeRuntimeDaemonHealth(hostPaths)).identityMatches).toBe(true);
-    expect(readRuntimeDaemonLockOwner(hostPaths.lockFile)?.runtimeId).toBe(first.identity.runtimeId);
+    expect(readRuntimeDaemonLockOwner(hostPaths.lockFile)?.runtimeId).toBe(clients[0]!.identity.runtimeId);
   } finally {
     await Promise.all(clients.map(client => client.close()));
-    if (protectedOwner) releaseRuntimeDaemonLock(protectedOwner);
     await stopHost(hostPaths);
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  }
+}, 120_000);
+
+it('preserves a live old inline owner of the canonical slot', async () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-host-inline-owner-'));
+  const paths = resolveRuntimeDaemonPaths(homeDir);
+  updateRuntimeOwnerPolicy(paths, 'inline', 0);
+  const owner = tryAcquireRuntimeDaemonLock(paths, {
+    runtimeId: 'live-old-inline', pid: process.pid, createdAt: new Date().toISOString(), kind: 'inline',
+  });
+  try {
+    await expect(ensureKodaXRuntime({ homeDir, daemonStartupTimeoutMs: 60_000 }))
+      .rejects.toThrow(/owner.*active|liveness/i);
+    expect(readRuntimeOwnerPolicy(paths)).toMatchObject({ mode: 'inline', revision: 1 });
+  } finally {
+    if (owner) releaseRuntimeDaemonLock(owner);
     fs.rmSync(homeDir, { recursive: true, force: true });
   }
 }, 120_000);
 
 it('concurrent launchers refresh a real idle older Host and keep its saved Session available', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-host-refresh-'));
-  const profile = 'refresh';
-  const paths = resolveRuntimeDaemonPaths(homeDir, profile);
+  const paths = resolveRuntimeDaemonPaths(homeDir);
   const child = spawn(process.execPath, ['--import', 'tsx', 'src/kodax_cli.ts', 'daemon', 'serve',
-    '--home', homeDir, '--config-home', paths.configHome, '--profile', profile,
+    '--home', homeDir, '--config-home', paths.configHome,
   ], {
     windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, KODAX_HOME: paths.configHome, KODAX_VERSION: '0.0.1', KODAX_INTERNAL_DAEMON_TEST_PARENT_PID: String(process.pid) },
@@ -107,12 +106,12 @@ it('concurrent launchers refresh a real idle older Host and keep its saved Sessi
     await waitForHost(paths, () => {
       if (child.exitCode !== null || child.signalCode !== null) throw new Error(`Old Host startup failed: ${output}`);
     });
-    const old = await connectKodaXRuntime({ homeDir, profile });
+    const old = await connectKodaXRuntime({ homeDir });
     const oldId = old.identity.runtimeId;
     const saved = await old.sessions.create({ title: 'Keep across Host refresh' });
     await old.close();
     contention.enabled = true;
-    const startup = { homeDir, profile, daemonStartupTimeoutMs: 60_000, daemonStartupSignal: cancellation.signal };
+    const startup = { homeDir, daemonStartupTimeoutMs: 60_000, daemonStartupSignal: cancellation.signal };
     pending.push(ensureKodaXRuntime(startup));
     await Promise.race([inspected, pending[0]!.then(() => { throw new Error('Launcher skipped the held inspection'); })]);
     const queued = new Promise<string>(resolve => {

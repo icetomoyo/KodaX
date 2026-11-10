@@ -56,7 +56,7 @@ import {
   type A2AOutboundAgentConfig,
   type A2AServerConfig,
 } from "./a2a/index.js";
-import { mergeCommandOptionsWithGlobals } from "./cli_option_helpers.js";
+import { mergeCommandOptionsWithGlobals, removedHostProfileOption } from "./cli_option_helpers.js";
 import { connectKodaXRuntime } from "./sdk-runtime.js";
 import {
   isRuntimeDaemonPidAlive,
@@ -151,7 +151,6 @@ async function assertA2AConfigOwnerCompatible(
     }
     try {
       const runtime = await connectKodaXRuntime({
-        profile,
         endpoint: state.endpoint,
         daemonToken: readRuntimeDaemonToken(paths),
         autoStart: false,
@@ -910,7 +909,6 @@ function configureA2AExpose(command: Command, version: string): void {
 async function serveA2A(options: {
   readonly hostname: string;
   readonly port: number;
-  readonly profile: string;
   readonly home?: string;
   readonly provider?: string;
   readonly model?: string;
@@ -950,7 +948,6 @@ async function serveA2A(options: {
       `A2A serving is Host-owned on ${displayHost}:${options.port}; config changes to serving need a Host restart.`,
     );
     await options.serveDaemonHost({
-      profile: options.profile,
       homeDir: options.home,
       provider: options.provider,
       model: options.model,
@@ -1256,7 +1253,7 @@ function configureA2ACommands(
     .command("serve")
     .option("--host <hostname>", "Loopback hostname", "127.0.0.1")
     .option("--port <port>", "Non-zero listener port", parsePort, 8765)
-    .option("--profile <name>", "Runtime profile", "a2a-server")
+    .addOption(removedHostProfileOption("kodax a2a serve"))
     .option("--home <dir>", "Runtime home directory")
     .option("--provider <name>", "Default provider")
     .option("--model <name>", "Default model")
@@ -1265,7 +1262,6 @@ function configureA2ACommands(
         localOptions: {
           host: string;
           port: number;
-          profile: string;
           home?: string;
           provider?: string;
           model?: string;
@@ -1276,7 +1272,6 @@ function configureA2ACommands(
         return serveA2A({
           hostname: options.host,
           port: options.port,
-          profile: options.profile,
           home: options.home,
           provider: options.provider,
           model: options.model,
@@ -1313,7 +1308,6 @@ function configureSandboxCommands(program: Command, root?: Command): void {
 }
 
 export interface A2AServeDelegateInput {
-  readonly profile: string;
   readonly homeDir?: string;
   readonly provider?: string;
   readonly model?: string;

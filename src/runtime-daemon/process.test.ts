@@ -172,7 +172,6 @@ describe("runtime daemon child process environment", () => {
   it("passes Space orphan recovery only to the newly spawned daemon", () => {
     const args = buildRuntimeDaemonServeArgs(
       {
-        profile: "coder",
         homeDir: "runtime-home",
         configHome: "runtime-config",
         orphanExitMs: 30_000,
@@ -184,8 +183,6 @@ describe("runtime daemon child process environment", () => {
     expect(args).toEqual([
       "daemon",
       "serve",
-      "--profile",
-      "coder",
       "--home",
       "runtime-home",
       "--config-home",
@@ -198,7 +195,6 @@ describe("runtime daemon child process environment", () => {
   it("passes independent interaction deadlines to a newly spawned daemon", () => {
     const args = buildRuntimeDaemonServeArgs(
       {
-        profile: "coder",
         homeDir: "runtime-home",
         configHome: "runtime-config",
         permissionTimeoutMs: 300_000,
@@ -211,8 +207,6 @@ describe("runtime daemon child process environment", () => {
     expect(args).toEqual([
       "daemon",
       "serve",
-      "--profile",
-      "coder",
       "--home",
       "runtime-home",
       "--config-home",

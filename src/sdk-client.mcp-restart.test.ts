@@ -44,12 +44,11 @@ it('rebuilds per-Session MCP resources across a Host restart and drops removed s
   const results: string[] = [];
   registerModelProvider('product-mcp-restart-test', () => new McpRestartProvider(fixture.toolId, results));
   vi.stubEnv('KODAX_PRODUCT_MCP_RESTART_TEST_KEY', 'test-only');
-  const profile = 'mcp-restart';
   const privateConfig = { private: fixture.servers[fixture.serverId]! };
 
   const boot = async () => {
-    const runtime = await createKodaXRuntime({ homeDir, profile, sharedDaemonHost: true });
-    const paths = resolveRuntimeDaemonPaths(homeDir, profile);
+    const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
+    const paths = resolveRuntimeDaemonPaths(homeDir);
     const lock = tryAcquireRuntimeDaemonLock(paths, {
       runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
     });
@@ -61,7 +60,7 @@ it('rebuilds per-Session MCP resources across a Host restart and drops removed s
       ? { kind: 'pipe' as const, path: endpointPath }
       : { kind: 'unix' as const, path: endpointPath };
     const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
-    const client = await connectKodaXClient({ homeDir, profile, endpoint: endpointPath });
+    const client = await connectKodaXClient({ homeDir, endpoint: endpointPath });
     return { runtime, host, client };
   };
 

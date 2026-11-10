@@ -67,8 +67,8 @@ export async function verifyExitReceipt(paths: RuntimeDaemonPaths, receipt: Clie
       receipt.cleanup.state === 'pending' ? 'client_cleanup_pending' : 'client_cleanup_unknown', 'retry_exit');
     return withRecovery(recovered, 'pending', 'daemon_active', 'retry_verification');
   }
-  const verification = await waitForRuntimeDaemonShutdown({ configHome: paths.configHome, profile: paths.profile,
-    owner, timeoutMs: 1, pollIntervalMs: 1 });
+  const verification = await waitForRuntimeDaemonShutdown({ configHome: paths.configHome,
+    owner, timeoutMs: 1, pollIntervalMs: 1 }, paths.profile);
   // The owner can finish cleanup while process verification yields. Keep its
   // latest durable receipt rather than returning our pre-probe snapshot.
   const latest = readExitReceipts(paths, receipt.clientId).find(row => row.requestId === receipt.requestId);

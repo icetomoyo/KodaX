@@ -56,10 +56,9 @@ Session 的第二个写入者。旧所有权状态由统一启动器迁移，条
 | 选项 | `connectKodaXClient` | `ensureKodaXClient` | 含义 |
 | --- | --- | --- | --- |
 | `homeDir?: string` | 支持 | 支持 | 包含 `.kodax` 的目录，与 CLI `--home` 的基础目录含义一致 |
-| `profile?: string` | 支持 | 支持 | 本地配置/连接 profile |
 | `clientInfo?: RuntimeClientInfo` | 支持 | 支持 | 客户端元数据及可选的 Host 颁发身份凭据 |
-| `endpoint?: string` | 支持 | 不支持 | 指定本地 socket/Windows named pipe；省略时从本地 profile 解析 |
-| `token?: string` | 支持 | 不支持 | 显式 Host token；省略时从所选本地 profile 读取 |
+| `endpoint?: string` | 支持 | 不支持 | 指定本地 socket/Windows named pipe；省略时使用该 home 的 Host |
+| `token?: string` | 支持 | 不支持 | 显式 Host token；省略时从该 home 的 Host 状态读取 |
 | `daemonStartupTimeoutMs?: number` | 不支持 | 支持 | 本机 Host 启动等待期限，单位毫秒；省略时采用运行时默认值 |
 | `userInputTimeoutMs?: number` | 不支持 | 支持 | 新 Host 的普通提问期限，默认 `0` 无限等待；正值到期返回 unanswered，不修改已运行 Host |
 | `onStartupProgress?: (progress: ClientStartupProgress) => void \| Promise<void>` | 支持 | 支持 | 本机启动/连接阶段观察；不等待显示工作，不改变启动结果 |
@@ -84,7 +83,7 @@ CLI 用同一通知驱动加载动画，模块加载、旧子进程清理、Sess
 
 `endpoint` 不是 HTTP/WebSocket URL。运行时连接实现依赖 Node；浏览器可通过 `import type` 使用纯契约，但当前没有可直接在浏览器运行的远程 transport 或已实现 Web 服务。
 
-同一实际 sessions 存储根只能由一个独立 Host 写入；profile 是连接/配置名称，不是绕过存储所有权的手段。启动器需要区分包版本、运行中的 Host 实例以及实际加载的构建：相同版本号并不证明 clean/build 前后的代码相同。内部 `RuntimeIdentity.build` 的 origin/fingerprint 用于启动器比较与诊断，不进入业务 view，UI 不据每次补丁维护能力矩阵。
+Host 的身份是数据根：每个 `homeDir`/`KODAX_HOME` 只有一个 Host（ADR-075），同一实际 sessions 存储根也只能由一个独立 Host 写入。原先选择 Host 位置的 `profile` 选项已删除；JavaScript 调用方仍传入时抛出 `runtime_host_migration_required`，需要隔离时使用独立的 `homeDir` 或 `KODAX_HOME`，见 [One Host per KODAX_HOME](SDK_MIGRATION.md#one-host-per-kodax_home-profile-removed)。线上字段 `identity.profile` 保留且固定为 `default`，只供旧客户端校验。凭据 profile、Agent/执行 profile 与 Session `profileId` 不受影响。启动器需要区分包版本、运行中的 Host 实例以及实际加载的构建：相同版本号并不证明 clean/build 前后的代码相同。内部 `RuntimeIdentity.build` 的 origin/fingerprint 用于启动器比较与诊断，不进入业务 view，UI 不据每次补丁维护能力矩阵。
 
 启动器把"能否使用"与"是否替换"分开判定。能否使用只看协议与必需 capability：缺少必需 capability 才是不兼容，须在可安全替换时替换，否则明确报错。包版本与构建身份只决定是否替换：启动器先验证当前磁盘构建与自身加载时冻结的构建一致，长寿命旧 SDK 在磁盘被重建后明确拒绝代为更新；能够证明语义版本较旧的 Host，以及相同版本、相同 origin、不同 fingerprint 的 Host，在空闲时执行正常更新。替换因 Host 忙碌或仍有其他客户端连接而无法进行时，启动器以真实客户端身份直接使用该兼容 Host，不等待启动期限耗尽。相同版本但 origin 不同的 Host 归属另一安装，本启动器从不接管它，而是直接使用；fingerprint 不同时记录 `runtime.daemon.compatible-host` 诊断。缺少构建身份的同版本旧 Host 仍须明确报错。被动 connect 不因本机构建不同要求替换兼容 Host，从而允许其他版本客户端及未来 Web 连接。因此，任何客户端可观察的 Host 行为变化都必须提升对应 capability 版本，不能只依赖包版本或构建差异表达。
 
@@ -539,7 +538,6 @@ import { ensureKodaXClient } from '@kodax-ai/kodax/client';
 import type { EnsureKodaXClientOptions } from '@kodax-ai/kodax/client';
 
 const options: EnsureKodaXClientOptions = {
-  profile: 'default',
   clientInfo: { name: 'my-local-app', clientType: 'app' },
   daemonStartupTimeoutMs: 60_000,
 };
@@ -559,7 +557,7 @@ import { randomUUID } from 'node:crypto';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import type { ClientSessionView } from '@kodax-ai/kodax/client';
 
-const client = await connectKodaXClient({ profile: 'default' });
+const client = await connectKodaXClient();
 try {
   const session = await client.sessions.create({ projectPath: process.cwd() });
   const observation = await client.sessions.observe(session.id, (view: ClientSessionView) => {

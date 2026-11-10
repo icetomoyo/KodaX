@@ -14,9 +14,8 @@ import { readRuntimeDaemonState, resolveRuntimeDaemonPaths } from './runtime-dae
 
 it('refreshes existing, peer and new observers after promotion without replacing history', async () => {
   const homeDir = await mkdtemp(path.join(await realpath(os.tmpdir()), 'kodax-promotion-view-'));
-  const profile = 'promotion-view';
-  const client = await ensureKodaXClient({ homeDir, profile });
-  const peer = await connectKodaXClient({ homeDir, profile });
+  const client = await ensureKodaXClient({ homeDir });
+  const peer = await connectKodaXClient({ homeDir });
   const observations: { close(): void }[] = [];
   try {
     const session = await client.sessions.create({ title: 'Original question', tag: 'quick-ask', projectPath: homeDir });
@@ -54,17 +53,16 @@ it('refreshes existing, peer and new observers after promotion without replacing
   } finally {
     for (const observation of observations) observation.close();
     await peer.disconnect();
-    const owner = getKodaXRuntimeOwnerState({ homeDir, profile }).owner;
+    const owner = getKodaXRuntimeOwnerState({ homeDir }).owner;
     await client.host.shutdown(); await client.disconnect();
-    if (owner) expect(await waitForRuntimeDaemonShutdown({ configHome: path.join(homeDir, '.kodax'), profile, owner })).toMatchObject({ status: 'succeeded' });
+    if (owner) expect(await waitForRuntimeDaemonShutdown({ configHome: path.join(homeDir, '.kodax'), owner })).toMatchObject({ status: 'succeeded' });
     await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 120_000);
 
 it('promotes a Quick Ask through its independent Host and preserves the Session identity', async () => {
   const homeDir = await mkdtemp(path.join(await realpath(os.tmpdir()), 'kodax-promotion-'));
-  const profile = 'promotion';
-  let client = await ensureKodaXClient({ homeDir, profile });
+  let client = await ensureKodaXClient({ homeDir });
   try {
     const session = await client.sessions.create({ title: 'Quick question', tag: 'quick-ask', projectPath: homeDir });
     await expect(client.sessions.promote({ sessionId: session.id, requestId: 'invalid',
@@ -75,7 +73,7 @@ it('promotes a Quick Ask through its independent Host and preserves the Session 
       id: session.id, title: 'Quick question', tag: 'coder', msgCount: 0,
     } });
     expect(promoted.session.metadataRevision).not.toBe(session.metadataRevision);
-    const peer = await connectKodaXClient({ homeDir, profile });
+    const peer = await connectKodaXClient({ homeDir });
     try {
       expect(await peer.sessions.readPromotion(session.id, 'promote-first')).toEqual(promoted);
       expect(await peer.sessions.read(session.id)).toMatchObject(promoted.session);
@@ -85,30 +83,29 @@ it('promotes a Quick Ask through its independent Host and preserves the Session 
         expectedRevision: session.metadataRevision!, tag: 'partner' })).rejects.toMatchObject({ code: 'conflict' });
       expect(await peer.sessions.readPromotion(session.id, 'promote-other')).toBeNull();
     } finally { await peer.disconnect(); }
-    const originalOwner = getKodaXRuntimeOwnerState({ homeDir, profile }).owner;
+    const originalOwner = getKodaXRuntimeOwnerState({ homeDir }).owner;
     if (!originalOwner) throw new Error('Missing isolated Host owner.');
     await client.host.shutdown();
     await client.disconnect();
     expect(await waitForRuntimeDaemonShutdown({ configHome: path.join(homeDir, '.kodax'),
-      profile, owner: originalOwner })).toMatchObject({ status: 'succeeded' });
-    client = await ensureKodaXClient({ homeDir, profile });
+      owner: originalOwner })).toMatchObject({ status: 'succeeded' });
+    client = await ensureKodaXClient({ homeDir });
     expect(await client.sessions.readPromotion(session.id, 'promote-first')).toEqual(promoted);
     expect(await client.sessions.list({ tag: 'coder' })).toMatchObject([{ id: session.id, tag: 'coder' }]);
   } finally {
-    const owner = (await getKodaXRuntimeOwnerState({ homeDir, profile })).owner;
+    const owner = (await getKodaXRuntimeOwnerState({ homeDir })).owner;
     await client.host.shutdown();
     await client.disconnect();
     if (owner) expect(await waitForRuntimeDaemonShutdown({ configHome: path.join(homeDir, '.kodax'),
-      profile, owner, timeoutMs: 30_000 })).toMatchObject({ status: 'succeeded' });
+      owner, timeoutMs: 30_000 })).toMatchObject({ status: 'succeeded' });
     await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 120_000);
 
 it('serializes peer promotion CAS and recovers a committed operation whose success response was lost', async () => {
   const homeDir = await mkdtemp(path.join(await realpath(os.tmpdir()), 'kodax-promotion-response-'));
-  const profile = 'promotion-response';
-  const client = await ensureKodaXClient({ homeDir, profile });
-  const peer = await connectKodaXClient({ homeDir, profile });
+  const client = await ensureKodaXClient({ homeDir });
+  const peer = await connectKodaXClient({ homeDir });
   try {
     const race = await client.sessions.create({ tag: 'quick-ask', projectPath: homeDir });
     const results = await Promise.allSettled([client.sessions.promote({ sessionId: race.id, requestId: 'race-a',
@@ -121,11 +118,11 @@ it('serializes peer promotion CAS and recovers a committed operation whose succe
       expect(await client.sessions.readPromotion(race.id, requestId)).toEqual(committed?.status === 'fulfilled' ? committed.value : null);
     }
     const question = await client.sessions.create({ title: 'Unacknowledged question', tag: 'quick-ask', projectPath: homeDir });
-    const state = readRuntimeDaemonState(resolveRuntimeDaemonPaths(homeDir, profile));
+    const state = readRuntimeDaemonState(resolveRuntimeDaemonPaths(homeDir));
     if (!state) throw new Error('Missing isolated Host endpoint.');
     const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\kodax-promotion-drop-${randomUUID()}` : path.join(homeDir, 'drop.sock');
     const proxy = await dropPromotionResponse(state.endpoint, endpoint);
-    const lossy = await connectKodaXClient({ homeDir, profile, endpoint });
+    const lossy = await connectKodaXClient({ homeDir, endpoint });
     try {
       const request = { sessionId: question.id, requestId: 'lost-success', expectedRevision: question.metadataRevision!, tag: 'coder' };
       await expect(lossy.sessions.promote(request)).rejects.toThrow();
@@ -136,9 +133,9 @@ it('serializes peer promotion CAS and recovers a committed operation whose succe
     } finally { await lossy.disconnect(); await proxy.close(); }
   } finally {
     await peer.disconnect();
-    const owner = getKodaXRuntimeOwnerState({ homeDir, profile }).owner;
+    const owner = getKodaXRuntimeOwnerState({ homeDir }).owner;
     await client.host.shutdown(); await client.disconnect();
-    if (owner) expect(await waitForRuntimeDaemonShutdown({ configHome: path.join(homeDir, '.kodax'), profile, owner })).toMatchObject({ status: 'succeeded' });
+    if (owner) expect(await waitForRuntimeDaemonShutdown({ configHome: path.join(homeDir, '.kodax'), owner })).toMatchObject({ status: 'succeeded' });
     await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 120_000);
@@ -190,7 +187,6 @@ async function dropPromotionResponse(target: string, endpoint: string) {
 
 it('rejects a new promotion while busy but returns an already committed receipt without another write', async () => {
   const homeDir = await mkdtemp(path.join(await realpath(os.tmpdir()), 'kodax-promotion-busy-'));
-  const profile = 'promotion-busy';
   await mkdir(path.join(homeDir, '.kodax'), { recursive: true });
   await writeFile(path.join(homeDir, '.kodax', 'config.json'), JSON.stringify({ customProviders: [{
     name: 'promotion-fixture', protocol: 'openai', baseUrl: 'http://127.0.0.1:9/v1',
@@ -201,7 +197,7 @@ it('rejects a new promotion while busy but returns an already committed receipt 
   let leaseId: string | undefined;
   let credentialId: string | undefined;
   const runIds: string[] = [];
-  const client = await ensureKodaXClient({ homeDir, profile, async authorizeExecution(_request, services) {
+  const client = await ensureKodaXClient({ homeDir, async authorizeExecution(_request, services) {
     credentialId ??= (await services.credentials.registerScoped({ providers: ['promotion-fixture'] }, async () => 'fixture-only')).id;
     leaseId ??= (await services.hostTools.register([{ name: 'hold_promotion', description: 'Hold a fixture operation.',
       inputSchema: { type: 'object', properties: {} }, sideEffect: 'none' }], {
@@ -238,16 +234,15 @@ it('rejects a new promotion while busy but returns an already committed receipt 
   } finally {
     release();
     for (const runId of runIds) await client.runs.await(runId);
-    const owner = getKodaXRuntimeOwnerState({ homeDir, profile }).owner;
+    const owner = getKodaXRuntimeOwnerState({ homeDir }).owner;
     await client.host.shutdown(); await client.disconnect();
-    if (owner) expect(await waitForRuntimeDaemonShutdown({ configHome: path.join(homeDir, '.kodax'), profile, owner })).toMatchObject({ status: 'succeeded' });
+    if (owner) expect(await waitForRuntimeDaemonShutdown({ configHome: path.join(homeDir, '.kodax'), owner })).toMatchObject({ status: 'succeeded' });
     await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 120_000);
 
 it('keeps crashed canonical/native history and attachments intact and gives forks their own promotion identity', async () => {
   const homeDir = await mkdtemp(path.join(await realpath(os.tmpdir()), 'kodax-promotion-history-'));
-  const profile = 'promotion-history';
   const configHome = path.join(homeDir, '.kodax');
   const storage = new FileSessionStorage({ sessionsDir: path.join(configHome, 'sessions'), configHome });
   const id = 'promotion-history';
@@ -262,7 +257,7 @@ it('keeps crashed canonical/native history and attachments intact and gives fork
     artifactLedger: [{ id: 'attachment', kind: 'image_input', target: path.join(homeDir, 'original.png'), timestamp: '2026-11-02T00:00:00Z' }],
     errorMetadata: { consecutiveErrors: 1, lastError: 'Interrupted fixture' } };
   await storage.save(id, data);
-  const client = await ensureKodaXClient({ homeDir, profile });
+  const client = await ensureKodaXClient({ homeDir });
   try {
     const before = await storage.read(id);
     expect(before?.messages[1]?.nativeHistory).toEqual(data.messages[1]!.nativeHistory);
@@ -279,9 +274,9 @@ it('keeps crashed canonical/native history and attachments intact and gives fork
     await expect(client.sessions.promote({ sessionId: fork.id, requestId: 'fork-promotion',
       expectedRevision: fork.metadataRevision!, tag: 'partner' })).resolves.toMatchObject({ session: { id: fork.id, tag: 'partner' } });
   } finally {
-    const owner = getKodaXRuntimeOwnerState({ homeDir, profile }).owner;
+    const owner = getKodaXRuntimeOwnerState({ homeDir }).owner;
     await client.host.shutdown(); await client.disconnect();
-    if (owner) expect(await waitForRuntimeDaemonShutdown({ configHome, profile, owner })).toMatchObject({ status: 'succeeded' });
+    if (owner) expect(await waitForRuntimeDaemonShutdown({ configHome, owner })).toMatchObject({ status: 'succeeded' });
     await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 120_000);

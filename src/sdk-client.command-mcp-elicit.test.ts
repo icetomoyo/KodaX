@@ -118,7 +118,7 @@ it.each(['checked-tool', 'sa-continuation'] as const)('retains the shared MCP Se
     },
     validate: parseMcpIntegrationDocument,
   });
-  const runtime = await createKodaXRuntime({ homeDir, profile: 'mcp-elicit', sharedDaemonHost: true });
+  const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
   try {
     const extensionPath = path.join(homeDir, 'elicit-command.mjs');
     await writeFile(extensionPath, `export default api => api.registerCommand({
@@ -128,7 +128,7 @@ it.each(['checked-tool', 'sa-continuation'] as const)('retains the shared MCP Se
         : { invocation: { prompt: 'Elicit from the shared server.' } }
     });`);
     await getActiveExtensionRuntime()!.loadExtension(extensionPath);
-    const paths = resolveRuntimeDaemonPaths(homeDir, 'mcp-elicit');
+    const paths = resolveRuntimeDaemonPaths(homeDir);
     const lock = tryAcquireRuntimeDaemonLock(paths, {
       runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
     });
@@ -137,8 +137,8 @@ it.each(['checked-tool', 'sa-continuation'] as const)('retains the shared MCP Se
       ? { kind: 'pipe' as const, path: `\\\\.\\pipe\\kodax-mcp-elicit-${randomUUID()}` }
       : { kind: 'unix' as const, path: path.join(homeDir, 'host.sock') };
     const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
-    const first = await connectKodaXClient({ homeDir, profile: 'mcp-elicit', endpoint: endpoint.path });
-    const second = await connectKodaXClient({ homeDir, profile: 'mcp-elicit', endpoint: endpoint.path });
+    const first = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
+    const second = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
     try {
       const active = await first.sessions.create({ projectPath: homeDir });
       await first.sessions.updateSettings(active.id, {

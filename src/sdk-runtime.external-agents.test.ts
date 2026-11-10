@@ -247,7 +247,7 @@ describe('FEATURE_258 Host core and connected agent services', () => {
     homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-runtime-retired-agents-'));
     const missingHome = path.join(homeDir, 'not-created');
     const options = {
-      mode: 'daemon', homeDir: missingHome, profile: 'retired-agent-host',
+      mode: 'daemon', homeDir: missingHome,
       externalAgents: externalAgentOptions(),
     };
     await expect(launchRuntime(options as unknown as CreateKodaXRuntimeOptions))

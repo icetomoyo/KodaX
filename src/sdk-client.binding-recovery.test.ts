@@ -23,7 +23,6 @@ it.each([
 ] as const)('cold-recovers original authority and $name', async ({ delivery, text, marker, rejects }) => {
   const homeDir = await mkdtemp(path.join(await realpath(os.tmpdir()), 'kodax-binding-recovery-'));
   const configHome = path.join(homeDir, '.kodax');
-  const profile = 'bound-recovery';
   const clientInfo = { name: 'Recovery fixture', instanceId: 'recovery-fixture', instanceSecret: 'r'.repeat(64) };
   const requests: string[] = [];
   const wire = createServer(async (request, response) => {
@@ -56,7 +55,7 @@ it.each([
     { title: 'Cold recovery', gitRoot: homeDir, messages, lineage, runtimeInfo: { surface: 'partner' } });
   const checkpoint = { version: 1, sessionId, turnId: 'original-turn', activeEntryId: lineage.activeEntryId,
     messagesDigest: createHash('sha256').update(JSON.stringify(messages)).digest('hex') };
-  const runDir = path.join(configHome, 'runtime', 'profiles', profile, 'runs', runId);
+  const runDir = path.join(configHome, 'runtime', 'profiles', 'default', 'runs', runId);
   await mkdir(runDir, { recursive: true });
   await writeFile(path.join(runDir, 'status.json'), JSON.stringify({ runId, sessionId, phase: 'recovering', provider: 'recovery-fixture',
     model: 'fixture', startedAt: '2026-11-01T00:00:00Z', origin: { principalId: runtimeClientPrincipal(clientInfo.instanceId, clientInfo.instanceSecret) },
@@ -73,7 +72,7 @@ it.each([
   let mode: 'changed' | 'revoked' | 'fresh' = 'changed';
   let leaseId: string | undefined;
   const seen: string[] = [];
-  const client = await ensureKodaXClient({ homeDir, profile, clientInfo, async authorizeExecution(_request, services) {
+  const client = await ensureKodaXClient({ homeDir, clientInfo, async authorizeExecution(_request, services) {
     leaseId ??= (await services.executionBindings.register(async (request, scoped) => {
       if (request.phase === 'recovery') {
         expect(request.recovery?.snapshot).toEqual(binding);
@@ -138,9 +137,9 @@ it.each([
     const pending = await client.inputs.read(sessionId, 'legacy-method');
     if (pending?.runId) await client.runs.await(pending.runId);
     else if (pending?.state === 'queued') await client.inputs.withdraw(sessionId, 'legacy-method');
-    const owner = getKodaXRuntimeOwnerState({ homeDir, profile }).owner;
+    const owner = getKodaXRuntimeOwnerState({ homeDir }).owner;
     await client.host.shutdown(); await client.disconnect();
-    if (owner) expect(await waitForRuntimeDaemonShutdown({ configHome, profile, owner })).toMatchObject({ status: 'succeeded' });
+    if (owner) expect(await waitForRuntimeDaemonShutdown({ configHome, owner })).toMatchObject({ status: 'succeeded' });
     wire.closeAllConnections();
     await new Promise<void>((resolve, reject) => wire.close(error => error ? reject(error) : resolve()));
     await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });

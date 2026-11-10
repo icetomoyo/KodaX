@@ -150,7 +150,6 @@ async function waitFor(condition, label) {
 test('published-layout Host preserves binding controls, explicit methods and promotion after cold restart', { timeout: 60_000 }, async () => {
   const homeDir = await mkdtemp(path.join(await realpath(os.tmpdir()), 'kodax-bundle-space-'));
   const configHome = path.join(homeDir, '.kodax');
-  const profile = 'bundle-space';
   const requests = [];
   const gates = [0, 2, 3, 4].map(index => {
     let release;
@@ -179,7 +178,7 @@ test('published-layout Host preserves binding controls, explicit methods and pro
     model: 'fixture', apiKeyEnv: 'UNUSED_BUNDLED_SPACE_KEY', baseUrl: `http://127.0.0.1:${address.port}/v1` }] }));
   const connect = () => {
     let bindingId, credentialId;
-    return ensureKodaXClient({ homeDir, profile, async authorizeExecution(_request, services) {
+    return ensureKodaXClient({ homeDir, async authorizeExecution(_request, services) {
       bindingId ??= (await services.executionBindings.register(async (input, scoped) => {
         if (input.input?.inputId === 'blocker') throw new Error('Fixture blocks queue consumption.');
         credentialId ??= (await scoped.credentials.registerScoped({ providers: ['bundle-space'] }, async () => 'bundle-fixture-key')).id;
@@ -191,9 +190,9 @@ test('published-layout Host preserves binding controls, explicit methods and pro
   };
   let client = await connect();
   const shutdown = async () => {
-    const owner = getKodaXRuntimeOwnerState({ homeDir, profile }).owner;
+    const owner = getKodaXRuntimeOwnerState({ homeDir }).owner;
     await client.host.shutdown(); await client.disconnect();
-    if (owner) assert.equal((await waitForRuntimeDaemonShutdown({ configHome, profile, owner })).status, 'succeeded');
+    if (owner) assert.equal((await waitForRuntimeDaemonShutdown({ configHome, owner })).status, 'succeeded');
   };
   try {
     const session = await client.sessions.create({ projectPath: homeDir, surface: 'partner', tag: 'quick-ask' });

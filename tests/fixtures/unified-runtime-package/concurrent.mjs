@@ -16,7 +16,7 @@ if (role !== 'verify') {
     await delay(20);
   }
 }
-const runtime = await ensureKodaXRuntime({ homeDir, profile: 'legacy', daemonStartupTimeoutMs: 60_000 });
+const runtime = await ensureKodaXRuntime({ homeDir, daemonStartupTimeoutMs: 60_000 });
 let owner;
 try {
   if (role === 'verify') {
@@ -28,7 +28,7 @@ try {
       sessionIds: sessions.map(session => session.id) }) + '\n');
   } else {
     const session = await runtime.sessions.create({ title: `concurrent-${role}` });
-    const descriptor = JSON.parse(await readFile(path.join(homeDir, '.kodax/runtime/daemon/legacy/daemon.json'), 'utf8'));
+    const descriptor = JSON.parse(await readFile(path.join(homeDir, '.kodax/runtime/daemon/default/daemon.json'), 'utf8'));
     assert.equal(descriptor.status, 'ready');
     assert.equal(descriptor.runtimeId, runtime.identity.runtimeId);
     assert.notEqual(descriptor.pid, process.pid);
@@ -37,7 +37,7 @@ try {
 } finally {
   if (owner) {
     try { await runtime.daemon.shutdown(); } finally { await runtime.close(); }
-    const stopped = await waitForRuntimeDaemonShutdown({ configHome: path.join(homeDir, '.kodax'), profile: 'legacy', owner });
+    const stopped = await waitForRuntimeDaemonShutdown({ configHome: path.join(homeDir, '.kodax'), owner });
     assert.equal(stopped.status, 'succeeded', JSON.stringify(stopped));
   } else await runtime.close();
 }

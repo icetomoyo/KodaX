@@ -31,7 +31,7 @@ describe('runtime daemon shutdown verifier', () => {
           }
         : {}),
     };
-    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
+    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome);
     writeRuntimeDaemonShutdownOutcome(paths, {
       version: 1,
       runtimeId: owner.runtimeId,
@@ -42,7 +42,6 @@ describe('runtime daemon shutdown verifier', () => {
 
     await expect(waitForRuntimeDaemonShutdown({
       configHome,
-      profile: 'coder',
       owner,
       timeoutMs: 100,
     })).resolves.toMatchObject({ status: 'succeeded' });
@@ -51,7 +50,7 @@ describe('runtime daemon shutdown verifier', () => {
   it('reports a durable cleanup failure without inferring success from process exit', async () => {
     const configHome = temporaryConfigHome();
     const owner = { runtimeId: 'rt_failed', pid: deadPid(), kind: 'daemon' as const };
-    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
+    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome);
     writeRuntimeDaemonShutdownOutcome(paths, {
       version: 1,
       runtimeId: owner.runtimeId,
@@ -63,7 +62,6 @@ describe('runtime daemon shutdown verifier', () => {
 
     await expect(waitForRuntimeDaemonShutdown({
       configHome,
-      profile: 'coder',
       owner,
       timeoutMs: 100,
     })).resolves.toMatchObject({
@@ -81,7 +79,7 @@ describe('runtime daemon shutdown verifier', () => {
       processContainment: 'windows-job' as const,
       supervisorPid: process.pid,
     };
-    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
+    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome);
     writeRuntimeDaemonShutdownOutcome(paths, {
       version: 1,
       runtimeId: owner.runtimeId,
@@ -92,7 +90,6 @@ describe('runtime daemon shutdown verifier', () => {
 
     await expect(waitForRuntimeDaemonShutdown({
       configHome,
-      profile: 'coder',
       owner,
       timeoutMs: 25,
       pollIntervalMs: 5,
@@ -109,7 +106,7 @@ describe('runtime daemon shutdown verifier', () => {
       supervisorPid: process.pid,
       supervisorProcessStartIdentity: 'not-the-current-process-generation',
     };
-    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
+    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome);
     writeRuntimeDaemonShutdownOutcome(paths, {
       version: 1,
       runtimeId: owner.runtimeId,
@@ -120,7 +117,6 @@ describe('runtime daemon shutdown verifier', () => {
 
     await expect(waitForRuntimeDaemonShutdown({
       configHome,
-      profile: 'coder',
       owner,
       timeoutMs: 100,
     })).resolves.toMatchObject({ status: 'succeeded' });
@@ -137,7 +133,7 @@ describe('runtime daemon shutdown verifier', () => {
       supervisorPid: deadPid(),
       supervisorProcessStartIdentity: 'gone-supervisor-generation',
     };
-    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
+    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome);
     writeRuntimeDaemonShutdownOutcome(paths, {
       version: 1,
       runtimeId: owner.runtimeId,
@@ -148,7 +144,6 @@ describe('runtime daemon shutdown verifier', () => {
 
     await expect(waitForRuntimeDaemonShutdown({
       configHome,
-      profile: 'coder',
       owner,
       timeoutMs: 100,
     })).resolves.toMatchObject({ status: 'succeeded' });
@@ -163,7 +158,7 @@ describe('runtime daemon shutdown verifier', () => {
       processContainment: 'windows-job' as const,
       supervisorPid: deadPid(),
     };
-    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
+    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome);
     writeRuntimeDaemonShutdownOutcome(paths, {
       version: 1,
       runtimeId: owner.runtimeId,
@@ -174,7 +169,6 @@ describe('runtime daemon shutdown verifier', () => {
 
     await expect(waitForRuntimeDaemonShutdown({
       configHome,
-      profile: 'coder',
       owner,
       timeoutMs: 25,
       pollIntervalMs: 5,
@@ -184,7 +178,6 @@ describe('runtime daemon shutdown verifier', () => {
   it('rejects an empty supervisor generation instead of treating it as PID reuse', async () => {
     await expect(waitForRuntimeDaemonShutdown({
       configHome: temporaryConfigHome(),
-      profile: 'coder',
       owner: {
         runtimeId: 'rt_invalid_supervisor_identity',
         pid: deadPid(),
@@ -200,7 +193,7 @@ describe('runtime daemon shutdown verifier', () => {
   it('does not let a replacement owner hide the exact old cleanup failure', async () => {
     const configHome = temporaryConfigHome();
     const owner = deadContainedOwner('rt_failed_before_replacement');
-    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
+    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome);
     writeRuntimeDaemonShutdownOutcome(paths, {
       version: 1,
       runtimeId: owner.runtimeId,
@@ -213,7 +206,6 @@ describe('runtime daemon shutdown verifier', () => {
 
     await expect(waitForRuntimeDaemonShutdown({
       configHome,
-      profile: 'coder',
       owner,
       timeoutMs: 100,
     })).resolves.toMatchObject({ status: 'failed' });
@@ -226,7 +218,7 @@ describe('runtime daemon shutdown verifier', () => {
       processContainment: 'windows-job' as const,
       supervisorPid: process.pid,
     };
-    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
+    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome);
     writeRuntimeDaemonShutdownOutcome(paths, {
       version: 1,
       runtimeId: owner.runtimeId,
@@ -238,7 +230,6 @@ describe('runtime daemon shutdown verifier', () => {
 
     await expect(waitForRuntimeDaemonShutdown({
       configHome,
-      profile: 'coder',
       owner,
       timeoutMs: 25,
       pollIntervalMs: 5,
@@ -248,7 +239,7 @@ describe('runtime daemon shutdown verifier', () => {
   it('reports a replacement only after the exact old successful shutdown is fenced', async () => {
     const configHome = temporaryConfigHome();
     const owner = deadContainedOwner('rt_succeeded_before_replacement');
-    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
+    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome);
     writeRuntimeDaemonShutdownOutcome(paths, {
       version: 1,
       runtimeId: owner.runtimeId,
@@ -260,7 +251,6 @@ describe('runtime daemon shutdown verifier', () => {
 
     await expect(waitForRuntimeDaemonShutdown({
       configHome,
-      profile: 'coder',
       owner,
       timeoutMs: 100,
     })).resolves.toMatchObject({
@@ -275,7 +265,7 @@ describe('runtime daemon shutdown verifier', () => {
     async () => {
       const configHome = temporaryConfigHome();
       const owner = { runtimeId: 'rt_legacy', pid: deadPid(), kind: 'daemon' as const };
-      const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'coder');
+      const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome);
       writeRuntimeDaemonShutdownOutcome(paths, {
         version: 1,
         runtimeId: owner.runtimeId,
@@ -286,7 +276,6 @@ describe('runtime daemon shutdown verifier', () => {
 
       await expect(waitForRuntimeDaemonShutdown({
         configHome,
-        profile: 'coder',
         owner,
         timeoutMs: 100,
       })).resolves.toEqual({ status: 'unverified', reason: 'containment_unavailable' });
