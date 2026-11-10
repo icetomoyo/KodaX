@@ -7475,3 +7475,70 @@ permissions, when the task needs it.
 - **Watch Skill folders with `fs.watch`.** Watchers behave differently on each
   platform and fire while a file is half-written. A stat check at Run start
   covers the same edits, with no background work.
+
+## ADR-074: Agent-Home Retention Runs in Host Idle Maintenance, Not a Command
+
+**Status**: Accepted (2026-11-10). Implemented for Issue 400.
+
+**Context**: `~/.kodax` reached 4.1 GB on a development machine. About half of
+it was state that current code never reads. Its writers had been retired: the
+Run event journal, filesystem-effect ledgers, sandbox request files and the
+home runner staging copy. Other files had no bound at all. `daemon.log` was
+never rotated, the `.unresolved/` child evidence grew with every isolated
+record, and deleting a Session left its runtime files behind. We asked where
+cleanup should live: a `kodax clean` command, a `doctor` subcommand, or
+automatic timing.
+
+**Decision**: Retention has three classes. A path outside them is never removed
+automatically.
+
+1. **Automatic expiry for state no current code reads.** The ready Host expires
+   an exact allow-list of paths in its existing idle maintenance round. The
+   round runs behind the same preflight gate: attached clients are the only
+   blocker, and no background work is pending. Retired data must be untouched
+   for 30 days. Unresolved child evidence is kept for 90 days. Rounds are
+   bounded, do not follow links, and repeat once per Host day.
+2. **Bounds at the writer for data that is still written.** `daemon.log` rotates
+   by rename at 2 MiB, keeping one previous generation. `debug` diagnostics are
+   no longer persisted.
+3. **Removal tied to an explicit user action.** When the Host deletes a
+   Session, it removes only state that belongs to that Session alone: settings,
+   order counter, an empty pending-input file and execution facts. This runs
+   after the Session file is gone, and a failure is reported without failing
+   the delete.
+
+DD §10 "Agent-home retention" lists every path and the paths that are kept.
+
+**Consequences**:
+
+- Users get the space back without learning a command. The work runs only
+  while the Host is idle, so it never competes with a Run or with startup.
+- Adding a path means adding a rule and a test. Removing state that is still
+  read needs that reader to be retired first, so the rule list stays an
+  allow-list of dead data.
+- A Host downgraded to v0.7.96 finds no Run event journal for Runs older than
+  30 days. Older Hosts already "must exit and upgrade before sharing
+  data" (Unified Host SDK ownership cutover, 2026-10-29). The 30-day fence
+  protects an old Host that is still writing.
+- `.unresolved/` evidence older than 90 days is gone, so diagnosing a stale
+  child record from before then needs another source.
+
+**Rejected alternatives**:
+
+- **A `kodax clean` command or a destructive `doctor` subcommand.** Most users
+  would never run it, so the disk would keep growing. A command also needs the
+  same safety rules as automatic expiry, plus a UI for them. `doctor` stays
+  read-only, so running it is always safe.
+- **Cleanup at CLI startup or exit.** Startup has a latency budget (Issue 398
+  came from startup work over old records). Exit races other processes that
+  are still writing, and it is skipped on a crash.
+- **Removing Run records, Session stops or tool results with a Session.** A Run
+  record is addressable by `runId` and anchors the order fallback scan. A tool
+  result file can be referenced from more than one Session. Removing either
+  would break a reader that still exists.
+- **Expiring finished memory review jobs.** A finished job's `state.json` is a
+  deduplication tombstone, so removing it would queue the same review again.
+  Issue 401 tracks a narrower fix.
+- **Pattern rules such as "any `events.jsonl` older than N days".** Agent task
+  and Workflow ledgers use the same file name and are live. Rules name exact
+  locations instead.
