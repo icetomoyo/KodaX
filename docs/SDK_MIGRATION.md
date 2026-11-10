@@ -801,7 +801,7 @@ CLI Host 要求 providerCredentialConnectionBinding:1，保存值按实际 adapt
 
 默认 providerOAuthStore(configPath) 改为 auth.json；新登录无 OS vault 强依赖。旧 linked registration 可用 migrateProviderOAuthRegistration 导入，保留原 client/service/account/issuer/identityKind/profile，清旧 token 前先 durable commit。已存在的共享记录（含注销状态）优先，不从旧副本复活。明确 Windows/encrypted SDK 后端保留。
 
-可信 Main 可为 loginProviderOAuth 提供实际 profile；缺省旧 registration 视为 default。profile-bound authorizer 要求 services.identity 同时带实际 runtimeId/profile，不能只转发 runtimeId。实际 Product Client 已传完整 runtime identity；自己包装 services 的客户端需同步转发。Radius source 的 issuer 必须与已登录 registration 相符。File store initialize() 在授权 shell 前建立 mask targets，默认 CLI 已调用；自建宿主使用该后端时也应在启用工具前调用。
+可信 Main 可为 loginProviderOAuth 提供实际 profile；缺省旧 registration 视为 default。authorizer 要求 services.identity 带实际 runtimeId；自己包装 services 的客户端需转发它。Host profile 不再参与授权（Issue 406），被重定向到其他 profile Host 的客户端照常注册 lease。Radius source 的 issuer 必须与已登录 registration 相符。File store initialize() 在授权 shell 前建立 mask targets，默认 CLI 已调用；自建宿主使用该后端时也应在启用工具前调用。
 
 此阶段修复了独立 Host 漏转发 providerProbeAuthorization 的问题，现按真实 owner 能力声明，避免 SDK 要求与 daemon 握手不一致。该修复不放宽旧 Host 的能力门槛。
 

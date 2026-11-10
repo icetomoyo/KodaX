@@ -26,14 +26,23 @@ it('negotiates OAuth identity and rejected-generation recovery while preserving 
     expect(await broker(request)).toBe('replacement-token');
   } finally { await authorizer.close(); }
 });
-it('does not register profile-bound authority with a different or unverified Host profile', async () => {
-  const registerScoped = vi.fn();
-  const authorizer = createProviderCredentialAuthorizer({ sources: [{ provider: 'profiled', kind: 'environment', apiKeyEnv: 'KEY', profile: 'work' }] });
-  const request = { kind: 'provider_probe' as const, input: { provider: 'profiled', efforts: [] } };
-  try {
-    for (const profile of [undefined, 'default']) await expect(authorizer.authorizeExecution(request, { credentials: { registerScoped }, identity: { runtimeId: 'host', profile } } as unknown as Parameters<KodaXClientHostAuthorization>[1])).rejects.toThrow(/profile/);
-    expect(registerScoped).not.toHaveBeenCalled();
-  } finally { await authorizer.close(); }
+it('binds profile-scoped credentials to the authenticated Host whatever its profile name (Issue 406)', async () => {
+  const session = { id: 'work', service: 'openrouter' as const, accountId: 'a', profile: 'work',
+    acquire: vi.fn(async () => 'fixture'), onInvalidate: () => () => undefined,
+    revoke: async () => ({ remote: 'unsupported' as const, leaseRevocationFailures: 0 }) };
+  for (const hostProfile of [undefined, 'coder']) {
+    const registerScoped = vi.fn(async () => ({ id: 'lease', providers: ['profiled', 'oauth'], brokerVersion: 2 as const }));
+    const authorizer = createProviderCredentialAuthorizer({ sources: [
+      { provider: 'profiled', kind: 'environment', apiKeyEnv: 'KEY', profile: 'work' },
+      { provider: 'oauth', kind: 'oauth', service: 'openrouter', session }] });
+    try {
+      const result = await authorizer.authorizeExecution({ kind: 'provider_probe', input: { provider: 'profiled', efforts: [] } },
+        { credentials: { registerScoped, revoke: async () => true }, identity: { runtimeId: 'host', profile: hostProfile } } as unknown as Parameters<KodaXClientHostAuthorization>[1]);
+      expect(result?.credential?.leaseId).toBe('lease');
+      expect(registerScoped).toHaveBeenCalledOnce();
+      expect(session.acquire).not.toHaveBeenCalled();
+    } finally { await authorizer.close(); }
+  }
 });
 it('rejects a linked grant belonging to another profile or Radius issuer before creating authority', () => {
   const session = { id: 'r', service: 'radius' as const, accountId: 'grant', profile: 'work', issuer: 'https://radius.example',
@@ -91,17 +100,6 @@ it('rebinds a replacement Host after old remote cleanup fails and reports unreco
   expect((await authorizer.authorizeExecution(request, services))!.credential!.leaseId).toBe('lease-2');
   await expect(authorizer.close()).rejects.toThrow(/cleanup failed/);
   expect(credentials.revoke).toHaveBeenCalledWith('lease-2');
-});
-
-it('uses the OAuth session profile when its source omits the duplicate field', async () => {
-  const session = { id: 'work', service: 'openrouter' as const, accountId: 'a', profile: 'work',
-    acquire: vi.fn(async () => 'fixture'), onInvalidate: () => () => undefined,
-    revoke: async () => ({ remote: 'unsupported' as const, leaseRevocationFailures: 0 }) };
-  const registerScoped = vi.fn();
-  const authority = createProviderCredentialAuthorizer({ sources: [{ provider: 'p', kind: 'oauth', service: 'openrouter', session }] });
-  await expect(authority.authorizeExecution({ kind: 'provider_probe', input: { provider: 'p', efforts: ['high'] } },
-    { identity: { runtimeId: 'host', profile: 'default' }, credentials: { registerScoped } } as unknown as Parameters<KodaXClientHostAuthorization>[1])).rejects.toThrow(/profile/);
-  expect(registerScoped).not.toHaveBeenCalled(); expect(session.acquire).not.toHaveBeenCalled();
 });
 
 it('requires an explicit approved issuer for a Radius grant', () => {

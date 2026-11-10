@@ -1029,7 +1029,7 @@ T12-A final slice evidence supersedes review-pending wording: final wide **126 f
 
 - session-file：同 canonical 文件多 handle 共用撤销 fence；正在 refresh 的 A 被撤销后结果不向 B 发布；三个真实 Node Main 只做一次 rotating refresh。
 - provider-oauth-store：只迁移 linked ID，先提交后清旧 token，其他 Key/账号保留；当前/已注销共享记录优先，旧清理失败有错误且新副本保留，竞争创建 target 不覆盖；实际 current-user DPAPI 路径迁移已运行。
-- Main profile/Radius issuer 不匹配在授权前失败；缺失/不同 Host profile 不注册 lease；CLI 不注销另一 profile。实际 OAuth status/login/logout 命令改走共享文件，旧 public encrypted 后端回归保留。
+- Main profile/Radius issuer 不匹配在授权前失败；缺失/不同 Host profile 仍按 runtimeId 注册 lease（Issue 406 移除 profile 比对）；CLI 不注销另一 profile。实际 OAuth status/login/logout 命令改走共享文件，旧 public encrypted 后端回归保留。
 - 文件初始化准备 auth.json 与整个 staging mask；实际 Windows ACL 检查 staging 去继承、OI/CI 只给 current-user/SYSTEM，未额外保护的新 probe 文件也只继承这两个账号。工作区包含配置根的沙箱 regression 从 mkdir 文件失败 RED 修至 GREEN。
 - Host 失败根因：B 开始校验已有 providerProbeAuthorization 要求，独立 daemon 未转发 owner 声明。四格 owner/override handshake 测试复现（2红），修复只从真实 owner 转发后4过，不能用 override 伪造。原始真实进程4/4通过，覆盖 print/scoped Host crash recovery、SDK重附着和30秒idle-exit；初轮3个失败保留在执行机 kodax-t12d-host-published.log，修复后证据 kodax-t12d-host-cap-published.log。临时诊断无源码插桩。
 - 此处为离线/本机存储及 Host 证据，不代表真实订阅权益或 POSIX 实机测试；E/F Space 和 G 全量仍未验收。

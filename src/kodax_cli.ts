@@ -78,6 +78,7 @@ import {
   classifyRuntimeDaemonHealth,
   readRuntimeDaemonShutdownOutcome,
   readRuntimeDaemonLockOwner,
+  findRuntimeSessionStorageHost,
   readRuntimeDaemonToken,
   removeRuntimeDaemonOwnershipIfUnchanged,
   isSameRuntimeDaemonPath,
@@ -86,6 +87,7 @@ import {
   readRuntimeDaemonLogLines,
   writeRuntimeDaemonShutdownOutcome,
   type RuntimeDaemonHealth,
+  type RuntimeDaemonPaths,
   type RuntimeDaemonState,
 } from './runtime-daemon/state.js';
 import { createRuntimeDaemonSocketClientTransport } from './runtime-daemon/transport.js';
@@ -709,19 +711,18 @@ async function startDaemonCommand(input: {
   readonly timeoutMs: number;
   readonly json: boolean;
 }): Promise<void> {
-  const paths = resolveRuntimeDaemonPathsFromConfigHome(
-    input.configHome,
-    input.profile,
-  );
   const result = await getDaemonStartResult(input);
   if (input.json) {
     console.log(JSON.stringify(result, null, 2));
     return;
   }
+  // The serving Host can belong to another profile that owns Session storage (Issue 406).
+  const profile = result.state?.profile
+    ?? resolveRuntimeDaemonPathsFromConfigHome(input.configHome, input.profile).profile;
   if (result.reason === 'already_running') {
     console.log(
       chalk.green(
-        `KodaX runtime daemon already running for profile "${paths.profile}".`,
+        `KodaX runtime daemon already running for profile "${profile}".`,
       ),
     );
     return;
@@ -733,7 +734,7 @@ async function startDaemonCommand(input: {
     );
   }
   console.log(
-    chalk.green(`KodaX runtime daemon started for profile "${paths.profile}".`),
+    chalk.green(`KodaX runtime daemon started for profile "${profile}".`),
   );
   if (result.state) {
     console.log(chalk.dim(`PID: ${result.state.pid}`));
@@ -749,20 +750,19 @@ async function getDaemonStartResult(input: {
   readonly model?: string;
   readonly timeoutMs: number;
 }): Promise<DaemonStartResult> {
-  const paths = resolveRuntimeDaemonPathsFromConfigHome(
-    input.configHome,
-    input.profile,
-  );
-  const before = await observeRuntimeDaemonHealth(paths);
+  const requested = resolveRuntimeDaemonPathsFromConfigHome(input.configHome, input.profile);
+  // Startup follows a live Session storage owner of another profile; snapshot that Host (Issue 406).
+  const beforePaths = sessionStorageHostPaths(input.configHome) ?? requested;
+  const before = await observeRuntimeDaemonHealth(beforePaths);
   // Initial integration reconciliation holds the owner fence before publishing
   // daemon.json. A later authenticated attach to that exact owner is reuse.
   const beforeOwner = before.state === undefined
-    ? readRuntimeDaemonLockOwner(paths.lockFile)
+    ? readRuntimeDaemonLockOwner(beforePaths.lockFile)
     : undefined;
   const cancellation = createDaemonStartupCancellation();
   try {
     const runtime = await ensureKodaXRuntime({
-      profile: paths.profile,
+      profile: requested.profile,
       // Omitted Home retains the existing KODAX_HOME override for the default location.
       homeDir: isSameRuntimeDaemonPath(input.configHome, path.join(input.homeDir, '.kodax')) ? input.homeDir : undefined,
       defaultProvider: input.provider,
@@ -773,7 +773,8 @@ async function getDaemonStartResult(input: {
       clientInfo: { name: 'kodax-daemon-start', clientType: 'automation' },
     });
     try {
-      const observation = await observeRuntimeDaemonHealth(paths);
+      const observation = await observeRuntimeDaemonHealth(
+        resolveRuntimeDaemonPathsFromConfigHome(input.configHome, runtime.identity.profile));
       if (!observation.state || observation.state.runtimeId !== runtime.identity.runtimeId
         || observation.state.status !== 'ready' || !observation.identityMatches) {
         throw new Error('The Host owner changed while startup was being verified. Retry startup.');
@@ -786,6 +787,17 @@ async function getDaemonStartResult(input: {
     } finally { await runtime.close(); }
   } finally {
     cancellation.close();
+  }
+}
+
+function sessionStorageHostPaths(configHome: string): RuntimeDaemonPaths | undefined {
+  try {
+    const host = findRuntimeSessionStorageHost(configHome, path.join(configHome, 'sessions'));
+    return host && resolveRuntimeDaemonPathsFromConfigHome(configHome, host.profile);
+  } catch (error: unknown) {
+    // An owner whose descriptor is not published yet is waited for by startup; it was not running before.
+    if (isRecord(error) && error.code === 'session_storage_owned') return undefined;
+    throw error;
   }
 }
 

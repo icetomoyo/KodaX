@@ -670,6 +670,18 @@ describe('daemon CLI smoke', () => {
     expect(status).toMatchObject({ health: 'healthy', state: { runtimeId: runtime.identity.runtimeId } });
   }, 90_000);
 
+  it('verifies daemon start against the Session storage owner it was redirected to (Issue 406)', async () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-daemon-redirect-'));
+    tempRoots.push(homeDir);
+    const ownerProfile = `coder-${process.pid}-${Date.now()}`;
+    const runtime = await ensureKodaXRuntime({ homeDir, profile: ownerProfile });
+    try {
+      const started = await runDaemonCommand(['start', '--home', homeDir, '--profile', 'default', '--json']);
+      expect(started).toMatchObject({ started: false, reason: 'already_running',
+        state: { runtimeId: runtime.identity.runtimeId, profile: ownerProfile, status: 'ready' } });
+    } finally { await runtime.close(); }
+  }, 90_000);
+
   it('self-stops a Space-managed daemon after its final client disconnects', async () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-daemon-orphan-smoke-'));
     tempRoots.push(homeDir);

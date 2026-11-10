@@ -2947,6 +2947,8 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 407 | Medium | Open | Passive connections and exit receipts ignore the session storage owner | v0.7.97-alpha.7 (storage-owner redirect) | - | 2026-11-10 | - |
+| 406 | High | Resolved | A CLI redirected to Space's Host fails `daemon start` verification and provider credential authorization | `daemon start` check v0.7.97-alpha.1, exposed by the v0.7.97-alpha.7 redirect; credential profile fence v0.7.97-alpha.12 | post-v0.7.97-beta.5 (unreleased) | 2026-11-10 | 2026-11-10 |
 | 405 | High | Resolved | Space and the CLI refuse to share a compatible Host from another installation or version | v0.7.97-alpha.1 (Host build refresh); busy older-Host refusal since v0.7.79 | post-v0.7.97-beta.5 (unreleased) | 2026-11-10 | 2026-11-10 |
 | 404 | High | Resolved | Linux kernels before 5.8 reject every trusted text write | v0.7.96 (FEATURE_295) | post-v0.7.97-beta.5 (unreleased) | 2026-11-10 | 2026-11-10 |
 | 403 | High | Resolved | Linux native text authority cannot load on glibc 2.17 hosts | v0.7.96 (FEATURE_295); 2.28 floor since Issue 328 | post-v0.7.97-beta.5 (unreleased) | 2026-11-10 | 2026-11-10 |
@@ -3238,6 +3240,90 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ---
 
 ## Issue Details
+
+### Issue 407: Passive connections and exit receipts ignore the session storage owner
+
+- Priority: Medium
+- Status: Open (folded into the one-Host-per-`KODAX_HOME` design; not fixed
+  separately)
+- Introduced: v0.7.97-alpha.7 (d45938b90, storage-owner redirect)
+- Created: 2026-11-10
+- Related: Issue 406, Issue 405
+
+**Original problem.** A Host has two identity keys: the profile name
+(`runtime/daemon/<profile>/`: lock, descriptor, pipe, token, logs) and the
+session storage owner (`sessions/.product-host/owner.lock`). Since alpha.7,
+`ensureKodaXRuntime` with `autoStart` follows the storage owner to another
+profile's Host. Other entry points still use only the profile key:
+
+- `connectKodaXClient` (passive, `autoStart: false`, used by integration
+  clients) looks only at the requested profile. With Space's `coder` Host
+  owning `~/.kodax/sessions`, a passive `default` client finds no Host.
+- `readKodaXClientExits` reads exit receipts from the requested profile's
+  daemon directory, so exits recorded by the Host that actually served the
+  client are not seen.
+- Per-Session runtime state lives under `runtime/profiles/<profile>/`
+  (session settings, Session order, Runs, pending inputs, permission grants,
+  run-status index). The same sessions directory therefore gets state split by
+  whichever profile's Host served it. The developer machine's `~/.kodax` holds
+  both `default` and `coder` state for one sessions directory.
+
+The fix is structural: one Host per `KODAX_HOME`, keyed by the data root, with
+profile demoted to configuration. It is tracked as a design (ADR plus feature
+design) instead of point fixes.
+
+### Issue 406: A CLI redirected to Space's Host fails `daemon start` verification and provider credential authorization
+
+- Priority: High
+- Status: Resolved
+- Introduced: `daemon start` verification in v0.7.97-alpha.1 (99ad85e30),
+  exposed by the storage-owner redirect in v0.7.97-alpha.7 (d45938b90);
+  credential profile fence in v0.7.97-alpha.12 (4b915c94c)
+- Created: 2026-11-10
+- Fixed: post-v0.7.97-beta.5 working tree (unreleased)
+- Related: Issue 405, Issue 407, ADR-075 (Proposed)
+
+**Original problem.** Packaged Space runs its Host as profile `coder`; the CLI
+uses `default`. Both use `~/.kodax/sessions`, so a CLI started after Space is
+redirected to Space's `coder` Host through the storage owner. Two checks still
+assume the requested profile:
+
+- `kodax daemon start` verifies the result against the `default` daemon
+  directory, which has no Host, and fails with `The Host owner changed while
+  startup was being verified. Retry startup.` although startup succeeded.
+- The provider credential authorizer requires the Host's profile to equal the
+  credential source's profile. The CLI's credentials are `default`, the Host is
+  `coder`, so every model request fails with `Provider credential
+  authorization requires the approved Host profile.`
+
+Both reproduce in the packaged Space E2E (Windows, isolated data root) with
+Space started first, with and without the Issue 405 fix. The profile fence adds
+no security: the lease is already bound to the authenticated Host runtimeId,
+scoped, fingerprinted and revoked on close, and every profile in one
+`KODAX_HOME` belongs to the same user.
+
+**Resolution (2026-11-10).**
+
+- The provider credential authorizer no longer compares the Host profile with
+  the credential profile. It still requires the authenticated Host runtimeId,
+  validates each source (profile, stored binding, OAuth scope, Radius issuer)
+  and connection fingerprints, and rebinds or revokes leases per Host epoch.
+  The credential profile still selects the account in `auth.json`.
+- `daemon start` snapshots the Session storage owner's Host before startup and
+  verifies the Host it actually attached to (`runtime.identity.profile`). A
+  start redirected to a running Host reports `already_running` with that
+  Host's state; the text output names the serving profile.
+
+- Files changed: `src/provider-credential-authorizer.ts`, `src/kodax_cli.ts`,
+  `docs/LLM_INTEGRATION.md`, `docs/SDK_MIGRATION.md`,
+  `docs/test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md`
+- Tests: `src/provider-credential-authorizer.test.ts` registers a lease for an
+  environment and an OAuth source with profile `work` against a Host whose
+  profile is `coder` or absent, without reading the OAuth token (replaces the
+  two fence tests). `src/kodax_cli.daemon-smoke.test.ts` starts a Host as
+  another profile, then runs `daemon start --profile default` and expects
+  `already_running` with the owner's runtimeId and profile (it failed with the
+  reported message before the fix). Source and test typechecks pass.
 
 ### Issue 405: Space and the CLI refuse to share a compatible Host from another installation or version
 
@@ -18405,12 +18491,21 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 283 (46 Open including 1 needs-info, 237 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 285 (47 Open including 1 needs-info, 238 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-10: Issues 406-407
+
+- Recorded and resolved the redirected-CLI failures against Space's `coder`
+  Host as Issue 406 (`daemon start` verification and the credential profile
+  fence).
+- Recorded passive connections, exit receipts and per-profile runtime state
+  ignoring the storage owner as Issue 407, folded into the one-Host-per-
+  `KODAX_HOME` design.
 
 ### 2026-11-10: Issue 405
 

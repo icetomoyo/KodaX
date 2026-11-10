@@ -124,7 +124,7 @@ providerOAuthStore(configPath) 现在使用同目录 auth.json 的 OAuth 区域�
 
 同一进程内，同一 canonical auth 文件的独立 store handle 现在共享 OAuth lifetime/fence；不是按每次 new 出来的 store 对象孤立。一个 handle 撤销会同步封住同文件其他 handle 的旧授权；迟到 refresh 不得向后继账号返回或覆盖结果。三独立 Main 进程的真实 openOAuthSession 测试确认同一 rotating grant 只刷新一次；跨进程每请求重读和文件锁不等于取消另一进程已经发出的生成。
 
-OAuth registration/session 可带可信 profile（旧记录缺省 default），属于不可变 metadata。Main source 校验 grant profile 和 Radius issuer；CLI 默认 profile 不撤销其他 profile，其他 profile 的 grant 不进入本 Main allowlist。Profile-bound source（含 API-key binding）在注册任何 lease 前，必须匹配实际 services.identity.profile；旧不带 profile 的 environment SDK 来源保留。Host epoch 变化继续重绑；不复用序列化 lease。
+OAuth registration/session 可带可信 profile（旧记录缺省 default），属于不可变 metadata。Main source 校验 grant profile 和 Radius issuer；CLI 默认 profile 不撤销其他 profile，其他 profile 的 grant 不进入本 Main allowlist。Lease 只绑定已认证 Host 的 runtimeId；Host 的 profile 名不是授权边界，同一 KODAX_HOME 下被重定向到其他 profile Host（如 Space 的 coder）的客户端照常注册 lease（Issue 406）。Host epoch 变化继续重绑；不复用序列化 lease。
 
 文件后端 initialize() 用于在启用不可信工具前准备空 auth.json 和 staging。CLI Main 在 env-only 路线也先初始化，否则 Linux ASRT 会忽略不存在的 denyRead 目标。Windows staging 本身去继承并设置 current-user/SYSTEM 可继承 ACL，新建的空文件从一开始就私有；再对实际明文文件去继承。POSIX staging0700/file0600 与 namespace masks 保留。工作区包含配置根时，沙箱不把 auth.json 当目录创建。
 
