@@ -7545,8 +7545,8 @@ DD §10 "Agent-home retention" lists every path and the paths that are kept.
 
 ## ADR-075: One Host per KODAX_HOME; Profile Is Not Host Identity
 
-**Status**: Accepted (2026-11-10), not implemented. See the
-[design](designs/one-host-per-kodax-home-2026-11-10.md). Tracks Issue 407.
+**Status**: Accepted (2026-11-10); implemented in KodaX by FEATURE_305 T1–T7, and Space follows on
+the release bump. See the [design](designs/one-host-per-kodax-home-2026-11-10.md). Tracks Issue 407.
 
 **Context**: A Host is identified by its profile name (`runtime/daemon/<profile>/`,
 `runtime/profiles/<profile>/`) and, since v0.7.97-alpha.7, also by the Session

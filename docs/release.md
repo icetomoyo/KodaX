@@ -50,8 +50,8 @@ on one commit.
 
 ## v0.7.97-beta.5 release preparation
 
-Release state: `v0.7.97-beta.5` is a candidate awaiting the publishing
-Release dispatch. npm publication has not occurred. The candidate is the
+Release state: `v0.7.97-beta.5` was published on 2026-11-10 as a
+GitHub prerelease and as npm `beta`. The release is the
 fifth beta of the v0.7.97 line: the `KodaX-next-dev` integration (SDK
 foundation hardening for Issues 378–385, FEATURE_303 proxy and private CA
 support, FEATURE_304 extension asks, durable visual observations, Managed

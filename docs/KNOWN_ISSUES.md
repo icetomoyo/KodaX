@@ -3314,7 +3314,7 @@ design) instead of point fixes.
   credential profile fence in v0.7.97-alpha.12 (4b915c94c)
 - Created: 2026-11-10
 - Fixed: post-v0.7.97-beta.5 working tree (unreleased)
-- Related: Issue 405, Issue 407, ADR-075 (Proposed)
+- Related: Issue 405, Issue 407, ADR-075 (Accepted)
 
 **Original problem.** Packaged Space runs its Host as profile `coder`; the CLI
 uses `default`. Both use `~/.kodax/sessions`, so a CLI started after Space is
