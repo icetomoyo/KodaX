@@ -129,7 +129,6 @@ jobs:
           set -euo pipefail
 
           home_dir="$(mktemp -d)"
-          profile="ci-unix-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
           cleanup() {
             result=$?
             if [ "$result" -eq 0 ]; then
@@ -140,14 +139,13 @@ jobs:
           }
           trap cleanup EXIT
 
-          KODAX_UNIX_GATE_HOME="$home_dir" KODAX_UNIX_GATE_PROFILE="$profile" node --input-type=module <<'NODE'
+          KODAX_UNIX_GATE_HOME="$home_dir" node --input-type=module <<'NODE'
           import path from 'node:path';
           import { readFile } from 'node:fs/promises';
           import { createKodaXRuntime, connectKodaXRuntime, waitForRuntimeDaemonShutdown } from '@kodax-ai/kodax/runtime';
 
           const homeDir = process.env.KODAX_UNIX_GATE_HOME;
-          const profile = process.env.KODAX_UNIX_GATE_PROFILE;
-          if (!homeDir || !profile) {
+          if (!homeDir) {
             throw new Error('Missing Unix runtime gate environment.');
           }
 
@@ -165,7 +163,6 @@ jobs:
             first = await createKodaXRuntime({
               mode: 'daemon',
               homeDir,
-              profile,
               defaultProvider: 'mock-provider',
               clientInfo: { name: 'ci-unix-a', version: '0.7.66' },
               capabilities,
@@ -173,7 +170,6 @@ jobs:
             owner = (await first.daemon.inspect()).owner;
             second = await connectKodaXRuntime({
               homeDir,
-              profile,
               clientInfo: { name: 'ci-unix-b', version: '0.7.66' },
               capabilities,
             });
@@ -221,7 +217,7 @@ jobs:
 
             const status = await second.status.snapshot();
             const pending = await second.permissions.listPending({ runId: run.runId });
-            const statePath = path.join(homeDir, '.kodax', 'runtime', 'daemon', profile, 'daemon.json');
+            const statePath = path.join(homeDir, '.kodax', 'runtime', 'daemon', 'default', 'daemon.json');
             const state = JSON.parse(await readFile(statePath, 'utf8'));
             const endpoint = typeof state.endpoint === 'string' ? state.endpoint : '';
             const proof = {
@@ -258,7 +254,7 @@ jobs:
               await first?.daemon.shutdown();
               if (owner) {
                 const stopped = await waitForRuntimeDaemonShutdown({
-                  configHome: path.join(homeDir, '.kodax'), profile, owner,
+                  configHome: path.join(homeDir, '.kodax'), owner,
                 });
                 if (stopped.status !== 'succeeded') {
                   throw new Error(`Unix gate Host cleanup failed: ${JSON.stringify(stopped)}`);
