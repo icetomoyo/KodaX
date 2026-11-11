@@ -79,6 +79,13 @@ function openTerminal(homeDir, mode, extraArgs = []) {
       return Array.from({ length: terminal.rows }, (_, i) =>
         buffer.getLine(buffer.viewportY + i)?.translateToString(true) ?? '').join('\n');
     },
+    // Everything ever written to the terminal. The Ink REPL renders inside the
+    // alternate screen buffer, which keeps no scrollback: once a restored
+    // transcript outgrows the viewport, the startup banner with the session id
+    // is dropped from the emulator buffer and exists only in the raw stream.
+    rawText() {
+      return raw;
+    },
     async save(name) {
       await writeFile(path.join(artifacts, `${mode}-${name}.ansi`), raw);
       await writeFile(path.join(artifacts, `${mode}-${name}.txt`), this.screen());
@@ -449,10 +456,9 @@ async function check(state, name, action) {
 async function displayedSessionId(state, previousId) {
   if (state.mode === 'classic') await state.terminal.submit('/status');
   return waitFor('displayed Session identity', () => {
-    const screen = state.terminal.screen();
     const id = state.mode === 'ink'
-      ? screen.match(/\bsession\s+(\d{8}_\d{6}_[a-z0-9]+)/i)?.[1]
-      : [...screen.matchAll(/Session ID:\s+([a-z0-9_]+)/gi)].at(-1)?.[1];
+      ? [...state.terminal.rawText().matchAll(/\bsession\s+(\d{8}_\d{6}_[a-z0-9]+)/gi)].at(-1)?.[1]
+      : [...state.terminal.screen().matchAll(/Session ID:\s+([a-z0-9_]+)/gi)].at(-1)?.[1];
     return id && id !== previousId ? id : undefined;
   });
 }
