@@ -22,9 +22,9 @@
 | Visual harness implementation | P3/P4/P5/P6 implemented within declared scope and released in `v0.7.97-beta.5` through the next-dev integration; [final ID/receipt contract delivery](designs/visual-harness-id-contract-delivery-2026-10-30.md). P7 task-value evaluation concluded **mixed; net task-quality/token value unproven**, against optimized pre-visual 1826cc22; [final review and limits](designs/visual-harness-current-version-closure-2026-10-30.md). The 2026-10-29 plan's "not executed" state and old r3 single-response results are historical, not the current outcome. Historical default suite 18,094 passed / 0 failed; earlier failures and unlocated causes remain recorded; [mainline integration acceptance](designs/next-dev-integration-execution-2026-11-09.md). No new feature ID/version assigned |
 | Roadmap updated | `2026-11-10` — beta.5 next-dev integration release prepared on top of the published beta.4; FEATURE_300 remains Planned |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
-| Total tracked features | `88` |
-| InProgress | `2` |
-| Planned | `18` |
+| Total tracked features | `89` |
+| InProgress | `3` |
+| Planned | `17` |
 | Completed | `63` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
 | Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305` |
@@ -522,6 +522,7 @@
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
+| `305` | One Host per KODAX_HOME | Core / Runtime + SDK | High | `v0.7.98` | [v0.7.98](features/v0.7.98.md#feature_305-one-host-per-kodax_home) — InProgress; ADR-075 Accepted, T1–T7 done; awaiting release and Space dependency bump |
 | `298` | Product Host and Client Contract Simplification | Core / Runtime + UI SDK + Execution | Critical | `v0.7.97` | [v0.7.97](features/v0.7.97.md#feature-298) — core, [consumer completion T38–T42](features/v0.7.97.md#consumer-completion-tickets) and parity follow-ups T43–T56 implemented; cross-platform/manual release verification pending |
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
@@ -2265,7 +2266,6 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
-| `305` | One Host per KODAX_HOME | Core / Runtime + SDK | High | `v0.7.98` | [v0.7.98](features/v0.7.98.md#feature_305-one-host-per-kodax_home) — InProgress; ADR-075 Accepted, T1–T7 done; awaiting release and Space dependency bump |
 | `300` | Git Execution Consolidation with Shared macOS Preflight | Refactor | Medium | `v0.7.99` | [v0.7.99](features/v0.7.99.md#feature_300-git-execution-consolidation-with-shared-macos-preflight) — Planned; design only |
 | `287` | Advisor Mode Virtual Provider | Enhancement / LLM Provider + Session Quality | High | `v0.8.13` | [v0.8.13](features/v0.8.13.md#feature_287-advisor-mode-virtual-provider) |
 | `288` | CLI-Space Daemon Profile Alignment | Enhancement / Runtime + Multi-Client UX | High | `v0.8.14` | [v0.8.14](features/v0.8.14.md#feature_288-cli-space-daemon-profile-alignment) |
