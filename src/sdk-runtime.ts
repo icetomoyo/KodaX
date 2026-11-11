@@ -502,6 +502,7 @@ import {
   RUNTIME_HOST_SLOT,
   updateRuntimeOwnerPolicy,
 } from "./runtime-daemon/state.js";
+import { mergeLegacyRuntimeProfileState } from "./runtime-daemon/profile-state-merge.js";
 export {
   RuntimePermissionScopeUpgradeRequiredError,
   RuntimeTransportBoundaryError,
@@ -4247,6 +4248,9 @@ export async function createKodaXHostRuntime(
   };
   try {
     createClientStartupProgressReporter(options.onStartupProgress)({ stage: 'initializing', phase: 'recovery' });
+    if ((options.profile ?? RUNTIME_HOST_SLOT) === RUNTIME_HOST_SLOT) {
+      mergeLegacyRuntimeProfileState(resolveRuntimeStateHome(options), parseRuntimePermissionGrant);
+    }
     await cleanupRegisteredManagedChildren({
       configHome: options.homeDir ? path.join(path.resolve(options.homeDir), '.kodax') : replApi.KODAX_DIR,
     });
@@ -17267,25 +17271,29 @@ function isTerminalRuntimeEvent(type: RuntimeEventType): boolean {
   );
 }
 
-function createRuntimePersistence(
-  options: CreateKodaXHostRuntimeOptions,
-  runOwner: AgentActorOwner,
-): RuntimePersistence {
+/** The `.kodax` directory that holds this Runtime's `runtime/` state. */
+function resolveRuntimeStateHome(options: CreateKodaXHostRuntimeOptions): string {
   const baseDir = options.homeDir
     ? path.resolve(options.homeDir)
     : options.sessionsDir
       ? path.resolve(options.sessionsDir, "..")
       : process.cwd();
+  return path.join(baseDir, ".kodax");
+}
+
+function createRuntimePersistence(
+  options: CreateKodaXHostRuntimeOptions,
+  runOwner: AgentActorOwner,
+): RuntimePersistence {
   const runtimeDir =
     options.sharedDaemonHost === true
       ? path.join(
-          baseDir,
-          ".kodax",
+          resolveRuntimeStateHome(options),
           "runtime",
           "profiles",
-          encodeURIComponent(options.profile ?? "default"),
+          encodeURIComponent(options.profile ?? RUNTIME_HOST_SLOT),
         )
-      : path.join(baseDir, ".kodax", "runtime");
+      : path.join(resolveRuntimeStateHome(options), "runtime");
   const runsDir = path.join(runtimeDir, "runs");
   const sessionSettingsDir = path.join(runtimeDir, "session-settings");
   const sessionOrdersDir = path.join(runtimeDir, "session-orders");

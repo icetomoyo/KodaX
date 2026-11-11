@@ -115,4 +115,23 @@ describe('product Host Session storage ownership', () => {
     runtimes.push(next);
     await expect(next.sessions.load(saved.id)).resolves.toMatchObject({ title: 'Owned session' });
   });
+  it('merges legacy Host profile state when the canonical Host starts, and only then (ADR-075)', async () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-host-profile-merge-'));
+    roots.push(homeDir);
+    const profiles = path.join(homeDir, '.kodax', 'runtime', 'profiles');
+    const legacyOrder = path.join(profiles, 'coder', 'session-orders', 's1.json');
+    fs.mkdirSync(path.dirname(legacyOrder), { recursive: true });
+    fs.writeFileSync(legacyOrder, '7');
+
+    const legacyHost = await createKodaXRuntime({ homeDir, profile: 'other', sharedDaemonHost: true });
+    await legacyHost.close();
+    expect(fs.existsSync(legacyOrder)).toBe(true);
+
+    const host = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
+    runtimes.push(host);
+    expect(JSON.parse(fs.readFileSync(path.join(profiles, 'default', 'session-orders', 's1.json'), 'utf8'))).toBe(7);
+    expect(fs.readdirSync(profiles).filter(name => name.startsWith('coder'))).toEqual([
+      expect.stringMatching(/^coder\.merged-\d{8}$/),
+    ]);
+  });
 });

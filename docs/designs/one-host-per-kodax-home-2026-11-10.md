@@ -1,6 +1,6 @@
 # One Host per `KODAX_HOME` — design draft, 2026-11-10
 
-Status: **accepted 2026-11-10; T1+T2 and T3 implemented**. Review decisions are in §8.
+Status: **accepted 2026-11-10; T1+T2, T3 and T4 implemented**. Review decisions are in §8.
 Tracked as [FEATURE_305](../features/v0.7.98.md#feature_305-one-host-per-kodax_home) (tickets T1–T7).
 Decision record:
 [ADR-075](../ADR.md#adr-075-one-host-per-kodax_home-profile-is-not-host-identity). Tracks [Issue 407](../KNOWN_ISSUES.md#issue-407-passive-connections-and-exit-receipts-ignore-the-session-storage-owner);
@@ -115,7 +115,13 @@ owner. Per source profile `p` ≠ `default`:
 | `permission-grants.json` | import grants scoped to one Session (`scope.sessionId` set), skipping ids already present; drop grants without a Session scope and report their count, because importing them would extend approvals given in Space to every CLI Session (Q2) |
 | `run-status-index.json` | delete the target index after merging Runs; the existing fail-closed scan rebuilds it |
 
-Afterwards the source is renamed to `runtime/profiles/<p>.merged-<date>/`.
+`session-stops/` and `session-mcp/` hold per-Session records and move like
+Runs. Unknown entries (such as `agents/`) stay in the source and are listed as
+`retained`.
+
+Afterwards the source is renamed to `runtime/profiles/<p>.merged-<date>/`
+(`-2`, `-3`, … when that name exists), and its mtime is set to the merge time
+so retention counts from the merge.
 ADR-074 retention gets one exact allow-list rule that expires it after 30 days.
 The migration emits one `runtime.host.state-merged` diagnostic with counts and
 conflicts. Startup is not blocked by a failed item; that item stays in place

@@ -2947,7 +2947,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 407 | Medium | Open | Passive connections and exit receipts ignore the session storage owner | v0.7.97-alpha.7 (storage-owner redirect) | - | 2026-11-10 | - |
+| 407 | Medium | Resolved | Passive connections and exit receipts ignore the session storage owner | v0.7.97-alpha.7 (storage-owner redirect) | post-v0.7.97-beta.5 (unreleased, FEATURE_305 T3+T4) | 2026-11-10 | 2026-11-11 |
 | 406 | High | Resolved | A CLI redirected to Space's Host fails `daemon start` verification and provider credential authorization | `daemon start` check v0.7.97-alpha.1, exposed by the v0.7.97-alpha.7 redirect; credential profile fence v0.7.97-alpha.12 | post-v0.7.97-beta.5 (unreleased) | 2026-11-10 | 2026-11-10 |
 | 405 | High | Resolved | Space and the CLI refuse to share a compatible Host from another installation or version | v0.7.97-alpha.1 (Host build refresh); busy older-Host refusal since v0.7.79 | post-v0.7.97-beta.5 (unreleased) | 2026-11-10 | 2026-11-10 |
 | 404 | High | Resolved | Linux kernels before 5.8 reject every trusted text write | v0.7.96 (FEATURE_295) | post-v0.7.97-beta.5 (unreleased) | 2026-11-10 | 2026-11-10 |
@@ -3244,10 +3244,10 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ### Issue 407: Passive connections and exit receipts ignore the session storage owner
 
 - Priority: Medium
-- Status: Open (folded into the one-Host-per-`KODAX_HOME` design; not fixed
-  separately)
+- Status: Resolved (by FEATURE_305 T3 and T4)
 - Introduced: v0.7.97-alpha.7 (d45938b90, storage-owner redirect)
 - Created: 2026-11-10
+- Fixed: post-v0.7.97-beta.5 working tree (unreleased)
 - Related: Issue 406, Issue 405, FEATURE_305, ADR-075
 
 **Original problem.** A Host has two identity keys: the profile name
@@ -3271,6 +3271,39 @@ profile's Host. Other entry points still use only the profile key:
 The fix is structural: one Host per `KODAX_HOME`, keyed by the data root, with
 profile demoted to configuration. It is tracked as a design (ADR plus feature
 design) instead of point fixes.
+
+**Resolution (2026-11-11).** FEATURE_305 (ADR-075): one Host per
+`KODAX_HOME` in the canonical slot `default`.
+
+- T3 (b89ba6b48): `resolveRuntimeHostSlot` returns the slot of a live
+  legacy-slot Host that owns Session storage, else the canonical slot. Passive
+  connections and `daemon stop|status|logs|restart` use it.
+  `readKodaXClientExits` reads the receipts of every daemon slot in the home,
+  so exits recorded by a legacy Host stay recoverable after it is replaced.
+- T4: when the canonical Host starts and owns Session storage, it merges each
+  `runtime/profiles/<p>/` into `runtime/profiles/default/` once
+  (`runtime-daemon/profile-state-merge.ts`): Runs, Session stops and Session
+  MCP records move when absent; the newer Session settings win; the Session
+  order keeps the larger counter; queued inputs are kept once per input id;
+  only Session-scoped permission grants are imported. A profile whose slot
+  Host is still running is skipped. The source becomes
+  `<p>.merged-<YYYYMMDD>`, which home retention removes 30 days later. One
+  `runtime.host.state-merged` diagnostic reports counts, conflicts and failed
+  items; a failed item stays in place and is retried on the next start.
+
+- Files changed: `src/runtime-daemon/state.ts`, `src/sdk-client.ts`,
+  `src/sdk-runtime.ts`, `src/kodax_cli.ts`,
+  `src/runtime-daemon/profile-state-merge.ts`,
+  `src/runtime-daemon/home-retention.ts`, `docs/CLIENT_CONTRACT.md`,
+  `public_docs/sdk/embedder-guide.md`
+- Tests: `src/kodax_cli.daemon-smoke.test.ts` (passive connection,
+  `status`, `logs` and `stop` act on a legacy `coder` Host),
+  `src/sdk-client.exit-recovery.test.ts` (exits recorded by a legacy-slot
+  Host), `src/runtime-daemon/profile-state-merge.test.ts` (every merge rule,
+  live-Host skip, failed item retry, crash idempotence, diagnostic),
+  `src/runtime-daemon/home-retention.test.ts` (merged profile expiry),
+  `src/sdk-runtime.host-owner.test.ts` (merge runs at canonical Host start
+  only).
 
 ### Issue 406: A CLI redirected to Space's Host fails `daemon start` verification and provider credential authorization
 
@@ -18491,12 +18524,17 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 285 (47 Open including 1 needs-info, 238 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 285 (46 Open including 1 needs-info, 239 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-11: Issue 407
+
+- Resolved Issue 407 through FEATURE_305 T3 (legacy-slot Host discovery) and
+  T4 (one-time merge of legacy profile state into the canonical profile).
 
 ### 2026-11-10: Issues 406-407
 
