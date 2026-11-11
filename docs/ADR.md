@@ -7545,8 +7545,8 @@ DD §10 "Agent-home retention" lists every path and the paths that are kept.
 
 ## ADR-075: One Host per KODAX_HOME; Profile Is Not Host Identity
 
-**Status**: Accepted (2026-11-10); implemented in KodaX by FEATURE_305 T1–T7, and Space follows on
-the release bump. See the [design](designs/one-host-per-kodax-home-2026-11-10.md). Tracks Issue 407.
+**Status**: Accepted (2026-11-10); implemented in KodaX by FEATURE_305 T1–T7, and it ships in
+`v0.7.97-beta.6`, and Space follows with its dependency bump. See the [design](designs/one-host-per-kodax-home-2026-11-10.md). Tracks Issue 407.
 
 **Context**: A Host is identified by its profile name (`runtime/daemon/<profile>/`,
 `runtime/profiles/<profile>/`) and, since v0.7.97-alpha.7, also by the Session
@@ -7590,7 +7590,7 @@ directory on the data root and never split process or storage by profile.
 - Two isolated Host environments in one account now require two data roots
   (`KODAX_HOME`), which is how tests and the Space test override already work.
 - SDK users must remove the `profile` option when they upgrade. This is a
-  breaking change inside the 0.7.97 line; the users are one closely connected
+  breaking change inside the 0.7.97 line (`0.7.97-beta.6`); the users are one closely connected
   team in the same refactoring period, so they change in step with the
   release instead of carrying a deprecated option.
 - Users who approved a global "always allow" in Space approve it once more.

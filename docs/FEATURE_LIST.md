@@ -522,7 +522,7 @@
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
-| `305` | One Host per KODAX_HOME | Core / Runtime + SDK | High | `v0.7.98` | [v0.7.98](features/v0.7.98.md#feature_305-one-host-per-kodax_home) — InProgress; ADR-075 Accepted, T1–T7 done; awaiting release and Space dependency bump |
+| `305` | One Host per KODAX_HOME | Core / Runtime + SDK | High | `v0.7.98` | [v0.7.98](features/v0.7.98.md#feature_305-one-host-per-kodax_home) — InProgress; ADR-075 Accepted, T1–T7 done; ships in `v0.7.97-beta.6`, then the Space dependency bump |
 | `298` | Product Host and Client Contract Simplification | Core / Runtime + UI SDK + Execution | Critical | `v0.7.97` | [v0.7.97](features/v0.7.97.md#feature-298) — core, [consumer completion T38–T42](features/v0.7.97.md#consumer-completion-tickets) and parity follow-ups T43–T56 implemented; cross-platform/manual release verification pending |
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
