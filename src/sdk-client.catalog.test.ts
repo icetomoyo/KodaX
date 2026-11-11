@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -51,8 +51,8 @@ beforeEach(async () => {
   await startCatalogHost();
 });
 
-async function startCatalogHost(): Promise<void> {
-  runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'product-catalog-test' });
+async function startCatalogHost(defaultModel?: string): Promise<void> {
+  runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'product-catalog-test', defaultModel });
   const paths = resolveRuntimeDaemonPaths(homeDir);
   const lock = tryAcquireRuntimeDaemonLock(paths, {
     runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
@@ -77,6 +77,91 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }, 30_000);
+
+it('isolates existing Sessions from saved defaults, including cleared choices and Host restart', async () => {
+  const initial = { provider: 'openai', model: 'first-model', effort: 'low', permissionMode: 'accept-edits' } as const;
+  await first.config.patch(initial);
+  const right = await second.sessions.create({ projectPath: path.join(homeDir, 'right') });
+  await first.config.patch({ model: 'other-model', effort: 'max', permissionMode: 'full-access' });
+  async function readView() {
+    let settings: unknown;
+    const observation = await second.sessions.observe(right.id, view => { settings = view.settings; });
+    try { await expect.poll(() => settings).toMatchObject(initial); }
+    finally { observation.close(); }
+  }
+  await readView();
+  const next = await first.sessions.create({ projectPath: homeDir });
+  let nextSettings: unknown;
+  const nextObservation = await first.sessions.observe(next.id, view => { nextSettings = view.settings; });
+  try { await expect.poll(() => nextSettings).toMatchObject({ model: 'other-model', effort: 'max', permissionMode: 'full-access' }); }
+  finally { nextObservation.close(); }
+  await second.sessions.updateSettings(right.id, { model: null, effort: null });
+  await first.config.patch({ model: 'third-model', effort: 'high' });
+  const cleared = await first.sessions.getSettings(right.id);
+  expect(cleared.model).toBeUndefined();
+  expect(cleared.effort).toBeUndefined();
+  await Promise.all([first.disconnect(), second.disconnect()]);
+  await host.close();
+  await runtime.close();
+  await startCatalogHost();
+  const restored = await second.sessions.getSettings(right.id);
+  expect(restored.model).toBeUndefined();
+  expect(restored.effort).toBeUndefined();
+  let observed: unknown;
+  const observation = await second.sessions.observe(right.id, view => { observed = view.settings; });
+  try {
+    await expect.poll(() => observed).toBeDefined();
+    expect(observed).toMatchObject({ permissionMode: 'accept-edits' });
+    expect(observed).not.toMatchObject({ model: 'third-model' });
+    await first.sessions.updateSettings(right.id, { effort: 'low' });
+    await expect.poll(() => observed).toMatchObject({ effort: 'low' });
+  } finally { observation.close(); }
+});
+
+it('initializes legacy Session defaults once while preserving explicit settings and revisions', async () => {
+  const session = await first.sessions.create({ projectPath: homeDir });
+  const file = path.join(homeDir, '.kodax', 'runtime', 'profiles', 'default', 'session-settings', `${session.id}.json`);
+  await writeFile(file, JSON.stringify({ revision: 7, value: { effort: 'low' } }));
+  await first.config.patch({ model: 'legacy-initial', effort: 'max', permissionMode: 'plan' });
+  expect(await first.sessions.getSettings(session.id)).toMatchObject({ effort: 'low' });
+  const stored: unknown = JSON.parse(await readFile(file, 'utf8'));
+  expect(stored).toMatchObject({ revision: 7, defaults: { model: 'legacy-initial' } });
+  await first.config.patch({ model: 'later-default', permissionMode: 'full-access' });
+  let observed: unknown;
+  const observation = await second.sessions.observe(session.id, view => { observed = view.settings; });
+  try { await expect.poll(() => observed).toMatchObject({ model: 'legacy-initial', effort: 'low', permissionMode: 'plan' }); }
+  finally { observation.close(); }
+});
+
+it('uses isolated model defaults for actual Runs, including clear, fork and Host restart', async () => {
+  await first.config.patch({ provider: 'product-catalog-test', model: 'original-model', effort: 'low' });
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await second.config.patch({ model: 'peer-model', effort: 'max' });
+  async function run(id: string, expected: string | undefined) {
+    const accepted = await first.inputs.submit({ sessionId: id, inputId: randomUUID(), text: 'Say hello.' });
+    if (!accepted.runId) throw new Error('Expected an admitted Run');
+    const result = await first.runs.await(accepted.runId);
+    expect(result.phase).toBe('completed');
+    expect((await runtime.runs.get(accepted.runId)).model).toBe(expected);
+  }
+  await run(session.id, 'original-model');
+  const fork = await createCliSessionCommands(first).fork({ sessionId: session.id });
+  if (!fork) throw new Error('Expected a forked Session');
+  await run(fork, 'original-model');
+  await first.sessions.updateSettings(session.id, { model: null, effort: null });
+  await run(session.id, undefined);
+  await Promise.all([first.disconnect(), second.disconnect()]);
+  await host.close();
+  await runtime.close();
+  await startCatalogHost('peer-model');
+  let budgetModel: string | undefined;
+  const observation = await first.sessions.observe(session.id, view => { budgetModel = view.contextBudget?.model; });
+  try { await expect.poll(() => budgetModel).toBe('catalog-test'); }
+  finally { observation.close(); }
+  await run(session.id, undefined);
+  await run(fork, 'original-model');
+});
 
 it('lists real Host skills, commands, and effective config through typed queries', async () => {
   // Skills come from the Host's real registry: built-in Skills ship with the
@@ -199,7 +284,7 @@ it('selects a Host-only model through the actual model command and clears it whe
     text: 'openai/host-only', display: 'openai/host-only', description: 'host-only', type: 'argument',
   });
   await first.config.patch({ planModeEffort: 'high' });
-  await first.sessions.updateSettings(session.id, { permissionMode: 'plan', effort: null });
+  await first.sessions.updateSettings(session.id, { permissionMode: 'plan', effort: null, planModeEffort: 'high' });
   let effectiveEffort: string | undefined;
   const observation = await second.sessions.observe(session.id, view => { effectiveEffort = view.settings.effort; });
   try { await expect.poll(() => effectiveEffort).toBe('high'); }

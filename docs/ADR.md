@@ -1,5 +1,20 @@
 # KodaX Architecture Decision Records
 
+## Session default isolation — 2026-11-11 (unreleased)
+
+The Host captures user-level Session defaults once at Session creation, or on
+first access to legacy settings. It persists that snapshot beside the raw
+overrides without changing their revision or public shape. Effective views and
+execution merge the captured defaults with explicit Session choices. Global
+configuration changes therefore affect future Sessions, while commands and
+shortcuts continue saving user defaults and applying the current Session.
+Clearing model or effort also clears its captured fallback, selecting
+engine/provider defaults; other cleared overrides return to the captured
+Session default. Plan effort retains its existing explicit-override precedence.
+Fork/recovery copy both overrides and captured defaults; clients observing the
+same Session still share changes. Draft snapshots remain in memory until the
+existing promotion path persists them. This adds no watcher or polling loop.
+
 ## FEATURE_302 implementation alignment — 2026-11-01 (released in v0.7.97-alpha.12)
 
 The accepted provider parity design is indexed in

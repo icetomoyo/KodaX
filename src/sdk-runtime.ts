@@ -4649,9 +4649,10 @@ async function createKodaXRuntimeInternal(
       !last || run.startedAt > last.startedAt ? run : last, undefined);
     const config = readRuntimeConfig(configFile);
     const activeRun = [...runs.values()].find(run => run.sessionId === sessionId && !run.terminalEmitted);
-    const settings = { ...resolveEffectiveRuntimeSessionSettings(config, rawSettings, true),
+    const effectiveSettings = resolveEffectiveRuntimeSessionSettings(config, rawSettings, true);
+    const settings = { ...effectiveSettings,
       ...(activeRun ? { agentMode: activeRun.mode === 'coding' ? 'sa' as const : 'ama' as const } : {}) };
-    const contextBudget = resolveClientContextBudget(config, settings, options.defaultProvider, options.defaultModel);
+    const contextBudget = resolveClientContextBudget(config, effectiveSettings, options.defaultProvider, options.defaultModel);
     return { session, settings: toClientSessionSettings(settings), contextBudget, items: restoreSessionViewItems(sessionId, data, conversation?.messages, liveItems, conversation?.boundaries),
       ...(data ? { committedOutputIds: [...committedSessionOutputIds(data, conversation?.messages ?? [])] } : {}),
       parentContextTokens: data ? estimateTokens(data.messages) : previous?.parentContextTokens,
@@ -4715,7 +4716,11 @@ async function createKodaXRuntimeInternal(
     if (isTerminalRuntimeEvent(type)) sessionViews.checkpoint(sessionId);
   });
   const settingsOwner = createRuntimeSessionSettingsOwner(persistence, bus,
-    sessionId => sessionManager.storage.isDraft(sessionId));
+    sessionId => sessionManager.storage.isDraft(sessionId), () => ({
+      ...(options.defaultProvider === undefined ? {} : { provider: options.defaultProvider }),
+      ...(options.defaultModel === undefined ? {} : { model: options.defaultModel }),
+      ...readRuntimeConfig(configFile),
+    }));
   const permissions = createRuntimePermissionRegistry(
     bus,
     options.permissionTimeoutMs ?? DEFAULT_PERMISSION_TIMEOUT_MS,
@@ -7059,6 +7064,7 @@ function createRuntimeSessionSettingsOwner(
   persistence: RuntimePersistence,
   bus: RuntimeEventBus,
   isDraft: (sessionId: string) => boolean,
+  readDefaults: () => unknown,
 ): RuntimeSessionSettingsOwner {
   const current = new Map<
     string,
@@ -7069,6 +7075,15 @@ function createRuntimeSessionSettingsOwner(
   // The canonical Session is saved before its settings. Keep draft settings
   // authoritative until both writes finish, including concurrent reads/updates.
   const pendingDraftSettings = new Set<string>();
+
+  const initialize = (sessionId: string, loaded: RuntimeVersionedValue<RuntimeSessionSettings>) => {
+    if (SESSION_DEFAULTS_CAPTURED in loaded.value) return loaded;
+    const { workMode: _workMode, ...defaults } = parseRuntimeSessionSettings(readDefaults());
+    const initialized = { revision: loaded.revision,
+      value: withCapturedSessionDefaults({ ...loaded.value }, defaults) };
+    if (!pendingDraftSettings.has(sessionId)) persistence.saveSessionSettingsVersioned(sessionId, initialized);
+    return initialized;
+  };
 
   const enqueue = <T>(
     sessionId: string,
@@ -7115,13 +7130,14 @@ function createRuntimeSessionSettingsOwner(
         pendingDraftSettings.delete(sessionId);
       });
     },
-    async read(sessionId) {
-      await (tails.get(sessionId) ?? Promise.resolve());
-      if (isDraft(sessionId)) pendingDraftSettings.add(sessionId);
-      const loaded = pendingDraftSettings.has(sessionId) ? current.get(sessionId) ?? { revision: 0, value: {} }
-        : persistence.loadSessionSettingsVersioned(sessionId);
-      current.set(sessionId, loaded);
-      return loaded;
+    read(sessionId) {
+      return enqueue(sessionId, () => {
+        if (isDraft(sessionId)) pendingDraftSettings.add(sessionId);
+        const loaded = initialize(sessionId, pendingDraftSettings.has(sessionId) ? current.get(sessionId) ?? { revision: 0, value: {} }
+          : persistence.loadSessionSettingsVersioned(sessionId));
+        current.set(sessionId, loaded);
+        return loaded;
+      });
     },
     peek(sessionId) {
       return current.get(sessionId);
@@ -7129,8 +7145,8 @@ function createRuntimeSessionSettingsOwner(
     update(sessionId, patch, expectedRevision, validate) {
       return enqueue(sessionId, async () => {
         if (isDraft(sessionId)) pendingDraftSettings.add(sessionId);
-        const loaded = pendingDraftSettings.has(sessionId) ? current.get(sessionId) ?? { revision: 0, value: {} }
-          : persistence.loadSessionSettingsVersioned(sessionId);
+        const loaded = initialize(sessionId, pendingDraftSettings.has(sessionId) ? current.get(sessionId) ?? { revision: 0, value: {} }
+          : persistence.loadSessionSettingsVersioned(sessionId));
         if (
           expectedRevision !== undefined &&
           loaded.revision !== expectedRevision
@@ -8659,6 +8675,7 @@ function createRuntimeSessionService(
         } else {
           await manager.storage.save(sessionId, data);
         }
+        await settingsOwner.read(sessionId);
         const session = toRuntimeSession(
           sessionId,
           data,
@@ -12561,7 +12578,7 @@ async function createRuntimeRunService(deps: {
     const model =
       options.modelOverride ??
       options.model ??
-      deps.defaultModel ??
+      (capturedSessionDefaults(settings) === undefined ? deps.defaultModel : undefined) ??
       resolveProviderModelDescriptors(provider)[0]?.id;
     const autoReviewPolicy = runtimeAutoReviewPolicy(
       readRuntimeConfig(path.join(deps.defaultConfigHome, "config.json")),
@@ -14452,7 +14469,7 @@ function resolveClientContextBudget(
   if (providerName === undefined) return undefined;
   try {
     const provider = resolveProvider(providerName);
-    const model = settings.model ?? defaultModel ?? provider.getModel();
+    const model = settings.model ?? (capturedSessionDefaults(settings) === undefined ? defaultModel : undefined) ?? provider.getModel();
     const raw = isRecord(config.compaction) ? config.compaction : {};
     const compaction = normalizeCompactionConfig({
       ...(typeof raw.contextWindow === 'number' ? { contextWindow: raw.contextWindow } : {}),
@@ -18175,7 +18192,9 @@ function createRuntimePersistence(
         ) {
           return {
             revision: parsed.revision,
-            value: parseRuntimeSessionSettings(parsed.value),
+            value: isRecord(parsed.defaults)
+              ? withCapturedSessionDefaults(parseRuntimeSessionSettings(parsed.value), parseRuntimeSessionSettings(parsed.defaults))
+              : parseRuntimeSessionSettings(parsed.value),
           };
         }
         // v0.7.68 and earlier stored a plain settings object.
@@ -18199,6 +18218,7 @@ function createRuntimePersistence(
       writeRuntimeJsonAtomic(file, {
         revision: settings.revision,
         value: serializeSessionSettings(settings.value),
+        ...(SESSION_DEFAULTS_CAPTURED in settings.value ? { defaults: capturedSessionDefaults(settings.value) } : {}),
       });
     },
     saveSessionSettings(sessionId, settings) {
@@ -23156,6 +23176,12 @@ function applySessionSettingsPatch(
   patch: RuntimeSessionSettingsPatch,
 ): RuntimeSessionSettings {
   const next: RuntimeSessionSettings = { ...current };
+  const defaults = capturedSessionDefaults(current);
+  if (defaults !== undefined) {
+    // Clearing a choice selects engine/provider defaults, never a peer's saved choice.
+    const cleared = new Set(['model', 'effort'].filter(key => patch[key as 'model' | 'effort'] === null));
+    withCapturedSessionDefaults(next, Object.fromEntries(Object.entries(defaults).filter(([key]) => !cleared.has(key))));
+  }
   applyNullablePatch(next, 'repoIntelligenceMode', patch.repoIntelligenceMode);
   applyNullablePatch(next, 'repoIntelligenceTrace', patch.repoIntelligenceTrace);
   applyNullableStringPatch(next, "provider", patch.provider);
@@ -23399,22 +23425,37 @@ function deleteMutableSetting<K extends keyof RuntimeSessionSettings>(
   )[key];
 }
 
+// Host-only metadata: persisted beside the settings value and excluded from public JSON.
+const SESSION_DEFAULTS_CAPTURED = Symbol('sessionDefaultsCaptured');
+
+function capturedSessionDefaults(settings: RuntimeSessionSettings): RuntimeSessionSettings | undefined {
+  return (settings as RuntimeSessionSettings & { [SESSION_DEFAULTS_CAPTURED]?: RuntimeSessionSettings })[SESSION_DEFAULTS_CAPTURED];
+}
+
+function withCapturedSessionDefaults(settings: RuntimeSessionSettings, defaults: RuntimeSessionSettings): RuntimeSessionSettings {
+  Object.defineProperty(settings, SESSION_DEFAULTS_CAPTURED, { value: defaults, configurable: true });
+  return settings;
+}
+
 function resolveEffectiveRuntimeSessionSettings(config: unknown, overrides: RuntimeSessionSettings,
   productSession = false): RuntimeSessionSettings {
   // Product defaults are effective facts only; raw overrides and low-level Run
   // callers retain their existing semantics when no permission was specified.
   // Work mode is a Session choice; stale profile fields must not alter the Coding default.
-  const { workMode: _profileWorkMode, ...profileSettings } = parseRuntimeSessionSettings(config);
+  const defaults = capturedSessionDefaults(overrides);
+  const retainDefaults = (value: RuntimeSessionSettings): RuntimeSessionSettings => defaults === undefined
+    ? value : withCapturedSessionDefaults(value, defaults);
+  const { workMode: _profileWorkMode, ...profileSettings } = defaults ?? parseRuntimeSessionSettings(config);
   const settings: RuntimeSessionSettings = { ...(productSession ? { permissionMode: 'accept-edits' as const, agentMode: 'ama' as const } : {}),
     ...profileSettings, ...overrides };
   if (settings.permissionMode === 'plan' && overrides.effort === undefined && overrides.planModeEffort !== undefined) {
-    return { ...settings, effort: overrides.planModeEffort };
+    return retainDefaults({ ...settings, effort: overrides.planModeEffort });
   }
   if (settings.permissionMode === 'plan' && settings.effort === undefined
-    && isRecord(config) && typeof config.planModeEffort === 'string') {
-    return { ...settings, effort: config.planModeEffort };
+    && profileSettings.planModeEffort !== undefined) {
+    return retainDefaults({ ...settings, effort: profileSettings.planModeEffort });
   }
-  return settings;
+  return retainDefaults(settings);
 }
 
 function parseRuntimeSessionSettings(value: unknown): RuntimeSessionSettings {
