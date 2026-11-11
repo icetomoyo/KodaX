@@ -704,7 +704,6 @@ function arrayLength(value: unknown): number {
 }
 
 async function startDaemonCommand(input: {
-  readonly profile: string;
   readonly homeDir: string;
   readonly configHome: string;
   readonly provider?: string;
@@ -718,8 +717,7 @@ async function startDaemonCommand(input: {
     return;
   }
   // The serving Host can belong to another profile that owns Session storage (Issue 406).
-  const profile = result.state?.profile
-    ?? resolveRuntimeDaemonPathsFromConfigHome(input.configHome, input.profile).profile;
+  const profile = result.state?.profile ?? RUNTIME_HOST_SLOT;
   if (result.reason === 'already_running') {
     console.log(
       chalk.green(
@@ -744,7 +742,6 @@ async function startDaemonCommand(input: {
 }
 
 async function getDaemonStartResult(input: {
-  readonly profile: string;
   readonly homeDir: string;
   readonly configHome: string;
   readonly provider?: string;
@@ -2887,7 +2884,6 @@ export function configureKodaXDaemonCommand(program: Command): Command {
       ) => {
         const options = mergeCommandOptionsWithGlobals(localOptions, command);
         await startDaemonCommand({
-          profile: RUNTIME_HOST_SLOT,
           ...resolveCliRuntimeDaemonLocation(options.home),
           provider: options.provider,
           model: options.model,
