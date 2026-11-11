@@ -48,7 +48,62 @@ on one commit.
   The step limit is ten minutes because the passing Windows suite alone takes
   about 4.6 minutes.
 
+## v0.7.97-beta.6 release preparation
+
+Release state: `v0.7.97-beta.6` is a candidate awaiting the single
+publishing dispatch. npm publication has not occurred. The candidate is the
+sixth beta of the v0.7.97 line: one Host per `KODAX_HOME` (ADR-075,
+FEATURE_305, designed under the `v0.7.98` planning identifier). The
+breaking change removes the Host-location `profile` from the SDK entry
+points and the `kodax daemon`/`a2a serve` commands; passing it fails with
+`runtime_host_migration_required`. A legacy-slot Host that an older Space
+started is still found through the storage-owner redirect, and its
+profile-split Session settings, order, queued inputs and Session-scoped
+permission grants merge once into the one Host's state; global grants
+approved in such a Host are dropped (Issue 407). Space and the CLI share
+one compatible Host across installations and versions (Issue 405), and a
+CLI started beside Space's Host attaches to it and keeps provider
+credentials (Issue 406). The standalone binary's Linux native text
+authority builds in digest-pinned `manylinux2014` images and loads on
+glibc 2.17 and on kernels before 5.8 (Issues 403–404; CI rejects any addon
+needing a newer `GLIBC_*` symbol), a failed native text addon load no
+longer crashes the next tracked write (Issue 402), and Session settings
+capture user-level defaults once instead of drifting with shared
+configuration. Acceptance is recorded in the
+[FEATURE_305 test guide](test-guides/FEATURE_305_v0.7.98_TEST_GUIDE.md).
+
+The CI/Release in-place upgrade gates now pin the published
+`0.7.97-beta.5` tarball (published 2026-11-10T09:40:09.927Z; registry
+dist.integrity sha512-QLU8cCBc…f20DwA== equals the
+kodax-ai-kodax-0.7.97-beta.5.tgz asset of the v0.7.97-beta.5 GitHub
+Release, sha256 0f5c154b…b0cefd6). Run that fixture locally with Windows
+`tar.exe` ahead of Git's GNU `tar` on `PATH`: GNU `tar` reads the `C:`
+drive in the archive path as a remote host.
+
+Local candidate validation on Windows with Node 22.23.1: full build,
+source and test typechecks, the registry (`kodax_manual`) suite
+(47 passed), `tests/release-workflow.test.ts` (28 passed),
+`tests/tracker-consistency.test.ts` (4 passed), `test:host-cutover`
+(3 passed), the contract tier (1,072 passed), the unit tier
+(13,977 passed), the fast tier (3,745 passed) — the unit and fast first
+runs each had one failure that passed on an immediate unchanged-candidate
+rerun — `test:bundle` (110 passed) and the real published beta.5 Host
+in-place upgrade (1 passed) against the integrity-pinned public tarball.
+The system tier runs in Release CI.
+
+This release follows the single publishing dispatch described under
+[Current release execution](#current-release-execution): `target=all` with
+`release_tag=v0.7.97-beta.6` runs Full CI, all five archive builds and the
+npm package gates, then creates the tag at the dispatched commit and the
+GitHub pre-release from that run's artifacts. Ordinary branch pushes do
+not run CI. Cross-platform manual acceptance, installed Space/SDK
+acceptance, the Space dependency bump (FEATURE_305 T6 follow-up) and npm
+registry publication remain separate maintainer steps.
+
 ## v0.7.97-beta.5 release preparation
+
+Historical preparation record: the upgrade baseline below reflects
+preparation time. The CI/Release upgrade gates now pin `0.7.97-beta.5`.
 
 Release state: `v0.7.97-beta.5` was published on 2026-11-10 as a
 GitHub prerelease and as npm `beta`. The release is the

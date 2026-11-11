@@ -1,5 +1,9 @@
 # Space 的 Product Client / Host 接缝
 
+## beta.6 的单 Host 与 `profile` 删除
+
+`v0.7.97-beta.6` 标签发布以下 Space 可见变化（npm 发布为手动步骤）。每个 `KODAX_HOME` 只有一个 Host：`ensureKodaXClient`、`connectKodaXClient` 与 `readKodaXClientExits` 不再接受 `profile`，传入即以 `runtime_host_migration_required` 失败；`kodax daemon` 各命令与 `kodax a2a serve` 不再接受 `--profile`。隔离 Host 请使用独立的 `homeDir`、`--home` 或 `KODAX_HOME`。`identity.profile` 仍保留在线上且已弃用，当前 Host 始终报告 `default`。旧版 Space 以 `coder` 启动且仍持有 Session 存储的 Host 仍可被新客户端找到并接入，空闲时按常规升级替换；旧 Host 按 profile 拆分的 Session 设置、顺序、排队输入和 Session 级权限授予在新 Host 启动时合并一次，全局授予会被丢弃并需重新批准。来自不同安装或版本的 Space 与 CLI 共用一个兼容 Host；CLI 在 Space 打开时启动会接入 Space 的 Host 并保留 Provider 凭据。Session 设置不再随共享的用户默认值变化：Host 在创建 Session 时捕获一次用户级默认值，全局配置变化只影响之后创建的 Session。迁移细节见 [SDK 迁移说明](SDK_MIGRATION.md#one-host-per-kodax_home-profile-removed)。
+
 ## beta.5 的权限请求与 Session 视图
 
 `v0.7.97-beta.5` 标签发布以下 Space 可见变化（npm 发布为手动步骤）。扩展 `tool:before` 可在任何权限模式下请人批准某一次调用：它沿用普通权限 Interaction，`reason` 写明发起的扩展与原因，不带 grantSuggestions，只能回答 `allow_once` 或 `reject`，回答不会成为授权；Host 以 `toolHookAsk: { version: 1 }` 声明支持。`ClientSessionView.sandbox` 是新的可选字段，记录本 Session 最近一次 Shell 沙箱健康观测，`fallback` 表示命令以宿主权限执行，Windows 的 `applied.degradedReadRoots` 列出本次不可读的 setup 目录；缺失表示尚未观测，不等于健康。Runtime 拥有的 Session 中，`read` 为每张已接受图片返回不透明的 `observationId`。迁移细节见 [SDK 迁移说明](SDK_MIGRATION.md#sdk-hardening-migration-shipped-in-v0797-beta5)。
@@ -91,7 +95,7 @@ Main/Renderer 不传该标记、不改 inputId，也不需自行迁移队列文�
 新 SDK 仍待发布；Space 升级后验收默认保持/变更、普通与显式 redirect、冷恢复和原账号
 保持，继续使用既有 API，不传内部队列标记，也不手改 pending 文件。
 
-2026-10-18 的 Space 核查样本安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，当时官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前开发树 `0.7.97-beta.5` 核对，不据此推断 Space 已升级；源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
+2026-10-18 的 Space 核查样本安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，当时官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前开发树 `0.7.97-beta.6` 核对，不据此推断 Space 已升级；源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
 
 ## 2026-10-29 未发布 SDK 接入补充
 

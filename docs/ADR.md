@@ -1,6 +1,6 @@
 # KodaX Architecture Decision Records
 
-## Session default isolation — 2026-11-11 (unreleased)
+## Session default isolation — 2026-11-11 (released in v0.7.97-beta.6)
 
 The Host captures user-level Session defaults once at Session creation, or on
 first access to legacy settings. It persists that snapshot beside the raw

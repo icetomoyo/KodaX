@@ -6,6 +6,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-beta.6] - 2026-11-11
+
+Sixth beta of the v0.7.97 line: one Host per `KODAX_HOME` (ADR-075,
+FEATURE_305). The breaking change removes the Host-location `profile`
+from the SDK entry points and the `kodax daemon`/`a2a serve` commands; a
+legacy-slot Host that an older Space started is still found through the
+storage-owner redirect, and its profile-split Session state merges once
+(Issue 407). Space and the CLI share one compatible Host across
+installations (Issue 405), and a CLI started beside Space's Host attaches
+to it and keeps provider credentials (Issue 406). The standalone binary's
+Linux floor drops to glibc 2.17 (Issues 403–404), a failed native text
+addon load no longer crashes the next tracked write (Issue 402), and
+Session settings no longer drift with shared user defaults. Every
+v0.7.96 stable and v0.7.97-alpha.1 through beta.5 client contract is
+retained except the removed `profile` option; the glibc and
+permission-grant behavior changes are listed under Compatibility. npm
+publication remains a manual maintainer action.
+
 ### Removed
 
 - **Breaking: one Host per `KODAX_HOME`; the Host-location `profile` is
@@ -52,12 +72,23 @@ All notable changes to this project will be documented in this file.
   authorization requires the approved Host profile`. `daemon start` now
   verifies the Host it actually attached to. Provider credential leases are
   bound to the authenticated Host only, not to its profile name (Issue 406).
+- Session settings no longer drift with shared user defaults. The Host
+  captures user-level Session defaults once at creation (or on first access
+  to legacy settings), persists that snapshot beside the raw overrides
+  without changing their revision, and merges the layers only for effective
+  views and execution. Global configuration changes affect future Sessions;
+  clearing the model or effort choice also clears its captured fallback;
+  fork and recovery copy both layers, and clients observing the same
+  Session still share changes.
 
 ### Compatibility
 
 - The supported Linux glibc floor drops from 2.28 to 2.17 for the standalone
   binary. The npm package still needs a Node build for the host, and official
   Node 20 requires glibc 2.28.
+- The one-time state merge imports only permission grants scoped to one
+  Session. Global grants approved in a Host that an older Space started under
+  another name are dropped; approve them again where needed (Issue 407).
 
 ---
 

@@ -11,21 +11,21 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.97-beta.5` (Git tag); `v0.7.96` remains the last stable release |
-| Current package version | `@kodax-ai/kodax@0.7.97-beta.5`; npm `beta` is `0.7.97-beta.5` (published 2026-11-10; publication remains manual) |
+| Current released version | `v0.7.97-beta.6` (Git tag); `v0.7.96` remains the last stable release |
+| Current package version | `@kodax-ai/kodax@0.7.97-beta.6`; npm `beta` is `0.7.97-beta.5` (published 2026-11-10); beta.6 npm publication remains a manual maintainer step |
 | Workspace baseline | `llm / agent / coding / repl` 4 core packages + private optional `artifacts` source workspace; one public npm package |
 | Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4` and extended with the unified Artifact SDK in `v0.7.97-alpha.5`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3` and extended with startup streamlining, Session recency ordering, draft admission, concurrent-launch recovery and shared-Session Host ownership resolution through `v0.7.97-alpha.7`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
 | Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement released in alpha.4; missing visual capabilities remain unverified; [design](ADR.md#verification-responsibility-and-tradeoffs) |
 | Artifact distribution revision | `2026-10-18` — one `@kodax-ai/kodax` npm package; four `/artifacts` subpaths and resources staged in the main tarball; local implementation, not yet published |
 | Current Artifact SDK additions | Unified visual evidence SDK and format backends released in `v0.7.97-alpha.5`: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
-| Current development | `v0.7.97-beta.5` next-dev integration — SDK foundation hardening (Issues 378–385), FEATURE_303 proxy/private CA, FEATURE_304 extension asks, durable visual observations, Managed Run Context reuse, scoped tool contracts and the root goal budget for child usage, plus Windows sandbox profile-file, cold-start child-record and agent-home retention repairs (Issues 398–400), on top of the beta.4 Space SDK contract repair; [release preparation](release.md#v0797-beta5-release-preparation). Cross-platform manual acceptance, installed Space/SDK acceptance and the original slow first resume after rebuild remain open; Issue 395's intermittent failure cause and Issue 394's whole-task non-inferiority remain unproven. |
+| Current development | `v0.7.97-beta.6` one Host per `KODAX_HOME` — FEATURE_305 removes the Host-location `profile` (breaking, ADR-075) with legacy-slot Host discovery and the one-time profile state merge (Issue 407), compatible-Host sharing across installations (Issue 405), Space Host coexistence (Issue 406), the standalone binary's glibc 2.17 Linux floor (Issues 403–404), native addon load-failure recovery (Issue 402) and Session-default isolation from shared user defaults, on top of the beta.5 next-dev integration; [release preparation](release.md#v0797-beta6-release-preparation). Cross-platform manual acceptance, installed Space/SDK acceptance, the Space dependency bump and the original slow first resume after rebuild remain open; Issue 395's intermittent failure cause and Issue 394's whole-task non-inferiority remain unproven. |
 | Visual harness implementation | P3/P4/P5/P6 implemented within declared scope and released in `v0.7.97-beta.5` through the next-dev integration; [final ID/receipt contract delivery](designs/visual-harness-id-contract-delivery-2026-10-30.md). P7 task-value evaluation concluded **mixed; net task-quality/token value unproven**, against optimized pre-visual 1826cc22; [final review and limits](designs/visual-harness-current-version-closure-2026-10-30.md). The 2026-10-29 plan's "not executed" state and old r3 single-response results are historical, not the current outcome. Historical default suite 18,094 passed / 0 failed; earlier failures and unlocated causes remain recorded; [mainline integration acceptance](designs/next-dev-integration-execution-2026-11-09.md). No new feature ID/version assigned |
-| Roadmap updated | `2026-11-10` — beta.5 next-dev integration release prepared on top of the published beta.4; FEATURE_300 remains Planned |
+| Roadmap updated | `2026-11-11` — beta.6 one-Host-per-`KODAX_HOME` release prepared on top of the published beta.5; FEATURE_305 Completed; FEATURE_300 remains Planned |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
 | Total tracked features | `89` |
-| InProgress | `3` |
+| InProgress | `2` |
 | Planned | `17` |
-| Completed | `63` |
+| Completed | `64` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
 | Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305` |
 | Archive cutoff | Shipped / canceled / absorbed / shelved items through `v0.7.49` are archived. |
@@ -34,8 +34,8 @@
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 63 | `304, 303, 302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
-| InProgress | 3 | `305, 298, 225` | `305`: T1+T2 (SDK and CLI `profile` removal), T3 (legacy-slot discovery), T4 (state merge) and T5 (migration docs) done; T6 Space follow-up and T7 acceptance done; Space dependency bump waits for the KodaX release. `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
+| Completed | 64 | `305, 304, 303, 302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| InProgress | 2 | `298, 225` | `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
@@ -522,7 +522,6 @@
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
-| `305` | One Host per KODAX_HOME | Core / Runtime + SDK | High | `v0.7.98` | [v0.7.98](features/v0.7.98.md#feature_305-one-host-per-kodax_home) — InProgress; ADR-075 Accepted, T1–T7 done; ships in `v0.7.97-beta.6`, then the Space dependency bump |
 | `298` | Product Host and Client Contract Simplification | Core / Runtime + UI SDK + Execution | Critical | `v0.7.97` | [v0.7.97](features/v0.7.97.md#feature-298) — core, [consumer completion T38–T42](features/v0.7.97.md#consumer-completion-tickets) and parity follow-ups T43–T56 implemented; cross-platform/manual release verification pending |
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
@@ -555,6 +554,33 @@ Final frozen package **80** and historical/real-alpha.11 Host gates **4** passed
 and build fingerprints remained unchanged throughout. See the J guide for exact checkpoints.
 Space stays independently at `da531f0a`; its historical I counts do not certify a newly paired
 Space build. No push/publication.
+
+## v0.7.97-beta.6 Release Record
+
+`v0.7.97-beta.6` is the sixth beta of the v0.7.97 line: one Host per
+`KODAX_HOME` (ADR-075, FEATURE_305, originally targeted at `v0.7.98`). The
+breaking change removes the Host-location `profile` from the SDK entry
+points and the `kodax daemon`/`a2a serve` commands; passing it fails with
+`runtime_host_migration_required`, and isolation moves to a separate
+`homeDir`, `--home` or `KODAX_HOME`. A legacy-slot Host that an older Space
+started is still found through the storage-owner redirect, and its
+profile-split Session settings, order, queued inputs and Session-scoped
+permission grants merge once into the one Host's state; global grants
+approved in such a Host are dropped (Issue 407). Space and the CLI share one
+compatible Host across installations and versions (Issue 405), and a CLI
+started beside Space's Host attaches to it and keeps provider credentials
+(Issue 406). The standalone binary's Linux native text authority loads on
+glibc 2.17 and on kernels before 5.8 (Issues 403–404), a failed native text
+addon load no longer crashes the next tracked write (Issue 402), and Session
+settings no longer drift with shared user defaults. The CI/Release in-place
+upgrade gate now pins the published beta.5 tarball. Acceptance is recorded in
+the [FEATURE_305 test guide](test-guides/FEATURE_305_v0.7.98_TEST_GUIDE.md).
+Every v0.7.96 stable and v0.7.97-alpha.1 through beta.5 client contract is
+retained except the removed `profile` option; migration steps are in
+[SDK_MIGRATION.md](SDK_MIGRATION.md#one-host-per-kodax_home-profile-removed)
+and the behavior changes are listed in the [CHANGELOG](../CHANGELOG.md).
+Cross-platform manual acceptance, installed Space/SDK acceptance, the Space
+dependency bump and npm publication remain manual maintainer steps.
 
 ## v0.7.97-beta.5 Release Record
 
@@ -2288,8 +2314,8 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 ## 2026-11-10 FEATURE_305 Addition
 
-- Status: Planned, target `v0.7.98` (planning identifier; the release vehicle is decided at
-  release time).
+- Status: Completed 2026-11-11 and shipped in `v0.7.97-beta.6`; planned under `v0.7.98`, a
+  planning identifier.
 - Source: Issues 405–407 from the KodaX Space 0.1.47-alpha.5 + CLI 0.7.97-beta.4 report.
   Decision record: ADR-075 (Accepted). Design:
   [one-host-per-kodax-home-2026-11-10.md](designs/one-host-per-kodax-home-2026-11-10.md).
@@ -2360,6 +2386,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Version | Design | Notes |
 |---|---|---|---|---|
+| `305` | One Host per KODAX_HOME | `v0.7.98` (shipped in `v0.7.97-beta.6`) | [v0.7.98](features/v0.7.98.md#feature_305-one-host-per-kodax_home) | One Host serves each `KODAX_HOME`; the Host-location `profile` SDK option and `--profile` CLI flag are removed with `runtime_host_migration_required` errors (ADR-075). Legacy-slot Hosts are found through the storage-owner redirect and profile-split Session state merges once (Issue 407); the Space dependency bump follows the release. |
 | `304` | Ask Result for Extension Tool Policy | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_304-ask-result-for-extension-tool-policy) | Extension `tool:before` may return `{ decision: 'ask', reason }`; block wins over ask. The Host raises an allow-once-only permission request with the reason in every mode, including Full Access and granted calls; a Host without `requestToolApproval` blocks. Capability `toolHookAsk: { version: 1 }` on embedded and daemon. The official sandbox asks for recursive and out-of-workspace deletes. |
 | `303` | Proxy and Private CA Support | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_303-proxy-and-private-ca-support) | The Responses WebSocket follows `HTTP(S)_PROXY` and `NO_PROXY` on Node 22.21+/24.5+ with `NODE_USE_ENV_PROXY=1` and on the Bun binary; the Host warns as `runtime:network` when a proxy variable would be bypassed. Node floor stays `>=20`. Verified on Node 22.23.1 and Bun 1.4.4 with a local proxy and private CA. |
 | `302` | Independent LLM Provider Parity | `v0.7.99` (unreleased) | [v0.7.99](features/v0.7.99.md#feature_302-independent-llm-provider-parity) | T01–T12/H/I accepted offline with paired Space; J Root/design local main integration and post-merge gates passed. Space remains independent; live accounts/platform installers unverified. |

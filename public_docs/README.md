@@ -3,8 +3,13 @@
 Documentation for KodaX users, product-client integrators and trusted Host developers.
 
 This development tree implements the unified Product Client contract under
-FEATURE_298/299/301/303/304. The package version is `0.7.97-beta.5`;
-`v0.7.96` remains the last stable release. `v0.7.97-beta.5` integrates the
+FEATURE_298/299/301/303/304/305. The package version is `0.7.97-beta.6`;
+`v0.7.96` remains the last stable release. `v0.7.97-beta.6` moves to one
+Host per `KODAX_HOME`: the Host-location `profile` is removed from the SDK
+entry points and the `kodax daemon`/`a2a serve` commands (breaking), Space
+and the CLI share one compatible Host across installations, the standalone
+binary's Linux floor drops to glibc 2.17, and Session settings no longer
+drift with shared user defaults; `v0.7.97-beta.5` integrates the
 SDK foundation hardening (extension `tool:before` on every dispatch path and
 failing closed, agent-home extension/integration write protection,
 `web_fetch` metadata and private-redirect refusal), proxy and private CA
@@ -58,9 +63,12 @@ recovery fixes shipped in `v0.7.97-beta.2`; long-context recovery, durable
 Actor settlement and saved-history location/turn resolution shipped in
 `v0.7.97-beta.3`; the instruction and history contract v2 repairs shipped in
 `v0.7.97-beta.4`; extension policy hardening and asks, proxy/private CA
-support and durable visual observations shipped in `v0.7.97-beta.5`. Read the
-[current SDK alignment](sdk/embedder-guide.md#post-alpha10-sdk-alignment)
-and [unified Host cutover](sdk/embedder-guide.md#unified-host-sdk-cutover-shipped-in-v0797-alpha12)
+support and durable visual observations shipped in `v0.7.97-beta.5`; one
+Host per `KODAX_HOME` with the Host-location `profile` removed shipped in
+`v0.7.97-beta.6`. Read the
+[current SDK alignment](sdk/embedder-guide.md#post-alpha10-sdk-alignment),
+[unified Host cutover](sdk/embedder-guide.md#unified-host-sdk-cutover-shipped-in-v0797-alpha12)
+and [one Host per KODAX_HOME](../docs/SDK_MIGRATION.md#one-host-per-kodax_home-profile-removed)
 for compatibility and standalone-library boundaries. Historical first-read
 latency remains tracked in Issue 371.
 

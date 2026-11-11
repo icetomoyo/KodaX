@@ -1,10 +1,12 @@
 # KodaX SDK — Product Client and Host Integration
 
-This page describes the current FEATURE_298/299/301/303/304 development tree, checked against
-package version `0.7.97-beta.5`. The version alone does not claim that all current
+This page describes the current FEATURE_298/299/301/303/304/305 development tree, checked against
+package version `0.7.97-beta.6`. The version alone does not claim that all current
 working-tree changes are already published to npm. Check the installed
 package exports and the connected Host's capabilities when migrating.
-The beta.5 extension policy, agent-home and Session view changes are listed in
+The beta.6 Host-location `profile` removal is listed in
+[One Host per KODAX_HOME](../../docs/SDK_MIGRATION.md#one-host-per-kodax_home-profile-removed);
+the beta.5 extension policy, agent-home and Session view changes are listed in
 [SDK hardening migration](../../docs/SDK_MIGRATION.md#sdk-hardening-migration-shipped-in-v0797-beta5).
 
 For applications sharing KodaX sessions, use `KodaXProductClient` from

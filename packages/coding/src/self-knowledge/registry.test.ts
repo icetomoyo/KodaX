@@ -170,7 +170,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('may canonicalize DACL protection/inheritance control at commit');
     expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
     expect(sandbox).toContain('nonce-bound per-policy private desktop');
-    expect(sandbox).toContain('v0.7.97-beta.5 release uses Windows native shell protocol 10');
+    expect(sandbox).toContain('v0.7.97-beta.6 release uses Windows native shell protocol 10');
     expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
     expect(sandbox).toContain('nonce-bound terminal record');
     expect(sandbox).toContain('protected host/SYSTEM-only control directory');
@@ -216,11 +216,33 @@ describe('FEATURE_218 manual registry', () => {
     expect(troubleshooting).toContain('(`daemon.log.1`, rotated at 2 MiB)');
   });
 
+  it('documents the v0.7.97-beta.6 one Host per KODAX_HOME release', () => {
+    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
+    const config = resolveKodaXManual({ topic: 'config' }).content;
+    const troubleshooting = resolveKodaXManual({ topic: 'troubleshooting' }).content;
+
+    expect(sdk).toContain('The v0.7.97-beta.6 release removes the Host-location profile: one Host serves each');
+    expect(sdk).toContain('`runtime_host_migration_required`. Isolate Hosts with a separate homeDir, `--home` or');
+    expect(sdk).toContain('`identity.profile` stays on the wire and is deprecated.');
+    expect(sdk).toContain('queued inputs and Session permission grants merge once into the one Host\'s state; such');
+    expect(sdk).toContain('global grants are dropped and re-approved (Issue 407)');
+    expect(sdk).toContain('across installations and versions and replace only an idle older one (Issue 405)');
+    expect(sdk).toContain('beside Space\'s Host attaches to it with provider credentials (Issue 406)');
+    expect(sdk).toContain('no longer drift with shared user defaults.');
+    expect(sdk).toContain('through beta.5 contract is retained except the removed `profile` option.');
+    expect(sdk).toContain('The shared local daemon is authoritative for one KODAX_HOME (one Host per data root).');
+    expect(config).toContain('~/.kodax/runtime/daemon/default/bootstrap.log');
+    expect(troubleshooting).toContain('`runtime_host_migration_required`: `profile`/`--profile` no longer names a Host');
+    expect(troubleshooting).toContain('isolate Hosts with a separate `--home`/KODAX_HOME.');
+    expect(troubleshooting).toContain('~/.kodax/runtime/daemon/default/bootstrap.log');
+  });
+
   it('documents the v0.7.96 release capability and capacity-debt contracts', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(sdk).toContain('The v0.7.97-beta.5 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The v0.7.97-beta.6 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('beta.5 and earlier required glibc 2.28 (Issue 328)');
     expect(sdk).toContain('The v0.7.97-alpha.10 release resumes checkpointed Runs and task trees after Host');
     expect(sdk).toContain('The v0.7.97-alpha.11 release adds explicit Agent, Coding and experimental Script work modes');
     expect(sdk).toContain('Script runs supported leaf tools through existing permission and receipt boundaries.');

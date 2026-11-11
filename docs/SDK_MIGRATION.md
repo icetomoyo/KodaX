@@ -1,6 +1,6 @@
 # SDK 统一 Client 契约迁移指南
 
-适用范围：当前工作树的 FEATURE_298/299/301/303/304 实现；本次核对的包版本为 `0.7.97-beta.5`，随 `v0.7.97-beta.5` 标签发布（npm 发布为手动步骤）。接入前应核对所安装包的导出和 Host 能力；下文带日期的 beta.1/beta.2/beta.3/beta.4 记录保留各自历史范围，beta.5 的变化见 [SDK hardening migration](#sdk-hardening-migration-shipped-in-v0797-beta5)。将随 `v0.7.97-beta.6` 发布（尚未发布）的破坏性变更见 [One Host per KODAX_HOME](#one-host-per-kodax_home-profile-removed)：Host 位置的 `profile` 已删除。
+适用范围：当前工作树的 FEATURE_298/299/301/303/304/305 实现；本次核对的包版本为 `0.7.97-beta.6`，随 `v0.7.97-beta.6` 标签发布（npm 发布为手动步骤）。接入前应核对所安装包的导出和 Host 能力；下文带日期的 beta.1/beta.2/beta.3/beta.4 记录保留各自历史范围，beta.5 的变化见 [SDK hardening migration](#sdk-hardening-migration-shipped-in-v0797-beta5)。beta.6 的破坏性变更见 [One Host per KODAX_HOME](#one-host-per-kodax_home-profile-removed)：Host 位置的 `profile` 已删除。
 
 Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附件/统计与退出恢复范围见 [SDK/Host 接缝](SPACE_SDK_SEAMS.md)。
 
@@ -1153,7 +1153,8 @@ sections and [ADR-071](ADR.md) for the ask decision.
 
 ## One Host per KODAX_HOME (profile removed)
 
-Breaking change, ships in `v0.7.97-beta.6` (not yet released). Decision:
+Breaking change shipped in `v0.7.97-beta.6`; npm publication is a separate
+manual step. Decision:
 [ADR-075](ADR.md). The Host is identified by its data root, `homeDir` or
 `KODAX_HOME` (default `~/.kodax`). One Host serves each data root. It always
 uses the fixed directories `runtime/daemon/default/` and

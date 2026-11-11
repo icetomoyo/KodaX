@@ -2947,12 +2947,12 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 407 | Medium | Resolved | Passive connections and exit receipts ignore the session storage owner | v0.7.97-alpha.7 (storage-owner redirect) | post-v0.7.97-beta.5 (unreleased, FEATURE_305 T3+T4) | 2026-11-10 | 2026-11-11 |
-| 406 | High | Resolved | A CLI redirected to Space's Host fails `daemon start` verification and provider credential authorization | `daemon start` check v0.7.97-alpha.1, exposed by the v0.7.97-alpha.7 redirect; credential profile fence v0.7.97-alpha.12 | post-v0.7.97-beta.5 (unreleased) | 2026-11-10 | 2026-11-10 |
-| 405 | High | Resolved | Space and the CLI refuse to share a compatible Host from another installation or version | v0.7.97-alpha.1 (Host build refresh); busy older-Host refusal since v0.7.79 | post-v0.7.97-beta.5 (unreleased) | 2026-11-10 | 2026-11-10 |
-| 404 | High | Resolved | Linux kernels before 5.8 reject every trusted text write | v0.7.96 (FEATURE_295) | post-v0.7.97-beta.5 (unreleased) | 2026-11-10 | 2026-11-10 |
-| 403 | High | Resolved | Linux native text authority cannot load on glibc 2.17 hosts | v0.7.96 (FEATURE_295); 2.28 floor since Issue 328 | post-v0.7.97-beta.5 (unreleased) | 2026-11-10 | 2026-11-10 |
-| 402 | High | Resolved | A failed native text addon load crashes the next tracked write | v0.7.96 (FEATURE_295) | post-v0.7.97-beta.5 (unreleased) | 2026-11-10 | 2026-11-10 |
+| 407 | Medium | Resolved | Passive connections and exit receipts ignore the session storage owner | v0.7.97-alpha.7 (storage-owner redirect) | `v0.7.97-beta.6` (FEATURE_305 T3+T4) | 2026-11-10 | 2026-11-11 |
+| 406 | High | Resolved | A CLI redirected to Space's Host fails `daemon start` verification and provider credential authorization | `daemon start` check v0.7.97-alpha.1, exposed by the v0.7.97-alpha.7 redirect; credential profile fence v0.7.97-alpha.12 | `v0.7.97-beta.6` | 2026-11-10 | 2026-11-10 |
+| 405 | High | Resolved | Space and the CLI refuse to share a compatible Host from another installation or version | v0.7.97-alpha.1 (Host build refresh); busy older-Host refusal since v0.7.79 | `v0.7.97-beta.6` | 2026-11-10 | 2026-11-10 |
+| 404 | High | Resolved | Linux kernels before 5.8 reject every trusted text write | v0.7.96 (FEATURE_295) | `v0.7.97-beta.6` | 2026-11-10 | 2026-11-10 |
+| 403 | High | Resolved | Linux native text authority cannot load on glibc 2.17 hosts | v0.7.96 (FEATURE_295); 2.28 floor since Issue 328 | `v0.7.97-beta.6` | 2026-11-10 | 2026-11-10 |
+| 402 | High | Resolved | A failed native text addon load crashes the next tracked write | v0.7.96 (FEATURE_295) | `v0.7.97-beta.6` | 2026-11-10 | 2026-11-10 |
 | 401 | Low | Open | Memory review inbox keeps every finished job's files and test-made jobs | unknown; observed at v0.7.97-beta.4 | — | 2026-11-10 | — |
 | 400 | Medium | Resolved | Agent home keeps retired runtime state forever and `daemon.log` grows without bound | retired writers in v0.7.96 and v0.7.97-alpha.1/alpha.12; observed at v0.7.97-beta.4 | `v0.7.97-beta.5` | 2026-11-10 | 2026-11-10 |
 | 399 | High | Resolved | A replaced profile file silently moves every Windows sandbox command to the host | setup-owned profile roots since v0.7.96 (`ea4d796ee`); observed at v0.7.97-beta.4 | `v0.7.97-beta.5` | 2026-11-10 | 2026-11-10 |
@@ -3247,7 +3247,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 - Status: Resolved (by FEATURE_305 T3 and T4)
 - Introduced: v0.7.97-alpha.7 (d45938b90, storage-owner redirect)
 - Created: 2026-11-10
-- Fixed: post-v0.7.97-beta.5 working tree (unreleased)
+- Fixed: `v0.7.97-beta.6`
 - Related: Issue 406, Issue 405, FEATURE_305, ADR-075
 
 **Original problem.** A Host has two identity keys: the profile name
@@ -3313,7 +3313,7 @@ design) instead of point fixes.
   exposed by the storage-owner redirect in v0.7.97-alpha.7 (d45938b90);
   credential profile fence in v0.7.97-alpha.12 (4b915c94c)
 - Created: 2026-11-10
-- Fixed: post-v0.7.97-beta.5 working tree (unreleased)
+- Fixed: `v0.7.97-beta.6`
 - Related: Issue 405, Issue 407, ADR-075 (Accepted)
 
 **Original problem.** Packaged Space runs its Host as profile `coder`; the CLI
@@ -3365,7 +3365,7 @@ scoped, fingerprinted and revoked on close, and every profile in one
 - Introduced: same-version cross-installation refusal in v0.7.97-alpha.1 (Host
   build refresh); busy older-Host refusal with the startup upgrade path in v0.7.79
 - Created: 2026-11-10
-- Fixed: post-v0.7.97-beta.5 working tree (unreleased)
+- Fixed: `v0.7.97-beta.6`
 - Related: 0a3728e9c (identical builds across installations share one Host)
 
 **Original problem.** A Windows user ran KodaX Space 0.1.47-alpha.5 (bundled SDK
@@ -3441,7 +3441,7 @@ version and build no longer gate compatibility.
 - Status: Resolved
 - Introduced: trusted text mount checks in v0.7.96 (FEATURE_295)
 - Created: 2026-11-10
-- Fixed: post-v0.7.97-beta.5 working tree (unreleased)
+- Fixed: `v0.7.97-beta.6`
 - Related: Issue 403 (same customer host)
 
 **Original problem.** The native text authority proved mount identity only
@@ -3472,7 +3472,7 @@ one extra procfs read.
 - Introduced: Linux native text authority in v0.7.96 (FEATURE_295); the glibc
   2.28 floor dates from Issue 328
 - Created: 2026-11-10
-- Fixed: post-v0.7.97-beta.5 working tree (unreleased)
+- Fixed: `v0.7.97-beta.6`
 - Related: Issues 328, 402 and 404
 
 **Original problem.** A customer runs the standalone Linux binary on Anolis 7
@@ -3509,7 +3509,7 @@ lock, atomic replace and receipt code is unchanged.
 - Status: Resolved
 - Introduced: process-level native binding cache in v0.7.96 (FEATURE_295)
 - Created: 2026-11-10
-- Fixed: post-v0.7.97-beta.5 working tree (unreleased)
+- Fixed: `v0.7.97-beta.6`
 - Related: Issue 403 (the load failure that exposed it)
 
 **Original problem.** On the glibc 2.17 host, the first `edit`, `write` or
