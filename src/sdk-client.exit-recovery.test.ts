@@ -99,10 +99,10 @@ it.skipIf(process.platform !== 'win32')('keeps the caller responsive while sever
   expect((await read).map(value => value.recovery?.reason)).toEqual(Array(4).fill('host_generation_terminated'));
 });
 
-async function fixture() {
+async function fixture(slot?: string) {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-client-exit-recovery-'));
   directories.push(homeDir);
-  const paths = resolveRuntimeDaemonPaths(homeDir);
+  const paths = resolveRuntimeDaemonPaths(homeDir, slot);
   const receipt: ClientExitReceipt = {
     requestId: 'space-exit', clientId: runtimeClientPrincipal(clientInfo.instanceId, clientInfo.instanceSecret),
     runtimeId: `rt_${randomUUID()}`, accepted: true, requestedAt: '2026-10-26T00:00:00.000Z', updatedAt: '2026-10-26T00:00:00.000Z',
@@ -136,6 +136,13 @@ it('converges across repeated Space restarts without promoting unknown work or r
       recovery: { state: 'ready', reason: 'host_shutdown_verified', nextAction: 'start_or_connect' } });
     expect(await readFile(file, 'utf8')).toBe(original);
   }
+});
+
+it('reads exits recorded by a legacy-slot Host that owned Session storage (Issue 407)', async () => {
+  const { homeDir, receipt, outcome } = await fixture('coder');
+  outcome();
+  expect(await readKodaXClientExits({ homeDir, clientInfo })).toMatchObject([{ requestId: receipt.requestId,
+    recovery: { state: 'ready', reason: 'host_shutdown_verified' } }]);
 });
 
 it('requests inspection for legacy missing evidence and still accepts a late exact shutdown outcome', async () => {

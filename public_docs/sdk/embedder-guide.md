@@ -3468,8 +3468,11 @@ Daemon ownership is scoped by `homeDir`: one Host serves each home (ADR-075).
   directory name, not a selectable profile; `identity.profile` always reports it
   and is kept only for older clients.
 - A Host started by an older client under another profile (for example `coder`)
-  keeps serving until it is idle; current clients reach it through the Session
-  storage owner.
+  keeps serving until it is idle. While it owns Session storage, `ensure`,
+  passive `connect`, and `kodax daemon start|stop|status|logs|restart` act on it;
+  `identity.profile` then reports its directory name. `readKodaXClientExits`
+  reads the receipts of every Host directory in the home, so exits recorded by
+  such a Host stay recoverable after it is replaced.
 - Default runtime session storage is also scoped under `<homeDir>/.kodax/sessions`
   when `sessionsDir` is omitted.
 - Windows uses a named pipe; Linux/macOS use a Unix domain socket.

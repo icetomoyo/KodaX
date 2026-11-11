@@ -937,6 +937,31 @@ export function findRuntimeSessionStorageHost(
   });
 }
 
+/**
+ * The slot of the Host that serves this home: a live legacy-slot Host that
+ * owns Session storage (an older client started it, ADR-075), else the
+ * canonical slot. An owner whose descriptor is not published yet is still
+ * starting; callers that must wait for it use findRuntimeSessionStorageHost.
+ */
+export function resolveRuntimeHostSlot(configHome: string, sessionsDir: string): string {
+  try {
+    return findRuntimeSessionStorageHost(configHome, sessionsDir)?.profile ?? RUNTIME_HOST_SLOT;
+  } catch (error: unknown) {
+    if (isRecord(error) && error.code === 'session_storage_owned') return RUNTIME_HOST_SLOT;
+    throw error;
+  }
+}
+
+/** Every daemon slot directory in this home, canonical first. */
+export function listRuntimeDaemonSlots(configHome: string): readonly string[] {
+  const daemonDir = path.join(path.resolve(configHome), 'runtime', 'daemon');
+  const legacy = fs.existsSync(daemonDir) ? fs.readdirSync(daemonDir, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && entry.name !== RUNTIME_HOST_SLOT
+      && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(entry.name))
+    .map(entry => entry.name).sort() : [];
+  return [RUNTIME_HOST_SLOT, ...legacy];
+}
+
 export function acquireRuntimeSessionStorageOwner(
   sessionsDir: string,
   runtimeId: string,

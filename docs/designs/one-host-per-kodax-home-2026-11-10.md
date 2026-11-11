@@ -1,6 +1,6 @@
 # One Host per `KODAX_HOME` — design draft, 2026-11-10
 
-Status: **accepted 2026-11-10; T1+T2 implemented**. Review decisions are in §8.
+Status: **accepted 2026-11-10; T1+T2 and T3 implemented**. Review decisions are in §8.
 Tracked as [FEATURE_305](../features/v0.7.98.md#feature_305-one-host-per-kodax_home) (tickets T1–T7).
 Decision record:
 [ADR-075](../ADR.md#adr-075-one-host-per-kodax_home-profile-is-not-host-identity). Tracks [Issue 407](../KNOWN_ISSUES.md#issue-407-passive-connections-and-exit-receipts-ignore-the-session-storage-owner);
@@ -141,8 +141,10 @@ KodaX:
 - `sdk-runtime.ts`: `ensureKodaXRuntime` and `createRuntimePersistence` use the
   canonical slot; drop the requested-profile fence for redirects; migration
   hook at Host startup.
-- `sdk-client.ts`: `connectKodaXClient` and `readKodaXClientExits` resolve the
-  canonical slot, falling back to the storage owner's slot.
+- `sdk-client.ts`: `connectKodaXClient` resolves the storage owner's slot when a
+  legacy Host owns storage, else the canonical slot (`resolveRuntimeHostSlot`).
+  `readKodaXClientExits` reads the receipts of every daemon slot in the home, so
+  exits recorded by a legacy Host stay recoverable after it is replaced.
 - `kodax_cli.ts`: `daemon` commands without `--profile`; explicit error when
   it is passed.
 - `home-retention.ts`: one rule for `runtime/profiles/*.merged-*`.

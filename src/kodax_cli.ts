@@ -78,12 +78,12 @@ import {
   classifyRuntimeDaemonHealth,
   readRuntimeDaemonShutdownOutcome,
   readRuntimeDaemonLockOwner,
-  findRuntimeSessionStorageHost,
   readRuntimeDaemonToken,
   removeRuntimeDaemonOwnershipIfUnchanged,
   isSameRuntimeDaemonPath,
   resolveRuntimeDaemonPaths,
   resolveRuntimeDaemonPathsFromConfigHome,
+  resolveRuntimeHostSlot,
   RUNTIME_HOST_SLOT,
   readRuntimeDaemonLogLines,
   writeRuntimeDaemonShutdownOutcome,
@@ -553,7 +553,6 @@ function summarizeDaemonRuntimeStatus(
 async function getInteractiveRuntimeStatus(input: {
   readonly runtime: KodaXRuntime;
   readonly configHome: string;
-  readonly profile: string;
 }): Promise<CliRuntimeSurfaceStatus> {
   const snapshot = await input.runtime.status.snapshot();
   let endpoint: string | undefined;
@@ -561,7 +560,7 @@ async function getInteractiveRuntimeStatus(input: {
   if (input.runtime.identity.mode === 'daemon') {
     const paths = resolveRuntimeDaemonPathsFromConfigHome(
       input.configHome,
-      input.profile,
+      input.runtime.identity.profile,
     );
     const observation = await observeRuntimeDaemonHealth(paths);
     health = classifyRuntimeDaemonHealth(observation);
@@ -752,9 +751,8 @@ async function getDaemonStartResult(input: {
   readonly model?: string;
   readonly timeoutMs: number;
 }): Promise<DaemonStartResult> {
-  const requested = resolveRuntimeDaemonPathsFromConfigHome(input.configHome, input.profile);
   // Startup follows a live Session storage owner of another profile; snapshot that Host (Issue 406).
-  const beforePaths = sessionStorageHostPaths(input.configHome) ?? requested;
+  const beforePaths = resolveRuntimeDaemonPathsFromConfigHome(input.configHome, daemonHostSlot(input.configHome));
   const before = await observeRuntimeDaemonHealth(beforePaths);
   // Initial integration reconciliation holds the owner fence before publishing
   // daemon.json. A later authenticated attach to that exact owner is reuse.
@@ -791,15 +789,15 @@ async function getDaemonStartResult(input: {
   }
 }
 
-function sessionStorageHostPaths(configHome: string): RuntimeDaemonPaths | undefined {
-  try {
-    const host = findRuntimeSessionStorageHost(configHome, path.join(configHome, 'sessions'));
-    return host && resolveRuntimeDaemonPathsFromConfigHome(configHome, host.profile);
-  } catch (error: unknown) {
-    // An owner whose descriptor is not published yet is waited for by startup; it was not running before.
-    if (isRecord(error) && error.code === 'session_storage_owned') return undefined;
-    throw error;
-  }
+/** daemon commands act on the Host serving this home, which may be a legacy-slot Host (Issues 406, 407). */
+function daemonHostSlot(configHome: string): string {
+  return resolveRuntimeHostSlot(configHome, path.join(configHome, 'sessions'));
+}
+
+/** stop, status, logs and restart address the Host serving this home, not a requested slot. */
+function daemonHostLocation(homeDir: string | undefined): { readonly profile: string; readonly homeDir: string; readonly configHome: string } {
+  const location = resolveCliRuntimeDaemonLocation(homeDir);
+  return { ...location, profile: daemonHostSlot(location.configHome) };
 }
 
 async function serveDaemonCommand(input: {
@@ -2926,8 +2924,7 @@ export function configureKodaXDaemonCommand(program: Command): Command {
         json?: boolean;
       }) => {
         await stopDaemonCommand({
-          profile: RUNTIME_HOST_SLOT,
-          ...resolveCliRuntimeDaemonLocation(subOpts.home),
+          ...daemonHostLocation(subOpts.home),
           timeoutMs: subOpts.timeoutMs ?? 5_000,
           force: subOpts.force === true,
           json: subOpts.json === true,
@@ -2965,8 +2962,7 @@ export function configureKodaXDaemonCommand(program: Command): Command {
       ) => {
         const options = mergeCommandOptionsWithGlobals(localOptions, command);
         await restartDaemonCommand({
-          profile: RUNTIME_HOST_SLOT,
-          ...resolveCliRuntimeDaemonLocation(options.home),
+          ...daemonHostLocation(options.home),
           provider: options.provider,
           model: options.model,
           timeoutMs: options.timeoutMs ?? 5_000,
@@ -2997,8 +2993,7 @@ export function configureKodaXDaemonCommand(program: Command): Command {
         json?: boolean;
       }) => {
         await printDaemonLogs({
-          profile: RUNTIME_HOST_SLOT,
-          ...resolveCliRuntimeDaemonLocation(subOpts.home),
+          ...daemonHostLocation(subOpts.home),
           lines: subOpts.lines ?? 80,
           json: subOpts.json === true,
         });
@@ -3072,8 +3067,7 @@ export function configureKodaXDaemonCommand(program: Command): Command {
     .action(
       async (subOpts: { home?: string; json?: boolean }) => {
         await printDaemonStatus({
-          profile: RUNTIME_HOST_SLOT,
-          ...resolveCliRuntimeDaemonLocation(subOpts.home),
+          ...daemonHostLocation(subOpts.home),
           json: subOpts.json === true,
         });
       },
@@ -4690,7 +4684,6 @@ complete -c kodax -l version -d 'Show version'`);
           );
         }
 
-        const runtimeProfile = 'default';
         const interactiveRuntime = await getCliRuntime();
         const interactiveClient = toKodaXProductClient(interactiveRuntime, authorizeCli);
         // FEATURE_298 T18 — resume selection reads the Host sessions face
@@ -4750,7 +4743,6 @@ complete -c kodax -l version -d 'Show version'`);
             getInteractiveRuntimeStatus({
               runtime: interactiveRuntime,
               configHome: KODAX_DIR,
-              profile: runtimeProfile,
             }),
           validateSetupA2AConfig: parseA2AIntegrationDocument,
           prepareSetupSandbox: prepareSetupSandboxReport,

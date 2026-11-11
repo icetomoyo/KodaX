@@ -10,7 +10,7 @@ import type { KodaXClientHostAuthorization } from './client-host-authorization.j
 import type { ClientExitReceipt } from '@kodax-ai/coding/client-contract';
 import path from 'node:path';
 import { KODAX_DIR } from '@kodax-ai/repl';
-import { resolveRuntimeDaemonPathsFromConfigHome } from './runtime-daemon/state.js';
+import { listRuntimeDaemonSlots, resolveRuntimeDaemonPathsFromConfigHome } from './runtime-daemon/state.js';
 import { runtimeClientPrincipal, readExitReceipts, verifyExitReceipt } from './runtime-daemon/client-lifecycle.js';
 export type { KodaXClientHostAuthorization, KodaXClientHostServices, KodaXClientExecutionRequest, RuntimeExecutionAuthorization, KodaXClientWorkflowHostPolicy } from './client-host-authorization.js';
 
@@ -51,12 +51,15 @@ export async function readKodaXClientExits(options: {
   const { instanceId, instanceSecret } = options.clientInfo;
   if (!instanceId || !/^[A-Za-z0-9_.:-]{4,160}$/.test(instanceId) || !instanceSecret
     || instanceSecret.length < 32 || instanceSecret.length > 512) throw new Error('Exit recovery requires the original stable client identity and secret.');
-  const paths = resolveRuntimeDaemonPathsFromConfigHome(options.homeDir === undefined ? KODAX_DIR : path.resolve(options.homeDir, '.kodax'));
+  const configHome = options.homeDir === undefined ? KODAX_DIR : path.resolve(options.homeDir, '.kodax');
+  const principal = runtimeClientPrincipal(instanceId, instanceSecret);
   const verified: ClientExitReceipt[] = [];
-  // Historical exits can require OS probes. Keep one probe chain in flight so
-  // a large history cannot launch a burst of native inspection processes.
-  for (const receipt of readExitReceipts(paths, runtimeClientPrincipal(instanceId, instanceSecret))) {
-    verified.push(await verifyExitReceipt(paths, receipt));
+  // A legacy-slot Host that served this client recorded its exits in its own slot (ADR-075).
+  for (const slot of listRuntimeDaemonSlots(configHome)) {
+    const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, slot);
+    // Historical exits can require OS probes. Keep one probe chain in flight so
+    // a large history cannot launch a burst of native inspection processes.
+    for (const receipt of readExitReceipts(paths, principal)) verified.push(await verifyExitReceipt(paths, receipt));
   }
   return verified;
 }

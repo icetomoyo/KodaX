@@ -664,7 +664,7 @@ describe('daemon CLI smoke', () => {
     expect(status).toMatchObject({ health: 'healthy', state: { runtimeId: runtime.identity.runtimeId } });
   }, 90_000);
 
-  it('verifies daemon start against the legacy-slot Host it was redirected to (Issue 406)', async () => {
+  it('acts on the legacy-slot Host that owns Session storage (Issues 406, 407)', async () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-daemon-redirect-'));
     tempRoots.push(homeDir);
     const legacy = await startLegacySlotHost(homeDir, 'coder');
@@ -672,6 +672,14 @@ describe('daemon CLI smoke', () => {
       const started = await runDaemonCommand(['start', '--home', homeDir, '--json']);
       expect(started).toMatchObject({ started: false, reason: 'already_running',
         state: { runtimeId: legacy.runtimeId, profile: 'coder', status: 'ready' } });
+      const passive = await connectKodaXRuntime({ homeDir });
+      try { expect(passive.identity).toMatchObject({ runtimeId: legacy.runtimeId, profile: 'coder' }); }
+      finally { await passive.close(); }
+      expect(await runDaemonCommand(['status', '--home', homeDir, '--json']))
+        .toMatchObject({ profile: 'coder', health: 'healthy', state: { runtimeId: legacy.runtimeId } });
+      expect(await runDaemonCommand(['logs', '--home', homeDir, '--json'])).toMatchObject({ profile: 'coder' });
+      expect(await runDaemonCommand(['stop', '--home', homeDir, '--json']))
+        .toMatchObject({ stopped: true });
     } finally { await legacy.close(); }
   }, 90_000);
 
@@ -1742,9 +1750,16 @@ async function startLegacySlotHost(homeDir: string, slot: string): Promise<{ rea
   fs.writeFileSync(script, [
     `import { acquireRuntimeDaemonLease } from ${source('runtime-daemon/manager.ts')};`,
     `import { createKodaXHostRuntime } from ${source('sdk-runtime.ts')};`,
+    `import { writeRuntimeDaemonShutdownOutcome } from ${source('runtime-daemon/state.ts')};`,
     `const homeDir = ${JSON.stringify(homeDir)}; const profile = ${JSON.stringify(slot)};`,
-    'await acquireRuntimeDaemonLease({ homeDir, profile, createRuntime: daemonHostRuntimeId =>',
-    '  createKodaXHostRuntime({ homeDir, profile, sharedDaemonHost: true, daemonHostRuntimeId }) });',
+    'let runtimeId;',
+    'const lease = await acquireRuntimeDaemonLease({ homeDir, profile, createRuntime: async daemonHostRuntimeId => {',
+    '  const runtime = await createKodaXHostRuntime({ homeDir, profile, sharedDaemonHost: true, daemonHostRuntimeId });',
+    '  runtimeId = runtime.identity.runtimeId; return runtime; } });',
+    // Like `daemon serve`, record the clean shutdown that `daemon stop` verifies.
+    'await lease.hostClosed;',
+    'writeRuntimeDaemonShutdownOutcome(lease.paths, { version: 1, runtimeId, pid: process.pid, status: "succeeded", completedAt: new Date().toISOString() });',
+    'process.exit(0);',
   ].join('\n'));
   const args = ['--import', 'tsx', script];
   const env = { ...process.env, KODAX_TRACING: '0' };

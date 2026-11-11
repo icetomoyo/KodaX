@@ -498,6 +498,7 @@ import {
   tryAcquireRuntimeSessionStorageStartup,
   resolveRuntimeDaemonEndpointScope,
   resolveRuntimeDaemonPathsFromConfigHome,
+  resolveRuntimeHostSlot,
   RUNTIME_HOST_SLOT,
   updateRuntimeOwnerPolicy,
 } from "./runtime-daemon/state.js";
@@ -6581,10 +6582,15 @@ async function connectKodaXRuntimeInternal(
       options.sessionsDir ?? path.join(daemonLocation.configHome, 'sessions'),
       startupDeadline, options.daemonStartupSignal, reportProgress)
     : undefined;
-  const connectionProfile = sharedHost?.profile ?? RUNTIME_HOST_SLOT;
   // A caller that names the Host by endpoint or transport has chosen it; only
   // a slot-derived endpoint must prove it reached that slot's Host.
   const slotDerived = explicitEndpoint === undefined && options.transport === undefined;
+  // A passive connection attaches to whichever Host serves this home, including
+  // a legacy-slot Host that owns Session storage (Issue 407).
+  const connectionProfile = sharedHost?.profile ?? (slotDerived && options.autoStart !== true
+    ? resolveRuntimeHostSlot(daemonLocation.configHome,
+      options.sessionsDir ?? path.join(daemonLocation.configHome, 'sessions'))
+    : RUNTIME_HOST_SLOT);
   if (sharedHost) {
     const requestedPaths = resolveRuntimeDaemonPathsFromConfigHome(daemonLocation.configHome, RUNTIME_HOST_SLOT);
     if (connectionProfile !== requestedPaths.profile) {
