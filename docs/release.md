@@ -100,6 +100,22 @@ not run CI. Cross-platform manual acceptance, installed Space/SDK
 acceptance, the Space dependency bump (FEATURE_305 T6 follow-up) and npm
 registry publication remain separate maintainer steps.
 
+The first publishing dispatch (run 43011838267 at `f85af054a`) failed
+three jobs and created no tag. The Runtime daemon Unix socket gate still
+passed the `profile` option that FEATURE_305 removed and failed
+deterministically; `4f40af145` points the gate at the fixed
+`runtime/daemon/default` slot. The real-terminal PTY gate timed out on
+"displayed Session identity": the Ink REPL renders in the alternate
+screen buffer, so a restored fixture transcript drops the banner with the
+session id from the emulator buffer and the viewport-only poll races the
+restore (reproduced 2-of-3 locally before, 6-of-6 after the fix);
+`10a0dd60f` reads the identity from the raw terminal stream. The third
+failure was one Windows effect Job supervisor startup exceeding its
+15-second budget on a slow runner — the sibling test in the same file
+passed at 13.3s and the whole file passes locally in about 8 seconds —
+an infrastructure flake covered by the re-run rule. The release is
+dispatched again from the corrected commits.
+
 ## v0.7.97-beta.5 release preparation
 
 Historical preparation record: the upgrade baseline below reflects
