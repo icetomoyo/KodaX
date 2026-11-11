@@ -156,21 +156,47 @@ function settingsRevision(file: string): number {
 }
 
 /**
- * The order counter must stay monotonic. Without a counter the Host rescans Runs, so an unreadable
- * legacy counter drops the canonical one: the moved legacy Runs may carry larger orders.
+ * The order counter must stay monotonic. An unreadable counter loses the orders its Runs used, so
+ * the counter is rebuilt from the merged Runs (`runs/` merges first) and written back: a later
+ * legacy profile, or a rerun after a crash, then compares against the rebuilt value.
  */
 function mergeOrder(source: string, target: string, item: string, state: MergeState): void {
   if (!fs.existsSync(target)) return moveIfAbsent(source, target, item, state);
   const legacy = readOrder(source);
-  if (legacy === undefined) {
-    fs.rmSync(target, { force: true });
-    state.conflicts.push(`${item}: legacy counter unreadable; the next order is rebuilt from the merged Runs`);
+  const canonical = readOrder(target);
+  if (legacy !== undefined && canonical !== undefined) {
+    if (legacy > canonical) {
+      writeJson(target, legacy);
+      state.moved += 1;
+    }
     return;
   }
-  const canonical = readOrder(target);
-  if (canonical !== undefined && legacy > canonical) {
-    writeJson(target, legacy);
-    state.moved += 1;
+  const sessionId = decodeURIComponent(path.basename(target, '.json'));
+  const rebuilt = Math.max(legacy ?? 0, canonical ?? 0, maxRunOrder(path.join(target, '..', '..', 'runs'), sessionId));
+  writeJson(target, rebuilt);
+  state.moved += 1;
+  state.conflicts.push(`${item}: rebuilt the counter as ${rebuilt} from the merged Runs; a counter was unreadable`);
+}
+
+/** Same scan as the Host's order fallback; malformed Run records are reported by its status reader. */
+function maxRunOrder(runsDir: string, sessionId: string): number {
+  if (!fs.existsSync(runsDir)) return 0;
+  let max = 0;
+  for (const entry of fs.readdirSync(runsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const file = path.join(runsDir, entry.name, 'status.json');
+    const status = fs.existsSync(file) ? readRunStatus(file) : undefined;
+    if (status?.sessionId === sessionId && Number.isSafeInteger(status.sessionOrder)) max = Math.max(max, status.sessionOrder as number);
+  }
+  return max;
+}
+
+function readRunStatus(file: string): Record<string, unknown> | undefined {
+  try {
+    const value = readJson(file);
+    return isRecord(value) ? value : undefined;
+  } catch {
+    return undefined;
   }
 }
 

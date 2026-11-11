@@ -259,15 +259,44 @@ it('imports Session grants when the canonical profile does not exist yet', () =>
   expect(reports[0]).toMatchObject({ importedGrants: 1, failed: [] });
 });
 
-it('drops the canonical Session order when the legacy counter is unreadable so the next allocation rescans Runs', () => {
-  const { file, put, exists, merge } = home();
+const run = (sessionOrder: number) => ({ runId: `run-${sessionOrder}`, sessionId: 's1', sessionOrder });
+const corrupt = (put: (relative: string, value: unknown) => void, file: (relative: string) => string, relative: string) => {
+  put(relative, 0);
+  fs.writeFileSync(file(relative), '{');
+};
+
+it('rebuilds the Session order from the merged Runs when the legacy counter is unreadable', () => {
+  const { file, put, read, merge } = home();
   put('default/session-orders/s1.json', 3);
-  put('coder/runs/run-b/status.json', { status: { sessionId: 's1', sessionOrder: 8 } });
-  fs.mkdirSync(path.dirname(file('coder/session-orders/s1.json')), { recursive: true });
-  fs.writeFileSync(file('coder/session-orders/s1.json'), '{');
+  put('coder/runs/run-8/status.json', run(8));
+  corrupt(put, file, 'coder/session-orders/s1.json');
 
   const { reports } = merge();
 
-  expect(exists('default/session-orders/s1.json')).toBe(false);
-  expect(reports[0]).toMatchObject({ failed: [], conflicts: ['session-orders/s1.json: legacy counter unreadable; the next order is rebuilt from the merged Runs'] });
+  expect(read('default/session-orders/s1.json')).toBe(8);
+  expect(reports[0]).toMatchObject({ failed: [], conflicts: ['session-orders/s1.json: rebuilt the counter as 8 from the merged Runs; a counter was unreadable'] });
+});
+
+it('keeps a rebuilt Session order when a later legacy profile has a smaller counter', () => {
+  const { file, put, read, merge } = home();
+  put('default/session-orders/s1.json', 3);
+  put('aaa/runs/run-8/status.json', run(8));
+  corrupt(put, file, 'aaa/session-orders/s1.json');
+  put('zzz/runs/run-2/status.json', { ...run(2), runId: 'zzz-run-2' });
+  put('zzz/session-orders/s1.json', 2);
+
+  merge();
+
+  expect(read('default/session-orders/s1.json')).toBe(8);
+});
+
+it('rebuilds an unreadable canonical Session order before a later legacy counter is compared', () => {
+  const { file, put, read, merge } = home();
+  put('default/runs/run-8/status.json', run(8));
+  corrupt(put, file, 'default/session-orders/s1.json');
+  put('coder/session-orders/s1.json', 2);
+
+  merge();
+
+  expect(read('default/session-orders/s1.json')).toBe(8);
 });

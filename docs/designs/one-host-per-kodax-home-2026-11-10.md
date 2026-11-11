@@ -110,7 +110,7 @@ owner. Per source profile `p` ≠ `default`:
 |---|---|
 | `runs/<runId>/` | move if absent in the target; if present in both (should not happen, ids are random) keep the target, log |
 | `session-settings/<sid>.json` | move if absent; if both exist keep the newer mtime and log both revisions (revisions are per-store counters and are not comparable); a copied file keeps its source mtime, so with several legacy profiles the newest write wins |
-| `session-orders/<sid>.json` | write `max(source, target)`; the counter must stay monotonic; if the source counter is unreadable, delete the target counter so the next allocation rescans the merged Runs |
+| `session-orders/<sid>.json` | write `max(source, target)`; the counter must stay monotonic; if either counter is unreadable, rebuild the target as the largest order among the readable counters and the merged Runs, so later profiles and reruns compare against it |
 | `pending-inputs/<sid>` | move if absent; if both exist keep both entries, deduplicated by input id across pending and withdrawn (target wins); the Host restores at most 5 pending inputs, so legacy entries over the limit become withdrawn receipts and are reported |
 | `permission-grants.json` | import grants scoped to one Session (`scope.sessionId` set), skipping ids already present; drop grants without a Session scope and report their count, because importing them would extend approvals given in Space to every CLI Session (Q2) |
 | `run-status-index.json` | delete the target index after merging Runs; the existing fail-closed scan rebuilds it |
