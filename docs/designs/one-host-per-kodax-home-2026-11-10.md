@@ -185,8 +185,10 @@ Space (after the bundled SDK carries the change):
 
 - `runtime-host-adapter.ts`: remove the `coder` profile (lines ~2171, ~2478, ~8968).
 - `runtime-daemon-control.ts`: stop without `--profile`.
-- `runtime-credential-recovery.ts`, `runtime-client-secret-file.ts`: take the
-  Host directory from the SDK instead of `runtime/daemon/coder`.
+- `runtime-credential-recovery.ts`, `runtime-client-secret-file.ts`: unchanged
+  (T6 decision). They verify rc.2 legacy keychain secrets against the journal of
+  the old Space `coder` Host, the only Host that ever saw those secrets. T4 merges
+  only `runtime/profiles/*`, and retention never removes `runtime/daemon/coder/`.
 - `space-manual-topics.ts`: update the `--profile coder` recovery text.
 
 ## 7. Tests
