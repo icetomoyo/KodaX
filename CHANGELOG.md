@@ -6,8 +6,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Removed
+
+- **Breaking: one Host per `KODAX_HOME`; the Host-location `profile` is
+  removed** (ADR-075, FEATURE_305). The `profile` option is gone from
+  `ensureKodaXRuntime`, `connectKodaXRuntime`,
+  `createKodaXRuntime({ mode: 'daemon' })`, `getKodaXRuntimeOwnerState`,
+  `waitForRuntimeDaemonShutdown`, `ensureKodaXClient`, `connectKodaXClient` and
+  `readKodaXClientExits`, and `--profile` is gone from `kodax daemon
+  start|stop|restart|status|logs|serve` and `kodax a2a serve`. Passing it fails
+  with `runtime_host_migration_required`: `<api> no longer accepts "profile":
+  one Host serves each KODAX_HOME`. Fix: delete the option. To isolate Hosts,
+  use a separate `homeDir`, `--home` or `KODAX_HOME`. `identity.profile` stays
+  on the wire and is deprecated. See [One Host per KODAX_HOME (profile
+  removed)](docs/SDK_MIGRATION.md#one-host-per-kodax_home-profile-removed).
+
 ### Fixed
 
+- Passive connections, exit receipts and `kodax daemon stop|status|logs` now
+  find the Host that serves the home when an older Space started it under
+  another name (`coder`). Session settings, order, queued inputs and
+  Session-scoped permission grants that older Hosts split by profile are merged
+  once into the one Host's state when it starts; global grants approved in such
+  a Host are dropped and must be approved again (Issue 407).
 - A failed load of the native text addon no longer crashes KodaX on the next
   `edit`, `write` or `multi_edit`. The first failure is final for the process.
   Later writes and `kodax doctor --native-text` report the same loader error

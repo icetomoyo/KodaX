@@ -1,6 +1,6 @@
 # One Host per `KODAX_HOME` — design draft, 2026-11-10
 
-Status: **accepted 2026-11-10; T1+T2, T3 and T4 implemented**. Review decisions are in §8.
+Status: **accepted 2026-11-10; T1–T5 implemented**. Review decisions are in §8.
 Tracked as [FEATURE_305](../features/v0.7.98.md#feature_305-one-host-per-kodax_home) (tickets T1–T7).
 Decision record:
 [ADR-075](../ADR.md#adr-075-one-host-per-kodax_home-profile-is-not-host-identity). Tracks [Issue 407](../KNOWN_ISSUES.md#issue-407-passive-connections-and-exit-receipts-ignore-the-session-storage-owner);

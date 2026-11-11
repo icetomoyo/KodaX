@@ -563,8 +563,25 @@ see the [Client contract](CLIENT_CONTRACT.md#连接启动与所有权).
 `createKodaXRuntime()` defaults to an inline embedded runtime in the caller's
 process (the v0.7.96 Worker-hosted isolation form was removed in v0.7.97).
 `mode: 'daemon'` starts or attaches to a detached
-`kodax daemon serve` owner at the profile-default endpoint. Custom daemon
+`kodax daemon serve` owner at the home's endpoint. Custom daemon
 endpoints are attach-only.
+
+**Host layout (ADR-075).** One Host serves each agent home (`homeDir` or
+`KODAX_HOME`). It always uses the slot `RUNTIME_HOST_SLOT = 'default'`
+(`src/runtime-daemon/state.ts`): `runtime/daemon/default/` holds the lock,
+`daemon.json`, token, log, owner policy, exit receipts and shutdown outcomes;
+`runtime/profiles/default/` holds Runtime state (`runs/`, `session-settings/`,
+`session-orders/`, `pending-inputs/`, `session-stops/`, `session-mcp/`,
+`permission-grants.json`, `run-status-index.json`).
+`sessions/.product-host/owner.lock` is the single-writer fence for the Session
+storage root. Older clients may still run a Host in another slot (older Space:
+`coder`); while it owns Session storage, `resolveRuntimeHostSlot` returns its
+slot so passive connect and `kodax daemon stop|status|logs|restart` act on it,
+and `readKodaXClientExits` reads every slot listed by `listRuntimeDaemonSlots`.
+At startup the canonical Host merges each legacy `runtime/profiles/<p>/` into
+`default` once and renames it to `<p>.merged-<YYYYMMDD>`
+(`src/runtime-daemon/profile-state-merge.ts`, rules in
+[the design](designs/one-host-per-kodax-home-2026-11-10.md#43-state-migration-one-time-idempotent)).
 
 When the host is packaged Electron, daemon auto-start launches through an
 internal Node bootstrap and scrubs `ELECTRON_RUN_AS_NODE` before loading the
@@ -1274,6 +1291,7 @@ real child directory.
 | `runtime/profiles/*/runs/*/events.watermark` | file | 30 days | same |
 | `runtime/profiles/*/session-events/` | directory | 30 days | same |
 | `runtime/profiles/*/event-sequence` | file | 30 days | same |
+| `runtime/profiles/<p>.merged-<YYYYMMDD>[-n]/` | directory | 30 days after the merge | legacy profile state already merged into `default` (ADR-075) |
 | `runtime/test-filesystem-effects-*/` | directory | 30 days | filesystem-effect ledger retired by `2f6751d19` |
 | `runtime/model-filesystem-effects.json` | file | 30 days | same |
 | `runtime/model-filesystem-effects.lock.queue/`, `runtime/model-filesystem-effect.lock.queue/` | directory | 30 days | same |

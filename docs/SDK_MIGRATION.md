@@ -1,6 +1,6 @@
 # SDK 统一 Client 契约迁移指南
 
-适用范围：当前工作树的 FEATURE_298/299/301/303/304 实现；本次核对的包版本为 `0.7.97-beta.5`，随 `v0.7.97-beta.5` 标签发布（npm 发布为手动步骤）。接入前应核对所安装包的导出和 Host 能力；下文带日期的 beta.1/beta.2/beta.3/beta.4 记录保留各自历史范围，beta.5 的变化见 [SDK hardening migration](#sdk-hardening-migration-shipped-in-v0797-beta5)。
+适用范围：当前工作树的 FEATURE_298/299/301/303/304 实现；本次核对的包版本为 `0.7.97-beta.5`，随 `v0.7.97-beta.5` 标签发布（npm 发布为手动步骤）。接入前应核对所安装包的导出和 Host 能力；下文带日期的 beta.1/beta.2/beta.3/beta.4 记录保留各自历史范围，beta.5 的变化见 [SDK hardening migration](#sdk-hardening-migration-shipped-in-v0797-beta5)。未发布的破坏性变更见 [One Host per KODAX_HOME](#one-host-per-kodax_home-profile-removed)：Host 位置的 `profile` 已删除。
 
 Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附件/统计与退出恢复范围见 [SDK/Host 接缝](SPACE_SDK_SEAMS.md)。
 
@@ -1150,3 +1150,109 @@ relying on them.
 
 See the [Client contract](CLIENT_CONTRACT.md) unattended-run and permission
 sections and [ADR-071](ADR.md) for the ask decision.
+
+## One Host per KODAX_HOME (profile removed)
+
+Breaking change, not yet released (after `v0.7.97-beta.5`). Decision:
+[ADR-075](ADR.md). The Host is identified by its data root, `homeDir` or
+`KODAX_HOME` (default `~/.kodax`). One Host serves each data root. It always
+uses the fixed directories `runtime/daemon/default/` and
+`runtime/profiles/default/`; `default` is a location, not a profile you can
+choose.
+
+### What was removed
+
+| Where | Removed |
+|---|---|
+| `ensureKodaXRuntime`, `connectKodaXRuntime`, `createKodaXRuntime({ mode: 'daemon' })` | `profile` |
+| `getKodaXRuntimeOwnerState`, `waitForRuntimeDaemonShutdown` | `profile` |
+| `ensureKodaXClient`, `connectKodaXClient`, `readKodaXClientExits` | `profile` |
+| `kodax daemon start\|stop\|restart\|status\|logs\|serve`, `kodax a2a serve` | `--profile` |
+
+TypeScript callers get a compile error. Nothing is silently ignored:
+
+- A JavaScript caller that still passes `profile` gets
+  `RuntimeHostMigrationRequiredError` (`code: 'runtime_host_migration_required'`)
+  before anything starts:
+  `ensureKodaXClient no longer accepts "profile": one Host serves each KODAX_HOME. Remove "profile"; to isolate Hosts, use a separate homeDir or KODAX_HOME.`
+- `--profile` on the CLI fails with the same text for the command, naming
+  `--home` instead of `homeDir`.
+
+### How to migrate
+
+Delete the option. Code that used it to share one Host keeps working:
+
+```ts
+// Before
+const client = await ensureKodaXClient({ homeDir, profile: 'coder' });
+const exits = await readKodaXClientExits({ homeDir, profile: 'coder', clientInfo });
+
+// After
+const client = await ensureKodaXClient({ homeDir });
+const exits = await readKodaXClientExits({ homeDir, clientInfo });
+```
+
+```sh
+# Before
+kodax daemon stop --profile coder
+# After
+kodax daemon stop
+```
+
+The same applies to `ensureKodaXRuntime`, `connectKodaXRuntime`,
+`createKodaXRuntime({ mode: 'daemon' })`, `getKodaXRuntimeOwnerState` and
+`waitForRuntimeDaemonShutdown`.
+
+If you used `profile` to keep two Hosts apart, give each its own data root
+(`homeDir`, `--home` or `KODAX_HOME`). A separate data root also separates
+configuration, providers and Sessions. Before, two profiles in one home already
+shared those; only the directory names differed.
+
+### `identity.profile`
+
+`RuntimeIdentity.profile` stays on the wire because older clients check it on
+connect. It is deprecated. A current Host always reports `default`. A Host
+started by an older client in another directory (older Space used `coder`)
+reports that name while it serves the home. Do not use it to select or isolate
+a Host.
+
+### Older clients next to a new Host
+
+| Pair | Result |
+|---|---|
+| new CLI + new Space | one Host in the fixed directory |
+| new client + older Space whose `coder` Host owns the Sessions | `ensure`, passive `connect` and `kodax daemon start\|stop\|status\|logs\|restart` act on that Host; `readKodaXClientExits` also reads its exit receipts after it is replaced. When it is idle, the usual upgrade replaces it |
+| older CLI (v0.7.97-alpha.7 or later) | uses the `default` directory, which is the new Host |
+| older Space started after the new Host | follows the Session storage owner to the new Host; its `--profile coder` stop and exit-receipt paths miss that Host until Space is upgraded |
+
+### One-time state merge
+
+Older Hosts kept per-Session Runtime state under `runtime/profiles/<profile>/`,
+so one Session could have different settings depending on which product
+started first. When the new Host starts and owns Session storage, it merges
+every `runtime/profiles/<p>/` into `runtime/profiles/default/` once:
+
+- Runs, Session stop records and Session MCP records move when the target has
+  none for that id; otherwise the target copy is kept.
+- Session settings: the more recently written copy wins.
+- Session order: the larger counter is kept, so numbering stays monotonic.
+- Queued inputs: both queues are kept, once per input id.
+- Permission grants: only grants scoped to one Session are imported. Global
+  grants, such as an "always allow" given in Space, are dropped and counted,
+  because importing them would extend that approval to every client. Approve
+  them again where needed.
+
+A profile whose Host is still running is skipped until a later start. The
+merged directory is renamed to `runtime/profiles/<p>.merged-<YYYYMMDD>/` and
+removed by the idle Host 30 days later. One `runtime.host.state-merged`
+diagnostic reports counts, conflicts, dropped grants and any item that failed.
+A failed item stays in place and is retried on the next start.
+
+### Not affected
+
+Three other things are also called "profile" and do not change:
+
+- Credential profiles: the account namespace in `auth.json` (API-key bindings,
+  OAuth registrations).
+- Agent and execution profiles (`KodaXAgentProfile`, `createExecutionProfile`).
+- Session `profileId`.

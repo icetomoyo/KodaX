@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { connectKodaXRuntime, createKodaXRuntime, ensureKodaXRuntime, getKodaXRuntimeOwnerState, waitForRuntimeDaemonShutdown, type KodaXRuntime } from './sdk-runtime.js';
 import { connectKodaXClient, ensureKodaXClient, readKodaXClientExits } from './sdk-client.js';
@@ -65,6 +66,15 @@ describe('public Runtime construction boundary', () => {
     expect(message).toContain('"profile"');
     expect(message).toMatch(/homeDir or KODAX_HOME/);
     expect(message).toContain('docs/SDK_MIGRATION.md');
+  });
+
+  it('names a migration section that ships in docs/SDK_MIGRATION.md', async () => {
+    const connect = connectKodaXClient as (input: unknown) => Promise<unknown>;
+    const error = await connect({ profile: 'coder' }).catch((reason: unknown) => reason);
+    const section = /See "([^"]+)" in docs\/SDK_MIGRATION\.md/.exec((error as Error).message)?.[1];
+    expect(section).toBe('One Host per KODAX_HOME (profile removed)');
+    const headings = readFileSync(new URL('../docs/SDK_MIGRATION.md', import.meta.url), 'utf8').split(/\r?\n/);
+    expect(headings).toContain(`## ${section}`);
   });
 
   it('does not turn Product Host shutdown into private Runtime disposal', async () => {

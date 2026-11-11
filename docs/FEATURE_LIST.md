@@ -35,7 +35,7 @@
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
 | Completed | 63 | `304, 303, 302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
-| InProgress | 3 | `305, 298, 225` | `305`: T1+T2 (SDK and CLI `profile` removal), T3 (legacy-slot discovery) and T4 (state merge) done; T5 migration docs next. `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
+| InProgress | 3 | `305, 298, 225` | `305`: T1+T2 (SDK and CLI `profile` removal), T3 (legacy-slot discovery), T4 (state merge) and T5 (migration docs) done; T6 Space follow-up next. `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
@@ -2265,7 +2265,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
-| `305` | One Host per KODAX_HOME | Core / Runtime + SDK | High | `v0.7.98` | [v0.7.98](features/v0.7.98.md#feature_305-one-host-per-kodax_home) — InProgress; ADR-075 Accepted, T1–T4 done, T5–T7 pending |
+| `305` | One Host per KODAX_HOME | Core / Runtime + SDK | High | `v0.7.98` | [v0.7.98](features/v0.7.98.md#feature_305-one-host-per-kodax_home) — InProgress; ADR-075 Accepted, T1–T5 done, T6–T7 pending |
 | `300` | Git Execution Consolidation with Shared macOS Preflight | Refactor | Medium | `v0.7.99` | [v0.7.99](features/v0.7.99.md#feature_300-git-execution-consolidation-with-shared-macos-preflight) — Planned; design only |
 | `287` | Advisor Mode Virtual Provider | Enhancement / LLM Provider + Session Quality | High | `v0.8.13` | [v0.8.13](features/v0.8.13.md#feature_287-advisor-mode-virtual-provider) |
 | `288` | CLI-Space Daemon Profile Alignment | Enhancement / Runtime + Multi-Client UX | High | `v0.8.14` | [v0.8.14](features/v0.8.14.md#feature_288-cli-space-daemon-profile-alignment) |
