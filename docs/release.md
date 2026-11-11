@@ -50,8 +50,10 @@ on one commit.
 
 ## v0.7.97-beta.6 release preparation
 
-Release state: `v0.7.97-beta.6` is a candidate awaiting the single
-publishing dispatch. npm publication has not occurred. The candidate is the
+Release state: `v0.7.97-beta.6` was published on 2026-11-11 as a GitHub
+prerelease from run 43018115059 at `367f5e752` (all five archive builds,
+Full CI and the npm package gates green; 13 assets). npm publication has
+not occurred. The release is the
 sixth beta of the v0.7.97 line: one Host per `KODAX_HOME` (ADR-075,
 FEATURE_305, designed under the `v0.7.98` planning identifier). The
 breaking change removes the Host-location `profile` from the SDK entry
@@ -113,8 +115,15 @@ restore (reproduced 2-of-3 locally before, 6-of-6 after the fix);
 failure was one Windows effect Job supervisor startup exceeding its
 15-second budget on a slow runner — the sibling test in the same file
 passed at 13.3s and the whole file passes locally in about 8 seconds —
-an infrastructure flake covered by the re-run rule. The release is
-dispatched again from the corrected commits.
+an infrastructure flake covered by the re-run rule. The second dispatch
+(run 43018115059 at `367f5e752`) passed every job except `Windows source
+(system 2/2)`, where two untouched real-process tests in
+`src/sdk-runtime.test.ts` exceeded Actor-settlement and 150-second test
+deadlines (one recorded 158s; both pass locally) — an infrastructure
+flake covered by one failed-job re-run, after which the run published.
+The universal npm tarball asset is
+`kodax-ai-kodax-0.7.97-beta.6.tgz`, sha256
+`5d2113ac…2502442`, matching `SHA256SUMS`.
 
 ## v0.7.97-beta.5 release preparation
 
