@@ -1,6 +1,7 @@
 import type { Stats } from 'node:fs';
 import { lstat, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
+import { RETIRED_RUNTIME_HOST_SLOT } from './state.js';
 
 /**
  * Idle-Host retention for agent-home state that no current code reads.
@@ -46,7 +47,7 @@ export const HOME_RETENTION_RULES: readonly RetentionRule[] = [
   { path: [...PROFILE, 'session-events'], kind: 'directory', minAgeDays: RETIRED },
   { path: [...PROFILE, 'event-sequence'], kind: 'file', minAgeDays: RETIRED },
   // Legacy Host profiles after their one-time merge into the canonical profile (ADR-075).
-  { path: ['runtime', 'profiles', /^[A-Za-z0-9][A-Za-z0-9._-]*\.merged-\d{8}(?:-\d+)?$/], kind: 'directory', minAgeDays: RETIRED },
+  { path: ['runtime', 'profiles', RETIRED_RUNTIME_HOST_SLOT], kind: 'directory', minAgeDays: RETIRED },
   // Filesystem-effect ledgers; their writer was removed and the state is ignored.
   { path: ['runtime', /^test-filesystem-effects-[\w-]+$/], kind: 'directory', minAgeDays: RETIRED },
   { path: ['runtime', 'model-filesystem-effects.json'], kind: 'file', minAgeDays: RETIRED },

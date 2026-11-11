@@ -199,6 +199,7 @@ it('expires a merged legacy Host profile thirty days after the merge and keeps l
   const { root, put, ageTree } = home();
   put('runtime/profiles/coder.merged-20261001/runs/run-a/status.json', 400);
   put('runtime/profiles/ops.merged-20261001-2/session-orders/s.json', 400);
+  put('runtime/profiles/_work.merged-20261001/session-orders/s.json', 400);
   put('runtime/profiles/space.merged-20261101/session-orders/s.json', 400);
   const kept = [
     'runtime/profiles/coder/session-orders/s.json',
@@ -207,12 +208,15 @@ it('expires a merged legacy Host profile thirty days after the merge and keeps l
   ].map(file => put(file, 400));
   ageTree('runtime/profiles/coder.merged-20261001', 40);
   ageTree('runtime/profiles/ops.merged-20261001-2', 40);
+  ageTree('runtime/profiles/_work.merged-20261001', 40);
   ageTree('runtime/profiles/space.merged-20261101', 400);
   fs.utimesSync(path.join(root, 'runtime/profiles/space.merged-20261101'), new Date(), new Date());
 
   await drain(createHomeRetention(root));
 
   expect(fs.existsSync(path.join(root, 'runtime/profiles/coder.merged-20261001'))).toBe(false);
+  // Any valid Host slot name, including a leading `_` or `.`, can be retired.
+  expect(fs.existsSync(path.join(root, 'runtime/profiles/_work.merged-20261001'))).toBe(false);
   expect(fs.existsSync(path.join(root, 'runtime/profiles/ops.merged-20261001-2'))).toBe(false);
   expect(kept.filter(file => !fs.existsSync(file))).toEqual([]);
 });

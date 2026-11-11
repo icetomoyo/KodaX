@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import path from 'node:path';
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 import { MAX_QUEUED_INPUTS } from '../session-input-queue.js';
-import { RUNTIME_HOST_SLOT, readRuntimeDaemonLockOwner, resolveRuntimeDaemonPathsFromConfigHome, runtimeOwnerProcessState } from './state.js';
+import { RETIRED_RUNTIME_HOST_SLOT, RUNTIME_HOST_SLOT, RUNTIME_HOST_SLOT_NAME, readRuntimeDaemonLockOwner, resolveRuntimeDaemonPathsFromConfigHome, runtimeOwnerProcessState } from './state.js';
 
 /**
  * One-time merge of legacy Host profile state (`runtime/profiles/<p>/`) into
@@ -38,8 +38,7 @@ interface MergeState {
   readonly failed: { item: string; error: string }[];
 }
 
-const LEGACY_PROFILE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const RETIRED_PROFILE = /\.merged-\d{8}(?:-\d+)?$/;
+const LEGACY_PROFILE = new RegExp(`^${RUNTIME_HOST_SLOT_NAME}$`);
 
 export function mergeLegacyRuntimeProfileState(
   configHome: string,
@@ -70,7 +69,7 @@ function legacyProfiles(profilesDir: string): string[] {
   if (!fs.existsSync(profilesDir)) return [];
   return fs.readdirSync(profilesDir, { withFileTypes: true })
     .filter(entry => entry.isDirectory() && entry.name !== RUNTIME_HOST_SLOT
-      && LEGACY_PROFILE.test(entry.name) && !RETIRED_PROFILE.test(entry.name))
+      && LEGACY_PROFILE.test(entry.name) && !RETIRED_RUNTIME_HOST_SLOT.test(entry.name))
     .map(entry => entry.name).sort();
 }
 

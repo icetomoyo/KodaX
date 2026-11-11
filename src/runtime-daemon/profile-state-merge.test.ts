@@ -202,6 +202,20 @@ it('reports unknown legacy entries, keeps them in the retired profile and emits 
   }]);
 });
 
+it('merges every valid legacy slot name, including a leading underscore or dot', () => {
+  const { put, read, exists, merge } = home();
+  put('_work/session-orders/s1.json', 4);
+  put('.space/session-orders/s2.json', 2);
+
+  const { reports } = merge();
+
+  expect(reports.map(report => report.profile)).toEqual(['.space', '_work']);
+  expect(read('default/session-orders/s1.json')).toBe(4);
+  expect(read('default/session-orders/s2.json')).toBe(2);
+  expect(exists('_work.merged-20261111')).toBe(true);
+  expect(exists('.space.merged-20261111')).toBe(true);
+});
+
 it('picks a fresh retired name when a legacy profile is merged twice on one day', () => {
   const { put, exists, merge } = home();
   put('coder/session-orders/s1.json', 1);
