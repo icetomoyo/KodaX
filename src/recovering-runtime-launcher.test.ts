@@ -4,7 +4,7 @@ import { ensureKodaXRuntime } from './sdk-runtime.js';
 import { ensureRecoveringKodaXRuntime } from './recovering-runtime-client.js';
 import { ensureKodaXClient, type EnsureKodaXClientOptions } from './sdk-client.js';
 
-vi.mock('./sdk-runtime.js', () => ({ ensureKodaXRuntime: vi.fn() }));
+vi.mock('./sdk-runtime.js', () => ({ ensureKodaXRuntime: vi.fn(), rejectRemovedHostProfile: vi.fn() }));
 
 it.each([0, 300_000])('forwards the Product launcher ordinary-question deadline (%s) to a new Host', async userInputTimeoutMs => {
   const host = { close: async () => {} } as unknown as Awaited<ReturnType<typeof ensureKodaXRuntime>>;
