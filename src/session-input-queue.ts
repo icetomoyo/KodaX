@@ -61,7 +61,7 @@ export function inputIntentDigest(input: ClientSubmitInput, executionKey?: strin
 }
 
 /** Host admission bound; matches the REPL pending-input footer limit (packages/repl/src/ui/utils/pending-inputs.ts, a UI-internal constant not exported from that package). */
-const MAX_QUEUED_INPUTS = 5;
+export const MAX_QUEUED_INPUTS = 5;
 const MAX_QUEUE_PREVIEW_CHARS = 72;
 
 function queuePreview(text: string): string {

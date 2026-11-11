@@ -1236,7 +1236,9 @@ every `runtime/profiles/<p>/` into `runtime/profiles/default/` once:
   none for that id; otherwise the target copy is kept.
 - Session settings: the more recently written copy wins.
 - Session order: the larger counter is kept, so numbering stays monotonic.
-- Queued inputs: both queues are kept, once per input id.
+- Queued inputs: both queues are kept, once per input id. A Session holds at
+  most 5 queued inputs; older-Host inputs beyond that are reported as withdrawn
+  and can be sent again.
 - Permission grants: only grants scoped to one Session are imported. Global
   grants, such as an "always allow" given in Space, are dropped and counted,
   because importing them would extend that approval to every client. Approve

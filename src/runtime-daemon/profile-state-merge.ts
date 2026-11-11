@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import path from 'node:path';
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
+import { MAX_QUEUED_INPUTS } from '../session-input-queue.js';
 import { RUNTIME_HOST_SLOT, readRuntimeDaemonLockOwner, resolveRuntimeDaemonPathsFromConfigHome, runtimeOwnerProcessState } from './state.js';
 
 /**
@@ -80,6 +81,8 @@ function mergeProfile(configHome: string, profilesDir: string, profile: string, 
   const target = path.join(profilesDir, RUNTIME_HOST_SLOT);
   const state: MergeState = { moved: 0, runsMoved: false, importedGrants: 0, droppedGlobalGrants: 0, conflicts: [], failed: [] };
   const retained: string[] = [];
+  // Root files such as the grant store are written before `runs/` would create it.
+  fs.mkdirSync(target, { recursive: true });
   for (const name of fs.readdirSync(source).sort()) {
     const merge = ENTRY_MERGERS[name];
     if (merge) merge(path.join(source, name), path.join(target, name), state, parseGrant);
@@ -128,13 +131,18 @@ function moveIfAbsent(source: string, target: string, item: string, state: Merge
   if (item.startsWith('runs/')) state.runsMoved = true;
 }
 
-/** Revisions are per-store counters and not comparable, so the newer write wins. */
+/**
+ * Revisions are per-store counters and not comparable, so the newer write wins. A copied file keeps
+ * its source mtime, so a later legacy profile is still compared with the original write time.
+ */
 function mergeSettings(source: string, target: string, item: string, state: MergeState): void {
   if (!fs.existsSync(target)) return moveIfAbsent(source, target, item, state);
   const legacy = settingsRevision(source);
   const canonical = settingsRevision(target);
-  if (fs.statSync(source).mtimeMs > fs.statSync(target).mtimeMs) {
+  const written = fs.statSync(source);
+  if (written.mtimeMs > fs.statSync(target).mtimeMs) {
     writeJson(target, readJson(source));
+    fs.utimesSync(target, written.atime, written.mtime);
     state.moved += 1;
     state.conflicts.push(`${item}: kept the newer legacy revision ${legacy} over canonical revision ${canonical}`);
   } else {
@@ -147,12 +155,20 @@ function settingsRevision(file: string): number {
   return isRecord(value) && Number.isSafeInteger(value.revision) && isRecord(value.value) ? value.revision as number : 0;
 }
 
-/** The order counter must stay monotonic; an unreadable canonical counter falls back to the Run scan. */
+/**
+ * The order counter must stay monotonic. Without a counter the Host rescans Runs, so an unreadable
+ * legacy counter drops the canonical one: the moved legacy Runs may carry larger orders.
+ */
 function mergeOrder(source: string, target: string, item: string, state: MergeState): void {
   if (!fs.existsSync(target)) return moveIfAbsent(source, target, item, state);
   const legacy = readOrder(source);
+  if (legacy === undefined) {
+    fs.rmSync(target, { force: true });
+    state.conflicts.push(`${item}: legacy counter unreadable; the next order is rebuilt from the merged Runs`);
+    return;
+  }
   const canonical = readOrder(target);
-  if (legacy !== undefined && canonical !== undefined && legacy > canonical) {
+  if (canonical !== undefined && legacy > canonical) {
     writeJson(target, legacy);
     state.moved += 1;
   }
@@ -170,12 +186,24 @@ function readOrder(file: string): number | undefined {
 
 interface InputQueue { readonly pending: readonly Record<string, unknown>[]; readonly withdrawn: readonly Record<string, unknown>[] }
 
+/**
+ * The result must pass Host recovery: one state per input id (canonical wins) and at most
+ * MAX_QUEUED_INPUTS pending. Legacy overflow becomes a withdrawn receipt that clients can see.
+ */
 function mergePendingInputs(source: string, target: string, item: string, state: MergeState): void {
   if (!fs.existsSync(target)) return moveIfAbsent(source, target, item, state);
   const legacy = readInputQueue(source);
   const canonical = readInputQueue(target);
-  const pending = appendNewInputs(canonical.pending, legacy.pending);
-  const withdrawn = appendNewInputs(canonical.withdrawn, legacy.withdrawn);
+  const known = new Set([...canonical.pending, ...canonical.withdrawn].map(inputId));
+  const added = legacy.pending.filter(entry => !known.has(inputId(entry)));
+  const kept = added.slice(0, Math.max(0, MAX_QUEUED_INPUTS - canonical.pending.length));
+  const overflow = added.slice(kept.length);
+  const pending = [...canonical.pending, ...kept];
+  const withdrawn = [...canonical.withdrawn, ...legacy.withdrawn.filter(entry => !known.has(inputId(entry))),
+    ...overflow.map(entry => ({ input: entry.input, ...(entry.principalId === undefined ? {} : { principalId: entry.principalId }) }))];
+  if (overflow.length > 0) {
+    state.conflicts.push(`${item}: withdrew ${overflow.map(inputId).join(', ')} over the ${MAX_QUEUED_INPUTS}-input queue limit`);
+  }
   if (pending.length === canonical.pending.length && withdrawn.length === canonical.withdrawn.length) return;
   // Same shape the Host writes: the plain array unless version 2 fields are needed.
   writeJson(target, withdrawn.length === 0 && pending.every(entry => entry.requiredWorkMode === undefined)
@@ -192,11 +220,6 @@ function readInputQueue(file: string): InputQueue {
     throw new Error('Malformed pending Session input queue.');
   }
   return queue as InputQueue;
-}
-
-function appendNewInputs(canonical: readonly Record<string, unknown>[], legacy: readonly Record<string, unknown>[]): Record<string, unknown>[] {
-  const ids = new Set(canonical.map(inputId));
-  return [...canonical, ...legacy.filter(entry => !ids.has(inputId(entry)))];
 }
 
 function inputId(entry: unknown): string | undefined {

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { setKodaXDiagnosticSink, type KodaXDiagnostic } from '@kodax-ai/agent';
 import { mergeLegacyRuntimeProfileState } from './profile-state-merge.js';
+import { SessionInputQueue, type SessionInputState } from '../session-input-queue.js';
 
 const roots: string[] = [];
 const NOW = new Date('2026-11-11T08:00:00Z');
@@ -41,6 +42,7 @@ function home() {
 }
 
 const input = (inputId: string) => ({ skill: false, input: { sessionId: 's1', inputId, text: inputId } });
+const input2 = (inputId: string) => ({ skill: false, input: { sessionId: 's2', inputId, text: inputId } });
 
 it('moves Session state absent in the canonical profile and retires the legacy profile', () => {
   const { put, read, exists, merge } = home();
@@ -210,4 +212,62 @@ it('picks a fresh retired name when a legacy profile is merged twice on one day'
 
   expect(reports[0]).toMatchObject({ mergedTo: 'coder.merged-20261111-2' });
   expect(exists('coder.merged-20261111-2')).toBe(true);
+});
+
+it('keeps the merged queue restorable: at most five pending inputs and one state per input id', () => {
+  const { put, read, merge } = home();
+  put('default/pending-inputs/s1.json', [input('a1'), input('a2'), input('a3')]);
+  put('coder/pending-inputs/s1.json', [input('b1'), input('b2'), input('b3')]);
+  put('default/pending-inputs/s2.json', { version: 2, pending: [input2('y')], withdrawn: [{ input: input2('x').input }] });
+  put('coder/pending-inputs/s2.json', { version: 2, pending: [input2('x')], withdrawn: [{ input: input2('y').input }] });
+
+  const { reports } = merge();
+
+  // Overflow becomes a withdrawn receipt, so clients see it instead of a blocked Session.
+  const s1 = read('default/pending-inputs/s1.json') as SessionInputState;
+  expect(s1).toEqual({ version: 2, pending: ['a1', 'a2', 'a3', 'b1', 'b2'].map(input), withdrawn: [{ input: input('b3').input }] });
+  expect(read('default/pending-inputs/s2.json')).toEqual({ version: 2, pending: [input2('y')], withdrawn: [{ input: input2('x').input }] });
+  for (const state of [s1, read('default/pending-inputs/s2.json') as SessionInputState]) {
+    const queue = new SessionInputQueue(() => undefined);
+    queue.restore(state.pending, true);
+    queue.restoreWithdrawn(state.withdrawn);
+  }
+  expect(reports[0]).toMatchObject({ conflicts: ['pending-inputs/s1.json: withdrew b3 over the 5-input queue limit'] });
+});
+
+it('keeps the newest Session settings across several legacy profiles', () => {
+  const { file, put, read, merge } = home();
+  put('default/session-settings/s1.json', { revision: 1, value: { model: 'default' } });
+  put('coder/session-settings/s1.json', { revision: 1, value: { model: 'coder' } });
+  put('work/session-settings/s1.json', { revision: 1, value: { model: 'work' } });
+  fs.utimesSync(file('default/session-settings/s1.json'), new Date(1_000), new Date(1_000));
+  fs.utimesSync(file('coder/session-settings/s1.json'), new Date(2_000), new Date(2_000));
+  fs.utimesSync(file('work/session-settings/s1.json'), new Date(3_000), new Date(3_000));
+
+  merge();
+
+  expect(read('default/session-settings/s1.json')).toEqual({ revision: 1, value: { model: 'work' } });
+});
+
+it('imports Session grants when the canonical profile does not exist yet', () => {
+  const { put, read, merge } = home();
+  put('coder/permission-grants.json', { revision: 1, value: [{ id: 'g1', createdAt: 'x', scope: { sessionId: 's1' } }] });
+
+  const { reports } = merge();
+
+  expect(read('default/permission-grants.json')).toEqual({ revision: 1, value: [{ id: 'g1', createdAt: 'x', scope: { sessionId: 's1' } }] });
+  expect(reports[0]).toMatchObject({ importedGrants: 1, failed: [] });
+});
+
+it('drops the canonical Session order when the legacy counter is unreadable so the next allocation rescans Runs', () => {
+  const { file, put, exists, merge } = home();
+  put('default/session-orders/s1.json', 3);
+  put('coder/runs/run-b/status.json', { status: { sessionId: 's1', sessionOrder: 8 } });
+  fs.mkdirSync(path.dirname(file('coder/session-orders/s1.json')), { recursive: true });
+  fs.writeFileSync(file('coder/session-orders/s1.json'), '{');
+
+  const { reports } = merge();
+
+  expect(exists('default/session-orders/s1.json')).toBe(false);
+  expect(reports[0]).toMatchObject({ failed: [], conflicts: ['session-orders/s1.json: legacy counter unreadable; the next order is rebuilt from the merged Runs'] });
 });
