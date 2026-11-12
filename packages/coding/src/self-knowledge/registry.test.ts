@@ -251,6 +251,17 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('reason. Every v0.7.96 stable and v0.7.97-alpha.1 through beta.6 contract is retained.');
   });
 
+  it('documents the v0.7.97-beta.8 native daemon Job startup repairs', () => {
+    const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
+
+    expect(sandbox).toContain('The v0.7.97-beta.8 release moves daemon startup Job proof and supervision off PowerShell (Issue 409):');
+    expect(sandbox).toContain('the bundled, hash-verified native `__daemon-job-identity` verifies Job membership, kill-on-close and');
+    expect(sandbox).toContain('both creation identities, and `__daemon-job-supervise` owns the named kill-on-close Job with a');
+    expect(sandbox).toContain('suspended start, assignment before resume and atomic readiness publication. A failed start keeps its');
+    expect(sandbox).toContain('exact cleanup handles while same-slot admissions serialize; `child_exit` is retryable and carries the');
+    expect(sandbox).toContain('child\'s last bootstrap error line. Unverified ownership still fails closed.');
+  });
+
   it('documents the v0.7.96 release capability and capacity-debt contracts', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;

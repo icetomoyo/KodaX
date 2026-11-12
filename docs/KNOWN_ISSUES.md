@@ -50,8 +50,10 @@ No production accounting change is claimed here. See the
 ## Issue 409: Windows daemon Job proof and failed-start cleanup prevent recovery
 
 - Priority: High
-- Status: Resolved in source; not published
+- Status: Resolved (fixed in `v0.7.97-beta.8`)
 - Observed: Space 0.1.47-alpha.5 / SDK 0.7.97-beta.4, Windows x64, 2026-11-12
+- Fixed: `v0.7.97-beta.8`
+- Resolution Date: 2026-11-12
 
 Customer logs show two `job-membership` probes exceeding the existing 5-second
 PowerShell timeout, followed by refusal to publish an unverified Host. No Provider
@@ -2982,6 +2984,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 409 | High | Resolved | Windows daemon Job proof and failed-start cleanup prevent recovery | observed in v0.7.97-beta.4 (customer report); PowerShell Job probe since v0.7.97-alpha.7 | `v0.7.97-beta.8` | 2026-11-12 | 2026-11-12 |
 | 408 | Medium | Resolved | Space SDK leaks user image labels, rejects non-PNG attachments and loses extension approval attribution | observed in v0.7.97-beta.6; visual input/tools since beta.5 | `v0.7.97-beta.7` | 2026-11-12 | 2026-11-12 |
 | 407 | Medium | Resolved | Passive connections and exit receipts ignore the session storage owner | v0.7.97-alpha.7 (storage-owner redirect) | `v0.7.97-beta.6` (FEATURE_305 T3+T4) | 2026-11-10 | 2026-11-11 |
 | 406 | High | Resolved | A CLI redirected to Space's Host fails `daemon start` verification and provider credential authorization | `daemon start` check v0.7.97-alpha.1, exposed by the v0.7.97-alpha.7 redirect; credential profile fence v0.7.97-alpha.12 | `v0.7.97-beta.6` | 2026-11-10 | 2026-11-10 |
@@ -18611,12 +18614,19 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 286 (46 Open including 1 needs-info, 240 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 287 (46 Open including 1 needs-info, 241 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-12: Issue 409
+
+- Replaced the PowerShell Add-Type daemon Job probe and startup Job supervisor
+  with the bundled native runner, retained failed-start cleanup handles, made
+  `child_exit` retryable and required a live competing startup owner; shipped in
+  `v0.7.97-beta.8`.
 
 ### 2026-11-12: Issue 408
 

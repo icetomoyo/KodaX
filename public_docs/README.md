@@ -3,8 +3,8 @@
 Documentation for KodaX users, product-client integrators and trusted Host developers.
 
 This development tree implements the unified Product Client contract under
-FEATURE_298/299/301/303/304/305. The package version is `0.7.97-beta.7`;
-`v0.7.96` remains the last stable release. `v0.7.97-beta.7` repairs the
+FEATURE_298/299/301/303/304/305. The package version is `0.7.97-beta.8`;
+`v0.7.96` remains the last stable release. `v0.7.97-beta.8` repairs Windows daemon startup reliability (Issue 409): the fail-closed startup path verifies and supervises the kill-on-close Job with the bundled native helper instead of compiling C# in PowerShell, failed starts retain cleanup handles with serialized admissions, and `child_exit` is retryable; `v0.7.97-beta.7` repairs the
 Space SDK image projection, attachment reads and extension approval
 attribution from the Space integration report (Issue 408): user image
 observation labels leave the view, history and search, Host attachment reads
@@ -72,7 +72,7 @@ Actor settlement and saved-history location/turn resolution shipped in
 support and durable visual observations shipped in `v0.7.97-beta.5`; one
 Host per `KODAX_HOME` with the Host-location `profile` removed shipped in
 `v0.7.97-beta.6`; the Space SDK image projection, attachment and
-approval-attribution corrections shipped in `v0.7.97-beta.7`. Read the
+approval-attribution corrections shipped in `v0.7.97-beta.7`; the Windows daemon native Job startup repairs shipped in `v0.7.97-beta.8`. Read the
 [current SDK alignment](sdk/embedder-guide.md#post-alpha10-sdk-alignment),
 [unified Host cutover](sdk/embedder-guide.md#unified-host-sdk-cutover-shipped-in-v0797-alpha12)
 and [one Host per KODAX_HOME](../docs/SDK_MIGRATION.md#one-host-per-kodax_home-profile-removed)

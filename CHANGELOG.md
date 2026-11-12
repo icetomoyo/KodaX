@@ -8,6 +8,47 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.97-beta.8] - 2026-11-12
+
+Eighth beta of the v0.7.97 line: the Windows daemon startup reliability
+repairs from the customer incident report (Issue 409). The fail-closed
+startup path no longer compiles C# through PowerShell: Job membership,
+kill-on-close and both creation identities are verified by the bundled,
+hash-verified native `__daemon-job-identity`, and the startup Job owner
+is the native `__daemon-job-supervise` helper, which starts the daemon
+suspended, assigns it to the kill-on-close Job before resume and
+publishes readiness atomically. Failed starts keep their exact cleanup
+handles, admissions for the same home/slot serialize until cleanup
+settles, `child_exit` is retryable, a competing startup owner must be
+alive to matter, and a child that exits carries its last bootstrap
+error line. Every v0.7.96 stable and v0.7.97-alpha.1 through beta.7
+client contract is retained; no SDK surface changes. npm publication
+remains a manual maintainer action.
+
+### Fixed
+
+- The daemon Job proof no longer compiles C# in PowerShell: the bundled,
+  hash-verified native `__daemon-job-identity` reads Job membership,
+  kill-on-close and both process-creation identities within the original
+  deadline, retries once when the probe could not run, and treats native
+  refusals as final while unverified ownership still fails closed
+  (Issue 409).
+- The startup Job supervisor no longer uses PowerShell `Add-Type`. The
+  native `__daemon-job-supervise` helper owns the named kill-on-close
+  Job: the daemon starts suspended and is assigned before resume,
+  readiness is published atomically with retries for transient sharing
+  violations, a pre-existing Job of the same name is refused, and
+  failures before readiness are written to the ready file (Issue 409).
+- A failed startup retains its exact child/supervisor cleanup handles and
+  admissions for the same home/slot serialize until cleanup settles, so a
+  replacement cannot overlap unfinished cleanup (Issue 409).
+- `child_exit` startup failures are retryable, and a dead owner left in
+  the lock no longer hides an immediate child exit behind the full
+  startup timeout; the message carries the child's last `bootstrap.log`
+  `[Error]` line (Issue 409).
+
+---
+
 ## [0.7.97-beta.7] - 2026-11-12
 
 Seventh beta of the v0.7.97 line: the Space SDK image projection,

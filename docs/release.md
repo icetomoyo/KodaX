@@ -48,6 +48,64 @@ on one commit.
   The step limit is ten minutes because the passing Windows suite alone takes
   about 4.6 minutes.
 
+## v0.7.97-beta.8 release preparation
+
+Release state: `v0.7.97-beta.8` is a candidate awaiting the publishing
+dispatch. npm publication has not occurred. The release is the eighth
+beta of the v0.7.97 line: the Windows daemon startup reliability
+repairs from the customer incident report (Issue 409). The fail-closed
+startup path no longer compiles C# through PowerShell: Job membership,
+kill-on-close and both process-creation identities are verified by the
+bundled, hash-verified native `__daemon-job-identity`, and the startup
+Job owner is the native `__daemon-job-supervise` helper (suspended
+start, assignment before resume, atomic readiness publication, refusal
+of a pre-existing same-name Job). A failed startup retains its exact
+cleanup handles while admissions for the same home/slot serialize until
+cleanup settles; `child_exit` is retryable, a competing startup owner
+must be alive to matter, and the exited child's last `bootstrap.log`
+`[Error]` line is surfaced. Every v0.7.96 stable and v0.7.97-alpha.1
+through beta.7 client contract is retained; no SDK surface changes.
+
+The CI/Release in-place upgrade gates now pin the published
+`0.7.97-beta.7` tarball (published 2026-11-12T05:07:12.252Z; registry
+dist.integrity sha512-GBEgt0X0…Offtw== equals the
+kodax-ai-kodax-0.7.97-beta.7.tgz asset of the v0.7.97-beta.7 GitHub
+Release, sha256 50c65ba0…1f414). Run that fixture locally with Windows
+`tar.exe` ahead of Git's GNU `tar` on `PATH`: GNU `tar` reads the `C:`
+drive in the archive path as a remote host.
+
+Local candidate validation on Windows with Node 22.23.1: full build
+(after the version bump, so `dist` carries 0.7.97-beta.8), source and
+test typechecks, the targeted daemon Job suites (149 passed across
+`windows-job-identity*`, `windows-job-native-supervisor`,
+`process-admission`, `process`, `windows-job-supervisor` and agent
+`process-tree.windows`), the self-knowledge and manual-tool
+(`kodax_manual`) suites (102 passed), `tests/release-workflow.test.ts`
+(28 passed), `tests/tracker-consistency.test.ts` (4 passed),
+`test:host-cutover` (3 passed), the contract tier (1,072 passed), the
+unit tier (14,012 passed, 7 skipped), the fast tier (3,757 passed,
+57 skipped), `test:bundle` (110 passed) and the real published beta.7
+Host in-place upgrade (1 passed) against the integrity-pinned public
+tarball. The first two full unit runs each failed one load-sensitive
+real-process test (`benchmark/visual-harness/pilot-runner.test.ts`
+fetch failures twice, then `deterministic-evaluator` exit codes; each
+file passes solo) and the unchanged candidate's third full run passed
+every test; the first bundle re-run on the rebuilt dist hit one
+transient `EBUSY` temp-directory cleanup lock that passes solo. The
+first upgrade-gate attempt ran against a `dist` built before the
+version bump, so the same-version Host reported `runtimeBuild` instead
+of `runtimeVersion`; the correctly versioned rebuild passes. The
+system tier runs in Release CI.
+
+This release follows the single publishing dispatch described under
+[Current release execution](#current-release-execution): `target=all` with
+`release_tag=v0.7.97-beta.8` runs Full CI, all five archive builds and the
+npm package gates, then creates the tag at the dispatched commit and the
+GitHub pre-release from that run's artifacts. Ordinary branch pushes do
+not run CI. Cross-platform manual acceptance, installed Space/SDK
+acceptance, the Space dependency bump (FEATURE_305 T6 follow-up) and npm
+registry publication remain separate maintainer steps.
+
 ## v0.7.97-beta.7 release preparation
 
 Release state: `v0.7.97-beta.7` was published on 2026-11-12 as a GitHub
