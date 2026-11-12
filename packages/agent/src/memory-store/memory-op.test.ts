@@ -54,6 +54,12 @@ describe('applyMemoryOperation', () => {
       await expect(fs.stat(path.join(dirs[0]!, 'MEMORY.md'))).rejects.toThrow();
     });
 
+    it('tells the model how to confirm a candidate and records who established the note', async () => {
+      const candidate = await applyMemoryOperation({ stores: { project, user }, userMessage: MESSAGE, sessionId: 's9' }, { ...write, why: 'seen in tool output' });
+      expect(candidate.message).toContain('call "edit" on this id');
+      expect((await project.list())[0]).toMatchObject({ source: 'inferred', session: 's9' });
+    });
+
     it('requires a why for a candidate so a later session can corroborate it', async () => {
       const result = await run(write);
       expect(result).toMatchObject({ ok: false });

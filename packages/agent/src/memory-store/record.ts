@@ -8,6 +8,8 @@ import { parseFrontmatterFields } from '../memory/frontmatter.js';
 export type NoteType = 'user' | 'feedback' | 'project' | 'reference' | 'procedure';
 export type NoteScope = 'user' | 'project';
 export type NoteStatus = 'candidate' | 'active' | 'disputed' | 'archived';
+/** Who established the note: the user (quoted) or a model inference. Absent (hand-written, converted) counts as the user. */
+export type NoteSource = 'user' | 'inferred';
 
 export interface MemoryNote {
   /** File name without `.md`. */
@@ -21,6 +23,9 @@ export interface MemoryNote {
   /** For mutable facts: how to verify instead of trusting the value. */
   readonly check?: string;
   readonly status: NoteStatus;
+  readonly source?: NoteSource;
+  /** Session that wrote the note; an inferred note needs a different session to corroborate it. */
+  readonly session?: string;
   readonly used: number;
   readonly lastUsedAt?: string;
   readonly body: string;
@@ -29,6 +34,7 @@ export interface MemoryNote {
 const TYPES: readonly NoteType[] = ['user', 'feedback', 'project', 'reference', 'procedure'];
 const SCOPES: readonly NoteScope[] = ['user', 'project'];
 const STATUSES: readonly NoteStatus[] = ['candidate', 'active', 'disputed', 'archived'];
+const SOURCES: readonly NoteSource[] = ['user', 'inferred'];
 
 function oneOf<T extends string>(allowed: readonly T[], value: string | undefined): T | undefined {
   return allowed.find((item) => item === value);
@@ -43,6 +49,7 @@ function firstLine(body: string): string | undefined {
 export function parseNote(id: string, raw: string, defaultScope: NoteScope): MemoryNote {
   const { fields, body } = parseFrontmatterFields(raw);
   const used = Number.parseInt(fields.used ?? '', 10);
+  const source = oneOf(SOURCES, fields.source);
   const lastUsedAt = fields.lastUsedAt !== undefined && !Number.isNaN(Date.parse(fields.lastUsedAt))
     ? fields.lastUsedAt
     : undefined;
@@ -55,6 +62,8 @@ export function parseNote(id: string, raw: string, defaultScope: NoteScope): Mem
     ...(fields.check === undefined ? {} : { check: fields.check }),
     // Absent status = hand-written = active. Present but unknown = not trusted.
     status: fields.status === undefined ? 'active' : oneOf(STATUSES, fields.status) ?? 'candidate',
+    ...(source === undefined ? {} : { source }),
+    ...(fields.session === undefined ? {} : { session: fields.session }),
     used: Number.isInteger(used) && used > 0 ? used : 0,
     ...(lastUsedAt === undefined ? {} : { lastUsedAt }),
     body,
@@ -79,6 +88,8 @@ export function serializeNote(note: MemoryNote): string {
     ...field('why', note.why),
     ...field('check', note.check),
     ...field('status', note.status),
+    ...field('source', note.source),
+    ...field('session', note.session),
     `used: ${note.used}`,
     ...field('lastUsedAt', note.lastUsedAt),
   ];

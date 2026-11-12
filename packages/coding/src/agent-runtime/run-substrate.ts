@@ -1580,6 +1580,7 @@ async function runSubstrateInContext(
     ctx.memoryNotes = createNoteMemoryBinding(
       resolveExecutionCwd(options.context),
       () => memoryIntentUserTurnRef.current.text,
+      options.session?.id,
     );
   }
 

@@ -1,0 +1,148 @@
+/**
+ * FEATURE_306 — bounded raw evidence from one session, for the reflection job.
+ *
+ * Every segment carries a provenance the HOST assigns (never the model):
+ *   user      what the user typed; the only source that can state a preference
+ *   local     output of a tool that reads or changes this machine (read, bash, ...)
+ *   external  anything else (web, MCP, unknown tools); shown to the model as
+ *             untrusted data and never accepted as proof for a note
+ *   assistant what the agent said; context only, never proof
+ */
+import type { KodaXContentBlock, KodaXMessage } from '@kodax-ai/llm';
+
+export type EvidenceSource = 'user' | 'local' | 'external' | 'assistant';
+
+export interface EvidenceSegment {
+  readonly source: EvidenceSource;
+  readonly label: string;
+  /** Tool name for tool results. */
+  readonly tool?: string;
+  readonly text: string;
+  readonly isError: boolean;
+}
+
+export interface SessionEvidence {
+  readonly segments: readonly EvidenceSegment[];
+  /** User segments joined so that no quote can span two messages. */
+  readonly userText: string;
+  readonly omitted: number;
+}
+
+const LOCAL_TOOLS: ReadonlySet<string> = new Set([
+  'bash', 'read', 'grep', 'glob', 'edit', 'multi_edit', 'write', 'undo', 'code_search',
+  'changed_diff', 'changed_diff_bundle', 'changed_scope', 'repo_overview',
+]);
+
+const USER_MESSAGE_CHARS = 4000;
+const TOOL_HEAD_CHARS = 1200;
+const TOOL_TAIL_CHARS = 600;
+const ASSISTANT_CHARS = 400;
+export const EVIDENCE_BUDGET_CHARS = 60_000;
+const SEGMENT_SEPARATOR = '\n\u0000\n';
+
+export function toolSource(toolName: string): EvidenceSource {
+  return LOCAL_TOOLS.has(toolName) || toolName.startsWith('lsp_') ? 'local' : 'external';
+}
+
+function clip(text: string, head: number, tail: number): string {
+  return text.length <= head + tail ? text : `${text.slice(0, head)}\n[... ${text.length - head - tail} characters omitted ...]\n${text.slice(-tail)}`;
+}
+
+function textOf(content: string | readonly KodaXContentBlock[]): string {
+  if (typeof content === 'string') return content;
+  return content
+    .map((block) => (block.type === 'text' ? block.text : ''))
+    .filter((part) => part.length > 0)
+    .join('\n');
+}
+
+function resultText(block: Extract<KodaXContentBlock, { type: 'tool_result' }>): string {
+  return typeof block.content === 'string'
+    ? block.content
+    : block.content.map((item) => (item.type === 'text' ? item.text : '[image]')).join('\n');
+}
+
+function commandOf(input: Record<string, unknown>): string {
+  const value = input.command ?? input.path ?? input.file_path ?? input.pattern ?? input.url ?? input.query;
+  return typeof value === 'string' ? value.slice(0, 200) : '';
+}
+
+export function collectSegments(messages: readonly KodaXMessage[]): EvidenceSegment[] {
+  const calls = new Map<string, { name: string; arg: string }>();
+  const segments: EvidenceSegment[] = [];
+  for (const message of messages) {
+    if (message.role === 'system') continue;
+    if (message.role === 'user' && typeof message.content === 'string') {
+      if (message._synthetic !== true) segments.push({ source: 'user', label: 'user', text: message.content.slice(0, USER_MESSAGE_CHARS), isError: false });
+      continue;
+    }
+    const blocks = typeof message.content === 'string' ? [{ type: 'text', text: message.content } as KodaXContentBlock] : message.content;
+    for (const block of blocks) {
+      if (block.type === 'text' && block.text.trim().length > 0) {
+        if (message.role === 'user') {
+          if (message._synthetic !== true) segments.push({ source: 'user', label: 'user', text: block.text.slice(0, USER_MESSAGE_CHARS), isError: false });
+        } else {
+          segments.push({ source: 'assistant', label: 'assistant', text: block.text.slice(0, ASSISTANT_CHARS), isError: false });
+        }
+      } else if (block.type === 'tool_use') {
+        calls.set(block.id, { name: block.name, arg: commandOf(block.input) });
+      } else if (block.type === 'tool_result') {
+        const call = calls.get(block.tool_use_id) ?? { name: 'unknown', arg: '' };
+        segments.push({
+          source: toolSource(call.name),
+          label: `${call.name}${call.arg.length > 0 ? `: ${call.arg}` : ''}`,
+          tool: call.name,
+          text: clip(resultText(block), TOOL_HEAD_CHARS, TOOL_TAIL_CHARS),
+          isError: block.is_error === true,
+        });
+      }
+    }
+  }
+  return segments;
+}
+
+/** User segments are always kept; error results next; then the rest, newest first, until the budget is spent. */
+export function buildEvidence(messages: readonly KodaXMessage[], budgetChars: number = EVIDENCE_BUDGET_CHARS): SessionEvidence {
+  const all = collectSegments(messages);
+  const keep = new Set<number>();
+  let spent = 0;
+  const take = (index: number): void => {
+    const size = all[index]!.text.length + all[index]!.label.length;
+    if (keep.has(index) || (all[index]!.source !== 'user' && spent + size > budgetChars)) return;
+    keep.add(index);
+    spent += size;
+  };
+  all.forEach((segment, index) => { if (segment.source === 'user') take(index); });
+  all.forEach((segment, index) => { if (segment.isError) take(index); });
+  for (let index = all.length - 1; index >= 0; index -= 1) take(index);
+  const segments = all.filter((_, index) => keep.has(index));
+  return {
+    segments,
+    userText: segments.filter((segment) => segment.source === 'user').map((segment) => segment.text).join(SEGMENT_SEPARATOR),
+    omitted: all.length - segments.length,
+  };
+}
+
+function normalize(text: string): string {
+  return text.normalize('NFC').replace(/\s+/g, ' ').trim();
+}
+
+/** True when `quote` appears verbatim (whitespace-insensitive) in a segment whose source is in `allowed`. */
+export function quoteInEvidence(evidence: SessionEvidence, quote: string, allowed: readonly EvidenceSource[]): boolean {
+  const wanted = normalize(quote);
+  return Array.from(wanted).length >= 4
+    && evidence.segments.some((segment) => allowed.includes(segment.source) && normalize(segment.text).includes(wanted));
+}
+
+/** Text for the reflection prompt; external content is fenced and labelled untrusted. */
+export function renderEvidence(evidence: SessionEvidence): string {
+  const blocks = evidence.segments.map((segment) => {
+    if (segment.source === 'external') {
+      return `<external-content tool="${segment.label}" trust="untrusted">\n${segment.text}\n</external-content>`;
+    }
+    const tag = segment.source === 'local' ? `tool ${segment.label}${segment.isError ? ' (error)' : ''}` : segment.label;
+    return `[${tag}]\n${segment.text}`;
+  });
+  if (evidence.omitted > 0) blocks.push(`[${evidence.omitted} lower-priority segments omitted]`);
+  return blocks.join('\n\n');
+}

@@ -1441,6 +1441,7 @@ async function runManagedTaskViaRunnerInner(
     substrateBaseCtx.memoryNotes = createNoteMemoryBinding(
       resolveExecutionCwd(options.context),
       () => liveTurnController.currentUserText(),
+      options.session?.id ?? resolvedSessionId,
     );
   }
   if (memoryRuntime !== undefined) {

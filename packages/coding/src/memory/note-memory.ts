@@ -53,10 +53,11 @@ export function renderNoteMemorySection(cwd: string): string {
 export function createNoteMemoryBinding(
   cwd: string,
   getUserText: () => string,
+  sessionId?: string,
 ): (input: MemoryOpInput) => Promise<MemoryOpResult> {
   const stores = {
     project: createNoteStore(resolveNoteRoot(cwd, 'project'), 'project' satisfies NoteScope),
     user: createNoteStore(resolveNoteRoot(cwd, 'user'), 'user' satisfies NoteScope),
   };
-  return (input) => applyMemoryOperation({ stores, userMessage: getUserText() }, input);
+  return (input) => applyMemoryOperation({ stores, userMessage: getUserText(), ...(sessionId === undefined ? {} : { sessionId }) }, input);
 }

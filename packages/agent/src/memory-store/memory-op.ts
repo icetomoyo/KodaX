@@ -28,6 +28,8 @@ export interface MemoryOpContext {
   readonly stores: Readonly<Record<NoteScope, NoteStore>>;
   /** Text of the current user message, supplied by the host. */
   readonly userMessage: string;
+  /** Recorded on new notes so a later session can corroborate an inferred one. */
+  readonly sessionId?: string;
 }
 
 export interface MemoryOpResult {
@@ -100,11 +102,17 @@ async function write(store: NoteStore, context: MemoryOpContext, input: MemoryOp
     why,
     ...(input.check === undefined ? {} : { check: input.check }),
     status,
+    source: status === 'active' ? 'user' : 'inferred',
+    ...(context.sessionId === undefined ? {} : { session: context.sessionId }),
     body: input.body ?? '',
   });
-  return result.ok
-    ? { ok: true, message: `Saved memory '${input.id}' as ${status}.` }
-    : failure(result, input.id);
+  if (!result.ok) return failure(result, input.id);
+  return {
+    ok: true,
+    message: status === 'active'
+      ? `Saved memory '${input.id}' as active.`
+      : `Saved memory '${input.id}' as a candidate: it is not shown in the index until it is confirmed. If the user asked you to remember it, call "edit" on this id with their exact words as userQuote.`,
+  };
 }
 
 async function change(store: NoteStore, context: MemoryOpContext, input: MemoryOpInput): Promise<MemoryOpResult> {
@@ -122,7 +130,7 @@ async function change(store: NoteStore, context: MemoryOpContext, input: MemoryO
     ...(input.check === undefined ? {} : { check: input.check }),
     ...(input.body === undefined ? {} : { body: input.body }),
     // The user authorized this note, so a candidate becomes active.
-    ...(existing?.status === 'candidate' ? { status: 'active' as const } : {}),
+    ...(existing?.status === 'candidate' ? { status: 'active' as const, source: 'user' as const } : {}),
   });
   return edited.ok ? { ok: true, message: `Updated memory '${input.id}'.` } : failure(edited, input.id);
 }

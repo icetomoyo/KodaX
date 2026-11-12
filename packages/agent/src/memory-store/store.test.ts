@@ -139,6 +139,6 @@ describe('note store', () => {
   it('leaves no temp files behind', async () => {
     await store.write({ id: 'a', ...base });
     await store.edit('a', { description: 'changed' });
-    expect((await fs.readdir(dir)).sort()).toEqual(['MEMORY.md', 'a.md']);
+    expect((await fs.readdir(dir)).sort()).toEqual(['.revisions', 'MEMORY.md', 'a.md']); // no *.tmp-* files
   });
 });

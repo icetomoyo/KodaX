@@ -12,7 +12,8 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
 import { buildIndex } from './index-builder.js';
-import { parseNote, serializeNote, type MemoryNote, type NoteScope, type NoteStatus, type NoteType } from './record.js';
+import { parseNote, serializeNote, type MemoryNote, type NoteScope, type NoteSource, type NoteStatus, type NoteType } from './record.js';
+import { keepRevision } from './revisions.js';
 import { findSecret } from './secrets.js';
 
 export const INDEX_FILE = 'MEMORY.md';
@@ -24,10 +25,12 @@ export interface NewNote {
   readonly why?: string;
   readonly check?: string;
   readonly status?: NoteStatus;
+  readonly source?: NoteSource;
+  readonly session?: string;
   readonly body: string;
 }
 
-export type NotePatch = Partial<Pick<NewNote, 'type' | 'description' | 'why' | 'check' | 'status' | 'body'>>;
+export type NotePatch = Partial<Pick<NewNote, 'type' | 'description' | 'why' | 'check' | 'status' | 'source' | 'body'>>;
 
 export type NoteResult =
   | { readonly ok: true; readonly note: MemoryNote }
@@ -127,7 +130,10 @@ export function createNoteStore(root: string, scope: NoteScope): NoteStore {
 
   async function save(note: MemoryNote): Promise<NoteResult> {
     await fs.mkdir(root, { recursive: true });
-    await atomicWrite(fileOf(note.id), serializeNote(note));
+    const previous = await readOrUndefined(fileOf(note.id));
+    const next = serializeNote(note);
+    if (previous !== undefined && previous !== next) await keepRevision(root, note.id, previous);
+    await atomicWrite(fileOf(note.id), next);
     await rebuild();
     return { ok: true, note };
   }
@@ -152,6 +158,8 @@ export function createNoteStore(root: string, scope: NoteScope): NoteStore {
         ...(input.why === undefined ? {} : { why: input.why }),
         ...(input.check === undefined ? {} : { check: input.check }),
         status: input.status ?? 'active',
+        ...(input.source === undefined ? {} : { source: input.source }),
+        ...(input.session === undefined ? {} : { session: input.session }),
         used: 0,
         body: input.body,
       });
@@ -173,6 +181,7 @@ export function createNoteStore(root: string, scope: NoteScope): NoteStore {
       if (!validId(id)) return { ok: false, reason: 'invalid-id' };
       const raw = await readOrUndefined(fileOf(id));
       if (raw === undefined) return { ok: false, reason: 'not-found' };
+      await keepRevision(root, id, raw);
       await fs.rm(fileOf(id));
       await rebuild();
       return { ok: true, note: parseNote(id, raw, scope) };
