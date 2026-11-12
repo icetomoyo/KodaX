@@ -134,6 +134,26 @@ export function quoteInEvidence(evidence: SessionEvidence, quote: string, allowe
     && evidence.segments.some((segment) => allowed.includes(segment.source) && normalize(segment.text).includes(wanted));
 }
 
+const COPY_WINDOW_CHARS = 40;
+
+/**
+ * True when `text` repeats a run of at least 40 characters from external content
+ * that no user message or local tool output also contains. A note that copies a
+ * web page verbatim (even as a warning) would carry that page into every future session.
+ */
+export function copiesExternalText(evidence: SessionEvidence, text: string): boolean {
+  const flat = (value: string): string => normalize(value).toLowerCase();
+  const external = evidence.segments.filter((segment) => segment.source === 'external').map((segment) => flat(segment.text));
+  if (external.length === 0) return false;
+  const trusted = evidence.segments.filter((segment) => segment.source === 'user' || segment.source === 'local').map((segment) => flat(segment.text));
+  const chars = Array.from(flat(text));
+  for (let start = 0; start + COPY_WINDOW_CHARS <= chars.length; start += 1) {
+    const window = chars.slice(start, start + COPY_WINDOW_CHARS).join('');
+    if (external.some((segment) => segment.includes(window)) && !trusted.some((segment) => segment.includes(window))) return true;
+  }
+  return false;
+}
+
 /** Text for the reflection prompt; external content is fenced and labelled untrusted. */
 export function renderEvidence(evidence: SessionEvidence): string {
   const blocks = evidence.segments.map((segment) => {

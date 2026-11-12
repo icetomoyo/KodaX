@@ -10,7 +10,7 @@
  *                from a user message, local evidence can only dispute it
  * External content (web, MCP) is never accepted as proof.
  */
-import { quoteInEvidence, type SessionEvidence } from './evidence.js';
+import { copiesExternalText, quoteInEvidence, type SessionEvidence } from './evidence.js';
 import { applyMemoryOperation, type MemoryOpResult } from './memory-op.js';
 import type { MemoryNote, NoteScope, NoteType } from './record.js';
 import type { NoteStore } from './store.js';
@@ -37,11 +37,17 @@ export interface ReflectionOpContext {
 
 const NEEDS_PROOF = 'quote must be exact words from a user message or a local tool result in this session. Web and MCP content is not accepted as proof.';
 
+const COPIES_EXTERNAL = 'The note repeats text from external content (web or MCP). State what you learned in your own words, or leave it out.';
+
 function fail(message: string): MemoryOpResult {
   return { ok: false, message };
 }
 
 export async function applyReflectionOperation(context: ReflectionOpContext, input: ReflectionOpInput): Promise<MemoryOpResult> {
+  const written = [input.description, input.why, input.check, input.body].filter((text): text is string => text !== undefined);
+  if (input.operation !== 'corroborate' && written.some((text) => copiesExternalText(context.evidence, text))) {
+    return fail(COPIES_EXTERNAL);
+  }
   if (input.operation === 'write') {
     return applyMemoryOperation(
       { stores: context.stores, userMessage: context.evidence.userText, sessionId: context.sessionId },
@@ -98,6 +104,9 @@ async function dispute(store: NoteStore, context: ReflectionOpContext, note: Mem
 
 async function rewrite(store: NoteStore, note: MemoryNote, input: ReflectionOpInput, fromUser: boolean): Promise<MemoryOpResult> {
   if (note.status === 'archived') return fail(`Memory '${note.id}' is archived.`);
+  if (input.description === undefined || input.description.trim().length === 0) {
+    return fail('A rewrite needs the new description: it is the line the index shows, so it must say the corrected thing.');
+  }
   if (note.source !== 'inferred' && !fromUser) {
     return fail('A note the user stated can only be rewritten from the user\'s own words. Dispute it instead.');
   }
