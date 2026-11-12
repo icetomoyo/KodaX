@@ -186,14 +186,16 @@ export function isAutoManagedMemoryFile(filePath: string): boolean {
       && ['project', 'workspace', 'agent', 'user'].includes(segments[1] ?? '')
       && /^[0-9a-f]{64}$/.test(segments[2] ?? '');
   }
+  // FEATURE_306 user-scope note store: <agentConfigHome>/notes/<file>.md
+  if (normalized.startsWith(comparablePath(getAgentConfigPath('notes')) + path.sep)) return true;
   const projectsRoot = comparablePath(getAgentConfigPath('projects'));
   if (!normalized.startsWith(projectsRoot + path.sep)) return false;
-  // Path under projects/ must include a /memory/ segment, ruling out
-  // sibling directories like projects/<key>/sessions/.
+  // Path under projects/ must include a /memory/ (or FEATURE_306 /notes/) segment,
+  // ruling out sibling directories like projects/<key>/sessions/.
   const tail = normalized.slice(projectsRoot.length + 1);
   const segments = tail.split(path.sep);
   // Expect: <key>/memory/<file>.md  or  <key>/memory/<subdir>/<file>.md
-  return segments.length >= 3 && segments[1] === 'memory';
+  return segments.length >= 3 && (segments[1] === 'memory' || segments[1] === 'notes');
 }
 
 function comparablePath(filePath: string): string {

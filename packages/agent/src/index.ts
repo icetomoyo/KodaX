@@ -645,6 +645,10 @@ export * from './memory/index.js';
 // learning proposal store into typed refs, guarded approvals, and memory packs.
 export * from './memory-control/index.js';
 
+// FEATURE_306 - New file-per-note memory store, index, `memory` tool logic and
+// legacy converter. Coexists with the control plane above until it is removed.
+export * from './memory-store/index.js';
+
 // FEATURE_224 (v0.7.54) - Procedural learning triage + SkillCurator v1
 // substrate. Owns learning intake, skill governance, and safe skill proposal
 // apply primitives; workflow and memory mutation remain destination-specific.

@@ -64,6 +64,23 @@ export function parseMemoryType(raw: unknown): MemoryType | undefined {
 }
 
 /**
+ * Split a file into its raw scalar frontmatter fields and body. NEVER throws.
+ * No frontmatter block → no fields, body = full input. Used by readers that
+ * need fields beyond the 4-type `parseMemoryFile` shape (e.g. `memory-store`).
+ */
+export function parseFrontmatterFields(raw: string): {
+  readonly fields: Record<string, string>;
+  readonly body: string;
+} {
+  const match = FRONTMATTER_RE.exec(raw);
+  if (!match) return { fields: {}, body: raw };
+  return {
+    fields: parseScalarFields(match[1]),
+    body: raw.slice(match[0].length).replace(/^\r?\n+/, ''),
+  };
+}
+
+/**
  * Parse a memory file's raw text into frontmatter + body. NEVER throws.
  *
  * Behavior:
