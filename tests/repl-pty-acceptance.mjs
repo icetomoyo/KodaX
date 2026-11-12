@@ -675,12 +675,22 @@ async function checkHostSessionTransitions(state) {
   });
 }
 
+// Work mode is fixed after the first accepted Run, so it is exercised on the untouched startup session.
+async function checkWorkModeBeforeFirstRun(state) {
+  for (const mode of ['agent', 'script', 'coding']) {
+    await state.terminal.submit('/work-mode ' + mode);
+    await waitFor('/work-mode ' + mode + ' updates Host', async () =>
+      (await state.client.sessions.getSettings(state.sessionId)).workMode === mode);
+  }
+}
+
 async function checkSettings(state) {
+  await state.terminal.submit('/work-mode agent');
+  await waitFor('work mode change after the first Run is refused', () => state.terminal.screen().includes('Work mode is fixed after the first run'));
+  assert.equal((await state.client.sessions.getSettings(state.sessionId)).workMode, 'coding');
   // Read complete labels here; narrow/resize rendering is exercised separately.
   if (state.mode === 'ink') await state.terminal.resize(220, 32);
   for (const [command, field, expected] of [
-    ['/work-mode agent', 'workMode', 'agent'], ['/work-mode script', 'workMode', 'script'],
-    ['/work-mode coding', 'workMode', 'coding'],
     ['/mode plan', 'permissionMode', 'plan'], ['/mode accept-edits', 'permissionMode', 'accept-edits'],
   ]) {
     await state.terminal.submit(command);
@@ -1530,6 +1540,7 @@ async function run(mode) {
     if (checkpointResumeOnly) await seedCheckpointResumeHistory(state);
     state.terminal = openTerminal(state.homeDir, mode, state.fixtureSessionId ? ['--resume', state.fixtureSessionId] : []);
     await check(state, 'startup', checkStartup);
+    if (!sideChatOnly && !state.fixtureSessionId) await check(state, 'work-mode-before-first-run', checkWorkModeBeforeFirstRun);
     if (sideChatOnly) {
       await check(state, 'concurrent-side-chat-selective-relay', checkSideChat);
       await check(state, 'idle-parent-side-chat', checkSideChatIdleParent);
