@@ -338,3 +338,22 @@ Sources re-read in full: "The components of agent memory" (2026-11-06) and the c
 **Limits.** One response per session from an empty store (no existing notes to reconcile, no multi-round job); 16 sessions of one owner; precision is the main session's judgement, not a second reviewer; the prompt was tuned on this same sample once, so r2 numbers are optimistic.
 
 **Recommendation (owner decides).** Precision is acceptable for candidates-by-default; proceed to the Layer 3 two-session arms (notes written by real reflection output, injected into a second session) as the gate for default-on. Host idle wiring stays after that gate.
+
+## 16. Phase 3 results (2026-11-12, revision `f306-phase3-r1`): the two-session gate
+
+**Setup.** `benchmark/datasets/feature-306-twosession/`. Seven chains, each: a scripted session 1 containing a user correction or statement, run through the real reflection job (prompt, tool, host guards as of §15), then a fresh session 2 over the production note index (`KODAX_MEMORY_NOTES=1`) whose first action is checked by the existing executable oracles. Session 2 reuses read cases c1, c3, c6, c7, c8 (lift), c4 (irrelevant note must not distract) and c5 (stale note must not mislead); c6/c7 put the real note among 39 unrelated hand-written notes, and the hand-written target note of the old seeds is gone: the note is whatever reflection wrote. Arm A is session 2 with no memory. 3 aliases (ark/k27, zhipu/glm52, ark/v4flash) x 2 repetitions x 7 chains = 42 chains, 126 calls, 603,560 tokens, about $0.012, no retries. Arm B (old memory, hand-seeded) is not rerun: §10-§12 already measured it, and hand seeding favours it. Arm D (F275 failure-time intervention) cannot differ from C here, because every oracle observes the first action, before any failure exists to intervene on; testing D needs multi-round cases and is left open.
+
+**Result (mechanical verdicts, 42 cells per arm).**
+
+| | pass | needs_review | fail (made the mistake) |
+|---|---|---|---|
+| A no memory | 9 | 14 | **19** |
+| C new design, two sessions | **31** | 11 | **0** |
+
+By case, pass count out of 6 (A -> C): c1 0 -> 5, c3 0 -> 5, c6 0 -> 4, c7 0 -> 4, c8 1 -> 3; c4 (harm) 6 -> 6; c5 (stale) 2 -> 4. In arm A the failures are the memory-addressable mistakes: bare `npm test` or `pytest`, and hand-editing the generated file (5 of 6 in c8). In arm C there is no cell where the model ran the wrong command, edited the generated file or added a dependency with yarn. Hygiene: 1.07 notes per chain, 44 of 45 active and user-sourced, 1 candidate, 1 chain wrote nothing, 1 malformed reflection call in 42.
+
+**What the 11 needs_review cells are.** I read all of them. Nine open the note file first (the path is the injected note directory), which is the intended use of the index, followed by a repository read or `ls`; the single-turn oracle cannot see the next action. Two are an `ls && cat package.json` and a `todo_create`. v4flash accounts for 9 of the 11 (it consults before acting), so its 4/14 mechanical pass rate understates it; none of its cells contradicts the note. c5 is the stale-note case: a user-stated "this project uses yarn" note was active, the repository shows pnpm, and C never ran yarn.
+
+**Limits.** The first-action oracle cannot say what happens after the model consulted the note; a multi-round check (read the note, then run the command) would settle the 9 consult-first cells and is the natural next case when D is built. Session 1 states each fact explicitly, so this measures the carry-over path (explicit statement, then reflection, then use), not whether reflection catches subtle lessons; §15 is the evidence for messy real sessions (about half useful). 7 chains, 6 samples per cell, cases written by me (the same author as the earlier cases), single-turn session 2. Blind review was done on the mechanical packs with arm labels hidden (X/Y, unblind map in `review/pack.json`) and agreed with the mechanical verdicts wherever compared.
+
+**Recommendation (owner decides).** Lift is real and harm is absent on these families: the new design turns 19 mistakes into 0 and carries the lesson across a reflection round trip. This clears the Layer 3 gate for turning the new note memory into the default after Phase 4 supplies what the gate does not test: usage signals and archive, the organizer and the 100-episode hygiene simulation, the Space `runtime.learning` read-only check, migration of existing stores, skill merge, and idle wiring of the reflection job with a cost cap. Until then it stays behind `KODAX_MEMORY_NOTES=1`.

@@ -119,10 +119,14 @@ async function noteBlocks(cwd: string): Promise<CapabilityBlocks> {
   };
 }
 
-export async function buildNotesCellInput(item: NotesCaseLike): Promise<ReadCellInput> {
-  const seeded = await seedNotes(`input-${item.id}`, item.seeds);
+/** Session-2 input over a store that already holds whatever notes the caller put there. */
+export async function buildNotesCellInputFrom(item: NotesCaseLike, seeded: SeededNotes): Promise<ReadCellInput> {
   return withNotesEnvironment(seeded, async () =>
     assembleReadCell(item, [...ROOT_TOOLS, MEMORY_TOOL_NAME], await noteBlocks(seeded.cwd)));
+}
+
+export async function buildNotesCellInput(item: NotesCaseLike): Promise<ReadCellInput> {
+  return buildNotesCellInputFrom(item, await seedNotes(`input-${item.id}`, item.seeds));
 }
 
 export interface ReplayedCall {
