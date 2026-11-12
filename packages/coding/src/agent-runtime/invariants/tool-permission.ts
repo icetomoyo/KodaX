@@ -33,9 +33,17 @@ import type {
  * allow-list approval.
  */
 export function resolveToolCapability(toolName: string): ToolCapability {
+  return resolveBuiltinToolCapability(toolName) ?? 'subagent';
+}
+
+/** Explicit built-in inventory, kept distinct from the conservative unknown-tool fallback. */
+export function resolveBuiltinToolCapability(toolName: string): ToolCapability | undefined {
   switch (toolName) {
     // Read-only file inspection.
     case 'read':
+    case 'visual_history':
+    case 'visual_inspect':
+    case 'visual_read_pixels':
     case 'glob':
     case 'grep':
     case 'code_search':
@@ -120,9 +128,30 @@ export function resolveToolCapability(toolName: string): ToolCapability {
     // topology, not file content — the closest existing tier.
     case 'worktree_create':
     case 'worktree_remove':
+    // Preserve the established tier for the remaining built-in surfaces explicitly.
+    case 'memory_recall':
+    case 'memory_intent':
+    case 'session_history_search':
+    case 'session_history_read':
+    case 'kodax_manual':
+    case 'skill':
+    case 'run_skill_script':
+    case 'list_dispatchable_agents':
+    case 'run_workflow':
+    case 'get_goal':
+    case 'create_goal':
+    case 'update_goal':
+    case 'todo_update':
+    case 'todo_create':
+    case 'todo_list':
+    case 'todo_get':
+    case 'stage_self_modify':
+    case 'tool_describe':
+    case 'tool_call':
+    case 'tool_search':
       return 'subagent';
     default:
-      return 'subagent';
+      return undefined;
   }
 }
 

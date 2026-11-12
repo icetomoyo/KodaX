@@ -691,6 +691,7 @@ describe('KodaXExtensionRuntime', () => {
       await expect(check(command), command).resolves.toEqual({
         decision: 'ask',
         reason: 'Extension "official-sandbox": Recursive delete.',
+        extensionAsks: [{ extension: 'official-sandbox', reason: 'Recursive delete.' }],
       });
     }
     for (const command of [
@@ -1274,7 +1275,8 @@ describe('KodaXExtensionRuntime — tool:before is a fail-closed policy hook', (
     const runtime = createExtensionRuntime();
     runtime.registerHook('tool:before', () => ({ decision: 'ask', reason: 'Deletes files outside the workspace.' }), source('sandbox'));
     await expect(runtime.runHook('tool:before', payload)).resolves.toEqual(
-      { decision: 'ask', reason: 'Extension "sandbox": Deletes files outside the workspace.' });
+      { decision: 'ask', reason: 'Extension "sandbox": Deletes files outside the workspace.',
+        extensionAsks: [{ extension: 'sandbox', reason: 'Deletes files outside the workspace.' }] });
     await runtime.dispose();
   });
 
@@ -1283,7 +1285,8 @@ describe('KodaXExtensionRuntime — tool:before is a fail-closed policy hook', (
     const bareAsk = (() => ({ decision: 'ask' })) as unknown as () => undefined; // JS extensions can omit the reason.
     runtime.registerHook('tool:before', bareAsk, source('audit'));
     await expect(runtime.runHook('tool:before', payload)).resolves.toEqual(
-      { decision: 'ask', reason: 'Extension "audit": wants a person to approve this call.' });
+      { decision: 'ask', reason: 'Extension "audit": wants a person to approve this call.',
+        extensionAsks: [{ extension: 'audit', reason: 'wants a person to approve this call.' }] });
     await runtime.dispose();
   });
 
@@ -1301,7 +1304,8 @@ describe('KodaXExtensionRuntime — tool:before is a fail-closed policy hook', (
     runtime.registerHook('tool:before', () => undefined, source('allow'));
     runtime.registerHook('tool:before', () => ({ decision: 'ask', reason: 'Touches billing data.' }), source('compliance'));
     await expect(runtime.runHook('tool:before', payload)).resolves.toEqual({ decision: 'ask',
-      reason: 'Extension "sandbox": Recursive delete.\nExtension "compliance": Touches billing data.' });
+      reason: 'Extension "sandbox": Recursive delete.\nExtension "compliance": Touches billing data.',
+      extensionAsks: [{ extension: 'sandbox', reason: 'Recursive delete.' }, { extension: 'compliance', reason: 'Touches billing data.' }] });
     await runtime.dispose();
   });
 
@@ -1312,7 +1316,8 @@ describe('KodaXExtensionRuntime — tool:before is a fail-closed policy hook', (
     globalRuntime.registerHook('tool:before', () => ({ decision: 'ask', reason: 'Global ask.' }), source('global'));
     sessionRuntime.registerHook('tool:before', () => ({ decision: 'ask', reason: 'Session ask.' }), source('session'));
     await expect(combined.runHook('tool:before', payload)).resolves.toEqual({ decision: 'ask',
-      reason: 'Extension "global": Global ask.\nExtension "session": Session ask.' });
+      reason: 'Extension "global": Global ask.\nExtension "session": Session ask.',
+      extensionAsks: [{ extension: 'global', reason: 'Global ask.' }, { extension: 'session', reason: 'Session ask.' }] });
     // A global ask must not hide a Session block.
     sessionRuntime.registerHook('tool:before', () => 'Session block.', source('session-block'));
     await expect(combined.runHook('tool:before', payload)).resolves.toBe('Session block.');

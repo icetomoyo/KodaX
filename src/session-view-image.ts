@@ -20,10 +20,12 @@ export async function readItemImage(item: ClientViewItem, options: ClientItemRea
   const sha256 = createHash('sha256').update(bytes).digest('hex');
   if (options.expectedImageSha256 !== undefined && options.expectedImageSha256 !== sha256) throw new Error('Image attachment hash changed.');
   const validation = await validateImageBytesInRun(bytes);
-  if (validation.status !== 'valid' || validation.mediaType !== 'image/png') throw new Error('Attachment must be a decodable PNG image.');
+  if (validation.status !== 'valid') throw new Error('Attachment must be a decodable supported image.');
+  const { imageSize } = await import('image-size');
+  const { width, height } = imageSize(bytes);
   if (offset > bytes.length) throw new Error('Attachment offset exceeds image length.');
   const chunk = bytes.subarray(offset, offset + 512 * 1024), nextOffset = offset + chunk.length;
-  return { mediaType: 'image/png', sha256, width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20),
+  return { mediaType: validation.mediaType, sha256, width, height,
     dataBase64: chunk.toString('base64'), offset, totalLength: bytes.length,
     ...(nextOffset < bytes.length ? { nextOffset } : {}) };
 }

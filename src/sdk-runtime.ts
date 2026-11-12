@@ -2943,6 +2943,7 @@ export interface RuntimePermissionRequest {
   readonly toolCallId?: string;
   readonly toolName: string;
   readonly reason?: string;
+  readonly extensionAsks?: readonly { readonly extension: string; readonly reason: string }[];
   readonly risk?: RuntimePermissionRisk;
   readonly inputPreview?: string;
   /** Effective directory used to resolve relative tool paths for this run. */
@@ -2962,6 +2963,7 @@ export interface RuntimePermissionRequestInput {
   readonly toolCallId?: string;
   readonly toolName: string;
   readonly reason?: string;
+  readonly extensionAsks?: readonly { readonly extension: string; readonly reason: string }[];
   readonly risk?: RuntimePermissionRisk;
   readonly inputPreview?: string;
   readonly executionCwd?: string;
@@ -20288,6 +20290,7 @@ function createRuntimePermissionRegistry(
       ...(requestInput.reason !== undefined
         ? { reason: requestInput.reason }
         : {}),
+      ...(requestInput.extensionAsks !== undefined ? { extensionAsks: requestInput.extensionAsks } : {}),
       ...(requestInput.risk !== undefined ? { risk: requestInput.risk } : {}),
       ...(trustedInputPreview !== undefined
         ? { inputPreview: trustedInputPreview }
@@ -21007,6 +21010,7 @@ function wrapKodaXEvents(input: {
         ...(meta?.toolId ? { toolCallId: meta.toolId } : {}),
         toolName: tool,
         ...(extensionReason !== undefined ? { reason: extensionReason } : {}),
+        ...(extensionReason !== undefined && meta?.extensionAsks !== undefined ? { extensionAsks: meta.extensionAsks } : {}),
         inputPreview: previewInput(toolInput),
         executionCwd: resolveRuntimeExecutionCwd(record),
       },

@@ -2304,10 +2304,11 @@ describe('buildChildEvents plan-mode propagation (FEATURE_074)', () => {
   it('forwards an extension approval request to the parent with the child attribution', async () => {
     const requestToolApproval = vi.fn(async () => true);
     const events = buildChildEvents('cb-ask', undefined, undefined, undefined, { requestToolApproval }, undefined, 'reviewer');
+    const extensionAsks = [{ extension: 'sandbox', reason: 'Recursive delete.' }];
     await expect(events!.requestToolApproval!('bash', { command: 'rm -rf build' }, 'Extension "sandbox": Recursive delete.',
-      { toolId: 'child_call_1' })).resolves.toBe(true);
+      { toolId: 'child_call_1', extensionAsks })).resolves.toBe(true);
     expect(requestToolApproval).toHaveBeenCalledWith('bash', { command: 'rm -rf build' }, 'Extension "sandbox": Recursive delete.',
-      expect.objectContaining({ toolId: 'child_call_1', childAgentId: 'cb-ask', childAgentName: 'reviewer' }));
+      expect.objectContaining({ toolId: 'child_call_1', childAgentId: 'cb-ask', childAgentName: 'reviewer', extensionAsks }));
   });
 
   it('leaves the approval member out when the parent cannot ask, so an ask still blocks', () => {

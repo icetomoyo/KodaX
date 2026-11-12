@@ -151,7 +151,8 @@ export function isExtensionToolBeforeAsk(value: unknown): value is ExtensionTool
 
 /** Every asking extension is shown in the one approval request. */
 function mergeToolPolicyAsks(asks: readonly ExtensionToolBeforeAsk[]): ExtensionToolBeforeAsk | undefined {
-  return asks.length === 0 ? undefined : { decision: 'ask', reason: asks.map((ask) => ask.reason).join('\n') };
+  return asks.length === 0 ? undefined : { decision: 'ask', reason: asks.map((ask) => ask.reason).join('\n'),
+    extensionAsks: asks.flatMap(ask => ask.extensionAsks ?? []) };
 }
 
 function toToolPolicyVerdict(result: unknown, extensionLabel: string): ToolPolicyVerdict {
@@ -160,7 +161,8 @@ function toToolPolicyVerdict(result: unknown, extensionLabel: string): ToolPolic
   const reason = typeof result.reason === 'string' && result.reason.trim() !== ''
     ? result.reason
     : 'wants a person to approve this call.';
-  return { decision: 'ask', reason: `Extension "${extensionLabel}": ${reason}` };
+  return { decision: 'ask', reason: `Extension "${extensionLabel}": ${reason}`,
+    extensionAsks: [{ extension: extensionLabel, reason }] };
 }
 let activeExtensionExecutionRuntime: ActiveExtensionExecutionRuntime | null = null;
 

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { countTokens, emitKodaXDiagnostic, getSessionLineagePath } from '@kodax-ai/agent';
 import { redactScopedProviderCredential } from '@kodax-ai/llm';
+import { projectVisualInputContent } from '@kodax-ai/agent/media';
 import type { KodaXMessage, KodaXSessionUiHistoryItem, KodaXSessionData } from '@kodax-ai/agent';
 import { createOutputSegmentProjection, reduceOutputSegmentProjection, effectiveOutputSegmentText } from '@kodax-ai/coding';
 import type { KodaXEvents, KodaXOutputSegmentProjection, KodaXActivityEventMeta, KodaXShellSandboxObservation } from '@kodax-ai/coding';
@@ -861,8 +862,7 @@ export function restoreSessionContentItems(
   const userAttachments = new Map<string, NonNullable<ClientViewItem['attachments']>>();
   for (const message of historyMessages) {
     if (message.role !== 'user' || message.inputId === undefined || !Array.isArray(message.content)) continue;
-    const images = message.content.flatMap(block => block.type === 'image'
-      ? [{ kind: 'image' as const, path: block.path, ...(block.mediaType ? { mediaType: block.mediaType } : {}) }] : []);
+    const images = projectVisualInputContent(message.content).attachments;
     if (images.length > 0) userAttachments.set(message.inputId, images);
   }
   const committedOutputs = committedSessionOutputIds(data, conversation ?? []);
