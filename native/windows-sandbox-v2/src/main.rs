@@ -10,6 +10,8 @@ mod protocol;
 mod runner;
 #[cfg(windows)]
 mod win;
+#[cfg(windows)]
+mod job_identity;
 
 #[cfg(windows)]
 use anyhow::{Context, ensure};
@@ -268,6 +270,14 @@ fn run() -> anyhow::Result<u32> {
         .next()
         .ok_or_else(|| anyhow::anyhow!("Windows sandbox mode is required"))?;
     match mode.to_string_lossy().as_ref() {
+        "__daemon-job-identity" => {
+            let name = args.next().context("Daemon Job name is required")?;
+            let pid = args.next().context("Daemon PID is required")?.to_string_lossy().parse::<u32>()?;
+            let supervisor = args.next().context("Supervisor PID is required")?.to_string_lossy().parse::<u32>()?;
+            ensure!(args.next().is_none(), "Unexpected daemon identity arguments");
+            println!("{}", job_identity::query(&name.to_string_lossy(), pid, supervisor)?);
+            Ok(0)
+        }
         "__current-user-sid" => {
             if args.next().is_some() {
                 anyhow::bail!("Current-user SID mode accepts no arguments");

@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import path from 'node:path';
 
 import { readProcessStartIdentity, readProcessStartIdentities, readCurrentProcessWindowsJobIdentity } from '@kodax-ai/agent';
+import { readDaemonWindowsJobIdentity } from './windows-job-identity.js';
 
 let currentProcessStartIdentity: string | undefined;
 let currentProcessStartIdentityRead = false;
@@ -105,7 +106,7 @@ export function readRuntimeOwnerProcessStartIdentity(pid: number): string | unde
 }
 
 export function readRuntimeDaemonWindowsJobIdentity(): ReturnType<typeof readCurrentProcessWindowsJobIdentity> {
-  const identity = readCurrentProcessWindowsJobIdentity();
+  const identity = readCurrentProcessWindowsJobIdentity(readDaemonWindowsJobIdentity);
   if (identity !== undefined) {
     // Only our own immutable identity is cached; the supervisor evidence is
     // returned to this startup observation and never reused for later checks.

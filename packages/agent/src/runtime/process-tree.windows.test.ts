@@ -675,4 +675,22 @@ describe('shared cleanup snapshot scope', () => {
     expect(readProcessStartIdentity(4242)).toBe('111');
     expect(spawnSyncMock).toHaveBeenCalledTimes(3);
   });
+
+  it('reuses verified native containment without rerunning PowerShell and clears it on failed fresh verification', () => {
+    setWindows();
+    vi.stubEnv('KODAX_DAEMON_JOB_CONTAINED', '1');
+    vi.stubEnv('KODAX_DAEMON_JOB_NAME', 'fixture-job');
+    vi.stubEnv('KODAX_DAEMON_JOB_SUPERVISOR_PID', '1234');
+    spawnSyncMock.mockReset();
+    try {
+      expect(readCurrentProcessWindowsJobIdentity(() => ({ processStartIdentity: '111', supervisorProcessStartIdentity: '222' })))
+        .toEqual({ processStartIdentity: '111', supervisorProcessStartIdentity: '222' });
+      expect(isCurrentProcessWindowsJobContained()).toBe(true);
+      expect(spawnSyncMock).not.toHaveBeenCalled();
+      expect(() => readCurrentProcessWindowsJobIdentity(() => { throw new Error('fresh native probe failed'); }))
+        .toThrow('fresh native probe failed');
+      expect(isCurrentProcessWindowsJobContained()).toBe(false);
+      expect(spawnSyncMock).not.toHaveBeenCalled();
+    } finally { vi.unstubAllEnvs(); }
+  });
 });

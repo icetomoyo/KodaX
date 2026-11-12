@@ -47,6 +47,41 @@ not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
 
+## Issue 409: Windows daemon Job proof and failed-start cleanup prevent recovery
+
+- Priority: High
+- Status: Resolved in source; not published
+- Observed: Space 0.1.47-alpha.5 / SDK 0.7.97-beta.4, Windows x64, 2026-11-12
+
+Customer logs show two `job-membership` probes exceeding the existing 5-second
+PowerShell timeout, followed by refusal to publish an unverified Host. No Provider
+or extensions were configured and the customer was offline. These are supported
+startup conditions; the evidence does not establish why PowerShell was slow.
+An earlier export also showed startup plus cleanup failure, without enough logs
+to prove it had the same trigger.
+
+The daemon now reads named Job membership, kill-on-close and process creation
+identities with the bundled, hash-verified native runner, avoiding dynamic C#
+compilation for this query. It retains the original 5-second query deadline and
+still refuses unverified ownership. Supervisor creation and other Windows probes
+retain their existing contracts.
+
+Failed startup is retryable only through the cleanup gate. Failed cleanup keeps
+the exact child/supervisor handle; admissions for the same home/slot are serialized
+until cleanup settles. Readiness failure retains its cleanup closure too. A
+committed/retained owner is re-observed, not treated as exited. Cancellation and
+old-owner shutdown cannot release the gate early or recursively deadlock it.
+Queue cancellation and expiry cannot spawn later; cancellation after admission
+waits for the existing cleanup path. A pre-cancelled request creates no unhandled
+background rejection. Native failures retain a bounded stderr reason in diagnostics.
+
+Regression: `src/runtime-daemon/process*.test.ts`,
+`windows-job-supervisor.test.ts`, `windows-job-identity*.test.ts`,
+`manager-containment.test.ts`, and agent `process-tree.windows.test.ts`.
+Space additionally runs real offline Electron cold-start, transient failure,
+persistent failure/manual retry and cleanup-failure recovery tests with no
+Provider, then configures a loopback private-model fixture. See Space Issue 246.
+
 ## Issue 394: Agent and Script whole-task non-inferiority is unproven
 
 - Priority: Medium

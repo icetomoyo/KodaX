@@ -488,6 +488,14 @@ export interface WindowsJobContainedProcess {
   terminate(): Promise<void | 'retained'>;
 }
 
+/** Retain the original supervisor handle when readiness cleanup needs another observation. */
+export class WindowsJobStartupCleanupError extends AggregateError {
+  constructor(startupError: unknown, cleanupError: unknown,
+    readonly cleanup: () => Promise<void | 'retained'>) {
+    super([startupError, cleanupError], 'Windows Job supervisor startup failed and its process tree was not reclaimed.');
+  }
+}
+
 export interface WindowsJobContainedSpawnInput {
   readonly executable: string;
   readonly args: readonly string[];
@@ -574,10 +582,11 @@ export async function spawnWindowsJobContainedProcess(
         releaseSupervisor(supervisor);
       }
     } catch (cleanupError: unknown) {
-      throw new AggregateError(
-        [error, cleanupError],
-        'Windows Job supervisor startup failed and its process tree was not reclaimed.',
-      );
+      throw new WindowsJobStartupCleanupError(error, cleanupError, async () => {
+        const outcome = await terminateSupervisor(supervisor, undefined, input.startupHandoff);
+        if (outcome === 'retained') releaseSupervisor(supervisor);
+        return outcome;
+      });
     }
     throw error;
   }).finally(() => {

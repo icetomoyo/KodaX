@@ -54,7 +54,7 @@ import {
   defaultRuntimeDaemonEndpoint,
   type RuntimeDaemonEndpoint,
 } from "./transport.js";
-import { spawnWindowsJobContainedProcess } from "./windows-job-supervisor.js";
+import { spawnWindowsJobContainedProcess, WindowsJobStartupCleanupError } from "./windows-job-supervisor.js";
 import { createClientStartupProgressReporter } from '../client-startup-progress.js';
 import type { ClientStartupProgress } from '@kodax-ai/coding/client-contract';
 import { DAEMON_STARTUP_PROGRESS_ENV, readDaemonStartupPhase } from './startup-progress.js';
@@ -325,8 +325,53 @@ export class RuntimeDaemonStartupError extends Error {
   ) {
     super(message);
     this.name = "RuntimeDaemonStartupError";
-    this.retryable = reason === 'timeout' || reason === 'unhealthy';
+    // Early exit is retryable only after waitForHealthyDaemonStartup verifies
+    // cleanup. Unknown cleanup retains the exact child in the gate below.
+    this.retryable = reason === 'timeout' || reason === 'unhealthy' || reason === 'child_exit';
   }
+}
+
+class RuntimeDaemonStartupCleanupError extends AggregateError {
+  readonly code = 'daemon_startup_failed' as const;
+  readonly reason = 'cleanup_incomplete' as const;
+  readonly retryable = true;
+  constructor(startupError: unknown, cleanupError: unknown) {
+    super([startupError, cleanupError], 'Runtime daemon startup failed and its child process could not be reclaimed. Cleanup must finish before replacement startup.');
+  }
+}
+
+// Keep exact owned handles, never a bare PID. Retrying this slot must settle
+// those handles before health inspection or spawning a replacement candidate.
+type StartupCleanupHandle = Pick<RuntimeDaemonStartupProcess, 'terminate'>;
+const pendingStartupCleanup = new Map<string, Map<StartupCleanupHandle, unknown>>();
+const cleanupAttempts = new Map<string, Promise<void>>();
+const startupAdmissions = new Map<string, Promise<void>>();
+function cleanupKey(paths: RuntimeDaemonPaths): string {
+  const root = path.resolve(paths.rootDir);
+  return process.platform === 'win32' ? root.toLowerCase() : root;
+}
+function settlePendingStartupCleanup(paths: RuntimeDaemonPaths): Promise<void> {
+  const key = cleanupKey(paths);
+  const existing = cleanupAttempts.get(key);
+  if (existing) return existing;
+  const attempt = (async () => {
+    const pending = pendingStartupCleanup.get(key);
+    if (!pending) return;
+    for (const [child, startupError] of pending) {
+      // 'retained' means the candidate committed ownership before abort. It is
+      // not proof of exit: release this cleanup gate and inspect that owner's
+      // health below, where a live/unverified owner still prevents replacement.
+      try { await child.terminate(); }
+      catch (error) { throw new RuntimeDaemonStartupCleanupError(startupError, error); }
+      pending.delete(child);
+    }
+    pendingStartupCleanup.delete(key);
+  })();
+  cleanupAttempts.set(key, attempt);
+  void attempt.finally(() => {
+    if (cleanupAttempts.get(key) === attempt) cleanupAttempts.delete(key);
+  }).catch(() => undefined);
+  return attempt;
 }
 
 type RuntimeDaemonHealthObserver = (
@@ -361,6 +406,51 @@ export async function waitForRuntimeDaemonOwnerExit(
 export async function acquireRuntimeDaemonProcessLease(
   options: RuntimeDaemonProcessLeaseOptions,
 ): Promise<RuntimeDaemonProcessLease> {
+  if (options.startupSignal?.aborted) throw runtimeDaemonStartupCancelled();
+  const configHome = path.resolve(options.configHome ?? path.join(options.homeDir ?? os.homedir(), '.kodax'));
+  const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, options.profile ?? 'default');
+  const key = cleanupKey(paths);
+  const deadline = Date.now() + (options.startupTimeoutMs ?? 60_000);
+  const previous = startupAdmissions.get(key);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let expired = false;
+  let cancelWaiting: (() => void) | undefined;
+  const stopWaiting = () => {
+    clearTimeout(timer);
+    if (cancelWaiting) options.startupSignal?.removeEventListener('abort', cancelWaiting);
+  };
+  const waiting = new Promise<never>((_, reject) => {
+    if (!previous) return;
+    cancelWaiting = () => reject(runtimeDaemonStartupCancelled());
+    options.startupSignal?.addEventListener('abort', cancelWaiting, { once: true });
+    timer = setTimeout(() => {
+      expired = true;
+      reject(runtimeDaemonStartupTimeout(paths));
+    }, Math.max(0, deadline - Date.now()));
+  });
+  const attempt = (previous ?? Promise.resolve()).then(() => {
+    // This timer bounds queue admission only. Once admitted, the existing
+    // startup path must finish verified cleanup before reporting its timeout.
+    stopWaiting();
+    if (options.startupSignal?.aborted) throw runtimeDaemonStartupCancelled();
+    if (previous && (expired || Date.now() >= deadline)) throw runtimeDaemonStartupTimeout(paths);
+    return acquireSerializedRuntimeDaemonProcessLease({
+      ...options, startupTimeoutMs: Math.max(0, deadline - Date.now()),
+    });
+  });
+  // A cancelled caller may stop waiting, but it cannot release the slot ahead
+  // of an earlier admission or that admission's verified cleanup.
+  const settled = attempt.then(() => undefined, () => undefined);
+  startupAdmissions.set(key, settled);
+  void settled.then(() => {
+    if (startupAdmissions.get(key) === settled) startupAdmissions.delete(key);
+  });
+  return Promise.race([attempt, waiting]).finally(stopWaiting);
+}
+
+async function acquireSerializedRuntimeDaemonProcessLease(
+  options: RuntimeDaemonProcessLeaseOptions,
+): Promise<RuntimeDaemonProcessLease> {
   const startupDeadline = Date.now() + (options.startupTimeoutMs ?? 60_000);
   if (
     options.orphanExitMs !== undefined
@@ -374,6 +464,7 @@ export async function acquireRuntimeDaemonProcessLease(
     options.configHome ?? path.join(homeDir, ".kodax"),
   );
   const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, profile);
+  await settlePendingStartupCleanup(paths);
   const expectedEndpoint = defaultRuntimeDaemonEndpoint(
     paths.profile,
     resolveRuntimeDaemonEndpointScope(homeDir, configHome),
@@ -425,7 +516,7 @@ export async function acquireRuntimeDaemonProcessLease(
     await waitForRuntimeDaemonOwnerExit(owner, exitBudget, options.startupSignal);
     const remainingMs = startupDeadline - Date.now();
     if (remainingMs <= 0) throw runtimeDaemonStartupTimeout(paths);
-    return acquireRuntimeDaemonProcessLease({ ...options, startupTimeoutMs: remainingMs });
+    return acquireSerializedRuntimeDaemonProcessLease({ ...options, startupTimeoutMs: remainingMs });
   }
   if (initialHealth === "healthy" && initial.state) {
     if (Date.now() >= startupDeadline) throw runtimeDaemonStartupTimeout(paths);
@@ -635,10 +726,11 @@ export async function waitForHealthyDaemonStartup(
     try {
       await child.terminate();
     } catch (terminationError: unknown) {
-      throw new AggregateError(
-        [error, terminationError],
-        "Runtime daemon startup failed and its child process could not be reclaimed.",
-      );
+      const key = cleanupKey(paths);
+      const pending = pendingStartupCleanup.get(key) ?? new Map<StartupCleanupHandle, unknown>();
+      pending.set(child, error);
+      pendingStartupCleanup.set(key, pending);
+      throw new RuntimeDaemonStartupCleanupError(error, terminationError);
     }
     try {
       capRuntimeDaemonBootstrapLog(paths);
@@ -788,7 +880,11 @@ function hasCompetingStartupOwner(
   child: RuntimeDaemonStartupProcess,
 ): boolean {
   const owner = readRuntimeDaemonLockOwner(paths.lockFile);
-  return owner !== undefined && owner.pid !== child.pid;
+  // A dead owner left in the lock (crash, reboot) is not a competitor: counting it
+  // hid the child's real exit behind a full startup timeout.
+  return owner !== undefined
+    && owner.pid !== child.pid
+    && runtimeOwnerProcessState(owner) !== 'gone';
 }
 
 function runtimeDaemonExitedEarly(
@@ -799,11 +895,34 @@ function runtimeDaemonExitedEarly(
     exit.signal !== null
       ? `signal ${exit.signal}`
       : `code ${exit.code ?? "unknown"}`;
+  const cause = readBootstrapLogLastError(paths);
   return new RuntimeDaemonStartupError(
-    `Runtime daemon child exited before becoming healthy (${status}). ` +
-      `See daemon bootstrap log: ${runtimeDaemonBootstrapLogPath(paths)}`,
+    `Runtime daemon child exited before becoming healthy (${status}).` +
+      (cause ? ` Cause: ${cause}.` : "") +
+      ` See daemon bootstrap log: ${runtimeDaemonBootstrapLogPath(paths)}`,
     "child_exit",
   );
+}
+
+/** The child's own last `[Error]` line is the most direct startup cause we have. */
+function readBootstrapLogLastError(paths: RuntimeDaemonPaths): string | undefined {
+  try {
+    const file = runtimeDaemonBootstrapLogPath(paths);
+    const size = statSync(file).size;
+    const length = Math.min(size, 4096);
+    const buffer = Buffer.alloc(length);
+    const descriptor = openSync(file, "r");
+    try {
+      readSync(descriptor, buffer, 0, length, size - length);
+    } finally {
+      closeSync(descriptor);
+    }
+    const line = buffer.toString("utf8").split(/\r?\n/).reverse()
+      .find((candidate) => candidate.startsWith("[Error] "));
+    return line?.slice("[Error] ".length, 300).replace(/\.$/, "");
+  } catch {
+    return undefined; // Diagnostics only; a missing log never changes the failure.
+  }
 }
 
 function runtimeDaemonStartupTimeout(
@@ -919,6 +1038,19 @@ export async function spawnRuntimeDaemonServeProcess(
         env: launch.env,
       });
     }
+  } catch (error) {
+    if (error instanceof WindowsJobStartupCleanupError) {
+      const key = cleanupKey(paths);
+      const pending = pendingStartupCleanup.get(key) ?? new Map<StartupCleanupHandle, unknown>();
+      pending.set({ terminate: error.cleanup }, error.errors[0]);
+      pendingStartupCleanup.set(key, pending);
+      throw new RuntimeDaemonStartupCleanupError(error.errors[0], error.errors[1]);
+    }
+    if (input.startupSignal?.aborted) throw runtimeDaemonStartupCancelled();
+    throw new RuntimeDaemonStartupError(
+      `Runtime daemon launch failed: ${error instanceof Error ? error.message : String(error)}`,
+      'child_exit',
+    );
   } finally {
     closeSync(bootstrapLog);
   }
