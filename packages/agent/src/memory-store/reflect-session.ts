@@ -5,15 +5,21 @@
  *
  * The cursor is written only after the judge answered, so a failed run is
  * retried; a thrown judge error reaches the caller instead of being swallowed.
+ * A session that keeps going is read again once it has grown by a few user turns,
+ * and every judge call spends one of the day's slots (the cost cap).
  */
 import type { KodaXMessage } from '@kodax-ai/llm';
 
-import { buildEvidence, type SessionEvidence } from './evidence.js';
-import { isReflected, markReflected } from './reflection-cursor.js';
-import { shouldReflect } from './reflection-gate.js';
+import { buildEvidence, collectSegments, type SessionEvidence } from './evidence.js';
+import { takeReflectionSlot } from './reflection-budget.js';
+import { markReflected, reflectedUserTurns } from './reflection-cursor.js';
+import { shouldReflect, signalsOf } from './reflection-gate.js';
 import { applyReflectionOperation, type ReflectionOpInput } from './reflection-op.js';
 import type { MemoryNote, NoteScope } from './record.js';
 import type { NoteStore } from './store.js';
+
+/** A session already reflected is read again only after this many more user turns. */
+export const REFLECT_AGAIN_AFTER_TURNS = 3;
 
 export type ReflectionJudge = (request: {
   readonly evidence: SessionEvidence;
@@ -28,10 +34,12 @@ export interface ReflectSessionInput {
   readonly cursorRoot: string;
   readonly judge: ReflectionJudge;
   readonly now?: () => Date;
+  /** Judge calls allowed per day; defaults to the job's standing cap. */
+  readonly dailyCap?: number;
 }
 
 export type ReflectSessionResult =
-  | { readonly status: 'skipped'; readonly reason: 'already-reflected' | 'no-signal' }
+  | { readonly status: 'skipped'; readonly reason: 'already-reflected' | 'no-signal' | 'daily-cap' }
   | { readonly status: 'done'; readonly applied: number; readonly rejected: readonly string[] };
 
 /** Archived notes are out of play: the judge neither sees nor edits them. */
@@ -41,8 +49,11 @@ async function currentNotes(stores: Readonly<Record<NoteScope, NoteStore>>): Pro
 }
 
 export async function reflectSession(input: ReflectSessionInput): Promise<ReflectSessionResult> {
-  if (await isReflected(input.cursorRoot, input.sessionId)) return { status: 'skipped', reason: 'already-reflected' };
+  const userTurns = signalsOf(collectSegments(input.messages)).userTurns;
+  const before = await reflectedUserTurns(input.cursorRoot, input.sessionId);
+  if (before !== undefined && userTurns < before + REFLECT_AGAIN_AFTER_TURNS) return { status: 'skipped', reason: 'already-reflected' };
   if (!shouldReflect(input.messages)) return { status: 'skipped', reason: 'no-signal' };
+  if (!await takeReflectionSlot(input.cursorRoot, input.now?.(), input.dailyCap)) return { status: 'skipped', reason: 'daily-cap' };
 
   const evidence = buildEvidence(input.messages);
   const operations = await input.judge({ evidence, notes: await currentNotes(input.stores) });
@@ -56,6 +67,6 @@ export async function reflectSession(input: ReflectSessionInput): Promise<Reflec
     if (outcome.ok) applied += 1;
     else rejected.push(`${operation.operation} ${operation.id}: ${outcome.message}`);
   }
-  await markReflected(input.cursorRoot, input.sessionId, (input.now?.() ?? new Date()).getTime());
+  await markReflected(input.cursorRoot, input.sessionId, (input.now?.() ?? new Date()).getTime(), userTurns);
   return { status: 'done', applied, rejected };
 }

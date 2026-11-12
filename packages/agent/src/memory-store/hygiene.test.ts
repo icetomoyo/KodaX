@@ -88,7 +88,7 @@ describe('100-episode hygiene simulation', () => {
   async function sweep(stores: ReturnType<typeof harness>['stores'], judge: ReflectionJudge, now: () => Date) {
     const skipped = { alreadyReflected: 0, noSignal: 0 };
     for (const [index, episode] of episodes.entries()) {
-      const result = await reflectSession({ sessionId: `s${index}`, messages: messagesOf(episode), stores, cursorRoot: path.join(dir, 'project'), judge, now });
+      const result = await reflectSession({ sessionId: `s${index}`, messages: messagesOf(episode), stores, cursorRoot: path.join(dir, 'project'), judge, now, dailyCap: 1000 });
       if (result.status === 'skipped') skipped[result.reason === 'no-signal' ? 'noSignal' : 'alreadyReflected'] += 1;
       if ((index + 1) % 10 === 0) {
         await organizeStore(stores.project, now());

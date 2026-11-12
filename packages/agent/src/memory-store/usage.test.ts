@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { buildIndex } from './index-builder.js';
 import { createNoteStore } from './store.js';
-import { noteReadsFrom, recordNoteReads } from './usage.js';
+import { noteReadsFrom, recordNoteReads, toolUseIds } from './usage.js';
 
 const call = (id: string, name: string, input: Record<string, unknown>): KodaXMessage => ({
   role: 'assistant',
@@ -33,6 +33,13 @@ describe('note usage signals', () => {
       call('3', 'read', { path: path.join(roots().user, 'style.md') }), result('3'),
     ], roots());
     expect(reads).toEqual({ project: { tests: 2 }, user: { style: 1 } });
+  });
+
+  it('leaves out calls already counted in an earlier run of the session', () => {
+    const file = path.join(roots().project, 'tests.md');
+    const history = [call('old', 'read', { path: file }), result('old')];
+    const resumed = [...history, call('new', 'read', { path: file }), result('new')];
+    expect(noteReadsFrom(resumed, roots(), toolUseIds(history))).toEqual({ project: { tests: 1 }, user: {} });
   });
 
   it('ignores the index, nested files, other tools, failed reads and reads outside the roots', () => {

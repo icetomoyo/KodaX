@@ -153,6 +153,7 @@ import {
   emitKodaXDiagnostic,
   getSessionMessageEntryId,
   getMessageQueue,
+  toolUseIds,
   validateAndFixToolHistory,
   type Agent,
 } from '@kodax-ai/agent';
@@ -223,6 +224,7 @@ import {
 } from '../tools/memory-intent.js';
 import { activateMemoryTool, MEMORY_TOOL_NAME } from '../tools/memory.js';
 import { createNoteMemoryBinding, isNoteMemoryEnabled } from '../memory/note-memory.js';
+import { scheduleNoteRunFinish } from '../memory/note-reflection-job.js';
 import {
   activateSessionHistoryTools,
   canActivateSessionHistoryTools,
@@ -1032,6 +1034,8 @@ async function runSubstrateInContext(
   );
   const initialImagePreparation = prepareHistoryImages(messages);
   if (initialImagePreparation) await initialImagePreparation;
+  // FEATURE_306: notes opened by earlier runs of this session were counted when those runs ended.
+  const noteEarlierCalls = isNoteMemoryEnabled() ? toolUseIds(messages) : undefined;
   // Journal evidence of earlier interrupted Runs is rendered once against the
   // resumed history and installed into each request's wire view only, so it
   // never reaches the persisted transcript.
@@ -1323,6 +1327,25 @@ async function runSubstrateInContext(
         });
       }
     });
+    if (noteEarlierCalls !== undefined
+      && options.context?.currentAgentId === undefined
+      && options.context?.parentAgentId === undefined) {
+      try {
+        // Not awaited: the run is over, and usage counting and reflection are background work.
+        void scheduleNoteRunFinish({
+          cwd: resolveExecutionCwd(options.context),
+          sessionId,
+          messages: finalized.messages,
+          earlierCalls: noteEarlierCalls,
+          provider: resolveProvider(turnState.currentProviderName),
+          ...(turnState.currentModelOverride === undefined ? {} : { model: turnState.currentModelOverride }),
+        });
+      } catch (error) {
+        emitResilienceDebug('[memory:note-follow-up:error]', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     if (memoryController !== undefined) {
       const controller = memoryController;
       // Deliberately not awaited: the foreground durability boundary is the

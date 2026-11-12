@@ -28,13 +28,27 @@ function noteIdAt(root: string, file: string): string | undefined {
   return relative.slice(0, -3);
 }
 
-export function noteReadsFrom(messages: readonly KodaXMessage[], roots: Readonly<Record<NoteScope, string>>): NoteReads {
+/** Ids of every tool call already in `messages`, so a later run can tell its own reads from the history it resumed. */
+export function toolUseIds(messages: readonly KodaXMessage[]): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const message of messages) {
+    if (typeof message.content === 'string') continue;
+    for (const block of message.content) if (block.type === 'tool_use') ids.add(block.id);
+  }
+  return ids;
+}
+
+export function noteReadsFrom(
+  messages: readonly KodaXMessage[],
+  roots: Readonly<Record<NoteScope, string>>,
+  ignoreCalls: ReadonlySet<string> = new Set(),
+): NoteReads {
   const pending = new Map<string, string>();
   const counts: Record<NoteScope, Record<string, number>> = { project: {}, user: {} };
   for (const message of messages) {
     if (typeof message.content === 'string') continue;
     for (const block of message.content) {
-      if (block.type === 'tool_use' && block.name === 'read') {
+      if (block.type === 'tool_use' && block.name === 'read' && !ignoreCalls.has(block.id)) {
         const file = readPath(block.input);
         if (file !== undefined) pending.set(block.id, file);
       } else if (block.type === 'tool_result' && block.is_error !== true) {
@@ -53,12 +67,14 @@ export function noteReadsFrom(messages: readonly KodaXMessage[], roots: Readonly
 export interface RecordReadsInput {
   readonly stores: Readonly<Record<NoteScope, NoteStore>>;
   readonly messages: readonly KodaXMessage[];
+  /** Tool calls from earlier runs of the same session, which were counted then. */
+  readonly ignoreCalls?: ReadonlySet<string>;
   readonly now?: () => Date;
 }
 
 /** Adds the reads found in `messages` to the notes' usage counters; returns how many notes were updated. */
 export async function recordNoteReads(input: RecordReadsInput): Promise<number> {
-  const reads = noteReadsFrom(input.messages, { project: input.stores.project.root, user: input.stores.user.root });
+  const reads = noteReadsFrom(input.messages, { project: input.stores.project.root, user: input.stores.user.root }, input.ignoreCalls);
   const at = input.now?.() ?? new Date();
   let updated = 0;
   for (const scope of ['project', 'user'] as const) {
