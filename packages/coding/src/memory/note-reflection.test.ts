@@ -4,9 +4,12 @@ import type { MemoryNote, SessionEvidence } from '@kodax-ai/agent';
 import {
   buildReflectionRequest,
   parseReflectionCall,
+  parseSkillCall,
   REFLECT_TOOL,
   REFLECT_TOOL_NAME,
   reflectionSystemPrompt,
+  SKILL_TOOL,
+  SKILL_TOOL_NAME,
 } from './note-reflection.js';
 
 const evidence: SessionEvidence = {
@@ -37,7 +40,7 @@ describe('note reflection request', () => {
 
   it('renders existing notes with status, source and session, then the evidence', () => {
     const { userMessage, tools, systemPrompt } = buildReflectionRequest(evidence, [note]);
-    expect(tools).toHaveLength(1);
+    expect(tools.map((tool) => tool.name)).toEqual([REFLECT_TOOL_NAME, SKILL_TOOL_NAME]);
     expect(systemPrompt).toBe(reflectionSystemPrompt());
     expect(userMessage).toContain('## test-flag (project, feedback, candidate, inferred, session s_1)');
     expect(userMessage).toContain('check: Run the test script once');
@@ -47,6 +50,31 @@ describe('note reflection request', () => {
 
   it('says so when there are no notes', () => {
     expect(buildReflectionRequest(evidence, []).userMessage).toContain('(no notes yet)');
+  });
+});
+
+describe('parseSkillCall', () => {
+  const full = {
+    name: 'cut-release', description: 'Cut a release.', purpose: 'Publish safely.', triggers: ['A release is asked for'],
+    steps: ['Dry run', 'Run for real'], verification: ['Dry run reports the tag'], pitfalls: ['Tag last'], quote: 'dry run ok',
+  };
+
+  it('turns a complete call into a skill operation named after the skill', () => {
+    expect(parseSkillCall(full)).toEqual({ operation: 'skill', id: 'cut-release', quote: 'dry run ok', skill: { name: 'cut-release', description: 'Cut a release.', purpose: 'Publish safely.', triggers: ['A release is asked for'], steps: ['Dry run', 'Run for real'], verification: ['Dry run reports the tag'], pitfalls: ['Tag last'] } });
+  });
+
+  it('allows a skill without pitfalls', () => {
+    expect(parseSkillCall({ ...full, pitfalls: undefined })?.skill?.pitfalls).toEqual([]);
+  });
+
+  it('drops a call whose lists are not lists of text', () => {
+    expect(parseSkillCall({ ...full, steps: 'Dry run' })).toBeUndefined();
+    expect(parseSkillCall({ ...full, triggers: [1] })).toBeUndefined();
+    expect(parseSkillCall({ ...full, name: undefined })).toBeUndefined();
+  });
+
+  it('has a tool that requires everything but the pitfalls', () => {
+    expect(SKILL_TOOL.input_schema.required).toEqual(['name', 'description', 'purpose', 'triggers', 'steps', 'verification', 'quote']);
   });
 });
 

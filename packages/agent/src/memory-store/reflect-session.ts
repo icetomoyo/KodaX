@@ -14,7 +14,7 @@ import { buildEvidence, collectSegments, type SessionEvidence } from './evidence
 import { takeReflectionSlot } from './reflection-budget.js';
 import { markReflected, reflectedUserTurns } from './reflection-cursor.js';
 import { shouldReflect, signalsOf } from './reflection-gate.js';
-import { applyReflectionOperation, type ReflectionOpInput } from './reflection-op.js';
+import { applyReflectionOperation, type ReflectionOpInput, type SkillSink } from './reflection-op.js';
 import type { MemoryNote, NoteScope } from './record.js';
 import type { NoteStore } from './store.js';
 
@@ -36,6 +36,8 @@ export interface ReflectSessionInput {
   readonly now?: () => Date;
   /** Judge calls allowed per day; defaults to the job's standing cap. */
   readonly dailyCap?: number;
+  /** Where a validated skill proposal goes; without it every proposal is refused. */
+  readonly skills?: SkillSink;
 }
 
 export type ReflectSessionResult =
@@ -61,7 +63,7 @@ export async function reflectSession(input: ReflectSessionInput): Promise<Reflec
   const rejected: string[] = [];
   for (const operation of operations) {
     const outcome = await applyReflectionOperation(
-      { stores: input.stores, evidence, sessionId: input.sessionId, ...(input.now === undefined ? {} : { now: input.now }) },
+      { stores: input.stores, evidence, sessionId: input.sessionId, ...(input.now === undefined ? {} : { now: input.now }), ...(input.skills === undefined ? {} : { skills: input.skills }) },
       operation,
     );
     if (outcome.ok) applied += 1;

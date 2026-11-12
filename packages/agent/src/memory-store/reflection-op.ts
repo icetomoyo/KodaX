@@ -8,15 +8,20 @@
  *   dispute      active or candidate -> disputed (hidden from the index, kept on disk)
  *   rewrite      corrects a note; a note the user stated can only be rewritten
  *                from a user message, local evidence can only dispute it
+ *   skill        proposes a learned skill; same proof as dispute, a valid and
+ *                unsafe-pattern-free spec, no external text; the host stores it
+ *                as "ready", so the user reviews it before it is ever used
  * External content (web, MCP) is never accepted as proof.
  */
+import type { DeclarativeSkillSpec } from '../learning/learned-skill.js';
+import { validateDeclarativeSkillSpec } from '../learning/learned-skill.js';
 import { copiesExternalText, quoteInEvidence, type SessionEvidence } from './evidence.js';
 import { applyMemoryOperation, type MemoryOpResult } from './memory-op.js';
 import type { MemoryNote, NoteScope, NoteType } from './record.js';
 import type { NoteStore } from './store.js';
 
 export interface ReflectionOpInput {
-  readonly operation: 'write' | 'corroborate' | 'dispute' | 'rewrite';
+  readonly operation: 'write' | 'corroborate' | 'dispute' | 'rewrite' | 'skill';
   readonly id: string;
   readonly scope?: NoteScope;
   readonly type?: NoteType;
@@ -26,13 +31,22 @@ export interface ReflectionOpInput {
   readonly body?: string;
   /** Exact words from a user message or a local tool result in the evidence. */
   readonly quote?: string;
+  /** The procedure a `skill` operation proposes. */
+  readonly skill?: DeclarativeSkillSpec;
 }
+
+/** Where a validated skill proposal goes; the host supplies it, so this file knows nothing of the learned area. */
+export type SkillSink = (
+  spec: DeclarativeSkillSpec,
+  origin: { readonly sessionId: string; readonly decisionId: string },
+) => Promise<MemoryOpResult>;
 
 export interface ReflectionOpContext {
   readonly stores: Readonly<Record<NoteScope, NoteStore>>;
   readonly evidence: SessionEvidence;
   readonly sessionId: string;
   readonly now?: () => Date;
+  readonly skills?: SkillSink;
 }
 
 const NEEDS_PROOF = 'quote must be exact words from a user message or a local tool result in this session. Web and MCP content is not accepted as proof.';
@@ -43,7 +57,23 @@ function fail(message: string): MemoryOpResult {
   return { ok: false, message };
 }
 
+async function proposeSkill(context: ReflectionOpContext, input: ReflectionOpInput): Promise<MemoryOpResult> {
+  if (context.skills === undefined) return fail('Skill proposals are not available here.');
+  const spec = input.skill;
+  if (spec === undefined) return fail('A skill proposal needs the skill: name, description, purpose, triggers, steps, verification and pitfalls.');
+  if (input.quote === undefined || !quoteInEvidence(context.evidence, input.quote, ['user', 'local'])) return fail(NEEDS_PROOF);
+  const texts = [spec.name, spec.description, spec.purpose, ...spec.triggers, ...spec.steps, ...spec.verification, ...spec.pitfalls];
+  if (texts.some((text) => copiesExternalText(context.evidence, text))) return fail(COPIES_EXTERNAL);
+  try {
+    validateDeclarativeSkillSpec(spec);
+  } catch {
+    return fail('The skill was rejected: it is incomplete, too large, or contains text that is not allowed in a skill.');
+  }
+  return context.skills(spec, { sessionId: context.sessionId, decisionId: `${context.sessionId}:${spec.name}` });
+}
+
 export async function applyReflectionOperation(context: ReflectionOpContext, input: ReflectionOpInput): Promise<MemoryOpResult> {
+  if (input.operation === 'skill') return proposeSkill(context, input);
   const written = [input.description, input.why, input.check, input.body].filter((text): text is string => text !== undefined);
   if (input.operation !== 'corroborate' && written.some((text) => copiesExternalText(context.evidence, text))) {
     return fail(COPIES_EXTERNAL);
@@ -80,7 +110,7 @@ export async function applyReflectionOperation(context: ReflectionOpContext, inp
     case 'rewrite':
       return rewrite(store, note, input, fromUser);
     default:
-      return fail('operation must be "write", "corroborate", "dispute" or "rewrite".');
+      return fail('operation must be "write", "corroborate", "dispute", "rewrite" or "skill".');
   }
 }
 

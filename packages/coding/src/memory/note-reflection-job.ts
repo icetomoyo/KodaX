@@ -3,28 +3,40 @@
  * background and never awaited by the run:
  *
  *   1. count the notes the agent opened during the run (usage signal),
- *   2. reflect on the session when it qualifies (gate, cursor, daily cap),
+ *   2. reflect on the session when it qualifies (gate, cursor, daily cap); a
+ *      procedure it proposes is saved as a learned skill waiting for the user,
  *   3. when reflection ran, tidy the stores and drop revisions past retention.
  *
  * The reflection call uses the session's own provider and model: the run just
  * finished with it, so its credentials are known to work. Passes run one at a
  * time so two finishing runs never write the same store together.
  */
+import { createHash } from 'node:crypto';
+
 import {
+  commitLearnedSkillRevision,
+  createLearnedCapabilityScope,
   createNoteStore,
   emitKodaXDiagnostic,
+  getAgentConfigPath,
+  LearnedAreaStore,
+  LearningCapabilityError,
   organizeStore,
   pruneRevisions,
   recordNoteReads,
   reflectSession,
   resolveNoteRoot,
+  resolveProjectLearnedAreaRoot,
   type NoteScope,
   type NoteStore,
   type ReflectionJudge,
+  type SkillSink,
 } from '@kodax-ai/agent';
 import { withProviderRequestCredential, type KodaXBaseProvider, type KodaXMessage } from '@kodax-ai/llm';
 
-import { buildReflectionRequest, parseReflectionCall, REFLECT_TOOL_NAME } from './note-reflection.js';
+import { resolveProtectedFormalSkillNames } from '../learned-skill-runtime.js';
+import { deriveCodingMemoryIdentityFromRoot } from '../memory-runtime.js';
+import { buildReflectionRequest, parseReflectionCall, parseSkillCall, REFLECT_TOOL_NAME, SKILL_TOOL_NAME } from './note-reflection.js';
 
 const REFLECTION_TIMEOUT_MS = 120_000;
 /** The size the reflection prompt was evaluated at (FEATURE_306 Phase 2b to 3). */
@@ -58,9 +70,11 @@ export function createProviderJudge(provider: KodaXBaseProvider, model: string |
       },
       credentialSignal,
     ));
-    return result.toolBlocks
-      .filter((block) => block.name === REFLECT_TOOL_NAME)
-      .flatMap((block) => parseReflectionCall(block.input) ?? []);
+    return result.toolBlocks.flatMap((block) => {
+      if (block.name === REFLECT_TOOL_NAME) return parseReflectionCall(block.input) ?? [];
+      if (block.name === SKILL_TOOL_NAME) return parseSkillCall(block.input) ?? [];
+      return [];
+    });
   };
 }
 
@@ -68,6 +82,39 @@ function storesFor(cwd: string): Readonly<Record<NoteScope, NoteStore>> {
   return {
     project: createNoteStore(resolveNoteRoot(cwd, 'project'), 'project'),
     user: createNoteStore(resolveNoteRoot(cwd, 'user'), 'user'),
+  };
+}
+
+/**
+ * A proposed skill is saved in the project's learned area as "ready": the user
+ * reviews it in /learn, and only then can it be used. There is no trial period.
+ */
+export function createLearnedSkillSink(cwd: string): SkillSink {
+  return async (spec, origin) => {
+    const configHome = getAgentConfigPath();
+    const identity = deriveCodingMemoryIdentityFromRoot(configHome, cwd);
+    const area = { tenantId: identity.tenantId, projectId: identity.projectId ?? `local:${cwd}` };
+    const store = new LearnedAreaStore(resolveProjectLearnedAreaRoot(configHome, area));
+    await store.initialize();
+    try {
+      await commitLearnedSkillRevision(store, {
+        scope: createLearnedCapabilityScope(configHome, area),
+        spec,
+        disposition: 'ready',
+        operation: 'create',
+        provenance: {
+          jobId: `note-reflection:${origin.sessionId}`,
+          inputHash: createHash('sha256').update(JSON.stringify(spec)).digest('hex'),
+          decisionId: origin.decisionId,
+          actionId: `${origin.decisionId}:skill`,
+        },
+        protectedSkillNames: await resolveProtectedFormalSkillNames({ provider: 'note-reflection', context: { configHome, gitRoot: cwd, executionCwd: cwd } }),
+      });
+    } catch (error) {
+      if (error instanceof LearningCapabilityError) return { ok: false, message: `The skill was not saved: ${error.code}.` };
+      throw error;
+    }
+    return { ok: true, message: `Skill '${spec.name}' is waiting for the user's review.` };
   };
 }
 
@@ -80,6 +127,7 @@ export async function finishNoteRun(run: NoteRunFinish, judge: ReflectionJudge =
     stores,
     cursorRoot: stores.user.root,
     judge,
+    skills: createLearnedSkillSink(run.cwd),
   });
   if (outcome.status !== 'done') return;
   for (const scope of NOTE_SCOPES) {

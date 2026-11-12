@@ -12,6 +12,7 @@ import path from 'node:path';
 
 import {
   applyReflectionOperation,
+  type DeclarativeSkillSpec,
   buildEvidence,
   createNoteStore,
   type MemoryNote,
@@ -25,6 +26,8 @@ import {
 import {
   buildReflectionRequest,
   parseReflectionCall,
+  parseSkillCall,
+  SKILL_TOOL_NAME,
 } from '../../../packages/coding/src/memory/note-reflection.js';
 import type { ReflectCase } from './cases.js';
 
@@ -84,6 +87,8 @@ export interface ReflectReplay {
   readonly calls: readonly ReplayedCall[];
   readonly before: readonly MemoryNote[];
   readonly after: readonly MemoryNote[];
+  /** Skills the host guards accepted and handed to the learned-skill sink. */
+  readonly skills: readonly DeclarativeSkillSpec[];
 }
 
 export function evidenceOf(item: Pick<ReflectCase, 'messages'>): SessionEvidence {
@@ -93,18 +98,24 @@ export function evidenceOf(item: Pick<ReflectCase, 'messages'>): SessionEvidence
 export async function replayReflectCalls(
   item: ReflectCase,
   tag: string,
-  inputs: readonly unknown[],
+  recorded: readonly { readonly name: string; readonly input: unknown }[],
 ): Promise<ReflectReplay> {
   const { stores } = await seedStores(`replay-${item.id}-${tag}`, item);
   const before = await allNotes(stores);
   const evidence = evidenceOf(item);
   const calls: ReplayedCall[] = [];
-  for (const raw of inputs) {
-    const input = typeof raw === 'object' && raw !== null ? parseReflectionCall(raw as Record<string, unknown>) : undefined;
+  const skills: DeclarativeSkillSpec[] = [];
+  const sink = async (spec: DeclarativeSkillSpec): Promise<MemoryOpResult> => {
+    skills.push(spec);
+    return { ok: true, message: `skill ${spec.name} accepted` };
+  };
+  for (const { name, input: raw } of recorded) {
+    const parse = name === SKILL_TOOL_NAME ? parseSkillCall : parseReflectionCall;
+    const input = typeof raw === 'object' && raw !== null ? parse(raw as Record<string, unknown>) : undefined;
     const result = input === undefined
       ? { ok: false, message: 'malformed memory_reflect call' }
-      : await applyReflectionOperation({ stores, evidence, sessionId: CURRENT_SESSION }, input);
+      : await applyReflectionOperation({ stores, evidence, sessionId: CURRENT_SESSION, skills: sink }, input);
     calls.push({ input, result });
   }
-  return { calls, before, after: await allNotes(stores) };
+  return { calls, before, after: await allNotes(stores), skills };
 }
