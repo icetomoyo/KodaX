@@ -1,31 +1,32 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { BUN_BE_BUN_ENV } from '@kodax-ai/agent';
+import { resolveWindowsSandboxV2Executable } from '../windows-sandbox-v2.js';
 
 const STARTUP_TIMEOUT_MS = 15_000;
 const PAYLOAD_ENV = 'KODAX_INTERNAL_WINDOWS_JOB_LAUNCH';
 const READY_FILE_ENV = 'KODAX_INTERNAL_WINDOWS_JOB_READY_FILE';
-const SCRIPT_FILE_ENV = 'KODAX_INTERNAL_WINDOWS_JOB_SCRIPT_FILE';
+const SUPERVISOR_EXE_ENV = 'KODAX_INTERNAL_WINDOWS_JOB_SUPERVISOR_EXE';
 const OWNER_AFTER_READY_ENV = 'KODAX_INTERNAL_WINDOWS_JOB_TEST_OWNER_AFTER_READY';
 const HANDOFF_ENV = 'KODAX_INTERNAL_WINDOWS_JOB_HANDOFF';
 
-// PowerShell launched detached by Node exits without executing its command on
-// supported Windows hosts. This detached Node bootstrap keeps one ordinary
-// PowerShell child alive after the SDK caller exits. PowerShell remains the
-// authoritative Job owner. The bootstrap retains its exact ChildProcess handle
-// for startup cleanup and reports the public owner PID over private Node IPC.
+// This detached Node bootstrap keeps one native supervisor (the hash-verified
+// `__daemon-job-supervise` mode of the bundled Windows helper) alive after the SDK
+// caller exits. The supervisor is the authoritative Job owner and compiles nothing
+// at startup. The bootstrap retains its exact ChildProcess handle for startup
+// cleanup and reports the public owner PID over private Node IPC.
 const WINDOWS_JOB_WRAPPER_SOURCE = String.raw`
 const { spawn } = require('node:child_process');
 const { appendFileSync, closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
 const readyFile = process.env.${READY_FILE_ENV};
-const scriptFile = process.env.${SCRIPT_FILE_ENV};
+const supervisorExe = process.env.${SUPERVISOR_EXE_ENV};
 const handoffFile = process.env.${HANDOFF_ENV};
 const logFile = JSON.parse(Buffer.from(process.env.${PAYLOAD_ENV}, 'base64').toString('utf8')).logFile;
 const childEnv = { ...process.env };
-delete childEnv.${SCRIPT_FILE_ENV};
+delete childEnv.${SUPERVISOR_EXE_ENV};
 delete childEnv.${OWNER_AFTER_READY_ENV};
 // The supervisor needed Bun runtime mode for its own -e entrypoint; the
 // contained daemon must run as the ordinary KodaX CLI instead.
@@ -49,13 +50,8 @@ const cleanReady = () => {
   try { rmSync(readyFile, { force: true }); }
   catch (error) { reportError(error); }
 };
-const cleanScript = () => {
-  try { rmSync(scriptFile, { force: true }); }
-  catch (error) { reportError(error); }
-};
 const cleanAfterExit = async () => {
   if (!handoffFile) return;
-  cleanScript();
   if (phase === 'aborting') {
     // The wrapper owns this ready file until teardown. Missing publication
     // proves the suspended target was never resumed; malformed data does not.
@@ -98,7 +94,6 @@ const stopCandidate = () => {
       phase = 'persistent';
       cleanHandoff();
       cleanReady();
-      cleanScript();
       return 'retained';
     }
     phase = 'aborting';
@@ -127,28 +122,20 @@ if (handoffFile) process.on('disconnect', () => {
   try { stopCandidate(); }
   catch (error) { reportError(error); }
 });
-child = spawn('powershell.exe', [
-  '-NoProfile',
-  '-NonInteractive',
-  '-ExecutionPolicy',
-  'Bypass',
-  '-File',
-  process.env.${SCRIPT_FILE_ENV},
-], { detached: false, windowsHide: true, stdio: 'ignore', env: childEnv });
+child = spawn(supervisorExe, ['__daemon-job-supervise'], { detached: false, windowsHide: true, stdio: 'ignore', env: childEnv });
 child.once('error', (error) => {
   if (!handoffFile) { fail(error.message); return; }
   reportError(error);
   if (child.pid !== undefined) return;
   // A failed spawn emits error without exit; there is no Job or target to wait for.
   childExited = true;
-  cleanScript();
   cleanHandoff();
   cleanReady();
   process.exit(1);
 });
 child.once('exit', async (code) => {
   childExited = true;
-  if (code !== 0 && !handoffFile) fail('PowerShell supervisor exited before readiness.');
+  if (code !== 0 && !handoffFile) fail('Native Job supervisor exited before readiness.');
   await cleanAfterExit();
   process.exit(code ?? 1);
 });
@@ -157,8 +144,8 @@ const publishOwner = () => {
   process.send({ kind: 'owner', pid: child.pid }, (error) => {
     if (!error) return;
     try { stopCandidate(); } catch (cleanupError) { reportError(cleanupError); }
-    if (handoffFile) reportError(new Error('Could not publish the PowerShell Job owner: ' + error.message));
-    else fail('Could not publish the PowerShell Job owner: ' + error.message);
+    if (handoffFile) reportError(new Error('Could not publish the Job owner: ' + error.message));
+    else fail('Could not publish the Job owner: ' + error.message);
   });
 };
 if (process.env.${OWNER_AFTER_READY_ENV} === '1') {
@@ -172,314 +159,9 @@ if (process.env.${OWNER_AFTER_READY_ENV} === '1') {
 }
 `;
 
-const WINDOWS_JOB_SUPERVISOR_SOURCE = String.raw`
-using System;
-using System.IO;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading;
-
-public static class KodaXWindowsJobSupervisor {
-  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-  private struct StartupInfo {
-    public uint cb;
-    public string lpReserved;
-    public string lpDesktop;
-    public string lpTitle;
-    public uint dwX;
-    public uint dwY;
-    public uint dwXSize;
-    public uint dwYSize;
-    public uint dwXCountChars;
-    public uint dwYCountChars;
-    public uint dwFillAttribute;
-    public uint dwFlags;
-    public ushort wShowWindow;
-    public ushort cbReserved2;
-    public IntPtr lpReserved2;
-    public IntPtr hStdInput;
-    public IntPtr hStdOutput;
-    public IntPtr hStdError;
-  }
-
-  [StructLayout(LayoutKind.Sequential)]
-  private struct ProcessInformation {
-    public IntPtr hProcess;
-    public IntPtr hThread;
-    public uint dwProcessId;
-    public uint dwThreadId;
-  }
-
-  [StructLayout(LayoutKind.Sequential)]
-  private struct SecurityAttributes {
-    public int length;
-    public IntPtr securityDescriptor;
-    public int inheritHandle;
-  }
-
-  [StructLayout(LayoutKind.Sequential)]
-  private struct BasicLimitInformation {
-    public long PerProcessUserTimeLimit;
-    public long PerJobUserTimeLimit;
-    public uint LimitFlags;
-    public UIntPtr MinimumWorkingSetSize;
-    public UIntPtr MaximumWorkingSetSize;
-    public uint ActiveProcessLimit;
-    public UIntPtr Affinity;
-    public uint PriorityClass;
-    public uint SchedulingClass;
-  }
-
-  [StructLayout(LayoutKind.Sequential)]
-  private struct IoCounters {
-    public ulong ReadOperationCount;
-    public ulong WriteOperationCount;
-    public ulong OtherOperationCount;
-    public ulong ReadTransferCount;
-    public ulong WriteTransferCount;
-    public ulong OtherTransferCount;
-  }
-
-  [StructLayout(LayoutKind.Sequential)]
-  private struct ExtendedLimitInformation {
-    public BasicLimitInformation BasicLimitInformation;
-    public IoCounters IoInfo;
-    public UIntPtr ProcessMemoryLimit;
-    public UIntPtr JobMemoryLimit;
-    public UIntPtr PeakProcessMemoryUsed;
-    public UIntPtr PeakJobMemoryUsed;
-  }
-
-  [StructLayout(LayoutKind.Sequential)]
-  private struct BasicAccountingInformation {
-    public long TotalUserTime;
-    public long TotalKernelTime;
-    public long ThisPeriodTotalUserTime;
-    public long ThisPeriodTotalKernelTime;
-    public uint TotalPageFaultCount;
-    public uint TotalProcesses;
-    public uint ActiveProcesses;
-    public uint TotalTerminatedProcesses;
-  }
-
-  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-  private static extern bool CreateProcessW(
-    string applicationName,
-    StringBuilder commandLine,
-    IntPtr processAttributes,
-    IntPtr threadAttributes,
-    bool inheritHandles,
-    uint creationFlags,
-    IntPtr environment,
-    string currentDirectory,
-    ref StartupInfo startupInfo,
-    out ProcessInformation processInformation);
-
-  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-  private static extern IntPtr CreateJobObjectW(IntPtr attributes, string name);
-
-  [DllImport("kernel32.dll", SetLastError = true)]
-  private static extern bool SetInformationJobObject(
-    IntPtr job,
-    int informationClass,
-    ref ExtendedLimitInformation information,
-    uint informationLength);
-
-  [DllImport("kernel32.dll", SetLastError = true)]
-  private static extern bool QueryInformationJobObject(
-    IntPtr job,
-    int informationClass,
-    out BasicAccountingInformation information,
-    uint informationLength,
-    IntPtr returnLength);
-
-  [DllImport("kernel32.dll", SetLastError = true)]
-  private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
-
-  [DllImport("kernel32.dll", SetLastError = true)]
-  private static extern bool TerminateProcess(IntPtr process, uint exitCode);
-
-  [DllImport("kernel32.dll", SetLastError = true)]
-  private static extern uint ResumeThread(IntPtr thread);
-
-  [DllImport("kernel32.dll", SetLastError = true)]
-  private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
-
-  [DllImport("kernel32.dll", SetLastError = true)]
-  private static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
-
-  [DllImport("kernel32.dll", SetLastError = true)]
-  private static extern bool TerminateJobObject(IntPtr job, uint exitCode);
-
-  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-  private static extern IntPtr CreateFileW(
-    string fileName,
-    uint desiredAccess,
-    uint shareMode,
-    ref SecurityAttributes securityAttributes,
-    uint creationDisposition,
-    uint flagsAndAttributes,
-    IntPtr templateFile);
-
-  [DllImport("kernel32.dll")]
-  private static extern bool CloseHandle(IntPtr handle);
-
-  private const uint CreateSuspended = 0x00000004;
-  private const uint CreateNoWindow = 0x08000000;
-  private const uint StartfUseStdHandles = 0x00000100;
-  private const uint JobObjectLimitKillOnJobClose = 0x00002000;
-  private const uint FileAppendData = 0x00000004;
-  private const uint Synchronize = 0x00100000;
-  private const uint FileShareRead = 0x00000001;
-  private const uint FileShareWrite = 0x00000002;
-  private const uint FileShareDelete = 0x00000004;
-  private const uint OpenAlways = 4;
-  private const uint FileAttributeNormal = 0x00000080;
-
-  private static void Require(bool result, string operation) {
-    if (!result) throw new InvalidOperationException(
-      operation + " failed with Win32 error " + Marshal.GetLastWin32Error());
-  }
-
-  private static void PublishReady(string readyFile, uint processId) {
-    var temporaryFile = readyFile + "." + Guid.NewGuid().ToString("N") + ".tmp";
-    try {
-      File.WriteAllText(
-        temporaryFile,
-        "{\"processPid\":" + processId +
-          ",\"containmentSupervisorPid\":" +
-          System.Diagnostics.Process.GetCurrentProcess().Id + "}");
-      File.Move(temporaryFile, readyFile);
-    } finally {
-      if (File.Exists(temporaryFile)) File.Delete(temporaryFile);
-    }
-  }
-
-  public static int Run(
-    string executable,
-    string commandLine,
-    string cwd,
-    string readyFile,
-    string logFile,
-    string jobName) {
-    var job = CreateJobObjectW(IntPtr.Zero, jobName);
-    if (job == IntPtr.Zero) throw new InvalidOperationException(
-      "CreateJobObject failed with Win32 error " + Marshal.GetLastWin32Error());
-    var process = new ProcessInformation();
-    var processAssigned = false;
-    var security = new SecurityAttributes();
-    security.length = Marshal.SizeOf(typeof(SecurityAttributes));
-    security.inheritHandle = 1;
-    var logHandle = CreateFileW(
-      logFile,
-      FileAppendData | Synchronize,
-      FileShareRead | FileShareWrite | FileShareDelete,
-      ref security,
-      OpenAlways,
-      FileAttributeNormal,
-      IntPtr.Zero);
-    if (logHandle == new IntPtr(-1)) throw new InvalidOperationException(
-      "CreateFile for daemon log failed with Win32 error " + Marshal.GetLastWin32Error());
-    try {
-      var limits = new ExtendedLimitInformation();
-      limits.BasicLimitInformation.LimitFlags = JobObjectLimitKillOnJobClose;
-      Require(SetInformationJobObject(
-        job,
-        9,
-        ref limits,
-        (uint)Marshal.SizeOf(typeof(ExtendedLimitInformation))),
-        "SetInformationJobObject");
-
-      var startup = new StartupInfo();
-      startup.cb = (uint)Marshal.SizeOf(typeof(StartupInfo));
-      startup.dwFlags = StartfUseStdHandles;
-      startup.hStdInput = IntPtr.Zero;
-      startup.hStdOutput = logHandle;
-      startup.hStdError = logHandle;
-      Require(CreateProcessW(
-        executable,
-        new StringBuilder(commandLine),
-        IntPtr.Zero,
-        IntPtr.Zero,
-        true,
-        CreateSuspended | CreateNoWindow,
-        IntPtr.Zero,
-        cwd,
-        ref startup,
-        out process),
-        "CreateProcess");
-      Require(AssignProcessToJobObject(job, process.hProcess), "AssignProcessToJobObject");
-      processAssigned = true;
-      PublishReady(readyFile, process.dwProcessId);
-      if (ResumeThread(process.hThread) == 0xffffffff) {
-        throw new InvalidOperationException(
-          "ResumeThread failed with Win32 error " + Marshal.GetLastWin32Error());
-      }
-
-      if (WaitForSingleObject(process.hProcess, 0xffffffff) == 0xffffffff) {
-        throw new InvalidOperationException(
-          "WaitForSingleObject failed with Win32 error " + Marshal.GetLastWin32Error());
-      }
-      uint exitCode;
-      if (!GetExitCodeProcess(process.hProcess, out exitCode)) exitCode = 1;
-      Require(TerminateJobObject(job, exitCode), "TerminateJobObject");
-      while (true) {
-        BasicAccountingInformation accounting;
-        Require(QueryInformationJobObject(
-          job,
-          1,
-          out accounting,
-          (uint)Marshal.SizeOf(typeof(BasicAccountingInformation)),
-          IntPtr.Zero),
-          "QueryInformationJobObject");
-        if (accounting.ActiveProcesses == 0) return unchecked((int)exitCode);
-        Thread.Sleep(10);
-      }
-    } finally {
-      if (process.hProcess != IntPtr.Zero && !processAssigned) {
-        TerminateProcess(process.hProcess, 1);
-        WaitForSingleObject(process.hProcess, 2000);
-      }
-      if (process.hThread != IntPtr.Zero) CloseHandle(process.hThread);
-      if (process.hProcess != IntPtr.Zero) CloseHandle(process.hProcess);
-      CloseHandle(logHandle);
-      CloseHandle(job);
-    }
-  }
-}`;
-
-const WINDOWS_JOB_SUPERVISOR_SCRIPT = String.raw`
-$ErrorActionPreference = 'Stop'
-try {
-  $readyFile = $env:${READY_FILE_ENV}
-  $payloadBytes = [Convert]::FromBase64String($env:${PAYLOAD_ENV})
-  $payload = [Text.Encoding]::UTF8.GetString($payloadBytes) | ConvertFrom-Json
-  Remove-Item Env:${PAYLOAD_ENV} -ErrorAction SilentlyContinue
-  Remove-Item Env:${READY_FILE_ENV} -ErrorAction SilentlyContinue
-  $env:KODAX_DAEMON_JOB_CONTAINED = '1'
-  $env:KODAX_DAEMON_JOB_SUPERVISOR_PID = [string]$PID
-  $env:KODAX_DAEMON_JOB_NAME = [string]$payload.jobName
-  $source = @'
-${WINDOWS_JOB_SUPERVISOR_SOURCE}
-'@
-  Add-Type -TypeDefinition $source
-  $exitCode = [KodaXWindowsJobSupervisor]::Run(
-    [string]$payload.executable,
-    [string]$payload.commandLine,
-    [string]$payload.cwd,
-    [string]$payload.readyFile,
-    [string]$payload.logFile,
-    [string]$payload.jobName)
-  exit $exitCode
-} catch {
-  [IO.File]::WriteAllText($readyFile, 'ERROR:' + $_.Exception.Message)
-  exit 1
-}
-`;
-
 export interface WindowsJobContainedProcess {
   readonly processPid: number;
-  /** PID of the PowerShell process that owns the Job handle. */
+  /** PID of the native supervisor that owns the Job handle. */
   readonly containmentSupervisorPid: number;
   readonly supervisor: ChildProcess;
   /** Handoff-enabled targets must commit publication before their launcher releases. */
@@ -524,16 +206,12 @@ export async function spawnWindowsJobContainedProcess(
   if (process.platform !== 'win32') {
     throw new Error('Windows Job containment is available only on Windows.');
   }
+  // Resolve (and hash-verify) the helper before creating any launch file.
+  const supervisorExe = resolveWindowsSandboxV2Executable().path;
   const readyFile = path.join(os.tmpdir(), `kodax-daemon-job-${randomUUID()}.ready`);
-  const scriptFile = path.join(os.tmpdir(), `kodax-daemon-job-${randomUUID()}.ps1`);
   const handoffFile = input.startupHandoff
     ? path.join(os.tmpdir(), `kodax-daemon-handoff-${randomUUID()}`)
     : undefined;
-  writeFileSync(scriptFile, WINDOWS_JOB_SUPERVISOR_SCRIPT, {
-    encoding: 'utf8',
-    flag: 'wx',
-    mode: 0o600,
-  });
   const payload = Buffer.from(JSON.stringify({
     executable: input.executable,
     commandLine: buildWindowsCommandLine(input.executable, input.args),
@@ -562,13 +240,12 @@ export async function spawnWindowsJobContainedProcess(
         [BUN_BE_BUN_ENV]: process.env.KODAX_BUNDLED === 'true' ? '1' : undefined,
         [PAYLOAD_ENV]: payload,
         [READY_FILE_ENV]: readyFile,
-        [SCRIPT_FILE_ENV]: scriptFile,
+        [SUPERVISOR_EXE_ENV]: supervisorExe,
         ...(handoffFile === undefined ? {} : { [HANDOFF_ENV]: handoffFile }),
       },
     });
   } catch (error) {
     rmSync(readyFile, { force: true });
-    rmSync(scriptFile, { force: true });
     throw error;
   }
   const readiness = await waitForSupervisorReadiness(
@@ -591,7 +268,6 @@ export async function spawnWindowsJobContainedProcess(
     throw error;
   }).finally(() => {
     if (handoffFile === undefined) rmSync(readyFile, { force: true });
-    rmSync(scriptFile, { force: true });
   });
   let released = false;
   return {

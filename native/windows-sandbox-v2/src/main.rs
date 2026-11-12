@@ -12,6 +12,8 @@ mod runner;
 mod win;
 #[cfg(windows)]
 mod job_identity;
+#[cfg(windows)]
+mod job_supervisor;
 
 #[cfg(windows)]
 use anyhow::{Context, ensure};
@@ -270,6 +272,10 @@ fn run() -> anyhow::Result<u32> {
         .next()
         .ok_or_else(|| anyhow::anyhow!("Windows sandbox mode is required"))?;
     match mode.to_string_lossy().as_ref() {
+        "__daemon-job-supervise" => {
+            ensure!(args.next().is_none(), "Job supervisor takes its launch payload from the environment");
+            job_supervisor::run()
+        }
         "__daemon-job-identity" => {
             let name = args.next().context("Daemon Job name is required")?;
             let pid = args.next().context("Daemon PID is required")?.to_string_lossy().parse::<u32>()?;

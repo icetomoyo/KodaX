@@ -26,8 +26,8 @@ describe('Windows Job daemon supervisor', () => {
     const preloadFile = path.join(directory, 'pause.cjs');
     const traceFile = path.join(directory, 'wrapper.json');
     writeFileSync(preloadFile, [
-      'if (process.env.KODAX_INTERNAL_WINDOWS_JOB_SCRIPT_FILE) {',
-      `require('node:fs').writeFileSync(${JSON.stringify(traceFile)}, JSON.stringify({ pid: process.pid, script: process.env.KODAX_INTERNAL_WINDOWS_JOB_SCRIPT_FILE, ready: process.env.KODAX_INTERNAL_WINDOWS_JOB_READY_FILE }));`,
+      'if (process.env.KODAX_INTERNAL_WINDOWS_JOB_SUPERVISOR_EXE) {',
+      `require('node:fs').writeFileSync(${JSON.stringify(traceFile)}, JSON.stringify({ pid: process.pid, ready: process.env.KODAX_INTERNAL_WINDOWS_JOB_READY_FILE }));`,
       'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500); }',
     ].join(' '));
     const controller = new AbortController();
@@ -44,15 +44,14 @@ describe('Windows Job daemon supervisor', () => {
       const rejected = expect(starting).resolves.toBe(reason);
       controller.abort(reason);
       await rejected;
-      const trace = JSON.parse(readFileSync(traceFile, 'utf8')) as { pid: number; script: string; ready: string };
+      const trace = JSON.parse(readFileSync(traceFile, 'utf8')) as { pid: number; ready: string };
       await waitForPidExit(trace.pid);
-      expect(existsSync(trace.script)).toBe(false);
       expect(existsSync(trace.ready)).toBe(false);
     } finally { await contained?.terminate(); }
   }, 30_000);
 
   it.skipIf(process.platform !== 'win32')(
-    'reclaims an opt-in wrapper and launch files when PowerShell cannot spawn',
+    'reclaims an opt-in wrapper and launch files when the native supervisor cannot spawn',
     async () => {
       const directory = mkdtempSync(path.join(os.tmpdir(), 'kodax-job-shell-spawn-error-'));
       temporaryDirectories.push(directory);
@@ -60,12 +59,12 @@ describe('Windows Job daemon supervisor', () => {
       const preloadFile = path.join(directory, 'trace.cjs');
       writeFileSync(preloadFile, [
         'const env = process.env;',
-        'if (env.KODAX_INTERNAL_WINDOWS_JOB_SCRIPT_FILE) {',
-        `require('node:fs').writeFileSync(${JSON.stringify(traceFile)}, JSON.stringify({ pid: process.pid, script: env.KODAX_INTERNAL_WINDOWS_JOB_SCRIPT_FILE, ready: env.KODAX_INTERNAL_WINDOWS_JOB_READY_FILE, marker: env.KODAX_INTERNAL_WINDOWS_JOB_HANDOFF })); }`,
+        'if (env.KODAX_INTERNAL_WINDOWS_JOB_SUPERVISOR_EXE) {',
+        `require('node:fs').writeFileSync(${JSON.stringify(traceFile)}, JSON.stringify({ pid: process.pid, ready: env.KODAX_INTERNAL_WINDOWS_JOB_READY_FILE, marker: env.KODAX_INTERNAL_WINDOWS_JOB_HANDOFF }));`,
+        // The wrapper reads this after the preload: point it at an executable that cannot start.
+        `env.KODAX_INTERNAL_WINDOWS_JOB_SUPERVISOR_EXE = ${JSON.stringify(path.join(directory, 'missing-supervisor.exe'))}; }`,
       ].join(' '));
-      const environment = Object.fromEntries(Object.entries(process.env)
-        .filter(([name]) => name.toUpperCase() !== 'PATH'));
-      environment.PATH = directory;
+      const environment = { ...process.env };
       environment.NODE_OPTIONS = `--require ${JSON.stringify(preloadFile)}`;
       await expect(spawnWindowsJobContainedProcess({
         executable: process.execPath, args: ['-e', 'process.exit(0)'], cwd: directory,
@@ -73,22 +72,21 @@ describe('Windows Job daemon supervisor', () => {
       })).rejects.toThrow('Windows Job supervisor');
       await waitForFile(traceFile);
       const trace = JSON.parse(readFileSync(traceFile, 'utf8')) as {
-        pid: number; script: string; ready: string; marker: string;
+        pid: number; ready: string; marker: string;
       };
       try {
         await waitForPidExit(trace.pid);
-        expect(existsSync(trace.script)).toBe(false);
-        expect(existsSync(trace.ready)).toBe(false);
+          expect(existsSync(trace.ready)).toBe(false);
         expect(existsSync(trace.marker)).toBe(false);
       } finally {
-        for (const file of [trace.script, trace.ready, trace.marker]) rmSync(file, { force: true });
+        for (const file of [trace.ready, trace.marker]) rmSync(file, { force: true });
       }
     },
     30_000,
   );
 
   it.skipIf(process.platform !== 'win32')(
-    'removes private launch files when its launcher dies before PowerShell starts',
+    'removes private launch files when its launcher dies before the native supervisor starts',
     async () => {
       const directory = mkdtempSync(path.join(os.tmpdir(), 'kodax-job-early-launcher-death-'));
       temporaryDirectories.push(directory);
@@ -96,8 +94,8 @@ describe('Windows Job daemon supervisor', () => {
       const preloadFile = path.join(directory, 'pause.cjs');
       writeFileSync(preloadFile, [
         'const env = process.env;',
-        'if (env.KODAX_INTERNAL_WINDOWS_JOB_SCRIPT_FILE) {',
-        `require('node:fs').writeFileSync(${JSON.stringify(traceFile)}, JSON.stringify({ pid: process.pid, script: env.KODAX_INTERNAL_WINDOWS_JOB_SCRIPT_FILE, ready: env.KODAX_INTERNAL_WINDOWS_JOB_READY_FILE, marker: env.KODAX_INTERNAL_WINDOWS_JOB_HANDOFF }));`,
+        'if (env.KODAX_INTERNAL_WINDOWS_JOB_SUPERVISOR_EXE) {',
+        `require('node:fs').writeFileSync(${JSON.stringify(traceFile)}, JSON.stringify({ pid: process.pid, ready: env.KODAX_INTERNAL_WINDOWS_JOB_READY_FILE, marker: env.KODAX_INTERNAL_WINDOWS_JOB_HANDOFF }));`,
         'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 750); }',
       ].join(' '));
       const launcher = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', [
@@ -111,7 +109,7 @@ describe('Windows Job daemon supervisor', () => {
         env: { ...process.env, NODE_OPTIONS: `--require ${JSON.stringify(preloadFile)}` },
       });
       const launcherExit = once(launcher, 'exit');
-      let trace: { pid: number; script: string; ready: string; marker: string } | undefined;
+      let trace: { pid: number; ready: string; marker: string } | undefined;
       try {
         await waitForFile(traceFile);
         trace = JSON.parse(readFileSync(traceFile, 'utf8')) as typeof trace;
@@ -119,7 +117,6 @@ describe('Windows Job daemon supervisor', () => {
         launcher.kill();
         await launcherExit;
         await waitForPidExit(trace!.pid);
-        expect(existsSync(trace!.script)).toBe(false);
         expect(existsSync(trace!.ready)).toBe(false);
         expect(existsSync(trace!.marker)).toBe(false);
       } finally {
@@ -127,7 +124,7 @@ describe('Windows Job daemon supervisor', () => {
         await launcherExit;
         if (trace) {
           await waitForPidExit(trace.pid);
-          for (const file of [trace.script, trace.ready, trace.marker]) rmSync(file, { force: true });
+          for (const file of [trace.ready, trace.marker]) rmSync(file, { force: true });
         }
       }
     },
