@@ -254,6 +254,7 @@ export type {
 // === 会话存储 ===
 export {
   FileSessionStorage,
+  SIDE_BOUNDARY_TEXT,
   type PreparedSessionAppendBaseline,
   type PreparedSessionTailDelta,
 } from "./interactive/storage.js";

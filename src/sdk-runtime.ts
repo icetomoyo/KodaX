@@ -6,7 +6,7 @@
  * process manager without introducing a daemon or a fifth workspace package.
  */
 
-import { SIDE_INSTRUCTIONS, SideChats, isSideId, sideRequester, sideBranch, sideCanDeliver, sideMessage, sideToolRuntime } from './side-chat.js';
+import { SIDE_INSTRUCTIONS, SideChats, type SideBinding, isSideId, sideRequester, sideBranch, sideCanDeliver, sideLetterRejection, sideMessage, sideToolRuntime } from './side-chat.js';
 import { createClientStartupProgressReporter } from './client-startup-progress.js';
 import { sessionMetadataRevision, promoteSessionMetadata } from '@kodax-ai/agent';
 import type { ClientStartupProgress } from '@kodax-ai/coding/client-contract';
@@ -4634,7 +4634,7 @@ async function createKodaXRuntimeInternal(
       ...(activeRun ? { agentMode: activeRun.mode === 'coding' ? 'sa' as const : 'ama' as const } : {}) };
     const contextBudget = resolveClientContextBudget(config, settings, options.defaultProvider, options.defaultModel);
     const side = persistence.sideChats.get(sessionId);
-    const receipts = side ? [side] : persistence.sideChats.forParent(sessionId);
+    const receipts = side ? [side] : persistence.sideChats.visibleTo(sessionId);
     const sourceId = side?.parent ?? sessionId;
     const source = includeHistory && side?.letters.length ? await sessionManager.storage.load(sourceId) : data;
     const reportLineage = includeHistory && receipts.some(b => b.letters.length)
@@ -8466,13 +8466,51 @@ function createRuntimeSessionService(
       return { goal: plan.goal, lineage: plan.lineage };
     });
 
+  // An unreadable binding file must not make its parent undeletable: set it aside, report it, and remove the side Sessions it named.
+  const readSideChildrenForDelete = async (parent: string) => {
+    try {
+      return persistence.sideChats.forParent(parent);
+    } catch (error: unknown) {
+      emitKodaXDiagnostic({
+        source: "runtime.sessions",
+        level: "error",
+        message: "Side chat bindings were unreadable and have been set aside.",
+        detail: { sessionId: parent, evidence: persistence.sideChats.quarantine(parent), error },
+      });
+      const prefix = persistence.sideChats.idPrefix(parent);
+      for (const orphan of (await manager.storage.list(undefined, { includeArchived: true })).filter(item => item.id.startsWith(prefix))) {
+        await manager.storage.delete(orphan.id);
+        settingsOwner.release(orphan.id);
+        sessionMcpStore.remove(orphan.id);
+        onSessionDeleted(orphan.id);
+        removeDeletedSessionRuntimeState(orphan.id);
+      }
+      return [];
+    }
+  };
+
+  // The binding goes even when the half-built Session cannot be removed, so the failure that led here is the one reported.
+  const discardSide = async (binding: SideBinding): Promise<void> => {
+    try {
+      await manager.storage.delete(binding.id);
+    } catch (error: unknown) {
+      emitKodaXDiagnostic({
+        source: "runtime.sessions",
+        level: "error",
+        message: "A half-opened side chat could not be removed.",
+        detail: { sessionId: binding.id, error },
+      });
+    }
+    persistence.sideChats.remove(binding);
+  };
+
   const deleteSession = async (sessionId: string, temporaryOnly: boolean): Promise<void> => {
     await sessionOperations.run(sessionId, async () => {
       if (!temporaryOnly) ensureOpen();
       const session = await admission.loadRequired(sessionId);
       if (temporaryOnly && session.runtimeInfo?.temporary !== true) return;
       assertSessionMutationAllowed(sessionId, sessionMutationOwner);
-      const children = persistence.sideChats.forParent(sessionId);
+      const children = await readSideChildrenForDelete(sessionId);
       for (const child of children) assertSessionMutationAllowed(child.id, sessionMutationOwner);
       for (const child of children) {
         if (child.preparing) await manager.storage.delete(child.id);
@@ -9418,12 +9456,10 @@ function createRuntimeSessionService(
         const source = { ...capture.data, lineage: capture.transcript.lineage };
         if (await manager.storage.isArchived(parent)) throw createSessionArchivedError(parent);
         const branch = sideBranch(source.lineage);
+        // Opening is serialized by the parent's gate, so a preparing binding found here is a crash leftover of any owner or branch.
+        for (const stale of persistence.sideChats.forParent(parent).filter(binding => binding.preparing)) await discardSide(stale);
         const existing = persistence.sideChats.forParent(parent).find(binding => binding.branch === branch && binding.owner === sideRequester.getStore());
-        if (existing && !existing.preparing) return toRuntimeSession(existing.id, await admission.loadExecutable(existing.id));
-        if (existing) {
-          await manager.storage.delete(existing.id);
-          persistence.sideChats.remove(existing);
-        }
+        if (existing) return toRuntimeSession(existing.id, await admission.loadExecutable(existing.id));
         const side = persistence.sideChats.allocate(parent, branch, null);
         persistence.sideChats.save({ ...side, preparing: true });
         try {
@@ -9432,8 +9468,7 @@ function createRuntimeSessionService(
           persistence.saveSessionSettingsVersioned(side.id, { ...settings, value: { ...settings.value, agentMode: "sa", workMode: "coding" } });
           persistence.sideChats.save(side);
         } catch (error) {
-          await manager.storage.delete(side.id);
-          persistence.sideChats.remove(side);
+          await discardSide(side);
           throw error;
         }
         const session = toRuntimeSession(side.id, await admission.loadRequired(side.id));
@@ -12516,7 +12551,8 @@ async function createRuntimeRunService(deps: {
         execution?.assertAdmission?.();
         const parent = await deps.sessionAdmission.loadExecutable(side.parent);
         const binding = deps.persistence.sideChats.get(side.id);
-        if (!binding || !sideCanDeliver(binding, await fullSideLineage(deps.sessionManager, side.parent, parent.lineage))) throw new Error('Parent history has changed. Message was not sent.');
+        if (!binding) throw new Error('This side chat no longer exists. Message was not sent.');
+        if (!sideCanDeliver(binding, await fullSideLineage(deps.sessionManager, side.parent, parent.lineage))) throw new Error('Parent history has changed. Message was not sent.');
         const activeId = activeRunBySession.get(binding.parent);
         const active = activeId ? getRecord(activeId) : undefined;
         if (active && active.origin?.principalId !== principalId) throw new Error('Parent run belongs to a different principal.');
@@ -12524,6 +12560,8 @@ async function createRuntimeRunService(deps: {
         let letter = binding.letters.find(l => l.id === id);
         if (letter && (letter.content !== content || letter.wake !== wake)) throw new Error('Conflicting side message retry.');
         if (!letter) {
+          const rejection = sideLetterRejection(binding, content);
+          if (rejection) throw new Error(rejection);
           letter = { id, content, wake, principalId };
           deps.persistence.sideChats.save({ ...binding, letters: [...binding.letters, letter] });
           if (active) active.pendingSideReport = true;
@@ -12544,13 +12582,13 @@ async function createRuntimeRunService(deps: {
         const pending = await Promise.all([deps.permissions.service.listPending({ sessionId: binding.parent }),
           deps.userInputs.service.listPending({ sessionId: binding.parent })]);
         if (pending.some(items => items.length) || previousStatus?.stop ||
-          (previousStatus && (!previousStatus.sideWakeWithHostDefaults || previousStatus.origin?.principalId !== principalId)) ||
+          !previousStatus || !previousStatus.sideWakeWithHostDefaults || previousStatus.origin?.principalId !== principalId ||
           (execution && !execution.defaultForSession)) {
           return { ...receipt, reason: 'Waiting for the next authorized parent run.' };
         }
         try {
           const parentInput: RuntimeTrustedStartRunInput = { sessionId: binding.parent, trustedRunId: wakeRunId,
-            prompt: 'The user requested that this session resume to consider the side agent report.', productSession: true,
+            prompt: 'The side agent asked this session to resume to consider its report.', productSession: true,
             origin: trustedInput.origin };
           const handle = await withProductExecution(execution?.defaultForSession?.(binding.parent),
             () => startRun(parentInput, 'runtime.runs.start', undefined, true));
@@ -12558,7 +12596,7 @@ async function createRuntimeRunService(deps: {
         } catch (error) {
           return { ...receipt, reason: normalizeError(error).message };
         }
-      }));
+      }), options.extensionRuntime);
       options = { ...options, extensionRuntime, agentMode: 'sa', workMode: 'coding', context: { ...options.context,
         systemPromptOverride: SIDE_INSTRUCTIONS,
         toolVisibilityPolicy: createExecutionToolPolicy({ tools: allowed }, options.context?.toolVisibilityPolicy),

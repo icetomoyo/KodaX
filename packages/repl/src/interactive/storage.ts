@@ -2641,6 +2641,9 @@ export interface SessionActorMetadata {
   readonly actorSnapshot?: AgentActorSnapshot;
 }
 
+/** Closes the inherited parent history in a side chat; the side-chat intent eval replays it verbatim. */
+export const SIDE_BOUNDARY_TEXT = 'Side conversation boundary. Everything above is inherited reference material. Only subsequent user requests are active.';
+
 export class FileSessionStorage implements KodaXSessionStorage {
   readonly actorSnapshotEligibilityTimeoutMs = ACTOR_SAVE_ELIGIBILITY_TIMEOUT_MS;
 
@@ -5674,7 +5677,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
     }
     const messages = getSessionMessagesFromLineage(history);
     messages.push({ role: 'user', _synthetic: true, _source: 'side-boundary',
-      content: 'Side conversation boundary. Everything above is inherited reference material. Only subsequent user requests are active.' });
+      content: SIDE_BOUNDARY_TEXT });
     const { temporary: _temporary, sessionPromotion: _promotion, workModeLocked: _locked, ...runtimeInfo } = source.runtimeInfo ?? {};
     try {
       await this.save(child, { title: 'Side chat', gitRoot: source.gitRoot, runtimeInfo, messages,

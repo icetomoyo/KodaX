@@ -523,7 +523,7 @@ export function areTranscriptRowPropsEqual(
   return ra.start === rb.start && ra.end === rb.end;
 }
 
-const TranscriptRowRenderer: React.FC<TranscriptRowRendererProps> = memo(({
+export const TranscriptRowRenderer: React.FC<TranscriptRowRendererProps> = memo(({
   row,
   theme,
   animateSpinners = true,

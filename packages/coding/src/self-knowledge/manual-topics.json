@@ -749,7 +749,7 @@
       "an explicit effort override. Legacy shortcuts remain accepted: `on/off` map to",
       "`auto/none`, and `quick/balanced/deep` map to `low/medium/high` (`med` is `medium`).",
       "- context/session: /compact, /recover, /save, /load, /history, /sessions, /tree,",
-      "  /fork, /rewind, /delete.",
+      "  /fork, /rewind, /delete, /side (alias /btw: private side chat, fullscreen UI only; /side end discards it).",
       "- capabilities: /mcp, /repo-intel, /repointel (legacy redirect), /skill, /extensions,",
       "  /reload, /agents.",
       "Enabled Skills are also invoked with `/<name>` or `/skill:<name>` at the query head or middle.",

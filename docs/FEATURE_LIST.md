@@ -35,7 +35,7 @@
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
 | Completed | 63 | `304, 303, 302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
-| InProgress | 2 | `298, 225` | `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
+| InProgress | 3 | `305, 298, 225` | `305`: R1–R6 hardening and verification per [side-chat plan](designs/side-chat-plan.md). `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
@@ -88,7 +88,7 @@
 | `v0.7.94` | `0` |
 | `v0.7.95` | `0` |
 | `v0.7.96` | `0` |
-| `v0.7.97` | `1` |
+| `v0.7.97` | `2` |
 | `v0.7.98` | `0` |
 | `v0.7.99` | `1` |
 | `v0.7.100` | `0` |
@@ -522,6 +522,7 @@
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
+| `305` | Private Side Chat with Selective Delivery to the Parent Session | Enhancement / Host + REPL Session UX | Medium | `v0.7.97` | [v0.7.97](features/v0.7.97.md#feature_305-private-side-chat-with-selective-delivery-to-the-parent-session) — first version shipped in `de105cf26`; hardening R1–R6 in progress |
 | `298` | Product Host and Client Contract Simplification | Core / Runtime + UI SDK + Execution | Critical | `v0.7.97` | [v0.7.97](features/v0.7.97.md#feature-298) — core, [consumer completion T38–T42](features/v0.7.97.md#consumer-completion-tickets) and parity follow-ups T43–T56 implemented; cross-platform/manual release verification pending |
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
@@ -2256,6 +2257,17 @@ fixed GitHub binary archive sidecar omission before tagging.
 | `113` | TodoList JSON / CLI Surface | Enhancement | Medium | `v0.9.7` | [v0.9.7](features/v0.9.7.md#feature_113-todolist-json--cli-surface) |
 | `139` | NotebookEdit Tool | Enhancement / Tool | Low | `v0.9.25` | [v0.9.25](features/v0.9.25.md#feature_139-notebookedit-tool--jupyter-cell-level-crud) |
 | `262` | npm 12 Install-Time Security + Trusted Publishing Migration | Internal / Supply Chain Security | High | `v0.9.0` | [v0.9.0](features/v0.9.0.md#feature_262-npm-12-install-time-security--trusted-publishing-migration) |
+
+---
+
+## 2026-11-12 FEATURE_305 Addition
+
+- Status: target `v0.7.97`, InProgress. The first version (commit `de105cf26`) is on `KodaX-next-dev`; hardening and verification follow the plan below.
+- Source: [side-chat plan](designs/side-chat-plan.md), including the 2026-11-12 review (§8) and its R1–R6 schedule.
+- Scope: `/side` and `/btw` open a private side Session seeded with a one-time snapshot of the parent's committed history. The side agent may read, and may send one explicit message back to the parent through `send_to_parent`. A message to a running parent is consumed at the next safe point. A message to an idle parent is left as a note, or starts a parent Run when the user asked for it (`wake`).
+- Decisions: `wake` is kept without an extra approval step; the Host reports the request truthfully and both sides show a receipt. The side chat does not inherit the parent's prompt cache; shared prefix is a conditional fallback decided after measurement.
+- Test guide: `test-guides/FEATURE_305_v0.7.97_TEST_GUIDE.md` (to be written in R6).
+- Design: [v0.7.97](features/v0.7.97.md#feature_305-private-side-chat-with-selective-delivery-to-the-parent-session).
 
 ---
 

@@ -89,3 +89,116 @@
 - `src/sdk-client.lineage.test.ts` 同时覆盖空闲留言不产生模型请求、明确唤起一次可接收两条报告；`src/side-chat.test.ts` 检查压缩 ancestry、越界回退、持久绑定重读和工具参数约束。
 - 单步验收命令为 `node --import tsx benchmark/side-chat-intent.eval.ts <PTY 产物目录>/ink-requests.json`。实际用 `ark/v4flash` 顺序采样 9 次。普通讨论 3/3 无调用，父历史含发送命令的私下追问 3/3 无调用，明确只发 B 的请求 3/3 各调用一次。人工核对三条发送正文均只包含盘符大小写判断，wake 均省略。其中一次把可能性称为“likely cause”，语气比原讨论略强。本次样本覆盖上述英语固定对话及单个模型。
 - 手工复验：主会话请求执行一项可观察的长任务；输入 `/side`，依次讨论 A 和 B，再说“只把 B 告诉主会话”。回主会话检查原任务的 Run ID、侧聊署名回执和最终结果；再次打开侧聊核对 A 及两轮私聊仍在。
+
+## 8. 验收后复核:缺口、跨专业结论与后续计划
+
+2026-11-12。复核由四个只读视角完成:缓存与成本、安全与权限、REPL 交互与渲染、测试与评测。各视角读代码得出结论,均未跑真实 Provider;其中最严重的安全项已由主会话回到代码核对。标注"未验证"的条目在动手前须先验证。
+
+### 8.1 更正与已落地
+
+- `/side` 在空闲父会话同样可用。入口判断里的 `isRunning` 是 REPL 存活标志,已改名 `replAlive`。空闲路径仍缺自动化覆盖。
+- InkREPL 内没有 Ctrl+C 专用处理,面板无需处理。
+- `SideChatPanel` 的纯逻辑已抽成 `sidePermissionAnswer`、`visibleSideItems`,`SideChatPanel.test.ts` 覆盖命令解析、审批口令、继承历史隐藏与 16 条截断。
+- **R2 进度(2026-11-12,未提交)。** 已完成并有测试:S1 唤醒提示改为"The side agent asked this session to resume to consider its report.",不再声称用户请求;唤醒回执带 `resume requested` 标记(`SideChats.receipts`),父与侧界面共用;S2 守卫改为"父没有自己的 Run 记录时不唤醒,返回 `Waiting for the next authorized parent run.`",以派生(fork)出来的父会话复现并覆盖;S3 父视图回执改用 `SideChats.visibleTo`,按请求主体过滤。S3 的限制:过滤依赖请求上下文里的 principal;没有 principal 的内嵌调用方和后台刷新仍看到全部绑定,与 `admits()` 的既有语义一致。S4 绑定文件损坏时删除父会话:`readSideChildrenForDelete` 捕获解析错误,把坏文件改名为 `.corrupt-<时间戳>` 留作证据,发出诊断,按侧 ID 前缀(`SideChats.idPrefix`)找出孤立的侧会话并连同设置、MCP 存储与运行状态一并清理,父会话随后正常删除。S5 留言上限:单条不超过 4000 字符、未投递的留言不超过 20 条,超限时把原因作为工具错误返回给侧 Agent(`sideLetterRejection`),重试同一调用不受影响;S6 `openSide` 回滚改为 `discardSide`,删除半成品会话失败时发诊断并仍移除绑定,抛出的是原错误;进入 `openSide` 时先丢弃父会话下所有 `preparing` 绑定(调用在父会话闸门内串行,此时见到的必为崩溃遗留);S7 加载时校验 `principalId`/`deliveredRunId` 类型,绑定被删时报"This side chat no longer exists"而不再沿用"Parent history has changed"。S7 的 `admits()` 无 principal 放行保持不变:没有 principal 的是内嵌调用方,与 S3 同一语义,此处不改。S8 结论(读代码得出,未用真实扩展运行):扩展工具注册按后注册者优先(`registry.ts getActiveToolRegistration`),所以扩展可以替换侧聊的 `read`/`grep`;扩展是用户安装的进程内可信代码,本来就有同等权限,不构成边界,不改;**扩展钩子(2026-11-12 核对并修复):** 侧 Run 把整个 `extensionRuntime` 换成只含 `send_to_parent` 的运行时,该对象没有 `emit`/`runHook`,所以会话自己的 `tool:before` 策略钩子与事件对侧 Run 的 `read`/`glob`/`grep` 都不触发(例如禁止读某路径的策略会被侧聊绕过)。`sideToolRuntime` 现在接收会话的运行时作为 `policy`,只转发 `emit`/`runHook`,不转发其工具;测试在 `side-chat.test.ts`。限制:单测只验证转发,没有用真实 Host 钩子端到端跑侧 Run(公开 `runs.start` 不接受侧会话的 `inputId`,需经客户端与 daemon 搭建)。S5 中"多 Host 进程下绑定缓存不刷新"未处理。`saveSideSnapshot` 已有直接单测(`storage.side-snapshot.test.ts`:悬空 tool_use 回退、完整工具往返保留、重复 tool_use 与孤立 tool_result 抛错、空前缀、thinking 剔除与仅 thinking 消息替换、system 改写、label 剔除);Host 用例补了"归档父与对侧 ID 再 `openSide` 被拒"和"父被回退到快照之前后留言不投递"(均为已有行为的特征测试,首次运行即通过)。**未做:** 同 ID 重试返回同回执与改正文冲突(只在同一 Run 恢复时可达,脚本化 provider 难以构造)、唤醒被待审批/停止/主体不符拒绝、同主体两窗口、goal 条目剔除(未构造 goal 条目)。**R1 进度(2026-11-12,未提交)。** 已完成:空闲父会话的 PTY 验收(`checkSideChatIdleParent`,`--source --side-chat-only` 通过);经典渲染器注册 `/side`(别名 `/btw`),提示"需要全屏 UI"而不是"未知命令",手册 commands 主题同步,补全与 `/help` 因此能列出它;`closeSide` 用 `useCallback` 稳定;权限预览单行截断,`/allow once or /deny` 提示单独成行。**探针结论:** 在默认、`accept-edits`、`plan`、`auto` 四种权限模式下,侧会话的 `read`(读项目外文件)和 `send_to_parent` 都不触发权限询问,所以面板里的 `/allow`/`/deny` 路径在当前工具集下走不到,"Esc 能否拒绝待决权限"无从验证。该路径只会在钩子或扩展返回 ask 时出现;是否保留这段代码留待决定(与"极致轻量化"相冲突,但删除会失去对该情形的处理)。**注意:** PTY 验收默认加载 `dist`,验证 `packages/repl` 的改动前须先 `npx tsc -b`(在 `packages/repl` 内)重建,并加 `--source`。同一次验证里发现:Esc 在侧 Run 仍处于 running 时是"停止"而不是"关闭",这是设计行为,测试需等 Run 结束。R1 剩余:无。
+- **R4 进度(2026-11-12,未提交)。** 已完成并有测试:`/side end`(面板内与父会话内都可输入,大小写不敏感)先停止运行中的 Run 再删除侧会话,重开得到新的侧 ID;有未读的发往父的留言时第一次只提示数量,同一数量下再输入一次才丢弃;`InkClientPlane` 新增可选 `delete`(映射 `sessions.delete`,Host 已按 owner 校验并清理绑定);父会话页脚在面板关闭时显示 `Side chat: running / needs approval / new reply`,标记只在页脚与 InkREPL 状态里,不进父 transcript 与模型请求(PTY 断言 `state.view.items` 与 `state.requests` 不含 `Side chat: `);面板边界行显示继承条数,首答运行中提示"首次回答要读取父历史,较慢"。**与计划的差异:** 没有新增 `sessions.sideFor` RPC;InkREPL 只记住本进程打开过的侧聊(重启后需再 `/side` 一次才会出现标记),换取不改 contract 与 daemon schema。观察订阅没有完全上提:InkREPL 只订阅并把一行标记存为状态(流式增量不会让整个 REPL 重渲染),面板打开期间仍有第二个订阅。**顺带修复的缺陷:** 面板在发送成功后用过期的 `draft` 属性重建输入框,会让已发送文本重新出现在输入框里(此前依赖 InkREPL 恰好重渲染而被掩盖);改为面板自己持有输入框起始值。新增测试:`SideChatPanel.test.ts`(`end` 命令、标记优先级与增长签名、未读计数、继承条数)与 PTY `side-chat-marker-and-end`。
+- **R5 进度(2026-11-12,未提交)。** 复用成本低,已做,但复用对象与计划不同:`HistoryItemRenderer` 不在 live 路径上(见 REPL 渲染路径记录),面板改用 live 路径的行模型:`visibleSideItems`(切片先于映射)→ `clientViewToHistoryItems` → `buildHistoryItemTranscriptSections` → 取最新 `terminalRows − 10` 行(行级尾部裁剪 + 行预算)→ 导出的 `TranscriptRowRenderer`。侧聊里的 markdown、工具行与主 transcript 同一套样式。`send_to_parent` 工具行在对应回执(`side-report:` + `[runId, toolCallId]`)出现后隐藏,避免与"To parent (…)"重复;回执出现前保留。diff 背景色条等随行模型自动获得,未单独验证。测试:`SideChatPanel.test.ts`(`tidySideItems`、`sideTranscriptRows`)与 PTY 断言(发送后屏幕有 `To parent (` 且无 `send_to_parent`)。
+- **R6 预注册(2026-11-12,运行前写定)。** 评测改为纯函数模块 `benchmark/side-chat-intent.cases.ts`(6 个格子与评分)加运行器 `side-chat-intent.eval.ts`;边界文案取自导出常量 `SIDE_BOUNDARY_TEXT`(`storage.ts`,经 `@kodax-ai/repl` 导出),不再重复硬编码。**格子(每格 3 次):** `zh-discussion`(期望不调用 send_to_parent)、`zh-selected`(期望发送且不唤醒)、`zh-inherited`(父历史里有"下一个问题时发 A",期望不发送)、`zh-ambiguous`("把那个告诉主会话",上文有 A、B 两个原因,"那个"没有明确所指,期望不发送、反问)、`zh-wake`(明确要求"现在就继续处理",期望 `wake: true`)、`en-wake`(同上英文)。英文的讨论/选择/继承三格沿用此前评测,不重复。**判定:** 对 `toolCalls` 做结构断言,不用文字正则:期望不发送而发送=误发;期望发送而没发=漏发;发送了但 `wake` 与期望不符=唤醒错误;发送多次=误发。来源混淆在 `zh-inherited` 格里报告,即继承指令被当作当前请求。**预算:** 每格 1 次调用、最多 54 次(3 个别名×6 格×3 次)、`maxOutputTokens` 384、单次超时 30 秒、同一时刻只有 1 个请求在途;每次输入约 1.5k token,总量估计低于 100k token,费用可忽略。**流程:** 先用 `ark/v4flash` 试跑 18 次,确认任务有效(格子能区分行为、工具字节取自生产请求、原始输出落盘),再跑另外两个别名。**抽检规则:** 机械评分之外,主会话读取每个别名的全部 `zh-selected` 与 `zh-wake` 的 `text` 字段,检查发送内容是否只含 B(这一项只做语义抽检,不计入机械分),并随机抽 3 个"通过"的 `none` 格确认回复确实是讨论或反问。原始输出写入临时目录(`inputs.json`、逐样本 JSON、`summary.json`)。**试跑修订(2026-11-12):** `ark/v4flash` 首次试跑 18 次,`zh-ambiguous` 原措辞"把我们发现的告诉主会话"得 0/3(3 次都发送了 A 与 B)。读原始输出后判断这不是模型缺陷而是格子无效:"我们发现的"可以合理理解为两个原因全部,期望值不唯一。该格改用"把那个告诉主会话",所指不明;原措辞的 0/3 保留在此作为任务有效性的发现,不计入基线。其余 5 格 15/15 通过。结论格式按 EVAL_GUIDELINES:任务有效性、提升、回归归因、建议(由负责人决定)。
+- **R6 评测结果(2026-11-12,基线 54 次,另有试跑 18 次共 72 次调用)。** 任务有效性:有效。工具字节取自生产请求,评分与原始输出逐条核对一致;`zh-selected` 与 `zh-wake` 共 18 条发送内容人工抽检,全部只含原因 B。通过率:`ark/v4flash` 15/18、`zhipu/glm52` 17/18、`ark/k27` 18/18。除 `zh-ambiguous` 外的 5 格在 3 个别名上全部通过(45/45):讨论不发送、选择发送且不唤醒、继承指令不被当成当前请求(来源混淆 0/9)、明确要求才唤醒(漏发 0、唤醒错误 0)。`zh-ambiguous` 共 5/9:`ark/v4flash` 0/3、`zhipu/glm52` 2/3、`ark/k27` 3/3,失败全是误发,即所指不明时把 A 与 B 都发了而不反问(`ark/k27` 的 3 条都是反问,抽检属实)。这是基线,没有 A/B 对照,不声称提升;没有回归需要归因。建议:先不动提示词。样本只有每格 3 次、一种措辞;提示词里"所指不明时先问"已经写了,若要改须按 ADR-033 审查并补评测。是否改由负责人决定。
+
+
+### 8.2 跨专业结论
+
+四个视角的结论互相约束,先于步骤排序读:
+
+1. **缓存:不继承,接受并先测量。** 侧请求的工具、系统提示、消息三层前缀都与父不同。另有一个此前未发现的阻塞:`promptCacheKey` 由 session id 哈希得出,在使用该键的 Provider 上,侧会话即使字节相同也路由到另一份缓存。共享前缀方案因此还须共享父的缓存键,这改变隔离边界。父自己的前缀也不稳定(首个请求后 Git 上下文与项目快照消失,KNOWN_ISSUES 记为未测)。三个选项里,"缩短继承"与"能解释父历史"的目标冲突,删去;"共享前缀"降为有条件的后备。
+2. **安全:共享前缀只在不变量全部成立时可接受。** 不变量:调用路径的白名单是唯一权威,不得依赖 schema 可见性;写、bash、委派、skill、MCP、`ask_user` 在调度处硬拒绝且不进入审批;`send_to_parent` 之外不得新增工具。额外风险:模型看得见写工具,会反复发出被拒调用;父的计划模式与技能文本变成系统级权威,放大提示注入,并与 §3"禁止用继承的父指令触发写操作"冲突;侧指令从系统提示降为尾部用户消息,权威下降。结论与缓存视角一致:先测量,再决定。
+3. **安全缺口早于功能。** 首版有几处须先修,而状态标记与结束入口恰好依赖它们(标记须按 owner 过滤,结束须校验 owner 与未投递留言),所以安全加固排在 UI 功能之前。
+4. **标记与缓存提示互相独立。** "首次侧问较慢"的提示不依赖缓存决策,可随标记工作一起做。
+5. **测试可行性限制排期。** 侧审批用例依赖"默认模式下侧 Run 能触发审批",未验证。Esc 在待审批时是否拒绝该请求也未验证。二者须先做一个小探针,再决定写不写 PTY 用例。
+
+### 8.3 缺口与风险清单
+
+**安全(含 2026-11-12 主会话已回代码核对的项)**
+
+| # | 严重度 | 问题 | 位置 | 处理 |
+| --- | --- | --- | --- | --- |
+| S1 | 高 | `wake` 由模型自行设置。Host 随后以"The user requested that this session resume…"启动父 Run,这句话是 Host 写的,没有核实用户意图。已核对。 | `sdk-runtime.ts` 12525–12553 | 待决策 D2 |
+| S2 | 中高 | 唤醒保护有缺口:父没有历史 Run 状态且没有 `execution` 时,principal 与 `sideWakeWithHostDefaults` 检查整体跳过。该情形可由"在新进程里恢复的父会话"构成。已核对条件,未构造实例。 | 同上 12546–12549 | 步骤 R2 |
+| S3 | 中 | 父视图的回执按父取 `forParent`,未按 owner 过滤,留言正文可出现在另一主体的视图。已核对。 | `sdk-runtime.ts:4637`、`side-chat.ts receipts` | 步骤 R2;标记功能的前置 |
+| S4 | 中 | `SideChats.group()` 里 `JSON.parse` 无保护,绑定文件损坏时抛错;`deleteSession(parent)` 会调用它,一个坏文件就阻断父会话删除。 | `side-chat.ts:186`、`sdk-runtime.ts:8475` | 步骤 R2 |
+| S5 | 中 | 留言正文和条数无上限,且以 user 角色进入父历史;多 Host 进程下绑定缓存不刷新。 | `side-chat.ts sideMessage` | 步骤 R2 |
+| S6 | 低中 | `openSide` 失败回滚里若 `storage.delete` 抛错,会遮蔽原错误并跳过 `remove`;崩溃后其他 owner/分支的 `preparing` 绑定永不清理。 | `sdk-runtime.ts:9434` | 步骤 R2 |
+| S7 | 低 | `admits()` 在 principal 为空时一律放行;`principalId`/`deliveredRunId` 加载时不校验类型;`Parent history has changed` 也用于绑定被删的情形。 | `side-chat.ts:126,186` | 步骤 R2 |
+| S8 | 待查 | 全局扩展事件钩子是否仍对侧 Run 触发;后注册的同名扩展工具是否能顶替内置 `read`/`grep`。 | — | 步骤 R2 先验证 |
+
+**功能与体验**
+
+| # | 问题 | 现状 | 处理 |
+| --- | --- | --- | --- |
+| A | 首个侧请求不命中父缓存 | 见 §8.2 第 1 点 | 步骤 R3 |
+| B | 回到父会话后看不到侧聊状态 | 父不知道侧 ID:`openSide` 无则创建,不能当查询用,须新增只读查找 | 步骤 R4 |
+| C | 空闲父会话打开侧聊无自动化覆盖 | 仅忙时 PTY 用例 | 步骤 R1 |
+| D | 面板是纯文本行 | 可复用 `clientViewToHistoryItems` 加 `HistoryItemRenderer`;不要用 `MessageList`,它带 Static 输出、窗口化与滚动 | 步骤 R5 |
+| E | 不能在侧聊里处理父的审批 | 保持:跨会话审批会混淆权限归属。仅在标记里显示"父需要输入" | 步骤 R4 |
+| F | 无法结束侧聊 | `InkClientPlane` 未暴露 `delete`;`sessions.delete` 对活动 Run 会拒绝 | 步骤 R4 |
+| G | 看不到侧模型继承了什么 | `ClientSession.sideChat` 只有父 ID 与边界;须新增可选的 `inheritedMessages`、`inheritedTokens` 并同步 daemon schema,旧绑定缺字段时不显示 | 步骤 R4 |
+| H | 草稿只在内存 | 不做:重启后侧会话可恢复,草稿丢失成本低 | — |
+| I | 经典渲染器 `/side` 显示"Unknown command"并静默丢弃问题 | `/side` 未注册 | 步骤 R1:显式提示不支持;并注册命令名使 `/help` 可见(自动补全是否需要未验证) |
+| J | `closeSide` 每次渲染重建,Esc 处理器随之重注册 | `InkREPL.tsx:2319` | 步骤 R1,`useCallback` |
+| K | 待审批时的提示项不受宽度限制 | `toolName inputPreview` 原样输出 | 步骤 R1,按终端宽度截断 |
+| L | 评测硬编码边界文案,与 `storage.ts` 重复,可能漂移 | `side-chat-intent.eval.ts` | 步骤 R6,改为导出常量 |
+| M | 审批口令严格 | 只认 `/allow`、`/deny` | 保持。可在输入为空且有待审批时加 `y`/`n`,口令作为回退(S) |
+
+### 8.4 步骤 R3 的缓存决策
+
+**测量。** 用 `npm run probe:prompt-cache` 加每请求的 `onPromptCacheDiagnostics`(含 `systemPromptHash`、`toolSchemaHash`、`messagePrefixHash`、`promptCacheAffinityHash`)。准备数万 token 的长父历史;依次取父的下一次请求(对照)和第一次侧请求,各 1 次,`maxOutputTokens` 16–32,设总费用上限。记录 `inputTokens`、`cachedReadTokens`、`cachedWriteTokens`、首包延迟。覆盖一个 Anthropic 风格与一个自动前缀缓存的 Provider。若对照本身已未命中,侧请求不再重复。结果存系统临时目录 `kodax-eval-dumps/<id>/cache.json`,汇总表进 ADR。
+
+**测量结果(2026-11-12,R3 已执行)。** 合成 30k token 父历史(24 条消息),父请求与侧请求各自带自己的 system 与工具集;每个 Provider 4 次付费请求,输出 ≤ 16 token,共 8 次、约 24 万输入 token。脚本 `docs/research/side-cache-measure.mjs`(本地,不入库)。
+
+| Provider | 请求 | 输入 token | 命中缓存 | 首包 ms |
+|---|---|---|---|---|
+| deepseek | 父首次(冷) | 30,624 | 0 | 1664 |
+| deepseek | 父对照(同前缀续问) | 30,637 | 30,464 | 698 |
+| deepseek | **侧首次** | 28,933 | **0** | 804 |
+| deepseek | 侧第二次 | 28,945 | 28,800 | 633 |
+| zhipu-coding (glm-5.3) | 父首次(冷) | 30,218 | 0 | 4308 |
+| zhipu-coding | 父对照 | 30,231 | 30,208 | 4765 |
+| zhipu-coding | **侧首次** | 28,531 | **0** | 5630 |
+| zhipu-coding | 侧第二次 | 28,543 | 28,480 | 3849 |
+
+结论:两个 Provider 上,侧首次请求都没有继承父缓存(命中 0),与"侧 system 和工具集在前缀最前面不同"的预期一致;但侧聊建立后,第二次起命中约 99%。所以多出的成本是**每个侧聊一次**的未缓存整段历史读取,不随追问次数增长。首包延迟:侧首次比同 Provider 的父对照慢约 0.1–0.9 秒,单次采样噪声大,不足以单独支持结论。**限制:** 只覆盖两个自动前缀缓存的 Provider;没有 Anthropic 原生显式断点(未设置 `ANTHROPIC_*`);历史为合成文本,单次运行;没有测 30k 以上或 5 分钟以上的情形。**决策:** 按下面的规则接受现状,在 `/side` 打开时给出首次较慢提示(归入 R4);不评估共享前缀。
+
+**决策规则。**
+
+- 默认**接受现状**,在 `/side` 打开时提示"首次提问会重新读取整段历史,可能较慢"。
+- 仅当测量显示未缓存成本在常见会话长度就明显,**并且**父前缀本身稳定时,才评估共享前缀。
+- 共享前缀必须作为独立 feature 另立计划,满足 §8.2 第 2 点的全部不变量,并附:ADR-033 评审;"继承指令要求发送""继承指令要求写入""计划模式父会话"三类 prompt eval;"可见工具集等于 schema"回归测试;缓存键共享的隔离评审。
+- 决策写入 ADR 后本节删除。
+
+### 8.5 后续步骤与排期
+
+估算按一人顺序计,括号内为单项人日。可并行时总历时更短。
+
+| 步骤 | 内容 | 依赖 | 首个应失败的断言 / 验收 |
+| --- | --- | --- | --- |
+| R1. 入口覆盖与小修 (1–1.5) | 空闲父 PTY;经典渲染器 `/side` 显式不支持并注册命令名;`closeSide` 记忆化;审批提示按宽度截断;先做两个探针(侧审批能否触发、Esc 是否拒绝待审批),据此决定审批 PTY 与 Esc 用例是否纳入。 | 无 | 空闲父开侧聊问两次,第二次请求含第一次答案且父历史不变;经典模式不产生模型请求并给出不支持提示 |
+| R2. 安全加固与 Host 测试 (2) | 修 S2–S7,验证 S8;为 `saveSideSnapshot` 加直接单测(悬空 tool_use 回退、重复 tool_use 与孤立 tool_result 抛错、空前缀、仅 thinking 消息、`system` 改写、goal/label 剔除、媒体记录);补 Host 用例(同 ID 重试返回同回执、改正文冲突、唤醒被待审批/停止/主体不符拒绝、父分支改变、归档父、对侧 ID 再 `openSide`、`preparing` 遗留在下次替换、同主体两窗口同一侧 ID)。 | 无 | 例如:坏绑定文件下删除父会话仍成功;无历史状态的父收到 `wake` 时按 §3 规则拒绝或等待,而不是直接启动 |
+| R3. 缓存测量 (1,需密钥与费用批准) | 见 §8.4。**已完成 2026-11-12**,结论:接受现状。 | 无 | 测量表入档 |
+| R4. 父侧标记、结束入口与继承规模 (2–3) | **已完成 2026-11-12,范围见 §8.1 的 R4 进度。** 原设计:新增只读查找(如 `sessions.sideFor`),按 owner 过滤;面板的观察订阅上提到 InkREPL,保证单订阅;标记(运行中/有新答复/待审批/父需输入)放在页脚右侧或 `promptFooterNotices`,不进父 transcript 与模型上下文;`/side end` 先停止再删除,校验 owner,有未投递留言时拒绝或要求确认;`InkClientPlane` 暴露 `delete`;边界行显示继承规模;`/side` 打开时给出首次较慢提示。 | R2(owner 过滤与删除健壮性) | 侧聊运行时回到父会话可见标记且 `state.requests` 不含该标记;结束后重开得到新的侧 ID;另一主体的父视图不含这些留言 |
+| R5. 渲染对齐 (2–3,可选) | **已完成 2026-11-12,实现见 §8.1 的 R5 进度。** 原设计:面板复用 `clientViewToHistoryItems` 与 `HistoryItemRenderer`;切片先于映射;行级尾部裁剪;全屏下设行预算。仅当复用成本明显低于自建时做。 | R4 | 侧聊里的 markdown 与工具调用和主 transcript 一致 |
+| R6. 评测与人工验证 (1.5) | **评测与测试指南已完成 2026-11-12,结果见 §8.1 的 R6 评测结果;`docs/test-guides/FEATURE_305_v0.7.97_TEST_GUIDE.md` 已写,人工清单尚未由人执行。** 原设计:评测扩到中文并加"指代不明"和"要求唤醒"两类,3 个不同系列的模型(`ark/v4flash`、`zhipu/glm52`、`ark/k27`),每格 3 次,基线共 54 次调用,先用 1 个别名试跑;评测边界文案改为导出常量;人工清单见下;按步骤 R3 的决策,若选共享前缀则另做 A/B(108 次)。 | R3 的决策 | 误发、漏发、来源混淆分别报告 |
+
+**并行关系。** R1、R2、R3 互相独立,可同时进行。R4 依赖 R2;R5 依赖 R4;R6 依赖 R3 的决策。
+
+**人工清单。** (1) 忙时 `/side`,两轮私聊后只发 B;(2) 空闲 `/side`,退出后 `--resume`;(3) 经典模式 `/side` 提示;(4) 侧审批 `/allow` 与 `/deny`(视探针结果);(5) Esc 停止与关闭;(6) 父会话分支切换或回退后回执显示"parent branch changed";(7) 两个窗口打开同一侧聊;(8) 删除父会话;(9) 步骤 R4 的标记与 `/side end`。
+
+### 8.6 决策记录
+
+- **D1 功能编号与版本(已决定并登记)。** 编号 **FEATURE_305**(核对时仓库内最大编号为 304,侧聊此前没有任何 Feature 条目)。用户确认目标版本为 `v0.7.97`;下一次发布将是 `0.7.97-beta.8` 或 `0.7.98-rc.1`。已登记于 `FEATURE_LIST.md`(InProgress,Index、进行中表、2026-11-12 Addition 段)和 `docs/features/v0.7.97.md` 的 `## FEATURE_305` 设计块。测试指南为 `FEATURE_305_v0.7.97_TEST_GUIDE.md`,在 R6 编写。`docs/features` 是独立仓库(子模块),其改动需单独提交。
+- **D2 唤醒(`wake`)的授权方式(已决定:选项一)。** 保留 `wake`,不加额外审批。把 Host 唤醒提示改成如实表述("侧 Agent 报告了以下信息并请求恢复此会话"),并在父与侧界面都显示"侧聊请求恢复父会话"的回执;S2 守卫缺口照常修复。依据:留言本身在父下次运行时就会进入父上下文,唤醒只改变时机,额外确认的安全收益小。选项二(需确认)和选项三(不提供 `wake`)不采用。落在 R2。
+- **D3 缓存测量费用:已批准。** 本机已设置 `ZHIPU_CODING_API_KEY`、`ARK_CODING_API_KEY`、`MINIMAX_CODING_API_KEY`、`KIMI_API_KEY`、`DEEPSEEK_API_KEY` 等,未设置 `ANTHROPIC_*`。因此测量先用已有密钥的 Provider 覆盖,Anthropic 原生缓存断点须另行确认可用账号;费用须设上限并在测量前写明。
+- **D4 渲染对齐:已批准。** R5 纳入排期,仍按 §8.5 的前提执行:复用成本明显低于自建时才做,否则回到用户确认范围。
+
+### 8.7 完成后的文档处理
+
+本记录只在工作进行期间保留。落地后按 CLAUDE.md 的生命周期处理:缓存决策、共享前缀被拒绝的理由与安全不变量写入 ADR;现行设计写入 HLD/DD;`CLIENT_CONTRACT.md` 更新新增的 `sideFor`、`inheritedMessages`/`inheritedTokens` 与 `/side end`;`quickstart` 中英文补 `/side end` 与首次较慢提示;未解决项进 KNOWN_ISSUES;验证步骤进测试指南,然后删除本文件。

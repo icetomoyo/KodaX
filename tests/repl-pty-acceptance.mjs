@@ -960,6 +960,8 @@ async function checkSideChat(state) {
     assert.ok(JSON.stringify(follow.messages).includes('END_ACCEPT_SIDE_PRIVATE'));
     await state.terminal.submit('ACCEPT_SIDE_SEND');
     await waitFor('side agent reports the delivery', () => state.terminal.screen().includes('END_ACCEPT_SIDE_SEND'));
+    await waitFor('the send_to_parent row gives way to its receipt', () => state.terminal.screen().includes('To parent (')
+      && !state.terminal.screen().includes('send_to_parent'));
     await waitFor('parent observer sees only the selected queued report', () =>
       state.view.items.some(item => item.text === 'From side chat (queued): Selected conclusion B'));
     assert.equal((await state.client.runs.read(parentRunId)).phase, 'running');
@@ -975,6 +977,54 @@ async function checkSideChat(state) {
   await waitFor('original parent run completion', async () => (await state.client.runs.read(parentRunId)).phase === 'completed');
   await waitFor('parent delivery receipt', () => state.view.items.some(item => item.text === 'From side chat (delivered): Selected conclusion B'));
   assert.ok(!JSON.stringify(state.view.items).includes('ACCEPT_SIDE_FOLLOWUP'));
+}
+
+// An idle parent: the side panel opens on its own, Esc closes it, and the parent never starts a Run.
+async function checkSideChatIdleParent(state) {
+  const parentRuns = () => state.view.runs.length;
+  const before = parentRuns();
+  await state.terminal.submit('/btw ACCEPT_SIDE_IDLE');
+  await waitFor('idle-parent side answer', () => state.terminal.screen().includes('END_ACCEPT_SIDE_IDLE'));
+  assert.ok(state.terminal.screen().includes('/side to return'));
+  // While the Run is still finishing, Esc stops it instead of closing the panel.
+  await waitFor('side Run finished', () => !state.terminal.screen().includes('Side agent running'));
+  await state.terminal.type('');
+  await waitFor('Esc closes an idle side panel', () => !state.terminal.screen().includes('/side to return'));
+  assert.equal(parentRuns(), before, 'Opening and closing a side chat must not start a parent Run');
+  await state.terminal.submit('/side');
+  await waitFor('side chat reopens with its history', () => state.terminal.screen().includes('END_ACCEPT_SIDE_IDLE'));
+  await state.terminal.submit('/side');
+  await waitFor('parent focus restored again', () => !state.terminal.screen().includes('/side to return'));
+}
+
+// The parent footer shows the side chat's status without touching the parent transcript or provider
+// requests, and /side end discards the chat so the next /side starts from a new one.
+async function checkSideChatMarkerAndEnd(state) {
+  const sideRequests = () => state.requests.filter(r => JSON.stringify(r.messages).includes('ACCEPT_SIDE_'));
+  await state.terminal.submit('/btw ACCEPT_SIDE_HOLD');
+  await waitFor('held side reply streaming', () => state.terminal.screen().includes('BEGIN_ACCEPT_SIDE_HOLD'));
+  await state.terminal.submit('/side');
+  await waitFor('panel closed while the side Run continues', () => !state.terminal.screen().includes('/side to return'));
+  await waitFor('running marker in the parent footer', () => state.terminal.screen().includes('Side chat: running'));
+  state.pending.get('ACCEPT_SIDE_HOLD')();
+  await waitFor('new reply marker in the parent footer', () => state.terminal.screen().includes('Side chat: new reply'));
+  assert.ok(!JSON.stringify(state.view.items).includes('Side chat: '), 'The marker must stay out of the parent transcript');
+  assert.ok(!state.requests.some(r => JSON.stringify(r.messages).includes('Side chat: ')), 'The marker must stay out of model requests');
+  await state.terminal.submit('/side');
+  await waitFor('panel reopened', () => state.terminal.screen().includes('/side to return'));
+  await waitFor('reply visible after reopening', () => state.terminal.screen().includes('END_ACCEPT_SIDE_HOLD'));
+  await state.terminal.submit('/side end');
+  await waitFor('side chat ended from its panel', () => !state.terminal.screen().includes('/side to return'));
+  await state.terminal.submit('/side ACCEPT_SIDE_AFTER_END');
+  await waitFor('answer from the new side chat', () => state.terminal.screen().includes('END_ACCEPT_SIDE_AFTER_END'));
+  const fresh = sideRequests().find(r => JSON.stringify(r.messages).includes('ACCEPT_SIDE_AFTER_END'));
+  assert.ok(!JSON.stringify(fresh.messages).includes('END_ACCEPT_SIDE_HOLD'), 'A new side chat must not inherit the ended one');
+  await waitFor('side Run finished', () => !state.terminal.screen().includes('Side agent running'));
+  await state.terminal.submit('/side');
+  await waitFor('parent focus restored', () => !state.terminal.screen().includes('/side to return'));
+  await state.terminal.submit('/side end');
+  await state.terminal.submit('/side end');
+  await waitFor('nothing left to end', () => state.terminal.screen().includes('There is no side chat to end.'));
 }
 
 async function checkQueueModelBoundary(state) {
@@ -1482,6 +1532,8 @@ async function run(mode) {
     await check(state, 'startup', checkStartup);
     if (sideChatOnly) {
       await check(state, 'concurrent-side-chat-selective-relay', checkSideChat);
+      await check(state, 'idle-parent-side-chat', checkSideChatIdleParent);
+      await check(state, 'side-chat-marker-and-end', checkSideChatMarkerAndEnd);
       await check(state, 'exit', checkExit);
       return;
     }

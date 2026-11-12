@@ -51,6 +51,8 @@ export interface ClientRoundOutcome {
 
 export interface InkClientPlane {
   openSide?(sessionId: string): Promise<import("@kodax-ai/coding/client-contract").ClientSession>;
+  /** Remove a Session the Host owns; an active Run must be stopped first. */
+  delete?(sessionId: string): Promise<void>;
   executeTool(input: ClientToolInvocationInput): Promise<{ readonly runId: string; readonly sessionId: string }>;
   cancelSession(input: ClientSessionCancelInput): Promise<ClientSessionCancelReceipt>;
   /** Configure the Host-owned Session before starting or changing a round. */

@@ -62,6 +62,7 @@ export function createCliClientPlane(client: KodaXProductClient): InkClientPlane
     updateSettings: (sessionId, patch) => client.sessions.updateSettings(sessionId, patch).then(() => undefined),
     appendNotice: (sessionId, input) => client.sessions.appendNotice(sessionId, input),
     openSide: sessionId => client.sessions.openSide(sessionId),
+    delete: sessionId => client.sessions.delete(sessionId),
     executeTool: input => client.runs.startTool(input),
     cancelSession: input => client.sessions.cancel(input),
     submit: input => client.inputs.submit(input),

@@ -25,7 +25,7 @@ import React, {
   useMemo,
 } from "react";
 import { usePromptHistoryBrowse } from './hooks/usePromptHistoryBrowse.js';
-import { SideChatPanel, sideCommand } from './components/SideChatPanel.js';
+import { SideChatPanel, sideCommand, sideMarker, sideSignature, undeliveredSideReports } from './components/SideChatPanel.js';
 import { useEffortShortcut } from './hooks/useEffortShortcut.js';
 import { capturePromptBrowseAnchor, resolvePromptBrowseAnchor } from './utils/prompt-history-browse.js';
 import { applyClientSessionViewSettings, changedClientSessionSettings, clientSessionSettings } from './client-session-settings.js';
@@ -2177,7 +2177,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     ),
     [options.clientPlane, clientView?.contextBudget, compactionInfo, currentConfig.provider, currentConfig.model],
   );
-  const [isRunning, setIsRunning] = useState(true);
+  const [replAlive, setReplAlive] = useState(true);
   const [showBanner, setShowBanner] = useState(true); // Show banner in Ink UI
   const [submitCounter, setSubmitCounter] = useState(0); // Counter to trigger clear on submit
   const [localCanQueueFollowUps, setCanQueueFollowUps] = useState(false);
@@ -2316,7 +2316,53 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const sideFocused = useRef(false);
   const [sideDraftRestore, setSideDraftRestore] = useState(0);
   const sideDrafts = useRef(new Map<string, string>());
-  const closeSide = () => { sideFocused.current = false; setSideFocus(undefined); };
+  const closeSide = useCallback(() => { sideFocused.current = false; setSideFocus(undefined); }, []);
+  // The side chat this REPL opened for the current parent; it is observed here so the parent
+  // footer can show its status while the panel is closed.
+  const [knownSide, setKnownSide] = useState<import('@kodax-ai/coding/client-contract').ClientSession>();
+  const [sideNotice, setSideNotice] = useState<string>();
+  const sideViewRef = useRef<import('@kodax-ai/coding/client-contract').ClientSessionView | undefined>(undefined);
+  const sideSeen = useRef('');
+  const sideEndArmed = useRef('');
+  const parentSide = knownSide?.sideChat?.parentSessionId === context.sessionId ? knownSide : undefined;
+  const parentSideId = parentSide?.id;
+  useEffect(() => {
+    const plane = options.clientPlane;
+    sideViewRef.current = undefined;
+    if (!parentSideId || !plane) { setSideNotice(undefined); return; }
+    let live = true;
+    let unsubscribe: (() => void) | undefined;
+    // Only the one-line marker is state: streaming deltas must not re-render the whole REPL.
+    void plane.observe(parentSideId, next => {
+      if (!live) return;
+      sideViewRef.current = next;
+      if (sideFocused.current) sideSeen.current = sideSignature(next);
+      setSideNotice(sideMarker(next, sideSeen.current));
+    })
+      .then(done => { if (live) unsubscribe = done; else done(); },
+        reason => { if (live) emitInfoItemToCorrectLayer({ type: 'info', text: String(reason) }, 'side-chat'); });
+    return () => { live = false; unsubscribe?.(); };
+  }, [parentSideId, options.clientPlane]);
+  const endSide = useCallback(async (): Promise<string | undefined> => {
+    const plane = options.clientPlane;
+    if (!plane?.delete || !parentSideId) return 'There is no side chat to end.';
+    const unread = undeliveredSideReports(sideViewRef.current?.items ?? []);
+    const armed = parentSideId + ':' + unread;
+    if (unread > 0 && sideEndArmed.current !== armed) {
+      sideEndArmed.current = armed;
+      return unread + ' message(s) to the parent have not been read yet. Run /side end again to discard them.';
+    }
+    try {
+      const run = await plane.activeRun(parentSideId);
+      if (run) { await plane.stop(run); await plane.awaitRun(parentSideId, run); }
+      await plane.delete(parentSideId);
+    } catch (error) { return 'Could not end the side chat: ' + String(error); }
+    sideEndArmed.current = '';
+    sideDrafts.current.delete(parentSideId);
+    closeSide(); setKnownSide(undefined);
+    emitInfoItemToCorrectLayer({ type: 'info', text: 'Side chat ended.' }, 'side-chat');
+    return undefined;
+  }, [options.clientPlane, parentSideId, closeSide]);
   const [transcriptDisplayState, setTranscriptDisplayState] = useState(() => (
     createTranscriptDisplayState(terminalHostProfile, {
       rendererMode,
@@ -4857,6 +4903,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       : clientObservationStatus?.state === 'closed' && clientObservationStatus.reason === 'unavailable'
         ? 'Host observation unavailable; displayed state may be outdated.' : undefined;
     return [...base, ...learningNotices, ...clientPlaneNotices,
+      ...(sideNotice && !sideFocus ? [{ id: 'side-chat', text: sideNotice }] : []),
       ...(observationNotice ? [{ id: 'host-observation', text: observationNotice }] : []),
       ...(shownSandboxNotice ? [{ id: 'sandbox', text: shownSandboxNotice }] : [])];
   }, [
@@ -4868,6 +4915,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     clientObservationStatus,
     shownSandboxNotice,
     displayPendingInputs.length,
+    sideNotice,
+    sideFocus,
   ]);
   const footerNotificationSummary = useMemo(
     () => footerNotifications.map((notification) => notification.text).join(" | "),
@@ -9039,7 +9088,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       await persistContextStateRef.current?.().catch(
         reportBackgroundSessionPersistenceError,
       );
-      setIsRunning(false);
+      setReplAlive(false);
       if (isRawModeSupported && stdin?.isRaw) {
         setRawMode(false);
       }
@@ -9942,7 +9991,13 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     async (payload: PromptSubmitPayload) => {
       const { displayText, fullText, pastedContents } = payload;
       const sideCommandInput = sideCommand(fullText);
-      if (sideCommandInput && isRunning) {
+      if (sideCommandInput?.end && replAlive) {
+        const reason = await endSide();
+        if (reason) emitInfoItemToCorrectLayer({ type: 'info', text: reason }, 'side-chat');
+        setInputText(''); setIsInputEmpty(true); setSubmitCounter(n => n + 1);
+        return;
+      }
+      if (sideCommandInput && replAlive) {
         if (sideFocused.current) return;
         sideFocused.current = true;
         try {
@@ -9955,7 +10010,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               inputId: crypto.randomUUID(), delivery: active ? 'after_turn' : 'immediate' });
           }
           setInputText(''); setIsInputEmpty(true); setSubmitCounter(n => n + 1);
-          setSideFocus(side);
+          setKnownSide(side); setSideFocus(side);
         } catch (error) {
           sideFocused.current = false;
           setInputText(fullText); setSideDraftRestore(n => n + 1);
@@ -9965,7 +10020,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
       // Prevent concurrent execution: ignore input if agent is busy or waiting for tool confirmation
       // Prevent concurrent execution while the agent is busy or awaiting confirmation.
-      if (!fullText.trim() || !isRunning || confirmRequest || uiRequest) return;
+      if (!fullText.trim() || !replAlive || confirmRequest || uiRequest) return;
       promptBrowse.reset();
       clearTranscriptMouseSelection();
       scrollTranscriptToBottom();
@@ -11513,7 +11568,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       }
     },
     [
-      isRunning,
+      replAlive,
       context,
       currentConfig,
       canQueueFollowUps,
@@ -11914,7 +11969,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     : promptFooterSurface;
   const shouldFillShellHeight = fullscreenPolicy.enabled && useRendererViewportShell;
   const shellBody = sideFocus && options.clientPlane ? (
-    <SideChatPanel key={sideFocus.id} session={sideFocus} plane={options.clientPlane}
+    <SideChatPanel key={sideFocus.id} session={sideFocus} plane={options.clientPlane} end={endSide}
       parentNeedsInput={Boolean(confirmRequest || uiRequest || clientView?.interactions.length)}
       draft={sideDrafts.current.get(sideFocus.id) ?? ''}
       saveDraft={value => sideDrafts.current.set(sideFocus.id, value)} close={closeSide} />

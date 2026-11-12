@@ -12,7 +12,7 @@ import type { ClientLineageSummary, ClientSessionView } from '@kodax-ai/coding/c
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { FileSessionStorage } from '@kodax-ai/repl';
 import { createSessionLineage, applySessionCompaction, COMPACTION_SUMMARY_PREFIX, COMPACTED_HISTORY_RECOVERY_GUIDANCE, getSessionMessagesFromLineage } from '@kodax-ai/agent';
-import { SideChats } from './side-chat.js';
+import { MAX_SIDE_LETTER_CHARS, SideChats, sideRequester } from './side-chat.js';
 import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
@@ -423,4 +423,156 @@ it('rewinds the head through the Host without dropping entries', async () => {
   await runtime.runs.await(next.runId!);
   const tail = await first.sessions.readLineage(session.id);
   expect(tail!.activeEntryId).not.toBe(rootId);
+}, 60_000);
+
+it('tells the woken parent the side agent asked to resume instead of claiming the user did', async () => {
+  const parent = await first.sessions.create({ projectPath: homeDir });
+  await runtime.sessions.updateSettings(parent.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runRound(parent.id, 1);
+  const side = await first.sessions.openSide(parent.id);
+  sideScript = async (messages, _tools, system) => {
+    requests.push(structuredClone(messages));
+    if (system.includes('independent side conversation') && messages.at(-1)?.content === 'Send and resume') {
+      return { thinkingBlocks: [], textBlocks: [], toolBlocks: [{ type: 'tool_use', name: 'send_to_parent',
+        id: 'send', input: { text: 'Check drive letters', wake: true } }], stopReason: 'tool_use' };
+    }
+    return { thinkingBlocks: [], textBlocks: [{ type: 'text', text: 'Done' }], toolBlocks: [], stopReason: 'end_turn' };
+  };
+  const receipt = await first.inputs.submit({ sessionId: side.id, inputId: 'wake', text: 'Send and resume' });
+  expect((await runtime.runs.await(receipt.runId!)).phase).toBe('completed');
+  await expect.poll(() => requests.some(messages => messages.some(m => m._source === 'side-chat'))).toBe(true);
+  const woken = JSON.stringify(requests.find(messages => messages.some(m => m._source === 'side-chat')));
+  expect(woken).toContain('The side agent asked this session to resume');
+  expect(woken).not.toContain('The user requested');
+}, 60_000);
+
+it('does not start a parent Run for a wake when the parent has no Run record of its own', async () => {
+  const source = await first.sessions.create({ projectPath: homeDir });
+  await runtime.sessions.updateSettings(source.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runRound(source.id, 1);
+  const parent = await first.sessions.forkSession(source.id);
+  const side = await first.sessions.openSide(parent.id);
+  sideScript = async (messages, _tools, system) => {
+    requests.push(structuredClone(messages));
+    if (system.includes('independent side conversation') && messages.at(-1)?.content === 'Send and resume') {
+      return { thinkingBlocks: [], textBlocks: [], toolBlocks: [{ type: 'tool_use', name: 'send_to_parent',
+        id: 'send', input: { text: 'Check drive letters', wake: true } }], stopReason: 'tool_use' };
+    }
+    return { thinkingBlocks: [], textBlocks: [{ type: 'text', text: 'Done' }], toolBlocks: [], stopReason: 'end_turn' };
+  };
+  const receipt = await first.inputs.submit({ sessionId: side.id, inputId: 'wake', text: 'Send and resume' });
+  expect((await runtime.runs.await(receipt.runId!)).phase).toBe('completed');
+  const sideResult = JSON.stringify((await runtime.sessions.transcript(side.id))?.activeMessages.filter(message =>
+    Array.isArray(message.content) && message.content.some(block => block.type === 'tool_result')).at(-1));
+  expect(sideResult).toContain('Waiting for the next authorized parent run');
+  expect(sideResult).not.toContain('wakeRunId');
+  expect(requests.some(messages => messages.some(m => m._source === 'side-chat'))).toBe(false);
+}, 60_000);
+
+it('deletes a parent whose side binding file is unreadable and removes the orphaned side Session', async () => {
+  const parent = await first.sessions.create({ projectPath: homeDir });
+  await runtime.sessions.updateSettings(parent.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runRound(parent.id, 1);
+  const side = await first.sessions.openSide(parent.id);
+  const bindings = (await fs.readdir(homeDir, { recursive: true })).find(entry => entry.includes('side-chats') && entry.endsWith('.json'));
+  expect(bindings).toBeDefined();
+  await Promise.all([first.disconnect(), second.disconnect()]);
+  await host.close();
+  await runtime.close();
+  await fs.writeFile(path.join(homeDir, bindings!), '{not json');
+  await openHost();
+  await first.sessions.delete(parent.id);
+  await expect(first.sessions.read(parent.id)).rejects.toThrow();
+  const remaining = (await fs.readdir(homeDir, { recursive: true })).filter(entry => entry.includes(side.id));
+  expect(remaining, JSON.stringify(remaining)).toEqual([]);
+  expect((await fs.readdir(path.dirname(path.join(homeDir, bindings!)))).some(name => name.includes('.corrupt-'))).toBe(true);
+}, 60_000);
+
+it('tells the side agent when a report is too long and keeps it out of the parent', async () => {
+  const parent = await first.sessions.create({ projectPath: homeDir });
+  await runtime.sessions.updateSettings(parent.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runRound(parent.id, 1);
+  const side = await first.sessions.openSide(parent.id);
+  sideScript = async (messages, _tools, system) => {
+    if (system.includes('independent side conversation') && messages.at(-1)?.content === 'Send everything') {
+      return { thinkingBlocks: [], textBlocks: [], toolBlocks: [{ type: 'tool_use', name: 'send_to_parent',
+        id: 'send', input: { text: 'x'.repeat(MAX_SIDE_LETTER_CHARS + 1) } }], stopReason: 'tool_use' };
+    }
+    return { thinkingBlocks: [], textBlocks: [{ type: 'text', text: 'Done' }], toolBlocks: [], stopReason: 'end_turn' };
+  };
+  const receipt = await first.inputs.submit({ sessionId: side.id, inputId: 'long', text: 'Send everything' });
+  await runtime.runs.await(receipt.runId!);
+  const result = JSON.stringify((await runtime.sessions.transcript(side.id))?.activeMessages.filter(message =>
+    Array.isArray(message.content) && message.content.some(block => block.type === 'tool_result')).at(-1));
+  expect(result).toContain('too long');
+  expect(JSON.stringify(await runtime.sessions.transcript(parent.id))).not.toContain('xxxxxxxx');
+}, 60_000);
+
+it('reports the original failure when cleaning up a half-opened side chat also fails, and opens cleanly afterwards', async () => {
+  const parent = await first.sessions.create({ projectPath: homeDir });
+  await runtime.sessions.updateSettings(parent.id, { agentMode: 'sa' });
+  await runRound(parent.id, 1);
+  const snapshot = vi.spyOn(FileSessionStorage.prototype, 'saveSideSnapshot').mockRejectedValue(new Error('snapshot failed'));
+  const cleanup = vi.spyOn(FileSessionStorage.prototype, 'delete').mockRejectedValue(new Error('cleanup failed'));
+  try {
+    await expect(first.sessions.openSide(parent.id)).rejects.toThrow('snapshot failed');
+  } finally {
+    snapshot.mockRestore();
+    cleanup.mockRestore();
+  }
+  const side = await first.sessions.openSide(parent.id);
+  expect(side.id).toMatch(/^side_/);
+}, 60_000);
+
+it('discards a preparing binding left by a crashed open even when it belongs to another owner or branch', async () => {
+  const parent = await first.sessions.create({ projectPath: homeDir });
+  await runtime.sessions.updateSettings(parent.id, { agentMode: 'sa' });
+  await runRound(parent.id, 1);
+  const side = await first.sessions.openSide(parent.id);
+  const relative = (await fs.readdir(homeDir, { recursive: true })).find(entry => entry.includes('side-chats') && entry.endsWith('.json'))!;
+  const file = path.join(homeDir, relative);
+  await Promise.all([first.disconnect(), second.disconnect()]);
+  await host.close();
+  await runtime.close();
+  const store = new SideChats(path.dirname(file), () => undefined);
+  const ghost = sideRequester.run('ghost', () => store.allocate(parent.id, 'ghost-branch', null));
+  const bindings = JSON.parse(await fs.readFile(file, 'utf8')) as unknown[];
+  await fs.writeFile(file, JSON.stringify([...bindings, { ...ghost, preparing: true }]));
+  await openHost();
+  expect((await first.sessions.openSide(parent.id)).id).toBe(side.id);
+  const left = JSON.parse(await fs.readFile(file, 'utf8')) as { id: string }[];
+  expect(left.map(binding => binding.id)).toEqual([side.id]);
+}, 60_000);
+
+it('refuses to open a side chat on an archived parent or on another side chat', async () => {
+  const parent = await first.sessions.create({ projectPath: homeDir });
+  await runtime.sessions.updateSettings(parent.id, { agentMode: 'sa' });
+  await runRound(parent.id, 1);
+  const side = await first.sessions.openSide(parent.id);
+  await expect(first.sessions.openSide(side.id)).rejects.toThrow('cannot open another side chat');
+  await first.sessions.archive(parent.id);
+  await expect(first.sessions.openSide(parent.id)).rejects.toThrow(/archived/i);
+}, 60_000);
+
+it('does not deliver a report once the parent was rewound before the side snapshot', async () => {
+  const parent = await first.sessions.create({ projectPath: homeDir });
+  await runtime.sessions.updateSettings(parent.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runRound(parent.id, 1);
+  await runRound(parent.id, 2);
+  const side = await first.sessions.openSide(parent.id);
+  const lineage = (await first.sessions.readLineage(parent.id))!;
+  await first.sessions.rewindSession(parent.id, { selector: firstUserEntryId(lineage), expectedHead: lineage.activeEntryId! });
+  sideScript = async (messages, _tools, system) => {
+    if (system.includes('independent side conversation') && messages.at(-1)?.content === 'Send now') {
+      return { thinkingBlocks: [], textBlocks: [], toolBlocks: [{ type: 'tool_use', name: 'send_to_parent',
+        id: 'send', input: { text: 'Stale finding' } }], stopReason: 'tool_use' };
+    }
+    return { thinkingBlocks: [], textBlocks: [{ type: 'text', text: 'Done' }], toolBlocks: [], stopReason: 'end_turn' };
+  };
+  const receipt = await first.inputs.submit({ sessionId: side.id, inputId: 'stale', text: 'Send now' });
+  await runtime.runs.await(receipt.runId!);
+  const result = JSON.stringify((await runtime.sessions.transcript(side.id))?.activeMessages.filter(message =>
+    Array.isArray(message.content) && message.content.some(block => block.type === 'tool_result')).at(-1));
+  expect(result).toContain('Parent history has changed');
+  expect(JSON.stringify(await runtime.sessions.transcript(parent.id))).not.toContain('Stale finding');
 }, 60_000);

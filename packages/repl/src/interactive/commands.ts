@@ -447,6 +447,16 @@ export const BUILTIN_COMMANDS: Command[] = [
     },
   },
   {
+    // The fullscreen UI intercepts /side before parsing; only the classic renderer reaches this handler.
+    name: 'side',
+    aliases: ['btw'],
+    description: 'Open a private side chat (fullscreen UI only)',
+    usage: '/side [question] | /side end',
+    handler: async () => {
+      console.log(chalk.yellow('\n[Side chat needs the fullscreen UI. Unset KODAX_FORCE_CLASSIC_REPL to use it.]'));
+    },
+  },
+  {
     name: 'clear',
     description: 'Clear conversation history',
     handler: async (_args, context, callbacks) => {
