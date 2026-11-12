@@ -7207,6 +7207,12 @@ grant, Full Access or Auto allow does not count as that approval.
 `requestToolApproval` returns `boolean | string`: only `true` runs the call, and
 a string blocks it with that text.
 
+**SDK clarification (2026-11-12, unreleased)**: The same permission Interaction
+also carries optional `extensionAsks: { extension, reason }[]`. Attribution comes
+from each handler's registered source; reasons retain their original text.
+Aggregation, child forwarding and client adapters preserve the list. Existing
+`reason` remains the readable fallback. No approval or grant authority changes.
+
 ---
 
 ## ADR-072: Work Modes and the Model-Facing Tool Contract

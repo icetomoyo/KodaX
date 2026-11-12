@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-10_
+_Last Updated: 2026-11-12_
 
 ---
 
@@ -2947,6 +2947,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 408 | Medium | Resolved | Space SDK leaks user image labels, rejects non-PNG attachments and loses extension approval attribution | observed in v0.7.97-beta.6; visual input/tools since beta.5 | Unreleased (based on v0.7.97-beta.6) | 2026-11-12 | 2026-11-12 |
 | 407 | Medium | Resolved | Passive connections and exit receipts ignore the session storage owner | v0.7.97-alpha.7 (storage-owner redirect) | `v0.7.97-beta.6` (FEATURE_305 T3+T4) | 2026-11-10 | 2026-11-11 |
 | 406 | High | Resolved | A CLI redirected to Space's Host fails `daemon start` verification and provider credential authorization | `daemon start` check v0.7.97-alpha.1, exposed by the v0.7.97-alpha.7 redirect; credential profile fence v0.7.97-alpha.12 | `v0.7.97-beta.6` | 2026-11-10 | 2026-11-10 |
 | 405 | High | Resolved | Space and the CLI refuse to share a compatible Host from another installation or version | v0.7.97-alpha.1 (Host build refresh); busy older-Host refusal since v0.7.79 | `v0.7.97-beta.6` | 2026-11-10 | 2026-11-10 |
@@ -3240,6 +3241,57 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ---
 
 ## Issue Details
+
+### Issue 408: Space SDK image projection, attachment access and approval attribution
+
+- Priority: Medium
+- Status: Resolved (triaged ready from the Space integration report)
+- Introduced: observed in v0.7.97-beta.6; model observation labels and visual tools since beta.5; the PNG-only reader predates this report
+- Created: 2026-11-12
+- Fixed: unreleased changes based on v0.7.97-beta.6; no package publication claimed
+- Resolution Date: 2026-11-12
+- Context: Space integration; current view, canonical history, remote Host attachments and extension approval UI
+
+**Original Problem.** Accepted user images receive model-facing observation
+labels. View/history projection treated those labels as user text, so display,
+copy and search included them. The Host attachment reader only accepted PNG,
+forcing JPEG/WebP clients to depend on local `.media` paths. The three read-only
+visual tools fell through to the `subagent` capability. Extension asks exposed
+only an aggregate reason and no structured attribution, so Space could overwrite
+the reason with its own risk explanation. Reproduce by accepting an image,
+reading the user view/history and attachment, resolving each visual capability,
+and observing an extension `tool:before` ask in Full Access.
+
+**Resolution.** The media owner projects its saved label encoding (including
+numbered queued-input labels) separately from user text, bound to the adjacent
+immutable image path. Client attachments carry optional observation identity,
+dimensions and SHA256. Canonical model context is retained. Image-only inputs
+remain visible. Search and full-body reads use the same user text projection.
+The Host reads PNG/JPEG/WebP/GIF using actual byte validation and dimensions,
+retains the 512 KiB/10 MiB bounds and expected-hash checks, and resolves history
+attachment IDs as well as live view IDs. Visual tools explicitly resolve to
+`read`; other previously implicit built-ins retain their established tier with
+explicit entries. Extension approval attribution survives aggregation, child
+callbacks, the Host registry and both client adapters in `extensionAsks`.
+
+**Files Changed.** `packages/agent/src/media/visual-input-display.ts`, media
+exports/history retrieval, REPL message projection, `src/session-view.ts`,
+`src/client-history.ts`, `src/session-view-image.ts`, the coding capability and
+permission gates, extension runtime/types, child forwarding, client contracts,
+`src/sdk-runtime.ts`, and `src/client-interactions.ts`.
+
+**Tests Added.** `src/session-view.attachments.test.ts` covers direct/queued and
+multiple/image-only inputs, persisted UI overlays, literal label-shaped text,
+all four media types, chunks and changed bytes. `src/sdk-runtime.visual.test.ts`
+checks view/history/search/attachment reads before and after restart/compaction.
+`src/sdk-runtime.visual-inputs.test.ts` verifies real queued, steer and redirect
+deliveries expose clean user history and structured observation identities.
+`src/sdk-runtime.tool-hook-ask.test.ts` covers multiple asking extensions through
+both client adapters; extension and child tests cover attribution forwarding.
+The capability test inventories every registered built-in. Targeted coverage
+of the display decoder, image reader and permission gates: 96.96% lines and
+94.05% branches. Related SDK/view/daemon regressions, workspace build, typecheck,
+SDK bundle and self-contained declaration generation pass.
 
 ### Issue 407: Passive connections and exit receipts ignore the session storage owner
 
@@ -18524,12 +18576,17 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 285 (46 Open including 1 needs-info, 239 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 286 (46 Open including 1 needs-info, 240 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-12: Issue 408
+
+- Resolved the Space SDK image text/attachment/capability report and added
+  structured extension approval attribution; these changes are unreleased.
 
 ### 2026-11-11: Issue 407
 

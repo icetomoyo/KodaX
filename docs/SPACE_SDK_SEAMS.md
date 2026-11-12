@@ -1,5 +1,14 @@
 # Space 的 Product Client / Host 接缝
 
+## SDK 接入修正（2026-11-12，尚未发布）
+
+用户图片的观测标签从当前 view、历史用户正文和搜索中移除；附件以可选的
+`observationId/width/height/sha256` 暴露观测信息。Host 附件读取覆盖 PNG、JPEG、
+WebP 和 GIF，返回实际 mediaType，保留 SHA256 校验与字节分块。客户端只用
+`sessions.readItem`，不自行读 `.media`。三个 `visual_*` 工具的能力均为 `read`。
+扩展审批增加可选 `options.extensionAsks: { extension, reason }[]`；展示每个扩展的
+原因，并继续只允许一次或拒绝。迁移详见 [SDK 说明](SDK_MIGRATION.md#sdk-integration-corrections-2026-11-12-unreleased)。
+
 ## beta.6 的单 Host 与 `profile` 删除
 
 `v0.7.97-beta.6` 标签发布以下 Space 可见变化（npm 发布为手动步骤）。每个 `KODAX_HOME` 只有一个 Host：`ensureKodaXClient`、`connectKodaXClient` 与 `readKodaXClientExits` 不再接受 `profile`，传入即以 `runtime_host_migration_required` 失败；`kodax daemon` 各命令与 `kodax a2a serve` 不再接受 `--profile`。隔离 Host 请使用独立的 `homeDir`、`--home` 或 `KODAX_HOME`。`identity.profile` 仍保留在线上且已弃用，当前 Host 始终报告 `default`。旧版 Space 以 `coder` 启动且仍持有 Session 存储的 Host 仍可被新客户端找到并接入，空闲时按常规升级替换；旧 Host 按 profile 拆分的 Session 设置、顺序、排队输入和 Session 级权限授予在新 Host 启动时合并一次，全局授予会被丢弃并需重新批准。来自不同安装或版本的 Space 与 CLI 共用一个兼容 Host；CLI 在 Space 打开时启动会接入 Space 的 Host 并保留 Provider 凭据。Session 设置不再随共享的用户默认值变化：Host 在创建 Session 时捕获一次用户级默认值，全局配置变化只影响之后创建的 Session。迁移细节见 [SDK 迁移说明](SDK_MIGRATION.md#one-host-per-kodax_home-profile-removed)。
@@ -361,7 +370,7 @@ Retry 包括第一条查询之前的空历史；`before` 需要 canonical bounda
 | 手册/可信系统指令 | Host 安装的 extension `provider:before` hook 用 `replaceSystemPrompt` 合并可信手册，随 Host integrations 生命周期加载。低层显式 Run 保留 `context.systemPromptOverride`（SA）/`agentProfile.instructions`（AMA）；产品输入不开放任意 prompt/context。共享 Host hook 的适用范围由可信宿主策略选择。 |
 | Shell | 可信 `/runtime` 的 Session `shellExecution` 设置，采用现有规范化 Shell contract 与 revision CAS；Product settings 只暴露已列出的业务选择。 |
 | 工具/执行策略 | permissionMode、Plan 与审批经 `/client`；Host `execPolicy.adminRules/trustedProjectRoots`、`autoReview` 在 owner 启动时注入，附着已有 Host不覆盖它。Skill/command 的 allowedTools、hooks 来自可信注册来源；Host Tool 描述符仅在绑定 Run 中提供。 |
-| 结构化图片附件 | `view.items` / `readHistory().items[].attachments` 暴露用户/工具图片的 path、mediaType。`readItem(sessionId, itemId, {part:'attachment', attachmentIndex, attachmentOffset, expectedImageSha256})` 从该 Host 项读取 PNG，返回 `image` 字节 chunk（base64）、SHA256、宽高、总字节数与 nextOffset；每块最多512KiB、整图最多10MiB。只接受项身份/附件索引，不接受客户端路径；旧文本 offset 仍按 UTF-16。原始 picker source/name、file/video/native Office 对象不在此接口中。 |
+| 结构化图片附件 | `view.items` / `readHistory().items[].attachments` 暴露用户/工具图片的 path、mediaType，用户观测可附 observationId、width、height、sha256。`readItem(sessionId, itemId, {part:'attachment', attachmentIndex, attachmentOffset, expectedImageSha256})` 从该 Host 项读取 PNG/JPEG/WebP/GIF，返回 `image` 实际 mediaType、字节 chunk（base64）、SHA256、宽高、总字节数与 nextOffset；每块最多512KiB、整图最多10MiB。只接受项身份/附件索引，不接受客户端路径；旧文本 offset 仍按 UTF-16。原始 picker source/name、file/video/native Office 对象不在此接口中。 |
 | 详细统计 | 使用上述 statistics 结构化事实。view.activity.usage 保留最新活动展示语义；SDK 不提供货币价格账本。 |
 | 退出/崩溃恢复 | 使用上述 lifecycle 与离线回执查询；SDK 结算自身受管工作，Space 管理自身资源。Host 重启不自动续跑队列、Provider 或未知工具调用。 |
 

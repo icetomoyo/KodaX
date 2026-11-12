@@ -658,7 +658,7 @@ Space 刷新、断连或关闭订阅只清理本地展示，重连后重读同�
 | --- | --- |
 | 当前屏幕 | `observe` 返回的 `ClientSessionView` |
 | 显示项全文/工具参数 | `readItem(sessionId, viewItem.id, {part, offset})` |
-| Host 项的实际 PNG | `readItem(sessionId, viewItem.id, {part:'attachment', attachmentIndex, attachmentOffset, expectedImageSha256})`；有界字节块，不是文本投影 |
+| Host 项的实际图片（PNG/JPEG/WebP/GIF） | `readItem(sessionId, item.id, {part:'attachment', attachmentIndex, attachmentOffset, expectedImageSha256})`；有界字节块，不是文本投影 |
 | 较早的规范对话 | `readHistory(sessionId, {cursor})`，首次为最新页 |
 | 历史页或搜索结果全文 | `readHistoryEntry(sessionId, historyItemId, {part, offset})` |
 | 全 Session 搜索 | `searchHistory`，使用命中 itemId 读取正文 |
@@ -1108,6 +1108,27 @@ SDK bytes before retrying; do not weaken build proof to force startup.
 The versioned contract, reasons, revision domains and remaining cold-read limits
 are recorded in [Client contract](CLIENT_CONTRACT.md#2026-11-08-space-sdk-contract-repairs-shipped-in-v0797-beta4).
 
+
+## SDK integration corrections (2026-11-12, unreleased)
+
+- User entries in the current view, history reads and search retain the user's
+  original text. Stop stripping observation-label suffixes in clients. Optional
+  `attachments[].observationId/width/height/sha256` carry image observation facts;
+  observation IDs remain opaque. Existing beta.5/beta.6 saved inputs are projected
+  without rewriting their canonical model context.
+- Read all accepted image formats (PNG, JPEG, WebP, GIF) through
+  `sessions.readItem(..., { part: 'attachment', attachmentIndex,
+  attachmentOffset, expectedImageSha256 })`. Use the returned actual mediaType,
+  validate the hash and concatenate decoded byte chunks. Do not read attachment
+  paths directly or calculate the Host media directory. The 512 KiB chunk and
+  10 MiB image limits remain in force.
+- `visual_history`, `visual_inspect`, and `visual_read_pixels` resolve to the
+  `read` capability. The built-in capability inventory has a completeness test.
+- Permission Interactions may include `options.extensionAsks`, a list of
+  `{ extension, reason }` supplied by the Host. Show each reason alongside your
+  own risk explanation. Keep the aggregate `reason` fallback for older Hosts;
+  absence of the new field cannot identify the approval's origin. Extension asks
+  remain one-call approvals without grant suggestions.
 
 ## SDK hardening migration (shipped in v0.7.97-beta.5)
 
