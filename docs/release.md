@@ -50,8 +50,10 @@ on one commit.
 
 ## v0.7.97-beta.8 release preparation
 
-Release state: `v0.7.97-beta.8` is a candidate awaiting the publishing
-dispatch. npm publication has not occurred. The release is the eighth
+Release state: `v0.7.97-beta.8` was published on 2026-11-12 as a GitHub
+prerelease from run 43238905900 at `56dea3830` (all five archive builds,
+Full CI and the npm package gates green; 13 assets). npm publication has
+not occurred. The release is the eighth
 beta of the v0.7.97 line: the Windows daemon startup reliability
 repairs from the customer incident report (Issue 409). The fail-closed
 startup path no longer compiles C# through PowerShell: Job membership,
@@ -102,9 +104,19 @@ This release follows the single publishing dispatch described under
 `release_tag=v0.7.97-beta.8` runs Full CI, all five archive builds and the
 npm package gates, then creates the tag at the dispatched commit and the
 GitHub pre-release from that run's artifacts. Ordinary branch pushes do
-not run CI. Cross-platform manual acceptance, installed Space/SDK
-acceptance, the Space dependency bump (FEATURE_305 T6 follow-up) and npm
-registry publication remain separate maintainer steps.
+not run CI. The dispatch (run 43238905900) failed its first attempt only
+on `Windows source (system 2/2)`, where the untouched real-process test
+`caps in-memory terminal run records while keeping persisted run lookup
+available` in `src/sdk-runtime.test.ts` exceeded the 150-second test
+deadline at 150,969 ms (the same file and deadline class as the beta.6
+flake; the test passes locally in about 46 seconds) — an infrastructure
+flake covered by one failed-job re-run on the unchanged candidate, after
+which every job passed and the run published. The universal npm tarball
+asset is `kodax-ai-kodax-0.7.97-beta.8.tgz`, sha256
+`ba00f68d…ad200c`, matching `SHA256SUMS`. Cross-platform manual
+acceptance, installed Space/SDK acceptance, the Space dependency bump
+(FEATURE_305 T6 follow-up) and npm registry publication remain separate
+maintainer steps.
 
 ## v0.7.97-beta.7 release preparation
 
