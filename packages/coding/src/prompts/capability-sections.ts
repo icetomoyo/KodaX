@@ -63,6 +63,7 @@ import { isToolDiscoverable } from '../tools/tool-search.js';
 import { getModelSkillCatalog } from '../agent-runtime/tool-resolution.js';
 
 import { buildMemoryRulesSection } from './memory-rules.js';
+import { isNoteMemoryEnabled, renderNoteMemorySection } from '../memory/note-memory.js';
 import { createPromptSection, type KodaXPromptSection } from './sections.js';
 import { buildSelfKnowledgeRoutingRule } from '../self-knowledge/routing-rule.js';
 import { EXECUTION_GUIDANCE } from './execution-guidance.js';
@@ -291,31 +292,42 @@ export async function buildCapabilityContextSections(
   // was trialed to save ~3.1K tokens/turn but eval-driven DEFERRED — kimi went
   // 3/3 write → 0/3 write (read instead) and ds/v4flash regressed on first-save
   // correctness. The claudecode-derived wording is load-bearing; keep full text.
-  sections.push(
-    createPromptSection(
-      'memory-rules',
-      buildMemoryRulesSection(executionCwd),
-      'Teach the agent the 4-type memory taxonomy, save procedure, and recall etiquette so writes are consistent across sessions and providers.',
-    ),
-  );
+  if (isNoteMemoryEnabled()) {
+    // FEATURE_306: note-store rules + MEMORY.md indexes replace the legacy memory sections.
+    sections.push(
+      createPromptSection(
+        'project-memory',
+        renderNoteMemorySection(executionCwd),
+        'Teach note-memory use and expose the saved-note indexes so later sessions read relevant notes on demand.',
+      ),
+    );
+  } else {
+    sections.push(
+      createPromptSection(
+        'memory-rules',
+        buildMemoryRulesSection(executionCwd),
+        'Teach the agent the 4-type memory taxonomy, save procedure, and recall etiquette so writes are consistent across sessions and providers.',
+      ),
+    );
 
-  // FEATURE_124 (v0.7.43) Phase B — `project-memory` section.
-  // MEMORY.md index injected after the teaching text so the agent has
-  // the rules in hand when it reads the current entries. Section is
-  // ALWAYS emitted — fallback "currently empty" text tells the LLM the
-  // subsystem is active even when no entries exist yet.
-  const memoryPack = options.context?.memoryPack ?? await buildTaskMemoryPack(
-    executionCwd,
-    options.context?.rawUserInput,
-    options.context?.memoryIdentity,
-  );
-  sections.push(
-    createPromptSection(
-      'project-memory',
-      renderTaskMemoryPack(memoryPack),
-      'Inject applicability-filtered memory hints without exposing raw memory indexes.',
-    ),
-  );
+    // FEATURE_124 (v0.7.43) Phase B — `project-memory` section.
+    // MEMORY.md index injected after the teaching text so the agent has
+    // the rules in hand when it reads the current entries. Section is
+    // ALWAYS emitted — fallback "currently empty" text tells the LLM the
+    // subsystem is active even when no entries exist yet.
+    const memoryPack = options.context?.memoryPack ?? await buildTaskMemoryPack(
+      executionCwd,
+      options.context?.rawUserInput,
+      options.context?.memoryIdentity,
+    );
+    sections.push(
+      createPromptSection(
+        'project-memory',
+        renderTaskMemoryPack(memoryPack),
+        'Inject applicability-filtered memory hints without exposing raw memory indexes.',
+      ),
+    );
+  }
 
   const skillsCatalog = getModelSkillCatalog(options);
   if (skillsCatalog) {

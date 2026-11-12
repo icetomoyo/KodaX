@@ -2742,6 +2742,8 @@ export interface KodaXToolExecutionContext {
   permissionIntent?: import('@kodax-ai/agent').GuardrailPermissionIntent;
   /** Trusted host operations that are intentionally absent from model-facing clients. */
   actorHost?: KodaXActorHost;
+  /** FEATURE_306: root-session note-store channel behind the `memory` tool; the host binds the current user message. */
+  memoryNotes?: (input: import('@kodax-ai/agent').MemoryOpInput) => Promise<import('@kodax-ai/agent').MemoryOpResult>;
   /** FEATURE_260: current exactly-scoped read-only MemorySession query binding. */
   memoryRecall?: (need: string) => Promise<{
     readonly content: string;

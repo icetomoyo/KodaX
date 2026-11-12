@@ -77,7 +77,7 @@ it('allows ordinary project writes and cd out of Memory while protecting aliases
     expect(await toolBash({ command, timeout: 5 }, context)).toContain('Memory Control Plane');
     expect(await fs.readFile(target, 'utf8')).toBe('retained-memory');
   }
-  const ordinary = path.join(home, 'projects', 'fixture', 'notes');
+  const ordinary = path.join(home, 'projects', 'fixture', 'scratch');
   await fs.mkdir(ordinary, { recursive: true });
   const cd = process.platform === 'win32' ? 'cd /d' : 'cd';
   const result = await toolBash({ command: `${cd} "${ordinary}" && echo allowed>notes.txt`, timeout: 5 },

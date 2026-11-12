@@ -25,6 +25,12 @@ import {
   toolMemoryIntent,
 } from './memory-intent.js';
 import {
+  MEMORY_TOOL_DESCRIPTION,
+  MEMORY_TOOL_NAME,
+  MEMORY_TOOL_SCHEMA,
+  toolMemory,
+} from './memory.js';
+import {
   SESSION_HISTORY_READ_DESCRIPTION,
   SESSION_HISTORY_READ_SCHEMA,
   SESSION_HISTORY_READ_TOOL_NAME,
@@ -235,6 +241,17 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     description: MEMORY_INTENT_TOOL_DESCRIPTION,
     input_schema: MEMORY_INTENT_TOOL_SCHEMA,
     handler: toolMemoryIntent,
+    sideEffect: 'mutates-state',
+    planModeAllowed: false,
+    classifierExemptReason:
+      staticText("tool.BUILTIN_TOOL_DEFINITION_SOURCE.classifierExemptReason"),
+    toClassifierInput: () => '',
+  },
+  {
+    name: MEMORY_TOOL_NAME,
+    description: MEMORY_TOOL_DESCRIPTION,
+    input_schema: MEMORY_TOOL_SCHEMA,
+    handler: toolMemory,
     sideEffect: 'mutates-state',
     planModeAllowed: false,
     classifierExemptReason:

@@ -34,7 +34,7 @@ it.each(['extensions', 'extensions/planted.mjs', 'integrations', 'integrations/m
 it('keeps extension source readable and ordinary Agent Home files writable', () => {
   const home = path.join(tmpdir(), 'kodax-host-loaded-fixture'); vi.stubEnv('KODAX_HOME', home);
   expect(isAutoReadableAgentHomePath(path.join(home, 'extensions', 'planted.mjs'), home)).toBe(true);
-  expect(isAgentHomeHardMutationTarget(path.join(home, 'notes', 'todo.md'))).toBe(false);
+  expect(isAgentHomeHardMutationTarget(path.join(home, 'scratch', 'todo.md'))).toBe(false);
   expect(isAgentHomeHardMutationTarget(path.join(home, 'extensions-notes.md'))).toBe(false);
   // Host control state stays approvable for text tools through the outer permission policy.
   expect(isAgentHomeHostLoadedTarget(path.join(home, 'runtime', 'daemon.json'))).toBe(false);
@@ -59,7 +59,8 @@ it('applies the hard mutation boundary to a registered Runtime agent home', () =
     expect(isAgentHomeHardMutationTarget(grants)).toBe(true);
     expect(isAgentHomeHardMutationTarget(path.join(runtimeHome, 'memory-scopes', 'user.md'))).toBe(true);
     expect(isAgentHomeHostLoadedTarget(grants)).toBe(false);
-    expect(isAgentHomeHardMutationTarget(path.join(runtimeHome, 'notes', 'todo.md'))).toBe(false);
+    expect(isAgentHomeHardMutationTarget(path.join(runtimeHome, 'scratch', 'todo.md'))).toBe(false);
+    expect(isAgentHomeHardMutationTarget(path.join(runtimeHome, 'notes', 'todo.md'))).toBe(true);
   } finally {
     release();
   }

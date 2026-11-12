@@ -92,6 +92,8 @@ import {
   extractPresentedMemoryTargetRefs,
   MEMORY_INTENT_TOOL_NAME,
 } from '../tools/memory-intent.js';
+import { MEMORY_TOOL_NAME } from '../tools/memory.js';
+import { createNoteMemoryBinding, isNoteMemoryEnabled } from '../memory/note-memory.js';
 import type {
   KodaXHarnessProfile,
   KodaXManagedTask,
@@ -505,6 +507,9 @@ export const __runnerDrivenTestables = {
 
 interface ManagedLiveTurnController {
   currentTurnId(): string;
+  /** FEATURE_306: text of the current user message, the only source a note quote may come from. */
+  currentUserText(): string;
+  setUserText(text: string): void;
   markInitialInputDurable(): void;
   prepareTurn(input: {
     readonly deliveryKind: KodaXTurnDeliveryKind;
@@ -676,6 +681,19 @@ function withoutMemoryIntentTool(options: KodaXOptions): KodaXOptions {
   };
 }
 
+/** FEATURE_306: the `memory` tool is visible only to a root run while the note switch is on. */
+function withNoteMemoryVisibility(options: KodaXOptions): KodaXOptions {
+  const isRoot = options.context?.currentAgentId === undefined && options.context?.parentAgentId === undefined;
+  if (isRoot && isNoteMemoryEnabled()) return options;
+  return {
+    ...options,
+    context: {
+      ...options.context,
+      excludeTools: [...new Set([...(options.context?.excludeTools ?? []), MEMORY_TOOL_NAME])],
+    },
+  };
+}
+
 async function startRunnerMemoryRuntime(
   options: KodaXOptions,
   prompt: string,
@@ -683,7 +701,8 @@ async function startRunnerMemoryRuntime(
   episodeId: string,
 ): Promise<StartedRunnerMemoryRuntime> {
   if (options.context?.currentAgentId !== undefined
-    || options.context?.parentAgentId !== undefined) {
+    || options.context?.parentAgentId !== undefined
+    || isNoteMemoryEnabled()) {
     return { options: withoutMemoryIntentTool(options) };
   }
   const identity = options.context?.memoryIdentity
@@ -1080,7 +1099,7 @@ async function runManagedTaskViaRunnerInContext(
   }) ?? { options: withoutMemoryIntentTool(optionsWithLiveEvents) };
   // Cancellation during setup must not start prompt Git or error-snapshot work.
   optionsWithLiveEvents.abortSignal?.throwIfAborted();
-  const optionsWithSessionId = startedMemoryRuntime.options;
+  const optionsWithSessionId = withNoteMemoryVisibility(startedMemoryRuntime.options);
   const runnerMemoryRuntime = startedMemoryRuntime.runtime;
   let liveLifecycleStarted = false;
   const emitLiveTurnCompleted = (
@@ -1099,8 +1118,11 @@ async function runManagedTaskViaRunnerInContext(
     terminalTurnIds.add(scope.turnId);
     emitTurnFailed(liveEvents, scope, error);
   };
+  let currentUserText = optionsWithSessionId.context?.rawUserInput?.trim() || prompt;
   const liveTurnController: ManagedLiveTurnController = {
     currentTurnId: () => liveTurnScopeRef.current.turnId,
+    currentUserText: () => currentUserText,
+    setUserText: (text) => { currentUserText = text; },
     markInitialInputDurable: () => {
       if (liveLifecycleStarted) return;
       liveLifecycleStarted = true;
@@ -1128,6 +1150,7 @@ async function runManagedTaskViaRunnerInContext(
           liveTurnScopeRef.current = nextScope;
           liveLifecycleStarted = true;
           emitTurnStarted(liveEvents, nextScope);
+          if (input.userText !== undefined) currentUserText = input.userText;
           if (runnerMemoryRuntime !== undefined && input.userText !== undefined) {
             runnerMemoryRuntime.currentUserTurn = {
               text: input.userText,
@@ -1414,6 +1437,12 @@ async function runManagedTaskViaRunnerInner(
     runtime: extensionRuntime,
     managedProtocolPayloadRef,
   });
+  if (isNoteMemoryEnabled() && !options.context?.currentAgentId && !options.context?.parentAgentId) {
+    substrateBaseCtx.memoryNotes = createNoteMemoryBinding(
+      resolveExecutionCwd(options.context),
+      () => liveTurnController.currentUserText(),
+    );
+  }
   if (memoryRuntime !== undefined) {
     substrateBaseCtx.memoryRecall = createMemoryRecallBinding(
       memoryRuntime.session,
@@ -2946,6 +2975,7 @@ async function runManagedTaskViaRunnerInner(
       }
       preparedIdleTurn?.start();
       preparedIdleTurn = undefined;
+      liveTurnController.setUserText(contents.join('\n'));
       if (memoryRuntime !== undefined) {
         memoryRuntime.presentationMessages = previousRunResult.messages;
         memoryRuntime.currentUserTurn = {

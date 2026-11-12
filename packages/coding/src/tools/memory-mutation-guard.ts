@@ -15,8 +15,10 @@ export function shellMemoryMutationDenial(command: string): string | undefined {
     || /(?:^|[\s/'"])(?:\.kodax\/)?memory-scopes(?:\/|[\s'"]|$)/.test(normalized);
   const targetsLegacy = (normalized.includes(projectsRoot)
       || /(?:\.kodax|kodax_config_home|userprofile|\$home|~).*\/projects(?:\/|\b)/.test(normalized))
-    && /(?:^|[\s/'"])memory(?:\/|[\s'"]|$)/.test(normalized);
-  if (!targetsScoped && !targetsLegacy) return undefined;
+    && /(?:^|[\s/'"])(?:memory|notes)(?:\/|[\s'"]|$)/.test(normalized);
+  const userNotesRoot = getAgentConfigPath('notes').replaceAll('\\', '/').toLowerCase();
+  const targetsUserNotes = normalized.includes(`${userNotesRoot}/`) || normalized.endsWith(userNotesRoot);
+  if (!targetsScoped && !targetsLegacy && !targetsUserNotes) return undefined;
   if (isReadOnlyInspection(command)) return undefined;
   return '[Tool Error] Shell mutation of governed memory is denied; use the Memory Control Plane.';
 }

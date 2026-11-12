@@ -221,6 +221,8 @@ import {
   extractPresentedMemoryTargetRefs,
   MEMORY_INTENT_TOOL_NAME,
 } from '../tools/memory-intent.js';
+import { activateMemoryTool, MEMORY_TOOL_NAME } from '../tools/memory.js';
+import { createNoteMemoryBinding, isNoteMemoryEnabled } from '../memory/note-memory.js';
 import {
   activateSessionHistoryTools,
   canActivateSessionHistoryTools,
@@ -947,7 +949,8 @@ async function runSubstrateInContext(
     learnedSkillBinding = await prepareCodingLearnedSkillBinding(options, memoryIdentity, sessionId);
     try {
       if (options.context?.currentAgentId === undefined
-        && options.context?.parentAgentId === undefined) {
+        && options.context?.parentAgentId === undefined
+        && !isNoteMemoryEnabled()) {
         memoryController = createMemoryControlPlane({
           cwd: resolveExecutionCwd(options.context),
           identity: memoryIdentity,
@@ -1198,6 +1201,8 @@ async function runSubstrateInContext(
   );
   const memoryRecallToolAllowed = configuredActiveTools.includes(MEMORY_RECALL_TOOL_NAME);
   const memoryIntentToolAllowed = configuredActiveTools.includes(MEMORY_INTENT_TOOL_NAME);
+  const memoryNotesToolAllowed = isNoteMemoryEnabled() && configuredActiveTools.includes(MEMORY_TOOL_NAME)
+    && options.context?.currentAgentId === undefined && options.context?.parentAgentId === undefined;
   const sessionHistoryStorage = options.session?.storage;
   const sessionHistoryToolsAllowed = canActivateSessionHistoryTools({
     activeTools: configuredActiveTools,
@@ -1212,9 +1217,12 @@ async function runSubstrateInContext(
     // FEATURE_247 (R2): apply the profile tool-visibility policy after the
     // static excludeTools filter, before the model-visible list is built.
     activeTools: activateSessionHistoryTools(
-      activateMemoryIntentTool(
-        activateMemoryRecallTool(configuredActiveTools, false),
-        false,
+      activateMemoryTool(
+        activateMemoryIntentTool(
+          activateMemoryRecallTool(configuredActiveTools, false),
+          false,
+        ),
+        memoryNotesToolAllowed,
       ),
       sessionHistoryToolsAllowed,
     ),
@@ -1566,6 +1574,13 @@ async function runSubstrateInContext(
         onHandledOperation: (operation) => handledMemoryOperations.push(operation),
       });
     }
+  }
+  if (memoryNotesToolAllowed) {
+    // FEATURE_306: the host supplies the current user message, so a quote can only come from the user.
+    ctx.memoryNotes = createNoteMemoryBinding(
+      resolveExecutionCwd(options.context),
+      () => memoryIntentUserTurnRef.current.text,
+    );
   }
 
   let incompleteRetryCount = 0;
