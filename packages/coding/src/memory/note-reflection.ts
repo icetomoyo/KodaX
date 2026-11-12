@@ -56,7 +56,8 @@ function text(value: unknown): string | undefined {
 
 /** Returns undefined when the model sent something that is not a usable operation. */
 export function parseReflectionCall(input: Record<string, unknown>): ReflectionOpInput | undefined {
-  const operation = oneOf(input.operation, OPERATIONS);
+  // Some models leave the operation out of a plain write; only a write carries a note body.
+  const operation = input.operation === undefined ? 'write' : oneOf(input.operation, OPERATIONS);
   const id = text(input.id);
   if (operation === undefined || id === undefined || id.length === 0) return undefined;
   return {

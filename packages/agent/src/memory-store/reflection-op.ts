@@ -49,6 +49,8 @@ export async function applyReflectionOperation(context: ReflectionOpContext, inp
     return fail(COPIES_EXTERNAL);
   }
   if (input.operation === 'write') {
+    // A question states no decision, so quoting one cannot make a note the user's own.
+    const statedQuote = input.quote !== undefined && !/[?？]\s*$/.test(input.quote) ? input.quote : undefined;
     return applyMemoryOperation(
       { stores: context.stores, userMessage: context.evidence.userText, sessionId: context.sessionId },
       {
@@ -60,7 +62,7 @@ export async function applyReflectionOperation(context: ReflectionOpContext, inp
         ...(input.why === undefined ? {} : { why: input.why }),
         ...(input.check === undefined ? {} : { check: input.check }),
         ...(input.body === undefined ? {} : { body: input.body }),
-        ...(input.quote === undefined ? {} : { userQuote: input.quote }),
+        ...(statedQuote === undefined ? {} : { userQuote: statedQuote }),
       },
     );
   }

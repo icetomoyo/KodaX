@@ -57,6 +57,11 @@ describe('parseReflectionCall', () => {
     expect(parsed?.scope).toBeUndefined();
   });
 
+  it('treats a call that omits the operation as a write, since only a write carries a note body', () => {
+    expect(parseReflectionCall({ id: 'a', body: 'text', description: 'd' })).toMatchObject({ operation: 'write', id: 'a' });
+    expect(parseReflectionCall({ operation: 'delete', id: 'a', body: 'text' })).toBeUndefined();
+  });
+
   it('rejects unknown operations and missing ids', () => {
     expect(parseReflectionCall({ operation: 'delete', id: 'a' })).toBeUndefined();
     expect(parseReflectionCall({ operation: 'write' })).toBeUndefined();

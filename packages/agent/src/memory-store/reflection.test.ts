@@ -62,6 +62,16 @@ describe('evidence', () => {
     expect(evidence.omitted).toBeGreaterThan(0);
   });
 
+  it('caps user messages at two thirds of the budget, keeping the newest', () => {
+    const long = Array.from({ length: 40 }, (_, i) => user(`message ${i} ${'y'.repeat(200)}`));
+    const evidence = buildEvidence(long, 3000);
+    const kept = evidence.segments.filter((s) => s.source === 'user');
+    expect(kept.reduce((sum, s) => sum + s.text.length + s.label.length, 0)).toBeLessThanOrEqual(2000);
+    expect(kept.at(-1)!.text).toContain('message 39');
+    expect(kept.some((s) => s.text.startsWith('message 0 '))).toBe(false);
+    expect(evidence.omitted).toBe(40 - kept.length);
+  });
+
   it('does not let a quote span two user messages', () => {
     const evidence = buildEvidence([user('use pnpm'), user('never npm')]);
     expect(quoteInEvidence(evidence, 'use pnpm never npm', ['user'])).toBe(false);
@@ -134,6 +144,16 @@ describe('reflection operations', () => {
     expect(byId['pre-push']).toMatchObject({ status: 'active', source: 'user', session: 's1' });
     expect(byId['fast']).toMatchObject({ status: 'candidate', source: 'inferred', session: 's1' });
     expect(byId['evil']).toBeUndefined();
+  });
+
+  it('keeps a note a candidate when its quote is only a question, because a question states no decision', async () => {
+    const ctx = context('s1', buildEvidence([user('Should the .kodax folder be ignored by git?'), user('Always run make check-fast before pushing')]));
+    const asked = await applyReflectionOperation(ctx, { operation: 'write', id: 'kodax-ignored', description: '.kodax is ignored', why: 'the agent added it', quote: 'Should the .kodax folder be ignored by git?' });
+    const said = await applyReflectionOperation(ctx, { operation: 'write', id: 'pre-push', description: 'run check-fast', quote: 'Always run make check-fast before pushing' });
+    expect(asked.ok && said.ok).toBe(true);
+    const byId = Object.fromEntries((await notes(ctx)).map((n) => [n.id, n]));
+    expect(byId['kodax-ignored']).toMatchObject({ status: 'candidate', source: 'inferred' });
+    expect(byId['pre-push']).toMatchObject({ status: 'active', source: 'user' });
   });
 
   it('promotes a candidate only from another session with user or local proof, never external', async () => {

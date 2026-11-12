@@ -101,20 +101,25 @@ export function collectSegments(messages: readonly KodaXMessage[]): EvidenceSegm
   return segments;
 }
 
-/** User segments are always kept; error results next; then the rest, newest first, until the budget is spent. */
+/**
+ * User segments first, newest first, up to two thirds of the budget (a very long
+ * session must not turn into an unbounded request); error results next; then the
+ * rest, newest first, until the budget is spent.
+ */
 export function buildEvidence(messages: readonly KodaXMessage[], budgetChars: number = EVIDENCE_BUDGET_CHARS): SessionEvidence {
   const all = collectSegments(messages);
   const keep = new Set<number>();
   let spent = 0;
-  const take = (index: number): void => {
+  const take = (index: number, limit: number): void => {
     const size = all[index]!.text.length + all[index]!.label.length;
-    if (keep.has(index) || (all[index]!.source !== 'user' && spent + size > budgetChars)) return;
+    if (keep.has(index) || spent + size > limit) return;
     keep.add(index);
     spent += size;
   };
-  all.forEach((segment, index) => { if (segment.source === 'user') take(index); });
-  all.forEach((segment, index) => { if (segment.isError) take(index); });
-  for (let index = all.length - 1; index >= 0; index -= 1) take(index);
+  const userLimit = Math.floor((budgetChars * 2) / 3);
+  for (let index = all.length - 1; index >= 0; index -= 1) if (all[index]!.source === 'user') take(index, userLimit);
+  all.forEach((segment, index) => { if (segment.isError) take(index, budgetChars); });
+  for (let index = all.length - 1; index >= 0; index -= 1) if (all[index]!.source !== 'user') take(index, budgetChars);
   const segments = all.filter((_, index) => keep.has(index));
   return {
     segments,

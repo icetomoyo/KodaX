@@ -312,3 +312,29 @@ Sources re-read in full: "The components of agent memory" (2026-11-06) and the c
 **Resolved from §9/§13.** Cache prefix: the note rules and index ride the dynamic run context (`project-memory` is not in the stable system block) and are byte-stable while notes are unchanged (existing test), so a note write never invalidates the cached system prefix. Notes directory display: kept as an absolute path because the index shows only descriptions and the model needs the directory to read a note body. The candidate-result hint was fixed in 2a. The two-round correction (n1) is superseded: reflection sees the whole session.
 
 **Recommendation (owner decides).** The reflection prompt and host guards are good enough to proceed to 2c (real local sessions, blind review) and then the Layer 3 two-session gate; the host idle wiring waits for that gate.
+
+## 15. Phase 2c results (2026-11-12, revisions `f306-phase2c-r1` and `r2`): real-session replay
+
+**Setup.** 16 of the owner's real local KodaX sessions (deterministic sample, at most 4 per project, 6+ messages, gate passed, under 8 MB; fixed sample seed so r2 replays the same sessions as r1) x 3 aliases (ark/k27, zhipu/glm52, ark/v4flash), one response per session from an empty store, blind review by the main session. Sessions are private: raw output stays under the OS temp dir and nothing from the sessions is quoted here. Harness: `benchmark/datasets/feature-306-replay/`. Cost r1 $0.018, r2 $0.018 (48 calls each).
+
+**r1 findings (52 notes, 15 active, 37 candidate).**
+- Roughly half the notes were useful: machine facts a command would not reveal quickly (a shell that cannot read the global git config, a required env var, which tool runs as which identity) and explicit user decisions or prohibitions. Three models independently wrote the same environment facts.
+- About 30% were "what happened" or "how the code is organised" notes that the next session can read directly (commit summaries, request pipelines, release status).
+- **About 6 of 15 active notes were over-claimed.** The host only proves that the quoted words exist in a user message, not that they state the claim: a question the user asked became "done", and one quote about ignoring untracked files backed an unrelated working habit.
+- 8 calls from glm52 were dropped as malformed because the model left out `operation`; every one was a complete, well-formed write.
+- Defect found (fixed): `buildEvidence` capped nothing on user messages, so a very long session could blow up the request. User messages now take at most two thirds of the budget, newest first.
+
+**Fixes (r2).**
+- `parseReflectionCall` treats a call without `operation` as a write; an unknown operation is still malformed. The write passes every host guard as before.
+- A write whose quote ends with a question mark is stored as a candidate: a question states no decision, so it cannot make the note the user's own.
+- Prompt: the quote must be the words in which the user states that very point; and what happened in the session, the repository's current state and how its code is organised are not worth a note.
+
+**r2 results (37 notes, 18 active, 19 candidate; 0 malformed).**
+- Candidates fell from 37 to 19 and are now almost all machine or project facts; the one visibly bad entry is a model using `write` as a no-op (`noop`), 1 of 37.
+- Over-claimed or one-off active notes fell from about 6 of 15 to about 3 of 18 (a "style decided" note whose quote only says the user is considering an option; a one-off "test it yourself" turned into a standing preference). The remaining over-claims are semantic and no host check can see them; they surface through `dispute` or user review, which is what the candidate/active split is for.
+- k27 now makes a call in 7 of 16 sessions (r1: 14 of 16), glm52 and v4flash 12 of 16. Fewer calls with the same useful content is the intended direction, but the drop in k27 means a missed lesson is possible; the Layer 3 arms measure that indirectly.
+- 2b regression on the new prompt (revision `f306-phase2b-r4`, 60 calls, $0.002): 56/60 pass, r5 (web injection) 6/6, r4 (secret) 4/6 with the two non-passes being the known residual candidate that never contains the key. Nothing leaked or injected was stored.
+
+**Limits.** One response per session from an empty store (no existing notes to reconcile, no multi-round job); 16 sessions of one owner; precision is the main session's judgement, not a second reviewer; the prompt was tuned on this same sample once, so r2 numbers are optimistic.
+
+**Recommendation (owner decides).** Precision is acceptable for candidates-by-default; proceed to the Layer 3 two-session arms (notes written by real reflection output, injected into a second session) as the gate for default-on. Host idle wiring stays after that gate.
