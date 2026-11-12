@@ -3,7 +3,7 @@ export { createNoteStore, INDEX_FILE } from './store.js';
 export type { NewNote, NotePatch, NoteResult, NoteStore } from './store.js';
 export { applyMemoryOperation } from './memory-op.js';
 export type { MemoryOpContext, MemoryOpInput, MemoryOpResult } from './memory-op.js';
-export { convertLegacyMemdir } from './converter.js';
+export { convertLegacyMemdir, convertLegacyOnce, LEGACY_CONVERTED_MARKER } from './converter.js';
 export type { ConversionReport } from './converter.js';
 export { INDEX_TOKEN_BUDGET } from './index-builder.js';
 export type { MemoryNote, NoteScope, NoteSource, NoteStatus, NoteType } from './record.js';

@@ -5,7 +5,7 @@ import * as path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { convertLegacyMemdir } from './converter.js';
+import { convertLegacyMemdir, convertLegacyOnce, LEGACY_CONVERTED_MARKER } from './converter.js';
 import { createNoteStore, type NoteStore } from './store.js';
 
 let legacy: string;
@@ -123,5 +123,46 @@ describe('convertLegacyMemdir', () => {
 
   it('returns an empty report for a missing legacy directory', async () => {
     expect(await convertLegacyMemdir(path.join(legacy, 'nope'), store)).toEqual({ converted: [], skipped: [] });
+  });
+});
+
+describe('convertLegacyOnce', () => {
+  it('converts the legacy directory the first time and leaves a marker', async () => {
+    await legacyFile('a.md', '---\ndescription: first\n---\n');
+    const report = await convertLegacyOnce(legacy, store);
+    expect(report?.converted).toEqual(['a']);
+    expect(JSON.parse(await fs.readFile(path.join(target, LEGACY_CONVERTED_MARKER), 'utf8'))).toMatchObject({ converted: ['a'], skipped: [] });
+  });
+
+  it('does not bring back a note the user deleted after the first conversion', async () => {
+    await legacyFile('a.md', '---\ndescription: first\n---\n');
+    await convertLegacyOnce(legacy, store);
+    await store.edit('a', { status: 'archived' });
+    await fs.rm(path.join(target, 'a.md'));
+    expect(await convertLegacyOnce(legacy, store)).toBeUndefined();
+    expect(await store.list()).toEqual([]);
+  });
+
+  it('writes no marker while there is no legacy directory, so a later one is still converted', async () => {
+    const missing = path.join(legacy, 'nope');
+    expect(await convertLegacyOnce(missing, store)).toBeUndefined();
+    await expect(fs.stat(path.join(target, LEGACY_CONVERTED_MARKER))).rejects.toThrow();
+    await fs.mkdir(missing);
+    await fs.writeFile(path.join(missing, 'late.md'), '---\ndescription: late\n---\n');
+    expect((await convertLegacyOnce(missing, store))?.converted).toEqual(['late']);
+  });
+
+  it('writes no marker when the conversion fails, so the next run retries', async () => {
+    await legacyFile('a.md', '---\ndescription: first\n---\n');
+    await fs.mkdir(path.join(legacy, '.governance'));
+    await fs.writeFile(path.join(legacy, '.governance', 'lifecycle.json'), '{}');
+    await expect(convertLegacyOnce(legacy, store)).rejects.toThrow('tombstone.key');
+    await expect(fs.stat(path.join(target, LEGACY_CONVERTED_MARKER))).rejects.toThrow();
+  });
+
+  it('keeps the marker out of the note list', async () => {
+    await legacyFile('a.md', '---\ndescription: first\n---\n');
+    await convertLegacyOnce(legacy, store);
+    expect((await store.list()).map((note) => note.id)).toEqual(['a']);
   });
 });

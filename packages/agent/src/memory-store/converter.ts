@@ -91,3 +91,27 @@ export async function convertLegacyMemdir(legacyRoot: string, store: NoteStore):
   }
   return { converted, skipped };
 }
+
+/** Written into the note root after a conversion; its presence means the legacy directory is never read again. */
+export const LEGACY_CONVERTED_MARKER = '.legacy-converted.json';
+
+/**
+ * Converts the legacy directory once per note root. The marker is what keeps a
+ * note the user later deleted from coming back. No marker is written when there
+ * is no legacy directory or the conversion throws, so both cases retry later.
+ * Returns undefined when nothing was converted this time.
+ */
+export async function convertLegacyOnce(legacyRoot: string, store: NoteStore): Promise<ConversionReport | undefined> {
+  const marker = path.join(store.root, LEGACY_CONVERTED_MARKER);
+  if (await readIfExists(marker) !== undefined) return undefined;
+  try {
+    await fs.stat(legacyRoot);
+  } catch (error) {
+    if (isNotFound(error)) return undefined;
+    throw error;
+  }
+  const report = await convertLegacyMemdir(legacyRoot, store);
+  await fs.mkdir(store.root, { recursive: true });
+  await fs.writeFile(marker, JSON.stringify({ at: new Date().toISOString(), ...report }, null, 2));
+  return report;
+}

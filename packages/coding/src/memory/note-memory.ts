@@ -8,8 +8,11 @@ import * as path from 'node:path';
 
 import {
   applyMemoryOperation,
+  convertLegacyOnce,
   createNoteStore,
+  emitKodaXDiagnostic,
   INDEX_FILE,
+  resolveMemoryRoot,
   resolveNoteRoot,
   type MemoryOpInput,
   type MemoryOpResult,
@@ -36,6 +39,22 @@ function readIndex(root: string): string {
 function renderScope(label: string, root: string): string {
   const index = readIndex(root);
   return `## ${label} notes\nDirectory: ${root}\n${index.length > 0 ? index : '(no notes yet)'}`;
+}
+
+/**
+ * First use of the note memory in a project: copy that project's legacy memories
+ * in (see `convertLegacyOnce`). A failure is reported and never blocks the run.
+ */
+export async function convertLegacyProjectMemory(cwd: string): Promise<void> {
+  try {
+    await convertLegacyOnce(resolveMemoryRoot(cwd), createNoteStore(resolveNoteRoot(cwd, 'project'), 'project'));
+  } catch (error) {
+    emitKodaXDiagnostic({
+      source: 'coding:note-memory',
+      level: 'warn',
+      message: `Could not convert the legacy memories of this project: ${error instanceof Error ? error.message : String(error)}`,
+    });
+  }
 }
 
 /** Synchronous, side-effect-free, byte-stable while the notes are unchanged. */

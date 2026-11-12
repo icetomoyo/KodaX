@@ -4,7 +4,7 @@ import * as path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createNoteStore, resolveNoteRoot, setAgentConfigHome } from '@kodax-ai/agent';
+import { createNoteStore, resolveMemoryRoot, resolveNoteRoot, setAgentConfigHome, setKodaXDiagnosticSink } from '@kodax-ai/agent';
 
 import { buildCapabilityContextSections } from '../prompts/capability-sections.js';
 import type { KodaXOptions } from '../types.js';
@@ -87,6 +87,40 @@ describe('capability sections gate', () => {
     vi.stubEnv('KODAX_MEMORY_NOTES', '');
     const sections = await buildCapabilityContextSections(options(), false, cwd);
     expect(sections.some((s) => s.id === 'memory-rules')).toBe(true);
+  });
+
+  const legacyDir = (): string => {
+    const dir = resolveMemoryRoot(cwd);
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  };
+
+  it('brings the project\'s legacy memories into the note store the first time the switch is on', async () => {
+    fs.writeFileSync(path.join(legacyDir(), 'feedback_tests.md'), '---\ndescription: Run make check-fast\ntype: feedback\n---\nbody\n');
+    vi.stubEnv('KODAX_MEMORY_NOTES', '1');
+    const sections = await buildCapabilityContextSections(options(), false, cwd);
+    expect(sections.find((s) => s.id === 'project-memory')?.content).toContain('Run make check-fast');
+    expect(fs.existsSync(path.join(legacyDir(), 'feedback_tests.md'))).toBe(true);
+  });
+
+  it('does not touch the legacy directory while the switch is off', async () => {
+    fs.writeFileSync(path.join(legacyDir(), 'a.md'), '---\ndescription: legacy\n---\n');
+    vi.stubEnv('KODAX_MEMORY_NOTES', '');
+    await buildCapabilityContextSections(options(), false, cwd);
+    expect(fs.existsSync(resolveNoteRoot(cwd, 'project'))).toBe(false);
+  });
+
+  it('still builds the prompt and reports a diagnostic when the conversion fails', async () => {
+    fs.writeFileSync(path.join(legacyDir(), 'a.md'), '---\ndescription: legacy\n---\n');
+    fs.mkdirSync(path.join(legacyDir(), '.governance'));
+    fs.writeFileSync(path.join(legacyDir(), '.governance', 'lifecycle.json'), '{}');
+    vi.stubEnv('KODAX_MEMORY_NOTES', '1');
+    const seen: string[] = [];
+    const stop = setKodaXDiagnosticSink((diagnostic) => seen.push(diagnostic.message));
+    const sections = await buildCapabilityContextSections(options(), false, cwd);
+    stop();
+    expect(sections.some((s) => s.id === 'project-memory')).toBe(true);
+    expect(seen.join('\n')).toContain('legacy memories');
   });
 });
 
