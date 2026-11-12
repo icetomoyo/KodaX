@@ -47,6 +47,8 @@ export interface NoteStore {
   write(input: NewNote): Promise<NoteResult>;
   edit(id: string, patch: NotePatch): Promise<NoteResult>;
   remove(id: string): Promise<NoteResult>;
+  /** Adds observed reads to the usage counters of existing notes; no revision is kept. Returns how many notes were updated. */
+  recordUse(uses: Readonly<Record<string, number>>, at: Date): Promise<number>;
   /** Returns true when MEMORY.md changed. */
   rebuildIndex(): Promise<boolean>;
 }
@@ -175,6 +177,20 @@ export function createNoteStore(root: string, scope: NoteScope): NoteStore {
       const rejected = secretIn({ description: patch.description, why: patch.why, check: patch.check, body: patch.body });
       if (rejected !== undefined) return rejected;
       return save({ ...parseNote(id, raw, scope), ...patch, scope });
+    }),
+
+    recordUse: (uses, at) => serialized(async () => {
+      let updated = 0;
+      for (const [id, count] of Object.entries(uses)) {
+        if (!validId(id) || !Number.isInteger(count) || count <= 0) continue;
+        const raw = await readOrUndefined(fileOf(id));
+        if (raw === undefined) continue;
+        const note = parseNote(id, raw, scope);
+        await atomicWrite(fileOf(id), serializeNote({ ...note, used: note.used + count, lastUsedAt: at.toISOString() }));
+        updated += 1;
+      }
+      if (updated > 0) await rebuild();
+      return updated;
     }),
 
     remove: (id) => serialized(async () => {
