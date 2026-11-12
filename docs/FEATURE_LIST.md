@@ -22,12 +22,12 @@
 | Visual harness implementation | P3/P4/P5/P6 implemented within declared scope; [final ID/receipt contract delivery](designs/visual-harness-id-contract-delivery-2026-10-30.md). P7 task-value evaluation concluded **mixed; net task-quality/token value unproven**, against optimized pre-visual 1826cc22; [final review and limits](designs/visual-harness-current-version-closure-2026-10-30.md). The 2026-10-29 plan's "not executed" state and old r3 single-response results are historical, not the current outcome. Historical default suite 18,094 passed / 0 failed; earlier failures and unlocated causes remain recorded, not acceptance of the new mainline integration. No new feature ID/version assigned |
 | Roadmap updated | `2026-11-08` — beta.4 Space SDK contract repair prepared on top of the published beta.3; FEATURE_300 remains Planned; `KodaX-next-dev` merged beta.4 the same day |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
-| Total tracked features | `88` |
+| Total tracked features | `89` |
 | InProgress | `2` |
-| Planned | `17` |
+| Planned | `18` |
 | Completed | `63` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
-| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304` |
+| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 306` |
 | Archive cutoff | Shipped / canceled / absorbed / shelved items through `v0.7.49` are archived. |
 
 ### 一览表
@@ -37,7 +37,7 @@
 | Completed | 63 | `304, 303, 302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 3 | `305, 298, 225` | `305`: R1–R6 hardening and verification per [side-chat plan](designs/side-chat-plan.md). `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
-| Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
+| Planned, 0.8.x | 11 | `278, 279, 282, 283, 285, 306, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
 | Reviewed out, 2026-07-12 | 6 | `244, 231, 235, 238, 232, 108` | Shelved, deferred, absorbed, or cancelled after the post-v0.7.70 roadmap review; F105 was restored by the 2026-07-29 MoA redesign. |
 
@@ -2248,6 +2248,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 | `282` | Bounded Active Query Recovery + Durable Physical-Capacity Emergency Compaction | Core / Context Management + Reliability | Critical | `v0.8.10` | [v0.8.10](features/v0.8.10.md#feature_282-bounded-active-query-recovery--durable-physical-capacity-emergency-compaction) |
 | `283` | Local Hybrid Session History Retrieval + Builtin Adaptive LLM Rerank | Enhancement / Session Retrieval + LLM | High | `v0.8.10` | [v0.8.10](features/v0.8.10.md#feature_283-local-hybrid-session-history-retrieval--builtin-adaptive-llm-rerank) |
 | `285` | Capability-Aware Auto Classifier Model Selection | Enhancement / LLM Provider + Auto Permission Reliability | High | `v0.8.10` | [v0.8.10](features/v0.8.10.md#feature_285-capability-aware-auto-classifier-model-selection) |
+| `306` | Memory and Skill-Learning Redesign | Enhancement / Memory + Learning | High | `v0.8.10` | [v0.8.10](features/v0.8.10.md#feature_306-memory-and-skill-learning-redesign) |
 | `280` | Cache-Stable Prompt and Tool Surface Optimization | Internal / LLM Cost + Tool Reliability | High | `v0.8.11` | [v0.8.11](features/v0.8.11.md#feature_280-cache-stable-prompt-and-tool-surface-optimization) |
 | `265` | Work Fast Path + Coding Assurance Budget | Core / Performance + Agent Quality | High | `v0.8.15` | [v0.8.15](features/v0.8.15.md#feature_265-work-fast-path--coding-assurance-budget) |
 | `105` | Mixture-of-Agents Virtual Provider (MoA mode, reuses F287 skeleton) | Core / LLM Provider + Test-Time Scaling | High | `v0.8.20` | [v0.8.20](features/v0.8.20.md#feature_105-mixture-of-agents-virtual-provider) |
@@ -2257,6 +2258,15 @@ fixed GitHub binary archive sidecar omission before tagging.
 | `113` | TodoList JSON / CLI Surface | Enhancement | Medium | `v0.9.7` | [v0.9.7](features/v0.9.7.md#feature_113-todolist-json--cli-surface) |
 | `139` | NotebookEdit Tool | Enhancement / Tool | Low | `v0.9.25` | [v0.9.25](features/v0.9.25.md#feature_139-notebookedit-tool--jupyter-cell-level-crud) |
 | `262` | npm 12 Install-Time Security + Trusted Publishing Migration | Internal / Supply Chain Security | High | `v0.9.0` | [v0.9.0](features/v0.9.0.md#feature_262-npm-12-install-time-security--trusted-publishing-migration) |
+
+---
+
+## 2026-11-12 FEATURE_306 Addition
+
+- Status: target `v0.8.10`, Planned; Phase 0 baseline evaluation of the current memory is the first work item.
+- Source: [memory redesign plan](designs/memory-redesign-plan.md) (owner decisions of 2026-11-12: skill learning redesigned together; inferred memories stay `candidate` until corroborated or approved; F275 interventions evaluated as an arm; one-time converter, experimental SDK entry may break with a one-release `runtime.learning` facade).
+- Scope: one markdown file per memory, a small injected index, an explicit `memory` tool, gated reflection over bounded raw evidence, an idle reconcile job, and learned procedures as `SKILL.md` under the same states. Eval-gated per `benchmark/EVAL_GUIDELINES.md`.
+- Design: [v0.8.10](features/v0.8.10.md#feature_306-memory-and-skill-learning-redesign).
 
 ---
 
