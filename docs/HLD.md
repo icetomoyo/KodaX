@@ -14,8 +14,8 @@ before printing and never dispatches management operations. See the
 > daemons are retired. Internal Runtime and independent libraries remain. See
 > [migration and ownership limits](SDK_MIGRATION.md#统一-host-sdk-收口未发布).
 
-Last updated: 2026-11-11. Current development tree: FEATURE_298/299/301/302/303/304/305 on package
-`0.7.97-beta.6`, with `v0.7.96` as the last stable release; publication is separate.
+Last updated: 2026-11-12. Current development tree: FEATURE_298/299/301/302/303/304/305 on package
+`0.7.97-beta.7`, with `v0.7.96` as the last stable release; publication is separate.
 
 Product integrations use `KodaXProductClient` through `/client`. Read the
 [Client contract](CLIENT_CONTRACT.md) and [SDK migration guide](SDK_MIGRATION.md)

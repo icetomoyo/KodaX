@@ -123,7 +123,7 @@ reference and does not duplicate every type. It should answer three questions:
 
 ## 2. Published Package And Build Entries
 
-The development package version is `@kodax-ai/kodax@0.7.97-beta.6`, which includes the v2
+The development package version is `@kodax-ai/kodax@0.7.97-beta.7`, which includes the v2
 scoped Provider credential broker (ADR-068) and bounded daemon client
 inventory on top of the v0.7.96-alpha.1 feature set and the v0.7.96-alpha.2
 Windows boot-identity hotfix. The v0.7.96-alpha.1

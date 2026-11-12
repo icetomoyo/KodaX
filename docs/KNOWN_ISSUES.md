@@ -2947,7 +2947,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 408 | Medium | Resolved | Space SDK leaks user image labels, rejects non-PNG attachments and loses extension approval attribution | observed in v0.7.97-beta.6; visual input/tools since beta.5 | Unreleased (based on v0.7.97-beta.6) | 2026-11-12 | 2026-11-12 |
+| 408 | Medium | Resolved | Space SDK leaks user image labels, rejects non-PNG attachments and loses extension approval attribution | observed in v0.7.97-beta.6; visual input/tools since beta.5 | `v0.7.97-beta.7` | 2026-11-12 | 2026-11-12 |
 | 407 | Medium | Resolved | Passive connections and exit receipts ignore the session storage owner | v0.7.97-alpha.7 (storage-owner redirect) | `v0.7.97-beta.6` (FEATURE_305 T3+T4) | 2026-11-10 | 2026-11-11 |
 | 406 | High | Resolved | A CLI redirected to Space's Host fails `daemon start` verification and provider credential authorization | `daemon start` check v0.7.97-alpha.1, exposed by the v0.7.97-alpha.7 redirect; credential profile fence v0.7.97-alpha.12 | `v0.7.97-beta.6` | 2026-11-10 | 2026-11-10 |
 | 405 | High | Resolved | Space and the CLI refuse to share a compatible Host from another installation or version | v0.7.97-alpha.1 (Host build refresh); busy older-Host refusal since v0.7.79 | `v0.7.97-beta.6` | 2026-11-10 | 2026-11-10 |
@@ -3248,7 +3248,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 - Status: Resolved (triaged ready from the Space integration report)
 - Introduced: observed in v0.7.97-beta.6; model observation labels and visual tools since beta.5; the PNG-only reader predates this report
 - Created: 2026-11-12
-- Fixed: unreleased changes based on v0.7.97-beta.6; no package publication claimed
+- Fixed: `v0.7.97-beta.7`
 - Resolution Date: 2026-11-12
 - Context: Space integration; current view, canonical history, remote Host attachments and extension approval UI
 
@@ -18586,7 +18586,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ### 2026-11-12: Issue 408
 
 - Resolved the Space SDK image text/attachment/capability report and added
-  structured extension approval attribution; these changes are unreleased.
+  structured extension approval attribution; shipped in `v0.7.97-beta.7`.
 
 ### 2026-11-11: Issue 407
 

@@ -237,6 +237,20 @@ describe('FEATURE_218 manual registry', () => {
     expect(troubleshooting).toContain('~/.kodax/runtime/daemon/default/bootstrap.log');
   });
 
+  it('documents the v0.7.97-beta.7 Space SDK integration corrections', () => {
+    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
+
+    expect(sdk).toContain('The v0.7.97-beta.7 release repairs the Space SDK image projection, attachment reads and');
+    expect(sdk).toContain('approval attribution from the Space integration report (Issue 408): user image observation');
+    expect(sdk).toContain('labels leave the current view, canonical history and search, which keep the user\'s original');
+    expect(sdk).toContain('text; attachments may carry `observationId`, `width`, `height` and `sha256`; Host attachment');
+    expect(sdk).toContain('reads cover PNG, JPEG, WebP and GIF with the actual mediaType, byte validation and the');
+    expect(sdk).toContain('unchanged 512 KiB chunk and 10 MiB image bounds; `visual_history`, `visual_inspect` and');
+    expect(sdk).toContain('`visual_read_pixels` resolve to the `read` capability; and extension `tool:before` approvals');
+    expect(sdk).toContain('carry optional `extensionAsks: { extension, reason }[]` attribution beside the aggregate');
+    expect(sdk).toContain('reason. Every v0.7.96 stable and v0.7.97-alpha.1 through beta.6 contract is retained.');
+  });
+
   it('documents the v0.7.96 release capability and capacity-debt contracts', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;

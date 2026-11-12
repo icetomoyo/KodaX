@@ -3,8 +3,14 @@
 Documentation for KodaX users, product-client integrators and trusted Host developers.
 
 This development tree implements the unified Product Client contract under
-FEATURE_298/299/301/303/304/305. The package version is `0.7.97-beta.6`;
-`v0.7.96` remains the last stable release. `v0.7.97-beta.6` moves to one
+FEATURE_298/299/301/303/304/305. The package version is `0.7.97-beta.7`;
+`v0.7.96` remains the last stable release. `v0.7.97-beta.7` repairs the
+Space SDK image projection, attachment reads and extension approval
+attribution from the Space integration report (Issue 408): user image
+observation labels leave the view, history and search, Host attachment reads
+cover PNG, JPEG, WebP and GIF with the actual mediaType, the read-only visual
+tools resolve to the `read` capability, and extension approvals carry
+structured per-extension attribution; `v0.7.97-beta.6` moves to one
 Host per `KODAX_HOME`: the Host-location `profile` is removed from the SDK
 entry points and the `kodax daemon`/`a2a serve` commands (breaking), Space
 and the CLI share one compatible Host across installations, the standalone
@@ -65,7 +71,8 @@ Actor settlement and saved-history location/turn resolution shipped in
 `v0.7.97-beta.4`; extension policy hardening and asks, proxy/private CA
 support and durable visual observations shipped in `v0.7.97-beta.5`; one
 Host per `KODAX_HOME` with the Host-location `profile` removed shipped in
-`v0.7.97-beta.6`. Read the
+`v0.7.97-beta.6`; the Space SDK image projection, attachment and
+approval-attribution corrections shipped in `v0.7.97-beta.7`. Read the
 [current SDK alignment](sdk/embedder-guide.md#post-alpha10-sdk-alignment),
 [unified Host cutover](sdk/embedder-guide.md#unified-host-sdk-cutover-shipped-in-v0797-alpha12)
 and [one Host per KODAX_HOME](../docs/SDK_MIGRATION.md#one-host-per-kodax_home-profile-removed)

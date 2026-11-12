@@ -1109,7 +1109,7 @@ The versioned contract, reasons, revision domains and remaining cold-read limits
 are recorded in [Client contract](CLIENT_CONTRACT.md#2026-11-08-space-sdk-contract-repairs-shipped-in-v0797-beta4).
 
 
-## SDK integration corrections (2026-11-12, unreleased)
+## SDK integration corrections (shipped in v0.7.97-beta.7)
 
 - User entries in the current view, history reads and search retain the user's
   original text. Stop stripping observation-label suffixes in clients. Optional

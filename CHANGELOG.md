@@ -8,6 +8,49 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.97-beta.7] - 2026-11-12
+
+Seventh beta of the v0.7.97 line: the Space SDK image projection,
+attachment and approval-attribution repairs triaged from the Space
+integration report (Issue 408). User image observation labels no longer
+leak into the current view, canonical history or search, the Host
+attachment reader accepts all four supported image formats, the
+read-only visual tools resolve to the `read` capability, and extension
+`tool:before` approvals carry structured per-extension attribution.
+Every v0.7.96 stable and v0.7.97-alpha.1 through beta.6 client contract
+is retained; the corrections tighten projections without adding
+requirements. npm publication remains a manual maintainer action.
+
+### Fixed
+
+- Model-facing observation labels on accepted user images are no longer
+  projected as user text. The current view, history reads and search return the
+  user's original text (including leading/trailing whitespace), image-only
+  inputs stay visible, and image observations surface as optional
+  `attachments[].observationId/width/height/sha256`. Saved beta.5/beta.6
+  inputs are projected the same way without rewriting their canonical model
+  context, and clients stop parsing labels or the `.media` layout themselves
+  (Issue 408).
+- `sessions.readItem(..., { part: 'attachment' })` reads PNG, JPEG, WebP and
+  GIF, validated by their actual bytes and dimensions, and returns the actual
+  `mediaType` beside the existing SHA256, width/height and bounded chunks.
+  History attachment IDs resolve as well as live view IDs. The 512 KiB chunk
+  and 10 MiB image limits and the expected-hash checks are unchanged
+  (Issue 408).
+- `visual_history`, `visual_inspect` and `visual_read_pixels` resolve to the
+  `read` capability instead of falling through to the conservative `subagent`
+  tier, and every registered built-in tool has an explicit capability entry
+  covered by a completeness test (Issue 408).
+- Extension `tool:before` approval requests carry optional
+  `options.extensionAsks: { extension, reason }[]` naming each asking
+  extension with its original reason, preserved through aggregation, child
+  forwarding, the Host registry and both client adapters, so a product UI no
+  longer overwrites the reason with its own risk explanation. The aggregate
+  `reason` remains the readable fallback for older Hosts; absence of the new
+  field does not identify the approval's origin (Issue 408).
+
+---
+
 ## [0.7.97-beta.6] - 2026-11-11
 
 Sixth beta of the v0.7.97 line: one Host per `KODAX_HOME` (ADR-075,

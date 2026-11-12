@@ -1,13 +1,14 @@
 # Space 的 Product Client / Host 接缝
 
-## SDK 接入修正（2026-11-12，尚未发布）
+## beta.7 的 SDK 接入修正
 
+`v0.7.97-beta.7` 标签发布以下 Space 可见变化（Issue 408，npm 发布为手动步骤）。
 用户图片的观测标签从当前 view、历史用户正文和搜索中移除；附件以可选的
 `observationId/width/height/sha256` 暴露观测信息。Host 附件读取覆盖 PNG、JPEG、
 WebP 和 GIF，返回实际 mediaType，保留 SHA256 校验与字节分块。客户端只用
 `sessions.readItem`，不自行读 `.media`。三个 `visual_*` 工具的能力均为 `read`。
 扩展审批增加可选 `options.extensionAsks: { extension, reason }[]`；展示每个扩展的
-原因，并继续只允许一次或拒绝。迁移详见 [SDK 说明](SDK_MIGRATION.md#sdk-integration-corrections-2026-11-12-unreleased)。
+原因，并继续只允许一次或拒绝。迁移详见 [SDK 说明](SDK_MIGRATION.md#sdk-integration-corrections-shipped-in-v0797-beta7)。
 
 ## beta.6 的单 Host 与 `profile` 删除
 

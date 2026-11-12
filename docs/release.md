@@ -48,6 +48,57 @@ on one commit.
   The step limit is ten minutes because the passing Windows suite alone takes
   about 4.6 minutes.
 
+## v0.7.97-beta.7 release preparation
+
+Release state: `v0.7.97-beta.7` is a candidate awaiting the publishing
+dispatch. npm publication has not occurred. The release is the seventh
+beta of the v0.7.97 line: the Space SDK image projection, attachment and
+approval-attribution repairs triaged from the Space integration report
+(Issue 408). User image observation labels leave the current view,
+canonical history and search, which return the user's original text;
+image observations surface as optional attachment observation facts;
+the Host attachment reader accepts PNG, JPEG, WebP and GIF with actual
+byte validation and the actual `mediaType`, resolving history attachment
+IDs as well as live view IDs; the read-only `visual_*` tools resolve to
+the `read` capability beside an explicit built-in inventory with a
+completeness test; and extension `tool:before` approvals carry structured
+`extensionAsks` attribution that survives aggregation, child forwarding,
+the Host registry and both client adapters. Every v0.7.96 stable and
+v0.7.97-alpha.1 through beta.6 client contract is retained.
+
+The CI/Release in-place upgrade gates now pin the published
+`0.7.97-beta.6` tarball (published 2026-11-11T14:01:03.446Z; registry
+dist.integrity sha512-4SZmAXEg…T8zA== equals the
+kodax-ai-kodax-0.7.97-beta.6.tgz asset of the v0.7.97-beta.6 GitHub
+Release, sha256 5d2113ac…2502442). Run that fixture locally with Windows
+`tar.exe` ahead of Git's GNU `tar` on `PATH`: GNU `tar` reads the `C:`
+drive in the archive path as a remote host.
+
+Local candidate validation on Windows with Node 22.23.1: full build,
+source and test typechecks, the self-knowledge and manual-tool
+(`kodax_manual`) suites (101 passed), `tests/release-workflow.test.ts`
+(28 passed), `tests/tracker-consistency.test.ts` (4 passed),
+`test:host-cutover` (3 passed), the contract tier (1,072 passed), the
+unit tier (13,982 passed, 7 skipped), the fast tier (3,757 passed,
+57 skipped), `test:bundle` (110 passed) and the real published beta.6
+Host in-place upgrade (1 passed) against the integrity-pinned public
+tarball. The first two full fast runs each failed one
+`src/sdk-client.crash.test.ts` scenario whose first provider request
+hit a local transport failure under full-suite machine load
+(`providerRequests: 0`, network before the first delta); the file
+passes in isolation and the unchanged candidate's third full run passed
+every test, matching the beta.6 preparation's load-flake pattern. The
+system tier runs in Release CI.
+
+This release follows the single publishing dispatch described under
+[Current release execution](#current-release-execution): `target=all` with
+`release_tag=v0.7.97-beta.7` runs Full CI, all five archive builds and the
+npm package gates, then creates the tag at the dispatched commit and the
+GitHub pre-release from that run's artifacts. Ordinary branch pushes do
+not run CI. Cross-platform manual acceptance, installed Space/SDK
+acceptance, the Space dependency bump (FEATURE_305 T6 follow-up) and npm
+registry publication remain separate maintainer steps.
+
 ## v0.7.97-beta.6 release preparation
 
 Release state: `v0.7.97-beta.6` was published on 2026-11-11 as a GitHub
