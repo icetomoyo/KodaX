@@ -50,8 +50,10 @@ on one commit.
 
 ## v0.7.97-beta.7 release preparation
 
-Release state: `v0.7.97-beta.7` is a candidate awaiting the publishing
-dispatch. npm publication has not occurred. The release is the seventh
+Release state: `v0.7.97-beta.7` was published on 2026-11-12 as a GitHub
+prerelease from run 43140277830 at `7e6b7d4c1` (all five archive builds,
+Full CI and the npm package gates green on the first dispatch; 13
+assets). npm publication has not occurred. The release is the seventh
 beta of the v0.7.97 line: the Space SDK image projection, attachment and
 approval-attribution repairs triaged from the Space integration report
 (Issue 408). User image observation labels leave the current view,
@@ -95,9 +97,12 @@ This release follows the single publishing dispatch described under
 `release_tag=v0.7.97-beta.7` runs Full CI, all five archive builds and the
 npm package gates, then creates the tag at the dispatched commit and the
 GitHub pre-release from that run's artifacts. Ordinary branch pushes do
-not run CI. Cross-platform manual acceptance, installed Space/SDK
-acceptance, the Space dependency bump (FEATURE_305 T6 follow-up) and npm
-registry publication remain separate maintainer steps.
+not run CI. The dispatch (run 43140277830) passed every job and published.
+The universal npm tarball asset is `kodax-ai-kodax-0.7.97-beta.7.tgz`,
+sha256 `50c65ba0…1f414`, matching `SHA256SUMS`. Cross-platform manual
+acceptance, installed Space/SDK acceptance, the Space dependency bump
+(FEATURE_305 T6 follow-up) and npm registry publication remain separate
+maintainer steps.
 
 ## v0.7.97-beta.6 release preparation
 
