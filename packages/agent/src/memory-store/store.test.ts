@@ -64,6 +64,12 @@ describe('note store', () => {
     expect(await fs.readdir(dir)).toEqual([]);
   });
 
+  it('rejects a secret used as the id, because the id becomes a file name and an index line', async () => {
+    const result = await store.write({ id: 'sk-live-9f8e7d6c5b4a39281716aabbccdd', ...base });
+    expect(result).toMatchObject({ ok: false, reason: 'secret' });
+    expect(await fs.readdir(dir)).toEqual([]);
+  });
+
   it('rejects an empty description', async () => {
     expect(await store.write({ id: 'a', ...base, description: '  ' }))
       .toMatchObject({ ok: false, reason: 'empty-description' });

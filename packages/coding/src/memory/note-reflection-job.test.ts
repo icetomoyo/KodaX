@@ -95,6 +95,24 @@ describe('finishNoteRun', () => {
     expect((await project.list())[0]!.used).toBe(1);
   });
 
+  it('never reflects through a CLI bridge, which would run its own agent, but still counts reads', async () => {
+    const project = createNoteStore(resolveNoteRoot(cwd, 'project'), 'project');
+    await project.write({ id: 'tests', type: 'feedback', description: 'Run make check-fast', body: 'x' });
+    const file = path.join(project.root, 'tests.md');
+    const bridge = {
+      ...provider([]),
+      getCapabilityProfile: () => ({ transport: 'cli-bridge', toolCallingFidelity: 'limited' }),
+    } as unknown as KodaXBaseProvider;
+    const opened: KodaXMessage[] = [
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'r1', name: 'read', input: { path: file } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'r1', content: 'ok' }] },
+    ];
+    await finishNoteRun(finish({ provider: bridge, messages: [...messages(), ...opened] }));
+    expect(bridge.stream).not.toHaveBeenCalled();
+    expect((await project.list())[0]!.used).toBe(1);
+    expect(fs.existsSync(path.join(resolveNoteRoot(cwd, 'user'), '.reflection-budget.json'))).toBe(false);
+  });
+
   it('does not call the model for a session with nothing to learn from', async () => {
     const fake = provider([]);
     await finishNoteRun(finish({ messages: [{ role: 'user', content: 'What is 2+2?' }], provider: fake }));

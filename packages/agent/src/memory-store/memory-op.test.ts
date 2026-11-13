@@ -74,6 +74,8 @@ describe('applyMemoryOperation', () => {
 
     it('rejects a trivially short quote', async () => {
       expect(await run({ ...write, userQuote: 'a' })).toMatchObject({ ok: false });
+      expect(await run({ ...write, userQuote: 'yes' }, 'yes')).toMatchObject({ ok: false });
+      expect(await run({ ...write, userQuote: '记住这个' }, '记住这个')).toMatchObject({ ok: true });
     });
 
     it('routes by scope', async () => {

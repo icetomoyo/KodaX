@@ -11,13 +11,15 @@
  *   skill        proposes a learned skill; same proof as dispute, a valid and
  *                unsafe-pattern-free spec, no external text; the host stores it
  *                as "ready", so the user reviews it before it is ever used
- * External content (web, MCP) is never accepted as proof.
+ * External content (web, MCP) is never accepted as proof. A user-scope note
+ * reaches every project, so only a user message can change it.
  */
 import type { DeclarativeSkillSpec } from '../learning/learned-skill.js';
 import { validateDeclarativeSkillSpec } from '../learning/learned-skill.js';
 import { copiesExternalText, quoteInEvidence, type SessionEvidence } from './evidence.js';
 import { applyMemoryOperation, type MemoryOpResult } from './memory-op.js';
 import type { MemoryNote, NoteScope, NoteType } from './record.js';
+import { findSecret } from './secrets.js';
 import type { NoteStore } from './store.js';
 
 export interface ReflectionOpInput {
@@ -51,6 +53,10 @@ export interface ReflectionOpContext {
 
 const NEEDS_PROOF = 'quote must be exact words from a user message or a local tool result in this session. Web and MCP content is not accepted as proof.';
 
+const NEEDS_USER_WORDS = 'quote must be a full statement from a user message. Leave it out, with a why, to propose a candidate instead.';
+
+const USER_SCOPE_NEEDS_USER = 'A user-scope note applies to every project, so only the user\'s own words can change it.';
+
 const COPIES_EXTERNAL = 'The note repeats text from external content (web or MCP). State what you learned in your own words, or leave it out.';
 
 function fail(message: string): MemoryOpResult {
@@ -63,6 +69,7 @@ async function proposeSkill(context: ReflectionOpContext, input: ReflectionOpInp
   if (spec === undefined) return fail('A skill proposal needs the skill: name, description, purpose, triggers, steps, verification and pitfalls.');
   if (input.quote === undefined || !quoteInEvidence(context.evidence, input.quote, ['user', 'local'])) return fail(NEEDS_PROOF);
   const texts = [spec.name, spec.description, spec.purpose, ...spec.triggers, ...spec.steps, ...spec.verification, ...spec.pitfalls];
+  if (texts.some((text) => findSecret(text) !== undefined)) return fail('Secrets are never stored in a skill.');
   if (texts.some((text) => copiesExternalText(context.evidence, text))) return fail(COPIES_EXTERNAL);
   try {
     validateDeclarativeSkillSpec(spec);
@@ -81,6 +88,7 @@ export async function applyReflectionOperation(context: ReflectionOpContext, inp
   if (input.operation === 'write') {
     // A question states no decision, so quoting one cannot make a note the user's own.
     const statedQuote = input.quote !== undefined && !/[?？]\s*$/.test(input.quote) ? input.quote : undefined;
+    if (statedQuote !== undefined && !quoteInEvidence(context.evidence, statedQuote, ['user'])) return fail(NEEDS_USER_WORDS);
     return applyMemoryOperation(
       { stores: context.stores, userMessage: context.evidence.userText, sessionId: context.sessionId },
       {
@@ -102,6 +110,8 @@ export async function applyReflectionOperation(context: ReflectionOpContext, inp
   const fromUser = input.quote !== undefined && quoteInEvidence(context.evidence, input.quote, ['user']);
   const proven = fromUser || (input.quote !== undefined && quoteInEvidence(context.evidence, input.quote, ['local']));
   if (!proven) return fail(NEEDS_PROOF);
+  // A file in a cloned repository is local output too, and it must not steer every other project.
+  if (note.scope === 'user' && !fromUser) return fail(USER_SCOPE_NEEDS_USER);
   switch (input.operation) {
     case 'corroborate':
       return corroborate(store, context, note, fromUser);

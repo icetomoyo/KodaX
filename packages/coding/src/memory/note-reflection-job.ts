@@ -118,15 +118,26 @@ export function createLearnedSkillSink(cwd: string): SkillSink {
   };
 }
 
-export async function finishNoteRun(run: NoteRunFinish, judge: ReflectionJudge = createProviderJudge(run.provider, run.model)): Promise<void> {
+/**
+ * A CLI bridge (codex, gemini) drops the request's tools and system prompt and
+ * runs its own agent with full permissions, so a reflection request sent there
+ * would start an unsupervised agent on the session text instead of answering.
+ */
+function canReflectWith(provider: KodaXBaseProvider, model: string | undefined): boolean {
+  const profile = provider.getCapabilityProfile?.(model);
+  return profile === undefined || (profile.transport === 'native-api' && profile.toolCallingFidelity === 'full');
+}
+
+export async function finishNoteRun(run: NoteRunFinish, judge?: ReflectionJudge): Promise<void> {
   const stores = storesFor(run.cwd);
   await recordNoteReads({ stores, messages: run.messages, ignoreCalls: run.earlierCalls });
+  if (!canReflectWith(run.provider, run.model)) return;
   const outcome = await reflectSession({
     sessionId: run.sessionId,
     messages: run.messages,
     stores,
     cursorRoot: stores.user.root,
-    judge,
+    judge: judge ?? createProviderJudge(run.provider, run.model),
     skills: createLearnedSkillSink(run.cwd),
   });
   if (outcome.status !== 'done') return;

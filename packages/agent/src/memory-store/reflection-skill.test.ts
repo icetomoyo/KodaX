@@ -80,6 +80,15 @@ describe('reflection skill proposals', () => {
     expect(sink).not.toHaveBeenCalled();
   });
 
+  it('rejects a skill that carries a secret, without echoing it', async () => {
+    const sink = vi.fn<SkillSink>(async () => ({ ok: true, message: 'ready' }));
+    const leaky = { ...SPEC, steps: ['Export NPM_TOKEN=npm_9f8e7d6c5b4a39281716aabb and publish'] };
+    const outcome = await applyReflectionOperation(context(sink), propose(leaky));
+    expect(outcome.ok).toBe(false);
+    expect(outcome.message).not.toContain('9f8e7d6c');
+    expect(sink).not.toHaveBeenCalled();
+  });
+
   it('rejects a call without a skill body', async () => {
     const sink = vi.fn<SkillSink>(async () => ({ ok: true, message: 'ready' }));
     const outcome = await applyReflectionOperation(context(sink), { operation: 'skill', id: 'cut-release', quote: 'release dry run ok: tag v1.2.3 would be pushed' });

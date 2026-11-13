@@ -9,6 +9,7 @@
  *                             session can corroborate it. Candidates are not indexed.
  *   - edit / delete        -> always need a valid quote.
  */
+import { normalizeQuote, quoteWeight } from './quote.js';
 import type { NoteScope, NoteType } from './record.js';
 import type { NewNote, NoteResult, NoteStore } from './store.js';
 
@@ -38,19 +39,16 @@ export interface MemoryOpResult {
   readonly message: string;
 }
 
-const MIN_QUOTE_CHARS = 4;
-
-function normalize(text: string): string {
-  return text.normalize('NFC').replace(/\s+/g, ' ').trim();
-}
+/** The user is present, so a short reply such as "yes, save that" is enough; one word is not. */
+const MIN_QUOTE_WEIGHT = 6;
 
 /** Returns the normalized quote when it authorizes, otherwise an error message. */
 function authorize(quote: string | undefined, userMessage: string): { readonly quote: string } | { readonly error: string } {
-  const normalized = normalize(quote ?? '');
-  if (Array.from(normalized).length < MIN_QUOTE_CHARS) {
+  const normalized = normalizeQuote(quote ?? '');
+  if (quoteWeight(normalized) < MIN_QUOTE_WEIGHT) {
     return { error: 'userQuote must be an exact quote from the current user message authorizing this change.' };
   }
-  if (!normalize(userMessage).includes(normalized)) {
+  if (!normalizeQuote(userMessage).includes(normalized)) {
     return { error: 'userQuote was not found in the current user message. Quote the user exactly, or omit it to propose a candidate note.' };
   }
   return { quote: normalized };

@@ -3,12 +3,15 @@
  *
  * Every segment carries a provenance the HOST assigns (never the model):
  *   user      what the user typed; the only source that can state a preference
- *   local     output of a tool that reads or changes this machine (read, bash, ...)
+ *   local     output of a tool that reads or changes this machine (read, bash, ...);
+ *             a shell command that fetches from the network counts as external
  *   external  anything else (web, MCP, unknown tools); shown to the model as
  *             untrusted data and never accepted as proof for a note
  *   assistant what the agent said; context only, never proof
  */
 import type { KodaXContentBlock, KodaXMessage } from '@kodax-ai/llm';
+
+import { normalizeQuote, quoteWeight } from './quote.js';
 
 export type EvidenceSource = 'user' | 'local' | 'external' | 'assistant';
 
@@ -40,7 +43,11 @@ const ASSISTANT_CHARS = 400;
 export const EVIDENCE_BUDGET_CHARS = 60_000;
 const SEGMENT_SEPARATOR = '\n\u0000\n';
 
-export function toolSource(toolName: string): EvidenceSource {
+/** Shell commands whose output is someone else's text: downloads, URLs, GitHub issues and PRs. */
+const FETCHES_NETWORK = /\b(?:curl|wget|iwr|irm|invoke-webrequest|invoke-restmethod|gh)\b|[a-z][a-z0-9+.-]*:\/\//i;
+
+export function toolSource(toolName: string, command = ''): EvidenceSource {
+  if (toolName === 'bash' && FETCHES_NETWORK.test(command)) return 'external';
   return LOCAL_TOOLS.has(toolName) || toolName.startsWith('lsp_') ? 'local' : 'external';
 }
 
@@ -64,7 +71,7 @@ function resultText(block: Extract<KodaXContentBlock, { type: 'tool_result' }>):
 
 function commandOf(input: Record<string, unknown>): string {
   const value = input.command ?? input.path ?? input.file_path ?? input.pattern ?? input.url ?? input.query;
-  return typeof value === 'string' ? value.slice(0, 200) : '';
+  return typeof value === 'string' ? value : '';
 }
 
 export function collectSegments(messages: readonly KodaXMessage[]): EvidenceSegment[] {
@@ -89,8 +96,8 @@ export function collectSegments(messages: readonly KodaXMessage[]): EvidenceSegm
       } else if (block.type === 'tool_result') {
         const call = calls.get(block.tool_use_id) ?? { name: 'unknown', arg: '' };
         segments.push({
-          source: toolSource(call.name),
-          label: `${call.name}${call.arg.length > 0 ? `: ${call.arg}` : ''}`,
+          source: toolSource(call.name, call.arg),
+          label: `${call.name}${call.arg.length > 0 ? `: ${call.arg.slice(0, 200)}` : ''}`,
           tool: call.name,
           text: clip(resultText(block), TOOL_HEAD_CHARS, TOOL_TAIL_CHARS),
           isError: block.is_error === true,
@@ -128,15 +135,17 @@ export function buildEvidence(messages: readonly KodaXMessage[], budgetChars: nu
   };
 }
 
-function normalize(text: string): string {
-  return text.normalize('NFC').replace(/\s+/g, ' ').trim();
-}
+/**
+ * The reflection job quotes a transcript, not a live user, so the quote must say
+ * something: two common words appear in almost every session and would prove any note.
+ */
+const MIN_PROOF_WEIGHT = 10;
 
 /** True when `quote` appears verbatim (whitespace-insensitive) in a segment whose source is in `allowed`. */
 export function quoteInEvidence(evidence: SessionEvidence, quote: string, allowed: readonly EvidenceSource[]): boolean {
-  const wanted = normalize(quote);
-  return Array.from(wanted).length >= 4
-    && evidence.segments.some((segment) => allowed.includes(segment.source) && normalize(segment.text).includes(wanted));
+  const wanted = normalizeQuote(quote);
+  return quoteWeight(wanted) >= MIN_PROOF_WEIGHT
+    && evidence.segments.some((segment) => allowed.includes(segment.source) && normalizeQuote(segment.text).includes(wanted));
 }
 
 const COPY_WINDOW_CHARS = 40;
@@ -147,7 +156,7 @@ const COPY_WINDOW_CHARS = 40;
  * web page verbatim (even as a warning) would carry that page into every future session.
  */
 export function copiesExternalText(evidence: SessionEvidence, text: string): boolean {
-  const flat = (value: string): string => normalize(value).toLowerCase();
+  const flat = (value: string): string => normalizeQuote(value).toLowerCase();
   const external = evidence.segments.filter((segment) => segment.source === 'external').map((segment) => flat(segment.text));
   if (external.length === 0) return false;
   const trusted = evidence.segments.filter((segment) => segment.source === 'user' || segment.source === 'local').map((segment) => flat(segment.text));

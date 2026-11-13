@@ -149,7 +149,7 @@ export function createNoteStore(root: string, scope: NoteScope): NoteStore {
     write: (input) => serialized(async () => {
       if (!validId(input.id)) return { ok: false, reason: 'invalid-id' };
       if (input.description.trim().length === 0) return { ok: false, reason: 'empty-description' };
-      const rejected = secretIn({ description: input.description, why: input.why, check: input.check, body: input.body });
+      const rejected = secretIn({ id: input.id, description: input.description, why: input.why, check: input.check, body: input.body });
       if (rejected !== undefined) return rejected;
       if ((await readOrUndefined(fileOf(input.id))) !== undefined) return { ok: false, reason: 'exists' };
       return save({
