@@ -1226,15 +1226,21 @@ try {
 It copies and never moves: the source is only read. Behavior:
 
 - The target must not exist or must be an empty directory
-  (`target_not_empty`, `target_invalid`). It must not contain or sit inside the
-  source (`nested_roots`).
+  (`target_not_empty`, `target_invalid`). OS housekeeping entries
+  (`.DS_Store`, `desktop.ini`, `Thumbs.db`, `lost+found`, `$RECYCLE.BIN`,
+  `System Volume Information`, `.Spotlight-V100`, `.fseventsd`, `.Trashes`,
+  `.TemporaryItems`) do not count and are left alone, so a drive root or a
+  mount point works. It must not contain or sit inside the source
+  (`nested_roots`).
 - It refuses (`host_running`) while any Host slot under `runtime/daemon/*` or
   the Session storage owner lock names a process that is not provably gone, and
   checks again just before publishing. Stop every client of the source first.
-- Files are copied into `<to>.copying` and renamed to `to` at the end. A failed
-  or aborted run removes the temporary copy and leaves no target. A stale
-  `<to>.copying` from a crashed run is replaced on the next call, so re-running
-  is safe.
+- The copy is assembled inside the target. `KODAX_DATA_ROOT_COPY_MARKER`
+  (`.kodax-copy-incomplete`) is written first and removed only when the copy is
+  complete, so a target holding it is not a usable data root. A failed or
+  aborted run removes what it wrote (and the target directory if it created
+  it). A target left with the marker by a crashed run counts as empty and is
+  replaced on the next call, so re-running is safe.
 - File modification times are preserved. Symbolic links and junctions are
   skipped, never followed.
 - `skipped` lists the topmost skipped entry with a reason: `non-portable`,

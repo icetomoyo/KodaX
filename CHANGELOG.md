@@ -13,7 +13,9 @@ All notable changes to this project will be documented in this file.
   `packages/repl` session resume no longer reads `KODAX_HOME` itself.
 - `copyKodaXDataRoot({ from, to, exclude?, onProgress?, signal? })`
   (`@kodax-ai/kodax/runtime`): copy-only data root relocation that skips
-  per-Host state and refuses a non-empty target or a running Host.
+  per-Host state and refuses a non-empty target or a running Host. The copy is
+  assembled inside the target under a `KODAX_DATA_ROOT_COPY_MARKER` file, so a
+  drive root or mount point can be the target.
 
 ### Changed
 

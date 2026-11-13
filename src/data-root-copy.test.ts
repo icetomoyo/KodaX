@@ -2,7 +2,12 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { copyKodaXDataRoot, KodaXDataRootCopyError, type CopyKodaXDataRootProgress } from './data-root-copy.js';
+import {
+  copyKodaXDataRoot,
+  KODAX_DATA_ROOT_COPY_MARKER,
+  KodaXDataRootCopyError,
+  type CopyKodaXDataRootProgress,
+} from './data-root-copy.js';
 
 const DEAD_PID = 2_147_483_647;
 const scratch: string[] = [];
@@ -97,7 +102,6 @@ describe('copyKodaXDataRoot', () => {
     writeFileSync(path.join(to, 'keep.txt'), 'mine');
     await expect(copyKodaXDataRoot({ from, to })).rejects.toMatchObject({ code: 'target_not_empty' });
     expect(files(to)).toEqual(['keep.txt']);
-    expect(existsSync(`${to}.copying`)).toBe(false);
   });
 
   it('accepts an existing empty target directory', async () => {
@@ -106,6 +110,26 @@ describe('copyKodaXDataRoot', () => {
     mkdirSync(to, { recursive: true });
     await copyKodaXDataRoot({ from, to });
     expect(files(to)).toEqual(['config.json']);
+  });
+
+  it('accepts a target holding only OS housekeeping files and keeps them', async () => {
+    const { from, to, put } = workspace();
+    put('config.json');
+    mkdirSync(to, { recursive: true });
+    writeFileSync(path.join(to, '.DS_Store'), '');
+    writeFileSync(path.join(to, 'desktop.ini'), '');
+    await copyKodaXDataRoot({ from, to });
+    expect(files(to)).toEqual(['.DS_Store', 'config.json', 'desktop.ini']);
+  });
+
+  it('marks the target incomplete until the copy is published', async () => {
+    const { from, to, put } = workspace();
+    put('a.json');
+    put('b.json');
+    const marked: boolean[] = [];
+    await copyKodaXDataRoot({ from, to, onProgress: () => marked.push(existsSync(path.join(to, KODAX_DATA_ROOT_COPY_MARKER))) });
+    expect(marked).toEqual([true, true]);
+    expect(existsSync(path.join(to, KODAX_DATA_ROOT_COPY_MARKER))).toBe(false);
   });
 
   it.each([
@@ -183,7 +207,6 @@ describe('copyKodaXDataRoot', () => {
     await expect(copyKodaXDataRoot({ from, to, signal: controller.signal, onProgress: () => controller.abort() }))
       .rejects.toMatchObject({ code: 'aborted' });
     expect(existsSync(to)).toBe(false);
-    expect(existsSync(`${to}.copying`)).toBe(false);
   });
 
   it('cleans up and rethrows when the copy fails midway', async () => {
@@ -193,7 +216,16 @@ describe('copyKodaXDataRoot', () => {
     const failure = new Error('disk full');
     await expect(copyKodaXDataRoot({ from, to, onProgress: () => { throw failure; } })).rejects.toBe(failure);
     expect(existsSync(to)).toBe(false);
-    expect(existsSync(`${to}.copying`)).toBe(false);
+  });
+
+  it('empties but keeps a target directory that existed before a failed copy', async () => {
+    const { from, to, put } = workspace();
+    put('a.json');
+    put('b.json');
+    mkdirSync(to, { recursive: true });
+    writeFileSync(path.join(to, 'desktop.ini'), 'folder view');
+    await expect(copyKodaXDataRoot({ from, to, onProgress: () => { throw new Error('disk full'); } })).rejects.toThrow('disk full');
+    expect(files(to)).toEqual(['desktop.ini']);
   });
 
   it('refuses to publish when a Host claimed the source during the copy', async () => {
@@ -204,20 +236,27 @@ describe('copyKodaXDataRoot', () => {
       onProgress: () => put('runtime/daemon/default/daemon.lock', lock(process.pid)),
     })).rejects.toMatchObject({ code: 'host_running' });
     expect(existsSync(to)).toBe(false);
-    expect(existsSync(`${to}.copying`)).toBe(false);
   });
 
-  it('is repeatable after a failure, replacing a stale temporary copy', async () => {
+  it('replaces an interrupted copy left by a crashed run', async () => {
     const { from, to, put } = workspace();
     put('a.json');
     put('b.json');
-    await expect(copyKodaXDataRoot({ from, to, onProgress: () => { throw new Error('interrupted'); } })).rejects.toThrow('interrupted');
-    mkdirSync(`${to}.copying`, { recursive: true });
-    writeFileSync(path.join(`${to}.copying`, 'stale.txt'), 'left by a crashed run');
+    mkdirSync(path.join(to, 'sessions'), { recursive: true });
+    writeFileSync(path.join(to, KODAX_DATA_ROOT_COPY_MARKER), '');
+    writeFileSync(path.join(to, 'sessions', 'stale.jsonl'), 'left by a crashed run');
     const result = await copyKodaXDataRoot({ from, to });
     expect(files(to)).toEqual(['a.json', 'b.json']);
     expect(result.files).toBe(2);
-    expect(existsSync(`${to}.copying`)).toBe(false);
+  });
+
+  it('never touches a sibling folder that happens to share the old temporary name', async () => {
+    const { from, to, put } = workspace();
+    put('a.json');
+    mkdirSync(`${to}.copying`, { recursive: true });
+    writeFileSync(path.join(`${to}.copying`, 'mine.txt'), 'user data');
+    await copyKodaXDataRoot({ from, to });
+    expect(files(`${to}.copying`)).toEqual(['mine.txt']);
   });
 
   it('uses a typed error', async () => {

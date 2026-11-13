@@ -15,7 +15,7 @@ export { createProviderCredentialAuthorizer } from './provider-credential-author
 export type { ProviderCredentialSource, ProviderCredentialAuthorizer } from './provider-credential-authorizer.js';
 export { createProviderCredentialManager } from './provider-credential-manager.js';
 export type { ProviderCredentialManager, ProviderCredentialStatus } from './provider-credential-manager.js';
-export { copyKodaXDataRoot, KodaXDataRootCopyError } from './data-root-copy.js';
+export { copyKodaXDataRoot, KODAX_DATA_ROOT_COPY_MARKER, KodaXDataRootCopyError } from './data-root-copy.js';
 export type {
   CopyKodaXDataRootOptions, CopyKodaXDataRootProgress, CopyKodaXDataRootResult, CopyKodaXDataRootSkipped,
   KodaXDataRootCopyErrorCode,
