@@ -141,6 +141,9 @@ describe.skipIf(process.platform !== 'win32')('native Windows Job supervisor', (
     const missing = launch({ directory, executable: path.join(directory, 'missing-daemon.exe') });
     expect(await missing.exit).not.toBe(0);
     expect(readFileSync(missing.readyFile, 'utf8')).toMatch(/^ERROR:.*CreateProcessW/u);
+    // The launcher deletes the ready file in handoff mode; the log keeps the cause.
+    expect(readFileSync(missing.logFile, 'utf8'))
+      .toMatch(/^\[Error\] Windows Job supervisor: CreateProcessW.*\S\n$/mu);
 
     const foreign = launch({ directory, jobName: 'Global\\NotKodaXDaemonJob' });
     expect(await foreign.exit).not.toBe(0);

@@ -4,6 +4,7 @@ import {
   appendFileSync,
   closeSync,
   existsSync,
+  fstatSync,
   ftruncateSync,
   openSync,
   readFileSync,
@@ -111,6 +112,8 @@ export interface RuntimeDaemonStartupExit {
 export interface RuntimeDaemonStartupProcess {
   readonly pid: number | undefined;
   readonly startupProgressId?: string;
+  /** Size of bootstrap.log when this attempt opened it; earlier attempts' lines lie before it. */
+  readonly bootstrapLogStart?: number;
   readonly exit: Promise<RuntimeDaemonStartupExit>;
   hasExited?(): boolean;
   unref(): void;
@@ -336,7 +339,8 @@ class RuntimeDaemonStartupCleanupError extends AggregateError {
   readonly reason = 'cleanup_incomplete' as const;
   readonly retryable = true;
   constructor(startupError: unknown, cleanupError: unknown) {
-    super([startupError, cleanupError], 'Runtime daemon startup failed and its child process could not be reclaimed. Cleanup must finish before replacement startup.');
+    super([startupError, cleanupError], 'Runtime daemon startup failed and its child process could not be reclaimed. Cleanup must finish before replacement startup; '
+      + 'each retry tries it again, and restarting the application releases it.');
   }
 }
 
@@ -851,7 +855,7 @@ async function observeStartupHealth(
         );
       }
     }
-    throw runtimeDaemonExitedEarly(paths, outcome.exit);
+    throw runtimeDaemonExitedEarly(paths, outcome.exit, child);
   }
   return outcome.observation;
 }
@@ -872,7 +876,7 @@ async function waitForStartupPoll(
     await raceRuntimeDaemonStartupStep(delay(pollIntervalMs), signal);
     return;
   }
-  throw runtimeDaemonExitedEarly(paths, outcome);
+  throw runtimeDaemonExitedEarly(paths, outcome, child);
 }
 
 function hasCompetingStartupOwner(
@@ -890,12 +894,13 @@ function hasCompetingStartupOwner(
 function runtimeDaemonExitedEarly(
   paths: RuntimeDaemonPaths,
   exit: RuntimeDaemonStartupExit,
+  child: RuntimeDaemonStartupProcess,
 ): RuntimeDaemonStartupError {
   const status =
     exit.signal !== null
       ? `signal ${exit.signal}`
       : `code ${exit.code ?? "unknown"}`;
-  const cause = readBootstrapLogLastError(paths);
+  const cause = readBootstrapLogLastError(paths, child.bootstrapLogStart);
   return new RuntimeDaemonStartupError(
     `Runtime daemon child exited before becoming healthy (${status}).` +
       (cause ? ` Cause: ${cause}.` : "") +
@@ -904,24 +909,30 @@ function runtimeDaemonExitedEarly(
   );
 }
 
-/** The child's own last `[Error]` line is the most direct startup cause we have. */
-function readBootstrapLogLastError(paths: RuntimeDaemonPaths): string | undefined {
+/**
+ * The last `[Error]` line this startup attempt wrote (from `start` on) is the most
+ * direct cause we have. A log that cannot be read is named as such instead, since
+ * it only adds to a failure that is reported either way.
+ */
+function readBootstrapLogLastError(paths: RuntimeDaemonPaths, start = 0): string | undefined {
+  const file = runtimeDaemonBootstrapLogPath(paths);
   try {
-    const file = runtimeDaemonBootstrapLogPath(paths);
     const size = statSync(file).size;
-    const length = Math.min(size, 4096);
-    const buffer = Buffer.alloc(length);
+    const from = Math.max(start, size - 4096);
+    if (from >= size) return undefined;
+    const buffer = Buffer.alloc(size - from);
     const descriptor = openSync(file, "r");
     try {
-      readSync(descriptor, buffer, 0, length, size - length);
+      readSync(descriptor, buffer, 0, buffer.length, from);
     } finally {
       closeSync(descriptor);
     }
     const line = buffer.toString("utf8").split(/\r?\n/).reverse()
       .find((candidate) => candidate.startsWith("[Error] "));
     return line?.slice("[Error] ".length, 300).replace(/\.$/, "");
-  } catch {
-    return undefined; // Diagnostics only; a missing log never changes the failure.
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    return `the bootstrap log could not be read (${error instanceof Error ? error.message : String(error)})`;
   }
 }
 
@@ -1010,6 +1021,7 @@ export async function spawnRuntimeDaemonServeProcess(
   });
   const paths = resolveRuntimeDaemonPathsFromConfigHome(input.configHome);
   const bootstrapLog = openRuntimeDaemonBootstrapLog(paths);
+  const bootstrapLogStart = fstatSync(bootstrapLog).size;
   let child: ChildProcess;
   let daemonPid: number | undefined;
   let terminateContainedProcess: (() => Promise<void | 'retained'>) | undefined;
@@ -1047,8 +1059,12 @@ export async function spawnRuntimeDaemonServeProcess(
       throw new RuntimeDaemonStartupCleanupError(error.errors[0], error.errors[1]);
     }
     if (input.startupSignal?.aborted) throw runtimeDaemonStartupCancelled();
+    const message = error instanceof Error ? error.message : String(error);
+    // The launcher may have removed its own report; the cause it logged survives.
+    const cause = readBootstrapLogLastError(paths, bootstrapLogStart);
     throw new RuntimeDaemonStartupError(
-      `Runtime daemon launch failed: ${error instanceof Error ? error.message : String(error)}`,
+      `Runtime daemon launch failed: ${message}` +
+        (cause && !message.includes(cause) ? ` Cause: ${cause}.` : ''),
       'child_exit',
     );
   } finally {
@@ -1071,6 +1087,7 @@ export async function spawnRuntimeDaemonServeProcess(
   return {
     ...createRuntimeDaemonStartupProcess(child, exit, daemonPid, terminateContainedProcess, releaseContainedProcess),
     startupProgressId: input.startupProgressId,
+    bootstrapLogStart,
   };
 }
 

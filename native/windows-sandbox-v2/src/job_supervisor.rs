@@ -1,12 +1,14 @@
 //! Daemon Job owner. Replaces the PowerShell + `Add-Type` supervisor: nothing is
 //! compiled at startup, so antivirus scans or a loaded machine cannot stall it.
 use crate::win::{wide, OwnedHandle};
-use anyhow::{ensure, Context, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use serde::Deserialize;
 use std::mem::{size_of, zeroed};
 use std::os::windows::io::AsRawHandle;
 use windows::core::{PCWSTR, PWSTR};
-use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HANDLE, WAIT_FAILED};
+use windows::Win32::Foundation::{
+    GetLastError, ERROR_ALREADY_EXISTS, HANDLE, WAIT_FAILED, WAIT_OBJECT_0,
+};
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation,
     JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
@@ -38,16 +40,25 @@ struct Payload {
 pub fn run() -> Result<u32> {
     let encoded = std::env::var(PAYLOAD_ENV).context("Job launch payload is missing")?;
     let ready_file = std::env::var(READY_FILE_ENV).context("Job ready file is missing")?;
-    let outcome = launch(&encoded);
+    let payload = decode(&encoded);
+    let log_file = payload.as_ref().ok().map(|payload| payload.log_file.clone());
+    let outcome = payload.and_then(launch);
     if let Err(error) = &outcome {
-        if !std::path::Path::new(&ready_file).exists() {
-            let _ = std::fs::write(&ready_file, format!("ERROR:{error:#}"));
+        if !std::path::Path::new(&ready_file).exists()
+            && let Err(write_error) = std::fs::write(&ready_file, format!("ERROR:{error:#}"))
+        {
+            eprintln!("Could not report the Job supervisor failure in {ready_file}: {write_error}");
+        }
+        // The launcher removes the ready file once this process exits; the log
+        // keeps the cause for the SDK's startup error.
+        if let Some(log_file) = &log_file {
+            log_error(log_file, &format!("{error:#}"));
         }
     }
     outcome
 }
 
-fn launch(encoded: &str) -> Result<u32> {
+fn decode(encoded: &str) -> Result<Payload> {
     use base64::Engine;
     let bytes = base64::engine::general_purpose::STANDARD.decode(encoded)?;
     let payload: Payload = serde_json::from_slice(&bytes).context("Invalid Job launch payload")?;
@@ -55,6 +66,45 @@ fn launch(encoded: &str) -> Result<u32> {
         payload.job_name.starts_with("Global\\KodaXDaemonJob-"),
         "Invalid daemon Job name"
     );
+    Ok(payload)
+}
+
+/// Append one `[Error]` line, the form the SDK reads back from the bootstrap log.
+fn log_error(log_file: &str, message: &str) {
+    use std::io::Write;
+    let line = format!(
+        "[Error] Windows Job supervisor: {}\n",
+        message.replace(['\r', '\n'], " ").trim_end()
+    );
+    let appended = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_file)
+        .and_then(|mut file| file.write_all(line.as_bytes()));
+    if let Err(write_error) = appended {
+        eprintln!("Could not write to {log_file}: {write_error}; {line}");
+    }
+}
+
+/// Kill a daemon whose launch failed and wait until it is gone.
+fn terminate(process: &OwnedHandle) -> Result<()> {
+    unsafe { TerminateProcess(process.raw(), 1) }.context("TerminateProcess")?;
+    match unsafe { WaitForSingleObject(process.raw(), 2000) } {
+        WAIT_OBJECT_0 => Ok(()),
+        WAIT_FAILED => Err(std::io::Error::last_os_error()).context("WaitForSingleObject"),
+        _ => bail!("the daemon did not exit within 2 s of TerminateProcess"),
+    }
+}
+
+/// Fail the launch, naming any daemon the cleanup could not reclaim.
+fn launch_failed(error: anyhow::Error, process: &OwnedHandle) -> anyhow::Error {
+    match terminate(process) {
+        Ok(()) => error,
+        Err(cleanup) => anyhow!("{error:#}; the daemon could not be reclaimed: {cleanup:#}"),
+    }
+}
+
+fn launch(payload: Payload) -> Result<u32> {
     // The contained daemon reads these to prove its containment; the launch
     // secrets themselves must not leak into it. Single-threaded at this point.
     unsafe {
@@ -133,29 +183,31 @@ fn launch(encoded: &str) -> Result<u32> {
     let process = OwnedHandle::new(information.hProcess, "daemon process")?;
     let thread = OwnedHandle::new(information.hThread, "daemon thread")?;
     // Never leave a suspended, uncontained daemon behind.
-    let assigned = unsafe { AssignProcessToJobObject(job.raw(), process.raw()) };
-    if let Err(error) = assigned {
-        unsafe {
-            let _ = TerminateProcess(process.raw(), 1);
-            WaitForSingleObject(process.raw(), 2000);
-        }
-        return Err(error).context("AssignProcessToJobObject");
+    if let Err(error) = unsafe { AssignProcessToJobObject(job.raw(), process.raw()) } {
+        let error = anyhow!("AssignProcessToJobObject: {error}");
+        return Err(launch_failed(error, &process));
     }
+    // Readiness is published before the daemon runs, so its first act can
+    // already prove containment.
     publish_ready(&payload.ready_file, information.dwProcessId)?;
-    ensure!(
-        unsafe { ResumeThread(thread.raw()) } != u32::MAX,
-        "ResumeThread failed"
-    );
+    if unsafe { ResumeThread(thread.raw()) } == u32::MAX {
+        let error = anyhow!("ResumeThread: {}", std::io::Error::last_os_error());
+        return Err(launch_failed(error, &process));
+    }
 
     ensure!(
         unsafe { WaitForSingleObject(process.raw(), INFINITE) } != WAIT_FAILED,
         "WaitForSingleObject failed"
     );
     let mut exit_code = 1u32;
-    unsafe {
-        let _ = GetExitCodeProcess(process.raw(), &mut exit_code);
-        TerminateJobObject(job.raw(), exit_code).context("TerminateJobObject")?;
+    if let Err(error) = unsafe { GetExitCodeProcess(process.raw(), &mut exit_code) } {
+        exit_code = 1;
+        log_error(
+            &payload.log_file,
+            &format!("could not read the daemon exit code ({error}); reporting 1"),
+        );
     }
+    unsafe { TerminateJobObject(job.raw(), exit_code) }.context("TerminateJobObject")?;
     // Do not exit while any contained descendant is still running.
     loop {
         let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { zeroed() };

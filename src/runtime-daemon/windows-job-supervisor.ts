@@ -38,7 +38,7 @@ let child;
 let childExited = false;
 let phase = 'candidate';
 const reportError = (error) => {
-  try { appendFileSync(logFile, 'Windows Job startup control failed: ' + error.message + '\n'); }
+  try { appendFileSync(logFile, '[Error] Windows Job startup control failed: ' + error.message + '\n'); }
   catch (logError) { process.stderr.write(String(logError) + '\n'); }
 };
 const cleanHandoff = () => {

@@ -340,10 +340,11 @@ bodies, credentials, prompts, raw header collections, URLs, local paths, stacks,
 and raw errors are not copied across the boundary; only allowlisted metadata is
 extracted.
 
-For a Windows daemon Runtime, startup is a three-part process boundary:
-PowerShell creates the daemon suspended, assigns it to a kill-on-close Job
-Object, and resumes it; an out-of-Job supervisor waits for daemon exit and then
-for the Job's active-process count to reach zero. The SDK and CLI consume that
+For a Windows daemon Runtime, startup is a three-part process boundary: the
+bundled native `__daemon-job-supervise` helper creates the daemon suspended,
+assigns it to a kill-on-close Job Object, publishes readiness and resumes it;
+the same out-of-Job helper then waits for daemon exit and for the Job's
+active-process count to reach zero. The SDK and CLI consume that
 boundary as a verified shutdown contract rather than treating PID exit alone as
 completion.
 

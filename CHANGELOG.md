@@ -44,6 +44,14 @@ All notable changes to this project will be documented in this file.
 
 - Client cleanup no longer stops on a pending `steer` input of the departing
   client; the input settles with its Run.
+- A failed Windows daemon launch now names its cause. The native Job
+  supervisor appends its failures to `bootstrap.log` as `[Error]` lines
+  (the launcher deletes the ready file that used to be the only record),
+  and the startup error quotes only a line written by the failed attempt,
+  never one left by an earlier start. The supervisor no longer ignores a
+  failed `ResumeThread`, a failed cleanup of an unassigned daemon or an
+  unreadable exit code. A cleanup failure tells the user that retrying or
+  restarting the application releases it (Issue 409).
 
 ---
 
@@ -68,8 +76,8 @@ remains a manual maintainer action.
 
 - The daemon Job proof no longer compiles C# in PowerShell: the bundled,
   hash-verified native `__daemon-job-identity` reads Job membership,
-  kill-on-close and both process-creation identities within the original
-  deadline, retries once when the probe could not run, and treats native
+  kill-on-close and both process-creation identities within a 10-second
+  deadline (previously 5), retries once when the probe could not run, and treats native
   refusals as final while unverified ownership still fails closed
   (Issue 409).
 - The startup Job supervisor no longer uses PowerShell `Add-Type`. The

@@ -1,4 +1,5 @@
 import {
+  appendFileSync,
   closeSync,
   existsSync,
   mkdtempSync,
@@ -995,6 +996,30 @@ describe("runtime daemon child startup", () => {
     try {
       await expect(waitForHealthyDaemonStartup(causePaths, {}, child, missingHealth))
         .rejects.toThrow(/code 1\).*Could not verify the Windows Job containment/s);
+    } finally {
+      rmSync(configHome, { recursive: true, force: true });
+    }
+  });
+
+  it("names only an error the failed attempt itself wrote to the bootstrap log", async () => {
+    const configHome = mkdtempSync(path.join(os.tmpdir(), "kodax-daemon-exit-scope-"));
+    const scopePaths = resolveRuntimeDaemonPathsFromConfigHome(configHome, "scope");
+    closeSync(openRuntimeDaemonBootstrapLog(scopePaths));
+    const earlier = "[Error] An earlier attempt could not open the Session store.\n";
+    writeFileSync(runtimeDaemonBootstrapLogPath(scopePaths), earlier);
+    appendFileSync(runtimeDaemonBootstrapLogPath(scopePaths), "[kodax-startup] {\"phase\":\"extensions\"}\n");
+    const child: RuntimeDaemonStartupProcess = {
+      pid: 888,
+      bootstrapLogStart: Buffer.byteLength(earlier),
+      exit: Promise.resolve({ code: 1, signal: null }),
+      hasExited: vi.fn(() => true),
+      unref: vi.fn(),
+      terminate: vi.fn(async () => undefined),
+    };
+    try {
+      const error = await waitForHealthyDaemonStartup(scopePaths, {}, child, missingHealth).catch((value: unknown) => value);
+      expect(error).toMatchObject({ reason: "child_exit" });
+      expect(String((error as Error).message)).not.toContain("Session store");
     } finally {
       rmSync(configHome, { recursive: true, force: true });
     }

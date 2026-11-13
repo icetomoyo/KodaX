@@ -64,9 +64,12 @@ to prove it had the same trigger.
 
 The daemon now reads named Job membership, kill-on-close and process creation
 identities with the bundled, hash-verified native runner, avoiding dynamic C#
-compilation for this query. It retains the original 5-second query deadline and
-still refuses unverified ownership. Supervisor creation and other Windows probes
-retain their existing contracts.
+compilation for this query. The query deadline is 10 seconds (it was 5), one
+retry follows a probe that could not run, and unverified ownership is still
+refused. The startup Job owner is the native `__daemon-job-supervise` helper
+instead of PowerShell `Add-Type`, so startup compiles nothing. Its failures are
+appended to `bootstrap.log` as `[Error]` lines, and a failed launch names the
+cause its own attempt logged.
 
 Failed startup is retryable only through the cleanup gate. Failed cleanup keeps
 the exact child/supervisor handle; admissions for the same home/slot are serialized
@@ -76,9 +79,16 @@ old-owner shutdown cannot release the gate early or recursively deadlock it.
 Queue cancellation and expiry cannot spawn later; cancellation after admission
 waits for the existing cleanup path. A pre-cancelled request creates no unhandled
 background rejection. Native failures retain a bounded stderr reason in diagnostics.
+When cleanup itself keeps failing, each retry tries it again and restarting the
+application releases the gate; there is no separate terminal state.
+
+Not yet measured: native probe and supervisor startup time on a machine whose
+antivirus scans a freshly installed helper on first run. The 10-second deadline
+is not backed by such a measurement.
 
 Regression: `src/runtime-daemon/process*.test.ts`,
-`windows-job-supervisor.test.ts`, `windows-job-identity*.test.ts`,
+`windows-job-supervisor.test.ts`, `windows-job-native-supervisor.test.ts`,
+`windows-job-identity*.test.ts`,
 `manager-containment.test.ts`, and agent `process-tree.windows.test.ts`.
 Space additionally runs real offline Electron cold-start, transient failure,
 persistent failure/manual retry and cleanup-failure recovery tests with no
