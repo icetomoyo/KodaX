@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 
+import { getAgentConfigHome } from '@kodax-ai/agent';
 
 import {
   deriveProjectKeyFromRoot,
@@ -62,11 +62,7 @@ export interface ListCliResumeSessionsOptions {
 }
 
 function defaultSessionsDir(): string {
-  const envHome = process.env.KODAX_HOME;
-  const configHome = envHome && envHome.length > 0
-    ? envHome
-    : path.join(os.homedir(), '.kodax');
-  return path.join(configHome, 'sessions');
+  return path.join(getAgentConfigHome(), 'sessions');
 }
 
 function isSessionFile(name: string): boolean {

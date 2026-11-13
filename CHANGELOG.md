@@ -6,6 +6,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `resolveKodaXHome({ env?, homeDir? })` (`@kodax-ai/kodax/agent`): a pure
+  resolver for the data root. `getAgentConfigHome()` now delegates to it, and
+  `packages/repl` session resume no longer reads `KODAX_HOME` itself.
+- `copyKodaXDataRoot({ from, to, exclude?, onProgress?, signal? })`
+  (`@kodax-ai/kodax/runtime`): copy-only data root relocation that skips
+  per-Host state and refuses a non-empty target or a running Host.
+
+### Changed
+
+- A relative `KODAX_HOME` is ignored (the default `~/.kodax` is used) instead of
+  being used as a path relative to the working directory; `resolveKodaXHome` reports it as
+  `ignoredEnv`.
+- `docs/SDK_MIGRATION.md` now states that `homeDir` / `--home` name the base
+  directory owning `.kodax`, while `KODAX_HOME` names the data root itself.
+
 ---
 
 ## [0.7.97-beta.8] - 2026-11-12
