@@ -634,7 +634,10 @@ export function isCurrentProcessWindowsJobContained(): boolean {
 }
 
 /** Fresh OS evidence for publishing a Windows Job owner, in one subprocess. */
-export function readCurrentProcessWindowsJobIdentity(): {
+export function readCurrentProcessWindowsJobIdentity(nativeProbe?: () => {
+  readonly processStartIdentity: string;
+  readonly supervisorProcessStartIdentity: string;
+} | undefined): {
   readonly processStartIdentity?: string;
   readonly supervisorProcessStartIdentity?: string;
 } | undefined {
@@ -655,6 +658,14 @@ export function readCurrentProcessWindowsJobIdentity(): {
       detail: { stage: 'job-membership', cached: false, available: false, reason: 'supervisor-metadata' },
     });
     return undefined;
+  }
+  if (nativeProbe !== undefined) {
+    // The bundled SDK supplies its hash-verified OS helper. Standalone agent
+    // consumers retain the fallback below; no dependency on the CLI package.
+    currentProcessWindowsJobContained = false;
+    const identity = nativeProbe();
+    currentProcessWindowsJobContained = identity !== undefined;
+    return identity;
   }
   const startedAt = Date.now();
   const result = spawnSync(

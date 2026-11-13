@@ -40,7 +40,7 @@ test('actual npm tarball exposes one Host path and migrates real historical owne
       await mkdir(path.dirname(target), { recursive: true });
       await symlink(path.join(root, 'node_modules', name), target, process.platform === 'win32' ? 'junction' : 'dir');
     }
-    for (const name of ['probe.mjs', 'contract.mts', 'concurrent.mjs', 'profile-alias.mjs']) {
+    for (const name of ['probe.mjs', 'contract.mts', 'concurrent.mjs']) {
       await writeFile(path.join(consumer, name), await readFile(path.join(root, 'tests/fixtures/unified-runtime-package', name)));
     }
     const program = ts.createProgram([path.join(consumer, 'contract.mts')], {
@@ -56,8 +56,9 @@ test('actual npm tarball exposes one Host path and migrates real historical owne
     for (const snapshot of HISTORICAL_OWNERS) {
       const historical = await loadHistoricalOwner(snapshot, directory);
       const homeDir = path.join(directory, snapshot.version);
-      homes.push({ homeDir, profile: 'legacy' });
-      const paths = historical.resolveRuntimeDaemonPaths(homeDir, 'legacy');
+      homes.push(homeDir);
+      // Historical owners used per-profile slots; ADR-075 keeps the canonical one, `default`.
+      const paths = historical.resolveRuntimeDaemonPaths(homeDir, 'default');
       const identity = { runtimeId: 'inline_packed_historical', pid: process.pid,
         createdAt: new Date().toISOString(), kind: 'inline' };
       const handle = historical.acquireRuntimeInlineOwner(paths, identity, true);
@@ -79,8 +80,8 @@ test('actual npm tarball exposes one Host path and migrates real historical owne
       // launchers must converge, while nonempty administrator bootstrap policy
       // intentionally belongs only to the caller creating a new owner above.
       const concurrentHome = path.join(directory, `${snapshot.version}-concurrent`);
-      homes.push({ homeDir: concurrentHome, profile: 'legacy' });
-      const concurrentPaths = historical.resolveRuntimeDaemonPaths(concurrentHome, 'legacy');
+      homes.push(concurrentHome);
+      const concurrentPaths = historical.resolveRuntimeDaemonPaths(concurrentHome, 'default');
       const concurrentOwner = historical.acquireRuntimeInlineOwner(concurrentPaths, identity, true);
       assert.equal(historical.releaseRuntimeDaemonOwnership(concurrentPaths, concurrentOwner), true);
       const barrier = path.join(concurrentHome, 'barrier');
@@ -120,29 +121,13 @@ test('actual npm tarball exposes one Host path and migrates real historical owne
         await Promise.all(callers);
       }
 
-      const aliasHome = path.join(directory, `${snapshot.version}-alias`);
-      homes.push({ homeDir: aliasHome, profile: 'owner' }, { homeDir: aliasHome, profile: 'legacy' });
-      const aliasPaths = historical.resolveRuntimeDaemonPaths(aliasHome, 'legacy');
-      const aliasOwner = historical.acquireRuntimeInlineOwner(aliasPaths, identity, true);
-      assert.equal(historical.releaseRuntimeDaemonOwnership(aliasPaths, aliasOwner), true);
-      try {
-        const result = await exec(process.execPath, ['profile-alias.mjs', aliasHome], {
-          cwd: consumer, windowsHide: true, timeout: 90_000, maxBuffer: 4 * 1024 * 1024,
-          env: { ...process.env, KODAX_HOME: path.join(aliasHome, '.kodax'), NODE_PATH: '', NODE_OPTIONS: '' },
-        });
-        assert.match(result.stdout, /PACKED_PROFILE_ALIAS_CUTOVER_PASSED/);
-      } catch (cause) {
-        throw new Error(`Packed cross-profile migration from ${snapshot.version} failed: ${cause.stderr || cause.message}`, { cause });
-      }
-      assert.throws(() => historical.acquireRuntimeInlineOwner(aliasPaths, identity, true), /corrupt/i);
-      context.diagnostic(`Passed ${snapshot.version} requested profile B -> live storage owner A -> shutdown -> B rollback rejection`);
     }
   } finally {
     // A timed-out probe may lose its finally block. Stop only this fixture's
-    // exact profile through the normal CLI management path before deleting it.
-    for (const { homeDir, profile } of homes) {
-      if (!existsSync(path.join(homeDir, '.kodax/runtime/daemon', profile, 'daemon.lock'))) continue;
-      const result = await exec(process.execPath, ['dist/kodax_cli.js', 'daemon', 'stop', '--home', homeDir, '--profile', profile, '--json'], {
+    // Host through the normal CLI management path before deleting it.
+    for (const homeDir of homes) {
+      if (!existsSync(path.join(homeDir, '.kodax/runtime/daemon/default/daemon.lock'))) continue;
+      const result = await exec(process.execPath, ['dist/kodax_cli.js', 'daemon', 'stop', '--home', homeDir, '--json'], {
         cwd: consumer, windowsHide: true, timeout: 30_000, maxBuffer: 1024 * 1024,
         env: { ...process.env, KODAX_HOME: path.join(homeDir, '.kodax'), NODE_PATH: '', NODE_OPTIONS: '' },
       });

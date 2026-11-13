@@ -34,8 +34,7 @@ it('applies a Main-declared default Skill in the Host while preserving the origi
     protocol: 'openai', baseUrl: `http://127.0.0.1:${address.port}/v1`, apiKeyEnv: 'KODAX_EXPERT_UNUSED_KEY', model: 'fixture' }] }));
   let credentialId: string | undefined;
   let method = 'expert-method';
-  const profile = 'default-skill';
-  const client = await ensureKodaXClient({ homeDir, profile, async authorizeExecution(_request, services) {
+  const client = await ensureKodaXClient({ homeDir, async authorizeExecution(_request, services) {
     credentialId ??= (await services.credentials.registerScoped({ providers: ['expert-fixture'] }, async () => 'fixture-only')).id;
     return { credential: { mode: 'scoped', leaseId: credentialId, providers: ['expert-fixture'] },
       profile: await services.createExecutionProfile({ agentProfile: { name: 'Fixture expert', instructions: 'KEEP-EXPERT-PERSONA' },
@@ -66,9 +65,9 @@ it('applies a Main-declared default Skill in the Host while preserving the origi
       .rejects.toMatchObject({ code: 'default_skill_unavailable' });
     expect(requests).toHaveLength(3);
   } finally {
-    const owner = getKodaXRuntimeOwnerState({ homeDir, profile }).owner;
+    const owner = getKodaXRuntimeOwnerState({ homeDir }).owner;
     await client.host.shutdown(); await client.disconnect();
-    if (owner) expect(await waitForRuntimeDaemonShutdown({ configHome, profile, owner })).toMatchObject({ status: 'succeeded' });
+    if (owner) expect(await waitForRuntimeDaemonShutdown({ configHome, owner })).toMatchObject({ status: 'succeeded' });
     await new Promise<void>((resolve, reject) => wire.close(error => error ? reject(error) : resolve()));
     await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }

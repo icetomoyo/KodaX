@@ -48,7 +48,340 @@ on one commit.
   The step limit is ten minutes because the passing Windows suite alone takes
   about 4.6 minutes.
 
+## v0.7.97-beta.9 release preparation
+
+Release state: `v0.7.97-beta.9` was published on 2026-11-13 as a GitHub
+prerelease from run 43469240727 at `71c3b033d` (all five archive builds,
+Full CI and the npm package gates green; 13 assets). npm publication has
+not occurred. The release is the ninth
+beta of the v0.7.97 line: data root relocation for Space (FEATURE_306),
+steer withdrawal, and two Host fixes from Space integration.
+`resolveKodaXHome` resolves the data root without touching
+`process.env` and ignores a relative `KODAX_HOME` with a warning;
+`copyKodaXDataRoot` copies a data root into an empty target under an
+incomplete marker, skips per-Host state, refuses a running Host and
+rebases absolute paths into the old root in `.json` / `.jsonl` files.
+`inputs.withdraw` takes back a `steer` input until its Run claims it. A
+principal-scoped client exit stop is refused with `connected_clients`
+before draining while a peer is attached (Issue 410), and a failed
+Windows daemon launch names the cause its own attempt logged (Issue 409
+follow-up). Every v0.7.96 stable and v0.7.97-alpha.1 through beta.8
+client contract is retained.
+
+The CI/Release in-place upgrade gates now pin the published
+`0.7.97-beta.8` tarball (published 2026-11-12T15:43:35.104Z; registry
+dist.integrity sha512-KCwvT9mu…Sptkw== packs to the same bytes as the
+kodax-ai-kodax-0.7.97-beta.8.tgz asset of the v0.7.97-beta.8 GitHub
+Release, sha256 ba00f68d…ad200c). The 1,005-run retention test in
+`src/sdk-runtime.test.ts`, which timed out on the Windows system 2/2
+shard in the beta.6 and beta.8 dispatches, now has a 300-second
+deadline.
+
+Local candidate validation on Windows with Node 22.23.1: full build
+(after the version bump, so `dist` carries 0.7.97-beta.9), source and
+test typechecks, the fast tier (3,795 passed, 58 skipped), the unit tier
+(14,029 passed, 7 skipped), the contract tier (1,072 passed),
+`tests/release-workflow.test.ts`, `tests/tracker-consistency.test.ts`
+and the self-knowledge/`kodax_manual` suites (127 passed),
+`test:bundle` (110 passed), `test:host-cutover`, the real published
+beta.8 Host in-place upgrade (1 passed) against the integrity-pinned
+public tarball, the Windows startup ownership and cancellation contracts
+(171 passed), `test:native`, the Windows portable tier (3,223 passed,
+34 skipped) and the Windows system tier (919 passed, 29 skipped). The
+system tier's one failure, `rebuilds its snapshot directory after
+external deletion`, finds its snapshot directory by diffing the shared
+`%TEMP%` listing and picked up a directory created by a live KodaX Host
+on the workstation; it passes solo, and CI runners have no such Host.
+The packaged Electron daemon gate runs in Release CI.
+
+This release follows the single publishing dispatch described under
+[Current release execution](#current-release-execution): `target=all` with
+`release_tag=v0.7.97-beta.9` runs Full CI, all five archive builds and the
+npm package gates, then creates the tag at the dispatched commit and the
+GitHub pre-release from that run's artifacts. Ordinary branch pushes do
+not run CI. The first dispatch (run 43463795038 at `e2326a2f7`) failed
+on the Node 20 unit row, where `src/runtime-daemon/maintenance.test.ts`
+assumed `opendir` lists the denied candidate first (ext4 hash order
+listed the later one first); `71c3b033d` makes that test
+order-independent. That run's Windows jobs also hit runner-load
+timeouts in unchanged code (PowerShell-backed OAuth sealing and
+`exec`, a queue-boundary fixture and two bundled Electron-job tests).
+The second dispatch (run 43469240727) failed its first attempt only on
+two timing fixtures: the 150 ms parallel-read window in
+`tests/first-turn-script-model.test.ts` (Node 20 fast) and the 40 ms
+`honors timeout while the first snapshot waits on slow global Temp
+cleanup` in `src/sdk-runtime.test.ts` (Windows system 2/2). One
+failed-job re-run on the unchanged candidate passed and published. The
+parallel-read window was widened to two seconds after the tag. The
+universal npm tarball asset is `kodax-ai-kodax-0.7.97-beta.9.tgz`,
+sha256 `65ec24d6…8dacb3`, matching `SHA256SUMS`. Cross-platform manual
+acceptance, installed Space/SDK acceptance, the Space dependency bump
+(FEATURE_305 T6 and FEATURE_306 follow-ups) and npm registry publication
+remain separate maintainer steps.
+
+## v0.7.97-beta.8 release preparation
+
+Release state: `v0.7.97-beta.8` was published on 2026-11-12 as a GitHub
+prerelease from run 43238905900 at `56dea3830` (all five archive builds,
+Full CI and the npm package gates green; 13 assets) and published to npm
+on 2026-11-12T15:43:35Z (dist-tag `beta`). The release is the eighth
+beta of the v0.7.97 line: the Windows daemon startup reliability
+repairs from the customer incident report (Issue 409). The fail-closed
+startup path no longer compiles C# through PowerShell: Job membership,
+kill-on-close and both process-creation identities are verified by the
+bundled, hash-verified native `__daemon-job-identity`, and the startup
+Job owner is the native `__daemon-job-supervise` helper (suspended
+start, assignment before resume, atomic readiness publication, refusal
+of a pre-existing same-name Job). A failed startup retains its exact
+cleanup handles while admissions for the same home/slot serialize until
+cleanup settles; `child_exit` is retryable, a competing startup owner
+must be alive to matter, and the exited child's last `bootstrap.log`
+`[Error]` line is surfaced. Every v0.7.96 stable and v0.7.97-alpha.1
+through beta.7 client contract is retained; no SDK surface changes.
+
+The CI/Release in-place upgrade gates now pin the published
+`0.7.97-beta.7` tarball (published 2026-11-12T05:07:12.252Z; registry
+dist.integrity sha512-GBEgt0X0…Offtw== equals the
+kodax-ai-kodax-0.7.97-beta.7.tgz asset of the v0.7.97-beta.7 GitHub
+Release, sha256 50c65ba0…1f414). Run that fixture locally with Windows
+`tar.exe` ahead of Git's GNU `tar` on `PATH`: GNU `tar` reads the `C:`
+drive in the archive path as a remote host.
+
+Local candidate validation on Windows with Node 22.23.1: full build
+(after the version bump, so `dist` carries 0.7.97-beta.8), source and
+test typechecks, the targeted daemon Job suites (149 passed across
+`windows-job-identity*`, `windows-job-native-supervisor`,
+`process-admission`, `process`, `windows-job-supervisor` and agent
+`process-tree.windows`), the self-knowledge and manual-tool
+(`kodax_manual`) suites (102 passed), `tests/release-workflow.test.ts`
+(28 passed), `tests/tracker-consistency.test.ts` (4 passed),
+`test:host-cutover` (3 passed), the contract tier (1,072 passed), the
+unit tier (14,012 passed, 7 skipped), the fast tier (3,757 passed,
+57 skipped), `test:bundle` (110 passed) and the real published beta.7
+Host in-place upgrade (1 passed) against the integrity-pinned public
+tarball. The first two full unit runs each failed one load-sensitive
+real-process test (`benchmark/visual-harness/pilot-runner.test.ts`
+fetch failures twice, then `deterministic-evaluator` exit codes; each
+file passes solo) and the unchanged candidate's third full run passed
+every test; the first bundle re-run on the rebuilt dist hit one
+transient `EBUSY` temp-directory cleanup lock that passes solo. The
+first upgrade-gate attempt ran against a `dist` built before the
+version bump, so the same-version Host reported `runtimeBuild` instead
+of `runtimeVersion`; the correctly versioned rebuild passes. The
+system tier runs in Release CI.
+
+This release follows the single publishing dispatch described under
+[Current release execution](#current-release-execution): `target=all` with
+`release_tag=v0.7.97-beta.8` runs Full CI, all five archive builds and the
+npm package gates, then creates the tag at the dispatched commit and the
+GitHub pre-release from that run's artifacts. Ordinary branch pushes do
+not run CI. The dispatch (run 43238905900) failed its first attempt only
+on `Windows source (system 2/2)`, where the untouched real-process test
+`caps in-memory terminal run records while keeping persisted run lookup
+available` in `src/sdk-runtime.test.ts` exceeded the 150-second test
+deadline at 150,969 ms (the same file and deadline class as the beta.6
+flake; the test passes locally in about 46 seconds) — an infrastructure
+flake covered by one failed-job re-run on the unchanged candidate, after
+which every job passed and the run published. The universal npm tarball
+asset is `kodax-ai-kodax-0.7.97-beta.8.tgz`, sha256
+`ba00f68d…ad200c`, matching `SHA256SUMS`. Cross-platform manual
+acceptance, installed Space/SDK acceptance and the Space dependency bump
+(FEATURE_305 T6 follow-up) remain separate maintainer steps.
+
+## v0.7.97-beta.7 release preparation
+
+Release state: `v0.7.97-beta.7` was published on 2026-11-12 as a GitHub
+prerelease from run 43140277830 at `7e6b7d4c1` (all five archive builds,
+Full CI and the npm package gates green on the first dispatch; 13
+assets). npm publication has not occurred. The release is the seventh
+beta of the v0.7.97 line: the Space SDK image projection, attachment and
+approval-attribution repairs triaged from the Space integration report
+(Issue 408). User image observation labels leave the current view,
+canonical history and search, which return the user's original text;
+image observations surface as optional attachment observation facts;
+the Host attachment reader accepts PNG, JPEG, WebP and GIF with actual
+byte validation and the actual `mediaType`, resolving history attachment
+IDs as well as live view IDs; the read-only `visual_*` tools resolve to
+the `read` capability beside an explicit built-in inventory with a
+completeness test; and extension `tool:before` approvals carry structured
+`extensionAsks` attribution that survives aggregation, child forwarding,
+the Host registry and both client adapters. Every v0.7.96 stable and
+v0.7.97-alpha.1 through beta.6 client contract is retained.
+
+The CI/Release in-place upgrade gates now pin the published
+`0.7.97-beta.6` tarball (published 2026-11-11T14:01:03.446Z; registry
+dist.integrity sha512-4SZmAXEg…T8zA== equals the
+kodax-ai-kodax-0.7.97-beta.6.tgz asset of the v0.7.97-beta.6 GitHub
+Release, sha256 5d2113ac…2502442). Run that fixture locally with Windows
+`tar.exe` ahead of Git's GNU `tar` on `PATH`: GNU `tar` reads the `C:`
+drive in the archive path as a remote host.
+
+Local candidate validation on Windows with Node 22.23.1: full build,
+source and test typechecks, the self-knowledge and manual-tool
+(`kodax_manual`) suites (101 passed), `tests/release-workflow.test.ts`
+(28 passed), `tests/tracker-consistency.test.ts` (4 passed),
+`test:host-cutover` (3 passed), the contract tier (1,072 passed), the
+unit tier (13,982 passed, 7 skipped), the fast tier (3,757 passed,
+57 skipped), `test:bundle` (110 passed) and the real published beta.6
+Host in-place upgrade (1 passed) against the integrity-pinned public
+tarball. The first two full fast runs each failed one
+`src/sdk-client.crash.test.ts` scenario whose first provider request
+hit a local transport failure under full-suite machine load
+(`providerRequests: 0`, network before the first delta); the file
+passes in isolation and the unchanged candidate's third full run passed
+every test, matching the beta.6 preparation's load-flake pattern. The
+system tier runs in Release CI.
+
+This release follows the single publishing dispatch described under
+[Current release execution](#current-release-execution): `target=all` with
+`release_tag=v0.7.97-beta.7` runs Full CI, all five archive builds and the
+npm package gates, then creates the tag at the dispatched commit and the
+GitHub pre-release from that run's artifacts. Ordinary branch pushes do
+not run CI. The dispatch (run 43140277830) passed every job and published.
+The universal npm tarball asset is `kodax-ai-kodax-0.7.97-beta.7.tgz`,
+sha256 `50c65ba0…1f414`, matching `SHA256SUMS`. Cross-platform manual
+acceptance, installed Space/SDK acceptance, the Space dependency bump
+(FEATURE_305 T6 follow-up) and npm registry publication remain separate
+maintainer steps.
+
+## v0.7.97-beta.6 release preparation
+
+Release state: `v0.7.97-beta.6` was published on 2026-11-11 as a GitHub
+prerelease from run 43018115059 at `367f5e752` (all five archive builds,
+Full CI and the npm package gates green; 13 assets). npm publication has
+not occurred. The release is the
+sixth beta of the v0.7.97 line: one Host per `KODAX_HOME` (ADR-075,
+FEATURE_305, designed under the `v0.7.98` planning identifier). The
+breaking change removes the Host-location `profile` from the SDK entry
+points and the `kodax daemon`/`a2a serve` commands; passing it fails with
+`runtime_host_migration_required`. A legacy-slot Host that an older Space
+started is still found through the storage-owner redirect, and its
+profile-split Session settings, order, queued inputs and Session-scoped
+permission grants merge once into the one Host's state; global grants
+approved in such a Host are dropped (Issue 407). Space and the CLI share
+one compatible Host across installations and versions (Issue 405), and a
+CLI started beside Space's Host attaches to it and keeps provider
+credentials (Issue 406). The standalone binary's Linux native text
+authority builds in digest-pinned `manylinux2014` images and loads on
+glibc 2.17 and on kernels before 5.8 (Issues 403–404; CI rejects any addon
+needing a newer `GLIBC_*` symbol), a failed native text addon load no
+longer crashes the next tracked write (Issue 402), and Session settings
+capture user-level defaults once instead of drifting with shared
+configuration. Acceptance is recorded in the
+[FEATURE_305 test guide](test-guides/FEATURE_305_v0.7.98_TEST_GUIDE.md).
+
+The CI/Release in-place upgrade gates now pin the published
+`0.7.97-beta.5` tarball (published 2026-11-10T09:40:09.927Z; registry
+dist.integrity sha512-QLU8cCBc…f20DwA== equals the
+kodax-ai-kodax-0.7.97-beta.5.tgz asset of the v0.7.97-beta.5 GitHub
+Release, sha256 0f5c154b…b0cefd6). Run that fixture locally with Windows
+`tar.exe` ahead of Git's GNU `tar` on `PATH`: GNU `tar` reads the `C:`
+drive in the archive path as a remote host.
+
+Local candidate validation on Windows with Node 22.23.1: full build,
+source and test typechecks, the registry (`kodax_manual`) suite
+(47 passed), `tests/release-workflow.test.ts` (28 passed),
+`tests/tracker-consistency.test.ts` (4 passed), `test:host-cutover`
+(3 passed), the contract tier (1,072 passed), the unit tier
+(13,977 passed), the fast tier (3,745 passed) — the unit and fast first
+runs each had one failure that passed on an immediate unchanged-candidate
+rerun — `test:bundle` (110 passed) and the real published beta.5 Host
+in-place upgrade (1 passed) against the integrity-pinned public tarball.
+The system tier runs in Release CI.
+
+This release follows the single publishing dispatch described under
+[Current release execution](#current-release-execution): `target=all` with
+`release_tag=v0.7.97-beta.6` runs Full CI, all five archive builds and the
+npm package gates, then creates the tag at the dispatched commit and the
+GitHub pre-release from that run's artifacts. Ordinary branch pushes do
+not run CI. Cross-platform manual acceptance, installed Space/SDK
+acceptance, the Space dependency bump (FEATURE_305 T6 follow-up) and npm
+registry publication remain separate maintainer steps.
+
+The first publishing dispatch (run 43011838267 at `f85af054a`) failed
+three jobs and created no tag. The Runtime daemon Unix socket gate still
+passed the `profile` option that FEATURE_305 removed and failed
+deterministically; `4f40af145` points the gate at the fixed
+`runtime/daemon/default` slot. The real-terminal PTY gate timed out on
+"displayed Session identity": the Ink REPL renders in the alternate
+screen buffer, so a restored fixture transcript drops the banner with the
+session id from the emulator buffer and the viewport-only poll races the
+restore (reproduced 2-of-3 locally before, 6-of-6 after the fix);
+`10a0dd60f` reads the identity from the raw terminal stream. The third
+failure was one Windows effect Job supervisor startup exceeding its
+15-second budget on a slow runner — the sibling test in the same file
+passed at 13.3s and the whole file passes locally in about 8 seconds —
+an infrastructure flake covered by the re-run rule. The second dispatch
+(run 43018115059 at `367f5e752`) passed every job except `Windows source
+(system 2/2)`, where two untouched real-process tests in
+`src/sdk-runtime.test.ts` exceeded Actor-settlement and 150-second test
+deadlines (one recorded 158s; both pass locally) — an infrastructure
+flake covered by one failed-job re-run, after which the run published.
+The universal npm tarball asset is
+`kodax-ai-kodax-0.7.97-beta.6.tgz`, sha256
+`5d2113ac…2502442`, matching `SHA256SUMS`.
+
+## v0.7.97-beta.5 release preparation
+
+Historical preparation record: the upgrade baseline below reflects
+preparation time. The CI/Release upgrade gates now pin `0.7.97-beta.5`.
+
+Release state: `v0.7.97-beta.5` was published on 2026-11-10 as a
+GitHub prerelease and as npm `beta`. The release is the
+fifth beta of the v0.7.97 line: the `KodaX-next-dev` integration (SDK
+foundation hardening for Issues 378–385, FEATURE_303 proxy and private CA
+support, FEATURE_304 extension asks, durable visual observations, Managed
+Run Context reuse, scoped tool contracts and the root goal budget for child
+usage) plus post-integration repairs: Windows sandboxing after a profile
+file is replaced (Issue 399), extinct Run child records at cold Host start
+(Issue 398), idle agent-home retention with `daemon.log` rotation
+(Issue 400), the PowerShell module cache in extension `exec` (Issue 386)
+and Host-owned PNG evidence reads. Integration acceptance and its limits
+are recorded in the
+[next-dev integration record](designs/next-dev-integration-execution-2026-11-09.md);
+the visual tools' whole-task value remains unproven.
+
+Local candidate validation on Windows with Node 22.23.1: full build, source
+and test typechecks, the unit (13,959 passed) and contract (1,072 passed)
+tiers, the fast tier (3,734 passed; its one failure was the KNOWN_ISSUES
+summary line that `371709bcf` wrote outside the tracker format, fixed in
+`01e29b96e`), `tests/release-workflow.test.ts` (28 passed),
+`test:bundle` (110 passed), `test:host-cutover` (3 passed) and the real
+published beta.4 Host in-place upgrade (1 passed). The system tier runs in
+Release CI. The local Windows CLI is
+5,168,525 bytes, 24,179 bytes under the unchanged 5 MiB minus 49 KiB gate;
+the five-manifest universal build in Release CI is authoritative. The
+CI/Release upgrade gates now pin the published `0.7.97-beta.4` tarball
+(published 2026-11-08T12:10:43.135Z; its registry integrity equals the
+beta.4 GitHub Release asset). Run that fixture locally with Windows
+`tar.exe` ahead of Git's GNU `tar` on `PATH`: GNU `tar` reads the `C:`
+drive in the archive path as a remote host.
+
+This is the first release through the single publishing dispatch described
+under [Current release execution](#current-release-execution): `target=all`
+with `release_tag=v0.7.97-beta.5` runs Full CI, all five archive builds and
+the npm package gates, then creates the tag at the dispatched commit and the
+GitHub pre-release from that run's artifacts. Ordinary branch pushes do not
+run CI. Cross-platform manual acceptance, installed Space/SDK acceptance and
+npm registry publication remain separate maintainer steps.
+
+The first publishing dispatch (run 42774928059 at `38a6c26f2`) passed every
+job except `test (node 20 unit)`. `benchmark/visual-harness/native-task-cell.test.ts`
+stubbed `KIMI_API_KEY`, but kimi-code reads `KIMI_CODE_API_KEY`, so the file
+had passed only on machines holding a real key. That run skipped its publish
+job and created no tag; `6a6fa5465` stubs the provider's variable. The
+second dispatch (run 42779240164 at `a28bdb7f2`) then hit two Windows
+runner flakes in the packaged Electron job across three attempts: the
+hosted-A2A bundle test missed `daemon start`'s default 5-second readiness
+wait (attempts 1 and 3; `913cd6d81` gives the fixture a 25-second budget),
+and attempt 2 hit the documented host-recovery timing flake. No tag was
+created; the release is dispatched again from the corrected commit.
+
 ## v0.7.97-beta.4 release preparation
+
+Historical preparation record: the baseline and publication status below
+reflect preparation time. beta.4 was published on 2026-11-08 and the
+CI/Release upgrade gates now pin `0.7.97-beta.4`.
 
 Release state: `v0.7.97-beta.4` is a candidate awaiting multi-platform CI.
 npm publication has not occurred. The candidate is the fourth beta of the
@@ -485,12 +818,17 @@ moved or archived as one unit.
 | Target          | OS / Arch                       | CI runner          |
 | --------------- | ------------------------------- | ------------------ |
 | `win-x64`       | Windows 10 1809+ / x64          | `windows-latest`   |
-| `linux-x64`     | Linux glibc 2.28+ / x64         | `ubuntu-24.04`     |
-| `linux-arm64`   | Linux glibc 2.28+ / aarch64     | `ubuntu-24.04-arm` |
+| `linux-x64`     | Linux glibc 2.17+ / x64         | `ubuntu-24.04`     |
+| `linux-arm64`   | Linux glibc 2.17+ / aarch64     | `ubuntu-24.04-arm` |
 | `darwin-x64`    | macOS 11+ / Intel               | `macos-15-intel`   |
 | `darwin-arm64`  | macOS 11+ / Apple Silicon       | `macos-15`         |
 
-Win7 and pre-glibc-2.28 distros (NeoKylin v7, CentOS 6/7) are **not supported**.
+The standalone binary's native text authority loads on glibc 2.17 and newer, so
+RHEL/CentOS 7-family hosts such as Anolis 7 are supported (Issue 403). The npm
+package still needs a Node build for the host; official Node 20 requires glibc
+2.28. On kernels before 5.8 the authority reads mount identity from procfs
+fdinfo instead of `statx` (Issue 404). Win7 and pre-glibc-2.17 distros (CentOS 6)
+are **not supported**.
 LoongArch64 / MIPS are **not supported** (Bun has no toolchain for them).
 
 ## Local builds (manual testing)
@@ -527,8 +865,8 @@ node scripts/build-binary.mjs --clean
 Output lives under `dist/binary/<target>/`. Native bindings built by the local
 commands above are executed on a matching OS/architecture. Official Linux
 artifacts are instead compiled by
-`scripts/build-linux-native.mjs` in digest-pinned `manylinux_2_28` builders and
-must pass the ELF glibc 2.28 ABI gate. The release workflow's five native
+`scripts/build-linux-native.mjs` in digest-pinned `manylinux2014` builders and
+must pass the ELF glibc 2.17 ABI gate. The release workflow's five native
 runners aggregate the npm package afterward. The build runs the local artifact
 with an isolated `KODAX_HOME` and requires `a2a list` to emit exactly one A2A
 v2 JSON document. A supplementary manual version smoke is:

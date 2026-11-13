@@ -46,7 +46,7 @@ describe('F269 shared Runtime contracts', () => {
 
   it('recovers a public inline owner left by a crashed process', () => {
     const homeDir = makeHome();
-    const profile = 'coder';
+    const profile = 'default';
     const child = spawnSync(process.execPath, [
       '--import',
       'tsx',
@@ -75,7 +75,7 @@ describe('F269 shared Runtime contracts', () => {
       windowsHide: true,
     });
     expect(child.status, child.stderr).toBe(0);
-    const abandoned = getKodaXRuntimeOwnerState({ homeDir, profile });
+    const abandoned = getKodaXRuntimeOwnerState({ homeDir });
     expect(abandoned).toMatchObject({
       policy: { mode: 'inline', revision: 1 },
       ownerStatus: 'owned',
@@ -87,7 +87,7 @@ describe('F269 shared Runtime contracts', () => {
       mode: 'daemon',
       revision: 2,
     });
-    expect(getKodaXRuntimeOwnerState({ homeDir, profile })).toMatchObject({
+    expect(getKodaXRuntimeOwnerState({ homeDir })).toMatchObject({
       policy: { mode: 'daemon', revision: 2 },
       ownerStatus: 'unowned',
       owner: null,
@@ -156,7 +156,7 @@ describe('F269 shared Runtime contracts', () => {
       surface: 'partner', profileId: 'kodax-space.partner' });
     const unknown = await original.sessions.create({ surface: 'custom-product' });
     await original.close();
-    const daemon = await createKodaXRuntime({ homeDir, sessionsDir, profile: 'coder', sharedDaemonHost: true });
+    const daemon = await createKodaXRuntime({ homeDir, sessionsDir, sharedDaemonHost: true });
     try {
       await expect(daemon.sessions.load(session.id)).resolves.toMatchObject({ surface: 'partner', profileId: 'kodax-space.partner' });
       await expect(daemon.sessions.getSettingsVersioned(session.id)).resolves.toBeDefined();
@@ -215,29 +215,29 @@ describe('F269 shared Runtime contracts', () => {
     }
   });
 
-  it('fences daemon auto-start while a live legacy inline owner owns the profile', async () => {
+  it('fences daemon auto-start while a live legacy inline owner owns the Host slot', async () => {
     const homeDir = makeHome();
     const policy = setKodaXRuntimeOwnerMode({
       homeDir,
-      profile: 'coder',
+      profile: 'default',
       mode: 'inline',
       expectedRevision: 0,
     });
-    const inline = acquireKodaXInlineOwner({ homeDir, profile: 'coder' });
+    const inline = acquireKodaXInlineOwner({ homeDir, profile: 'default' });
 
     try {
-      const before = getKodaXRuntimeOwnerState({ homeDir, profile: 'coder' });
+      const before = getKodaXRuntimeOwnerState({ homeDir });
       expect(policy.revision).toBe(1);
-      expect(() => acquireKodaXInlineOwner({ homeDir, profile: 'coder' })).toThrow(/already has an owner/i);
-      await expect(acquireRuntimeDaemonProcessLease({ homeDir, profile: 'coder' }))
+      expect(() => acquireKodaXInlineOwner({ homeDir, profile: 'default' })).toThrow(/already has an owner/i);
+      await expect(acquireRuntimeDaemonProcessLease({ homeDir, profile: 'default' }))
         .rejects.toThrow(/Runtime owner is active or its liveness is unverified/i);
-      expect(getKodaXRuntimeOwnerState({ homeDir, profile: 'coder' })).toEqual(before);
+      expect(getKodaXRuntimeOwnerState({ homeDir })).toEqual(before);
     } finally {
       inline.close();
     }
     expect(setKodaXRuntimeOwnerMode({
       homeDir,
-      profile: 'coder',
+      profile: 'default',
       mode: 'daemon',
       expectedRevision: 1,
     })).toMatchObject({ mode: 'daemon', revision: 2 });
@@ -247,7 +247,6 @@ describe('F269 shared Runtime contracts', () => {
     const homeDir = makeHome();
     const runtime = await createKodaXRuntime({
       homeDir,
-      profile: 'coder',
       sharedDaemonHost: true,
     });
     const decision = runtime.permissions.request({
@@ -271,7 +270,6 @@ describe('F269 shared Runtime contracts', () => {
 
     const reopened = await createKodaXRuntime({
       homeDir,
-      profile: 'coder',
       sharedDaemonHost: true,
     });
     await expect(reopened.permissions.listGrants()).resolves.toMatchObject({

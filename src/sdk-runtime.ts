@@ -472,7 +472,8 @@ import {
   type RuntimeDaemonOwnerBootstrap,
   type RuntimeDaemonProcessLease,
 } from "./runtime-daemon/process.js";
-export { waitForRuntimeDaemonShutdown } from "./runtime-daemon/shutdown-verifier.js";
+import { waitForRuntimeDaemonShutdown as waitForRuntimeDaemonSlotShutdown } from "./runtime-daemon/shutdown-verifier.js";
+import type { RuntimeDaemonShutdownVerification, RuntimeDaemonShutdownVerificationInput } from "./runtime-daemon/shutdown-verifier.js";
 export type {
   RuntimeDaemonShutdownVerification,
   RuntimeDaemonShutdownVerificationInput,
@@ -498,8 +499,11 @@ import {
   tryAcquireRuntimeSessionStorageStartup,
   resolveRuntimeDaemonEndpointScope,
   resolveRuntimeDaemonPathsFromConfigHome,
+  resolveRuntimeHostSlot,
+  RUNTIME_HOST_SLOT,
   updateRuntimeOwnerPolicy,
 } from "./runtime-daemon/state.js";
+import { mergeLegacyRuntimeProfileState } from "./runtime-daemon/profile-state-merge.js";
 export {
   RuntimePermissionScopeUpgradeRequiredError,
   RuntimeTransportBoundaryError,
@@ -534,6 +538,24 @@ export class RuntimeHostMigrationRequiredError extends Error {
     super(message);
     this.name = "RuntimeHostMigrationRequiredError";
   }
+}
+
+/** Waits until the given owner of this home's Host has exited. */
+export async function waitForRuntimeDaemonShutdown(
+  input: RuntimeDaemonShutdownVerificationInput,
+): Promise<RuntimeDaemonShutdownVerification> {
+  rejectRemovedHostProfile("waitForRuntimeDaemonShutdown", input);
+  return waitForRuntimeDaemonSlotShutdown(input);
+}
+
+/** @internal One Host serves each KODAX_HOME; JavaScript callers still passing `profile` fail loudly (FEATURE_305). */
+export function rejectRemovedHostProfile(api: string, options: unknown): void {
+  if (!isRecord(options) || options.profile === undefined) return;
+  throw new RuntimeHostMigrationRequiredError(
+    `${api} no longer accepts "profile": one Host serves each KODAX_HOME. Remove "profile"; `
+    + 'to isolate Hosts, use a separate homeDir or KODAX_HOME. '
+    + 'See "One Host per KODAX_HOME (profile removed)" in docs/SDK_MIGRATION.md.',
+  );
 }
 
 /** A recoverable Auto LLM configuration error that must never become approval work. */
@@ -718,13 +740,10 @@ export function acquireKodaXInlineOwner(
 export function getKodaXRuntimeOwnerState(
   input: {
     readonly homeDir?: string;
-    readonly profile?: string;
   } = {},
 ): RuntimeOwnerState {
-  const { paths } = resolveRuntimeDaemonClientPaths(
-    input.homeDir,
-    input.profile,
-  );
+  rejectRemovedHostProfile("getKodaXRuntimeOwnerState", input);
+  const { paths } = resolveRuntimeDaemonClientPaths(input.homeDir);
   const owner = readRuntimeDaemonLockOwner(paths.lockFile);
   const policy = readRuntimeOwnerPolicy(paths);
   return {
@@ -844,6 +863,11 @@ type RuntimeConfigPatchKey = (typeof RUNTIME_CONFIG_PATCH_KEYS)[number];
 export interface RuntimeIdentity {
   readonly runtimeId: string;
   readonly mode: KodaXRuntimeMode;
+  /**
+   * @deprecated Host directory name kept on the wire because older clients check it on connect.
+   * A current Host always reports `default`; a Host started by an older client may report its own
+   * profile. One Host serves each KODAX_HOME (ADR-075), so this never selects or isolates a Host.
+   */
   readonly profile: string;
   readonly startedAt: string;
   readonly version: string;
@@ -918,7 +942,6 @@ export interface CreateKodaXRuntimeOptions {
   readonly mode: "daemon";
   /** Base directory that owns `.kodax`, matching CLI `--home`; not the `.kodax` directory used by `KODAX_HOME`. */
   readonly homeDir?: string;
-  readonly profile?: string;
   readonly sessionsDir?: string;
   readonly defaultProvider?: string;
   readonly defaultModel?: string;
@@ -954,6 +977,8 @@ export interface CreateKodaXRuntimeOptions {
 export interface CreateKodaXHostRuntimeOptions extends Omit<CreateKodaXRuntimeOptions, "mode"> {
   /** Retained only for existing internal core fixtures. */
   readonly mode?: "embedded";
+  /** Daemon slot this Host serves; defaults to the canonical slot. Only test Hosts stand in for a legacy slot (ADR-075). */
+  readonly profile?: string;
   readonly sharedDaemonHost?: boolean;
   readonly daemonHostRuntimeId?: string;
   readonly externalAgents?: RuntimeExternalAgentsOptions;
@@ -999,7 +1024,6 @@ function runtimeDaemonOwnerBootstrap(
 export interface ConnectKodaXRuntimeOptions {
   /** Local stage changes; observer work is not awaited. Failures are diagnosed without affecting startup. */
   readonly onStartupProgress?: (progress: ClientStartupProgress) => void | Promise<void>;
-  readonly profile?: string;
   /** @deprecated Connect is passive. Use ensureKodaXRuntime for startup; true is rejected here. */
   readonly autoStart?: boolean;
   readonly endpoint?: string | RuntimeDaemonEndpoint;
@@ -2923,6 +2947,7 @@ export interface RuntimePermissionRequest {
   readonly toolCallId?: string;
   readonly toolName: string;
   readonly reason?: string;
+  readonly extensionAsks?: readonly { readonly extension: string; readonly reason: string }[];
   readonly risk?: RuntimePermissionRisk;
   readonly inputPreview?: string;
   /** Effective directory used to resolve relative tool paths for this run. */
@@ -2942,6 +2967,7 @@ export interface RuntimePermissionRequestInput {
   readonly toolCallId?: string;
   readonly toolName: string;
   readonly reason?: string;
+  readonly extensionAsks?: readonly { readonly extension: string; readonly reason: string }[];
   readonly risk?: RuntimePermissionRisk;
   readonly inputPreview?: string;
   readonly executionCwd?: string;
@@ -3722,6 +3748,8 @@ interface RuntimeRunRecord {
   readonly origin?: RuntimeRunStatus["origin"];
   readonly continuation?: Omit<RuntimeContinuationStatus, "state">;
   readonly interruptInputs: RuntimeInterruptInputRecord[];
+  /** Process-local: settles the client's steer fact when the Run ends an interrupt input it never delivered. */
+  readonly onInterruptInputDropped?: (inputId: string) => void;
   stop?: RuntimeRunStopStatus;
   providerCredential?: string;
   readonly providerCredentialScope?: ProviderCredentialLeaseScope;
@@ -4148,6 +4176,7 @@ export async function createKodaXRuntime(
       );
     }
   }
+  rejectRemovedHostProfile("createKodaXRuntime", options);
   assertRuntimeTimeout("permissionTimeoutMs", options.permissionTimeoutMs, 0);
   assertRuntimeTimeout("userInputTimeoutMs", options.userInputTimeoutMs, 0);
   const autoStart =
@@ -4165,7 +4194,6 @@ export async function createKodaXRuntime(
   }
   return connectKodaXRuntimeWithStartupCoordination({
     onStartupProgress: options.onStartupProgress,
-    profile: options.profile,
     transport: options.daemonTransport,
     endpoint: options.daemonEndpoint,
     autoStart,
@@ -4230,6 +4258,9 @@ export async function createKodaXHostRuntime(
   };
   try {
     createClientStartupProgressReporter(options.onStartupProgress)({ stage: 'initializing', phase: 'recovery' });
+    if ((options.profile ?? RUNTIME_HOST_SLOT) === RUNTIME_HOST_SLOT) {
+      mergeLegacyRuntimeProfileState(resolveRuntimeStateHome(options), parseRuntimePermissionGrant);
+    }
     await cleanupRegisteredManagedChildren({
       configHome: options.homeDir ? path.join(path.resolve(options.homeDir), '.kodax') : replApi.KODAX_DIR,
     });
@@ -4630,9 +4661,10 @@ async function createKodaXRuntimeInternal(
       !last || run.startedAt > last.startedAt ? run : last, undefined);
     const config = readRuntimeConfig(configFile);
     const activeRun = [...runs.values()].find(run => run.sessionId === sessionId && !run.terminalEmitted);
-    const settings = { ...resolveEffectiveRuntimeSessionSettings(config, rawSettings, true),
+    const effectiveSettings = resolveEffectiveRuntimeSessionSettings(config, rawSettings, true);
+    const settings = { ...effectiveSettings,
       ...(activeRun ? { agentMode: activeRun.mode === 'coding' ? 'sa' as const : 'ama' as const } : {}) };
-    const contextBudget = resolveClientContextBudget(config, settings, options.defaultProvider, options.defaultModel);
+    const contextBudget = resolveClientContextBudget(config, effectiveSettings, options.defaultProvider, options.defaultModel);
     const side = persistence.sideChats.get(sessionId);
     const receipts = side ? [side] : persistence.sideChats.visibleTo(sessionId);
     const sourceId = side?.parent ?? sessionId;
@@ -4706,7 +4738,11 @@ async function createKodaXRuntimeInternal(
     if (isTerminalRuntimeEvent(type)) sessionViews.checkpoint(sessionId);
   });
   const settingsOwner = createRuntimeSessionSettingsOwner(persistence, bus,
-    sessionId => sessionManager.storage.isDraft(sessionId));
+    sessionId => sessionManager.storage.isDraft(sessionId), () => ({
+      ...(options.defaultProvider === undefined ? {} : { provider: options.defaultProvider }),
+      ...(options.defaultModel === undefined ? {} : { model: options.defaultModel }),
+      ...readRuntimeConfig(configFile),
+    }));
   const permissions = createRuntimePermissionRegistry(
     bus,
     options.permissionTimeoutMs ?? DEFAULT_PERMISSION_TIMEOUT_MS,
@@ -5989,6 +6025,7 @@ function assertVersionedRuntimeCapability(
 export async function connectKodaXRuntime(
   options: ConnectKodaXRuntimeOptions = {},
 ): Promise<KodaXDaemonRuntime> {
+  rejectRemovedHostProfile("connectKodaXRuntime", options);
   if (options.autoStart === true) {
     throw new Error("connectKodaXRuntime is passive; use ensureKodaXRuntime to start or update a Host.");
   }
@@ -6002,6 +6039,7 @@ export async function connectKodaXRuntime(
 export async function ensureKodaXRuntime(
   options: Omit<ConnectKodaXRuntimeOptions, "autoStart" | "transport"> = {},
 ): Promise<KodaXDaemonRuntime> {
+  rejectRemovedHostProfile("ensureKodaXRuntime", options);
   return connectKodaXRuntimeWithStartupCoordination({ ...options, autoStart: true }, true);
 }
 
@@ -6218,6 +6256,7 @@ function firstRequiredDaemonUpgrade(
   capabilities: Readonly<Record<string, unknown>>,
   requirements: RuntimeCapabilityRequirements,
   requireCurrentVersion: boolean,
+  reportCompatibleHost = false,
 ): { readonly name: string; readonly version: number } | undefined {
   const currentVersion = replApi.KODAX_VERSION;
   // A daemon that reports the "0.0.0" development sentinel has no provable
@@ -6239,7 +6278,7 @@ function firstRequiredDaemonUpgrade(
   if (capability !== undefined) return capability;
   if (!requireCurrentVersion) return undefined;
   if (versionOrder === 1) return undefined;
-  if (versionOrder === 0 && requiresRuntimeBuildRefresh(identity)) {
+  if (versionOrder === 0 && requiresRuntimeBuildRefresh(identity, reportCompatibleHost)) {
     return { name: 'runtimeBuild', version: 1 };
   }
   return currentVersion !== "0.0.0" && versionOrder === -1
@@ -6247,7 +6286,7 @@ function firstRequiredDaemonUpgrade(
     : undefined;
 }
 
-function requiresRuntimeBuildRefresh(identity: RuntimeIdentity): boolean {
+function requiresRuntimeBuildRefresh(identity: RuntimeIdentity, reportCompatibleHost: boolean): boolean {
   if (!identity.build) {
     throw new RuntimeDaemonCapabilityUpgradeError(
       'This Host predates build identification. Finish its work and perform one normal daemon restart; its loaded code cannot be verified.',
@@ -6256,12 +6295,30 @@ function requiresRuntimeBuildRefresh(identity: RuntimeIdentity): boolean {
   }
   if (identity.build.fingerprint === LOCAL_RUNTIME_BUILD.fingerprint) return false;
   if (identity.build.origin !== LOCAL_RUNTIME_BUILD.origin) {
-    throw new RuntimeDaemonCapabilityUpgradeError(
-      'A different KodaX installation owns this profile. Connect passively to use that Host, or stop it explicitly before starting this installation.',
-      undefined, undefined, 'runtimeBuild',
-    );
+    // Another installation's Host is never ours to replace. Capabilities
+    // already proved it compatible, so use it as it is (Issue 405).
+    if (reportCompatibleHost) reportCompatibleHostAttach('runtimeBuild', identity);
+    return false;
   }
   return true;
+}
+
+/** Version and build only decide replacement; a compatible Host stays usable. */
+function isHostRefreshOnly(upgrade: string): upgrade is 'runtimeVersion' | 'runtimeBuild' {
+  return upgrade === 'runtimeVersion' || upgrade === 'runtimeBuild';
+}
+
+function reportCompatibleHostAttach(
+  reason: 'runtimeVersion' | 'runtimeBuild',
+  identity: RuntimeIdentity,
+  blockers?: readonly string[],
+): void {
+  emitKodaXDiagnostic({
+    source: 'runtime.daemon.compatible-host', level: 'warn',
+    message: 'Using a compatible Host from a different KodaX version or build without replacing it.',
+    detail: { reason, hostVersion: identity.version, localVersion: replApi.KODAX_VERSION,
+      hostBuild: identity.build, localBuild: LOCAL_RUNTIME_BUILD, ...(blockers ? { blockers } : {}) },
+  });
 }
 
 function assertCurrentLauncherBuild(): void {
@@ -6510,6 +6567,7 @@ async function connectKodaXRuntimeInternal(
   startupDeadline = Date.now() + (options.daemonStartupTimeoutMs ?? 60_000),
   contentionAttempt = 0,
   reportProgress = createClientStartupProgressReporter(options.onStartupProgress),
+  acceptCompatibleHost = false,
 ): Promise<KodaXDaemonRuntime> {
   if (allowCapabilityUpgrade && options.autoStart === true) assertCurrentLauncherBuild();
   assertRuntimeTimeout(
@@ -6562,9 +6620,17 @@ async function connectKodaXRuntimeInternal(
       options.sessionsDir ?? path.join(daemonLocation.configHome, 'sessions'),
       startupDeadline, options.daemonStartupSignal, reportProgress)
     : undefined;
-  const connectionProfile = sharedHost?.profile ?? options.profile ?? 'default';
+  // A caller that names the Host by endpoint or transport has chosen it; only
+  // a slot-derived endpoint must prove it reached that slot's Host.
+  const slotDerived = explicitEndpoint === undefined && options.transport === undefined;
+  // A passive connection attaches to whichever Host serves this home, including
+  // a legacy-slot Host that owns Session storage (Issue 407).
+  const connectionProfile = sharedHost?.profile ?? (slotDerived && options.autoStart !== true
+    ? resolveRuntimeHostSlot(daemonLocation.configHome,
+      options.sessionsDir ?? path.join(daemonLocation.configHome, 'sessions'))
+    : RUNTIME_HOST_SLOT);
   if (sharedHost) {
-    const requestedPaths = resolveRuntimeDaemonPathsFromConfigHome(daemonLocation.configHome, options.profile ?? 'default');
+    const requestedPaths = resolveRuntimeDaemonPathsFromConfigHome(daemonLocation.configHome, RUNTIME_HOST_SLOT);
     if (connectionProfile !== requestedPaths.profile) {
       prepareRuntimeDaemonOwner(requestedPaths,
         options.sessionsDir ?? path.join(daemonLocation.configHome, 'sessions'), sharedHost);
@@ -6573,7 +6639,7 @@ async function connectKodaXRuntimeInternal(
   if (sharedHost && contentionAttempt === 0) emitKodaXDiagnostic({
     source: 'runtime.daemon.storage-owner', level: 'info',
     message: `Session storage is owned by Host profile ${sharedHost.profile}.`,
-    detail: { requestedProfile: options.profile ?? 'default', ownerProfile: sharedHost.profile,
+    detail: { requestedProfile: RUNTIME_HOST_SLOT, ownerProfile: sharedHost.profile,
       runtimeId: sharedHost.owner.runtimeId, pid: sharedHost.owner.pid },
   });
   let lease: RuntimeDaemonProcessLease | undefined;
@@ -6608,6 +6674,11 @@ async function connectKodaXRuntimeInternal(
       ? await waitForRuntimeSessionStorageHost(daemonLocation.configHome,
         options.sessionsDir ?? path.join(daemonLocation.configHome, 'sessions'),
         startupDeadline, options.daemonStartupSignal, reportProgress) : undefined;
+    // The redirected-to legacy Host exited: retry, which starts the canonical Host.
+    if (sharedHost && !winner && startupRetries > 0) {
+      return connectKodaXRuntimeInternal(options, true, ownerBootstrap, startupRetries - 1,
+        startupDeadline, contentionAttempt, reportProgress);
+    }
     if (!winner || winner.owner.runtimeId === sharedHost?.owner.runtimeId) throw error;
     if (startupRetries > 0 && Date.now() < startupDeadline) {
       return connectKodaXRuntimeInternal(options, true, ownerBootstrap, startupRetries - 1,
@@ -6643,7 +6714,7 @@ async function connectKodaXRuntimeInternal(
       "connectKodaXRuntime requires a daemon transport, endpoint, or autoStart: true.",
     );
   }
-  const token = resolveConnectDaemonToken({ ...options, profile: connectionProfile });
+  const token = resolveConnectDaemonToken(options, connectionProfile);
   let identity: RuntimeIdentity;
   let daemonCapabilities: Readonly<Record<string, unknown>> = {};
   let grantedScopes: readonly RuntimeGrantedScope[] | undefined;
@@ -6659,7 +6730,7 @@ async function connectKodaXRuntimeInternal(
           probedDaemon.identity,
           probedDaemon.capabilities,
           requirements,
-          allowCapabilityUpgrade && options.autoStart === true,
+          allowCapabilityUpgrade && options.autoStart === true && !acceptCompatibleHost,
         );
     const requestedClientInfo: RuntimeClientInfo = {
       name: options.clientInfo?.name ?? "kodax-sdk",
@@ -6687,7 +6758,7 @@ async function connectKodaXRuntimeInternal(
       : capabilityUpgradeClientInfo();
     const clientInfo = upgradeClientInfo ?? requestedClientInfo;
     const initializeParams = {
-      profile: connectionProfile,
+      ...(slotDerived ? { profile: connectionProfile } : {}),
       connectionPurpose: "client",
       autoStart: options.autoStart === true,
       ...(options.daemonLifecycle === 'persistent' && upgradeClientInfo === undefined
@@ -6702,10 +6773,9 @@ async function connectKodaXRuntimeInternal(
       : transport.request('initialize', initializeParams)));
     attaching = false;
     identity = parseRuntimeIdentity(initialized.identity);
-    const expectedProfile = connectionProfile;
-    if (identity.profile !== expectedProfile) {
+    if (slotDerived && identity.profile !== connectionProfile) {
       throw new Error(
-        `Runtime daemon profile mismatch: expected ${expectedProfile}, got ${identity.profile}`,
+        `Runtime daemon profile mismatch: expected ${connectionProfile}, got ${identity.profile}`,
       );
     }
     let currentSharedHost = sharedHost;
@@ -6738,11 +6808,13 @@ async function connectKodaXRuntimeInternal(
       diagnoseStaleGitSafeDirectory(daemonCapabilities);
     }
     grantedScopes = parseRuntimeGrantedScopes(initialized.grantedScopes);
+    // Only this authenticated decision reports; the probe decision stays silent.
     const requiredUpgrade = firstRequiredDaemonUpgrade(
       identity,
       daemonCapabilities,
       requirements,
-      allowCapabilityUpgrade && options.autoStart === true,
+      allowCapabilityUpgrade && options.autoStart === true && !acceptCompatibleHost,
+      true,
     );
     if (
       probedDaemon !== undefined
@@ -6809,6 +6881,17 @@ async function connectKodaXRuntimeInternal(
           reportProgress,
         });
       } catch (error: unknown) {
+        if (
+          isHostRefreshOnly(requiredUpgrade.name)
+          && error instanceof RuntimeDaemonCapabilityUpgradeError
+          && error.preflight?.canStop === false
+        ) {
+          // A busy Host that satisfies every capability is still usable. Attach
+          // again with the real client identity instead of waiting out startup.
+          reportCompatibleHostAttach(requiredUpgrade.name, identity, error.preflight.blockers);
+          return connectKodaXRuntimeInternal(options, true, ownerBootstrap, startupRetries,
+            startupDeadline, contentionAttempt, reportProgress, true);
+        }
         if (
           error instanceof RuntimeDaemonCapabilityUpgradeError
           && (error instanceof RuntimeDaemonInspectionInterruptedError
@@ -6959,12 +7042,13 @@ function isRuntimeGrantedScope(value: string): value is RuntimeGrantedScope {
 
 function resolveConnectDaemonToken(
   options: ConnectKodaXRuntimeOptions,
+  profile: string,
 ): string | undefined {
   if (options.daemonToken !== undefined) return options.daemonToken;
   if (options.transport !== undefined && options.autoStart !== true)
     return undefined;
   return readRuntimeDaemonToken(
-    resolveRuntimeDaemonClientPaths(options.homeDir, options.profile).paths,
+    resolveRuntimeDaemonClientPaths(options.homeDir, profile).paths,
   );
 }
 
@@ -7009,6 +7093,7 @@ function createRuntimeSessionSettingsOwner(
   persistence: RuntimePersistence,
   bus: RuntimeEventBus,
   isDraft: (sessionId: string) => boolean,
+  readDefaults: () => unknown,
 ): RuntimeSessionSettingsOwner {
   const current = new Map<
     string,
@@ -7019,6 +7104,15 @@ function createRuntimeSessionSettingsOwner(
   // The canonical Session is saved before its settings. Keep draft settings
   // authoritative until both writes finish, including concurrent reads/updates.
   const pendingDraftSettings = new Set<string>();
+
+  const initialize = (sessionId: string, loaded: RuntimeVersionedValue<RuntimeSessionSettings>) => {
+    if (SESSION_DEFAULTS_CAPTURED in loaded.value) return loaded;
+    const { workMode: _workMode, ...defaults } = parseRuntimeSessionSettings(readDefaults());
+    const initialized = { revision: loaded.revision,
+      value: withCapturedSessionDefaults({ ...loaded.value }, defaults) };
+    if (!pendingDraftSettings.has(sessionId)) persistence.saveSessionSettingsVersioned(sessionId, initialized);
+    return initialized;
+  };
 
   const enqueue = <T>(
     sessionId: string,
@@ -7065,13 +7159,14 @@ function createRuntimeSessionSettingsOwner(
         pendingDraftSettings.delete(sessionId);
       });
     },
-    async read(sessionId) {
-      await (tails.get(sessionId) ?? Promise.resolve());
-      if (isDraft(sessionId)) pendingDraftSettings.add(sessionId);
-      const loaded = pendingDraftSettings.has(sessionId) ? current.get(sessionId) ?? { revision: 0, value: {} }
-        : persistence.loadSessionSettingsVersioned(sessionId);
-      current.set(sessionId, loaded);
-      return loaded;
+    read(sessionId) {
+      return enqueue(sessionId, () => {
+        if (isDraft(sessionId)) pendingDraftSettings.add(sessionId);
+        const loaded = initialize(sessionId, pendingDraftSettings.has(sessionId) ? current.get(sessionId) ?? { revision: 0, value: {} }
+          : persistence.loadSessionSettingsVersioned(sessionId));
+        current.set(sessionId, loaded);
+        return loaded;
+      });
     },
     peek(sessionId) {
       return current.get(sessionId);
@@ -7079,8 +7174,8 @@ function createRuntimeSessionSettingsOwner(
     update(sessionId, patch, expectedRevision, validate) {
       return enqueue(sessionId, async () => {
         if (isDraft(sessionId)) pendingDraftSettings.add(sessionId);
-        const loaded = pendingDraftSettings.has(sessionId) ? current.get(sessionId) ?? { revision: 0, value: {} }
-          : persistence.loadSessionSettingsVersioned(sessionId);
+        const loaded = initialize(sessionId, pendingDraftSettings.has(sessionId) ? current.get(sessionId) ?? { revision: 0, value: {} }
+          : persistence.loadSessionSettingsVersioned(sessionId));
         if (
           expectedRevision !== undefined &&
           loaded.revision !== expectedRevision
@@ -8655,6 +8750,7 @@ function createRuntimeSessionService(
         } else {
           await manager.storage.save(sessionId, data);
         }
+        await settingsOwner.read(sessionId);
         const session = toRuntimeSession(
           sessionId,
           data,
@@ -12690,7 +12786,7 @@ async function createRuntimeRunService(deps: {
     const model =
       options.modelOverride ??
       options.model ??
-      deps.defaultModel ??
+      (capturedSessionDefaults(settings) === undefined ? deps.defaultModel : undefined) ??
       resolveProviderModelDescriptors(provider)[0]?.id;
     const autoReviewPolicy = runtimeAutoReviewPolicy(
       readRuntimeConfig(path.join(deps.defaultConfigHome, "config.json")),
@@ -12863,6 +12959,7 @@ async function createRuntimeRunService(deps: {
           }
         : {}),
       interruptInputs: recovery?.data.interruptInputs?.map(value => ({ ...value })) ?? [],
+      onInterruptInputDropped: (inputId: string) => productQueue.markDropped(input.sessionId, inputId),
       ...((input.agentContext ?? deps.defaultAgentContext)
         ? { agentContext: input.agentContext ?? deps.defaultAgentContext }
         : {}),
@@ -12973,6 +13070,9 @@ async function createRuntimeRunService(deps: {
       productQueue.validateRestore(pendingInputs);
       const pendingInterrupts = record.interruptInputs.filter(pending => pending.state === 'queued').map(pending => {
         if (saved.messages.some(message => message.inputId === pending.inputId)) return { pending, normalized: undefined };
+        // The Host stopped after committing this steer's withdrawal receipt but before the
+        // Run checkpoint recorded the release; the receipt is the user's decision.
+        if (productQueue.read(record.sessionId, pending.inputId)?.state === 'withdrawn') return { pending, withdrawn: true };
         if (!pending.input) throw new Error('Recovery input body is unavailable.');
         return { pending, normalized: normalizeRuntimeRunInput({ sessionId: record.sessionId, input: pending.input }, deps.artifacts, 'runtime.runs.submitInput') };
       });
@@ -12990,7 +13090,8 @@ async function createRuntimeRunService(deps: {
         throw error;
       }
       commitInputs!();
-      for (const { pending, normalized } of pendingInterrupts) {
+      for (const { pending, normalized, withdrawn } of pendingInterrupts) {
+        if (withdrawn) { pending.state = 'terminal'; continue; }
         if (!normalized) { pending.state = 'delivered'; continue; }
         pending.queueMessageId = enqueueWithArtifacts({ sessionId: record.sessionId, inputId: pending.inputId,
           content: normalized.prompt, inputArtifacts: normalized.inputArtifacts, provider: record.provider,
@@ -13140,6 +13241,14 @@ async function createRuntimeRunService(deps: {
     return materialized;
   };
 
+  const commitVisualWithdrawal = async (sessionId: string, inputId: string, saved?: KodaXSessionData): Promise<void> => {
+    saved ??= await deps.sessionAdmission.loadExecutable(sessionId);
+    const records = runtimeVisualWithdrawalRecords(saved, sessionId, inputId);
+    if (records.length && !await deps.sessionManager.storage.appendSessionRecords?.(sessionId, records)) {
+      throw new Error('Visual input withdrawal could not be committed.');
+    }
+  };
+
   const withdrawPendingVisualInput = async (sessionId: string, inputId: string): Promise<void> => {
     const pending = productQueue.snapshot(sessionId).find(value => value.input.inputId === inputId);
     if (!pending?.input.inputArtifacts?.some(artifact => artifact.kind === 'image')) return;
@@ -13147,10 +13256,32 @@ async function createRuntimeRunService(deps: {
     if (saved.messages.some(message => message.role === 'user' && (message.inputId === inputId || message.inputIds?.includes(inputId)))) {
       throw createRuntimeConflictError('Visual input already entered canonical history; retry its acknowledgement.', 0);
     }
-    const records = runtimeVisualWithdrawalRecords(saved, sessionId, inputId);
-    if (records.length && !await deps.sessionManager.storage.appendSessionRecords?.(sessionId, records)) {
-      throw new Error('Visual input withdrawal could not be committed.');
+    await commitVisualWithdrawal(sessionId, inputId, saved);
+  };
+
+  /** Synchronously takes an undelivered steer input back out of its Run; false once delivery has claimed it. */
+  const releaseSteerInput = (sessionId: string, runId: string, inputId: string): boolean => {
+    const run = deps.runs.get(runId);
+    const pending = run?.sessionId === sessionId
+      ? run.interruptInputs.find(input => input.inputId === inputId) : undefined;
+    if (!run || pending?.state !== 'queued' || pending.queueMessageId === undefined) return false;
+    const queueMessageId = pending.queueMessageId;
+    const filter = { agentId: actorQueueId(sessionId, '/root'), maxPriority: 'user', mode: 'prompt', id: queueMessageId } as const;
+    if (getMessageQueue().peek(filter).length === 0) return false;
+    // Record the release before taking the message, so a failed checkpoint write leaves the
+    // input deliverable. Nothing here awaits, so no safety point can claim it in between.
+    delete pending.queueMessageId;
+    pending.state = 'terminal';
+    try {
+      if (run.contextRecovery?.checkpoint) persistGenerationRecovery(run, deps.persistence, productQueue.snapshot(sessionId));
+    } catch (error: unknown) {
+      pending.queueMessageId = queueMessageId;
+      pending.state = 'queued';
+      throw error;
     }
+    getMessageQueue().dequeue(filter);
+    publishRunUpdate(run);
+    return true;
   };
 
   const assertProductExecutionMode = async (sessionId: string, execution: ReturnType<typeof currentProductExecution>): Promise<void> => {
@@ -13433,7 +13564,13 @@ async function createRuntimeRunService(deps: {
         0,
       );
     }
-    return productQueue.recordAccepted(input, target.runId, "queued");
+    productQueue.recordAccepted(input, target.runId, "queued");
+    // The Run may have delivered or dropped the input while acceptance awaited; its
+    // delivery and drop notices found no fact then, so settle the new fact now.
+    const interrupt = target.interruptInputs.find(value => value.inputId === input.inputId);
+    if (interrupt?.state === "delivered") productQueue.markSubmitted(input.sessionId, input.inputId);
+    else if (interrupt?.state === "terminal") productQueue.markDropped(input.sessionId, input.inputId);
+    return productQueue.read(input.sessionId, input.inputId)!;
   };
 
   const acceptRedirectInput = async (
@@ -13899,7 +14036,13 @@ async function createRuntimeRunService(deps: {
       return deps.sessionOperations.run(sessionId, async () => {
         await deps.sessionAdmission.assertRunAccess(sessionId);
         await withdrawPendingVisualInput(sessionId, inputId);
-        return productQueue.withdraw(sessionId, inputId);
+        const original = productQueue.withdraw(sessionId, inputId, undefined,
+          runId => releaseSteerInput(sessionId, runId, inputId));
+        // A steer image was staged for its Run; retrying withdrawal re-commits this idempotently.
+        if (original.delivery === 'steer' && original.inputArtifacts?.some(artifact => artifact.kind === 'image')) {
+          await commitVisualWithdrawal(sessionId, inputId);
+        }
+        return original;
       });
     },
 
@@ -14586,7 +14729,7 @@ function resolveClientContextBudget(
   if (providerName === undefined) return undefined;
   try {
     const provider = resolveProvider(providerName);
-    const model = settings.model ?? defaultModel ?? provider.getModel();
+    const model = settings.model ?? (capturedSessionDefaults(settings) === undefined ? defaultModel : undefined) ?? provider.getModel();
     const raw = isRecord(config.compaction) ? config.compaction : {};
     const compaction = normalizeCompactionConfig({
       ...(typeof raw.contextWindow === 'number' ? { contextWindow: raw.contextWindow } : {}),
@@ -17407,25 +17550,29 @@ function isTerminalRuntimeEvent(type: RuntimeEventType): boolean {
   );
 }
 
-function createRuntimePersistence(
-  options: CreateKodaXHostRuntimeOptions,
-  runOwner: AgentActorOwner,
-): RuntimePersistence {
+/** The `.kodax` directory that holds this Runtime's `runtime/` state. */
+function resolveRuntimeStateHome(options: CreateKodaXHostRuntimeOptions): string {
   const baseDir = options.homeDir
     ? path.resolve(options.homeDir)
     : options.sessionsDir
       ? path.resolve(options.sessionsDir, "..")
       : process.cwd();
+  return path.join(baseDir, ".kodax");
+}
+
+function createRuntimePersistence(
+  options: CreateKodaXHostRuntimeOptions,
+  runOwner: AgentActorOwner,
+): RuntimePersistence {
   const runtimeDir =
     options.sharedDaemonHost === true
       ? path.join(
-          baseDir,
-          ".kodax",
+          resolveRuntimeStateHome(options),
           "runtime",
           "profiles",
-          encodeURIComponent(options.profile ?? "default"),
+          encodeURIComponent(options.profile ?? RUNTIME_HOST_SLOT),
         )
-      : path.join(baseDir, ".kodax", "runtime");
+      : path.join(resolveRuntimeStateHome(options), "runtime");
   const runsDir = path.join(runtimeDir, "runs");
   const sessionSettingsDir = path.join(runtimeDir, "session-settings");
   const sessionOrdersDir = path.join(runtimeDir, "session-orders");
@@ -18308,7 +18455,9 @@ function createRuntimePersistence(
         ) {
           return {
             revision: parsed.revision,
-            value: parseRuntimeSessionSettings(parsed.value),
+            value: isRecord(parsed.defaults)
+              ? withCapturedSessionDefaults(parseRuntimeSessionSettings(parsed.value), parseRuntimeSessionSettings(parsed.defaults))
+              : parseRuntimeSessionSettings(parsed.value),
           };
         }
         // v0.7.68 and earlier stored a plain settings object.
@@ -18332,6 +18481,7 @@ function createRuntimePersistence(
       writeRuntimeJsonAtomic(file, {
         revision: settings.revision,
         value: serializeSessionSettings(settings.value),
+        ...(SESSION_DEFAULTS_CAPTURED in settings.value ? { defaults: capturedSessionDefaults(settings.value) } : {}),
       });
     },
     saveSessionSettings(sessionId, settings) {
@@ -20412,6 +20562,7 @@ function createRuntimePermissionRegistry(
       ...(requestInput.reason !== undefined
         ? { reason: requestInput.reason }
         : {}),
+      ...(requestInput.extensionAsks !== undefined ? { extensionAsks: requestInput.extensionAsks } : {}),
       ...(requestInput.risk !== undefined ? { risk: requestInput.risk } : {}),
       ...(trustedInputPreview !== undefined
         ? { inputPreview: trustedInputPreview }
@@ -21131,6 +21282,7 @@ function wrapKodaXEvents(input: {
         ...(meta?.toolId ? { toolCallId: meta.toolId } : {}),
         toolName: tool,
         ...(extensionReason !== undefined ? { reason: extensionReason } : {}),
+        ...(extensionReason !== undefined && meta?.extensionAsks !== undefined ? { extensionAsks: meta.extensionAsks } : {}),
         inputPreview: previewInput(toolInput),
         executionCwd: resolveRuntimeExecutionCwd(record),
       },
@@ -23314,6 +23466,12 @@ function applySessionSettingsPatch(
   patch: RuntimeSessionSettingsPatch,
 ): RuntimeSessionSettings {
   const next: RuntimeSessionSettings = { ...current };
+  const defaults = capturedSessionDefaults(current);
+  if (defaults !== undefined) {
+    // Clearing a choice selects engine/provider defaults, never a peer's saved choice.
+    const cleared = new Set(['model', 'effort'].filter(key => patch[key as 'model' | 'effort'] === null));
+    withCapturedSessionDefaults(next, Object.fromEntries(Object.entries(defaults).filter(([key]) => !cleared.has(key))));
+  }
   applyNullablePatch(next, 'repoIntelligenceMode', patch.repoIntelligenceMode);
   applyNullablePatch(next, 'repoIntelligenceTrace', patch.repoIntelligenceTrace);
   applyNullableStringPatch(next, "provider", patch.provider);
@@ -23557,22 +23715,37 @@ function deleteMutableSetting<K extends keyof RuntimeSessionSettings>(
   )[key];
 }
 
+// Host-only metadata: persisted beside the settings value and excluded from public JSON.
+const SESSION_DEFAULTS_CAPTURED = Symbol('sessionDefaultsCaptured');
+
+function capturedSessionDefaults(settings: RuntimeSessionSettings): RuntimeSessionSettings | undefined {
+  return (settings as RuntimeSessionSettings & { [SESSION_DEFAULTS_CAPTURED]?: RuntimeSessionSettings })[SESSION_DEFAULTS_CAPTURED];
+}
+
+function withCapturedSessionDefaults(settings: RuntimeSessionSettings, defaults: RuntimeSessionSettings): RuntimeSessionSettings {
+  Object.defineProperty(settings, SESSION_DEFAULTS_CAPTURED, { value: defaults, configurable: true });
+  return settings;
+}
+
 function resolveEffectiveRuntimeSessionSettings(config: unknown, overrides: RuntimeSessionSettings,
   productSession = false): RuntimeSessionSettings {
   // Product defaults are effective facts only; raw overrides and low-level Run
   // callers retain their existing semantics when no permission was specified.
   // Work mode is a Session choice; stale profile fields must not alter the Coding default.
-  const { workMode: _profileWorkMode, ...profileSettings } = parseRuntimeSessionSettings(config);
+  const defaults = capturedSessionDefaults(overrides);
+  const retainDefaults = (value: RuntimeSessionSettings): RuntimeSessionSettings => defaults === undefined
+    ? value : withCapturedSessionDefaults(value, defaults);
+  const { workMode: _profileWorkMode, ...profileSettings } = defaults ?? parseRuntimeSessionSettings(config);
   const settings: RuntimeSessionSettings = { ...(productSession ? { permissionMode: 'accept-edits' as const, agentMode: 'ama' as const } : {}),
     ...profileSettings, ...overrides };
   if (settings.permissionMode === 'plan' && overrides.effort === undefined && overrides.planModeEffort !== undefined) {
-    return { ...settings, effort: overrides.planModeEffort };
+    return retainDefaults({ ...settings, effort: overrides.planModeEffort });
   }
   if (settings.permissionMode === 'plan' && settings.effort === undefined
-    && isRecord(config) && typeof config.planModeEffort === 'string') {
-    return { ...settings, effort: config.planModeEffort };
+    && profileSettings.planModeEffort !== undefined) {
+    return retainDefaults({ ...settings, effort: profileSettings.planModeEffort });
   }
-  return settings;
+  return retainDefaults(settings);
 }
 
 function parseRuntimeSessionSettings(value: unknown): RuntimeSessionSettings {
@@ -24908,7 +25081,7 @@ function markRunTerminal(
   delete run.lifecycleError;
   if (run.error === "stop_outcome_unconfirmed" || run.error === "shell_cleanup_unconfirmed") delete run.error;
   run.interruptInputOpen = false;
-  terminalizeQueuedInterruptInputs(run);
+  terminalizeQueuedInterruptInputs(run, run.onInterruptInputDropped);
   run.phase = phase;
   if (phase === "completed") delete run.failureDetail;
   const endedAt = new Date().toISOString();

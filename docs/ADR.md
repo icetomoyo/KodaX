@@ -1,5 +1,20 @@
 # KodaX Architecture Decision Records
 
+## Session default isolation — 2026-11-11 (released in v0.7.97-beta.6)
+
+The Host captures user-level Session defaults once at Session creation, or on
+first access to legacy settings. It persists that snapshot beside the raw
+overrides without changing their revision or public shape. Effective views and
+execution merge the captured defaults with explicit Session choices. Global
+configuration changes therefore affect future Sessions, while commands and
+shortcuts continue saving user defaults and applying the current Session.
+Clearing model or effort also clears its captured fallback, selecting
+engine/provider defaults; other cleared overrides return to the captured
+Session default. Plan effort retains its existing explicit-override precedence.
+Fork/recovery copy both overrides and captured defaults; clients observing the
+same Session still share changes. Draft snapshots remain in memory until the
+existing promotion path persists them. This adds no watcher or polling loop.
+
 ## FEATURE_302 implementation alignment — 2026-11-01 (released in v0.7.97-alpha.12)
 
 The accepted provider parity design is indexed in
@@ -7192,6 +7207,13 @@ grant, Full Access or Auto allow does not count as that approval.
 `requestToolApproval` returns `boolean | string`: only `true` runs the call, and
 a string blocks it with that text.
 
+**SDK clarification (2026-11-12, released in v0.7.97-beta.7)**: The same permission
+Interaction also carries optional `extensionAsks: { extension, reason }[]`.
+Attribution comes from each handler's registered source; reasons retain their
+original text. Aggregation, child forwarding and client adapters preserve the
+list. Existing `reason` remains the readable fallback. No approval or grant
+authority changes.
+
 ---
 
 ## ADR-072: Work Modes and the Model-Facing Tool Contract
@@ -7542,3 +7564,73 @@ DD §10 "Agent-home retention" lists every path and the paths that are kept.
 - **Pattern rules such as "any `events.jsonl` older than N days".** Agent task
   and Workflow ledgers use the same file name and are live. Rules name exact
   locations instead.
+
+## ADR-075: One Host per KODAX_HOME; Profile Is Not Host Identity
+
+**Status**: Accepted (2026-11-10); implemented in KodaX by FEATURE_305 T1–T7, and it ships in
+`v0.7.97-beta.6`, and Space follows with its dependency bump. See the [design](designs/one-host-per-kodax-home-2026-11-10.md). Tracks Issue 407.
+
+**Context**: A Host is identified by its profile name (`runtime/daemon/<profile>/`,
+`runtime/profiles/<profile>/`) and, since v0.7.97-alpha.7, also by the Session
+storage owner (`sessions/.product-host/owner.lock`). Packaged Space uses profile
+`coder` and the CLI uses `default`, with one shared sessions directory. Only
+one Host may own that directory, so the second product is redirected to the
+first product's Host. Each path that still keys on the requested profile then
+breaks: `daemon start` verification and the credential profile fence (Issue
+406), passive connect and exit receipts (Issue 407), Space's hard-coded
+`coder` stop and recovery paths, and per-Session Runtime state that is split
+by whichever profile served the Session. Profile selects no configuration; it
+only names directories. codex, opencode and pi each key one service or agent
+directory on the data root and never split process or storage by profile.
+
+**Decision**:
+
+1. The data root (`KODAX_HOME`, default `~/.kodax`) is the Host identity. One
+   Host serves it, in one canonical slot that keeps the existing `default`
+   directory names, so older clients find it without a redirect.
+2. The Host-location `profile` SDK option and the `daemon --profile` flag are
+   removed in the same release, not deprecated. Passing either fails with an
+   explicit error that points to `docs/SDK_MIGRATION.md`, which ships in the
+   npm package with the `CHANGELOG.md` entry. The `identity.profile` wire field
+   stays, always `default`, for older clients.
+3. Per-Session Runtime state lives once per data root. State left under other
+   profiles is merged once at Host startup with fixed rules and a diagnostic.
+   Session-scoped permission grants are imported; global grants are not,
+   because they would extend approvals given in one product to every Session.
+4. `owner.lock` remains the single-writer fence and the redirect remains, but
+   only to reach a legacy Host in another slot until it is idle and replaced.
+5. Credential profile (the account namespace in `auth.json`), Agent/execution
+   profiles and Session `profileId` are unchanged. The credential profile is
+   not compared with any Host property.
+
+**Consequences**:
+
+- Space and the CLI meet in one Host by construction; no redirect is needed
+  between current versions. Session settings no longer depend on start order.
+- A one-time migration must run on every machine that ever ran Space. It is
+  idempotent and keeps the source for 30 days.
+- Two isolated Host environments in one account now require two data roots
+  (`KODAX_HOME`), which is how tests and the Space test override already work.
+- SDK users must remove the `profile` option when they upgrade. This is a
+  breaking change inside the 0.7.97 line (`0.7.97-beta.6`); the users are one closely connected
+  team in the same refactoring period, so they change in step with the
+  release instead of carrying a deprecated option.
+- Users who approved a global "always allow" in Space approve it once more.
+
+**Rejected alternatives**:
+
+- **Keep per-profile Hosts and patch each path to follow the storage owner.**
+  It fixes the symptoms one at a time and keeps two identity keys, so every
+  new path can repeat the bug. It does not fix the split Runtime state.
+- **One Host per sessions directory.** The sessions directory is a setting of
+  the data root, not an independent identity; making it the key keeps two
+  keys whenever a client passes a custom directory.
+- **Space uses profile `default`.** It removes today's collision but keeps the
+  profile key, so any other client with another profile repeats it.
+- **A new slot name such as `runtime/host/`.** Older clients only look under
+  `runtime/daemon/<profile>/`. They would start a second Host and fail on the
+  storage owner (Issue 405 again) unless the Host also wrote a descriptor in
+  the old place, which restores two identities. It also migrates every CLI
+  user's state.
+- **Deprecate `profile` and remove it in a later major version.** It keeps a
+  public option with no meaning and a second code path to test until then.

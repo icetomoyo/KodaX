@@ -3,8 +3,25 @@
 Documentation for KodaX users, product-client integrators and trusted Host developers.
 
 This development tree implements the unified Product Client contract under
-FEATURE_298/299/301. The package version is `0.7.97-beta.4`;
-`v0.7.96` remains the last stable release. `v0.7.97-beta.4` repairs the
+FEATURE_298/299/301/303/304/305/306. The package version is `0.7.97-beta.9`;
+`v0.7.96` remains the last stable release. `v0.7.97-beta.9` adds data root relocation (FEATURE_306: `resolveKodaXHome` and `copyKodaXDataRoot`), lets `inputs.withdraw` take back an undelivered `steer` input, refuses a client exit stop at once while a peer is attached (Issue 410) and ignores a relative `KODAX_HOME` with a warning; `v0.7.97-beta.8` repairs Windows daemon startup reliability (Issue 409): the fail-closed startup path verifies and supervises the kill-on-close Job with the bundled native helper instead of compiling C# in PowerShell, failed starts retain cleanup handles with serialized admissions, and `child_exit` is retryable; `v0.7.97-beta.7` repairs the
+Space SDK image projection, attachment reads and extension approval
+attribution from the Space integration report (Issue 408): user image
+observation labels leave the view, history and search, Host attachment reads
+cover PNG, JPEG, WebP and GIF with the actual mediaType, the read-only visual
+tools resolve to the `read` capability, and extension approvals carry
+structured per-extension attribution; `v0.7.97-beta.6` moves to one
+Host per `KODAX_HOME`: the Host-location `profile` is removed from the SDK
+entry points and the `kodax daemon`/`a2a serve` commands (breaking), Space
+and the CLI share one compatible Host across installations, the standalone
+binary's Linux floor drops to glibc 2.17, and Session settings no longer
+drift with shared user defaults; `v0.7.97-beta.5` integrates the
+SDK foundation hardening (extension `tool:before` on every dispatch path and
+failing closed, agent-home extension/integration write protection,
+`web_fetch` metadata and private-redirect refusal), proxy and private CA
+support, extension asks for one-call human approval, durable visual
+observations and Managed Run Context reuse, with Windows sandbox, cold-start
+and agent-home retention repairs; `v0.7.97-beta.4` repairs the
 Space SDK instruction and history client contracts (AGENTS-only editor
 loading beside a tagged instruction loader, history contract v2 with
 revision-fenced Fork/Rewind/Retry turn targets, bidirectional paging and
@@ -51,9 +68,14 @@ Host cutover and provider/OAuth credential parity shipped in
 recovery fixes shipped in `v0.7.97-beta.2`; long-context recovery, durable
 Actor settlement and saved-history location/turn resolution shipped in
 `v0.7.97-beta.3`; the instruction and history contract v2 repairs shipped in
-`v0.7.97-beta.4`. Read the
-[current SDK alignment](sdk/embedder-guide.md#post-alpha10-sdk-alignment)
-and [unified Host cutover](sdk/embedder-guide.md#unified-host-sdk-cutover-shipped-in-v0797-alpha12)
+`v0.7.97-beta.4`; extension policy hardening and asks, proxy/private CA
+support and durable visual observations shipped in `v0.7.97-beta.5`; one
+Host per `KODAX_HOME` with the Host-location `profile` removed shipped in
+`v0.7.97-beta.6`; the Space SDK image projection, attachment and
+approval-attribution corrections shipped in `v0.7.97-beta.7`; the Windows daemon native Job startup repairs shipped in `v0.7.97-beta.8`; data root relocation and steer withdrawal shipped in `v0.7.97-beta.9`. Read the
+[current SDK alignment](sdk/embedder-guide.md#post-alpha10-sdk-alignment),
+[unified Host cutover](sdk/embedder-guide.md#unified-host-sdk-cutover-shipped-in-v0797-alpha12)
+and [one Host per KODAX_HOME](../docs/SDK_MIGRATION.md#one-host-per-kodax_home-profile-removed)
 for compatibility and standalone-library boundaries. Historical first-read
 latency remains tracked in Issue 371.
 

@@ -1,4 +1,5 @@
 import {
+  appendFileSync,
   closeSync,
   existsSync,
   mkdtempSync,
@@ -172,7 +173,6 @@ describe("runtime daemon child process environment", () => {
   it("passes Space orphan recovery only to the newly spawned daemon", () => {
     const args = buildRuntimeDaemonServeArgs(
       {
-        profile: "coder",
         homeDir: "runtime-home",
         configHome: "runtime-config",
         orphanExitMs: 30_000,
@@ -184,8 +184,6 @@ describe("runtime daemon child process environment", () => {
     expect(args).toEqual([
       "daemon",
       "serve",
-      "--profile",
-      "coder",
       "--home",
       "runtime-home",
       "--config-home",
@@ -198,7 +196,6 @@ describe("runtime daemon child process environment", () => {
   it("passes independent interaction deadlines to a newly spawned daemon", () => {
     const args = buildRuntimeDaemonServeArgs(
       {
-        profile: "coder",
         homeDir: "runtime-home",
         configHome: "runtime-config",
         permissionTimeoutMs: 300_000,
@@ -211,8 +208,6 @@ describe("runtime daemon child process environment", () => {
     expect(args).toEqual([
       "daemon",
       "serve",
-      "--profile",
-      "coder",
       "--home",
       "runtime-home",
       "--config-home",
@@ -564,8 +559,31 @@ describe("runtime daemon child startup", () => {
     reportExit?.({ code: 17, signal: null });
 
     await expect(waiting).rejects.toThrow(/exited.*code 17.*bootstrap\.log/i);
+    await expect(waiting).rejects.toMatchObject({ reason: 'child_exit', retryable: true });
     expect(child.terminate).toHaveBeenCalledOnce();
     expect(child.unref).not.toHaveBeenCalled();
+  });
+
+  it('fences replacement startup behind the exact failed child cleanup and retries cleanup first', async () => {
+    const configHome = mkdtempSync(path.join(os.tmpdir(), 'kodax-startup-cleanup-gate-'));
+    const scoped = resolveRuntimeDaemonPathsFromConfigHome(configHome, 'default');
+    const terminate = vi.fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('cleanup probe unavailable'))
+      .mockRejectedValueOnce(new Error('cleanup probe still unavailable'))
+      .mockResolvedValue(undefined);
+    const child: RuntimeDaemonStartupProcess = {
+      pid: 987, exit: Promise.resolve({ code: 17, signal: null }), unref: vi.fn(), terminate,
+    };
+    try {
+      await expect(waitForHealthyDaemonStartup(scoped, { startupTimeoutMs: 0 }, child, missingHealth))
+        .rejects.toMatchObject({ code: 'daemon_startup_failed', reason: 'cleanup_incomplete', retryable: true, errors: expect.any(Array) });
+      await expect(acquireRuntimeDaemonProcessLease({ configHome, startupTimeoutMs: 0 }))
+        .rejects.toMatchObject({ reason: 'cleanup_incomplete' });
+      expect(terminate).toHaveBeenCalledTimes(2);
+      await expect(acquireRuntimeDaemonProcessLease({ configHome, startupTimeoutMs: 0 }))
+        .rejects.toMatchObject({ reason: 'timeout' });
+      expect(terminate).toHaveBeenCalledTimes(3);
+    } finally { rmSync(configHome, { recursive: true, force: true }); }
   });
 
   it("reclaims a still-running child when startup reaches its timeout", async () => {
@@ -879,7 +897,7 @@ describe("runtime daemon child startup", () => {
       configHome,
       "race",
     );
-    const winnerPid = 999;
+    const winnerPid = process.pid;
     const lock = tryAcquireRuntimeDaemonLock(racePaths, {
       runtimeId: `runtime-${winnerPid}`,
       pid: winnerPid,
@@ -925,6 +943,83 @@ describe("runtime daemon child startup", () => {
       });
       expect(child.terminate).not.toHaveBeenCalled();
       expect(child.unref).not.toHaveBeenCalled();
+    } finally {
+      rmSync(configHome, { recursive: true, force: true });
+    }
+  });
+
+  it("reports child_exit promptly when only a dead owner is left in the lock", async () => {
+    const configHome = mkdtempSync(path.join(os.tmpdir(), "kodax-daemon-stale-lock-"));
+    const stalePaths = resolveRuntimeDaemonPathsFromConfigHome(configHome, "stale");
+    expect(tryAcquireRuntimeDaemonLock(stalePaths, {
+      runtimeId: "rt_dead",
+      pid: 2_147_000,
+      createdAt: "2026-07-17T00:00:00.000Z",
+      kind: "daemon",
+    })).toBeDefined();
+    const child: RuntimeDaemonStartupProcess = {
+      pid: 888,
+      exit: new Promise((resolve) => setTimeout(() => resolve({ code: 1, signal: null }), 5)),
+      hasExited: vi.fn(() => true),
+      unref: vi.fn(),
+      terminate: vi.fn(async () => undefined),
+    };
+    const startedAt = Date.now();
+    try {
+      await expect(waitForHealthyDaemonStartup(
+        stalePaths,
+        { startupTimeoutMs: 10_000, pollIntervalMs: 1 },
+        child,
+        missingHealth,
+      )).rejects.toMatchObject({ reason: "child_exit" });
+      expect(Date.now() - startedAt).toBeLessThan(2_000);
+    } finally {
+      rmSync(configHome, { recursive: true, force: true });
+    }
+  });
+
+  it("puts the child's last bootstrap error into the child_exit message", async () => {
+    const configHome = mkdtempSync(path.join(os.tmpdir(), "kodax-daemon-exit-cause-"));
+    const causePaths = resolveRuntimeDaemonPathsFromConfigHome(configHome, "cause");
+    closeSync(openRuntimeDaemonBootstrapLog(causePaths));
+    writeFileSync(
+      runtimeDaemonBootstrapLogPath(causePaths),
+      "[kodax-startup] {\"phase\":\"extensions\"}\n[Error] Could not verify the Windows Job containment.\n",
+    );
+    const child: RuntimeDaemonStartupProcess = {
+      pid: 888,
+      exit: Promise.resolve({ code: 1, signal: null }),
+      hasExited: vi.fn(() => true),
+      unref: vi.fn(),
+      terminate: vi.fn(async () => undefined),
+    };
+    try {
+      await expect(waitForHealthyDaemonStartup(causePaths, {}, child, missingHealth))
+        .rejects.toThrow(/code 1\).*Could not verify the Windows Job containment/s);
+    } finally {
+      rmSync(configHome, { recursive: true, force: true });
+    }
+  });
+
+  it("names only an error the failed attempt itself wrote to the bootstrap log", async () => {
+    const configHome = mkdtempSync(path.join(os.tmpdir(), "kodax-daemon-exit-scope-"));
+    const scopePaths = resolveRuntimeDaemonPathsFromConfigHome(configHome, "scope");
+    closeSync(openRuntimeDaemonBootstrapLog(scopePaths));
+    const earlier = "[Error] An earlier attempt could not open the Session store.\n";
+    writeFileSync(runtimeDaemonBootstrapLogPath(scopePaths), earlier);
+    appendFileSync(runtimeDaemonBootstrapLogPath(scopePaths), "[kodax-startup] {\"phase\":\"extensions\"}\n");
+    const child: RuntimeDaemonStartupProcess = {
+      pid: 888,
+      bootstrapLogStart: Buffer.byteLength(earlier),
+      exit: Promise.resolve({ code: 1, signal: null }),
+      hasExited: vi.fn(() => true),
+      unref: vi.fn(),
+      terminate: vi.fn(async () => undefined),
+    };
+    try {
+      const error = await waitForHealthyDaemonStartup(scopePaths, {}, child, missingHealth).catch((value: unknown) => value);
+      expect(error).toMatchObject({ reason: "child_exit" });
+      expect(String((error as Error).message)).not.toContain("Session store");
     } finally {
       rmSync(configHome, { recursive: true, force: true });
     }

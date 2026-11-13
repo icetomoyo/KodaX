@@ -5,7 +5,6 @@ const { pathToFileURL } = require('node:url');
 const { app } = require('electron');
 
 const homeDir = requireEnvironment('KODAX_SMOKE_HOME');
-const profile = requireEnvironment('KODAX_SMOKE_PROFILE');
 const resultFile = requireEnvironment('KODAX_SMOKE_RESULT');
 const detachFile = requireEnvironment('KODAX_SMOKE_DETACH');
 const guiCountFile = requireEnvironment('KODAX_SMOKE_GUI_COUNT');
@@ -64,7 +63,6 @@ async function run() {
   const { ensureKodaXRuntime } = await import('@kodax-ai/kodax/runtime');
   const runtime = await ensureKodaXRuntime({
     homeDir,
-    profile,
     clientInfo: { name: 'packaged-electron-smoke', instanceId: 'packaged-electron-smoke' },
     requirements: { daemonManagement: 1 },
   });
@@ -277,7 +275,7 @@ function readWindowsSandboxDiagnostics() {
     '.kodax',
     'runtime',
     'daemon',
-    profile,
+    'default',
     'daemon.log',
   );
   let text;

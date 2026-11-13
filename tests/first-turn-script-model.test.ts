@@ -145,7 +145,9 @@ it.each(['native', 'parallel', 'host', 'selected'] as const)('supports the %s to
         executed.push(name);
         if (scenario === 'parallel' && name === 'read' && input.path === 'native.txt') {
           if (++independentReads === 2) releaseReads();
-          await Promise.race([readsReady, new Promise(resolve => setTimeout(resolve, 150))]);
+          // A serial implementation never starts the second read while the first waits, so it
+          // still fails; 150 ms was too short for a loaded Node 20 CI runner.
+          await Promise.race([readsReady, new Promise(resolve => setTimeout(resolve, 2_000))]);
           expect(independentReads).toBe(2);
         }
         return ['read', 'write', 'tool_call', 'host_extract', 'script_read'].includes(name);

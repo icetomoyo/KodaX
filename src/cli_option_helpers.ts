@@ -1,4 +1,4 @@
-import { Command, InvalidArgumentError } from 'commander';
+import { Command, InvalidArgumentError, Option } from 'commander';
 import {
   KodaXAgentMode,
   KodaXOptions,
@@ -14,7 +14,26 @@ import {
   createJsonEvents,
   FileSessionStorage,
 } from '@kodax-ai/repl';
+import { resolveKodaXHome } from '@kodax-ai/agent';
 import type { AcpPermissionMode } from './acp_server.js';
+
+/** Explains a relative `KODAX_HOME`, which is ignored, so the user is not left wondering where their data went. */
+export function ignoredKodaXHomeWarning(options?: Parameters<typeof resolveKodaXHome>[0]): string | undefined {
+  const home = resolveKodaXHome(options);
+  if (home.ignoredEnv === undefined) return undefined;
+  return `KODAX_HOME=${home.ignoredEnv} is not an absolute path and is ignored; using ${home.path}.`;
+}
+
+/** Hidden `--profile` that explains its removal instead of failing as an unknown option (FEATURE_305). */
+export function removedHostProfileOption(command: string): Option {
+  return new Option('--profile <name>').hideHelp().argParser(() => {
+    throw new InvalidArgumentError(
+      `${command} no longer accepts --profile: one Host serves each KODAX_HOME. Remove --profile; `
+      + 'to isolate Hosts, use a separate --home or KODAX_HOME. '
+      + 'See "One Host per KODAX_HOME (profile removed)" in docs/SDK_MIGRATION.md.',
+    );
+  });
+}
 
 export const ACP_PERMISSION_MODES: AcpPermissionMode[] = [
   'plan',

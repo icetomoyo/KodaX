@@ -3,6 +3,7 @@ import {
   readRuntimeDaemonLockOwner,
   readRuntimeDaemonShutdownOutcome,
   resolveRuntimeDaemonPathsFromConfigHome,
+  RUNTIME_HOST_SLOT,
   type RuntimeDaemonShutdownOutcome,
 } from './state.js';
 
@@ -20,7 +21,6 @@ export interface RuntimeDaemonShutdownVerificationOwner {
 
 export interface RuntimeDaemonShutdownVerificationInput {
   readonly configHome: string;
-  readonly profile?: string;
   readonly owner: RuntimeDaemonShutdownVerificationOwner;
   readonly timeoutMs?: number;
   readonly pollIntervalMs?: number;
@@ -52,8 +52,10 @@ const DEFAULT_SHUTDOWN_VERIFICATION_POLL_MS = 25;
  * Verify one exact daemon shutdown from its durable outcome and process fence.
  * This is deliberately a quit-path API: it performs no steady-state polling.
  */
+/** `slot` is internal: only a legacy-slot Host (ADR-075) lives outside the canonical slot. */
 export async function waitForRuntimeDaemonShutdown(
   input: RuntimeDaemonShutdownVerificationInput,
+  slot = RUNTIME_HOST_SLOT,
 ): Promise<RuntimeDaemonShutdownVerification> {
   if (!Number.isSafeInteger(input.owner.pid) || input.owner.pid <= 0) {
     throw new Error('Runtime daemon shutdown verification requires a positive owner PID.');
@@ -94,10 +96,7 @@ export async function waitForRuntimeDaemonShutdown(
     );
   }
 
-  const paths = resolveRuntimeDaemonPathsFromConfigHome(
-    input.configHome,
-    input.profile ?? 'default',
-  );
+  const paths = resolveRuntimeDaemonPathsFromConfigHome(input.configHome, slot);
   const deadline = Date.now() + timeoutMs;
   let reason: Extract<RuntimeDaemonShutdownVerification, { status: 'unverified' }>['reason'] =
     'outcome_missing';

@@ -170,10 +170,12 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('may canonicalize DACL protection/inheritance control at commit');
     expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
     expect(sandbox).toContain('nonce-bound per-policy private desktop');
-    expect(sandbox).toContain('v0.7.97-beta.4 release uses Windows native shell protocol 10');
+    expect(sandbox).toContain('v0.7.97-beta.6 release uses Windows native shell protocol 10');
     expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
     expect(sandbox).toContain('nonce-bound terminal record');
     expect(sandbox).toContain('protected host/SYSTEM-only control directory');
+    expect(sandbox).toContain('re-applies a replaced top-level profile file root');
+    expect(sandbox).toContain('reported as `degradedReadRoots`, unless a write root of the command reaches it');
     expect(sandbox).toContain('Non-interactive Runtime/daemon startup readiness remains verify-only');
     expect(sandbox).toContain('Interactive Windows CLI startup performs one setup-generation check');
     expect(sandbox).toContain('host control-plane command');
@@ -194,11 +196,89 @@ describe('FEATURE_218 manual registry', () => {
     expect(tools).toContain('Shell writes do not join that lock');
   });
 
+  it('documents the v0.7.97-beta.5 Skill, visual, extension policy and Host log behavior', () => {
+    const skills = resolveKodaXManual({ topic: 'skills' }).content;
+    const tools = resolveKodaXManual({ topic: 'tools' }).content;
+    const extensions = resolveKodaXManual({ topic: 'extensions' }).content;
+    const troubleshooting = resolveKodaXManual({ topic: 'troubleshooting' }).content;
+
+    expect(skills).toContain('User Skills load from `<agent home>/skills` (`KODAX_HOME`, default `~/.kodax`)');
+    expect(skills).toContain('`${CLAUDE_SKILL_DIR}` expand to the Skill root with forward slashes.');
+    expect(skills).toContain('removed Skills apply on the next request without /reload');
+    expect(tools).toContain('`read` pins each accepted image as a durable observation and returns its `observationId`.');
+    expect(tools).toContain('`visual_read_pixels` returns exact grid-center RGBA samples as text.');
+    expect(tools).toContain('`web_fetch` refuses cloud metadata addresses on every hop');
+    expect(extensions).toContain('`tool:before` runs on every dispatch path, after saved-grant matching.');
+    expect(extensions).toContain('may return `{ decision: \'ask\', reason }` so a person approves that one call');
+    expect(extensions).toContain('The model cannot write `<agent home>/extensions` or `<agent home>/integrations`.');
+    expect(troubleshooting).toContain('`NODE_USE_ENV_PROXY=1`');
+    expect(troubleshooting).toContain('`NODE_EXTRA_CA_CERTS` (private root CA)');
+    expect(troubleshooting).toContain('(`daemon.log.1`, rotated at 2 MiB)');
+  });
+
+  it('documents the v0.7.97-beta.6 one Host per KODAX_HOME release', () => {
+    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
+    const config = resolveKodaXManual({ topic: 'config' }).content;
+    const troubleshooting = resolveKodaXManual({ topic: 'troubleshooting' }).content;
+
+    expect(sdk).toContain('The v0.7.97-beta.6 release removes the Host-location profile: one Host serves each');
+    expect(sdk).toContain('`runtime_host_migration_required`. Isolate Hosts with a separate homeDir, `--home` or');
+    expect(sdk).toContain('`identity.profile` stays on the wire and is deprecated.');
+    expect(sdk).toContain('queued inputs and Session permission grants merge once into the one Host\'s state; such');
+    expect(sdk).toContain('global grants are dropped and re-approved (Issue 407)');
+    expect(sdk).toContain('across installations and versions and replace only an idle older one (Issue 405)');
+    expect(sdk).toContain('beside Space\'s Host attaches to it with provider credentials (Issue 406)');
+    expect(sdk).toContain('no longer drift with shared user defaults.');
+    expect(sdk).toContain('through beta.5 contract is retained except the removed `profile` option.');
+    expect(sdk).toContain('The shared local daemon is authoritative for one KODAX_HOME (one Host per data root).');
+    expect(config).toContain('~/.kodax/runtime/daemon/default/bootstrap.log');
+    expect(troubleshooting).toContain('`runtime_host_migration_required`: `profile`/`--profile` no longer names a Host');
+    expect(troubleshooting).toContain('isolate Hosts with a separate `--home`/KODAX_HOME.');
+    expect(troubleshooting).toContain('~/.kodax/runtime/daemon/default/bootstrap.log');
+  });
+
+  it('documents the v0.7.97-beta.7 Space SDK integration corrections', () => {
+    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
+
+    expect(sdk).toContain('The v0.7.97-beta.7 release repairs the Space SDK image projection, attachment reads and');
+    expect(sdk).toContain('approval attribution from the Space integration report (Issue 408): user image observation');
+    expect(sdk).toContain('labels leave the current view, canonical history and search, which keep the user\'s original');
+    expect(sdk).toContain('text; attachments may carry `observationId`, `width`, `height` and `sha256`; Host attachment');
+    expect(sdk).toContain('reads cover PNG, JPEG, WebP and GIF with the actual mediaType, byte validation and the');
+    expect(sdk).toContain('unchanged 512 KiB chunk and 10 MiB image bounds; `visual_history`, `visual_inspect` and');
+    expect(sdk).toContain('`visual_read_pixels` resolve to the `read` capability; and extension `tool:before` approvals');
+    expect(sdk).toContain('carry optional `extensionAsks: { extension, reason }[]` attribution beside the aggregate');
+    expect(sdk).toContain('reason. Every v0.7.96 stable and v0.7.97-alpha.1 through beta.6 contract is retained.');
+  });
+
+  it('documents the v0.7.97-beta.9 data root relocation and steer withdrawal', () => {
+    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
+
+    expect(sdk).toContain('The v0.7.97-beta.9 release adds data root relocation (FEATURE_306). `resolveKodaXHome({ env?, homeDir? })`');
+    expect(sdk).toContain('KODAX_HOME is ignored (the default `~/.kodax` is used) and the CLI warns about it.');
+    expect(sdk).toContain('`copyKodaXDataRoot({ from, to, exclude?, onProgress?, signal? })` from `/runtime` copies a data root');
+    expect(sdk).toContain('what it created; a target left by a crashed copy is refused as `target_incomplete`. Selecting the new');
+    expect(sdk).toContain('`inputs.withdraw` takes back a `steer` input until its Run claims it; a `steer` whose Run ends');
+    expect(sdk).toContain('while another client is attached (Issue 410). Every v0.7.96 stable and v0.7.97-alpha.1 through');
+  });
+
+  it('documents the v0.7.97-beta.8 native daemon Job startup repairs', () => {
+    const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
+
+    expect(sandbox).toContain('The v0.7.97-beta.8 release moves daemon startup Job proof and supervision off PowerShell (Issue 409):');
+    expect(sandbox).toContain('the bundled, hash-verified native `__daemon-job-identity` verifies Job membership, kill-on-close and');
+    expect(sandbox).toContain('both creation identities, and `__daemon-job-supervise` owns the named kill-on-close Job with a');
+    expect(sandbox).toContain('suspended start, assignment before resume and atomic readiness publication. A failed start keeps its');
+    expect(sandbox).toContain('exact cleanup handles while same-slot admissions serialize; `child_exit` is retryable and carries the');
+    expect(sandbox).toContain('child\'s last bootstrap error line. Unverified ownership still fails closed.');
+  });
+
   it('documents the v0.7.96 release capability and capacity-debt contracts', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(sdk).toContain('The v0.7.97-beta.4 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('The v0.7.97-beta.6 release advertises Windows `sandboxRuntime:11`');
+    expect(sdk).toContain('beta.5 and earlier required glibc 2.28 (Issue 328)');
     expect(sdk).toContain('The v0.7.97-alpha.10 release resumes checkpointed Runs and task trees after Host');
     expect(sdk).toContain('The v0.7.97-alpha.11 release adds explicit Agent, Coding and experimental Script work modes');
     expect(sdk).toContain('Script runs supported leaf tools through existing permission and receipt boundaries.');
@@ -231,6 +311,11 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('replaces stale results with the shared `resync_required` error contract, and adds ordinary');
     expect(sdk).toContain('requirements add no mandatory basic-startup gates, and model prompts are unchanged.');
     expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through beta.3 contract is retained.');
+    expect(sdk).toContain('The v0.7.97-beta.5 release integrates SDK foundation hardening, durable visual observations');
+    expect(sdk).toContain('may return `{ decision: \'ask\', reason }` so a person approves');
+    expect(sdk).toContain('`visual_history`, `visual_inspect` and `visual_read_pixels` page, re-display and sample them');
+    expect(sdk).toContain('`daemon.log` at 2 MiB. The visual tools\' whole-task value remains unproven.');
+    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through beta.4 contract is retained.');
     expect(sdk).toContain('wait in `recovering`');
     expect(sdk).toContain('Kimi K3.1 provider routes join the registry with all seven effort levels mapped');
     expect(sdk).toContain('skip or Host timeout returns `unanswered` with its reason.');
@@ -353,7 +438,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('The rc.1 release unifies trusted text authority across Runtime Sessions and direct SDK entries');
     expect(sdk).toContain('without granting a directory or reusing an approval across');
     expect(sdk).toContain('capability 6 fences older daemon authority');
-    expect(sdk).toContain('`manylinux_2_28` images and require no `GLIBC_*` symbol newer than 2.28');
+    expect(sdk).toContain('`manylinux2014` images and require no `GLIBC_*` symbol newer than 2.17');
     expect(sdk).toContain('one generation retry after persisted history reduction without replaying tools');
     expect(sdk).toContain('Bundled Provider credential scopes stay shared');
     expect(sdk).toContain('omit empty `tools` arrays for strict vLLM gateways');

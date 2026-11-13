@@ -319,6 +319,8 @@ export interface KodaXWorkflowAgentDigestEvent {
 
 export interface KodaXToolEventMeta extends KodaXActivityEventMeta {
   readonly toolId?: string;
+  /** Present on approval callbacks when extension policies asked about this call. */
+  readonly extensionAsks?: readonly { readonly extension: string; readonly reason: string }[];
   /** One SDK invocation; Provider tool IDs can repeat, including within a batch. */
   readonly executionId?: string;
 }

@@ -20,10 +20,9 @@ it('exposes the same recent-message facts and pagination through the shared Host
     runtimeInfo: { surface: 'custom-unadmitted', profileId: 'custom' },
     messages: [{ role: 'user', content: 'other profile', timestamp: '2026-10-16T00:00:00.000Z' }],
   });
-  const profile = 'recency';
-  const runtime = await createKodaXRuntime({ homeDir, profile, sharedDaemonHost: true });
+  const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
   try {
-    const paths = resolveRuntimeDaemonPaths(homeDir, profile);
+    const paths = resolveRuntimeDaemonPaths(homeDir);
     const lock = tryAcquireRuntimeDaemonLock(paths, { runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt });
     if (!lock) throw new Error('Could not acquire the isolated Host');
     const endpoint = process.platform === 'win32'
@@ -31,7 +30,7 @@ it('exposes the same recent-message facts and pagination through the shared Host
       : { kind: 'unix' as const, path: path.join(homeDir, 'host.sock') };
     const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
     try {
-      const client = await connectKodaXClient({ homeDir, profile, endpoint: endpoint.path });
+      const client = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
       try {
         const first = await client.sessions.list({ limit: 1 });
         expect(first).toMatchObject([{ id: 'old', lastMessageAt: '2026-10-15T00:00:00.000Z' }]);

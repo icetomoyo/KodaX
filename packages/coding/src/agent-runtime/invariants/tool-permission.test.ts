@@ -10,7 +10,8 @@ import { describe, expect, it } from 'vitest';
 import { createAgent } from '@kodax-ai/agent';
 import type { Agent, AdmissionCtx, AgentManifest, SystemCap, ToolCapability } from '@kodax-ai/agent';
 
-import { resolveToolCapability, toolPermission } from './tool-permission.js';
+import { resolveBuiltinToolCapability, resolveToolCapability, toolPermission } from './tool-permission.js';
+import { listBuiltinToolDefinitions } from '../../tools/registry.js';
 
 type ToolEntry = NonNullable<Agent['tools']>[number];
 
@@ -28,6 +29,15 @@ function tool(name: string): ToolEntry {
 }
 
 describe('resolveToolCapability', () => {
+  it('gives every built-in tool an explicit capability rather than the unknown-tool fallback', () => {
+    expect(listBuiltinToolDefinitions().filter(tool => resolveBuiltinToolCapability(tool.name) === undefined)
+      .map(tool => tool.name)).toEqual([]);
+  });
+
+  it.each(['visual_history', 'visual_inspect', 'visual_read_pixels'])('maps %s to read', name => {
+    expect(resolveToolCapability(name)).toBe('read');
+  });
+
   it('maps read-only tools to "read"', () => {
     expect(resolveToolCapability('read')).toBe('read');
     expect(resolveToolCapability('grep')).toBe('read');

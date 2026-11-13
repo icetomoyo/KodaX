@@ -32,10 +32,7 @@ export function createProviderCredentialAuthorizer(input: {
       if (!sources.size) return undefined;
       const runtimeId = services.identity?.runtimeId;
       if (!runtimeId) throw new Error('Provider credential authorization requires Host identity.');
-      for (const source of sources.values()) {
-        const profile = source.profile ?? (source.kind === 'api-key' ? source.binding.profile : source.kind === 'oauth' ? source.session.profile ?? 'default' : undefined);
-        if (profile !== undefined && services.identity?.profile !== profile) throw new Error('Provider credential authorization requires the approved Host profile.');
-      }
+      // The lease is bound to the authenticated Host runtimeId. The Host's profile name is not an authority boundary (Issue 406).
       if (!active || epoch !== runtimeId) {
         const previous = active; active = undefined;
         if (previous) try { await previous.close(); }

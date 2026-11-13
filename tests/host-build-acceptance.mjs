@@ -13,9 +13,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 // not a semantic-difference test or a claim to have run a second npm build.
 const script = fileURLToPath(import.meta.url);
 const repo = path.resolve(path.dirname(script), '..');
-const stateDirectory = (home, profile) => path.join(home, '.kodax/runtime/daemon', profile);
-async function readOwner(home, profile) {
-  const directory = stateDirectory(home, profile);
+const stateDirectory = home => path.join(home, '.kodax/runtime/daemon/default');
+async function readOwner(home) {
+  const directory = stateDirectory(home);
   const state = JSON.parse(await readFile(path.join(directory, 'daemon.json'), 'utf8'));
   const lock = JSON.parse(await readFile(path.join(directory, 'daemon.lock'), 'utf8'));
   assert.equal(lock.runtimeId, state.runtimeId, 'Exactly the published Host must own the lock');
@@ -24,14 +24,14 @@ async function readOwner(home, profile) {
 }
 
 async function workerMain() {
-  const [, , , installation, homeDir, profile] = process.argv;
+  const [, , , installation, homeDir] = process.argv;
   // Import now, before commands arrive: the stale-launcher case keeps this
   // actual module graph loaded across replacement of the installation files.
   const sdk = await import(pathToFileURL(path.join(installation, 'dist/sdk-client.js')).href);
   let heldClient;
   let observation;
   let updates = 0;
-  const options = { homeDir, profile, daemonStartupTimeoutMs: 30_000,
+  const options = { homeDir, daemonStartupTimeoutMs: 30_000,
     clientInfo: { name: 'host-build-acceptance', instanceId: randomUUID(), instanceSecret: randomUUID() } };
   const closeHeld = async () => {
     observation?.close();
@@ -50,13 +50,13 @@ async function workerMain() {
       if (action === 'observe') {
         heldClient = await sdk.connectKodaXClient(options);
         observation = await heldClient.sessions.observe(sessionId, () => { updates += 1; });
-        process.send({ id, ok: true, owner: await readOwner(homeDir, profile), updates });
+        process.send({ id, ok: true, owner: await readOwner(homeDir), updates });
         return;
       }
       if (action === 'ping') {
         assert.ok(heldClient, 'Observer connection remains available');
         const session = await heldClient.sessions.read(sessionId);
-        process.send({ id, ok: true, owner: await readOwner(homeDir, profile), session, updates });
+        process.send({ id, ok: true, owner: await readOwner(homeDir), session, updates });
         return;
       }
       const client = await (action === 'ensure' ? sdk.ensureKodaXClient(options) : sdk.connectKodaXClient(options));
@@ -71,7 +71,7 @@ async function workerMain() {
           let history;
           const snapshot = await client.sessions.observe(session.id, view => { history = view.items; });
           snapshot.close();
-          process.send({ id, ok: true, owner: await readOwner(homeDir, profile), session,
+          process.send({ id, ok: true, owner: await readOwner(homeDir), session,
             history: JSON.stringify(history) });
         }
       } finally { await client.disconnect(); }
@@ -97,7 +97,6 @@ async function acceptanceMain() {
   const installation = path.join(artifacts, 'installation');
   const baseline = path.join(artifacts, 'baseline-dist');
   const homeDir = path.join(artifacts, 'home');
-  const profile = 'build-acceptance';
   const workers = new Set();
   const owners = [];
   const results = [];
@@ -111,7 +110,7 @@ async function acceptanceMain() {
   delete environment.NODE_OPTIONS;
   async function openWorker() {
     const index = ++workerNumber;
-    const child = spawn(process.execPath, [script, '--worker', installation, homeDir, profile], {
+    const child = spawn(process.execPath, [script, '--worker', installation, homeDir], {
       cwd: installation, env: environment, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     });
     let log = '';
@@ -172,7 +171,7 @@ async function acceptanceMain() {
     await writeFile(cli, `${await readFile(cli, 'utf8')}\n// Host build acceptance variant ${marker}\n`);
   }
   async function assertOwner(owner, previous) {
-    assert.deepEqual(await readOwner(homeDir, profile), owner);
+    assert.deepEqual(await readOwner(homeDir), owner);
     assert.ok(alive(owner.pid), 'Published owner process is alive');
     if (previous) {
       assert.notEqual(owner.runtimeId, previous.runtimeId);
@@ -245,13 +244,13 @@ async function acceptanceMain() {
     const stale = await staleLauncher.request('ensure', sessionId);
     assert.equal(stale.ok, false, 'A loaded old launcher must not replace the current Host');
     assert.match(stale.error, /loaded|stale|changed|restart|relaunch/i);
-    assert.deepEqual(await readOwner(homeDir, profile), released.owner);
+    assert.deepEqual(await readOwner(homeDir), released.owner);
     await staleLauncher.close();
     results.push({ scenario: 'long-lived launcher refuses after its loaded installation changes', passed: true, refusal: stale.error });
 
     await replaceDist('D');
     const cli = spawn(process.execPath, [path.join(installation, 'scripts/kodax-bin.cjs'),
-      'daemon', 'start', '--home', homeDir, '--profile', profile, '--timeout-ms', '30000', '--json'],
+      'daemon', 'start', '--home', homeDir, '--timeout-ms', '30000', '--json'],
       { cwd: installation, env: environment, windowsHide: true, timeout: 60_000, stdio: ['ignore', 'pipe', 'pipe'] });
     let cliOutput = '';
     cli.stdout.on('data', data => { cliOutput += data; });
@@ -277,8 +276,8 @@ async function acceptanceMain() {
     // stopped halfway through copying the isolated installation.
     try {
       const { connectKodaXClient } = await import(pathToFileURL(path.join(repo, 'dist/sdk-client.js')).href);
-      const client = await connectKodaXClient({ homeDir, profile });
-      const owner = await readOwner(homeDir, profile);
+      const client = await connectKodaXClient({ homeDir });
+      const owner = await readOwner(homeDir);
       try { await client.host.shutdown(); } finally { await client.disconnect(); }
       await waitFor(`final isolated Host ${owner.pid} exit`, () => !alive(owner.pid));
     } catch (error) {

@@ -311,6 +311,49 @@ describe('Runtime daemon orphan idle exit', () => {
   });
 });
 
+describe('Runtime daemon stop with peer clients', () => {
+  it('refuses an exiting client at once while a peer stays connected, without draining or scanning', async () => {
+    const preflight = vi.fn(() => idlePreflight());
+    const requestStop = vi.fn();
+    const controller = createController({ orphanExitMs: 30_000, preflight, requestStop });
+    try {
+      controller.attachClient(client('space'));
+      controller.attachClient(client('cli'));
+      await expect(controller.stop({ principalId: 'space' })).rejects.toMatchObject({
+        code: 'conflict', message: 'Runtime daemon cannot stop safely: connected_clients.',
+      });
+      expect(preflight).not.toHaveBeenCalled();
+      expect(requestStop).not.toHaveBeenCalled();
+      await expect(controller.runMutation('session.notice.append', async () => 'peer')).resolves.toBe('peer');
+    } finally { controller.close(); }
+  });
+
+  it('keeps the preflight evidence on a Host-level stop that peers refuse', async () => {
+    const preflight = vi.fn(() => idlePreflight());
+    const controller = createController({ orphanExitMs: 30_000, preflight, requestStop: vi.fn() });
+    try {
+      controller.attachClient(client('space'));
+      controller.attachClient(client('cli'));
+      await expect(controller.stop()).rejects.toMatchObject({
+        code: 'conflict',
+        data: { preflight: { canStop: false, blockers: ['connected_clients'] } },
+      });
+    } finally { controller.close(); }
+  });
+
+  it('still inspects governed work before stopping for the last client', async () => {
+    const preflight = vi.fn(() => idlePreflight());
+    const requestStop = vi.fn();
+    const controller = createController({ orphanExitMs: 30_000, preflight, requestStop });
+    try {
+      controller.attachClient(client('space'));
+      await expect(controller.stop({ principalId: 'space' })).resolves.toEqual({ ok: true });
+      expect(preflight).toHaveBeenCalled();
+      expect(requestStop).toHaveBeenCalledTimes(1);
+    } finally { controller.close(); }
+  });
+});
+
 function createController(input: {
   readonly orphanExitMs: number;
   readonly preflight: (options?: { readonly signal?: AbortSignal }) => RuntimeDaemonPreflight | Promise<RuntimeDaemonPreflight>;

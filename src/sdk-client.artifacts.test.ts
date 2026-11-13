@@ -59,9 +59,8 @@ it('binds artifact references to their actual file state at run admission', asyn
       }],
     }), 'utf8');
 
-    const profile = 'artifacts';
-    runtime = await createKodaXRuntime({ homeDir, profile, sharedDaemonHost: true });
-    const paths = resolveRuntimeDaemonPaths(homeDir, profile);
+    runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
+    const paths = resolveRuntimeDaemonPaths(homeDir);
     const lock = tryAcquireRuntimeDaemonLock(paths, {
       runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
     });
@@ -73,7 +72,7 @@ it('binds artifact references to their actual file state at run admission', asyn
       ? { kind: 'pipe' as const, path: endpointPath }
       : { kind: 'unix' as const, path: endpointPath };
     host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
-    client = await connectKodaXClient({ homeDir, profile, endpoint: endpointPath });
+    client = await connectKodaXClient({ homeDir, endpoint: endpointPath });
 
     const session = await client.sessions.create({ projectPath: homeDir });
     await client.sessions.updateSettings(session.id, {

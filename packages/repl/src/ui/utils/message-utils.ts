@@ -10,6 +10,7 @@ import type {
 } from "@kodax-ai/agent";
 import { ToolCallStatus, type CreatableHistoryItem, type ToolCall, type HistoryItemBase } from "../types.js";
 import { readTaskResultReports, type KodaXTaskResultMetadata, type KodaXTaskResultReport } from '@kodax-ai/agent';
+import { projectVisualInputContent } from '@kodax-ai/agent/media';
 import {
   sanitizeToolInput,
   stringifyToolReplayValue,
@@ -496,9 +497,10 @@ function extractHistorySeedsFromMessageWithoutTimestamp(
       if (message._synthetic) {
         return [];
       }
-      const content = extractTextContent(message.content);
+      const visual = projectVisualInputContent(message.content);
+      const content = visual.text;
       // Skip internal worker prompts (Scout/Generator/Planner/Evaluator role instructions).
-      if (content.trim().length === 0 || (message.inputId === undefined && isManagedWorkerPrompt(content))) {
+      if (content.trim().length === 0 && visual.attachments.length === 0 || (message.inputId === undefined && isManagedWorkerPrompt(content))) {
         return [];
       }
       return [{ type: "user", text: content }];

@@ -145,6 +145,56 @@ it.each([false, true])('steers into the named active Run with image=%s at a safe
   expect(await first.inputs.read(session.id, 'steer-late')).toBeNull();
 });
 
+it.each([false, true])('withdraws an undelivered steer with image=%s before the safety point so the model never sees it', async (withImage) => {
+  const imagePath = path.join(homeDir, 'withdrawn.png');
+  if (withImage) await writeFile(imagePath, await new Jimp({ width: 1, height: 1, color: 0x0000ffff }).getBuffer('image/png'));
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await runtime.sessions.updateSettings(session.id, { agentMode: 'ama', permissionMode: 'full-access' });
+  const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
+  await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(1);
+  const steer = {
+    sessionId: session.id, inputId: 'steer-withdrawn', text: 'Withdrawn guidance.',
+    delivery: 'steer' as const, targetRunId: active.runId!,
+    ...(withImage ? { inputArtifacts: [{ kind: 'image' as const, path: imagePath, mediaType: 'image/png' as const }] } : {}),
+  };
+  expect(await first.inputs.submit(steer)).toMatchObject({ state: 'queued', runId: active.runId });
+  await expect(second.inputs.withdraw(session.id, steer.inputId)).rejects.toMatchObject({ code: 'permission_denied' });
+  expect(await first.inputs.withdraw(session.id, steer.inputId)).toEqual(steer);
+  expect(await first.inputs.withdraw(session.id, steer.inputId)).toEqual(steer);
+  expect(await first.inputs.read(session.id, steer.inputId)).toMatchObject({ state: 'withdrawn' });
+  expect((await runtime.runs.get(active.runId!)).interruptInputs).toMatchObject([{ inputId: steer.inputId, state: 'terminal' }]);
+  const kept = { sessionId: session.id, inputId: 'steer-kept', text: 'Kept guidance.', delivery: 'steer' as const, targetRunId: active.runId! };
+  await first.inputs.submit(kept);
+  release();
+  await runtime.runs.await(active.runId!);
+  await expect.poll(async () => (await first.inputs.read(session.id, kept.inputId))?.state).toBe('submitted');
+  expect((await first.inputs.read(session.id, steer.inputId))?.state).toBe('withdrawn');
+  await expect(first.inputs.withdraw(session.id, kept.inputId)).rejects.toMatchObject({ code: 'conflict' });
+  const seen = JSON.stringify(requests);
+  expect(seen).toContain('Kept guidance.');
+  expect(seen).not.toContain('Withdrawn guidance.');
+  const transcript = await runtime.sessions.transcript(session.id);
+  expect(transcript?.messages.some(message => message.inputId === steer.inputId)).toBe(false);
+});
+
+it('drops an undelivered steer when its Run settles without a Stop', async () => {
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await runtime.sessions.updateSettings(session.id, { agentMode: 'ama', permissionMode: 'full-access' });
+  const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
+  await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(1);
+  const steer = { sessionId: session.id, inputId: 'steer-dropped', text: 'Dropped guidance.',
+    delivery: 'steer' as const, targetRunId: active.runId! };
+  expect(await first.inputs.submit(steer)).toMatchObject({ state: 'queued', runId: active.runId });
+  // The Provider fails the turn, so the Run settles before any safety point delivers the steer.
+  interruptFirstRequest();
+  const settled = await runtime.runs.await(active.runId!);
+  expect(settled.stop).toBeUndefined();
+  expect((await runtime.runs.get(active.runId!)).interruptInputs).toMatchObject([{ inputId: steer.inputId, state: 'terminal' }]);
+  expect(await first.inputs.read(session.id, steer.inputId)).toMatchObject({ state: 'dropped' });
+  await expect(first.inputs.withdraw(session.id, steer.inputId))
+    .rejects.toThrow('Input has already been submitted or withdrawn.');
+});
+
 it('retains interrupted same-Run steer output after the delivered canonical input when reopened', async () => {
   registerCustomProviders([]);
   clearRuntimeModelProviders();

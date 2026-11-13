@@ -1153,7 +1153,8 @@ async function runSubstrateInContext(
     };
     // Host SA owns only its Session queue; an unscoped legacy queue belongs
     // to a standalone embedder. Actor-backed Runs retain their exact route.
-    const prompts = inputPort.consumePendingInputs && messageQueueAgentId === undefined ? [] : queue.peek(promptFilter);
+    // Claim before the async append so a withdrawal cannot take back an input already entering history.
+    const prompts = inputPort.consumePendingInputs && messageQueueAgentId === undefined ? [] : queue.dequeue(promptFilter);
     const notify = (inputs: readonly import('@kodax-ai/agent').QueuedMessage[], appended: readonly KodaXMessage[]) => {
       if (inputs.length === 0) return;
       const queuedMessageEntryIds: Record<string, string> = {};
@@ -1167,8 +1168,13 @@ async function runSubstrateInContext(
     };
     if (prompts.length > 0) {
       // Legacy interrupt admission already owns this queue slice.
-      const appended = await appendInterruptPrompts(prompts);
-      queue.dequeue(promptFilter);
+      let appended: KodaXMessage[];
+      try {
+        appended = await appendInterruptPrompts(prompts);
+      } catch (error) {
+        queue.requeue(prompts);
+        throw error;
+      }
       notify(prompts, appended);
     }
     let appended: KodaXMessage[] = [];

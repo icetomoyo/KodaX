@@ -7,6 +7,7 @@ import type {
 } from '../types.js';
 import { COMPACTION_SUMMARY_PREFIX } from './compaction/compaction.js';
 import { getSessionLineagePath } from './kodax-session-lineage.js';
+import { projectVisualInputContent } from '../media/visual-input-display.js';
 
 export type KodaXSessionHistoryScope = 'compacted' | 'all';
 export type KodaXSessionHistorySource = 'user' | 'assistant' | 'system' | 'tool' | 'child_task';
@@ -105,6 +106,11 @@ function visibleMessage(message: KodaXMessage): VisibleMessage {
       redactedBlockCount: 0,
       source: message._taskResult || message._taskResults ? 'child_task' : message.role,
     };
+  }
+
+  if (message.role === 'user' && message.content.some(block => block.type === 'image')
+    && message.content.every(block => block.type === 'text' || block.type === 'image')) {
+    return { text: projectVisualInputContent(message.content).text, redactedBlockCount: 0, source: 'user' };
   }
 
   const parts: string[] = [];

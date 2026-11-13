@@ -66,7 +66,8 @@ export async function getToolExecutionOverride(
   if (isExtensionToolBeforeAsk(extensionOverride)) {
     // Without a way to ask a person, an ask must block rather than allow.
     const approval = events.requestToolApproval
-      ? await events.requestToolApproval(name, input, extensionOverride.reason, { toolId })
+      ? await events.requestToolApproval(name, input, extensionOverride.reason, { toolId,
+        ...(extensionOverride.extensionAsks !== undefined ? { extensionAsks: extensionOverride.extensionAsks } : {}) })
       : `[Tool Error] ${name}: This call needs a person's approval, but this host cannot ask for it.\n${extensionOverride.reason}`;
     if (approval === true) return undefined;
     recovery?.denyRead(name, input);

@@ -1,6 +1,6 @@
 # SDK 统一 Client 契约迁移指南
 
-适用范围：当前工作树的 FEATURE_298/299/301 实现；本次核对的包版本为 `0.7.97-beta.4`，随 `v0.7.97-beta.4` 标签发布（npm 发布为手动步骤）。接入前应核对所安装包的导出和 Host 能力；下文带日期的 beta.1/beta.2/beta.3 记录保留各自历史范围。
+适用范围：当前工作树的 FEATURE_298/299/301/303/304/305 实现；本次核对的包版本为 `0.7.97-beta.6`，随 `v0.7.97-beta.6` 标签发布（npm 发布为手动步骤）。接入前应核对所安装包的导出和 Host 能力；下文带日期的 beta.1/beta.2/beta.3/beta.4 记录保留各自历史范围，beta.5 的变化见 [SDK hardening migration](#sdk-hardening-migration-shipped-in-v0797-beta5)。beta.6 的破坏性变更见 [One Host per KODAX_HOME](#one-host-per-kodax_home-profile-removed)：Host 位置的 `profile` 已删除。
 
 Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附件/统计与退出恢复范围见 [SDK/Host 接缝](SPACE_SDK_SEAMS.md)。
 
@@ -658,7 +658,7 @@ Space 刷新、断连或关闭订阅只清理本地展示，重连后重读同�
 | --- | --- |
 | 当前屏幕 | `observe` 返回的 `ClientSessionView` |
 | 显示项全文/工具参数 | `readItem(sessionId, viewItem.id, {part, offset})` |
-| Host 项的实际 PNG | `readItem(sessionId, viewItem.id, {part:'attachment', attachmentIndex, attachmentOffset, expectedImageSha256})`；有界字节块，不是文本投影 |
+| Host 项的实际图片（PNG/JPEG/WebP/GIF） | `readItem(sessionId, item.id, {part:'attachment', attachmentIndex, attachmentOffset, expectedImageSha256})`；有界字节块，不是文本投影 |
 | 较早的规范对话 | `readHistory(sessionId, {cursor})`，首次为最新页 |
 | 历史页或搜索结果全文 | `readHistoryEntry(sessionId, historyItemId, {part, offset})` |
 | 全 Session 搜索 | `searchHistory`，使用命中 itemId 读取正文 |
@@ -801,7 +801,7 @@ CLI Host 要求 providerCredentialConnectionBinding:1，保存值按实际 adapt
 
 默认 providerOAuthStore(configPath) 改为 auth.json；新登录无 OS vault 强依赖。旧 linked registration 可用 migrateProviderOAuthRegistration 导入，保留原 client/service/account/issuer/identityKind/profile，清旧 token 前先 durable commit。已存在的共享记录（含注销状态）优先，不从旧副本复活。明确 Windows/encrypted SDK 后端保留。
 
-可信 Main 可为 loginProviderOAuth 提供实际 profile；缺省旧 registration 视为 default。profile-bound authorizer 要求 services.identity 同时带实际 runtimeId/profile，不能只转发 runtimeId。实际 Product Client 已传完整 runtime identity；自己包装 services 的客户端需同步转发。Radius source 的 issuer 必须与已登录 registration 相符。File store initialize() 在授权 shell 前建立 mask targets，默认 CLI 已调用；自建宿主使用该后端时也应在启用工具前调用。
+可信 Main 可为 loginProviderOAuth 提供实际 profile；缺省旧 registration 视为 default。authorizer 要求 services.identity 带实际 runtimeId；自己包装 services 的客户端需转发它。Host profile 不再参与授权（Issue 406），被重定向到其他 profile Host 的客户端照常注册 lease。Radius source 的 issuer 必须与已登录 registration 相符。File store initialize() 在授权 shell 前建立 mask targets，默认 CLI 已调用；自建宿主使用该后端时也应在启用工具前调用。
 
 此阶段修复了独立 Host 漏转发 providerProbeAuthorization 的问题，现按真实 owner 能力声明，避免 SDK 要求与 daemon 握手不一致。该修复不放宽旧 Host 的能力门槛。
 
@@ -1107,3 +1107,291 @@ SDK bytes before retrying; do not weaken build proof to force startup.
 
 The versioned contract, reasons, revision domains and remaining cold-read limits
 are recorded in [Client contract](CLIENT_CONTRACT.md#2026-11-08-space-sdk-contract-repairs-shipped-in-v0797-beta4).
+
+
+## SDK integration corrections (shipped in v0.7.97-beta.7)
+
+- User entries in the current view, history reads and search retain the user's
+  original text. Stop stripping observation-label suffixes in clients. Optional
+  `attachments[].observationId/width/height/sha256` carry image observation facts;
+  observation IDs remain opaque. Existing beta.5/beta.6 saved inputs are projected
+  without rewriting their canonical model context.
+- Read all accepted image formats (PNG, JPEG, WebP, GIF) through
+  `sessions.readItem(..., { part: 'attachment', attachmentIndex,
+  attachmentOffset, expectedImageSha256 })`. Use the returned actual mediaType,
+  validate the hash and concatenate decoded byte chunks. Do not read attachment
+  paths directly or calculate the Host media directory. The 512 KiB chunk and
+  10 MiB image limits remain in force.
+- `visual_history`, `visual_inspect`, and `visual_read_pixels` resolve to the
+  `read` capability. The built-in capability inventory has a completeness test.
+- Permission Interactions may include `options.extensionAsks`, a list of
+  `{ extension, reason }` supplied by the Host. Show each reason alongside your
+  own risk explanation. Keep the aggregate `reason` fallback for older Hosts;
+  absence of the new field cannot identify the approval's origin. Extension asks
+  remain one-call approvals without grant suggestions.
+
+## SDK hardening migration (shipped in v0.7.97-beta.5)
+
+These changes ship with the `v0.7.97-beta.5` tag; npm publication is a separate
+maintainer step. Check the installed package and the connected Host before
+relying on them.
+
+- Extension `tool:before` now runs on every dispatch path, including AMA without
+  `events` and nested constructed-tool calls. An early allow no longer ends
+  evaluation, and a handler that throws or does not answer within 10 seconds
+  blocks the call. Review hooks that relied on fail-open behavior.
+- A handler may return `{ decision: 'ask', reason }`. Inline hosts answer it
+  through the optional `KodaXEvents.requestToolApproval`; without it the ask
+  blocks. Product clients receive an ordinary permission Interaction whose
+  `reason` names the extension, with no grant suggestions: answer `allow_once`
+  or `reject`. Hosts advertise `toolHookAsk: { version: 1 }`.
+- With `KODAX_HOME` set, user Skills, personal workflows and commands load from
+  `<KODAX_HOME>/skills`, `<KODAX_HOME>/workflows` and `<KODAX_HOME>/commands`,
+  not `~/.kodax`. Move existing files. `~/.agents/skills` is unchanged.
+  `SkillRegistry.refreshIfChanged()` applies on-disk Skill edits between requests.
+- The model cannot write `<agent home>/extensions` or `<agent home>/integrations`,
+  including the home of an inline Runtime built with `homeDir`. Install
+  integrations through `kodax mcp add`, the integration commands or a Host UI.
+- `ClientSessionView.sandbox` is an optional field with the latest shell sandbox
+  health; Windows `applied` observations may list `degradedReadRoots`. Treat a
+  missing field as not yet observed, not as healthy.
+- `session_history_search` hits add `entryRevision`, which
+  `session_history_read` accepts so tail appends do not make the read stale.
+  Callers that ignore it keep the strict whole-history `revision`.
+- In Runtime-owned Sessions, `read` returns an `observationId` with each
+  accepted image and the visual tools join the tool list. Treat observation IDs
+  as opaque.
+- The idle Host expires retired agent-home state after 30 days (unresolved
+  child records after 90) and rotates `daemon.log` at 2 MiB. Do not depend on
+  Run event journals or filesystem-effect ledgers; neither is read by current
+  code. A Host downgraded to v0.7.96 finds no Run event journal for Runs older
+  than 30 days.
+- The daemon Host copies its environment at start, including `HTTPS_PROXY`,
+  `NO_PROXY` and `NODE_EXTRA_CA_CERTS`; restart it after changing them.
+
+See the [Client contract](CLIENT_CONTRACT.md) unattended-run and permission
+sections and [ADR-071](ADR.md) for the ask decision.
+
+## One Host per KODAX_HOME (profile removed)
+
+Breaking change shipped in `v0.7.97-beta.6`; npm publication is a separate
+manual step. Decision:
+[ADR-075](ADR.md). The Host is identified by its data root (default
+`~/.kodax`). One Host serves each data root. It always uses the fixed
+directories `runtime/daemon/default/` and `runtime/profiles/default/`;
+`default` is a location, not a profile you can choose.
+
+### `homeDir` / `--home` versus `KODAX_HOME`
+
+They name different directories:
+
+| Setting | Names | Data root |
+|---|---|---|
+| `KODAX_HOME` | the data root itself | the value, which must be absolute (a relative value is ignored) |
+| `homeDir` option, CLI `--home` | the base directory that owns the data root | `<homeDir>/.kodax` |
+| neither | | `~/.kodax` |
+
+`homeDir: '/data/team'` and `KODAX_HOME=/data/team/.kodax` select the same
+Host. `homeDir: '/data/team/.kodax'` selects `/data/team/.kodax/.kodax`, a
+different Host and different Sessions. A data root that is not named `.kodax`
+can only be selected with `KODAX_HOME`.
+
+`resolveKodaXHome({ env?, homeDir? })` from `@kodax-ai/kodax/agent` returns the
+env/default result without touching `process.env`: `{ path, source: 'env' | 'default', ignoredEnv? }`.
+Here `homeDir` is the base for the `~/.kodax` fallback (default `os.homedir()`),
+and `ignoredEnv` carries a non-empty `KODAX_HOME` that was skipped because it
+was not absolute. `getAgentConfigHome()` returns the same path unless
+`setAgentConfigHome` overrides it. An embedder that wants a different data root
+must set `process.env.KODAX_HOME` before the first SDK call that reads it.
+
+### Relocating a data root: `copyKodaXDataRoot`
+
+```ts
+import { copyKodaXDataRoot, KodaXDataRootCopyError } from '@kodax-ai/kodax/runtime';
+
+try {
+  const result = await copyKodaXDataRoot({
+    from: oldRoot,
+    to: newRoot,
+    exclude: ['space/runtime-client-identity.json'], // embedder-owned per-root state
+    onProgress: ({ files, totalFiles, bytes, totalBytes }) => {},
+    signal,
+  });
+  // result: { files, bytes, rebasedFiles, skipped: [{ path, reason }] }
+} catch (error) {
+  if (error instanceof KodaXDataRootCopyError) error.code; // see below
+}
+```
+
+It copies and never moves: the source is only read. Behavior:
+
+- The target must not exist or must be an empty directory
+  (`target_not_empty`, `target_invalid`). OS housekeeping entries
+  (`.DS_Store`, `desktop.ini`, `Thumbs.db`, `lost+found`, `$RECYCLE.BIN`,
+  `System Volume Information`, `.Spotlight-V100`, `.fseventsd`, `.Trashes`,
+  `.TemporaryItems`) do not count and are left alone, so a drive root or a
+  mount point works. It must not contain or sit inside the source
+  (`nested_roots`).
+- It refuses (`host_running`) while any Host slot under `runtime/daemon/*` or
+  the Session storage owner lock names a process that is not provably gone, and
+  checks again just before publishing. A lock file it cannot read counts as a
+  running Host too. Stop every client of the source first.
+- The copy is assembled inside the target. `KODAX_DATA_ROOT_COPY_MARKER`
+  (`.kodax-copy-incomplete`) is written first and removed only when the copy is
+  complete, so a target holding it is an unfinished copy. Nothing checks for
+  the marker when a data root is opened: select the target only after
+  `copyKodaXDataRoot` resolves. A failed or aborted run removes each top-level
+  entry it created, with everything inside it, and then the marker; a
+  top-level entry that another process added meanwhile stays. It removes the
+  target directory too if it created it and nothing else is left. A target still holding the
+  marker after a crash is refused (`target_incomplete`), because nothing proves
+  which files in it the crashed copy wrote. Ask the user to delete it or choose
+  another folder.
+- Stored data holds absolute paths into its own root (MCPB install folders
+  and launch arguments, session image and tool-output paths, workflow
+  snapshots, embedder stores). In every `.json` / `.jsonl` file, each
+  occurrence of the source root — native, forward-slash, or JSON-escaped with
+  doubled backslashes; case-insensitive on Windows and macOS — that is not part
+  of a longer name or path is rewritten to `to`, including one right after
+  argument syntax such as `--root=` or `@`. Nothing else in the file changes;
+  other file types and files that are not valid UTF-8 are copied byte for
+  byte. `rebasedFiles` counts the rewritten files. A source that is a whole
+  drive is not rebased. A rewritten file whose length changed has a new size,
+  so caches keyed on size and modification time rebuild.
+- File modification times are preserved. Symbolic links and junctions are
+  skipped, never followed.
+- `skipped` lists the topmost skipped entry with a reason: `non-portable`,
+  `excluded` (your `exclude`), `symlink` or `unsupported`.
+
+Not copied (`non-portable`), because it belongs to one Host, process or
+machine, plus any name ending `.lock` or `.lock.queue`:
+
+| Path under the data root | Why |
+|---|---|
+| `runtime/daemon/` | Host descriptor, token, lock, log, owner policy, client exit receipts |
+| `runtime/processes/` | live child-process records |
+| `processes/` | legacy location of live child-process records |
+| `sessions/.product-host/` | Session storage owner lock |
+| `instances/` | per-process heartbeat directories |
+| `sandbox-runtime/` | sandbox gate and ACL state bound to this machine and boot |
+| `native-text-state-v1/` | trusted state validated against its own directory ancestry |
+
+Everything else, including `config.json`, `auth.json`, `sessions/`, `skills/`
+and `runtime/profiles/default/runs/`, is copied. `auth.json` reserved
+credential bindings tied to the source root's client identity are the
+embedder's to `exclude` if they must not follow the data.
+
+Error codes: `source_missing`, `target_invalid`, `target_not_empty`,
+`target_incomplete`, `nested_roots`, `host_running`, `aborted`.
+
+#### After the copy
+
+The copy selects nothing. To move to the new root:
+
+1. Point every process that should use it at the target: `KODAX_HOME=<to>`,
+   which works for any folder name, or `homeDir` / `--home` set to the
+   target's parent when the target is named `.kodax`. Set it before the first
+   SDK call that reads it.
+2. Start the Host on the target. A process that still selects the source
+   starts a separate Host on the old data.
+3. Keep the source until the new root is verified, then delete it yourself.
+   The SDK never deletes it.
+
+### What was removed
+
+| Where | Removed |
+|---|---|
+| `ensureKodaXRuntime`, `connectKodaXRuntime`, `createKodaXRuntime({ mode: 'daemon' })` | `profile` |
+| `getKodaXRuntimeOwnerState`, `waitForRuntimeDaemonShutdown` | `profile` |
+| `ensureKodaXClient`, `connectKodaXClient`, `readKodaXClientExits` | `profile` |
+| `kodax daemon start\|stop\|restart\|status\|logs\|serve`, `kodax a2a serve` | `--profile` |
+
+TypeScript callers get a compile error. Nothing is silently ignored:
+
+- A JavaScript caller that still passes `profile` gets
+  `RuntimeHostMigrationRequiredError` (`code: 'runtime_host_migration_required'`)
+  before anything starts:
+  `ensureKodaXClient no longer accepts "profile": one Host serves each KODAX_HOME. Remove "profile"; to isolate Hosts, use a separate homeDir or KODAX_HOME.`
+- `--profile` on the CLI fails with the same text for the command, naming
+  `--home` instead of `homeDir`.
+
+### How to migrate
+
+Delete the option. Code that used it to share one Host keeps working:
+
+```ts
+// Before
+const client = await ensureKodaXClient({ homeDir, profile: 'coder' });
+const exits = await readKodaXClientExits({ homeDir, profile: 'coder', clientInfo });
+
+// After
+const client = await ensureKodaXClient({ homeDir });
+const exits = await readKodaXClientExits({ homeDir, clientInfo });
+```
+
+```sh
+# Before
+kodax daemon stop --profile coder
+# After
+kodax daemon stop
+```
+
+The same applies to `ensureKodaXRuntime`, `connectKodaXRuntime`,
+`createKodaXRuntime({ mode: 'daemon' })`, `getKodaXRuntimeOwnerState` and
+`waitForRuntimeDaemonShutdown`.
+
+If you used `profile` to keep two Hosts apart, give each its own data root
+(`homeDir`, `--home` or `KODAX_HOME`). A separate data root also separates
+configuration, providers and Sessions. Before, two profiles in one home already
+shared those; only the directory names differed.
+
+### `identity.profile`
+
+`RuntimeIdentity.profile` stays on the wire because older clients check it on
+connect. It is deprecated. A current Host always reports `default`. A Host
+started by an older client in another directory (older Space used `coder`)
+reports that name while it serves the home. Do not use it to select or isolate
+a Host.
+
+### Older clients next to a new Host
+
+| Pair | Result |
+|---|---|
+| new CLI + new Space | one Host in the fixed directory |
+| new client + older Space whose `coder` Host owns the Sessions | `ensure`, passive `connect` and `kodax daemon start\|stop\|status\|logs\|restart` act on that Host; `readKodaXClientExits` also reads its exit receipts after it is replaced. When it is idle, the usual upgrade replaces it |
+| older CLI (v0.7.97-alpha.7 or later) | uses the `default` directory, which is the new Host |
+| older Space started after the new Host | follows the Session storage owner to the new Host; its `--profile coder` stop and exit-receipt paths miss that Host until Space is upgraded |
+
+### One-time state merge
+
+Older Hosts kept per-Session Runtime state under `runtime/profiles/<profile>/`,
+so one Session could have different settings depending on which product
+started first. When the new Host starts and owns Session storage, it merges
+every `runtime/profiles/<p>/` into `runtime/profiles/default/` once:
+
+- Runs, Session stop records and Session MCP records move when the target has
+  none for that id; otherwise the target copy is kept.
+- Session settings: the more recently written copy wins.
+- Session order: the larger counter is kept, so numbering stays monotonic.
+- Queued inputs: both queues are kept, once per input id. A Session holds at
+  most 5 queued inputs; older-Host inputs beyond that are reported as withdrawn
+  and can be sent again.
+- Permission grants: only grants scoped to one Session are imported. Global
+  grants, such as an "always allow" given in Space, are dropped and counted,
+  because importing them would extend that approval to every client. Approve
+  them again where needed.
+
+A profile whose Host is still running is skipped until a later start. The
+merged directory is renamed to `runtime/profiles/<p>.merged-<YYYYMMDD>/` and
+removed by the idle Host 30 days later. One `runtime.host.state-merged`
+diagnostic reports counts, conflicts, dropped grants and any item that failed.
+A failed item stays in place and is retried on the next start.
+
+### Not affected
+
+Three other things are also called "profile" and do not change:
+
+- Credential profiles: the account namespace in `auth.json` (API-key bindings,
+  OAuth registrations).
+- Agent and execution profiles (`KodaXAgentProfile`, `createExecutionProfile`).
+- Session `profileId`.

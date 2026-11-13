@@ -430,7 +430,7 @@ export interface ClientItemReadOptions {
   readonly offset?: number;
   /** original reads a saved full tool result; text keeps display-preview offsets unchanged. */
   readonly part?: 'text' | 'input' | 'attachment' | 'original';
-  /** Reads a PNG already attached to this Host item; never accepts a client file path. */
+  /** Reads a supported image already attached to this Host item; never accepts a client file path. */
   readonly attachmentIndex?: number;
   readonly attachmentOffset?: number;
   readonly expectedImageSha256?: string;
@@ -722,7 +722,7 @@ export interface ClientItemContent {
 
 /** Bounded binary chunks, distinct from text projection and character offsets. */
 export interface ClientImageAttachmentContent {
-  readonly mediaType: 'image/png';
+  readonly mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
   readonly dataBase64: string;
   readonly sha256: string;
   readonly width: number;
@@ -839,7 +839,10 @@ export interface ClientViewItem {
   /** Structured task delivery. Body is text/readItem, never model-facing XML. */
   readonly taskResult?: Omit<KodaXTaskResultReport, 'summary'>;
   /** Image references proven by canonical user/tool content; does not include file bytes. */
-  readonly attachments?: readonly { readonly kind: 'image'; readonly path: string; readonly mediaType?: string }[];
+  readonly attachments?: readonly {
+    readonly kind: 'image'; readonly path: string; readonly mediaType?: string;
+    readonly observationId?: string; readonly width?: number; readonly height?: number; readonly sha256?: string;
+  }[];
   /** Boundary after the complete canonical message, shared by all its display blocks. */
   readonly historyBoundary?: ClientHistoryBoundary;
   /** Host checkpoint provenance for retained output and tool evidence. */
@@ -1048,6 +1051,8 @@ export interface ClientPermissionInteractionOptions {
   readonly toolName: string;
   readonly toolCallId?: string;
   readonly reason?: string;
+  /** Present when one or more extension `tool:before` handlers asked for this approval. */
+  readonly extensionAsks?: readonly { readonly extension: string; readonly reason: string }[];
   readonly risk?: 'low' | 'medium' | 'high';
   readonly inputPreview?: string;
   readonly executionCwd?: string;

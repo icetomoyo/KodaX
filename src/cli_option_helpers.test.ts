@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { Command } from 'commander';
 import {
@@ -18,6 +19,7 @@ import {
   findSessionTitleMatches,
   validateCliModeSelection,
   parsePermissionModeOption,
+  ignoredKodaXHomeWarning,
   type CliOptions,
 } from './cli_option_helpers.js';
 
@@ -434,5 +436,19 @@ describe('resolveCliModelSelection', () => {
         'glm-5.1',
       ),
     ).toBe('gpt-5');
+  });
+});
+
+describe('ignoredKodaXHomeWarning', () => {
+  it('names a relative KODAX_HOME and the data root used instead', () => {
+    const warning = ignoredKodaXHomeWarning({ env: { KODAX_HOME: 'relative/.kodax' }, homeDir: '/users/me' });
+    expect(warning).toContain('KODAX_HOME=relative/.kodax');
+    expect(warning).toContain(path.join('/users/me', '.kodax'));
+  });
+
+  it('stays quiet for an absolute or unset KODAX_HOME', () => {
+    const absolute = path.resolve('/data/.kodax');
+    expect(ignoredKodaXHomeWarning({ env: { KODAX_HOME: absolute }, homeDir: '/users/me' })).toBeUndefined();
+    expect(ignoredKodaXHomeWarning({ env: {}, homeDir: '/users/me' })).toBeUndefined();
   });
 });

@@ -57,9 +57,8 @@ it('keeps local Skill failures across an independent daemon and IPC, then execut
     if (prepared.kind !== 'prepared') throw new Error('Main did not discover fixture Skill.');
     expect(prepared.invocation.skillInvocation.runtimePolicy.enforceAtRuntime).toBe(true);
 
-    const profile = 'skill-failure';
-    daemon = await ensureKodaXRuntime({ homeDir: root, profile, daemonStartupTimeoutMs: 60_000 });
-    const owner = readRuntimeDaemonLockOwner(resolveRuntimeDaemonPaths(root, profile).lockFile);
+    daemon = await ensureKodaXRuntime({ homeDir: root, daemonStartupTimeoutMs: 60_000 });
+    const owner = readRuntimeDaemonLockOwner(resolveRuntimeDaemonPaths(root).lockFile);
     expect(owner?.pid).toBeDefined();
     expect(owner?.pid).not.toBe(process.pid);
     const session = await daemon.sessions.create({ projectPath: project });
@@ -85,12 +84,12 @@ it('keeps local Skill failures across an independent daemon and IPC, then execut
       await expect(daemon.runs.get(run.runId)).resolves.toMatchObject({ failureDetail: detail });
       await expect.poll(() => failures.length, { timeout: 15_000 }).toBe(1);
       expect(JSON.stringify(failures)).toContain('skill_not_found');
-      const reconnected = await connectKodaXRuntime({ homeDir: root, profile });
+      const reconnected = await connectKodaXRuntime({ homeDir: root });
       try {
         await expect(reconnected.runs.await(run.runId)).resolves.toMatchObject({ failureDetail: result.failureDetail });
         expect(JSON.stringify(await reconnected.sessions.diagnostics({ sessionId: session.id }))).toContain('skill_not_found');
       } finally { await reconnected.close(); }
-      const product = await connectKodaXClient({ homeDir: root, profile });
+      const product = await connectKodaXClient({ homeDir: root });
       try {
         await expect(product.runs.await(run.runId)).resolves.toMatchObject({ failureDetail: result.failureDetail });
         await expect(product.runs.read(run.runId)).resolves.toMatchObject({ failureDetail: result.failureDetail });

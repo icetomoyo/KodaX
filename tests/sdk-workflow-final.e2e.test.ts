@@ -14,7 +14,6 @@ const execFileAsync = promisify(execFile);
 
 it.each(['success', 'failure', 'cancel', 'partial-cleanup', 'crash'] as const)('persists Workflow %s after disconnect and a cold Host restart', async outcome => {
   const homeDir = await mkdtemp(path.join(await realpath(os.tmpdir()), 'kodax-workflow-final-'));
-  const profile = 'workflow-final';
   await mkdir(path.join(homeDir, '.kodax'), { recursive: true });
   await writeFile(path.join(homeDir, '.kodax', 'config.json'), JSON.stringify({ provider: 'workflow-fixture', model: 'fixture',
     customProviders: [{ name: 'workflow-fixture', protocol: 'openai', model: 'fixture',
@@ -27,8 +26,8 @@ it.each(['success', 'failure', 'cancel', 'partial-cleanup', 'crash'] as const)('
     await writeFile(path.join(homeDir, 'project.txt'), 'Preserved project original.');
     await git(['add', 'project.txt']); await git(['commit', '-m', 'fixture']);
   }
-  let client = await ensureKodaXClient({ homeDir, profile });
-  let peer = await connectKodaXClient({ homeDir, profile });
+  let client = await ensureKodaXClient({ homeDir });
+  let peer = await connectKodaXClient({ homeDir });
   let cleanupPaths: { scratch: string; locked: string; referenced: string; unknown: string; runDir: string } | undefined;
   let testFailure: unknown;
   try {
@@ -59,12 +58,12 @@ it.each(['success', 'failure', 'cancel', 'partial-cleanup', 'crash'] as const)('
       }
       if (outcome === 'crash') {
         const beforeCrash = await readFile(path.join(cleanupPaths!.runDir, 'events.jsonl'), 'utf8');
-        const owner = getKodaXRuntimeOwnerState({ homeDir, profile }).owner!;
+        const owner = getKodaXRuntimeOwnerState({ homeDir }).owner!;
         await peer.disconnect();
         process.kill(owner.pid, 'SIGKILL');
-        expect(await waitForRuntimeDaemonShutdown({ configHome: path.join(homeDir, '.kodax'), profile, owner, timeoutMs: 500 })).toMatchObject({ status: 'unverified', reason: 'outcome_missing' });
-        client = await ensureKodaXClient({ homeDir, profile });
-        peer = await connectKodaXClient({ homeDir, profile });
+        expect(await waitForRuntimeDaemonShutdown({ configHome: path.join(homeDir, '.kodax'), owner, timeoutMs: 500 })).toMatchObject({ status: 'unverified', reason: 'outcome_missing' });
+        client = await ensureKodaXClient({ homeDir });
+        peer = await connectKodaXClient({ homeDir });
         expect(await peer.runs.read(started.runId)).toMatchObject({ phase: 'interrupted', terminal: { code: 'daemon_crashed', effectOutcome: 'unknown' } });
         expect((await peer.sessions.readHistory(session.id)).items.filter(item => item.taskResult?.source === 'workflow')).toEqual([]);
         for (const target of [cleanupPaths!.scratch, cleanupPaths!.locked, cleanupPaths!.referenced, cleanupPaths!.unknown]) {
@@ -103,12 +102,12 @@ it.each(['success', 'failure', 'cancel', 'partial-cleanup', 'crash'] as const)('
       expect(existsSync(cleanupPaths.referenced)).toBe(true);
       expect(existsSync(cleanupPaths.unknown)).toBe(true);
     }
-    const owner = getKodaXRuntimeOwnerState({ homeDir, profile }).owner!;
+    const owner = getKodaXRuntimeOwnerState({ homeDir }).owner!;
     await peer.host.shutdown(); await peer.disconnect();
-    expect(await waitForRuntimeDaemonShutdown({ configHome: path.join(homeDir, '.kodax'), profile, owner })).toMatchObject({ status: 'succeeded' });
+    expect(await waitForRuntimeDaemonShutdown({ configHome: path.join(homeDir, '.kodax'), owner })).toMatchObject({ status: 'succeeded' });
     if (cleanupPaths) await git(['worktree', 'unlock', cleanupPaths.locked]);
-    client = await ensureKodaXClient({ homeDir, profile });
-    peer = await connectKodaXClient({ homeDir, profile });
+    client = await ensureKodaXClient({ homeDir });
+    peer = await connectKodaXClient({ homeDir });
     if (cleanupPaths) {
       await expect.poll(() => existsSync(cleanupPaths!.locked), { timeout: 10_000 }).toBe(false);
       await expect.poll(async () => JSON.parse(await readFile(path.join(cleanupPaths!.runDir, 'cleanup.json'), 'utf8')).completed,
@@ -121,14 +120,14 @@ it.each(['success', 'failure', 'cancel', 'partial-cleanup', 'crash'] as const)('
     const recovered = await peer.sessions.readHistory(session.id);
     expect(recovered.items.filter(item => item.taskResult?.source === 'workflow').map(item => item.text)).toEqual([text]);
   } catch (error: unknown) { testFailure = error; throw error; } finally {
-    const owner = getKodaXRuntimeOwnerState({ homeDir, profile }).owner;
+    const owner = getKodaXRuntimeOwnerState({ homeDir }).owner;
     await client.disconnect(); await peer.disconnect();
-    const cleanupClient = await connectKodaXClient({ homeDir, profile }).catch(error => {
+    const cleanupClient = await connectKodaXClient({ homeDir }).catch(error => {
       if (testFailure !== undefined) throw new AggregateError([testFailure, error], 'Workflow test and fixture cleanup failed');
       throw error;
     });
     await cleanupClient.host.shutdown(); await cleanupClient.disconnect();
-    if (owner) expect(await waitForRuntimeDaemonShutdown({ configHome: path.join(homeDir, '.kodax'), profile, owner })).toMatchObject({ status: 'succeeded' });
+    if (owner) expect(await waitForRuntimeDaemonShutdown({ configHome: path.join(homeDir, '.kodax'), owner })).toMatchObject({ status: 'succeeded' });
     await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 120_000);

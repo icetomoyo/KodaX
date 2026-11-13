@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-10_
+_Last Updated: 2026-11-13_
 
 ---
 
@@ -46,6 +46,97 @@ This predates the child contract projection; the eval uses raw per-call usage,
 not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
+
+## Issue 410: A client exit stop with a connected peer drains the Host and answers late
+
+- Priority: Medium
+- Status: Resolved (fixed in `v0.7.97-beta.9`)
+- Observed: Space `out/win-unpacked` / SDK 0.7.97-beta.8 with a `kodax` CLI attached to the same Host, Windows x64, 2026-11-13
+- Introduced: `v0.7.97-alpha.2` (client exit receipts with `shutdownHost`)
+- Fixed: `v0.7.97-beta.9`
+- Resolution Date: 2026-11-13
+
+`lifecycle.requestExit({ shutdownHost: true })` ends in `management.stop({ principalId })`.
+`stop()` began draining and then ran the full preflight before it applied the
+`connected_clients` rule. With a CLI attached, the refusal was certain, but the
+preflight took 4.6–17.5 seconds. Meanwhile the peer's mutations and attaches were
+rejected, and Space's 15-second exit settlement expired before the receipt said
+`protected`.
+
+A principal-scoped stop now refuses with the same `connected_clients` conflict
+before it drains or inspects. A last-client stop still runs the full preflight,
+and a Host-level stop (no principal) keeps it, because upgrade callers read the
+blockers in its `preflight` data.
+
+Reproduce: attach a `kodax` CLI to a Host, then call
+`lifecycle.requestExit({ shutdownHost: true })` from another client, as Space
+does when it quits. Before the fix the exit receipt reported `protected` only
+after the preflight finished, and the CLI's requests were rejected while the
+Host drained.
+
+**Files Changed:** `src/runtime-daemon/management.ts`.
+
+**Tests Added:** `src/runtime-daemon/management.orphan-exit.test.ts`
+(`Runtime daemon stop with peer clients`): an exiting client is refused at once
+without draining or scanning, a Host-level stop keeps its preflight evidence,
+and the last client's stop still inspects governed work. See Space Issue 250.
+
+## Issue 409: Windows daemon Job proof and failed-start cleanup prevent recovery
+
+- Priority: High
+- Status: Resolved (fixed in `v0.7.97-beta.8`)
+- Observed: Space 0.1.47-alpha.5 / SDK 0.7.97-beta.4, Windows x64, 2026-11-12
+- Fixed: `v0.7.97-beta.8` (launch-failure cause naming in `v0.7.97-beta.9`)
+- Resolution Date: 2026-11-12
+
+Customer logs show two `job-membership` probes exceeding the existing 5-second
+PowerShell timeout, followed by refusal to publish an unverified Host. No Provider
+or extensions were configured and the customer was offline. These are supported
+startup conditions; the evidence does not establish why PowerShell was slow.
+An earlier export also showed startup plus cleanup failure, without enough logs
+to prove it had the same trigger.
+
+The daemon now reads named Job membership, kill-on-close and process creation
+identities with the bundled, hash-verified native runner, avoiding dynamic C#
+compilation for this query. The query deadline is 10 seconds (it was 5), one
+retry follows a probe that could not run, and unverified ownership is still
+refused. The startup Job owner is the native `__daemon-job-supervise` helper
+instead of PowerShell `Add-Type`, so startup compiles nothing. Its failures are
+appended to `bootstrap.log` as `[Error]` lines, and a failed launch names the
+cause its own attempt logged.
+
+Failed startup is retryable only through the cleanup gate. Failed cleanup keeps
+the exact child/supervisor handle; admissions for the same home/slot are serialized
+until cleanup settles. Readiness failure retains its cleanup closure too. A
+committed/retained owner is re-observed, not treated as exited. Cancellation and
+old-owner shutdown cannot release the gate early or recursively deadlock it.
+Queue cancellation and expiry cannot spawn later; cancellation after admission
+waits for the existing cleanup path. A pre-cancelled request creates no unhandled
+background rejection. Native failures retain a bounded stderr reason in diagnostics.
+When cleanup itself keeps failing, each retry tries it again and restarting the
+application releases the gate; there is no separate terminal state.
+
+Not yet measured: native probe and supervisor startup time on a machine whose
+antivirus scans a freshly installed helper on first run. The 10-second deadline
+is not backed by such a measurement.
+
+Reproduce: the slow PowerShell was not reproduced locally. The tests reproduce
+its effects instead: a Job probe that times out or cannot run, a child that
+exits before readiness, and a cleanup that fails, each followed by a retry.
+
+**Files Changed:** `src/runtime-daemon/process.ts`, `state.ts`,
+`windows-job-identity.ts` (new), `windows-job-supervisor.ts`;
+`native/windows-sandbox-v2/src/job_identity.rs` (new), `job_supervisor.rs`
+(new), `main.rs`; `packages/agent/src/runtime/process-tree.ts`.
+
+**Tests Added:** `src/runtime-daemon/process*.test.ts` (including the new
+`process-admission.test.ts`), `windows-job-supervisor.test.ts`,
+`windows-job-native-supervisor.test.ts` (new),
+`windows-job-identity*.test.ts` (new), and agent `process-tree.windows.test.ts`;
+the existing `manager-containment.test.ts` also guards it.
+Space additionally runs real offline Electron cold-start, transient failure,
+persistent failure/manual retry and cleanup-failure recovery tests with no
+Provider, then configures a loopback private-model fixture. See Space Issue 246.
 
 ## Issue 394: Agent and Script whole-task non-inferiority is unproven
 
@@ -146,7 +237,7 @@ replace lone surrogates with U+FFFD in the request projection only.
 - Status: Resolved
 - Introduced: observed in v0.7.97-beta.3 Release CI; first affected version unknown
 - Created / Resolved: 2026-11-08
-- Fixed: post-`v0.7.97-beta.4` (unreleased)
+- Fixed: `v0.7.97-beta.5`
 
 `src/sdk-client.history.test.ts:22` ("projects the actual request compaction
 capacity including Memory reserve without enabling diagnostics") failed on the
@@ -172,7 +263,7 @@ still take precedence. No production code changed.
 - Files changed: `vitest.config.ts`
 - Tests added: `tests/vitest-poll-budget.test.ts` (a projection settling after
   1.5 s failed with "Matcher did not succeed in time" before the change)
-- Fixed: post-`v0.7.97-beta.4` (unreleased)
+- Fixed: `v0.7.97-beta.5`
 
 ## Issue 387: Busy-Session Ink attach fixture times out before the prompt renders on Windows
 
@@ -180,7 +271,7 @@ still take precedence. No production code changed.
 - Status: Resolved
 - Introduced: observed in v0.7.97-beta.4 Release CI; first affected version unknown
 - Created / Resolved: 2026-11-08
-- Fixed: post-`v0.7.97-beta.4` (unreleased)
+- Fixed: `v0.7.97-beta.5`
 
 `src/sdk-client.repl-activity.test.ts:71` ("renders current Host activity and
 accepts follow-ups when attaching Ink to a busy Session") failed on the
@@ -203,7 +294,7 @@ still take precedence. No production code changed.
 - Files changed: `vitest.config.ts`
 - Tests added: `tests/vitest-poll-budget.test.ts` (a projection settling after
   1.5 s failed with "Matcher did not succeed in time" before the change)
-- Fixed: post-`v0.7.97-beta.4` (unreleased)
+- Fixed: `v0.7.97-beta.5`
 
 ## Issue 386: Extension `exec` can take over 30 seconds on Windows
 
@@ -211,7 +302,7 @@ still take precedence. No production code changed.
 - Status: Resolved
 - Introduced: observed in v0.7.97-beta.4 Release CI; first affected version unknown
 - Created / Resolved: 2026-11-08
-- Fixed: post-`v0.7.97-beta.4` (unreleased)
+- Fixed: `v0.7.97-beta.5`
 
 `packages/coding/src/extensions/helpers.test.ts` ("exec > runs a simple command
 and returns stdout") timed out after 30 seconds running `exec('echo hello')`
@@ -259,7 +350,7 @@ which PowerShell does not expand, so it never read the variable. It now uses
   `packages/coding/src/extensions/helpers.test.ts`
 - Tests added: Windows-only check that both cache variables reach PowerShell
   (failed with `"|"` before the fix)
-- Fixed: post-`v0.7.97-beta.4` (unreleased)
+- Fixed: `v0.7.97-beta.5`
 
 ## Issue 385: Inline Runtime agent home is outside model write protection
 
@@ -267,7 +358,7 @@ which PowerShell does not expand, so it never read the variable. It now uses
 - Status: Resolved
 - Introduced: inline `homeDir` Runtimes predate Issue 380; the gap became visible with it
 - Created / Resolved: 2026-11-05
-- Fixed: KodaX-next-dev (unreleased)
+- Fixed: `v0.7.97-beta.5` (KodaX-next-dev integration)
 
 ### Original Problem
 
@@ -325,7 +416,7 @@ set `KODAX_HOME` to their agent home.
 - Status: Resolved
 - Introduced: nested resolver in FEATURE_246 Part E; CLI commands predate FEATURE_145
 - Created / Resolved: 2026-11-04
-- Fixed: KodaX-next-dev (unreleased)
+- Fixed: `v0.7.97-beta.5` (KodaX-next-dev integration)
 
 ### Original Problem
 
@@ -394,7 +485,7 @@ address directly.
 - Status: Resolved
 - Introduced: present since FEATURE_194 v0.7.43 (`88f2faa96`); first affected version unknown
 - Created / Resolved: 2026-11-04
-- Fixed: KodaX-next-dev working tree (unreleased)
+- Fixed: `v0.7.97-beta.5` (KodaX-next-dev integration)
 
 ### Original Problem
 
@@ -434,7 +525,7 @@ that intentionally skip the resolver; user Skills are not among them.
 - Status: Resolved
 - Introduced: first affected version unknown (observed on `fc296bd56`)
 - Created / Resolved: 2026-11-04
-- Fixed: KodaX-next-dev working tree (unreleased)
+- Fixed: `v0.7.97-beta.5` (KodaX-next-dev integration)
 
 ### Original Problem
 
@@ -504,7 +595,7 @@ proxied requests, for HTTP or HTTPS, and that refusing a reused socket on its
 - Status: Resolved
 - Introduced: first affected version unknown (observed on `fc296bd56`)
 - Created / Resolved: 2026-11-04
-- Fixed: KodaX-next-dev working tree (unreleased)
+- Fixed: `v0.7.97-beta.5` (KodaX-next-dev integration)
 
 ### Original Problem
 
@@ -565,7 +656,7 @@ host runs, and through a canonical target. The existing
 - Status: Resolved
 - Introduced: first affected version unknown (observed on `fc296bd56`)
 - Created / Resolved: 2026-11-04
-- Fixed: KodaX-next-dev working tree (unreleased)
+- Fixed: `v0.7.97-beta.5` (KodaX-next-dev integration)
 
 ### Original Problem
 
@@ -610,7 +701,7 @@ allow, a throwing global hook through a combined runtime, and a fail-open
 - Status: Resolved
 - Introduced: first affected version unknown (observed on `fc296bd56`)
 - Created / Resolved: 2026-11-04
-- Fixed: KodaX-next-dev working tree (unreleased)
+- Fixed: `v0.7.97-beta.5` (KodaX-next-dev integration)
 
 ### Original Problem
 
@@ -658,7 +749,7 @@ depth limit. Child Agents and Script leaf calls use the same entry points.
 - Status: Resolved
 - Introduced: FEATURE_192 v0.7.44 (`/goal`); first affected version unknown
 - Created / Resolved: 2026-10-31
-- Fixed: post-v0.7.97-alpha.10 working tree (unreleased)
+- Fixed: `v0.7.97-beta.5` (KodaX-next-dev integration)
 
 ### Original Problem
 
@@ -2947,12 +3038,21 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 410 | Medium | Resolved | A client exit stop with a connected peer drains the Host and answers late | `v0.7.97-alpha.2` (client exit receipts) | `v0.7.97-beta.9` | 2026-11-13 | 2026-11-13 |
+| 409 | High | Resolved | Windows daemon Job proof and failed-start cleanup prevent recovery | observed in v0.7.97-beta.4 (customer report); PowerShell Job probe since v0.7.97-alpha.7 | `v0.7.97-beta.8` | 2026-11-12 | 2026-11-12 |
+| 408 | Medium | Resolved | Space SDK leaks user image labels, rejects non-PNG attachments and loses extension approval attribution | observed in v0.7.97-beta.6; visual input/tools since beta.5 | `v0.7.97-beta.7` | 2026-11-12 | 2026-11-12 |
+| 407 | Medium | Resolved | Passive connections and exit receipts ignore the session storage owner | v0.7.97-alpha.7 (storage-owner redirect) | `v0.7.97-beta.6` (FEATURE_305 T3+T4) | 2026-11-10 | 2026-11-11 |
+| 406 | High | Resolved | A CLI redirected to Space's Host fails `daemon start` verification and provider credential authorization | `daemon start` check v0.7.97-alpha.1, exposed by the v0.7.97-alpha.7 redirect; credential profile fence v0.7.97-alpha.12 | `v0.7.97-beta.6` | 2026-11-10 | 2026-11-10 |
+| 405 | High | Resolved | Space and the CLI refuse to share a compatible Host from another installation or version | v0.7.97-alpha.1 (Host build refresh); busy older-Host refusal since v0.7.79 | `v0.7.97-beta.6` | 2026-11-10 | 2026-11-10 |
+| 404 | High | Resolved | Linux kernels before 5.8 reject every trusted text write | v0.7.96 (FEATURE_295) | `v0.7.97-beta.6` | 2026-11-10 | 2026-11-10 |
+| 403 | High | Resolved | Linux native text authority cannot load on glibc 2.17 hosts | v0.7.96 (FEATURE_295); 2.28 floor since Issue 328 | `v0.7.97-beta.6` | 2026-11-10 | 2026-11-10 |
+| 402 | High | Resolved | A failed native text addon load crashes the next tracked write | v0.7.96 (FEATURE_295) | `v0.7.97-beta.6` | 2026-11-10 | 2026-11-10 |
 | 401 | Low | Open | Memory review inbox keeps every finished job's files and test-made jobs | unknown; observed at v0.7.97-beta.4 | — | 2026-11-10 | — |
-| 400 | Medium | Resolved | Agent home keeps retired runtime state forever and `daemon.log` grows without bound | retired writers in v0.7.96 and v0.7.97-alpha.1/alpha.12; observed at v0.7.97-beta.4 | v0.7.97 (Unreleased) | 2026-11-10 | 2026-11-10 |
-| 399 | High | Resolved | A replaced profile file silently moves every Windows sandbox command to the host | setup-owned profile roots since v0.7.96 (`ea4d796ee`); observed at v0.7.97-beta.4 | v0.7.97 (Unreleased) | 2026-11-10 | 2026-11-10 |
-| 398 | Medium | Resolved | Cold shared Host start rereads every unresolvable Run child record | Run-record retention since v0.7.97-alpha.12; slow cold starts observed from 2026-10-31 | v0.7.97 (Unreleased) | 2026-11-10 | 2026-11-10 |
-| 397 | Low | Resolved | Builtin skill-creator activation lists 14 `.d.ts` typing files | v0.7.97-beta.4 (c50d24c27) | v0.7.97 (Unreleased) | 2026-11-09 | 2026-11-09 |
-| 396 | Medium | Resolved | Skill edits in a running REPL session need `/reload` to take effect | unknown; present at v0.7.97-beta.4 | v0.7.97 (Unreleased) | 2026-11-09 | 2026-11-09 |
+| 400 | Medium | Resolved | Agent home keeps retired runtime state forever and `daemon.log` grows without bound | retired writers in v0.7.96 and v0.7.97-alpha.1/alpha.12; observed at v0.7.97-beta.4 | `v0.7.97-beta.5` | 2026-11-10 | 2026-11-10 |
+| 399 | High | Resolved | A replaced profile file silently moves every Windows sandbox command to the host | setup-owned profile roots since v0.7.96 (`ea4d796ee`); observed at v0.7.97-beta.4 | `v0.7.97-beta.5` | 2026-11-10 | 2026-11-10 |
+| 398 | Medium | Resolved | Cold shared Host start rereads every unresolvable Run child record | Run-record retention since v0.7.97-alpha.12; slow cold starts observed from 2026-10-31 | `v0.7.97-beta.5` | 2026-11-10 | 2026-11-10 |
+| 397 | Low | Resolved | Builtin skill-creator activation lists 14 `.d.ts` typing files | v0.7.97-beta.4 (c50d24c27) | `v0.7.97-beta.5` | 2026-11-09 | 2026-11-09 |
+| 396 | Medium | Resolved | Skill edits in a running REPL session need `/reload` to take effect | unknown; present at v0.7.97-beta.4 | `v0.7.97-beta.5` | 2026-11-09 | 2026-11-09 |
 | 395 | Medium | needs-info | Intermittent oversized-output Runtime test failure has no captured cause | unknown; observed at e37aef47a (v0.7.97-beta.4) | — | 2026-11-09 | — |
 | 394 | Medium | Open | Agent and Script whole-task non-inferiority is unproven | work modes in v0.7.97 | — | 2026-11-09 | — |
 | 393 | Low | Open | `worktree remove` reports a branch deleted when `branch -D` failed | unknown; present at 08ce2f742 | — | 2026-11-09 | — |
@@ -2960,18 +3060,18 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 | 391 | Low | Open | `code_search` skips `.mts` and `.cts` files | unknown; present at 08ce2f742 | — | 2026-11-09 | — |
 | 390 | Low | Open | Skill-discovery natural eval cannot run without a Git-free temp root | eval harness limitation found 2026-10-28 | — | 2026-11-09 | — |
 | 389 | Low | Open | Lone UTF-16 surrogates in tool text make GLM Coding return HTTP 500 | observed 2026-09-14; first affected version unknown | — | 2026-11-09 | — |
-| 388 | Medium | Resolved | SDK history capacity fixture observes the parent before the worker on Windows | observed in v0.7.97-beta.3 Release CI; first affected version unknown | post-`v0.7.97-beta.4` (unreleased) | 2026-11-08 | 2026-11-08 |
-| 387 | Medium | Resolved | Busy-Session Ink attach fixture times out before the prompt renders on Windows | observed in v0.7.97-beta.4 Release CI; first affected version unknown | post-`v0.7.97-beta.4` (unreleased) | 2026-11-08 | 2026-11-08 |
-| 386 | High | Resolved | Extension `exec` can take over 30 seconds on Windows | observed in v0.7.97-beta.4 Release CI; first affected version unknown | post-`v0.7.97-beta.4` (unreleased) | 2026-11-08 | 2026-11-08 |
-| 385 | Low | Resolved | Inline Runtime agent home is outside model write protection | inline `homeDir` Runtimes; visible with Issue 380 | KodaX-next-dev (unreleased) | 2026-11-05 | 2026-11-05 |
-| 384 | Low | Resolved | Nested workflows and CLI print-mode commands ignore KODAX_HOME | FEATURE_246 Part E; CLI commands earlier | KodaX-next-dev (unreleased) | 2026-11-04 | 2026-11-04 |
+| 388 | Medium | Resolved | SDK history capacity fixture observes the parent before the worker on Windows | observed in v0.7.97-beta.3 Release CI; first affected version unknown | `v0.7.97-beta.5` | 2026-11-08 | 2026-11-08 |
+| 387 | Medium | Resolved | Busy-Session Ink attach fixture times out before the prompt renders on Windows | observed in v0.7.97-beta.4 Release CI; first affected version unknown | `v0.7.97-beta.5` | 2026-11-08 | 2026-11-08 |
+| 386 | High | Resolved | Extension `exec` can take over 30 seconds on Windows | observed in v0.7.97-beta.4 Release CI; first affected version unknown | `v0.7.97-beta.5` | 2026-11-08 | 2026-11-08 |
+| 385 | Low | Resolved | Inline Runtime agent home is outside model write protection | inline `homeDir` Runtimes; visible with Issue 380 | `v0.7.97-beta.5` | 2026-11-05 | 2026-11-05 |
+| 384 | Low | Resolved | Nested workflows and CLI print-mode commands ignore KODAX_HOME | FEATURE_246 Part E; CLI commands earlier | `v0.7.97-beta.5` | 2026-11-04 | 2026-11-04 |
 | 383 | Low | Open | Volcengine instance metadata address is not confirmed | Issue 381 metadata set | — | 2026-11-04 | — |
-| 382 | Low | Resolved | User Skill discovery ignores KODAX_HOME | FEATURE_194 v0.7.43 or earlier | KodaX-next-dev (unreleased) | 2026-11-04 | 2026-11-04 |
-| 381 | High | Resolved | `web_fetch` can read cloud metadata and follow public redirects into the private network | first affected version unknown | KodaX-next-dev (unreleased) | 2026-11-04 | 2026-11-04 |
-| 380 | High | Resolved | Model writes can install Host-loaded extensions and integrations | first affected version unknown | KodaX-next-dev (unreleased) | 2026-11-04 | 2026-11-04 |
-| 379 | High | Resolved | Extension `tool:before` fails open on a throw or hang | first affected version unknown | KodaX-next-dev (unreleased) | 2026-11-04 | 2026-11-04 |
-| 378 | High | Resolved | Extension tool policy is skipped or doubled on some dispatch paths | first affected version unknown | KodaX-next-dev (unreleased) | 2026-11-04 | 2026-11-04 |
-| 377 | Medium | Resolved | Child Agents expose failing Goal tools and bypass the root goal budget | FEATURE_192 v0.7.44; first affected version unknown | post-v0.7.97-alpha.10 working tree (unreleased) | 2026-10-31 | 2026-10-31 |
+| 382 | Low | Resolved | User Skill discovery ignores KODAX_HOME | FEATURE_194 v0.7.43 or earlier | `v0.7.97-beta.5` | 2026-11-04 | 2026-11-04 |
+| 381 | High | Resolved | `web_fetch` can read cloud metadata and follow public redirects into the private network | first affected version unknown | `v0.7.97-beta.5` | 2026-11-04 | 2026-11-04 |
+| 380 | High | Resolved | Model writes can install Host-loaded extensions and integrations | first affected version unknown | `v0.7.97-beta.5` | 2026-11-04 | 2026-11-04 |
+| 379 | High | Resolved | Extension `tool:before` fails open on a throw or hang | first affected version unknown | `v0.7.97-beta.5` | 2026-11-04 | 2026-11-04 |
+| 378 | High | Resolved | Extension tool policy is skipped or doubled on some dispatch paths | first affected version unknown | `v0.7.97-beta.5` | 2026-11-04 | 2026-11-04 |
+| 377 | Medium | Resolved | Child Agents expose failing Goal tools and bypass the root goal budget | FEATURE_192 v0.7.44; first affected version unknown | `v0.7.97-beta.5` | 2026-10-31 | 2026-10-31 |
 | 375 | High | Resolved | Constrained Skill shell patterns admit extra effects | observed on aeb16fef; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
 | 374 | Medium | Resolved | Client question adapters lose unanswered semantics | observed on aeb16fef; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
 | 373 | Low | Resolved | Streaming progress mixes character and token units | observed in v0.7.97-alpha.10; first affected version unknown | `v0.7.97-alpha.11` | 2026-10-29 | 2026-10-29 |
@@ -3235,6 +3335,348 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 ## Issue Details
 
+### Issue 408: Space SDK image projection, attachment access and approval attribution
+
+- Priority: Medium
+- Status: Resolved (triaged ready from the Space integration report)
+- Introduced: observed in v0.7.97-beta.6; model observation labels and visual tools since beta.5; the PNG-only reader predates this report
+- Created: 2026-11-12
+- Fixed: `v0.7.97-beta.7`
+- Resolution Date: 2026-11-12
+- Context: Space integration; current view, canonical history, remote Host attachments and extension approval UI
+
+**Original Problem.** Accepted user images receive model-facing observation
+labels. View/history projection treated those labels as user text, so display,
+copy and search included them. The Host attachment reader only accepted PNG,
+forcing JPEG/WebP clients to depend on local `.media` paths. The three read-only
+visual tools fell through to the `subagent` capability. Extension asks exposed
+only an aggregate reason and no structured attribution, so Space could overwrite
+the reason with its own risk explanation. Reproduce by accepting an image,
+reading the user view/history and attachment, resolving each visual capability,
+and observing an extension `tool:before` ask in Full Access.
+
+**Resolution.** The media owner projects its saved label encoding (including
+numbered queued-input labels) separately from user text, bound to the adjacent
+immutable image path. Client attachments carry optional observation identity,
+dimensions and SHA256. Canonical model context is retained. Image-only inputs
+remain visible. Search and full-body reads use the same user text projection.
+The Host reads PNG/JPEG/WebP/GIF using actual byte validation and dimensions,
+retains the 512 KiB/10 MiB bounds and expected-hash checks, and resolves history
+attachment IDs as well as live view IDs. Visual tools explicitly resolve to
+`read`; other previously implicit built-ins retain their established tier with
+explicit entries. Extension approval attribution survives aggregation, child
+callbacks, the Host registry and both client adapters in `extensionAsks`.
+
+**Files Changed.** `packages/agent/src/media/visual-input-display.ts`, media
+exports/history retrieval, REPL message projection, `src/session-view.ts`,
+`src/client-history.ts`, `src/session-view-image.ts`, the coding capability and
+permission gates, extension runtime/types, child forwarding, client contracts,
+`src/sdk-runtime.ts`, and `src/client-interactions.ts`.
+
+**Tests Added.** `src/session-view.attachments.test.ts` covers direct/queued and
+multiple/image-only inputs, persisted UI overlays, literal label-shaped text,
+all four media types, chunks and changed bytes. `src/sdk-runtime.visual.test.ts`
+checks view/history/search/attachment reads before and after restart/compaction.
+`src/sdk-runtime.visual-inputs.test.ts` verifies real queued, steer and redirect
+deliveries expose clean user history and structured observation identities.
+`src/sdk-runtime.tool-hook-ask.test.ts` covers multiple asking extensions through
+both client adapters; extension and child tests cover attribution forwarding.
+The capability test inventories every registered built-in. Targeted coverage
+of the display decoder, image reader and permission gates: 96.96% lines and
+94.05% branches. Related SDK/view/daemon regressions, workspace build, typecheck,
+SDK bundle and self-contained declaration generation pass.
+
+### Issue 407: Passive connections and exit receipts ignore the session storage owner
+
+- Priority: Medium
+- Status: Resolved (by FEATURE_305 T3 and T4)
+- Introduced: v0.7.97-alpha.7 (d45938b90, storage-owner redirect)
+- Created: 2026-11-10
+- Fixed: `v0.7.97-beta.6`
+- Related: Issue 406, Issue 405, FEATURE_305, ADR-075
+
+**Original problem.** A Host has two identity keys: the profile name
+(`runtime/daemon/<profile>/`: lock, descriptor, pipe, token, logs) and the
+session storage owner (`sessions/.product-host/owner.lock`). Since alpha.7,
+`ensureKodaXRuntime` with `autoStart` follows the storage owner to another
+profile's Host. Other entry points still use only the profile key:
+
+- `connectKodaXClient` (passive, `autoStart: false`, used by integration
+  clients) looks only at the requested profile. With Space's `coder` Host
+  owning `~/.kodax/sessions`, a passive `default` client finds no Host.
+- `readKodaXClientExits` reads exit receipts from the requested profile's
+  daemon directory, so exits recorded by the Host that actually served the
+  client are not seen.
+- Per-Session runtime state lives under `runtime/profiles/<profile>/`
+  (session settings, Session order, Runs, pending inputs, permission grants,
+  run-status index). The same sessions directory therefore gets state split by
+  whichever profile's Host served it. The developer machine's `~/.kodax` holds
+  both `default` and `coder` state for one sessions directory.
+
+The fix is structural: one Host per `KODAX_HOME`, keyed by the data root, with
+profile demoted to configuration. It is tracked as a design (ADR plus feature
+design) instead of point fixes.
+
+**Resolution (2026-11-11).** FEATURE_305 (ADR-075): one Host per
+`KODAX_HOME` in the canonical slot `default`.
+
+- T3 (b89ba6b48): `resolveRuntimeHostSlot` returns the slot of a live
+  legacy-slot Host that owns Session storage, else the canonical slot. Passive
+  connections and `daemon stop|status|logs|restart` use it.
+  `readKodaXClientExits` reads the receipts of every daemon slot in the home,
+  so exits recorded by a legacy Host stay recoverable after it is replaced.
+- T4: when the canonical Host starts and owns Session storage, it merges each
+  `runtime/profiles/<p>/` into `runtime/profiles/default/` once
+  (`runtime-daemon/profile-state-merge.ts`): Runs, Session stops and Session
+  MCP records move when absent; the newer Session settings win; the Session
+  order keeps the larger counter; queued inputs are kept once per input id;
+  only Session-scoped permission grants are imported. A profile whose slot
+  Host is still running is skipped. The source becomes
+  `<p>.merged-<YYYYMMDD>`, which home retention removes 30 days later. One
+  `runtime.host.state-merged` diagnostic reports counts, conflicts and failed
+  items; a failed item stays in place and is retried on the next start.
+
+- Files changed: `src/runtime-daemon/state.ts`, `src/sdk-client.ts`,
+  `src/sdk-runtime.ts`, `src/kodax_cli.ts`,
+  `src/runtime-daemon/profile-state-merge.ts`,
+  `src/runtime-daemon/home-retention.ts`, `docs/CLIENT_CONTRACT.md`,
+  `public_docs/sdk/embedder-guide.md`
+- Tests: `src/kodax_cli.daemon-smoke.test.ts` (passive connection,
+  `status`, `logs` and `stop` act on a legacy `coder` Host),
+  `src/sdk-client.exit-recovery.test.ts` (exits recorded by a legacy-slot
+  Host), `src/runtime-daemon/profile-state-merge.test.ts` (every merge rule,
+  live-Host skip, failed item retry, crash idempotence, diagnostic),
+  `src/runtime-daemon/home-retention.test.ts` (merged profile expiry),
+  `src/sdk-runtime.host-owner.test.ts` (merge runs at canonical Host start
+  only).
+
+### Issue 406: A CLI redirected to Space's Host fails `daemon start` verification and provider credential authorization
+
+- Priority: High
+- Status: Resolved
+- Introduced: `daemon start` verification in v0.7.97-alpha.1 (99ad85e30),
+  exposed by the storage-owner redirect in v0.7.97-alpha.7 (d45938b90);
+  credential profile fence in v0.7.97-alpha.12 (4b915c94c)
+- Created: 2026-11-10
+- Fixed: `v0.7.97-beta.6`
+- Related: Issue 405, Issue 407, ADR-075 (Accepted)
+
+**Original problem.** Packaged Space runs its Host as profile `coder`; the CLI
+uses `default`. Both use `~/.kodax/sessions`, so a CLI started after Space is
+redirected to Space's `coder` Host through the storage owner. Two checks still
+assume the requested profile:
+
+- `kodax daemon start` verifies the result against the `default` daemon
+  directory, which has no Host, and fails with `The Host owner changed while
+  startup was being verified. Retry startup.` although startup succeeded.
+- The provider credential authorizer requires the Host's profile to equal the
+  credential source's profile. The CLI's credentials are `default`, the Host is
+  `coder`, so every model request fails with `Provider credential
+  authorization requires the approved Host profile.`
+
+Both reproduce in the packaged Space E2E (Windows, isolated data root) with
+Space started first, with and without the Issue 405 fix. The profile fence adds
+no security: the lease is already bound to the authenticated Host runtimeId,
+scoped, fingerprinted and revoked on close, and every profile in one
+`KODAX_HOME` belongs to the same user.
+
+**Resolution (2026-11-10).**
+
+- The provider credential authorizer no longer compares the Host profile with
+  the credential profile. It still requires the authenticated Host runtimeId,
+  validates each source (profile, stored binding, OAuth scope, Radius issuer)
+  and connection fingerprints, and rebinds or revokes leases per Host epoch.
+  The credential profile still selects the account in `auth.json`.
+- `daemon start` snapshots the Session storage owner's Host before startup and
+  verifies the Host it actually attached to (`runtime.identity.profile`). A
+  start redirected to a running Host reports `already_running` with that
+  Host's state; the text output names the serving profile.
+
+- Files changed: `src/provider-credential-authorizer.ts`, `src/kodax_cli.ts`,
+  `docs/LLM_INTEGRATION.md`, `docs/SDK_MIGRATION.md`,
+  `docs/test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md`
+- Tests: `src/provider-credential-authorizer.test.ts` registers a lease for an
+  environment and an OAuth source with profile `work` against a Host whose
+  profile is `coder` or absent, without reading the OAuth token (replaces the
+  two fence tests). `src/kodax_cli.daemon-smoke.test.ts` starts a Host as
+  another profile, then runs `daemon start --profile default` and expects
+  `already_running` with the owner's runtimeId and profile (it failed with the
+  reported message before the fix). Source and test typechecks pass.
+
+### Issue 405: Space and the CLI refuse to share a compatible Host from another installation or version
+
+- Priority: High
+- Status: Resolved
+- Introduced: same-version cross-installation refusal in v0.7.97-alpha.1 (Host
+  build refresh); busy older-Host refusal with the startup upgrade path in v0.7.79
+- Created: 2026-11-10
+- Fixed: `v0.7.97-beta.6`
+- Related: 0a3728e9c (identical builds across installations share one Host)
+
+**Original problem.** A Windows user ran KodaX Space 0.1.47-alpha.5 (bundled SDK
+0.7.97-beta.4) and a KodaX CLI that also reported 0.7.97-beta.4. Whichever
+started second failed. The CLI printed `A different KodaX installation owns this
+profile. Connect passively to use that Host, or stop it explicitly before
+starting this installation.`; Space showed its assistant startup failure with
+`daemon_capability_upgrade_required`. The 0a3728e9c fix was in both builds, but
+it only shares a Host whose fingerprint matches byte for byte. The user's CLI
+was downloaded from the GitHub Release page for v0.7.97-beta.4 (a pre-release
+that ships both `kodax-ai-kodax-0.7.97-beta.4.tgz` and
+`kodax-v0.7.97-beta.4-win-x64.zip`); on Windows this is most likely the Bun
+single binary. A binary's identity hashes `kodax.exe` and its sidecars, while
+Space bundles the npm JS module build, so the two can never share a
+fingerprint even from the same commit. A registry npm install of beta.4 and
+Space's packaged SDK do match (verified: same 185 files, same SHA-256). Source
+builds, `npm link` and locally packed tarballs also never match, because the
+fingerprint covers `package-lock.json`, `src` or stale `dist` chunks.
+
+The root cause was broader. `ensureKodaXRuntime` used version and build to decide
+both whether it may use a Host and whether it should replace it:
+
+- Same version, different origin and fingerprint: always thrown, although the
+  Host satisfied every capability and a newer Host from the same installation
+  would have been accepted.
+- Older version or changed build of this installation, compatible but busy
+  (`connected_clients`, `active_runs`): the launcher retried replacement until
+  the startup deadline (60 s by default) and then failed. A CLI one release
+  ahead of Space's bundled SDK would hit this whenever Space was open.
+
+**Resolution (2026-11-10).** Only protocol and required capabilities decide
+whether a launcher can use a Host. Version and build only decide replacement:
+
+- A same-version Host from another installation is never replaced; the launcher
+  attaches to it.
+- When a refresh-only replacement (`runtimeVersion` or `runtimeBuild`) is
+  blocked because the Host cannot stop, the launcher attaches again with its
+  real client identity instead of the temporary launcher identity. It does not
+  wait for the deadline.
+- Both paths emit one `runtime.daemon.compatible-host` warning diagnostic per
+  connection with the reason, both versions, both builds and any blockers. The
+  probe-time decision stays silent; only the authenticated decision reports.
+- Missing required capabilities, legacy same-version Hosts without build
+  identity, and idle older or rebuilt Hosts keep their existing behavior
+  (replace or explicit error).
+
+`CLIENT_CONTRACT.md` now states the split. It also requires every
+client-visible Host behavior change to raise a capability version, because
+version and build no longer gate compatibility.
+
+- Files changed: `src/sdk-runtime.ts`, `docs/CLIENT_CONTRACT.md`,
+  `tests/bundled-historical-host-upgrade.test.mjs`
+- Tests: `src/sdk-runtime-daemon-upgrade.test.ts` covers attaching a foreign
+  same-version build without stopping it (exactly one diagnostic with a real
+  probe), attaching a busy older Host from another installation and a busy
+  rebuilt Host of this installation with the real client identity, and the
+  unchanged refusal for a Host without build identity. The real beta.4
+  historical upgrade suite now expects the updated installation to attach to
+  the busy beta.4 Host (same runtimeId, `runtimeVersion` diagnostic with
+  `active_runs`) and still upgrade in place once idle. `test:bundle`,
+  `test:host-upgrade`, `test:host-cutover`, source and test typechecks pass.
+- End-to-end (Windows, isolated `KODAX_HOME`, OpenAI-compatible fixture): the
+  released GitHub beta.4 win-x64 binary and npm beta.4 module (Space layout)
+  reproduce the refusal in both start orders. Fixed Bun binary and fixed module
+  of the same version share one Host in both orders and while the CLI has an
+  active run; Runs from both sides complete and the Host PID never changes. A
+  fixed module attaches to a busy released beta.4 binary Host within about 1 s,
+  replaces it when idle, and the released beta.4 CLI then joins the newer Host.
+
+### Issue 404: Linux kernels before 5.8 reject every trusted text write
+
+- Priority: High
+- Status: Resolved
+- Introduced: trusted text mount checks in v0.7.96 (FEATURE_295)
+- Created: 2026-11-10
+- Fixed: `v0.7.97-beta.6`
+- Related: Issue 403 (same customer host)
+
+**Original problem.** The native text authority proved mount identity only
+through `statx(STATX_MNT_ID)`. Linux added that field in 5.8. On the customer's
+Anolis 7 host (kernel 4.18) and other distribution kernels older than 5.8, such
+as RHEL 8 and Kylin V10, it is missing. Every `write`, `edit` and `multi_edit`
+would then fail with `trusted text filesystem does not report mount identity`
+even after the addon loaded.
+
+**Resolution (2026-11-10).** `mount_identity` tries `statx` first. If statx is
+missing, filtered by seccomp, or omits `STATX_MNT_ID`, it reads the `mnt_id:`
+line of `/proc/self/fdinfo/<fd>` (Linux 3.15+). Both sources report the same
+kernel mount ID, so mount-boundary checks keep their meaning. Before trusting
+fdinfo, the addon checks that `/proc` really is procfs (fstatfs magic `0x9fa0`).
+After the first fallback, the process goes straight to fdinfo. Kernels with
+`STATX_MNT_ID` take the same path as before. On older kernels each check costs
+one extra procfs read.
+
+- Files changed: `native/windows-text-transaction/src/unix_transaction.rs`
+- Tests: Rust unit tests compare fdinfo with statx on the same descriptor,
+  parse fdinfo text, and commit a full transaction with only the fdinfo path
+  enabled. They run in the Linux CI `test:native` lanes.
+
+### Issue 403: Linux native text authority cannot load on glibc 2.17 hosts
+
+- Priority: High
+- Status: Resolved
+- Introduced: Linux native text authority in v0.7.96 (FEATURE_295); the glibc
+  2.28 floor dates from Issue 328
+- Created: 2026-11-10
+- Fixed: `v0.7.97-beta.6`
+- Related: Issues 328, 402 and 404
+
+**Original problem.** A customer runs the standalone Linux binary on Anolis 7
+(RHEL/CentOS 7 family, glibc 2.17, kernel 4.18). Loading
+`kodax-text-transaction.node` fails because the addon needs `GLIBC_2.28`, so no
+trusted text write can succeed. The addon was linked against glibc 2.28 in
+`manylinux_2_28` builders. `statx` is a hard `GLIBC_2.28` reference, and Rust
+std's weak `getrandom` and `__cxa_thread_atexit_impl` references also carried
+the 2.25 and 2.18 version requirements. The Bun-compiled binary itself starts on
+glibc 2.17. The npm package still needs a Node build for that host, and official
+Node 20 requires glibc 2.28.
+
+**Resolution (2026-11-10).** Linux x64 and arm64 addons now build with the same
+Rust 1.98.0 inside digest-pinned `manylinux2014` (glibc 2.17) images. Rust 1.98
+officially supports glibc 2.17. The addon calls statx through `syscall(2)`
+instead of the glibc 2.28 wrapper. Std's weak symbols resolve at run time as
+they do on any glibc 2.17 build. CI and release lanes now reject any staged
+Linux addon that needs a `GLIBC_*` version newer than 2.17. Transaction, CAS,
+lock, atomic replace and receipt code is unchanged.
+
+- Files changed: `scripts/build-linux-native.mjs`, `scripts/build-native.mjs`,
+  `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `.gitignore`,
+  `native/windows-text-transaction/src/unix_transaction.rs`, `docs/release.md`,
+  self-knowledge manual
+- Tests: `tests/native-glibc-compatibility.test.ts` (2.17 gate),
+  `tests/release-workflow.test.ts` (builder images and the CI/release 2.17 gates)
+- Verification still owed: the first CI run must build in the new images and
+  pass the 2.17 gate, and the customer's Anolis 7 host must pass the regression
+  guide.
+
+### Issue 402: A failed native text addon load crashes the next tracked write
+
+- Priority: High
+- Status: Resolved
+- Introduced: process-level native binding cache in v0.7.96 (FEATURE_295)
+- Created: 2026-11-10
+- Fixed: `v0.7.97-beta.6`
+- Related: Issue 403 (the load failure that exposed it)
+
+**Original problem.** On the glibc 2.17 host, the first `edit`, `write` or
+`multi_edit` reported the addon load failure. The second one in the same
+process always crashed KodaX with a segmentation fault. The loader remembered
+only successful loads, so every write called `process.dlopen` again on the same
+object. KodaX's JavaScript holds no native handle, and Bun's dlopen error path
+keeps no pending state. The crash is most likely glibc 2.17 failing to roll
+back the first failed dlopen. This is inferred from the report; it was not
+reproduced locally.
+
+**Resolution (2026-11-10).** The first dlopen (or Windows `require`) failure is
+recorded for the process. Every later snapshot, commit and
+`kodax doctor --native-text` probe fails closed with the same error. The error
+includes the loader message and says the binding will not be retried in this
+process. Path, hash and manifest checks before dlopen still run on each call.
+Restarting KodaX after the host is fixed loads the binding again.
+
+- Files changed: `src/windows-text-transaction.ts`
+- Tests: `src/windows-text-transaction.test.ts` (three commits plus the doctor
+  probe after one failed load call dlopen exactly once and create no file)
+
 ### Issue 401: Memory review inbox keeps every finished job's files and test-made jobs
 
 - Priority: Low
@@ -3268,7 +3710,7 @@ needs its own decision about re-review.
   (`2f6751d19`, v0.7.96), sandbox request files (`c7d31f954`, `80a205022`,
   v0.7.96) and the home runner staging copy (`27bb8536e`, v0.7.97-alpha.12)
 - Created: 2026-11-10
-- Fixed: v0.7.97 (Unreleased)
+- Fixed: `v0.7.97-beta.5`
 - Related: Issue 398 (`.unresolved/` grows with every isolated record)
 
 **Original problem.** `~/.kodax` on the reporting machine was 4.1 GB. About
@@ -3326,7 +3768,7 @@ the rules, and DD §10 lists every path.
 - Introduced: setup-owned profile read roots since v0.7.96 (`ea4d796ee`, protocol 10);
   observed at v0.7.97-beta.4
 - Created: 2026-11-10
-- Fixed: v0.7.97 (Unreleased)
+- Fixed: `v0.7.97-beta.5`
 - Related: Issue 372 (same diagnostic, different trigger)
 
 **Original problem.** In a REPL session (`20261008_104354_7r848c8cf21187`) every
@@ -3423,7 +3865,7 @@ resumed at 16:06:29, 2.1 s after `~/.claude.json` was rewritten (16:06:26.96).
 - Introduced: Run-record retention in the historical sweep since v0.7.97-alpha.12
   (`fee13b700`, `141446d2f`); every cold Host start observed slow from 2026-10-31
 - Created: 2026-11-10
-- Fixed: v0.7.97 (Unreleased)
+- Fixed: `v0.7.97-beta.5`
 - Follow-up of Issue 371
 
 **Original problem.** The first `kodax -r` after `npm run build` took about 7.6 s;
@@ -3484,7 +3926,7 @@ its outcome does not change.
 - Status: Resolved
 - Introduced: v0.7.97-beta.4 (`c50d24c27` made the activation inventory list every bundled file)
 - Created: 2026-11-09
-- Fixed: v0.7.97 (Unreleased)
+- Fixed: `v0.7.97-beta.5`
 
 **Problem.** `builtin/skill-creator/scripts/` ships a `.d.ts` file next to each
 of its 14 `.js` helpers. Activating `skill-creator` lists all 28 files in the
@@ -3518,7 +3960,7 @@ the loader and `skillRevision` are unchanged.
 - Status: Resolved
 - Introduced: unknown; present at v0.7.97-beta.4
 - Created: 2026-11-09
-- Fixed: v0.7.97 (Unreleased)
+- Fixed: `v0.7.97-beta.5`
 
 **Problem.** `SkillRegistry.loadFull` caches each skill body until
 `reload()`, and the REPL builds the skill catalog from the registry that was
@@ -18227,12 +18669,55 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 279 (45 Open, 0 ready, 1 needs-info, 233 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 288 (45 Open, 0 ready, 1 needs-info, 242 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-13: Issue 410
+
+- A principal-scoped client exit stop refuses `connected_clients` before
+  draining or running the preflight; shipped in `v0.7.97-beta.9`.
+
+### 2026-11-12: Issue 409
+
+- Replaced the PowerShell Add-Type daemon Job probe and startup Job supervisor
+  with the bundled native runner, retained failed-start cleanup handles, made
+  `child_exit` retryable and required a live competing startup owner; shipped in
+  `v0.7.97-beta.8`.
+
+### 2026-11-12: Issue 408
+
+- Resolved the Space SDK image text/attachment/capability report and added
+  structured extension approval attribution; shipped in `v0.7.97-beta.7`.
+
+### 2026-11-11: Issue 407
+
+- Resolved Issue 407 through FEATURE_305 T3 (legacy-slot Host discovery) and
+  T4 (one-time merge of legacy profile state into the canonical profile).
+
+### 2026-11-10: Issues 406-407
+
+- Recorded and resolved the redirected-CLI failures against Space's `coder`
+  Host as Issue 406 (`daemon start` verification and the credential profile
+  fence).
+- Recorded passive connections, exit receipts and per-profile runtime state
+  ignoring the storage owner as Issue 407, folded into the one-Host-per-
+  `KODAX_HOME` design.
+
+### 2026-11-10: Issue 405
+
+- Recorded and resolved the Space/CLI Host sharing report: a launcher now uses
+  any Host that satisfies its capabilities, and version or build differences
+  only trigger replacement when that is possible.
+
+### 2026-11-10: Issues 402-404
+
+- Recorded and resolved the Anolis 7 report (glibc 2.17, kernel 4.18): a failed
+  native text addon load is final for the process, Linux addons build against
+  glibc 2.17, and kernels before 5.8 prove mount identity through procfs fdinfo.
 
 ### 2026-11-10: Issues 400-401
 

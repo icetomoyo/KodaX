@@ -6,6 +6,275 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Memory is rebuilt (FEATURE_308). Each memory is now one markdown file with a short index in the system prompt and a single `memory` tool, and it is on by default. A background step after each run reflects on the session, saves what you stated or corrected, keeps inferred notes as candidates until a second session or you confirm them, archives stale inferred notes, and proposes reusable procedures as skills that wait for your review in `/learn ready`. It makes at most 10 model calls per day, and it skips CLI-bridge providers. `/memory` lists your notes and unconfirmed candidates, and can show, approve or forget one. When the index is full, the remaining notes are linked from `MEMORY.more.md`. Your existing memories in every scope are copied into the new store once; the old files are left in place. Set `KODAX_MEMORY_NOTES=0` to keep the previous memory.
+
+---
+
+## [0.7.97-beta.9] - 2026-11-13
+
+Ninth beta of the v0.7.97 line: data root relocation for Space
+(FEATURE_306), steer withdrawal, and two Host fixes from Space
+integration. `resolveKodaXHome` resolves the data root without touching
+`process.env`, and `copyKodaXDataRoot` copies a data root into an empty
+target. The copy runs under an incomplete marker, skips per-Host state,
+refuses a running Host and rebases absolute paths into the old root.
+`inputs.withdraw` can take back an undelivered `steer` input. A client
+exit stop is refused at once while a peer is attached (Issue 410). A
+failed Windows daemon launch names its cause (Issue 409 follow-up).
+A relative `KODAX_HOME` is now ignored with a warning. Every v0.7.96
+stable and v0.7.97-alpha.1 through beta.8 client contract is retained.
+npm publication remains a manual maintainer action.
+
+### Added
+
+- `resolveKodaXHome({ env?, homeDir? })` (`@kodax-ai/kodax/agent`): a pure
+  resolver for the data root. `getAgentConfigHome()` now delegates to it, and
+  `packages/repl` session resume no longer reads `KODAX_HOME` itself.
+- `copyKodaXDataRoot({ from, to, exclude?, onProgress?, signal? })`
+  (`@kodax-ai/kodax/runtime`): copy-only data root relocation that skips
+  per-Host state and refuses a non-empty target or a running Host. The copy is
+  assembled inside the target under a `KODAX_DATA_ROOT_COPY_MARKER` file, so a
+  drive root or mount point can be the target. Absolute paths into the old
+  root inside `.json` / `.jsonl` files are rewritten to the new root
+  (`rebasedFiles`), so MCPB servers, session images, tool-output files and
+  workflow snapshots keep resolving after the old root is deleted. A failed run
+  removes only what it created; a target left by a crashed run is refused
+  (`target_incomplete`) rather than cleared, and an unreadable Host lock counts
+  as a running Host.
+
+### Changed
+
+- `inputs.withdraw` now takes back a `steer` input until its Run claims it
+  at a safety point, returning the complete original text and attachments.
+  It used to fail with "Input is bound to its target Run". Once delivery has
+  claimed the input, withdrawal is still an explicit `conflict`. A Runtime
+  safety point now claims queued interrupt input before writing it to
+  history, so a concurrent withdrawal can no longer report success for input
+  the model already sees. `MessageQueue.requeue` restores claimed messages
+  with their original ids when that write fails.
+- A relative `KODAX_HOME` is ignored (the default `~/.kodax` is used) instead of
+  being used as a path relative to the working directory; `resolveKodaXHome` reports it as
+  `ignoredEnv`, the CLI prints a warning naming it, and the skill-creator
+  scripts follow the same rule instead of always using `~/.kodax/skills`.
+- `docs/SDK_MIGRATION.md` now states that `homeDir` / `--home` name the base
+  directory owning `.kodax`, while `KODAX_HOME` names the data root itself.
+
+### Fixed
+
+- Client cleanup no longer stops on a pending `steer` input of the departing
+  client; the input settles with its Run.
+- A `steer` input whose Run completes or fails before delivering it now reads
+  `dropped`. It used to stay `queued` while every withdrawal failed.
+- A `steer` withdrawal interrupted by a Host stop no longer comes back: Run
+  recovery honors the persisted withdrawal and does not deliver the input.
+- A failed Windows daemon launch now names its cause. The native Job
+  supervisor appends its failures to `bootstrap.log` as `[Error]` lines
+  (the launcher deletes the ready file that used to be the only record),
+  and the startup error quotes only a line written by the failed attempt,
+  never one left by an earlier start. The supervisor no longer ignores a
+  failed `ResumeThread`, a failed cleanup of an unassigned daemon or an
+  unreadable exit code. A cleanup failure tells the user that retrying or
+  restarting the application releases it (Issue 409).
+- A client exit that asks to stop the Host now gets `connected_clients` at
+  once while another client is attached. It used to drain the Host and run
+  the full preflight first, which took up to 17 seconds and rejected the
+  other client's work in the meantime (Issue 410).
+
+---
+
+## [0.7.97-beta.8] - 2026-11-12
+
+Eighth beta of the v0.7.97 line: the Windows daemon startup reliability
+repairs from the customer incident report (Issue 409). The fail-closed
+startup path no longer compiles C# through PowerShell: Job membership,
+kill-on-close and both creation identities are verified by the bundled,
+hash-verified native `__daemon-job-identity`, and the startup Job owner
+is the native `__daemon-job-supervise` helper, which starts the daemon
+suspended, assigns it to the kill-on-close Job before resume and
+publishes readiness atomically. Failed starts keep their exact cleanup
+handles, admissions for the same home/slot serialize until cleanup
+settles, `child_exit` is retryable, a competing startup owner must be
+alive to matter, and a child that exits carries its last bootstrap
+error line. Every v0.7.96 stable and v0.7.97-alpha.1 through beta.7
+client contract is retained; no SDK surface changes. npm publication
+remains a manual maintainer action.
+
+### Fixed
+
+- The daemon Job proof no longer compiles C# in PowerShell: the bundled,
+  hash-verified native `__daemon-job-identity` reads Job membership,
+  kill-on-close and both process-creation identities within a 10-second
+  deadline (previously 5), retries once when the probe could not run, and treats native
+  refusals as final while unverified ownership still fails closed
+  (Issue 409).
+- The startup Job supervisor no longer uses PowerShell `Add-Type`. The
+  native `__daemon-job-supervise` helper owns the named kill-on-close
+  Job: the daemon starts suspended and is assigned before resume,
+  readiness is published atomically with retries for transient sharing
+  violations, a pre-existing Job of the same name is refused, and
+  failures before readiness are written to the ready file (Issue 409).
+- A failed startup retains its exact child/supervisor cleanup handles and
+  admissions for the same home/slot serialize until cleanup settles, so a
+  replacement cannot overlap unfinished cleanup (Issue 409).
+- `child_exit` startup failures are retryable, and a dead owner left in
+  the lock no longer hides an immediate child exit behind the full
+  startup timeout; the message carries the child's last `bootstrap.log`
+  `[Error]` line (Issue 409).
+
+---
+
+## [0.7.97-beta.7] - 2026-11-12
+
+Seventh beta of the v0.7.97 line: the Space SDK image projection,
+attachment and approval-attribution repairs triaged from the Space
+integration report (Issue 408). User image observation labels no longer
+leak into the current view, canonical history or search, the Host
+attachment reader accepts all four supported image formats, the
+read-only visual tools resolve to the `read` capability, and extension
+`tool:before` approvals carry structured per-extension attribution.
+Every v0.7.96 stable and v0.7.97-alpha.1 through beta.6 client contract
+is retained; the corrections tighten projections without adding
+requirements. npm publication remains a manual maintainer action.
+
+### Fixed
+
+- Model-facing observation labels on accepted user images are no longer
+  projected as user text. The current view, history reads and search return the
+  user's original text (including leading/trailing whitespace), image-only
+  inputs stay visible, and image observations surface as optional
+  `attachments[].observationId/width/height/sha256`. Saved beta.5/beta.6
+  inputs are projected the same way without rewriting their canonical model
+  context, and clients stop parsing labels or the `.media` layout themselves
+  (Issue 408).
+- `sessions.readItem(..., { part: 'attachment' })` reads PNG, JPEG, WebP and
+  GIF, validated by their actual bytes and dimensions, and returns the actual
+  `mediaType` beside the existing SHA256, width/height and bounded chunks.
+  History attachment IDs resolve as well as live view IDs. The 512 KiB chunk
+  and 10 MiB image limits and the expected-hash checks are unchanged
+  (Issue 408).
+- `visual_history`, `visual_inspect` and `visual_read_pixels` resolve to the
+  `read` capability instead of falling through to the conservative `subagent`
+  tier, and every registered built-in tool has an explicit capability entry
+  covered by a completeness test (Issue 408).
+- Extension `tool:before` approval requests carry optional
+  `options.extensionAsks: { extension, reason }[]` naming each asking
+  extension with its original reason, preserved through aggregation, child
+  forwarding, the Host registry and both client adapters, so a product UI no
+  longer overwrites the reason with its own risk explanation. The aggregate
+  `reason` remains the readable fallback for older Hosts; absence of the new
+  field does not identify the approval's origin (Issue 408).
+
+---
+
+## [0.7.97-beta.6] - 2026-11-11
+
+Sixth beta of the v0.7.97 line: one Host per `KODAX_HOME` (ADR-075,
+FEATURE_305). The breaking change removes the Host-location `profile`
+from the SDK entry points and the `kodax daemon`/`a2a serve` commands; a
+legacy-slot Host that an older Space started is still found through the
+storage-owner redirect, and its profile-split Session state merges once
+(Issue 407). Space and the CLI share one compatible Host across
+installations (Issue 405), and a CLI started beside Space's Host attaches
+to it and keeps provider credentials (Issue 406). The standalone binary's
+Linux floor drops to glibc 2.17 (Issues 403–404), a failed native text
+addon load no longer crashes the next tracked write (Issue 402), and
+Session settings no longer drift with shared user defaults. Every
+v0.7.96 stable and v0.7.97-alpha.1 through beta.5 client contract is
+retained except the removed `profile` option; the glibc and
+permission-grant behavior changes are listed under Compatibility. npm
+publication remains a manual maintainer action.
+
+### Removed
+
+- **Breaking: one Host per `KODAX_HOME`; the Host-location `profile` is
+  removed** (ADR-075, FEATURE_305). The `profile` option is gone from
+  `ensureKodaXRuntime`, `connectKodaXRuntime`,
+  `createKodaXRuntime({ mode: 'daemon' })`, `getKodaXRuntimeOwnerState`,
+  `waitForRuntimeDaemonShutdown`, `ensureKodaXClient`, `connectKodaXClient` and
+  `readKodaXClientExits`, and `--profile` is gone from `kodax daemon
+  start|stop|restart|status|logs|serve` and `kodax a2a serve`. Passing it fails
+  with `runtime_host_migration_required`: `<api> no longer accepts "profile":
+  one Host serves each KODAX_HOME`. Fix: delete the option. To isolate Hosts,
+  use a separate `homeDir`, `--home` or `KODAX_HOME`. `identity.profile` stays
+  on the wire and is deprecated. See [One Host per KODAX_HOME (profile
+  removed)](docs/SDK_MIGRATION.md#one-host-per-kodax_home-profile-removed).
+
+### Fixed
+
+- Passive connections, exit receipts and `kodax daemon stop|status|logs` now
+  find the Host that serves the home when an older Space started it under
+  another name (`coder`). Session settings, order, queued inputs and
+  Session-scoped permission grants that older Hosts split by profile are merged
+  once into the one Host's state when it starts; global grants approved in such
+  a Host are dropped and must be approved again (Issue 407).
+- A failed load of the native text addon no longer crashes KodaX on the next
+  `edit`, `write` or `multi_edit`. The first failure is final for the process.
+  Later writes and `kodax doctor --native-text` report the same loader error
+  without loading the addon again (Issue 402).
+- The Linux standalone binary's native text authority now loads on glibc 2.17
+  hosts such as Anolis 7 and other RHEL/CentOS 7-family systems. Linux addons
+  build in digest-pinned `manylinux2014` images, and CI rejects any addon that
+  needs a `GLIBC_*` version newer than 2.17 (Issue 403).
+- Trusted text writes work on Linux kernels older than 5.8, such as 4.18 and
+  4.19. Those kernels do not report mount IDs through `statx`, so the authority
+  reads the same mount ID from `/proc/self/fdinfo` (Issue 404).
+- KodaX Space and the CLI can run together when they come from different
+  installations, such as a source build, a local package or a newer CLI next to
+  Space's bundled SDK. A launcher now uses any running Host that supports the
+  capabilities it needs. A launcher replaces only an idle Host, and only when that
+  Host runs an older version or a stale build of the same installation. A busy
+  Host is no longer retried until the 60-second startup deadline (Issue 405).
+- A CLI started while KodaX Space is open now works with Space's Host. Before,
+  `kodax daemon start` failed with `The Host owner changed while startup was
+  being verified`, and every model request failed with `Provider credential
+  authorization requires the approved Host profile`. `daemon start` now
+  verifies the Host it actually attached to. Provider credential leases are
+  bound to the authenticated Host only, not to its profile name (Issue 406).
+- Session settings no longer drift with shared user defaults. The Host
+  captures user-level Session defaults once at creation (or on first access
+  to legacy settings), persists that snapshot beside the raw overrides
+  without changing their revision, and merges the layers only for effective
+  views and execution. Global configuration changes affect future Sessions;
+  clearing the model or effort choice also clears its captured fallback;
+  fork and recovery copy both layers, and clients observing the same
+  Session still share changes.
+
+### Compatibility
+
+- The supported Linux glibc floor drops from 2.28 to 2.17 for the standalone
+  binary. The npm package still needs a Node build for the host, and official
+  Node 20 requires glibc 2.28.
+- The one-time state merge imports only permission grants scoped to one
+  Session. Global grants approved in a Host that an older Space started under
+  another name are dropped; approve them again where needed (Issue 407).
+
+---
+
+## [0.7.97-beta.5] - 2026-11-10
+
+Fifth beta of the v0.7.97 line: the `KodaX-next-dev` integration plus
+post-beta.4 repairs. Extension `tool:before` applies on every dispatch
+path, fails closed, and can ask a person to approve one call (FEATURE_304);
+the Responses WebSocket follows the environment proxy and private root CAs
+are documented (FEATURE_303); model writes to agent-home extensions and
+integrations, cloud metadata reads and public-to-private `web_fetch`
+redirects are refused (Issues 378–385). `read` pins accepted images as
+durable observations that `visual_history`, `visual_inspect` and
+`visual_read_pixels` page, re-display and sample across restarts,
+compaction and forks; their whole-task value remains unproven. Follow-up
+Runs keep the Managed Run Context in place, scoped tool contracts appear
+when relevant, and child usage is charged to the root goal budget. Windows
+commands stay sandboxed after a profile file is replaced, cold Host starts
+skip extinct Run child records, and the idle Host expires retired
+agent-home state and rotates `daemon.log`. Optional CLI integrations, ACP
+and hosted A2A load on demand, keeping the audited 49 KiB headroom under
+the unchanged 5 MiB limit. Every v0.7.96 stable and v0.7.97-alpha.1
+through beta.4 client contract is retained; the security-driven behavior
+changes are listed under Compatibility. npm publication remains a manual
+maintainer action.
+
 ### Added
 
 - Skills can use `${CLAUDE_SKILL_DIR}` or `${KODAX_SKILL_DIR}` for the skill
@@ -24,6 +293,22 @@ All notable changes to this project will be documented in this file.
   and no grant suggestions, so it can only be allowed once or rejected. Hosts
   implement the new optional `KodaXEvents.requestToolApproval`; without it an
   ask blocks the call. Runtimes advertise `toolHookAsk: { version: 1 }`.
+- `read` pins each accepted image as a durable observation and returns its
+  `observationId` with the image. Three new tools work on accepted
+  observations: `visual_history` pages them, `visual_inspect` re-displays one
+  to four whole images or regions in order, with optional nearest-neighbor
+  enlargement, and `visual_read_pixels` returns exact grid-center RGBA samples
+  as text. Regions, enlargement and sampling accept static 8-bit RGB/RGBA PNG
+  only; other formats re-display whole.
+- Accepted observations survive Host restarts, repeated compaction and Session
+  forks. Originals are stored under `<sessions>/.media/`, forks copy them to
+  the child Session, and a restored Run re-verifies the stored bytes against
+  their hash. An image queued while a Run is busy is pinned when the input is
+  accepted, so later delivery never rereads the original file.
+- Typed images in MCP tool results and `mcp_read_resource` responses become
+  observations, with the same output-capacity checks, when the call runs in a
+  Runtime-owned Session. Sessions without a visual owner keep the previous
+  inline images.
 
 ### Security
 
@@ -46,7 +331,6 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- Memory is rebuilt (FEATURE_306). Each memory is now one markdown file with a short index in the system prompt and a single `memory` tool, and it is on by default. A background step after each run reflects on the session, saves what you stated or corrected, keeps inferred notes as candidates until a second session or you confirm them, archives stale inferred notes, and proposes reusable procedures as skills that wait for your review in `/learn ready`. It makes at most 10 model calls per day, and it skips CLI-bridge providers. `/memory` lists your notes and unconfirmed candidates, and can show, approve or forget one. When the index is full, the remaining notes are linked from `MEMORY.more.md`. Your existing memories in every scope are copied into the new store once; the old files are left in place. Set `KODAX_MEMORY_NOTES=0` to keep the previous memory.
 - Load optional CLI integration commands, ACP, and hosted A2A serving when
   selected, preserving command help and Host lock/diagnostic ownership while
   retaining the existing 49 KiB CLI bundle reserve.
@@ -56,6 +340,25 @@ All notable changes to this project will be documented in this file.
 - The Windows effect Job supervisor reports its `Add-Type` compile time and
   startup time through `runtime:windows` diagnostics, and reports startup
   failures and timeouts as warnings.
+- A follow-up Run in the same Session keeps the earlier Managed Run Context in
+  place and appends a short context update instead of a new full envelope, so
+  the prompt prefix stays stable and providers with prompt caching can reuse
+  it. Forks, reopened Runtimes and changed history still install a full
+  envelope.
+- Scoped tool contracts appear when they become relevant: `worktree_create`,
+  `worktree_remove` and `session_history_read` are described inside
+  `tool_call` until the model uses them, `visual_inspect` and
+  `visual_read_pixels` stay hidden until the Session holds image evidence, and
+  `exit_plan_mode` is hidden outside Plan mode. The Skill catalog and
+  Actor-capacity text are compacted. Only the request changes; measured
+  offline, first requests are about 1.4K–1.5K tokens smaller in each work mode.
+- Deferred-tool hints say each resident schema can be called directly, and
+  past `tool_search` results drop parameter blocks the current tool contracts
+  already carry. `tool_search` remains available; receipts and persisted
+  evidence stay complete.
+- Builtin child Agent requests use a compact projection of their audited tool
+  contracts plus the shared `spawn_agent`, `wait_agent` and Todo obligations.
+  SDK inputs, live permissions and persisted contracts stay canonical.
 - Move the README demo animation into `assets/`.
 - Move the Vitest tier configs, tier lists, and shared setup file into
   `tests/config/`. The root `vitest.config.ts` and every `npm run test:*`
@@ -105,6 +408,38 @@ All notable changes to this project will be documented in this file.
 - Nested `wf.workflow(name)` calls and `kodax "/name"` print mode read personal
   workflows and commands from the agent home, the same place the REPL saves
   them (Issue 384).
+- On Windows, sandboxed commands stay sandboxed after another program replaces
+  a profile file such as `~/.claude.json` or `~/.gitconfig`. The replaced file
+  gets its sandbox access back at the next command, and a setup-owned
+  directory that lost its access becomes unreadable for that command instead
+  of moving every command to host execution. The REPL footer reports
+  `Sandbox cannot read <dir>; run kodax sandbox setup` (Issue 399).
+- A cold shared Host start no longer rereads Run child records whose owner and
+  every recorded process are gone; they move unchanged to `.unresolved/`. On
+  one home with about 1,300 such records this removed about 6 seconds from
+  each cold start (Issue 398).
+- The idle Host expires agent-home state that no current code reads: retired
+  Run event journals, filesystem-effect ledgers, sandbox request files and the
+  old sandbox runner copy after 30 days untouched, and `.unresolved` child
+  records after 90 days. `daemon.log` rotates to `daemon.log.1` at 2 MiB and
+  `kodax daemon logs` reads both; `debug` diagnostics are no longer written to
+  it. Deleting a Session also removes its settings, order counter, empty
+  pending-input file and execution facts (Issue 400, ADR-074).
+- Extension `exec` on Windows passes `PSModuleAnalysisCachePath` and
+  `LOCALAPPDATA` to PowerShell, so it keeps its module analysis cache instead
+  of rescanning every installed module on each call, which took over 20
+  seconds on CI runners (Issue 386).
+- The Session layout migration lock records the owner's process start
+  identity, so a reused PID no longer keeps a stale lock alive. Migration and
+  read-boundary errors show the full lock path.
+- Child Agents no longer see `get_goal`, `create_goal` or `update_goal`, and
+  their provider usage is charged once to the root goal budget (Issue 377).
+- `session_history_search` hits carry an `entryRevision` that
+  `session_history_read` accepts, so ordinary appends to the Session tail no
+  longer make the read stale. The whole-history `revision` stays strict.
+- Stale temporary transcript snapshots are cleaned asynchronously within the
+  existing read budget, so concurrent Session reads no longer wait for the
+  scan.
 
 ### Compatibility
 
@@ -123,6 +458,20 @@ All notable changes to this project will be documented in this file.
 - With `KODAX_HOME` set, user Skills, personal workflows and commands in
   `~/.kodax` are no longer found. Move them to `<KODAX_HOME>/skills`,
   `<KODAX_HOME>/workflows` and `<KODAX_HOME>/commands`.
+- `visual_history` is in the default tool list of Runtime-owned Sessions, and
+  `read` labels each accepted image with an `observationId`. Observation IDs
+  are opaque: file names, paths and view labels are not accepted. Sessions
+  without a visual owner see no visual tools, and `read` behaves as before.
+- The Host deletes the retired agent-home state listed under Issue 400 by
+  itself. Only that exact list is ever removed; Sessions, Run records, tool
+  results and memory are kept, and `daemon.log` keeps at most two
+  generations. A Host downgraded to v0.7.96 finds no Run event journal for
+  Runs older than 30 days.
+- `ClientSessionView.sandbox` is a new optional field with the Session's
+  latest shell sandbox health; on Windows an applied observation can list
+  `degradedReadRoots`.
+- `session_history_search` hits and read results add `entryRevision`; callers
+  that ignore it keep the strict whole-history `revision` behavior.
 
 ---
 

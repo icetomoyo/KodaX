@@ -8,6 +8,7 @@ import {
   type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult,
 } from '@kodax-ai/llm';
 import { createKodaXRuntime } from '../tests/runtime-fixture.js';
+import { listClientInteractions, toRuntimePermissionRequest } from './client-interactions.js';
 
 // FEATURE_304 / ADR-071: an extension `tool:before` ask reaches a person through the Host.
 const REASON = 'Extension "guard": Deletes build output.';
@@ -58,13 +59,32 @@ async function setup({ permissionTimeoutMs = 10_000, sideEffect = 'mutates-state
     if (pending.length === 0) throw new Error('No permission request yet.');
     return pending;
   }, { timeout: 10_000, interval: 20 });
-  return { runtime, session, deleted, start, pendingFor };
+  return { runtime, session, deleted, start, pendingFor, extension };
 }
 
 it('advertises the toolHookAsk capability', async () => {
   const { runtime } = await setup();
   expect(runtime.capabilities).toMatchObject({ toolHookAsk: { version: 1 } });
 });
+
+it('preserves each extension ask through the client Interaction and permission adapter', async () => {
+  const { runtime, session, start, pendingFor, extension } = await setup();
+  extension.registerHook('tool:before', () => ({ decision: 'ask', reason: 'Requires a billing check.' }),
+    { source: { kind: 'runtime', id: 'billing', label: 'Billing policy' } });
+  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', workMode: 'coding', permissionMode: 'full-access' });
+  const runId = await start();
+  const [request] = await pendingFor(runId);
+  const [interaction] = await listClientInteractions({ userInputs: runtime.userInputs, permissions: runtime.permissions }, { sessionId: session.id });
+  expect(interaction?.kind).toBe('permission');
+  if (interaction?.kind !== 'permission') throw new Error('Expected permission Interaction.');
+  const extensionAsks = [{ extension: 'guard', reason: 'Deletes build output.' },
+    { extension: 'Billing policy', reason: 'Requires a billing check.' }];
+  expect(interaction.options).toMatchObject({ extensionAsks });
+  expect(toRuntimePermissionRequest(interaction)).toMatchObject({ extensionAsks });
+  expect(interaction.options.grantSuggestions).toBeUndefined();
+  await runtime.permissions.respond(request!.id, { type: 'allow_once' });
+  expect((await runtime.runs.await(runId)).phase).toBe('completed');
+}, 30_000);
 
 it('asks a person in Full Access with the reason, and the answer cannot become a grant', async () => {
   const { runtime, session, deleted, start, pendingFor } = await setup();

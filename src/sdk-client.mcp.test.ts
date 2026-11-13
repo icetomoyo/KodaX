@@ -60,13 +60,12 @@ beforeEach(async () => {
   results = currentResults;
   unregisterProvider = registerModelProvider('product-mcp-test', () => new McpTestProvider(toolId, currentResults));
   vi.stubEnv('KODAX_PRODUCT_MCP_TEST_KEY', 'test-only');
-  const profile = 'mcp-contract';
   writeIntegrationDocument({
     domain: 'mcp', configHome: path.join(homeDir, '.kodax'),
     document: { version: 1, servers: fixture.servers }, validate: parseMcpIntegrationDocument,
   });
-  runtime = await createKodaXRuntime({ homeDir, profile, sharedDaemonHost: true });
-  const paths = resolveRuntimeDaemonPaths(homeDir, profile);
+  runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
+  const paths = resolveRuntimeDaemonPaths(homeDir);
   const lock = tryAcquireRuntimeDaemonLock(paths, {
     runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
   });
@@ -75,7 +74,7 @@ beforeEach(async () => {
     ? { kind: 'pipe' as const, path: `\\\\.\\pipe\\kodax-mcp-${randomUUID()}` }
     : { kind: 'unix' as const, path: path.join(homeDir, 'host.sock') };
   host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
-  client = await connectKodaXClient({ homeDir, profile, endpoint: endpoint.path });
+  client = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
 });
 
 afterEach(async () => {

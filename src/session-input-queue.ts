@@ -21,6 +21,8 @@ interface QueuedInputFact {
   skill: boolean;
   state: ClientInputAcceptance['state'];
   runId?: string;
+  /** A steer input lives in its target Run; the original stays here only while withdrawal can still return it. */
+  steerInput?: ClientSubmitInput;
 }
 
 export interface PendingSessionInput {
@@ -61,7 +63,7 @@ export function inputIntentDigest(input: ClientSubmitInput, executionKey?: strin
 }
 
 /** Host admission bound; matches the REPL pending-input footer limit (packages/repl/src/ui/utils/pending-inputs.ts, a UI-internal constant not exported from that package). */
-const MAX_QUEUED_INPUTS = 5;
+export const MAX_QUEUED_INPUTS = 5;
 const MAX_QUEUE_PREVIEW_CHARS = 72;
 
 function queuePreview(text: string): string {
@@ -267,7 +269,7 @@ export class SessionInputQueue {
     this.facts.set(this.key(input.sessionId, input.inputId), {
       sessionId: input.sessionId, inputId: input.inputId, digest: inputIntentDigest(input, productExecutionIntentKey(currentProductExecution())),
       principalId: currentProductExecution()?.principalId,
-      skill: false, state, runId,
+      skill: false, state, runId, steerInput: structuredClone(input),
     });
     this.changed(input.sessionId);
     return this.read(input.sessionId, input.inputId)!;
@@ -277,6 +279,7 @@ export class SessionInputQueue {
     const fact = this.facts.get(this.key(sessionId, inputId));
     if (!fact || fact.state !== 'queued') return;
     fact.state = 'submitted';
+    delete fact.steerInput;
     this.changed(sessionId);
   }
 
@@ -285,6 +288,7 @@ export class SessionInputQueue {
     const fact = this.facts.get(this.key(sessionId, inputId));
     if (!fact || fact.state !== 'queued' || fact.messageId !== undefined) return;
     fact.state = 'dropped';
+    delete fact.steerInput;
     this.changed(sessionId);
   }
 
@@ -409,17 +413,15 @@ export class SessionInputQueue {
     if (original !== principalId) throw Object.assign(new Error('Input withdrawal requires its original principal.'), { code: 'permission_denied' });
   }
 
-  withdraw(sessionId: string, inputId: string, principalId = currentProductExecution()?.principalId): ClientSubmitInput {
+  /** `releaseSteer` synchronously removes an undelivered steer input from its Run; false means delivery has begun. */
+  withdraw(sessionId: string, inputId: string, principalId = currentProductExecution()?.principalId,
+    releaseSteer?: (runId: string) => boolean): ClientSubmitInput {
     const fact = this.facts.get(this.key(sessionId, inputId));
     if (fact) this.assertWithdrawalOwner(fact.principalId, principalId);
     const previous = this.withdrawals.get(this.key(sessionId, inputId));
     if (previous) return structuredClone(previous.input);
-    if (fact?.messageId === undefined) {
-      throw conflict(fact
-        ? 'Input is bound to its target Run and cannot be withdrawn from the queue.'
-        : 'Input has already been submitted or withdrawn.');
-    }
-    if (fact.state !== 'queued') throw conflict('Input has already been submitted or withdrawn.');
+    if (!fact || fact.state !== 'queued') throw conflict('Input has already been submitted or withdrawn.');
+    if (fact.messageId === undefined) return this.withdrawSteer(fact, releaseSteer);
     const original = this.snapshot(sessionId).find(value => value.input.inputId === inputId);
     if (!original) throw conflict('Input is already being submitted.');
     const receipt: WithdrawnSessionInput = { input: structuredClone(original.input),
@@ -432,6 +434,30 @@ export class SessionInputQueue {
     fact.digest = inputIntentDigest(receipt.input);
     this.withdrawals.set(this.key(sessionId, inputId), receipt);
     delete fact.execution;
+    this.changed(sessionId);
+    return structuredClone(receipt.input);
+  }
+
+  private withdrawSteer(fact: QueuedInputFact, release?: (runId: string) => boolean): ClientSubmitInput {
+    const { sessionId, inputId, steerInput, runId } = fact;
+    if (!steerInput || !runId) throw conflict('Input has already been submitted or withdrawn.');
+    const receipt: WithdrawnSessionInput = { input: structuredClone(steerInput),
+      ...(fact.principalId === undefined ? {} : { principalId: fact.principalId }) };
+    const receipts = [...this.withdrawals.values()].filter(value => value.input.sessionId === sessionId);
+    // Commit the receipt first; roll it back if the Run has already started delivering
+    // the input or could not record the release.
+    this.persistPending(sessionId, this.snapshot(sessionId), [...receipts, receipt]);
+    let released = false;
+    try {
+      released = release?.(runId) === true;
+    } finally {
+      if (!released) this.persistPending(sessionId, this.snapshot(sessionId), receipts);
+    }
+    if (!released) throw conflict('Input is already being delivered to its Run.');
+    fact.state = 'withdrawn';
+    fact.digest = inputIntentDigest(receipt.input);
+    delete fact.steerInput;
+    this.withdrawals.set(this.key(sessionId, inputId), receipt);
     this.changed(sessionId);
     return structuredClone(receipt.input);
   }
@@ -451,7 +477,9 @@ export class SessionInputQueue {
   withdrawClient(principalId: string, sessionId: string): Array<{ sessionId: string; inputId: string }> {
     const withdrawn: Array<{ sessionId: string; inputId: string }> = [];
     for (const fact of this.facts.values()) {
-      if (fact.sessionId !== sessionId || fact.state !== 'queued' || fact.principalId !== principalId) continue;
+      // Steer inputs settle with their Run, which client cleanup stops separately.
+      if (fact.sessionId !== sessionId || fact.state !== 'queued' || fact.principalId !== principalId
+        || fact.messageId === undefined) continue;
       this.withdraw(fact.sessionId, fact.inputId, principalId);
       withdrawn.push({ sessionId: fact.sessionId, inputId: fact.inputId });
     }

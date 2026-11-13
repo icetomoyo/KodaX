@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 describe('runtime config patch validation', () => {
   let tempRoot: string;
   let previousKodaxHome: string | undefined;
-  const daemonOwners: Array<{ readonly homeDir: string; readonly profile: string }> = [];
+  const daemonOwners: string[] = [];
 
   beforeEach(async () => {
     tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-runtime-config-'));
@@ -22,7 +22,7 @@ describe('runtime config patch validation', () => {
     vi.restoreAllMocks(); syncBuiltinESMExports();
     try {
       for (const owner of daemonOwners.splice(0)) {
-        await shutdownRuntimeDaemon(owner.homeDir, owner.profile);
+        await shutdownRuntimeDaemon(owner);
       }
     } finally {
       if (previousKodaxHome === undefined) {
@@ -189,11 +189,9 @@ describe('runtime config patch validation', () => {
     process.env.KODAX_HOME = envHome;
     vi.resetModules();
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
-    const profile = `config-${process.pid}-${Date.now()}`;
-    daemonOwners.push({ homeDir: runtimeHome, profile });
+    daemonOwners.push(runtimeHome);
     const runtime = await createKodaXRuntime({
       mode: 'daemon',
-      profile,
       homeDir: runtimeHome,
       sessionsDir: path.join(runtimeHome, '.kodax', 'sessions'),
       autoStartDaemon: true,
@@ -234,31 +232,31 @@ describe('runtime config patch validation', () => {
     } finally {
       await runtime.close();
     }
-    await shutdownRuntimeDaemon(runtimeHome, profile);
+    await shutdownRuntimeDaemon(runtimeHome);
     const { readRuntimeDaemonState, resolveRuntimeDaemonPaths } = await import('./runtime-daemon/state.js');
-    expect(readRuntimeDaemonState(resolveRuntimeDaemonPaths(runtimeHome, profile))).toBeUndefined();
+    expect(readRuntimeDaemonState(resolveRuntimeDaemonPaths(runtimeHome))).toBeUndefined();
   });
 });
 
-async function shutdownRuntimeDaemon(homeDir: string, profile: string): Promise<void> {
+async function shutdownRuntimeDaemon(homeDir: string): Promise<void> {
   const {
     readRuntimeDaemonState,
     readRuntimeDaemonLockOwner,
     readRuntimeDaemonToken,
     resolveRuntimeDaemonPaths,
   } = await import('./runtime-daemon/state.js');
-  const paths = resolveRuntimeDaemonPaths(homeDir, profile);
+  const paths = resolveRuntimeDaemonPaths(homeDir);
   const state = readRuntimeDaemonState(paths);
   if (!state) return;
   const owner = readRuntimeDaemonLockOwner(paths.lockFile);
-  if (!owner) throw new Error(`Runtime daemon profile ${profile} has no verifiable owner.`);
+  if (!owner) throw new Error(`The Runtime daemon of ${homeDir} has no verifiable owner.`);
   const { waitForRuntimeDaemonShutdown } = await import('./runtime-daemon/shutdown-verifier.js');
   const { runtimeDaemonEndpointFromState } = await import('./runtime-daemon/lifecycle.js');
   const { createRuntimeDaemonSocketClientTransport } = await import('./runtime-daemon/transport.js');
   const transport = await createRuntimeDaemonSocketClientTransport(runtimeDaemonEndpointFromState(state));
   try {
     await transport.request('initialize', {
-      profile,
+      profile: paths.profile,
       token: readRuntimeDaemonToken(paths),
     });
     await transport.request('runtime.shutdown');
@@ -269,7 +267,6 @@ async function shutdownRuntimeDaemon(homeDir: string, profile: string): Promise<
   // writes its final outcome/log. Wait for that exact process tree before rm.
   const result = await waitForRuntimeDaemonShutdown({
     configHome: paths.configHome,
-    profile,
     owner,
   });
   expect(result.status).toBe('succeeded');

@@ -64,6 +64,22 @@ it('recalls the accepted user image through Runtime, native inspect and the real
     const completed = await runtime.runs.await(accepted.runId!);
     expect(completed.error).toBeUndefined();
     expect(completed).toMatchObject({ phase: 'completed' });
+    const assertClientImage = async () => {
+      const page = await runtime.sessions.readHistory(session.id);
+      const item = page.items.find(value => value.inputId === input.inputId)!;
+      expect(item.text).toBe(input.text);
+      expect(item.attachments?.[0]).toMatchObject({ observationId, width: 2, height: 2 });
+      expect((await runtime.sessions.readHistoryEntry(session.id, item.id))?.text).toBe(input.text);
+      const search = await runtime.sessions.searchHistory(session.id, { query: input.text, role: 'user' });
+      expect(search.hits.find(hit => hit.snippet.includes(input.text))?.snippet).toBe(input.text);
+      const attachment = await runtime.sessions.readViewItem(session.id, item.id, { part: 'attachment', attachmentIndex: 0 });
+      expect(attachment?.image?.dataBase64).toBe(PNG.toString('base64'));
+      const viewItems: import('@kodax-ai/coding/client-contract').ClientViewItem[] = [];
+      const observation = await runtime.sessions.observeView(session.id, view => { viewItems.splice(0, viewItems.length, ...view.items); });
+      try { expect(viewItems.find(value => value.inputId === input.inputId)?.text).toBe(input.text); }
+      finally { observation.close(); }
+    };
+    await assertClientImage();
     expect(JSON.stringify(wires.at(-1))).toContain(PNG.toString('base64'));
     await writeFile(source, 'The source has been replaced.');
     await runtime.close();
@@ -84,6 +100,7 @@ it('recalls the accepted user image through Runtime, native inspect and the real
     expect((await runtime.runs.await(resumed.runId!)).phase).toBe('completed');
     expect(JSON.stringify(wires.at(-1))).toContain(PNG.toString('base64'));
     await expect(runtime.runs.acceptInput({ ...input, text: 'A different intent.' })).rejects.toThrow(/different intent/i);
+    await assertClientImage();
     const storage = createSessionManager({ sessionsDir: path.join(homeDir, '.kodax', 'sessions'), configHome: path.join(homeDir, '.kodax') });
     const saved = await storage.loadSession(session.id);
     const fullLineage = await canonical.loadFullLineage(session.id);

@@ -25,22 +25,22 @@ function writeElfFixture(versions: readonly string[]): string {
 }
 
 describe('Linux native glibc compatibility gate', () => {
-  it('accepts a 2.28 authority and rejects one that needs a newer glibc', () => {
+  it('accepts a 2.17 authority and rejects one that needs a newer glibc', () => {
     const script = path.resolve('scripts/check-native-glibc.mjs');
     const compatible = spawnSync(
       process.execPath,
-      [script, '--max', '2.28', writeElfFixture(['GLIBC_2.17', 'GLIBC_2.28'])],
+      [script, '--max', '2.17', writeElfFixture(['GLIBC_2.2.5', 'GLIBC_2.17'])],
       { encoding: 'utf8' },
     );
     const incompatible = spawnSync(
       process.execPath,
-      [script, '--max', '2.28', writeElfFixture(['GLIBC_2.28', 'GLIBC_2.34'])],
+      [script, '--max', '2.17', writeElfFixture(['GLIBC_2.17', 'GLIBC_2.28'])],
       { encoding: 'utf8' },
     );
 
     expect(compatible).toMatchObject({ status: 0, stderr: '' });
-    expect(compatible.stdout).toContain('maximum required GLIBC_2.28');
+    expect(compatible.stdout).toContain('maximum required GLIBC_2.17');
     expect(incompatible.status).toBe(1);
-    expect(incompatible.stderr).toContain('requires GLIBC_2.34; maximum supported is GLIBC_2.28');
+    expect(incompatible.stderr).toContain('requires GLIBC_2.28; maximum supported is GLIBC_2.17');
   });
 });

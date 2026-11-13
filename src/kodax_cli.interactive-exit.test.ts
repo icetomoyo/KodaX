@@ -322,6 +322,7 @@ async function importMainWithMocks(options: {
     }) => ({ args: [...input.args], env: { ...input.env } }),
     isCurrentProcessWindowsJobContained: vi.fn(() => false),
     getAgentConfigHome: vi.fn(() => join(tmpdir(), 'kodax-cli-test-home')),
+    resolveKodaXHome: vi.fn(() => ({ path: join(tmpdir(), 'kodax-cli-test-home'), source: 'default' })),
     getAgentConfigPath: vi.fn((...segments: string[]) => join(tmpdir(), 'kodax-cli-test-home', ...segments)),
     cleanupRegisteredManagedChildren,
     shutdownTracing,
@@ -533,8 +534,6 @@ describe('CLI interactive exit lifecycle', () => {
       'serve',
       '--home',
       daemonHome,
-      '--profile',
-      'daemon-cleanup',
       '--provider',
       'mock-provider',
     ];
@@ -571,8 +570,6 @@ describe('CLI interactive exit lifecycle', () => {
       'serve',
       '--home',
       daemonHome,
-      '--profile',
-      'daemon-memory-review-drain',
     ];
     const { main, harness } = await importMainWithMocks({
       mockDaemonLease: true,
@@ -598,8 +595,6 @@ describe('CLI interactive exit lifecycle', () => {
       'serve',
       '--home',
       daemonHome,
-      '--profile',
-      'daemon-cleanup-failure',
     ];
     const { main, harness } = await importMainWithMocks({
       mockDaemonLease: true,
@@ -628,8 +623,6 @@ describe('CLI interactive exit lifecycle', () => {
       'serve',
       '--home',
       daemonHome,
-      '--profile',
-      'daemon-cleanup-timeout',
     ];
     const { main, harness } = await importMainWithMocks({
       mockDaemonLease: true,
@@ -655,8 +648,6 @@ describe('CLI interactive exit lifecycle', () => {
       'serve',
       '--home',
       daemonHome,
-      '--profile',
-      'daemon-aggregate-failure',
     ];
     const { main } = await importMainWithMocks({
       mockDaemonLease: true,
@@ -1056,8 +1047,8 @@ describe('CLI interactive exit lifecycle', () => {
       expect(harness.runInkInteractiveMode).toHaveBeenCalledTimes(1);
       expect(harness.ensureKodaXRuntime).toHaveBeenCalledTimes(1);
       expect(harness.createKodaXHostRuntime).not.toHaveBeenCalled();
+      expect(harness.runtimeOptions[0]).not.toHaveProperty('profile');
       expect(harness.runtimeOptions[0]).toMatchObject({
-        profile: 'default',
         clientInfo: {
           name: 'kodax-cli',
           title: 'KodaX CLI',
@@ -1099,9 +1090,7 @@ describe('CLI interactive exit lifecycle', () => {
 
     expect(harness.ensureKodaXRuntime).toHaveBeenCalledOnce();
     expect(harness.createKodaXHostRuntime).not.toHaveBeenCalled();
-    expect(harness.runtimeOptions[0]).toMatchObject({
-      profile: 'default',
-    });
+    expect(harness.runtimeOptions[0]).not.toHaveProperty('profile');
     expect(harness.runtimeOptions[0]).not.toHaveProperty('externalAgents');
     expect(harness.runtimeStarts).toHaveLength(1);
     expect(harness.runtimeStarts[0]).toMatchObject({
@@ -1179,8 +1168,6 @@ describe('CLI interactive exit lifecycle', () => {
         'status',
         '--home',
         homeDir,
-        '--profile',
-        'test',
         '--json',
       ];
       const { main, harness } = await importMainWithMocks();
@@ -1211,8 +1198,6 @@ describe('CLI interactive exit lifecycle', () => {
         'status',
         '--home',
         homeDir,
-        '--profile',
-        'test',
         '--json',
       ];
       const { main, harness } = await importMainWithMocks();

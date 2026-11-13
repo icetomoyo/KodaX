@@ -56,10 +56,9 @@ Session 的第二个写入者。旧所有权状态由统一启动器迁移，条
 | 选项 | `connectKodaXClient` | `ensureKodaXClient` | 含义 |
 | --- | --- | --- | --- |
 | `homeDir?: string` | 支持 | 支持 | 包含 `.kodax` 的目录，与 CLI `--home` 的基础目录含义一致 |
-| `profile?: string` | 支持 | 支持 | 本地配置/连接 profile |
 | `clientInfo?: RuntimeClientInfo` | 支持 | 支持 | 客户端元数据及可选的 Host 颁发身份凭据 |
-| `endpoint?: string` | 支持 | 不支持 | 指定本地 socket/Windows named pipe；省略时从本地 profile 解析 |
-| `token?: string` | 支持 | 不支持 | 显式 Host token；省略时从所选本地 profile 读取 |
+| `endpoint?: string` | 支持 | 不支持 | 指定本地 socket/Windows named pipe；省略时使用该 home 的 Host |
+| `token?: string` | 支持 | 不支持 | 显式 Host token；省略时从该 home 的 Host 状态读取 |
 | `daemonStartupTimeoutMs?: number` | 不支持 | 支持 | 本机 Host 启动等待期限，单位毫秒；省略时采用运行时默认值 |
 | `userInputTimeoutMs?: number` | 不支持 | 支持 | 新 Host 的普通提问期限，默认 `0` 无限等待；正值到期返回 unanswered，不修改已运行 Host |
 | `onStartupProgress?: (progress: ClientStartupProgress) => void \| Promise<void>` | 支持 | 支持 | 本机启动/连接阶段观察；不等待显示工作，不改变启动结果 |
@@ -84,9 +83,9 @@ CLI 用同一通知驱动加载动画，模块加载、旧子进程清理、Sess
 
 `endpoint` 不是 HTTP/WebSocket URL。运行时连接实现依赖 Node；浏览器可通过 `import type` 使用纯契约，但当前没有可直接在浏览器运行的远程 transport 或已实现 Web 服务。
 
-同一实际 sessions 存储根只能由一个独立 Host 写入；profile 是连接/配置名称，不是绕过存储所有权的手段。启动器需要区分包版本、运行中的 Host 实例以及实际加载的构建：相同版本号并不证明 clean/build 前后的代码相同。内部 `RuntimeIdentity.build` 的 origin/fingerprint 用于启动器比较与诊断，不进入业务 view，UI 不据每次补丁维护能力矩阵。
+Host 的身份是数据根：每个 `homeDir`/`KODAX_HOME` 只有一个 Host（ADR-075），同一实际 sessions 存储根也只能由一个独立 Host 写入。原先选择 Host 位置的 `profile` 选项已删除；JavaScript 调用方仍传入时抛出 `runtime_host_migration_required`，需要隔离时使用独立的 `homeDir` 或 `KODAX_HOME`，见 [One Host per KODAX_HOME](SDK_MIGRATION.md#one-host-per-kodax_home-profile-removed)。线上字段 `identity.profile` 保留且固定为 `default`，只供旧客户端校验。旧客户端以其他目录名（如老 Space 的 `coder`）启动的 Host 占有 Session 存储时，`ensure`、被动 `connect` 与 `kodax daemon start|stop|status|logs|restart` 都作用于该 Host，此时 `identity.profile` 报告它的目录名；`readKodaXClientExits` 读取本 home 所有 Host 目录的回执，该 Host 被替换后其退出回执仍可恢复。凭据 profile、Agent/执行 profile 与 Session `profileId` 不受影响。启动器需要区分包版本、运行中的 Host 实例以及实际加载的构建：相同版本号并不证明 clean/build 前后的代码相同。内部 `RuntimeIdentity.build` 的 origin/fingerprint 用于启动器比较与诊断，不进入业务 view，UI 不据每次补丁维护能力矩阵。
 
-启动器先验证当前磁盘构建与自身加载时冻结的构建一致；长寿命旧 SDK 在磁盘被重建后明确拒绝代为更新。相同版本、相同 origin、不同 fingerprint 的 Host 才可据构建差异执行正常空闲更新。相同版本但 origin 不同的 Host 归属另一安装，即使 fingerprint 相同也明确拒绝由本启动器接管；缺少构建身份的同版本旧 Host 同样须明确报错。能够证明语义版本较旧的原更新路径仍保留。被动 connect 不因本机构建不同要求替换兼容 Host，从而允许其他版本客户端及未来 Web 连接。
+启动器把"能否使用"与"是否替换"分开判定。能否使用只看协议与必需 capability：缺少必需 capability 才是不兼容，须在可安全替换时替换，否则明确报错。包版本与构建身份只决定是否替换：启动器先验证当前磁盘构建与自身加载时冻结的构建一致，长寿命旧 SDK 在磁盘被重建后明确拒绝代为更新；能够证明语义版本较旧的 Host，以及相同版本、相同 origin、不同 fingerprint 的 Host，在空闲时执行正常更新。替换因 Host 忙碌或仍有其他客户端连接而无法进行时，启动器以真实客户端身份直接使用该兼容 Host，不等待启动期限耗尽。相同版本但 origin 不同的 Host 归属另一安装，本启动器从不接管它，而是直接使用；fingerprint 不同时记录 `runtime.daemon.compatible-host` 诊断。缺少构建身份的同版本旧 Host 仍须明确报错。被动 connect 不因本机构建不同要求替换兼容 Host，从而允许其他版本客户端及未来 Web 连接。因此，任何客户端可观察的 Host 行为变化都必须提升对应 capability 版本，不能只依赖包版本或构建差异表达。
 
 构建身份按实际文件字节计算，不判定代码是否语义等价。origin 是实际启动入口的规范路径（Windows 统一大小写），fingerprint 是有序运行文件路径、大小和内容的 SHA-256。源码启动覆盖 `src` 生产代码、四个 workspace 的实际 `dist`、当前平台的 native 产物、包及锁文件和运行所需配置模板/启动脚本；dist 启动覆盖实际 bundle、分块与随附运行资产；binary 启动覆盖实际可执行文件及 builtin/vendor/native/worker 等 sidecar。它不读取用户配置，不创建 build manifest 或新配置。
 
@@ -131,7 +130,7 @@ Host owner 实际销毁视图服务时，先停止新的读取、刷新和监听
 | `sessions` 条件设置 | `getSettingsVersioned`, `updateSettingsVersioned` | 读取 `{ revision, value }`；更新必须携带 `{ expectedRevision }`，过期时 `conflict` 且不写入。复用 Host 既有设置 CAS，普通编辑无需使用，不新增操作回执或恢复协议 |
 | `sessions` Auto 诊断 | `getAutoModeStats` | 返回现有 Host Auto 拒绝、熔断和分类器健康事实；非 Auto 为 undefined，不创建第二套权限状态 |
 | `sessions` 显示 | `observe`, `readItem` | 当前显示视图及其替换；补读显示项的完整正文或工具输入 |
-| `sessions` 图片附件 | `readItem(..., {part:'attachment', attachmentIndex, attachmentOffset, expectedImageSha256})` | 读取该 Host 项已附带的 PNG 字节块；不接受客户端文件路径 |
+| `sessions` 图片附件 | `readItem(..., {part:'attachment', attachmentIndex, attachmentOffset, expectedImageSha256})` | 读取该 Host 项已附带的 PNG、JPEG、WebP 或 GIF 字节块，返回实际 mediaType；不接受客户端文件路径 |
 | `sessions` 历史 | `readHistory`, `readHistoryEntry`, `searchHistory`, `resolveHistoryTurn` | 规范对话分页、超大项正文和全 Session 搜索。支持时可定位搜索结果，并为 Fork/回退解析完整轮尾。 |
 | `sessions` 目标 | `readGoal`, `createGoal`, `pauseGoal`, `resumeGoal`, `clearGoal` | 读取及修改共享持久目标；创建、状态转换和预算遵守领域约束 |
 | `sessions` 通知 | `appendNotice` | 由 Host 保存通知正文及可选来源 |
@@ -309,9 +308,11 @@ delivery 的队列行为如下；空 queue 不能证明所有已知输入已经�
 | immediate | 尝试开始 Run；Session 忙时冲突，不先执行动态准备 |
 | after_turn | 保存到 Host 可撤回队列；普通输入在当前 Run 下一次模型调用前的安全点交付，不等待整个长任务结束。没有可用安全点时保留待后续调度；多条输入也可能合批为同一 Run/一个 user 展示项，须逐 inputs.read 确认 submitted/runId |
 | redirect | 保存新输入并停止目标 Run，沿用显式 redirect 的后续调度 |
-| steer | 交给目标执行中的中断输入路径，可能返回 queued，但不在可撤回 view.queue 中；通过 inputs.read 确认 submitted/dropped |
+| steer | 交给目标执行中的中断输入路径，可能返回 queued，但不在 view.queue 中；安全点认领前可由原客户端 withdraw 取回完整原文，认领后 withdraw 明确 conflict；通过 inputs.read 确认 submitted/dropped/withdrawn |
 
 普通 stop/failed 不自动 drain，队列保留；不能在重连时自行重放提交。Ink 已按逐 inputId 查询处理合批确认，不按正文去重。
+
+steer 不进入可撤回队列，也不随客户端退出撤回；客户端退出另行结算本客户端的 Run。目标 Run 以任何方式（完成、失败或 Stop）在交付前结束时，未交付的 steer 记为 dropped，之后 withdraw 返回 conflict。withdraw 先持久化撤回回执，再从 Run 释放该输入；释放失败时回滚回执并返回 conflict。Host 在两步之间中断时回执生效，生成检查点恢复时不再交付该 steer；若输入在中断前已写入规范历史，恢复以历史为准不重复交付，但 inputs.read 仍可能报告 withdrawn。steer 的 queued 接收记录只在本 Host 进程内存在，Host 重启后随检查点恢复的 steer 不能再 withdraw，inputs.read 可能返回 null。
 
 安全点消费与 withdraw 使用同一 Host Session 操作锁；输入成功保存后才从可撤回队列移除并标记 submitted。消费前撤回得到完整原文和附件，消费后撤回明确 conflict。排队 Skill 必须经 Host 可信准备，是普通批次的顺序边界；不把 Skill 当普通文字塞入执行器，也不让后方输入越过它。没有后续执行额度时不通过无限延长 Run 来消费队列。以上行为对 REPL 和 SDK 相同，不新增 UI 自有执行队列。
 
@@ -482,7 +483,11 @@ original 每块最多 65,536 个 UTF-16 单元，沿 nextOffset 继续；没有 
 普通正文，已保存文件丢失则报告 `not_found`，其他读取错误报告 `internal_error`。
 不要把丢失的原文静默替换成裁剪预览，也不要声称所有工具都存在独立原文文件。
 
-图片附件通过 `readItem(sessionId, itemId, {part:'attachment', attachmentIndex, attachmentOffset, expectedImageSha256})` 读取，返回 `ClientItemContent.image`。`attachmentIndex` 是该项附件索引；`attachmentOffset` 默认 0，按图片字节计数，独立于正文的 UTF-16 `offset`。可选 `expectedImageSha256` 要求完整图片身份不变。Host 只读该 Session 项已持有的附件引用，验证实际 PNG，不接受任意客户端路径。当前每块最多 512 KiB、整张最多 10 MiB；返回 `dataBase64/sha256/width/height/offset/totalLength/nextOffset`。调用方分别解码各块，验证同一哈希、尺寸、总长及连续偏移，拼接后校验完整 SHA256；缺项、无进展、图片变化或缺 Host 能力均不能回退到 UI 文件读取。Artifact Client port 已封装这些检查，见 [SDK](ARTIFACT_SDK.md)。图片字节不作为正文、历史文本或日志返回。
+图片附件通过 `readItem(sessionId, itemId, {part:'attachment', attachmentIndex, attachmentOffset, expectedImageSha256})` 读取，返回 `ClientItemContent.image`。`attachmentIndex` 是该项附件索引；`attachmentOffset` 默认 0，按图片字节计数，独立于正文的 UTF-16 `offset`。可选 `expectedImageSha256` 要求完整图片身份不变。Host 只读该 Session 项已持有的附件引用，验证实际 PNG、JPEG、WebP 或 GIF，不接受任意客户端路径。当前每块最多 512 KiB、整张最多 10 MiB；返回实际 `mediaType` 以及 `dataBase64/sha256/width/height/offset/totalLength/nextOffset`。调用方分别解码各块，验证同一媒体类型、哈希、尺寸、总长及连续偏移，拼接后校验完整 SHA256；缺项、无进展、图片变化或缺 Host 能力均不能回退到 UI 文件读取。Artifact Client port 已封装 PNG 证据的这些检查，见 [SDK](ARTIFACT_SDK.md)。图片字节不作为正文、历史文本或日志返回。
+
+用户图片的模型观测标签不属于用户正文。当前 view、历史正文及搜索中的用户输入保留原文（含首尾空白）；图片对应的 `attachments` 可携带 `observationId/width/height/sha256`。旧版已保存的 Host 观测标签由 SDK 投影处理，客户端不解析标签或 `.media` 布局。
+
+扩展 `tool:before` 发起的权限 Interaction 可带 `options.extensionAsks: readonly { extension: string; reason: string }[]`，记录每个请求确认的扩展及其原始原因。UI 应连同自身风险说明展示这些原因；旧客户端仍可展示汇总 `reason`。该字段缺失不证明是普通权限请求，旧 Host 也可能不提供它。扩展确认仍只接受 `allow_once/reject`，不提供 grantSuggestions。
 
 `sessions.observe` 先交付当前 `ClientSessionView`，以后交付完整替换视图。它不是文本 delta 或可回放事件日志；客户端替换当前展示投影，不自行将每帧追加成历史。view 包含 Session、settings、items、queue、interactions、runs，以及可选的 contextBudget/activity/parentContextTokens/sandbox。Activity 的父上下文与 worker 上下文不可混为一个计数。
 
@@ -545,7 +550,6 @@ import { ensureKodaXClient } from '@kodax-ai/kodax/client';
 import type { EnsureKodaXClientOptions } from '@kodax-ai/kodax/client';
 
 const options: EnsureKodaXClientOptions = {
-  profile: 'default',
   clientInfo: { name: 'my-local-app', clientType: 'app' },
   daemonStartupTimeoutMs: 60_000,
 };
@@ -565,7 +569,7 @@ import { randomUUID } from 'node:crypto';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import type { ClientSessionView } from '@kodax-ai/kodax/client';
 
-const client = await connectKodaXClient({ profile: 'default' });
+const client = await connectKodaXClient();
 try {
   const session = await client.sessions.create({ projectPath: process.cwd() });
   const observation = await client.sessions.observe(session.id, (view: ClientSessionView) => {

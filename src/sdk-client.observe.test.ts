@@ -43,7 +43,7 @@ it.each([true, false])('clears active Session overrides to the same Host setting
     expect(await runtime.sessions.getSettings(session.id)).toEqual({});
     // Product views resolve their built-in default without granting a low-level
     // Run an undeclared policy; its original approval hook still owns this call.
-    await expect.poll(() => views.at(-1)?.settings).toEqual({ permissionMode: 'accept-edits', agentMode: 'sa', ...profileSettings });
+    await expect.poll(() => views.at(-1)?.settings).toEqual({ provider: 'mock-provider', permissionMode: 'accept-edits', agentMode: 'sa', ...profileSettings });
     const decide = () => captured!.events!.beforeToolExecute!(hasProfile ? 'edit' : 'bash',
       hasProfile ? { path: path.join(process.cwd(), 'file.ts'), old_string: 'old', new_string: 'new' } : { command: 'echo test' });
     const activeDecision = await decide();
@@ -67,13 +67,12 @@ it.each([true, false])('clears active Session overrides to the same Host setting
 
 it('observes an actual Host current view and replaces settings without event cursors', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-client-view-'));
-  const profile = 'observe';
   await mkdir(path.join(homeDir, '.kodax'), { recursive: true });
   await writeFile(path.join(homeDir, '.kodax', 'config.json'), JSON.stringify({
     compaction: { contextWindow: 120_000, triggerPercent: 66, triggerTokens: 70_000 },
   }));
-  const runtime = await createKodaXRuntime({ homeDir, profile, defaultProvider: 'anthropic' });
-  const paths = resolveRuntimeDaemonPaths(homeDir, profile);
+  const runtime = await createKodaXRuntime({ homeDir, defaultProvider: 'anthropic' });
+  const paths = resolveRuntimeDaemonPaths(homeDir);
   const lock = tryAcquireRuntimeDaemonLock(paths, {
     runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
   });
@@ -82,7 +81,7 @@ it('observes an actual Host current view and replaces settings without event cur
     ? { kind: 'pipe' as const, path: `\\\\.\\pipe\\kodax-view-${randomUUID()}` }
     : { kind: 'unix' as const, path: path.join(homeDir, 'host.sock') };
   const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
-  const client = await connectKodaXClient({ homeDir, profile, endpoint: endpoint.path });
+  const client = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
   try {
     const session = await runtime.sessions.create({ title: 'Current view' });
     const views: ClientSessionView[] = [];
@@ -92,7 +91,7 @@ it('observes an actual Host current view and replaces settings without event cur
     expect(views[0]).not.toHaveProperty('cursor');
     expect(views[0]).not.toHaveProperty('revision');
     expect(views[0]?.contextBudget).toMatchObject({ provider: 'anthropic', model: expect.any(String), contextWindow: 120_000 });
-    const peer = await connectKodaXClient({ homeDir, profile, endpoint: endpoint.path });
+    const peer = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
     const peerViews: ClientSessionView[] = [];
     const peerObservation = await peer.sessions.observe(session.id, (view) => peerViews.push(view));
     await client.sessions.updateSettings(session.id, { provider: 'anthropic', model: 'reviewed-model', compactionTriggerPercent: 61 });

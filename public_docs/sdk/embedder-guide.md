@@ -1,9 +1,15 @@
 # KodaX SDK — Product Client and Host Integration
 
-This page describes the current FEATURE_298/299/301 development tree, checked against
-package version `0.7.97-beta.4`. The version alone does not claim that all current
+This page describes the current FEATURE_298/299/301/303/304/305/306 development tree, checked against
+package version `0.7.97-beta.9`. The version alone does not claim that all current
 working-tree changes are already published to npm. Check the installed
 package exports and the connected Host's capabilities when migrating.
+The beta.9 data root resolver and copy (`resolveKodaXHome`, `copyKodaXDataRoot`) are described in
+[Relocating a data root](../../docs/SDK_MIGRATION.md#relocating-a-data-root-copykodaxdataroot).
+The beta.6 Host-location `profile` removal is listed in
+[One Host per KODAX_HOME](../../docs/SDK_MIGRATION.md#one-host-per-kodax_home-profile-removed);
+the beta.5 extension policy, agent-home and Session view changes are listed in
+[SDK hardening migration](../../docs/SDK_MIGRATION.md#sdk-hardening-migration-shipped-in-v0797-beta5).
 
 For applications sharing KodaX sessions, use `KodaXProductClient` from
 `@kodax-ai/kodax/client`. The Host owns execution, configuration and persistence;
@@ -42,7 +48,7 @@ arbitrary executor callbacks have no automatic cross-process equivalent.
 
 The launcher migrates eligible abandoned owner policies after checking the actual
 Session storage owner. Its atomic terminal policy prevents verified old readers
-from switching that profile back to inline after idle exit. Old management tools
+from switching that Host back to inline after idle exit. Old management tools
 may report a corrupt policy; deleting it is not a supported downgrade. Live,
 unknown and malformed owners are not reclaimed. Old private embedders without
 ownership records must be stopped and upgraded first: an absent lock cannot prove
@@ -233,7 +239,10 @@ bridge; do not import the Node connector into browser code.
 
 `homeDir` is the base directory containing `.kodax`, not `.kodax` itself.
 `connect` additionally accepts `endpoint` and `token`; `ensure` accepts
-`daemonStartupTimeoutMs`. Both accept `profile` and `clientInfo`. Presentation
+`daemonStartupTimeoutMs`. Both accept `clientInfo`. One Host serves each home
+(`homeDir` or `KODAX_HOME`); the former Host-location `profile` option is
+rejected with `runtime_host_migration_required` (see
+[One Host per KODAX_HOME](../../docs/SDK_MIGRATION.md#one-host-per-kodax_home-profile-removed)). Presentation
 metadata such as `clientInfo.name` grants no authority. Configure provider
 credentials at the Host, rather than passing API keys in input submissions.
 Both also accept trusted Main's optional `authorizeExecution`; see the
@@ -3118,10 +3127,10 @@ the top of this guide. This table also identifies explicit low-level ownership.
 | Host scenario | Recommended shape | Why |
 |---|---|---|
 | One-off product scripts | `ensureKodaXClient()` | Uses the same Host contract; disconnect when finished. |
-| REPL + Space + IDE product clients | `ensureKodaXClient({ profile, homeDir })` | Starts or reuses the Host and returns the Product contract. |
-| Product attach-only client | `connectKodaXClient({ profile, homeDir })` | Passive; fails if no compatible Host is ready. |
+| REPL + Space + IDE product clients | `ensureKodaXClient({ homeDir })` | Starts or reuses the Host and returns the Product contract. |
+| Product attach-only client | `connectKodaXClient({ homeDir })` | Passive; fails if no compatible Host is ready. |
 | Trusted low-level daemon integration | `ensureKodaXRuntime` / `connectKodaXRuntime` | Runtime services rather than Product business methods. |
-| Test/CI isolated daemon namespace | pass `homeDir` and `profile` | Keeps state/config/sessions out of the user's home daemon. |
+| Test/CI isolated Host | pass a separate `homeDir` | Keeps state/config/sessions out of the user's home Host. |
 
 ### Public construction contract
 
@@ -3142,7 +3151,7 @@ The important creation options are:
 |---|---|---|
 | `mode` | required | Only `'daemon'` is accepted by the compatibility launcher. |
 | `homeDir` | unset | When omitted, use the exact resolved `KODAX_HOME`. When set, this is the base directory that owns `.kodax`, with the same meaning as CLI `daemon --home`; daemon state/config live under `<homeDir>/.kodax`. |
-| `profile` | `'default'` | Daemon uniqueness and runtime configuration namespace. |
+| `profile` | removed | One Host serves each home (ADR-075). Passing it fails with `runtime_host_migration_required`; use a separate `homeDir` to isolate. |
 | `sessionsDir` | `<homeDir>/.kodax/sessions` | Explicit session storage override. |
 | `daemonStartupTimeoutMs` | `60000` | Total cold-start/concurrent-owner wait budget. |
 | `daemonConnectTimeoutMs` | `2000` | Per-socket connection timeout. |
@@ -3171,7 +3180,6 @@ import { createKodaXRuntime, connectKodaXRuntime } from '@kodax-ai/kodax/runtime
 
 const replLikeClient = await createKodaXRuntime({
   mode: 'daemon',
-  profile: 'default',
   clientInfo: { name: 'my-repl', title: 'My REPL', version: '1.0.0' },
   capabilities: {
     richEvents: true,
@@ -3181,7 +3189,6 @@ const replLikeClient = await createKodaXRuntime({
 });
 
 const spaceLikeClient = await connectKodaXRuntime({
-  profile: 'default',
   clientInfo: { name: 'my-space', title: 'My Space', version: '1.0.0' },
   capabilities: {
     richEvents: true,
@@ -3201,14 +3208,14 @@ try {
 This is a low-level Runtime example, not the default product integration.
 `createKodaXRuntime({ mode: 'daemon' })` is a retained convenience API: when
 no explicit `daemonEndpoint` or `daemonTransport` is supplied it starts or reuses
-the local profile daemon. `connectKodaXRuntime()` is passive and rejects
+the Host of that home. `connectKodaXRuntime()` is passive and rejects
 `autoStart: true`; use `ensureKodaXRuntime()` for low-level startup/update.
 
 Trusted `execPolicy` and `autoReview` options are owner bootstrap inputs, not
 client connection settings. For a new daemon, KodaX transfers them through a
 bounded one-shot file in the selected daemon state directory, consumes and
 deletes that file before loading extensions, and never exposes its contents in
-process arguments or the daemon protocol. If the profile already has an owner,
+process arguments or the daemon protocol. If the home already has a Host,
 creation with non-empty owner policy fails closed; stop that daemon and retry if its
 administrator policy must change. Ordinary `connectKodaXRuntime()` clients
 cannot supply or mutate these policy layers.
@@ -3231,14 +3238,14 @@ Hosts that own the shutdown boundary can use the public verifier:
 ```ts
 import { waitForRuntimeDaemonShutdown } from '@kodax-ai/kodax/runtime';
 
+// `owner` is the Host owner read before shutdown, e.g. `(await runtime.daemon.inspect()).owner`.
 const result = await waitForRuntimeDaemonShutdown({
-  homeDir: kodaxHome,
-  profile: 'default',
-  runtimeId,
+  configHome: path.join(homeDir, '.kodax'),
+  owner,
   timeoutMs: 30_000,
 });
-if (!result.verified) {
-  throw new Error(`Runtime shutdown was not verified: ${result.outcome}`);
+if (result.status !== 'succeeded') {
+  throw new Error(`Runtime shutdown was not verified: ${JSON.stringify(result)}`);
 }
 ```
 
@@ -3445,30 +3452,37 @@ Node 20 exposes only cached-PID signaling on POSIX, so KodaX fails closed there
 instead of risking a reused PID/PGID; the result is `cleanup_unverified` and the
 process is left to an external lifecycle manager until Issue 269 supplies a
 retained native handle/supervisor. A forced exit without a matching success
-outcome is never success. After the original PID exits, the client re-reads the profile; JSON
+outcome is never success. After the original PID exits, the client re-reads the Host state; JSON
 results use `replacementRunning: true` and return the current state/health when
 a replacement daemon has already acquired the owner lock. Such a result also
 uses `stopped: false` and `reason: 'replacement_running'`, so existing callers
 that gate cleanup on `stopped` remain safe. Callers must not clean or rebuild a
-profile while that flag is present or health is non-missing.
+home while that flag is present or health is non-missing.
 The administrative connection also verifies that `initialize.identity` still
-matches the Runtime ID/profile observed before connecting; if an old owner exits
+matches the Runtime ID observed before connecting; if an old owner exits
 and a replacement binds the same endpoint first, the stale stop command fails
 without sending `daemon.stop` to the replacement.
 
 ### Daemon ownership and state
 
-Daemon ownership is scoped by `homeDir + profile`.
+Daemon ownership is scoped by `homeDir`: one Host serves each home (ADR-075).
 
 - Default `homeDir` is the OS user home directory.
-- Default `profile` is `default`.
-- State lives under `.kodax/runtime/daemon/{profile}/`.
+- State lives under `.kodax/runtime/daemon/default/`. `default` is a fixed
+  directory name, not a selectable profile; `identity.profile` always reports it
+  and is kept only for older clients.
+- A Host started by an older client under another profile (for example `coder`)
+  keeps serving until it is idle. While it owns Session storage, `ensure`,
+  passive `connect`, and `kodax daemon start|stop|status|logs|restart` act on it;
+  `identity.profile` then reports its directory name. `readKodaXClientExits`
+  reads the receipts of every Host directory in the home, so exits recorded by
+  such a Host stay recoverable after it is replaced.
 - Default runtime session storage is also scoped under `<homeDir>/.kodax/sessions`
   when `sessionsDir` is omitted.
 - Windows uses a named pipe; Linux/macOS use a Unix domain socket.
 - The daemon opens no public TCP listener.
 
-For a given profile, one owner wins an atomic lock. Concurrent starters wait for
+For a given home, one owner wins an atomic lock. Concurrent starters wait for
 the winner and connect once it is ready. Stale state is cleaned only after pid,
 endpoint, token, and runtime identity checks. If ownership cannot be verified,
 KodaX reports the daemon as unhealthy instead of killing an arbitrary process.
@@ -3485,7 +3499,7 @@ creating client process.
 
 ### Daemon startup, conflict, and recovery behavior
 
-REPL, Space, and SDK callers using the same resolved `homeDir + profile` target
+REPL, Space, and SDK callers using the same resolved `homeDir` target
 the same daemon. Simultaneous startup is expected: candidates race only for the
 atomic owner lock, then non-owners wait for and attach to the verified winner.
 A client never owns a daemon merely because it caused auto-start.
@@ -3531,11 +3545,11 @@ reconnect/retry decisions.
 
 Operational guidance:
 
-- use one stable profile for cooperating desktop clients;
-- use a separate `homeDir` or profile for tests, previews, and incompatible
+- cooperating desktop clients share the Host of their home;
+- use a separate `homeDir` for tests, previews, and incompatible
   configurations;
 - test harnesses that auto-start a process daemon must send authenticated
-  `runtime.shutdown` (or run `kodax daemon stop --home <dir> --profile <name>`)
+  `runtime.shutdown` (or run `kodax daemon stop --home <dir>`)
   before deleting their temporary home; use the CLI command when the caller
   needs a completed process-exit boundary, because `runtime.close()` only
   detaches and the low-level shutdown response is acceptance, not completion;
@@ -3550,14 +3564,14 @@ Operational guidance:
 The matching CLI surface is:
 
 ```bash
-kodax daemon start --profile default
-kodax daemon status --profile default --json
-kodax daemon logs --profile default --lines 100
-kodax daemon stop --profile default --json
-kodax daemon restart --profile default
+kodax daemon start
+kodax daemon status --json
+kodax daemon logs --lines 100
+kodax daemon stop --json
+kodax daemon restart
 ```
 
-Inside the REPL, `/status runtime` reports Host identity, profile,
+Inside the REPL, `/status runtime` reports Host identity,
 runtime id, endpoint/health when applicable, and active/queued counters.
 
 ### Runtime services
@@ -3572,7 +3586,7 @@ Every `KodaXRuntime` exposes the same service set in inline and daemon mode:
 | `events` | Subscribe to the live in-process event stream (one `seq` ordering hint per Session). |
 | `permissions` | Request/list/respond to tool permissions across clients. |
 | `workflows` | Observe workflow process snapshots/events and lifecycle controls. |
-| `config` | Read/patch/reload shared Host profile config. |
+| `config` | Read/patch/reload shared Host config. |
 | `catalog` | Providers, models, commands, skills, custom providers, extensions. |
 | `mcp` | MCP server CRUD, validation, reload, and tool catalog listing. |
 | `artifacts` | Create/get/delete runtime artifact references for file/image/video inputs. |
@@ -3902,7 +3916,7 @@ Host-bound extensions must use supported owner-loaded module/config descriptors.
 Arbitrary client callbacks have no transparent migration to the shared Host.
 
 For daemon mode, extension and MCP ownership follows daemon configuration.
-Configure extensions in the daemon profile and call
+Configure extensions in the Host configuration and call
 `runtime.catalog.reloadExtensions()` or the matching config service. A CLI
 `--extension <path>` is intentionally rejected in daemon mode because that
 process-local object cannot become part of a durable shared owner. Use
@@ -4037,7 +4051,7 @@ compatibility but no longer removes enabled Skills.
 
 This is the intended path for KodaX Space, IDE adapters, and settings UIs:
 session defaults go through `sessions.updateSettings()`, one-turn overrides go
-through `runs.start({ options })`, and daemon/profile config goes through
+through `runs.start({ options })`, and Host config goes through
 `config`, `catalog`, and `mcp`.
 
 ### Context optimization and diagnostics
@@ -4174,12 +4188,12 @@ Arbitrary factory injection has no equivalent product Host API.
 | Desired owner | Supported construction |
 |---|---|
 | Private in-process owner | `createKodaXRuntime({ mode: 'embedded', externalAgents })` |
-| New locally hosted daemon owner | `createKodaXRuntime({ mode: 'daemon', profile: '<unique>', externalAgents })` |
+| New locally hosted daemon owner | `createKodaXRuntime({ mode: 'daemon', homeDir: '<separate home>', externalAgents })` |
 | Existing daemon | Configure its owner, then attach with `connectKodaXRuntime({ requirements: { externalAgents: true } })`; a client cannot inject factories. |
 | Built-in configured A2A plane | Wire it in the owner: `createConfiguredA2ARuntimeIntegration({ configHome })` → pass `runtimeOptions` as `externalAgents` (the KodaX CLI does this for its embedded sessions and the daemon Host it launches; an SDK-created runtime never reads `integrations/a2a.json` on its own). The former `worker: { configuredA2A: true }` opt-in was removed with the Worker facade in v0.7.97. |
 
 When `mode: 'daemon'` and `externalAgents` are supplied, the caller must win a
-new in-process daemon lease. KodaX rejects an already-running profile instead of
+new in-process daemon lease. KodaX rejects a home that already has a Host instead of
 silently replacing its executor configuration. Closing that owner facade shuts
 down the host it created; closing an ordinary attached client only detaches.
 
@@ -5082,7 +5096,7 @@ The normative baseline is A2A repository commit
 > exposed by Product Client. UI business operations use `/client`; do not port
 > this entire Runtime facade into the renderer. See the migration guide above.
 
-FEATURE_269 makes one local daemon the source of truth for a Coder profile.
+FEATURE_269 makes one local daemon the source of truth for a KodaX home.
 CLI, Space, IDE, and SDK clients can observe and control the same sessions and
 runs. The transport remains local to the current OS user; it is not a remote
 collaboration protocol. Closing a client detaches that client and does not stop

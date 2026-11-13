@@ -39,6 +39,7 @@ export default defineConfig({
       '@kodax-ai/agent/capabilities/skills/shared/yaml': resolveFromRoot('packages', 'agent', 'src', 'capabilities', 'skills', 'shared', 'yaml.ts'),
       '@kodax-ai/agent/messaging/queue': resolveFromRoot('packages', 'agent', 'src', 'messaging', 'queue.ts'),
       '@kodax-ai/agent/runtime/macos-git': resolveFromRoot('packages', 'agent', 'src', 'runtime', 'macos-git.ts'),
+      '@kodax-ai/agent/runtime/agent-home': resolveFromRoot('packages', 'agent', 'src', 'runtime', 'agent-home.ts'),
       '@kodax-ai/agent/workflow': resolveFromRoot('packages', 'agent', 'src', 'workflow', 'index.ts'),
       '@kodax-ai/repl/cli-resume': resolveFromRoot('packages', 'repl', 'src', 'cli-resume.ts'),
       '@kodax-ai/llm': resolveFromRoot('packages', 'llm', 'src', 'index.ts'),

@@ -82,7 +82,7 @@ describe('Host launcher waits for the original process', () => {
     { status: 'draining', reachable: false },
   ] as const)('waits for a $status owner (reachable=$reachable) to exit before acquiring a replacement', async ({ status, reachable }) => {
     const homeDir = mkdtempSync(path.join(os.tmpdir(), 'kodax-owner-transition-'));
-    const paths = resolveRuntimeDaemonPaths(homeDir, 'transition');
+    const paths = resolveRuntimeDaemonPaths(homeDir);
     const endpoint = defaultRuntimeDaemonEndpoint(paths.profile,
       resolveRuntimeDaemonEndpointScope(homeDir, paths.configHome));
     const child = spawn(process.execPath, ['-e', 'process.stdout.write("ready"); process.stdin.resume();'], {
@@ -186,7 +186,7 @@ describe('Host launcher waits for the original process', () => {
 
   it('re-observes an unhealthy owner instead of refusing on one failed probe', async () => {
     const homeDir = mkdtempSync(path.join(os.tmpdir(), 'kodax-owner-recheck-'));
-    const paths = resolveRuntimeDaemonPaths(homeDir, 'recheck');
+    const paths = resolveRuntimeDaemonPaths(homeDir);
     const endpoint = defaultRuntimeDaemonEndpoint(paths.profile,
       resolveRuntimeDaemonEndpointScope(homeDir, paths.configHome));
     const child = spawn(process.execPath, ['-e', 'process.stdout.write("ready"); process.stdin.resume();'], {
@@ -233,7 +233,7 @@ describe('Host launcher waits for the original process', () => {
 
   it('still refuses a persistently unreachable owner after the recheck budget', async () => {
     const homeDir = mkdtempSync(path.join(os.tmpdir(), 'kodax-owner-hung-'));
-    const paths = resolveRuntimeDaemonPaths(homeDir, 'hung');
+    const paths = resolveRuntimeDaemonPaths(homeDir);
     const child = spawn(process.execPath, ['-e', 'process.stdout.write("ready"); process.stdin.resume();'], {
       stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
     });
@@ -264,7 +264,7 @@ describe('Host launcher waits for the original process', () => {
 
   it('reports cancellation while re-observing an unreachable live owner', async () => {
     const homeDir = mkdtempSync(path.join(os.tmpdir(), 'kodax-owner-recheck-cancel-'));
-    const paths = resolveRuntimeDaemonPaths(homeDir, 'cancel');
+    const paths = resolveRuntimeDaemonPaths(homeDir);
     const controller = new AbortController();
     const owner = { runtimeId: 'live-owner', pid: process.pid, createdAt: new Date().toISOString() };
     expect(tryAcquireRuntimeDaemonLock(paths, owner)).toBeDefined();
@@ -290,7 +290,7 @@ describe('Host launcher waits for the original process', () => {
 
   it.each([0, 1])('cancels an in-flight probe after %i failed probes and closes it without replacing the owner', async failedProbes => {
     const homeDir = mkdtempSync(path.join(os.tmpdir(), 'kodax-owner-probe-cancel-'));
-    const paths = resolveRuntimeDaemonPaths(homeDir, 'cancel');
+    const paths = resolveRuntimeDaemonPaths(homeDir);
     const controller = new AbortController();
     const owner = { runtimeId: 'live-owner', pid: process.pid, createdAt: new Date().toISOString() };
     expect(tryAcquireRuntimeDaemonLock(paths, owner)).toBeDefined();

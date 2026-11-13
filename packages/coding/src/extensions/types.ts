@@ -201,6 +201,8 @@ export interface ExtensionToolBeforeHookContext {
 export interface ExtensionToolBeforeAsk {
   readonly decision: 'ask';
   readonly reason: string;
+  /** Host attribution; handler-provided values are replaced with the registered source. */
+  readonly extensionAsks?: readonly { readonly extension: string; readonly reason: string }[];
 }
 
 export interface ExtensionProviderBeforeHookContext {

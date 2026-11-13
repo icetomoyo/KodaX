@@ -2404,8 +2404,10 @@ export function buildChildEvents(
     const next: KodaXToolEventMeta = {
       ...(activityMeta ?? {}),
       ...(meta?.toolId !== undefined ? { toolId: meta.toolId } : {}),
+      ...(meta?.extensionAsks !== undefined ? { extensionAsks: meta.extensionAsks } : {}),
     };
     return next.toolId === undefined
+      && next.extensionAsks === undefined
       && next.workflowCorrelation === undefined
       && next.childAgentId === undefined
       && next.childAgentName === undefined

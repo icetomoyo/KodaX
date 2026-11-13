@@ -142,7 +142,8 @@ describe('CAP-010: tri-state permission gate contract', () => {
         const result = await withExtensionRuntimeContext(() => getToolExecutionOverride(
           { requestToolApproval }, 'bash', { command: 'rm -rf build' }, 'call_1'), runtime);
         expect(result).toBe(expected);
-        expect(requestToolApproval).toHaveBeenCalledWith('bash', { command: 'rm -rf build' }, reason, { toolId: 'call_1' });
+        expect(requestToolApproval).toHaveBeenCalledWith('bash', { command: 'rm -rf build' }, reason,
+          { toolId: 'call_1', extensionAsks: [{ extension: 'sandbox', reason: 'Recursive delete.' }] });
       }
       // A Host that cannot ask a person must not turn an ask into an allow.
       const unanswerable = await withExtensionRuntimeContext(

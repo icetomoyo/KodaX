@@ -9,8 +9,7 @@ import { ensureKodaXRuntime } from '../dist/sdk-runtime.js';
 
 test('the bundled ready Host removes only abandoned publications through its lazy maintenance entry', { timeout: 60_000 }, async () => {
   const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-bundled-maintenance-'));
-  const profile = 'maintenance';
-  const root = path.join(homeDir, '.kodax/runtime/daemon', profile);
+  const root = path.join(homeDir, '.kodax/runtime/daemon', 'default');
   await fs.mkdir(root, { recursive: true });
   const record = { runtimeId: 'retired-publication', pid: 2_147_483_647,
     processStartIdentity: 'retired', createdAt: new Date().toISOString(), kind: 'daemon' };
@@ -21,7 +20,7 @@ test('the bundled ready Host removes only abandoned publications through its laz
   await fs.writeFile(active, activeBytes);
   let runtime;
   try {
-    runtime = await ensureKodaXRuntime({ homeDir, profile, daemonStartupTimeoutMs: 30_000 });
+    runtime = await ensureKodaXRuntime({ homeDir, daemonStartupTimeoutMs: 30_000 });
     const deadline = Date.now() + 15_000;
     while (true) {
       try { await fs.access(abandoned); }

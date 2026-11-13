@@ -119,9 +119,9 @@ it.each(['sa', 'ama'] as const)('attributes a shared MCP server elicitation to i
     },
     validate: parseMcpIntegrationDocument,
   });
-  const runtime = await createKodaXRuntime({ homeDir, profile: 'mcp-elicit', sharedDaemonHost: true });
+  const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
   try {
-    const paths = resolveRuntimeDaemonPaths(homeDir, 'mcp-elicit');
+    const paths = resolveRuntimeDaemonPaths(homeDir);
     const lock = tryAcquireRuntimeDaemonLock(paths, {
       runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
     });
@@ -130,8 +130,8 @@ it.each(['sa', 'ama'] as const)('attributes a shared MCP server elicitation to i
       ? { kind: 'pipe' as const, path: `\\\\.\\pipe\\kodax-mcp-elicit-${randomUUID()}` }
       : { kind: 'unix' as const, path: path.join(homeDir, 'host.sock') };
     const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
-    const first = await connectKodaXClient({ homeDir, profile: 'mcp-elicit', endpoint: endpoint.path });
-    const second = await connectKodaXClient({ homeDir, profile: 'mcp-elicit', endpoint: endpoint.path });
+    const first = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
+    const second = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
     try {
       const active = await first.sessions.create({ projectPath: homeDir });
       await first.sessions.updateSettings(active.id, {
@@ -204,7 +204,7 @@ it.each(['confirm', 'url'] as const)('maps an initial UI failure through the rea
     },
     validate: parseMcpIntegrationDocument,
   });
-  const runtime = await createKodaXRuntime({ homeDir, profile: 'mcp-error', sharedDaemonHost: true });
+  const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
   try {
     const session = await runtime.sessions.create({ projectPath: homeDir });
     await runtime.sessions.updateSettings(session.id, {

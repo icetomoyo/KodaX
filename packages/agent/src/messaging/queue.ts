@@ -182,6 +182,16 @@ export class MessageQueue {
   }
 
   /**
+   * Put messages a consumer claimed with `dequeue` back at the front, keeping
+   * their ids, when it could not deliver them.
+   */
+  requeue(messages: readonly QueuedMessage[]): void {
+    if (messages.length === 0) return;
+    this.messages = [...messages, ...this.messages];
+    for (const message of messages) this.notify({ kind: 'enqueued', message });
+  }
+
+  /**
    * Peek at matching messages without removing them. Returns messages in
    * the same priority + FIFO order that `dequeue(filter)` would return,
    * so callers can inspect what the next drain would yield.

@@ -43,10 +43,9 @@ it('probes and forgets capabilities in the actual Host used by subsequent SA and
     reasoning: { efforts: ['low', 'medium', 'high'], default: 'medium' },
   }] }));
   vi.stubEnv('KODAX_PRODUCT_CAPABILITY_TEST_KEY', 'test-only');
-  const profile = 'capabilities-contract';
-  const runtime = await createKodaXRuntime({ homeDir, profile, sharedDaemonHost: true });
+  const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
   try {
-    const paths = resolveRuntimeDaemonPaths(homeDir, profile);
+    const paths = resolveRuntimeDaemonPaths(homeDir);
     const lock = tryAcquireRuntimeDaemonLock(paths, {
       runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
     });
@@ -56,7 +55,7 @@ it('probes and forgets capabilities in the actual Host used by subsequent SA and
       : { kind: 'unix' as const, path: path.join(homeDir, 'host.sock') };
     const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
     try {
-      const client = await connectKodaXClient({ homeDir, profile, endpoint: endpoint.path });
+      const client = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
       try {
         const selection = { provider: 'product-capability-test', model: 'test-model' };
         expect(await client.catalog.providers()).toEqual(expect.arrayContaining([

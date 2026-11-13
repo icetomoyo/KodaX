@@ -12,7 +12,6 @@ test('built Product SDK loads tagged instructions and derives complete history t
   const temporary = await realpath(os.tmpdir());
   const homeDir = await mkdtemp(path.join(temporary, 'kodax-bundled-history-'));
   const configHome = path.join(homeDir, '.kodax');
-  const profile = 'bundled-history';
   let client;
   try {
     await mkdir(path.join(configHome, 'rules'), { recursive: true });
@@ -21,7 +20,7 @@ test('built Product SDK loads tagged instructions and derives complete history t
     const options = { cwd: homeDir, projectRoot: homeDir, kodaxDir: configHome };
     assert.ok(loadAgentsFiles(options).every(file => path.basename(file.path) === 'AGENTS.md'));
     assert.ok(loadInstructionFiles(options).some(file => file.kind === 'rule' && file.content === 'fragment instruction'));
-    client = await ensureKodaXClient({ homeDir, profile,
+    client = await ensureKodaXClient({ homeDir,
       requirements: { productHistoryTurnResolution: 2, productHistoryLocation: 2 } });
     assert.equal(client.capabilities.supports('productHistoryTurnResolution', 2), true);
     const session = await client.sessions.create({ projectPath: homeDir });
@@ -55,9 +54,9 @@ test('built Product SDK loads tagged instructions and derives complete history t
     await assert.rejects(client.sessions.readHistory(session.id, { signal: controller.signal }), { code: 'read_cancelled' });
   } finally {
     if (client) {
-      const owner = getKodaXRuntimeOwnerState({ homeDir, profile }).owner;
+      const owner = getKodaXRuntimeOwnerState({ homeDir }).owner;
       try { await client.host.shutdown(); } finally { await client.disconnect(); }
-      if (owner) assert.equal((await waitForRuntimeDaemonShutdown({ configHome, profile, owner })).status, 'succeeded');
+      if (owner) assert.equal((await waitForRuntimeDaemonShutdown({ configHome, owner })).status, 'succeeded');
     }
     assert.equal(path.dirname(homeDir), temporary);
     await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });

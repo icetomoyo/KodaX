@@ -74,10 +74,9 @@ it.each([
     registerModelProvider(name, () => new LiveSettingsProvider(name));
   }
   vi.stubEnv('KODAX_LIVE_SETTINGS_TEST_KEY', 'test-only');
-  const profile = 'live-settings';
-  const runtime = await createKodaXRuntime({ homeDir, profile, sharedDaemonHost: true });
+  const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
   try {
-    const paths = resolveRuntimeDaemonPaths(homeDir, profile);
+    const paths = resolveRuntimeDaemonPaths(homeDir);
     const lock = tryAcquireRuntimeDaemonLock(paths, { runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt });
     if (!lock) throw new Error('Could not acquire isolated test Host.');
     const endpoint = process.platform === 'win32'
@@ -85,7 +84,7 @@ it.each([
       : { kind: 'unix' as const, path: path.join(homeDir, 'host.sock') };
     const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
     try {
-      const client = await connectKodaXClient({ homeDir, profile, endpoint: endpoint.path });
+      const client = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
       try {
         const session = await client.sessions.create({ title: 'Live settings', projectPath: homeDir });
         if (compact) {

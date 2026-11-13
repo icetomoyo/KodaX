@@ -270,6 +270,25 @@ describe('MessageQueue', () => {
     });
   });
 
+  describe('requeue', () => {
+    it('restores claimed messages ahead of later arrivals with their original ids', () => {
+      const q = new MessageQueue();
+      const events: QueueEvent[] = [];
+      q.enqueue({ priority: 'user', mode: 'prompt', content: 'a' });
+      q.enqueue({ priority: 'user', mode: 'prompt', content: 'b' });
+      const claimed = q.dequeue({ maxPriority: 'user' });
+      q.enqueue({ priority: 'user', mode: 'prompt', content: 'c' });
+      q.subscribe(event => events.push(event));
+      q.requeue(claimed);
+      expect(q.peek({ maxPriority: 'user' }).map(m => [m.id, m.content])).toEqual([
+        ['msg-1', 'a'], ['msg-2', 'b'], ['msg-3', 'c'],
+      ]);
+      expect(events.map(event => event.kind === 'enqueued' ? event.message.id : event.kind)).toEqual(['msg-1', 'msg-2']);
+      q.requeue([]);
+      expect(events).toHaveLength(2);
+    });
+  });
+
   describe('mode tagging', () => {
     it('preserves prompt / agent-message / task-notification / system-reminder modes', () => {
       const q = new MessageQueue();

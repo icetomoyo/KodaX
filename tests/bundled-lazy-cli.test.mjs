@@ -29,7 +29,7 @@ test('bundled optional CLI roots retain populated help and real command parsing'
     assert.match(run(['--help'], env), /KodaX/);
     assert.match(run(['mcp', '--help'], env), /list/);
     assert.match(run(['a2a', '--help'], env), /serve/);
-    assert.match(run(['a2a', 'serve', '--help'], env), /--profile/);
+    assert.match(run(['a2a', 'serve', '--help'], env), /--port/);
     assert.match(run(['sandbox', '--help'], env), /doctor/);
     assert.match(run(['extensions', '--help'], env), /reload/);
     assert.match(run(['config', 'template', 'core'], env), /provider/);
@@ -63,7 +63,7 @@ test('bundled ACP loads its adapter and initializes the protocol without a model
   } finally {
     try { child.stdin.end(); await closed; }
     finally {
-      run(['daemon', 'stop', '--profile', 'default'], env);
+      run(['daemon', 'stop'], env);
       await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }
@@ -74,7 +74,6 @@ test('bundled daemon loads hosted A2A with its configured card and authenticatio
   const configHome = path.join(home, '.kodax');
   const env = { ...process.env, KODAX_HOME: configHome, KODAX_TRACING: '0',
     KODAX_LAZY_A2A_TOKEN: 'local-fixture-only' };
-  const profile = 'lazy-hosted';
   const probe = createServer();
   probe.listen(0, '127.0.0.1');
   await once(probe, 'listening');
@@ -92,7 +91,13 @@ test('bundled daemon loads hosted A2A with its configured card and authenticatio
         dataDir: path.join(configHome, 'a2a-tasks'),
       },
     }));
-    run(['daemon', 'start', '--home', home, '--profile', profile, '--provider', 'mock-provider'], env);
+    // `daemon start` defaults to a 5s readiness wait, sized for interactive
+    // use. On a cold Windows CI runner (this suite runs right after the full
+    // build) the first start can need longer, which surfaced as Release flakes
+    // (run 42779240164 attempts 1 and 3). Ask for a CI-sized budget; the
+    // spawnSync cap in run() stays the outer bound.
+    run(['daemon', 'start', '--home', home, '--provider', 'mock-provider',
+      '--timeout-ms', '25000'], env);
     const card = await fetch(`http://127.0.0.1:${port}/.well-known/agent-card.json`, { signal: t.signal });
     assert.equal(card.status, 200);
     assert.equal((await card.json()).name, 'Lazy hosted fixture');
@@ -103,7 +108,7 @@ test('bundled daemon loads hosted A2A with its configured card and authenticatio
     assert.equal(refused.status, 401);
     await refused.arrayBuffer();
   } finally {
-    try { run(['daemon', 'stop', '--home', home, '--profile', profile], env); }
+    try { run(['daemon', 'stop', '--home', home], env); }
     finally { await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
   }
 });

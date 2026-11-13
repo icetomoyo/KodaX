@@ -388,6 +388,7 @@ export type {
 export {
   getAgentConfigHome,
   getAgentConfigPath,
+  resolveKodaXHome,
   setAgentConfigHome,
   getAppDataDir,
   isPathInsideDirectory,
@@ -395,6 +396,7 @@ export {
   registerRuntimeAgentHome,
   getActiveAgentHomes,
 } from './runtime/agent-home.js';
+export type { ResolvedKodaXHome } from './runtime/agent-home.js';
 
 export {
   CAPABILITY_CACHE_FILENAME,

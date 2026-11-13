@@ -14,8 +14,8 @@ before printing and never dispatches management operations. See the
 > daemons are retired. Internal Runtime and independent libraries remain. See
 > [migration and ownership limits](SDK_MIGRATION.md#统一-host-sdk-收口未发布).
 
-Last updated: 2026-11-08. Current development tree: FEATURE_298/299/301/302 on package
-`0.7.97-beta.4`, with `v0.7.96` as the last stable release; publication is separate.
+Last updated: 2026-11-13. Current development tree: FEATURE_298/299/301/302/303/304/305/306 on package
+`0.7.97-beta.9`, with `v0.7.96` as the last stable release; publication is separate.
 
 Product integrations use `KodaXProductClient` through `/client`. Read the
 [Client contract](CLIENT_CONTRACT.md) and [SDK migration guide](SDK_MIGRATION.md)
@@ -340,10 +340,11 @@ bodies, credentials, prompts, raw header collections, URLs, local paths, stacks,
 and raw errors are not copied across the boundary; only allowlisted metadata is
 extracted.
 
-For a Windows daemon Runtime, startup is a three-part process boundary:
-PowerShell creates the daemon suspended, assigns it to a kill-on-close Job
-Object, and resumes it; an out-of-Job supervisor waits for daemon exit and then
-for the Job's active-process count to reach zero. The SDK and CLI consume that
+For a Windows daemon Runtime, startup is a three-part process boundary: the
+bundled native `__daemon-job-supervise` helper creates the daemon suspended,
+assigns it to a kill-on-close Job Object, publishes readiness and resumes it;
+the same out-of-Job helper then waits for daemon exit and for the Job's
+active-process count to reach zero. The SDK and CLI consume that
 boundary as a verified shutdown contract rather than treating PID exit alone as
 completion.
 

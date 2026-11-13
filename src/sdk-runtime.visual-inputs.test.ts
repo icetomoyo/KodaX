@@ -184,6 +184,14 @@ it.each<{ restart: boolean; toolRead: boolean; batch: boolean; delivery: 'after_
     await vi.waitFor(async () => expect((await runtime.runs.getInput(session.id, input.inputId))?.state, queueErrors.join('\n')).toBe('submitted'), { timeout: 5000 });
     const delivered = await runtime.runs.getInput(session.id, input.inputId);
     expect((await runtime.runs.await(delivered!.runId!)).phase).toBe('completed');
+    const page = await runtime.sessions.readHistory(session.id);
+    const userImages = page.items.filter(item => item.type === 'user' && item.attachments?.length);
+    expect(userImages.length).toBeGreaterThan(0);
+    for (const item of userImages) {
+      expect(item.text).not.toContain('observedAt=');
+      expect(item.attachments?.every(attachment => attachment.observationId !== undefined)).toBe(true);
+      expect((await runtime.sessions.readHistoryEntry(session.id, item.id))?.text).toBe(item.text);
+    }
     expect(JSON.stringify(rootWires.at(-1))).toContain(original.toString('base64'));
     if (failedDelivery !== 'after') expect(JSON.stringify(rootWires.at(-1))).not.toContain(replacement.toString('base64'));
     const visible = await owner.list();

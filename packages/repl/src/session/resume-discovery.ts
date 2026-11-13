@@ -1,7 +1,8 @@
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 
+// Subpath, not the barrel: the bare-resume bundle must not load the agent/LLM graph.
+import { getAgentConfigHome } from '@kodax-ai/agent/runtime/agent-home';
 
 import {
   deriveProjectKeyFromRoot,
@@ -62,11 +63,7 @@ export interface ListCliResumeSessionsOptions {
 }
 
 function defaultSessionsDir(): string {
-  const envHome = process.env.KODAX_HOME;
-  const configHome = envHome && envHome.length > 0
-    ? envHome
-    : path.join(os.homedir(), '.kodax');
-  return path.join(configHome, 'sessions');
+  return path.join(getAgentConfigHome(), 'sessions');
 }
 
 function isSessionFile(name: string): boolean {

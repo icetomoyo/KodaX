@@ -5,8 +5,10 @@
  * large-entry reads stay unambiguous.
  */
 import { restoreHistoryItemsFromSession } from '@kodax-ai/repl';
+import { projectVisualInputContent } from '@kodax-ai/agent/media';
 import { canonicalTools, canonicalToolKey, toolResultText, toolResultOutputPath } from './client-canonical-tools.js';
 import { readSavedToolOutput } from './tool-output-reader.js';
+import { readItemImage } from './session-view-image.js';
 import { readTaskResultReports, type KodaXDiagnosticSink, type KodaXMessage } from '@kodax-ai/agent';
 import { assembleConversationHistoryEntry, readFollowingMessage } from './conversation-entry-reader.js';
 export { assembleConversationHistoryEntry, readFollowingMessage } from './conversation-entry-reader.js';
@@ -73,10 +75,6 @@ export async function projectConversationHistoryPage(
           ...(successor?.timestamp !== undefined ? { timestamp: successor.timestamp } : {}) }]
         : [owner.message],
     ).map(item => boundHistoryItem({ ...item,
-      ...(item.type === 'user' && Array.isArray(owner.message.content)
-        && owner.message.content.some(block => block.type === 'image')
-        ? { attachments: owner.message.content.flatMap(block => block.type === 'image'
-          ? [{ kind: 'image' as const, path: block.path, ...(block.mediaType ? { mediaType: block.mediaType } : {}) }] : []) } : {}),
       ...(entry.boundaryId !== undefined ? { historyBoundary: {
         entryId: entry.boundaryId, sourceRevision: page.sourceRevision,
       } } : {}),
@@ -115,11 +113,18 @@ export async function readConversationHistoryEntry(
   namespace: 'history' | 'transcript' = 'history',
   report?: KodaXDiagnosticSink,
 ): Promise<ClientItemContent | null> {
-  if (options.part === 'attachment') throw new Error('Read image attachments through sessions.readItem.');
   const parsed = parseHistoryEntryItemId(sessionId, itemId, namespace);
   if (parsed === undefined) return null;
   const entry = await assembleConversationHistoryEntry(readChunk, sessionId, parsed.revision, parsed.entryIndex, report);
   if (entry === null) return null;
+  if (options.part === 'attachment') {
+    const successor = entry.message.role === 'assistant' && Array.isArray(entry.message.content)
+      && entry.message.content.some(block => block.type === 'tool_use')
+      ? await readFollowingMessage(readChunk, sessionId, parsed.revision, parsed.entryIndex, report) : undefined;
+    const item = projectHistoryEntry(sessionId, parsed.revision, parsed.entryIndex,
+      successor?.role === 'user' ? [entry.message, successor] : [entry.message])[parsed.ordinal ?? 0];
+    return item ? { id: itemId, text: '', offset: 0, totalLength: 0, image: await readItemImage(item, options) } : null;
+  }
   const selected = parsed.ordinal === undefined ? undefined
     : projectHistoryEntry(sessionId, parsed.revision, parsed.entryIndex, [entry.message])[parsed.ordinal];
   if (parsed.ordinal !== undefined && selected === undefined) return null;
@@ -223,6 +228,8 @@ export function projectHistoryEntry(
   // under the same entry anchor; ordinals count emitted items flatly.
   const restored = restoreHistoryItemsFromSession({ messages, historyScope: 'all', structuredTaskResults: true });
   const tools = canonicalTools(messages);
+  const userAttachments = new Map(messages.filter(message => message.role === 'user')
+    .map(message => [message.inputId, projectVisualInputContent(message.content).attachments] as const));
   const items: ClientViewItem[] = [];
   let ordinal = 0;
   for (const item of restored) {
@@ -242,6 +249,8 @@ export function projectHistoryEntry(
       id: historyItemId(sessionId, revision, entryIndex, ordinal),
       type: item.type as ClientViewItem['type'],
       text: item.text,
+      ...(item.type === 'user' && userAttachments.get(item.inputId)?.length
+        ? { attachments: userAttachments.get(item.inputId) } : {}),
       ...(item.taskResult ? { taskResult: item.taskResult } : {}),
       ...(item.inputId !== undefined ? { inputId: item.inputId } : {}),
       ...(item.outputId !== undefined ? {
@@ -272,6 +281,8 @@ function historyItemId(sessionId: string, revision: string, entryIndex: number, 
 
 /** Raw entry body, bypassing the replay projection's display truncation. */
 function entryBody(message: KodaXMessage, part: 'text' | 'input'): string {
+  if (part === 'text' && message.role === 'user' && Array.isArray(message.content)
+    && message.content.some(block => block.type === 'image')) return projectVisualInputContent(message.content).text;
   const blocks = Array.isArray(message.content) ? message.content : [];
   if (part === 'input') {
     return blocks

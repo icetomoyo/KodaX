@@ -139,7 +139,7 @@ for (const scenario of ['recoverable', 'without-read', 'storage-failure',
         response.end(JSON.stringify({ error: { message: String(error) } }));
       }
     });
-    const connection = { homeDir, profile: 'mcp-output', daemonOrphanExitMs: 1000,
+    const connection = { homeDir, daemonOrphanExitMs: 1000,
       daemonStartupTimeoutMs: 60_000 };
     const stopHost = async () => {
       await client?.disconnect();
@@ -147,7 +147,7 @@ for (const scenario of ['recoverable', 'without-read', 'storage-failure',
       try { await runtime?.daemon.shutdown(); }
       finally { await runtime?.close(); runtime = undefined; }
       if (owner) {
-        const stopped = await waitForRuntimeDaemonShutdown({ configHome, profile: connection.profile, owner });
+        const stopped = await waitForRuntimeDaemonShutdown({ configHome, owner });
         assert.equal(stopped.status, 'succeeded');
         owner = undefined;
       }
@@ -254,7 +254,7 @@ for (const scenario of ['recoverable', 'without-read', 'storage-failure',
         owner = (await runtime.daemon.inspect()).owner;
         assert.notEqual(runtime.identity.runtimeId, originalRuntimeId);
       }
-      client = await connectKodaXClient({ homeDir, profile: connection.profile });
+      client = await connectKodaXClient({ homeDir });
       const sessionApi = client?.sessions ?? runtime.sessions;
       const history = await sessionApi.readHistory(session.id);
       const item = history.items.find(entry => entry.tool?.callId === 'mcp-output-call');

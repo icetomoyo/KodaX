@@ -58,7 +58,7 @@ export NODE_EXTRA_CA_CERTS=/etc/ssl/corp-root.pem
 export HTTPS_PROXY=http://proxy.corp.example:3128
 export NO_PROXY=localhost,127.0.0.1,.corp.example
 export NODE_USE_ENV_PROXY=1
-kodax daemon stop --profile default   # 已运行的 Host 沿用它启动时的环境变量
+kodax daemon stop   # 已运行的 Host 沿用它启动时的环境变量
 kodax -p "Review this repository"
 ```
 
@@ -71,7 +71,7 @@ kodax -p "Review this repository"
 ```bash
 kodax daemon start
 kodax -p "Review 这个仓库"
-kodax daemon stop --profile default
+kodax daemon stop
 ```
 
 Daemon 状态、配置和 Runtime 会话存储默认使用解析后的 `KODAX_HOME`（通常为 `<OS 用户主目录>/.kodax`），CLI 和 SDK 客户端因此收敛到同一个本地 Daemon。

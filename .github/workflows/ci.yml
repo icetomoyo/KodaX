@@ -67,7 +67,7 @@ jobs:
       - name: Typecheck production source and source tests
         run: npm run typecheck
 
-      - name: Compile Linux native authority for glibc 2.28
+      - name: Compile Linux native authority for glibc 2.17
         if: matrix.node == '22'
         run: node scripts/build-linux-native.mjs
 
@@ -76,9 +76,9 @@ jobs:
           KODAX_NATIVE_PREBUILT: ${{ matrix.node == '22' && '1' || '0' }}
         run: npm run build:native
 
-      - name: Enforce Linux glibc 2.28 ABI
+      - name: Enforce Linux glibc 2.17 ABI
         if: matrix.node == '22'
-        run: node scripts/check-native-glibc.mjs --max 2.28 dist/native/linux-x64/kodax-text-transaction.node
+        run: node scripts/check-native-glibc.mjs --max 2.17 dist/native/linux-x64/kodax-text-transaction.node
 
       - name: Build bundled SDK and Worker sidecars
         run: npm run build:bundle
@@ -129,7 +129,6 @@ jobs:
           set -euo pipefail
 
           home_dir="$(mktemp -d)"
-          profile="ci-unix-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
           cleanup() {
             result=$?
             if [ "$result" -eq 0 ]; then
@@ -140,14 +139,13 @@ jobs:
           }
           trap cleanup EXIT
 
-          KODAX_UNIX_GATE_HOME="$home_dir" KODAX_UNIX_GATE_PROFILE="$profile" node --input-type=module <<'NODE'
+          KODAX_UNIX_GATE_HOME="$home_dir" node --input-type=module <<'NODE'
           import path from 'node:path';
           import { readFile } from 'node:fs/promises';
           import { createKodaXRuntime, connectKodaXRuntime, waitForRuntimeDaemonShutdown } from '@kodax-ai/kodax/runtime';
 
           const homeDir = process.env.KODAX_UNIX_GATE_HOME;
-          const profile = process.env.KODAX_UNIX_GATE_PROFILE;
-          if (!homeDir || !profile) {
+          if (!homeDir) {
             throw new Error('Missing Unix runtime gate environment.');
           }
 
@@ -165,7 +163,6 @@ jobs:
             first = await createKodaXRuntime({
               mode: 'daemon',
               homeDir,
-              profile,
               defaultProvider: 'mock-provider',
               clientInfo: { name: 'ci-unix-a', version: '0.7.66' },
               capabilities,
@@ -173,7 +170,6 @@ jobs:
             owner = (await first.daemon.inspect()).owner;
             second = await connectKodaXRuntime({
               homeDir,
-              profile,
               clientInfo: { name: 'ci-unix-b', version: '0.7.66' },
               capabilities,
             });
@@ -221,7 +217,7 @@ jobs:
 
             const status = await second.status.snapshot();
             const pending = await second.permissions.listPending({ runId: run.runId });
-            const statePath = path.join(homeDir, '.kodax', 'runtime', 'daemon', profile, 'daemon.json');
+            const statePath = path.join(homeDir, '.kodax', 'runtime', 'daemon', 'default', 'daemon.json');
             const state = JSON.parse(await readFile(statePath, 'utf8'));
             const endpoint = typeof state.endpoint === 'string' ? state.endpoint : '';
             const proof = {
@@ -258,7 +254,7 @@ jobs:
               await first?.daemon.shutdown();
               if (owner) {
                 const stopped = await waitForRuntimeDaemonShutdown({
-                  configHome: path.join(homeDir, '.kodax'), profile, owner,
+                  configHome: path.join(homeDir, '.kodax'), owner,
                 });
                 if (stopped.status !== 'succeeded') {
                   throw new Error(`Unix gate Host cleanup failed: ${JSON.stringify(stopped)}`);
@@ -402,12 +398,12 @@ jobs:
         timeout-minutes: 5
         run: npm run test:host-cutover
 
-      - name: Published beta.3 Host in-place upgrade gate
+      - name: Published beta.8 Host in-place upgrade gate
         timeout-minutes: 5
         env:
-          KODAX_BETA3_TARBALL: ${{ runner.temp }}/kodax-ai-kodax-0.7.97-beta.3.tgz
+          KODAX_BETA8_TARBALL: ${{ runner.temp }}/kodax-ai-kodax-0.7.97-beta.8.tgz
         run: |
-          npm pack @kodax-ai/kodax@0.7.97-beta.3 --ignore-scripts --pack-destination "$env:RUNNER_TEMP"
+          npm pack @kodax-ai/kodax@0.7.97-beta.8 --ignore-scripts --pack-destination "$env:RUNNER_TEMP"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run test:host-upgrade
 
@@ -510,7 +506,7 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install ripgrep socat
 
-      - name: Compile Linux native authority for glibc 2.28
+      - name: Compile Linux native authority for glibc 2.17
         if: runner.os == 'Linux'
         run: node scripts/build-linux-native.mjs
 
@@ -522,9 +518,9 @@ jobs:
           npm run test:native
           node node_modules/vitest/vitest.mjs run src/windows-text-transaction.test.ts src/windows-native-artifacts.test.ts
 
-      - name: Enforce Linux glibc 2.28 ABI
+      - name: Enforce Linux glibc 2.17 ABI
         if: runner.os == 'Linux'
-        run: node scripts/check-native-glibc.mjs --max 2.28 dist/native/linux-arm64/kodax-text-transaction.node
+        run: node scripts/check-native-glibc.mjs --max 2.17 dist/native/linux-arm64/kodax-text-transaction.node
 
       - name: Real POSIX per-command sandbox concurrency gate
         env:

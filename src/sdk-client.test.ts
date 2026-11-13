@@ -76,12 +76,11 @@ it.each(['productClient', 'productHistoryBoundaries', 'productExecutionAuthoriza
 
 it('reads actual Host sessions through the product SDK without owning their lifetime', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-client-'));
-  const profile = 'client-contract';
-  const runtime = await createKodaXRuntime({ homeDir, profile });
+  const runtime = await createKodaXRuntime({ homeDir });
   try {
     const first = await runtime.sessions.create({ title: 'Fix login', surface: 'repl' });
     await runtime.sessions.create({ title: 'Review parser', surface: 'sdk' });
-    const paths = resolveRuntimeDaemonPaths(homeDir, profile);
+    const paths = resolveRuntimeDaemonPaths(homeDir);
     const lock = tryAcquireRuntimeDaemonLock(paths, {
       runtimeId: runtime.identity.runtimeId,
       pid: process.pid,
@@ -93,7 +92,7 @@ it('reads actual Host sessions through the product SDK without owning their life
       : { kind: 'unix' as const, path: path.join(homeDir, 'host.sock') };
     const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
     try {
-      const client = await connectKodaXClient({ homeDir, profile, endpoint: endpoint.path });
+      const client = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
       try {
         const sessions = await client.sessions.list({ surface: 'repl' });
         expect(sessions).toHaveLength(1);
@@ -127,7 +126,7 @@ it('reads actual Host sessions through the product SDK without owning their life
       } finally {
         await client.disconnect();
       }
-      const reconnected = await connectKodaXClient({ homeDir, profile, endpoint: endpoint.path });
+      const reconnected = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
       try {
         expect(await reconnected.sessions.list()).toHaveLength(2);
       } finally {

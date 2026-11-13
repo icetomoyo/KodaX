@@ -6,7 +6,6 @@ import * as runtimeSdk from '@kodax-ai/kodax/runtime';
 import * as rootSdk from '@kodax-ai/kodax';
 
 const homeDir = process.argv[2];
-const profile = 'legacy';
 for (const sdk of [runtimeSdk, rootSdk]) {
   for (const name of ['createKodaXHostRuntime', 'acquireKodaXInlineOwner', 'setKodaXRuntimeOwnerMode']) {
     assert.equal(name in sdk, false, `${name} must not be exported by a published SDK entry`);
@@ -25,10 +24,12 @@ for (const sdk of [runtimeSdk, rootSdk]) {
 }
 
 const ownerOptions = {
-  mode: 'daemon', homeDir, profile, daemonStartupTimeoutMs: 60_000,
+  mode: 'daemon', homeDir, daemonStartupTimeoutMs: 60_000,
   execPolicy: { adminRules: [{ prefix: ['git', 'push'], decision: 'forbidden', justification: 'Package fixture.' }] },
   autoReview: { administratorPolicy: 'Do not publish fixture work.', modelGuidance: 'Offline verification.' },
 };
+// FEATURE_305: one Host per home; a Host-location profile fails with migration guidance.
+await assert.rejects(runtimeSdk.ensureKodaXRuntime({ homeDir, profile: 'legacy' }), { code: 'runtime_host_migration_required' });
 let host;
 let peer;
 let owner;
@@ -38,13 +39,13 @@ try {
   assert.notEqual(owner.pid, process.pid, 'The SDK caller must not own the execution process');
   assert.equal(host.identity.isolation, 'process');
   const session = await host.sessions.create({ title: 'Packed unified Host' });
-  peer = await runtimeSdk.connectKodaXRuntime({ homeDir, profile });
+  peer = await runtimeSdk.connectKodaXRuntime({ homeDir });
   assert.equal(peer.identity.runtimeId, host.identity.runtimeId);
   await assert.rejects(runtimeSdk.createKodaXRuntime(ownerOptions), /already|owner|policy|running/i);
   await host.close();
   host = undefined;
   assert.ok((await peer.sessions.list()).some(item => item.id === session.id), 'Disconnect must retain the shared Session');
-  const stateDirectory = path.join(homeDir, '.kodax', 'runtime', 'daemon', profile);
+  const stateDirectory = path.join(homeDir, '.kodax', 'runtime', 'daemon', 'default');
   assert.equal((await readdir(stateDirectory)).some(name => name.startsWith('owner-bootstrap-')), false);
   assert.equal(JSON.parse(await readFile(path.join(stateDirectory, 'owner-policy.json'), 'utf8')).mode, 'host');
 } finally {
@@ -54,7 +55,7 @@ try {
     finally { await peer?.close(); await host?.close(); }
   }
   if (owner) {
-    const stopped = await runtimeSdk.waitForRuntimeDaemonShutdown({ configHome: path.join(homeDir, '.kodax'), profile, owner });
+    const stopped = await runtimeSdk.waitForRuntimeDaemonShutdown({ configHome: path.join(homeDir, '.kodax'), owner });
     assert.equal(stopped.status, 'succeeded', JSON.stringify(stopped));
   }
 }

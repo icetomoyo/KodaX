@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import path from 'node:path';
 
 import { readProcessStartIdentity, readProcessStartIdentities, readCurrentProcessWindowsJobIdentity } from '@kodax-ai/agent';
+import { readDaemonWindowsJobIdentity } from './windows-job-identity.js';
 
 let currentProcessStartIdentity: string | undefined;
 let currentProcessStartIdentityRead = false;
@@ -105,7 +106,7 @@ export function readRuntimeOwnerProcessStartIdentity(pid: number): string | unde
 }
 
 export function readRuntimeDaemonWindowsJobIdentity(): ReturnType<typeof readCurrentProcessWindowsJobIdentity> {
-  const identity = readCurrentProcessWindowsJobIdentity();
+  const identity = readCurrentProcessWindowsJobIdentity(readDaemonWindowsJobIdentity);
   if (identity !== undefined) {
     // Only our own immutable identity is cached; the supervisor evidence is
     // returned to this startup observation and never reused for later checks.
@@ -175,16 +176,22 @@ export type RuntimeDaemonOwnershipDecision =
       readonly lockOwner?: RuntimeDaemonLockOwner;
     };
 
+/**
+ * The fixed directory name of the one Host per KODAX_HOME (ADR-075). It is a
+ * location, not a profile; older clients find the Host here.
+ */
+export const RUNTIME_HOST_SLOT = 'default';
+
 export function resolveRuntimeDaemonPaths(
   homeDir: string,
-  profile = 'default',
+  profile = RUNTIME_HOST_SLOT,
 ): RuntimeDaemonPaths {
   return resolveRuntimeDaemonPathsFromConfigHome(path.join(path.resolve(homeDir), '.kodax'), profile);
 }
 
 export function resolveRuntimeDaemonPathsFromConfigHome(
   configHome: string,
-  profile = 'default',
+  profile = RUNTIME_HOST_SLOT,
 ): RuntimeDaemonPaths {
   const normalizedProfile = normalizeRuntimeDaemonProfile(profile);
   const resolvedConfigHome = path.resolve(configHome);
@@ -554,9 +561,14 @@ export function assertRuntimeDaemonOwnerAllowed(paths: RuntimeDaemonPaths): void
   }
 }
 
+/** Host slot directory names any KodaX version accepted; merge and retention match the same set (ADR-075). */
+export const RUNTIME_HOST_SLOT_NAME = '[A-Za-z0-9_.-]+';
+/** Directory a merged legacy slot is renamed to (`<slot>.merged-YYYYMMDD[-n]`). */
+export const RETIRED_RUNTIME_HOST_SLOT = new RegExp(`^${RUNTIME_HOST_SLOT_NAME}\\.merged-\\d{8}(?:-\\d+)?$`);
+
 export function normalizeRuntimeDaemonProfile(profile: string): string {
   const trimmed = profile.trim() || 'default';
-  if (trimmed === '.' || trimmed === '..' || !/^[A-Za-z0-9_.-]+$/.test(trimmed)) {
+  if (trimmed === '.' || trimmed === '..' || !new RegExp(`^${RUNTIME_HOST_SLOT_NAME}$`).test(trimmed)) {
     throw new Error(`Invalid runtime daemon profile: ${profile}`);
   }
   return trimmed;
@@ -929,6 +941,31 @@ export function findRuntimeSessionStorageHost(
   throw Object.assign(new Error(`The shared Session storage owner ${owner.runtimeId} (PID ${owner.pid}) cannot be attached yet. Waiting for its verified daemon descriptor.`), {
     code: 'session_storage_owned' as const, retryable: true,
   });
+}
+
+/**
+ * The slot of the Host that serves this home: a live legacy-slot Host that
+ * owns Session storage (an older client started it, ADR-075), else the
+ * canonical slot. An owner whose descriptor is not published yet is still
+ * starting; callers that must wait for it use findRuntimeSessionStorageHost.
+ */
+export function resolveRuntimeHostSlot(configHome: string, sessionsDir: string): string {
+  try {
+    return findRuntimeSessionStorageHost(configHome, sessionsDir)?.profile ?? RUNTIME_HOST_SLOT;
+  } catch (error: unknown) {
+    if (isRecord(error) && error.code === 'session_storage_owned') return RUNTIME_HOST_SLOT;
+    throw error;
+  }
+}
+
+/** Every daemon slot directory in this home, canonical first. */
+export function listRuntimeDaemonSlots(configHome: string): readonly string[] {
+  const daemonDir = path.join(path.resolve(configHome), 'runtime', 'daemon');
+  const legacy = fs.existsSync(daemonDir) ? fs.readdirSync(daemonDir, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && entry.name !== RUNTIME_HOST_SLOT
+      && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(entry.name))
+    .map(entry => entry.name).sort() : [];
+  return [RUNTIME_HOST_SLOT, ...legacy];
 }
 
 export function acquireRuntimeSessionStorageOwner(
