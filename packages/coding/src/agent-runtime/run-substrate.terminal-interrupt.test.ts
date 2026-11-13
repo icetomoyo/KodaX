@@ -424,6 +424,65 @@ describe('runKodaX Runtime terminal interrupt continuation', { timeout: 30_000 }
     expect(result.success).toBe(false);
     expect(turn).toBe(1);
     expect(delivered).toEqual([]);
+    // The undelivered input stays with its original id for the Host's terminal cleanup.
+    expect(getMessageQueue().peek({ agentId: queueAgentId, maxPriority: 'user', mode: 'prompt' })
+      .map(message => message.content)).toEqual(['must not be reported delivered']);
+  });
+
+  it('claims a Runtime-owned interrupt before persisting it, so a withdrawal during the save finds nothing', async () => {
+    const sessionId = 'runtime-terminal-interrupt-claim';
+    const queueAgentId = actorQueueId(sessionId, '/root');
+    let turn = 0;
+    let queuedId: string | undefined;
+    let withdrawnDuringSave: unknown[] | undefined;
+    let storedSession: KodaXSessionData = { messages: [], gitRoot: process.cwd() };
+
+    class ClaimedInterruptProvider extends KodaXBaseProvider {
+      readonly name = PROVIDER_NAME;
+      readonly supportsThinking = false;
+      protected readonly config: KodaXProviderConfig = {
+        apiKeyEnv: API_KEY_ENV, model: 'baseline-model', supportsThinking: false,
+      };
+
+      async stream(): Promise<KodaXStreamResult> {
+        turn += 1;
+        if (turn === 1) {
+          queuedId = getMessageQueue().enqueue({
+            agentId: queueAgentId, priority: 'user', mode: 'prompt', content: 'claimed interrupt',
+          });
+        }
+        return { textBlocks: [{ type: 'text', text: `answer ${turn}` }], toolBlocks: [], thinkingBlocks: [] };
+      }
+    }
+
+    registerModelProvider(PROVIDER_NAME, () => new ClaimedInterruptProvider());
+    actorSession = new CodingActorSession({ sessionId });
+    const result = await runKodaX({
+      provider: PROVIDER_NAME, model: 'baseline-model', maxIter: 1, lsp: false,
+      session: {
+        id: sessionId,
+        persistedByHost: false,
+        storage: {
+          load: async () => storedSession,
+          save: async (_id: string, data: KodaXSessionData) => {
+            if (withdrawnDuringSave === undefined && JSON.stringify(data.messages).includes('claimed interrupt')) {
+              withdrawnDuringSave = getMessageQueue().dequeue({
+                agentId: queueAgentId, maxPriority: 'user', mode: 'prompt', id: queuedId,
+              });
+            }
+            storedSession = data;
+          },
+        },
+      },
+      context: {
+        actorSession, gitRoot: process.cwd(), executionCwd: process.cwd(), repoIntelligenceMode: 'off',
+        interruptInput: { closeInputWindow() {}, reopenInputWindow() {} },
+      },
+    }, 'first prompt');
+
+    expect(result.success).toBe(true);
+    expect(turn).toBe(2);
+    expect(withdrawnDuringSave).toEqual([]);
   });
 
   it('binds memory_intent to a queued user turn instead of the initial prompt', async () => {
