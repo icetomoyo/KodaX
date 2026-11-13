@@ -67,8 +67,18 @@ before it drains or inspects. A last-client stop still runs the full preflight,
 and a Host-level stop (no principal) keeps it, because upgrade callers read the
 blockers in its `preflight` data.
 
-Regression: `src/runtime-daemon/management.orphan-exit.test.ts`
-(`Runtime daemon stop with peer clients`). See Space Issue 250.
+Reproduce: attach a `kodax` CLI to a Host, then call
+`lifecycle.requestExit({ shutdownHost: true })` from another client, as Space
+does when it quits. Before the fix the exit receipt reported `protected` only
+after the preflight finished, and the CLI's requests were rejected while the
+Host drained.
+
+**Files Changed:** `src/runtime-daemon/management.ts`.
+
+**Tests Added:** `src/runtime-daemon/management.orphan-exit.test.ts`
+(`Runtime daemon stop with peer clients`): an exiting client is refused at once
+without draining or scanning, a Host-level stop keeps its preflight evidence,
+and the last client's stop still inspects governed work. See Space Issue 250.
 
 ## Issue 409: Windows daemon Job proof and failed-start cleanup prevent recovery
 
@@ -109,10 +119,20 @@ Not yet measured: native probe and supervisor startup time on a machine whose
 antivirus scans a freshly installed helper on first run. The 10-second deadline
 is not backed by such a measurement.
 
-Regression: `src/runtime-daemon/process*.test.ts`,
-`windows-job-supervisor.test.ts`, `windows-job-native-supervisor.test.ts`,
-`windows-job-identity*.test.ts`,
-`manager-containment.test.ts`, and agent `process-tree.windows.test.ts`.
+Reproduce: the slow PowerShell was not reproduced locally. The tests reproduce
+its effects instead: a Job probe that times out or cannot run, a child that
+exits before readiness, and a cleanup that fails, each followed by a retry.
+
+**Files Changed:** `src/runtime-daemon/process.ts`, `state.ts`,
+`windows-job-identity.ts` (new), `windows-job-supervisor.ts`;
+`native/windows-sandbox-v2/src/job_identity.rs` (new), `job_supervisor.rs`
+(new), `main.rs`; `packages/agent/src/runtime/process-tree.ts`.
+
+**Tests Added:** `src/runtime-daemon/process*.test.ts` (including the new
+`process-admission.test.ts`), `windows-job-supervisor.test.ts`,
+`windows-job-native-supervisor.test.ts` (new),
+`windows-job-identity*.test.ts` (new), and agent `process-tree.windows.test.ts`;
+the existing `manager-containment.test.ts` also guards it.
 Space additionally runs real offline Electron cold-start, transient failure,
 persistent failure/manual retry and cleanup-failure recovery tests with no
 Provider, then configures a loopback private-model fixture. See Space Issue 246.
