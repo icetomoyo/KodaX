@@ -187,6 +187,11 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
   }
 
   async stop(input?: { readonly principalId?: string; readonly preserveBackgroundWork?: true }): Promise<{ readonly ok: true }> {
+    // A connected peer refuses a client's exit stop whatever the preflight says. Refuse
+    // before draining so a slow history scan never rejects that peer's work meanwhile.
+    // Host-level stops keep the full preflight: upgrade callers read its blockers.
+    if (input?.principalId !== undefined && this.hasPeerClients(input.principalId)) {      throw managementError('conflict', 'Runtime daemon cannot stop safely: connected_clients.');
+    }
     this.beginDraining();
     try {
       await this.assertStoppable(input?.principalId, input?.preserveBackgroundWork === true);
@@ -231,7 +236,7 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
     const current = await this.preflight();
     const blockers = exitingPrincipalId === undefined ? [...current.blockers] : [
       ...current.blockers.filter(blocker => blocker !== 'connected_clients'),
-      ...([...this.clients.values()].some(client => client.principalId !== exitingPrincipalId) ? ['connected_clients'] : []),
+      ...(this.hasPeerClients(exitingPrincipalId) ? ['connected_clients'] : []),
     ];
     if (preserveBackgroundWork && (current.pendingBackgroundWork ?? 0) > 0) blockers.push('background_work');
     if (blockers.length > 0) {
@@ -241,6 +246,10 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
         { preflight: current },
       );
     }
+  }
+
+  private hasPeerClients(exitingPrincipalId: string): boolean {
+    return [...this.clients.values()].some(client => client.principalId !== exitingPrincipalId);
   }
 
   private observePreflight(current: RuntimeDaemonPreflight): void {

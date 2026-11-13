@@ -52,6 +52,10 @@ All notable changes to this project will be documented in this file.
   failed `ResumeThread`, a failed cleanup of an unassigned daemon or an
   unreadable exit code. A cleanup failure tells the user that retrying or
   restarting the application releases it (Issue 409).
+- A client exit that asks to stop the Host now gets `connected_clients` at
+  once while another client is attached. It used to drain the Host and run
+  the full preflight first, which took up to 17 seconds and rejected the
+  other client's work in the meantime (Issue 410).
 
 ---
 

@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-12_
+_Last Updated: 2026-11-13_
 
 ---
 
@@ -46,6 +46,29 @@ This predates the child contract projection; the eval uses raw per-call usage,
 not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
+
+## Issue 410: A client exit stop with a connected peer drains the Host and answers late
+
+- Priority: Medium
+- Status: Resolved (source; not released)
+- Observed: Space `out/win-unpacked` / SDK 0.7.97-beta.8 with a `kodax` CLI attached to the same Host, Windows x64, 2026-11-13
+- Introduced: `v0.7.97-alpha.2` (client exit receipts with `shutdownHost`)
+- Resolution Date: 2026-11-13
+
+`lifecycle.requestExit({ shutdownHost: true })` ends in `management.stop({ principalId })`.
+`stop()` began draining and then ran the full preflight before it applied the
+`connected_clients` rule. With a CLI attached, the refusal was certain, but the
+preflight took 4.6–17.5 seconds. Meanwhile the peer's mutations and attaches were
+rejected, and Space's 15-second exit settlement expired before the receipt said
+`protected`.
+
+A principal-scoped stop now refuses with the same `connected_clients` conflict
+before it drains or inspects. A last-client stop still runs the full preflight,
+and a Host-level stop (no principal) keeps it, because upgrade callers read the
+blockers in its `preflight` data.
+
+Regression: `src/runtime-daemon/management.orphan-exit.test.ts`
+(`Runtime daemon stop with peer clients`). See Space Issue 250.
 
 ## Issue 409: Windows daemon Job proof and failed-start cleanup prevent recovery
 
@@ -2994,6 +3017,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 410 | Medium | Resolved | A client exit stop with a connected peer drains the Host and answers late | `v0.7.97-alpha.2` (client exit receipts) | source; not released | 2026-11-13 | 2026-11-13 |
 | 409 | High | Resolved | Windows daemon Job proof and failed-start cleanup prevent recovery | observed in v0.7.97-beta.4 (customer report); PowerShell Job probe since v0.7.97-alpha.7 | `v0.7.97-beta.8` | 2026-11-12 | 2026-11-12 |
 | 408 | Medium | Resolved | Space SDK leaks user image labels, rejects non-PNG attachments and loses extension approval attribution | observed in v0.7.97-beta.6; visual input/tools since beta.5 | `v0.7.97-beta.7` | 2026-11-12 | 2026-11-12 |
 | 407 | Medium | Resolved | Passive connections and exit receipts ignore the session storage owner | v0.7.97-alpha.7 (storage-owner redirect) | `v0.7.97-beta.6` (FEATURE_305 T3+T4) | 2026-11-10 | 2026-11-11 |
@@ -18624,12 +18648,17 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 287 (46 Open including 1 needs-info, 241 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 288 (46 Open including 1 needs-info, 242 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-13: Issue 410
+
+- A principal-scoped client exit stop refuses `connected_clients` before
+  draining or running the preflight; not yet released.
 
 ### 2026-11-12: Issue 409
 
