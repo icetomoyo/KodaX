@@ -404,11 +404,31 @@ By case, pass count out of 6 (A -> C): c1 0 -> 5, c3 0 -> 5, c6 0 -> 4, c7 0 -> 
 
 **Limits.** Skills are judged from one response per case; a real job may loop. Six cells per case is a smoke test, not a rate. A proposal needs the user to act before it is used, so a bad skill costs review attention, not behavior.
 
-### 17.5 Stage 4e: deletion of the old code is held until the default is decided
+### 17.5 Stage 4e: deletion of the old code is held for one release cycle
 
 **Decision: not done in this pass.** Deleting is the one stage that cannot be verified by an eval and cannot be undone for users, and two findings argue for waiting:
 
-1. **The old path is still the default.** The note memory is behind `KODAX_MEMORY_NOTES=1`. `memory-control` (about 14.7k lines), `experimental-memory` (2.9k) and the coding-side wiring (`memory-runtime.ts`, `coding-context`, `intervention-selector`, `rendering`, `decision-trace`, `memory-recall`, the REPL `/memory` command) run for every user who has not set the switch. Removing them before the default flips would leave those users with no memory at all. Order has to be: owner flips the default, one release cycle, then delete.
+1. **The old path is the fallback.** The owner flipped the default on 2026-11-13 (`2b4ca7c72`): the note memory is on, and `KODAX_MEMORY_NOTES=0` returns to the old memory. `memory-control` (about 14.7k lines), `experimental-memory` (2.9k) and the coding-side wiring (`memory-runtime.ts`, `coding-context`, `intervention-selector`, `rendering`, `decision-trace`, `memory-recall`) are what that switch falls back to. Removing them now would leave a user who hits a note-memory problem with no way back. Order: one release cycle on the new default, then delete.
 2. **The "dead" files are not dead.** `intake`, `triage`, `completed-turn` and `consumer-impact` have no production caller, but they are public exports of `@kodax-ai/agent`, and `learning.test.ts` builds its stored proposals through `triageProceduralLearning` to exercise `approval.ts`, which Space calls (`approveStoredLearningProposal`, `readSkillTrustLedger`, `readSkillUsageLedger`). Removing them means rewriting about 1k lines of live-path tests first. `experimental-memory` is also named by Space's SDK probe, so removing the entry needs the Space pin bump in the same step.
 
 **Inventory for the deletion pass** (after the default flips): the old memory section and `memory_recall` tool in coding; `memory-control` and `experimental-memory` in agent with the `./experimental-memory` export in both `package.json` files; the REPL `/memory` command, rewritten over the note store; the proposal intake chain with its tests re-based on `commitLearnedSkillRevision`; the canary lifecycle states. `runtime.learning` and its 13 methods stay (§17.3).
+
+### 17.6 Review fixes after the default flip (2026-11-13)
+
+The Phase 1 to 4 work was reviewed in full after the default flipped, because it had been done on a weaker model. The owner asked for every finding to be fixed directly, with the default left on. Fixes, in commit order:
+
+- `32467c53e`: reflection skips CLI-bridge providers, which drop the request's tools and run their own full-permission agent. A reflection quote needs ten characters of weight (a CJK character counts double), the `memory` tool six. Bash output from network commands counts as external. User-scope notes change only on the user's words. Secrets are refused in note ids and proposed skills. Re-scoring the 78 cached 4d answers under the new guards: 78/78.
+- `00d1a72d1`: AMA (the CLI default) now reaches the note follow-up; before, only SA did. The exit drain waits for queued note work, so `-p` runs finish their writes. One write queue per note directory. Unreadable notes and corrupt state files are reported, and state files are written atomically. A throwing operation keeps the cursor. A failed legacy conversion retries after a day.
+- `8792c1ab3`: a host's `memoryIdentity` decides where note stores live, so hosted tenants stay apart. All legacy `memory-scopes/` scopes convert once each. A host with its own learning or memory reviewer owns learning, and the note follow-up then only counts reads.
+- `8d8aa2178`: `/memory` works on notes (list, candidates, show, approve, forget). The manual, the skills topic and the file/shell guards describe the note memory first. User guide in `public_docs/` (en + zh-CN).
+- `24c9339d8`: `MEMORY.md` links notes it has no room for to `MEMORY.more.md` instead of dropping them. The skill catalog keeps room for learned skills. Reads, reflections and applied operations are counted in `.memory-stats.json`. Note scopes and types live in one place. `noteMemoryAppliesTo` is the single root-run check.
+- `20c9419ac`: the note rules and the `memory` / `memory_reflect` tool texts follow ADR-033 (one concept per sentence, a reason for each rule). The `memory` tool's `type` field explains each type.
+
+**Evals for the prompt change.**
+
+- Notes, revision `f306-phase1b-r2`: 127/128 at $0.016. One glm52 cell timed out and was not retried. c6, c7 and c8 arm N match r1. The write-side misses are the r1 kinds: one candidate saved without `userQuote`, one read before a delete. One secret was refused by the store guard.
+- The harness fix behind it: with the note memory on by default, arm B had silently lost the old memory rules (system prompt 12101 to 10924 chars). `prepare` caught the input mismatch against Phase 0. Arm B is now built with `KODAX_MEMORY_NOTES=0`, and a test pins it.
+- Reflect, revision `f306-phase4d-r2`: 71/78. Spelling out the note types in the reflection tool made models file the confirmed release procedure (r11) as a `procedure` note instead of a skill: 3/6 skills.
+- Reflect, revision `f306-phase4d-r3`, with the reflection type text reverted: 77/78 at $0.003. r11 5/6; the miss wrote a procedure note only.
+
+**Left as they are.** The tool names hardcoded in `evidence.ts` and `usage.ts` have one caller each; passing them in would be plumbing for no second case. A duplicate-id result from the reflection job never reaches the model (the job is one call, and results go only to diagnostics), so the message needs no hint.
