@@ -15,6 +15,11 @@ export { createProviderCredentialAuthorizer } from './provider-credential-author
 export type { ProviderCredentialSource, ProviderCredentialAuthorizer } from './provider-credential-authorizer.js';
 export { createProviderCredentialManager } from './provider-credential-manager.js';
 export type { ProviderCredentialManager, ProviderCredentialStatus } from './provider-credential-manager.js';
+export { copyKodaXDataRoot, KODAX_DATA_ROOT_COPY_MARKER, KodaXDataRootCopyError } from './data-root-copy.js';
+export type {
+  CopyKodaXDataRootOptions, CopyKodaXDataRootProgress, CopyKodaXDataRootResult, CopyKodaXDataRootSkipped,
+  KodaXDataRootCopyErrorCode,
+} from './data-root-copy.js';
 /** Public connections to the single product Host. Owner assembly stays internal. */
 export { bindOAuthCredentials } from './oauth-credential-binding.js';
 export type { RuntimeOAuthCredentialBinding } from './oauth-credential-binding.js';

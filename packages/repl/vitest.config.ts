@@ -28,6 +28,7 @@ export default defineConfig({
       '@kodax-ai/agent/capabilities/skills/shared/yaml': path.resolve(__dirname, '..', 'agent', 'src', 'capabilities', 'skills', 'shared', 'yaml.ts'),
       '@kodax-ai/agent/messaging/queue': path.resolve(__dirname, '..', 'agent', 'src', 'messaging', 'queue.ts'),
       '@kodax-ai/agent/runtime/macos-git': path.resolve(__dirname, '..', 'agent', 'src', 'runtime', 'macos-git.ts'),
+      '@kodax-ai/agent/runtime/agent-home': path.resolve(__dirname, '..', 'agent', 'src', 'runtime', 'agent-home.ts'),
       '@kodax-ai/agent/experimental-memory': path.resolve(__dirname, '..', 'agent', 'src', 'experimental-memory', 'index.ts'),
       '@kodax-ai/agent': path.resolve(__dirname, '..', 'agent', 'src', 'index.ts'),
       '@kodax-ai/llm': path.resolve(__dirname, '..', 'llm', 'src', 'index.ts'),

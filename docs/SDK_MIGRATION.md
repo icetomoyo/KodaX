@@ -1176,11 +1176,105 @@ sections and [ADR-071](ADR.md) for the ask decision.
 
 Breaking change shipped in `v0.7.97-beta.6`; npm publication is a separate
 manual step. Decision:
-[ADR-075](ADR.md). The Host is identified by its data root, `homeDir` or
-`KODAX_HOME` (default `~/.kodax`). One Host serves each data root. It always
-uses the fixed directories `runtime/daemon/default/` and
-`runtime/profiles/default/`; `default` is a location, not a profile you can
-choose.
+[ADR-075](ADR.md). The Host is identified by its data root (default
+`~/.kodax`). One Host serves each data root. It always uses the fixed
+directories `runtime/daemon/default/` and `runtime/profiles/default/`;
+`default` is a location, not a profile you can choose.
+
+### `homeDir` / `--home` versus `KODAX_HOME`
+
+They name different directories:
+
+| Setting | Names | Data root |
+|---|---|---|
+| `KODAX_HOME` | the data root itself | the value, which must be absolute (a relative value is ignored) |
+| `homeDir` option, CLI `--home` | the base directory that owns the data root | `<homeDir>/.kodax` |
+| neither | | `~/.kodax` |
+
+`homeDir: '/data/team'` and `KODAX_HOME=/data/team/.kodax` select the same
+Host. `homeDir: '/data/team/.kodax'` selects `/data/team/.kodax/.kodax`, a
+different Host and different Sessions. A data root that is not named `.kodax`
+can only be selected with `KODAX_HOME`.
+
+`resolveKodaXHome({ env?, homeDir? })` from `@kodax-ai/kodax/agent` returns the
+env/default result without touching `process.env`: `{ path, source: 'env' | 'default', ignoredEnv? }`.
+Here `homeDir` is the base for the `~/.kodax` fallback (default `os.homedir()`),
+and `ignoredEnv` carries a non-empty `KODAX_HOME` that was skipped because it
+was not absolute. `getAgentConfigHome()` returns the same path unless
+`setAgentConfigHome` overrides it. An embedder that wants a different data root
+must set `process.env.KODAX_HOME` before the first SDK call that reads it.
+
+### Relocating a data root: `copyKodaXDataRoot`
+
+```ts
+import { copyKodaXDataRoot, KodaXDataRootCopyError } from '@kodax-ai/kodax/runtime';
+
+try {
+  const result = await copyKodaXDataRoot({
+    from: oldRoot,
+    to: newRoot,
+    exclude: ['space/runtime-client-identity.json'], // embedder-owned per-root state
+    onProgress: ({ files, totalFiles, bytes, totalBytes }) => {},
+    signal,
+  });
+  // result: { files, bytes, skipped: [{ path, reason }] }
+} catch (error) {
+  if (error instanceof KodaXDataRootCopyError) error.code; // see below
+}
+```
+
+It copies and never moves: the source is only read. Behavior:
+
+- The target must not exist or must be an empty directory
+  (`target_not_empty`, `target_invalid`). OS housekeeping entries
+  (`.DS_Store`, `desktop.ini`, `Thumbs.db`, `lost+found`, `$RECYCLE.BIN`,
+  `System Volume Information`, `.Spotlight-V100`, `.fseventsd`, `.Trashes`,
+  `.TemporaryItems`) do not count and are left alone, so a drive root or a
+  mount point works. It must not contain or sit inside the source
+  (`nested_roots`).
+- It refuses (`host_running`) while any Host slot under `runtime/daemon/*` or
+  the Session storage owner lock names a process that is not provably gone, and
+  checks again just before publishing. Stop every client of the source first.
+- The copy is assembled inside the target. `KODAX_DATA_ROOT_COPY_MARKER`
+  (`.kodax-copy-incomplete`) is written first and removed only when the copy is
+  complete, so a target holding it is not a usable data root. A failed or
+  aborted run removes what it wrote (and the target directory if it created
+  it). A target left with the marker by a crashed run counts as empty and is
+  replaced on the next call, so re-running is safe.
+- Stored data holds absolute paths into its own root (MCPB install folders
+  and launch arguments, session image and tool-output paths, workflow
+  snapshots, embedder stores). In every `.json` / `.jsonl` file, each
+  occurrence of the source root — native, forward-slash, or JSON-escaped with
+  doubled backslashes; case-insensitive on Windows and macOS — that is not part
+  of a longer name is rewritten to `to`. Nothing else in the file changes;
+  other file types and files that are not valid UTF-8 are copied byte for
+  byte. `rebasedFiles` counts the rewritten files. A source that is a whole
+  drive is not rebased. A rewritten file whose length changed has a new size,
+  so caches keyed on size and modification time rebuild.
+- File modification times are preserved. Symbolic links and junctions are
+  skipped, never followed.
+- `skipped` lists the topmost skipped entry with a reason: `non-portable`,
+  `excluded` (your `exclude`), `symlink` or `unsupported`.
+
+Not copied (`non-portable`), because it belongs to one Host, process or
+machine, plus any name ending `.lock` or `.lock.queue`:
+
+| Path under the data root | Why |
+|---|---|
+| `runtime/daemon/` | Host descriptor, token, lock, log, owner policy, client exit receipts |
+| `runtime/processes/` | live child-process records |
+| `sessions/.product-host/` | Session storage owner lock |
+| `instances/` | per-process heartbeat directories |
+| `sandbox-runtime/` | sandbox gate and ACL state bound to this machine and boot |
+| `native-text-state-v1/` | trusted state validated against its own directory ancestry |
+
+Everything else, including `config.json`, `auth.json`, `sessions/`, `skills/`
+and `runtime/profiles/default/runs/`, is copied. `auth.json` reserved
+credential bindings tied to the source root's client identity are the
+embedder's to `exclude` if they must not follow the data.
+
+Error codes: `source_missing`, `target_invalid`, `target_not_empty`,
+`nested_roots`, `host_running`, `aborted`.
 
 ### What was removed
 

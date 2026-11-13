@@ -19,7 +19,8 @@
  *   1. **Programmatic override** via {@link setAgentConfigHome} —
  *      highest priority. Substrate consumers call this once at boot,
  *      before any subsystem reads the path.
- *   2. **`KODAX_HOME` env var** — middle priority. Used by shell / CI /
+ *   2. **`KODAX_HOME` env var** (absolute path only; see
+ *      {@link resolveKodaXHome}) — middle priority. Used by shell / CI /
  *      test isolation / multi-tenant shared machines. (Already honored
  *      historically by the llm-layer config helpers; this helper makes it
  *      the canonical path for all packages.)
@@ -42,13 +43,6 @@
  * `~/.opsagent/` simultaneously).
  *
  * NOT migrated:
- *   - llm-layer config helpers keep their inline
- *     `process.env.KODAX_HOME ?? path.join(os.homedir(), '.kodax')`
- *     fallback because moving them to this helper would create an
- *     `@kodax-ai/llm → @kodax-ai/agent` dependency cycle (agent already
- *     imports ai). The two implementations have identical observable
- *     behavior at the env / default tiers; the programmatic override
- *     tier doesn't apply to ai-layer code.
  *   - **Project-relative** `.kodax/` paths (e.g. `path.join(projectRoot,
  *     '.kodax', 'AGENTS.md')`) are NOT migrated — those name a
  *     different concept (per-project config) and use a different root.
@@ -89,9 +83,32 @@ export function setAgentConfigHome(path: string | undefined): void {
  */
 export function getAgentConfigHome(): string {
   if (_programmaticOverride) return _programmaticOverride;
-  const envOverride = process.env[ENV_VAR];
-  if (envOverride && envOverride.length > 0) return envOverride;
-  return join(homedir(), DEFAULT_DIRNAME);
+  return resolveKodaXHome().path;
+}
+
+export interface ResolvedKodaXHome {
+  /** The `.kodax` data root itself (not the directory that owns it). */
+  readonly path: string;
+  readonly source: 'env' | 'default';
+  /** A non-empty `KODAX_HOME` that was not used because it is not an absolute path. */
+  readonly ignoredEnv?: string;
+}
+
+/**
+ * Pure env/default resolution of the data root: no process state is changed and
+ * `process.env` is read only when `env` is omitted. `KODAX_HOME` names the
+ * `.kodax` directory itself, whereas `homeDir` (like CLI `--home`) names the
+ * directory that owns `.kodax`. A relative `KODAX_HOME` would resolve against
+ * each process's cwd and split one user's data, so it is ignored and reported.
+ */
+export function resolveKodaXHome(
+  options: { readonly env?: Readonly<Record<string, string | undefined>>; readonly homeDir?: string } = {},
+): ResolvedKodaXHome {
+  const value = (options.env ?? process.env)[ENV_VAR];
+  const fallback = join(options.homeDir ?? homedir(), DEFAULT_DIRNAME);
+  if (value === undefined || value.length === 0) return { path: fallback, source: 'default' };
+  if (!isAbsolute(value)) return { path: fallback, source: 'default', ignoredEnv: value };
+  return { path: value, source: 'env' };
 }
 
 /**

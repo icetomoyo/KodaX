@@ -16,8 +16,76 @@ import {
   isPathInsideDirectory,
   registerRuntimeAgentHome,
   resolveExecutionPath,
+  resolveKodaXHome,
   setAgentConfigHome,
 } from './agent-home.js';
+
+describe('resolveKodaXHome — pure env/default resolution', () => {
+  const absolute = join(resolve(tmpdir()), 'kodax-resolver-home');
+
+  it('uses an absolute KODAX_HOME as the data root itself', () => {
+    expect(resolveKodaXHome({ env: { KODAX_HOME: absolute } })).toEqual({ path: absolute, source: 'env' });
+  });
+
+  it('falls back to <homeDir>/.kodax, where homeDir owns .kodax like CLI --home', () => {
+    const homeDir = join(resolve(tmpdir()), 'owner');
+    expect(resolveKodaXHome({ env: {}, homeDir })).toEqual({ path: join(homeDir, '.kodax'), source: 'default' });
+    expect(resolveKodaXHome({ env: {} })).toEqual({ path: join(homedir(), '.kodax'), source: 'default' });
+  });
+
+  it('treats an empty KODAX_HOME as unset without reporting it', () => {
+    expect(resolveKodaXHome({ env: { KODAX_HOME: '' } })).toEqual({ path: join(homedir(), '.kodax'), source: 'default' });
+  });
+
+  it('ignores a relative KODAX_HOME and reports it so callers can warn', () => {
+    expect(resolveKodaXHome({ env: { KODAX_HOME: 'relative/kodax' } })).toEqual({
+      path: join(homedir(), '.kodax'),
+      source: 'default',
+      ignoredEnv: 'relative/kodax',
+    });
+  });
+
+  it('does not read or change process state', () => {
+    const before = process.env.KODAX_HOME;
+    process.env.KODAX_HOME = join(resolve(tmpdir()), 'from-process');
+    try {
+      expect(resolveKodaXHome({ env: {} }).source).toBe('default');
+      expect(process.env.KODAX_HOME).toBe(join(resolve(tmpdir()), 'from-process'));
+    } finally {
+      if (before === undefined) delete process.env.KODAX_HOME;
+      else process.env.KODAX_HOME = before;
+    }
+  });
+
+  it('reads process.env only when no env is given', () => {
+    const before = process.env.KODAX_HOME;
+    process.env.KODAX_HOME = absolute;
+    try {
+      expect(resolveKodaXHome()).toEqual({ path: absolute, source: 'env' });
+    } finally {
+      if (before === undefined) delete process.env.KODAX_HOME;
+      else process.env.KODAX_HOME = before;
+    }
+  });
+
+  it.each([
+    ['unset', {}],
+    ['empty', { KODAX_HOME: '' }],
+    ['absolute', { KODAX_HOME: absolute }],
+    ['relative', { KODAX_HOME: 'relative/kodax' }],
+  ])('getAgentConfigHome agrees with the resolver when KODAX_HOME is %s', (_name, env) => {
+    const before = process.env.KODAX_HOME;
+    setAgentConfigHome(undefined);
+    if (env.KODAX_HOME === undefined) delete process.env.KODAX_HOME;
+    else process.env.KODAX_HOME = env.KODAX_HOME;
+    try {
+      expect(getAgentConfigHome()).toBe(resolveKodaXHome({ env }).path);
+    } finally {
+      if (before === undefined) delete process.env.KODAX_HOME;
+      else process.env.KODAX_HOME = before;
+    }
+  });
+});
 
 describe('agent-home — 3-tier resolution', () => {
   const originalEnv = process.env.KODAX_HOME;

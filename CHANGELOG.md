@@ -6,6 +6,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `resolveKodaXHome({ env?, homeDir? })` (`@kodax-ai/kodax/agent`): a pure
+  resolver for the data root. `getAgentConfigHome()` now delegates to it, and
+  `packages/repl` session resume no longer reads `KODAX_HOME` itself.
+- `copyKodaXDataRoot({ from, to, exclude?, onProgress?, signal? })`
+  (`@kodax-ai/kodax/runtime`): copy-only data root relocation that skips
+  per-Host state and refuses a non-empty target or a running Host. The copy is
+  assembled inside the target under a `KODAX_DATA_ROOT_COPY_MARKER` file, so a
+  drive root or mount point can be the target. Absolute paths into the old
+  root inside `.json` / `.jsonl` files are rewritten to the new root
+  (`rebasedFiles`), so MCPB servers, session images, tool-output files and
+  workflow snapshots keep resolving after the old root is deleted.
+
 ### Changed
 
 - `inputs.withdraw` now takes back a `steer` input until its Run claims it
@@ -16,6 +30,11 @@ All notable changes to this project will be documented in this file.
   history, so a concurrent withdrawal can no longer report success for input
   the model already sees. `MessageQueue.requeue` restores claimed messages
   with their original ids when that write fails.
+- A relative `KODAX_HOME` is ignored (the default `~/.kodax` is used) instead of
+  being used as a path relative to the working directory; `resolveKodaXHome` reports it as
+  `ignoredEnv`.
+- `docs/SDK_MIGRATION.md` now states that `homeDir` / `--home` name the base
+  directory owning `.kodax`, while `KODAX_HOME` names the data root itself.
 
 ### Fixed
 

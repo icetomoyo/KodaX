@@ -15,6 +15,10 @@
       "types": "./dist/runtime/macos-git.d.ts",
       "import": "./dist/runtime/macos-git.js"
     },
+    "./runtime/agent-home": {
+      "types": "./dist/runtime/agent-home.d.ts",
+      "import": "./dist/runtime/agent-home.js"
+    },
     "./messaging/queue": {
       "types": "./dist/messaging/queue.d.ts",
       "import": "./dist/messaging/queue.js"
