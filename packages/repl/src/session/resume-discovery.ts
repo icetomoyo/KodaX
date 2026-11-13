@@ -1,7 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { getAgentConfigHome } from '@kodax-ai/agent';
+// Subpath, not the barrel: the bare-resume bundle must not load the agent/LLM graph.
+import { getAgentConfigHome } from '@kodax-ai/agent/runtime/agent-home';
 
 import {
   deriveProjectKeyFromRoot,

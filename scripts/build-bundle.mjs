@@ -468,9 +468,11 @@ assertStartupInputBoundary('Resume', resumeResult, [
   'packages/repl/src/interactive/storage.ts',
   'packages/repl/src/session/conversation-page-cache.ts',
 ], [
-  // This Node-only leaf protects resume discovery without loading the agent/LLM graph.
+  // These Node-only leaves serve resume discovery without loading the agent/LLM graph.
   'packages/agent/src/runtime/macos-git.ts',
   'packages/agent/dist/runtime/macos-git.js',
+  'packages/agent/src/runtime/agent-home.ts',
+  'packages/agent/dist/runtime/agent-home.js',
 ]);
 const resumeBytes = statSync(path.join(distDir, 'kodax_resume.js')).size;
 assertBundleSize('Resume', resumeBytes, 160 * 1024);
