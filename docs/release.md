@@ -50,8 +50,10 @@ on one commit.
 
 ## v0.7.97-beta.9 release preparation
 
-Release state: `v0.7.97-beta.9` is a candidate awaiting the publishing
-dispatch. npm publication has not occurred. The release is the ninth
+Release state: `v0.7.97-beta.9` was published on 2026-11-13 as a GitHub
+prerelease from run 43469240727 at `71c3b033d` (all five archive builds,
+Full CI and the npm package gates green; 13 assets). npm publication has
+not occurred. The release is the ninth
 beta of the v0.7.97 line: data root relocation for Space (FEATURE_306),
 steer withdrawal, and two Host fixes from Space integration.
 `resolveKodaXHome` resolves the data root without touching
@@ -97,10 +99,25 @@ This release follows the single publishing dispatch described under
 `release_tag=v0.7.97-beta.9` runs Full CI, all five archive builds and the
 npm package gates, then creates the tag at the dispatched commit and the
 GitHub pre-release from that run's artifacts. Ordinary branch pushes do
-not run CI. Cross-platform manual acceptance, installed Space/SDK
-acceptance, the Space dependency bump (FEATURE_305 T6 and FEATURE_306
-follow-ups) and npm registry publication remain separate maintainer
-steps.
+not run CI. The first dispatch (run 43463795038 at `e2326a2f7`) failed
+on the Node 20 unit row, where `src/runtime-daemon/maintenance.test.ts`
+assumed `opendir` lists the denied candidate first (ext4 hash order
+listed the later one first); `71c3b033d` makes that test
+order-independent. That run's Windows jobs also hit runner-load
+timeouts in unchanged code (PowerShell-backed OAuth sealing and
+`exec`, a queue-boundary fixture and two bundled Electron-job tests).
+The second dispatch (run 43469240727) failed its first attempt only on
+two timing fixtures: the 150 ms parallel-read window in
+`tests/first-turn-script-model.test.ts` (Node 20 fast) and the 40 ms
+`honors timeout while the first snapshot waits on slow global Temp
+cleanup` in `src/sdk-runtime.test.ts` (Windows system 2/2). One
+failed-job re-run on the unchanged candidate passed and published. The
+parallel-read window was widened to two seconds after the tag. The
+universal npm tarball asset is `kodax-ai-kodax-0.7.97-beta.9.tgz`,
+sha256 `65ec24d6…8dacb3`, matching `SHA256SUMS`. Cross-platform manual
+acceptance, installed Space/SDK acceptance, the Space dependency bump
+(FEATURE_305 T6 and FEATURE_306 follow-ups) and npm registry publication
+remain separate maintainer steps.
 
 ## v0.7.97-beta.8 release preparation
 
