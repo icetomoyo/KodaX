@@ -190,7 +190,8 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
     // A connected peer refuses a client's exit stop whatever the preflight says. Refuse
     // before draining so a slow history scan never rejects that peer's work meanwhile.
     // Host-level stops keep the full preflight: upgrade callers read its blockers.
-    if (input?.principalId !== undefined && this.hasPeerClients(input.principalId)) {      throw managementError('conflict', 'Runtime daemon cannot stop safely: connected_clients.');
+    if (input?.principalId !== undefined && this.hasPeerClients(input.principalId)) {
+      throw managementError('conflict', 'Runtime daemon cannot stop safely: connected_clients.');
     }
     this.beginDraining();
     try {
