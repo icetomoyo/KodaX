@@ -14838,7 +14838,9 @@ describe("createKodaXRuntime", () => {
       syncBuiltinESMExports();
       await runtime.close();
     }
-  }, 150_000);
+    // 1,005 persisted runs take ~46 s locally but exceeded 150 s on loaded Windows
+    // CI runners (beta.6 and beta.8 system 2/2); the run count must exceed the cap.
+  }, 300_000);
 
   it("rejects runs for missing sessions before calling the coding layer", async () => {
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
