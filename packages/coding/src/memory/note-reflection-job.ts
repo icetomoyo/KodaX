@@ -12,30 +12,26 @@
  * time so two finishing runs never write the same store together.
  */
 import { createHash } from 'node:crypto';
+import * as path from 'node:path';
 
 import {
   commitLearnedSkillRevision,
   createLearnedCapabilityScope,
-  createNoteStore,
   emitKodaXDiagnostic,
-  getAgentConfigPath,
   LearnedAreaStore,
   LearningCapabilityError,
   organizeStore,
   pruneRevisions,
   recordNoteReads,
   reflectSession,
-  resolveNoteRoot,
   resolveProjectLearnedAreaRoot,
-  type NoteScope,
-  type NoteStore,
   type ReflectionJudge,
   type SkillSink,
 } from '@kodax-ai/agent';
 import { withProviderRequestCredential, type KodaXBaseProvider, type KodaXMessage } from '@kodax-ai/llm';
 
 import { resolveProtectedFormalSkillNames } from '../learned-skill-runtime.js';
-import { deriveCodingMemoryIdentityFromRoot } from '../memory-runtime.js';
+import { noteStoresFor, type NotePlace } from './note-memory.js';
 import { buildReflectionRequest, parseReflectionCall, parseSkillCall, REFLECT_TOOL_NAME, SKILL_TOOL_NAME } from './note-reflection.js';
 import { enqueueNoteWork } from './note-work-queue.js';
 
@@ -45,7 +41,9 @@ const REFLECTION_MAX_OUTPUT_TOKENS = 8192;
 const NOTE_SCOPES = ['project', 'user'] as const;
 
 export interface NoteRunFinish {
-  readonly cwd: string;
+  readonly place: NotePlace;
+  /** False when the host supplied its own learning reviewer: it owns what is learned, so only reads are counted. */
+  readonly reflect: boolean;
   readonly sessionId: string;
   /** The session's messages as the run ended. */
   readonly messages: readonly KodaXMessage[];
@@ -79,22 +77,15 @@ export function createProviderJudge(provider: KodaXBaseProvider, model: string |
   };
 }
 
-function storesFor(cwd: string): Readonly<Record<NoteScope, NoteStore>> {
-  return {
-    project: createNoteStore(resolveNoteRoot(cwd, 'project'), 'project'),
-    user: createNoteStore(resolveNoteRoot(cwd, 'user'), 'user'),
-  };
-}
-
 /**
  * A proposed skill is saved in the project's learned area as "ready": the user
  * reviews it in /learn, and only then can it be used. There is no trial period.
  */
-export function createLearnedSkillSink(cwd: string): SkillSink {
+export function createLearnedSkillSink(place: NotePlace): SkillSink {
   return async (spec, origin) => {
-    const configHome = getAgentConfigPath();
-    const identity = deriveCodingMemoryIdentityFromRoot(configHome, cwd);
-    const area = { tenantId: identity.tenantId, projectId: identity.projectId ?? `local:${cwd}` };
+    const { configHome, tenantId, projectId } = place.identity;
+    const cwd = place.cwd;
+    const area = { tenantId, projectId: projectId ?? `local:${path.resolve(cwd).toLowerCase()}` };
     const store = new LearnedAreaStore(resolveProjectLearnedAreaRoot(configHome, area));
     await store.initialize();
     try {
@@ -130,16 +121,16 @@ function canReflectWith(provider: KodaXBaseProvider, model: string | undefined):
 }
 
 export async function finishNoteRun(run: NoteRunFinish, judge?: ReflectionJudge): Promise<void> {
-  const stores = storesFor(run.cwd);
+  const stores = noteStoresFor(run.place);
   await recordNoteReads({ stores, messages: run.messages, ignoreCalls: run.earlierCalls });
-  if (!canReflectWith(run.provider, run.model)) return;
+  if (!run.reflect || !canReflectWith(run.provider, run.model)) return;
   const outcome = await reflectSession({
     sessionId: run.sessionId,
     messages: run.messages,
     stores,
     cursorRoot: stores.user.root,
     judge: judge ?? createProviderJudge(run.provider, run.model),
-    skills: createLearnedSkillSink(run.cwd),
+    skills: createLearnedSkillSink(run.place),
   });
   if (outcome.status !== 'done') return;
   for (const scope of NOTE_SCOPES) {

@@ -78,7 +78,7 @@ import {
   persistMemoryOutcomeToSession,
   runOwnedMemoryWork,
 } from '../memory-runtime.js';
-import { installProductionLearningReviewer } from '../learning-reviewer.js';
+import { hostOwnsLearning, installProductionLearningReviewer } from '../learning-reviewer.js';
 import {
   buildToolMemoryObservations,
   codingMemorySourcePolicy,
@@ -95,7 +95,7 @@ import {
   MEMORY_INTENT_TOOL_NAME,
 } from '../tools/memory-intent.js';
 import { MEMORY_TOOL_NAME } from '../tools/memory.js';
-import { createNoteMemoryBinding, isNoteMemoryEnabled } from '../memory/note-memory.js';
+import { createNoteMemoryBinding, isNoteMemoryEnabled, resolveNotePlace } from '../memory/note-memory.js';
 import { scheduleNoteRunFinish } from '../memory/note-reflection-job.js';
 import type {
   KodaXHarnessProfile,
@@ -717,7 +717,8 @@ function scheduleNoteFollowUp(options: KodaXOptions, run: {
     return;
   }
   void scheduleNoteRunFinish({
-    cwd: resolveExecutionCwd(options.context),
+    place: resolveNotePlace(options),
+    reflect: !hostOwnsLearning(options),
     sessionId: run.sessionId,
     messages: run.messages,
     earlierCalls: run.earlierCalls,
@@ -1471,7 +1472,7 @@ async function runManagedTaskViaRunnerInner(
   });
   if (isNoteMemoryEnabled() && !options.context?.currentAgentId && !options.context?.parentAgentId) {
     substrateBaseCtx.memoryNotes = createNoteMemoryBinding(
-      resolveExecutionCwd(options.context),
+      resolveNotePlace(options),
       () => liveTurnController.currentUserText(),
       options.session?.id ?? resolvedSessionId,
     );
@@ -3201,7 +3202,8 @@ async function runManagedTaskViaRunnerInner(
     runtimeSessionState,
   });
   scheduleNoteFollowUp(options, {
-    sessionId: result.sessionId,
+    // The id the memory tool binding wrote under, so corroboration can tell sessions apart.
+    sessionId: options.session?.id ?? resolvedSessionId,
     messages: result.messages,
     earlierCalls: noteEarlierCalls,
     providerName: runtimeSessionState.modelSelection.provider ?? options.provider ?? 'anthropic',

@@ -165,6 +165,18 @@ describe('convertLegacyOnce', () => {
     await expect(fs.stat(path.join(target, LEGACY_FAILED_MARKER))).rejects.toThrow();
   });
 
+  it('converts a second legacy directory into the same store under its own marker', async () => {
+    await legacyFile('a.md', '---\ndescription: first\n---\n');
+    await convertLegacyOnce(legacy, store);
+    const other = await fs.mkdtemp(path.join(os.tmpdir(), 'legacy-scoped-'));
+    try {
+      await fs.writeFile(path.join(other, 'b.md'), '---\ndescription: second\n---\n');
+      expect(await convertLegacyOnce(other, store, Date.now(), '.legacy-project-scope-converted.json')).toMatchObject({ converted: ['b'] });
+      expect(await convertLegacyOnce(other, store, Date.now(), '.legacy-project-scope-converted.json')).toBeUndefined();
+      expect((await store.list()).map((note) => note.id).sort()).toEqual(['a', 'b']);
+    } finally { await fs.rm(other, { recursive: true, force: true }); }
+  });
+
   it('keeps the marker out of the note list', async () => {
     await legacyFile('a.md', '---\ndescription: first\n---\n');
     await convertLegacyOnce(legacy, store);

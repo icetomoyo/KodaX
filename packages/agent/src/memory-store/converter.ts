@@ -89,11 +89,18 @@ export async function convertLegacyMemdir(legacyRoot: string, store: NoteStore):
   return { converted, skipped };
 }
 
-/** Written into the note root after a conversion; its presence means the legacy directory is never read again. */
+/**
+ * Written into the note root after a conversion; its presence means that legacy
+ * directory is never read again. A store fed by several legacy directories
+ * gets one marker per directory.
+ */
 export const LEGACY_CONVERTED_MARKER = '.legacy-converted.json';
 
-/** Written when a conversion throws; the next attempt waits a day so a broken legacy file is not retried on every run. */
-export const LEGACY_FAILED_MARKER = '.legacy-conversion-failed.json';
+/** Written beside a marker when a conversion throws; the next attempt waits a day so a broken legacy file is not retried on every run. */
+export function failedMarkerOf(marker: string): string {
+  return marker.replace(/\.json$/, '.failed.json');
+}
+export const LEGACY_FAILED_MARKER = failedMarkerOf(LEGACY_CONVERTED_MARKER);
 const RETRY_FAILED_AFTER_MS = 24 * 60 * 60 * 1000;
 
 async function failedRecently(file: string, now: number): Promise<boolean> {
@@ -109,9 +116,14 @@ async function failedRecently(file: string, now: number): Promise<boolean> {
  * is no legacy directory, so a later one is still converted. A failure throws
  * and is retried after a day. Returns undefined when nothing was converted this time.
  */
-export async function convertLegacyOnce(legacyRoot: string, store: NoteStore, now: number = Date.now()): Promise<ConversionReport | undefined> {
-  const marker = path.join(store.root, LEGACY_CONVERTED_MARKER);
-  const failedMarker = path.join(store.root, LEGACY_FAILED_MARKER);
+export async function convertLegacyOnce(
+  legacyRoot: string,
+  store: NoteStore,
+  now: number = Date.now(),
+  markerName: string = LEGACY_CONVERTED_MARKER,
+): Promise<ConversionReport | undefined> {
+  const marker = path.join(store.root, markerName);
+  const failedMarker = path.join(store.root, failedMarkerOf(markerName));
   if (await readIfExists(marker) !== undefined || await failedRecently(failedMarker, now)) return undefined;
   try {
     await fs.stat(legacyRoot);

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   createProductionLearningReviewer,
+  hostOwnsLearning,
   installProductionLearningReviewer,
   LEARNING_REVIEW_SYSTEM_PROMPT,
   LEARNING_REVIEW_TOOL,
@@ -77,6 +78,10 @@ describe('FEATURE_263 production unified learning reviewer', () => {
 
     expect(installed.learningReviewer).toBeTypeOf('function');
     expect(preserved.learningReviewer).toBe(custom);
+    expect(hostOwnsLearning(installed)).toBe(false);
+    expect(hostOwnsLearning({ ...installed })).toBe(false);
+    expect(hostOwnsLearning(preserved)).toBe(true);
+    expect(hostOwnsLearning({ memoryReviewer: vi.fn() })).toBe(true);
   });
 
   it('declares every governed Memory action field required by the apply path', () => {

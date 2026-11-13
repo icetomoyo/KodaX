@@ -4,7 +4,15 @@ import * as path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createNoteStore, resolveMemoryRoot, resolveNoteRoot, setAgentConfigHome, setKodaXDiagnosticSink } from '@kodax-ai/agent';
+import {
+  createNoteStore,
+  resolveMemoryRoot,
+  resolveNoteRoot,
+  resolveScopedMemoryRoot,
+  setAgentConfigHome,
+  setKodaXDiagnosticSink,
+  type MemoryContextIdentity,
+} from '@kodax-ai/agent';
 
 import { buildCapabilityContextSections } from '../prompts/capability-sections.js';
 import type { KodaXOptions } from '../types.js';
@@ -12,9 +20,12 @@ import { getBuiltinRegisteredToolDefinition } from '../tools/registry.js';
 import { activateMemoryTool, MEMORY_TOOL_NAME, toolMemory } from '../tools/memory.js';
 import type { KodaXToolExecutionContext } from '../types.js';
 import {
+  convertLegacyMemory,
   createNoteMemoryBinding,
   isNoteMemoryEnabled,
   renderNoteMemorySection,
+  resolveNotePlace,
+  type NotePlace,
 } from './note-memory.js';
 
 let home: string;
@@ -35,6 +46,45 @@ afterEach(() => {
 const ctxWith = (memoryNotes: KodaXToolExecutionContext['memoryNotes']): KodaXToolExecutionContext =>
   ({ memoryNotes }) as KodaXToolExecutionContext;
 
+const optionsWith = (context: KodaXOptions['context'] = {}): KodaXOptions =>
+  ({ provider: 'anthropic', context: { executionCwd: cwd, gitRoot: cwd, ...context } }) as KodaXOptions;
+const place = (): NotePlace => resolveNotePlace(optionsWith());
+
+const tenant = (tenantId: string): MemoryContextIdentity =>
+  ({ configHome: home, tenantId, userId: 'u1', agentId: 'space', projectId: 'p1', sessionId: 's' });
+
+describe('resolveNotePlace', () => {
+  it('follows the project remote layout when the host names no identity', () => {
+    expect(place().roots).toEqual({ project: resolveNoteRoot(cwd, 'project'), user: resolveNoteRoot(cwd, 'user') });
+  });
+
+  it('gives each hosted tenant its own stores, so tenants never see each other\'s notes', () => {
+    const a = resolveNotePlace(optionsWith({ memoryIdentity: tenant('tenant-a') }));
+    const b = resolveNotePlace(optionsWith({ memoryIdentity: tenant('tenant-b') }));
+    expect(a.roots.project).not.toBe(b.roots.project);
+    expect(a.roots.user).not.toBe(b.roots.user);
+    expect(a.roots.project.startsWith(path.join(home, 'memory-scopes'))).toBe(true);
+    expect(a.legacy.map((source) => source.root)).not.toContain(resolveMemoryRoot(cwd));
+  });
+
+  it('keeps project and user notes apart for a hosted identity with only an agent', () => {
+    const roots = resolveNotePlace(optionsWith({ memoryIdentity: { tenantId: 't', agentId: 'a', sessionId: 's' } })).roots;
+    expect(roots.project).not.toBe(roots.user);
+  });
+});
+
+describe('convertLegacyMemory', () => {
+  it('brings in memories the legacy control plane kept in its project and user scopes', async () => {
+    const current = place();
+    fs.mkdirSync(resolveScopedMemoryRoot(current.identity, 'project'), { recursive: true });
+    fs.mkdirSync(resolveScopedMemoryRoot(current.identity, 'user'), { recursive: true });
+    fs.writeFileSync(path.join(resolveScopedMemoryRoot(current.identity, 'project'), 'build.md'), '---\ndescription: Build with make dist\n---\n');
+    fs.writeFileSync(path.join(resolveScopedMemoryRoot(current.identity, 'user'), 'tone.md'), '---\ndescription: Answer in Chinese\ntype: user\n---\n');
+    await convertLegacyMemory(current);
+    expect(renderNoteMemorySection(current)).toMatch(/## Project notes[\s\S]*Build with make dist[\s\S]*## User notes[\s\S]*Answer in Chinese/);
+  });
+});
+
 describe('note memory switch', () => {
   it('is on unless KODAX_MEMORY_NOTES is exactly 0', () => {
     expect(isNoteMemoryEnabled({})).toBe(true);
@@ -45,7 +95,7 @@ describe('note memory switch', () => {
 
 describe('renderNoteMemorySection', () => {
   it('says there are no notes yet and shows both directories', () => {
-    const text = renderNoteMemorySection(cwd);
+    const text = renderNoteMemorySection(place());
     expect(text).toContain('(no notes yet)');
     expect(text).toContain(resolveNoteRoot(cwd, 'project'));
     expect(text).toContain(resolveNoteRoot(cwd, 'user'));
@@ -54,9 +104,9 @@ describe('renderNoteMemorySection', () => {
   it('includes the saved index and is byte-stable while notes are unchanged', async () => {
     const store = createNoteStore(resolveNoteRoot(cwd, 'project'), 'project');
     await store.write({ id: 'test-cmd', type: 'project', description: 'Run tests with npm test', body: 'b' });
-    const first = renderNoteMemorySection(cwd);
+    const first = renderNoteMemorySection(place());
     expect(first).toContain('Run tests with npm test');
-    expect(renderNoteMemorySection(cwd)).toBe(first);
+    expect(renderNoteMemorySection(place())).toBe(first);
   });
 
   it('keeps candidate notes out of the prompt', async () => {
@@ -64,7 +114,7 @@ describe('renderNoteMemorySection', () => {
     await store.write({
       id: 'guess', type: 'project', description: 'Inferred thing', why: 'seen once', body: 'b', status: 'candidate',
     });
-    expect(renderNoteMemorySection(cwd)).not.toContain('Inferred thing');
+    expect(renderNoteMemorySection(place())).not.toContain('Inferred thing');
   });
 });
 
@@ -159,25 +209,25 @@ describe('memory tool', () => {
 describe('createNoteMemoryBinding', () => {
   it('lets a quote from the current user message create an active note and reads the message lazily', async () => {
     let userText = 'please remember that we use pnpm here';
-    const bind = createNoteMemoryBinding(cwd, () => userText);
+    const bind = createNoteMemoryBinding(place(), () => userText);
     const stored = await bind({
       operation: 'write', id: 'pkg-manager', type: 'project', description: 'Use pnpm', userQuote: 'we use pnpm here',
     });
     expect(stored.ok).toBe(true);
-    expect(renderNoteMemorySection(cwd)).toContain('Use pnpm');
+    expect(renderNoteMemorySection(place())).toContain('Use pnpm');
 
     userText = 'something unrelated';
     const refused = await bind({ operation: 'delete', id: 'pkg-manager', userQuote: 'we use pnpm here' });
     expect(refused.ok).toBe(false);
-    expect(renderNoteMemorySection(cwd)).toContain('Use pnpm');
+    expect(renderNoteMemorySection(place())).toContain('Use pnpm');
   });
 
   it('stores an unquoted write as a candidate that stays out of the prompt', async () => {
-    const bind = createNoteMemoryBinding(cwd, () => 'hi');
+    const bind = createNoteMemoryBinding(place(), () => 'hi');
     const result = await bind({
       operation: 'write', id: 'maybe', type: 'project', description: 'Maybe true', why: 'saw it once', body: 'b',
     });
     expect(result.ok).toBe(true);
-    expect(renderNoteMemorySection(cwd)).not.toContain('Maybe true');
+    expect(renderNoteMemorySection(place())).not.toContain('Maybe true');
   });
 });

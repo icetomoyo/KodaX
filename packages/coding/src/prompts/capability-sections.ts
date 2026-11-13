@@ -63,7 +63,7 @@ import { isToolDiscoverable } from '../tools/tool-search.js';
 import { getModelSkillCatalog } from '../agent-runtime/tool-resolution.js';
 
 import { buildMemoryRulesSection } from './memory-rules.js';
-import { convertLegacyProjectMemory, isNoteMemoryEnabled, renderNoteMemorySection } from '../memory/note-memory.js';
+import { convertLegacyMemory, isNoteMemoryEnabled, renderNoteMemorySection, resolveNotePlace } from '../memory/note-memory.js';
 import { createPromptSection, type KodaXPromptSection } from './sections.js';
 import { buildSelfKnowledgeRoutingRule } from '../self-knowledge/routing-rule.js';
 import { EXECUTION_GUIDANCE } from './execution-guidance.js';
@@ -294,11 +294,12 @@ export async function buildCapabilityContextSections(
   // correctness. The claudecode-derived wording is load-bearing; keep full text.
   if (isNoteMemoryEnabled()) {
     // FEATURE_306: note-store rules + MEMORY.md indexes replace the legacy memory sections.
-    await convertLegacyProjectMemory(executionCwd);
+    const notePlace = resolveNotePlace(options, executionCwd);
+    await convertLegacyMemory(notePlace);
     sections.push(
       createPromptSection(
         'project-memory',
-        renderNoteMemorySection(executionCwd),
+        renderNoteMemorySection(notePlace),
         'Teach note-memory use and expose the saved-note indexes so later sessions read relevant notes on demand.',
       ),
     );

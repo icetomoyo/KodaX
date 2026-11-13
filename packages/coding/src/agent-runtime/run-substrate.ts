@@ -191,6 +191,7 @@ import {
 import { prepareCodingLearnedSkillBinding } from '../learned-skill-runtime.js';
 import { bindModelSkillSelection } from '../skill-invocation-policy.js';
 import {
+  hostOwnsLearning,
   installProductionLearningReviewer,
 } from '../learning-reviewer.js';
 export { shouldInstallProductionLearningReviewer } from '../learning-reviewer.js';
@@ -223,7 +224,7 @@ import {
   MEMORY_INTENT_TOOL_NAME,
 } from '../tools/memory-intent.js';
 import { activateMemoryTool, MEMORY_TOOL_NAME } from '../tools/memory.js';
-import { createNoteMemoryBinding, isNoteMemoryEnabled } from '../memory/note-memory.js';
+import { createNoteMemoryBinding, isNoteMemoryEnabled, resolveNotePlace } from '../memory/note-memory.js';
 import { scheduleNoteRunFinish } from '../memory/note-reflection-job.js';
 import {
   activateSessionHistoryTools,
@@ -1333,7 +1334,8 @@ async function runSubstrateInContext(
       try {
         // Not awaited: the run is over, and usage counting and reflection are background work.
         void scheduleNoteRunFinish({
-          cwd: resolveExecutionCwd(options.context),
+          place: resolveNotePlace(options),
+          reflect: !hostOwnsLearning(options),
           sessionId,
           messages: finalized.messages,
           earlierCalls: noteEarlierCalls,
@@ -1601,7 +1603,7 @@ async function runSubstrateInContext(
   if (memoryNotesToolAllowed) {
     // FEATURE_306: the host supplies the current user message, so a quote can only come from the user.
     ctx.memoryNotes = createNoteMemoryBinding(
-      resolveExecutionCwd(options.context),
+      resolveNotePlace(options),
       () => memoryIntentUserTurnRef.current.text,
       // The same id the follow-up reflects under, so corroboration can tell sessions apart.
       sessionId,

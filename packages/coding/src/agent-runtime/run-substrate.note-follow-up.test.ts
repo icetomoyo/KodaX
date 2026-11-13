@@ -14,7 +14,9 @@ import {
 } from '@kodax-ai/llm';
 import type { KodaXMessage, KodaXProviderConfig, KodaXStreamResult } from '@kodax-ai/llm';
 
+import type { NotePlace } from '../memory/note-memory.js';
 import { scheduleNoteRunFinish } from '../memory/note-reflection-job.js';
+import type { KodaXOptions } from '../types.js';
 import { runSubstrate } from './run-substrate.js';
 
 const PROVIDER_NAME = 'note-follow-up-runtime-test';
@@ -56,24 +58,34 @@ describe('runSubstrate note memory follow-up', { timeout: 30_000 }, () => {
     fs.rmSync(home, { recursive: true, force: true });
   });
 
-  const run = (context: Record<string, unknown> = {}) => runSubstrate({
+  const run = (context: Record<string, unknown> = {}, extra: Partial<KodaXOptions> = {}) => runSubstrate({
     provider: PROVIDER_NAME,
     model: 'note-follow-up-model',
     maxIter: 2,
     reasoningMode: 'off',
     context: { systemPromptOverride: 'NOTE FOLLOW-UP TEST', executionCwd: home, ...context },
+    ...extra,
   }, 'please remember that tests run with make check-fast');
+
+  type Call = { sessionId: string; place: NotePlace; reflect: boolean; messages: KodaXMessage[]; earlierCalls: ReadonlySet<string>; model?: string };
 
   it('hands the finished session to the note follow-up when the note memory is on', async () => {
     vi.stubEnv('KODAX_MEMORY_NOTES', '1');
     const result = await run();
     expect(scheduled).toHaveBeenCalledTimes(1);
-    const call = scheduled.mock.calls[0]![0] as { sessionId: string; cwd: string; messages: KodaXMessage[]; earlierCalls: ReadonlySet<string>; model?: string };
+    const call = scheduled.mock.calls[0]![0] as Call;
     expect(call.sessionId).toBe(result.sessionId);
-    expect(call.cwd).toBe(home);
+    expect(call.place.cwd).toBe(home);
+    expect(call.reflect).toBe(true);
     expect(call.model).toBe('note-follow-up-model');
     expect(call.earlierCalls.size).toBe(0);
     expect(JSON.stringify(call.messages)).toContain('make check-fast');
+  });
+
+  it('only counts reads when the host supplied its own learning reviewer', async () => {
+    vi.stubEnv('KODAX_MEMORY_NOTES', '1');
+    await run({}, { learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['offline'] } }) });
+    expect((scheduled.mock.calls[0]![0] as Call).reflect).toBe(false);
   });
 
   it('does nothing when the note memory is off', async () => {

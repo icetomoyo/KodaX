@@ -7,7 +7,9 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 vi.mock('../memory/note-reflection-job.js', () => ({ scheduleNoteRunFinish: vi.fn(async () => undefined) }));
 
+import type { NotePlace } from '../memory/note-memory.js';
 import { scheduleNoteRunFinish } from '../memory/note-reflection-job.js';
+import type { KodaXOptions } from '../types.js';
 import { runManagedTaskViaRunner } from './runner-driven.js';
 
 const scheduled = scheduleNoteRunFinish as unknown as ReturnType<typeof vi.fn>;
@@ -17,12 +19,13 @@ afterEach(() => {
   scheduled.mockClear();
 });
 
-async function runAma(context: Record<string, unknown> = {}) {
+async function runAma(context: Record<string, unknown> = {}, extra: Partial<KodaXOptions> = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-ama-notes-'));
   try {
     const result = await runManagedTaskViaRunner({ provider: 'anthropic', effort: 'none', lsp: false,
       context: { configHome: path.join(root, 'home'), gitRoot: root, executionCwd: root, repoIntelligenceMode: 'off', ...context },
-    }, 'please remember that tests run with make check-fast', async () => ({ textBlocks: [{ text: 'done' }], toolBlocks: [] }));
+      ...extra,
+    },'please remember that tests run with make check-fast', async () => ({ textBlocks: [{ text: 'done' }], toolBlocks: [] }));
     return { root, result };
   } finally { await rm(root, { recursive: true, force: true, maxRetries: 3 }); }
 }
@@ -31,11 +34,18 @@ it('hands the finished AMA session to the note follow-up', async () => {
   vi.stubEnv('KODAX_MEMORY_NOTES', '1');
   const { root, result } = await runAma();
   expect(scheduled).toHaveBeenCalledTimes(1);
-  const call = scheduled.mock.calls[0]![0] as { sessionId: string; cwd: string; messages: KodaXMessage[]; earlierCalls: ReadonlySet<string> };
+  const call = scheduled.mock.calls[0]![0] as { sessionId: string; place: NotePlace; reflect: boolean; messages: KodaXMessage[]; earlierCalls: ReadonlySet<string> };
   expect(call.sessionId).toBe(result.sessionId);
-  expect(call.cwd).toBe(root);
+  expect(call.place.cwd).toBe(root);
+  expect(call.reflect).toBe(true);
   expect(call.earlierCalls.size).toBe(0);
   expect(JSON.stringify(call.messages)).toContain('make check-fast');
+});
+
+it('only counts reads when the host supplied its own learning reviewer', async () => {
+  vi.stubEnv('KODAX_MEMORY_NOTES', '1');
+  await runAma({}, { learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['offline'] } }) });
+  expect((scheduled.mock.calls[0]![0] as { reflect: boolean }).reflect).toBe(false);
 });
 
 it('does nothing when the note memory is off', async () => {

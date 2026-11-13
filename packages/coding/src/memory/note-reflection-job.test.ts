@@ -15,7 +15,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createProviderJudge, finishNoteRun, scheduleNoteRunFinish, type NoteRunFinish } from './note-reflection-job.js';
 import { REFLECT_TOOL_NAME, SKILL_TOOL_NAME } from './note-reflection.js';
+import { resolveNotePlace } from './note-memory.js';
 import { deriveCodingMemoryIdentityFromRoot } from '../memory-runtime.js';
+import type { KodaXOptions } from '../types.js';
 
 let home: string;
 let cwd: string;
@@ -48,7 +50,8 @@ function provider(toolBlocks: readonly { name: string; input: Record<string, unk
 }
 
 const finish = (overrides: Partial<NoteRunFinish> = {}): NoteRunFinish => ({
-  cwd,
+  place: resolveNotePlace({ provider: 'anthropic', context: { executionCwd: cwd, gitRoot: cwd } } as KodaXOptions),
+  reflect: true,
   sessionId: 'sess-1',
   messages: messages(),
   earlierCalls: new Set(),
@@ -110,6 +113,13 @@ describe('finishNoteRun', () => {
     await finishNoteRun(finish({ provider: bridge, messages: [...messages(), ...opened] }));
     expect(bridge.stream).not.toHaveBeenCalled();
     expect((await project.list())[0]!.used).toBe(1);
+    expect(fs.existsSync(path.join(resolveNoteRoot(cwd, 'user'), '.reflection-budget.json'))).toBe(false);
+  });
+
+  it('makes no model call when the host owns learning', async () => {
+    const fake = provider([]);
+    await finishNoteRun(finish({ provider: fake, reflect: false }));
+    expect(fake.stream).not.toHaveBeenCalled();
     expect(fs.existsSync(path.join(resolveNoteRoot(cwd, 'user'), '.reflection-budget.json'))).toBe(false);
   });
 

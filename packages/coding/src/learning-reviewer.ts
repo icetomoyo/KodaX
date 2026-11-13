@@ -165,19 +165,29 @@ export function shouldInstallProductionLearningReviewer(
   return options.learningReviewer === undefined && options.memoryReviewer === undefined;
 }
 
+const installedReviewers = new WeakSet<UnifiedLearningReviewRunner>();
+
 export function installProductionLearningReviewer(
   options: KodaXOptions,
   provider: KodaXBaseProvider,
   model: string | undefined,
 ): KodaXOptions {
   if (!shouldInstallProductionLearningReviewer(options)) return options;
-  return {
-    ...options,
-    learningReviewer: createProductionLearningReviewer({
-      provider,
-      ...(model === undefined ? {} : { model }),
-    }),
-  };
+  const learningReviewer = createProductionLearningReviewer({
+    provider,
+    ...(model === undefined ? {} : { model }),
+  });
+  installedReviewers.add(learningReviewer);
+  return { ...options, learningReviewer };
+}
+
+/**
+ * True when the host supplied its own reviewer. Evals and hosts that keep
+ * learning offline do this, so the run must not make learning calls of its own.
+ */
+export function hostOwnsLearning(options: Pick<KodaXOptions, 'learningReviewer' | 'memoryReviewer'>): boolean {
+  if (options.memoryReviewer !== undefined) return true;
+  return options.learningReviewer !== undefined && !installedReviewers.has(options.learningReviewer);
 }
 
 type ReviewInvocation =
