@@ -12,6 +12,7 @@ import { createHmac } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
+import { isNotFound } from './fs-util.js';
 import { parseNote } from './record.js';
 import { INDEX_FILE, type NoteStore } from './store.js';
 
@@ -21,10 +22,6 @@ export interface ConversionReport {
 }
 
 type Tombstones = ReadonlyMap<string, 'archived' | 'forgotten'>;
-
-function isNotFound(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException).code === 'ENOENT';
-}
 
 async function readIfExists(file: string): Promise<Buffer | undefined> {
   try {
@@ -95,23 +92,43 @@ export async function convertLegacyMemdir(legacyRoot: string, store: NoteStore):
 /** Written into the note root after a conversion; its presence means the legacy directory is never read again. */
 export const LEGACY_CONVERTED_MARKER = '.legacy-converted.json';
 
+/** Written when a conversion throws; the next attempt waits a day so a broken legacy file is not retried on every run. */
+export const LEGACY_FAILED_MARKER = '.legacy-conversion-failed.json';
+const RETRY_FAILED_AFTER_MS = 24 * 60 * 60 * 1000;
+
+async function failedRecently(file: string, now: number): Promise<boolean> {
+  const raw = await readIfExists(file);
+  if (raw === undefined) return false;
+  const at = Date.parse((JSON.parse(raw.toString('utf8')) as { at?: string }).at ?? '');
+  return Number.isFinite(at) && now - at < RETRY_FAILED_AFTER_MS;
+}
+
 /**
  * Converts the legacy directory once per note root. The marker is what keeps a
  * note the user later deleted from coming back. No marker is written when there
- * is no legacy directory or the conversion throws, so both cases retry later.
- * Returns undefined when nothing was converted this time.
+ * is no legacy directory, so a later one is still converted. A failure throws
+ * and is retried after a day. Returns undefined when nothing was converted this time.
  */
-export async function convertLegacyOnce(legacyRoot: string, store: NoteStore): Promise<ConversionReport | undefined> {
+export async function convertLegacyOnce(legacyRoot: string, store: NoteStore, now: number = Date.now()): Promise<ConversionReport | undefined> {
   const marker = path.join(store.root, LEGACY_CONVERTED_MARKER);
-  if (await readIfExists(marker) !== undefined) return undefined;
+  const failedMarker = path.join(store.root, LEGACY_FAILED_MARKER);
+  if (await readIfExists(marker) !== undefined || await failedRecently(failedMarker, now)) return undefined;
   try {
     await fs.stat(legacyRoot);
   } catch (error) {
     if (isNotFound(error)) return undefined;
     throw error;
   }
-  const report = await convertLegacyMemdir(legacyRoot, store);
+  let report: ConversionReport;
+  try {
+    report = await convertLegacyMemdir(legacyRoot, store);
+  } catch (error) {
+    await fs.mkdir(store.root, { recursive: true });
+    await fs.writeFile(failedMarker, JSON.stringify({ at: new Date(now).toISOString(), error: error instanceof Error ? error.message : String(error) }));
+    throw error;
+  }
   await fs.mkdir(store.root, { recursive: true });
-  await fs.writeFile(marker, JSON.stringify({ at: new Date().toISOString(), ...report }, null, 2));
+  await fs.writeFile(marker, JSON.stringify({ at: new Date(now).toISOString(), ...report }, null, 2));
+  await fs.rm(failedMarker, { force: true });
   return report;
 }

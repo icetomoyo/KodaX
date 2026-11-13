@@ -32,8 +32,10 @@ function readIndex(root: string): string {
   try {
     return fs.readFileSync(path.join(root, INDEX_FILE), 'utf8').trim();
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '';
-    return `(index unreadable: ${(error as NodeJS.ErrnoException).code ?? 'unknown error'})`;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return '';
+    emitKodaXDiagnostic({ source: 'coding:note-memory', level: 'warn', message: `Could not read the memory index in ${root}: ${code ?? String(error)}` });
+    return `(index unreadable: ${code ?? 'unknown error'})`;
   }
 }
 

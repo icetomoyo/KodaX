@@ -11,7 +11,7 @@ export { resolveNoteRoot } from './paths.js';
 export { buildEvidence, collectSegments, copiesExternalText, quoteInEvidence, renderEvidence, toolSource } from './evidence.js';
 export type { EvidenceSegment, EvidenceSource, SessionEvidence } from './evidence.js';
 export { shouldReflect, signalsOf } from './reflection-gate.js';
-export { isReflected, markReflected, reflectedUserTurns } from './reflection-cursor.js';
+export { markReflected, reflectedUserTurns } from './reflection-cursor.js';
 export { DAILY_REFLECTION_CALLS, takeReflectionSlot } from './reflection-budget.js';
 export { applyReflectionOperation } from './reflection-op.js';
 export type { ReflectionOpContext, ReflectionOpInput, SkillSink } from './reflection-op.js';

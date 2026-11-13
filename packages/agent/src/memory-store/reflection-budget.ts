@@ -6,6 +6,9 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
+import { atomicWrite, readOrUndefined } from './fs-util.js';
+import { parseStateFile } from './state-file.js';
+
 export const BUDGET_FILE = '.reflection-budget.json';
 export const DAILY_REFLECTION_CALLS = 10;
 
@@ -15,14 +18,9 @@ interface Day {
 }
 
 async function load(file: string): Promise<Day | undefined> {
-  try {
-    const parsed: unknown = JSON.parse(await fs.readFile(file, 'utf8'));
-    const { day, calls } = (parsed ?? {}) as Record<string, unknown>;
-    return typeof day === 'string' && typeof calls === 'number' ? { day, calls } : undefined;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT' || error instanceof SyntaxError) return undefined;
-    throw error;
-  }
+  const parsed = parseStateFile(file, await readOrUndefined(file));
+  const { day, calls } = (parsed ?? {}) as Record<string, unknown>;
+  return typeof day === 'string' && typeof calls === 'number' ? { day, calls } : undefined;
 }
 
 /** Takes one of today's slots; false when the day's cap is spent. */
@@ -33,8 +31,6 @@ export async function takeReflectionSlot(root: string, now: Date = new Date(), c
   const calls = current?.day === today ? current.calls : 0;
   if (calls >= cap) return false;
   await fs.mkdir(root, { recursive: true });
-  const temp = `${file}.tmp-${process.pid}`;
-  await fs.writeFile(temp, JSON.stringify({ day: today, calls: calls + 1 }), 'utf8');
-  await fs.rename(temp, file);
+  await atomicWrite(file, JSON.stringify({ day: today, calls: calls + 1 }));
   return true;
 }

@@ -54,8 +54,15 @@ describe('reflectSession: long sessions and the cost cap', () => {
     expect(await run(turns(2), { dailyCap: 5 })).toMatchObject({ status: 'done' });
   });
 
-  it('still reads a cursor file written before turn counts were kept', async () => {
-    await fs.writeFile(path.join(dir, CURSOR_FILE), JSON.stringify({ s1: Date.now() }), 'utf8');
-    expect(await run(turns(2))).toEqual({ status: 'skipped', reason: 'already-reflected' });
+  it('keeps going and saves the cursor when one operation throws', async () => {
+    const project = stores().project;
+    await project.write({ id: 'a', type: 'project', description: 'one', body: 'b' });
+    await project.write({ id: 'b', type: 'project', description: 'two', body: 'b' });
+    const throwing = { ...project, edit: async () => { throw new Error('disk gone'); } };
+    const twoOps: ReflectionJudge = async () => [{ operation: 'dispute', id: 'a', quote: 'request number 1' }, { operation: 'dispute', id: 'b', quote: 'request number 1' }];
+    const outcome = await run(turns(2), { judge: twoOps, stores: { project: throwing, user: stores().user } });
+    expect(outcome).toMatchObject({ status: 'done', applied: 0 });
+    expect(outcome.status === 'done' && outcome.rejected.join('\n')).toContain('disk gone');
+    expect(JSON.parse(await fs.readFile(path.join(dir, CURSOR_FILE), 'utf8'))).toHaveProperty('s1');
   });
 });

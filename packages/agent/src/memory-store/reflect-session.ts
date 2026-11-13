@@ -61,11 +61,13 @@ export async function reflectSession(input: ReflectSessionInput): Promise<Reflec
   const operations = await input.judge({ evidence, notes: await currentNotes(input.stores) });
   let applied = 0;
   const rejected: string[] = [];
+  const context = { stores: input.stores, evidence, sessionId: input.sessionId, ...(input.now === undefined ? {} : { now: input.now }), ...(input.skills === undefined ? {} : { skills: input.skills }) };
   for (const operation of operations) {
-    const outcome = await applyReflectionOperation(
-      { stores: input.stores, evidence, sessionId: input.sessionId, ...(input.now === undefined ? {} : { now: input.now }), ...(input.skills === undefined ? {} : { skills: input.skills }) },
-      operation,
-    );
+    // One failing write must not lose the rest, nor the cursor: the judge call is already paid for.
+    const outcome = await applyReflectionOperation(context, operation).catch((error: unknown) => ({
+      ok: false,
+      message: `failed: ${error instanceof Error ? error.message : String(error)}`,
+    }));
     if (outcome.ok) applied += 1;
     else rejected.push(`${operation.operation} ${operation.id}: ${outcome.message}`);
   }

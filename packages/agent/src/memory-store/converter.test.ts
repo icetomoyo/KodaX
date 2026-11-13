@@ -5,7 +5,7 @@ import * as path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { convertLegacyMemdir, convertLegacyOnce, LEGACY_CONVERTED_MARKER } from './converter.js';
+import { convertLegacyMemdir, convertLegacyOnce, LEGACY_CONVERTED_MARKER, LEGACY_FAILED_MARKER } from './converter.js';
 import { createNoteStore, type NoteStore } from './store.js';
 
 let legacy: string;
@@ -152,12 +152,17 @@ describe('convertLegacyOnce', () => {
     expect((await convertLegacyOnce(missing, store))?.converted).toEqual(['late']);
   });
 
-  it('writes no marker when the conversion fails, so the next run retries', async () => {
+  it('retries a failed conversion after a day, not on every run', async () => {
     await legacyFile('a.md', '---\ndescription: first\n---\n');
     await fs.mkdir(path.join(legacy, '.governance'));
     await fs.writeFile(path.join(legacy, '.governance', 'lifecycle.json'), '{}');
-    await expect(convertLegacyOnce(legacy, store)).rejects.toThrow('tombstone.key');
+    const start = Date.parse('2026-11-13T00:00:00Z');
+    await expect(convertLegacyOnce(legacy, store, start)).rejects.toThrow('tombstone.key');
     await expect(fs.stat(path.join(target, LEGACY_CONVERTED_MARKER))).rejects.toThrow();
+    expect(await convertLegacyOnce(legacy, store, start + 60_000)).toBeUndefined();
+    await fs.rm(path.join(legacy, '.governance'), { recursive: true });
+    expect((await convertLegacyOnce(legacy, store, start + 25 * 3600_000))?.converted).toEqual(['a']);
+    await expect(fs.stat(path.join(target, LEGACY_FAILED_MARKER))).rejects.toThrow();
   });
 
   it('keeps the marker out of the note list', async () => {

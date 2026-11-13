@@ -14,6 +14,7 @@
  * External content (web, MCP) is never accepted as proof. A user-scope note
  * reaches every project, so only a user message can change it.
  */
+import { LearningCapabilityError } from '../learning/center-types.js';
 import type { DeclarativeSkillSpec } from '../learning/learned-skill.js';
 import { validateDeclarativeSkillSpec } from '../learning/learned-skill.js';
 import { copiesExternalText, quoteInEvidence, type SessionEvidence } from './evidence.js';
@@ -73,7 +74,8 @@ async function proposeSkill(context: ReflectionOpContext, input: ReflectionOpInp
   if (texts.some((text) => copiesExternalText(context.evidence, text))) return fail(COPIES_EXTERNAL);
   try {
     validateDeclarativeSkillSpec(spec);
-  } catch {
+  } catch (error) {
+    if (!(error instanceof LearningCapabilityError)) throw error;
     return fail('The skill was rejected: it is incomplete, too large, or contains text that is not allowed in a skill.');
   }
   return context.skills(spec, { sessionId: context.sessionId, decisionId: `${context.sessionId}:${spec.name}` });

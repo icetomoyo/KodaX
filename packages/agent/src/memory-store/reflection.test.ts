@@ -6,7 +6,8 @@ import type { KodaXMessage } from '@kodax-ai/llm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { buildEvidence, quoteInEvidence, renderEvidence, toolSource } from './evidence.js';
-import { isReflected, markReflected } from './reflection-cursor.js';
+import { setKodaXDiagnosticSink } from '../diagnostics.js';
+import { markReflected, reflectedUserTurns } from './reflection-cursor.js';
 import { shouldReflect } from './reflection-gate.js';
 import { applyReflectionOperation, type ReflectionOpContext } from './reflection-op.js';
 import { keepRevision, pruneRevisions } from './revisions.js';
@@ -111,17 +112,40 @@ afterEach(async () => { await fs.rm(dir, { recursive: true, force: true }); });
 
 describe('cursor and revisions', () => {
   it('marks a session only when asked and expires old entries', async () => {
-    expect(await isReflected(dir, 's1')).toBe(false);
-    await markReflected(dir, 's1', 1_000);
-    expect(await isReflected(dir, 's1')).toBe(true);
+    expect(await reflectedUserTurns(dir, 's1')).toBeUndefined();
+    await markReflected(dir, 's1', 1_000, 2);
+    expect(await reflectedUserTurns(dir, 's1')).toBe(2);
     await markReflected(dir, 's2', 1_000 + 91 * 24 * 3600 * 1000);
-    expect(await isReflected(dir, 's1')).toBe(false);
-    expect(await isReflected(dir, 's2')).toBe(true);
+    expect(await reflectedUserTurns(dir, 's1')).toBeUndefined();
+    expect(await reflectedUserTurns(dir, 's2')).toBe(0);
   });
 
-  it('survives a corrupt cursor file', async () => {
+  it('survives a corrupt cursor file and reports it', async () => {
     await fs.writeFile(path.join(dir, '.reflected.json'), '{not json');
-    expect(await isReflected(dir, 's1')).toBe(false);
+    const seen: string[] = [];
+    const stop = setKodaXDiagnosticSink((diagnostic) => seen.push(diagnostic.message));
+    expect(await reflectedUserTurns(dir, 's1')).toBeUndefined();
+    stop();
+    expect(seen.join()).toContain('not valid JSON');
+  });
+
+  it('skips and reports an unreadable note instead of hiding every note', async () => {
+    const store = createNoteStore(dir, 'project');
+    await store.write({ id: 'good', type: 'project', description: 'fine', body: 'b' });
+    await fs.mkdir(path.join(dir, 'broken.md'));
+    const seen: string[] = [];
+    const stop = setKodaXDiagnosticSink((diagnostic) => seen.push(diagnostic.message));
+    expect((await store.list()).map((note) => note.id)).toEqual(['good']);
+    stop();
+    expect(seen.join()).toContain('broken.md');
+  });
+
+  it('serializes writes from two store objects on the same directory', async () => {
+    const a = createNoteStore(dir, 'project');
+    const b = createNoteStore(dir, 'project');
+    await Promise.all(Array.from({ length: 8 }, (_, i) => (i % 2 === 0 ? a : b).write({ id: `n${i}`, type: 'project', description: `note ${i}`, body: 'b' })));
+    const index = await fs.readFile(path.join(dir, 'MEMORY.md'), 'utf8');
+    for (let i = 0; i < 8; i += 1) expect(index).toContain(`note ${i}`);
   });
 
   it('keeps the previous revision on edit and delete, and prunes by age', async () => {

@@ -1536,6 +1536,21 @@ describe('memory runtime hooks', () => {
     await expect(fresh.awaitLatestCodingMemoryReviewDrain(10_000)).resolves.toBeUndefined();
   });
 
+  it('awaitLatestCodingMemoryReviewDrain also waits for queued note memory work', async () => {
+    vi.resetModules();
+    const fresh = await import('./memory-runtime.js');
+    const queue = await import('./memory/note-work-queue.js');
+    let release: (() => void) | undefined;
+    let finished = false;
+    void queue.enqueueNoteWork(() => new Promise<void>((resolve) => { release = resolve; }).then(() => { finished = true; }));
+
+    await expect(fresh.awaitLatestCodingMemoryReviewDrain(30)).resolves.toBeUndefined();
+    expect(finished).toBe(false);
+    setTimeout(() => release?.(), 20);
+    await fresh.awaitLatestCodingMemoryReviewDrain(2_000);
+    expect(finished).toBe(true);
+  });
+
   it('awaitLatestCodingMemoryReviewDrain bounds the wait and resolves once the drain completes', async () => {
     let releaseReview: (() => void) | undefined;
     const fixture = await failedLessonDrainFixture((input) => new Promise((resolve) => {

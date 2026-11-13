@@ -6,6 +6,7 @@
  */
 
 import type {
+  KodaXBaseProvider,
   KodaXMessage,
   KodaXTaskResultMetadata,
   KodaXToolResultContentItem,
@@ -39,6 +40,7 @@ import {
   cleanupIncompleteToolCalls,
   validateAndFixToolHistory,
   registerActiveRootQueueRoute,
+  toolUseIds,
   type MemoryContextIdentity,
   type MemoryManagementController,
   type KodaXHandledMemoryOperation,
@@ -94,6 +96,7 @@ import {
 } from '../tools/memory-intent.js';
 import { MEMORY_TOOL_NAME } from '../tools/memory.js';
 import { createNoteMemoryBinding, isNoteMemoryEnabled } from '../memory/note-memory.js';
+import { scheduleNoteRunFinish } from '../memory/note-reflection-job.js';
 import type {
   KodaXHarnessProfile,
   KodaXManagedTask,
@@ -692,6 +695,35 @@ function withNoteMemoryVisibility(options: KodaXOptions): KodaXOptions {
       excludeTools: [...new Set([...(options.context?.excludeTools ?? []), MEMORY_TOOL_NAME])],
     },
   };
+}
+
+/**
+ * FEATURE_306: once a root run is saved, count the notes it opened and reflect on
+ * the session in the background. Not awaited: the run is over.
+ */
+function scheduleNoteFollowUp(options: KodaXOptions, run: {
+  readonly sessionId: string;
+  readonly messages: readonly KodaXMessage[];
+  readonly earlierCalls: ReadonlySet<string>;
+  readonly providerName: string;
+  readonly model: string | undefined;
+}): void {
+  if (!isNoteMemoryEnabled() || options.context?.currentAgentId !== undefined || options.context?.parentAgentId !== undefined) return;
+  let provider: KodaXBaseProvider;
+  try {
+    provider = resolveProvider(run.providerName);
+  } catch (error) {
+    emitResilienceDebug('[memory:note-follow-up:error]', { error: error instanceof Error ? error.message : String(error) });
+    return;
+  }
+  void scheduleNoteRunFinish({
+    cwd: resolveExecutionCwd(options.context),
+    sessionId: run.sessionId,
+    messages: run.messages,
+    earlierCalls: run.earlierCalls,
+    provider,
+    ...(run.model === undefined ? {} : { model: run.model }),
+  });
 }
 
 async function startRunnerMemoryRuntime(
@@ -2153,6 +2185,8 @@ async function runManagedTaskViaRunnerInner(
   const resolvedInitial = await resolveInitialMessages(options, options.session?.id ?? resolvedSessionId);
   // Retain recovery metadata without another storage read or changing load order.
   recovery.initial = resolvedInitial;
+  // FEATURE_306: notes opened by earlier runs of this session were counted when those runs ended.
+  const noteEarlierCalls = toolUseIds(resolvedInitial.messages);
   if (options.session?.generationCheckpoint && options.context?.runtimeRunId) {
     await options.context.actorSession?.resumeGenerationChildren(options.context.runtimeRunId);
   }
@@ -3165,6 +3199,13 @@ async function runManagedTaskViaRunnerInner(
     title: resolvedInitial.title || prompt.slice(0, 80),
     gitRoot: options.context?.gitRoot ?? undefined,
     runtimeSessionState,
+  });
+  scheduleNoteFollowUp(options, {
+    sessionId: result.sessionId,
+    messages: result.messages,
+    earlierCalls: noteEarlierCalls,
+    providerName: runtimeSessionState.modelSelection.provider ?? options.provider ?? 'anthropic',
+    model: runtimeSessionState.modelSelection.model,
   });
 
   // This is the managed terminal-commit boundary: the canonical Session

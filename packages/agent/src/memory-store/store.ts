@@ -6,11 +6,13 @@
  *
  * Guarantees: secrets are rejected before anything is written; every file
  * write is temp-file + rename (never a torn file); MEMORY.md is rewritten only
- * when its bytes change. Operations on one store are serialized in-process.
+ * when its bytes change. Operations on one directory are serialized in-process.
  */
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
+import { emitKodaXDiagnostic } from '../diagnostics.js';
+import { atomicWrite, isNotFound, readOrUndefined } from './fs-util.js';
 import { buildIndex } from './index-builder.js';
 import { parseNote, serializeNote, type MemoryNote, type NoteScope, type NoteSource, type NoteStatus, type NoteType } from './record.js';
 import { keepRevision } from './revisions.js';
@@ -59,31 +61,6 @@ function validId(id: string): boolean {
   return ID_PATTERN.test(id) && id.toUpperCase() !== 'MEMORY';
 }
 
-function isNotFound(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException).code === 'ENOENT';
-}
-
-async function readOrUndefined(file: string): Promise<string | undefined> {
-  try {
-    return await fs.readFile(file, 'utf8');
-  } catch (error) {
-    if (isNotFound(error)) return undefined;
-    throw error;
-  }
-}
-
-let tempCounter = 0;
-
-async function atomicWrite(file: string, content: string): Promise<void> {
-  const temp = `${file}.tmp-${process.pid}-${tempCounter++}`;
-  try {
-    await fs.writeFile(temp, content, 'utf8');
-    await fs.rename(temp, file);
-  } catch (error) {
-    await fs.rm(temp, { force: true });
-    throw error;
-  }
-}
 
 function secretIn(fields: Readonly<Record<string, string | undefined>>): NoteResult | undefined {
   for (const [name, value] of Object.entries(fields)) {
@@ -95,11 +72,14 @@ function secretIn(fields: Readonly<Record<string, string | undefined>>): NoteRes
   return undefined;
 }
 
+/** One queue per directory, shared by every store object on it, so callers in one process never interleave writes. */
+const rootQueues = new Map<string, Promise<unknown>>();
+
 export function createNoteStore(root: string, scope: NoteScope): NoteStore {
-  let queue: Promise<unknown> = Promise.resolve();
+  const queueKey = path.resolve(root);
   const serialized = <T>(task: () => Promise<T>): Promise<T> => {
-    const run = queue.then(task, task);
-    queue = run.catch(() => undefined);
+    const run = (rootQueues.get(queueKey) ?? Promise.resolve()).then(task, task);
+    rootQueues.set(queueKey, run.catch(() => undefined));
     return run;
   };
 
@@ -116,9 +96,24 @@ export function createNoteStore(root: string, scope: NoteScope): NoteStore {
     const notes: MemoryNote[] = [];
     for (const name of names.sort()) {
       if (!name.endsWith('.md') || name.toUpperCase() === INDEX_FILE.toUpperCase()) continue;
-      notes.push(parseNote(name.slice(0, -3), await fs.readFile(path.join(root, name), 'utf8'), scope));
+      const raw = await readNoteFile(name);
+      if (raw !== undefined) notes.push(parseNote(name.slice(0, -3), raw, scope));
     }
     return notes;
+  }
+
+  /** One unreadable file must not hide every other note; it is reported and skipped. */
+  async function readNoteFile(name: string): Promise<string | undefined> {
+    try {
+      return await readOrUndefined(path.join(root, name));
+    } catch (error) {
+      emitKodaXDiagnostic({
+        source: 'agent:note-store',
+        level: 'warn',
+        message: `Skipped the unreadable memory note ${name}: ${(error as NodeJS.ErrnoException).code ?? String(error)}`,
+      });
+      return undefined;
+    }
   }
 
   async function rebuild(): Promise<boolean> {

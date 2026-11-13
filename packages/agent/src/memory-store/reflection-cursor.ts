@@ -8,6 +8,9 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
+import { atomicWrite, readOrUndefined } from './fs-util.js';
+import { parseStateFile } from './state-file.js';
+
 export const CURSOR_FILE = '.reflected.json';
 const CURSOR_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
@@ -18,30 +21,21 @@ interface Entry {
 type Cursor = Record<string, Entry>;
 
 function entryOf(value: unknown): Entry | undefined {
-  if (typeof value === 'number') return { at: value, userTurns: 0 };
   if (typeof value !== 'object' || value === null) return undefined;
   const { at, userTurns } = value as Record<string, unknown>;
   return typeof at === 'number' && typeof userTurns === 'number' ? { at, userTurns } : undefined;
 }
 
 async function load(root: string): Promise<Cursor> {
-  try {
-    const parsed: unknown = JSON.parse(await fs.readFile(path.join(root, CURSOR_FILE), 'utf8'));
-    if (typeof parsed !== 'object' || parsed === null) return {};
-    const cursor: Cursor = {};
-    for (const [id, value] of Object.entries(parsed)) {
-      const entry = entryOf(value);
-      if (entry !== undefined) cursor[id] = entry;
-    }
-    return cursor;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT' || error instanceof SyntaxError) return {};
-    throw error;
+  const file = path.join(root, CURSOR_FILE);
+  const parsed = parseStateFile(file, await readOrUndefined(file));
+  if (typeof parsed !== 'object' || parsed === null) return {};
+  const cursor: Cursor = {};
+  for (const [id, value] of Object.entries(parsed)) {
+    const entry = entryOf(value);
+    if (entry !== undefined) cursor[id] = entry;
   }
-}
-
-export async function isReflected(root: string, sessionId: string): Promise<boolean> {
-  return (await load(root))[sessionId] !== undefined;
+  return cursor;
 }
 
 /** User turns the session had when it was last reflected, or undefined if it never was. */
@@ -56,7 +50,5 @@ export async function markReflected(root: string, sessionId: string, now: number
     if (now - entry.at > CURSOR_RETENTION_MS) delete cursor[id];
   }
   await fs.mkdir(root, { recursive: true });
-  const temp = path.join(root, `${CURSOR_FILE}.tmp-${process.pid}`);
-  await fs.writeFile(temp, JSON.stringify(cursor), 'utf8');
-  await fs.rename(temp, path.join(root, CURSOR_FILE));
+  await atomicWrite(path.join(root, CURSOR_FILE), JSON.stringify(cursor));
 }

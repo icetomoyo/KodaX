@@ -1603,7 +1603,8 @@ async function runSubstrateInContext(
     ctx.memoryNotes = createNoteMemoryBinding(
       resolveExecutionCwd(options.context),
       () => memoryIntentUserTurnRef.current.text,
-      options.session?.id,
+      // The same id the follow-up reflects under, so corroboration can tell sessions apart.
+      sessionId,
     );
   }
 

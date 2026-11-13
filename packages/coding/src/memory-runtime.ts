@@ -40,6 +40,7 @@ import {
 } from '@kodax-ai/agent';
 
 import { emitResilienceDebug } from './agent-runtime/resilience-debug.js';
+import { noteWorkSettled } from './memory/note-work-queue.js';
 import { resolveExecutionCwd } from './runtime-paths.js';
 import type { KodaXOptions } from './types.js';
 import {
@@ -328,15 +329,16 @@ export function drainCodingMemoryReviewInbox(
 
 /**
  * FEATURE_289 §3.1: bounded await of the latest drain for shutdown cleanup.
- * Never rejects; resolves immediately when no drain was ever started.
+ * Also waits for the note memory's queued follow-ups (FEATURE_306), so a
+ * one-shot `-p` run does not exit in the middle of writing a note.
+ * Never rejects; resolves at once when nothing was started.
  */
 export async function awaitLatestCodingMemoryReviewDrain(timeoutMs: number): Promise<void> {
   const drain = latestMemoryReviewDrain;
-  if (drain === undefined) return;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
-      drain.then(() => undefined, () => undefined),
+      Promise.all([drain?.then(() => undefined, () => undefined), noteWorkSettled()]),
       new Promise<void>((resolve) => {
         timer = setTimeout(resolve, timeoutMs);
         timer.unref?.();

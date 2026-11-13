@@ -6,6 +6,8 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
+import { isNotFound } from './fs-util.js';
+
 export const REVISIONS_DIR = '.revisions';
 export const REVISION_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -28,7 +30,7 @@ export async function pruneRevisions(
   try {
     names = await fs.readdir(dir);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0;
+    if (isNotFound(error)) return 0;
     throw error;
   }
   let removed = 0;

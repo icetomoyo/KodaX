@@ -37,6 +37,7 @@ import { withProviderRequestCredential, type KodaXBaseProvider, type KodaXMessag
 import { resolveProtectedFormalSkillNames } from '../learned-skill-runtime.js';
 import { deriveCodingMemoryIdentityFromRoot } from '../memory-runtime.js';
 import { buildReflectionRequest, parseReflectionCall, parseSkillCall, REFLECT_TOOL_NAME, SKILL_TOOL_NAME } from './note-reflection.js';
+import { enqueueNoteWork } from './note-work-queue.js';
 
 const REFLECTION_TIMEOUT_MS = 120_000;
 /** The size the reflection prompt was evaluated at (FEATURE_306 Phase 2b to 3). */
@@ -155,17 +156,13 @@ export async function finishNoteRun(run: NoteRunFinish, judge?: ReflectionJudge)
   }
 }
 
-let queue: Promise<void> = Promise.resolve();
-
 /** Queues a finish behind the earlier ones. The returned promise never rejects; failures go to diagnostics. */
 export function scheduleNoteRunFinish(run: NoteRunFinish, judge?: ReflectionJudge): Promise<void> {
-  const next = queue.then(() => finishNoteRun(run, judge)).catch((error: unknown) => {
+  return enqueueNoteWork(() => finishNoteRun(run, judge).catch((error: unknown) => {
     emitKodaXDiagnostic({
       source: 'coding:note-reflection',
       level: 'warn',
       message: `Note memory follow-up failed: ${error instanceof Error ? error.message : String(error)}`,
     });
-  });
-  queue = next;
-  return next;
+  }));
 }
