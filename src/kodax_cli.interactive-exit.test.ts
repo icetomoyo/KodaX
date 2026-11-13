@@ -322,6 +322,7 @@ async function importMainWithMocks(options: {
     }) => ({ args: [...input.args], env: { ...input.env } }),
     isCurrentProcessWindowsJobContained: vi.fn(() => false),
     getAgentConfigHome: vi.fn(() => join(tmpdir(), 'kodax-cli-test-home')),
+    resolveKodaXHome: vi.fn(() => ({ path: join(tmpdir(), 'kodax-cli-test-home'), source: 'default' })),
     getAgentConfigPath: vi.fn((...segments: string[]) => join(tmpdir(), 'kodax-cli-test-home', ...segments)),
     cleanupRegisteredManagedChildren,
     shutdownTracing,
