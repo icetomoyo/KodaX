@@ -68,6 +68,7 @@ latency remains tracked in Issue 371.
 - [Configuration Files](./configuration/config-files.md) — config.json, split files, env vars
 - [Permission Modes](./configuration/permissions.md) — Plan / Edits / Auto[LLM] / Full Access + Exec Policy
 - [Sandbox](./configuration/sandbox.md) — Optional OS-level containment (ASRT)
+- [Memory](./configuration/memory.md) — Notes across sessions, background learning, `/memory`
 
 ## SDK
 

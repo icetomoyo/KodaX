@@ -18,10 +18,10 @@ describe('FEATURE_260 memory mutation guard', () => {
       'b'.repeat(64),
       'project_stack.md',
     );
-    expect(memoryMutationDenial(legacy)).toContain('Memory Control Plane');
-    expect(memoryMutationDenial(scoped)).toContain('Memory Control Plane');
+    expect(memoryMutationDenial(legacy)).toContain('memory tool you were given');
+    expect(memoryMutationDenial(scoped)).toContain('memory tool you were given');
     if (process.platform === 'win32') {
-      expect(memoryMutationDenial(scoped.toUpperCase())).toContain('Memory Control Plane');
+      expect(memoryMutationDenial(scoped.toUpperCase())).toContain('memory tool you were given');
     } else {
       expect(memoryMutationDenial(scoped.toUpperCase())).toBeUndefined();
     }

@@ -20,7 +20,7 @@ it.runIf(process.platform === 'win32')('protects direct Memory targets using Win
   const suffix = path.relative(root, target);
   for (const alias of ['%USERPROFILE%', '$env:USERPROFILE', '$HOME']) {
     const destination = `${alias}\\${suffix}`;
-    expect(getGovernedMemoryShellWriteDenial(`echo changed>"${destination}"`, root, home)).toContain('Memory Control Plane');
+    expect(getGovernedMemoryShellWriteDenial(`echo changed>"${destination}"`, root, home)).toContain('memory tool you were given');
     expect(getGovernedMemoryShellWriteDenial(`copy "${destination}" "${path.join(root, 'copy.md')}"`, root, home)).toBeUndefined();
   }
 });
@@ -29,7 +29,7 @@ it('retains destructive target roles through nested shell wrappers without treat
   for (const command of [
     `cmd /c 'rmdir /s /q "${home}"'`,
     `sh -c 'rm -rf "${path.join(home, 'projects')}"'`,
-  ]) expect(getGovernedMemoryShellWriteDenial(command, root, home)).toContain('Memory Control Plane');
+  ]) expect(getGovernedMemoryShellWriteDenial(command, root, home)).toContain('memory tool you were given');
   expect(getGovernedMemoryShellWriteDenial(`mkdir "${path.join(home, 'projects', 'new')}" && rm "${path.join(root, 'unrelated.txt')}"`, root, home)).toBeUndefined();
 });
 
@@ -44,7 +44,7 @@ it.each(['direct', 'unavailable', 'denied'] as const)('retains governed Memory b
       return undefined;
     } } }),
   });
-  expect(result).toContain('Memory Control Plane');
+  expect(result).toContain('memory tool you were given');
   expect(await fs.readFile(target, 'utf8')).toBe('retained-memory');
   expect(authorize).not.toHaveBeenCalled();
 });
@@ -54,14 +54,14 @@ it('tracks direct relative writes after cd without blocking Memory copy sources'
   const result = await toolBash({ command: `${cd} "${path.dirname(target)}" && echo changed>retain.md`, timeout: 5 }, {
     backups: new Map(), configHome: home, executionCwd: root, resolveShellPermissionMode: () => 'full-access', authorizeShellHostExecution: async () => true,
   });
-  expect(result).toContain('Memory Control Plane');
+  expect(result).toContain('memory tool you were given');
   expect(await fs.readFile(target, 'utf8')).toBe('retained-memory');
   const copy = process.platform === 'win32' ? 'copy /Y' : 'cp';
   const destination = path.join(root, 'read-copy.md');
   const read = await toolBash({ command: `${copy} "${target}" "${destination}"`, timeout: 5 }, {
     backups: new Map(), configHome: home, executionCwd: root, resolveShellPermissionMode: () => 'full-access', authorizeShellHostExecution: async () => true,
   });
-  expect(read).not.toContain('Memory Control Plane');
+  expect(read).not.toContain('memory tool you were given');
   expect(await fs.readFile(destination, 'utf8')).toBe('retained-memory');
 });
 
@@ -74,7 +74,7 @@ it('allows ordinary project writes and cd out of Memory while protecting aliases
     `echo changed>"${path.join(alias, 'retain.md')}"`,
     process.platform === 'win32' ? `rmdir /s /q "${path.join(home, 'memory-scopes')}"` : `rm -rf "${path.join(home, 'memory-scopes')}"`,
   ]) {
-    expect(await toolBash({ command, timeout: 5 }, context)).toContain('Memory Control Plane');
+    expect(await toolBash({ command, timeout: 5 }, context)).toContain('memory tool you were given');
     expect(await fs.readFile(target, 'utf8')).toBe('retained-memory');
   }
   const ordinary = path.join(home, 'projects', 'fixture', 'scratch');
@@ -82,6 +82,6 @@ it('allows ordinary project writes and cd out of Memory while protecting aliases
   const cd = process.platform === 'win32' ? 'cd /d' : 'cd';
   const result = await toolBash({ command: `${cd} "${ordinary}" && echo allowed>notes.txt`, timeout: 5 },
     { ...context, executionCwd: path.dirname(target) });
-  expect(result).not.toContain('Memory Control Plane');
+  expect(result).not.toContain('memory tool you were given');
   expect(await fs.readFile(path.join(ordinary, 'notes.txt'), 'utf8')).toContain('allowed');
 });

@@ -1009,6 +1009,10 @@
       "",
       "Versus AGENTS.md — AGENTS.md",
       "sets repo-wide rules always in context; a skill is task-specific and loaded when needed.",
+      "With the note memory (the default), the background reflection after a run may propose a skill",
+      "for a procedure whose success the session output proves; it is saved as ready in the project's",
+      "learned area and is used only after the user trusts it with /learn trust.",
+      "With KODAX_MEMORY_NOTES=0 the legacy learning path applies instead:",
       "Background learning is Memory first: one correction or recovery is evidence, not permission",
       "to create a Skill. Repeated independently verified evidence, or an explicit preserve-as-Skill",
       "request with verified terminal evidence, may create a low-risk declarative Skill as an",
@@ -1445,7 +1449,7 @@
   },
   {
     "id": "memory",
-    "title": "Governed memory",
+    "title": "Memory",
     "aliases": [
       "memory",
       "remember",
@@ -1458,9 +1462,37 @@
       "下次记得",
       "回忆"
     ],
-    "summary": "F228 memory governance, automatic recall, deliberate query, and the experimental SDK.",
+    "summary": "Note memory (the default), background reflection, /memory, the legacy control plane, and the experimental SDK.",
     "body": [
-      "Top-level coding runs use the existing F228 Memory Control Plane. At session start KodaX",
+      "Memory is on by default and kept as notes: one markdown file per note plus a MEMORY.md index,",
+      "in two stores. Project notes hold facts about this repository and are shared by every clone and",
+      "worktree of the same git remote; user notes hold preferences that apply everywhere. The system",
+      "prompt carries both indexes, and the model opens a note with the read tool when its index line",
+      "looks relevant. Notes are evidence from the past: the current user message, project rules and",
+      "what the model verifies now all override a note.",
+      "",
+      "The model changes notes only through the memory tool (write, edit, delete). A write that carries",
+      "an exact quote of the user's current message is active at once. A write without a quote is a",
+      "candidate: it stays out of the index until a later session corroborates it or the user approves",
+      "it, so a wrong inference cannot steer future work. Edit and delete need the user's quote.",
+      "Secrets are refused.",
+      "",
+      "After a top-level run ends, a background reflection reads the session and may save the user's",
+      "corrections, corroborate or dispute existing notes, and propose a skill for a procedure that",
+      "verifiably worked. It makes at most ten model calls a day, never runs through a CLI bridge",
+      "provider, and is skipped when an embedding host supplies its own learning reviewer. A proposed",
+      "skill waits as ready in the project's learned area until the user trusts it with /learn trust.",
+      "Inferred notes nobody confirmed or used for 90 days are archived; notes with the same",
+      "description are merged.",
+      "",
+      "Use /memory to list the active notes, /memory candidates to see unconfirmed ones, and",
+      "/memory show|approve|forget <id> for one note. Notes are plain files and may be edited by hand.",
+      "The first run converts the legacy memories into notes once; the legacy files are left in place.",
+      "",
+      "Legacy memory: setting KODAX_MEMORY_NOTES=0 switches back to the F228 Memory Control Plane,",
+      "described below until it is removed.",
+      "",
+      "Top-level coding runs then use the existing F228 Memory Control Plane. At session start KodaX",
       "builds an exact-scoped memory pack; passive recall stays on the zero-wait hot path. When",
       "the current context cannot answer a specific question about prior execution experience or",
       "a user preference, the Action LLM may call the read-only memory_recall tool. Current",
@@ -1478,7 +1510,7 @@
       "",
       "Recalled text is low-authority evidence, never an instruction override. Scope, secret",
       "filtering, source evidence, lifecycle, and mutation protection are deterministic code gates.",
-      "Use /memory list|remember|forget|decisions|show|approve|reject|doctor|open as an advanced",
+      "In that mode use /memory list|remember|forget|decisions|show|approve|reject|doctor|open as an advanced",
       "escape hatch. MEMORY.md is a derived projection; open launches an external application and",
       "the hidden rebuild command only repairs that projection. Durable changes still pass the",
       "proposal/preview/fingerprint/apply controller;",
@@ -1498,6 +1530,18 @@
       "reasoning. This subpath is experimental; the F228 control plane remains the only durable store."
     ],
     "sources": [
+      {
+        "label": "note memory wiring",
+        "path": "packages/coding/src/memory/note-memory.ts"
+      },
+      {
+        "label": "note store and reflection",
+        "path": "packages/agent/src/memory-store/"
+      },
+      {
+        "label": "note memory command",
+        "path": "packages/repl/src/commands/note-memory-command.ts"
+      },
       {
         "label": "coding memory runtime",
         "path": "packages/coding/src/agent-runtime/run-substrate.ts"

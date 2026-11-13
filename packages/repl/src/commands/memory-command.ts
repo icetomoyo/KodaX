@@ -33,8 +33,9 @@ import {
   type MemoryRememberResult,
   type PendingEpisodeReviewSummary,
 } from '@kodax-ai/agent';
-import { type KodaXOptions } from '@kodax-ai/coding';
+import { isNoteMemoryEnabled, resolveNotePlace, type KodaXOptions } from '@kodax-ai/coding';
 
+import { runNoteMemoryCommand } from './note-memory-command.js';
 import type { Command, CommandCallbacks, MemoryCommandPlane } from './types.js';
 import type { InteractiveContext } from '../interactive/context.js';
 const PREVIEW_FINGERPRINT_TTL_MS = 15 * 60 * 1000;
@@ -836,9 +837,15 @@ async function runMemorySubcommand(
 export const memoryCommand: Command = {
   name: 'memory',
   description: 'View or manage durable Memory',
-  usage: '/memory [list|remember|forget|decisions|show|approve|reject|doctor|open|help]',
-  argumentHint: 'list | remember <text> | forget <ref> | decisions | show <ref> | approve <ref> | reject <ref> [reason] | doctor | open | help',
+  usage: '/memory [list|candidates|show|approve|forget|help]',
+  argumentHint: 'list | candidates | show <id> | approve <id> | forget <id> | help',
   handler: async (args, context, callbacks) => {
+    if (isNoteMemoryEnabled()) {
+      const options = callbacks.createKodaXOptions?.() ?? { provider: '' };
+      const cwd = options.context?.executionCwd ?? context.runtimeInfo?.executionCwd ?? resolveCwd(context);
+      await runNoteMemoryCommand(resolveNotePlace(options, cwd), args);
+      return;
+    }
     const subcommand = (args[0] ?? 'list').toLowerCase();
     if (subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
       printHelp();

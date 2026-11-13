@@ -1,9 +1,13 @@
 import { getAgentConfigPath, isAutoManagedMemoryFile } from '@kodax-ai/agent';
 import { isGovernedMemoryMutationTarget } from '../permissions/agent-home-policy.js';
 
+const MEMORY_TOOL_HINT = 'use the memory tool you were given (memory, or memory_intent in the legacy memory), which checks the user\'s authorization and secrets.';
+export const MEMORY_FILE_DENIAL = `[Tool Error] Memory files cannot be changed with file tools; ${MEMORY_TOOL_HINT}`;
+export const MEMORY_SHELL_DENIAL = `[Tool Error] Shell mutation of memory files is denied; ${MEMORY_TOOL_HINT}`;
+
 export function memoryMutationDenial(filePath: string): string | undefined {
   return isAutoManagedMemoryFile(filePath) || isGovernedMemoryMutationTarget(filePath)
-    ? '[Tool Error] Memory files are governed by the Memory Control Plane; use an explicit memory command or proposal instead.'
+    ? MEMORY_FILE_DENIAL
     : undefined;
 }
 
@@ -20,7 +24,7 @@ export function shellMemoryMutationDenial(command: string): string | undefined {
   const targetsUserNotes = normalized.includes(`${userNotesRoot}/`) || normalized.endsWith(userNotesRoot);
   if (!targetsScoped && !targetsLegacy && !targetsUserNotes) return undefined;
   if (isReadOnlyInspection(command)) return undefined;
-  return '[Tool Error] Shell mutation of governed memory is denied; use the Memory Control Plane.';
+  return MEMORY_SHELL_DENIAL;
 }
 
 function isReadOnlyInspection(command: string): boolean {

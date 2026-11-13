@@ -684,6 +684,9 @@ describe('FEATURE_218 manual registry', () => {
   it('documents the governed runtime and SDK memory surfaces', () => {
     const content = resolveKodaXManual({ topic: 'memory' }).content;
 
+    expect(content).toContain('Memory is on by default and kept as notes');
+    expect(content).toContain('/memory candidates');
+    expect(content).toContain('KODAX_MEMORY_NOTES=0');
     expect(content).toContain('/memory');
     expect(content).toContain('memory_recall');
     expect(content).toContain('memory_intent');

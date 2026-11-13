@@ -23,6 +23,7 @@
 - [配置文件](./configuration/config-files.zh-CN.md) — config.json、分文件、环境变量
 - [权限模式](./configuration/permissions.zh-CN.md) — Plan / Edits / Auto[LLM] / Full Access + Exec Policy
 - [沙箱](./configuration/sandbox.zh-CN.md) — 可选的 OS 级隔离（ASRT）
+- [记忆](./configuration/memory.zh-CN.md) — 跨会话笔记、后台学习、`/memory`
 
 ## SDK
 

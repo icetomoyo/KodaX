@@ -23,6 +23,7 @@ import {
 } from '@kodax-ai/agent';
 import type { BashPrefixExtractor, BashPrefixResult } from '../guardrails/auto-mode/bash-prefix-extractor.js';
 import { isToolPlanModeAllowed } from '../tools/registry.js';
+import { MEMORY_SHELL_DENIAL } from '../tools/memory-mutation-guard.js';
 import type { RunScopedToolDefinition } from '../extensions/runtime-contract.js';
 import {
   BASH_SAFE_READ_COMMANDS,
@@ -2369,7 +2370,7 @@ export function getGovernedMemoryShellWriteDenial(command: string, cwd: string, 
   const destructiveTargets = new Set<string>();
   return collectBashWriteTargetsAtDepth(command, 0, false, cwd, agentHome, destructiveTargets)
     .some(target => isGovernedMemoryMutationTarget(target, cwd, agentHome, destructiveTargets.has(target)))
-    ? '[Tool Error] Shell mutation of governed Memory is denied; use the Memory Control Plane.' : undefined;
+    ? MEMORY_SHELL_DENIAL : undefined;
 }
 
 export function getBashOutsideProjectWriteRisk(

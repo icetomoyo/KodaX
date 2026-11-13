@@ -102,6 +102,12 @@ export {
   drainCodingMemoryReviewInbox,
 } from './memory-runtime.js';
 export {
+  isNoteMemoryEnabled,
+  noteStoresFor,
+  resolveNotePlace,
+  type NotePlace,
+} from './memory/note-memory.js';
+export {
   createProductionLearningReviewer,
   installProductionLearningReviewer,
   LEARNING_REVIEW_SYSTEM_PROMPT,
