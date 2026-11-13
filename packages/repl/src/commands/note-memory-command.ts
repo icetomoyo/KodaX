@@ -6,12 +6,11 @@
 
 import chalk from 'chalk';
 
-import type { MemoryNote, NoteScope, NoteStore } from '@kodax-ai/agent';
+import { NOTE_SCOPES, readMemoryStats, type MemoryNote, type MemoryStatName, type NoteScope, type NoteStore } from '@kodax-ai/agent';
 import { noteStoresFor, type NotePlace } from '@kodax-ai/coding';
 
 type Stores = Readonly<Record<NoteScope, NoteStore>>;
 
-const SCOPES: readonly NoteScope[] = ['project', 'user'];
 
 const HELP: readonly (readonly [string, string])[] = [
   ['/memory', 'List the notes the agent reads at startup'],
@@ -30,7 +29,7 @@ function printHelp(): void {
 }
 
 async function listNotes(stores: Stores): Promise<void> {
-  for (const scope of SCOPES) {
+  for (const scope of NOTE_SCOPES) {
     const notes = await stores[scope].list();
     const active = notes.filter((note) => note.status === 'active');
     console.log(chalk.cyan(`\n[memory] ${scope} notes`) + chalk.dim(`  ${stores[scope].root}`));
@@ -39,13 +38,19 @@ async function listNotes(stores: Stores): Promise<void> {
     const waiting = notes.filter(pending).length;
     if (waiting > 0) console.log(chalk.yellow(`  ${waiting} unconfirmed — /memory candidates`));
   }
+  const stats = await readMemoryStats(stores.user.root);
+  if (stats !== undefined) {
+    const count = (name: MemoryStatName): number => stats[name] ?? 0;
+    console.log(chalk.dim(`\n  Since ${stats.since.slice(0, 10)}: ${count('reads')} note reads, ${count('reflections')} reflections, `
+      + `${count('write')} notes saved, ${count('corroborate')} confirmed, ${count('dispute')} disputed, ${count('skill')} skills proposed`));
+  }
   console.log('');
 }
 
 async function listCandidates(stores: Stores): Promise<void> {
   console.log(chalk.cyan('\n[memory] unconfirmed notes (the agent does not read these until you approve them)'));
   let count = 0;
-  for (const scope of SCOPES) {
+  for (const scope of NOTE_SCOPES) {
     for (const note of (await stores[scope].list()).filter(pending)) {
       count += 1;
       console.log(`  ${chalk.bold(`${scope}:${note.id}`)} ${chalk.dim(`[${note.status}]`)}  ${note.description}`);
@@ -61,7 +66,7 @@ type Found = { readonly scope: NoteScope; readonly note: MemoryNote } | { readon
 async function findNote(stores: Stores, ref: string | undefined): Promise<Found> {
   if (ref === undefined || ref.length === 0) return { error: 'name the note id, e.g. /memory show build-cmd' };
   const match = /^(project|user):(.+)$/.exec(ref);
-  const scopes = match === null ? SCOPES : [match[1] as NoteScope];
+  const scopes = match === null ? NOTE_SCOPES : [match[1] as NoteScope];
   const id = match === null ? ref : match[2]!;
   const hits: { scope: NoteScope; note: MemoryNote }[] = [];
   for (const scope of scopes) {

@@ -95,7 +95,7 @@ import {
   MEMORY_INTENT_TOOL_NAME,
 } from '../tools/memory-intent.js';
 import { MEMORY_TOOL_NAME } from '../tools/memory.js';
-import { createNoteMemoryBinding, isNoteMemoryEnabled, resolveNotePlace } from '../memory/note-memory.js';
+import { createNoteMemoryBinding, isNoteMemoryEnabled, noteMemoryAppliesTo, resolveNotePlace } from '../memory/note-memory.js';
 import { scheduleNoteRunFinish } from '../memory/note-reflection-job.js';
 import type {
   KodaXHarnessProfile,
@@ -686,8 +686,7 @@ function withoutMemoryIntentTool(options: KodaXOptions): KodaXOptions {
 
 /** FEATURE_306: the `memory` tool is visible only to a root run while the note switch is on. */
 function withNoteMemoryVisibility(options: KodaXOptions): KodaXOptions {
-  const isRoot = options.context?.currentAgentId === undefined && options.context?.parentAgentId === undefined;
-  if (isRoot && isNoteMemoryEnabled()) return options;
+  if (noteMemoryAppliesTo(options)) return options;
   return {
     ...options,
     context: {
@@ -708,7 +707,7 @@ function scheduleNoteFollowUp(options: KodaXOptions, run: {
   readonly providerName: string;
   readonly model: string | undefined;
 }): void {
-  if (!isNoteMemoryEnabled() || options.context?.currentAgentId !== undefined || options.context?.parentAgentId !== undefined) return;
+  if (!noteMemoryAppliesTo(options)) return;
   let provider: KodaXBaseProvider;
   try {
     provider = resolveProvider(run.providerName);
@@ -1470,7 +1469,7 @@ async function runManagedTaskViaRunnerInner(
     runtime: extensionRuntime,
     managedProtocolPayloadRef,
   });
-  if (isNoteMemoryEnabled() && !options.context?.currentAgentId && !options.context?.parentAgentId) {
+  if (noteMemoryAppliesTo(options)) {
     substrateBaseCtx.memoryNotes = createNoteMemoryBinding(
       resolveNotePlace(options),
       () => liveTurnController.currentUserText(),

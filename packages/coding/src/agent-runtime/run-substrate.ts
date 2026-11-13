@@ -224,7 +224,7 @@ import {
   MEMORY_INTENT_TOOL_NAME,
 } from '../tools/memory-intent.js';
 import { activateMemoryTool, MEMORY_TOOL_NAME } from '../tools/memory.js';
-import { createNoteMemoryBinding, isNoteMemoryEnabled, resolveNotePlace } from '../memory/note-memory.js';
+import { createNoteMemoryBinding, isNoteMemoryEnabled, noteMemoryAppliesTo, resolveNotePlace } from '../memory/note-memory.js';
 import { scheduleNoteRunFinish } from '../memory/note-reflection-job.js';
 import {
   activateSessionHistoryTools,
@@ -1206,8 +1206,7 @@ async function runSubstrateInContext(
   );
   const memoryRecallToolAllowed = configuredActiveTools.includes(MEMORY_RECALL_TOOL_NAME);
   const memoryIntentToolAllowed = configuredActiveTools.includes(MEMORY_INTENT_TOOL_NAME);
-  const memoryNotesToolAllowed = isNoteMemoryEnabled() && configuredActiveTools.includes(MEMORY_TOOL_NAME)
-    && options.context?.currentAgentId === undefined && options.context?.parentAgentId === undefined;
+  const memoryNotesToolAllowed = noteMemoryAppliesTo(options) && configuredActiveTools.includes(MEMORY_TOOL_NAME);
   const sessionHistoryStorage = options.session?.storage;
   const sessionHistoryToolsAllowed = canActivateSessionHistoryTools({
     activeTools: configuredActiveTools,
@@ -1328,9 +1327,7 @@ async function runSubstrateInContext(
         });
       }
     });
-    if (noteEarlierCalls !== undefined
-      && options.context?.currentAgentId === undefined
-      && options.context?.parentAgentId === undefined) {
+    if (noteEarlierCalls !== undefined && noteMemoryAppliesTo(options)) {
       try {
         // Not awaited: the run is over, and usage counting and reflection are background work.
         void scheduleNoteRunFinish({

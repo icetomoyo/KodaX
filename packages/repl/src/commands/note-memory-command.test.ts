@@ -4,7 +4,7 @@ import * as path from 'node:path';
 
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-import { setAgentConfigHome } from '@kodax-ai/agent';
+import { addMemoryStats, setAgentConfigHome } from '@kodax-ai/agent';
 import { noteStoresFor, resolveNotePlace, type NotePlace } from '@kodax-ai/coding';
 
 import { memoryCommand } from './memory-command.js';
@@ -49,6 +49,9 @@ it('lists the active notes of both scopes and points at the unconfirmed ones', a
   const out = await run();
   expect(out).toMatch(/project notes[\s\S]*Build with make dist[\s\S]*1 unconfirmed[\s\S]*user notes[\s\S]*Answer in Chinese/);
   expect(out).not.toContain('Maybe uses pnpm');
+  expect(out).not.toContain('note reads');
+  await addMemoryStats(place().roots.user, { reads: 3, write: 1 });
+  expect(await run()).toContain('3 note reads, 0 reflections, 1 notes saved');
 });
 
 it('approves a candidate as a user-confirmed active note', async () => {

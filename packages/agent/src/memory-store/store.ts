@@ -13,12 +13,18 @@ import * as path from 'node:path';
 
 import { emitKodaXDiagnostic } from '../diagnostics.js';
 import { atomicWrite, isNotFound, readOrUndefined } from './fs-util.js';
-import { buildIndex } from './index-builder.js';
+import { buildIndex, buildOverflowIndex, OVERFLOW_FILE } from './index-builder.js';
 import { parseNote, serializeNote, type MemoryNote, type NoteScope, type NoteSource, type NoteStatus, type NoteType } from './record.js';
 import { keepRevision } from './revisions.js';
 import { findSecret } from './secrets.js';
 
 export const INDEX_FILE = 'MEMORY.md';
+
+/** The two index files in a notes directory are not notes. */
+export function isIndexFile(name: string): boolean {
+  const upper = name.toUpperCase();
+  return upper === INDEX_FILE.toUpperCase() || upper === OVERFLOW_FILE.toUpperCase();
+}
 
 export interface NewNote {
   readonly id: string;
@@ -95,7 +101,7 @@ export function createNoteStore(root: string, scope: NoteScope): NoteStore {
     }
     const notes: MemoryNote[] = [];
     for (const name of names.sort()) {
-      if (!name.endsWith('.md') || name.toUpperCase() === INDEX_FILE.toUpperCase()) continue;
+      if (!name.endsWith('.md') || isIndexFile(name)) continue;
       const raw = await readNoteFile(name);
       if (raw !== undefined) notes.push(parseNote(name.slice(0, -3), raw, scope));
     }
@@ -116,13 +122,23 @@ export function createNoteStore(root: string, scope: NoteScope): NoteStore {
     }
   }
 
-  async function rebuild(): Promise<boolean> {
-    const index = buildIndex(await listNotes());
-    const file = path.join(root, INDEX_FILE);
-    if ((await readOrUndefined(file) ?? '') === index) return false;
+  /** Rewrites one index file only when its bytes change; an empty overflow index is removed. */
+  async function syncFile(name: string, content: string): Promise<boolean> {
+    const file = path.join(root, name);
+    if ((await readOrUndefined(file) ?? '') === content) return false;
+    if (content.length === 0 && name === OVERFLOW_FILE) {
+      await fs.rm(file, { force: true });
+      return true;
+    }
     await fs.mkdir(root, { recursive: true });
-    await atomicWrite(file, index);
+    await atomicWrite(file, content);
     return true;
+  }
+
+  async function rebuild(): Promise<boolean> {
+    const notes = await listNotes();
+    const overflowChanged = await syncFile(OVERFLOW_FILE, buildOverflowIndex(notes));
+    return (await syncFile(INDEX_FILE, buildIndex(notes))) || overflowChanged;
   }
 
   async function save(note: MemoryNote): Promise<NoteResult> {

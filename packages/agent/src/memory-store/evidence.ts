@@ -31,6 +31,12 @@ export interface SessionEvidence {
   readonly omitted: number;
 }
 
+/**
+ * The KodaX coding tools whose output is this machine's own. A host with other
+ * tool names gets every result classified external, which only makes evidence
+ * weaker (an external result can never prove a note), so these names stay here
+ * until a second tool set needs them passed in.
+ */
 const LOCAL_TOOLS: ReadonlySet<string> = new Set([
   'bash', 'read', 'grep', 'glob', 'edit', 'multi_edit', 'write', 'undo', 'code_search',
   'changed_diff', 'changed_diff_bundle', 'changed_scope', 'repo_overview',

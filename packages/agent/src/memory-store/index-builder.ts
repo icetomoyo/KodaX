@@ -11,6 +11,8 @@
 import type { MemoryNote, NoteType } from './record.js';
 
 export const INDEX_TOKEN_BUDGET = 2000;
+/** Second index for the notes demoted from `MEMORY.md`. Its name is not a valid note id, so it never collides with a note. */
+export const OVERFLOW_FILE = 'MEMORY.more.md';
 
 const MAX_DESCRIPTION_CHARS = 200;
 const TYPE_ORDER: readonly NoteType[] = ['user', 'feedback', 'project', 'reference', 'procedure'];
@@ -49,23 +51,34 @@ function keepPriority(left: MemoryNote, right: MemoryNote): number {
     || compare(left.id, right.id);
 }
 
-export function buildIndex(notes: readonly MemoryNote[]): string {
-  const listable = notes.filter((note) => note.status === 'active' || note.status === 'disputed');
-  if (listable.length === 0) return '';
-
-  const kept: MemoryNote[] = [];
+/** The listable notes split into those that fit the budget and the least used rest. */
+function splitByBudget(notes: readonly MemoryNote[]): { kept: MemoryNote[]; demoted: MemoryNote[] } {
+  const listable = notes.filter((note) => note.status === 'active' || note.status === 'disputed').sort(keepPriority);
   let tokens = 0;
-  for (const note of [...listable].sort(keepPriority)) {
+  let count = 0;
+  for (const note of listable) {
     const cost = estimateTokens(line(note)) + 1;
     if (tokens + cost > INDEX_TOKEN_BUDGET - FOOTER_RESERVE_TOKENS) break;
-    kept.push(note);
     tokens += cost;
+    count += 1;
   }
+  return { kept: listable.slice(0, count), demoted: listable.slice(count) };
+}
 
-  const lines = kept.sort(displayOrder).map(line);
-  const omitted = listable.length - kept.length;
-  if (omitted > 0) {
-    lines.push(`- ${omitted} more note${omitted === 1 ? '' : 's'} not listed (least used); list this directory to see them`);
+const render = (notes: readonly MemoryNote[]): string[] => [...notes].sort(displayOrder).map(line);
+
+export function buildIndex(notes: readonly MemoryNote[]): string {
+  const { kept, demoted } = splitByBudget(notes);
+  if (kept.length === 0 && demoted.length === 0) return '';
+  const lines = render(kept);
+  if (demoted.length > 0) {
+    lines.push(`- ${demoted.length} more note${demoted.length === 1 ? '' : 's'}, least used, are indexed in [${OVERFLOW_FILE}](${OVERFLOW_FILE})`);
   }
   return `${lines.join('\n')}\n`;
+}
+
+/** Index lines of the notes that did not fit `MEMORY.md`, so a demoted note is still one read away; empty when all fit. */
+export function buildOverflowIndex(notes: readonly MemoryNote[]): string {
+  const { demoted } = splitByBudget(notes);
+  return demoted.length === 0 ? '' : `${render(demoted).join('\n')}\n`;
 }

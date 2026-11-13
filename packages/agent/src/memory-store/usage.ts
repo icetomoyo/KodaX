@@ -9,7 +9,7 @@ import * as path from 'node:path';
 
 import type { KodaXMessage } from '@kodax-ai/llm';
 
-import { INDEX_FILE } from './store.js';
+import { isIndexFile } from './store.js';
 import type { NoteScope } from './record.js';
 import type { NoteStore } from './store.js';
 
@@ -24,7 +24,7 @@ function readPath(input: Record<string, unknown>): string | undefined {
 function noteIdAt(root: string, file: string): string | undefined {
   const relative = path.relative(root, path.resolve(file));
   if (relative.length === 0 || relative.includes(path.sep) || relative.startsWith('..') || path.isAbsolute(relative)) return undefined;
-  if (!relative.endsWith('.md') || relative.toUpperCase() === INDEX_FILE.toUpperCase()) return undefined;
+  if (!relative.endsWith('.md') || isIndexFile(relative)) return undefined;
   return relative.slice(0, -3);
 }
 
@@ -38,6 +38,11 @@ export function toolUseIds(messages: readonly KodaXMessage[]): ReadonlySet<strin
   return ids;
 }
 
+/**
+ * Counts calls to the KodaX `read` tool. A host whose read tool has another name
+ * records no uses: the index then cannot rank by use, and an unconfirmed inferred
+ * note is archived after 90 days even if it was read. Nothing is lost for good.
+ */
 export function noteReadsFrom(
   messages: readonly KodaXMessage[],
   roots: Readonly<Record<NoteScope, string>>,

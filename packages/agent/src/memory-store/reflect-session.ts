@@ -42,7 +42,13 @@ export interface ReflectSessionInput {
 
 export type ReflectSessionResult =
   | { readonly status: 'skipped'; readonly reason: 'already-reflected' | 'no-signal' | 'daily-cap' }
-  | { readonly status: 'done'; readonly applied: number; readonly rejected: readonly string[] };
+  | {
+      readonly status: 'done';
+      readonly applied: number;
+      /** Applied operations by kind, for the local counters. */
+      readonly appliedByOperation: Readonly<Partial<Record<ReflectionOpInput['operation'], number>>>;
+      readonly rejected: readonly string[];
+    };
 
 /** Archived notes are out of play: the judge neither sees nor edits them. */
 async function currentNotes(stores: Readonly<Record<NoteScope, NoteStore>>): Promise<MemoryNote[]> {
@@ -60,6 +66,7 @@ export async function reflectSession(input: ReflectSessionInput): Promise<Reflec
   const evidence = buildEvidence(input.messages);
   const operations = await input.judge({ evidence, notes: await currentNotes(input.stores) });
   let applied = 0;
+  const appliedByOperation: Partial<Record<ReflectionOpInput['operation'], number>> = {};
   const rejected: string[] = [];
   const context = { stores: input.stores, evidence, sessionId: input.sessionId, ...(input.now === undefined ? {} : { now: input.now }), ...(input.skills === undefined ? {} : { skills: input.skills }) };
   for (const operation of operations) {
@@ -68,9 +75,11 @@ export async function reflectSession(input: ReflectSessionInput): Promise<Reflec
       ok: false,
       message: `failed: ${error instanceof Error ? error.message : String(error)}`,
     }));
-    if (outcome.ok) applied += 1;
-    else rejected.push(`${operation.operation} ${operation.id}: ${outcome.message}`);
+    if (outcome.ok) {
+      applied += 1;
+      appliedByOperation[operation.operation] = (appliedByOperation[operation.operation] ?? 0) + 1;
+    } else rejected.push(`${operation.operation} ${operation.id}: ${outcome.message}`);
   }
   await markReflected(input.cursorRoot, input.sessionId, (input.now?.() ?? new Date()).getTime(), userTurns);
-  return { status: 'done', applied, rejected };
+  return { status: 'done', applied, appliedByOperation, rejected };
 }

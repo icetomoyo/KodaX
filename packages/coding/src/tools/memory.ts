@@ -3,7 +3,7 @@
  * The host binds `ctx.memoryNotes` with the CURRENT user message, so the model
  * can only authorize a change by quoting that message.
  */
-import type { MemoryOpInput } from '@kodax-ai/agent';
+import { NOTE_SCOPES, NOTE_TYPES, oneOf, type MemoryOpInput } from '@kodax-ai/agent';
 
 import { staticText } from '../prompts/static-text.js';
 import type { KodaXToolExecutionContext } from '../types.js';
@@ -17,10 +17,10 @@ export const MEMORY_TOOL_SCHEMA = {
   properties: {
     operation: { type: 'string' as const, enum: ['write', 'edit', 'delete'], description: 'Create, change or remove a note.' },
     id: { type: 'string' as const, description: 'Short slug naming the note, e.g. test-command.' },
-    scope: { type: 'string' as const, enum: ['project', 'user'], description: 'project (default) or user.' },
+    scope: { type: 'string' as const, enum: [...NOTE_SCOPES], description: 'project (default) or user.' },
     type: {
       type: 'string' as const,
-      enum: ['user', 'feedback', 'project', 'reference', 'procedure'],
+      enum: [...NOTE_TYPES],
       description: 'What kind of note this is.',
     },
     description: { type: 'string' as const, description: 'One-line index summary.' },
@@ -33,12 +33,6 @@ export const MEMORY_TOOL_SCHEMA = {
 };
 
 const OPERATIONS = ['write', 'edit', 'delete'] as const;
-const SCOPES = ['project', 'user'] as const;
-const TYPES = ['user', 'feedback', 'project', 'reference', 'procedure'] as const;
-
-function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | undefined {
-  return allowed.find((candidate) => candidate === value);
-}
 
 function text(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
@@ -61,8 +55,8 @@ export async function toolMemory(
   const result = await ctx.memoryNotes({
     operation,
     id,
-    scope: oneOf(input.scope, SCOPES),
-    type: oneOf(input.type, TYPES),
+    scope: oneOf(input.scope, NOTE_SCOPES),
+    type: oneOf(input.type, NOTE_TYPES),
     description: text(input.description),
     why: text(input.why),
     check: text(input.check),

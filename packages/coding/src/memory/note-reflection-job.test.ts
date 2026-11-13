@@ -6,6 +6,7 @@ import {
   createNoteStore,
   getAgentConfigPath,
   LearnedAreaStore,
+  readMemoryStats,
   resolveNoteRoot,
   resolveProjectLearnedAreaRoot,
   setAgentConfigHome,
@@ -84,6 +85,7 @@ describe('finishNoteRun', () => {
     const project = createNoteStore(resolveNoteRoot(cwd, 'project'), 'project');
     expect(await project.list()).toMatchObject([{ id: 'tests', status: 'active', source: 'user', session: 'sess-1' }]);
     expect(fs.readFileSync(path.join(project.root, 'MEMORY.md'), 'utf8')).toContain('make check-fast');
+    expect(await readMemoryStats(resolveNoteRoot(cwd, 'user'))).toMatchObject({ reflections: 1, write: 1 });
   });
 
   it('counts the notes the run opened, but not reads that were already in the session', async () => {
@@ -96,6 +98,7 @@ describe('finishNoteRun', () => {
     ];
     await finishNoteRun(finish({ messages: [...read('old'), ...read('new')], earlierCalls: new Set(['old']) }), async () => []);
     expect((await project.list())[0]!.used).toBe(1);
+    expect(await readMemoryStats(resolveNoteRoot(cwd, 'user'))).toMatchObject({ reads: 1 });
   });
 
   it('never reflects through a CLI bridge, which would run its own agent, but still counts reads', async () => {

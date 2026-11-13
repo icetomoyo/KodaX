@@ -14,7 +14,7 @@ import * as path from 'node:path';
 
 import { isNotFound } from './fs-util.js';
 import { parseNote } from './record.js';
-import { INDEX_FILE, type NoteStore } from './store.js';
+import { isIndexFile, type NoteStore } from './store.js';
 
 export interface ConversionReport {
   readonly converted: readonly string[];
@@ -66,7 +66,7 @@ export async function convertLegacyMemdir(legacyRoot: string, store: NoteStore):
   const skipped: { id: string; reason: string }[] = [];
 
   for (const name of names.sort()) {
-    if (!name.endsWith('.md') || name.toUpperCase() === INDEX_FILE.toUpperCase()) continue;
+    if (!name.endsWith('.md') || isIndexFile(name)) continue;
     const id = safeId(name.slice(0, -3));
     const tombstone = tombstoneOf(name);
     if (tombstone === 'forgotten') {

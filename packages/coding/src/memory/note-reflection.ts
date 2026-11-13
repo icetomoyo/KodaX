@@ -7,6 +7,9 @@
  * applyReflectionOperation).
  */
 import {
+  NOTE_SCOPES,
+  NOTE_TYPES,
+  oneOf,
   renderEvidence,
   type MemoryNote,
   type ReflectionOpInput,
@@ -20,8 +23,6 @@ export const REFLECT_TOOL_NAME = 'memory_reflect';
 export const SKILL_TOOL_NAME = 'skill_propose';
 
 const OPERATIONS = ['write', 'corroborate', 'dispute', 'rewrite'] as const;
-const SCOPES = ['project', 'user'] as const;
-const TYPES = ['user', 'feedback', 'project', 'reference', 'procedure'] as const;
 const NOTE_BODY_CHARS = 1500;
 
 export const REFLECT_TOOL: KodaXToolDefinition = {
@@ -32,8 +33,8 @@ export const REFLECT_TOOL: KodaXToolDefinition = {
     properties: {
       operation: { type: 'string', enum: [...OPERATIONS], description: 'The change to make.' },
       id: { type: 'string', description: 'Short slug naming the note.' },
-      scope: { type: 'string', enum: [...SCOPES], description: 'project (default) or user.' },
-      type: { type: 'string', enum: [...TYPES], description: 'What kind of note this is.' },
+      scope: { type: 'string', enum: [...NOTE_SCOPES], description: 'project (default) or user.' },
+      type: { type: 'string', enum: [...NOTE_TYPES], description: 'What kind of note this is.' },
       description: { type: 'string', description: 'One-line index summary.' },
       body: { type: 'string', description: 'The note details.' },
       why: { type: 'string', description: 'The evidence that makes the note true, or the reason for a dispute.' },
@@ -69,10 +70,6 @@ export function reflectionSystemPrompt(): string {
   return staticText('t13.prompts/note-reflection.0');
 }
 
-function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | undefined {
-  return allowed.find((candidate) => candidate === value);
-}
-
 function text(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
@@ -86,8 +83,8 @@ export function parseReflectionCall(input: Record<string, unknown>): ReflectionO
   return {
     operation,
     id,
-    scope: oneOf(input.scope, SCOPES),
-    type: oneOf(input.type, TYPES),
+    scope: oneOf(input.scope, NOTE_SCOPES),
+    type: oneOf(input.type, NOTE_TYPES),
     description: text(input.description),
     why: text(input.why),
     check: text(input.check),

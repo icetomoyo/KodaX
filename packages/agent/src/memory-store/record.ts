@@ -31,12 +31,13 @@ export interface MemoryNote {
   readonly body: string;
 }
 
-const TYPES: readonly NoteType[] = ['user', 'feedback', 'project', 'reference', 'procedure'];
-const SCOPES: readonly NoteScope[] = ['user', 'project'];
+export const NOTE_TYPES: readonly NoteType[] = ['user', 'feedback', 'project', 'reference', 'procedure'];
+export const NOTE_SCOPES: readonly NoteScope[] = ['project', 'user'];
 const STATUSES: readonly NoteStatus[] = ['candidate', 'active', 'disputed', 'archived'];
 const SOURCES: readonly NoteSource[] = ['user', 'inferred'];
 
-function oneOf<T extends string>(allowed: readonly T[], value: string | undefined): T | undefined {
+/** The value when it is one of `allowed`, else undefined; for parsing untyped input. */
+export function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | undefined {
   return allowed.find((item) => item === value);
 }
 
@@ -49,19 +50,19 @@ function firstLine(body: string): string | undefined {
 export function parseNote(id: string, raw: string, defaultScope: NoteScope): MemoryNote {
   const { fields, body } = parseFrontmatterFields(raw);
   const used = Number.parseInt(fields.used ?? '', 10);
-  const source = oneOf(SOURCES, fields.source);
+  const source = oneOf(fields.source, SOURCES);
   const lastUsedAt = fields.lastUsedAt !== undefined && !Number.isNaN(Date.parse(fields.lastUsedAt))
     ? fields.lastUsedAt
     : undefined;
   return {
     id,
-    type: oneOf(TYPES, fields.type) ?? 'project',
-    scope: oneOf(SCOPES, fields.scope) ?? defaultScope,
+    type: oneOf(fields.type, NOTE_TYPES) ?? 'project',
+    scope: oneOf(fields.scope, NOTE_SCOPES) ?? defaultScope,
     description: fields.description ?? fields.name ?? firstLine(body) ?? id,
     ...(fields.why === undefined ? {} : { why: fields.why }),
     ...(fields.check === undefined ? {} : { check: fields.check }),
     // Absent status = hand-written = active. Present but unknown = not trusted.
-    status: fields.status === undefined ? 'active' : oneOf(STATUSES, fields.status) ?? 'candidate',
+    status: fields.status === undefined ? 'active' : oneOf(fields.status, STATUSES) ?? 'candidate',
     ...(source === undefined ? {} : { source }),
     ...(fields.session === undefined ? {} : { session: fields.session }),
     used: Number.isInteger(used) && used > 0 ? used : 0,

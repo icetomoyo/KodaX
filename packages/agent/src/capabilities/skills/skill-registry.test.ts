@@ -139,6 +139,19 @@ describe("SkillRegistry", () => {
     expect(invocation.content).toContain('Inspect case 39:');
   });
 
+  it('keeps a learned Skill in a full catalog even though it comes last', () => {
+    const visible = { userInvocable: true, disableModelInvocation: false };
+    const formal = Array.from({ length: 40 }, (_, index) => ({ name: `formal-${index}`,
+      description: `Formal case ${index} ${'x'.repeat(400)}`, path: `/skills/formal-${index}`, source: 'project' as const, ...visible }));
+    const learned = { name: 'cut-release', description: 'Cut a release of this repository.',
+      path: '/learned/cut-release', source: 'learned' as const, ...visible };
+    const snippet = formatSkillsSystemPrompt([...formal, learned]);
+    expect(snippet.length).toBeLessThanOrEqual(8_000);
+    expect(snippet).toContain('- formal-0: Formal case 0');
+    expect(snippet).toContain('- cut-release: Cut a release');
+    expect(snippet.indexOf('- cut-release')).toBeGreaterThan(snippet.indexOf('- formal-0'));
+  });
+
   it('renders catalog metadata on one line without letting a long hint consume the catalog', () => {
     const snippet = formatSkillsSystemPrompt([{ name: 'inspect', description: 'Inspect\nsource\tfiles',
       argumentHint: 'arg '.repeat(5_000), path: '/skills/inspect', source: 'project',

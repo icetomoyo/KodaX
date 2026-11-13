@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildIndex, estimateTokens, INDEX_TOKEN_BUDGET } from './index-builder.js';
+import { buildIndex, buildOverflowIndex, estimateTokens, INDEX_TOKEN_BUDGET, OVERFLOW_FILE } from './index-builder.js';
 import type { MemoryNote, NoteStatus } from './record.js';
 
 function note(id: string, over: Partial<MemoryNote> = {}): MemoryNote {
@@ -56,11 +56,17 @@ describe('buildIndex', () => {
     const index = buildIndex(notes);
     expect(estimateTokens(index)).toBeLessThanOrEqual(INDEX_TOKEN_BUDGET);
     expect(index).toContain('(n399.md)');
-    expect(index).toMatch(/\d+ more notes? not listed/);
+    expect(index).toContain(`are indexed in [${OVERFLOW_FILE}]`);
+    const overflow = buildOverflowIndex(notes);
+    expect(overflow).toContain('(n398.md)');
+    expect(overflow).not.toContain('(n399.md)');
+    const lines = (text: string): string[] => text.split('\n').filter((item) => item.startsWith('- ['));
+    expect(lines(index).length + lines(overflow).length).toBe(400);
   });
 
   it('does not mention overflow when everything fits', () => {
-    expect(buildIndex([note('a'), note('b')])).not.toMatch(/not listed/);
+    expect(buildIndex([note('a'), note('b')])).not.toContain(OVERFLOW_FILE);
+    expect(buildOverflowIndex([note('a'), note('b')])).toBe('');
   });
 
   it('bounds one very long description', () => {

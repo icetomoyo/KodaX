@@ -15,11 +15,13 @@ import { createHash } from 'node:crypto';
 import * as path from 'node:path';
 
 import {
+  addMemoryStats,
   commitLearnedSkillRevision,
   createLearnedCapabilityScope,
   emitKodaXDiagnostic,
   LearnedAreaStore,
   LearningCapabilityError,
+  NOTE_SCOPES,
   organizeStore,
   pruneRevisions,
   recordNoteReads,
@@ -38,7 +40,6 @@ import { enqueueNoteWork } from './note-work-queue.js';
 const REFLECTION_TIMEOUT_MS = 120_000;
 /** The size the reflection prompt was evaluated at (FEATURE_306 Phase 2b to 3). */
 const REFLECTION_MAX_OUTPUT_TOKENS = 8192;
-const NOTE_SCOPES = ['project', 'user'] as const;
 
 export interface NoteRunFinish {
   readonly place: NotePlace;
@@ -122,7 +123,8 @@ function canReflectWith(provider: KodaXBaseProvider, model: string | undefined):
 
 export async function finishNoteRun(run: NoteRunFinish, judge?: ReflectionJudge): Promise<void> {
   const stores = noteStoresFor(run.place);
-  await recordNoteReads({ stores, messages: run.messages, ignoreCalls: run.earlierCalls });
+  const reads = await recordNoteReads({ stores, messages: run.messages, ignoreCalls: run.earlierCalls });
+  await addMemoryStats(stores.user.root, { reads });
   if (!run.reflect || !canReflectWith(run.provider, run.model)) return;
   const outcome = await reflectSession({
     sessionId: run.sessionId,
@@ -133,6 +135,7 @@ export async function finishNoteRun(run: NoteRunFinish, judge?: ReflectionJudge)
     skills: createLearnedSkillSink(run.place),
   });
   if (outcome.status !== 'done') return;
+  await addMemoryStats(stores.user.root, { reflections: 1, rejected: outcome.rejected.length, ...outcome.appliedByOperation });
   for (const scope of NOTE_SCOPES) {
     await organizeStore(stores[scope]);
     await pruneRevisions(stores[scope].root);

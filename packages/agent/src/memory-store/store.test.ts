@@ -4,6 +4,7 @@ import * as path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { OVERFLOW_FILE } from './index-builder.js';
 import { createNoteStore, type NoteStore } from './store.js';
 
 let dir: string;
@@ -26,6 +27,18 @@ describe('note store', () => {
     expect(result.ok).toBe(true);
     expect(await read('tests.md')).toContain('make check-fast');
     expect(await read('MEMORY.md')).toContain('(tests.md)');
+  });
+
+  it('keeps notes demoted from a full index in a second index, and drops it once everything fits', async () => {
+    const long = 'a reasonably long description about one project convention that the agent should know';
+    for (let i = 0; i < 120; i += 1) await store.write({ id: `n${String(i).padStart(3, '0')}`, ...base, description: `${long} ${i}` });
+    const overflow = await read(OVERFLOW_FILE);
+    expect(await read('MEMORY.md')).toContain(OVERFLOW_FILE);
+    expect(overflow).toContain('(n119.md)');
+    expect((await store.list()).map((note) => note.id)).not.toContain('MEMORY.more');
+    for (let i = 20; i < 120; i += 1) await store.remove(`n${String(i).padStart(3, '0')}`);
+    await expect(fs.stat(path.join(dir, OVERFLOW_FILE))).rejects.toThrow();
+    expect(await read('MEMORY.md')).not.toContain(OVERFLOW_FILE);
   });
 
   it('stamps the store scope whatever the caller says', async () => {

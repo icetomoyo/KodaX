@@ -38,6 +38,17 @@ export function isNoteMemoryEnabled(env: NodeJS.ProcessEnv = process.env): boole
   return env[NOTE_MEMORY_ENV] !== '0';
 }
 
+/**
+ * The note memory belongs to the top-level run: it reads the index, holds the
+ * `memory` tool and gets the follow-up. A child agent's notes would duplicate
+ * its parent's, and its messages are the parent's work anyway.
+ */
+export function noteMemoryAppliesTo(options: KodaXOptions): boolean {
+  return isNoteMemoryEnabled()
+    && options.context?.currentAgentId === undefined
+    && options.context?.parentAgentId === undefined;
+}
+
 interface LegacySource {
   readonly root: string;
   readonly scope: NoteScope;
