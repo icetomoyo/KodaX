@@ -141,9 +141,9 @@ async function resolveThroughExisting(target: string): Promise<string> {
 }
 
 /**
- * Removes the top-level entries this copy created, then the marker; anything else
- * that appeared in the target meanwhile stays. A target the copy created goes too
- * once it is empty.
+ * Removes each top-level entry this copy created, with everything inside it, then
+ * the marker; a top-level entry another process added meanwhile stays. A target
+ * the copy created goes too once it is empty.
  */
 async function removeCopy(to: string, names: readonly string[], created: boolean): Promise<void> {
   for (const name of names) await rm(path.join(to, name), { recursive: true, force: true });

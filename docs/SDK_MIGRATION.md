@@ -1238,10 +1238,12 @@ It copies and never moves: the source is only read. Behavior:
   running Host too. Stop every client of the source first.
 - The copy is assembled inside the target. `KODAX_DATA_ROOT_COPY_MARKER`
   (`.kodax-copy-incomplete`) is written first and removed only when the copy is
-  complete, so a target holding it is not a usable data root. A failed or
-  aborted run removes the top-level entries it created and leaves anything
-  else that appeared in the target meanwhile; it removes the target directory
-  too if it created it and nothing else is left. A target still holding the
+  complete, so a target holding it is an unfinished copy. Nothing checks for
+  the marker when a data root is opened: select the target only after
+  `copyKodaXDataRoot` resolves. A failed or aborted run removes each top-level
+  entry it created, with everything inside it, and then the marker; a
+  top-level entry that another process added meanwhile stays. It removes the
+  target directory too if it created it and nothing else is left. A target still holding the
   marker after a crash is refused (`target_incomplete`), because nothing proves
   which files in it the crashed copy wrote. Ask the user to delete it or choose
   another folder.
@@ -1281,6 +1283,19 @@ embedder's to `exclude` if they must not follow the data.
 
 Error codes: `source_missing`, `target_invalid`, `target_not_empty`,
 `target_incomplete`, `nested_roots`, `host_running`, `aborted`.
+
+#### After the copy
+
+The copy selects nothing. To move to the new root:
+
+1. Point every process that should use it at the target: `KODAX_HOME=<to>`,
+   which works for any folder name, or `homeDir` / `--home` set to the
+   target's parent when the target is named `.kodax`. Set it before the first
+   SDK call that reads it.
+2. Start the Host on the target. A process that still selects the source
+   starts a separate Host on the old data.
+3. Keep the source until the new root is verified, then delete it yourself.
+   The SDK never deletes it.
 
 ### What was removed
 

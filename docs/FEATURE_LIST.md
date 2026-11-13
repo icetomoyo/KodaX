@@ -20,21 +20,21 @@
 | Current Artifact SDK additions | Unified visual evidence SDK and format backends released in `v0.7.97-alpha.5`: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
 | Current development | `v0.7.97-beta.8` Windows daemon startup reliability — Issue 409 replaces the PowerShell Add-Type Job probe and startup Job supervisor with the bundled, hash-verified native `__daemon-job-identity`/`__daemon-job-supervise` helpers, retains failed-start cleanup handles with serialized per-slot admissions, makes `child_exit` retryable, requires a live competing startup owner and surfaces the child's last bootstrap error, on top of the beta.7 Space SDK integration corrections; [release preparation](release.md#v0797-beta8-release-preparation). Cross-platform manual acceptance, installed Space/SDK acceptance, the Space dependency bump and the original slow first resume after rebuild remain open; Issue 395's intermittent failure cause and Issue 394's whole-task non-inferiority remain unproven. |
 | Visual harness implementation | P3/P4/P5/P6 implemented within declared scope and released in `v0.7.97-beta.5` through the next-dev integration; [final ID/receipt contract delivery](designs/visual-harness-id-contract-delivery-2026-10-30.md). P7 task-value evaluation concluded **mixed; net task-quality/token value unproven**, against optimized pre-visual 1826cc22; [final review and limits](designs/visual-harness-current-version-closure-2026-10-30.md). The 2026-10-29 plan's "not executed" state and old r3 single-response results are historical, not the current outcome. Historical default suite 18,094 passed / 0 failed; earlier failures and unlocated causes remain recorded; [mainline integration acceptance](designs/next-dev-integration-execution-2026-11-09.md). No new feature ID/version assigned |
-| Roadmap updated | `2026-11-12` — beta.8 Windows daemon native Job startup repairs prepared on top of the published beta.7; FEATURE_305 Completed; FEATURE_300 remains Planned |
+| Roadmap updated | `2026-11-13` — FEATURE_306 data root resolver and copy Completed in source (unreleased); beta.8 Windows daemon native Job startup repairs prepared on top of the published beta.7; FEATURE_305 Completed; FEATURE_300 remains Planned |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
-| Total tracked features | `89` |
+| Total tracked features | `90` |
 | InProgress | `2` |
 | Planned | `17` |
-| Completed | `64` |
+| Completed | `65` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
-| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305` |
+| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306` |
 | Archive cutoff | Shipped / canceled / absorbed / shelved items through `v0.7.49` are archived. |
 
 ### 一览表
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 64 | `305, 304, 303, 302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| Completed | 65 | `306, 305, 304, 303, 302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 2 | `298, 225` | `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
@@ -2359,6 +2359,17 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 ---
 
+## 2026-11-13 FEATURE_306 Addition
+
+- Status: Completed 2026-11-13 in source on `KodaX`; not released. Planned under `v0.7.98`, a
+  planning identifier. npm publication and the Space dependency bump follow.
+- Source: KodaX Space F148 (Settings-based data location) and Space ADR-011. The SDK resolves
+  the data root and copies it; selecting the new root, restarting the Host and deleting the
+  old root stay with the embedder.
+- Design block: [v0.7.98](features/v0.7.98.md#feature_306-data-root-resolver-and-copy).
+
+---
+
 ## 2026-11-10 FEATURE_305 Addition
 
 - Status: Completed 2026-11-11 and shipped in `v0.7.97-beta.6`; planned under `v0.7.98`, a
@@ -2433,6 +2444,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Version | Design | Notes |
 |---|---|---|---|---|
+| `306` | Data Root Resolver and Copy | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_306-data-root-resolver-and-copy) | `resolveKodaXHome` resolves the data root without touching `process.env` and ignores a relative `KODAX_HOME` with a warning; `copyKodaXDataRoot` copies a data root into an empty target under an incomplete marker, skips per-Host state, refuses a running Host and rebases absolute paths in `.json` / `.jsonl`. Source: Space F148 / ADR-011; the Space dependency bump follows the release. |
 | `305` | One Host per KODAX_HOME | `v0.7.98` (shipped in `v0.7.97-beta.6`) | [v0.7.98](features/v0.7.98.md#feature_305-one-host-per-kodax_home) | One Host serves each `KODAX_HOME`; the Host-location `profile` SDK option and `--profile` CLI flag are removed with `runtime_host_migration_required` errors (ADR-075). Legacy-slot Hosts are found through the storage-owner redirect and profile-split Session state merges once (Issue 407); the Space dependency bump follows the release. |
 | `304` | Ask Result for Extension Tool Policy | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_304-ask-result-for-extension-tool-policy) | Extension `tool:before` may return `{ decision: 'ask', reason }`; block wins over ask. The Host raises an allow-once-only permission request with the reason in every mode, including Full Access and granted calls; a Host without `requestToolApproval` blocks. Capability `toolHookAsk: { version: 1 }` on embedded and daemon. The official sandbox asks for recursive and out-of-workspace deletes. |
 | `303` | Proxy and Private CA Support | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_303-proxy-and-private-ca-support) | The Responses WebSocket follows `HTTP(S)_PROXY` and `NO_PROXY` on Node 22.21+/24.5+ with `NODE_USE_ENV_PROXY=1` and on the Bun binary; the Host warns as `runtime:network` when a proxy variable would be bypassed. Node floor stays `>=20`. Verified on Node 22.23.1 and Bun 1.4.4 with a local proxy and private CA. |
