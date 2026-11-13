@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { sanitizePromptSafeMemoryClaim } from '../../../packages/agent/src/memory-control/prompt-safety.js';
 import { FEATURE_306_READ_CASES, FEATURE_306_WRITE_CASES } from './cases.js';
@@ -49,6 +49,20 @@ describe('read cell inputs: arm A and arm B differ only in memory pieces', () =>
       expect(a.systemPrompt).not.toContain('# Memory');
     });
   }
+
+  it('arm B stays the legacy memory when the note memory is on, as it is by default', async () => {
+    const readCase = FEATURE_306_READ_CASES[0]!;
+    const legacy = await buildReadCellInput(readCase, 'B');
+    vi.stubEnv('KODAX_MEMORY_NOTES', '1');
+    try {
+      const underDefault = await buildReadCellInput(readCase, 'B');
+      expect(underDefault.systemPrompt).toBe(legacy.systemPrompt);
+      expect(underDefault.priorMessages).toEqual(legacy.priorMessages);
+      expect(process.env.KODAX_MEMORY_NOTES).toBe('1');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });
 
 describe('Layer 1: the seeded memory surfaces through the real pack', () => {

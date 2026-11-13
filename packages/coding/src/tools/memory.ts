@@ -18,11 +18,7 @@ export const MEMORY_TOOL_SCHEMA = {
     operation: { type: 'string' as const, enum: ['write', 'edit', 'delete'], description: 'Create, change or remove a note.' },
     id: { type: 'string' as const, description: 'Short slug naming the note, e.g. test-command.' },
     scope: { type: 'string' as const, enum: [...NOTE_SCOPES], description: 'project (default) or user.' },
-    type: {
-      type: 'string' as const,
-      enum: [...NOTE_TYPES],
-      description: 'What kind of note this is.',
-    },
+    type: { type: 'string' as const, enum: [...NOTE_TYPES], description: staticText('t13.tools/note-type.0') },
     description: { type: 'string' as const, description: 'One-line index summary.' },
     body: { type: 'string' as const, description: 'The note details.' },
     why: { type: 'string' as const, description: 'The reason or incident behind the note.' },

@@ -151,20 +151,35 @@ export interface ReadCellInput {
   readonly tools: readonly KodaXToolDefinition[];
 }
 
+/**
+ * Arms A and B are the prompt before the note memory existed. The note memory is
+ * on by default now, so the legacy sections only appear with the switch off.
+ */
+async function withLegacyMemory<T>(build: () => Promise<T>): Promise<T> {
+  const previous = process.env.KODAX_MEMORY_NOTES;
+  process.env.KODAX_MEMORY_NOTES = '0';
+  try {
+    return await build();
+  } finally {
+    if (previous === undefined) delete process.env.KODAX_MEMORY_NOTES;
+    else process.env.KODAX_MEMORY_NOTES = previous;
+  }
+}
+
 async function capabilityBlocks(
   arm: Arm,
   pack: MemoryPack | undefined,
   store: SeededStore | undefined,
   cwd: string,
 ): Promise<{ stable: string | undefined; dynamic: string | undefined }> {
-  const sections = await buildCapabilityContextSections({
+  const sections = await withLegacyMemory(() => buildCapabilityContextSections({
     provider: 'f306-eval',
     context: {
       executionCwd: cwd,
       ...(pack === undefined ? {} : { memoryPack: pack }),
       ...(store === undefined ? {} : { memoryIdentity: store.identity }),
     },
-  }, false, cwd);
+  }, false, cwd));
   const kept = sections
     .filter((section) => CAPABILITY_SECTION_IDS.includes(section.id))
     .filter((section) => arm === 'B' || !MEMORY_SECTION_IDS.includes(section.id));

@@ -15,7 +15,7 @@ import {
 } from '../feature-306-baseline/experiment-contract.js';
 import { FEATURE_306_PROBE_CASES } from './cases.js';
 
-export const NOTES_REVISION = 'f306-phase1b-r1' as const;
+export const NOTES_REVISION = 'f306-phase1b-r2' as const;
 export const NOTES_PROBE_CASES_SHA256 =
   'a50851b7768bc96c67b3bcfcc3c9276d4f1edc473b6d45c32b29d16e3889e7d7' as const;
 /** Arm N runs on all three; Phase 0 arms A/B already exist for the first two (r2 raw dumps). */

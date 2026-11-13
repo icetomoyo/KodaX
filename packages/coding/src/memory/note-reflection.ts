@@ -34,6 +34,8 @@ export const REFLECT_TOOL: KodaXToolDefinition = {
       operation: { type: 'string', enum: [...OPERATIONS], description: 'The change to make.' },
       id: { type: 'string', description: 'Short slug naming the note.' },
       scope: { type: 'string', enum: [...NOTE_SCOPES], description: 'project (default) or user.' },
+      // Kept short on purpose: spelling out the types here (f306-phase4d-r2) made models
+      // file a confirmed multi-step procedure as a `procedure` note instead of a skill.
       type: { type: 'string', enum: [...NOTE_TYPES], description: 'What kind of note this is.' },
       description: { type: 'string', description: 'One-line index summary.' },
       body: { type: 'string', description: 'The note details.' },

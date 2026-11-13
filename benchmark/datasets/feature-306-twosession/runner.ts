@@ -337,7 +337,7 @@ function flag(name: string): string | undefined {
 async function main(): Promise<void> {
   const mode = process.argv[2];
   const root = flag('raw-root') ?? TWO_ROOT;
-  const out = (value: object): void => console.log(JSON.stringify(value, null, 2));
+  const out = (value: object): void => { process.stdout.write(`${JSON.stringify(value, null, 2)}\n`); };
   if (mode === 'prepare') out(await prepare(root));
   else if (mode === 'run') out(await run(flag('confirm-budget') ?? '', root));
   else if (mode === 'pack') out(await pack(root));
@@ -347,7 +347,7 @@ async function main(): Promise<void> {
 if (process.env.VITEST === undefined && import.meta.url === pathToFileURL(process.argv[1] ?? '').href
   && ['prepare', 'run', 'pack'].includes(process.argv[2] ?? '')) {
   main().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : String(error));
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   });
 }

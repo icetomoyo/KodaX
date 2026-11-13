@@ -10,7 +10,7 @@ import path from 'node:path';
 import type { ModelAlias } from '../../harness/aliases.js';
 import { FEATURE_306_REFLECT_CASES } from './cases.js';
 
-export const REFLECT_REVISION = 'f306-phase4d-r1' as const;
+export const REFLECT_REVISION = 'f306-phase4d-r3' as const;
 export const REFLECT_CASES_SHA256 = 'f97dacb58e2776b5ace44605f7389a519044265a663e4749174fe2da604fde65' as const;
 export const REFLECT_ALIASES: readonly ModelAlias[] = Object.freeze(['ark/v4flash', 'zhipu/glm52', 'ark/k27']);
 export const REFLECT_RAW_ROOT = path.join(os.tmpdir(), 'kodax-eval-dumps', 'feature-306', REFLECT_REVISION);
