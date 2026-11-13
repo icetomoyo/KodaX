@@ -15,7 +15,10 @@ All notable changes to this project will be documented in this file.
   (`@kodax-ai/kodax/runtime`): copy-only data root relocation that skips
   per-Host state and refuses a non-empty target or a running Host. The copy is
   assembled inside the target under a `KODAX_DATA_ROOT_COPY_MARKER` file, so a
-  drive root or mount point can be the target.
+  drive root or mount point can be the target. Absolute paths into the old
+  root inside `.json` / `.jsonl` files are rewritten to the new root
+  (`rebasedFiles`), so MCPB servers, session images, tool-output files and
+  workflow snapshots keep resolving after the old root is deleted.
 
 ### Changed
 

@@ -259,6 +259,61 @@ describe('copyKodaXDataRoot', () => {
     expect(files(`${to}.copying`)).toEqual(['mine.txt']);
   });
 
+  it('rebases paths into the old root inside JSON and JSONL files, and nothing else', async () => {
+    const { from, to, put } = workspace();
+    const old = (...parts: string[]): string => path.join(from, ...parts);
+    const slashed = (value: string): string => value.replaceAll('\\', '/');
+    const registry = {
+      installDir: old('mcpb', 'ext'),
+      args: [old('mcpb', 'ext', 'server.js')],
+      sibling: `${from}-backup${path.sep}keep`,
+      project: path.join(path.dirname(path.dirname(from)), 'project'),
+    };
+    put('space/mcpb/registry.json', JSON.stringify(registry, null, 2));
+    put('sessions/a.jsonl', [
+      JSON.stringify({ text: `Full output saved to: ${old('tool-results', 'o.txt')} (12 KB)` }),
+      JSON.stringify({ image: { path: slashed(old('space', 'session-attachments', 'p.png')) } }),
+      '',
+    ].join('\n'));
+    put('notes.txt', old('sessions'));
+    const mtime = new Date('2024-01-02T03:04:05Z');
+    const { utimesSync } = await import('node:fs');
+    utimesSync(path.join(from, 'sessions', 'a.jsonl'), mtime, mtime);
+
+    const result = await copyKodaXDataRoot({ from, to });
+
+    const copied = JSON.parse(readFileSync(path.join(to, 'space', 'mcpb', 'registry.json'), 'utf8'));
+    expect(copied).toEqual({
+      ...registry,
+      installDir: path.join(to, 'mcpb', 'ext'),
+      args: [path.join(to, 'mcpb', 'ext', 'server.js')],
+    });
+    expect(readFileSync(path.join(to, 'space', 'mcpb', 'registry.json'), 'utf8')).toBe(JSON.stringify(copied, null, 2));
+    const lines = readFileSync(path.join(to, 'sessions', 'a.jsonl'), 'utf8').split('\n');
+    expect(JSON.parse(lines[0]!).text).toBe(`Full output saved to: ${path.join(to, 'tool-results', 'o.txt')} (12 KB)`);
+    expect(JSON.parse(lines[1]!).image.path).toBe(slashed(path.join(to, 'space', 'session-attachments', 'p.png')));
+    expect(lines[2]).toBe('');
+    expect(readFileSync(path.join(to, 'notes.txt'), 'utf8')).toBe(old('sessions'));
+    expect(lstatSync(path.join(to, 'sessions', 'a.jsonl')).mtimeMs).toBe(mtime.getTime());
+    expect(result.rebasedFiles).toBe(2);
+  });
+
+  it.runIf(process.platform === 'win32')('matches the old root regardless of letter case on Windows', async () => {
+    const { from, to, put } = workspace();
+    put('config.json', JSON.stringify({ skill: path.join(from.toUpperCase(), 'skills', 'demo') }));
+    await copyKodaXDataRoot({ from, to });
+    expect(JSON.parse(readFileSync(path.join(to, 'config.json'), 'utf8')).skill).toBe(path.join(to, 'skills', 'demo'));
+  });
+
+  it('copies a .json file that is not UTF-8 byte for byte', async () => {
+    const { from, to } = workspace();
+    const bytes = Buffer.concat([Buffer.from(from), Buffer.from([0xff, 0xfe, 0x00])]);
+    writeFileSync(path.join(from, 'blob.json'), bytes);
+    const result = await copyKodaXDataRoot({ from, to });
+    expect(readFileSync(path.join(to, 'blob.json')).equals(bytes)).toBe(true);
+    expect(result.rebasedFiles).toBe(0);
+  });
+
   it('uses a typed error', async () => {
     const { from, to } = workspace();
     const error = await copyKodaXDataRoot({ from: path.join(from, 'missing'), to }).catch((reason: unknown) => reason);

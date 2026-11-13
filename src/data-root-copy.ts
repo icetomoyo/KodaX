@@ -1,5 +1,5 @@
-import { constants } from 'node:fs';
-import { copyFile, lstat, mkdir, readdir, realpath, rm, rmdir, stat, utimes, writeFile } from 'node:fs/promises';
+import { constants, createReadStream } from 'node:fs';
+import { copyFile, lstat, mkdir, open, readdir, realpath, rm, rmdir, stat, utimes, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isPathInsideDirectory } from '@kodax-ai/agent';
 import {
@@ -81,6 +81,8 @@ export interface CopyKodaXDataRootResult {
   readonly files: number;
   readonly bytes: number;
   readonly skipped: readonly CopyKodaXDataRootSkipped[];
+  /** JSON / JSONL files in which paths into the old root were rewritten to the new root. */
+  readonly rebasedFiles: number;
 }
 
 interface PlannedEntry {
@@ -185,6 +187,81 @@ async function plan(
   return { entries, skipped };
 }
 
+/** Stores whose text may hold absolute paths into their own root (KodaX and embedder state is JSON). */
+const REBASED_EXTENSIONS = new Set(['.json', '.jsonl']);
+/** A match followed or preceded by one of these is part of a longer name (`.kodax2`), not the root. */
+const NAME_CHAR = String.raw`[\p{L}\p{N}._~$@#%+=-]`;
+
+interface RootRebase {
+  readonly pattern: RegExp;
+  /** Replacement for a Windows path written in JSON, where every backslash is doubled. */
+  readonly backslashed: string;
+  readonly slashed: string;
+}
+
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Stored data keeps absolute paths into its own root: MCPB install folders and launch
+ * arguments, session image and tool-output paths, workflow snapshots and more. The copy
+ * rewrites them in the JSON text itself, which keeps formatting and every other byte.
+ * A Windows path appears there with doubled backslashes, and any path may also be
+ * written with forward slashes. A drive root is not rebased: it would match every path
+ * on the drive, including project folders that are not data.
+ */
+function rootRebase(sourceForms: readonly string[], to: string): RootRebase | null {
+  if (sourceForms.some((form) => path.dirname(form) === form)) return null;
+  const windows = process.platform === 'win32';
+  const forms = new Set<string>();
+  for (const form of sourceForms) {
+    forms.add(form.replaceAll('\\', '/'));
+    if (windows) forms.add(form.replaceAll('\\', '\\\\'));
+  }
+  const alternatives = [...forms].sort((a, b) => b.length - a.length).map(escapeRegExp).join('|');
+  const flags = windows || process.platform === 'darwin' ? 'giu' : 'gu';
+  return {
+    pattern: new RegExp(`(?<!${NAME_CHAR})(?:${alternatives})(?!${NAME_CHAR})`, flags),
+    backslashed: to.replaceAll('\\', '\\\\'),
+    slashed: to.replaceAll('\\', '/'),
+  };
+}
+
+/**
+ * Copies one JSON / JSONL store with paths into the old root rewritten, and reports
+ * whether anything changed. A file that is not valid UTF-8 is copied byte for byte.
+ */
+async function copyRebased(from: string, to: string, rebase: RootRebase): Promise<boolean> {
+  const replace = (match: string): string => (match.includes('\\') ? rebase.backslashed : rebase.slashed);
+  const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+  const output = await open(to, 'wx');
+  let changed = false;
+  let invalidText = false;
+  const write = async (text: string): Promise<void> => {
+    const rebased = text.replace(rebase.pattern, replace);
+    changed ||= rebased !== text;
+    await output.write(rebased);
+  };
+  try {
+    let carry = '';
+    for await (const chunk of createReadStream(from)) {
+      const text = carry + decoder.decode(chunk as Buffer, { stream: true });
+      // JSON escapes newlines inside strings, so a path never spans a line break.
+      const end = text.lastIndexOf('\n') + 1;
+      carry = text.slice(end);
+      await write(text.slice(0, end));
+    }
+    await write(carry + decoder.decode());
+  } catch (error: unknown) {
+    if (errorCode(error) !== 'ERR_ENCODING_INVALID_ENCODED_DATA') throw error;
+    invalidText = true;
+  } finally {
+    await output.close();
+  }
+  if (!invalidText) return changed;
+  await copyFile(from, to);
+  return false;
+}
+
 function assertNotAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw new KodaXDataRootCopyError('aborted', 'The data root copy was aborted.');
 }
@@ -222,8 +299,10 @@ export async function copyKodaXDataRoot(options: CopyKodaXDataRootOptions): Prom
   const totalBytes = entries.reduce((sum, entry) => sum + entry.size, 0);
   await mkdir(to, { recursive: true });
   await writeFile(path.join(to, KODAX_DATA_ROOT_COPY_MARKER), '', { flag: 'wx' });
+  const rebase = rootRebase([path.resolve(options.from), source], to);
   let files = 0;
   let bytes = 0;
+  let rebasedFiles = 0;
   try {
     for (const entry of entries) {
       assertNotAborted(options.signal);
@@ -232,7 +311,12 @@ export async function copyKodaXDataRoot(options: CopyKodaXDataRootOptions): Prom
         await mkdir(destination);
         continue;
       }
-      await copyFile(path.join(source, ...entry.segments), destination, constants.COPYFILE_EXCL);
+      const from = path.join(source, ...entry.segments);
+      if (rebase !== null && REBASED_EXTENSIONS.has(path.extname(destination).toLowerCase())) {
+        if (await copyRebased(from, destination, rebase)) rebasedFiles += 1;
+      } else {
+        await copyFile(from, destination, constants.COPYFILE_EXCL);
+      }
       await utimes(destination, entry.mtime, entry.mtime);
       files += 1;
       bytes += entry.size;
@@ -249,5 +333,5 @@ export async function copyKodaXDataRoot(options: CopyKodaXDataRootOptions): Prom
       });
     throw error;
   }
-  return { files, bytes, skipped };
+  return { files, bytes, skipped, rebasedFiles };
 }

@@ -1241,6 +1241,16 @@ It copies and never moves: the source is only read. Behavior:
   aborted run removes what it wrote (and the target directory if it created
   it). A target left with the marker by a crashed run counts as empty and is
   replaced on the next call, so re-running is safe.
+- Stored data holds absolute paths into its own root (MCPB install folders
+  and launch arguments, session image and tool-output paths, workflow
+  snapshots, embedder stores). In every `.json` / `.jsonl` file, each
+  occurrence of the source root — native, forward-slash, or JSON-escaped with
+  doubled backslashes; case-insensitive on Windows and macOS — that is not part
+  of a longer name is rewritten to `to`. Nothing else in the file changes;
+  other file types and files that are not valid UTF-8 are copied byte for
+  byte. `rebasedFiles` counts the rewritten files. A source that is a whole
+  drive is not rebased. A rewritten file whose length changed has a new size,
+  so caches keyed on size and modification time rebuild.
 - File modification times are preserved. Symbolic links and junctions are
   skipped, never followed.
 - `skipped` lists the topmost skipped entry with a reason: `non-portable`,
