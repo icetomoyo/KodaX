@@ -251,6 +251,17 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('reason. Every v0.7.96 stable and v0.7.97-alpha.1 through beta.6 contract is retained.');
   });
 
+  it('documents the v0.7.97-beta.9 data root relocation and steer withdrawal', () => {
+    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
+
+    expect(sdk).toContain('The v0.7.97-beta.9 release adds data root relocation (FEATURE_306). `resolveKodaXHome({ env?, homeDir? })`');
+    expect(sdk).toContain('KODAX_HOME is ignored (the default `~/.kodax` is used) and the CLI warns about it.');
+    expect(sdk).toContain('`copyKodaXDataRoot({ from, to, exclude?, onProgress?, signal? })` from `/runtime` copies a data root');
+    expect(sdk).toContain('what it created; a target left by a crashed copy is refused as `target_incomplete`. Selecting the new');
+    expect(sdk).toContain('`inputs.withdraw` takes back a `steer` input until its Run claims it; a `steer` whose Run ends');
+    expect(sdk).toContain('while another client is attached (Issue 410). Every v0.7.96 stable and v0.7.97-alpha.1 through');
+  });
+
   it('documents the v0.7.97-beta.8 native daemon Job startup repairs', () => {
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
