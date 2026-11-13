@@ -127,7 +127,9 @@ it('retains client ownership during withdrawal and enforces restore identity bef
     queue.restore(queue.snapshot('s'));
     expect(() => queue.validateRestore([{ input, skill: false, principalId: 'B' }])).toThrow(/intent/);
     queue.recordAccepted({ ...input, inputId: 'steer' }, 'root', 'queued');
-    expect(() => queue.withdraw('s', 'steer')).toThrow(/bound/);
+    expect(() => queue.withdraw('s', 'steer', 'A', () => false)).toThrow(/being delivered/);
+    expect(queue.read('s', 'steer')?.state).toBe('queued');
+    queue.recordAccepted({ ...input, inputId: 'steer-pending' }, 'root', 'queued');
     queue.markDropped('s', 'steer');
     expect(queue.read('s', 'steer')?.state).toBe('dropped');
   });
@@ -139,6 +141,26 @@ it('retains client ownership during withdrawal and enforces restore identity bef
   expect(queue.list('s')).toEqual([]);
   expect(() => queue.withdraw('s', 'missing')).toThrow(/submitted/);
   expect(() => queue.submitBatch('s', ['missing'], 'root')).toThrow(/available/);
+});
+
+it('withdraws a steer input only after its Run releases it, keeping a durable receipt', () => {
+  let saved: unknown;
+  const queue = new SessionInputQueue(() => {}, (_session, _pending, withdrawn) => { saved = structuredClone(withdrawn); });
+  const a: ProductExecutionContext = { principalId: 'A', key: 'fresh-A', bindRun: async input => input };
+  const steer = { sessionId: 's', inputId: 'steer', text: 'Use the lighter script.', delivery: 'steer' as const, targetRunId: 'run-1' };
+  const released: string[] = [];
+  withProductExecution(a, () => queue.recordAccepted(steer, 'run-1', 'queued'));
+  expect(() => queue.withdraw('s', 'steer', 'B', () => true)).toThrow(/original principal/);
+  expect(() => queue.withdraw('s', 'steer', 'A', () => false)).toThrow(/being delivered/);
+  expect(saved).toEqual([]);
+  expect(queue.withdraw('s', 'steer', 'A', runId => { released.push(runId); return true; })).toEqual(steer);
+  expect(released).toEqual(['run-1']);
+  expect(queue.read('s', 'steer')).toEqual({ sessionId: 's', inputId: 'steer', state: 'withdrawn', runId: 'run-1' });
+  expect(saved).toEqual([{ input: steer, principalId: 'A' }]);
+  expect(queue.withdraw('s', 'steer', 'A', () => false)).toEqual(steer);
+  queue.markSubmitted('s', 'steer');
+  expect(queue.read('s', 'steer')?.state).toBe('withdrawn');
+  expect(withProductExecution(a, () => queue.recordAccepted(steer, 'run-1', 'queued')).state).toBe('withdrawn');
 });
 
 it('commits pending bodies before accepting enqueue or withdrawal and permits retry after failed persistence', () => {

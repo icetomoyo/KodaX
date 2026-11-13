@@ -6,6 +6,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- `inputs.withdraw` now takes back a `steer` input until its Run claims it
+  at a safety point, returning the complete original text and attachments.
+  It used to fail with "Input is bound to its target Run". Once delivery has
+  claimed the input, withdrawal is still an explicit `conflict`. A Runtime
+  safety point now claims queued interrupt input before writing it to
+  history, so a concurrent withdrawal can no longer report success for input
+  the model already sees. `MessageQueue.requeue` restores claimed messages
+  with their original ids when that write fails.
+
+### Fixed
+
+- Client cleanup no longer stops on a pending `steer` input of the departing
+  client; the input settles with its Run.
+
 ---
 
 ## [0.7.97-beta.8] - 2026-11-12

@@ -13025,6 +13025,14 @@ async function createRuntimeRunService(deps: {
     return materialized;
   };
 
+  const commitVisualWithdrawal = async (sessionId: string, inputId: string, saved?: KodaXSessionData): Promise<void> => {
+    saved ??= await deps.sessionAdmission.loadExecutable(sessionId);
+    const records = runtimeVisualWithdrawalRecords(saved, sessionId, inputId);
+    if (records.length && !await deps.sessionManager.storage.appendSessionRecords?.(sessionId, records)) {
+      throw new Error('Visual input withdrawal could not be committed.');
+    }
+  };
+
   const withdrawPendingVisualInput = async (sessionId: string, inputId: string): Promise<void> => {
     const pending = productQueue.snapshot(sessionId).find(value => value.input.inputId === inputId);
     if (!pending?.input.inputArtifacts?.some(artifact => artifact.kind === 'image')) return;
@@ -13032,10 +13040,23 @@ async function createRuntimeRunService(deps: {
     if (saved.messages.some(message => message.role === 'user' && (message.inputId === inputId || message.inputIds?.includes(inputId)))) {
       throw createRuntimeConflictError('Visual input already entered canonical history; retry its acknowledgement.', 0);
     }
-    const records = runtimeVisualWithdrawalRecords(saved, sessionId, inputId);
-    if (records.length && !await deps.sessionManager.storage.appendSessionRecords?.(sessionId, records)) {
-      throw new Error('Visual input withdrawal could not be committed.');
-    }
+    await commitVisualWithdrawal(sessionId, inputId, saved);
+  };
+
+  /** Synchronously takes an undelivered steer input back out of its Run; false once delivery has claimed it. */
+  const releaseSteerInput = (sessionId: string, runId: string, inputId: string): boolean => {
+    const run = deps.runs.get(runId);
+    const pending = run?.sessionId === sessionId
+      ? run.interruptInputs.find(input => input.inputId === inputId) : undefined;
+    if (!run || pending?.state !== 'queued' || pending.queueMessageId === undefined) return false;
+    const [claimed] = getMessageQueue().dequeue({ agentId: actorQueueId(sessionId, '/root'),
+      maxPriority: 'user', mode: 'prompt', id: pending.queueMessageId });
+    if (!claimed) return false;
+    delete pending.queueMessageId;
+    pending.state = 'terminal';
+    if (run.contextRecovery?.checkpoint) persistGenerationRecovery(run, deps.persistence, productQueue.snapshot(sessionId));
+    publishRunUpdate(run);
+    return true;
   };
 
   const assertProductExecutionMode = async (sessionId: string, execution: ReturnType<typeof currentProductExecution>): Promise<void> => {
@@ -13784,7 +13805,13 @@ async function createRuntimeRunService(deps: {
       return deps.sessionOperations.run(sessionId, async () => {
         await deps.sessionAdmission.assertRunAccess(sessionId);
         await withdrawPendingVisualInput(sessionId, inputId);
-        return productQueue.withdraw(sessionId, inputId);
+        const original = productQueue.withdraw(sessionId, inputId, undefined,
+          runId => releaseSteerInput(sessionId, runId, inputId));
+        // A steer image was staged for its Run; retrying withdrawal re-commits this idempotently.
+        if (original.delivery === 'steer' && original.inputArtifacts?.some(artifact => artifact.kind === 'image')) {
+          await commitVisualWithdrawal(sessionId, inputId);
+        }
+        return original;
       });
     },
 

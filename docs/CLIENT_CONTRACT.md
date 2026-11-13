@@ -302,7 +302,7 @@ delivery 的队列行为如下；空 queue 不能证明所有已知输入已经�
 | immediate | 尝试开始 Run；Session 忙时冲突，不先执行动态准备 |
 | after_turn | 保存到 Host 可撤回队列；普通输入在当前 Run 下一次模型调用前的安全点交付，不等待整个长任务结束。没有可用安全点时保留待后续调度；多条输入也可能合批为同一 Run/一个 user 展示项，须逐 inputs.read 确认 submitted/runId |
 | redirect | 保存新输入并停止目标 Run，沿用显式 redirect 的后续调度 |
-| steer | 交给目标执行中的中断输入路径，可能返回 queued，但不在可撤回 view.queue 中；通过 inputs.read 确认 submitted/dropped |
+| steer | 交给目标执行中的中断输入路径，可能返回 queued，但不在 view.queue 中；安全点认领前可由原客户端 withdraw 取回完整原文，认领后 withdraw 明确 conflict；通过 inputs.read 确认 submitted/dropped/withdrawn |
 
 普通 stop/failed 不自动 drain，队列保留；不能在重连时自行重放提交。Ink 已按逐 inputId 查询处理合批确认，不按正文去重。
 
