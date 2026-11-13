@@ -35,7 +35,8 @@ All notable changes to this project will be documented in this file.
   with their original ids when that write fails.
 - A relative `KODAX_HOME` is ignored (the default `~/.kodax` is used) instead of
   being used as a path relative to the working directory; `resolveKodaXHome` reports it as
-  `ignoredEnv`.
+  `ignoredEnv`, the CLI prints a warning naming it, and the skill-creator
+  scripts follow the same rule instead of always using `~/.kodax/skills`.
 - `docs/SDK_MIGRATION.md` now states that `homeDir` / `--home` name the base
   directory owning `.kodax`, while `KODAX_HOME` names the data root itself.
 

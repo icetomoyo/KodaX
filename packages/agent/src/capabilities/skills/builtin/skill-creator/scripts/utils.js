@@ -263,8 +263,15 @@ export async function collectFiles(rootDir, currentDir = rootDir, files = []) {
   return files;
 }
 
+/**
+ * These scripts run as plain Node programs without the agent package, so this
+ * mirrors resolveKodaXHome: an absolute KODAX_HOME wins, anything else falls
+ * back to ~/.kodax.
+ */
 export function getDefaultSkillsDir() {
-  return path.join(os.homedir(), '.kodax', 'skills');
+  const home = process.env.KODAX_HOME;
+  const root = home && path.isAbsolute(home) ? home : path.join(os.homedir(), '.kodax');
+  return path.join(root, 'skills');
 }
 
 export async function ensureDirectory(targetPath) {

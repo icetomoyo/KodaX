@@ -132,6 +132,7 @@ import {
   type CliOptions,
   validateCliModeSelection,
   removedHostProfileOption,
+  ignoredKodaXHomeWarning,
 } from './cli_option_helpers.js';
 import {
   consumeInternalSkillDispatchFlag,
@@ -3279,6 +3280,8 @@ async function runCliMain(startupProgress?: CliStartupProgress) {
   // addons. Opt-out: KODAX_DISABLE_HARDENING=1. Debug-preserving (no
   // PR_SET_DUMPABLE). No-op on Windows.
   applyProcessHardening();
+  const kodaxHomeWarning = ignoredKodaXHomeWarning();
+  if (kodaxHomeWarning !== undefined) process.stderr.write(`${kodaxHomeWarning}\n`);
   if (argv[0] === INTERNAL_SANDBOX_STARTUP_RECOVERY_ARG) {
     if (process.env[INTERNAL_SANDBOX_STARTUP_RECOVERY_ENV] !== '1') {
       throw new Error('Internal sandbox startup recovery is not available directly.');
