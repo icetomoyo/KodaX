@@ -13049,12 +13049,21 @@ async function createRuntimeRunService(deps: {
     const pending = run?.sessionId === sessionId
       ? run.interruptInputs.find(input => input.inputId === inputId) : undefined;
     if (!run || pending?.state !== 'queued' || pending.queueMessageId === undefined) return false;
-    const [claimed] = getMessageQueue().dequeue({ agentId: actorQueueId(sessionId, '/root'),
-      maxPriority: 'user', mode: 'prompt', id: pending.queueMessageId });
-    if (!claimed) return false;
+    const queueMessageId = pending.queueMessageId;
+    const filter = { agentId: actorQueueId(sessionId, '/root'), maxPriority: 'user', mode: 'prompt', id: queueMessageId } as const;
+    if (getMessageQueue().peek(filter).length === 0) return false;
+    // Record the release before taking the message, so a failed checkpoint write leaves the
+    // input deliverable. Nothing here awaits, so no safety point can claim it in between.
     delete pending.queueMessageId;
     pending.state = 'terminal';
-    if (run.contextRecovery?.checkpoint) persistGenerationRecovery(run, deps.persistence, productQueue.snapshot(sessionId));
+    try {
+      if (run.contextRecovery?.checkpoint) persistGenerationRecovery(run, deps.persistence, productQueue.snapshot(sessionId));
+    } catch (error: unknown) {
+      pending.queueMessageId = queueMessageId;
+      pending.state = 'queued';
+      throw error;
+    }
+    getMessageQueue().dequeue(filter);
     publishRunUpdate(run);
     return true;
   };

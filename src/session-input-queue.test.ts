@@ -163,6 +163,18 @@ it('withdraws a steer input only after its Run releases it, keeping a durable re
   expect(withProductExecution(a, () => queue.recordAccepted(steer, 'run-1', 'queued')).state).toBe('withdrawn');
 });
 
+it('rolls back the steer withdrawal receipt when its Run fails to release the input', () => {
+  let saved: unknown;
+  const queue = new SessionInputQueue(() => {}, (_session, _pending, withdrawn) => { saved = structuredClone(withdrawn); });
+  const steer = { sessionId: 's', inputId: 'steer', text: 'Use the lighter script.', delivery: 'steer' as const, targetRunId: 'run-1' };
+  queue.recordAccepted(steer, 'run-1', 'queued');
+  expect(() => queue.withdraw('s', 'steer', undefined, () => { throw new Error('Run checkpoint write failed'); }))
+    .toThrow(/checkpoint write failed/);
+  expect(saved).toEqual([]);
+  expect(queue.read('s', 'steer')?.state).toBe('queued');
+  expect(queue.withdraw('s', 'steer', undefined, () => true)).toEqual(steer);
+});
+
 it('commits pending bodies before accepting enqueue or withdrawal and permits retry after failed persistence', () => {
   let fail = true;
   let saved: unknown;
