@@ -1,4 +1,4 @@
-import { constants, createReadStream } from 'node:fs';
+import { constants, createReadStream, existsSync } from 'node:fs';
 import { copyFile, lstat, mkdir, open, readdir, realpath, rm, rmdir, stat, utimes, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isPathInsideDirectory } from '@kodax-ai/agent';
@@ -18,6 +18,7 @@ import {
 const NON_PORTABLE_ENTRIES: readonly { readonly path: readonly string[]; readonly why: string }[] = [
   { path: ['runtime', 'daemon'], why: 'Host descriptor, token, lock, log, owner policy and client exit receipts of this root' },
   { path: ['runtime', 'processes'], why: 'live child-process records' },
+  { path: ['processes'], why: 'legacy location of live child-process records' },
   { path: ['sessions', '.product-host'], why: 'Session storage owner lock of the Host' },
   { path: ['instances'], why: 'per-process heartbeat directories' },
   { path: ['sandbox-runtime'], why: 'sandbox gate and ACL state bound to this machine and boot' },
@@ -28,7 +29,8 @@ const LOCK_NAME = /\.lock(?:\.queue)?$/i;
 
 /**
  * Present in the target from the first copied file until the copy is published.
- * A target holding it is an interrupted copy, which the next run replaces.
+ * A target holding it was left by an interrupted copy. Nothing proves which files
+ * in it that copy wrote, so the target is refused rather than cleared.
  */
 export const KODAX_DATA_ROOT_COPY_MARKER = '.kodax-copy-incomplete';
 /** Files the OS or file manager puts in a fresh folder or at the top of a drive; never user data. */
@@ -42,6 +44,7 @@ export type KodaXDataRootCopyErrorCode =
   | 'source_missing'
   | 'target_invalid'
   | 'target_not_empty'
+  | 'target_incomplete'
   | 'nested_roots'
   | 'host_running'
   | 'aborted';
@@ -99,10 +102,14 @@ function errorCode(error: unknown): string | undefined {
 const comparable = (segments: readonly string[]): string =>
   (process.platform === 'win32' ? segments.map((segment) => segment.toLowerCase()) : segments).join('\0');
 
+/**
+ * A lock that cannot be read (another KodaX version, a write in progress) or whose
+ * owner is not provably gone counts as running, as it does for the Host itself.
+ */
 function liveOwner(lockFile: string): boolean {
+  if (!existsSync(lockFile)) return false;
   const owner = readRuntimeDaemonLockOwner(lockFile);
-  // An owner whose liveness cannot be proven is treated as running.
-  return owner !== undefined && runtimeOwnerProcessState(owner) !== 'gone';
+  return owner === undefined || runtimeOwnerProcessState(owner) !== 'gone';
 }
 
 /** Any Host slot or the Session storage owner still running means the files are in use. */
@@ -111,8 +118,9 @@ function assertNoLiveHost(root: string): void {
     ...listRuntimeDaemonSlots(root).map((slot) => resolveRuntimeDaemonPathsFromConfigHome(root, slot).lockFile),
     path.join(root, 'sessions', '.product-host', 'owner.lock'),
   ];
-  if (lockFiles.some(liveOwner)) {
-    throw new KodaXDataRootCopyError('host_running', `A Host is running on ${root}. Stop every client of this data root before copying it.`);
+  const live = lockFiles.find(liveOwner);
+  if (live !== undefined) {
+    throw new KodaXDataRootCopyError('host_running', `A Host is running on ${root} (${live}). Stop every client of this data root before copying it.`);
   }
 }
 
@@ -132,17 +140,24 @@ async function resolveThroughExisting(target: string): Promise<string> {
   }
 }
 
-/** Removes everything a copy may have written into the target, leaving OS housekeeping files. */
-async function clearCopy(to: string): Promise<void> {
-  const names = (await readdir(to)).filter((name) => !isHousekeeping(name) && name !== KODAX_DATA_ROOT_COPY_MARKER);
+/**
+ * Removes the top-level entries this copy created, then the marker; anything else
+ * that appeared in the target meanwhile stays. A target the copy created goes too
+ * once it is empty.
+ */
+async function removeCopy(to: string, names: readonly string[], created: boolean): Promise<void> {
   for (const name of names) await rm(path.join(to, name), { recursive: true, force: true });
-  // The marker goes last so a cleanup that fails halfway is still recognised as an interrupted copy.
+  // The marker goes last so a cleanup that fails halfway still shows an interrupted copy.
   await rm(path.join(to, KODAX_DATA_ROOT_COPY_MARKER), { force: true });
+  if (!created) return;
+  await rmdir(to).catch((error: unknown) => {
+    if (errorCode(error) !== 'ENOTEMPTY') throw error;
+  });
 }
 
 /**
- * Accepts a missing target, an empty one (OS housekeeping files aside) or an
- * interrupted copy, which is cleared. Returns whether the directory existed.
+ * Accepts a missing target or an empty one (OS housekeeping files aside).
+ * Returns whether the directory existed.
  */
 async function prepareTarget(to: string): Promise<boolean> {
   const info = await stat(to).catch((error: unknown) => {
@@ -152,8 +167,10 @@ async function prepareTarget(to: string): Promise<boolean> {
   if (info === undefined) return false;
   if (!info.isDirectory()) throw new KodaXDataRootCopyError('target_invalid', `The target ${to} exists and is not a directory.`);
   const names = (await readdir(to)).filter((name) => !isHousekeeping(name));
-  if (names.includes(KODAX_DATA_ROOT_COPY_MARKER)) await clearCopy(to);
-  else if (names.length > 0) throw new KodaXDataRootCopyError('target_not_empty', `The target ${to} is not empty.`);
+  if (names.includes(KODAX_DATA_ROOT_COPY_MARKER)) {
+    throw new KodaXDataRootCopyError('target_incomplete', `The target ${to} holds an interrupted copy. Delete it or choose another folder.`);
+  }
+  if (names.length > 0) throw new KodaXDataRootCopyError('target_not_empty', `The target ${to} is not empty.`);
   return true;
 }
 
@@ -189,8 +206,15 @@ async function plan(
 
 /** Stores whose text may hold absolute paths into their own root (KodaX and embedder state is JSON). */
 const REBASED_EXTENSIONS = new Set(['.json', '.jsonl']);
-/** A match followed or preceded by one of these is part of a longer name (`.kodax2`), not the root. */
+/** A match followed by one of these is part of a longer name (`.kodax2`), not the root. */
 const NAME_CHAR = String.raw`[\p{L}\p{N}._~$@#%+=-]`;
+/**
+ * A match preceded by a name character is the tail of a longer path. Argument
+ * syntax such as `--root=` or `@` may come right before a root, and a POSIX root
+ * after another directory (`/mirror/home/…`) is not the root either.
+ */
+const leadingBoundary = (form: string): string =>
+  String.raw`(?<![\p{L}\p{N}._~${form.startsWith('/') ? '/' : ''}-])`;
 
 interface RootRebase {
   readonly pattern: RegExp;
@@ -217,10 +241,13 @@ function rootRebase(sourceForms: readonly string[], to: string): RootRebase | nu
     forms.add(form.replaceAll('\\', '/'));
     if (windows) forms.add(form.replaceAll('\\', '\\\\'));
   }
-  const alternatives = [...forms].sort((a, b) => b.length - a.length).map(escapeRegExp).join('|');
+  const alternatives = [...forms]
+    .sort((a, b) => b.length - a.length)
+    .map((form) => leadingBoundary(form) + escapeRegExp(form))
+    .join('|');
   const flags = windows || process.platform === 'darwin' ? 'giu' : 'gu';
   return {
-    pattern: new RegExp(`(?<!${NAME_CHAR})(?:${alternatives})(?!${NAME_CHAR})`, flags),
+    pattern: new RegExp(`(?:${alternatives})(?!${NAME_CHAR})`, flags),
     backslashed: to.replaceAll('\\', '\\\\'),
     slashed: to.replaceAll('\\', '/'),
   };
@@ -266,13 +293,67 @@ function assertNotAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw new KodaXDataRootCopyError('aborted', 'The data root copy was aborted.');
 }
 
+/** Creates one planned entry exclusively; returns whether paths in it were rebased. */
+async function copyEntry(source: string, to: string, entry: PlannedEntry, rebase: RootRebase | null): Promise<boolean> {
+  const destination = path.join(to, ...entry.segments);
+  if (entry.directory) {
+    await mkdir(destination);
+    return false;
+  }
+  const from = path.join(source, ...entry.segments);
+  let rebased = false;
+  if (rebase !== null && REBASED_EXTENSIONS.has(path.extname(destination).toLowerCase())) {
+    rebased = await copyRebased(from, destination, rebase);
+  } else {
+    await copyFile(from, destination, constants.COPYFILE_EXCL);
+  }
+  await utimes(destination, entry.mtime, entry.mtime);
+  return rebased;
+}
+
+/**
+ * Copies the planned entries in order and records in `written` every top-level
+ * name this run created, so a failure removes exactly that. Creation is exclusive:
+ * a name that already existed (EEXIST) belongs to someone else and is not recorded.
+ */
+async function copyEntries(
+  source: string,
+  to: string,
+  entries: readonly PlannedEntry[],
+  rebase: RootRebase | null,
+  written: string[],
+  options: CopyKodaXDataRootOptions,
+): Promise<Omit<CopyKodaXDataRootResult, 'skipped'>> {
+  const totalFiles = entries.filter((entry) => !entry.directory).length;
+  const totalBytes = entries.reduce((sum, entry) => sum + entry.size, 0);
+  let files = 0;
+  let bytes = 0;
+  let rebasedFiles = 0;
+  for (const entry of entries) {
+    assertNotAborted(options.signal);
+    const topLevel = entry.segments.length === 1 ? entry.segments[0] : undefined;
+    const rebased = await copyEntry(source, to, entry, rebase).catch((error: unknown) => {
+      if (topLevel !== undefined && errorCode(error) !== 'EEXIST') written.push(topLevel);
+      throw error;
+    });
+    if (topLevel !== undefined) written.push(topLevel);
+    if (entry.directory) continue;
+    if (rebased) rebasedFiles += 1;
+    files += 1;
+    bytes += entry.size;
+    options.onProgress?.({ files, totalFiles, bytes, totalBytes });
+  }
+  return { files, bytes, rebasedFiles };
+}
+
 /**
  * Copies a KodaX data root to a new location for relocation. The source is
  * only read. The copy is assembled inside the target, which therefore works for
  * a drive root or a mount point. KODAX_DATA_ROOT_COPY_MARKER stays in the target
  * until the source has been re-checked for a Host that started meanwhile; a
- * failed or aborted run removes what it wrote, and a crashed run is replaced by
- * the next one. OS housekeeping files in the target are left alone.
+ * failed or aborted run removes what it wrote, and the target of a crashed run
+ * is refused until the user deletes it. OS housekeeping files in the target are
+ * left alone.
  * Per-Host and per-process state is not copied (see NON_PORTABLE_ENTRIES), and
  * links are skipped so nothing outside the root is read.
  */
@@ -295,43 +376,20 @@ export async function copyKodaXDataRoot(options: CopyKodaXDataRootOptions): Prom
   const targetExisted = await prepareTarget(to);
 
   const { entries, skipped } = await plan(source, (options.exclude ?? []).map((entry) => entry.split(/[\\/]+/).filter(Boolean)));
-  const totalFiles = entries.filter((entry) => !entry.directory).length;
-  const totalBytes = entries.reduce((sum, entry) => sum + entry.size, 0);
   await mkdir(to, { recursive: true });
   await writeFile(path.join(to, KODAX_DATA_ROOT_COPY_MARKER), '', { flag: 'wx' });
   const rebase = rootRebase([path.resolve(options.from), source], to);
-  let files = 0;
-  let bytes = 0;
-  let rebasedFiles = 0;
+  const written: string[] = [];
   try {
-    for (const entry of entries) {
-      assertNotAborted(options.signal);
-      const destination = path.join(to, ...entry.segments);
-      if (entry.directory) {
-        await mkdir(destination);
-        continue;
-      }
-      const from = path.join(source, ...entry.segments);
-      if (rebase !== null && REBASED_EXTENSIONS.has(path.extname(destination).toLowerCase())) {
-        if (await copyRebased(from, destination, rebase)) rebasedFiles += 1;
-      } else {
-        await copyFile(from, destination, constants.COPYFILE_EXCL);
-      }
-      await utimes(destination, entry.mtime, entry.mtime);
-      files += 1;
-      bytes += entry.size;
-      options.onProgress?.({ files, totalFiles, bytes, totalBytes });
-    }
+    const copied = await copyEntries(source, to, entries, rebase, written, options);
     assertNotAborted(options.signal);
     assertNoLiveHost(source);
     await rm(path.join(to, KODAX_DATA_ROOT_COPY_MARKER));
+    return { ...copied, skipped };
   } catch (error: unknown) {
-    await clearCopy(to)
-      .then(async () => { if (!targetExisted) await rmdir(to); })
-      .catch((cleanup: unknown) => {
-        throw new AggregateError([error, cleanup], `The data root copy failed and the partial copy in ${to} could not be removed.`);
-      });
+    await removeCopy(to, written, !targetExisted).catch((cleanup: unknown) => {
+      throw new AggregateError([error, cleanup], `The data root copy failed and the partial copy in ${to} could not be removed.`);
+    });
     throw error;
   }
-  return { files, bytes, skipped, rebasedFiles };
 }

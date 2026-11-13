@@ -55,6 +55,7 @@ function seedPortableAndHostState(put: (relative: string, content?: string) => v
     'sessions/.product-host/startup.lock', 'instances/123/state.json',
     'sandbox-runtime/acl-poison/x.json', 'native-text-state-v1/artifacts-v1/a',
     'runtime/construction-budget-locks/hash.lock', 'sessions/b.jsonl.lock',
+    'processes/children/2.json',
   ]) put(hostState);
   put('space/runtime-client-identity.json');
 }
@@ -73,6 +74,7 @@ describe('copyKodaXDataRoot', () => {
     expect(Object.fromEntries(result.skipped.map((entry) => [entry.path, entry.reason]))).toEqual({
       'runtime/daemon': 'non-portable',
       'runtime/processes': 'non-portable',
+      processes: 'non-portable',
       'sessions/.product-host': 'non-portable',
       instances: 'non-portable',
       'sandbox-runtime': 'non-portable',
@@ -238,16 +240,39 @@ describe('copyKodaXDataRoot', () => {
     expect(existsSync(to)).toBe(false);
   });
 
-  it('replaces an interrupted copy left by a crashed run', async () => {
+  it('refuses a target left incomplete by an interrupted copy and keeps its content', async () => {
+    const { from, to, put } = workspace();
+    put('a.json');
+    mkdirSync(path.join(to, 'sessions'), { recursive: true });
+    writeFileSync(path.join(to, KODAX_DATA_ROOT_COPY_MARKER), '');
+    writeFileSync(path.join(to, 'sessions', 'kept.jsonl'), 'not provably ours');
+    await expect(copyKodaXDataRoot({ from, to })).rejects.toMatchObject({ code: 'target_incomplete' });
+    expect(files(to)).toEqual([KODAX_DATA_ROOT_COPY_MARKER, 'sessions/kept.jsonl']);
+  });
+
+  it('removes only what it wrote when a copy fails', async () => {
     const { from, to, put } = workspace();
     put('a.json');
     put('b.json');
-    mkdirSync(path.join(to, 'sessions'), { recursive: true });
-    writeFileSync(path.join(to, KODAX_DATA_ROOT_COPY_MARKER), '');
-    writeFileSync(path.join(to, 'sessions', 'stale.jsonl'), 'left by a crashed run');
-    const result = await copyKodaXDataRoot({ from, to });
-    expect(files(to)).toEqual(['a.json', 'b.json']);
-    expect(result.files).toBe(2);
+    await expect(copyKodaXDataRoot({
+      from, to,
+      onProgress: () => {
+        writeFileSync(path.join(to, 'user.txt'), 'saved here meanwhile');
+        throw new Error('disk full');
+      },
+    })).rejects.toThrow('disk full');
+    expect(files(to)).toEqual(['user.txt']);
+  });
+
+  it.each([
+    ['an unreadable lock', 'not json'],
+    ['a lock in an unknown format', JSON.stringify({ owner: 'future Host' })],
+  ])('treats %s as a running Host', async (_name, content) => {
+    const { from, to, put } = workspace();
+    put('config.json');
+    put('runtime/daemon/default/daemon.lock', content);
+    await expect(copyKodaXDataRoot({ from, to })).rejects.toMatchObject({ code: 'host_running' });
+    expect(existsSync(to)).toBe(false);
   });
 
   it('never touches a sibling folder that happens to share the old temporary name', async () => {
@@ -296,6 +321,22 @@ describe('copyKodaXDataRoot', () => {
     expect(readFileSync(path.join(to, 'notes.txt'), 'utf8')).toBe(old('sessions'));
     expect(lstatSync(path.join(to, 'sessions', 'a.jsonl')).mtimeMs).toBe(mtime.getTime());
     expect(result.rebasedFiles).toBe(2);
+  });
+
+  it('rebases a root written after an argument name such as --root=', async () => {
+    const { from, to, put } = workspace();
+    put('mcp.json', JSON.stringify({ args: [`--root=${path.join(from, 'mcp')}`, `@${from}`] }));
+    await copyKodaXDataRoot({ from, to });
+    expect(JSON.parse(readFileSync(path.join(to, 'mcp.json'), 'utf8')).args)
+      .toEqual([`--root=${path.join(to, 'mcp')}`, `@${to}`]);
+  });
+
+  it.runIf(process.platform !== 'win32')('leaves a longer path that merely ends with the old root alone', async () => {
+    const { from, to, put } = workspace();
+    const mirror = `/mirror${from}/config.json`;
+    put('backup.json', JSON.stringify({ mirror }));
+    await copyKodaXDataRoot({ from, to });
+    expect(JSON.parse(readFileSync(path.join(to, 'backup.json'), 'utf8')).mirror).toBe(mirror);
   });
 
   it.runIf(process.platform === 'win32')('matches the old root regardless of letter case on Windows', async () => {

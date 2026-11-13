@@ -1217,7 +1217,7 @@ try {
     onProgress: ({ files, totalFiles, bytes, totalBytes }) => {},
     signal,
   });
-  // result: { files, bytes, skipped: [{ path, reason }] }
+  // result: { files, bytes, rebasedFiles, skipped: [{ path, reason }] }
 } catch (error) {
   if (error instanceof KodaXDataRootCopyError) error.code; // see below
 }
@@ -1234,19 +1234,24 @@ It copies and never moves: the source is only read. Behavior:
   (`nested_roots`).
 - It refuses (`host_running`) while any Host slot under `runtime/daemon/*` or
   the Session storage owner lock names a process that is not provably gone, and
-  checks again just before publishing. Stop every client of the source first.
+  checks again just before publishing. A lock file it cannot read counts as a
+  running Host too. Stop every client of the source first.
 - The copy is assembled inside the target. `KODAX_DATA_ROOT_COPY_MARKER`
   (`.kodax-copy-incomplete`) is written first and removed only when the copy is
   complete, so a target holding it is not a usable data root. A failed or
-  aborted run removes what it wrote (and the target directory if it created
-  it). A target left with the marker by a crashed run counts as empty and is
-  replaced on the next call, so re-running is safe.
+  aborted run removes the top-level entries it created and leaves anything
+  else that appeared in the target meanwhile; it removes the target directory
+  too if it created it and nothing else is left. A target still holding the
+  marker after a crash is refused (`target_incomplete`), because nothing proves
+  which files in it the crashed copy wrote. Ask the user to delete it or choose
+  another folder.
 - Stored data holds absolute paths into its own root (MCPB install folders
   and launch arguments, session image and tool-output paths, workflow
   snapshots, embedder stores). In every `.json` / `.jsonl` file, each
   occurrence of the source root — native, forward-slash, or JSON-escaped with
   doubled backslashes; case-insensitive on Windows and macOS — that is not part
-  of a longer name is rewritten to `to`. Nothing else in the file changes;
+  of a longer name or path is rewritten to `to`, including one right after
+  argument syntax such as `--root=` or `@`. Nothing else in the file changes;
   other file types and files that are not valid UTF-8 are copied byte for
   byte. `rebasedFiles` counts the rewritten files. A source that is a whole
   drive is not rebased. A rewritten file whose length changed has a new size,
@@ -1263,6 +1268,7 @@ machine, plus any name ending `.lock` or `.lock.queue`:
 |---|---|
 | `runtime/daemon/` | Host descriptor, token, lock, log, owner policy, client exit receipts |
 | `runtime/processes/` | live child-process records |
+| `processes/` | legacy location of live child-process records |
 | `sessions/.product-host/` | Session storage owner lock |
 | `instances/` | per-process heartbeat directories |
 | `sandbox-runtime/` | sandbox gate and ACL state bound to this machine and boot |
@@ -1274,7 +1280,7 @@ credential bindings tied to the source root's client identity are the
 embedder's to `exclude` if they must not follow the data.
 
 Error codes: `source_missing`, `target_invalid`, `target_not_empty`,
-`nested_roots`, `host_running`, `aborted`.
+`target_incomplete`, `nested_roots`, `host_running`, `aborted`.
 
 ### What was removed
 

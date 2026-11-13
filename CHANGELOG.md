@@ -18,7 +18,10 @@ All notable changes to this project will be documented in this file.
   drive root or mount point can be the target. Absolute paths into the old
   root inside `.json` / `.jsonl` files are rewritten to the new root
   (`rebasedFiles`), so MCPB servers, session images, tool-output files and
-  workflow snapshots keep resolving after the old root is deleted.
+  workflow snapshots keep resolving after the old root is deleted. A failed run
+  removes only what it created; a target left by a crashed run is refused
+  (`target_incomplete`) rather than cleared, and an unreadable Host lock counts
+  as a running Host.
 
 ### Changed
 
