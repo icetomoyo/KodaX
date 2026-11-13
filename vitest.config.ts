@@ -64,6 +64,10 @@ export function createVitestConfig(options: TestSuiteOptions = {}) {
     test: {
       globals: true,
       environment: 'node',
+      // The legacy memory path (memory_intent, the AMA control plane, the passive pack) is
+      // still in the tree with its own suites. The note memory is the product default, so
+      // those suites pin the old path here and the note-memory suites opt in explicitly.
+      env: { KODAX_MEMORY_NOTES: '0' },
       // Raised from vitest's 5s default: many fs-heavy tests already
       // set local 15_000/30_000 timeouts, i.e. 5s stopped fitting this suite's
       // scale (>800 files run in parallel). Under that contention an otherwise-

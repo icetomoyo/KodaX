@@ -36,10 +36,10 @@ const ctxWith = (memoryNotes: KodaXToolExecutionContext['memoryNotes']): KodaXTo
   ({ memoryNotes }) as KodaXToolExecutionContext;
 
 describe('note memory switch', () => {
-  it('is off unless KODAX_MEMORY_NOTES is exactly 1', () => {
-    expect(isNoteMemoryEnabled({})).toBe(false);
-    expect(isNoteMemoryEnabled({ KODAX_MEMORY_NOTES: '0' })).toBe(false);
+  it('is on unless KODAX_MEMORY_NOTES is exactly 0', () => {
+    expect(isNoteMemoryEnabled({})).toBe(true);
     expect(isNoteMemoryEnabled({ KODAX_MEMORY_NOTES: '1' })).toBe(true);
+    expect(isNoteMemoryEnabled({ KODAX_MEMORY_NOTES: '0' })).toBe(false);
   });
 });
 
@@ -84,7 +84,7 @@ describe('capability sections gate', () => {
   });
 
   it('keeps the legacy memory sections when the switch is off', async () => {
-    vi.stubEnv('KODAX_MEMORY_NOTES', '');
+    vi.stubEnv('KODAX_MEMORY_NOTES', '0');
     const sections = await buildCapabilityContextSections(options(), false, cwd);
     expect(sections.some((s) => s.id === 'memory-rules')).toBe(true);
   });
@@ -105,7 +105,7 @@ describe('capability sections gate', () => {
 
   it('does not touch the legacy directory while the switch is off', async () => {
     fs.writeFileSync(path.join(legacyDir(), 'a.md'), '---\ndescription: legacy\n---\n');
-    vi.stubEnv('KODAX_MEMORY_NOTES', '');
+    vi.stubEnv('KODAX_MEMORY_NOTES', '0');
     await buildCapabilityContextSections(options(), false, cwd);
     expect(fs.existsSync(resolveNoteRoot(cwd, 'project'))).toBe(false);
   });

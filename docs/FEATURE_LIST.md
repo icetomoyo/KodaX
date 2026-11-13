@@ -22,8 +22,8 @@
 | Visual harness implementation | P3/P4/P5/P6 implemented within declared scope; [final ID/receipt contract delivery](designs/visual-harness-id-contract-delivery-2026-10-30.md). P7 task-value evaluation concluded **mixed; net task-quality/token value unproven**, against optimized pre-visual 1826cc22; [final review and limits](designs/visual-harness-current-version-closure-2026-10-30.md). The 2026-10-29 plan's "not executed" state and old r3 single-response results are historical, not the current outcome. Historical default suite 18,094 passed / 0 failed; earlier failures and unlocated causes remain recorded, not acceptance of the new mainline integration. No new feature ID/version assigned |
 | Roadmap updated | `2026-11-08` — beta.4 Space SDK contract repair prepared on top of the published beta.3; FEATURE_300 remains Planned; `KodaX-next-dev` merged beta.4 the same day |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
-| Total tracked features | `89` |
-| InProgress | `2` |
+| Total tracked features | `90` |
+| InProgress | `3` |
 | Planned | `18` |
 | Completed | `63` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
@@ -2263,7 +2263,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 ## 2026-11-12 FEATURE_306 Addition
 
-- Status: target `v0.8.10`, Planned; Phase 0 baseline evaluation of the current memory is the first work item.
+- Status: target `v0.8.10`. Implementation is under way and the tracker rows still count it as Planned until the legacy deletion lands. Phases 0 to 4d are done and pushed; the note memory is on by default (`KODAX_MEMORY_NOTES=0` falls back to the legacy memory). Remaining: delete the legacy memory code (design record §17.5) after one release on the new default, and Phase 5 `session_search` only if needed.
 - Source: [memory redesign plan](designs/memory-redesign-plan.md) (owner decisions of 2026-11-12: skill learning redesigned together; inferred memories stay `candidate` until corroborated or approved; F275 interventions evaluated as an arm; one-time converter, experimental SDK entry may break with a one-release `runtime.learning` facade).
 - Scope: one markdown file per memory, a small injected index, an explicit `memory` tool, gated reflection over bounded raw evidence, an idle reconcile job, and learned procedures as `SKILL.md` under the same states. Eval-gated per `benchmark/EVAL_GUIDELINES.md`.
 - Design: [v0.8.10](features/v0.8.10.md#feature_306-memory-and-skill-learning-redesign).

@@ -23,8 +23,9 @@ import { staticText } from '../prompts/static-text.js';
 
 export const NOTE_MEMORY_ENV = 'KODAX_MEMORY_NOTES';
 
+/** On by default; `KODAX_MEMORY_NOTES=0` falls back to the legacy memory, which stays until it is removed. */
 export function isNoteMemoryEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env[NOTE_MEMORY_ENV] === '1';
+  return env[NOTE_MEMORY_ENV] !== '0';
 }
 
 function readIndex(root: string): string {
