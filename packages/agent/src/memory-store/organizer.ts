@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — deterministic store hygiene, no model call.
+ * FEATURE_308 — deterministic store hygiene, no model call.
  *
  *   stale      a note the model inferred and nobody confirmed or used for 90 days
  *              is archived (reversible: the file stays, only the index drops it).

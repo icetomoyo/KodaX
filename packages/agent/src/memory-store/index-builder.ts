@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — build the `MEMORY.md` index the model reads. No ranking code:
+ * FEATURE_308 — build the `MEMORY.md` index the model reads. No ranking code:
  * the model sees every listed one-line description and opens what it needs with
  * ordinary file tools. Phase 0 showed the old title-token ranking surfaced the
  * right note 0/5 times at 40 notes.

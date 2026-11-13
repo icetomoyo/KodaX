@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — one-time converter from a legacy memdir into a new note store.
+ * FEATURE_308 — one-time converter from a legacy memdir into a new note store.
  *
  * The legacy directory is only READ, so the old system keeps working until it
  * is removed and the conversion can be re-run safely (existing ids are never

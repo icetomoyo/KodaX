@@ -1,4 +1,4 @@
-/** FEATURE_306 — new note store (public surface; the old memory-control path is untouched). */
+/** FEATURE_308 — new note store (public surface; the old memory-control path is untouched). */
 export { createNoteStore, INDEX_FILE } from './store.js';
 export type { NewNote, NotePatch, NoteResult, NoteStore } from './store.js';
 export { applyMemoryOperation } from './memory-op.js';

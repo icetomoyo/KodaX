@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — local usage counters, so whether memory helps can be judged
+ * FEATURE_308 — local usage counters, so whether memory helps can be judged
  * from real use and not only from staged evals. Plain totals in
  * `<root>/.memory-stats.json`; nothing leaves the machine.
  */

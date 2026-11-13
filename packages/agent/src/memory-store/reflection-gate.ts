@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — cheap, language-independent gate in front of the reflection
+ * FEATURE_308 — cheap, language-independent gate in front of the reflection
  * LLM call. A session qualifies when the user steered it (more than one user
  * turn) or a tool failure was later followed by a success of the same tool.
  * Everything else is skipped without a model call.

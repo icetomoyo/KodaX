@@ -1,4 +1,4 @@
-/** FEATURE_306 — reading the reflection job's small JSON state files (budget, cursor). */
+/** FEATURE_308 — reading the reflection job's small JSON state files (budget, cursor). */
 import { emitKodaXDiagnostic } from '../diagnostics.js';
 
 /**

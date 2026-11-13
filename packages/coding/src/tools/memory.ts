@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — the single `memory` tool (write / edit / delete) over the note store.
+ * FEATURE_308 — the single `memory` tool (write / edit / delete) over the note store.
  * The host binds `ctx.memoryNotes` with the CURRENT user message, so the model
  * can only authorize a change by quoting that message.
  */

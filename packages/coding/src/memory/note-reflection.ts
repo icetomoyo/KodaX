@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — the request the background reflection job sends to the model:
+ * FEATURE_308 — the request the background reflection job sends to the model:
  * system prompt, the `memory_reflect` and `skill_propose` tools, and the evidence
  * plus the current notes rendered as the user message. The worker holds no other
  * tool, so injected text in the evidence has nothing to act with except a note

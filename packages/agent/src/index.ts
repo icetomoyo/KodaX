@@ -647,7 +647,7 @@ export * from './memory/index.js';
 // learning proposal store into typed refs, guarded approvals, and memory packs.
 export * from './memory-control/index.js';
 
-// FEATURE_306 - New file-per-note memory store, index, `memory` tool logic and
+// FEATURE_308 - New file-per-note memory store, index, `memory` tool logic and
 // legacy converter. Coexists with the control plane above until it is removed.
 export * from './memory-store/index.js';
 

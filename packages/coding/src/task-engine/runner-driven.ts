@@ -510,7 +510,7 @@ export const __runnerDrivenTestables = {
 
 interface ManagedLiveTurnController {
   currentTurnId(): string;
-  /** FEATURE_306: text of the current user message, the only source a note quote may come from. */
+  /** FEATURE_308: text of the current user message, the only source a note quote may come from. */
   currentUserText(): string;
   setUserText(text: string): void;
   markInitialInputDurable(): void;
@@ -684,7 +684,7 @@ function withoutMemoryIntentTool(options: KodaXOptions): KodaXOptions {
   };
 }
 
-/** FEATURE_306: the `memory` tool is visible only to a root run while the note switch is on. */
+/** FEATURE_308: the `memory` tool is visible only to a root run while the note switch is on. */
 function withNoteMemoryVisibility(options: KodaXOptions): KodaXOptions {
   if (noteMemoryAppliesTo(options)) return options;
   return {
@@ -697,7 +697,7 @@ function withNoteMemoryVisibility(options: KodaXOptions): KodaXOptions {
 }
 
 /**
- * FEATURE_306: once a root run is saved, count the notes it opened and reflect on
+ * FEATURE_308: once a root run is saved, count the notes it opened and reflect on
  * the session in the background. Not awaited: the run is over.
  */
 function scheduleNoteFollowUp(options: KodaXOptions, run: {
@@ -2185,7 +2185,7 @@ async function runManagedTaskViaRunnerInner(
   const resolvedInitial = await resolveInitialMessages(options, options.session?.id ?? resolvedSessionId);
   // Retain recovery metadata without another storage read or changing load order.
   recovery.initial = resolvedInitial;
-  // FEATURE_306: notes opened by earlier runs of this session were counted when those runs ended.
+  // FEATURE_308: notes opened by earlier runs of this session were counted when those runs ended.
   const noteEarlierCalls = toolUseIds(resolvedInitial.messages);
   if (options.session?.generationCheckpoint && options.context?.runtimeRunId) {
     await options.context.actorSession?.resumeGenerationChildren(options.context.runtimeRunId);

@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — one pass of the reflection job over one session: gate, evidence,
+ * FEATURE_308 — one pass of the reflection job over one session: gate, evidence,
  * judge, host-validated apply, cursor. The judge is injected, so this file holds
  * no model client and the whole job runs against a stub in tests.
  *

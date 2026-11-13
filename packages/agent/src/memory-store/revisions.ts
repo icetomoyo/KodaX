@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — previous revisions of a note, kept so a wrong rewrite or an
+ * FEATURE_308 — previous revisions of a note, kept so a wrong rewrite or an
  * unwanted delete can be undone by hand. Files live in `<root>/.revisions/` as
  * `<id>.<epoch-ms>-<n>.md`; the notes listing ignores the directory.
  */

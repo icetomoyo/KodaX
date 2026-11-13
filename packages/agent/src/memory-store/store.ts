@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — file-backed note store for ONE scope root (a directory the
+ * FEATURE_308 — file-backed note store for ONE scope root (a directory the
  * caller resolves). Pure fs: no dependency on the legacy memory-control
  * package, so the new store and the old system coexist until the old code is
  * removed.

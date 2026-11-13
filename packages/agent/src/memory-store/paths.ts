@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — where the new note stores live. Deliberately NOT the legacy
+ * FEATURE_308 — where the new note stores live. Deliberately NOT the legacy
  * `memory/` directory, so both systems can coexist until the old one is removed.
  *
  *   project scope: <agentConfigHome>/projects/<project-key>/notes/

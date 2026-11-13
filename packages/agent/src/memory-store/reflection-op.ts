@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — the operations the background reflection worker may apply.
+ * FEATURE_308 — the operations the background reflection worker may apply.
  * Authority comes from the evidence the HOST collected, never from what the
  * model claims about it (see evidence.ts):
  *   write        quote found in a user message -> active; no quote -> candidate

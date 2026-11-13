@@ -1,4 +1,4 @@
-/** FEATURE_306 — the small fs helpers every note-store file uses. */
+/** FEATURE_308 — the small fs helpers every note-store file uses. */
 import * as fs from 'node:fs/promises';
 
 export function isNotFound(error: unknown): boolean {

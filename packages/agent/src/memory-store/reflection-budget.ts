@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — the reflection job's cost cap: a fixed number of judge calls per
+ * FEATURE_308 — the reflection job's cost cap: a fixed number of judge calls per
  * calendar day, counted in `<root>/.reflection-budget.json`. A slot is taken
  * before the call, so a failing provider cannot be retried past the cap.
  */

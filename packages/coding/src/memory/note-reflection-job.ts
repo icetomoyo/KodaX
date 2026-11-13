@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — what the host does with the note memory after a run ends, in the
+ * FEATURE_308 — what the host does with the note memory after a run ends, in the
  * background and never awaited by the run:
  *
  *   1. count the notes the agent opened during the run (usage signal),
@@ -38,7 +38,7 @@ import { buildReflectionRequest, parseReflectionCall, parseSkillCall, REFLECT_TO
 import { enqueueNoteWork } from './note-work-queue.js';
 
 const REFLECTION_TIMEOUT_MS = 120_000;
-/** The size the reflection prompt was evaluated at (FEATURE_306 Phase 2b to 3). */
+/** The size the reflection prompt was evaluated at (FEATURE_308 Phase 2b to 3). */
 const REFLECTION_MAX_OUTPUT_TOKENS = 8192;
 
 export interface NoteRunFinish {

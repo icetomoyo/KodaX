@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — one memory = one markdown file with self-contained frontmatter
+ * FEATURE_308 — one memory = one markdown file with self-contained frontmatter
  * (no sidecar). A hand-edited file with only a `description:` is a valid active
  * note; an unrecognised `status:` never activates a note.
  */

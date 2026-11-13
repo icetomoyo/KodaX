@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — wiring for the note store: the env switch, where a run's notes
+ * FEATURE_308 — wiring for the note store: the env switch, where a run's notes
  * live, the system-prompt section (rules + the two MEMORY.md indexes) and the
  * host binding behind the `memory` tool. The old Memory Control Plane is
  * untouched while the switch is off.

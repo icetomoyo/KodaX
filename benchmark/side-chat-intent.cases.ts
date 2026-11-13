@@ -1,5 +1,5 @@
 /**
- * Cells and structural scoring for the side-chat intent eval (FEATURE_305 R6).
+ * Cells and structural scoring for the side-chat intent eval (FEATURE_307 R6).
  * Pure data and functions so the scoring can be re-run on dumped raw output.
  */
 export interface IntentMessage { role: 'user' | 'assistant'; content: string }

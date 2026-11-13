@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — the logic behind the single `memory` tool (write / edit / delete).
+ * FEATURE_308 — the logic behind the single `memory` tool (write / edit / delete).
  *
  * Authorization is exact-quote: `userQuote` must appear verbatim in the CURRENT
  * user message, which the host supplies (never text from a tool result, so an

@@ -116,7 +116,7 @@ function isGovernedMemoryRelativePath(relative: string, destructiveAncestors = f
   if (process.platform === 'win32') relative = relative.toLowerCase().split('/').map(part => part.split(':')[0]!.replace(/[ .]+$/u, '')).join('/');
   return relative === 'memory-scopes' || relative.startsWith('memory-scopes/')
     || (destructiveAncestors && /^projects(?:\/[^/]+)?$/u.test(relative)) || /^projects\/[^/]+\/memory(?:\/|$)/u.test(relative)
-    // FEATURE_306 note stores: only the `memory` tool may mutate them (secret scan, quote authorization).
+    // FEATURE_308 note stores: only the `memory` tool may mutate them (secret scan, quote authorization).
     || relative === 'notes' || relative.startsWith('notes/') || /^projects\/[^/]+\/notes(?:\/|$)/u.test(relative);
 }
 

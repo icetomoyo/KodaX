@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — secret detection by token SHAPE. The older sanitizer matches
+ * FEATURE_308 — secret detection by token SHAPE. The older sanitizer matches
  * phrases ("api key is ..."), so `sk-live-...` slipped through whenever the
  * surrounding sentence avoided those phrases (Phase 0 case w4).
  *

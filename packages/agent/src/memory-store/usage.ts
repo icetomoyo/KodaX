@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — usage signals. A note counts as used when the agent opened its
+ * FEATURE_308 — usage signals. A note counts as used when the agent opened its
  * file with the `read` tool and the read succeeded. The host observes this in
  * the transcript; the model never reports it. Nothing else counts: an index
  * line the model merely saw is not a read, so a note is never judged unused

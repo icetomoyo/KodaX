@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — how a quote is compared with the text it claims to come from.
+ * FEATURE_308 — how a quote is compared with the text it claims to come from.
  * Shared by the `memory` tool (current user message) and the reflection job (session evidence).
  */
 

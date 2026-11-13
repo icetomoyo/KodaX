@@ -1035,7 +1035,7 @@ async function runSubstrateInContext(
   );
   const initialImagePreparation = prepareHistoryImages(messages);
   if (initialImagePreparation) await initialImagePreparation;
-  // FEATURE_306: notes opened by earlier runs of this session were counted when those runs ended.
+  // FEATURE_308: notes opened by earlier runs of this session were counted when those runs ended.
   const noteEarlierCalls = isNoteMemoryEnabled() ? toolUseIds(messages) : undefined;
   // Journal evidence of earlier interrupted Runs is rendered once against the
   // resumed history and installed into each request's wire view only, so it
@@ -1604,7 +1604,7 @@ async function runSubstrateInContext(
     }
   }
   if (memoryNotesToolAllowed) {
-    // FEATURE_306: the host supplies the current user message, so a quote can only come from the user.
+    // FEATURE_308: the host supplies the current user message, so a quote can only come from the user.
     ctx.memoryNotes = createNoteMemoryBinding(
       resolveNotePlace(options),
       () => memoryIntentUserTurnRef.current.text,

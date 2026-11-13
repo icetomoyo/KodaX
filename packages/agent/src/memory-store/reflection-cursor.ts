@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — which sessions the reflection job has already processed, kept
+ * FEATURE_308 — which sessions the reflection job has already processed, kept
  * in `<root>/.reflected.json` together with how many user turns the session had
  * then, so a session that keeps going can be read again later. A session is
  * marked only AFTER its reflection succeeded, so a failed run is retried;

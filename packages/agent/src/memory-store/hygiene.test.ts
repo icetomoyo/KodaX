@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 Phase 4 — 100-episode hygiene simulation (Layer 1, no model call).
+ * FEATURE_308 Phase 4 — 100-episode hygiene simulation (Layer 1, no model call).
  *
  * A stub judge plays the reflection model: it writes, repeats, guesses and
  * corroborates from what the user said, through the real gate, host guards,

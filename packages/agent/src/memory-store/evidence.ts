@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — bounded raw evidence from one session, for the reflection job.
+ * FEATURE_308 — bounded raw evidence from one session, for the reflection job.
  *
  * Every segment carries a provenance the HOST assigns (never the model):
  *   user      what the user typed; the only source that can state a preference

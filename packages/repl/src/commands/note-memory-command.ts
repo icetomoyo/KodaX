@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — `/memory` over the note memory: see what the agent reads at
+ * FEATURE_308 — `/memory` over the note memory: see what the agent reads at
  * startup, review the notes it is still unsure about, approve or forget one.
  * Notes are plain markdown files, so editing one by hand works too.
  */

@@ -293,7 +293,7 @@ export async function buildCapabilityContextSections(
   // 3/3 write → 0/3 write (read instead) and ds/v4flash regressed on first-save
   // correctness. The claudecode-derived wording is load-bearing; keep full text.
   if (isNoteMemoryEnabled()) {
-    // FEATURE_306: note-store rules + MEMORY.md indexes replace the legacy memory sections.
+    // FEATURE_308: note-store rules + MEMORY.md indexes replace the legacy memory sections.
     const notePlace = resolveNotePlace(options, executionCwd);
     await convertLegacyMemory(notePlace);
     sections.push(

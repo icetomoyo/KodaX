@@ -1,5 +1,5 @@
 /**
- * Side-chat intent eval (FEATURE_305 R6). Run after the --side-chat-only PTY fixture; contains only synthetic conversations.
+ * Side-chat intent eval (FEATURE_307 R6). Run after the --side-chat-only PTY fixture; contains only synthetic conversations.
  *   tsx benchmark/side-chat-intent.eval.ts <ink-requests.json> [alias,alias,...]   (default alias: ark/v4flash)
  * Budget (pre-registered in docs/designs/side-chat-plan.md §8.1): 1 call per sample, 3 samples per cell,
  * at most 54 calls, maxOutputTokens 384, 30 s timeout, one request in flight.

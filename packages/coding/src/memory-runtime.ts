@@ -329,7 +329,7 @@ export function drainCodingMemoryReviewInbox(
 
 /**
  * FEATURE_289 §3.1: bounded await of the latest drain for shutdown cleanup.
- * Also waits for the note memory's queued follow-ups (FEATURE_306), so a
+ * Also waits for the note memory's queued follow-ups (FEATURE_308), so a
  * one-shot `-p` run does not exit in the middle of writing a note.
  * Never rejects; resolves at once when nothing was started.
  */

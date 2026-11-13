@@ -1,5 +1,5 @@
 /**
- * FEATURE_306 — the per-process queue for the note memory's background work.
+ * FEATURE_308 — the per-process queue for the note memory's background work.
  * It lives apart from the job so shutdown code can wait for it without
  * importing the job (which would make an import cycle with memory-runtime).
  */

@@ -6,7 +6,7 @@ import { getAgentConfigPath, setAgentConfigHome } from '@kodax-ai/agent';
 import { isGovernedMemoryMutationTarget } from '../permissions/agent-home-policy.js';
 import { memoryMutationDenial, shellMemoryMutationDenial } from './memory-mutation-guard.js';
 
-describe('FEATURE_306 note store guard', () => {
+describe('FEATURE_308 note store guard', () => {
   afterEach(() => setAgentConfigHome(undefined));
 
   const home = path.resolve('temp-notes-home');
