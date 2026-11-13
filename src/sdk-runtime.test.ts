@@ -13564,7 +13564,7 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
-  it.each(['resume', 'stop', 'session-stop', 'earlier-session-stop', 'session-stop-repair', 'session-stop-unverified-owner', 'leases', 'concurrent', 'changed-history', 'queue-save-failure', 'claim-save-failure'] as const)('handles %s at a dead owner generation checkpoint without replaying admission', async action => {
+  it.each(['resume', 'stop', 'session-stop', 'earlier-session-stop', 'session-stop-repair', 'session-stop-unverified-owner', 'leases', 'concurrent', 'changed-history', 'queue-save-failure', 'claim-save-failure', 'withdrawn-steer'] as const)('handles %s at a dead owner generation checkpoint without replaying admission', async action => {
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, 'generation-resume-sessions');
     const { FileSessionStorage } = await import('@kodax-ai/repl');
@@ -13594,6 +13594,14 @@ describe("createKodaXRuntime", () => {
         input: { sessionId: 'generation-session', inputId: 'pending-after', delivery: 'after_turn', text: 'Do not change signatures.' } }] } : {}),
       interruptInputs: [{ inputId: 'pending-exact', afterRunId: 'generation-run', delivery: 'interrupt', state: 'queued',
         queuedAt: '2026-10-21T00:00:01Z', contentPreview: 'Keep...', input: { type: 'text', text: 'Keep every public export unchanged. Also preserve all tests.' } }] }));
+    if (action === 'withdrawn-steer') {
+      // The Host stopped after committing the withdrawal receipt, before the checkpoint recorded the release.
+      const pendingDir = path.join(tempRoot, '.kodax', 'runtime', 'pending-inputs');
+      await fs.mkdir(pendingDir, { recursive: true });
+      await fs.writeFile(path.join(pendingDir, 'generation-session.json'), JSON.stringify({ version: 2, pending: [],
+        withdrawn: [{ input: { sessionId: 'generation-session', inputId: 'pending-exact', delivery: 'steer', targetRunId: 'generation-run',
+          text: 'Keep every public export unchanged. Also preserve all tests.' } }] }));
+    }
     if (action === 'session-stop' || action === 'earlier-session-stop' || action === 'session-stop-repair' || action === 'session-stop-unverified-owner') {
       const stops = path.join(tempRoot, '.kodax', 'runtime', 'session-stops');
       await fs.mkdir(stops, { recursive: true });
@@ -13704,8 +13712,10 @@ describe("createKodaXRuntime", () => {
         return;
       }
       codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions, prompt: string) => {
-        expect(getMessageQueue().peek({ agentId: actorQueueId('generation-session', '/root'), mode: 'prompt', maxPriority: 'user' }))
-          .toEqual(expect.arrayContaining([expect.objectContaining({ inputId: 'pending-exact', content: 'Keep every public export unchanged. Also preserve all tests.' })]));
+        const recoveredSteer = expect.arrayContaining([expect.objectContaining({ inputId: 'pending-exact', content: 'Keep every public export unchanged. Also preserve all tests.' })]);
+        const queuedSteers = getMessageQueue().peek({ agentId: actorQueueId('generation-session', '/root'), mode: 'prompt', maxPriority: 'user' });
+        if (action === 'withdrawn-steer') expect(queuedSteers).not.toEqual(recoveredSteer);
+        else expect(queuedSteers).toEqual(recoveredSteer);
         expect(options.session?.generationCheckpoint).toEqual(checkpoint);
         expect(options.context?.systemPromptOverride).toBe('Keep all constraints.');
         expect(prompt).toBe('Keep exports unchanged.');
@@ -13734,6 +13744,10 @@ describe("createKodaXRuntime", () => {
       const outcome = await handle.result;
       expect(outcome.phase, JSON.stringify(outcome)).toBe('completed');
       expect(codingMock.startKodaX).toHaveBeenCalledTimes(1);
+      if (action === 'withdrawn-steer') {
+        expect((await runtime.runs.get('generation-run')).interruptInputs).toMatchObject([{ inputId: 'pending-exact', state: 'terminal' }]);
+        expect(await runtime.runs.getInput('generation-session', 'pending-exact')).toMatchObject({ state: 'withdrawn' });
+      }
     } finally { await runtime.close(); }
   });
 

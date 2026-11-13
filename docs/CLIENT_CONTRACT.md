@@ -306,6 +306,8 @@ delivery 的队列行为如下；空 queue 不能证明所有已知输入已经�
 
 普通 stop/failed 不自动 drain，队列保留；不能在重连时自行重放提交。Ink 已按逐 inputId 查询处理合批确认，不按正文去重。
 
+steer 不进入可撤回队列，也不随客户端退出撤回；客户端退出另行结算本客户端的 Run。目标 Run 以任何方式（完成、失败或 Stop）在交付前结束时，未交付的 steer 记为 dropped，之后 withdraw 返回 conflict。withdraw 先持久化撤回回执，再从 Run 释放该输入；释放失败时回滚回执并返回 conflict。Host 在两步之间中断时回执生效，生成检查点恢复时不再交付该 steer；若输入在中断前已写入规范历史，恢复以历史为准不重复交付，但 inputs.read 仍可能报告 withdrawn。steer 的 queued 接收记录只在本 Host 进程内存在，Host 重启后随检查点恢复的 steer 不能再 withdraw，inputs.read 可能返回 null。
+
 安全点消费与 withdraw 使用同一 Host Session 操作锁；输入成功保存后才从可撤回队列移除并标记 submitted。消费前撤回得到完整原文和附件，消费后撤回明确 conflict。排队 Skill 必须经 Host 可信准备，是普通批次的顺序边界；不把 Skill 当普通文字塞入执行器，也不让后方输入越过它。没有后续执行额度时不通过无限延长 Run 来消费队列。以上行为对 REPL 和 SDK 相同，不新增 UI 自有执行队列。
 
 即时、after_turn 与 redirect 输入的 Skill 引用使用同一 Host registry 识别规则，包含正文中间的 `/name` 和 `/skill:name`。未知斜杠词、路径及 URL 保持普通文本，多引用限制只计算已知 Skill。入队仅确认身份并保存原文和独立消费边界，不执行动态上下文或 hooks；实际消费时重新通过 registry 解析可信定义，沿用其缓存与显式重载语义。已入队的 Skill 若届时无法解析，沿用未知引用的原文回退并保留其既定队列边界。客户端不提交 Skill 执行元数据，原始输入去重与 Stop 保留规则不变。

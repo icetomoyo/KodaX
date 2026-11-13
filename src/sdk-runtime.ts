@@ -3744,6 +3744,8 @@ interface RuntimeRunRecord {
   readonly origin?: RuntimeRunStatus["origin"];
   readonly continuation?: Omit<RuntimeContinuationStatus, "state">;
   readonly interruptInputs: RuntimeInterruptInputRecord[];
+  /** Process-local: settles the client's steer fact when the Run ends an interrupt input it never delivered. */
+  readonly onInterruptInputDropped?: (inputId: string) => void;
   stop?: RuntimeRunStopStatus;
   providerCredential?: string;
   readonly providerCredentialScope?: ProviderCredentialLeaseScope;
@@ -12753,6 +12755,7 @@ async function createRuntimeRunService(deps: {
           }
         : {}),
       interruptInputs: recovery?.data.interruptInputs?.map(value => ({ ...value })) ?? [],
+      onInterruptInputDropped: (inputId: string) => productQueue.markDropped(input.sessionId, inputId),
       ...((input.agentContext ?? deps.defaultAgentContext)
         ? { agentContext: input.agentContext ?? deps.defaultAgentContext }
         : {}),
@@ -12862,6 +12865,9 @@ async function createRuntimeRunService(deps: {
       productQueue.validateRestore(pendingInputs);
       const pendingInterrupts = record.interruptInputs.filter(pending => pending.state === 'queued').map(pending => {
         if (saved.messages.some(message => message.inputId === pending.inputId)) return { pending, normalized: undefined };
+        // The Host stopped after committing this steer's withdrawal receipt but before the
+        // Run checkpoint recorded the release; the receipt is the user's decision.
+        if (productQueue.read(record.sessionId, pending.inputId)?.state === 'withdrawn') return { pending, withdrawn: true };
         if (!pending.input) throw new Error('Recovery input body is unavailable.');
         return { pending, normalized: normalizeRuntimeRunInput({ sessionId: record.sessionId, input: pending.input }, deps.artifacts, 'runtime.runs.submitInput') };
       });
@@ -12879,7 +12885,8 @@ async function createRuntimeRunService(deps: {
         throw error;
       }
       commitInputs!();
-      for (const { pending, normalized } of pendingInterrupts) {
+      for (const { pending, normalized, withdrawn } of pendingInterrupts) {
+        if (withdrawn) { pending.state = 'terminal'; continue; }
         if (!normalized) { pending.state = 'delivered'; continue; }
         pending.queueMessageId = enqueueWithArtifacts({ sessionId: record.sessionId, inputId: pending.inputId,
           content: normalized.prompt, inputArtifacts: normalized.inputArtifacts, provider: record.provider,
@@ -13348,7 +13355,13 @@ async function createRuntimeRunService(deps: {
         0,
       );
     }
-    return productQueue.recordAccepted(input, target.runId, "queued");
+    productQueue.recordAccepted(input, target.runId, "queued");
+    // The Run may have delivered or dropped the input while acceptance awaited; its
+    // delivery and drop notices found no fact then, so settle the new fact now.
+    const interrupt = target.interruptInputs.find(value => value.inputId === input.inputId);
+    if (interrupt?.state === "delivered") productQueue.markSubmitted(input.sessionId, input.inputId);
+    else if (interrupt?.state === "terminal") productQueue.markDropped(input.sessionId, input.inputId);
+    return productQueue.read(input.sessionId, input.inputId)!;
   };
 
   const acceptRedirectInput = async (
@@ -24830,7 +24843,7 @@ function markRunTerminal(
   delete run.lifecycleError;
   if (run.error === "stop_outcome_unconfirmed" || run.error === "shell_cleanup_unconfirmed") delete run.error;
   run.interruptInputOpen = false;
-  terminalizeQueuedInterruptInputs(run);
+  terminalizeQueuedInterruptInputs(run, run.onInterruptInputDropped);
   run.phase = phase;
   if (phase === "completed") delete run.failureDetail;
   const endedAt = new Date().toISOString();

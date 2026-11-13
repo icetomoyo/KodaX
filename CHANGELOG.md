@@ -44,6 +44,10 @@ All notable changes to this project will be documented in this file.
 
 - Client cleanup no longer stops on a pending `steer` input of the departing
   client; the input settles with its Run.
+- A `steer` input whose Run completes or fails before delivering it now reads
+  `dropped`. It used to stay `queued` while every withdrawal failed.
+- A `steer` withdrawal interrupted by a Host stop no longer comes back: Run
+  recovery honors the persisted withdrawal and does not deliver the input.
 - A failed Windows daemon launch now names its cause. The native Job
   supervisor appends its failures to `bootstrap.log` as `[Error]` lines
   (the launcher deletes the ready file that used to be the only record),

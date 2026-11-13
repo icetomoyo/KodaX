@@ -177,6 +177,24 @@ it.each([false, true])('withdraws an undelivered steer with image=%s before the 
   expect(transcript?.messages.some(message => message.inputId === steer.inputId)).toBe(false);
 });
 
+it('drops an undelivered steer when its Run settles without a Stop', async () => {
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await runtime.sessions.updateSettings(session.id, { agentMode: 'ama', permissionMode: 'full-access' });
+  const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
+  await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(1);
+  const steer = { sessionId: session.id, inputId: 'steer-dropped', text: 'Dropped guidance.',
+    delivery: 'steer' as const, targetRunId: active.runId! };
+  expect(await first.inputs.submit(steer)).toMatchObject({ state: 'queued', runId: active.runId });
+  // The Provider fails the turn, so the Run settles before any safety point delivers the steer.
+  interruptFirstRequest();
+  const settled = await runtime.runs.await(active.runId!);
+  expect(settled.stop).toBeUndefined();
+  expect((await runtime.runs.get(active.runId!)).interruptInputs).toMatchObject([{ inputId: steer.inputId, state: 'terminal' }]);
+  expect(await first.inputs.read(session.id, steer.inputId)).toMatchObject({ state: 'dropped' });
+  await expect(first.inputs.withdraw(session.id, steer.inputId))
+    .rejects.toThrow('Input has already been submitted or withdrawn.');
+});
+
 it('retains interrupted same-Run steer output after the delivered canonical input when reopened', async () => {
   registerCustomProviders([]);
   clearRuntimeModelProviders();
