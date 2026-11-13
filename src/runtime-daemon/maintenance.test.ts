@@ -206,8 +206,10 @@ it.each(['read', 'delete'] as const)('continues past a persistently denied candi
   }
   syncBuiltinESMExports();
   await expect(maintenance.runOnce()).rejects.toBe(failure);
-  expect(fs.existsSync(later)).toBe(true);
-  expect((await maintenance.runOnce()).removed).toBe(1);
+  // Directory order is filesystem-defined (hash order on ext4), so `later` may
+  // precede the denied candidate and be removed by the failing round.
+  const removedBeforeFailure = !fs.existsSync(later);
+  expect((await maintenance.runOnce()).removed).toBe(removedBeforeFailure ? 0 : 1);
   expect(fs.existsSync(later)).toBe(false);
   expect(fs.existsSync(blocked)).toBe(true);
 });
