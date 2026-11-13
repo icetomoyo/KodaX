@@ -50,9 +50,10 @@ No production accounting change is claimed here. See the
 ## Issue 410: A client exit stop with a connected peer drains the Host and answers late
 
 - Priority: Medium
-- Status: Resolved (source; not released)
+- Status: Resolved (fixed in `v0.7.97-beta.9`)
 - Observed: Space `out/win-unpacked` / SDK 0.7.97-beta.8 with a `kodax` CLI attached to the same Host, Windows x64, 2026-11-13
 - Introduced: `v0.7.97-alpha.2` (client exit receipts with `shutdownHost`)
+- Fixed: `v0.7.97-beta.9`
 - Resolution Date: 2026-11-13
 
 `lifecycle.requestExit({ shutdownHost: true })` ends in `management.stop({ principalId })`.
@@ -85,7 +86,7 @@ and the last client's stop still inspects governed work. See Space Issue 250.
 - Priority: High
 - Status: Resolved (fixed in `v0.7.97-beta.8`)
 - Observed: Space 0.1.47-alpha.5 / SDK 0.7.97-beta.4, Windows x64, 2026-11-12
-- Fixed: `v0.7.97-beta.8`
+- Fixed: `v0.7.97-beta.8` (launch-failure cause naming in `v0.7.97-beta.9`)
 - Resolution Date: 2026-11-12
 
 Customer logs show two `job-membership` probes exceeding the existing 5-second
@@ -3037,7 +3038,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 410 | Medium | Resolved | A client exit stop with a connected peer drains the Host and answers late | `v0.7.97-alpha.2` (client exit receipts) | source; not released | 2026-11-13 | 2026-11-13 |
+| 410 | Medium | Resolved | A client exit stop with a connected peer drains the Host and answers late | `v0.7.97-alpha.2` (client exit receipts) | `v0.7.97-beta.9` | 2026-11-13 | 2026-11-13 |
 | 409 | High | Resolved | Windows daemon Job proof and failed-start cleanup prevent recovery | observed in v0.7.97-beta.4 (customer report); PowerShell Job probe since v0.7.97-alpha.7 | `v0.7.97-beta.8` | 2026-11-12 | 2026-11-12 |
 | 408 | Medium | Resolved | Space SDK leaks user image labels, rejects non-PNG attachments and loses extension approval attribution | observed in v0.7.97-beta.6; visual input/tools since beta.5 | `v0.7.97-beta.7` | 2026-11-12 | 2026-11-12 |
 | 407 | Medium | Resolved | Passive connections and exit receipts ignore the session storage owner | v0.7.97-alpha.7 (storage-owner redirect) | `v0.7.97-beta.6` (FEATURE_305 T3+T4) | 2026-11-10 | 2026-11-11 |
@@ -18678,7 +18679,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ### 2026-11-13: Issue 410
 
 - A principal-scoped client exit stop refuses `connected_clients` before
-  draining or running the preflight; not yet released.
+  draining or running the preflight; shipped in `v0.7.97-beta.9`.
 
 ### 2026-11-12: Issue 409
 

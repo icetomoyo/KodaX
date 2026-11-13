@@ -6,6 +6,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-beta.9] - 2026-11-13
+
+Ninth beta of the v0.7.97 line: data root relocation for Space
+(FEATURE_306), steer withdrawal, and two Host fixes from Space
+integration. `resolveKodaXHome` resolves the data root without touching
+`process.env`, and `copyKodaXDataRoot` copies a data root into an empty
+target. The copy runs under an incomplete marker, skips per-Host state,
+refuses a running Host and rebases absolute paths into the old root.
+`inputs.withdraw` can take back an undelivered `steer` input. A client
+exit stop is refused at once while a peer is attached (Issue 410). A
+failed Windows daemon launch names its cause (Issue 409 follow-up).
+A relative `KODAX_HOME` is now ignored with a warning. Every v0.7.96
+stable and v0.7.97-alpha.1 through beta.8 client contract is retained.
+npm publication remains a manual maintainer action.
+
 ### Added
 
 - `resolveKodaXHome({ env?, homeDir? })` (`@kodax-ai/kodax/agent`): a pure

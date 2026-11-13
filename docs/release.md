@@ -48,12 +48,66 @@ on one commit.
   The step limit is ten minutes because the passing Windows suite alone takes
   about 4.6 minutes.
 
+## v0.7.97-beta.9 release preparation
+
+Release state: `v0.7.97-beta.9` is a candidate awaiting the publishing
+dispatch. npm publication has not occurred. The release is the ninth
+beta of the v0.7.97 line: data root relocation for Space (FEATURE_306),
+steer withdrawal, and two Host fixes from Space integration.
+`resolveKodaXHome` resolves the data root without touching
+`process.env` and ignores a relative `KODAX_HOME` with a warning;
+`copyKodaXDataRoot` copies a data root into an empty target under an
+incomplete marker, skips per-Host state, refuses a running Host and
+rebases absolute paths into the old root in `.json` / `.jsonl` files.
+`inputs.withdraw` takes back a `steer` input until its Run claims it. A
+principal-scoped client exit stop is refused with `connected_clients`
+before draining while a peer is attached (Issue 410), and a failed
+Windows daemon launch names the cause its own attempt logged (Issue 409
+follow-up). Every v0.7.96 stable and v0.7.97-alpha.1 through beta.8
+client contract is retained.
+
+The CI/Release in-place upgrade gates now pin the published
+`0.7.97-beta.8` tarball (published 2026-11-12T15:43:35.104Z; registry
+dist.integrity sha512-KCwvT9mu…Sptkw== packs to the same bytes as the
+kodax-ai-kodax-0.7.97-beta.8.tgz asset of the v0.7.97-beta.8 GitHub
+Release, sha256 ba00f68d…ad200c). The 1,005-run retention test in
+`src/sdk-runtime.test.ts`, which timed out on the Windows system 2/2
+shard in the beta.6 and beta.8 dispatches, now has a 300-second
+deadline.
+
+Local candidate validation on Windows with Node 22.23.1: full build
+(after the version bump, so `dist` carries 0.7.97-beta.9), source and
+test typechecks, the fast tier (3,795 passed, 58 skipped), the unit tier
+(14,029 passed, 7 skipped), the contract tier (1,072 passed),
+`tests/release-workflow.test.ts`, `tests/tracker-consistency.test.ts`
+and the self-knowledge/`kodax_manual` suites (127 passed),
+`test:bundle` (110 passed), `test:host-cutover`, the real published
+beta.8 Host in-place upgrade (1 passed) against the integrity-pinned
+public tarball, the Windows startup ownership and cancellation contracts
+(171 passed), `test:native`, the Windows portable tier (3,223 passed,
+34 skipped) and the Windows system tier (919 passed, 29 skipped). The
+system tier's one failure, `rebuilds its snapshot directory after
+external deletion`, finds its snapshot directory by diffing the shared
+`%TEMP%` listing and picked up a directory created by a live KodaX Host
+on the workstation; it passes solo, and CI runners have no such Host.
+The packaged Electron daemon gate runs in Release CI.
+
+This release follows the single publishing dispatch described under
+[Current release execution](#current-release-execution): `target=all` with
+`release_tag=v0.7.97-beta.9` runs Full CI, all five archive builds and the
+npm package gates, then creates the tag at the dispatched commit and the
+GitHub pre-release from that run's artifacts. Ordinary branch pushes do
+not run CI. Cross-platform manual acceptance, installed Space/SDK
+acceptance, the Space dependency bump (FEATURE_305 T6 and FEATURE_306
+follow-ups) and npm registry publication remain separate maintainer
+steps.
+
 ## v0.7.97-beta.8 release preparation
 
 Release state: `v0.7.97-beta.8` was published on 2026-11-12 as a GitHub
 prerelease from run 43238905900 at `56dea3830` (all five archive builds,
-Full CI and the npm package gates green; 13 assets). npm publication has
-not occurred. The release is the eighth
+Full CI and the npm package gates green; 13 assets) and published to npm
+on 2026-11-12T15:43:35Z (dist-tag `beta`). The release is the eighth
 beta of the v0.7.97 line: the Windows daemon startup reliability
 repairs from the customer incident report (Issue 409). The fail-closed
 startup path no longer compiles C# through PowerShell: Job membership,
@@ -114,9 +168,8 @@ flake covered by one failed-job re-run on the unchanged candidate, after
 which every job passed and the run published. The universal npm tarball
 asset is `kodax-ai-kodax-0.7.97-beta.8.tgz`, sha256
 `ba00f68d…ad200c`, matching `SHA256SUMS`. Cross-platform manual
-acceptance, installed Space/SDK acceptance, the Space dependency bump
-(FEATURE_305 T6 follow-up) and npm registry publication remain separate
-maintainer steps.
+acceptance, installed Space/SDK acceptance and the Space dependency bump
+(FEATURE_305 T6 follow-up) remain separate maintainer steps.
 
 ## v0.7.97-beta.7 release preparation
 
