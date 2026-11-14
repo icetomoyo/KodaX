@@ -104,6 +104,16 @@ describe('reflection gate', () => {
     expect(shouldReflect([user('fix'), call('1', 'bash', { command: 'make' }), result('1', 'boom', true), call('2', 'bash', { command: 'make check' }), result('2', 'ok')])).toBe(true);
     expect(shouldReflect([user('fix'), call('1', 'bash', { command: 'make' }), result('1', 'boom', true)])).toBe(false);
   });
+
+  it('counts a shell command that exited non-zero as a failure, as the bash tool reports it', () => {
+    const failed = 'Command: npx vitest run\nExit: 127\n\n[stderr]\nbash: npx: command not found';
+    const passed = 'Command: export PATH="$FNM:$PATH"; npx vitest run\nExit: 0\n 12 passed';
+    const session = [user('run the tests'), call('1', 'bash', { command: 'npx vitest run' }), result('1', failed), call('2', 'bash', { command: 'export PATH="$FNM:$PATH"; npx vitest run' }), result('2', passed)];
+    expect(shouldReflect(session)).toBe(true);
+    expect(renderEvidence(buildEvidence(session))).toContain('[tool bash: npx vitest run (error)]');
+    expect(shouldReflect([user('run it'), call('1', 'bash', { command: 'make' }), result('1', 'Command: make\nExit: 0\nExit: 2 is printed by the build')])).toBe(false);
+    expect(shouldReflect([user('run it'), call('1', 'read', { path: 'a.txt' }), result('1', 'Command: x\nExit: 1'), call('2', 'read', { path: 'b.txt' }), result('2', 'ok')])).toBe(false);
+  });
 });
 
 let dir: string;

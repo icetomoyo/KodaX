@@ -75,6 +75,19 @@ function resultText(block: Extract<KodaXContentBlock, { type: 'tool_result' }>):
     : block.content.map((item) => (item.type === 'text' ? item.text : '[image]')).join('\n');
 }
 
+/**
+ * The bash tool returns a failed command as ordinary text with an `Exit: N` header
+ * line, not as an error result, so a failed command is read from that first line.
+ */
+const SHELL_EXIT_LINE = /^Exit: (\S+)\s*$/m;
+
+function isFailedResult(block: Extract<KodaXContentBlock, { type: 'tool_result' }>, tool: string, text: string): boolean {
+  if (block.is_error === true) return true;
+  if (tool !== 'bash') return false;
+  const code = SHELL_EXIT_LINE.exec(text)?.[1];
+  return code !== undefined && code !== '0';
+}
+
 function commandOf(input: Record<string, unknown>): string {
   const value = input.command ?? input.path ?? input.file_path ?? input.pattern ?? input.url ?? input.query;
   return typeof value === 'string' ? value : '';
@@ -101,12 +114,13 @@ export function collectSegments(messages: readonly KodaXMessage[]): EvidenceSegm
         calls.set(block.id, { name: block.name, arg: commandOf(block.input) });
       } else if (block.type === 'tool_result') {
         const call = calls.get(block.tool_use_id) ?? { name: 'unknown', arg: '' };
+        const text = resultText(block);
         segments.push({
           source: toolSource(call.name, call.arg),
           label: `${call.name}${call.arg.length > 0 ? `: ${call.arg.slice(0, 200)}` : ''}`,
           tool: call.name,
-          text: clip(resultText(block), TOOL_HEAD_CHARS, TOOL_TAIL_CHARS),
-          isError: block.is_error === true,
+          text: clip(text, TOOL_HEAD_CHARS, TOOL_TAIL_CHARS),
+          isError: isFailedResult(block, call.name, text),
         });
       }
     }
