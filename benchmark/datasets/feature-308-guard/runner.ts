@@ -319,12 +319,19 @@ async function callModel(root: string, alias: ModelAlias, key: string, input: Mo
   }
 }
 
+/** Set by `--resume-interrupted`: a call whose process died in flight is retried once, under its own ledger key. */
+let resumeInterrupted = false;
+
 /** Runs one call unless its result is already on disk (resume after an interruption). */
 async function cached(file: string, root: string, alias: ModelAlias, key: string, input: ModelInput): Promise<Call> {
   const existing = await readJson<Call>(file);
   if (existing !== undefined) return existing;
-  if (ledgerState(readLedger(root)).requestedCells.has(key)) throw new Error(`${key} was requested but has no result; inspect the ledger before retrying`);
-  const result = await callModel(root, alias, key, input);
+  const requested = ledgerState(readLedger(root)).requestedCells;
+  const retryKey = `${key}#retry`;
+  if (requested.has(key) && (!resumeInterrupted || requested.has(retryKey))) {
+    throw new Error(`${key} was requested but has no result; inspect the ledger, then rerun with --resume-interrupted to retry it once`);
+  }
+  const result = await callModel(root, alias, requested.has(key) ? retryKey : key, input);
   await writeJsonAtomic(file, result);
   return result;
 }
@@ -538,11 +545,12 @@ async function main(): Promise<void> {
   const mode = process.argv[2];
   const root = flag('raw-root') ?? GUARD_ROOT;
   const pilot = process.argv.includes('--pilot');
+  resumeInterrupted = process.argv.includes('--resume-interrupted');
   const out = (value: object): void => { process.stdout.write(`${JSON.stringify(value, null, 2)}\n`); };
   if (mode === 'prepare') out(await prepare(root));
   else if (mode === 'run') out(await run(flag('confirm-budget') ?? '', pilot, root));
   else if (mode === 'pack') out(await pack(root, pilot));
-  else throw new Error('usage: runner.ts <prepare|run|pack> [--pilot] [--raw-root DIR] [--confirm-budget TOKEN]');
+  else throw new Error('usage: runner.ts <prepare|run|pack> [--pilot] [--resume-interrupted] [--raw-root DIR] [--confirm-budget TOKEN]');
 }
 
 if (process.env.VITEST === undefined && import.meta.url === pathToFileURL(process.argv[1] ?? '').href
