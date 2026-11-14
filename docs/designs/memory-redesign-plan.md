@@ -690,3 +690,23 @@ Use stage, blinded review of 24 chains (written before unblinding):
 - `u-node-path` was solved by no arm. The world returns empty output for many shell probes, and the answers ran out of rounds. This applied to all arms.
 
 **Verdict: fix.** Writing and use hold: the rule line helps the next session at a cost of about 35 tokens and draws no unrelated reads. The confirm step lost true lessons to quote mechanics, which the host fix addresses (checked by the replay above). Its remaining harm has one cause, confirming on a repeated situation. That is a prompt question, so it gets its own pre-registered run (r2).
+
+**r2: when a candidate holds (pre-registered 2026-11-14, before any r2 call).** The change under test is one passage of the reflection prompt. The `memory_reflect` description and the host (as of `d715c64c4`) do not change.
+
+- Before: "If the session shows a candidate holds, use corroborate with the exact words that show it."
+- After: "A candidate holds when this session met the situation it names and the way it gives is the way that worked. Then use corroborate with the exact words that show it. A session that met the situation but got past it another way does not confirm the candidate, because a confirmed note is shown to every later session as settled. When that other way is the better one, rewrite the candidate to it. A session that never met the situation says nothing about a candidate, so leave it as it is."
+
+The passage targets the r1 harm: all three harmful confirmations met the situation without using the candidate's way, or never met it. Two runs check it:
+
+- **`f308-holistic-r2` (target effect).** It reruns the confirm stage only: 11 cases × 3 aliases × 2 repetitions = 66 calls, with the k27 repetition-1 slice as pilot. The use stage does not read the reflection prompt, so its r1 result stands. Budget: 80 calls, 1.5M tokens, $3. The worst case is $0.031. The case hash is unchanged (`ca399ac0…`).
+- **`f308-notelines-r4` (regression).** Arm A is the reflection text as shipped now. Arm B adds the passage. The run covers the 27 cases of §19: 13 reflection regression cases, 8 first sessions and 6 held-out sessions. With 3 aliases and 2 repetitions that is 324 cells. The pilot has 16 cells: `r9` (a user confirms a candidate), `r7` (a stored inferred note), `m-node-not-installed` and `h-python3` on v4flash and glm52. The budget is unchanged: 410 calls, 3.5M tokens, $3.
+
+**Decision rule for r2.** The per-case review of the confirm stage and the blinded pair review of notelines are the verdict. Mechanical counts are diagnostics only. The r1 numbers are taken after the host fix.
+
+- **ship:**
+  - Harmful confirmations in the leave and correct cases are at most 2 of 30.
+  - Durable chains confirmed stay at 14 of 30 or more (r1: 16).
+  - Corrections stay at 4 of 18 or more (r1: 6).
+  - Notelines shows no reflection case consistently worse in B, and `r9` still corroborates in B.
+- **iterate:** harm falls, but true confirmations or corrections fall below those floors, or a notelines case regresses.
+- **revert:** harm does not fall.

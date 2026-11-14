@@ -19,16 +19,19 @@ import { ARMS } from './inputs.js';
  * 1 of 6 pairs against A's 4, so r3 says that a tool found under another name or
  * path is the note. h-python3 shaped that wording, so r3 adds two fresh held-out
  * cases (h-compose-v2, h-npx-tsc) and pilots the cases the change touches.
+ * r4: regression check for a later change. Arm A is the text shipped after r3; arm B
+ * adds when a candidate holds (the holistic run confirmed candidates on a repeated
+ * situation). The pilot covers the cases with notes in the store plus two lessons.
  */
-export const NOTELINE_REVISION = 'f308-notelines-r3' as const;
+export const NOTELINE_REVISION = 'f308-notelines-r4' as const;
 export const NOTELINE_CASES_SHA256 = 'ae18665539611b5eb159422d40f36e54b5446a40c658a70f920bdfba3ebab085' as const;
-/** Hash of every arm-A input. Arm A's two texts equal the committed production texts; r3 re-pinned it only because two cases were added. */
-export const NOTELINE_ARM_A_SHA256 = '98402eaa83bab95322fdf9f499a4be97d95cfde61c707cbb6ad0b71e0bd30898' as const;
+/** Hash of every arm-A input. Arm A's two texts equal the production texts shipped after r3. */
+export const NOTELINE_ARM_A_SHA256 = 'e5dd091cc3dcb9037dae64217d6fd8256dd8ab3c327bc8e3059939feee58bdd5' as const;
 export const NOTELINE_ALIASES: readonly ModelAlias[] = Object.freeze(['ark/v4flash', 'zhipu/glm52', 'ark/k27']);
 export const NOTELINE_RAW_ROOT = path.join(os.tmpdir(), 'kodax-eval-dumps', 'feature-308', NOTELINE_REVISION);
 
-/** Pilot: one case per expectation kind, two aliases, one repetition, both arms. */
-export const PILOT_CASE_IDS: readonly string[] = Object.freeze(['h-python3', 'm-node-not-installed', 'h-compose-v2', 'h-npx-tsc']);
+/** Pilot: the cases the change touches, two aliases, one repetition, both arms. */
+export const PILOT_CASE_IDS: readonly string[] = Object.freeze(['r9', 'r7', 'm-node-not-installed', 'h-python3']);
 export const PILOT_ALIASES: readonly ModelAlias[] = Object.freeze(['ark/v4flash', 'zhipu/glm52']);
 
 const REPETITIONS = 2;

@@ -43,7 +43,13 @@ import { answerToolCall, noteFileMap, turnSettles } from '../feature-308-inferre
 import { buildNotesCellInputFrom, seedNotes, type SeededNotes } from '../feature-308-notes/inputs.js';
 import { CONFIRM_CASES, SESSION_ONE, USE_CASES, type ConfirmCase, type UseCase } from './cases.js';
 
-export const HOLISTIC_REVISION = 'f308-holistic-r1' as const;
+/**
+ * r1: both stages (see the design record §20).
+ * r2: the reflection prompt says when a candidate holds. Only the confirm stage reads
+ * that prompt, so r2 runs the confirm stage alone; the use stage stays in r1.
+ */
+export const HOLISTIC_REVISION = 'f308-holistic-r2' as const;
+const RUN_USE_STAGE = false;
 export const HOLISTIC_ALIASES: readonly ModelAlias[] = Object.freeze(['ark/k27', 'zhipu/glm52', 'ark/v4flash']);
 export const HOLISTIC_ROOT = path.join(os.tmpdir(), 'kodax-eval-dumps', 'feature-308', HOLISTIC_REVISION);
 const PILOT_ALIAS: ModelAlias = 'ark/k27';
@@ -57,18 +63,18 @@ export type Arm = 'N' | 'O' | 'R';
 export const ARMS: readonly Arm[] = ['N', 'O', 'R'];
 
 const CONFIRM_CALLS = CONFIRM_CASES.length * HOLISTIC_ALIASES.length * REPETITIONS;
-const USE_CALLS = USE_CASES.length * HOLISTIC_ALIASES.length * REPETITIONS * ARMS.length * MAX_ROUNDS;
+const USE_CALLS = RUN_USE_STAGE ? USE_CASES.length * HOLISTIC_ALIASES.length * REPETITIONS * ARMS.length * MAX_ROUNDS : 0;
 
 export const HOLISTIC_BUDGET = {
   /** 11 confirm chains x 3 aliases x 2 reps, one call each. */
   confirmCalls: CONFIRM_CALLS,
-  /** Upper bound: 4 use cases x 3 aliases x 2 reps x 3 arms x 3 rounds; early stops cut it well below. */
+  /** Upper bound when the use stage runs: 4 use cases x 3 aliases x 2 reps x 3 arms x 3 rounds; early stops cut it well below. */
   useCalls: USE_CALLS,
   /** The pilot is the k27 repetition-1 slice of the full plan, so it adds nothing; 20% headroom on top. */
-  maxProviderCalls: 340,
+  maxProviderCalls: 80,
   maxOutputTokensPerCall: 8192,
-  /** prepare measures about 8k input per confirm call and 13k per use call; every call at the output cap stays under this. */
-  maxTotalTokens: 7_000_000,
+  /** prepare measures about 6k input per confirm call; 80 calls at the output cap stay under this. */
+  maxTotalTokens: 1_500_000,
   maxExternalSpendUsd: 3,
   timeoutMs: 180_000,
 } as const;
@@ -340,7 +346,7 @@ export async function prepare(root: string = HOLISTIC_ROOT): Promise<object> {
   }
   const worstCaseUsd = HOLISTIC_ALIASES.reduce((sum, alias) => sum
     + REPETITIONS * confirmTokens.reduce((total, tokens) => total + estimateCost(alias, { inputTokens: tokens, outputTokens: HOLISTIC_BUDGET.maxOutputTokensPerCall }), 0)
-    + REPETITIONS * use.reduce((total, item) => total + Object.values(item.arms).reduce((armTotal, arm) =>
+    + (RUN_USE_STAGE ? REPETITIONS : 0) * use.reduce((total, item) => total + Object.values(item.arms).reduce((armTotal, arm) =>
       armTotal + MAX_ROUNDS * estimateCost(alias, { inputTokens: arm.inputTokens * 1.3, outputTokens: HOLISTIC_BUDGET.maxOutputTokensPerCall }), 0), 0), 0);
   const summary = { revision: HOLISTIC_REVISION, caseHash: caseHash(), confirmTokens, use, worstCaseUsd: Number(worstCaseUsd.toFixed(3)) };
   await writeJsonAtomic(path.join(root, 'prepare.json'), summary);
@@ -358,7 +364,7 @@ export async function run(confirmBudget: string, pilot: boolean, root: string = 
   const lane = async (alias: ModelAlias): Promise<void> => {
     const work = [
       ...plannedChains(CONFIRM_CASES, pilot).filter((chain) => chain.alias === alias).map((chain) => () => runConfirm(root, chain)),
-      ...plannedChains(USE_CASES, pilot).filter((chain) => chain.alias === alias).map((chain) => () => runUse(root, chain)),
+      ...(RUN_USE_STAGE ? plannedChains(USE_CASES, pilot) : []).filter((chain) => chain.alias === alias).map((chain) => () => runUse(root, chain)),
     ];
     for (const step of work) {
       if (failure !== undefined) return;
@@ -518,7 +524,7 @@ async function packUse(root: string, pilot: boolean): Promise<object> {
 
 export async function pack(root: string = HOLISTIC_ROOT, pilot = false): Promise<object> {
   const { calls, committedTokens, committedUsd } = ledgerState(readLedger(root));
-  return { confirm: await packConfirm(root, pilot), use: await packUse(root, pilot), ledger: { calls, committedTokens, committedUsd } };
+  return { confirm: await packConfirm(root, pilot), ...(RUN_USE_STAGE ? { use: await packUse(root, pilot) } : {}), ledger: { calls, committedTokens, committedUsd } };
 }
 
 // ---------------------------------------------------------------- cli
