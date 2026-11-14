@@ -489,3 +489,12 @@ Settings:
 - **recommend-adopt** (some notes active at once): E's lift on durable cases is clear, and its harm on the other four cases is rare. The note-quality review must also identify a write-time property that separates the two kinds, so that only the safe part goes active. Example: a local failure plus a recovery confirmed by the next command, with no transient cause named.
 - **recommend-keep** (quarantine stays): harm is comparable to lift, or no such property exists.
 - Either way, changing the rule is the owner's decision.
+
+**Amendments after the pilots (before the full run).** Four k27 pilots (r1 to r4) changed the setup. None of them changed the questions or the decision rule.
+
+- **Session 2 starts from a short history and runs up to three rounds.** With no history, every arm explored first (`ls`, `glob`), and a single call never reached the judged command. The harness now continues the conversation (`runOneShot` takes no user message and returns the assistant content). Each case has a fixed `world` that answers exploration calls, and a read of a note file returns the stored note. The run stops at the first judged action.
+- **Arm E promotes candidates in both scopes.** k27 filed "Node is not installed" under the user scope. That is where the most common real lesson, a tool missing from PATH, belongs.
+- **Two oracles now judge more actions.** `d-tsc-root` also judges `npm run build`; all arms used it, and it skips `tests/e2e`. `s-unpublished-version` also judges the edit to `package.json`.
+- **`d-gh-jq` was reworked.** Session 2 now asks for a filtered file, because arm A passed the first version without filtering anything.
+
+In the r4 pilot, arm A makes the mistake in all four durable cases. The reflection job wrote notes in 3 of 8 cases and proposed one skill (`d-node-path`). Few notes is a production property, recorded as part of question 3.

@@ -21,6 +21,8 @@
 
 import {
   getProvider,
+  reconcileAssistantContent,
+  type KodaXAssistantBlock,
   type KodaXMessage,
   type KodaXEphemeralSuffix,
   type KodaXReasoningRequest,
@@ -87,7 +89,11 @@ async function withProviderCallSlot<T>(alias: ModelAlias, call: () => Promise<T>
 
 export interface OneShotInput {
   readonly systemPrompt: string;
-  readonly userMessage: string;
+  /**
+   * The user turn appended after `priorMessages`. Omit it to continue a
+   * conversation whose last prior message already carries the tool results.
+   */
+  readonly userMessage?: string;
   /** Optional tools advertised to the provider (default: none). */
   readonly tools?: readonly KodaXToolDefinition[];
   /** Optional production-aligned forced report tool for structured judges. */
@@ -117,6 +123,11 @@ export interface OneShotOutput {
   readonly toolCalls: ReadonlyArray<{ name: string; input: unknown }>;
   /** Provider-reported usage; absent stays absent and fails strict coverage gates. */
   readonly usage?: KodaXTokenUsage;
+  /**
+   * The assistant turn as the production loop stores it (thinking, text and tool
+   * blocks in order), for a caller that continues the conversation with tool results.
+   */
+  readonly assistantContent: readonly KodaXAssistantBlock[];
 }
 
 /**
@@ -135,7 +146,7 @@ export async function runOneShot(
 
   const messages: KodaXMessage[] = [
     ...(input.priorMessages ?? []),
-    { role: 'user', content: input.userMessage },
+    ...(input.userMessage === undefined ? [] : [{ role: 'user' as const, content: input.userMessage }]),
   ];
   const tools = input.tools === undefined ? [] : [...input.tools];
 
@@ -186,6 +197,7 @@ export async function runOneShot(
     toolCalls,
     durationMs,
     ...(result.usage !== undefined ? { usage: result.usage } : {}),
+    assistantContent: reconcileAssistantContent(result.contentBlocks, result),
   };
 }
 

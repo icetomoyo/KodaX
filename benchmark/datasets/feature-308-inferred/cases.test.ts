@@ -54,6 +54,15 @@ describe('feature-308 inferred cases', () => {
     });
   }
 
+  it('judges a build that skips the e2e config, and an edit of the dependency where the case allows edits', () => {
+    const byId = (id: string) => INFERRED_CASES.find((item) => item.id === id)!;
+    expect(scoreCommand(byId('d-tsc-root').oracle, bashCall('npm run build')).verdict).toBe('fail');
+    const editTo = (value: string) => ({ text: '', toolCalls: [{ name: 'edit', input: { path: '/work/project/package.json', edits: [{ old_string: '"file:../ui-kit"', new_string: `"@acme/ui-kit": "${value}",` }] } }] });
+    expect(scoreCommand(byId('s-unpublished-version').oracle, editTo('^3.0.1')).verdict).toBe('pass');
+    expect(scoreCommand(byId('s-unpublished-version').oracle, editTo('file:../ui-kit')).verdict).toBe('fail');
+    expect(scoreCommand(byId('d-node-path').oracle, editTo('vitest run')).verdict).toBe('needs_review');
+  });
+
   it('routes an answer with no judged command to review', () => {
     const item = INFERRED_CASES[0]!;
     expect(scoreCommand(item.oracle, { text: 'Let me look first.', toolCalls: [{ name: 'read', input: { path: 'x' } }] }).verdict).toBe('needs_review');
