@@ -458,7 +458,7 @@ fail closed.
 | `./runtime` | `dist/sdk-runtime.js` | Stable host Runtime facade and daemon protocol/schema exports. |
 | `./sandbox` | `dist/sdk-sandbox.js` | Explicit ASRT capability, setup/doctor, and host-owned contained execution. |
 | `./a2a` | `dist/sdk-a2a.js` | Bidirectional A2A 1.0 client/server integration edge. |
-| `./experimental-memory` | `dist/sdk-experimental-memory.js` | Opt-in governed Memory Agent and scoped session contracts. |
+| `./experimental-memory` | `dist/sdk-experimental-memory.js` | Legacy governed Memory Agent and scoped session contracts; rollback only, removed by FEATURE_309 (ADR-076). |
 
 The build path is:
 
@@ -1490,10 +1490,11 @@ Core modules:
 - LLM expansion,
 - built-in skills copied during build,
 - `packages/agent/src/learning` for immutable learned revisions, canonical
-  lifecycle records, project canary admission, usage/outcome receipts, and
-  Learning Center actions,
-- `packages/coding/src/learning-reviewer.ts` plus `memory-runtime.ts` for the
-  bounded production review and Memory-first carrier decision.
+  lifecycle records, usage/outcome receipts, and Learning Center actions,
+- `packages/coding/src/memory/note-reflection-job.ts`, whose reflection pass
+  proposes skills as `ready` for the user to trust (DD §14). The canary
+  admission and `learning-reviewer.ts` serve only the legacy memory plane
+  until FEATURE_309.
 
 The published `@kodax-ai/kodax/skills` subpath is a focused subset of agent
 capabilities. It should not require importing the full coding package.
@@ -1724,70 +1725,81 @@ The repository test harness may additionally bind a daemon to its Vitest worker
 for abnormal worker-loss cleanup, but production daemon lifetime remains
 explicitly administered rather than client- or idle-owned.
 
-## 14. Governed Memory Runtime
+## 14. Note Memory
 
-The sole durable memory authority remains `packages/agent/src/memory-control`.
-FEATURE_260 adds these focused layers:
+ADR-076 records the decision; HLD §10 the shape. The switch is
+`isNoteMemoryEnabled()` (`KODAX_MEMORY_NOTES`, on unless `0`).
+`noteMemoryAppliesTo` is the single check that a run is a root run.
 
-- `packages/agent/src/experimental-memory`: public `MemoryAgent`, scoped
-  `MemorySession`, policy, passive recall, deliberate query, observations,
-  outcomes, and bounded episode close/review.
-- `packages/agent/src/memory`: exact identity/applicability and managed memory
-  path policy.
-- `packages/coding/src/memory-runtime.ts`: coding integration, project identity,
-  passive recall preparation, episode lifecycle, and review scheduling.
-- `packages/coding/src/memory`: coding context/observation extraction,
-  prompt-safe rendering, policy artifact hashes, and trace-only decision links.
-- `packages/coding/src/tools/memory-recall.ts`: the session-bound read-only
-  `memory_recall` tool; mutation tools share the managed-path guard.
+**Store layout.** For the local CLI, under the run's `configHome`:
 
-Routine exact recall remains synchronous and renders only into the dynamic
-prompt suffix. FEATURE_275 adds `MemorySession.intervene()` for three sparse
-events: tool failure, verification failure, and committed context compaction.
-The coding loop projects current objective/open todos, then combines them with
-recent prompt-safe observations and a fresh governed pack. Deterministic exact
-pins run first; an optional host `memoryRecallRunner` may add only exact offered
-IDs. Selection is awaited before the Action-LLM request, capped at three
-candidates and three calls per Session, and discarded if the observation
-sequence changes.
+- `projects/<key>/notes/` for the project store. `<key>` comes from the git
+  remote, or from the main checkout root (`git rev-parse --show-toplevel
+  --git-common-dir`) when there is no remote, so subdirectories and linked
+  worktrees share one store. Outside git it is the directory.
+- `notes/` for the user store.
+- A host that names a `memoryIdentity` gets the tenant's own stores under
+  `memory-scopes/`. An identity the runner derives (`tenantId` of
+  `local:<configHome>`) keeps the local layout. Child agents inherit the root
+  run's `configHome`, so a root run and its children share one store.
 
-The central prompt-safe claim gate runs before selection and again before the
-evidence envelope. Private/sensitive observations are excluded; suspicious
-tool text becomes a neutral source reference. The daemon DTO explicitly rejects
-the function-valued runner. Deliberate query appends a normal tool call/result
-tail. None of these paths writes memory. Episode promotion first consults existing
-claims, then emits at most a governed proposal or a deferred inbox record; the
-existing preview/fingerprint/apply controller is the only durable write path.
-`MemoryDecisionReceipt` stores candidate IDs, selected candidate IDs, exposed
-evidence refs, event triggers, and policy facts in tracing, not hidden reasoning
-or a second event database.
+Each store holds `<id>.md` notes, `MEMORY.md` (index budget: project 1600
+tokens, user 800; notes past the budget are linked from `MEMORY.more.md`),
+`.revisions/` (kept 30 days) and `.legacy-converted.json` once a conversion
+finished. The user store also holds the reflection cursor (`.reflected.json`),
+the daily call counter (`.reflection-budget.json`) and `.memory-stats.json`
+(reads, reflections, applied and rejected operations). State files are written
+atomically.
 
-The root-only `memory_intent` tool binds an exact quote from the current user
-turn and implements `list`, `remember`, `correct`, `forget`, plus exceptional
-decision inspection and approval/rejection. The quote must identify the operation
-and exact target; revision-bearing decision handles survive turn/binding changes
-and stale revisions fail closed. Mutating operations reject any text
-whose stored statement is not itself an exact current-turn claim span. Safe
-explicit operations call `MemoryManagementController.remember()` or `forget()`
-immediately. Every new fact, preference, policy, or procedure has a stable semantic
-claim key. Foreground completion still emits the ordinary outcome plus a bounded
-host-owned handled-operation marker, so autonomous Memory and Skill learning are
-not skipped and cannot repeat the explicit mutation.
-Duplicates are idempotent; correction requires an exact target; deterministic
-safety, identity, scope, applicability, and fingerprint checks remain mandatory.
-Ambiguous/broad operations return clarification, conflicts persist a readable
-decision, and restricted/secret content is rejected without persistence.
+**`packages/agent/src/memory-store`** (no coding knowledge):
 
-Autonomous outcome review is separate. The model returns only actions and
-warnings; the host binds trigger, time, source/candidate references, and digest
-authority before validation. Deterministic low-risk verified actions may
-auto-apply; other actions remain decisions. Same-process drains are serialized
-best effort, and restart recovery owns any persisted remainder.
+| Module | Role |
+|---|---|
+| `record`, `store`, `fs-util`, `state-file` | Note frontmatter (scope, type, state, source, `used`, `lastUsedAt`), one write queue per note directory, atomic writes, corrupt-file reporting |
+| `index-builder` | `MEMORY.md` and `MEMORY.more.md`; candidates and archived notes are left out |
+| `memory-op` | The `memory` tool's write/edit/delete; an inferred write needs a `why` |
+| `quote`, `secrets` | Exact-quote checks (pieces split at line breaks, ellipses and result heads; ten characters of weight for reflection, six for the tool) and the secret scan |
+| `reflection-op` | Host checks for reflection: write, confirm, dispute, rewrite and `skill` |
+| `reflection-gate`, `reflection-cursor`, `reflection-budget`, `reflect-session` | Skip sessions with one user turn and no recovered failure; read a session again after 3 more user turns (`REFLECT_AGAIN_AFTER_TURNS`); 10 calls per UTC day (`DAILY_REFLECTION_CALLS`), taken before the call |
+| `evidence` | The session as evidence, capped at 60k characters (`EVIDENCE_BUDGET_CHARS`); network shell output counts as external |
+| `usage`, `stats` | Observed note reads and counters |
+| `organizer`, `revisions` | Archive inferred notes untouched for 90 days (`STALE_AFTER_DAYS`); never archive a user-stated note; merge equal descriptions; prune revisions after 30 days |
+| `converter`, `paths` | Legacy memdir and `memory-scopes/` conversion; store roots |
 
-The normal REPL surface lists accepted Memory and exceptional decisions.
-`open` delegates to the host/default external application (never an embedded
-editor) and opens one exact storage scope/item. `MEMORY.md` remains
-a derived readable projection; hidden `rebuild` recreates only that projection.
+**`packages/coding`**:
+
+- `memory/note-memory.ts`: the switch, `resolveNotePlace`, `noteStoresFor`,
+  `projectKeyOf`, `convertLegacyMemory` (once per store, retried after a day
+  on failure), `renderNoteMemorySection` (the `memory-notes` prompt section),
+  `createNoteMemoryBinding` (passes the current user message for quote checks),
+  `toolBatchFailed` and `noteFailureReminder`.
+- `memory/note-reflection.ts`: the reflection request (system prompt, current
+  notes, evidence, `memory_reflect` and `skill_propose`).
+- `memory/note-reflection-job.ts`: `scheduleNoteRunFinish` (not awaited),
+  `finishNoteRun` (count reads, reflect, organize both stores, prune
+  revisions), `createProviderJudge` and `createLearnedSkillSink`, which commits
+  a `ready` skill with `commitLearnedSkillRevision`.
+- `memory/note-work-queue.ts`: runs passes one at a time; the exit drain waits
+  for it, so `kodax -p` finishes its writes.
+- `tools/memory.ts`: the `memory` tool, `mutates-state`, refused in plan mode,
+  root agent only.
+- `agent-runtime/run-substrate.ts` and `task-engine/runner-driven.ts` (SA and
+  AMA) wire the binding and the follow-up. After a batch where
+  `toolBatchFailed` holds, the next request appends `noteFailureReminder` to
+  its last user message only; the transcript keeps no copy.
+
+Reflection is skipped for CLI-bridge providers, which drop the request's tools.
+A host with its own learning or memory reviewer owns learning, and the
+follow-up then only counts reads. Failures go to a diagnostic, never to the run.
+
+**`packages/repl`**: `/memory` lists notes, `candidates`, `show`, `approve` and
+`forget` (`project:` or `user:` prefixes an ambiguous id).
+
+**Legacy plane (until FEATURE_309).** With `KODAX_MEMORY_NOTES=0` the runtime
+builds `memory-control`, the `experimental-memory` Memory Agent,
+`memory-runtime.ts`, `memory_intent`, `memory_recall`, the FEATURE_275
+interventions and the learning reviewer as before. Space's memory popout,
+`/memory` and `memory.*` IPC still use it (Issue 411).
 
 ## 15. Workflow Runtime
 

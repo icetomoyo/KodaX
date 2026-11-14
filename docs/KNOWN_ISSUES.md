@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-13_
+_Last Updated: 2026-11-15_
 
 ---
 
@@ -46,6 +46,31 @@ This predates the child contract projection; the eval uses raw per-call usage,
 not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
+
+## Issue 411: Space's memory UI cannot see notes while note memory is on by default
+
+- Priority: Medium
+- Status: Open
+- Introduced: FEATURE_308 default flip on `KodaX-next-dev` (`2b4ca7c72`, 2026-11-13); not yet released
+- Created: 2026-11-15
+- Blocks: FEATURE_309 (legacy memory code deletion)
+
+Space's Memory popout, its `/memory` command and its `memory.*` IPC channels
+drive a legacy memory-control controller: `runtime.memory.forProject(root).controller`
+on the daemon path, or `createMemoryControlPlane` with `resolveMemoryRoot` and
+`memoryProposalRevision` from `@kodax-ai/kodax/agent`. With note memory on, nothing
+writes that store any more, so Space shows old memories and cannot list, show,
+approve or forget notes. Space's `/learn` also reads the legacy proposal store
+and skill ledgers directly, and its startup probe requires
+`experimental-memory` to export `createMemoryAgent`, `createMemoryControlPlane`
+and `MEMORY_POLICY_VERSION`. `runtime.learning` is unaffected: skills proposed
+by note reflection appear there as `ready`.
+
+Closing this needs a note client surface in KodaX (list, show, approve, forget)
+that Space moves its memory UI onto, with the Space pin bump. Until then
+FEATURE_309 must keep these entries. Workaround: the CLI's `/memory`, or the
+note files under `~/.kodax/projects/<project>/notes/` and `~/.kodax/notes/`.
+See [ADR-076](ADR.md#adr-076-note-memory-replaces-the-governed-memory-plane).
 
 ## Issue 410: A client exit stop with a connected peer drains the Host and answers late
 
@@ -3038,6 +3063,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 411 | Medium | Open | Space's memory UI cannot see notes while note memory is on by default | FEATURE_308 default flip (unreleased, `KodaX-next-dev`) | — | 2026-11-15 | — |
 | 410 | Medium | Resolved | A client exit stop with a connected peer drains the Host and answers late | `v0.7.97-alpha.2` (client exit receipts) | `v0.7.97-beta.9` | 2026-11-13 | 2026-11-13 |
 | 409 | High | Resolved | Windows daemon Job proof and failed-start cleanup prevent recovery | observed in v0.7.97-beta.4 (customer report); PowerShell Job probe since v0.7.97-alpha.7 | `v0.7.97-beta.8` | 2026-11-12 | 2026-11-12 |
 | 408 | Medium | Resolved | Space SDK leaks user image labels, rejects non-PNG attachments and loses extension approval attribution | observed in v0.7.97-beta.6; visual input/tools since beta.5 | `v0.7.97-beta.7` | 2026-11-12 | 2026-11-12 |

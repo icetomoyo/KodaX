@@ -7634,3 +7634,124 @@ directory on the data root and never split process or storage by profile.
   user's state.
 - **Deprecate `profile` and remove it in a later major version.** It keeps a
   public option with no meaning and a second code path to test until then.
+
+## ADR-076: Note Memory Replaces the Governed Memory Plane
+
+**Status**: Accepted (2026-11-15). Implemented by FEATURE_308 on
+`KodaX-next-dev`, on by default since `2b4ca7c72`. Removal of the legacy
+plane is FEATURE_309. Supersedes the memory parts of FEATURE_260 and FEATURE_275.
+
+**Context**: The governed memory plane (`memory-control`,
+`experimental-memory`, the coding memory runtime and the learning review) was
+about 21k non-test lines plus 9k for learning. It had little measured effect.
+Recall showed at most five title-ranked hints with no relevance floor, so
+Chinese titles never matched. The episode judge saw a 512-character digest, so
+it learned templates such as "run the test". Nothing wrote `lastUsedAt` or
+assigned `stale`. A fixed block of about 3K tokens of memory rules went into
+every request. Claim identity lived in a sidecar, so a hand-edited memory
+silently dropped out of recall. Skill learning had a second promotion ladder
+and a three-invocation canary. No eval had shown that memory or learned skills
+improved a task.
+
+**Decision**:
+
+1. **A note is one markdown file.** Each store has a `MEMORY.md` index with one
+   line per note, and the model reads the index and opens a note with the read
+   tool. There is no ranking code. The indexes ride in the managed run context,
+   not the system prompt, so writing a note leaves the prompt cache intact. There are two stores: one per project
+   (keyed by git remote, or by the main checkout root without one) and one per
+   user. A store over its index budget links the rest from `MEMORY.more.md`.
+2. **The `memory` tool writes, edits and deletes notes.** A change made because
+   the user asked needs an exact quote of the current user message. A note the
+   model infers carries a `why` and starts as a `candidate`.
+3. **A candidate stays out of the index** until a later session confirms it or
+   the user approves it. A note the user stated is `active` at once.
+4. **Reflection runs after a root run ends**, in the background, on the
+   session's own provider and model. It can write, confirm, dispute or rewrite
+   notes and propose a skill. The host checks every operation: quotes must come
+   from user messages or local tool output, external content cannot authorize a
+   note, user-scope notes change only on the user's words, and secrets are
+   refused. It makes at most ten calls a day, reads at most 60k characters of
+   evidence, and reads a session again after three more user turns. It skips
+   CLI-bridge providers and hosts that bring their own reviewer.
+5. **A candidate is confirmed only when its way is the way that worked** in the
+   later session, not when the session merely met the same situation. The
+   index line states the rule, not a topic.
+6. **Usage comes from observed reads** of a note file. A failure after a read
+   does not dispute the note; disputes come only from reflection.
+7. **Housekeeping makes no model call.** An inferred note that nobody confirmed
+   or read for 90 days is archived. A note the user stated is never archived
+   automatically. Notes with the same description merge. Revisions are kept 30
+   days.
+8. **The Learning Center stays the skill store.** Reflection proposes a skill as
+   `ready`, and it waits for the user. `runtime.learning` and its 13 methods are
+   unchanged. The canary is not used.
+9. **After a failed tool batch, the next request carries a reminder** to read a
+   note whose index line fits the failure. The reminder is not persisted in the
+   transcript.
+10. **Note memory is on by default.** `KODAX_MEMORY_NOTES=0` returns to the
+    legacy plane, which stays until FEATURE_309 removes it. The first session
+    copies legacy memories into notes once and leaves the old files in place.
+
+DD §14 lists the modules, files and constants.
+
+**Evidence** (eval guidelines in `benchmark/EVAL_GUIDELINES.md`; datasets under
+`benchmark/datasets/feature-308-*`):
+
+- Retrieval: 0 of 12 to 12 of 12 with the right note among 40.
+- Two sessions, real reflection in between (42 chains): the memory-addressable
+  mistakes went from 19 with no memory to 0. An irrelevant note distracted no
+  answer, and a stale note misled none.
+- Real sessions replayed through reflection: about half the notes were useful,
+  and inferred ones stayed candidates.
+- Skill proposals: a hard confirmed procedure became a correct skill in 6 of 6.
+  A documented one-off and a planted web instruction produced none.
+- Inferred lessons (48 chains): harm was as large as lift, and nothing at write
+  time told them apart, so candidates stay.
+- Index lines as rules: better on the index-line and failure cases, and no
+  reflection case got worse.
+- Confirmation (30 durable chains): 18 confirmed, 1 harmful confirmation, 10 of
+  18 wrong notes corrected.
+- Guard lessons (81 chains): the model marked 4 of 13 lookalike notes as guards,
+  so a self-labelled guard does not skip the quarantine.
+- Failure reminder (63 chains per arm): right actions 22 with no memory, 41
+  with notes, 42 with notes and the reminder. The reminder made the weaker
+  model read the note body (0 to 8 chains), which carries the scoped form of a
+  fix. Its cost was about one round in a few chains and no harm. The keep
+  decision rests on this post-hoc measure, because the pre-registered lift
+  threshold of four more right chains was not met.
+
+**Consequences**:
+
+- Each request carries a short rule block and two indexes instead of the fixed
+  3K-token block.
+- A user can read and edit notes in any editor. A hand edit stays in the index.
+- A true inferred lesson costs one repeated failure before it is confirmed.
+- Reflection costs at most ten model calls a day per agent home.
+- A one-shot `kodax -p` run waits for queued note work at exit.
+- Space's memory UI still reads the legacy store, which nothing writes while
+  notes are on (Issue 411). FEATURE_309 waits for it.
+
+**Rejected alternatives**:
+
+- **Ranking or a passive recall pack.** Ranked hints never reached the model
+  for non-ASCII titles, and the index lets the model judge relevance itself.
+- **`memory_recall` and the 8-action `memory_intent`.** The read tool and one
+  `memory` tool cover them.
+- **A Host idle sweep for reflection.** The Host has no provider or credential
+  for a model call, and the CLI does not always run under a Host.
+- **Disputing a note when a failure follows its read.** Any red test would
+  dispute whatever note was open.
+- **Archiving unused user-stated notes.** Their index line may be all the model
+  needs, and that use is invisible to the host.
+- **Rebuilding the Learning Center over the note store.** It would break the
+  `runtime.learning` contract Space uses, for no gain.
+- **Making inferred lessons active at once.** Harm matched lift in the
+  inferred-lesson experiment.
+- **Letting a self-labelled guard skip confirmation.** The label landed on the
+  process-killing notes it should exclude.
+- **Porting the reminder after compaction.** The index rides in every managed
+  request, after a compaction too, so a reminder would repeat what the request
+  already holds.
+- **Deleting the legacy plane with the default flip.** It is the only rollback,
+  and Space still depends on it.

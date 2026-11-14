@@ -8,7 +8,7 @@
  *
  *   arm A  nothing from session 1 is stored
  *   arm C  production: production reflection answer, inferred notes stay candidates
- *   arm E  §18's no-quarantine reference: production answer, every inferred note active
+ *   arm E  feature-308-inferred's no-quarantine reference: production answer, every inferred note active
  *   arm G  the rule under test: candidate answer; a write marked guard whose quote is
  *          found in local tool output is active at once, the rest stay candidates
  *

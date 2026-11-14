@@ -1031,53 +1031,47 @@ obsolete cleanup runs after the serialized registration mutation lane. Daemon
 auto-start retains ownership of startup children until readiness and terminates
 abandoned children on timeout or cancellation.
 
-## 10. Governed Memory Runtime
+## 10. Note Memory
 
-FEATURE_260 adds a thin experimental Memory Agent without creating a second
-long-term memory plane. `packages/agent/src/experimental-memory` owns the
-domain-neutral `MemoryAgent` / `MemorySession` contracts; the existing
-`packages/agent/src/memory-control` plane remains the sole governed persistence
-authority. `packages/coding` owns coding observations, prompt-safe rendering,
-the `memory_recall` tool, Action-LLM integration, and trace correlation.
+Memory is a set of notes (ADR-076, FEATURE_308). Each note is one markdown
+file with frontmatter. Each store has a `MEMORY.md` index with one line per
+note. There is a project store per repository and a user store per agent home.
+`packages/agent/src/memory-store` owns the store, the index, the host checks
+and the reflection pass, and knows nothing about coding. `packages/coding`
+owns the prompt section, the `memory` tool, the reflection request, the
+follow-up after a run and the failure reminder. `packages/repl` owns `/memory`.
 
-Routine exact recall is synchronous and injected as a bounded dynamic suffix.
-FEATURE_275 adds sparse foreground intervention after tool failure,
-verification failure, or a durably committed context compaction. At those
-events the Memory Agent rebuilds one closed candidate set from current
-objective/open todos, recent governed observations, and a fresh F228 pack.
-An optional host-owned selector can return only offered IDs; the default
-runtime makes no selector call. Intervention completes after compaction and
-before the affected Action-LLM request, so the reminder cannot be compacted
-away before use. Deliberate `query()` / `memory_recall` remains read-only and
-initiated by the Action LLM. Episode review may create a governed
-proposal or defer it to the scoped inbox; only the existing
-proposal/preview/fingerprint/apply path can mutate durable memory. Exact scope,
-private/sensitive filtering, prompt-injection rejection, stale-result fences,
-and managed-path guards remain deterministic. Decision receipts separately
-record offered candidate IDs, selected candidate IDs, and exposed evidence refs;
-they are trace-only and never store hidden reasoning.
+The read path has no ranking. Each managed request carries the note rules and
+both indexes in the run context, outside the system prompt and the
+compactable transcript. The model opens a note with the read tool when its
+index line fits the task. A successful read of a note file counts as a use.
+After a failed tool batch, the next request carries a short reminder to check
+the index for a fitting note.
 
-The root Action LLM binds exact current-turn Memory requests through one hidden
-`memory_intent` tool. Mutation authority binds both the requested operation and
-its exact target, and every new claim carries a stable semantic key. Safe explicit
-remember, correction, and forget operations reuse the governed controller and
-apply immediately; the episode carries only a host-owned handled-operation marker
-for de-duplication, while normal episode and
-Skill learning still completes. Ambiguous/broad requests ask for clarification,
-conflicts become explained decisions, and secrets are rejected. Autonomous episode review remains a separate
-background path: verified low-risk changes may auto-apply, and exceptional cases
-remain reviewable. A later run recovers any persisted background jobs.
+The write path has two entries:
 
-The user-facing surface is conversational first. `/memory` is an advanced
-escape hatch for accepted entries, exceptional decisions, and diagnostics.
-`MEMORY.md` is only a derived projection; external editors may open it, while a
-hidden repair command may rebuild it from authoritative state.
+- **The `memory` tool**, for the root agent only. A change the user asked for
+  carries an exact quote of the current user message and makes the note
+  `active`. A note the model infers carries a `why` and starts as a
+  `candidate`, which the index leaves out.
+- **Reflection after the run.** When a root run ends, a background job sends
+  the finished session to the same provider and model with one
+  `memory_reflect` tool and one `skill_propose` tool. The host validates every
+  operation against the session's user messages and local tool output, then
+  applies it. A candidate becomes active when a later session confirms its
+  way worked, or when the user approves it. A proposed skill is committed to
+  the Learning Center as `ready` and waits for the user.
 
-The public opt-in entry is `@kodax-ai/kodax/experimental-memory`; its additive
-`MemoryManagementAgent` exposes list/remember/forget only when the supplied
-controller implements that capability. The base `MemoryAgent` return type remains
-source-compatible and does not become an implicit dependency for consumers of
-the stable root or Runtime SDK.
+Notes directories are governed paths: file and shell tools may read them but
+not write them. A housekeeping pass after each reflection archives stale
+inferred notes, merges duplicates and prunes old revisions without a model
+call.
+
+The first session converts legacy memories into notes once. With
+`KODAX_MEMORY_NOTES=0` the runtime builds the legacy governed plane instead
+(`memory-control`, `experimental-memory`, `memory_intent`, `memory_recall` and
+the FEATURE_275 interventions). That plane stays only as a rollback until
+FEATURE_309 removes it, and Space's memory UI still reads it (Issue 411).
 
 ## 11. Workflow Runtime
 

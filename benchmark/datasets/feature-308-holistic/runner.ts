@@ -44,7 +44,7 @@ import { buildNotesCellInputFrom, seedNotes, type SeededNotes } from '../feature
 import { CONFIRM_CASES, SESSION_ONE, USE_CASES, type ConfirmCase, type UseCase } from './cases.js';
 
 /**
- * r1: both stages (see the design record §20).
+ * r1: both stages (results in docs/ADR.md ADR-076).
  * r2: the reflection prompt says when a candidate holds. Only the confirm stage reads
  * that prompt, so r2 runs the confirm stage alone; the use stage stays in r1.
  */

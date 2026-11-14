@@ -1,5 +1,5 @@
 /**
- * FEATURE_308 §22: does a reminder after a failure make the agent use its notes?
+ * FEATURE_308 (results in docs/ADR.md ADR-076): does a reminder after a failure make the agent use its notes?
  *
  * Each chain is one user message against the case's fixed world under three arms:
  *

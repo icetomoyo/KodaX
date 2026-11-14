@@ -9,7 +9,7 @@
  *
  *   guard        the damage was real and the guard is the right lesson; using it at once should help
  *   lookalike    shaped like a guard, but the added step is itself harmful or the cause was misjudged
- *   control      §18 cases reused unchanged: lessons that replace what is done
+ *   control      feature-308-inferred cases reused unchanged: lessons that replace what is done
  *
  * A case without `sessionTwo` is label-only: it measures what the reflection job
  * writes for the owner's own example (a Windows mirror-delete that followed a
@@ -323,11 +323,11 @@ const NUKE_LOCKFILE: GuardCase = {
 
 const CONTROL_IDS = ['d-node-path', 's-tls-proxy', 'm-node-not-installed'] as const;
 
-/** §18 cases reused unchanged, so their oracles and worlds are exactly the ones already validated. */
+/** feature-308-inferred cases reused unchanged, so their oracles and worlds are exactly the ones already validated. */
 const CONTROLS: readonly GuardCase[] = CONTROL_IDS.map((id) => {
   const item = INFERRED_CASES.find((candidate) => candidate.id === id);
   if (item === undefined) throw new Error(`missing control case ${id}`);
-  return { ...item, kind: 'control' as const, truth: `${item.kind} in §18. ${item.truth}` };
+  return { ...item, kind: 'control' as const, truth: `${item.kind} in feature-308-inferred. ${item.truth}` };
 });
 
 export const GUARD_CASES: readonly GuardCase[] = Object.freeze([

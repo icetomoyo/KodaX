@@ -1,5 +1,5 @@
 /**
- * FEATURE_308 §22: does a reminder after a failure make the agent use its notes?
+ * FEATURE_308 (results in docs/ADR.md ADR-076): does a reminder after a failure make the agent use its notes?
  *
  * Every case is one user message against a fixed world. In a lift case the
  * obvious first command fails in a way one saved note explains; in a control
