@@ -38,7 +38,7 @@ import {
 
 export const NOTES_FIXTURE_ROOT = path.join(os.tmpdir(), 'kodax-eval-fixtures', 'feature-308-notes');
 const NOTE_ENV = 'KODAX_MEMORY_NOTES';
-const SECTION_IDS = ['self-knowledge-routing', 'project-memory'];
+const SECTION_IDS = ['self-knowledge-routing', 'memory-notes'];
 /** runner-driven.ts splits these ids into the stable system block; the rest ride the run context. */
 const STABLE_IDS = ['project-agents', 'self-knowledge-routing', 'memory-rules', 'tool-construction'];
 
