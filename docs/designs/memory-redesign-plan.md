@@ -600,3 +600,42 @@ What B changes:
 - One answer per cell. Three cheap aliases. 2 repetitions.
 - `h-python3` shaped the r3 wording, so only `h-compose-v2` and `h-npx-tsc` are truly held out.
 - In the r2 review, the first lines of `unblind.json` (v4flash rep1, r1–r9) were printed before that review was written. The judgments were already formed, and none changed.
+
+## 20. Experiment: what happens to a note after it is written? (revision `f308-holistic-r1`, pre-registered 2026-11-14)
+
+§18 and §19 tested the first session and the line the job writes. This run tests the two steps after that, in a store of 40 notes: whether a second session confirms the right candidates, and whether the confirmed line helps the session after it. Nothing in production changes for this run. The dataset is `benchmark/datasets/feature-308-holistic/`.
+
+**Confirm stage (11 cases, one reflection call per chain).** A candidate sits in the store with 39 other active notes, as session one left it. Every candidate is a note the shipped prompt actually wrote in the r3 run, taken as the first real write in a fixed chain order (k27 r1, glm52 r1, v4flash r1, then rep 2). The second session continues the §18 case: the agent meets the same situation, and the real reflection job reads that session. Its answer is applied through the real host guards.
+
+- Confirm (5): `c-node-path`, `c-vitest-root`, `c-tsc-root` and `c-gh-jq` repeat the failure and the same recovery. `c-node-path-other-project` has the Node lesson as a user-scope candidate from project p1, met again in a different repository (p2).
+- Leave (2): `c-tls-proxy` (the pull works through the proxy) and `c-db-running` (the whole suite passes). Nothing bears on the candidate, so confirming it is harm.
+- Correct (3): `c-ui-kit-published` (the registry lists 3.0.0), `c-db-stopped-again` (Postgres is down again and `npm run db:up` fixes it) and `c-node-found` (the agent finds Node through fnm). The session shows the candidate is wrong, so a dispute or rewrite is right and confirming it is harm.
+- Repeat (1): `c-python-again` makes the same misreading again. This measures what the quarantine cannot catch, and has no target.
+
+Two predictions are fixed before the run:
+
+- `c-gh-jq` has no local proof: a command that runs `gh` counts as network output, stderr included. It should stay a candidate unless the job quotes the user.
+- A user-scope candidate is only found when the call names `scope: "user"`. A call without it is refused as "no memory".
+
+**Use stage (4 cases × 3 arms, up to 3 rounds).** This stage reuses the second session, world and oracle of the four durable §18 cases. The store holds the lesson and the same 39 other notes:
+
+- N: the lesson is absent.
+- O: the lesson has the old prompt's line from the same chain order.
+- R: the lesson has the shipped prompt's line.
+
+O and R share the id and the body, so only the line differs. The measures:
+
+- oracle pass;
+- note reads per run (the lesson, the index, other notes);
+- runs where an unrelated note steered the action (reviewer judgment);
+- injected index size.
+
+Prepare measures a 40-note `MEMORY.md` at about 1.1k tokens. Adding the lesson costs 25–40 tokens, and R costs 1–15 tokens more than O.
+
+Settings: three aliases (k27, glm52, v4flash) and 2 repetitions, so 66 confirm calls and at most 216 use calls. The pilot is the k27 repetition-1 slice. Budget: at most 340 calls, 7M tokens, $3. The worst case at the output cap is $0.17. Case hash `ca399ac0…`.
+
+**Decision rule.** The blinded review of the use stage and the per-case review of the confirm stage are the verdict. Mechanical counts are diagnostics only.
+
+- **holds:** most durable chains are confirmed. Harmful confirmations stay rare in the leave and correct cases (at most 2 of 30). R passes more often than N, and is not worse than O in the pair review. R does not read more unrelated notes than N.
+- **fix:** one step loses true lessons or admits wrong ones for a cause the run identifies. The fix is targeted and checked by replaying the same responses ($0) before any new paid run.
+- **rethink:** the line does not help the next session, or confirmation admits wrong lessons about as often as true ones.
