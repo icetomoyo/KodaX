@@ -31,6 +31,8 @@ export interface MemoryOpContext {
   readonly userMessage: string;
   /** Recorded on new notes so a later session can corroborate an inferred one. */
   readonly sessionId?: string;
+  /** Recorded on new user-scope notes, which every project shares, so another project can confirm one. */
+  readonly project?: string;
 }
 
 export interface MemoryOpResult {
@@ -102,6 +104,7 @@ async function write(store: NoteStore, context: MemoryOpContext, input: MemoryOp
     status,
     source: status === 'active' ? 'user' : 'inferred',
     ...(context.sessionId === undefined ? {} : { session: context.sessionId }),
+    ...(context.project === undefined || store.scope !== 'user' ? {} : { project: context.project }),
     body: input.body ?? '',
   });
   if (!result.ok) return failure(result, input.id);

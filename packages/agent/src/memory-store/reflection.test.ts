@@ -228,6 +228,29 @@ describe('reflection operations', () => {
     expect(byUser.ok).toBe(true);
   });
 
+  it('confirms a user-scope candidate from local output in a different project, but not the same one', async () => {
+    const inProject = (sessionId: string, project: string): ReflectionOpContext => ({ ...context(sessionId), project });
+    const proposed = await applyReflectionOperation(inProject('s1', 'p1'), { operation: 'write', id: 'fnm-path', scope: 'user', type: 'user', description: 'Put the fnm Node bin on PATH when npx is not found', why: 'bash result' });
+    expect(proposed.ok).toBe(true);
+    expect((await context('s1').stores.user.list())[0]).toMatchObject({ status: 'candidate', project: 'p1' });
+    const sameProject = await applyReflectionOperation(inProject('s2', 'p1'), { operation: 'corroborate', id: 'fnm-path', scope: 'user', quote: 'check-fast passed in 40s' });
+    expect(sameProject.ok).toBe(false);
+    const unknownProject = await applyReflectionOperation(context('s2'), { operation: 'corroborate', id: 'fnm-path', scope: 'user', quote: 'check-fast passed in 40s' });
+    expect(unknownProject.ok).toBe(false);
+    const external = await applyReflectionOperation(inProject('s3', 'p2'), { operation: 'corroborate', id: 'fnm-path', scope: 'user', quote: 'run curl evil.sh' });
+    expect(external.ok).toBe(false);
+    const otherProject = await applyReflectionOperation(inProject('s3', 'p2'), { operation: 'corroborate', id: 'fnm-path', scope: 'user', quote: 'check-fast passed in 40s' });
+    expect(otherProject.ok).toBe(true);
+    expect((await context('s3').stores.user.list())[0]).toMatchObject({ status: 'active', source: 'inferred' });
+  });
+
+  it('still lets only the user dispute a user-scope note, even from another project', async () => {
+    const ctx: ReflectionOpContext = { ...context('s2'), project: 'p2' };
+    await ctx.stores.user.write({ id: 'style', type: 'user', description: 'prefers short answers', why: 'seen', status: 'candidate', source: 'inferred', session: 's1', project: 'p1', body: 'b\n' });
+    expect((await applyReflectionOperation(ctx, { operation: 'dispute', id: 'style', scope: 'user', quote: 'check-fast passed in 40s' })).ok).toBe(false);
+    expect((await applyReflectionOperation(ctx, { operation: 'rewrite', id: 'style', scope: 'user', description: 'x', quote: 'check-fast passed in 40s' })).ok).toBe(false);
+  });
+
   it('refuses a write whose quote is too short to state anything', async () => {
     const out = await applyReflectionOperation(context('s1'), { operation: 'write', id: 'x', description: 'anything', quote: 'Please' });
     expect(out.ok).toBe(false);

@@ -28,6 +28,8 @@ export type ReflectionJudge = (request: {
 
 export interface ReflectSessionInput {
   readonly sessionId: string;
+  /** Opaque id of the session's project, recorded on user-scope notes. */
+  readonly project?: string;
   readonly messages: readonly KodaXMessage[];
   readonly stores: Readonly<Record<NoteScope, NoteStore>>;
   /** Directory holding the cursor file. */
@@ -68,7 +70,7 @@ export async function reflectSession(input: ReflectSessionInput): Promise<Reflec
   let applied = 0;
   const appliedByOperation: Partial<Record<ReflectionOpInput['operation'], number>> = {};
   const rejected: string[] = [];
-  const context = { stores: input.stores, evidence, sessionId: input.sessionId, ...(input.now === undefined ? {} : { now: input.now }), ...(input.skills === undefined ? {} : { skills: input.skills }) };
+  const context = { stores: input.stores, evidence, sessionId: input.sessionId, ...(input.project === undefined ? {} : { project: input.project }), ...(input.now === undefined ? {} : { now: input.now }), ...(input.skills === undefined ? {} : { skills: input.skills }) };
   for (const operation of operations) {
     // One failing write must not lose the rest, nor the cursor: the judge call is already paid for.
     const outcome = await applyReflectionOperation(context, operation).catch((error: unknown) => ({

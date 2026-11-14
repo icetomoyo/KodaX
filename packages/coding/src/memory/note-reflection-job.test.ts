@@ -88,6 +88,28 @@ describe('finishNoteRun', () => {
     expect(await readMemoryStats(resolveNoteRoot(cwd, 'user'))).toMatchObject({ reflections: 1, write: 1 });
   });
 
+  it('lets local output in a second project confirm a user-scope candidate the first project proposed', async () => {
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), 'note-job-cwd2-'));
+    try {
+      const placeOf = (dir: string) => resolveNotePlace({ provider: 'anthropic', context: { executionCwd: dir, gitRoot: dir } } as KodaXOptions);
+      const ran: KodaXMessage[] = [
+        { role: 'assistant', content: [{ type: 'tool_use', id: 'b1', name: 'bash', input: { command: 'npx vitest run' } }] },
+        { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'b1', content: 'npx: command not found; fnm node bin added to PATH, 12 tests passed' }] },
+      ];
+      const write = { operation: 'write' as const, id: 'fnm-path', scope: 'user' as const, type: 'user' as const, description: 'Put the fnm Node bin on PATH when npx is not found', why: 'npx was not found until the fnm bin was added' };
+      const confirm = { operation: 'corroborate' as const, id: 'fnm-path', scope: 'user' as const, quote: 'fnm node bin added to PATH, 12 tests passed' };
+      await finishNoteRun(finish({ messages: messages(ran) }), async () => [write]);
+      await finishNoteRun(finish({ sessionId: 'sess-2', messages: messages(ran) }), async () => [confirm]);
+      const user = createNoteStore(resolveNoteRoot(cwd, 'user'), 'user');
+      expect(await user.list()).toMatchObject([{ id: 'fnm-path', status: 'candidate' }]);
+      expect(await readMemoryStats(user.root)).toMatchObject({ reflections: 2, rejected: 1 });
+      await finishNoteRun(finish({ place: placeOf(other), sessionId: 'sess-3', messages: messages(ran) }), async () => [confirm]);
+      expect(await user.list()).toMatchObject([{ id: 'fnm-path', status: 'active', source: 'inferred' }]);
+    } finally {
+      fs.rmSync(other, { recursive: true, force: true });
+    }
+  });
+
   it('counts the notes the run opened, but not reads that were already in the session', async () => {
     const project = createNoteStore(resolveNoteRoot(cwd, 'project'), 'project');
     await project.write({ id: 'tests', type: 'feedback', description: 'Run make check-fast', body: 'x' });

@@ -4,6 +4,7 @@
  * host binding behind the `memory` tool. The old Memory Control Plane is
  * untouched while the switch is off.
  */
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -155,6 +156,11 @@ export function renderNoteMemorySection(place: NotePlace): string {
   ].join('\n');
 }
 
+/** Opaque project id recorded on user-scope notes; a hash, so no path is copied into the shared store. */
+export function projectKeyOf(place: NotePlace): string {
+  return createHash('sha256').update(path.resolve(place.roots.project)).digest('hex').slice(0, 16);
+}
+
 /** Bind the `memory` tool to the run's stores; `getUserText` supplies the CURRENT user message. */
 export function createNoteMemoryBinding(
   place: NotePlace,
@@ -162,5 +168,6 @@ export function createNoteMemoryBinding(
   sessionId?: string,
 ): (input: MemoryOpInput) => Promise<MemoryOpResult> {
   const stores = noteStoresFor(place);
-  return (input) => applyMemoryOperation({ stores, userMessage: getUserText(), ...(sessionId === undefined ? {} : { sessionId }) }, input);
+  const project = projectKeyOf(place);
+  return (input) => applyMemoryOperation({ stores, userMessage: getUserText(), project, ...(sessionId === undefined ? {} : { sessionId }) }, input);
 }

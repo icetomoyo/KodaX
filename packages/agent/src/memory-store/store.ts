@@ -35,6 +35,7 @@ export interface NewNote {
   readonly status?: NoteStatus;
   readonly source?: NoteSource;
   readonly session?: string;
+  readonly project?: string;
   readonly body: string;
 }
 
@@ -173,6 +174,7 @@ export function createNoteStore(root: string, scope: NoteScope): NoteStore {
         status: input.status ?? 'active',
         ...(input.source === undefined ? {} : { source: input.source }),
         ...(input.session === undefined ? {} : { session: input.session }),
+        ...(input.project === undefined ? {} : { project: input.project }),
         used: 0,
         body: input.body,
       });

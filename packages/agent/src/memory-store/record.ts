@@ -26,6 +26,8 @@ export interface MemoryNote {
   readonly source?: NoteSource;
   /** Session that wrote the note; an inferred note needs a different session to corroborate it. */
   readonly session?: string;
+  /** Project a user-scope note was proposed in; local output from another project can confirm it. */
+  readonly project?: string;
   readonly used: number;
   readonly lastUsedAt?: string;
   readonly body: string;
@@ -65,6 +67,7 @@ export function parseNote(id: string, raw: string, defaultScope: NoteScope): Mem
     status: fields.status === undefined ? 'active' : oneOf(fields.status, STATUSES) ?? 'candidate',
     ...(source === undefined ? {} : { source }),
     ...(fields.session === undefined ? {} : { session: fields.session }),
+    ...(fields.project === undefined ? {} : { project: fields.project }),
     used: Number.isInteger(used) && used > 0 ? used : 0,
     ...(lastUsedAt === undefined ? {} : { lastUsedAt }),
     body,
@@ -91,6 +94,7 @@ export function serializeNote(note: MemoryNote): string {
     ...field('status', note.status),
     ...field('source', note.source),
     ...field('session', note.session),
+    ...field('project', note.project),
     `used: ${note.used}`,
     ...field('lastUsedAt', note.lastUsedAt),
   ];

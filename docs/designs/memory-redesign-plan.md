@@ -60,6 +60,7 @@ A hand-edited file keeps working. Only two scopes until three real use cases exi
   - The judge reads bounded raw evidence, user messages first and tool output capped, not a digest.
   - The output schema allows "nothing worth saving". It runs at idle with a per-run cap.
   - Inferred entries are written as `candidate`. A second corroborating session or user approval makes them `active`.
+  - A user-scope note reaches every project, so local output from the same project cannot confirm it: a cloned repository could otherwise steer them all. Local output from a different project can, because two projects agreeing is independent evidence. Each user-scope note records an opaque hash of the project that proposed it. Disputing or rewriting a user-scope note still needs the user's words.
   - Prompt text follows ADR-033: purpose over rules. Keep what a new colleague could not recover from the repo or git. Record why it is true. Store how to check mutable facts instead of their values.
 
 ### 3.4 Reconcile job (the article's "dreaming")

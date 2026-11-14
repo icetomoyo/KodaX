@@ -33,7 +33,7 @@ import {
 import { withProviderRequestCredential, type KodaXBaseProvider, type KodaXMessage } from '@kodax-ai/llm';
 
 import { resolveProtectedFormalSkillNames } from '../learned-skill-runtime.js';
-import { noteStoresFor, type NotePlace } from './note-memory.js';
+import { noteStoresFor, projectKeyOf, type NotePlace } from './note-memory.js';
 import { buildReflectionRequest, parseReflectionCall, parseSkillCall, REFLECT_TOOL_NAME, SKILL_TOOL_NAME } from './note-reflection.js';
 import { enqueueNoteWork } from './note-work-queue.js';
 
@@ -128,6 +128,7 @@ export async function finishNoteRun(run: NoteRunFinish, judge?: ReflectionJudge)
   if (!run.reflect || !canReflectWith(run.provider, run.model)) return;
   const outcome = await reflectSession({
     sessionId: run.sessionId,
+    project: projectKeyOf(run.place),
     messages: run.messages,
     stores,
     cursorRoot: stores.user.root,

@@ -12,7 +12,8 @@
  *                unsafe-pattern-free spec, no external text; the host stores it
  *                as "ready", so the user reviews it before it is ever used
  * External content (web, MCP) is never accepted as proof. A user-scope note
- * reaches every project, so only a user message can change it.
+ * reaches every project, so only a user message can change it; a user-scope
+ * candidate can also be confirmed by local output from a different project.
  */
 import { LearningCapabilityError } from '../learning/center-types.js';
 import type { DeclarativeSkillSpec } from '../learning/learned-skill.js';
@@ -48,6 +49,8 @@ export interface ReflectionOpContext {
   readonly stores: Readonly<Record<NoteScope, NoteStore>>;
   readonly evidence: SessionEvidence;
   readonly sessionId: string;
+  /** Opaque id of the session's project; lets a different project confirm a user-scope candidate. */
+  readonly project?: string;
   readonly now?: () => Date;
   readonly skills?: SkillSink;
 }
@@ -57,6 +60,12 @@ const NEEDS_PROOF = 'quote must be exact words from a user message or a local to
 const NEEDS_USER_WORDS = 'quote must be a full statement from a user message. Leave it out, with a why, to propose a candidate instead.';
 
 const USER_SCOPE_NEEDS_USER = 'A user-scope note applies to every project, so only the user\'s own words can change it.';
+
+const USER_SCOPE_NEEDS_OTHER_PROJECT = 'A user-scope candidate applies to every project, so it is confirmed only by the user\'s own words or by local output from a project other than the one that proposed it.';
+
+function fromOtherProject(note: MemoryNote, context: ReflectionOpContext): boolean {
+  return note.project !== undefined && context.project !== undefined && note.project !== context.project;
+}
 
 const COPIES_EXTERNAL = 'The note repeats text from external content (web or MCP). State what you learned in your own words, or leave it out.';
 
@@ -92,7 +101,12 @@ export async function applyReflectionOperation(context: ReflectionOpContext, inp
     const statedQuote = input.quote !== undefined && !/[?？]\s*$/.test(input.quote) ? input.quote : undefined;
     if (statedQuote !== undefined && !quoteInEvidence(context.evidence, statedQuote, ['user'])) return fail(NEEDS_USER_WORDS);
     return applyMemoryOperation(
-      { stores: context.stores, userMessage: context.evidence.userText, sessionId: context.sessionId },
+      {
+        stores: context.stores,
+        userMessage: context.evidence.userText,
+        sessionId: context.sessionId,
+        ...(context.project === undefined ? {} : { project: context.project }),
+      },
       {
         operation: 'write',
         id: input.id,
@@ -113,7 +127,10 @@ export async function applyReflectionOperation(context: ReflectionOpContext, inp
   const proven = fromUser || (input.quote !== undefined && quoteInEvidence(context.evidence, input.quote, ['local']));
   if (!proven) return fail(NEEDS_PROOF);
   // A file in a cloned repository is local output too, and it must not steer every other project.
-  if (note.scope === 'user' && !fromUser) return fail(USER_SCOPE_NEEDS_USER);
+  // Two projects showing the same thing is independent evidence, so that alone may confirm a candidate.
+  if (note.scope === 'user' && !fromUser && !(input.operation === 'corroborate' && fromOtherProject(note, context))) {
+    return fail(input.operation === 'corroborate' ? USER_SCOPE_NEEDS_OTHER_PROJECT : USER_SCOPE_NEEDS_USER);
+  }
   switch (input.operation) {
     case 'corroborate':
       return corroborate(store, context, note, fromUser);
