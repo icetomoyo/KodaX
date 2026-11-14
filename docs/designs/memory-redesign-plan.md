@@ -432,3 +432,60 @@ The Phase 1 to 4 work was reviewed in full after the default flipped, because it
 - Reflect, revision `f306-phase4d-r3`, with the reflection type text reverted: 77/78 at $0.003. r11 5/6; the miss wrote a procedure note only.
 
 **Left as they are.** The tool names hardcoded in `evidence.ts` and `usage.ts` have one caller each; passing them in would be plumbing for no second case. A duplicate-id result from the reflection job never reaches the model (the job is one call, and results go only to diagnostics), so the message needs no hint.
+
+## 18. Experiment: should an inferred lesson wait as a candidate? (revision `f308-inferred-r1`, pre-registered 2026-11-14)
+
+**Question.** A note the reflection job writes without the user's words is a candidate, hidden from the index until a later session confirms it. Phase 3's lift came almost entirely from notes the user had stated, so neither the benefit nor the cost of that quarantine has been measured. This experiment measures both.
+
+**Where the cases come from.** Two read-only passes over the owner's local agent session logs (Claude Code and Codex) collected the failure-then-recovery episodes. Raw session text stays out of the repo. What the passes found:
+
+- About a third of the real recoveries were lessons worth keeping. The most frequent one was a Node version manager missing from the agent shell's PATH, re-learned in about 30 sessions. The agent rarely said the lesson out loud, so only the reflection job can write it down.
+- About half were transient conditions or task-specific details: a network reset, an unpublished version, a stopped service, a wrong guess at a path.
+- A few recoveries named the wrong cause, for example "Node is not installed" when it was only off PATH.
+- At write time these three kinds look the same.
+
+The eight cases paraphrase those patterns on a linux workspace. Windows-only syntax lessons were left out.
+
+| Kind | Cases | Session 2 is judged on |
+|---|---|---|
+| durable | `d-node-path`, `d-vitest-root`, `d-tsc-root`, `d-gh-jq` | the first relevant command carries the fix |
+| spurious | `s-tls-proxy`, `s-unpublished-version`, `s-db-down` | the first relevant command does not repeat the one-off workaround |
+| misattributed | `m-node-not-installed` | the first relevant command does not switch to Python |
+
+Each session 1 has one user message, a shell failure in the production `Command:`/`Exit:` format, a recovery, and a grep that matched nothing. The user never states the lesson; a Layer 1 test pins all three properties.
+
+**Arms.** One reflection answer per chain, applied three ways:
+
+- **A**: nothing stored.
+- **C**: production. Inferred notes are candidates.
+- **E**: inferred project notes are active at once. A write refused only because its quote came from local tool output is kept without the quote.
+
+Settings:
+
+- Models: `ark/k27`, `zhipu/glm52`, `ark/v4flash`. 2 repetitions each, so 48 chains.
+- Budget: at most 212 calls, 6M tokens, $3.
+- An arm whose session-2 input is byte-identical to an earlier arm reuses that answer.
+
+**Pilot.** One pass on `ark/k27`, repetition 1. It checks two things before the full run:
+
+- Arm A actually makes the mistake in the durable cases. A durable case A already passes measures nothing and is reworked or dropped.
+- The reflection job writes a note in most cases.
+
+**Questions.**
+
+1. **Lift:** in durable cases, how often does E carry the fix when A does not?
+2. **Harm:** in spurious and misattributed cases, how often does E repeat the wrong rule when A does not?
+3. **Discrimination at write time:** does the reflection job already tell these apart? Signs would be writing nothing, hedging, or naming the transient cause for spurious cases.
+4. **Rejected local quotes:** how many writes does production refuse because their quote was local tool output? Those lessons are lost even after a later confirmation.
+
+**Rubric for the blinded review.** Arms are shown as X/Y/Z in a fixed per-chain shuffle.
+
+- For each answer, judge whether the first relevant command is right given the case truth.
+- For each written note, judge whether it states the true lesson, a wrong rule, or a hedged observation.
+- The mechanical oracle is a diagnostic, not the verdict.
+
+**Decision rule.**
+
+- **recommend-adopt** (some notes active at once): E's lift on durable cases is clear, and its harm on the other four cases is rare. The note-quality review must also identify a write-time property that separates the two kinds, so that only the safe part goes active. Example: a local failure plus a recovery confirmed by the next command, with no transient cause named.
+- **recommend-keep** (quarantine stays): harm is comparable to lift, or no such property exists.
+- Either way, changing the rule is the owner's decision.
