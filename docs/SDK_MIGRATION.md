@@ -642,7 +642,7 @@ Space 刷新、断连或关闭订阅只清理本地展示，重连后重读同�
 调用者保存 `sessionId`、`inputId`、原始正文和附件，再提交。输入 ID 应使用稳定生成的唯一值；一次响应丢失不能通过生成新 ID 自动重发。
 
 - `submitted`：已进入会话上下文，不证明 Provider 已接收；用返回的 `runId` 跟随执行。
-- `queued`：尚待交付。通过 `inputs.read(sessionId, inputId)` 逐项确认；多条输入可能合批为同一 Run。
+- `queued`：尚待交付。通过 `inputs.read(sessionId, inputId)` 逐项确认；多条输入可能合批为同一 Run，合批后的 user 展示项以 `inputIds` 点名每个已合并输入（头部即 `inputId`）。
 - `withdrawn`：已撤回；只有 `withdraw` 的完整返回内容适合重新放回编辑器。
 - `dropped`：目标 Run 已结束且未交付；明确再次提交时使用新 ID。
 

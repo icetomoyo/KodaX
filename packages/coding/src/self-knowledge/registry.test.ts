@@ -251,6 +251,14 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('reason. Every v0.7.96 stable and v0.7.97-alpha.1 through beta.6 contract is retained.');
   });
 
+  it('documents the v0.7.97-beta.10 merged-input acknowledgement', () => {
+    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
+
+    expect(sdk).toContain('The v0.7.97-beta.10 release adds merged-input acknowledgement to the client contract:');
+    expect(sdk).toContain("client retires each merged input's pending bubble without per-input reads; the field is absent on");
+    expect(sdk).toContain('marking its batch submitted no longer restores the merged non-head inputs as `queued`. Every');
+  });
+
   it('documents the v0.7.97-beta.9 data root relocation and steer withdrawal', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
 

@@ -48,12 +48,65 @@ on one commit.
   The step limit is ten minutes because the passing Windows suite alone takes
   about 4.6 minutes.
 
+## v0.7.97-beta.10 release preparation
+
+Release state: `v0.7.97-beta.10` is a candidate awaiting the publishing
+dispatch. npm publication has not occurred. The candidate is the tenth
+beta of the v0.7.97 line: merged-input acknowledgement in the Space
+client contract. When the Host merges queued `after_turn` inputs into
+one canonical user message, `ClientViewItem.inputIds` names every
+merged input, head (`inputId`) first, on live views, restored sessions
+and read history alike (the REPL `HistoryItem` and restored-history seed
+carry the same field), so a client retires each merged input's pending
+bubble without per-input reads; the field is absent on unmerged
+messages and legacy history, and acceptance confirmation still uses
+`inputs.read`. A Host restart between saving a merged user message and
+marking its batch submitted no longer restores the merged non-head
+inputs as `queued`: every pending-input restore, `validateRestore`
+filter and interrupt filter goes through one `messageConsumesInput`
+check that treats `inputId` and every `inputIds` entry as consumed,
+matching the merge acknowledgement path. Every v0.7.96 stable and
+v0.7.97-alpha.1 through beta.9 client contract is retained; no Host
+capability negotiation changed.
+
+The CI/Release in-place upgrade gates now pin the published
+`0.7.97-beta.9` tarball (published 2026-11-13T21:57:01.081Z; registry
+dist.integrity sha512-eXjZoG+p…mj4Q== packs to the same bytes as the
+kodax-ai-kodax-0.7.97-beta.9.tgz asset of the v0.7.97-beta.9 GitHub
+Release, sha256 65ec24d6…8dacb3). Run that fixture locally with Windows
+`tar.exe` ahead of Git's GNU `tar` on `PATH`: GNU `tar` reads the `C:`
+drive in the archive path as a remote host.
+
+Local candidate validation on Windows with Node 22.23.1: full build
+(after the version bump, so `dist` carries 0.7.97-beta.10), source and
+test typechecks, the fast tier (3,795 passed, 58 skipped), the unit tier
+(14,030 passed, 7 skipped), the contract tier (1,072 passed),
+`tests/release-workflow.test.ts` and `tests/tracker-consistency.test.ts`
+(32 passed), the self-knowledge/`kodax_manual` suites (106 passed),
+`test:bundle` (110 passed), `test:host-cutover` (3 passed), the real
+published beta.9 Host in-place upgrade (1 passed) against the
+integrity-pinned public tarball, the Windows startup ownership and
+cancellation contracts (171 passed), `test:native`, the Windows portable
+tier (3,223 passed, 34 skipped across both shards), the Windows system
+tier (921 passed, 29 skipped across both shards) and the real-terminal
+PTY streaming-scroll gate. The packaged Electron daemon gate runs in
+Release CI.
+
+This release follows the single publishing dispatch described under
+[Current release execution](#current-release-execution): `target=all` with
+`release_tag=v0.7.97-beta.10` runs Full CI, all five archive builds and the
+npm package gates, then creates the tag at the dispatched commit and the
+GitHub pre-release from that run's artifacts. Ordinary branch pushes do
+not run CI. Cross-platform manual acceptance, installed Space/SDK
+acceptance, the Space dependency bump and npm registry publication
+remain separate maintainer steps.
+
 ## v0.7.97-beta.9 release preparation
 
 Release state: `v0.7.97-beta.9` was published on 2026-11-13 as a GitHub
 prerelease from run 43469240727 at `71c3b033d` (all five archive builds,
-Full CI and the npm package gates green; 13 assets). npm publication has
-not occurred. The release is the ninth
+Full CI and the npm package gates green; 13 assets) and to npm on
+2026-11-13T21:57:01Z (dist-tag `beta`). The release is the ninth
 beta of the v0.7.97 line: data root relocation for Space (FEATURE_306),
 steer withdrawal, and two Host fixes from Space integration.
 `resolveKodaXHome` resolves the data root without touching

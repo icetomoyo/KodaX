@@ -6,6 +6,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-beta.10] - 2026-11-15
+
+Tenth beta of the v0.7.97 line: merged-input acknowledgement in the
+Space client contract. `ClientViewItem.inputIds` names every accepted
+input the Host merged into one canonical user message, head (`inputId`)
+first, on live views, restored sessions and read history alike, so a
+client retires each merged input's pending bubble without per-input
+reads; the field is absent on unmerged messages and legacy history. A
+Host restart between saving a merged user message and marking its batch
+submitted no longer restores the merged non-head inputs as `queued`.
+Every v0.7.96 stable and v0.7.97-alpha.1 through beta.9 client contract
+is retained. npm publication remains a manual maintainer action.
+
 ### Added
 
 - `ClientViewItem.inputIds`: when the Host merges queued `after_turn` inputs
