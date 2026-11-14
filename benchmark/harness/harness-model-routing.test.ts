@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const stream = vi.fn();
 
-vi.mock('@kodax-ai/llm', () => ({
+vi.mock('@kodax-ai/llm', async (importOriginal) => ({
+  reconcileAssistantContent: (await importOriginal<typeof import('@kodax-ai/llm')>()).reconcileAssistantContent,
   getProvider: () => ({ stream }),
 }));
 
@@ -35,6 +36,26 @@ describe('runOneShot alias fidelity', () => {
     );
     expect(result.target.model).toBe('deepseek-v4-flash');
     expect(result.usage).toEqual({ inputTokens: 7, outputTokens: 3, totalTokens: 10 });
+  });
+
+  it('continues a prior conversation without a new user message and returns the assistant turn', async () => {
+    stream.mockResolvedValue({
+      textBlocks: [{ type: 'text', text: 'looking' }],
+      toolBlocks: [{ type: 'tool_use', id: 't1', name: 'read', input: { path: 'a' } }],
+      thinkingBlocks: [],
+    });
+    const prior = [
+      { role: 'user' as const, content: 'task' },
+      { role: 'assistant' as const, content: 'ok' },
+      { role: 'user' as const, content: [{ type: 'tool_result' as const, tool_use_id: 't0', content: 'done' }] },
+    ];
+    const result = await runOneShot('ark/v4flash', { systemPrompt: 'system', priorMessages: prior });
+
+    expect(stream.mock.calls[0]![0]).toEqual(prior);
+    expect(result.assistantContent).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'text', text: 'looking' }),
+      expect.objectContaining({ type: 'tool_use', id: 't1', name: 'read' }),
+    ]));
   });
 
   it('passes an explicit forced report tool through for production-aligned judges', async () => {
