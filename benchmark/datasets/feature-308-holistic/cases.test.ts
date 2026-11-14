@@ -33,13 +33,19 @@ describe('feature-308 holistic confirm cases', () => {
     expect(outcome.fate).toBe('confirmed');
   });
 
-  it('confirms a user-scope candidate from another project only when the call names the user scope', async () => {
+  it('confirms a user-scope candidate from another project, with or without the scope named', async () => {
     const item = byId('c-node-path-other-project');
     const quote = 'bash: line 1: npm: command not found';
     expect((await applyConfirm(item, reflect({ operation: 'corroborate', id: 'fnm-node-path', scope: 'user', quote }))).fate).toBe('confirmed');
-    const unscoped = await applyConfirm(item, reflect({ operation: 'corroborate', id: 'fnm-node-path', quote }));
-    expect(unscoped.fate).toBe('left');
-    expect(unscoped.trace[0]).toContain('No memory');
+    expect((await applyConfirm(item, reflect({ operation: 'corroborate', id: 'fnm-node-path', quote }))).fate).toBe('confirmed');
+    // Local output still cannot rewrite a note that reaches every project.
+    const rewrite = await applyConfirm(item, reflect({ operation: 'rewrite', id: 'fnm-node-path', quote, description: 'Put the fnm Node bin on PATH.' }));
+    expect(rewrite.fate).toBe('left');
+  });
+
+  it('accepts a quote copied across several local results, the way the job copies a run of output', async () => {
+    const quote = 'Command: cd packages/server && npx vitest run\nExit: 1\n FAIL  src/routes/health.test.ts\n\nCommand: npx vitest run packages/server\nExit: 0';
+    expect((await applyConfirm(byId('c-vitest-root'), reflect({ operation: 'corroborate', id: 'run-vitest-from-root', quote }))).fate).toBe('confirmed');
   });
 
   it('records a dispute, a rewrite, a refused proof and a duplicate write as distinct fates', async () => {

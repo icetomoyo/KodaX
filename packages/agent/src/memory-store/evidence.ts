@@ -161,11 +161,27 @@ export function buildEvidence(messages: readonly KodaXMessage[], budgetChars: nu
  */
 const MIN_PROOF_WEIGHT = 10;
 
-/** True when `quote` appears verbatim (whitespace-insensitive) in a segment whose source is in `allowed`. */
+/** Where a quote of several pieces breaks: a line break, an ellipsis, or a line break written out as \n. */
+const QUOTE_GAP = /\n|\\n|\.\.\.|…/;
+
+/**
+ * True when `quote` appears verbatim (whitespace-insensitive) in a segment whose source is in `allowed`.
+ * When local output is allowed, a quote may also be pieces copied from several local results,
+ * split by line breaks, an ellipsis or a written-out "\n", since the job answers once and never
+ * learns that a quote was refused. Each piece must say something on its own or be a whole line
+ * of output, so words cannot be stitched into a claim. User messages never combine: an active
+ * note rests on one statement.
+ */
 export function quoteInEvidence(evidence: SessionEvidence, quote: string, allowed: readonly EvidenceSource[]): boolean {
   const wanted = normalizeQuote(quote);
-  return quoteWeight(wanted) >= MIN_PROOF_WEIGHT
-    && evidence.segments.some((segment) => allowed.includes(segment.source) && normalizeQuote(segment.text).includes(wanted));
+  if (quoteWeight(wanted) < MIN_PROOF_WEIGHT) return false;
+  if (evidence.segments.some((segment) => allowed.includes(segment.source) && normalizeQuote(segment.text).includes(wanted))) return true;
+  const lines = quote.split(QUOTE_GAP).map(normalizeQuote).filter((line) => line.length > 0);
+  if (!allowed.includes('local') || lines.length < 2) return false;
+  const local = evidence.segments.filter((segment) => segment.source === 'local').map((segment) => segment.text);
+  const texts = local.map(normalizeQuote);
+  const wholeLines = new Set(local.flatMap((text) => text.split('\n').map(normalizeQuote)));
+  return lines.every((line) => wholeLines.has(line) || (quoteWeight(line) >= MIN_PROOF_WEIGHT && texts.some((text) => text.includes(line))));
 }
 
 const COPY_WINDOW_CHARS = 40;

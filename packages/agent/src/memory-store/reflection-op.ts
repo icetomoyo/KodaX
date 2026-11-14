@@ -126,9 +126,9 @@ export async function applyReflectionOperation(context: ReflectionOpContext, inp
       },
     );
   }
-  const store = context.stores[input.scope ?? 'project'];
-  const note = (await store.list()).find((item) => item.id === input.id);
-  if (note === undefined) return fail(`No memory with id '${input.id}'.`);
+  const found = await findNote(context, input);
+  if (found === undefined) return fail(`No memory with id '${input.id}'.`);
+  const { store, note } = found;
   const fromUser = input.quote !== undefined && quoteInEvidence(context.evidence, input.quote, ['user']);
   const proven = fromUser || (input.quote !== undefined && quoteInEvidence(context.evidence, input.quote, ['local']));
   if (!proven) return fail(NEEDS_PROOF);
@@ -147,6 +147,20 @@ export async function applyReflectionOperation(context: ReflectionOpContext, inp
     default:
       return fail('operation must be "write", "corroborate", "dispute", "rewrite" or "skill".');
   }
+}
+
+/**
+ * The note in the named scope. A call that names no scope also reaches a user-scope note,
+ * because the job sees every note's scope but often leaves it out, and the id names one note.
+ */
+async function findNote(context: ReflectionOpContext, input: ReflectionOpInput): Promise<{ store: NoteStore; note: MemoryNote } | undefined> {
+  const scopes: readonly NoteScope[] = input.scope === undefined ? ['project', 'user'] : [input.scope];
+  for (const scope of scopes) {
+    const store = context.stores[scope];
+    const note = (await store.list()).find((item) => item.id === input.id);
+    if (note !== undefined) return { store, note };
+  }
+  return undefined;
 }
 
 async function corroborate(store: NoteStore, context: ReflectionOpContext, note: MemoryNote, fromUser: boolean): Promise<MemoryOpResult> {

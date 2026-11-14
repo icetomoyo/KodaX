@@ -639,3 +639,54 @@ Settings: three aliases (k27, glm52, v4flash) and 2 repetitions, so 66 confirm c
 - **holds:** most durable chains are confirmed. Harmful confirmations stay rare in the leave and correct cases (at most 2 of 30). R passes more often than N, and is not worse than O in the pair review. R does not read more unrelated notes than N.
 - **fix:** one step loses true lessons or admits wrong ones for a cause the run identifies. The fix is targeted and checked by replaying the same responses ($0) before any new paid run.
 - **rethink:** the line does not help the next session, or confirmation admits wrong lessons about as often as true ones.
+
+**Results (revision `f308-holistic-r1`, full run 2026-11-14).** 199 provider calls, about 1.38M tokens, $0.025. The confirm answers were applied twice: once through the guards as committed at the run (`20bf6dd31`), once through the fix below (a $0 replay of the same answers).
+
+Confirm stage, candidate fate out of 6 chains per case:
+
+| Case | Expect | At the run | After the fix |
+|---|---|---|---|
+| `c-node-path` | confirm | 3 confirmed | 5 confirmed |
+| `c-node-path-other-project` | confirm | 0 (6 "no memory" or refused) | 3 confirmed |
+| `c-vitest-root` | confirm | 0 confirmed, 1 rewritten | 2 confirmed, 1 rewritten |
+| `c-tsc-root` | confirm | 6 confirmed | 6 confirmed |
+| `c-gh-jq` | confirm | 0 (gh output is external, as predicted) | 0 |
+| `c-tls-proxy` | leave | 1 confirmed (harm) | same |
+| `c-db-running` | leave | 1 confirmed (harm), 1 disputed | 1 confirmed (harm), 2 disputed |
+| `c-ui-kit-published` | correct | 0 corrected | 2 disputed |
+| `c-db-stopped-again` | correct | 1 confirmed (harm), 1 rewritten | 1 confirmed (harm), 2 rewritten |
+| `c-node-found` | correct | 2 rewritten | 2 rewritten |
+| `c-python-again` | repeat | 2 confirmed, 3 rewritten | same |
+
+- **True lessons were lost to quote mechanics, not judgment.** At the run, 9 of 30 durable chains were confirmed. In most lost chains the model chose the right operation, and the guard refused its quote:
+  - the quote copied a run of output across two or three tool results;
+  - fragments were joined with "..." or the line break was written as the two characters `\n`;
+  - the call left out `scope: "user"` for a user-scope candidate (prediction 2 held: "no memory").
+- **The fix (host only, no prompt change):**
+  - A quote that is not found whole may be pieces of several local results, split at line breaks, an ellipsis or a written `\n`. Each piece must say something on its own or be a whole line of output, so words cannot be stitched into a claim. User words never combine, because an active note rests on one statement.
+  - A call that names no scope also finds a user-scope note. The user-scope rules still apply to it.
+- **After the fix, 16 of 30 durable chains are confirmed (16 of 24 without `c-gh-jq`).** Corrections rise from 3 to 6 of 18, and harm is unchanged.
+  - One side effect was reviewed: a k27 answer now also disputes an unrelated seed note ("start Postgres with `docker compose up db`"). The session showed the service is `postgres`, so the dispute is fair.
+  - What remains lost:
+    - quotes of the agent's own words or of the rendered `[tool …]` label;
+    - a k27 rewrite of the user-scope note from local output, which is refused by design;
+    - one k27 answer that wrote an unrelated note instead.
+- **Harm: 3 of 30, one over the bar.** All three confirmed a candidate because the session met the same situation, not because the candidate's way worked:
+  - k27 confirmed "without Postgres run only the unit project" while the session started Postgres. It also wrote the right note beside it.
+  - glm52 confirmed the same note because the suite layout matched.
+  - v4flash confirmed the proxy note after a plain pull, while its own text said nothing bore on it.
+
+Use stage, blinded review of 24 chains (written before unblinding):
+
+| Arm | right | partial | wrong | wasted calls |
+|---|---|---|---|---|
+| N (no lesson) | 2 | 7 | 15 | 16 |
+| O (old line) | 11 | 11 | 2 | 6 |
+| R (rule line) | 12 | 9 | 3 | 5 |
+
+- R beats N in 15 chains and loses 2. R ties O in 17 chains, beats it in 3 and loses 4.
+- No answer acted on or read an unrelated note in any arm. The mechanical counts agree: there were 0 reads of other notes and 0 reads of the index, and the lesson was read 5 times in O and 3 times in R.
+- The 40-note index is 1097 tokens. The lesson adds 24–39, and R adds 1–15 over O, as predicted.
+- `u-node-path` was solved by no arm. The world returns empty output for many shell probes, and the answers ran out of rounds. This applied to all arms.
+
+**Verdict: fix.** Writing and use hold: the rule line helps the next session at a cost of about 35 tokens and draws no unrelated reads. The confirm step lost true lessons to quote mechanics, which the host fix addresses (checked by the replay above). Its remaining harm has one cause, confirming on a repeated situation. That is a prompt question, so it gets its own pre-registered run (r2).
