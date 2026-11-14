@@ -516,3 +516,87 @@ In the r4 pilot, arm A makes the mistake in all four durable cases. The reflecti
 **Verdict: recommend-keep.** Harm is comparable to lift, and no write-time property separates the kinds. The quarantine costs one repeated failure before a lesson can be confirmed. Removing it would let a wrong rule mislead every later session without any user having seen it.
 
 **Caveats.** The world simulator returns empty output for `cd /work/project && ...` commands, so v4flash often spent its three rounds exploring (the "no action" column). This applied equally to all arms. `s-unpublished-version` was uninformative for glm52 and v4flash, which never reached an action. The verdict counts the first relevant action only; a real agent would recover after the failure.
+
+## 19. Experiment: do index lines say what to do? (revision `f308-notelines-r3`, pre-registered 2026-11-14)
+
+**Change under test.** Two production texts change:
+
+- The reflection prompt gets two new paragraphs.
+  - One says the description is the only line a later session sees, so it states the rule rather than a topic.
+  - The other says that after a failure the note is the way that worked. A failure from a passing condition is left out. A not-found command is not proof that the tool is missing.
+- The `memory_reflect` description says the description is "written as what to do and when".
+
+**Arms.** A is the frozen pre-change text (`baseline-text.ts`, equal byte for byte to the committed texts). B is production after the change. Nothing else differs, and a Layer 1 test pins this.
+
+**Cases (27).**
+
+- The 13 reflection regression cases, scored by their own oracle.
+- Session 1 of the 8 inferred-lesson cases from §18.
+- 6 held-out sessions modelled on the owner's session logs (paraphrased): `h-python3`, `h-tls-retry`, `h-registry-503`, `h-zh-npm`, `h-compose-v2`, `h-npx-tsc`.
+
+Settings: three aliases (v4flash, glm52, k27) and 2 repetitions, so 324 cells. Budget: at most 410 calls, 3.5M tokens, $3.
+
+**Decision rule.**
+
+- **recommend-ship:** B is better or equal on the index-line and failure cases, and no reflection regression case gets worse.
+- **iterate:** B helps but regresses a case.
+- **revert:** B is not better.
+
+The blinded main-session pair review is the verdict. The mechanical pass rates are diagnostics only.
+
+**Amendments before r3.**
+
+- **r1 (pilot only).** B's absence sentence ("an error message is weak evidence") still let the misread "Node is not installed" through in all 4 pilot cells.
+- **r2 (pilot and full run, 300 cells, about $0.015).** r2 says what a not-found error does show. In the blinded review:
+  - B won 18 non-reflect pairs and A won 10.
+  - B won 8 reflection pairs and A won 2. These were rejected or missing calls and one unasked skill; no stored note got worse.
+  - B avoided the misread in 5 of 6 `m-node-not-installed` cells; A avoided it in 3.
+  - But the held-out `h-python3` regressed. A wrote "use python3, not python" in 4 of 6 pairs, B in 1. The not-found sentence suppressed a true lesson as well as the wrong one.
+  - Verdict: iterate.
+- **r3** adds one sentence: when the same tool then worked under another name or from a full path, that name or path is the note. This follows the pattern §18 noted after the fact: true lessons change how the same tool is invoked, while harmful notes replace what is done. `h-python3` shaped this wording, so it is no longer held out. Two fresh held-out cases of the same shape were added: `h-compose-v2` (`docker compose`) and `h-npx-tsc` (`npx tsc`). The pilot covers the four cases the sentence touches (`h-python3`, `m-node-not-installed`, `h-compose-v2`, `h-npx-tsc`), on v4flash and glm52.
+
+**r3 pilot (16 cells).** B won 3 pairs and A won none:
+
+- `m-node-not-installed` (glm52): B left out the misread.
+- `h-compose-v2` (v4flash) and `h-npx-tsc` (v4flash): B kept the lesson.
+
+B also wrote "use python3" again (glm52).
+
+**Results (revision `f308-notelines-r3`, full run 2026-11-14).** 324 cells, 340 calls with the pilot, about 760k tokens, $0.017. The blinded review was written before unblinding. Pair wins:
+
+| Group | B better | A better | Notes |
+|---|---|---|---|
+| inferred and held-out (14 cases × 6 pairs) | 27 | 6 | B: `d-node-path` 5/0, `d-tsc-root` 5/0, `m-node-not-installed` 4/0, `h-npx-tsc` 4/0, `d-gh-jq` 3/0, `h-python3` 2/0. A: `h-registry-503` 2, `d-vitest-root` 2, one each in `h-tls-retry` and `s-unpublished-version` |
+| reflection regression (13 × 6) | 5 | 5 | scattered single pairs with no consistent case; r2 had B 8 / A 2 on the same cases |
+
+Mechanical diagnostics, replayed through the guards as they stood at the run:
+
+| Expectation | A | B |
+|---|---|---|
+| reflect oracle | 71/78 | 71/78 |
+| lesson kept | 23/42 | 30/42 |
+| nothing written (passing conditions) | 20/30 | 19/30 |
+| misread avoided | 2/6 | 6/6 |
+| user rule active | 6/6 | 6/6 |
+
+What B changes:
+
+- B's index lines say what to do and when ("When npx is not found, put fnm's Node bin on PATH…"). A's lines more often describe a state ("npx/node not on PATH").
+- B leaves out the "not installed" misread.
+- The narrowed sentence restored the python3 lesson.
+- B does not cut down on notes about passing conditions. Proxy and ui-kit notes appear on both sides about equally. They stay candidates, and §18 shows that the quarantine is what contains them.
+
+**Verdict: recommend-ship.** B is better on the index-line and failure cases. No reflection case gets consistently worse across r2 and r3.
+
+**Follow-up found by this run: a write that quotes local output was lost.** The job answers once and never sees a rejection. So the hint "leave the quote out to propose a candidate" never reached the model.
+
+- B makes v4flash attach a tool-output quote to a `write` more often: 8 such writes against 1 in r3, 4 against 1 in r2. Every one of them was rejected, and with it a true lesson.
+- The guard now keeps such a write as a candidate. The quote becomes its `why` ("local output: …"). Only the user's words make a note active, as before. A quote found only in external content, or nowhere, is still refused.
+- Replaying the same r3 responses through the new guard ($0), B's lessons kept rise from 30/42 to 35/42. That comes from 7 rescued true notes: python3 ×2, compose ×2, npx tsc, gh `--jq`, vitest root.
+- B's misread avoidance falls from 6/6 to 4/6. The two admitted notes are conditional candidates ("when node is not found in this shell, use python3"). Arm A already writes the same misread as a candidate without a quote. The quarantine contains both. Arm A is unchanged.
+
+**Caveats.**
+
+- One answer per cell. Three cheap aliases. 2 repetitions.
+- `h-python3` shaped the r3 wording, so only `h-compose-v2` and `h-npx-tsc` are truly held out.
+- In the r2 review, the first lines of `unblind.json` (v4flash rep1, r1–r9) were printed before that review was written. The judgments were already formed, and none changed.

@@ -96,7 +96,7 @@ export function evidenceOf(item: Pick<ReflectCase, 'messages'>): SessionEvidence
 }
 
 export async function replayReflectCalls(
-  item: ReflectCase,
+  item: Pick<ReflectCase, 'seeds' | 'messages'> & { readonly id: string },
   tag: string,
   recorded: readonly { readonly name: string; readonly input: unknown }[],
 ): Promise<ReflectReplay> {
