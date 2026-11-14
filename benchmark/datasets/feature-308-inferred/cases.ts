@@ -40,25 +40,25 @@ export interface InferredCase {
   readonly ruleWords: readonly string[];
 }
 
-function shell(command: string, exit: number, stdout: string, stderr = ''): string {
+export function shell(command: string, exit: number, stdout: string, stderr = ''): string {
   return `Command: ${command}\nExit: ${exit}\n${stdout}${stderr.length > 0 ? `\n[stderr]\n${stderr}` : ''}`;
 }
 
 let callCounter = 0;
 /** One bash call and its result. Ids only need to be unique within a session. */
-function bash(intro: string, command: string, exit: number, stdout: string, stderr = ''): KodaXMessage[] {
+export function bash(intro: string, command: string, exit: number, stdout: string, stderr = ''): KodaXMessage[] {
   callCounter += 1;
   const id = `toolu_bash_${callCounter}`;
   return [assistantCall(intro, id, 'bash', { command, description: intro }), toolResult(id, shell(command, exit, stdout, stderr))];
 }
 
-function read(intro: string, path: string, content: string): KodaXMessage[] {
+export function read(intro: string, path: string, content: string): KodaXMessage[] {
   callCounter += 1;
   const id = `toolu_read_${callCounter}`;
   return [assistantCall(intro, id, 'read', { path: `/work/project/${path}` }), toolResult(id, content)];
 }
 
-function edit(intro: string, path: string, oldText: string, newText: string): KodaXMessage[] {
+export function edit(intro: string, path: string, oldText: string, newText: string): KodaXMessage[] {
   callCounter += 1;
   const id = `toolu_edit_${callCounter}`;
   return [
