@@ -298,7 +298,7 @@ export async function buildCapabilityContextSections(
     await convertLegacyMemory(notePlace);
     sections.push(
       createPromptSection(
-        'project-memory',
+        'memory-notes',
         renderNoteMemorySection(notePlace),
         'Teach note-memory use and expose the saved-note indexes so later sessions read relevant notes on demand.',
       ),

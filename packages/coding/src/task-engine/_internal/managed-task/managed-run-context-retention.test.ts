@@ -157,6 +157,7 @@ describe('retained session section diff', () => {
     expect(isRetainedSessionSection('skills-addendum')).toBe(true);
     expect(isRetainedSessionSection('repo-intelligence-context')).toBe(true);
     expect(isRetainedSessionSection('project-memory')).toBe(false);
+    expect(isRetainedSessionSection('memory-notes')).toBe(true);
     expect(isRetainedSessionSection('prompt-overlay')).toBe(false);
   });
 });

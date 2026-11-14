@@ -38,6 +38,7 @@ const RETAINED_FACT_LABELS: Readonly<Record<string, string>> = {
   'skills-addendum': 'Skills catalog',
   'mcp-capability-context': 'MCP capability context',
   'specialist-agents': 'Specialist agent list',
+  'memory-notes': 'Memory notes',
 };
 const RETAINED_EVIDENCE_SECTION_IDS = new Set(['git-context', 'project-snapshot', 'repo-intelligence-context']);
 // Models seldom look back to an earlier envelope for the file list, so a Run

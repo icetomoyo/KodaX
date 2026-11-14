@@ -231,6 +231,15 @@ export const PROMPT_SECTION_REGISTRY: Record<string, KodaXPromptSectionDefinitio
     order: 200,
     stability: 'project',
   },
+  'memory-notes': {
+    id: 'memory-notes',
+    title: 'Memory Notes',
+    owner: 'project',
+    feature: 'FEATURE_308',
+    slot: 'project-rules',
+    order: 200,
+    stability: 'project',
+  },
   'skills-addendum': {
     id: 'skills-addendum',
     title: 'Skills Addendum',

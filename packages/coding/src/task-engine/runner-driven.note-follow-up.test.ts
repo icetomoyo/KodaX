@@ -7,8 +7,9 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 vi.mock('../memory/note-reflection-job.js', () => ({ scheduleNoteRunFinish: vi.fn(async () => undefined) }));
 
-import type { NotePlace } from '../memory/note-memory.js';
+import { noteStoresFor, type NotePlace } from '../memory/note-memory.js';
 import { scheduleNoteRunFinish } from '../memory/note-reflection-job.js';
+import { buildFallbackRoutingDecision, type ReasoningPlan } from '../reasoning.js';
 import type { KodaXOptions } from '../types.js';
 import { runManagedTaskViaRunner } from './runner-driven.js';
 
@@ -57,4 +58,34 @@ it('does nothing for a child agent, whose notes belong to its parent run', async
   vi.stubEnv('KODAX_MEMORY_NOTES', '1');
   await runAma({ parentAgentId: '/root' });
   expect(scheduled).not.toHaveBeenCalled();
+});
+
+it('sends the memory index once per session, not again with every follow-up run', async () => {
+  vi.stubEnv('KODAX_MEMORY_NOTES', '1');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-ama-notes-'));
+  try {
+    const requests: string[] = [];
+    const capture = async (transcript: readonly KodaXMessage[], _tools: unknown, system: string) => {
+      requests.push(system + JSON.stringify(transcript));
+      return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
+    };
+    const managedContextRetention = {};
+    const options = (initialMessages?: KodaXMessage[]): KodaXOptions => ({ provider: 'anthropic', effort: 'none', lsp: false,
+      context: { configHome: path.join(root, 'home'), gitRoot: root, executionCwd: root, repoIntelligenceMode: 'off' },
+      session: { id: 'note-index-once', managedContextRetention, ...(initialMessages ? { initialMessages } : {}) },
+    });
+    const plan = (prompt: string): ReasoningPlan => ({ effort: 'medium', decision: buildFallbackRoutingDecision(prompt), promptOverlay: '' });
+    const first = await runManagedTaskViaRunner(options(), 'Inspect the cache behavior.', capture, plan('Inspect the cache behavior.'));
+    const second = await runManagedTaskViaRunner(options([...first.messages]), 'Now check the diagnostics.', capture, plan('Now check the diagnostics.'));
+    const memoryRules = 'The index below lists notes saved in earlier sessions.';
+    const occurrences = (request: string) => request.split(memoryRules).length - 1;
+    expect(occurrences(requests[0]!)).toBe(1);
+    expect(occurrences(requests.at(-1)!)).toBe(1);
+
+    const place = (scheduled.mock.calls.at(-1)![0] as { place: NotePlace }).place;
+    await noteStoresFor(place).project.write({ id: 'diag-cmd', type: 'project', description: 'Run diagnostics with npm run diag', body: 'b' });
+    await runManagedTaskViaRunner(options([...second.messages]), 'Run the diagnostics again.', capture, plan('Run the diagnostics again.'));
+    expect(occurrences(requests.at(-1)!)).toBe(2);
+    expect(requests.at(-1)!.split('npm run diag').length - 1).toBe(1);
+  } finally { await rm(root, { recursive: true, force: true, maxRetries: 3 }); }
 });

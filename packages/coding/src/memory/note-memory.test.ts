@@ -128,7 +128,7 @@ describe('capability sections gate', () => {
     vi.stubEnv('KODAX_MEMORY_NOTES', '1');
     const sections = await buildCapabilityContextSections(options(), false, cwd);
     expect(sections.some((s) => s.id === 'memory-rules')).toBe(false);
-    const memory = sections.find((s) => s.id === 'project-memory');
+    const memory = sections.find((s) => s.id === 'memory-notes');
     expect(memory?.content).toContain('# Memory');
     expect(memory?.content).toContain('memory tool');
   });
@@ -149,7 +149,7 @@ describe('capability sections gate', () => {
     fs.writeFileSync(path.join(legacyDir(), 'feedback_tests.md'), '---\ndescription: Run make check-fast\ntype: feedback\n---\nbody\n');
     vi.stubEnv('KODAX_MEMORY_NOTES', '1');
     const sections = await buildCapabilityContextSections(options(), false, cwd);
-    expect(sections.find((s) => s.id === 'project-memory')?.content).toContain('Run make check-fast');
+    expect(sections.find((s) => s.id === 'memory-notes')?.content).toContain('Run make check-fast');
     expect(fs.existsSync(path.join(legacyDir(), 'feedback_tests.md'))).toBe(true);
   });
 
@@ -169,7 +169,7 @@ describe('capability sections gate', () => {
     const stop = setKodaXDiagnosticSink((diagnostic) => seen.push(diagnostic.message));
     const sections = await buildCapabilityContextSections(options(), false, cwd);
     stop();
-    expect(sections.some((s) => s.id === 'project-memory')).toBe(true);
+    expect(sections.some((s) => s.id === 'memory-notes')).toBe(true);
     expect(seen.join('\n')).toContain('legacy memories');
   });
 });
