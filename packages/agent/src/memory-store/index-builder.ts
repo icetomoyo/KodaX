@@ -8,9 +8,14 @@
  * (sorted deterministically), so unchanged memory means identical bytes and a
  * stable prompt-cache prefix.
  */
-import type { MemoryNote, NoteType } from './record.js';
+import type { MemoryNote, NoteScope, NoteType } from './record.js';
 
-export const INDEX_TOKEN_BUDGET = 2000;
+/**
+ * Per-scope ceiling on the always-injected `MEMORY.md`, about 2.4k tokens for
+ * both (codex injects a 2.5k summary, hermes under 1k). At about 28 tokens a
+ * line the project index holds some 55 notes; the rest stay one read away.
+ */
+export const INDEX_TOKEN_BUDGET: Readonly<Record<NoteScope, number>> = { project: 1600, user: 800 };
 /** Second index for the notes demoted from `MEMORY.md`. Its name is not a valid note id, so it never collides with a note. */
 export const OVERFLOW_FILE = 'MEMORY.more.md';
 
@@ -52,13 +57,13 @@ function keepPriority(left: MemoryNote, right: MemoryNote): number {
 }
 
 /** The listable notes split into those that fit the budget and the least used rest. */
-function splitByBudget(notes: readonly MemoryNote[]): { kept: MemoryNote[]; demoted: MemoryNote[] } {
+function splitByBudget(notes: readonly MemoryNote[], scope: NoteScope): { kept: MemoryNote[]; demoted: MemoryNote[] } {
   const listable = notes.filter((note) => note.status === 'active' || note.status === 'disputed').sort(keepPriority);
   let tokens = 0;
   let count = 0;
   for (const note of listable) {
     const cost = estimateTokens(line(note)) + 1;
-    if (tokens + cost > INDEX_TOKEN_BUDGET - FOOTER_RESERVE_TOKENS) break;
+    if (tokens + cost > INDEX_TOKEN_BUDGET[scope] - FOOTER_RESERVE_TOKENS) break;
     tokens += cost;
     count += 1;
   }
@@ -67,8 +72,8 @@ function splitByBudget(notes: readonly MemoryNote[]): { kept: MemoryNote[]; demo
 
 const render = (notes: readonly MemoryNote[]): string[] => [...notes].sort(displayOrder).map(line);
 
-export function buildIndex(notes: readonly MemoryNote[]): string {
-  const { kept, demoted } = splitByBudget(notes);
+export function buildIndex(notes: readonly MemoryNote[], scope: NoteScope): string {
+  const { kept, demoted } = splitByBudget(notes, scope);
   if (kept.length === 0 && demoted.length === 0) return '';
   const lines = render(kept);
   if (demoted.length > 0) {
@@ -78,7 +83,7 @@ export function buildIndex(notes: readonly MemoryNote[]): string {
 }
 
 /** Index lines of the notes that did not fit `MEMORY.md`, so a demoted note is still one read away; empty when all fit. */
-export function buildOverflowIndex(notes: readonly MemoryNote[]): string {
-  const { demoted } = splitByBudget(notes);
+export function buildOverflowIndex(notes: readonly MemoryNote[], scope: NoteScope): string {
+  const { demoted } = splitByBudget(notes, scope);
   return demoted.length === 0 ? '' : `${render(demoted).join('\n')}\n`;
 }

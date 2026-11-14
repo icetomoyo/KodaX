@@ -137,8 +137,8 @@ export function createNoteStore(root: string, scope: NoteScope): NoteStore {
 
   async function rebuild(): Promise<boolean> {
     const notes = await listNotes();
-    const overflowChanged = await syncFile(OVERFLOW_FILE, buildOverflowIndex(notes));
-    return (await syncFile(INDEX_FILE, buildIndex(notes))) || overflowChanged;
+    const overflowChanged = await syncFile(OVERFLOW_FILE, buildOverflowIndex(notes, scope));
+    return (await syncFile(INDEX_FILE, buildIndex(notes, scope))) || overflowChanged;
   }
 
   async function save(note: MemoryNote): Promise<NoteResult> {

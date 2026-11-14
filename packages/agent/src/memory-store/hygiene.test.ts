@@ -93,7 +93,7 @@ describe('100-episode hygiene simulation', () => {
       if ((index + 1) % 10 === 0) {
         await organizeStore(stores.project, now());
         const index_ = await fs.readFile(path.join(dir, 'project', 'MEMORY.md'), 'utf8').catch(() => '');
-        expect(estimateTokens(index_)).toBeLessThanOrEqual(INDEX_TOKEN_BUDGET);
+        expect(estimateTokens(index_)).toBeLessThanOrEqual(INDEX_TOKEN_BUDGET.project);
       }
     }
     return skipped;
@@ -138,6 +138,6 @@ describe('100-episode hygiene simulation', () => {
     expect(live.every((note) => note.source === 'user')).toBe(true);
     const index = await fs.readFile(path.join(dir, 'project', 'MEMORY.md'), 'utf8');
     expect(index.split('\n').filter((line) => line.startsWith('- [')).length).toBe(50);
-    expect(estimateTokens(index)).toBeLessThanOrEqual(INDEX_TOKEN_BUDGET);
+    expect(estimateTokens(index)).toBeLessThanOrEqual(INDEX_TOKEN_BUDGET.project);
   });
 });

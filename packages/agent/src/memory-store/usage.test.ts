@@ -77,6 +77,6 @@ describe('note usage signals', () => {
     const before = await fs.readFile(path.join(roots().project, 'MEMORY.md'), 'utf8');
     await store.recordUse({ b: 3 }, new Date());
     expect(await fs.readFile(path.join(roots().project, 'MEMORY.md'), 'utf8')).toBe(before);
-    expect(buildIndex(await store.list())).toBe(before);
+    expect(buildIndex(await store.list(), 'project')).toBe(before);
   });
 });

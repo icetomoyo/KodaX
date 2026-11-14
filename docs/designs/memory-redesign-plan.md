@@ -47,7 +47,7 @@ lastUsedAt: ISO time
 A hand-edited file keeps working. Only two scopes until three real use cases exist for more.
 
 ### 3.2 Index and read path
-- A real `MEMORY.md` per scope is injected, capped at about 2k tokens. Each line is a meaningful one-line description. The model chooses what to open with ordinary file tools.
+- A real `MEMORY.md` per scope is injected, capped at about 1.6k tokens for the project and 0.8k for the user (2.4k together; codex injects 2.5k, hermes under 1k). Each line is a meaningful one-line description. The model chooses what to open with ordinary file tools.
 - Candidate and archived entries are not listed. If the index overflows, the least-used entries are demoted with a link left behind.
 - The index is rebuilt only when memory changes, so the cache prefix stays byte-stable.
 - No ranking code, no passive pack, no `memory_recall`.
