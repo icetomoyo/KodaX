@@ -2,7 +2,8 @@
  * FEATURE_308 — the operations the background reflection worker may apply.
  * Authority comes from the evidence the HOST collected, never from what the
  * model claims about it (see evidence.ts):
- *   write        quote found in a user message -> active; no quote -> candidate
+ *   write        quote found in a user message -> active; no quote, or one from
+ *                local output -> candidate
  *   corroborate  candidate -> active; needs proof from user or local output, and a
  *                session other than the one that proposed it (or the user's own words)
  *   dispute      active or candidate -> disputed (hidden from the index, kept on disk)
@@ -99,7 +100,12 @@ export async function applyReflectionOperation(context: ReflectionOpContext, inp
   if (input.operation === 'write') {
     // A question states no decision, so quoting one cannot make a note the user's own.
     const statedQuote = input.quote !== undefined && !/[?？]\s*$/.test(input.quote) ? input.quote : undefined;
-    if (statedQuote !== undefined && !quoteInEvidence(context.evidence, statedQuote, ['user'])) return fail(NEEDS_USER_WORDS);
+    const userQuote = statedQuote !== undefined && quoteInEvidence(context.evidence, statedQuote, ['user']) ? statedQuote : undefined;
+    // The job answers once and never sees this result, so a lesson quoted from local output
+    // is kept as a candidate instead of lost. Only the user's words make a note active.
+    const localQuote = statedQuote !== undefined && userQuote === undefined && quoteInEvidence(context.evidence, statedQuote, ['local']) ? statedQuote : undefined;
+    if (statedQuote !== undefined && userQuote === undefined && localQuote === undefined) return fail(NEEDS_USER_WORDS);
+    const why = input.why !== undefined && input.why.trim().length > 0 ? input.why : localQuote === undefined ? input.why : `local output: "${localQuote}"`;
     return applyMemoryOperation(
       {
         stores: context.stores,
@@ -113,10 +119,10 @@ export async function applyReflectionOperation(context: ReflectionOpContext, inp
         ...(input.scope === undefined ? {} : { scope: input.scope }),
         ...(input.type === undefined ? {} : { type: input.type }),
         ...(input.description === undefined ? {} : { description: input.description }),
-        ...(input.why === undefined ? {} : { why: input.why }),
+        ...(why === undefined ? {} : { why }),
         ...(input.check === undefined ? {} : { check: input.check }),
         ...(input.body === undefined ? {} : { body: input.body }),
-        ...(statedQuote === undefined ? {} : { userQuote: statedQuote }),
+        ...(userQuote === undefined ? {} : { userQuote }),
       },
     );
   }
