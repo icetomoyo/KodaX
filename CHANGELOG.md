@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- A Host restart between saving a merged user message and marking its batch
+  submitted no longer restores the merged non-head inputs as `queued`. Every
+  pending-input restore now treats `inputIds` as consumed, as the merge path
+  already did.
+
 ---
 
 ## [0.7.97-beta.9] - 2026-11-13
