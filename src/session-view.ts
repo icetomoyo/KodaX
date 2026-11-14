@@ -945,7 +945,8 @@ export function restoreSessionContentItems(
     }
     if (item.type === 'user' && item.inputId !== undefined) {
       return [{ id: `${sessionId}:input:${item.inputId}`, type: 'user', text: item.text,
-        inputId: item.inputId, ...(item.timestamp !== undefined ? { timestamp: item.timestamp } : {}),
+        inputId: item.inputId, ...(item.inputIds ? { inputIds: item.inputIds } : {}),
+        ...(item.timestamp !== undefined ? { timestamp: item.timestamp } : {}),
         ...(userAttachments.has(item.inputId) ? { attachments: userAttachments.get(item.inputId) } : {}) }];
     }
     let previous: ClientViewItem | undefined;

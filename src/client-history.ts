@@ -253,6 +253,7 @@ export function projectHistoryEntry(
         ? { attachments: userAttachments.get(item.inputId) } : {}),
       ...(item.taskResult ? { taskResult: item.taskResult } : {}),
       ...(item.inputId !== undefined ? { inputId: item.inputId } : {}),
+      ...(item.type === 'user' && item.inputIds ? { inputIds: item.inputIds } : {}),
       ...(item.outputId !== undefined ? {
         outputId: item.outputId, outputState: 'committed' as const, textRevision: 0,
       } : {}),

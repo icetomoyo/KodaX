@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `ClientViewItem.inputIds`: when the Host merges queued `after_turn` inputs
+  into one user message, its view and history items name every merged input,
+  head (`inputId`) first. Clients can retire each merged input's pending
+  bubble. Absent on unmerged messages.
+
 ### Fixed
 
 - A Host restart between saving a merged user message and marking its batch

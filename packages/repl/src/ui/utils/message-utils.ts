@@ -18,7 +18,7 @@ import {
 } from "./tool-sanitizer.js";
 
 export type RestoredHistorySeed = (
-  | { type: "user"; text: string; inputId?: string }
+  | { type: "user"; text: string; inputId?: string; inputIds?: readonly string[] }
   | { type: "assistant"; text: string }
   | { type: "system"; text: string }
   | { type: "thinking"; text: string }
@@ -428,6 +428,7 @@ export interface HistorySeedSourceMessage {
   _taskResults?: KodaXTaskResultMetadata[];
   outputId?: string;
   inputId?: string;
+  inputIds?: readonly string[];
   role: KodaXMessage["role"];
   content: string | KodaXContentBlock[];
   timestamp?: string;
@@ -536,7 +537,7 @@ export function extractHistorySeedsFromMessage(
 ): RestoredHistorySeed[] {
   return withMessageTimestamp(extractHistorySeedsFromMessageWithoutTimestamp(message), message.timestamp)
     .map(seed => seed.type === "user" && message.inputId !== undefined
-      ? { ...seed, inputId: message.inputId }
+      ? { ...seed, inputId: message.inputId, ...(message.inputIds && message.inputIds.length > 1 ? { inputIds: message.inputIds } : {}) }
       : message.outputId && (seed.type === 'assistant' || seed.type === 'thinking')
         ? { ...seed, outputId: message.outputId } : seed);
 }
