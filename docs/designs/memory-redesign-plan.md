@@ -498,3 +498,20 @@ Settings:
 - **`d-gh-jq` was reworked.** Session 2 now asks for a filtered file, because arm A passed the first version without filtering anything.
 
 In the r4 pilot, arm A makes the mistake in all four durable cases. The reflection job wrote notes in 3 of 8 cases and proposed one skill (`d-node-path`). Few notes is a production property, recorded as part of question 3.
+
+**Results (revision `f308-inferred-r4`, full run 2026-11-14).** Three aliases (k27, glm52, v4flash) × 8 cases × 2 repetitions = 48 chains, 176 provider calls, about $0.02. The blinded review agreed with the mechanical oracle on every answer. Arm C equals arm A in every chain, because production never shows a candidate.
+
+| Kind | A right / wrong / no action | E right / wrong / no action | E changed the outcome |
+|---|---|---|---|
+| durable (24) | 5 / 15 / 4 | 8 / 11 / 5 | 3 fixed, 2 wrong → no action |
+| spurious (18) | 14 / 0 / 4 | 12 / 1 / 5 | 1 harmed (unset the proxy), 1 right → no action |
+| misattributed (6) | 6 / 0 / 0 | 3 / 3 / 0 | 3 harmed (rewrote the Node script in Python) |
+
+1. **Lift is small: 3 of 24.** All three aliases wrote true notes for `d-node-path` (4 of 6 chains), yet no answer used them. The models ran `npm test` straight away. Four of five `d-vitest-root` notes were scoped to `packages/cli` instead of the repository, and only the one general note helped. Most of the gap between a visible note and a used note is attention, not quarantine.
+2. **Harm is as large as lift: 4 of 24.** The misattributed note ("Node is not installed; use Python") misled one answer from each alias. The proxy note ("unset the proxy to reach GitHub") misled one.
+3. **The reflection job does not tell the kinds apart at write time.** Every note has the same shape: a local failure, a recovery confirmed by the next command, and no transient cause named. Wrong rules (proxy 4, ui-kit 2, Python 4) carry no hedge. Only the `s-db-down` notes stayed conditional ("needs Postgres; the unit project runs without it"), and they did no harm. Writing nothing is also no signal: k27 wrote nothing in 5 of 8 cases, durable and spurious alike. The pre-registered property is therefore met by the harmful notes too. One post-hoc pattern remains untested: true lessons fix how the same tool is invoked, while the harmful notes replace what is done (a different language, no proxy, a local dependency).
+4. **Rejected local quotes: 1 of 48** (glm52, the "use Python" note). The latent gap is real but rare here, and the lost note was a wrong rule.
+
+**Verdict: recommend-keep.** Harm is comparable to lift, and no write-time property separates the kinds. The quarantine costs one repeated failure before a lesson can be confirmed. Removing it would let a wrong rule mislead every later session without any user having seen it.
+
+**Caveats.** The world simulator returns empty output for `cd /work/project && ...` commands, so v4flash often spent its three rounds exploring (the "no action" column). This applied equally to all arms. `s-unpublished-version` was uninformative for glm52 and v4flash, which never reached an action. The verdict counts the first relevant action only; a real agent would recover after the failure.
