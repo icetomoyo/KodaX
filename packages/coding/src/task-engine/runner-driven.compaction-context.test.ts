@@ -36,6 +36,7 @@ const PROVIDER_API_KEY_ENV = 'RUNNER_COMPACTION_CONTEXT_TEST_API_KEY';
 const SKILLS_ADDENDUM_SENTINEL = 'AMA_SKILLS_ADDENDUM_SURVIVES_COMPACTION';
 const SELECTED_SKILL_SENTINEL = 'AMA_SELECTED_SKILL_SURVIVES_COMPACTION';
 const TASK_CONSTRAINT_SENTINEL = 'AMA_TASK_CONSTRAINT_SURVIVES_COMPACTION';
+const NOTE_INDEX_SENTINEL = 'The index below lists notes saved in earlier sessions.';
 
 const compactMock = mockedCompact as unknown as ReturnType<typeof vi.fn>;
 
@@ -67,6 +68,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   clearRuntimeModelProviders();
   delete process.env[PROVIDER_API_KEY_ENV];
 });
@@ -225,6 +227,7 @@ function makeOptions(
       gitRoot: process.cwd(),
       executionCwd: process.cwd(),
       managedTaskWorkspaceDir: workspaceRoot,
+      configHome: path.join(workspaceRoot, 'home'),
       repoIntelligenceMode: 'off',
       contextDiagnostics: true,
       skillsPrompt: [
@@ -257,6 +260,7 @@ describe.each([
     const requests: PhysicalRequest[] = [];
     const snapshots: RuntimeContextBudgetSnapshot[] = [];
     const timeline: string[] = [];
+    vi.stubEnv('KODAX_MEMORY_NOTES', '1');
     registerScriptedProvider(native, requests, timeline);
     compactMock.mockImplementation(async (messages: KodaXMessage[]) => {
       timeline.push('compact');
@@ -291,6 +295,8 @@ describe.each([
       expect(countOccurrences(physicalRequest, SKILLS_ADDENDUM_SENTINEL)).toBe(1);
       expect(countOccurrences(physicalRequest, SELECTED_SKILL_SENTINEL)).toBe(1);
       expect(countOccurrences(physicalRequest, TASK_CONSTRAINT_SENTINEL)).toBe(1);
+      // The note index is sent once per session, so compaction must carry it over.
+      expect(countOccurrences(physicalRequest, NOTE_INDEX_SENTINEL)).toBe(1);
       expect(request.system).not.toContain(SKILLS_ADDENDUM_SENTINEL);
       expect(request.system).not.toContain(SELECTED_SKILL_SENTINEL);
       expect(request.system).not.toContain(TASK_CONSTRAINT_SENTINEL);
@@ -308,6 +314,7 @@ describe.each([
     expect(compactableTranscript).not.toContain(SKILLS_ADDENDUM_SENTINEL);
     expect(compactableTranscript).not.toContain(SELECTED_SKILL_SENTINEL);
     expect(compactableTranscript).not.toContain(TASK_CONSTRAINT_SENTINEL);
+    expect(compactableTranscript).not.toContain(NOTE_INDEX_SENTINEL);
     expect(compactableTranscript).not.toContain('managed-run-context');
 
     const durableTranscript = JSON.stringify(result.messages);

@@ -111,3 +111,30 @@ it('shows a root run and its child agents the same note store', async () => {
     expect(await directories({ currentAgentId: '/root/child' })).toEqual(parent);
   } finally { await rm(root, { recursive: true, force: true, maxRetries: 3 }); }
 });
+
+it('keeps the system prompt and tools byte-identical when a note is written between sessions', async () => {
+  vi.stubEnv('KODAX_MEMORY_NOTES', '1');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-ama-notes-'));
+  try {
+    const firstRequest = async (session: string) => {
+      let captured: { system: string; tools: string; messages: string } | undefined;
+      await runManagedTaskViaRunner({ provider: 'anthropic', effort: 'none', lsp: false,
+        context: { configHome: path.join(root, 'home'), gitRoot: root, executionCwd: root, repoIntelligenceMode: 'off' },
+        session: { id: session },
+      }, 'Reply briefly.', async (messages, tools, system) => {
+        captured ??= { system, tools: JSON.stringify(tools), messages: JSON.stringify(messages) };
+        return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
+      }, { effort: 'medium', decision: buildFallbackRoutingDecision('Reply briefly.'), promptOverlay: '' });
+      return captured!;
+    };
+    const before = await firstRequest('cache-a');
+    const place = (scheduled.mock.calls.at(-1)![0] as { place: NotePlace }).place;
+    await noteStoresFor(place).project.write({ id: 'diag-cmd', type: 'project', description: 'Run diagnostics with npm run diag', body: 'b' });
+    const after = await firstRequest('cache-b');
+    // The provider caches system and tools ahead of the messages; the index rides in the messages.
+    expect(after.messages).toContain('npm run diag');
+    expect(after.system).not.toContain('npm run diag');
+    expect(after.system).toBe(before.system);
+    expect(after.tools).toBe(before.tools);
+  } finally { await rm(root, { recursive: true, force: true, maxRetries: 3 }); }
+});
