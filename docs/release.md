@@ -50,8 +50,10 @@ on one commit.
 
 ## v0.7.97-beta.10 release preparation
 
-Release state: `v0.7.97-beta.10` is a candidate awaiting the publishing
-dispatch. npm publication has not occurred. The candidate is the tenth
+Release state: `v0.7.97-beta.10` was published on 2026-11-15 as a GitHub
+prerelease from run 43617234911 at `1c45ad53c` (all five archive builds,
+Full CI and the npm package gates green after one failed-job re-run; 13
+assets). npm publication has not occurred. The release is the tenth
 beta of the v0.7.97 line: merged-input acknowledgement in the Space
 client contract. When the Host merges queued `after_turn` inputs into
 one canonical user message, `ClientViewItem.inputIds` names every
@@ -97,9 +99,19 @@ This release follows the single publishing dispatch described under
 `release_tag=v0.7.97-beta.10` runs Full CI, all five archive builds and the
 npm package gates, then creates the tag at the dispatched commit and the
 GitHub pre-release from that run's artifacts. Ordinary branch pushes do
-not run CI. Cross-platform manual acceptance, installed Space/SDK
-acceptance, the Space dependency bump and npm registry publication
-remain separate maintainer steps.
+not run CI. The dispatch (run 43617234911 at `1c45ad53c`) failed its
+first attempt only on `system (node 20)`, where the untouched
+`keeps the session usable after stopped Shell cleanup remains unknown`
+variant in `src/sdk-runtime.shell-timeout.test.ts` saw its successor Run
+settle `failed` instead of `completed` (the suite's file has prior CI
+budget evidence at `152ec646b`; the variant passes solo three-of-three
+under the local Node 20.20.2 and the whole file under Node 22) — an
+infrastructure flake covered by one failed-job re-run on the unchanged
+candidate, after which every job passed and the run published. The
+universal npm tarball asset is `kodax-ai-kodax-0.7.97-beta.10.tgz`,
+sha256 `360498dc…b2e615`, matching `SHA256SUMS`. Cross-platform manual
+acceptance, installed Space/SDK acceptance, the Space dependency bump
+and npm registry publication remain separate maintainer steps.
 
 ## v0.7.97-beta.9 release preparation
 
