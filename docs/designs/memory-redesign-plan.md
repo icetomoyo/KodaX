@@ -148,13 +148,13 @@ Wikis and vector stores (the article's wiki benefit is for large corpora and can
 ## 8. Non-goals of Phase 0
 Phase 0 does not change product code. It measures the current system.
 
-## 9. Unverified items (resolve before relying on them)
-- Whether the F289 replay job files still exist on disk.
-- Whether the prompt-dependent `project-memory` section breaks the cache prefix today.
-- What Space actually uses from `runtime.learning` and the memory SDK entry.
-- The exact LOC after deletion; the 5-7k figure is a guess.
-- Whether any learned skill has ever completed a canary outside the dev machine.
-- The F275 test-guide results were not read.
+## 9. Items that were unverified at planning time (resolved 2026-11-14)
+- **F289 replay files.** They still exist on the dev machine (about 13k job files in the review inbox). Phase 2c replayed local sessions instead (§15), so nothing depends on them.
+- **Cache prefix.** The notes index is not in the system prompt; it rides in the managed run-context message. Two runner tests pin this: the system prompt and the tool list are byte-identical across two sessions when a note is written between them, and after automatic compaction the index is in each managed request exactly once and never in the compactable transcript.
+- **Space.** See the corrected Space check in §17.3: Space uses `runtime.learning` and also the old memory-control surface.
+- **LOC.** Measured: about 12-13k non-test lines become deletable in 4e, not the 5-7k remainder guessed at planning time.
+- **Canary outside the dev machine.** Moot: 4d removed the canary.
+- **F275.** Read (`FEATURE_275_v0.7.77_TEST_GUIDE.md`). Its failure and compaction reminders run only through the old memory controller, which the runner creates only when notes are off. So since the default flip F275 is off by construction, which decision 3 did not intend; arm D was never measured (§16). Open, see §17.5.
 
 ## 10. Phase 0 results (2026-11-12, revision `f306-phase0-r1`)
 
@@ -389,7 +389,7 @@ By case, pass count out of 6 (A -> C): c1 0 -> 5, c3 0 -> 5, c6 0 -> 4, c7 0 -> 
 
 **Migration.** The first time the note memory builds a project's prompt, `convertLegacyOnce` copies that project's legacy memdir (`projects/<key>/memory/`) into its note store and writes `.legacy-converted.json` in the note root (`convertLegacyProjectMemory`, called from `buildCapabilityContextSections` only while `KODAX_MEMORY_NOTES=1`). The legacy directory is only read. The marker is what keeps a note the user later deleted from coming back, so it is written only after a conversion that finished; a missing legacy directory writes none (a later one is still converted), and a failed conversion writes none and is retried on the next run with a diagnostic (a malformed `lifecycle.json` is the known cause: it throws on purpose so a forgotten note is never resurrected). Converted notes carry no `source`, which the store reads as user-stated: they are never auto-archived. Scoped roots under `memory-scopes/` belong to embedders that pass a `memoryIdentity` (Space); the CLI never writes there, so they are not converted.
 
-**Space check (read from `KodaX-Space-next-dev`).** Space consumes the whole `runtime.learning` surface through `runtime-host-adapter.ts`: `list`, `get`, `getSnapshot`, `events`, `subscribe`, `acknowledge`, and the seven actions by name; it gates on the capabilities `runtime.learning` (`learningCenter` >= 1) and `runtime.learning.skillLoop` (`skillLearningLoop` >= 1) and requests the `learning:read` / `learning:control` scopes. Space does not touch the memory-control surface that this redesign replaces.
+**Space check (read from `KodaX-Space-next-dev`).** Space consumes the whole `runtime.learning` surface through `runtime-host-adapter.ts`: `list`, `get`, `getSnapshot`, `events`, `subscribe`, `acknowledge`, and the seven actions by name; it gates on the capabilities `runtime.learning` (`learningCenter` >= 1) and `runtime.learning.skillLoop` (`skillLearningLoop` >= 1) and requests the `learning:read` / `learning:control` scopes. Correction (2026-11-14, read again from both Space repos): Space does touch the memory-control surface. Its Memory popout, its `/memory` command and its `memory.*` IPC channels drive a memory-control controller: `runtime.memory.forProject(root).controller` on the daemon path, or `createMemoryControlPlane` with `resolveMemoryRoot` and `memoryProposalRevision` from `@kodax-ai/kodax/agent` otherwise. Its `/learn` command also reads the proposal store and the skill ledgers directly from the agent entry, and its startup probe fails if `experimental-memory` does not export `createMemoryAgent`, `createMemoryControlPlane` and `MEMORY_POLICY_VERSION`. Space never reads KodaX memory directories directly and passes no `memoryIdentity`. Two consequences: with notes on, Space's memory UI shows the old store, which nothing writes any more, and cannot see notes; and 4e cannot remove these entries before Space moves off them.
 
 **Decision for 4d (changes §3.5 and §3.7).** Learned skills already are `SKILL.md` directories under `<configHome>/learned` with their own revisions, fingerprints and actions, so there is nothing to import and no new store to put a facade over. 4d keeps the Learning Center as the skill store and governance, so the 13 methods, the two capability flags and the scopes stay byte-for-byte as they are, and only changes who proposes a skill (the reflection job instead of the old review call) and removes the canary. Rewriting the Learning Center over the note store would break a contract Space depends on for no gain. The facade-and-retire cycle is therefore not needed for `runtime.learning`; only the old memory-control code in 4e is removed.
 
@@ -413,6 +413,11 @@ By case, pass count out of 6 (A -> C): c1 0 -> 5, c3 0 -> 5, c6 0 -> 4, c7 0 -> 
 2. **The "dead" files are not dead.** `intake`, `triage`, `completed-turn` and `consumer-impact` have no production caller, but they are public exports of `@kodax-ai/agent`, and `learning.test.ts` builds its stored proposals through `triageProceduralLearning` to exercise `approval.ts`, which Space calls (`approveStoredLearningProposal`, `readSkillTrustLedger`, `readSkillUsageLedger`). Removing them means rewriting about 1k lines of live-path tests first. `experimental-memory` is also named by Space's SDK probe, so removing the entry needs the Space pin bump in the same step.
 
 **Inventory for the deletion pass** (after the default flips): the old memory section and `memory_recall` tool in coding; `memory-control` and `experimental-memory` in agent with the `./experimental-memory` export in both `package.json` files; the REPL `/memory` command, rewritten over the note store; the proposal intake chain with its tests re-based on `commitLearnedSkillRevision`; the canary lifecycle states. `runtime.learning` and its 13 methods stay (§17.3).
+
+**Blockers found 2026-11-14.** Two things must be settled before the deletion pass:
+
+1. **Space.** Space still needs `runtime.memory.forProject().controller`, `createMemoryControlPlane`, `resolveMemoryRoot`, `memoryProposalRevision`, the proposal-store and skill-ledger readers and the `experimental-memory` probe exports (§17.3). Either KodaX first gives notes a client surface (list, read, forget) and Space moves its memory UI onto it, or 4e keeps those entries as a thin compatibility layer.
+2. **F275.** Its reminders depend on the old controller, so deleting it ends F275 for good. Before that, either port the post-failure and post-compaction reminder onto notes and measure it as arm D on multi-round cases, or record with evidence that notes do not need it.
 
 ### 17.6 Review fixes after the default flip (2026-11-13)
 
