@@ -8,8 +8,8 @@
  *
  * Resolution order:
  *   1. `git config --get remote.origin.url` (when present) — stable across
- *      worktrees + clones, matches claudecode's `findCanonicalGitRoot`
- *      semantic without re-implementing git plumbing.
+ *      worktrees + clones. (claudecode keys by the canonical local git root
+ *      instead; a remote also joins clones on different machines.)
  *   2. `local-<sha256(cwd)>` fallback — for repos without a remote, or
  *      when git is unavailable. Stable within a single clone path.
  *
@@ -21,6 +21,7 @@
 
 import { createHash } from 'node:crypto';
 import { execSync } from 'node:child_process';
+import * as fs from 'node:fs';
 import { assertNoGitInstallPromptSync } from '../runtime/macos-git.js';
 import * as path from 'node:path';
 
@@ -112,6 +113,44 @@ export function tryGitRemote(cwd: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * The main checkout's root for any directory inside a git repository: a
+ * subdirectory or a linked worktree of it gives the same answer. Returns
+ * `undefined` outside a repository or when git fails. NEVER throws.
+ */
+export function tryGitProjectRoot(cwd: string): string | undefined {
+  try {
+    assertNoGitInstallPromptSync({ cwd });
+    const [top, common] = execSync('git rev-parse --show-toplevel --git-common-dir', {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 1000,
+      windowsHide: true,
+    }).split(/\r?\n/);
+    if (top === undefined || top.trim().length === 0) return undefined;
+    const commonDir = common === undefined || common.length === 0 ? undefined : path.resolve(cwd, common);
+    // A linked worktree keeps its git data in the main checkout's .git directory. Anything
+    // else (a submodule, a bare repository, a git too old to know the flag) keeps its own top.
+    return commonDir !== undefined && path.basename(commonDir) === '.git' && fs.existsSync(commonDir)
+      ? path.dirname(commonDir)
+      : path.resolve(top);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The key a project's FEATURE_308 notes live under: the sanitized remote, or
+ * for a repository without one, a hash of its main checkout's root, so every
+ * subdirectory and worktree shares one store. The legacy memory directory
+ * keeps its cwd key (`resolveMemoryRoot`), since memories already on disk are found by it.
+ */
+export function resolveProjectKey(cwd: string): string {
+  const remote = tryGitRemote(cwd);
+  return remote ? sanitizeProjectKey(remote) : `local-${hashCwd(tryGitProjectRoot(cwd) ?? cwd)}`;
 }
 
 /**

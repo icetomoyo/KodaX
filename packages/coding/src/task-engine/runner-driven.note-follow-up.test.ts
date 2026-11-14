@@ -89,3 +89,25 @@ it('sends the memory index once per session, not again with every follow-up run'
     expect(requests.at(-1)!.split('npm run diag').length - 1).toBe(1);
   } finally { await rm(root, { recursive: true, force: true, maxRetries: 3 }); }
 });
+
+it('shows a root run and its child agents the same note store', async () => {
+  vi.stubEnv('KODAX_MEMORY_NOTES', '1');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-ama-notes-'));
+  try {
+    const directories = async (agent: Record<string, unknown>): Promise<string[]> => {
+      let text = '';
+      await runManagedTaskViaRunner({ provider: 'anthropic', effort: 'none', lsp: false,
+        context: { configHome: path.join(root, 'home'), gitRoot: root, executionCwd: root, repoIntelligenceMode: 'off', ...agent },
+      }, 'Reply briefly.', async (messages, _tools, system) => {
+        text += [system, ...messages.map((message) => (typeof message.content === 'string' ? message.content : message.content.map((block) => (block.type === 'text' ? block.text : '')).join('\n')))].join('\n');
+        return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
+      }, { effort: 'medium', decision: buildFallbackRoutingDecision('Reply briefly.'), promptOverlay: '' });
+      return [...text.matchAll(/## (?:Project|User) notes\nDirectory: (.+)/g)].map((match) => match[1]!.trim());
+    };
+    const parent = await directories({});
+    expect(parent).toHaveLength(2);
+    expect(parent.every((directory) => directory.startsWith(path.join(root, 'home')))).toBe(true);
+    expect(await directories({ parentAgentId: '/root' })).toEqual(parent);
+    expect(await directories({ currentAgentId: '/root/child' })).toEqual(parent);
+  } finally { await rm(root, { recursive: true, force: true, maxRetries: 3 }); }
+});

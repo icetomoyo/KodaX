@@ -180,8 +180,9 @@ describe('executeChildAgents — guardrails propagation (FEATURE_092 phase 2b.7b
     mockRunKodaX.mockResolvedValue(okResult('inspected'));
     const managedWorkBudget = { totalBudget: 200, spentBudget: 7, currentHarness: 'H0_DIRECT' as const };
     const goalUsageSink = vi.fn();
+    const runtimeHome = join(tmpdir(), 'runtime-home');
     const guardrail = { kind: 'tool' as const, name: 'parent-boundary', beforeTool: async () => ({ action: 'block' as const, reason: 'Parent policy refusal' }) };
-    await executeChildAgents([createBundle({ readOnly })], { ...createCtx(), managedWorkBudget, goalUsageSink }, createOptions({
+    await executeChildAgents([createBundle({ readOnly })], { ...createCtx(), managedWorkBudget, goalUsageSink, configHome: runtimeHome }, createOptions({
       maxIterationsPerChild: 7,
       guardrails: [guardrail],
       parentOptions: { provider: 'anthropic', permissionIntent: { rootUserIntent: 'Inspect the assigned task', bindingConstraints: ['Do not publish'] } },
@@ -193,6 +194,8 @@ describe('executeChildAgents — guardrails propagation (FEATURE_092 phase 2b.7b
     expect(options.context?.permissionIntent).toMatchObject({ readOnly, rootUserIntent: 'Inspect the assigned task', bindingConstraints: ['Do not publish'] });
     expect(options.context?.managedWorkBudget).toBe(managedWorkBudget);
     expect(options.context?.goalUsageSink).toBe(goalUsageSink);
+    // Notes, reasoning caches and user agents live in the runtime's home, not the process's.
+    expect(options.context?.configHome).toBe(runtimeHome);
     expect(options.maxIter).toBe(7);
     expect(managedWorkBudget.spentBudget).toBe(7);
     const canonical = { system: options.context!.systemPromptOverride!, tools: getActiveToolDefinitions(

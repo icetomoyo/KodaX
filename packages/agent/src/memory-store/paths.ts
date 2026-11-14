@@ -7,12 +7,13 @@
  */
 import * as path from 'node:path';
 
-import { getAgentConfigPath } from '../runtime/agent-home.js';
-import { resolveMemoryRoot } from '../memory/paths.js';
+import { getAgentConfigHome } from '../runtime/agent-home.js';
+import { resolveProjectKey } from '../memory/paths.js';
 import type { NoteScope } from './record.js';
 
-export function resolveNoteRoot(cwd: string, scope: NoteScope): string {
+/** `home` is the config home of the runtime that owns the run; it defaults to the process's agent home. */
+export function resolveNoteRoot(cwd: string, scope: NoteScope, home: string = getAgentConfigHome()): string {
   return scope === 'user'
-    ? getAgentConfigPath('notes')
-    : path.join(path.dirname(resolveMemoryRoot(cwd)), 'notes');
+    ? path.join(home, 'notes')
+    : path.join(home, 'projects', resolveProjectKey(cwd), 'notes');
 }

@@ -8,7 +8,7 @@ Memory is a set of notes. Each note is one markdown file, and each store has a `
 
 | Store | Holds | Location |
 |---|---|---|
-| Project notes | Facts about this repository. Shared by every clone and worktree of the same git remote. | `~/.kodax/projects/<project>/notes/` |
+| Project notes | Facts about this repository. Shared by every clone and worktree of the same git remote. A repository without a remote shares them across its subdirectories and worktrees. | `~/.kodax/projects/<project>/notes/` |
 | User notes | Preferences that apply in every project. | `~/.kodax/notes/` |
 
 At the start of each session the agent sees both indexes. It opens a note only when its index line looks relevant to the task. A note never overrides your current message, the project's rules, or what the agent can verify in the repository now.

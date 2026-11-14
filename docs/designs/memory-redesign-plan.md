@@ -434,6 +434,24 @@ The Phase 1 to 4 work was reviewed in full after the default flipped, because it
 
 **Left as they are.** The tool names hardcoded in `evidence.ts` and `usage.ts` have one caller each; passing them in would be plumbing for no second case. A duplicate-id result from the reflection job never reaches the model (the job is one call, and results go only to diagnostics), so the message needs no hint.
 
+### 17.7 One note store per project (2026-11-14)
+
+A probe that rendered the prompt of a root run and of its child agents found three different note stores for one project:
+
+- An AMA root run used `memory-scopes/<tenant>/project/<id>/project-notes`. The runner derives a `memoryIdentity` for every root run, and `resolveNotePlace` read any identity as a hosted tenant.
+- An SA root run, every child agent and `/memory` used `projects/<key>/notes`. Children were also given the process's agent home instead of the runtime's `configHome`.
+- A repository without a remote was keyed by the launch directory. A subdirectory or a linked worktree therefore got its own store.
+
+No notes were on disk yet, so nothing needs migrating. The fixes:
+
+- An identity the runner derived (`tenantId` is `local:<configHome>`) keeps the local layout. Only an identity a host names gets the tenant's own stores.
+- The local layout lives in the run's `configHome`: `<configHome>/projects/<key>/notes` and `<configHome>/notes`.
+- Child agents inherit `configHome`.
+- A repository without a remote is keyed by its main checkout's root (`git rev-parse --show-toplevel --git-common-dir`). Outside git it falls back to the directory.
+- The legacy memory directory keeps its cwd key, so the conversion still finds memories that are already on disk. An AMA root run now also converts that directory, as SA always did.
+
+A runner test now pins one store for a root run and its children. A real-git test pins one key for a repository's root, its subdirectories and its linked worktrees.
+
 ## 18. Experiment: should an inferred lesson wait as a candidate? (revision `f308-inferred-r1`, pre-registered 2026-11-14)
 
 **Question.** A note the reflection job writes without the user's words is a candidate, hidden from the index until a later session confirms it. Phase 3's lift came almost entirely from notes the user had stated, so neither the benefit nor the cost of that quarantine has been measured. This experiment measures both.

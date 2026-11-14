@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -51,5 +52,46 @@ describe('note roots', () => {
   it('does not treat sibling directories as governed', () => {
     const sessions = path.join(path.dirname(resolveNoteRoot(cwd, 'project')), 'sessions', 'x.md');
     expect(isAutoManagedMemoryFile(sessions)).toBe(false);
+  });
+
+  it('roots both stores in the config home it is given', () => {
+    const other = path.join(home, 'runtime-home');
+    expect(resolveNoteRoot(cwd, 'user', other)).toBe(path.join(other, 'notes'));
+    expect(resolveNoteRoot(cwd, 'project', other)).toBe(path.join(other, path.relative(home, resolveNoteRoot(cwd, 'project'))));
+  });
+});
+
+describe('a repository without a remote', () => {
+  const git = (dir: string, ...args: string[]): void => {
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', ...args], { cwd: dir, stdio: 'ignore', windowsHide: true });
+  };
+
+  it('keeps one project store for its subdirectories and its linked worktrees', () => {
+    git(cwd, 'init', '-q');
+    fs.mkdirSync(path.join(cwd, 'packages', 'a'), { recursive: true });
+    fs.writeFileSync(path.join(cwd, 'packages', 'a', 'f.txt'), 'x');
+    git(cwd, 'add', '.');
+    git(cwd, 'commit', '-qm', 'init');
+    const trees = fs.mkdtempSync(path.join(os.tmpdir(), 'note-wt-'));
+    try {
+      git(cwd, 'worktree', 'add', '-q', path.join(trees, 'wt'));
+      const root = resolveNoteRoot(cwd, 'project');
+      expect(resolveNoteRoot(path.join(cwd, 'packages', 'a'), 'project')).toBe(root);
+      expect(resolveNoteRoot(path.join(trees, 'wt'), 'project')).toBe(root);
+      expect(resolveNoteRoot(path.join(trees, 'wt', 'packages', 'a'), 'project')).toBe(root);
+    } finally {
+      fs.rmSync(trees, { recursive: true, force: true });
+    }
+  });
+
+  it('still separates two repositories', () => {
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), 'note-cwd3-'));
+    try {
+      git(cwd, 'init', '-q');
+      git(other, 'init', '-q');
+      expect(resolveNoteRoot(other, 'project')).not.toBe(resolveNoteRoot(cwd, 'project'));
+    } finally {
+      fs.rmSync(other, { recursive: true, force: true });
+    }
   });
 });

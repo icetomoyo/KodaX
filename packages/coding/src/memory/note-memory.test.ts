@@ -14,6 +14,7 @@ import {
   type MemoryContextIdentity,
 } from '@kodax-ai/agent';
 
+import { deriveCodingMemoryIdentity } from '../memory-runtime.js';
 import { buildCapabilityContextSections } from '../prompts/capability-sections.js';
 import type { KodaXOptions } from '../types.js';
 import { getBuiltinRegisteredToolDefinition } from '../tools/registry.js';
@@ -65,6 +66,17 @@ describe('resolveNotePlace', () => {
     expect(a.roots.user).not.toBe(b.roots.user);
     expect(a.roots.project.startsWith(path.join(home, 'memory-scopes'))).toBe(true);
     expect(a.legacy.map((source) => source.root)).not.toContain(resolveMemoryRoot(cwd));
+  });
+
+  it('gives a root run, its child agents and the /memory command one store, in the run\'s config home', () => {
+    const runtimeHome = path.join(home, 'runtime-home');
+    const child = optionsWith({ configHome: runtimeHome, parentAgentId: '/root' });
+    // The runner derives an identity for a root run; that is not a host naming a tenant.
+    const root = optionsWith({ configHome: runtimeHome, memoryIdentity: deriveCodingMemoryIdentity(child, cwd, 'session-1') });
+    const expected = { project: resolveNoteRoot(cwd, 'project', runtimeHome), user: resolveNoteRoot(cwd, 'user', runtimeHome) };
+    expect(resolveNotePlace(root).roots).toEqual(expected);
+    expect(resolveNotePlace(child).roots).toEqual(expected);
+    expect(resolveNotePlace(root).legacy.map((source) => source.root)).toContain(resolveMemoryRoot(cwd));
   });
 
   it('keeps project and user notes apart for a hosted identity with only an agent', () => {

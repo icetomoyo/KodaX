@@ -948,6 +948,7 @@ async function createWorkflowChildDigest(
         context: {
           gitRoot: input.scopeCtx.gitRoot,
           executionCwd: input.scopeCtx.executionCwd ?? input.scopeCtx.gitRoot,
+          configHome: input.scopeCtx.configHome,
           shellExecution: input.scopeCtx.shellExecution,
           assertReadablePath: input.scopeCtx.assertReadablePath,
           toolVisibilityPolicy: input.scopeCtx.toolVisibilityPolicy,
@@ -1107,6 +1108,7 @@ async function resolveChildStructuredOutput(input: {
         context: {
           gitRoot: input.scopeCtx.gitRoot,
           executionCwd: input.scopeCtx.executionCwd ?? input.scopeCtx.gitRoot,
+          configHome: input.scopeCtx.configHome,
           shellExecution: input.scopeCtx.shellExecution,
           assertReadablePath: input.scopeCtx.assertReadablePath,
           toolVisibilityPolicy: input.scopeCtx.toolVisibilityPolicy,
@@ -1448,6 +1450,7 @@ async function runReadChildBody(
         context: {
           gitRoot: scope.ctx.gitRoot,
           executionCwd: scope.ctx.executionCwd ?? scope.ctx.gitRoot,
+          configHome: scope.ctx.configHome,
           runtimeRunId: scope.ctx.runtimeRunId,
           shellExecution: scope.ctx.shellExecution,
           shellSandbox: scope.ctx.shellSandbox,
@@ -1764,6 +1767,7 @@ async function runWriteChildBody(
         context: {
           gitRoot: childCtx.gitRoot,
           executionCwd: childCtx.executionCwd ?? childCtx.gitRoot,
+          configHome: childCtx.configHome,
           runtimeRunId: childCtx.runtimeRunId,
           shellExecution: childCtx.shellExecution,
           shellSandbox: childCtx.shellSandbox,

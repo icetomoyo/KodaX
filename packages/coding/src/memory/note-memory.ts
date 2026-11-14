@@ -28,7 +28,7 @@ import {
 } from '@kodax-ai/agent';
 
 import { resolveExecutionCwd } from '../runtime-paths.js';
-import { deriveCodingMemoryIdentity } from '../memory-runtime.js';
+import { deriveCodingMemoryIdentity, isLocalMemoryIdentity } from '../memory-runtime.js';
 import { staticText } from '../prompts/static-text.js';
 import type { KodaXOptions } from '../types.js';
 
@@ -82,15 +82,19 @@ function scopedNoteRoot(identity: MemoryContextIdentity, order: readonly Durable
 /**
  * A host that names the memory identity (one tenant per user, as a hosted
  * product does) gets stores inside that identity's own directories, so two
- * tenants never read each other's notes. Without one, notes follow the
- * project's git remote, shared by every worktree and clone.
+ * tenants never read each other's notes. Without one, notes follow the project
+ * (its git remote, else its main checkout) inside the run's config home, so a
+ * root run, its child agents and the /memory command all share one store.
  */
 export function resolveNotePlace(options: KodaXOptions, cwd: string = resolveExecutionCwd(options.context)): NotePlace {
-  const hosted = options.context?.memoryIdentity;
-  const derived = hosted ?? deriveCodingMemoryIdentity(options, cwd, 'notes');
+  const given = options.context?.memoryIdentity;
+  // The runner derives an identity for every root run; that one names no tenant.
+  const hosted = given !== undefined && !isLocalMemoryIdentity(given) ? given : undefined;
+  const derived = given ?? deriveCodingMemoryIdentity(options, cwd, 'notes');
   const identity = { ...derived, configHome: derived.configHome ?? getAgentConfigPath() };
+  const home = options.context?.configHome ?? getAgentConfigPath();
   const roots = hosted === undefined
-    ? { project: resolveNoteRoot(cwd, 'project'), user: resolveNoteRoot(cwd, 'user') }
+    ? { project: resolveNoteRoot(cwd, 'project', home), user: resolveNoteRoot(cwd, 'user', home) }
     : { project: scopedNoteRoot(identity, ['project', 'workspace'], 'project'), user: scopedNoteRoot(identity, ['user'], 'user') };
   const scoped = LEGACY_SCOPES
     .filter((item) => item.needs === undefined || identity[item.needs] !== undefined)

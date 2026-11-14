@@ -104,6 +104,14 @@ export function deriveCodingMemoryIdentityFromRoot(
   };
 }
 
+/**
+ * True for an identity {@link deriveCodingMemoryIdentityFromRoot} made for this machine,
+ * as the runner does for every root run, as opposed to one a host named for its tenant.
+ */
+export function isLocalMemoryIdentity(identity: MemoryContextIdentity): boolean {
+  return identity.configHome !== undefined && identity.tenantId === `local:${identity.configHome}`;
+}
+
 export function deriveCodingMemoryIdentity(
   options: KodaXOptions,
   cwd: string,
