@@ -12,7 +12,7 @@
  *   arm G  the rule under test: candidate answer; a write marked guard whose quote is
  *          found in local tool output is active at once, the rest stay candidates
  *
- * Session 2 runs up to three rounds against the case's fixed world. An arm whose
+ * Session 2 runs up to eight rounds against the case's fixed world. An arm whose
  * session-2 input is byte-identical to an earlier arm's reuses that trajectory.
  * Label-only cases (no session 2) make only the two reflection calls.
  *
@@ -48,12 +48,13 @@ import { buildNotesCellInputFrom, seedNotes, type SeededNotes } from '../feature
 import { candidateRequest, marksGuard } from './candidate.js';
 import { GUARD_CASES, REPLAYED_CASES, type GuardCase, type GuardKind } from './cases.js';
 
-export const GUARD_REVISION = 'f308-guard-r1' as const;
+export const GUARD_REVISION = 'f308-guard-r3' as const;
 export const GUARD_ALIASES: readonly ModelAlias[] = Object.freeze(['ark/k27', 'zhipu/glm52', 'ark/v4flash']);
 export const GUARD_ROOT = path.join(os.tmpdir(), 'kodax-eval-dumps', 'feature-308', GUARD_REVISION);
 const PILOT_ALIAS: ModelAlias = 'ark/k27';
 const REPETITIONS = 3;
-const MAX_ROUNDS = 3;
+/** The pilots never reached the port decision in three or six rounds: it comes after the agent reads, runs and inspects. */
+const MAX_ROUNDS = 8;
 const BYTES_PER_TOKEN = 3;
 const SESSION_ID = 'session-one';
 type Arm = 'A' | 'C' | 'E' | 'G';
@@ -68,8 +69,8 @@ export const GUARD_BUDGET = {
   plannedCalls: PLANNED_CALLS,
   maxProviderCalls: PLANNED_CALLS + 20,
   maxOutputTokensPerCall: 8192,
-  /** Requests of about 12k input tokens each, rounded up. */
-  maxTotalTokens: 16_000_000,
+  /** Requests of about 10k to 24k input tokens each, rounded up. */
+  maxTotalTokens: 60_000_000,
   maxExternalSpendUsd: 8,
   timeoutMs: 180_000,
 } as const;
