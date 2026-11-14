@@ -224,7 +224,7 @@ import {
   MEMORY_INTENT_TOOL_NAME,
 } from '../tools/memory-intent.js';
 import { activateMemoryTool, MEMORY_TOOL_NAME } from '../tools/memory.js';
-import { createNoteMemoryBinding, isNoteMemoryEnabled, noteMemoryAppliesTo, resolveNotePlace } from '../memory/note-memory.js';
+import { createNoteMemoryBinding, isNoteMemoryEnabled, noteFailureReminder, noteMemoryAppliesTo, resolveNotePlace, toolBatchFailed } from '../memory/note-memory.js';
 import { scheduleNoteRunFinish } from '../memory/note-reflection-job.js';
 import {
   activateSessionHistoryTools,
@@ -1494,6 +1494,8 @@ async function runSubstrateInContext(
   );
   let memoryObservationSequence = 0;
   let pendingMemoryInterventionTriggers: MemoryInterventionTrigger[] = [];
+  // FEATURE_308: the note memory's form of the F275 failure reminder, for the request after a failed batch.
+  let noteFailurePending = false;
   if (memoryController !== undefined && memoryPack !== undefined) {
     const controlPlane = memoryController;
     const initialMemoryPack = memoryPack;
@@ -1603,10 +1605,11 @@ async function runSubstrateInContext(
       });
     }
   }
-  if (memoryNotesToolAllowed) {
+  const notePlace = memoryNotesToolAllowed ? resolveNotePlace(options) : undefined;
+  if (notePlace !== undefined) {
     // FEATURE_308: the host supplies the current user message, so a quote can only come from the user.
     ctx.memoryNotes = createNoteMemoryBinding(
-      resolveNotePlace(options),
+      notePlace,
       () => memoryIntentUserTurnRef.current.text,
       // The same id the follow-up reflects under, so corroboration can tell sessions apart.
       sessionId,
@@ -2063,6 +2066,10 @@ async function runSubstrateInContext(
             error: error instanceof Error ? error.message : String(error),
           });
         }
+      }
+      if (noteFailurePending && notePlace !== undefined) {
+        noteFailurePending = false;
+        memorySuffix = noteFailureReminder(notePlace);
       }
       throwCallerAbort(options.abortSignal);
       const budgetSnapshot = {
@@ -3047,6 +3054,7 @@ async function runSubstrateInContext(
         });
         toolResults = postProcessed.toolResults;
         editRecoveryMessages = postProcessed.editRecoveryMessages;
+        if (notePlace !== undefined && toolBatchFailed(toolResults)) noteFailurePending = true;
         if (memorySession !== undefined) {
           const observations = buildToolMemoryObservations({
             toolBlocks: result.toolBlocks,

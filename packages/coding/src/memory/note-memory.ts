@@ -26,10 +26,12 @@ import {
   type NoteScope,
   type NoteStore,
 } from '@kodax-ai/agent';
+import type { KodaXEphemeralSuffix, KodaXToolResultBlock } from '@kodax-ai/llm';
 
 import { resolveExecutionCwd } from '../runtime-paths.js';
 import { deriveCodingMemoryIdentity, isLocalMemoryIdentity } from '../memory-runtime.js';
 import { staticText } from '../prompts/static-text.js';
+import { toolResultText } from '../tools/tool-result-content.js';
 import type { KodaXOptions } from '../types.js';
 
 export const NOTE_MEMORY_ENV = 'KODAX_MEMORY_NOTES';
@@ -158,6 +160,35 @@ export function renderNoteMemorySection(place: NotePlace): string {
     '',
     renderScope('User', place.roots.user),
   ].join('\n');
+}
+
+/**
+ * A batch failed when a tool reported an error, or a shell command exited
+ * non-zero. Exit 1 with nothing on stderr is how grep, test and diff say "no
+ * match" or "false", so it does not count.
+ */
+export function toolBatchFailed(results: readonly KodaXToolResultBlock[]): boolean {
+  return results.some((result) => {
+    if (result.is_error === true) return true;
+    const text = toolResultText(result.content);
+    const exit = /^Command: [\s\S]*?\nExit: (-?\d+)\n/.exec(text)?.[1];
+    if (exit === undefined || exit === '0') return false;
+    return exit !== '1' || text.includes('\n[stderr]\n');
+  });
+}
+
+function indexListsNotes(root: string): boolean {
+  return /^- \[/m.test(readIndex(root));
+}
+
+/**
+ * The reminder for the request after a failed batch: it points at the index
+ * and leaves the judgment to the model. None while no note is listed, because
+ * then there is nothing to look up.
+ */
+export function noteFailureReminder(place: NotePlace): KodaXEphemeralSuffix | undefined {
+  if (!indexListsNotes(place.roots.project) && !indexListsNotes(place.roots.user)) return undefined;
+  return { content: staticText('t13.prompts/note-failure-reminder.0') };
 }
 
 /** Opaque project id recorded on user-scope notes; a hash, so no path is copied into the shared store. */

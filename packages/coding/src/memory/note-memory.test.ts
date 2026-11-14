@@ -24,8 +24,10 @@ import {
   convertLegacyMemory,
   createNoteMemoryBinding,
   isNoteMemoryEnabled,
+  noteFailureReminder,
   renderNoteMemorySection,
   resolveNotePlace,
+  toolBatchFailed,
   type NotePlace,
 } from './note-memory.js';
 
@@ -127,6 +129,57 @@ describe('renderNoteMemorySection', () => {
       id: 'guess', type: 'project', description: 'Inferred thing', why: 'seen once', body: 'b', status: 'candidate',
     });
     expect(renderNoteMemorySection(place())).not.toContain('Inferred thing');
+  });
+});
+
+describe('toolBatchFailed', () => {
+  const result = (content: string, isError?: boolean) => ({
+    type: 'tool_result' as const, tool_use_id: 't', content, ...(isError === undefined ? {} : { is_error: isError }),
+  });
+
+  it('counts a tool error', () => {
+    expect(toolBatchFailed([result('[Tool Error] read: File not found: a.ts', true)])).toBe(true);
+  });
+
+  it('counts a shell command that exited non-zero', () => {
+    expect(toolBatchFailed([result('Command: npx vitest\nExit: 127\n\n[stderr]\nbash: npx: command not found')])).toBe(true);
+    expect(toolBatchFailed([result('Command: tsc --noEmit\nExit: 2\nsrc/a.ts(1,1): error TS2322')])).toBe(true);
+    expect(toolBatchFailed([result('Command: npm test\nExit: 1\nFAIL src/a.test.ts\n[stderr]\nnpm error Lifecycle script `test` failed')])).toBe(true);
+  });
+
+  it('reads the exit code of a multi-line command', () => {
+    expect(toolBatchFailed([result("Command: cat <<'X' | node\nconsole.log(1)\nX\nExit: 127\n\n[stderr]\nnode: not found")])).toBe(true);
+    expect(toolBatchFailed([result("Command: cat <<'X' | node\nconsole.log(1)\nX\nExit: 0\n1\n")])).toBe(false);
+  });
+
+  it('does not count exit 1 with nothing on stderr, the way grep says no match', () => {
+    expect(toolBatchFailed([result('Command: grep -rn foo src\nExit: 1\n')])).toBe(false);
+  });
+
+  it('does not count a batch where everything succeeded', () => {
+    expect(toolBatchFailed([result('Command: ls\nExit: 0\nsrc\n'), result('file text')])).toBe(false);
+    expect(toolBatchFailed([])).toBe(false);
+  });
+
+  it('counts the batch when any one result failed', () => {
+    expect(toolBatchFailed([result('file text'), result('Command: git pull\nExit: 128\n\n[stderr]\nfatal: unable to access')])).toBe(true);
+  });
+});
+
+describe('noteFailureReminder', () => {
+  it('stays silent while the index lists no note', async () => {
+    expect(noteFailureReminder(place())).toBeUndefined();
+    const store = createNoteStore(resolveNoteRoot(cwd, 'project'), 'project');
+    await store.write({ id: 'guess', type: 'project', description: 'Inferred thing', why: 'seen once', body: 'b', status: 'candidate' });
+    expect(noteFailureReminder(place())).toBeUndefined();
+  });
+
+  it('points at the index once a note is listed in either scope', async () => {
+    const store = createNoteStore(resolveNoteRoot(cwd, 'user'), 'user');
+    await store.write({ id: 'node-path', type: 'project', description: 'Node comes from fnm', body: 'b' });
+    const reminder = noteFailureReminder(place());
+    expect(reminder?.content).toContain('memory index');
+    expect(reminder?.content).not.toContain('Node comes from fnm');
   });
 });
 
