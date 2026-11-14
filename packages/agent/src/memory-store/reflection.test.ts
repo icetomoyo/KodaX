@@ -119,6 +119,31 @@ describe('evidence', () => {
     expect(quoteInEvidence(evidence, 'Command: npx vitest run packages/server\\nExit: 0', ['local'])).toBe(true);
     expect(quoteInEvidence(evidence, 'FAIL  src/routes/health.test.ts … the server tests are flaky', ['local'])).toBe(false);
   });
+
+  it('accepts a local quote that copies the heads the prompt shows results under, tying each line to its own result', () => {
+    const evidence = buildEvidence([
+      user('run the server tests'),
+      call('1', 'bash', { command: 'cd packages/server && npx vitest run' }),
+      result('1', 'Command: cd packages/server && npx vitest run\nExit: 1\n FAIL  src/routes/health.test.ts'),
+      call('2', 'bash', { command: 'npx vitest run packages/server' }),
+      result('2', 'Command: npx vitest run packages/server\nExit: 0\n Test Files  1 passed (1)'),
+      call('3', 'bash', { command: 'gh pr view 7' }),
+      result('3', 'Exit: 0'),
+    ]);
+    const failed = '[tool bash: cd packages/server && npx vitest run (error)]';
+    const passed = '[tool bash: npx vitest run packages/server]';
+    expect(renderEvidence(evidence)).toContain(`${failed}\n`);
+    expect(quoteInEvidence(evidence, `${failed}\nExit: 1\n FAIL  src/routes/health.test.ts\n\n${passed}\nExit: 0\n Test Files  1 passed (1)`, ['local'])).toBe(true);
+    expect(quoteInEvidence(evidence, `${passed} Exit: 0`, ['local'])).toBe(true);
+    expect(quoteInEvidence(evidence, `FAIL  src/routes/health.test.ts\n${passed}\nExit: 0`, ['local'])).toBe(true);
+    // A line copied under a head must come from that result: the failed run never printed "Exit: 0".
+    expect(quoteInEvidence(evidence, `${failed} Exit: 0`, ['local'])).toBe(false);
+    // A head alone shows only that the command ran, and words the agent wrote are not output.
+    expect(quoteInEvidence(evidence, passed, ['local'])).toBe(false);
+    expect(quoteInEvidence(evidence, `Running from the root works. ${passed} Exit: 0`, ['local'])).toBe(false);
+    // Only local results are split this way; an external result's head is not one of them.
+    expect(quoteInEvidence(evidence, '[tool bash: gh pr view 7] Exit: 0', ['local'])).toBe(false);
+  });
 });
 
 describe('reflection gate', () => {
@@ -311,6 +336,18 @@ describe('reflection operations', () => {
     const ok = await applyReflectionOperation(context('s1'), { operation: 'corroborate', id: 'fast', quote: 'always run make check-fast' });
     expect(ok.ok).toBe(true);
     expect((await notes(context('s1')))[0]).toMatchObject({ status: 'active', source: 'user' });
+  });
+
+  it('makes a candidate the user\'s own when a rewrite quotes them, as corroborate and edit do', async () => {
+    const ctx = context('s2');
+    await ctx.stores.project.write({ id: 'fast', type: 'project', description: 'run checks', why: 'seen', status: 'candidate', source: 'inferred', session: 's1', body: 'b\n' });
+    await ctx.stores.project.write({ id: 'seen', type: 'project', description: 'old', why: 'seen', status: 'candidate', source: 'inferred', session: 's1', body: 'b\n' });
+    expect((await applyReflectionOperation(ctx, { operation: 'rewrite', id: 'fast', description: 'Run make check-fast before pushing', quote: 'always run make check-fast' })).ok).toBe(true);
+    // Local output corrects the line but is not the user's word, so the note still waits for confirmation.
+    expect((await applyReflectionOperation(ctx, { operation: 'rewrite', id: 'seen', description: 'new', quote: 'check-fast passed in 40s' })).ok).toBe(true);
+    const byId = Object.fromEntries((await notes(ctx)).map((n) => [n.id, n]));
+    expect(byId['fast']).toMatchObject({ status: 'active', source: 'user', description: 'Run make check-fast before pushing' });
+    expect(byId['seen']).toMatchObject({ status: 'candidate', source: 'inferred', description: 'new' });
   });
 
   it('disputes with both statements and keeps the file; the dispute needs real evidence', async () => {

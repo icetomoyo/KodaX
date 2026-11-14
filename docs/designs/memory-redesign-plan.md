@@ -710,3 +710,24 @@ The passage targets the r1 harm: all three harmful confirmations met the situati
   - Notelines shows no reflection case consistently worse in B, and `r9` still corroborates in B.
 - **iterate:** harm falls, but true confirmations or corrections fall below those floors, or a notelines case regresses.
 - **revert:** harm does not fall.
+
+**Results of r2 (full runs 2026-11-14).** Both runs passed their pilots first. The answers were applied through the host as committed at the run (`dd75b8677`), then replayed ($0) through the two host fixes below.
+
+| Confirm stage (30 durable, 30 leave/correct, 18 correct chains) | r1 after its fix | r2 at the run | r2 after the fixes below |
+|---|---|---|---|
+| Durable chains confirmed | 16 | 15 | 18 |
+| Harmful confirmations | 3 | 1 | 1 |
+| Corrections (disputed or rewritten) | 6 | 9 | 10 |
+
+- **Harm fell from 3 to 1.** The one left is a v4flash answer that confirmed "without Postgres run only the unit project" after a passing suite. The passage did what it was written for: in `c-ui-kit-published` every answer now disputes or rewrites, against 2 of 6 in r1.
+- **Notelines regression (blinded pair review of 162 pairs, written before unblinding).** A was better in 18 pairs, B in 19, and 125 were equal. Most differences are v4flash noise in both arms. On the reflection cases:
+  - `r11` favours B in 4 pairs: B keeps the user-confirmed release order as an active line next to the skill.
+  - `r3` favours A in 2 pairs, each with a different cause. A v4flash answer said nothing applied, then disputed an unrelated note quoting "Great, done.". A glm answer wrote a candidate from a one-off rename. Neither follows from the passage, so this is not a consistent regression.
+  - `r9` corroborates in 5 of 6 B pairs. The sixth rewrote the candidate with the user's own words, and the host left it a candidate (fixed below).
+- **Host fixes found by this run ($0, checked by replay):**
+  - A quote copied from the prompt often carries the head a result is shown under (`[tool bash: npm test]`). Heads now split a quote like the other gaps. A piece after a head must come from that result, so a head alone or an "Exit: 0" from another run proves nothing. The replay changes exactly the four r2 answers that quoted heads (3 confirmations, 1 correction) and one r1 answer. Harm is unchanged in both.
+  - A rewrite of a candidate that quotes the user's own statement now makes it active and the user's own, as `corroborate` and the in-session `edit` already did. Local output still only corrects the line.
+- **Considered and left alone:** requiring a `why` for a dispute would have stopped the "Great, done." dispute. It would also refuse the correct `r7` disputes, which quote the user and give no reason.
+- What remains lost: quotes with the model's own annotations ("(Exit: 0)"), quotes that mix in the agent's words, rewrites with no quote, and the by-design refusal of a user-scope rewrite from local output.
+
+**Verdict: ship.** Every floor holds: harm 1 of 30, 18 of 30 durable chains confirmed, 10 of 18 corrections, and no notelines reflection case is consistently worse. The passage stays in the reflection prompt, and the two host fixes land with it.

@@ -164,24 +164,53 @@ const MIN_PROOF_WEIGHT = 10;
 /** Where a quote of several pieces breaks: a line break, an ellipsis, or a line break written out as \n. */
 const QUOTE_GAP = /\n|\\n|\.\.\.|…/;
 
+/** The head renderEvidence shows a local result under. */
+function localHead(segment: EvidenceSegment): string {
+  return `[tool ${segment.label}${segment.isError ? ' (error)' : ''}]`;
+}
+
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+interface QuotePiece {
+  readonly text: string;
+  /** The results this piece may come from: the ones under the head just before it, else any local result. */
+  readonly from: readonly EvidenceSegment[];
+}
+
+/** Splits a quote at copied result heads and at QUOTE_GAP. */
+function quotePieces(quote: string, local: readonly EvidenceSegment[]): { readonly pieces: readonly QuotePiece[]; readonly heads: number } {
+  const heads = [...new Set(local.map(localHead))].sort((a, b) => b.length - a.length);
+  const parts = heads.length === 0 ? [quote] : quote.split(new RegExp(`(${heads.map(escapeRegExp).join('|')})`));
+  const runs: QuotePiece[] = [{ text: parts[0]!, from: local }];
+  for (let index = 1; index < parts.length; index += 2) {
+    runs.push({ text: parts[index + 1] ?? '', from: local.filter((segment) => localHead(segment) === parts[index]) });
+  }
+  const pieces = runs.flatMap((run) => run.text.split(QUOTE_GAP).map(normalizeQuote).filter((text) => text.length > 0).map((text) => ({ text, from: run.from })));
+  return { pieces, heads: (parts.length - 1) / 2 };
+}
+
+/** A piece says something on its own, or is a whole line, so words cannot be stitched into a claim. */
+function pieceIn(piece: QuotePiece): boolean {
+  return piece.from.some((segment) => segment.text.split('\n').some((line) => normalizeQuote(line) === piece.text)
+    || (quoteWeight(piece.text) >= MIN_PROOF_WEIGHT && normalizeQuote(segment.text).includes(piece.text)));
+}
+
 /**
  * True when `quote` appears verbatim (whitespace-insensitive) in a segment whose source is in `allowed`.
  * When local output is allowed, a quote may also be pieces copied from several local results,
- * split by line breaks, an ellipsis or a written-out "\n", since the job answers once and never
- * learns that a quote was refused. Each piece must say something on its own or be a whole line
- * of output, so words cannot be stitched into a claim. User messages never combine: an active
- * note rests on one statement.
+ * split by line breaks, an ellipsis, a written-out "\n" or the head a result is shown under,
+ * since the job answers once and never learns that a quote was refused. A piece after a head
+ * must come from that result. User messages never combine: an active note rests on one statement.
  */
 export function quoteInEvidence(evidence: SessionEvidence, quote: string, allowed: readonly EvidenceSource[]): boolean {
   const wanted = normalizeQuote(quote);
   if (quoteWeight(wanted) < MIN_PROOF_WEIGHT) return false;
   if (evidence.segments.some((segment) => allowed.includes(segment.source) && normalizeQuote(segment.text).includes(wanted))) return true;
-  const lines = quote.split(QUOTE_GAP).map(normalizeQuote).filter((line) => line.length > 0);
-  if (!allowed.includes('local') || lines.length < 2) return false;
-  const local = evidence.segments.filter((segment) => segment.source === 'local').map((segment) => segment.text);
-  const texts = local.map(normalizeQuote);
-  const wholeLines = new Set(local.flatMap((text) => text.split('\n').map(normalizeQuote)));
-  return lines.every((line) => wholeLines.has(line) || (quoteWeight(line) >= MIN_PROOF_WEIGHT && texts.some((text) => text.includes(line))));
+  if (!allowed.includes('local')) return false;
+  const { pieces, heads } = quotePieces(quote, evidence.segments.filter((segment) => segment.source === 'local'));
+  // A head alone shows only that a command ran; without heads one piece is the plain check above.
+  if (pieces.length < (heads > 0 ? 1 : 2)) return false;
+  return pieces.every(pieceIn);
 }
 
 const COPY_WINDOW_CHARS = 40;
@@ -210,8 +239,7 @@ export function renderEvidence(evidence: SessionEvidence): string {
     if (segment.source === 'external') {
       return `<external-content tool="${segment.label}" trust="untrusted">\n${segment.text}\n</external-content>`;
     }
-    const tag = segment.source === 'local' ? `tool ${segment.label}${segment.isError ? ' (error)' : ''}` : segment.label;
-    return `[${tag}]\n${segment.text}`;
+    return `${segment.source === 'local' ? localHead(segment) : `[${segment.label}]`}\n${segment.text}`;
   });
   if (evidence.omitted > 0) blocks.push(`[${evidence.omitted} lower-priority segments omitted]`);
   return blocks.join('\n\n');

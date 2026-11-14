@@ -8,7 +8,8 @@
  *                session other than the one that proposed it (or the user's own words)
  *   dispute      active or candidate -> disputed (hidden from the index, kept on disk)
  *   rewrite      corrects a note; a note the user stated can only be rewritten
- *                from a user message, local evidence can only dispute it
+ *                from a user message, local evidence can only dispute it; a
+ *                candidate rewritten from a user message becomes active
  *   skill        proposes a learned skill; same proof as dispute, a valid and
  *                unsafe-pattern-free spec, no external text; the host stores it
  *                as "ready", so the user reviews it before it is ever used
@@ -197,6 +198,8 @@ async function rewrite(store: NoteStore, note: MemoryNote, input: ReflectionOpIn
     ...(input.why === undefined ? {} : { why: input.why }),
     ...(input.body === undefined ? {} : { body: input.body }),
     ...(note.status === 'disputed' ? { status: 'active' as const } : {}),
+    // The user stated the corrected rule, so a candidate becomes theirs, as with corroborate.
+    ...(note.status === 'candidate' && fromUser ? { status: 'active' as const, source: 'user' as const } : {}),
   });
   return done.ok ? { ok: true, message: `Rewrote memory '${note.id}'.` } : fail(done.reason === 'secret' ? (done.detail ?? 'Secrets are never stored in memory.') : `Could not update '${note.id}'.`);
 }
