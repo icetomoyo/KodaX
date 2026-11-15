@@ -96,7 +96,7 @@ it.each(['history', 'observe'] as const)('preserves dated canonical tool facts a
     { role: 'user', timestamp: '2026-10-08T02:50:37.276Z', content: [
       { type: 'tool_result', tool_use_id: 'reused-call', content: 'First result' },
     ] },
-    { role: 'user', inputId: 'later-input', timestamp: '2026-10-13T01:29:39.401Z', content: 'Repeat the same test' },
+    { role: 'user', inputId: 'later-input', inputIds: ['later-input', 'merged-input'], timestamp: '2026-10-13T01:29:39.401Z', content: 'Repeat the same test' },
     { role: 'assistant', outputId: 'later-output', timestamp: '2026-10-13T01:30:00.000Z', content: [
       { type: 'tool_use', id: 'reused-call', name: 'read', input: { path: 'later.txt' } },
     ] },
@@ -112,7 +112,8 @@ it.each(['history', 'observe'] as const)('preserves dated canonical tool facts a
     ? await client.sessions.observe(session.id, next => { view = next; }) : undefined;
   try {
     const items = surface === 'history' ? (await client.sessions.readHistory(session.id)).items : view!.items;
-    expect(items.filter(item => item.type === 'user').map(item => item.inputId)).toEqual(['first-input', 'later-input']);
+    expect(items.filter(item => item.type === 'user').map(item => [item.inputId, item.inputIds]))
+      .toEqual([['first-input', undefined], ['later-input', ['later-input', 'merged-input']]]);
     expect(items.map(item => item.type)).toEqual(['user', 'tool', 'user', 'tool']);
     expect(new Set(items.map(item => item.id)).size).toBe(items.length);
     const tools = items.filter(item => item.type === 'tool');

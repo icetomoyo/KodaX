@@ -445,6 +445,8 @@ export interface HistoryItemBase {
   id: string;
   /** Accepted input identity used to join saved history to a frozen browse snapshot. */
   inputId?: string;
+  /** Every accepted input merged into this user message, head first; present only when merged. */
+  inputIds?: readonly string[];
   type: HistoryItemType;
   timestamp: number;
   textOffset?: number;

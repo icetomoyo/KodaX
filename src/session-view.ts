@@ -42,6 +42,8 @@ interface ObservedSession {
   readonly segments: Map<string, KodaXOutputSegmentProjection>;
   history: readonly ClientViewItem[];
   readonly runIds: Set<string>;
+  /** Live Runs' failure writers; the terminal event settles each exactly once. */
+  readonly runFailures: Map<string, (text: string) => void>;
   persistRequested: boolean;
   persisting?: Promise<void>;
   hasPersistFailure: boolean;
@@ -101,7 +103,7 @@ export class SessionViewOwner {
     this.assertOpen();
     let state = this.sessions.get(sessionId);
     if (!state) {
-      state = { committedOutputIds: new Set(), dirty: true, historyDirty: true, generation: 0, listeners: new Map(), items: [], history: [], segments: new Map(), runIds: new Set(), persistRequested: false, hasPersistFailure: false };
+      state = { committedOutputIds: new Set(), dirty: true, historyDirty: true, generation: 0, listeners: new Map(), items: [], history: [], segments: new Map(), runIds: new Set(), runFailures: new Map(), persistRequested: false, hasPersistFailure: false };
       this.sessions.set(sessionId, state);
     }
     return state;
@@ -155,6 +157,10 @@ export class SessionViewOwner {
           itemId: id, charCount: reduced.state.active.thinkingText.length } : undefined });
       }
     };
+    state.runFailures.set(runId, text => {
+      upsert({ id: `${runId}:failure`, type: 'error', text, timestamp: Date.now() });
+      this.checkpoint(sessionId);
+    });
     const notices = createSessionNoticeEvents(sessionId, (notice, meta) => {
         if (!isPrimary(meta)) { childActivity('progress', notice.text, meta); return; }
         upsert({ ...notice, id: `${runId}:${notice.id ?? randomUUID()}`, timestamp: Date.now() });
@@ -342,6 +348,14 @@ export class SessionViewOwner {
         this.checkpoint(sessionId);
       },
     };
+  }
+
+  /** Retains a failed Run's credential-safe failure after its input; any terminal Run releases its writer. */
+  settleRun(sessionId: string, runId: string, failure?: string): void {
+    const state = this.sessions.get(sessionId);
+    const write = state?.runFailures.get(runId);
+    state?.runFailures.delete(runId);
+    if (failure !== undefined) write?.(failure);
   }
 
   checkpoint(sessionId: string): void {
@@ -946,7 +960,8 @@ export function restoreSessionContentItems(
     }
     if (item.type === 'user' && item.inputId !== undefined) {
       return [{ id: `${sessionId}:input:${item.inputId}`, type: 'user', text: item.text,
-        inputId: item.inputId, ...(item.timestamp !== undefined ? { timestamp: item.timestamp } : {}),
+        inputId: item.inputId, ...(item.inputIds ? { inputIds: item.inputIds } : {}),
+        ...(item.timestamp !== undefined ? { timestamp: item.timestamp } : {}),
         ...(userAttachments.has(item.inputId) ? { attachments: userAttachments.get(item.inputId) } : {}) }];
     }
     let previous: ClientViewItem | undefined;

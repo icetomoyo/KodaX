@@ -855,7 +855,8 @@ export interface KodaXEvents {
     meta?: KodaXToolEventMeta,
     context?: KodaXUserInputPromptContext,
   ) => Promise<AskUserAnswer | AskUserUnanswered>;
-  /** Ask user multiple independent questions sequentially - 澶氶棶棰橀『搴忔彁闂?*/
+  /** Ask user multiple independent questions sequentially. Answers are keyed by
+   *  question text; a partial map is valid and a missing question was skipped. */
   askUserMulti?: (
     options: AskUserMultiOptions,
     meta?: KodaXToolEventMeta,

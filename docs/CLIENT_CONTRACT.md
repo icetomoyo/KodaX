@@ -269,6 +269,12 @@ Host 将其结算为正常的 `unanswered/non_interactive` 工具结果，区别
 `skipped` 和 Host `timeout`。客户端不能用 skip 伪造 timeout。one-shot CLI
 只跳过本次接收 Run 的问题；MCP elicitation 的无回答仍映射为协议 `cancel`。
 
+多题 `question_multi` 的 `answers` 以题目文本为键，只放用户已答的题；部分映射是
+合法回复，缺失的题表示该题被跳过。工具结果在 `answers` 之外按原题顺序列出
+`unanswered`；全部作答时不出现该字段。键不是题目文本时 Host 无法判断哪些题被
+跳过，不输出该字段。空映射与整体 skip 相同，返回 `status: 'unanswered'`。同一批
+题目文本不能重复，否则工具在提问前报错。
+
 Space/其他客户端只展示 Host 的 pending 状态并按精确 requestId 提交结果，
 不设本地自动回答/取消定时器。断连、关闭订阅、刷新页面不能自行结算问题；
 重连后读取同一 pending 请求。首个有效结算生效，迟到、重复或旧 ID 回复返回
@@ -291,7 +297,7 @@ Host 超时或 Stop 结算后才到达的回调异常不能改写结果。未回
 | Input | `sessionId + inputId` | 调用方为一个意图分配 ID；不确定接收时查询原 ID，不能直接生成新 ID 重发 |
 | Run | `runId`，关联 `sessionId` | 输入接收与运行完成分开；仅 Host 生命周期/终态是完成事实 |
 | Interaction | `requestId`，关联 Session/Run | 精确回答当前请求；过期、已答和未知请求不能被当作新请求 |
-| 显示项 | `ClientViewItem.id`；用户项可带 `inputId` | 以身份和 Host 顺序显示；旧历史可无 inputId，禁止按全文去重不同用户意图 |
+| 显示项 | `ClientViewItem.id`；用户项可带 `inputId`，合批消息再带 `inputIds` | 以身份和 Host 顺序显示；旧历史可无 inputId，禁止按全文去重不同用户意图 |
 | History | `revision`、项 ID、分页 cursor；搜索 entryIndex 仅在该 revision 内稳定 | 不跨 revision 拼接页或按陈旧索引执行分支操作 |
 | 授权/注册/Actor | 各域自己的 ID、revision、路径等 | 遵守对应 CAS/归属约束，不用统一的猜测 revision 替代 |
 
@@ -306,11 +312,11 @@ delivery 的队列行为如下；空 queue 不能证明所有已知输入已经�
 | delivery | 行为与确认 |
 | --- | --- |
 | immediate | 尝试开始 Run；Session 忙时冲突，不先执行动态准备 |
-| after_turn | 保存到 Host 可撤回队列；普通输入在当前 Run 下一次模型调用前的安全点交付，不等待整个长任务结束。没有可用安全点时保留待后续调度；多条输入也可能合批为同一 Run/一个 user 展示项，须逐 inputs.read 确认 submitted/runId |
+| after_turn | 保存到 Host 可撤回队列；普通输入在当前 Run 下一次模型调用前的安全点交付，不等待整个长任务结束。没有可用安全点时保留待后续调度；多条输入也可能合批为同一 Run/一个 user 展示项，该项以 `inputIds` 逐个点名已合并输入（头部即 `inputId`），据此即可退役各输入的 pending 呈现；submitted/runId 的接收确认仍以逐 inputs.read 为准 |
 | redirect | 保存新输入并停止目标 Run，沿用显式 redirect 的后续调度 |
 | steer | 交给目标执行中的中断输入路径，可能返回 queued，但不在 view.queue 中；安全点认领前可由原客户端 withdraw 取回完整原文，认领后 withdraw 明确 conflict；通过 inputs.read 确认 submitted/dropped/withdrawn |
 
-普通 stop/failed 不自动 drain，队列保留；不能在重连时自行重放提交。Ink 已按逐 inputId 查询处理合批确认，不按正文去重。
+普通 stop/failed 不自动 drain，队列保留；不能在重连时自行重放提交。Ink 处理合批确认时不按正文去重：合并项的 `inputIds` 覆盖每个输入，接收状态再按逐 inputId 查询。
 
 steer 不进入可撤回队列，也不随客户端退出撤回；客户端退出另行结算本客户端的 Run。目标 Run 以任何方式（完成、失败或 Stop）在交付前结束时，未交付的 steer 记为 dropped，之后 withdraw 返回 conflict。withdraw 先持久化撤回回执，再从 Run 释放该输入；释放失败时回滚回执并返回 conflict。Host 在两步之间中断时回执生效，生成检查点恢复时不再交付该 steer；若输入在中断前已写入规范历史，恢复以历史为准不重复交付，但 inputs.read 仍可能报告 withdrawn。steer 的 queued 接收记录只在本 Host 进程内存在，Host 重启后随检查点恢复的 steer 不能再 withdraw，inputs.read 可能返回 null。
 
@@ -360,6 +366,7 @@ Interaction 的 kind 决定 options 和 response：单选问题、多问题、�
 | --- | --- | --- |
 | `id` | Host 为该显示项给出的身份；同项更新沿用 ID | 可作组件 key，不解析内部字符串格式；不同读取面或修订的 ID 不保证互换 |
 | `inputId?` | canonical user 消息对应的已接受输入身份 | 关联乐观输入与 Host 正式项；旧历史可能没有，不能据全文全局去重 |
+| `inputIds?` | 该 canonical user 消息合并的全部已接受输入，头部（`inputId`）在前 | 仅合批消息出现；据此退役每个已合并输入的 pending 呈现。未合批消息与旧历史没有该字段，不能据全文猜测合并关系 |
 | `type` | user/assistant/thinking/info/error/event/hint/sidecar/system/tool | 用户、助手、思考、通知与工具分别呈现；不同类型不因相邻而合成同一条原文 |
 | `text` | 该类型的显示正文；tool 时是工具输出 | 可能是有界后缀；原文为空时空文本合法，不代表没有工具输入或运行失败。不能因其他项目用完预算而把非空原文投影成空壳 |
 | `textOffset?`, `totalTextLength?` | 有界正文后缀的绝对 UTF-16 偏移与完整长度 | 按 readItem 补齐；不能用 text.length 代替完整长度 |
@@ -459,7 +466,7 @@ Run 的 Provider 失败，主任务结果继续读取 `runs` 及其 `failureDeta
 首轮输入到终态（下面表达因果，不保证一次内部事件对应一次观察回调）：
 
 1. Client 对 Session 建立 observe，先收到当前 view；随后用新 inputId submit。先 submit 后 observe 也能取得当前态，但不能要求补发错过的瞬态步骤。
-2. submit 返回 submitted/runId，后续 view.items 出现 user 项，runs 给出实际 phase；单条输入可由 inputId 关联，after_turn 合批必须逐 inputs.read 确认各 ID，不能要求每个输入各有一个展示项。
+2. submit 返回 submitted/runId，后续 view.items 出现 user 项，runs 给出实际 phase；单条输入可由 inputId 关联；after_turn 合批时 user 项以 `inputIds` 点名每个已合并输入（头部即 `inputId`），客户端据此退役各输入的 pending 气泡，submitted/runId 仍逐 inputs.read 确认，不能要求每个输入各有一个展示项。
 3. Host 更新 thinking/assistant 项；工具以稳定 item.id 和 callId 出现，status=running、inputText 为参数，后续 progress 或结果替换同项。
 4. 若需要权限，view.interactions 出现 requestId；任一 Client respond 后后续视图移除请求。工具最终 success/error/cancelled，不能据此结束整轮。
 5. runs.await 返回真实终态，view.runs/最后正文收敛；Client 去掉本地流式标记。若 await 返回 unknown，显示终态无法确认及 error 原因，不发布成功；连接错误的 Promise rejection 单独处理。
@@ -532,6 +539,8 @@ Skill 不代表独立 daemon 已注册。Host 仍从可信来源重载并执行 
 Space 的注册和调用前检查由 Space 单独接入。
 源扫描不完整时，已发现的技能继续可用；缺失目标不能被断言为不存在，须返回
 注册表不可用。修复来源后重新发现会更新该事实；可选来源缺失不算扫描失败。
+
+以 `failed` 结束且带 `failureDetail` 的 Run，会在会话视图追加并保存一条 `type: 'error'` 项：`sourceRunId` 为该 Run，`text` 等于 `failureDetail.safeMessage`，`afterInputId` 为该 Run 最后交付的输入，因此重开会话后失败仍位于对应输入之后。`cancelled`/`interrupted` 不追加。Provider 用尽恢复后，视图不再写入命令行版“输入 continue/stop”提示；SDK 不处理这两个指令，失败由上述错误项说明。客户端按 `sourceRunId` 是否为当前 Run 决定是否补充 `failureDetail` 详情。
 
 常见边界包括 conflict（意图或 revision 冲突）、not_found、permission_denied、unauthorized、version_incompatible/client_upgrade_required、resync_required/data_changed、runtime_changed、observation_invalidated 和读取超时/取消。不要将这些错误统一吞为“没有数据”或“已完成”。具体码以 [daemon protocol](../src/runtime-daemon/protocol.ts) 及执行域为准，当前协议码表不是纯产品 SDK 的穷尽错误类型。
 

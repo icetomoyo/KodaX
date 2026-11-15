@@ -13782,6 +13782,31 @@ describe("createKodaXRuntime", () => {
     } finally { await third.close(); }
   });
 
+  it('does not restore or re-run an input merged into a saved canonical message', async () => {
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
+    const homeDir = path.join(tempRoot, 'pending-merged');
+    const sessionsDir = path.join(homeDir, 'sessions');
+    const first = await createKodaXRuntime({ homeDir, sessionsDir, defaultProvider: 'mock-provider' });
+    const session = await first.sessions.create({ title: 'Merged batch' });
+    await first.close();
+    const storage = new FileSessionStorage({ sessionsDir });
+    const saved = await storage.load(session.id);
+    if (!saved) throw new Error('Expected canonical Session');
+    const messages: KodaXMessage[] = [{ role: 'user', content: 'second\n\n---\n\nthird', inputId: 'second', inputIds: ['second', 'third'] }];
+    await storage.save(session.id, { ...saved, messages, lineage: createSessionLineage(messages, saved.lineage) });
+    const directory = path.join(homeDir, '.kodax', 'runtime', 'pending-inputs');
+    await fs.mkdir(directory, { recursive: true });
+    const entry = (inputId: string, text: string) => ({ input: { sessionId: session.id, inputId, text, delivery: 'after_turn' }, skill: false, principalId: 'client-A' });
+    await fs.writeFile(path.join(directory, `${session.id}.json`), JSON.stringify([entry('second', 'second'), entry('third', 'third')]));
+    const restarted = await createKodaXRuntime({ homeDir, sessionsDir, defaultProvider: 'mock-provider' });
+    try {
+      for (const inputId of ['second', 'third']) {
+        expect((await restarted.runs.getInput(session.id, inputId))?.state, inputId).not.toBe('queued');
+      }
+      expect(codingMock.startKodaX).not.toHaveBeenCalled();
+    } finally { await restarted.close(); }
+  });
+
   it('fences work and config patches on unreadable core config without discarding its bytes or selecting defaults', async () => {
     const { createKodaXRuntime } = await import('../tests/runtime-fixture.js');
     const homeDir = path.join(tempRoot, 'unreadable-core-config');

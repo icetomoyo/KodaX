@@ -4725,7 +4725,7 @@ async function createKodaXRuntimeInternal(
       .find(item => identity || toolIdentity || inputId !== undefined ? item.id === itemId : item.tool?.callId === toolId);
     return restored ? { ...restored, id: itemId } : null;
   });
-  const bus = createRuntimeEventBus((sessionId, type) => {
+  const bus = createRuntimeEventBus((sessionId, type, payload, scope) => {
     if (type === 'session.created') executionFacts.created(sessionId);
     if (type === 'session.rewound' || type === 'session.active_entry.updated') {
       sessionViews.resetHistory(sessionId);
@@ -4735,7 +4735,12 @@ async function createKodaXRuntimeInternal(
     // history reload because they cannot change display items.
     sessionViews.changed(sessionId, (type.startsWith('session.') && type !== 'session.settings.updated')
       || type === 'run.started' || type === 'turn.started' || type === 'run.input.delivered' || isTerminalRuntimeEvent(type));
-    if (isTerminalRuntimeEvent(type)) sessionViews.checkpoint(sessionId);
+    if (isTerminalRuntimeEvent(type)) {
+      // run.failed carries the terminal Run status; its safe failure joins the conversation.
+      const failure = type === 'run.failed' ? (payload as Partial<RuntimeRunStatus>).failureDetail?.safeMessage : undefined;
+      sessionViews.settleRun(sessionId, scope.runId, failure);
+      sessionViews.checkpoint(sessionId);
+    }
   });
   const settingsOwner = createRuntimeSessionSettingsOwner(persistence, bus,
     sessionId => sessionManager.storage.isDraft(sessionId), () => ({
@@ -10217,6 +10222,11 @@ function createRuntimeSessionService(
   return service;
 }
 
+/** A canonical user message consumes its head input and every input merged into its batch. */
+function messageConsumesInput(message: KodaXMessage, inputId: string): boolean {
+  return message.role === 'user' && (message.inputId === inputId || message.inputIds?.includes(inputId) === true);
+}
+
 async function createRuntimeRunService(deps: {
   readonly executionFacts: ExecutionFactsStore;
   readonly deleteTemporarySession: (sessionId: string) => Promise<void>;
@@ -10306,7 +10316,7 @@ async function createRuntimeRunService(deps: {
   for (const sessionId of new Set(persistedInputs.map(value => value.input.sessionId))) {
     const saved = await deps.sessionManager.storage.load(sessionId);
     const pending = persistedInputs.filter(value => value.input.sessionId === sessionId
-      && !saved?.messages.some(message => message.inputId === value.input.inputId));
+      && !saved?.messages.some(message => messageConsumesInput(message, value.input.inputId)));
     productQueue.restore(pending, true);
   }
   productQueue.restoreWithdrawn(persistedInputState.withdrawn);
@@ -12988,7 +12998,7 @@ async function createRuntimeRunService(deps: {
         sessionsDir: deps.sessionManager.storage.getSessionsDir(), content: originalContent, session, runId,
         productIntentDigest: record.productInput?.digest, inputIds: trustedInput.productBatch });
       const content = visualInput.content;
-      const savedInput = session.messages.find(message => message.role === 'user' && (message.inputId === canonicalInputId || message.inputIds?.includes(canonicalInputId)));
+      const savedInput = session.messages.find(message => messageConsumesInput(message, canonicalInputId));
       if (savedInput && JSON.stringify(savedInput.content) !== JSON.stringify(content)) {
         throw createRuntimeConflictError('Input ID already belongs to a different intent.', 0);
       }
@@ -13066,10 +13076,10 @@ async function createRuntimeRunService(deps: {
       const saved = await deps.sessionAdmission.loadExecutable(input.sessionId);
       const pendingInputs = (deps.persistence.hasPendingInputs(input.sessionId)
         ? productQueue.snapshot(input.sessionId) : recovery.data.pendingInputs ?? [])
-        .filter(value => !saved.messages.some(message => message.inputId === value.input.inputId));
+        .filter(value => !saved.messages.some(message => messageConsumesInput(message, value.input.inputId)));
       productQueue.validateRestore(pendingInputs);
       const pendingInterrupts = record.interruptInputs.filter(pending => pending.state === 'queued').map(pending => {
-        if (saved.messages.some(message => message.inputId === pending.inputId)) return { pending, normalized: undefined };
+        if (saved.messages.some(message => messageConsumesInput(message, pending.inputId))) return { pending, normalized: undefined };
         // The Host stopped after committing this steer's withdrawal receipt but before the
         // Run checkpoint recorded the release; the receipt is the user's decision.
         if (productQueue.read(record.sessionId, pending.inputId)?.state === 'withdrawn') return { pending, withdrawn: true };
@@ -13253,7 +13263,7 @@ async function createRuntimeRunService(deps: {
     const pending = productQueue.snapshot(sessionId).find(value => value.input.inputId === inputId);
     if (!pending?.input.inputArtifacts?.some(artifact => artifact.kind === 'image')) return;
     const saved = await deps.sessionAdmission.loadExecutable(sessionId);
-    if (saved.messages.some(message => message.role === 'user' && (message.inputId === inputId || message.inputIds?.includes(inputId)))) {
+    if (saved.messages.some(message => messageConsumesInput(message, inputId))) {
       throw createRuntimeConflictError('Visual input already entered canonical history; retry its acknowledgement.', 0);
     }
     await commitVisualWithdrawal(sessionId, inputId, saved);
@@ -13306,8 +13316,7 @@ async function createRuntimeRunService(deps: {
     const first = batch[0];
     if (!first) return;
     const saved = await deps.sessionAdmission.loadExecutable(sessionId);
-    const committed = saved.messages.find(message => message.role === 'user'
-      && (message.inputId === first.input.inputId || message.inputIds?.includes(first.input.inputId)));
+    const committed = saved.messages.find(message => messageConsumesInput(message, first.input.inputId));
     if (committed) {
       const committedIds = new Set([committed.inputId, ...(committed.inputIds ?? [])]);
       const next = batch.findIndex(value => !committedIds.has(value.input.inputId));
@@ -16716,7 +16725,12 @@ function mergeRuntimeEventEmissions(
   return next;
 }
 
-function createRuntimeEventBus(onSessionChanged?: (sessionId: string, type: RuntimeEventType) => void) {
+function createRuntimeEventBus(onSessionChanged?: (
+  sessionId: string,
+  type: RuntimeEventType,
+  payload: unknown,
+  scope: RuntimeEventEmissionScope,
+) => void) {
   let closed = false;
   const seqBySession = new Map<string, number>();
   const liveBySession = new Map<string, RuntimeSessionLiveProjectionState>();
@@ -17175,7 +17189,7 @@ function createRuntimeEventBus(onSessionChanged?: (sessionId: string, type: Runt
       payload: unknown,
       scope: RuntimeEventEmissionScope,
     ): void {
-      onSessionChanged?.(scope.sessionId, type);
+      onSessionChanged?.(scope.sessionId, type, payload, scope);
       enqueue(type, payload, scope);
     },
     emitCommitted(

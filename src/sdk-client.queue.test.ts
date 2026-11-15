@@ -205,6 +205,13 @@ it('keeps unknown slash tokens, paths and URLs in the ordinary text batch', asyn
   expect(await second.inputs.read(session.id, 'plain')).toMatchObject({ state: 'submitted', runId: consumed!.runId });
   expect(requests[1]?.filter(message => message.inputId === 'slash' || message.inputId === 'plain')
     .map(message => message.content)).toEqual([`${text}\n\n---\n\nContinue normally.`]);
+  // The merged message names every input it consumed, so a client can retire each one.
+  let view: ClientSessionView | undefined;
+  const observation = await second.sessions.observe(session.id, (next) => { view = next; });
+  try {
+    expect(view?.items.filter(item => item.type === 'user').map(item => [item.inputId, item.inputIds]))
+      .toEqual([['initial', undefined], ['slash', ['slash', 'plain']]]);
+  } finally { observation.close(); }
 });
 
 it('bounds queue previews and capacity while only the original principal can retrieve the complete withdrawal', async () => {

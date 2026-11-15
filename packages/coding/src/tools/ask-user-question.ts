@@ -168,6 +168,17 @@ function normalizeAnswerMap(answers: Record<string, AskUserAnswer>): {
   return { answers: normalizedAnswers, customInputs };
 }
 
+/**
+ * Questions missing from a map keyed by question text. Undefined when any key
+ * is not a question text: such a host's omissions cannot be identified.
+ */
+function unansweredQuestions(questions: readonly AskUserQuestionItemInput[], answers: object): string[] | undefined {
+  const texts = new Set(questions.map(item => item.question));
+  if (Object.keys(answers).some(key => !texts.has(key))) return undefined;
+  const missing = questions.map(item => item.question).filter(text => !Object.hasOwn(answers, text));
+  return missing.length > 0 ? missing : undefined;
+}
+
 function addCustomInputResponseFields(
   response: Record<string, unknown>,
   customInputs: string[],
@@ -196,10 +207,15 @@ export async function toolAskUserQuestion(
       return '[Tool Error] ask_user_question: Multi-question mode not available (askUserMulti callback not provided)';
     }
 
+    const seen = new Set<string>();
     for (const item of input.questions as AskUserQuestionItemInput[]) {
       if (!item.question || typeof item.question !== 'string') {
         return '[Tool Error] ask_user_question: Each item in "questions" must have a "question" string';
       }
+      if (seen.has(item.question)) {
+        return `[Tool Error] ask_user_question: Question "${item.question}" appears more than once; answers are keyed by question text, so each question needs distinct text`;
+      }
+      seen.add(item.question);
       if (!Array.isArray(item.options) || item.options.length === 0) {
         return `[Tool Error] ask_user_question: Question "${item.question}" must have a non-empty "options" array`;
       }
@@ -248,7 +264,7 @@ export async function toolAskUserQuestion(
       if (isAskUserUnanswered(answers)) {
         return JSON.stringify({ success: true, status: 'unanswered', reason: answers.reason });
       }
-      if (answers === undefined) {
+      if (answers === undefined || Object.keys(answers).length === 0) {
         return JSON.stringify({ success: true, status: 'unanswered', reason: 'skipped' });
       }
 
@@ -260,6 +276,8 @@ export async function toolAskUserQuestion(
       if (Object.keys(normalized.customInputs).length > 0) {
         response.custom_inputs = normalized.customInputs;
       }
+      const unanswered = unansweredQuestions(input.questions as AskUserQuestionItemInput[], answers);
+      if (unanswered !== undefined) response.unanswered = unanswered;
       return JSON.stringify(response);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);

@@ -6,9 +6,52 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Session views now retain a failed Run's failure: a `type: 'error'` item with
+  the Run's `sourceRunId`, its `failureDetail.safeMessage`, placed after the
+  Run's input and saved with the session. The CLI-only "Recovery exhausted.
+  Type 'continue'..." prompt is no longer written to SDK session views; the
+  terminal REPL still shows it.
+
 ### Changed
 
 - Memory is rebuilt (FEATURE_308). Each memory is now one markdown file with a short index in the system prompt and a single `memory` tool, and it is on by default. A background step after each run reflects on the session, saves what you stated or corrected, keeps inferred notes as candidates until a second session or you confirm them, archives stale inferred notes, and proposes reusable procedures as skills that wait for your review in `/learn ready`. It makes at most 10 model calls per day, and it skips CLI-bridge providers. After a tool call fails, the agent is reminded to check whether a note covers that failure. `/memory` lists your notes and unconfirmed candidates, and can show, approve or forget one. When the index is full, the remaining notes are linked from `MEMORY.more.md`. Your existing memories in every scope are copied into the new store once; the old files are left in place. Set `KODAX_MEMORY_NOTES=0` to keep the previous memory.
+- `ask_user_question` with `questions[]`: when the host answers only some
+  questions, the result adds `unanswered`, the skipped question texts in
+  question order. Hosts keep returning a map of the answered questions only.
+  An empty map now returns the same `unanswered/skipped` result as a skip.
+  Duplicate question texts in one batch are rejected before asking, since an
+  answer map keyed by text cannot tell them apart.
+
+---
+
+## [0.7.97-beta.10] - 2026-11-15
+
+Tenth beta of the v0.7.97 line: merged-input acknowledgement in the
+Space client contract. `ClientViewItem.inputIds` names every accepted
+input the Host merged into one canonical user message, head (`inputId`)
+first, on live views, restored sessions and read history alike, so a
+client retires each merged input's pending bubble without per-input
+reads; the field is absent on unmerged messages and legacy history. A
+Host restart between saving a merged user message and marking its batch
+submitted no longer restores the merged non-head inputs as `queued`.
+Every v0.7.96 stable and v0.7.97-alpha.1 through beta.9 client contract
+is retained. npm publication remains a manual maintainer action.
+
+### Added
+
+- `ClientViewItem.inputIds`: when the Host merges queued `after_turn` inputs
+  into one user message, its view and history items name every merged input,
+  head (`inputId`) first. Clients can retire each merged input's pending
+  bubble. Absent on unmerged messages.
+
+### Fixed
+
+- A Host restart between saving a merged user message and marking its batch
+  submitted no longer restores the merged non-head inputs as `queued`. Every
+  pending-input restore now treats `inputIds` as consumed, as the merge path
+  already did.
 
 ---
 

@@ -858,6 +858,8 @@ export interface ClientViewItem {
   readonly id: string;
   /** Accepted input identity of a canonical user message; absent on legacy history. */
   readonly inputId?: string;
+  /** Every accepted input merged into this canonical user message, head (inputId) first; present only when merged. */
+  readonly inputIds?: readonly string[];
   readonly type: 'user' | 'assistant' | 'thinking' | 'info' | 'error' | 'event' | 'hint' | 'sidecar' | 'system' | 'tool';
   readonly text: string;
   /** Present when text is a bounded suffix; readItem retains the complete original. */
