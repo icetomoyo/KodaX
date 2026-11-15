@@ -89,14 +89,12 @@ describe('prepareInvocationExecution', () => {
     expect(emit).toHaveBeenCalledWith(expect.stringContaining('blocked by the current permission policy'));
   });
 
-  it('blocks shell hooks when allowed-tools does not permit bash', async () => {
-    const emit = vi.fn();
+  it('leaves shell hooks to the permission policy even when allowed-tools omits bash', async () => {
+    const beforeToolExecute = vi.fn(async () => true);
     const prepared = await prepareInvocationExecution(
       {
         provider: 'zhipu-coding',
-        events: {
-          beforeToolExecute: async () => true,
-        },
+        events: { beforeToolExecute },
       },
       {
         prompt: 'Base prompt',
@@ -104,43 +102,44 @@ describe('prepareInvocationExecution', () => {
         displayName: 'hooked-skill',
         allowedTools: 'Read, Grep',
         hooks: {
-          UserPromptSubmit: [{ command: 'echo prompt-hook' }],
+          UserPromptSubmit: [{ command: `"${process.execPath}" -e "process.stdout.write('hook-context')"` }],
         },
       },
       '/skill:hooked-skill',
-      emit
+      vi.fn()
     );
 
-    expect(prepared.mode).toBe('manual');
-    expect(prepared.manualOutput).toContain('stopped by a UserPromptSubmit hook');
-    expect(emit).toHaveBeenCalledWith(expect.stringContaining('blocked by allowed-tools policy'));
+    expect(prepared.mode).toBe('inline');
+    expect(prepared.prompt).toContain('hook-context');
+    expect(beforeToolExecute).toHaveBeenCalledWith('bash', expect.objectContaining({ _hookEvent: 'UserPromptSubmit' }));
   });
 
-  it('blocks tools outside the allowed-tools list', async () => {
+  it('ignores allowed-tools and lets the permission policy decide every tool', async () => {
+    const emit = vi.fn();
     const prepared = await prepareInvocationExecution(
       {
         provider: 'zhipu-coding',
         events: {
-          beforeToolExecute: async () => true,
+          beforeToolExecute: async (tool) => tool !== 'write',
         },
       },
       {
         prompt: 'Use only read tools',
         source: 'prompt',
         displayName: 'read-only-command',
-        allowedTools: 'Read, Grep',
+        allowedTools: 'Read, Grep, Bashh(git:*)',
       },
       '/read-only-command',
-      vi.fn()
+      emit
     );
 
     expect(prepared.mode).toBe('inline');
-    expect(prepared.options).toBeDefined();
-    const allowRead = await prepared.options!.events!.beforeToolExecute!('read', {});
-    const allowWrite = await prepared.options!.events!.beforeToolExecute!('write', {});
-
-    expect(allowRead).toBe(true);
-    expect(allowWrite).toBe(false);
+    const events = prepared.options!.events!;
+    await expect(events.beforeToolExecute!('read', {})).resolves.toBe(true);
+    await expect(events.beforeToolExecute!('bash', { command: 'npm test && git push' })).resolves.toBe(true);
+    await expect(events.beforeToolExecute!('mcp_call', {})).resolves.toBe(true);
+    await expect(events.beforeToolExecute!('write', {})).resolves.toBe(false);
+    expect(emit).not.toHaveBeenCalledWith(expect.stringContaining('allowed-tools'));
   });
 
   it.each([
@@ -271,32 +270,6 @@ describe('prepareInvocationExecution', () => {
     expect(JSON.stringify(prepared.options?.context?.skillInvocation?.runtimePolicy))
       .not.toContain('echo');
     expect(prepared.options?.events?.onToolResult).toBe(onToolResult);
-  });
-
-  it('fails closed when allowed-tools contains only invalid entries', async () => {
-    const emit = vi.fn();
-    const prepared = await prepareInvocationExecution(
-      {
-        provider: 'zhipu-coding',
-        events: {
-          beforeToolExecute: async () => true,
-        },
-      },
-      {
-        prompt: 'Use only approved tools',
-        source: 'prompt',
-        displayName: 'strict-command',
-        allowedTools: 'Bashh(git:*)',
-      },
-      '/strict-command',
-      emit
-    );
-
-    expect(prepared.mode).toBe('inline');
-    expect(await prepared.options!.events!.beforeToolExecute!('read', {})).toBe(false);
-    expect(await prepared.options!.events!.beforeToolExecute!('bash', { command: 'git status' })).toBe(false);
-    expect(emit).toHaveBeenCalledWith(expect.stringContaining('invalid allowed-tools entries'));
-    expect(emit).toHaveBeenCalledWith(expect.stringContaining('all tool execution will be blocked'));
   });
 
   it('dispatches Notification hooks for runtime messages without recursion', async () => {

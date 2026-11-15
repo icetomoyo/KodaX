@@ -170,7 +170,8 @@ it('binds Main-owned credentials and tools to Product inputs, queued Runs and ex
     const commandOutcome = await client.runs.await(command.runId);
     expect(commandOutcome.phase, commandOutcome.error).toBe('completed');
     expect(commandProbes).toBeGreaterThan(0);
-    expect(toolCalls).toHaveLength(1);
+    // allowed-tools is preapproval, not a restriction: the Host decides the command's tool call.
+    expect(toolCalls).toEqual([expect.anything(), expect.objectContaining({ sessionId: session.id, runId: command.runId })]);
     expect(await readFile(path.join(homeDir, 'command-hook.txt'), 'utf8')).toContain('fixture-hook');
     const skill = await client.inputs.submit({ sessionId: session.id, inputId: 'skill', text: '/skill:space-skill inspect' });
     expect((await client.runs.await(skill.runId!)).phase).toBe('completed');
@@ -192,7 +193,7 @@ it('binds Main-owned credentials and tools to Product inputs, queued Runs and ex
     expect(brokerRequests.some(request => request.target.kind === 'actor_turn' && request.target.parentRunId === workflow.runId)).toBe(true);
     expect(workflowToolSets.length).toBeGreaterThan(0);
     expect(workflowToolSets.every(names => names.includes('space_read') && !names.includes('space_artifact'))).toBe(true);
-    expect(toolCalls).toHaveLength(2);
+    expect(toolCalls).toHaveLength(3);
     const detached = await client.sessions.create({ projectPath: homeDir });
     await client.sessions.updateSettings(detached.id, { provider: 'product-authorized', permissionMode: 'full-access' });
     const actor = await client.agents.spawn(detached.id, { taskName: 'independent', objective: 'INDEPENDENT-WRITE-PROBE: Inspect independently.',

@@ -61,13 +61,8 @@ Live and restored paths share projection; independent notices are preserved.
 text once per coalesced view. Partial arguments are transient memory, omitted
 from public/persisted views and released at their lifecycle boundary.
 
-Skill policy checks only constrained `Bash(pattern)` as a single parsed command.
-Compound statements, pipes, redirections and unsupported substitutions fail
-closed; cmd and PowerShell have explicit quote/expansion checks. Unrestricted
-rules still call Host authorization. The same restriction applies to hooks and
-dynamic context. [Issue 375](test-guides/ISSUE_375_v0.7.97_REGRESSION_GUIDE.md)
-records syntax limits; this does not claim that an allowed executable or profile
-cannot itself cause effects.
+Skill `allowed-tools` is parsed but does not restrict tools, hooks or dynamic
+context; every call uses the Host permission mode, authorization and sandbox.
 
 ## Startup and resume projections (2026-10-15 source)
 
@@ -147,7 +142,7 @@ observes text-helper stdin failures on the operation Promise, and
 reports scheduled shutdown cleanup failures. A missing workspace directory
 omits the concurrent text sandbox at Run start. Runtime advertises
 `conversationHistory:2`. Explicit Skill invocation is independent of model
-discovery. Invalid `allowed-tools` and malformed hook JSON are diagnosed;
+discovery. Skill `allowed-tools` does not restrict tools; malformed hook JSON is diagnosed;
 `PostToolUse` still runs if an embedder result observer throws. Run settlement
 observes finalization rejections and recovers an admitted `runId` without
 replaying `runs.start()`. The v0.7.95 maintenance release
@@ -1382,7 +1377,7 @@ provenance; it remains a model-tool request and therefore still observes
 `disableModelInvocation`.
 
 Tool policy is runtime-owned. Isolated transports carry only an enforcement
-marker and rehydrate `allowed-tools` plus Pre/Post hooks from the runtime's
+marker and rehydrate the Skill policy plus Pre/Post hooks from the runtime's
 trusted registry; a bound registry is authoritative and absence fails closed.
 Host registry objects and hook command strings never cross the JSON boundary.
 Hook shell commands still require the runtime permission broker, and runtime
@@ -1456,8 +1451,8 @@ registered names (including disabled and budget-omitted entries). The requested
 name is JSON-escaped and bounded before it is echoed.
 
 Recoverable result truncation also observes the active invocation's read
-policy. If `allowed-tools` excludes `read`, or any matching `PreToolUse` hook
-could refuse it, results remain complete inline. This check is conservative,
+policy. If any matching `PreToolUse` hook could refuse a read, results
+remain complete inline. This check is conservative,
 including hooks that might ultimately allow the read; it never runs a hook
 speculatively or bypasses Host/Skill authorization. Explicit and model-loaded
 Skills share this rule, and multiple active policies intersect. Existing

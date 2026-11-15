@@ -21,6 +21,14 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- `allowed-tools` in a Skill or command no longer restricts tools, hooks or
+  dynamic-context commands, in the SDK and in the REPL. Claude Code treats the
+  field as preapproval for the invoking turn, so third-party Skills that declare
+  it were blocked from tools the user's permission mode allows. The Host
+  permission mode and sandbox now decide every call. The field is still parsed
+  and kept in the Skill policy identity, so existing checkpoints restore;
+  invalid entries are no longer reported, since they no longer have an effect.
+
 - The builtin `code-review`, `git-workflow`, `skill-creator` and `tdd` Skills
   no longer declare `allowed-tools`, and `init-skill.js` no longer writes one into
   new Skills. A model-activated Skill's `allowed-tools` narrows every tool for the

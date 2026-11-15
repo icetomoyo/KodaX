@@ -24,10 +24,8 @@ helper 时给脚本路径和目标路径，不假定当前目录就是 Skill 目
 - SKILL.md 保留共同方法和分支入口。机械步骤放 scripts/，分支细节放 references/，
   模板放 assets/；只有实际需要时才新增支持文件。内置脚本使用 plain Node ESM `.js`，
   `.ts` 需要相应构建链，不能假定被直接复制的 TypeScript 可以执行。
-- 默认不写 allowed-tools。模型激活 Skill 时它会把整个 Run 的工具收窄到声明范围，
-  联网、子 Agent、todo 和 Windows PowerShell 都会被挡。确需限制时才声明，
-  `Bash(npm *, node *)` 匹配完整命令文本，不是 `npm:*` 冒号前缀。Skill 声明不会
-  授予宿主权限，仍执行原有授权与沙箱检查。
+- 不写 allowed-tools。KodaX 不用它限制或预授权工具；工具是否可用、是否需要确认，
+  始终由宿主的权限模式、授权与沙箱决定。
 - 移植时核对工具、路径、依赖和事件语义，保留真正可用的行为。记录可核实的来源
   URL、revision、许可与改写范围；未核实的来源明确标未知，不追认一个上游版本。
 

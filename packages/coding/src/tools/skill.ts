@@ -83,7 +83,7 @@ export async function toolSkill(
     if (fullSkill.context === 'fork') {
       return `[Tool Error] skill ${skillName}: context: fork requires explicit invocation so the Host can create its execution boundary.`;
     }
-    if (!ctx.activateModelSkill && (fullSkill.allowedTools || fullSkill.hooks || fullSkill.model || fullSkill.agent)) {
+    if (!ctx.activateModelSkill && (fullSkill.hooks || fullSkill.model || fullSkill.agent)) {
       return `[Tool Error] skill ${skillName}: runtime Skill activation is unavailable.`;
     }
     const metadata = registry.get(skillName);
@@ -111,7 +111,6 @@ export async function toolSkill(
       // (unchanged for the trusted standalone CLI).
       executeDynamicContext: ctx.skillDynamicContext?.execute,
       disableDynamicContext: ctx.skillDynamicContext?.disable,
-      assertDynamicContextAllowed: activation?.assertDynamicContextAllowed,
     });
 
     return [expanded.content, activation?.additionalContext].filter(Boolean).join('\n\n');

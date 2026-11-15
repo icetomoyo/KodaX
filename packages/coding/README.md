@@ -169,8 +169,8 @@ submodule relationship files are byte-bounded before that trust. Sandboxed
 text-helper stdin failures stay on the operation Promise. Scheduled daemon
 shutdown reports failed cleanup. A missing workspace directory omits the
 concurrent text sandbox at Run start. Runtime advertises `conversationHistory:2`.
-Explicit Skill invocation is independent of model discovery. Invalid
-`allowed-tools` and malformed hook JSON are diagnosed; `PostToolUse` still
+Explicit Skill invocation is independent of model discovery. Skill
+`allowed-tools` does not restrict tools; malformed hook JSON is diagnosed; `PostToolUse` still
 runs if an embedder result observer throws. Run settlement
 observes finalization rejections and recovers an admitted `runId` through
 `runs.get()` / `runs.await()` instead of replaying `runs.start()`. See the

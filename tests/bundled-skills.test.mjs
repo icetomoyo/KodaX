@@ -166,7 +166,8 @@ test('built SDK preserves Skill discovery, activation, permissions and refresh a
       assert.ok(!requests[0].tools.includes('skill'));
       assert.ok(!requests[0].system.includes('- bundle-audit:'));
     } else {
-      assert.match(results.join('\n'), /Tool 'glob' is not allowed by bundle-audit/);
+      // allowed-tools no longer narrows the Run; the Host decides, so glob runs.
+      assert.equal(results.at(-1), 'No files found');
       if (activation === 'model') {
         assert.match(requests[0].system, /- bundle-audit:/);
         assert.match(results[0], /BUNDLED_SKILL_BODY/);

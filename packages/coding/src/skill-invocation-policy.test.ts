@@ -123,7 +123,7 @@ describe('applyRuntimeSkillInvocationPolicy', () => {
       const resumed = await applyRuntimeSkillInvocationPolicy(recovery, 'Original question');
       expect(hookCalls).toHaveLength(2);
       expect(resumed.context?.promptOverlay).toContain('ADMITTED-HOOK-CONTEXT');
-      expect(await resumed.events?.beforeToolExecute?.('write', { path: 'x', content: 'x' })).toContain('not allowed');
+      expect(await resumed.events?.beforeToolExecute?.('write', { path: 'x', content: 'x' })).toBe(true);
       const original = await readFile(fixture.options.context!.skillInvocation!.path, 'utf8');
       await writeFile(fixture.options.context!.skillInvocation!.path, original.replace('Read, Bash(echo *)', 'Bash, Write'));
       await expect(applyRuntimeSkillInvocationPolicy(recovery)).rejects.toMatchObject({ code: 'skill_policy_restore_failed' });
@@ -138,59 +138,20 @@ describe('applyRuntimeSkillInvocationPolicy', () => {
     expect(options.events?.requestToolApproval).toBe(requestToolApproval);
   });
 
-  it.each([undefined, 'Bash', '*'] as const)('retains Host authorization for unrestricted shell rules (%s)', async allowedTools => {
-    const fixture = await optionsWithSkill({ allowedTools });
-    fixture.options.events = { beforeToolExecute: async () => '[Blocked] Host decision' };
+  it('ignores allowed-tools: every tool and hook goes to the Host permission mode', async () => {
+    // Claude Code treats allowed-tools as preapproval, not a restriction; KodaX leaves approval to the Host.
+    const fixture = await optionsWithSkill({ allowedTools: 'Read, Bash(git diff *), imaginary-tool',
+      userPromptSubmit: nodeCommand('process.exit(0)') });
+    const host = vi.fn(async (tool: string) => tool === 'write' ? '[Blocked] Host decision' : true);
+    fixture.options.events = { beforeToolExecute: host };
     const options = await applyRuntimeSkillInvocationPolicy(fixture.options);
-    expect(await options.events?.beforeToolExecute?.('bash', { command: 'echo one && echo two' }))
-      .toBe('[Blocked] Host decision');
-  });
-
-  it.each(['cmd', undefined] as const)('rejects cmd expansion and single-quote command chains (%s)', async kind => {
-    if (kind === undefined && process.platform !== 'win32') return;
-    const fixture = await optionsWithSkill({ allowedTools: 'Bash(echo SAFE *)' });
-    if (kind) fixture.options.context!.shellExecution = { version: 1, shell: { kind } };
-    const options = await applyRuntimeSkillInvocationPolicy(fixture.options);
-    for (const command of ["echo SAFE 'x&echo SECOND&rem '", 'echo SAFE %KODAX_SKILL_PROBE%',
-      'echo SAFE !KODAX_SKILL_PROBE!', 'echo SAFE ^&echo SECOND']) {
-      expect(await options.events?.beforeToolExecute?.('bash', { command }), command).toContain('not allowed');
-    }
-    expect(await options.events?.beforeToolExecute?.('bash', { command: 'echo SAFE "x&y"' })).toBe(true);
-  });
-
-  it.each(['powershell', 'pwsh'] as const)('uses %s quoting for constrained commands', async kind => {
-    const fixture = await optionsWithSkill({ allowedTools: 'Bash(echo SAFE *)' });
-    fixture.options.context!.shellExecution = { version: 1, shell: { kind } };
-    const options = await applyRuntimeSkillInvocationPolicy(fixture.options);
-    for (const command of ['echo SAFE \\;echo SECOND', 'echo SAFE \\|echo SECOND',
-      'echo SAFE "x\\"; echo SECOND; #"']) {
-      expect(await options.events?.beforeToolExecute?.('bash', { command }), command).toContain('not allowed');
-    }
-    for (const command of ['echo SAFE "x;y"', "echo SAFE 'x&y'", 'echo SAFE C:\\Work\\file.txt']) {
-      expect(await options.events?.beforeToolExecute?.('bash', { command }), command).toBe(true);
-    }
-  });
-
-  it('keeps constrained shell patterns from authorizing compound shell effects', async () => {
-    const fixture = await optionsWithSkill({ allowedTools: 'Bash(git diff *)' });
-    const hostAdmission = vi.fn(async () => true);
-    fixture.options.events = { beforeToolExecute: hostAdmission };
-    const options = await applyRuntimeSkillInvocationPolicy(fixture.options);
-    for (const command of [
-      'git diff --stat && git commit -am x', 'git diff --stat & whoami',
-      'git diff --stat || whoami', 'git diff --stat; whoami',
-      'git diff --stat\nwhoami', 'git diff --stat\r\nwhoami',
-      'git diff --stat | sh', 'git diff --stat > changed.txt',
-      'git diff $(whoami)', 'git diff `whoami`',
-    ]) {
-      expect(await options.events?.beforeToolExecute?.('bash', { command }), command)
-        .toContain('not allowed');
-    }
-    expect(hostAdmission).not.toHaveBeenCalled();
-    for (const command of ['git diff --stat', 'git diff -- "file with spaces.ts"', 'git diff -- "a&&b.ts"']) {
-      expect(await options.events?.beforeToolExecute?.('bash', { command })).toBe(true);
-    }
-    expect(hostAdmission).toHaveBeenCalledTimes(3);
+    await expect(options.events?.beforeToolExecute?.('write', {})).resolves.toBe('[Blocked] Host decision');
+    await expect(options.events?.beforeToolExecute?.('bash', { command: 'git diff --stat && git commit -am x' }))
+      .resolves.toBe(true);
+    await expect(options.events?.beforeToolExecute?.('mcp_call', { id: 'mcp:fixture:tool:x' })).resolves.toBe(true);
+    expect(host).toHaveBeenCalledWith('bash', expect.objectContaining({ command: 'git diff --stat && git commit -am x' }), undefined);
+    expect(host).toHaveBeenCalledWith('mcp_call', expect.anything(), undefined);
+    expect(host).toHaveBeenCalledWith('bash', expect.objectContaining({ _frontmatterHook: true, _hookEvent: 'UserPromptSubmit' }));
   });
 
   it('reports an unregistered Skill as a local loading failure', async () => {
@@ -397,17 +358,6 @@ describe('applyRuntimeSkillInvocationPolicy', () => {
     expect(options.modelOverride).toBe('review-model');
     expect(options.context?.skillInvocation?.model).toBe('review-model');
   });
-  it('rehydrates allowed-tools from the trusted runtime Skill', async () => {
-    const fixture = await optionsWithSkill({ allowedTools: 'read' });
-    const options = await applyRuntimeSkillInvocationPolicy(fixture.options);
-
-    await expect(options.events?.beforeToolExecute?.('read', {})).resolves.toBe(true);
-    await expect(options.events?.beforeToolExecute?.('write', {})).resolves.toContain(
-      "Tool 'write' is not allowed",
-    );
-    expect(options.context?.skillInvocation?.runtimePolicy?.enforceAtRuntime).toBe(false);
-  });
-
   it('runs trusted PreToolUse hooks before tool execution', async () => {
     const fixture = await optionsWithSkill({
       preToolUse: nodeCommand('process.stdout.write(JSON.stringify({allow:false}))'),
@@ -503,24 +453,6 @@ describe('applyRuntimeSkillInvocationPolicy', () => {
       .toThrow('injected result observer failure');
     await awaitRuntimeSkillInvocationPolicy(options);
     await expect(readFile(marker, 'utf8')).resolves.toBe('done');
-  });
-
-  it('diagnoses invalid allowed-tools entries while preserving fail-closed enforcement', async () => {
-    const diagnostics: KodaXDiagnostic[] = [];
-    const restore = setKodaXDiagnosticSink((diagnostic) => diagnostics.push(diagnostic));
-    try {
-      const fixture = await optionsWithSkill({ allowedTools: 'read, imaginary-tool' });
-      const options = await applyRuntimeSkillInvocationPolicy(fixture.options);
-
-      await expect(options.events?.beforeToolExecute?.('read', {})).resolves.toBe(true);
-      await expect(options.events?.beforeToolExecute?.('write', {})).resolves.toContain('not allowed');
-      expect(diagnostics).toContainEqual(expect.objectContaining({
-        level: 'warn',
-        message: expect.stringContaining('invalid allowed-tools'),
-      }));
-    } finally {
-      restore();
-    }
   });
 
   it('fails closed when a PreToolUse hook returns malformed output', async () => {
