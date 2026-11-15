@@ -4707,7 +4707,7 @@ async function createKodaXRuntimeInternal(
       .find(item => identity || toolIdentity || inputId !== undefined ? item.id === itemId : item.tool?.callId === toolId);
     return restored ? { ...restored, id: itemId } : null;
   });
-  const bus = createRuntimeEventBus((sessionId, type) => {
+  const bus = createRuntimeEventBus((sessionId, type, payload, scope) => {
     if (type === 'session.created') executionFacts.created(sessionId);
     if (type === 'session.rewound' || type === 'session.active_entry.updated') {
       sessionViews.resetHistory(sessionId);
@@ -4717,7 +4717,12 @@ async function createKodaXRuntimeInternal(
     // history reload because they cannot change display items.
     sessionViews.changed(sessionId, (type.startsWith('session.') && type !== 'session.settings.updated')
       || type === 'run.started' || type === 'turn.started' || type === 'run.input.delivered' || isTerminalRuntimeEvent(type));
-    if (isTerminalRuntimeEvent(type)) sessionViews.checkpoint(sessionId);
+    if (isTerminalRuntimeEvent(type)) {
+      // run.failed carries the terminal Run status; its safe failure joins the conversation.
+      const failure = type === 'run.failed' ? (payload as Partial<RuntimeRunStatus>).failureDetail?.safeMessage : undefined;
+      sessionViews.settleRun(sessionId, scope.runId, failure);
+      sessionViews.checkpoint(sessionId);
+    }
   });
   const settingsOwner = createRuntimeSessionSettingsOwner(persistence, bus,
     sessionId => sessionManager.storage.isDraft(sessionId), () => ({
@@ -16509,7 +16514,12 @@ function mergeRuntimeEventEmissions(
   return next;
 }
 
-function createRuntimeEventBus(onSessionChanged?: (sessionId: string, type: RuntimeEventType) => void) {
+function createRuntimeEventBus(onSessionChanged?: (
+  sessionId: string,
+  type: RuntimeEventType,
+  payload: unknown,
+  scope: RuntimeEventEmissionScope,
+) => void) {
   let closed = false;
   const seqBySession = new Map<string, number>();
   const liveBySession = new Map<string, RuntimeSessionLiveProjectionState>();
@@ -16968,7 +16978,7 @@ function createRuntimeEventBus(onSessionChanged?: (sessionId: string, type: Runt
       payload: unknown,
       scope: RuntimeEventEmissionScope,
     ): void {
-      onSessionChanged?.(scope.sessionId, type);
+      onSessionChanged?.(scope.sessionId, type, payload, scope);
       enqueue(type, payload, scope);
     },
     emitCommitted(

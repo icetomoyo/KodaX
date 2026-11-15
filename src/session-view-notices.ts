@@ -29,7 +29,12 @@ export function createSessionNoticeEvents(
       append({ id: `reasoning:${event.providerRequestId ?? 'legacy'}:resolved:${event.provider}:${event.model}`,
         type: 'info', text: `[Reasoning] ${event.provider}/${event.model} ${sent} (requested '${event.requestedEffort}'; unverified).` });
     },
-    onProviderRecovery: (event, meta) => append(createRecoveryHistoryItem(event), meta),
+    onProviderRecovery: (event, meta) => {
+      // The CLI's manual_continue prompt names commands no SDK client handles;
+      // the failed Run's error item carries the failure instead.
+      if (event.recoveryAction === 'manual_continue') return;
+      append(createRecoveryHistoryItem(event), meta);
+    },
     onMemoryNotice: (notice) => {
       if (notice.sessionId !== undefined && notice.sessionId !== sessionId) return;
       append({ id: `memory:${notice.episodeId}`, type: 'info', text: `[memory] ${notice.summaries.slice(0, 3).join('; ')}` });

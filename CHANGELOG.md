@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Session views now retain a failed Run's failure: a `type: 'error'` item with
+  the Run's `sourceRunId`, its `failureDetail.safeMessage`, placed after the
+  Run's input and saved with the session. The CLI-only "Recovery exhausted.
+  Type 'continue'..." prompt is no longer written to SDK session views; the
+  terminal REPL still shows it.
+
 ---
 
 ## [0.7.97-beta.10] - 2026-11-15
