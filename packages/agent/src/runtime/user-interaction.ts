@@ -165,9 +165,10 @@ export interface UserInteraction {
     options: AskUserQuestionOptions,
     context?: UserInteractionPromptContext,
   ) => Promise<AskUserAnswer | AskUserUnanswered>;
-  /** Ask several independent questions sequentially. Resolves a per-question
-   *  value map using the same `AskUserAnswer` shape as `askUser`, or undefined
-   *  when the user skips (legacy hosts). Requests may return `AskUserUnanswered`. */
+  /** Ask several independent questions sequentially. Resolves a map keyed by
+   *  question text, using the same `AskUserAnswer` shape as `askUser`. A partial
+   *  map is valid: a missing question was skipped. An empty map, undefined
+   *  (legacy hosts) or `AskUserUnanswered` means no question was answered. */
   askUserMulti?: (
     options: AskUserMultiOptions,
     context?: UserInteractionPromptContext,

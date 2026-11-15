@@ -303,6 +303,41 @@ describe('toolAskUserQuestion - multi question', () => {
     expect(result).toContain('reserved');
   });
 
+  const three = [
+    { question: 'Database?', options: [{ label: 'Postgres', value: 'pg' }] },
+    { question: 'Cache?', options: [{ label: 'Redis', value: 'redis' }] },
+    { question: 'Queue?', options: [{ label: 'SQS', value: 'sqs' }] },
+  ];
+
+  it('names questions the host left out of a partial answer map, in question order', async () => {
+    const ctx = makeCtx({ askUserMulti: async () => ({ 'Cache?': 'redis' }) });
+    const result = await toolAskUserQuestion({ questions: three }, ctx);
+    expect(JSON.parse(result)).toEqual({
+      success: true, answers: { 'Cache?': 'redis' }, unanswered: ['Database?', 'Queue?'],
+    });
+  });
+
+  it('omits unanswered when the host keys answers by something other than question text', async () => {
+    const ctx = makeCtx({ askUserMulti: async () => ({ db: 'pg' }) });
+    const result = await toolAskUserQuestion({ questions: three }, ctx);
+    expect(JSON.parse(result)).toEqual({ success: true, answers: { db: 'pg' } });
+  });
+
+  it('returns the skipped result when the host answers none of the questions', async () => {
+    const ctx = makeCtx({ askUserMulti: async () => ({}) });
+    const result = await toolAskUserQuestion({ questions: three }, ctx);
+    expect(JSON.parse(result)).toEqual({ success: true, status: 'unanswered', reason: 'skipped' });
+  });
+
+  it('rejects duplicate question text, which an answer map keyed by text cannot distinguish', async () => {
+    const askUserMulti = vi.fn(async () => ({}));
+    const result = await toolAskUserQuestion({ questions: [three[0]!, { ...three[1]!, question: 'Database?' }] },
+      makeCtx({ askUserMulti }));
+    expect(result).toContain('[Tool Error]');
+    expect(result).toContain('Database?');
+    expect(askUserMulti).not.toHaveBeenCalled();
+  });
+
   it('skips normally when the host returns undefined', async () => {
     const ctx = makeCtx({ askUserMulti: async () => undefined });
     const result = await toolAskUserQuestion(

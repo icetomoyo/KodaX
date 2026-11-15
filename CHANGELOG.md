@@ -14,6 +14,15 @@ All notable changes to this project will be documented in this file.
   Type 'continue'..." prompt is no longer written to SDK session views; the
   terminal REPL still shows it.
 
+### Changed
+
+- `ask_user_question` with `questions[]`: when the host answers only some
+  questions, the result adds `unanswered`, the skipped question texts in
+  question order. Hosts keep returning a map of the answered questions only.
+  An empty map now returns the same `unanswered/skipped` result as a skip.
+  Duplicate question texts in one batch are rejected before asking, since an
+  answer map keyed by text cannot tell them apart.
+
 ---
 
 ## [0.7.97-beta.10] - 2026-11-15

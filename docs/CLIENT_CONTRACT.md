@@ -263,6 +263,12 @@ Host 将其结算为正常的 `unanswered/non_interactive` 工具结果，区别
 `skipped` 和 Host `timeout`。客户端不能用 skip 伪造 timeout。one-shot CLI
 只跳过本次接收 Run 的问题；MCP elicitation 的无回答仍映射为协议 `cancel`。
 
+多题 `question_multi` 的 `answers` 以题目文本为键，只放用户已答的题；部分映射是
+合法回复，缺失的题表示该题被跳过。工具结果在 `answers` 之外按原题顺序列出
+`unanswered`；全部作答时不出现该字段。键不是题目文本时 Host 无法判断哪些题被
+跳过，不输出该字段。空映射与整体 skip 相同，返回 `status: 'unanswered'`。同一批
+题目文本不能重复，否则工具在提问前报错。
+
 Space/其他客户端只展示 Host 的 pending 状态并按精确 requestId 提交结果，
 不设本地自动回答/取消定时器。断连、关闭订阅、刷新页面不能自行结算问题；
 重连后读取同一 pending 请求。首个有效结算生效，迟到、重复或旧 ID 回复返回
