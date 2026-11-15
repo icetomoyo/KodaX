@@ -8,6 +8,11 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- In a packaged Electron app, builtin Skills now resolve to the `app.asar.unpacked`
+  copy when it exists. Their reported Skill root was inside `app.asar`, so helper
+  scripts such as `node scripts/init-skill.js` failed with `MODULE_NOT_FOUND`:
+  a real `node` cannot read archive paths.
+
 - Session views now retain a failed Run's failure: a `type: 'error'` item with
   the Run's `sourceRunId`, its `failureDetail.safeMessage`, placed after the
   Run's input and saved with the session. The CLI-only "Recovery exhausted.
@@ -15,6 +20,13 @@ All notable changes to this project will be documented in this file.
   terminal REPL still shows it.
 
 ### Changed
+
+- The builtin `code-review`, `git-workflow`, `skill-creator` and `tdd` Skills
+  no longer declare `allowed-tools`, and `init-skill.js` no longer writes one into
+  new Skills. A model-activated Skill's `allowed-tools` narrows every tool for the
+  rest of the Run, so loading one blocked `web_fetch`, `spawn_agent`, todos and
+  Windows PowerShell commands unrelated to the Skill. Tools stay governed by the
+  Host's permission mode and sandbox.
 
 - `ask_user_question` with `questions[]`: when the host answers only some
   questions, the result adds `unanswered`, the skipped question texts in
