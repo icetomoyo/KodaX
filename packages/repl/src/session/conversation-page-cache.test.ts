@@ -16,6 +16,7 @@ import {
   appendConversationPageCache,
   canAppendConversationPageCache,
   readConversationPageCache,
+  readConversationPageCacheChunk,
   readConversationPageCacheManifest,
   refreshConversationPageCache,
   writeConversationPageCache,
@@ -173,6 +174,69 @@ describe('Conversation page cache durability', () => {
         profileId: 'default',
       }),
     })).resolves.toMatchObject({ sourceRevision: refreshedRevision });
+  });
+
+  it('keeps an older page revision readable while its generation only grows', async () => {
+    const value = await fixture('prefix-first');
+    value.lineage.entries.push(
+      messageEntry('entry-2', 'entry-1', 'assistant', 'prefix-second'),
+      messageEntry('entry-3', 'entry-2', 'user', 'prefix-third'),
+    );
+    value.lineage.activeEntryId = 'entry-3';
+    const sourceRevision = createSessionSourceRevision(value.sourceRevisionState);
+    await writeConversationPageCache(value.mainPath, 'boundary:first', value.sourceRevisionState,
+      buildSessionConversationHistory(value.lineage, sourceRevision), value.lineage, undefined, 1024);
+    const input = { limit: 1, maxPageBytes: 64 * 1024, maxInlineEntryBytes: 64 * 1024, reservedBytes: 0 };
+    const newest = await readConversationPageCache(value.mainPath, 'boundary:first', input);
+    if (newest?.nextEnd === undefined) throw new Error('expected an older page cursor');
+    const older = { ...input, expectedRevision: newest.revision, end: newest.nextEnd };
+
+    const manifest = await readConversationPageCacheManifest(value.mainPath);
+    if (manifest === undefined) throw new Error('Conversation cache manifest missing');
+    const appended = [messageEntry('entry-4', 'entry-3', 'assistant', 'prefix-fourth')];
+    const appendedState = createSessionSourceRevisionState([{
+      kind: 'main', relativePath: 'session.jsonl', bytes: Buffer.from('prefix-appended'),
+    }]);
+    const projected = canAppendConversationPageCache(manifest, 'entry-3', appended, 'entry-4');
+    if (projected === undefined) throw new Error('expected an appendable batch');
+    await appendConversationPageCache(value.mainPath, manifest, 'boundary:appended', appendedState,
+      projected, appended, 'entry-4');
+    const extended = { ...value.lineage, activeEntryId: 'entry-4', entries: [...value.lineage.entries, ...appended] };
+    const refreshedState = createSessionSourceRevisionState([{
+      kind: 'main', relativePath: 'session.jsonl', bytes: Buffer.from('prefix-ui-checkpoint'),
+    }]);
+    await expect(refreshConversationPageCache(value.mainPath, 'boundary:refreshed', refreshedState,
+      buildSessionConversationHistory(extended, createSessionSourceRevision(refreshedState)), extended, undefined))
+      .resolves.toBe(true);
+    // An append in flight grows the files before it replaces the manifest.
+    const current = await readConversationPageCacheManifest(value.mainPath);
+    if (current === undefined) throw new Error('Conversation cache manifest missing');
+    await fs.appendFile(path.join(path.dirname(value.mainPath), current.dataFile), 'in-flight');
+
+    // The writer's boundary is not needed: the revision witnesses the immutable prefix.
+    const page = await readConversationPageCache(value.mainPath, undefined, older);
+    expect(page).toMatchObject({ revision: newest.revision, sourceRevision, nextEnd: 1 });
+    expect(page?.entries.map((item) => item.entry?.message.content)).toEqual(['prefix-second']);
+    await expect(readConversationPageCacheChunk(value.mainPath, undefined, {
+      revision: newest.revision, entryIndex: 2, offset: 0,
+    })).resolves.toMatchObject({ revision: newest.revision, entryIndex: 2 });
+
+    // A Run saves by rewriting the session; a rebuild that keeps the prefix still serves the page.
+    await writeConversationPageCache(value.mainPath, 'boundary:rewritten', refreshedState,
+      buildSessionConversationHistory(extended, createSessionSourceRevision(refreshedState)), extended, undefined, 1024);
+    await expect(readConversationPageCache(value.mainPath, undefined, older))
+      .resolves.toMatchObject({ revision: newest.revision, sourceRevision });
+
+    const edited = {
+      ...extended,
+      entries: extended.entries.map((entry) => entry.id === 'entry-2'
+        ? messageEntry('entry-2', 'entry-1', 'assistant', 'edited-second')
+        : entry),
+    };
+    await writeConversationPageCache(value.mainPath, 'boundary:edited', refreshedState,
+      buildSessionConversationHistory(edited, createSessionSourceRevision(refreshedState)), edited, undefined, 1024);
+    await expect(readConversationPageCache(value.mainPath, undefined, older))
+      .rejects.toBeInstanceOf(ConversationPageCacheStaleError);
   });
 
   it('rejects oversized manifests without reading them into memory', async () => {

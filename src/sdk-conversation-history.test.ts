@@ -564,11 +564,20 @@ describe('Runtime conversation history', () => {
         activeEntryId: 'entry-2000',
         lineageEntries: updatedEntries.slice(baseline.lineageCount),
       });
-      await expect(runtime.sessions.conversationPage({
+      // The append only grew the cache, so the older cursor keeps its revision and window.
+      const stillOlder = await runtime.sessions.conversationPage({
         sessionId,
         cursor: first!.nextCursor,
         limit: 5,
-      })).rejects.toMatchObject({ code: 'resync_required' });
+      });
+      expect(stillOlder?.revision).toBe(first?.revision);
+      expect(stillOlder?.entries.map((item) => item.entry?.message.content)).toEqual([
+        'message-1990',
+        'message-1991',
+        'message-1992',
+        'message-1993',
+        'message-1994',
+      ]);
       const refreshed = await runtime.sessions.conversationPage({ sessionId, limit: 2 });
       expect(refreshed?.entries.map((item) => item.entry?.message.content)).toEqual([
         'message-1999',

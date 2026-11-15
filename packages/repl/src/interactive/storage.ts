@@ -4982,6 +4982,10 @@ export class FileSessionStorage implements KodaXSessionStorage {
   ): Promise<ConversationPageCachePage | null> {
     throwIfSessionReadAborted(options.signal);
     normalizeSessionReadTimeout(options.timeoutMs);
+    if (input.expectedRevision !== undefined) {
+      return raceSessionRead(this.readConversationCachePrefix(id, (mainPath) =>
+        readPreparedConversationPage(mainPath, undefined, { ...input, signal: options.signal })), options);
+    }
     const startedAt = Date.now();
     const operation = (async (): Promise<ConversationPageCachePage | null> => {
       await this.awaitOwnWrites(id, options, startedAt);
@@ -5007,19 +5011,37 @@ export class FileSessionStorage implements KodaXSessionStorage {
         if (before !== after) {
           throw new ConversationPageCacheStaleError('Conversation history changed during paging');
         }
-        if (page === null && input.expectedRevision !== undefined) {
-          throw new ConversationPageCacheStaleError('Conversation history changed; request a fresh page');
-        }
         return page;
       } catch (error: unknown) {
-        if (error instanceof ConversationPageCacheStaleError) {
-          if (input.expectedRevision === undefined) return null;
-          throw new SessionReadError('data_changed', error.message);
-        }
+        if (error instanceof ConversationPageCacheStaleError) return null;
         throw error;
       }
     })();
     return raceSessionRead(operation, options);
+  }
+
+  /**
+   * Older pages and entry chunks come from the cache generation's immutable
+   * prefix, witnessed by their page revision. They neither wait for the
+   * writer nor need its boundary, so they stay readable during a Run.
+   */
+  private async readConversationCachePrefix<T>(
+    id: string,
+    read: (mainPath: string) => Promise<T | null>,
+  ): Promise<T> {
+    try {
+      const mainPath = await this.resolveSessionLocation(id);
+      const value = mainPath === null ? null : await read(mainPath);
+      if (value === null) {
+        throw new ConversationPageCacheStaleError('Conversation history changed; request a fresh page');
+      }
+      return value;
+    } catch (error: unknown) {
+      if (error instanceof ConversationPageCacheStaleError) {
+        throw new SessionReadError('data_changed', error.message);
+      }
+      throw error;
+    }
   }
 
   async readConversationPageBoundary(
@@ -5104,41 +5126,13 @@ export class FileSessionStorage implements KodaXSessionStorage {
   ): Promise<ConversationPageCacheChunk | null> {
     throwIfSessionReadAborted(options.signal);
     normalizeSessionReadTimeout(options.timeoutMs);
-    const startedAt = Date.now();
-    const operation = (async (): Promise<ConversationPageCacheChunk | null> => {
-      await this.awaitOwnWrites(id, options, startedAt);
-      const mainPath = await this.resolveSessionLocation(id, true);
-      if (mainPath === null) return null;
-      const topologyIdentity = this.verifiedLocationTopology(id);
-      try {
-        const before = await readStableSessionBundleBoundaryAtPath(
-          this.sessionsDir,
-          id,
-          mainPath,
-        );
-        const chunk = await readPreparedConversationChunk(mainPath, before, {
-          ...input,
-          signal: options.signal,
-        });
-        const after = await readStableSessionBundleBoundaryAtPath(
-          this.sessionsDir,
-          id,
-          mainPath,
-        );
-        this.assertLocationTopologyUnchanged(id, topologyIdentity);
-        if (before !== after || chunk === null) {
-          throw new ConversationPageCacheStaleError('Conversation history changed; request a fresh page');
-        }
-        if (chunk === undefined) {
-          throw new Error(`Transcript entry index is out of range: ${input.entryIndex}`);
-        }
-        return chunk;
-      } catch (error: unknown) {
-        if (error instanceof ConversationPageCacheStaleError) {
-          throw new SessionReadError('data_changed', error.message);
-        }
-        throw error;
+    const operation = (async (): Promise<ConversationPageCacheChunk> => {
+      const chunk = await this.readConversationCachePrefix(id, (mainPath) =>
+        readPreparedConversationChunk(mainPath, undefined, { ...input, signal: options.signal }));
+      if (chunk === undefined) {
+        throw new Error(`Transcript entry index is out of range: ${input.entryIndex}`);
       }
+      return chunk;
     })();
     return raceSessionRead(operation, options);
   }

@@ -19,6 +19,16 @@ All notable changes to this project will be documented in this file.
   Type 'continue'..." prompt is no longer written to SDK session views; the
   terminal REPL still shows it.
 
+- An older Conversation cache page or entry chunk stays readable while a Run
+  writes to the Session. Reading one used to need the Session write lock and the
+  newest revision, so scrolling up during a Run failed with "could not be
+  verified" or a `.write-locks` conflict. The cache manifest now records up to
+  128 earlier revisions, and keeps them when a Run's full save rebuilds the
+  cache with their entries as an unchanged prefix. Those reads come from that
+  prefix without the write boundary, and an older cursor reads the same window
+  after the history grows. A revision whose entries were rewritten, or that the
+  manifest does not know, still returns `data_changed`.
+
 ### Changed
 
 - `allowed-tools` in a Skill or command no longer restricts tools, hooks or

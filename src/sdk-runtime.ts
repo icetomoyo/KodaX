@@ -8939,8 +8939,6 @@ function createRuntimeSessionService(
       if (input.around || input.cursor?.startsWith("newer.")) {
         return readLocatedConversationPage(input, budget);
       }
-      // Cached pages need the same Host checkpoint boundary as a fresh capture.
-      await awaitRuntimeReadOperation(() => sessionViews.flush(input.sessionId), budget);
       const limit = input.limit ?? DEFAULT_RUNTIME_TRANSCRIPT_PAGE_LIMIT;
       if (!Number.isSafeInteger(limit) || limit <= 0) {
         throw new Error("transcript page limit must be a positive safe integer");
@@ -8949,6 +8947,11 @@ function createRuntimeSessionService(
       const parsedCursor = input.cursor === undefined
         ? undefined
         : decodeRuntimeTranscriptCursor(input.cursor);
+      // A newest page needs the same Host checkpoint boundary as a fresh capture;
+      // an older cached page reads the immutable prefix its revision witnesses.
+      if (parsedCursor?.kind !== "conversation_cache_page") {
+        await awaitRuntimeReadOperation(() => sessionViews.flush(input.sessionId), budget);
+      }
       if (
         parsedCursor === undefined
         || parsedCursor.kind === "conversation_cache_page"
@@ -9105,7 +9108,6 @@ function createRuntimeSessionService(
       ensureOpen();
       const budget = createRuntimeReadBudget(options);
       sessionReadOptionsFromBudget(budget);
-      await awaitRuntimeReadOperation(() => sessionViews.flush(input.sessionId), budget);
       if (!Number.isSafeInteger(input.entryIndex) || input.entryIndex < 0) {
         throw new Error(`Transcript entry index is out of range: ${input.entryIndex}`);
       }
@@ -9115,6 +9117,8 @@ function createRuntimeSessionService(
         "conversation",
       );
       if (snapshot !== undefined) {
+        // A cached chunk reads its revision's immutable prefix; only a snapshot needs the checkpoint.
+        await awaitRuntimeReadOperation(() => sessionViews.flush(input.sessionId), budget);
         await assertConversationSnapshotCurrent(input.sessionId, snapshot, budget);
         return readTranscriptSnapshot(
           snapshot,
