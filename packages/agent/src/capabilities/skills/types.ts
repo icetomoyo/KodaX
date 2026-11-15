@@ -354,7 +354,20 @@ function resolveBuiltinPath(): string {
   }
   const local = path.join(__dirname, 'builtin');
   const distribution = path.join(__dirname, '..', 'builtin');
-  return !existsSync(local) && existsSync(distribution) ? distribution : local;
+  return physicalSkillRoot(!existsSync(local) && existsSync(distribution) ? distribution : local);
+}
+
+/**
+ * In a packaged Electron app the module path sits inside `app.asar`, which only Electron can read.
+ * Skill scripts run under a real `node`, so prefer the `app.asar.unpacked` copy when it exists.
+ */
+export function physicalSkillRoot(candidate: string): string {
+  const parts = candidate.split(/([\\/])/);
+  const archive = parts.findIndex((part) => part.toLowerCase() === 'app.asar');
+  if (archive < 0) return candidate;
+  parts[archive] = `${parts[archive]}.unpacked`;
+  const unpacked = parts.join('');
+  return existsSync(unpacked) ? unpacked : candidate;
 }
 
 /**
