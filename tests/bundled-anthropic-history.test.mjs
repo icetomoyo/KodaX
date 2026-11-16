@@ -45,7 +45,7 @@ test('published native Anthropic history survives SDK/Agent/file restore and a r
     if (passed) {
       assert.equal(path.dirname(directory), await realpath(os.tmpdir()));
       assert.ok(path.basename(directory).startsWith('kodax-native-history-e2e-'));
-      await rm(directory, { recursive: true, force: true });
+      await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     } else {
       await writeFile(path.join(directory, 'requests.json'), JSON.stringify(requests, null, 2));
       t.diagnostic(`Retained native history fixture: ${directory}`);

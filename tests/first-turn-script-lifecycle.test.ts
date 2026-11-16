@@ -100,6 +100,6 @@ it('observes a yielded Script cell, rereads its cursor and shares bounded data o
   } finally {
     release(); clearRuntimeModelProviders(); vi.unstubAllEnvs();
     if (path.dirname(root) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith('kodax-script-lifecycle-')) throw new Error('Unsafe fixture cleanup');
-    await rm(root, { recursive: true, force: true, maxRetries: 3 });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 30_000);
