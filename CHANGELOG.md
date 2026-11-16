@@ -24,7 +24,7 @@ All notable changes to this project will be documented in this file.
   newest revision, so scrolling up during a Run failed with "could not be
   verified" or a `.write-locks` conflict. Each cache now keeps an append-only
   revision log (72 bytes per superseded revision, up to 16,384; when full it
-  compacts to the newest 8,192), and
+  keeps the newest 8,192 and appends the new one), and
   keeps it when a Run's full save rebuilds the cache with the old entries as an
   unchanged prefix. Those reads come from that prefix without the write
   boundary, and an older cursor reads the same window after the history grows.

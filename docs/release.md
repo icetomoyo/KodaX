@@ -206,7 +206,7 @@ must be alive to matter, and the exited child's last `bootstrap.log`
 through beta.7 client contract is retained; no SDK surface changes.
 
 The CI/Release in-place upgrade gates now pin the published
-`0.7.97-beta.7` tarball (published 2026-11-12T05:07:12.252Z; registry
+`0.7.97-beta.7` tarball (published 2026-11-12T05:07:12.016Z; registry
 dist.integrity sha512-GBEgt0X0…Offtw== equals the
 kodax-ai-kodax-0.7.97-beta.7.tgz asset of the v0.7.97-beta.7 GitHub
 Release, sha256 50c65ba0…1f414). Run that fixture locally with Windows
@@ -276,7 +276,7 @@ the Host registry and both client adapters. Every v0.7.96 stable and
 v0.7.97-alpha.1 through beta.6 client contract is retained.
 
 The CI/Release in-place upgrade gates now pin the published
-`0.7.97-beta.6` tarball (published 2026-11-11T14:01:03.446Z; registry
+`0.7.97-beta.6` tarball (published 2026-11-11T14:00:50.591Z; registry
 dist.integrity sha512-4SZmAXEg…T8zA== equals the
 kodax-ai-kodax-0.7.97-beta.6.tgz asset of the v0.7.97-beta.6 GitHub
 Release, sha256 5d2113ac…2502442). Run that fixture locally with Windows
@@ -449,8 +449,8 @@ Historical preparation record: the baseline and publication status below
 reflect preparation time. beta.4 was published on 2026-11-08 and the
 CI/Release upgrade gates now pin `0.7.97-beta.4`.
 
-Release state: `v0.7.97-beta.4` is a candidate awaiting multi-platform CI.
-npm publication has not occurred. The candidate is the fourth beta of the
+Release state: `v0.7.97-beta.4` was published as a GitHub prerelease and
+to npm on 2026-11-08T12:10:43Z (dist-tag `beta`). It is the fourth beta of the
 v0.7.97 line, repairing the Space SDK instruction and history client
 contracts: AGENTS-only editor loading returns beside a tagged instruction
 loader whose ordered sources carry `kind:'agents'|'rule'` with typed skip
