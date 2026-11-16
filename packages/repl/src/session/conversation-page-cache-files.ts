@@ -23,6 +23,7 @@ export function cacheArtifactSessionId(fileName: string): string | undefined {
     && !(suffix.startsWith('json.') && suffix.endsWith('.tmp'))
     && !suffix.endsWith('.data')
     && !suffix.endsWith('.index')
+    && !suffix.endsWith('.revisions')
   ) return undefined;
   return fileName.slice(0, marker);
 }

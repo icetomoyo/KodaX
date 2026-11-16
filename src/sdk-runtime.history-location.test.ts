@@ -66,6 +66,35 @@ it('only computes the full page revision when resolving an item from that page',
   }
 });
 
+it('resolves an item from a page that checkpoint-only saves superseded', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-history-superseded-'));
+  const sessionsDir = path.join(root, 'sessions');
+  const storage = new FileSessionStorage({ sessionsDir, configHome: root });
+  await storage.save('superseded', { title: 'Superseded', gitRoot: root, messages: [
+    { role: 'user', content: 'first' }, { role: 'assistant', content: 'one' },
+    { role: 'user', content: 'second' }, { role: 'assistant', content: 'two' },
+  ] });
+  const runtime = await createKodaXRuntime({ homeDir: root, sessionsDir });
+  try {
+    const page = await runtime.sessions.readHistory('superseded');
+    const selector = { kind: 'item' as const, source: 'history' as const, itemId: page.items[0]!.id, revision: page.revision };
+    for (let checkpoint = 0; checkpoint < 140; checkpoint += 1) {
+      await storage.mutateUiHistory('superseded', () => [{ type: 'info', text: `checkpoint ${checkpoint}` }]);
+    }
+    expect(await runtime.sessions.resolveHistoryTurn('superseded', selector))
+      .toMatchObject({ status: 'ready', turnIndex: 0, excerpt: 'first' });
+    const saved = (await storage.load('superseded'))!;
+    saved.messages[0] = { role: 'user', content: 'rewritten' };
+    delete saved.lineage;
+    await storage.save('superseded', saved);
+    await expect(runtime.sessions.resolveHistoryTurn('superseded', selector))
+      .rejects.toMatchObject({ code: 'resync_required', data: { reason: 'source_changed' } });
+  } finally {
+    await runtime.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 30_000);
+
 it('opens a saved context at the exact search hit and continues forward without skipping a message', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-history-location-'));
   const sessionsDir = path.join(root, 'sessions');
@@ -117,7 +146,21 @@ it('opens a saved context at the exact search hit and continues forward without 
       .rejects.toMatchObject({ code: 'resync_required' });
     await expect(runtime.sessions.readHistory('location', { limit: 3, cursor: 'newer.invalid' }))
       .rejects.toMatchObject({ code: 'resync_required' });
-    await storage.mutateUiHistory('location', () => [{ type: 'info', text: 'changed snapshot' }]);
+    // A Run checkpoints its view many times a second; each save supersedes the page revision
+    // without touching saved messages, so the saved window and the search hit stay usable.
+    for (let checkpoint = 0; checkpoint < 140; checkpoint += 1) {
+      await storage.mutateUiHistory('location', () => [{ type: 'info', text: `checkpoint ${checkpoint}` }]);
+    }
+    const continued = await runtime.sessions.readHistory('location', { limit: 3, cursor: first!.newerCursor });
+    expect(continued).toMatchObject({ revision: first!.revision, sourceRevision: first!.sourceRevision });
+    expect(continued.items[0]?.text).toBe(messages[search.hits[0]!.entryIndex + 2]!.content);
+    expect(await runtime.sessions.readHistory('location', { limit: 3, around: { searchItemId: search.hits[0]!.itemId } }))
+      .toMatchObject({ locatedBoundaryId: first!.locatedBoundaryId });
+    // Rewriting saved messages retires both.
+    const saved = (await storage.load('location'))!;
+    saved.messages[0] = { role: 'user', content: 'rewritten row' };
+    delete saved.lineage;
+    await storage.save('location', saved);
     await expect(runtime.sessions.readHistory('location', { limit: 3, cursor: first!.newerCursor }))
       .rejects.toMatchObject({ code: 'resync_required' });
     await expect(runtime.sessions.readHistory('location', { limit: 3, around: { searchItemId: search.hits[0]!.itemId } }))

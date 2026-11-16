@@ -1614,6 +1614,28 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
+  it("reports a live foreign Session writer as a writer_active resync on history pages", async () => {
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir: tempRoot });
+    const session = await runtime.sessions.create({ sessionId: "runtime-writer-active-page" });
+    const lockKey = createHash("sha256").update(session.id, "utf8").digest("hex");
+    const lockPath = path.join(tempRoot, ".write-locks", `${lockKey}.lock`);
+    let markHeld!: () => void;
+    const held = new Promise<void>((resolve) => { markHeld = resolve; });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    const holder = withKodaXFileLock(lockPath, async () => { markHeld(); await released; });
+    await held;
+    try {
+      await expect(runtime.sessions.conversationPage({ sessionId: session.id }))
+        .rejects.toMatchObject({ code: "resync_required", data: { reason: "writer_active" } });
+    } finally {
+      release();
+      await holder;
+      await runtime.close();
+    }
+  });
+
   it("isolates event listener failures from runtime operations and other subscribers", async () => {
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot });

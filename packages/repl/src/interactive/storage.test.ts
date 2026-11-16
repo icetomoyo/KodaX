@@ -6040,7 +6040,7 @@ describe('FileSessionStorage', () => {
       end = page.nextEnd;
     }
     expect(paged).toEqual(history.entries.map((item) => item.message));
-    expect(JSON.parse(await readFile(manifestPath, 'utf8'))).toMatchObject({ version: 10 });
+    expect(JSON.parse(await readFile(manifestPath, 'utf8'))).toMatchObject({ version: 11 });
     const provider = (await storage.load(sessionId))?.messages ?? [];
     expect(provider.slice(1)).toEqual(history.entries.map((item) => item.message));
   });

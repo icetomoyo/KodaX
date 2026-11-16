@@ -471,7 +471,9 @@ export interface ClientHistoryTurnTarget {
 }
 export type ClientHistoryTurnUnavailableReason = 'unresolved_history' | 'no_turns' | 'no_previous_turn'
   | 'turn_not_found' | 'unproven_source' | 'item_not_found' | 'not_canonical' | 'incomplete_turn';
-export type ClientHistoryResyncReason = 'revision_mismatch' | 'source_changed' | 'selection_expired' | 'head_changed';
+export type ClientHistoryResyncReason = 'revision_mismatch' | 'source_changed' | 'selection_expired' | 'head_changed'
+  /** A writer held the Session while the read ran; retrying shortly usually succeeds. */
+  | 'writer_active';
 export type ClientHistoryTurnResolution =
   | (ClientHistoryTurnTarget & { readonly status: 'ready'; readonly turnIndex: number;
       readonly excerpt: string; readonly hasLaterTurn: boolean }

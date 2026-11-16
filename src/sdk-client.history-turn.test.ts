@@ -103,6 +103,14 @@ it('resolves complete legacy turns through the daemon Product API and preserves 
         kind: 'item', source: 'history', itemId: search.hits[0]!.itemId, revision: search.revision,
       })).toMatchObject({ status: 'ready', turnIndex: 0 });
       await storage.mutateUiHistory(session.id, () => [{ type: 'info', text: 'new metadata' }]);
+      // A metadata-only save keeps saved messages, so the superseded page still resolves.
+      expect(await client.sessions.resolveHistoryTurn(session.id, {
+        kind: 'item', source: 'history', itemId: selectedHistory.id, revision: page.revision,
+      })).toMatchObject({ status: 'ready', turnIndex: 0, excerpt: 'same prompt' });
+      const rewritten = (await storage.load(session.id))!;
+      rewritten.messages[4] = { role: 'assistant', content: 'rewritten answer' };
+      delete rewritten.lineage;
+      await storage.save(session.id, rewritten);
       expect(await legacyTransport.request('session.history.resolveTurn', { sessionId: session.id,
         selector: { kind: 'item', source: 'history', itemId: selectedHistory.id, revision: page.revision } }))
         .toEqual({ status: 'stale', reason: 'source_changed' });

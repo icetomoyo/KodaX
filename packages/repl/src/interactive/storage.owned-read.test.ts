@@ -58,7 +58,7 @@ it('waits for its own in-flight write before taking a strict read, retaining for
     // This is a real held storage write. A separate reader has no ownership
     // evidence and must keep the existing strict boundary rejection.
     await expect(new FileSessionStorage({ sessionsDir: f.sessionsDir }).read('owned-read'))
-      .rejects.toMatchObject({ code: 'data_changed' });
+      .rejects.toMatchObject({ code: 'data_changed', reason: 'writer_active' });
     await new Promise(resolve => setTimeout(resolve, 50));
     expect(settled).toBe(false);
     f.release();
@@ -77,7 +77,7 @@ it.each(['boundary', 'cache'] as const)('waits for its owned writer before the f
   const reading = read(f.storage).then(value => { settled = true; return { value }; },
     (error: unknown) => { settled = true; return { error }; });
   try {
-    await expect(read(new FileSessionStorage({ sessionsDir: f.sessionsDir }))).rejects.toMatchObject({ code: 'data_changed' });
+    await expect(read(new FileSessionStorage({ sessionsDir: f.sessionsDir }))).rejects.toMatchObject({ code: 'data_changed', reason: 'writer_active' });
     await new Promise(resolve => setTimeout(resolve, 25));
     expect(settled).toBe(false);
     f.release(); await f.writing;
@@ -115,7 +115,7 @@ it('waits for its own in-flight write before capturing a stable full snapshot', 
   );
   try {
     await expect(new FileSessionStorage({ sessionsDir: f.sessionsDir }).readFullSnapshot('owned-read'))
-      .rejects.toMatchObject({ code: 'data_changed' });
+      .rejects.toMatchObject({ code: 'data_changed', reason: 'writer_active' });
     await new Promise(resolve => setTimeout(resolve, 50));
     expect(settled).toBe(false);
     f.release();
@@ -132,7 +132,7 @@ it('waits for an owned Actor write and rejects a foreign Actor read during repla
   );
   try {
     await expect(new FileSessionStorage({ sessionsDir: f.sessionsDir }).readActorSnapshot('owned-read'))
-      .rejects.toMatchObject({ code: 'data_changed' });
+      .rejects.toMatchObject({ code: 'data_changed', reason: 'writer_active' });
     await new Promise(resolve => setTimeout(resolve, 20));
     expect(settled).toBe(false);
     f.release();
@@ -180,7 +180,7 @@ it('keeps the last committed data readable after an owned write fails', async ()
   }
 });
 
-it.each(['read', 'readFullSnapshot'] as const)('waits for a second owned write queued while %s is waiting', async method => {
+it.each(['read', 'readFullSnapshot'] as const)('returns before a second owned write queued after %s', async method => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-owned-read-'));
   const storage = new FileSessionStorage({ sessionsDir: path.join(root, 'sessions') });
   const data = { messages: [], title: 'before', gitRoot: root };
@@ -212,12 +212,14 @@ it.each(['read', 'readFullSnapshot'] as const)('waits for a second owned write q
     );
     second = storage.save('queued-read', { ...data, title: 'second' });
     gates[0]!.release();
+    // The read waits only for the write queued before it; the later write
+    // waits for the read instead of starving it.
+    expect(await reading).toMatchObject({ value: { title: 'first' } });
+    expect(settled).toBe(true);
     await gates[1]!.entered;
-    await new Promise(resolve => setTimeout(resolve, 50));
-    expect(settled).toBe(false);
     gates[1]!.release();
     await second;
-    expect(await reading).toMatchObject({ value: { title: 'second' } });
+    await expect(storage.read('queued-read')).resolves.toMatchObject({ title: 'second' });
   } finally {
     for (const gate of gates) gate.release();
     try { await Promise.all([first, second]); }
@@ -228,3 +230,35 @@ it.each(['read', 'readFullSnapshot'] as const)('waits for a second owned write q
     }
   }
 });
+
+it.each(['read', 'readFullSnapshot', 'readConversationPageCache', 'readConversationPageBoundary'] as const)(
+  'keeps %s readable while the same instance writes back to back', async method => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-busy-read-'));
+    const storage = new FileSessionStorage({ sessionsDir: path.join(root, 'sessions') });
+    const data = { messages: [{ role: 'user' as const, content: 'saved' }], title: 'busy', gitRoot: root };
+    await storage.save('busy-read', data);
+    const read = () => method === 'readConversationPageCache'
+      ? storage.readConversationPageCache('busy-read', { limit: 10, maxPageBytes: 65_536,
+        maxInlineEntryBytes: 32_768, reservedBytes: 0 })
+      : storage[method]('busy-read');
+    let writing = true;
+    const writer = (async () => {
+      for (let index = 0; index < 40; index += 1) {
+        await storage.mutateUiHistory('busy-read', () => [{ type: 'info', text: `step ${index}` }]);
+      }
+      writing = false;
+    })();
+    try {
+      const failures: unknown[] = [];
+      while (writing) {
+        await read().catch((error: unknown) => { failures.push(error); });
+        await new Promise<void>(resolve => setImmediate(resolve));
+      }
+      expect(failures).toEqual([]);
+    } finally {
+      await writer;
+      expect(path.dirname(root)).toBe(path.resolve(os.tmpdir()));
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  },
+);
