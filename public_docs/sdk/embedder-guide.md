@@ -1,10 +1,11 @@
 # KodaX SDK — Product Client and Host Integration
 
 This page describes the current FEATURE_298/299/301/303/304/305/306 development tree, checked against
-package version `0.7.97-beta.10`. The version alone does not claim that all current
+package version `0.7.97-beta.11`. The version alone does not claim that all current
 working-tree changes are already published to npm. Check the installed
 package exports and the connected Host's capabilities when migrating.
-The beta.10 merged-input acknowledgement (`ClientViewItem.inputIds`) is covered in the
+The beta.11 readable-history-during-a-Run changes and the beta.10 merged-input
+acknowledgement (`ClientViewItem.inputIds`) are covered in the
 [client contract view-item table](../../docs/CLIENT_CONTRACT.md); the
 beta.9 data root resolver and copy (`resolveKodaXHome`, `copyKodaXDataRoot`) are described in
 [Relocating a data root](../../docs/SDK_MIGRATION.md#relocating-a-data-root-copykodaxdataroot).

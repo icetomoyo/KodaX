@@ -398,12 +398,12 @@ jobs:
         timeout-minutes: 5
         run: npm run test:host-cutover
 
-      - name: Published beta.9 Host in-place upgrade gate
+      - name: Published beta.10 Host in-place upgrade gate
         timeout-minutes: 5
         env:
-          KODAX_BETA9_TARBALL: ${{ runner.temp }}/kodax-ai-kodax-0.7.97-beta.9.tgz
+          KODAX_BETA10_TARBALL: ${{ runner.temp }}/kodax-ai-kodax-0.7.97-beta.10.tgz
         run: |
-          npm pack @kodax-ai/kodax@0.7.97-beta.9 --ignore-scripts --pack-destination "$env:RUNNER_TEMP"
+          npm pack @kodax-ai/kodax@0.7.97-beta.10 --ignore-scripts --pack-destination "$env:RUNNER_TEMP"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run test:host-upgrade
 
