@@ -22,14 +22,54 @@ All notable changes to this project will be documented in this file.
 - An older Conversation cache page or entry chunk stays readable while a Run
   writes to the Session. Reading one used to need the Session write lock and the
   newest revision, so scrolling up during a Run failed with "could not be
-  verified" or a `.write-locks` conflict. The cache manifest now records up to
-  128 earlier revisions, and keeps them when a Run's full save rebuilds the
-  cache with their entries as an unchanged prefix. Those reads come from that
-  prefix without the write boundary, and an older cursor reads the same window
-  after the history grows. A revision whose entries were rewritten, or that the
-  manifest does not know, still returns `data_changed`.
+  verified" or a `.write-locks` conflict. Each cache now keeps an append-only
+  revision log (72 bytes per superseded revision, newest 16,384 retained), and
+  keeps it when a Run's full save rebuilds the cache with the old entries as an
+  unchanged prefix. Those reads come from that prefix without the write
+  boundary, and an older cursor reads the same window after the history grows.
+  A revision whose entries were rewritten, or that the log does not know, still
+  returns `data_changed`. The cache format moves to version 11, so existing
+  caches rebuild once on first read.
+
+- A Run checkpoints its display history about twice a second, and each save
+  gave the conversation a new revision. Cursors and item ids from an earlier
+  page therefore went stale within about a minute of a Run, even though no saved
+  message changed. Now they stay valid while their saved messages are an
+  unchanged prefix: older pages and their `newer` cursors read at the cursor's
+  own revision, `around: { searchItemId }` and saved positions resolve, and
+  `resolveHistoryTurn` resolves a history item for fork or rewind against the
+  current source. Rewriting a saved message still returns `resync_required` with
+  `source_changed`.
+
+- Two races during a busy Run could still expire an older page or search hit.
+  A full save writes a new cache generation and deletes the old files, so a read
+  that had already taken the old manifest failed with "Conversation page cache
+  changed or is unavailable". Such a read now restarts once on the new
+  generation; it only does so after an IO error, and only when the generation
+  really changed. On Windows, replacing the cache manifest fails with `EPERM`
+  while a reader has the old one open. That failure dropped the whole cache, and
+  every older revision with it. The manifest replace now retries briefly, using
+  the same backoff that Session file saves already use (10, 25, 50 and 100 ms).
+
+- The newest history page stays readable from the runtime that is running a
+  Run. A strict read used to wait until that runtime had no write queued, and a
+  streaming Run always had one, so `conversationPage` and Session reads timed
+  out until the Run ended. A read now waits only for writes queued before it,
+  and a later write waits for the read. `sessionViews.flush()` likewise waits
+  only for checkpoints requested before the call.
+
+- During a Run, display-history checkpoints are saved at most every 500ms
+  instead of back to back. Each one rewrites the whole Session, so the write
+  lock was held almost all the time and other processes could not read. A
+  `flush()` still saves pending checkpoints at once.
 
 ### Changed
+
+- A `resync_required` error caused by another writer holding the Session during
+  the read now has `data.reason: 'writer_active'` instead of `source_changed`.
+  The saved history may not have changed, and a short retry of the same read
+  usually succeeds. `ClientHistoryResyncReason` gains `'writer_active'`, and
+  `SessionReadError` has an optional `reason` field.
 
 - `allowed-tools` in a Skill or command no longer restricts tools, hooks or
   dynamic-context commands, in the SDK and in the REPL. Claude Code treats the
@@ -38,6 +78,9 @@ All notable changes to this project will be documented in this file.
   permission mode and sandbox now decide every call. The field is still parsed
   and kept in the Skill policy identity, so existing checkpoints restore;
   invalid entries are no longer reported, since they no longer have an effect.
+  Skill prompts, managed-task prompts and the fork config of `SkillExecutor` no
+  longer list the field, and the `skill-creator` validator reports it as an
+  ignored-field warning instead of checking its type.
 
 - The builtin `code-review`, `git-workflow`, `skill-creator` and `tdd` Skills
   no longer declare `allowed-tools`, and `init-skill.js` no longer writes one into

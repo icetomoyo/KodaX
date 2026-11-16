@@ -17,6 +17,21 @@ Solo 和 Adaptive 都会向模型提供可用且已授权的 Skill 目录。运�
 调用方显式设置的 `systemPromptOverride` 仍是 Solo 的完整提示覆盖，不自动追加
 可选 Skill 目录。`sa` 当前仍是可执行的 Solo 模式；`amaw` 才是归一为 `ama` 的旧别名。
 
+## beta.10 之后：Skill `allowed-tools` 不再生效（未发布）
+
+Skill 或命令 frontmatter 里的 `allowed-tools` 现在被忽略（与 Codex 一致）：
+不再限制或预授权任何工具、hook 和动态上下文命令，每次调用都按 Host 的权限模式、
+授权和沙箱决定。旧 Skill 无需修改，字段仍会解析并参与 Skill 策略身份，已有
+checkpoint 照常恢复；写错的条目不再报诊断。Skill 提示、managed-task 提示和
+`SkillExecutor` 的 fork 配置不再列出该字段；调用方显式传入的
+`ExecutionOptions.allowedTools` 仍原样写入 fork 配置。需要限制工具时，使用 Host
+权限模式、PreToolUse hook（可按工具名 matcher 拒绝）或沙箱。
+
+同一批改动中，另一写入方占用 Session 导致的历史读取冲突改为
+`resync_required` + `data.reason: 'writer_active'`（原为 `source_changed`）。
+这表示保存的历史不一定变化，短暂重试同一读取通常成功；其余原因的处理不变。
+按原因做穷举映射的客户端需加上这一项，见 [Client 契约](CLIENT_CONTRACT.md)。
+
 ## 2026-11-03 beta.1 后续修复（未发布）
 
 本轮基线为 `v0.7.97-beta.1` / `e733e51f`，后续修复已随 `v0.7.97-beta.2` 发布

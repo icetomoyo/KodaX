@@ -1640,6 +1640,17 @@ recorded Node 22 failure in Issue 362
 ([CI evidence](https://github.com/icetomoyo/KodaX/actions/runs/37815764971)).
 No test deadline or product assertion was relaxed. Release remains deferred.
 
+**Follow-up (2026-11-16, unreleased):** Draining the whole write queue starved
+reads during a streaming Run: Session-view checkpoints kept a write queued, so
+Space's newest-page and Session reads from the running runtime always timed out.
+A strict read now takes a turn in the same per-Session queue without the file
+lock. It waits only for writes queued before it, and later writes wait for it,
+so a second write queued during the wait no longer extends it. The "second
+queued write" regression now asserts the read returns the first commit and a
+following read returns the second. `flush()` likewise waits only for earlier
+checkpoints, consecutive checkpoints are spaced 500ms apart, and a read rejected
+because a live writer crossed it reports `writer_active`.
+
 ## Issue 360: Resume catalog fixture spends its deadline on unrelated repository analysis
 
 - Priority: Medium

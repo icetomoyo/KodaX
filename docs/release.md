@@ -53,7 +53,8 @@ on one commit.
 Release state: `v0.7.97-beta.10` was published on 2026-11-15 as a GitHub
 prerelease from run 43617234911 at `1c45ad53c` (all five archive builds,
 Full CI and the npm package gates green after one failed-job re-run; 13
-assets). npm publication has not occurred. The release is the tenth
+assets). npm `beta` points to `0.7.97-beta.10` (published
+2026-11-14T23:49:40Z). The release is the tenth
 beta of the v0.7.97 line: merged-input acknowledgement in the Space
 client contract. When the Host merges queued `after_turn` inputs into
 one canonical user message, `ClientViewItem.inputIds` names every

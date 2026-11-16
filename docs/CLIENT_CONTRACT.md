@@ -724,8 +724,10 @@ closed union: `unresolved_history`, `no_turns`, `no_previous_turn`,
 `incomplete_turn`. An incomplete tool exchange is not a ready turn-end target.
 History reads, turn selection and derivation use `code:'resync_required'` when
 the saved target expires. `ClientHistoryResyncError.data.reason` is
-`revision_mismatch`, `source_changed`, `selection_expired`, or `head_changed`.
-JSON-RPC preserves `data`; do not parse error messages. Re-read/reselect after
+`revision_mismatch`, `source_changed`, `selection_expired`, `head_changed`, or
+`writer_active`. `writer_active` means another writer held the Session while the
+read ran; the saved history did not necessarily change, and a short retry of the
+same read usually succeeds. JSON-RPC preserves `data`; do not parse error messages. Re-read/reselect after
 resync and confirm destructive operations again. Active-work conflicts remain
 `conflict`; cancellation and deadline failures remain `read_cancelled` and
 `read_timeout`. These are distinct recovery actions.
@@ -737,6 +739,20 @@ from displayed item counts. `cursor` and `around` are mutually exclusive in
 TypeScript and at runtime. `readHistory` accepts `timeoutMs`/`signal` in its
 options; `resolveHistoryTurn` accepts them as a third argument. One page budget
 covers retry, projection and body-chunk reads; cancellation reaches Host work.
+
+Page cursors, entry-body cursors, page item ids and search hits stay usable
+after a Run saves to the Session (display checkpoints or appended turns) while
+the entries they were issued for are an unchanged prefix of the newest history.
+The Host keeps the newest 16,384 superseded revisions per cache. An older-page
+`nextCursor`, a `newerCursor` and an entry-body cursor read at the revision they
+were issued for, so the returned page carries that `revision` and
+`sourceRevision` and the window never shifts; a `newerCursor` ends at that
+revision's last entry, and a newer page needs a fresh newest read.
+`around: { searchItemId }` and `resolveHistoryTurn` with a history item resolve
+against the newest source. A revision whose entries were rewritten (for example
+by compaction or rewind), or that has left the log, returns `data_changed` from
+a page cursor and `resync_required` with `source_changed` from a selector. In
+both cases re-read from the newest page.
 
 | Revision domain | Producer and permitted use |
 | --- | --- |
