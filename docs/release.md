@@ -50,8 +50,11 @@ on one commit.
 
 ## v0.7.97-beta.11 release preparation
 
-Release state: `v0.7.97-beta.11` is a candidate awaiting the publishing
-dispatch. The release is the eleventh beta of the v0.7.97 line: readable
+Release state: `v0.7.97-beta.11` was published on 2026-11-16 as a GitHub
+prerelease from run 43850422130 at `b351ce378` (all five archive builds,
+Full CI and the npm package gates green after three failed-job re-runs;
+13 assets). npm publication has not occurred. The release is the
+eleventh beta of the v0.7.97 line: readable
 Session history during a busy Run and tool-neutral Skills. Older
 Conversation cache pages, entry chunks and cursors stay readable and
 valid while a Run writes: each cache keeps an append-only revision log
@@ -99,11 +102,24 @@ builds and the npm package gates, then creates the tag at the dispatched
 commit and the GitHub pre-release from that run's artifacts. Ordinary
 branch pushes do not run CI; the thirteen commits between the beta.10
 dispatch and this candidate first ran through a candidate-only CI
-dispatch on the release commit before the publishing dispatch. The
-universal npm tarball asset is `kodax-ai-kodax-0.7.97-beta.11.tgz`
-with its `SHA256SUMS` checksum. Cross-platform manual acceptance,
-installed Space/SDK acceptance, the Space dependency bump and npm
-publication remain separate maintainer steps.
+dispatch on the release commit (run 43846367041, every job green).
+The publishing dispatch (run 43850422130 at `b351ce378`) then failed
+`build (darwin-x64)` on three consecutive attempts, each time on a
+different untouched bundled test with the same
+`daemon_startup_failed` readiness timeout: `informational commands
+remain available with corrupt core config` at its 90-second deadline,
+then `shared Host retains a bounded Skill catalog: ama/profile` and
+`bundled SDK preserves MCP output end to end: host-denied-sa` each at
+about 61 seconds, while the identical bundle suite stayed green on
+darwin-arm64, both Linux builds, Windows (packaged Electron job) and
+in the candidate-only dispatch — runner-class slowness on
+`macos-15-intel` during GitHub's 2026-11-16 partially degraded service
+day. The fourth failed-job re-run on a fresh runner passed every job
+and the run published. The universal npm tarball asset is
+`kodax-ai-kodax-0.7.97-beta.11.tgz`, sha256 `93ee716f…8b53c6`,
+matching `SHA256SUMS`. Cross-platform manual acceptance, installed
+Space/SDK acceptance, the Space dependency bump and npm publication
+remain separate maintainer steps.
 
 ## v0.7.97-beta.10 release preparation
 
