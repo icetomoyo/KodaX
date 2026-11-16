@@ -525,6 +525,7 @@ export function assertSessionReadBudget(
 async function raceSessionRead<T>(
   operation: Promise<T>,
   options: SessionReadOptions,
+  startedAt = Date.now(),
 ): Promise<T> {
   const timeoutMs = normalizeSessionReadTimeout(options.timeoutMs);
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -538,7 +539,7 @@ async function raceSessionRead<T>(
             'read_timeout',
             `Session history read timed out after ${timeoutMs}ms`,
           )),
-          timeoutMs,
+          Math.max(0, timeoutMs - (Date.now() - startedAt)),
         );
         if (options.signal !== undefined) {
           abort = () => reject(new SessionReadError(
@@ -2925,7 +2926,9 @@ export class FileSessionStorage implements KodaXSessionStorage {
   /**
    * A strict read takes a turn in this instance's write chain without the
    * file lock. It waits only for writes queued before it, and a later owned
-   * write cannot open the lock mid-read, so a busy Run cannot starve it.
+   * write cannot open the lock mid-read, so a busy Run cannot starve it. The
+   * turn ends when the read settles or its budget is spent, rejecting first,
+   * so a stuck filesystem read cannot hold the Run's later saves.
    */
   private serializedRead<T>(
     id: string,
@@ -2938,7 +2941,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
       assertSessionReadBudget(options, startedAt);
       return read();
     };
-    const result = prev.then(turn, turn);
+    const result = raceSessionRead(prev.then(turn, turn), options, startedAt);
     const next = result.then(() => undefined, () => undefined);
     this.writeQueues.set(id, next);
     void next.then(() => {

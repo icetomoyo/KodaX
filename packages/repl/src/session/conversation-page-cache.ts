@@ -433,10 +433,16 @@ export async function readConversationPageCacheRevision(
   mainPath: string,
   key: ConversationPageCacheRevisionKey,
 ): Promise<(ConversationPageCacheRevision & { readonly currentRevision: string }) | undefined> {
-  const manifest = await readConversationPageCacheManifest(mainPath);
-  if (manifest === undefined) return undefined;
-  const found = await findConversationRevision(mainPath, manifest, key);
-  return found && { ...found, currentRevision: manifest.revision };
+  try {
+    const manifest = await readConversationPageCacheManifest(mainPath);
+    if (manifest === undefined) return undefined;
+    const found = await findConversationRevision(mainPath, manifest, key);
+    return found && { ...found, currentRevision: manifest.revision };
+  } catch (error: unknown) {
+    // A cache being replaced cannot prove the revision; callers then ask for a resync.
+    if (error instanceof SyntaxError || isCacheIoError(error)) return undefined;
+    throw error;
+  }
 }
 
 function parseManifest(value: unknown, mainPath: string): ConversationCacheManifest | undefined {

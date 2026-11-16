@@ -22,7 +22,9 @@ describe('SkillExecutor', () => {
 
     expect(result.content).toBe('[Using Skill: restricted]\n\nDo the task.');
     const config = result.artifacts?.find(artifact => artifact.name === 'fork-config');
-    if (config) expect(JSON.parse(config.content)).not.toHaveProperty('allowedTools');
+    expect(config === undefined ? undefined : JSON.parse(config.content)).toEqual(
+      mode === 'fork' ? { agent: 'general-purpose', model: 'haiku' } : undefined,
+    );
   });
 
   it('keeps an explicit caller allowedTools override in the fork config', async () => {

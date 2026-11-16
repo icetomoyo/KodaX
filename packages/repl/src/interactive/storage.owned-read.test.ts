@@ -262,3 +262,34 @@ it.each(['read', 'readFullSnapshot', 'readConversationPageCache', 'readConversat
     }
   },
 );
+
+it('releases later writes once a stuck strict read exhausts its budget', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-stuck-read-'));
+  const storage = new FileSessionStorage({ sessionsDir: path.join(root, 'sessions') });
+  const data = { messages: [{ role: 'user' as const, content: 'saved' }], title: 'before', gitRoot: root };
+  await storage.save('stuck-read', data);
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const readFile = fs.readFile.bind(fs);
+  let stuck = false;
+  const probe = vi.spyOn(fs, 'readFile').mockImplementation(async (...args: Parameters<typeof fs.readFile>) => {
+    // Only the strict read gets stuck; the save's own reads proceed.
+    if (!stuck && String(args[0]).endsWith(`${path.sep}stuck-read.jsonl`)) { stuck = true; await gate; }
+    return readFile(...args);
+  });
+  try {
+    await expect(storage.read('stuck-read', { timeoutMs: 50 })).rejects.toMatchObject({ code: 'read_timeout' });
+    expect(stuck).toBe(true);
+    // The timed-out read is still stuck in the filesystem; the Run's next save must not wait for it.
+    const saved = await Promise.race([
+      storage.save('stuck-read', { ...data, title: 'after' }).then(() => 'saved'),
+      new Promise(resolve => setTimeout(resolve, 2_000, 'blocked')),
+    ]);
+    expect(saved).toBe('saved');
+  } finally {
+    release();
+    probe.mockRestore();
+    expect(path.dirname(root)).toBe(path.resolve(os.tmpdir()));
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});

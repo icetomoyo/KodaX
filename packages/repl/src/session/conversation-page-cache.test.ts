@@ -335,6 +335,27 @@ describe('Conversation page cache durability', () => {
       .resolves.toBeUndefined();
   });
 
+  it('treats a revision log Windows refuses to open as an unproven revision', async () => {
+    const value = await fixture('revision-log-held');
+    await writeConversationPageCache(value.mainPath, 'boundary:first', value.sourceRevisionState,
+      value.history, value.lineage, undefined, 1024);
+    const state = createSessionSourceRevisionState([{
+      kind: 'main', relativePath: 'session.jsonl', bytes: Buffer.from('checkpoint'),
+    }]);
+    await refreshConversationPageCache(value.mainPath, 'boundary:next', state,
+      buildSessionConversationHistory(value.lineage, createSessionSourceRevision(state)), value.lineage, undefined);
+    const open = fs.open.bind(fs);
+    // A log being deleted or replaced is delete-pending; opening it fails with EPERM.
+    vi.spyOn(fs, 'open').mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+      if (String(args[0]).endsWith('.revisions')) {
+        throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+      }
+      return open(...args);
+    });
+    await expect(readConversationPageCacheRevision(value.mainPath, { revision: 'sha256:'.padEnd(71, 'a') }))
+      .resolves.toBeUndefined();
+  });
+
   it('rewrites a full revision log with its newest half and ignores a torn trailing record', async () => {
     const value = await fixture('full-log');
     await writeConversationPageCache(value.mainPath, 'boundary:first', value.sourceRevisionState,
