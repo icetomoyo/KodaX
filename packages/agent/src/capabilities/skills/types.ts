@@ -22,7 +22,7 @@ export interface SkillFrontmatter {
   disableModelInvocation?: boolean;
   /** @deprecated Enabled skills are always explicitly user-invocable. */
   userInvocable?: boolean;
-  /** Tool restrictions, e.g., "Read, Grep, Bash(python *)"; shell patterns match the full command. */
+  /** Declared tool list, e.g. "Read, Grep". Parsed for compatibility only; KodaX does not restrict tools by it. */
   allowedTools?: string;
   /** Execution context - 'fork' for sub-agent execution */
   context?: 'fork';

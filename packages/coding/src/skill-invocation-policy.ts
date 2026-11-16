@@ -11,9 +11,9 @@ import { toolBash } from './tools/bash.js';
 import { KodaXSkillInvocationError } from './skill-invocation-error.js';
 import { createToolResultRecovery } from './tool-result-recovery.js';
 
-// Claude Code reads `allowed-tools` as preapproval for the invoking turn, not
-// as a restriction. KodaX parses the field but leaves every tool, hook and
-// dynamic-context command to the Host permission mode the user chose.
+// Like Codex, KodaX ignores a Skill's `allowed-tools`: it never restricts or
+// preapproves a call. Every tool, hook and dynamic-context command follows the
+// Host permission mode, authorization and sandbox the user chose.
 
 function matchesPattern(pattern: string, value: string): boolean {
   const escaped = pattern

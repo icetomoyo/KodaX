@@ -22,9 +22,9 @@ export interface PreparedInvocation {
   finalize: (error?: Error) => Promise<void>;
 }
 
-// Claude Code reads `allowed-tools` as preapproval for the invoking turn, not
-// as a restriction. KodaX leaves every tool and hook to the permission policy
-// the user chose.
+// Like Codex, KodaX ignores a Skill's `allowed-tools`: it never restricts or
+// preapproves a call. Every tool and hook follows the permission policy the
+// user chose.
 
 function wildcardToRegExp(pattern: string): RegExp {
   const escaped = pattern

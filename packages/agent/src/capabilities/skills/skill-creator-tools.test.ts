@@ -121,6 +121,9 @@ Follow the workflow.
 
     expect(result.valid).toBe(true);
     expect(result.errors).toEqual([]);
+    expect(result.warnings).toContain(
+      'allowed-tools is ignored by KodaX; tool access follows the Host permission mode.',
+    );
   });
 
   it('initializes a new skill scaffold with evals and support directories', async () => {
