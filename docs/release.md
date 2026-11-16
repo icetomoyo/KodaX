@@ -53,7 +53,8 @@ on one commit.
 Release state: `v0.7.97-beta.10` was published on 2026-11-15 as a GitHub
 prerelease from run 43617234911 at `1c45ad53c` (all five archive builds,
 Full CI and the npm package gates green after one failed-job re-run; 13
-assets). npm publication has not occurred. The release is the tenth
+assets). npm `beta` points to `0.7.97-beta.10` (published
+2026-11-14T23:49:40Z). The release is the tenth
 beta of the v0.7.97 line: merged-input acknowledgement in the Space
 client contract. When the Host merges queued `after_turn` inputs into
 one canonical user message, `ClientViewItem.inputIds` names every
@@ -110,8 +111,8 @@ infrastructure flake covered by one failed-job re-run on the unchanged
 candidate, after which every job passed and the run published. The
 universal npm tarball asset is `kodax-ai-kodax-0.7.97-beta.10.tgz`,
 sha256 `360498dc…b2e615`, matching `SHA256SUMS`. Cross-platform manual
-acceptance, installed Space/SDK acceptance, the Space dependency bump
-and npm registry publication remain separate maintainer steps.
+acceptance, installed Space/SDK acceptance and the Space dependency bump
+remain separate maintainer steps.
 
 ## v0.7.97-beta.9 release preparation
 
@@ -180,9 +181,9 @@ failed-job re-run on the unchanged candidate passed and published. The
 parallel-read window was widened to two seconds after the tag. The
 universal npm tarball asset is `kodax-ai-kodax-0.7.97-beta.9.tgz`,
 sha256 `65ec24d6…8dacb3`, matching `SHA256SUMS`. Cross-platform manual
-acceptance, installed Space/SDK acceptance, the Space dependency bump
-(FEATURE_305 T6 and FEATURE_306 follow-ups) and npm registry publication
-remain separate maintainer steps.
+acceptance, installed Space/SDK acceptance, and the Space dependency bump
+(FEATURE_305 T6 and FEATURE_306 follow-ups) remain separate maintainer
+steps.
 
 ## v0.7.97-beta.8 release preparation
 
@@ -205,7 +206,7 @@ must be alive to matter, and the exited child's last `bootstrap.log`
 through beta.7 client contract is retained; no SDK surface changes.
 
 The CI/Release in-place upgrade gates now pin the published
-`0.7.97-beta.7` tarball (published 2026-11-12T05:07:12.252Z; registry
+`0.7.97-beta.7` tarball (published 2026-11-12T05:07:12.016Z; registry
 dist.integrity sha512-GBEgt0X0…Offtw== equals the
 kodax-ai-kodax-0.7.97-beta.7.tgz asset of the v0.7.97-beta.7 GitHub
 Release, sha256 50c65ba0…1f414). Run that fixture locally with Windows
@@ -258,7 +259,8 @@ acceptance, installed Space/SDK acceptance and the Space dependency bump
 Release state: `v0.7.97-beta.7` was published on 2026-11-12 as a GitHub
 prerelease from run 43140277830 at `7e6b7d4c1` (all five archive builds,
 Full CI and the npm package gates green on the first dispatch; 13
-assets). npm publication has not occurred. The release is the seventh
+assets) and to npm on 2026-11-12T05:07:12Z (dist-tag `beta`). The release
+is the seventh
 beta of the v0.7.97 line: the Space SDK image projection, attachment and
 approval-attribution repairs triaged from the Space integration report
 (Issue 408). User image observation labels leave the current view,
@@ -274,7 +276,7 @@ the Host registry and both client adapters. Every v0.7.96 stable and
 v0.7.97-alpha.1 through beta.6 client contract is retained.
 
 The CI/Release in-place upgrade gates now pin the published
-`0.7.97-beta.6` tarball (published 2026-11-11T14:01:03.446Z; registry
+`0.7.97-beta.6` tarball (published 2026-11-11T14:00:50.591Z; registry
 dist.integrity sha512-4SZmAXEg…T8zA== equals the
 kodax-ai-kodax-0.7.97-beta.6.tgz asset of the v0.7.97-beta.6 GitHub
 Release, sha256 5d2113ac…2502442). Run that fixture locally with Windows
@@ -305,16 +307,15 @@ GitHub pre-release from that run's artifacts. Ordinary branch pushes do
 not run CI. The dispatch (run 43140277830) passed every job and published.
 The universal npm tarball asset is `kodax-ai-kodax-0.7.97-beta.7.tgz`,
 sha256 `50c65ba0…1f414`, matching `SHA256SUMS`. Cross-platform manual
-acceptance, installed Space/SDK acceptance, the Space dependency bump
-(FEATURE_305 T6 follow-up) and npm registry publication remain separate
-maintainer steps.
+acceptance, installed Space/SDK acceptance and the Space dependency bump
+(FEATURE_305 T6 follow-up) remain separate maintainer steps.
 
 ## v0.7.97-beta.6 release preparation
 
 Release state: `v0.7.97-beta.6` was published on 2026-11-11 as a GitHub
 prerelease from run 43018115059 at `367f5e752` (all five archive builds,
-Full CI and the npm package gates green; 13 assets). npm publication has
-not occurred. The release is the
+Full CI and the npm package gates green; 13 assets) and to npm on
+2026-11-11T14:00:50Z (dist-tag `beta`). The release is the
 sixth beta of the v0.7.97 line: one Host per `KODAX_HOME` (ADR-075,
 FEATURE_305, designed under the `v0.7.98` planning identifier). The
 breaking change removes the Host-location `profile` from the SDK entry
@@ -360,8 +361,8 @@ This release follows the single publishing dispatch described under
 npm package gates, then creates the tag at the dispatched commit and the
 GitHub pre-release from that run's artifacts. Ordinary branch pushes do
 not run CI. Cross-platform manual acceptance, installed Space/SDK
-acceptance, the Space dependency bump (FEATURE_305 T6 follow-up) and npm
-registry publication remain separate maintainer steps.
+acceptance and the Space dependency bump (FEATURE_305 T6 follow-up)
+remain separate maintainer steps.
 
 The first publishing dispatch (run 43011838267 at `f85af054a`) failed
 three jobs and created no tag. The Runtime daemon Unix socket gate still
@@ -427,8 +428,8 @@ under [Current release execution](#current-release-execution): `target=all`
 with `release_tag=v0.7.97-beta.5` runs Full CI, all five archive builds and
 the npm package gates, then creates the tag at the dispatched commit and the
 GitHub pre-release from that run's artifacts. Ordinary branch pushes do not
-run CI. Cross-platform manual acceptance, installed Space/SDK acceptance and
-npm registry publication remain separate maintainer steps.
+run CI. Cross-platform manual acceptance and installed Space/SDK acceptance
+remain separate maintainer steps.
 
 The first publishing dispatch (run 42774928059 at `38a6c26f2`) passed every
 job except `test (node 20 unit)`. `benchmark/visual-harness/native-task-cell.test.ts`
@@ -448,8 +449,8 @@ Historical preparation record: the baseline and publication status below
 reflect preparation time. beta.4 was published on 2026-11-08 and the
 CI/Release upgrade gates now pin `0.7.97-beta.4`.
 
-Release state: `v0.7.97-beta.4` is a candidate awaiting multi-platform CI.
-npm publication has not occurred. The candidate is the fourth beta of the
+Release state: `v0.7.97-beta.4` was published as a GitHub prerelease and
+to npm on 2026-11-08T12:10:43Z (dist-tag `beta`). It is the fourth beta of the
 v0.7.97 line, repairing the Space SDK instruction and history client
 contracts: AGENTS-only editor loading returns beside a tagged instruction
 loader whose ordered sources carry `kind:'agents'|'rule'` with typed skip

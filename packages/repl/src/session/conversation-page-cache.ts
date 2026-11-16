@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { replaceFileWithRetry } from './replace-file.js';
 
 import type {
   KodaXSessionEntry,
@@ -35,8 +36,8 @@ export {
   removeConversationPageCachesInDirectory,
 } from './conversation-page-cache-files.js';
 
-// v10 combines canonical source lookup with legacy pairing and compaction repair.
-const CACHE_VERSION = 10;
+// v11 moves superseded revisions from the manifest into an append-only revision log.
+const CACHE_VERSION = 11;
 const INDEX_RECORD_BYTES = 24;
 const WRITE_BATCH_BYTES = 1024 * 1024;
 const MAX_CACHE_MANIFEST_BYTES = 1024 * 1024;
@@ -46,14 +47,27 @@ const MAX_CACHE_CHUNK_BYTES = 4 * 1024 * 1024;
 // invalidates the optimization and falls back to canonical reconstruction.
 const IDENTITY_FILTER_BYTES = 128 * 1024;
 const IDENTITY_FILTER_HASHES = 7;
+// A Run checkpoints its view about twice a second, and every save supersedes the page revision.
+// Superseded revisions whose entries are a prefix of the current ones stay readable through an
+// append-only log of fixed records: revision digest, source revision digest, uint64 entry count.
+const REVISION_RECORD_BYTES = 72;
+const MAX_REVISION_LOG_BYTES = REVISION_RECORD_BYTES * 16_384;
+const REVISION_SCAN_BYTES = REVISION_RECORD_BYTES * 1024;
 
 export interface ConversationPageCacheAdmission {
   readonly surface?: string;
   readonly profileId?: string;
 }
 
+/** A readable revision: the current one, or a superseded one whose entries are a prefix of it. */
+export interface ConversationPageCacheRevision {
+  readonly revision: string;
+  readonly sourceRevision: string;
+  readonly entryCount: number;
+}
+
 interface ConversationCacheManifest {
-  readonly version: 10;
+  readonly version: 11;
   readonly sessionId: string;
   readonly generation: string;
   readonly sourceRevision: string;
@@ -73,6 +87,8 @@ interface ConversationCacheManifest {
   readonly dataBytes: number;
   readonly indexFile: string;
   readonly indexBytes: number;
+  /** File name of the superseded-revision log; the file is absent until a revision is superseded. */
+  readonly revisionLog: string;
 }
 
 interface ConversationCacheDescriptor {
@@ -89,6 +105,10 @@ interface ConversationCacheIndexRecord {
 }
 
 export interface ConversationPageCacheInput {
+  /**
+   * Page cursor revision. Any revision of the current generation is served from
+   * its immutable entry prefix, without the writer boundary.
+   */
   readonly expectedRevision?: string;
   readonly end?: number;
   readonly limit: number;
@@ -171,7 +191,11 @@ function cacheGenerationPath(mainPath: string, generation: string, kind: 'data' 
   return `${stem}${CACHE_FILE_MARKER}${generation}.${kind}`;
 }
 
-function isSafeCacheFileName(mainPath: string, fileName: string, kind: 'data' | 'index'): boolean {
+function isSafeCacheFileName(
+  mainPath: string,
+  fileName: string,
+  kind: 'data' | 'index' | 'revisions',
+): boolean {
   const sessionId = path.basename(mainPath, path.extname(mainPath));
   return path.basename(fileName) === fileName
     && fileName.startsWith(`${sessionId}${CACHE_FILE_MARKER}`)
@@ -268,6 +292,159 @@ export function conversationPageIdentityFilterContains(
   return identityFilterContains(Buffer.from(encoded, 'base64'), identity);
 }
 
+function newRevisionLogName(mainPath: string): string {
+  return `${path.basename(mainPath, path.extname(mainPath))}${CACHE_FILE_MARKER}${randomUUID()}.revisions`;
+}
+
+function revisionDigest(value: string): Buffer | undefined {
+  return /^sha256:[0-9a-f]{64}$/.test(value) ? Buffer.from(value.slice(7), 'hex') : undefined;
+}
+
+function encodeRevisionRecord(manifest: ConversationCacheManifest): Buffer | undefined {
+  const revision = revisionDigest(manifest.revision);
+  const sourceRevision = revisionDigest(manifest.sourceRevision);
+  if (revision === undefined || sourceRevision === undefined) return undefined;
+  const record = Buffer.alloc(REVISION_RECORD_BYTES);
+  revision.copy(record, 0);
+  sourceRevision.copy(record, 32);
+  record.writeBigUInt64LE(BigInt(manifest.entryCount), 64);
+  return record;
+}
+
+async function fileSize(filePath: string): Promise<number> {
+  try {
+    return (await fs.stat(filePath)).size;
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0;
+    throw error;
+  }
+}
+
+/**
+ * Logs `previous` as superseded by `revision`, whose entries keep its entries as a prefix.
+ * Returns the log the next manifest names: a full log is rewritten with its newest half.
+ * No fsync: a record lost to a crash only makes an older cursor request a fresh page.
+ */
+async function recordSupersededRevision(
+  mainPath: string,
+  previous: ConversationCacheManifest,
+  revision: string,
+): Promise<string> {
+  const record = encodeRevisionRecord(previous);
+  if (revision === previous.revision || record === undefined) return previous.revisionLog;
+  const logPath = path.join(path.dirname(mainPath), previous.revisionLog);
+  const size = await fileSize(logPath);
+  if (size % REVISION_RECORD_BYTES === 0 && size + REVISION_RECORD_BYTES <= MAX_REVISION_LOG_BYTES) {
+    await fs.appendFile(logPath, record);
+    return previous.revisionLog;
+  }
+  const aligned = size - (size % REVISION_RECORD_BYTES);
+  const keptBytes = Math.min(aligned, MAX_REVISION_LOG_BYTES / 2);
+  const handle = await fs.open(logPath, 'r');
+  let kept: Buffer;
+  try {
+    kept = await readFully(handle, aligned - keptBytes, keptBytes);
+  } finally {
+    await handle.close();
+  }
+  const next = newRevisionLogName(mainPath);
+  await fs.writeFile(path.join(path.dirname(mainPath), next), Buffer.concat([kept, record]), { flag: 'wx' });
+  return next;
+}
+
+async function retireRevisionLog(mainPath: string, previous: string, current: string): Promise<void> {
+  if (previous === current) return;
+  try {
+    await fs.rm(path.join(path.dirname(mainPath), previous), { force: true });
+  } catch (error: unknown) {
+    process.emitWarning(
+      `Unable to remove an old Conversation page revision log: ${String(error)}`,
+      { code: 'KODAX_CONVERSATION_PAGE_CACHE_GC_FAILED' },
+    );
+  }
+}
+
+/**
+ * A Run saves by rewriting the session, which rebuilds the cache. Earlier revisions stay readable
+ * when the rebuilt entries keep theirs as an unchanged prefix; any other rewrite retires them.
+ */
+function extendsPreviousEntries(
+  previous: ConversationCacheManifest,
+  history: SessionConversationHistoryData,
+  chunkBytes: number,
+): boolean {
+  return previous.chunkBytes === chunkBytes
+    && previous.status === history.status
+    && JSON.stringify(previous.issues) === JSON.stringify(history.issues)
+    && previous.entryCount <= history.entries.length
+    && createConversationEntryChain(history.entries.slice(0, previous.entryCount)) === previous.entryChain;
+}
+
+export type ConversationPageCacheRevisionKey =
+  | { readonly revision: string }
+  | { readonly sourceRevision: string };
+
+/** Newest first; undefined when `key` is neither current nor a logged prefix of this cache. */
+async function findConversationRevision(
+  mainPath: string,
+  manifest: ConversationCacheManifest,
+  key: ConversationPageCacheRevisionKey,
+): Promise<ConversationPageCacheRevision | undefined> {
+  const byRevision = 'revision' in key;
+  if (byRevision ? key.revision === manifest.revision : key.sourceRevision === manifest.sourceRevision) {
+    return { revision: manifest.revision, sourceRevision: manifest.sourceRevision, entryCount: manifest.entryCount };
+  }
+  const target = revisionDigest(byRevision ? key.revision : key.sourceRevision);
+  if (target === undefined) return undefined;
+  const field = byRevision ? 0 : 32;
+  let handle: Awaited<ReturnType<typeof fs.open>>;
+  try {
+    handle = await fs.open(path.join(path.dirname(mainPath), manifest.revisionLog), 'r');
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+  try {
+    const size = (await handle.stat()).size;
+    // A torn trailing record from an interrupted append is ignored.
+    for (let end = size - (size % REVISION_RECORD_BYTES); end > 0;) {
+      const start = Math.max(0, end - REVISION_SCAN_BYTES);
+      const records = await readFully(handle, start, end - start);
+      for (let offset = records.length - REVISION_RECORD_BYTES; offset >= 0; offset -= REVISION_RECORD_BYTES) {
+        if (!records.subarray(offset + field, offset + field + 32).equals(target)) continue;
+        const entryCount = Number(records.readBigUInt64LE(offset + 64));
+        if (entryCount > manifest.entryCount) return undefined;
+        return {
+          revision: `sha256:${records.toString('hex', offset, offset + 32)}`,
+          sourceRevision: `sha256:${records.toString('hex', offset + 32, offset + 64)}`,
+          entryCount,
+        };
+      }
+      end = start;
+    }
+    return undefined;
+  } finally {
+    await handle.close();
+  }
+}
+
+/** Resolves a page or source revision against the current cache, without the writer boundary. */
+export async function readConversationPageCacheRevision(
+  mainPath: string,
+  key: ConversationPageCacheRevisionKey,
+): Promise<(ConversationPageCacheRevision & { readonly currentRevision: string }) | undefined> {
+  try {
+    const manifest = await readConversationPageCacheManifest(mainPath);
+    if (manifest === undefined) return undefined;
+    const found = await findConversationRevision(mainPath, manifest, key);
+    return found && { ...found, currentRevision: manifest.revision };
+  } catch (error: unknown) {
+    // A cache being replaced cannot prove the revision; callers then ask for a resync.
+    if (error instanceof SyntaxError || isCacheIoError(error)) return undefined;
+    throw error;
+  }
+}
+
 function parseManifest(value: unknown, mainPath: string): ConversationCacheManifest | undefined {
   if (!isRecord(value) || value.version !== CACHE_VERSION) return undefined;
   if (
@@ -298,6 +475,8 @@ function parseManifest(value: unknown, mainPath: string): ConversationCacheManif
     || value.indexFile !== `${value.sessionId}${CACHE_FILE_MARKER}${value.generation}.index`
     || value.sessionId !== path.basename(mainPath, path.extname(mainPath))
     || Number(value.indexBytes) !== Number(value.entryCount) * INDEX_RECORD_BYTES
+    || typeof value.revisionLog !== 'string'
+    || !isSafeCacheFileName(mainPath, value.revisionLog, 'revisions')
   ) {
     return undefined;
   }
@@ -347,10 +526,14 @@ function cachePaths(mainPath: string, manifest: ConversationCacheManifest): {
 async function assertCacheFilesStable(
   mainPath: string,
   manifest: ConversationCacheManifest,
+  allowGrowth = false,
 ): Promise<void> {
   const paths = cachePaths(mainPath, manifest);
   const [data, index] = await Promise.all([fs.stat(paths.dataPath), fs.stat(paths.indexPath)]);
-  if (data.size !== manifest.dataBytes || index.size !== manifest.indexBytes) {
+  // Readers tolerate an append in flight: it only grows the files past this manifest.
+  const stable = (size: number, expected: number): boolean =>
+    allowGrowth ? size >= expected : size === expected;
+  if (!stable(data.size, manifest.dataBytes) || !stable(index.size, manifest.indexBytes)) {
     throw new ConversationPageCacheStaleError('Conversation page cache changed');
   }
 }
@@ -477,35 +660,67 @@ function assertEntryIntegrity(
   }
 }
 
+const CACHE_IO_ERROR_CODES = new Set([
+  'EACCES',
+  'EBADF',
+  'EBUSY',
+  'EIO',
+  'EISDIR',
+  'EMFILE',
+  'ENFILE',
+  'ENOENT',
+  'ENOTDIR',
+  'EPERM',
+  'ESTALE',
+]);
+
+function isCacheIoError(error: unknown): boolean {
+  return isRecord(error) && typeof error.code === 'string' && CACHE_IO_ERROR_CODES.has(error.code);
+}
+
 function normalizeConversationPageCacheReadError(error: unknown): Error {
   if (
     error instanceof ConversationPageCacheStaleError
     || error instanceof ConversationPageCacheCapacityError
   ) return error;
-  const cacheIoErrorCodes = new Set([
-    'EACCES',
-    'EBADF',
-    'EBUSY',
-    'EIO',
-    'EISDIR',
-    'EMFILE',
-    'ENFILE',
-    'ENOENT',
-    'ENOTDIR',
-    'EPERM',
-    'ESTALE',
-  ]);
-  if (
-    error instanceof SyntaxError
-    || (
-      isRecord(error)
-      && typeof error.code === 'string'
-      && cacheIoErrorCodes.has(error.code)
-    )
-  ) {
+  if (error instanceof SyntaxError || isCacheIoError(error)) {
     return new ConversationPageCacheStaleError('Conversation page cache changed or is unavailable');
   }
   return error instanceof Error ? error : new Error(String(error));
+}
+
+interface CacheGenerationSeen {
+  generation?: string;
+}
+
+const MAX_CACHE_GENERATION_READ_ATTEMPTS = 3;
+
+/**
+ * A rebuild retires the generation files a reader's manifest named. When an IO error coincides
+ * with a newer generation, the read restarts on it; an older revision kept as its prefix still
+ * resolves there, and any other rewrite reports a stale revision.
+ */
+async function readAcrossCacheGenerations<T>(
+  mainPath: string,
+  read: (seen: CacheGenerationSeen) => Promise<T>,
+): Promise<T> {
+  try {
+    for (let attempt = 1; ; attempt += 1) {
+      const seen: CacheGenerationSeen = {};
+      try {
+        return await read(seen);
+      } catch (error: unknown) {
+        if (
+          attempt >= MAX_CACHE_GENERATION_READ_ATTEMPTS
+          || seen.generation === undefined
+          || !isCacheIoError(error)
+          || (await readConversationPageCacheManifest(mainPath))?.generation === seen.generation
+        ) throw error;
+      }
+    }
+  } catch (error: unknown) {
+    throw normalizeConversationPageCacheReadError(error);
+  }
 }
 
 async function openCachePair(
@@ -526,40 +741,50 @@ async function openCachePair(
   }
 }
 
+/**
+ * `boundaryRevision` is only checked for a newest read: an `expectedRevision`
+ * read is witnessed by its revision, whose entries are an immutable prefix.
+ */
 export async function readConversationPageCache(
   mainPath: string,
-  boundaryRevision: string,
+  boundaryRevision: string | undefined,
   input: ConversationPageCacheInput,
 ): Promise<ConversationPageCachePage | null> {
-  try {
-    return await readConversationPageCacheInternal(mainPath, boundaryRevision, input);
-  } catch (error: unknown) {
-    throw normalizeConversationPageCacheReadError(error);
-  }
+  return readAcrossCacheGenerations(mainPath, (seen) =>
+    readConversationPageCacheInternal(mainPath, boundaryRevision, input, seen));
 }
 
 async function readConversationPageCacheInternal(
   mainPath: string,
-  boundaryRevision: string,
+  boundaryRevision: string | undefined,
   input: ConversationPageCacheInput,
+  seen: CacheGenerationSeen,
 ): Promise<ConversationPageCachePage | null> {
   throwIfAborted(input.signal);
   const manifest = await readConversationPageCacheManifest(mainPath);
-  if (manifest === undefined || manifest.boundaryRevision !== boundaryRevision) return null;
+  if (manifest === undefined) return null;
+  seen.generation = manifest.generation;
+  if (input.expectedRevision === undefined && manifest.boundaryRevision !== boundaryRevision) {
+    return null;
+  }
   await input.authorize?.(manifest.admission);
-  if (input.expectedRevision !== undefined && input.expectedRevision !== manifest.revision) {
+  const located = await findConversationRevision(mainPath, manifest, {
+    revision: input.expectedRevision ?? manifest.revision,
+  });
+  if (located === undefined) {
     throw new ConversationPageCacheStaleError('Conversation history changed; request a fresh page');
   }
-  await assertCacheFilesStable(mainPath, manifest);
-  const end = Math.min(input.end ?? manifest.entryCount, manifest.entryCount);
+  const { revision, sourceRevision, entryCount } = located;
+  await assertCacheFilesStable(mainPath, manifest, true);
+  const end = Math.min(input.end ?? entryCount, entryCount);
   const start = Math.max(0, end - input.limit);
   const paths = cachePaths(mainPath, manifest);
   const { data, index } = await openCachePair(paths.dataPath, paths.indexPath, 'r');
   try {
     if (input.sourceKeys) {
-      const entries = await findConversationSourceEntries(data, index, manifest, input);
-      await assertCacheFilesStable(mainPath, manifest);
-      return { revision: manifest.revision, sourceRevision: manifest.sourceRevision,
+      const entries = await findConversationSourceEntries(data, index, manifest, entryCount, input);
+      await assertCacheFilesStable(mainPath, manifest, true);
+      return { revision, sourceRevision,
         status: manifest.status, issues: structuredClone(manifest.issues), entries, hasMore: false };
     }
     const encodedIndex = await readFully(
@@ -569,8 +794,8 @@ async function readConversationPageCacheInternal(
     );
     const entries: ConversationPageCacheEntry[] = [];
     let encodedBytes = input.reservedBytes + Buffer.byteLength(JSON.stringify({
-      revision: manifest.revision,
-      sourceRevision: manifest.sourceRevision,
+      revision,
+      sourceRevision,
       status: manifest.status,
       issues: manifest.issues,
     }), 'utf8');
@@ -605,15 +830,15 @@ async function readConversationPageCacheInternal(
       encodedBytes += itemBytes;
     }
     const firstIndex = entries[0]?.index ?? end;
-    await assertCacheFilesStable(mainPath, manifest);
+    await assertCacheFilesStable(mainPath, manifest, true);
     return {
-      revision: manifest.revision,
-      sourceRevision: manifest.sourceRevision,
+      revision,
+      sourceRevision,
       status: manifest.status,
       issues: structuredClone(manifest.issues),
       entries,
       hasMore: firstIndex > 0,
-      ...(end < manifest.entryCount ? { newerStart: end } : {}),
+      ...(end < entryCount ? { newerStart: end } : {}),
       ...(firstIndex > 0 ? { nextEnd: firstIndex } : {}),
     };
   } finally {
@@ -625,12 +850,13 @@ async function findConversationSourceEntries(
   data: Awaited<ReturnType<typeof fs.open>>,
   index: Awaited<ReturnType<typeof fs.open>>,
   manifest: ConversationCacheManifest,
+  entryCount: number,
   input: ConversationPageCacheInput,
 ): Promise<ConversationPageCacheEntry[]> {
   const pending = new Set(input.sourceKeys);
   const entries: ConversationPageCacheEntry[] = [];
   let bytes = input.reservedBytes;
-  for (let end = manifest.entryCount; end > 0 && pending.size > 0;) {
+  for (let end = entryCount; end > 0 && pending.size > 0;) {
     const start = Math.max(0, end - 256);
     const encoded = await readFully(index, start * INDEX_RECORD_BYTES, (end - start) * INDEX_RECORD_BYTES);
     for (let position = end - 1; position >= start && pending.size > 0; position -= 1) {
@@ -651,32 +877,34 @@ async function findConversationSourceEntries(
   return entries.reverse();
 }
 
+/** Any revision of the current generation reads its immutable entries; the boundary is optional. */
 export async function readConversationPageCacheChunk(
   mainPath: string,
-  boundaryRevision: string,
+  boundaryRevision: string | undefined,
   input: ConversationPageCacheChunkInput,
 ): Promise<ConversationPageCacheChunk | null | undefined> {
-  try {
-    return await readConversationPageCacheChunkInternal(mainPath, boundaryRevision, input);
-  } catch (error: unknown) {
-    throw normalizeConversationPageCacheReadError(error);
-  }
+  return readAcrossCacheGenerations(mainPath, (seen) =>
+    readConversationPageCacheChunkInternal(mainPath, boundaryRevision, input, seen));
 }
 
 async function readConversationPageCacheChunkInternal(
   mainPath: string,
-  boundaryRevision: string,
+  boundaryRevision: string | undefined,
   input: ConversationPageCacheChunkInput,
+  seen: CacheGenerationSeen,
 ): Promise<ConversationPageCacheChunk | null | undefined> {
   throwIfAborted(input.signal);
   const manifest = await readConversationPageCacheManifest(mainPath);
-  if (manifest === undefined || manifest.boundaryRevision !== boundaryRevision) return null;
+  if (manifest === undefined) return null;
+  seen.generation = manifest.generation;
+  if (boundaryRevision !== undefined && manifest.boundaryRevision !== boundaryRevision) return null;
   await input.authorize?.(manifest.admission);
-  if (manifest.revision !== input.revision) {
+  const located = await findConversationRevision(mainPath, manifest, { revision: input.revision });
+  if (located === undefined) {
     throw new ConversationPageCacheStaleError('Conversation history changed; request a fresh page');
   }
-  await assertCacheFilesStable(mainPath, manifest);
-  if (input.entryIndex >= manifest.entryCount) {
+  await assertCacheFilesStable(mainPath, manifest, true);
+  if (input.entryIndex >= located.entryCount) {
     // Let storage verify its final source/topology boundary before reporting EOF.
     return undefined;
   }
@@ -699,9 +927,9 @@ async function readConversationPageCacheChunkInternal(
     if (digest !== descriptor.chunkDigests[input.offset / manifest.chunkBytes]) {
       throw new ConversationPageCacheStaleError('Conversation page cache entry is corrupt');
     }
-    await assertCacheFilesStable(mainPath, manifest);
+    await assertCacheFilesStable(mainPath, manifest, true);
     return {
-      revision: manifest.revision,
+      revision: input.revision,
       entryIndex: input.entryIndex,
       ...(descriptor.boundaryId !== undefined ? { boundaryId: descriptor.boundaryId } : {}),
       data: chunk,
@@ -793,7 +1021,7 @@ async function replaceManifest(mainPath: string, manifest: ConversationCacheMani
   const temp = `${target}.${process.pid}.${randomUUID()}.tmp`;
   await fs.writeFile(temp, JSON.stringify(manifest), { encoding: 'utf8', flag: 'wx' });
   try {
-    await fs.rename(temp, target);
+    await replaceFileWithRetry(temp, target);
   } finally {
     await fs.rm(temp, { force: true });
   }
@@ -802,6 +1030,7 @@ async function replaceManifest(mainPath: string, manifest: ConversationCacheMani
 async function removeGenerationFiles(
   mainPath: string,
   keepGeneration: string,
+  keepRevisionLog: string,
 ): Promise<void> {
   const directory = path.dirname(mainPath);
   const sessionId = path.basename(mainPath, path.extname(mainPath));
@@ -811,6 +1040,7 @@ async function removeGenerationFiles(
   await Promise.all(names
     .filter((name) => cacheArtifactSessionId(name) === sessionId
       && !name.startsWith(keepPrefix)
+      && name !== keepRevisionLog
       && name !== path.basename(cacheManifestPath(mainPath)))
     .map((name) => fs.rm(path.join(directory, name), { force: true })));
 }
@@ -830,9 +1060,15 @@ export async function writeConversationPageCache(
   const generation = randomUUID();
   const dataPath = cacheGenerationPath(mainPath, generation, 'data');
   const indexPath = cacheGenerationPath(mainPath, generation, 'index');
+  let revisionLog: string;
   try {
     const sizes = await writeCacheEntries(dataPath, indexPath, history.entries, chunkBytes);
+    const previous = await readConversationPageCacheManifest(mainPath);
     const entryChain = createConversationEntryChain(history.entries);
+    const revision = createSessionConversationHistoryRevision(history, entryChain);
+    revisionLog = previous !== undefined && extendsPreviousEntries(previous, history, chunkBytes)
+      ? await recordSupersededRevision(mainPath, previous, revision)
+      : newRevisionLogName(mainPath);
     await replaceManifest(mainPath, {
       version: CACHE_VERSION,
       sessionId: path.basename(mainPath, path.extname(mainPath)),
@@ -841,7 +1077,7 @@ export async function writeConversationPageCache(
       sourceRevisionState,
       identityFilter: createConversationPageIdentityFilter(lineage),
       boundaryRevision,
-      revision: createSessionConversationHistoryRevision(history, entryChain),
+      revision,
       entryChain,
       status: history.status,
       issues: history.issues,
@@ -854,13 +1090,14 @@ export async function writeConversationPageCache(
       dataBytes: sizes.dataBytes,
       indexFile: path.basename(indexPath),
       indexBytes: sizes.indexBytes,
+      revisionLog,
     });
   } catch (error: unknown) {
     await Promise.all([fs.rm(dataPath, { force: true }), fs.rm(indexPath, { force: true })]);
     throw error;
   }
   try {
-    await removeGenerationFiles(mainPath, generation);
+    await removeGenerationFiles(mainPath, generation, revisionLog);
   } catch (error: unknown) {
     process.emitWarning(
       `Unable to remove an old Conversation page cache generation: ${String(error)}`,
@@ -888,8 +1125,10 @@ export async function refreshConversationPageCache(
     || JSON.stringify(history.issues) !== JSON.stringify(manifest.issues)
   ) return false;
   const revision = createSessionConversationHistoryRevision(history, entryChain);
+  const revisionLog = await recordSupersededRevision(mainPath, manifest, revision);
   await replaceManifest(mainPath, {
     ...manifest,
+    revisionLog,
     sourceRevision: history.sourceRevision,
     sourceRevisionState,
     identityFilter: createConversationPageIdentityFilter(lineage),
@@ -902,6 +1141,7 @@ export async function refreshConversationPageCache(
     activeEntryId: lineage.activeEntryId,
     admission: cacheAdmission(runtimeInfo),
   });
+  await retireRevisionLog(mainPath, manifest.revisionLog, revisionLog);
   await assertCacheFilesStable(mainPath, manifest);
   return true;
 }
@@ -956,8 +1196,11 @@ export async function appendConversationPageCache(
     issues: previous.issues,
     entries: [],
   } satisfies SessionConversationHistoryData;
+  const revision = createSessionConversationHistoryRevision(history, entryChain);
+  const revisionLog = await recordSupersededRevision(mainPath, previous, revision);
   await replaceManifest(mainPath, {
     ...previous,
+    revisionLog,
     sourceRevision,
     sourceRevisionState,
     identityFilter: extendConversationPageIdentityFilter(
@@ -965,7 +1208,7 @@ export async function appendConversationPageCache(
       appendedLineageEntries,
     ),
     boundaryRevision,
-    revision: createSessionConversationHistoryRevision(history, entryChain),
+    revision,
     entryChain,
     entryCount: previous.entryCount + entries.length,
     lineageEntryCount: previous.lineageEntryCount + appendedLineageEntries.length,
@@ -973,6 +1216,7 @@ export async function appendConversationPageCache(
     dataBytes,
     indexBytes: previous.indexBytes + entries.length * INDEX_RECORD_BYTES,
   });
+  await retireRevisionLog(mainPath, previous.revisionLog, revisionLog);
 }
 
 export function canAppendConversationPageCache(

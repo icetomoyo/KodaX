@@ -7741,7 +7741,7 @@ function createRuntimeSessionService(
       );
     } catch (error: unknown) {
       if (error instanceof replApi.SessionReadError && error.code === 'data_changed') {
-        throw createRuntimeResyncError(error.message);
+        throw createSessionReadResyncError(error);
       }
       throw error;
     }
@@ -7820,7 +7820,7 @@ function createRuntimeSessionService(
           || error.code !== "data_changed"
         ) throw error;
         const delayMs = RUNTIME_SESSION_CAPTURE_RETRY_DELAYS_MS[attempt];
-        if (delayMs === undefined) throw createRuntimeResyncError(error.message);
+        if (delayMs === undefined) throw createSessionReadResyncError(error);
         await awaitRuntimeReadOperation(
           () => new Promise<void>((resolve) => setTimeout(resolve, delayMs)),
           budget,
@@ -8684,6 +8684,7 @@ function createRuntimeSessionService(
         const snapshot = getTranscriptSnapshot(input.sessionId, revision, 'transcript');
         return snapshot ? { sourceRevision: snapshot.sourceRevision, entryId: snapshot.entries[index]?.entryId } : undefined;
       },
+      readRevision: (key) => manager.storage.readConversationPageRevision(input.sessionId, key, sessionReadOptionsFromBudget(budget)),
       encode: encodeRuntimeTranscriptCursor, decode: decodeRuntimeTranscriptCursor,
       yieldControl: () => yieldToRuntimeReadBudget(budget),
       defaultLimit: DEFAULT_RUNTIME_TRANSCRIPT_PAGE_LIMIT, maximumLimit: MAX_RUNTIME_TRANSCRIPT_PAGE_LIMIT,
@@ -9010,8 +9011,6 @@ function createRuntimeSessionService(
       if (input.around || input.cursor?.startsWith("newer.")) {
         return readLocatedConversationPage(input, budget);
       }
-      // Cached pages need the same Host checkpoint boundary as a fresh capture.
-      await awaitRuntimeReadOperation(() => sessionViews.flush(input.sessionId), budget);
       const limit = input.limit ?? DEFAULT_RUNTIME_TRANSCRIPT_PAGE_LIMIT;
       if (!Number.isSafeInteger(limit) || limit <= 0) {
         throw new Error("transcript page limit must be a positive safe integer");
@@ -9020,6 +9019,11 @@ function createRuntimeSessionService(
       const parsedCursor = input.cursor === undefined
         ? undefined
         : decodeRuntimeTranscriptCursor(input.cursor);
+      // A newest page needs the same Host checkpoint boundary as a fresh capture;
+      // an older cached page reads the immutable prefix its revision witnesses.
+      if (parsedCursor?.kind !== "conversation_cache_page") {
+        await awaitRuntimeReadOperation(() => sessionViews.flush(input.sessionId), budget);
+      }
       if (
         parsedCursor === undefined
         || parsedCursor.kind === "conversation_cache_page"
@@ -9056,7 +9060,7 @@ function createRuntimeSessionService(
             error instanceof replApi.SessionReadError
             && error.code === "data_changed"
           ) {
-            throw createRuntimeResyncError(error.message);
+            throw createSessionReadResyncError(error);
           }
           throw error;
         }
@@ -9127,7 +9131,7 @@ function createRuntimeSessionService(
             error instanceof replApi.SessionReadError
             && error.code === "data_changed"
           ) {
-            throw createRuntimeResyncError(error.message);
+            throw createSessionReadResyncError(error);
           }
           process.emitWarning(
             `Unable to prepare bounded Conversation pages: ${normalizeError(error).message}`,
@@ -9176,7 +9180,6 @@ function createRuntimeSessionService(
       ensureOpen();
       const budget = createRuntimeReadBudget(options);
       sessionReadOptionsFromBudget(budget);
-      await awaitRuntimeReadOperation(() => sessionViews.flush(input.sessionId), budget);
       if (!Number.isSafeInteger(input.entryIndex) || input.entryIndex < 0) {
         throw new Error(`Transcript entry index is out of range: ${input.entryIndex}`);
       }
@@ -9186,6 +9189,8 @@ function createRuntimeSessionService(
         "conversation",
       );
       if (snapshot !== undefined) {
+        // A cached chunk reads its revision's immutable prefix; only a snapshot needs the checkpoint.
+        await awaitRuntimeReadOperation(() => sessionViews.flush(input.sessionId), budget);
         await assertConversationSnapshotCurrent(input.sessionId, snapshot, budget);
         return readTranscriptSnapshot(
           snapshot,
@@ -9253,7 +9258,7 @@ function createRuntimeSessionService(
           error instanceof replApi.SessionReadError
           && error.code === "data_changed"
         ) {
-          throw createRuntimeResyncError(error.message);
+          throw createSessionReadResyncError(error);
         }
         throw error;
       }
@@ -9350,10 +9355,13 @@ function createRuntimeSessionService(
           transcriptSource: (revision, index) => {
             const snapshot = getTranscriptSnapshot(sessionId, revision, 'transcript');
             return snapshot ? { sourceRevision: snapshot.sourceRevision, entryId: snapshot.entries[index]?.entryId } : undefined;
-          }, checkpoint: () => yieldToRuntimeReadBudget(budget) });
+          },
+          readRevision: (key) => manager.storage.readConversationPageRevision(sessionId, key, sessionReadOptionsFromBudget(budget)),
+          checkpoint: () => yieldToRuntimeReadBudget(budget) });
       } catch (error: unknown) {
         if (isTransientConversationBoundaryError(error)) {
           if (isRecord(error) && isRecord(error.data) && typeof error.data.reason === 'string') throw error;
+          if (error instanceof replApi.SessionReadError) throw createSessionReadResyncError(error);
           throw createRuntimeResyncError(normalizeError(error).message);
         }
         throw error;
@@ -26738,9 +26746,18 @@ function createRuntimeResyncError(
   });
 }
 
+/** Keeps the storage conflict reason so a client can tell a live writer from changed history. */
+function createSessionReadResyncError(
+  error: replApi.SessionReadError,
+  message = error.message,
+): Error & { readonly code: "resync_required" } {
+  return createRuntimeResyncError(message, error.reason ?? 'source_changed');
+}
+
 function normalizeConversationBoundaryMutationError(error: unknown): Error {
   if (error instanceof replApi.SessionReadError && error.code === "data_changed") {
-    return createRuntimeResyncError(
+    return createSessionReadResyncError(
+      error,
       "Conversation history changed; acquire a fresh history boundary",
     );
   }

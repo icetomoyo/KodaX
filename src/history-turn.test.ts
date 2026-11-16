@@ -80,7 +80,7 @@ it('does not retry an obsolete saved-position read as though it were a fresh new
 it('uses a new saved input only when the exact observed item identity is supplied, rejecting duplicates and drafts', async () => {
   const source = history([{ role: 'user', inputId: 'accepted', content: 'prompt' }, { role: 'assistant', outputId: 'saved', content: 'answer' }]);
   const base = { sessionId: 'session', history: source, conversationRevision: 'revision', expectedHead: 'head',
-    transcriptSource: () => undefined, checkpoint: () => undefined };
+    transcriptSource: () => undefined, readRevision: async () => undefined, checkpoint: () => undefined };
   const selector = { kind: 'item' as const, source: 'view' as const, itemId: 'observed', inputId: 'accepted' };
   const viewItem = { id: 'observed', type: 'user' as const, text: 'preview', inputId: 'accepted' };
   expect(await resolveHistoryTurnAtSnapshot({ ...base, selector, viewItem })).toMatchObject({ status: 'ready', turnIndex: 0 });

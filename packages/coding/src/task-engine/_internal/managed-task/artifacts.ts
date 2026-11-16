@@ -220,7 +220,6 @@ export async function writeManagedSkillArtifacts(
         '',
         `- Summary: ${skillMap.skillSummary}`,
         `- Projection confidence: ${skillMap.projectionConfidence}`,
-        skillMap.allowedTools ? `- Allowed tools: ${skillMap.allowedTools}` : undefined,
         skillMap.preferredAgent ? `- Preferred agent: ${skillMap.preferredAgent}` : undefined,
         skillMap.preferredModel ? `- Preferred model: ${skillMap.preferredModel}` : undefined,
         skillMap.invocationContext ? `- Invocation context: ${skillMap.invocationContext}` : undefined,

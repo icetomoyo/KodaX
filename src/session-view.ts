@@ -26,6 +26,8 @@ import { readItemImage } from './session-view-image.js';
 import { readSavedToolOutput } from './tool-output-reader.js';
 
 const SESSION_VIEW_ITEM_LIMIT = 150;
+/** Each checkpoint rewrites the whole display history, so a busy Run saves at most this often. */
+const CHECKPOINT_SPACING_MS = 500;
 
 const STREAMING_RUN_PHASES = new Set(['queued', 'running', 'recovering', 'waiting_agent', 'waiting_permission', 'waiting_user_input']);
 
@@ -44,7 +46,13 @@ interface ObservedSession {
   readonly runIds: Set<string>;
   /** Live Runs' failure writers; the terminal event settles each exactly once. */
   readonly runFailures: Map<string, (text: string) => void>;
-  persistRequested: boolean;
+  checkpointsRequested: number;
+  checkpointsSaved: number;
+  lastCheckpointAt?: number;
+  /** Each flush waits only for checkpoints requested before it. */
+  readonly flushWaiters: Set<{ readonly target: number; readonly resolve: () => void }>;
+  /** Ends the spacing delay early when a flush starts waiting. */
+  wakeCheckpoint?: () => void;
   persisting?: Promise<void>;
   hasPersistFailure: boolean;
   persistFailure?: unknown;
@@ -53,6 +61,14 @@ interface ObservedSession {
   sandbox?: KodaXShellSandboxObservation;
   toolInputTexts?: Map<string, string>;
   costReport?: NonNullable<KodaXEvents['getCostReport']>;
+}
+
+function settleFlushWaiters(state: ObservedSession, all: boolean): void {
+  for (const waiter of state.flushWaiters) {
+    if (!all && state.checkpointsSaved < waiter.target) continue;
+    state.flushWaiters.delete(waiter);
+    waiter.resolve();
+  }
 }
 
 interface SessionViewReadResult extends ClientSessionView {
@@ -103,7 +119,7 @@ export class SessionViewOwner {
     this.assertOpen();
     let state = this.sessions.get(sessionId);
     if (!state) {
-      state = { committedOutputIds: new Set(), dirty: true, historyDirty: true, generation: 0, listeners: new Map(), items: [], history: [], segments: new Map(), runIds: new Set(), runFailures: new Map(), persistRequested: false, hasPersistFailure: false };
+      state = { committedOutputIds: new Set(), dirty: true, historyDirty: true, generation: 0, listeners: new Map(), items: [], history: [], segments: new Map(), runIds: new Set(), runFailures: new Map(), checkpointsRequested: 0, checkpointsSaved: 0, flushWaiters: new Set(), hasPersistFailure: false };
       this.sessions.set(sessionId, state);
     }
     return state;
@@ -362,20 +378,9 @@ export class SessionViewOwner {
     if (this.closing) return;
     const state = this.sessions.get(sessionId);
     if (!state || state.runIds.size === 0) return;
-    state.persistRequested = true;
+    state.checkpointsRequested += 1;
     if (state.persisting) return;
-    state.persisting = Promise.resolve().then(async () => {
-      while (state.persistRequested) {
-        state.persistRequested = false;
-        await this.save(sessionId, [...state.runIds], state.items);
-        state.hasPersistFailure = false;
-        state.persistFailure = undefined;
-      }
-    }).catch((error: unknown) => {
-      state.hasPersistFailure = true;
-      state.persistFailure = error;
-      throw error;
-    }).finally(() => { state.persisting = undefined; });
+    state.persisting = this.persistCheckpoints(sessionId, state);
     void state.persisting.catch((error: unknown) => {
       emitKodaXDiagnostic({ source: 'session.view', level: 'error', message: 'Unable to persist Session display history.', detail: error });
     });
@@ -506,15 +511,61 @@ export class SessionViewOwner {
     return attempt;
   }
 
+  /** Waits for checkpoints requested before this call; later Run output does not extend the wait. */
   async flush(sessionId: string): Promise<void> {
     const state = this.sessions.get(sessionId);
-    while (state?.persisting) await state.persisting;
-    if (state?.hasPersistFailure) throw state.persistFailure;
+    if (!state) return;
+    const target = state.checkpointsRequested;
+    if (state.persisting && state.checkpointsSaved < target) {
+      await new Promise<void>(resolve => {
+        state.flushWaiters.add({ target, resolve });
+        state.wakeCheckpoint?.();
+      });
+    }
+    if (state.hasPersistFailure) throw state.persistFailure;
+  }
+
+  /** The loop exit and `persisting` reset share one tick, so no checkpoint request is stranded. */
+  private async persistCheckpoints(sessionId: string, state: ObservedSession): Promise<void> {
+    try {
+      while (state.checkpointsSaved < state.checkpointsRequested) {
+        await this.spaceCheckpoint(state);
+        const through = state.checkpointsRequested;
+        await this.save(sessionId, [...state.runIds], state.items);
+        state.lastCheckpointAt = Date.now();
+        state.checkpointsSaved = through;
+        state.hasPersistFailure = false;
+        state.persistFailure = undefined;
+        settleFlushWaiters(state, false);
+      }
+    } catch (error: unknown) {
+      state.hasPersistFailure = true;
+      state.persistFailure = error;
+      throw error;
+    } finally {
+      state.persisting = undefined;
+      settleFlushWaiters(state, true);
+    }
+  }
+
+  private async spaceCheckpoint(state: ObservedSession): Promise<void> {
+    const delayMs = (state.lastCheckpointAt ?? -Infinity) + CHECKPOINT_SPACING_MS - Date.now();
+    if (delayMs <= 0 || state.flushWaiters.size > 0 || this.closing) return;
+    await new Promise<void>(resolve => {
+      const wake = () => {
+        clearTimeout(timer);
+        state.wakeCheckpoint = undefined;
+        resolve();
+      };
+      const timer = setTimeout(wake, delayMs);
+      state.wakeCheckpoint = wake;
+    });
   }
 
   release(sessionId: string): void {
     const state = this.sessions.get(sessionId);
     if (state?.timer) clearTimeout(state.timer);
+    state?.wakeCheckpoint?.();
     state?.toolInputTexts?.clear();
     if (state) for (const report of state.listeners.values()) report({ state: 'closed', reason: 'unavailable' });
     state?.listeners.clear();

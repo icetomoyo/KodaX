@@ -150,7 +150,6 @@ it.each(['direct', 'managed', 'managed-retry', 'stopped', 'product'] as const)('
       const accepted = await client.inputs.submit({ sessionId: session.id, inputId: 'product-successor', text: 'Continue after the unknown Shell cleanup.' });
       expect(await client.runs.await(accepted.runId!)).toMatchObject({ phase: 'completed' });
     }
-    await writeFile(path.join(root, 'later.txt'), 'successor');
     const later = await runtime.runs.start({ sessionId: session.id, prompt: 'later', options: {
       lsp: false, toolInvocation: { name: 'read', input: { path: path.join(root, 'later.txt') } },
     } });
@@ -170,6 +169,6 @@ it.each(['direct', 'managed', 'managed-retry', 'stopped', 'product'] as const)('
     cleanup.children = [];
     clearRuntimeModelProviders();
     vi.unstubAllEnvs();
-    await rm(root, { recursive: true, force: true, maxRetries: 3 });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

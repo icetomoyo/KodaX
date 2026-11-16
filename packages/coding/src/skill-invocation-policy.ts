@@ -9,134 +9,17 @@ import {
 import type { KodaXOptions, KodaXShellExecutionContract, KodaXToolExecutionContext } from './types.js';
 import { toolBash } from './tools/bash.js';
 import { KodaXSkillInvocationError } from './skill-invocation-error.js';
-import { parseBashCommand } from './permissions/bash-ast.js';
 import { createToolResultRecovery } from './tool-result-recovery.js';
 
-const TOOL_NAME_ALIASES: Readonly<Record<string, string>> = {
-  read: 'read',
-  grep: 'grep',
-  glob: 'glob',
-  write: 'write',
-  edit: 'edit',
-  bash: 'bash',
-  undo: 'undo',
-  askuserquestion: 'ask-user-question',
-  askuser: 'ask-user-question',
-};
-
-interface AllowedToolRule {
-  readonly tool: string;
-  readonly patterns?: readonly string[];
-}
-
-interface AllowedToolPolicy {
-  readonly configured: boolean;
-  readonly rules: readonly AllowedToolRule[];
-  readonly invalidEntries: readonly string[];
-}
-
-function splitTopLevelCommaList(value: string): string[] {
-  const items: string[] = [];
-  let current = '';
-  let depth = 0;
-  for (const char of value) {
-    if (char === ',' && depth === 0) {
-      if (current.trim()) items.push(current.trim());
-      current = '';
-      continue;
-    }
-    if (char === '(') depth++;
-    else if (char === ')' && depth > 0) depth--;
-    current += char;
-  }
-  if (current.trim()) items.push(current.trim());
-  return items;
-}
-
-function parseAllowedTools(value?: string): AllowedToolPolicy {
-  if (!value?.trim()) return { configured: false, rules: [], invalidEntries: [] };
-  const rules: AllowedToolRule[] = [];
-  const invalidEntries: string[] = [];
-  for (const entry of splitTopLevelCommaList(value)) {
-    if (entry === '*') {
-      rules.push({ tool: '*' });
-      continue;
-    }
-    if (entry.includes('(') && !entry.endsWith(')')) {
-      invalidEntries.push(entry);
-      continue;
-    }
-    const match = entry.match(/^([^(]+?)(?:\((.*)\))?$/);
-    if (!match) {
-      invalidEntries.push(entry);
-      continue;
-    }
-    const tool = TOOL_NAME_ALIASES[match[1]!.replace(/[^a-z]/gi, '').toLowerCase()];
-    if (!tool) {
-      invalidEntries.push(entry);
-      continue;
-    }
-    const patterns = match[2]
-      ? splitTopLevelCommaList(match[2]).map((item) => item.trim()).filter(Boolean)
-      : undefined;
-    rules.push({ tool, ...(patterns?.length ? { patterns } : {}) });
-  }
-  return { configured: true, rules, invalidEntries };
-}
+// Like Codex, KodaX ignores a Skill's `allowed-tools`: it never restricts or
+// preapproves a call. Every tool, hook and dynamic-context command follows the
+// Host permission mode, authorization and sandbox the user chose.
 
 function matchesPattern(pattern: string, value: string): boolean {
   const escaped = pattern
     .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
     .replace(/\*/g, '.*');
   return new RegExp(`^${escaped}$`, 'i').test(value);
-}
-
-function isToolAllowed(
-  policy: AllowedToolPolicy,
-  tool: string,
-  input: Record<string, unknown>,
-  shellExecution?: KodaXShellExecutionContract,
-): boolean {
-  if (!policy.configured) return true;
-  if (policy.rules.length === 0) return false;
-  const normalizedTool = tool.toLowerCase();
-  const command = normalizedTool === 'bash' ? String(input.command ?? '').trim() : '';
-  return policy.rules.some((rule) => {
-    if (rule.tool !== '*' && rule.tool !== normalizedTool) return false;
-    if (!rule.patterns?.length || normalizedTool !== 'bash') return true;
-    const shellKind = shellExecution?.shell.kind ?? (process.platform === 'win32' ? 'cmd' : 'bash');
-    if (shellKind === 'cmd') {
-      // cmd expands variables before parsing and does not recognize single
-      // quotes. Do not let POSIX quoting hide executable cmd syntax.
-      if (/[%!^\r\n]/.test(command)) return false;
-      let quoted = false;
-      for (const character of command) {
-        if (character === '"') quoted = !quoted;
-        else if (!quoted && /[&|<>()]/.test(character)) return false;
-      }
-      if (quoted) return false;
-    }
-    if (shellKind === 'powershell' || shellKind === 'pwsh') {
-      // PowerShell does not use POSIX backslash escapes. Reject ambiguous
-      // escapes/smart quotes, then check its own quote boundaries as well.
-      if (/[`\r\n\u2018\u2019\u201c\u201d]/.test(command)) return false;
-      let quote: "'" | '"' | undefined;
-      for (const character of command) {
-        if (character === quote) quote = undefined;
-        else if (!quote && (character === '"' || character === "'")) quote = character;
-        else if (!quote && /[;&|<>(){}]/.test(character)) return false;
-      }
-      if (quote) return false;
-    }
-    // A constrained pattern authorizes one simple command, not extra shell
-    // effects absorbed by a wildcard. Unrestricted Bash still uses Host admission.
-    const tree = parseBashCommand(command);
-    const stage = tree.statements[0]?.stages[0];
-    if (tree.unparseable || tree.statements.length !== 1
-      || tree.statements[0]!.stages.length !== 1 || !stage?.argv.length
-      || stage.redirections.length > 0) return false;
-    return rule.patterns.some((pattern) => matchesPattern(pattern, command));
-  });
 }
 
 function hookMatches(hook: SkillHook, target: string): boolean {
@@ -252,7 +135,6 @@ async function runHooks(
   target: string,
   payload: Record<string, unknown>,
   cwd: string,
-  allowedTools: AllowedToolPolicy,
   admitHook: NonNullable<KodaXOptions['events']>['beforeToolExecute'],
   options: KodaXOptions,
   notify?: (message: string) => Promise<void>,
@@ -261,14 +143,6 @@ async function runHooks(
   for (const hook of hooks ?? []) {
     if (!hookMatches(hook, target)) continue;
     const hookInput = hookToolInput(event, hook);
-    if (!isToolAllowed(allowedTools, 'bash', hookInput, options.context?.shellExecution)) {
-      emitKodaXDiagnostic({
-        source: 'coding:skill-invocation',
-        level: 'warn',
-        message: `Skill ${event} hook is blocked by allowed-tools policy.`,
-      });
-      return { allow: false, message: `Skill ${event} hook is blocked by allowed-tools policy.` };
-    }
     const admitted = await admitHook?.('bash', hookInput);
     if (admitted !== true) {
       emitKodaXDiagnostic({
@@ -365,15 +239,6 @@ export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions, p
   const recovery = createToolResultRecovery(explicit.context?.executionCwd ?? explicit.context?.gitRoot ?? process.cwd());
   let activeEvents = explicit.events ?? {};
   const activated: KodaXOptions[] = [];
-  const dynamicPolicies: AllowedToolPolicy[] = [
-    parseAllowedTools(explicit.context?.skillInvocation?.allowedTools),
-    parseAllowedTools(explicit.context?.commandInvocation?.allowedTools),
-  ];
-  const assertDynamicContextAllowed = (command: string) => {
-    if (dynamicPolicies.some(policy => !isToolAllowed(policy, 'bash', { command }, explicit.context?.shellExecution))) {
-      throw new Error('Dynamic context command is not allowed by the active Skill policy.');
-    }
-  };
   const policyIdentity = (policy: Skill) => JSON.stringify([policy.skillFilePath, policy.rawContent,
     policy.allowedTools, policy.hooks, policy.model, policy.context, policy.agent]);
   const initial = invocationWork.get(explicit)?.trustedSkill;
@@ -402,17 +267,16 @@ export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions, p
         if (previous !== undefined && previous !== identity) {
           throw new Error(`Skill "${name}" changed after activation; start a new Run to apply its updated policy.`);
         }
-        if (previous !== undefined) return { assertDynamicContextAllowed };
+        if (previous !== undefined) return {};
         const applied = await applyExplicitSkillInvocationPolicy({ ...explicit, provider, events: activeEvents,
           context: { ...explicit.context, skillRegistry: registry, commandInvocation: undefined,
             skillInvocation: { name, arguments: args, path: skill.skillFilePath, expandedContent: skill.content,
               runtimePolicy: { enforceAtRuntime: true } } } }, prompt);
         activated.push(applied);
-        dynamicPolicies.push(parseAllowedTools(skill.allowedTools));
         activeEvents = applied.events ?? activeEvents;
         identities.set(name, identity);
         return { modelOverride: resolveSkillModelOverride(provider, skill.model),
-          additionalContext: invocationWork.get(applied)?.additionalContext, assertDynamicContextAllowed };
+          additionalContext: invocationWork.get(applied)?.additionalContext };
       });
       // A refused activation must not poison later, independent loads.
       activationTail = activation.catch(() => undefined);
@@ -471,11 +335,9 @@ async function applyExplicitSkillInvocationPolicy(options: KodaXOptions, prompt?
       || invocation.allowedTools !== policy.allowedTools || invocation.path !== policy.path)) {
     throw new KodaXSkillInvocationError('skill_policy_restore_failed', invocation.name);
   }
-  const allowedTools = parseAllowedTools(policy.allowedTools);
   // A matching hook is an arbitrary runtime decision. Do not execute it early
   // or assume it will allow a later recovery read; retain the original inline.
-  const recoveryReadAllowed = isToolAllowed(allowedTools, 'read', {})
-    && !policy.hooks?.PreToolUse?.some(hook => hookMatches(hook, 'read'));
+  const recoveryReadAllowed = !policy.hooks?.PreToolUse?.some(hook => hookMatches(hook, 'read'));
   const baseEvents = options.events ?? {};
   const cwd = options.context?.executionCwd ?? options.context?.gitRoot ?? process.cwd();
   let dispatchingNotification = false;
@@ -485,7 +347,7 @@ async function applyExplicitSkillInvocationPolicy(options: KodaXOptions, prompt?
     try {
       await runHooks('Notification', policy.hooks.Notification, message,
         { displayName: invocation.name, source: policy.source, path: policy.path, message },
-        cwd, allowedTools, baseEvents.beforeToolExecute, options, notify);
+        cwd, baseEvents.beforeToolExecute, options, notify);
     } catch (error: unknown) {
       emitKodaXDiagnostic({ source: 'coding:skill-invocation', level: 'error',
         message: 'Skill Notification hook failed unexpectedly.', detail: error });
@@ -493,19 +355,10 @@ async function applyExplicitSkillInvocationPolicy(options: KodaXOptions, prompt?
       dispatchingNotification = false;
     }
   };
-  if (allowedTools.invalidEntries.length > 0) {
-    emitKodaXDiagnostic({
-      source: 'coding:skill-invocation',
-      level: 'warn',
-      message: `Skill ${invocation.name} has invalid allowed-tools entries.`,
-      detail: allowedTools.invalidEntries,
-    });
-    await notify(`Skill ${invocation.name} has invalid allowed-tools entries: ${allowedTools.invalidEntries.join(', ')}`);
-  }
   const started = admission ? {} : await runHooks(
     'SessionStart', policy.hooks?.SessionStart, invocation.name,
     { displayName: invocation.name, source: policy.source, path: policy.path },
-    cwd, allowedTools, baseEvents.beforeToolExecute, options, notify,
+    cwd, baseEvents.beforeToolExecute, options, notify,
   );
   if (started.allow === false) {
     throw Object.assign(new Error(`[Blocked] ${started.message ?? 'Skill SessionStart hook refused execution.'}`), {
@@ -516,7 +369,7 @@ async function applyExplicitSkillInvocationPolicy(options: KodaXOptions, prompt?
   const submitted = admission ? {} : await runHooks(
     'UserPromptSubmit', policy.hooks?.UserPromptSubmit, rawUserInput,
     { displayName: invocation.name, source: policy.source, path: policy.path, prompt: rawUserInput },
-    cwd, allowedTools, baseEvents.beforeToolExecute, options, notify,
+    cwd, baseEvents.beforeToolExecute, options, notify,
   );
   if (submitted.allow === false) {
     throw Object.assign(new Error(`[Blocked] ${submitted.message ?? 'Skill UserPromptSubmit hook refused execution.'}`), {
@@ -560,18 +413,12 @@ async function applyExplicitSkillInvocationPolicy(options: KodaXOptions, prompt?
       onComplete: (meta) => { terminalNotification = () => baseEvents.onComplete?.(meta); },
       onError: (error, meta) => { terminalNotification = () => baseEvents.onError?.(error, meta); },
       beforeToolExecute: async (tool, input, meta) => {
-        // Loading instructions is separate from their concrete actions. Inline
-        // dynamic commands are checked independently before execution.
-        if (tool !== 'skill' && !isToolAllowed(allowedTools, tool, input, options.context?.shellExecution)) {
-          return `[Blocked] Tool '${tool}' is not allowed by ${invocation.name}`;
-        }
         if ((await runHooks(
           'PreToolUse',
           policy.hooks?.PreToolUse,
           tool,
           { tool, input, displayName: invocation.name, source: policy.source, path: policy.path },
           cwd,
-          allowedTools,
           baseEvents.beforeToolExecute,
           options, notify,
         )).allow === false) {
@@ -591,7 +438,6 @@ async function applyExplicitSkillInvocationPolicy(options: KodaXOptions, prompt?
             result.name,
             { ...result, displayName: invocation.name, source: policy.source, path: policy.path },
             cwd,
-            allowedTools,
             baseEvents.beforeToolExecute,
             options, notify,
           ));
@@ -606,7 +452,7 @@ async function applyExplicitSkillInvocationPolicy(options: KodaXOptions, prompt?
       event, policy.hooks?.[event], invocation.name,
       { displayName: invocation.name, source: policy.source, path: policy.path,
         ...(error === undefined ? {} : { error: error instanceof Error ? error.message : String(error) }) },
-      cwd, allowedTools, baseEvents.beforeToolExecute, options, notify,
+      cwd, baseEvents.beforeToolExecute, options, notify,
     ).then(() => undefined, (failure: unknown) => {
       emitKodaXDiagnostic({ source: 'coding:skill-invocation', level: 'error',
         message: `Skill ${event} hook failed unexpectedly.`, detail: failure });

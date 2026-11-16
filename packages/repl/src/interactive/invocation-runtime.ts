@@ -6,29 +6,6 @@ import type { CommandHook, CommandHooks, CommandInvocationRequest } from '../com
 
 const execAsync = promisify(execCallback);
 
-const TOOL_NAME_ALIASES: Record<string, string> = {
-  read: 'read',
-  grep: 'grep',
-  glob: 'glob',
-  write: 'write',
-  edit: 'edit',
-  bash: 'bash',
-  undo: 'undo',
-  askuserquestion: 'ask-user-question',
-  askuser: 'ask-user-question',
-};
-
-interface AllowedToolRule {
-  tool: string | '*';
-  patterns?: string[];
-}
-
-interface ParsedAllowedTools {
-  configured: boolean;
-  rules: AllowedToolRule[];
-  invalidEntries: string[];
-}
-
 interface HookResponse {
   allow?: boolean;
   message?: string;
@@ -45,86 +22,9 @@ export interface PreparedInvocation {
   finalize: (error?: Error) => Promise<void>;
 }
 
-function splitTopLevelCommaList(value: string): string[] {
-  const items: string[] = [];
-  let current = '';
-  let depth = 0;
-
-  for (const char of value) {
-    if (char === ',' && depth === 0) {
-      if (current.trim()) {
-        items.push(current.trim());
-      }
-      current = '';
-      continue;
-    }
-
-    if (char === '(') {
-      depth++;
-    } else if (char === ')' && depth > 0) {
-      depth--;
-    }
-
-    current += char;
-  }
-
-  if (current.trim()) {
-    items.push(current.trim());
-  }
-
-  return items;
-}
-
-function parseAllowedTools(value?: string): ParsedAllowedTools {
-  if (!value?.trim()) {
-    return {
-      configured: false,
-      rules: [],
-      invalidEntries: [],
-    };
-  }
-
-  const invalidEntries: string[] = [];
-  const rules = splitTopLevelCommaList(value)
-    .map((entry) => {
-      if (entry === '*') {
-        return { tool: '*' } satisfies AllowedToolRule;
-      }
-
-      if (entry.includes('(') && !entry.endsWith(')')) {
-        invalidEntries.push(entry);
-        return undefined;
-      }
-
-      const match = entry.match(/^([^(]+?)(?:\((.*)\))?$/);
-      if (!match) {
-        invalidEntries.push(entry);
-        return undefined;
-      }
-
-      const normalizedTool = TOOL_NAME_ALIASES[match[1]!.replace(/[^a-z]/gi, '').toLowerCase()];
-      if (!normalizedTool) {
-        invalidEntries.push(entry);
-        return undefined;
-      }
-
-      const patterns = match[2]
-        ? splitTopLevelCommaList(match[2]).map((item) => item.trim()).filter(Boolean)
-        : undefined;
-
-      return {
-        tool: normalizedTool,
-        patterns: patterns && patterns.length > 0 ? patterns : undefined,
-      } satisfies AllowedToolRule;
-    })
-    .filter((rule): rule is AllowedToolRule => rule !== undefined);
-
-  return {
-    configured: true,
-    rules,
-    invalidEntries,
-  };
-}
+// Like Codex, KodaX ignores a Skill's `allowed-tools`: it never restricts or
+// preapproves a call. Every tool and hook follows the permission policy the
+// user chose.
 
 function wildcardToRegExp(pattern: string): RegExp {
   const escaped = pattern
@@ -135,37 +35,6 @@ function wildcardToRegExp(pattern: string): RegExp {
 
 function matchesPattern(pattern: string, value: string): boolean {
   return wildcardToRegExp(pattern).test(value);
-}
-
-function isToolAllowed(parsed: ParsedAllowedTools, tool: string, input: Record<string, unknown>): boolean {
-  if (!parsed.configured) {
-    return true;
-  }
-
-  if (parsed.rules.length === 0) {
-    return false;
-  }
-
-  const normalizedTool = tool.toLowerCase();
-  const bashCommand = normalizedTool === 'bash'
-    ? String(input.command ?? '').trim()
-    : '';
-
-  return parsed.rules.some((rule) => {
-    if (rule.tool !== '*' && rule.tool !== normalizedTool) {
-      return false;
-    }
-
-    if (!rule.patterns || rule.patterns.length === 0) {
-      return true;
-    }
-
-    if (normalizedTool !== 'bash') {
-      return true;
-    }
-
-    return rule.patterns.some((pattern) => matchesPattern(pattern, bashCommand));
-  });
 }
 
 function hookMatches(hook: CommandHook, target: string): boolean {
@@ -194,7 +63,6 @@ async function executeHookCommand(
   payload: Record<string, unknown>,
   emit: RuntimeEmitter,
   baseEvents: KodaXEvents,
-  allowedToolPolicy: ParsedAllowedTools,
   cwd: string,
 ): Promise<HookResponse> {
   const displayName = typeof payload.displayName === 'string' ? payload.displayName : 'frontmatter invocation';
@@ -205,13 +73,6 @@ async function executeHookCommand(
     _hookEvent: event,
     _hookMatcher: hook.matcher,
   } satisfies Record<string, unknown>;
-
-  if (!isToolAllowed(allowedToolPolicy, 'bash', hookInput)) {
-    return {
-      allow: false,
-      message: `Hook ${event} for ${displayName} is blocked by allowed-tools policy.`,
-    };
-  }
 
   const allowed = await baseEvents.beforeToolExecute?.('bash', hookInput);
   if (allowed !== true) {
@@ -293,7 +154,6 @@ async function runHooks(
   payload: Record<string, unknown>,
   emit: RuntimeEmitter,
   baseEvents: KodaXEvents,
-  allowedToolPolicy: ParsedAllowedTools,
   cwd: string,
 ): Promise<HookResponse> {
   const list = hooks?.[event];
@@ -314,7 +174,6 @@ async function runHooks(
       payload,
       emit,
       baseEvents,
-      allowedToolPolicy,
       cwd,
     );
     if (response.message) {
@@ -345,7 +204,6 @@ export async function prepareInvocationExecution(
     return { mode: 'inline', prompt: rawUserInput, options: baseOptions, finalize: async () => {} };
   }
   const baseEvents = baseOptions.events ?? {};
-  const allowedToolPolicy = parseAllowedTools(request.allowedTools);
   const runtimeOwnsSkillToolPolicy = request.source === 'skill' && request.skillInvocation !== undefined;
   const activeSkillInvocation = runtimeOwnsSkillToolPolicy ? request.skillInvocation : undefined;
   const hookCwd = baseOptions.context?.executionCwd
@@ -377,7 +235,6 @@ export async function prepareInvocationExecution(
           emit(notificationText);
         },
         baseEvents,
-        allowedToolPolicy,
         hookCwd,
       );
     } finally {
@@ -388,14 +245,6 @@ export async function prepareInvocationExecution(
   if (request.model && !modelOverride) {
     await emitWithNotifications(`[Info] Model preference '${request.model}' is not supported by provider '${baseOptions.provider}', using the current model.`);
   }
-  if (allowedToolPolicy.invalidEntries.length > 0) {
-    await emitWithNotifications(
-      `[Warning] ${request.displayName} has invalid allowed-tools entries: ${allowedToolPolicy.invalidEntries.join(', ')}`
-    );
-  }
-  if (allowedToolPolicy.configured && allowedToolPolicy.rules.length === 0) {
-    await emitWithNotifications(`[Warning] ${request.displayName} has no valid allowed-tools entries, so all tool execution will be blocked.`);
-  }
 
   const sessionStart = await runHooks(
     request.hooks,
@@ -404,7 +253,6 @@ export async function prepareInvocationExecution(
     { displayName: request.displayName, source: request.source, path: request.path },
     emitWithNotifications,
     baseEvents,
-    allowedToolPolicy,
     hookCwd,
   );
   if (sessionStart.allow === false) {
@@ -422,7 +270,6 @@ export async function prepareInvocationExecution(
     { displayName: request.displayName, source: request.source, prompt: rawUserInput, path: request.path },
     emitWithNotifications,
     baseEvents,
-    allowedToolPolicy,
     hookCwd,
   );
 
@@ -455,11 +302,6 @@ export async function prepareInvocationExecution(
   const wrappedEvents: KodaXEvents = {
     ...baseEvents,
     beforeToolExecute: async (tool, input, meta) => {
-      if (!isToolAllowed(allowedToolPolicy, tool, input)) {
-        await emitWithNotifications(`[Blocked] Tool '${tool}' is not allowed by ${request.displayName}`);
-        return false;
-      }
-
       const preToolUse = await runHooks(
         request.hooks,
         'PreToolUse',
@@ -467,7 +309,6 @@ export async function prepareInvocationExecution(
         { tool, input, displayName: request.displayName, source: request.source, path: request.path },
         emitWithNotifications,
         baseEvents,
-        allowedToolPolicy,
         hookCwd,
       );
       if (preToolUse.allow === false) {
@@ -489,7 +330,6 @@ export async function prepareInvocationExecution(
         { ...result, displayName: request.displayName, source: request.source, path: request.path },
         emitWithNotifications,
         baseEvents,
-        allowedToolPolicy,
         hookCwd,
       );
     },
@@ -514,7 +354,6 @@ export async function prepareInvocationExecution(
       },
       emitWithNotifications,
       baseEvents,
-      allowedToolPolicy,
       hookCwd,
     );
   };

@@ -220,11 +220,12 @@ it('reads complete MCP originals over IPC and after Host restart while history k
   }
 }, 60_000);
 
-it.each(['page', 'entry'] as const)('waits for the Host display checkpoint before reading a prepared history %s', async kind => {
+it.each(['page', 'entry'] as const)('reads a prepared history %s across the next Run and its Host display checkpoint', async kind => {
   const session = await client.sessions.create({ projectPath: homeDir });
   await client.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
   await runRound(session.id, 1);
   const earlier = await client.sessions.readHistory(session.id);
+  const earlierEntry = await client.sessions.readHistoryEntry(session.id, earlier.items[0]!.id);
   let terminal = false;
   let checkpointWrite = false;
   let release!: () => void;
@@ -261,14 +262,22 @@ it.each(['page', 'entry'] as const)('waits for the Host display checkpoint befor
       value => ({ ok: true as const, value }),
       (error: unknown) => ({ ok: false as const, error }),
     ).then(result => { outcome = result; return result; });
+    if (kind === 'entry') {
+      // The Run rewrote the Session but kept this revision's prefix, so the entry stays readable
+      // without waiting for the newest checkpoint, and after it.
+      await expect(reading).resolves.toEqual({ ok: true, value: earlierEntry });
+      release();
+      await mutateSpy.mock.results.at(-1)?.value;
+      await expect(client.sessions.readHistoryEntry(session.id, earlier.items[0]!.id)).resolves.toEqual(earlierEntry);
+      return;
+    }
+    // The newest page waits for the Host display checkpoint.
     await new Promise(resolve => setTimeout(resolve, 150));
     expect(outcome).toBeUndefined();
     release();
-    await expect(reading).resolves.toMatchObject(kind === 'page'
-      ? { ok: true, value: { items: expect.arrayContaining([
-        expect.objectContaining({ type: 'assistant', text: 'FACT-2 acknowledged.' }),
-      ]) } }
-      : { ok: false, error: { code: 'resync_required', message: expect.stringMatching(/history changed/i) } });
+    await expect(reading).resolves.toMatchObject({ ok: true, value: { items: expect.arrayContaining([
+      expect.objectContaining({ type: 'assistant', text: 'FACT-2 acknowledged.' }),
+    ]) } });
   } finally {
     release();
     await Promise.allSettled(reading ? [reading] : []);
@@ -405,18 +414,19 @@ it('pages older history with stable ids, copyable bodies, and oversized entry re
   } finally { stopObserving(); }
 }, 60_000);
 
-it('marks old cursors stale after history changes and searches the whole history', async () => {
+it('keeps an older cursor on its revision while history grows and searches the whole history', async () => {
   const session = await client.sessions.create({ projectPath: homeDir });
   await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
   for (let index = 1; index <= ROUNDS; index += 1) await runRound(session.id, index);
 
   const firstPage = await client.sessions.readHistory(session.id, { limit: 3 });
   expect(firstPage.nextCursor).toBeDefined();
+  const olderPage = await client.sessions.readHistory(session.id, { cursor: firstPage.nextCursor! });
 
-  // History grows: the old cursor is explicitly stale, never silently reinterpreted.
+  // History grows: the Run keeps the earlier prefix, so the older cursor reads the same window.
   await runRound(session.id, ROUNDS + 1);
   await expect(client.sessions.readHistory(session.id, { cursor: firstPage.nextCursor! }))
-    .rejects.toMatchObject({ code: 'resync_required' });
+    .resolves.toEqual(olderPage);
   const fresh = await client.sessions.readHistory(session.id);
   expect(fresh.items.some((item) => item.text.includes('FACT-7'))).toBe(true);
 

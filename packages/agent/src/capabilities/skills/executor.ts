@@ -4,7 +4,9 @@
  * Handles skill execution with support for:
  * - Inline execution (default)
  * - Fork execution (sub-agent)
- * - Tool restrictions
+ *
+ * A Skill's `allowed-tools` field is ignored: calls follow the Host permission
+ * mode, authorization and sandbox.
  */
 
 import type { Skill, SkillContext, SkillResult } from './types.js';
@@ -26,7 +28,7 @@ export interface ExecutionOptions {
   model?: string;
   /** Override agent type (for fork mode) */
   agent?: string;
-  /** Override allowed tools */
+  /** Explicit caller tool list passed through to the fork config */
   allowedTools?: string[];
   /** Callback for inline execution */
   onExecute?: (content: string, skill: Skill) => Promise<string>;
@@ -148,7 +150,7 @@ export class SkillExecutor {
           content: JSON.stringify({
             agent: options?.agent ?? skill.agent ?? 'general-purpose',
             model: options?.model ?? skill.model ?? 'haiku',
-            allowedTools: options?.allowedTools ?? this.parseAllowedTools(skill.allowedTools),
+            ...(options?.allowedTools ? { allowedTools: options.allowedTools } : {}),
           }),
         },
       ],
@@ -165,28 +167,10 @@ export class SkillExecutor {
     lines.push(`[Using Skill: ${skill.name}]`);
     lines.push('');
 
-    // Add allowed tools restriction if specified
-    if (skill.allowedTools) {
-      lines.push(`**Allowed Tools**: ${skill.allowedTools}`);
-      lines.push('');
-    }
-
     // Add the skill content
     lines.push(resolvedContent);
 
     return lines.join('\n');
-  }
-
-  /**
-   * Parse allowed tools string into array
-   */
-  private parseAllowedTools(allowedTools?: string): string[] {
-    if (!allowedTools) return [];
-
-    return allowedTools
-      .split(',')
-      .map((t) => t.trim())
-      .filter(Boolean);
   }
 }
 

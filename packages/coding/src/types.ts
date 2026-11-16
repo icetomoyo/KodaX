@@ -1995,7 +1995,6 @@ export interface KodaXContextOptions {
   activateModelSkill?: (skill: import('@kodax-ai/agent').Skill, args: string, registry: ISkillRegistry, provider?: string) => Promise<{
     readonly modelOverride?: string;
     readonly additionalContext?: string;
-    readonly assertDynamicContextAllowed?: (command: string) => void;
   }>;
   /** Runtime-owned complete formal-name inventory used to prevent learned Skill shadowing. */
   protectedFormalSkillNames?: readonly string[];

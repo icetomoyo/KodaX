@@ -165,7 +165,7 @@ a safe stop. Runtime advertises `conversationHistory:2` so hosts can reject
 daemons that still expose the legacy ordinary-history projection.
 Explicit Skill invocation stays available for every enabled Skill;
 `disable-model-invocation` only hides the Skill from the model tool path.
-Invalid `allowed-tools` entries and malformed hook JSON are diagnosed.
+Skill `allowed-tools` does not restrict tools; malformed hook JSON is diagnosed.
 `PostToolUse` still runs if an embedder result observer throws.
 A single Run or process-cleanup failure must not escape as a process-global
 unhandled rejection. If terminal durability cannot be proved, Runtime reports

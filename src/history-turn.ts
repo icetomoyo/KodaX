@@ -7,6 +7,13 @@ import type { RuntimeConversationHistoryPageInput, RuntimeConversationHistorySli
 
 const turnStarts = new WeakMap<SessionConversationHistoryData, readonly number[]>();
 
+/**
+ * A Run's saves supersede the page revision many times a second. A superseded page or source
+ * revision stays usable while its entries are a prefix of the current saved conversation.
+ */
+type SavedRevisionLookup = (key: { readonly revision: string } | { readonly sourceRevision: string })
+  => Promise<{ readonly entryCount: number; readonly currentRevision: string } | undefined>;
+
 /** The selected prefix includes invisible tool-result messages up to the next real input. */
 export async function resolveSavedHistoryTurn(
   history: SessionConversationHistoryData,
@@ -75,9 +82,16 @@ export async function resolveHistoryTurnAtSnapshot(input: {
   readonly selector: ClientHistoryTurnSelector;
   readonly viewItem?: ClientViewItem;
   readonly transcriptSource: (revision: string, index: number) => { readonly sourceRevision: string; readonly entryId?: string } | undefined;
+  readonly readRevision: SavedRevisionLookup;
   readonly checkpoint: () => void | Promise<void>;
 }): Promise<ClientHistoryTurnResolution> {
   const { sessionId, history, selector, expectedHead, checkpoint } = input;
+  const currentRevision = async () => typeof input.conversationRevision === 'function'
+    ? input.conversationRevision() : input.conversationRevision;
+  const isSavedPrefix = async (key: Parameters<SavedRevisionLookup>[0], entryIndex = -1) => {
+    const prior = await input.readRevision(key);
+    return prior !== undefined && entryIndex < prior.entryCount && prior.currentRevision === await currentRevision();
+  };
   if (selector.kind !== 'item') return resolveSavedHistoryTurn(history, expectedHead, selector, undefined, checkpoint, sessionId);
   let entryIndex: number;
   if (selector.source === 'view') {
@@ -110,8 +124,9 @@ export async function resolveHistoryTurnAtSnapshot(input: {
     if (!reference) return { status: 'unavailable', reason: 'item_not_found' };
     if (selector.revision !== reference.revision) return staleHistory('Saved history selection changed.', 'revision_mismatch');
     if (parsed) {
-      const revision = typeof input.conversationRevision === 'function' ? await input.conversationRevision() : input.conversationRevision;
-      if (parsed.revision !== revision) return staleHistory('Saved history selection changed.', 'source_changed');
+      if (parsed.revision !== await currentRevision()
+        && !await isSavedPrefix({ revision: parsed.revision }, parsed.entryIndex))
+        return staleHistory('Saved history selection changed.', 'source_changed');
       entryIndex = parsed.entryIndex;
       const entry = history.entries[entryIndex];
       if (!entry || (parsed.ordinal !== undefined && !projectHistoryEntry(sessionId, parsed.revision, entryIndex, [entry.message])[parsed.ordinal]))
@@ -119,7 +134,9 @@ export async function resolveHistoryTurnAtSnapshot(input: {
     } else {
       const snapshot = input.transcriptSource(reference.revision, reference.entryIndex);
       if (!snapshot) return staleHistory('Saved history selection changed.', 'selection_expired');
-      if (snapshot.sourceRevision !== history.sourceRevision) return staleHistory('Saved history selection changed.', 'source_changed');
+      if (snapshot.sourceRevision !== history.sourceRevision
+        && !await isSavedPrefix({ sourceRevision: snapshot.sourceRevision }))
+        return staleHistory('Saved history selection changed.', 'source_changed');
       const entryId = snapshot.entryId;
       entryIndex = entryId === undefined ? -1 : (await matchingEntries(history, entry => entry.auditEntryIds.includes(entryId), checkpoint))[0] ?? -1;
     }
@@ -155,6 +172,7 @@ interface LocatedHistoryRead {
   readonly readPage: (cursor: string | undefined, limit: number) => Promise<RuntimeConversationHistorySlice | null>;
   readonly readSource: () => Promise<SessionConversationHistoryData>;
   readonly transcriptSource: (revision: string, index: number) => { readonly sourceRevision: string; readonly entryId?: string } | undefined;
+  readonly readRevision: SavedRevisionLookup;
   readonly encode: typeof encodeRuntimeTranscriptCursor;
   readonly decode: typeof decodeRuntimeTranscriptCursor;
   readonly yieldControl: () => Promise<void>;
@@ -170,16 +188,18 @@ async function locateConversationEntry(
   sessionId: string, around: NonNullable<RuntimeConversationHistoryPageInput['around']>,
   sourceRevision: string, read: LocatedHistoryRead,
 ): Promise<{index: number; boundaryId: string} | undefined> {
+  const isSaved = async (source: string) => source === sourceRevision
+    || await read.readRevision({ sourceRevision: source }) !== undefined;
   let auditId: string | undefined;
   if (around.searchItemId !== undefined) {
     const hit = parseHistoryEntryItemId(sessionId, around.searchItemId, 'transcript');
     const transcript = hit && read.transcriptSource(hit.revision, hit.entryIndex);
-    if (!transcript || transcript.sourceRevision !== sourceRevision) staleHistory('Search reference expired; search again.');
+    if (!transcript || !await isSaved(transcript.sourceRevision)) staleHistory('Search reference expired; search again.');
     auditId = transcript.entryId;
     if (!auditId) return undefined;
-  } else if (around.historyBoundary.sourceRevision !== sourceRevision) staleHistory('Saved reading position changed.');
+  } else if (!await isSaved(around.historyBoundary.sourceRevision)) staleHistory('Saved reading position changed.');
+  // The source may be newer than the tail; the page read proves the located entry at its index.
   const history = await read.readSource();
-  if (history.sourceRevision !== sourceRevision) staleHistory('Saved history changed.');
   let found: {index: number; boundaryId: string} | undefined;
   for (const [index, entry] of history.entries.entries()) {
     if ((index & 255) === 0) await read.yieldControl();
@@ -211,14 +231,18 @@ export async function readLocatedHistoryPage(
     if (cursor) staleHistory('Saved history changed.');
     return { ...tail, locatedBoundaryId: located?.boundaryId };
   }
-  const atEnd = (end: number) => read.encode({ ...template, end });
   const forward = cursor && read.decode(cursor.slice('newer.'.length));
-  if (forward && (forward.kind !== template.kind || forward.revision !== tail.revision || forward.view !== 'conversation'))
+  if (forward && (forward.kind !== template.kind || forward.view !== 'conversation'))
     staleHistory('Saved history changed.');
+  // A saved window continues at its own revision, so its pages keep one source.
+  const revision = forward ? forward.revision : tail.revision;
+  const count = revision === tail.revision ? last + 1 : (await read.readRevision({ revision }))?.entryCount;
+  if (count === undefined) staleHistory('Saved history changed.');
+  const atEnd = (end: number) => read.encode({ ...template, revision, end });
   const start = forward && 'end' in forward ? forward.end : undefined;
-  if (start !== undefined && start > last) staleHistory('Saved window no longer exists.');
-  let end = located ? Math.min(last + 1, located.index + 1 + Math.floor(limit / 2))
-    : Math.min(last + 1, (start ?? 0) + limit);
+  if (start !== undefined && start >= count) staleHistory('Saved window no longer exists.');
+  let end = located ? Math.min(count, located.index + 1 + Math.floor(limit / 2))
+    : Math.min(count, (start ?? 0) + limit);
   let page = await read.readPage(atEnd(end), start === undefined ? limit : end - start);
   // A large following entry may shrink a centered page past the target.
   // Retry with the target as its last entry; never claim an absent hit is shown.
@@ -231,8 +255,9 @@ export async function readLocatedHistoryPage(
     end = start + Math.max(1, Math.floor((end - start) / 2));
     page = await read.readPage(atEnd(end), end - start);
   }
-  if (!page || page.revision !== tail.revision || (located && !page.entries.some(entry => entry.index === located.index)))
+  if (!page || page.revision !== revision || (located && !page.entries.some(entry =>
+    entry.index === located.index && entry.boundaryId === located.boundaryId)))
     staleHistory('Saved history changed.');
   return { ...page, locatedBoundaryId: located?.boundaryId,
-    ...(end <= last ? { newerCursor: 'newer.' + atEnd(end) } : {}) };
+    ...(end < count ? { newerCursor: 'newer.' + atEnd(end) } : {}) };
 }

@@ -21,7 +21,7 @@ describe('FEATURE_218 manual registry', () => {
     ['工具原文', 'tools', ["part:'original'", 'not_found', 'tool item ID']],
     ['任务报告', 'sessions', ['taskResult', 'unknown', 'KodaXTaskResultReport']],
     ['sidecar', 'agents', ['automatic Sidecar Verifier is retired']],
-    ['Bash(pattern)', 'skills', ['single parsed command', 'Host authorization']],
+    ['allowed-tools', 'skills', ['does not restrict', 'permission mode']],
   ] as const)('answers %s from its relevant current topic', (query, topic, facts) => {
     const result = resolveKodaXManual({ query });
     expect(result.matchedTopic).toBe(topic);
@@ -144,7 +144,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('missing workspace directory');
     expect(sdk).toContain('conversationHistory:2');
     expect(sdk).toContain('disable-model-invocation');
-    expect(sdk).toContain('Invalid `allowed-tools`');
+    expect(sdk).toContain('`allowed-tools` no longer restricts');
     expect(sdk).toContain('PostToolUse');
     expect(sdk).toContain('stdin failures stay on the operation Promise');
     expect(sdk).toContain('strict byte bounds');
@@ -709,7 +709,8 @@ describe('FEATURE_218 manual registry', () => {
     expect(content).toContain('user-invocable');
     expect(content).toContain('structured `skillInvocation`');
     expect(content).toContain('model-authored child objective');
-    expect(content).toContain('Invalid `allowed-tools`');
+    expect(content).toContain('`allowed-tools` does not restrict');
+    expect(content).not.toContain('Bash(pattern) rule');
     expect(content).toContain('PostToolUse');
     expect(commands).toContain('/<name>');
     expect(commands).toContain('/skill:<name>');

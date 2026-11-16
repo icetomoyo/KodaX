@@ -202,7 +202,7 @@ it.each(['explicit', 'model'] as const)('public Runner installs and settles the 
       onToolResult: result => { results.push(result.content); }, onComplete: completed } };
   await Runner.run(createDefaultCodingAgent(), 'Inspect project code.', { presetOptions });
   expect(results.join('\n')).not.toContain('runtime Skill activation is unavailable');
-  expect(results.join('\n')).toContain("Tool 'glob' is not allowed by audit-project");
+  expect(results.join('\n')).not.toContain('is not allowed by audit-project');
   expect(completed).toHaveBeenCalledOnce();
   expect(completed.mock.results[0]?.value).toBe(true);
   expect(await readFile(marker, 'utf8')).toBe('settled');
@@ -241,9 +241,10 @@ it.each(['skill', 'tool_call'] as const)('applies a %s activation before sibling
   const results: string[] = [];
   await runKodaX({ provider: provider.provider, maxIter: 3, reasoningMode: 'off', context: f.context,
     events: { beforeToolExecute: authorize, onToolResult: result => { results.push(result.content); } } }, 'Inspect project code.');
-  expect(results.join('\n')).toContain("Tool 'glob' is not allowed by audit-project");
+  expect(results.join('\n')).not.toContain('is not allowed by audit-project');
   expect(results[0]).toContain('deferred until after Skill loading');
-  expect(authorize.mock.calls).toHaveLength(1);
+  // The retried glob goes to the Host, not to the Skill's allowed-tools.
+  expect(authorize.mock.calls.map(([name]) => name)).toEqual(['skill', 'glob']);
 });
 
 it.each(['skill', 'tool_call'] as const)('defers a Script cell beside %s loading and applies the activated policy on retry', async loader => {
@@ -260,8 +261,8 @@ it.each(['skill', 'tool_call'] as const)('defers a Script cell beside %s loading
     reasoningMode: 'off', context: f.context, session: { id: 'skill-script-session', storage },
     events: { beforeToolExecute: authorize, onToolResult: result => { results.push(result.content); } } }, 'Inspect project code.');
   expect(results[0]).toContain('deferred until after Skill loading');
-  expect(results.join('\n')).toContain("Tool 'glob' is not allowed by audit-project");
-  expect(authorize.mock.calls.some(([name]) => name === 'glob')).toBe(false);
+  expect(results.join('\n')).not.toContain('is not allowed by audit-project');
+  expect(authorize.mock.calls.some(([name]) => name === 'glob')).toBe(true);
   expect(provider.requests).toHaveLength(3);
 });
 
@@ -312,12 +313,12 @@ it('refuses a model fork before expanding dynamic context', async () => {
   expect(execute).not.toHaveBeenCalled();
 });
 
-it('loads multiple and repeated Skills while intersecting their action policies', async () => {
+it('loads multiple and repeated Skills without letting allowed-tools restrict their actions', async () => {
   const f = await fixture();
   const secondDir = path.join(f.root, '.kodax', 'skills', 'second-skill');
   await mkdir(secondDir);
   await writeFile(path.join(secondDir, 'SKILL.md'), '---\nname: second-skill\ndescription: Inspect more code\nallowed-tools: "Read, Glob"\n---\nSECOND_BODY\n!`node --version`\n');
-  const execute = vi.fn(async () => 'SHOULD_NOT_EXECUTE');
+  const execute = vi.fn(async () => 'SECOND_CONTEXT');
   const provider = scriptedProvider([
     { name: 'skill', input: { skill: 'audit-project' } },
     { name: 'skill', input: { skill: 'second-skill' } },
@@ -330,14 +331,14 @@ it('loads multiple and repeated Skills while intersecting their action policies'
     skillDynamicContext: { execute }, events: { beforeToolExecute: authorize,
       onToolResult: result => { results.push(result.content); } } }, 'Inspect project code.');
   expect(results[1]).toContain('SECOND_BODY');
-  expect(results[1]).toContain('Dynamic context command is not allowed');
+  expect(results[1]).toContain('SECOND_CONTEXT');
   expect(results[2]).toContain('Inspect source before answering.');
-  expect(results[3]).toContain("Tool 'glob' is not allowed by audit-project");
-  expect(execute).not.toHaveBeenCalled();
-  expect(authorize).toHaveBeenCalledTimes(3);
+  expect(results[3]).not.toContain('is not allowed');
+  expect(execute).toHaveBeenCalledExactlyOnceWith('node --version', f.root);
+  expect(authorize.mock.calls.map(([name]) => name)).toEqual(['skill', 'skill', 'skill', 'glob']);
 });
 
-it('checks substituted dynamic commands before invoking the Host executor', async () => {
+it('leaves substituted dynamic commands to the Host executor instead of allowed-tools', async () => {
   const f = await fixture();
   await writeFile(path.join(f.skillDir, 'SKILL.md'), '---\nname: audit-project\ndescription: Inspect project code\nallowed-tools: "Bash(node --version)"\n---\n!`node $ARGUMENTS`\n');
   const execute = vi.fn(async () => 'HOST_CONTEXT');
@@ -349,8 +350,8 @@ it('checks substituted dynamic commands before invoking the Host executor', asyn
   await runKodaX({ provider: provider.provider, maxIter: 4, reasoningMode: 'off', context: f.context,
     skillDynamicContext: { execute }, events: { onToolResult: result => { results.push(result.content); } } }, 'Inspect project code.');
   expect(results[0]).toContain('HOST_CONTEXT');
-  expect(results[1]).toContain('Dynamic context command is not allowed');
-  expect(execute).toHaveBeenCalledExactlyOnceWith('node --version', f.root);
+  expect(results[1]).toContain('HOST_CONTEXT');
+  expect(execute.mock.calls).toEqual([['node --version', f.root], ['node --version && echo extra', f.root]]);
 });
 
 it('returns Skill-specific guidance without copying the Host prompt overlay into tool output', async () => {
@@ -440,7 +441,7 @@ it.each(['sa', 'ama'] as const)('respects Runtime loader availability in %s exec
   expect(provider.requests.every(request => !request.system.includes('- audit-project:'))).toBe(true);
 });
 
-it.each(['explicit', 'model'] as const)('enforces Skill tool restrictions for %s activation and retains Host authority', async activation => {
+it.each(['explicit', 'model'] as const)('leaves every tool to Host authority for %s activation despite allowed-tools', async activation => {
   const f = await fixture();
   const registry = new SkillRegistry(f.root, { userPaths: [], pluginPaths: [], builtinPath: path.join(f.root, 'none') });
   await registry.discover();
@@ -459,6 +460,6 @@ it.each(['explicit', 'model'] as const)('enforces Skill tool restrictions for %s
   }, events: { beforeToolExecute: authorize, onToolResult: result => { results.push(result.content); } } };
   await runKodaX(options, 'Inspect project code.');
   expect(results.join('\n')).toContain('[Blocked] Host denied read.');
-  expect(results.join('\n')).toContain("Tool 'glob' is not allowed by audit-project");
-  expect(authorize.mock.calls.some(([name]) => name === 'glob')).toBe(false);
+  expect(results.join('\n')).not.toContain('is not allowed by audit-project');
+  expect(authorize.mock.calls.some(([name]) => name === 'glob')).toBe(true);
 });

@@ -61,7 +61,7 @@ class PolicyProvider extends KodaXBaseProvider {
   name = 'packed-policy';
   config = { name: 'packed-policy', model: 'fixture', apiKeyEnv: 'KODAX_PACKED_EVAL_KEY' };
   async stream(messages) {
-    assert.ok(++policyCalls <= 14, 'Offline command smoke exceeded its fixed call budget.');
+    assert.ok(++policyCalls <= 12, 'Offline command smoke exceeded its fixed call budget.');
     const finished = messages.some(message => Array.isArray(message.content)
       && message.content.some(block => block.type === 'tool_result'));
     return { textBlocks: finished ? [{ type: 'text', text: 'Done.' }] : [], thinkingBlocks: [],
@@ -77,7 +77,6 @@ try {
     ['tdd', 'npm test', 'allowed'],
     ['code-review', 'git diff --stat', 'allowed'],
     ['skill-creator', 'node policy-command.cjs', 'allowed'],
-    ['code-review', 'git commit -m unrequested', 'skill-denied'],
     ['git-workflow', 'node git-hosting-request.cjs', 'host-denied'],
   ]) {
     command = candidate;
@@ -93,17 +92,17 @@ try {
         return outcome === 'host-denied' ? '[Blocked] Host authorization denied.' : true;
       }, onToolResult: result => { results.push(result.content); } },
     }, 'Execute the fixture command.');
-    assert.equal(hostCalls, outcome === 'skill-denied' ? 0 : 1, `${name}: Host authority`);
+    assert.equal(hostCalls, 1, `${name}: Host authority`);
     const output = JSON.stringify(results);
     if (outcome === 'allowed') {
       assert.match(output, /Exit: 0/, `${name}: command did not execute`);
       if (name === 'tdd' || name === 'skill-creator') assert.match(output, /POLICY_COMMAND_RAN/);
       if (candidate === 'node git-hosting-request.cjs') assert.match(output, /POLICY_API_RAN/);
     } else {
-      assert.match(output, outcome === 'host-denied' ? /Host authorization denied/ : /not allowed by code-review/);
+      assert.match(output, /Host authorization denied/);
     }
   }
-  assert.equal(policyCalls, 14);
+  assert.equal(policyCalls, 12);
   assert.deepEqual(apiRequests, [{ method: 'POST', url: '/repos/fixture/project/pulls' }]);
 } finally {
   server.closeAllConnections();

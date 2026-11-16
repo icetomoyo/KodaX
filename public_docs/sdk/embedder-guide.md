@@ -793,9 +793,9 @@ host UI mediates everything else).
 
 ### The LLM-triggered `skill` tool path — `KodaXOptions.skillDynamicContext` (v0.7.58)
 
-Model-selected Skills use the owning Run's existing `allowed-tools`, lifecycle
-hooks and model preference, while concrete actions retain Host authorization.
-Multiple active Skill restrictions intersect; unchanged repeated loads do not
+Model-selected Skills use the owning Run's lifecycle hooks and model
+preference, while concrete actions retain Host authorization. `allowed-tools`
+does not restrict or preapprove tools; unchanged repeated loads do not
 restart hooks. Changing an active Skill requires a new Run. A batch containing
 Skill loading defers other actions to a later batch so the model can read the
 instructions or resolve a refusal first. `context: fork` requires explicit Host
@@ -2568,15 +2568,10 @@ every child step and can overwhelm users.
 ### Result review and historical sessions
 
 The five core Skills (`git-workflow`, `tdd`, `code-review`, `skill-creator`,
-`visual-review`) are visible to model discovery. Their `allowed-tools` shell
-patterns match one parsed command, for example `Bash(git *, npm *)`; compound
-statements, pipelines, redirects and unsupported substitutions are rejected.
-cmd and PowerShell quoting rules are checked separately; ambiguous expansions
-and escapes are conservatively rejected. Issue 375's
-[dialect limits](../../docs/test-guides/ISSUE_375_v0.7.97_REGRESSION_GUIDE.md) apply.
-Bare `Bash`, wildcard authority and omitted restrictions still use normal Host
-authorization. These restrictions do not grant Host permission or bypass the
-sandbox. Code Review permits read-only
+`visual-review`) are visible to model discovery. They declare no
+`allowed-tools`, and a third-party Skill's `allowed-tools` neither restricts
+nor preapproves tools: every call uses normal Host authorization and the
+sandbox. Code Review asks for read-only
 Git inspection; TDD's tests-only branch allows a first-pass success without
 changing correct production code. Skill Creator packages into an archive and
 uses an explicit isolated destination when testing installation.

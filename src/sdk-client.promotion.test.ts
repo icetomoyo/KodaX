@@ -48,8 +48,9 @@ it('refreshes existing, peer and new observers after promotion without replacing
     expect(await peer.sessions.read(session.id)).toEqual(promoted.session);
     expect((await peer.sessions.readHistory(session.id)).items.map(item => item.text))
       .toEqual(['Original retained question', 'Original retained answer']);
-    await expect(peer.sessions.readHistory(session.id, { cursor: history.nextCursor })).rejects
-      .toMatchObject({ code: 'resync_required' });
+    // Promotion keeps the entries, so an older cursor still reads its page.
+    expect((await peer.sessions.readHistory(session.id, { cursor: history.nextCursor })).items
+      .map(item => item.text)).toEqual(['Original retained question']);
   } finally {
     for (const observation of observations) observation.close();
     await peer.disconnect();

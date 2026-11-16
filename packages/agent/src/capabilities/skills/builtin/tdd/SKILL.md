@@ -2,7 +2,6 @@
 name: tdd
 description: 测试先行实现或修 bug、补回归测试，或为已有正确实现补充行为测试时使用。按用户范围区分实现改动与仅补测试；不用于只解释测试概念、解读报错或未要求测试工作的普通讨论。
 user-invocable: true
-allowed-tools: "Read, Grep, Glob, Write, Edit, Bash(npm *, node *, npx *, vitest *, jest *, pytest *)"
 argument-hint: "[file-or-description]"
 compatibility: "Use the repository's existing test runner, layout and coverage requirements."
 ---

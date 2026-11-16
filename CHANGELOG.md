@@ -8,15 +8,96 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- In a packaged Electron app, builtin Skills now resolve to the `app.asar.unpacked`
+  copy when it exists. Their reported Skill root was inside `app.asar`, so helper
+  scripts such as `node scripts/init-skill.js` failed with `MODULE_NOT_FOUND`:
+  a real `node` cannot read archive paths.
+
 - Session views now retain a failed Run's failure: a `type: 'error'` item with
   the Run's `sourceRunId`, its `failureDetail.safeMessage`, placed after the
   Run's input and saved with the session. The CLI-only "Recovery exhausted.
   Type 'continue'..." prompt is no longer written to SDK session views; the
   terminal REPL still shows it.
 
+- An older Conversation cache page or entry chunk stays readable while a Run
+  writes to the Session. Reading one used to need the Session write lock and the
+  newest revision, so scrolling up during a Run failed with "could not be
+  verified" or a `.write-locks` conflict. Each cache now keeps an append-only
+  revision log (72 bytes per superseded revision, up to 16,384; when full it
+  keeps the newest 8,192 and appends the new one), and
+  keeps it when a Run's full save rebuilds the cache with the old entries as an
+  unchanged prefix. Those reads come from that prefix without the write
+  boundary, and an older cursor reads the same window after the history grows.
+  A revision whose entries were rewritten, or that the log does not know, still
+  returns `data_changed`. The cache format moves to version 11, so existing
+  caches rebuild once on first read.
+
+- A Run checkpoints its display history about twice a second, and each save
+  gave the conversation a new revision. Cursors and item ids from an earlier
+  page therefore went stale within about a minute of a Run, even though no saved
+  message changed. Now they stay valid while their saved messages are an
+  unchanged prefix: older pages and their `newer` cursors read at the cursor's
+  own revision, `around: { searchItemId }` and saved positions resolve, and
+  `resolveHistoryTurn` resolves a history item for fork or rewind against the
+  current source. Rewriting a saved message still returns `resync_required` with
+  `source_changed`.
+
+- Two races during a busy Run could still expire an older page or search hit.
+  A full save writes a new cache generation and deletes the old files, so a read
+  that had already taken the old manifest failed with "Conversation page cache
+  changed or is unavailable". Such a read now restarts once on the new
+  generation; it only does so after an IO error, and only when the generation
+  really changed. On Windows, replacing the cache manifest fails with `EPERM`
+  while a reader has the old one open. That failure dropped the whole cache, and
+  every older revision with it. The manifest replace now retries briefly, using
+  the same backoff that Session file saves already use (10, 25, 50 and 100 ms).
+
+- The newest history page stays readable from the runtime that is running a
+  Run. A strict read used to wait until that runtime had no write queued, and a
+  streaming Run always had one, so `conversationPage` and Session reads timed
+  out until the Run ended. A read now waits only for writes queued before it,
+  and a later write waits for the read. `sessionViews.flush()` likewise waits
+  only for checkpoints requested before the call. A read whose filesystem
+  call never returns gives up its turn when its `timeoutMs` budget runs out,
+  so later saves of the Run are not held behind it.
+
+- An older-page lookup that hit a revision log Windows would not open (for
+  example one being replaced) failed with a raw `EPERM`. It now returns
+  `resync_required`, like other revisions the cache cannot prove.
+
+- During a Run, display-history checkpoints are saved at most every 500ms
+  instead of back to back. Each one rewrites the whole Session, so the write
+  lock was held almost all the time and other processes could not read. A
+  `flush()` still saves pending checkpoints at once.
+
 ### Changed
 
 - Memory is rebuilt (FEATURE_308). Each memory is now one markdown file with a short index in the system prompt and a single `memory` tool, and it is on by default. A background step after each run reflects on the session, saves what you stated or corrected, keeps inferred notes as candidates until a second session or you confirm them, archives stale inferred notes, and proposes reusable procedures as skills that wait for your review in `/learn ready`. It makes at most 10 model calls per day, and it skips CLI-bridge providers. After a tool call fails, the agent is reminded to check whether a note covers that failure. `/memory` lists your notes and unconfirmed candidates, and can show, approve or forget one. When the index is full, the remaining notes are linked from `MEMORY.more.md`. Your existing memories in every scope are copied into the new store once; the old files are left in place. Set `KODAX_MEMORY_NOTES=0` to keep the previous memory.
+
+- A `resync_required` error caused by another writer holding the Session during
+  the read now has `data.reason: 'writer_active'` instead of `source_changed`.
+  The saved history may not have changed, and a short retry of the same read
+  usually succeeds. `ClientHistoryResyncReason` gains `'writer_active'`, and
+  `SessionReadError` has an optional `reason` field.
+
+- `allowed-tools` in a Skill or command no longer restricts tools, hooks or
+  dynamic-context commands, in the SDK and in the REPL. Claude Code treats the
+  field as preapproval for the invoking turn, so third-party Skills that declare
+  it were blocked from tools the user's permission mode allows. The Host
+  permission mode and sandbox now decide every call. The field is still parsed
+  and kept in the Skill policy identity, so existing checkpoints restore;
+  invalid entries are no longer reported, since they no longer have an effect.
+  Skill prompts, managed-task prompts and the fork config of `SkillExecutor` no
+  longer list the field, and the `skill-creator` validator reports it as an
+  ignored-field warning instead of checking its type.
+
+- The builtin `code-review`, `git-workflow`, `skill-creator` and `tdd` Skills
+  no longer declare `allowed-tools`, and `init-skill.js` no longer writes one into
+  new Skills. A model-activated Skill's `allowed-tools` narrows every tool for the
+  rest of the Run, so loading one blocked `web_fetch`, `spawn_agent`, todos and
+  Windows PowerShell commands unrelated to the Skill. Tools stay governed by the
+  Host's permission mode and sandbox.
+
 - `ask_user_question` with `questions[]`: when the host answers only some
   questions, the result adds `unanswered`, the skipped question texts in
   question order. Hosts keep returning a map of the answered questions only.

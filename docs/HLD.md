@@ -318,8 +318,8 @@ its complete persistence chain. A durable terminal status wins over a failed
 event append; failure to persist either authority produces an explicit
 `unknown` lifecycle error and keeps Session execution fenced. Sandbox and
 managed-child cleanup errors are observed and recorded instead of escaping as
-process-global Promise rejections. Invalid Skill `allowed-tools` entries and
-malformed hook JSON are diagnosed; `PostToolUse` still runs if an embedder
+process-global Promise rejections. Skill `allowed-tools` does not restrict
+tools; malformed hook JSON is diagnosed; `PostToolUse` still runs if an embedder
 result observer throws. The v0.7.95 release additionally reconciles a
 status-lock cleanup error after a terminal commit only when the reread status
 exactly equals the local proposal; that path still emits one terminal event,

@@ -5348,7 +5348,7 @@ describe('FileSessionStorage', () => {
     })).rejects.toMatchObject({ code: 'data_changed' });
   });
 
-  it('rejects cached end-of-history when the Session changes during the read', async () => {
+  it('reports an index past a revision as out of range even when the Session changes during the read', async () => {
     const { FileSessionStorage } = await import('./storage.js');
     const { buildSessionConversationHistory } = await import('../session/conversation-history.js');
     const { deriveProjectKeyFromRoot } = await import('./project-key.js');
@@ -5376,7 +5376,8 @@ describe('FileSessionStorage', () => {
         };
         await fsPromises.appendFile(mainPath, `${JSON.stringify({ _type: 'lineage_entry', entry })}\n`);
       },
-    })).rejects.toMatchObject({ code: 'data_changed' });
+      // A revision only names indexes inside its own immutable prefix, so a newer source cannot make it valid.
+    })).rejects.toThrow(`Transcript entry index is out of range: ${history.entries.length}`);
   });
 
   it('uses a canonical-hash-bound identity filter for archived ids and keeps the page cache hot', async () => {
@@ -5888,8 +5889,29 @@ describe('FileSessionStorage', () => {
     const direct = await storage.readFullSnapshot(sessionId);
     expect(nextPage?.sourceRevision).toBe(direct?.sourceRevision);
     expect(nextPage?.entries.at(-1)?.entry?.message.content).toBe('bounded append tail');
+    // An older page stays readable after the append, even while a writer holds the Session.
+    const lockKey = createHash('sha256').update(sessionId, 'utf8').digest('hex');
+    const lockPath = path.join(sessionsDir, '.write-locks', `${lockKey}.lock`);
+    await withKodaXFileLock(lockPath, async () => {
+      const older = await storage.readConversationPageCache(sessionId, {
+        expectedRevision: previousPage.revision,
+        end: previousPage.nextEnd,
+        limit: 4,
+        maxPageBytes: 64 * 1024,
+        maxInlineEntryBytes: 64 * 1024,
+        reservedBytes: 0,
+      });
+      expect(older?.revision).toBe(previousPage.revision);
+      expect(older?.entries.map((item) => item.entry?.message.content))
+        .toEqual(['prepared history 120', 'prepared history 121', 'prepared history 122', 'prepared history 123']);
+      await expect(storage.readConversationPageCacheChunk(sessionId, {
+        revision: previousPage.revision,
+        entryIndex: 0,
+        offset: 0,
+      })).resolves.toMatchObject({ revision: previousPage.revision, entryIndex: 0 });
+    });
     await expect(storage.readConversationPageCache(sessionId, {
-      expectedRevision: previousPage.revision,
+      expectedRevision: 'sha256:unknown',
       limit: 4,
       maxPageBytes: 64 * 1024,
       maxInlineEntryBytes: 64 * 1024,
@@ -6018,7 +6040,7 @@ describe('FileSessionStorage', () => {
       end = page.nextEnd;
     }
     expect(paged).toEqual(history.entries.map((item) => item.message));
-    expect(JSON.parse(await readFile(manifestPath, 'utf8'))).toMatchObject({ version: 10 });
+    expect(JSON.parse(await readFile(manifestPath, 'utf8'))).toMatchObject({ version: 11 });
     const provider = (await storage.load(sessionId))?.messages ?? [];
     expect(provider.slice(1)).toEqual(history.entries.map((item) => item.message));
   });

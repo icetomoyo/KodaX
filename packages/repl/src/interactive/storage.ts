@@ -12,6 +12,7 @@ import { prepareVisualSessionFork, discardVisualSessionFork } from './visual-for
 import { readVisualObservationRecord, sessionVisualMediaDirectory, mergeVisualSessionRecords } from '@kodax-ai/agent/media';
 import chalk from 'chalk';
 import { compareSessionRecency, latestSessionMessageAt, validSessionTimestamp } from '../session/session-recency.js';
+import { replaceFileWithRetry } from '../session/replace-file.js';
 import type {
   AgentActorSaveAttempt,
   AgentActorSaveDiagnostics,
@@ -99,6 +100,7 @@ import {
   readConversationPageCache as readPreparedConversationPage,
   readConversationPageCacheChunk as readPreparedConversationChunk,
   readConversationPageCacheManifest,
+  readConversationPageCacheRevision,
   refreshConversationPageCache,
   removeConversationPageCache,
   writeConversationPageCache,
@@ -107,6 +109,8 @@ import {
   type ConversationPageCacheAdmission,
   type ConversationPageCacheInput,
   type ConversationPageCachePage,
+  type ConversationPageCacheRevision,
+  type ConversationPageCacheRevisionKey,
 } from '../session/conversation-page-cache.js';
 import {
   createSessionSourceRevision,
@@ -129,6 +133,8 @@ export type {
   ConversationPageCacheAdmission,
   ConversationPageCacheInput,
   ConversationPageCachePage,
+  ConversationPageCacheRevision,
+  ConversationPageCacheRevisionKey,
 } from '../session/conversation-page-cache.js';
 export { ConversationPageCacheCapacityError } from '../session/conversation-page-cache.js';
 import {
@@ -219,7 +225,6 @@ interface ArchivedLineageRecord extends PersistedArchivedEntryLine {
   readonly streamId: number;
 }
 
-const ATOMIC_RENAME_RETRY_DELAYS_MS = [10, 25, 50, 100] as const;
 const SESSION_WRITE_LOCK_TIMEOUT_MS = 60_000;
 const ACTOR_SAVE_ELIGIBILITY_TIMEOUT_MS = SESSION_WRITE_LOCK_TIMEOUT_MS + 5_000;
 const DEFAULT_SESSION_READ_TIMEOUT_MS = 15_000;
@@ -520,6 +525,7 @@ export function assertSessionReadBudget(
 async function raceSessionRead<T>(
   operation: Promise<T>,
   options: SessionReadOptions,
+  startedAt = Date.now(),
 ): Promise<T> {
   const timeoutMs = normalizeSessionReadTimeout(options.timeoutMs);
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -533,7 +539,7 @@ async function raceSessionRead<T>(
             'read_timeout',
             `Session history read timed out after ${timeoutMs}ms`,
           )),
-          timeoutMs,
+          Math.max(0, timeoutMs - (Date.now() - startedAt)),
         );
         if (options.signal !== undefined) {
           abort = () => reject(new SessionReadError(
@@ -550,25 +556,6 @@ async function raceSessionRead<T>(
       options.signal?.removeEventListener('abort', abort);
     }
   }
-}
-
-async function replaceSessionFile(tempPath: string, targetPath: string): Promise<void> {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      await fs.rename(tempPath, targetPath);
-      return;
-    } catch (error: unknown) {
-      const delay = ATOMIC_RENAME_RETRY_DELAYS_MS[attempt];
-      if (delay === undefined || !isTransientRenameError(error)) throw error;
-      await new Promise<void>((resolve) => setTimeout(resolve, delay));
-    }
-  }
-}
-
-function isTransientRenameError(error: unknown): boolean {
-  if (!(error instanceof Error) || !('code' in error)) return false;
-  const code = (error as NodeJS.ErrnoException).code;
-  return code === 'EPERM' || code === 'EBUSY' || code === 'EACCES';
 }
 
 function isPersistedMetaUpdateLine(value: unknown): value is PersistedMetaUpdateLine {
@@ -629,14 +616,22 @@ export type SessionReadErrorCode =
   | 'read_timeout'
   | 'read_cancelled';
 
+/** `writer_active`: a concurrent write crossed the read; a later retry can succeed. */
+export type SessionReadConflictReason = 'writer_active';
+
 export class SessionReadError extends Error {
   constructor(
     readonly code: SessionReadErrorCode,
     message: string,
+    readonly reason?: SessionReadConflictReason,
   ) {
     super(message);
     this.name = 'SessionReadError';
   }
+}
+
+function writerActiveReadError(message: string): SessionReadError {
+  return new SessionReadError('data_changed', message, 'writer_active');
 }
 
 export interface SessionReadOptions {
@@ -805,10 +800,7 @@ function assertStableSessionReadBoundary(sessionsDir: string, id: string): void 
     path.join(sessionsDir, '.migration-journal.jsonl'),
   ].find((candidate) => fsSync.existsSync(candidate));
   if (activePath !== undefined) {
-    throw new SessionReadError(
-      'data_changed',
-      `Session data changed during the read boundary: ${activePath}`,
-    );
+    throw writerActiveReadError(`Session data changed during the read boundary: ${activePath}`);
   }
 }
 
@@ -863,10 +855,7 @@ async function inspectSessionCandidateAsync(filePath: string): Promise<SessionCa
 }
 
 function inaccessibleSessionCandidate(id: string, filePath: string): SessionReadError {
-  return new SessionReadError(
-    'data_changed',
-    `Session candidate could not be verified for ${id}: ${path.basename(filePath)}`,
-  );
+  return new SessionReadError('data_changed', `Session candidate could not be verified for ${id}: ${path.basename(filePath)}`);
 }
 
 async function findStableSessionCandidates(
@@ -1245,10 +1234,7 @@ async function readStableSessionBundleAtPath(
     }
   }
   if (reads[0] === null) {
-    throw new SessionReadError(
-      'data_changed',
-      'Session main file moved during the read boundary',
-    );
+    throw writerActiveReadError('Session main file moved during the read boundary');
   }
   if (!allowActiveWriter) assertStableSessionReadBoundary(sessionsDir, id);
   for (let index = 0; index < descriptors.length; index += 1) {
@@ -1262,10 +1248,7 @@ async function readStableSessionBundleAtPath(
         || !sameStableFileIdentity(captured.identity, finalIdentity)
       ))
     ) {
-      throw new SessionReadError(
-        'data_changed',
-        `Session file changed during the read boundary: ${path.basename(descriptors[index]!.filePath)}`,
-      );
+      throw writerActiveReadError(`Session file changed during the read boundary: ${path.basename(descriptors[index]!.filePath)}`);
     }
   }
   if (!allowActiveWriter) assertStableSessionReadBoundary(sessionsDir, id);
@@ -1338,7 +1321,7 @@ async function withStableSessionBundleBoundaryAtPath<T>(
     });
   }
   if (reads[0] === null) {
-    throw new SessionReadError('data_changed', 'Session main file moved during the read boundary');
+    throw writerActiveReadError('Session main file moved during the read boundary');
   }
   if (!allowActiveWriter) assertStableSessionReadBoundary(sessionsDir, id);
   const result = await read({
@@ -1354,10 +1337,7 @@ async function withStableSessionBundleBoundaryAtPath<T>(
         finalIdentity === null || !sameStableFileIdentity(captured.identity, finalIdentity)
       ))
     ) {
-      throw new SessionReadError(
-        'data_changed',
-        `Session file changed during the read boundary: ${path.basename(descriptors[index]!.filePath)}`,
-      );
+      throw writerActiveReadError(`Session file changed during the read boundary: ${path.basename(descriptors[index]!.filePath)}`);
     }
   }
   if (!allowActiveWriter) assertStableSessionReadBoundary(sessionsDir, id);
@@ -1424,10 +1404,7 @@ export async function readStableSessionBundleFiles(
     finalCandidates.length !== candidates.length
     || finalCandidates.some((candidate, index) => candidate !== candidates[index])
   ) {
-    throw new SessionReadError(
-      'data_changed',
-      'Session location changed during the read boundary',
-    );
+    throw writerActiveReadError('Session location changed during the read boundary');
   }
   return snapshot;
 }
@@ -2949,13 +2926,31 @@ export class FileSessionStorage implements KodaXSessionStorage {
     return next;
   }
 
-  private async awaitOwnWrites(id: string, options: SessionReadOptions, startedAt: number): Promise<void> {
-    for (;;) {
+  /**
+   * A strict read takes a turn in this instance's write chain without the
+   * file lock. It waits only for writes queued before it, and a later owned
+   * write cannot open the lock mid-read, so a busy Run cannot starve it. The
+   * turn ends when the read settles or its budget is spent, rejecting first,
+   * so a stuck filesystem read cannot hold the Run's later saves.
+   */
+  private serializedRead<T>(
+    id: string,
+    options: SessionReadOptions,
+    startedAt: number,
+    read: () => Promise<T>,
+  ): Promise<T> {
+    const prev = this.writeQueues.get(id) ?? Promise.resolve();
+    const turn = (): Promise<T> => {
       assertSessionReadBudget(options, startedAt);
-      const pending = this.writeQueues.get(id);
-      if (!pending) return;
-      await pending;
-    }
+      return read();
+    };
+    const result = raceSessionRead(prev.then(turn, turn), options, startedAt);
+    const next = result.then(() => undefined, () => undefined);
+    this.writeQueues.set(id, next);
+    void next.then(() => {
+      if (this.writeQueues.get(id) === next) this.writeQueues.delete(id);
+    });
+    return result;
   }
 
   private refreshSelfVerifiedLocationTopology(id: string): void {
@@ -3036,7 +3031,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
         await handle.sync();
         await handle.close();
         handle = undefined;
-        await replaceSessionFile(temp, target);
+        await replaceFileWithRetry(temp, target);
       } finally {
         await handle?.close().catch(() => undefined);
         await fs.rm(temp, { force: true });
@@ -3293,10 +3288,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
       || current === undefined
       || !sameSessionTopologyIdentity(expected, current)
     ) {
-      throw new SessionReadError(
-        'data_changed',
-        `Session location topology changed during the read boundary for ${id}`,
-      );
+      throw writerActiveReadError(`Session location topology changed during the read boundary for ${id}`);
     }
   }
 
@@ -3367,7 +3359,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
       await handle.sync();
       await handle.close();
       handle = undefined;
-      await replaceSessionFile(tempPath, targetPath);
+      await replaceFileWithRetry(tempPath, targetPath);
     } finally {
       await handle?.close().catch(() => undefined);
       await fs.unlink(tempPath).catch((error: unknown) => {
@@ -3493,10 +3485,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
       && topologyAfter !== undefined
       && sameOptionalSessionTopologyIdentity(topologyBefore, topologyAfter);
     if (strict && !traversalComplete) {
-      throw new SessionReadError(
-        'data_changed',
-        `Session location topology could not be verified for ${id}`,
-      );
+      throw writerActiveReadError(`Session location topology could not be verified for ${id}`);
     }
     if (strict) assertStableSessionReadBoundary(this.sessionsDir, id);
     if (matches.length === 0) {
@@ -4085,7 +4074,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
         canonicalObserver?.beforeCommit();
         const renameStartedAt = performance.now();
         try {
-          await replaceSessionFile(tempPath, targetPath);
+          await replaceFileWithRetry(tempPath, targetPath);
         } finally {
           canonicalObserver?.recordTiming('rename', elapsedMs(renameStartedAt));
         }
@@ -4365,7 +4354,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
       const handle = await fs.open(temporary, 'wx');
       try { await handle.writeFile(Buffer.concat([original, Buffer.from(suffix)])); await handle.sync(); }
       finally { await handle.close(); }
-      await replaceSessionFile(temporary, mainPath);
+      await replaceFileWithRetry(temporary, mainPath);
     } finally { await fs.rm(temporary, { force: true }); }
   }
 
@@ -4913,8 +4902,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
     throwIfSessionReadAborted(options.signal);
     normalizeSessionReadTimeout(options.timeoutMs);
     const startedAt = Date.now();
-    return raceSessionRead((async () => {
-      await this.awaitOwnWrites(id, options, startedAt);
+    return raceSessionRead(this.serializedRead(id, options, startedAt, async () => {
       throwIfSessionReadAborted(options.signal);
       const draft = this.drafts.get(id);
       if (draft) return { id, runtimeInfo: structuredClone(draft.runtimeInfo), actorSnapshot: structuredClone(draft.actorSnapshot) };
@@ -4955,7 +4943,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
         }
       }
       return { id, runtimeInfo, actorSnapshot: structuredClone(snapshot) as unknown as AgentActorSnapshot };
-    })(), options);
+    }), options);
   }
 
   /** Strict read-only Session load. It never migrates or repairs persisted data. */
@@ -4967,12 +4955,8 @@ export class FileSessionStorage implements KodaXSessionStorage {
     normalizeSessionReadTimeout(options.timeoutMs);
     const startedAt = Date.now();
     const resolved = await raceSessionRead(
-      (async () => {
-        // Coordinate known writes before opening the strict boundary. Waiting
-        // uses the same deadline/cancellation budget as the subsequent read.
-        await this.awaitOwnWrites(id, options, startedAt);
-        return this.readSession(id, { migrate: false, strict: true });
-      })(),
+      this.serializedRead(id, options, startedAt, () =>
+        this.readSession(id, { migrate: false, strict: true })),
       options,
     );
     return resolved ? cloneSessionDataForRead(resolved.data) : null;
@@ -4985,9 +4969,12 @@ export class FileSessionStorage implements KodaXSessionStorage {
   ): Promise<ConversationPageCachePage | null> {
     throwIfSessionReadAborted(options.signal);
     normalizeSessionReadTimeout(options.timeoutMs);
+    if (input.expectedRevision !== undefined) {
+      return raceSessionRead(this.readConversationCachePrefix(id, (mainPath) =>
+        readPreparedConversationPage(mainPath, undefined, { ...input, signal: options.signal })), options);
+    }
     const startedAt = Date.now();
-    const operation = (async (): Promise<ConversationPageCachePage | null> => {
-      await this.awaitOwnWrites(id, options, startedAt);
+    const operation = this.serializedRead(id, options, startedAt, async (): Promise<ConversationPageCachePage | null> => {
       const mainPath = await this.resolveSessionLocation(id, true);
       if (mainPath === null) return null;
       const topologyIdentity = this.verifiedLocationTopology(id);
@@ -5010,19 +4997,54 @@ export class FileSessionStorage implements KodaXSessionStorage {
         if (before !== after) {
           throw new ConversationPageCacheStaleError('Conversation history changed during paging');
         }
-        if (page === null && input.expectedRevision !== undefined) {
-          throw new ConversationPageCacheStaleError('Conversation history changed; request a fresh page');
-        }
         return page;
       } catch (error: unknown) {
-        if (error instanceof ConversationPageCacheStaleError) {
-          if (input.expectedRevision === undefined) return null;
-          throw new SessionReadError('data_changed', error.message);
-        }
+        if (error instanceof ConversationPageCacheStaleError) return null;
         throw error;
       }
-    })();
+    });
     return raceSessionRead(operation, options);
+  }
+
+  /**
+   * Older pages and entry chunks come from the cache generation's immutable
+   * prefix, witnessed by their page revision. They neither wait for the
+   * writer nor need its boundary, so they stay readable during a Run.
+   */
+  private async readConversationCachePrefix<T>(
+    id: string,
+    read: (mainPath: string) => Promise<T | null>,
+  ): Promise<T> {
+    try {
+      const mainPath = await this.resolveSessionLocation(id);
+      const value = mainPath === null ? null : await read(mainPath);
+      if (value === null) {
+        throw new ConversationPageCacheStaleError('Conversation history changed; request a fresh page');
+      }
+      return value;
+    } catch (error: unknown) {
+      if (error instanceof ConversationPageCacheStaleError) {
+        throw new SessionReadError('data_changed', error.message);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * A page or source revision a Run's later saves superseded stays usable while its entries
+   * are a prefix of the current cache's. Like older pages, this needs no writer boundary.
+   */
+  async readConversationPageRevision(
+    id: string,
+    key: ConversationPageCacheRevisionKey,
+    options: SessionReadOptions = {},
+  ): Promise<(ConversationPageCacheRevision & { readonly currentRevision: string }) | undefined> {
+    throwIfSessionReadAborted(options.signal);
+    normalizeSessionReadTimeout(options.timeoutMs);
+    return raceSessionRead((async () => {
+      const mainPath = await this.resolveSessionLocation(id);
+      return mainPath === null ? undefined : readConversationPageCacheRevision(mainPath, key);
+    })(), options);
   }
 
   async readConversationPageBoundary(
@@ -5035,8 +5057,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
     throwIfSessionReadAborted(options.signal);
     normalizeSessionReadTimeout(options.timeoutMs);
     const startedAt = Date.now();
-    const operation = (async () => {
-      await this.awaitOwnWrites(id, options, startedAt);
+    const operation = this.serializedRead(id, options, startedAt, async () => {
       const mainPath = await this.resolveSessionLocation(id, true);
       if (mainPath === null) return null;
       const topologyIdentity = this.verifiedLocationTopology(id);
@@ -5053,13 +5074,10 @@ export class FileSessionStorage implements KodaXSessionStorage {
       );
       this.assertLocationTopologyUnchanged(id, topologyIdentity);
       if (before !== after) {
-        throw new SessionReadError(
-          'data_changed',
-          'Session changed while validating a Conversation page boundary',
-        );
+        throw writerActiveReadError('Session changed while validating a Conversation page boundary');
       }
       return { boundaryRevision: after, admission };
-    })();
+    });
     return raceSessionRead(operation, options);
   }
 
@@ -5073,7 +5091,8 @@ export class FileSessionStorage implements KodaXSessionStorage {
     options: SessionReadOptions = {},
   ): Promise<void> {
     throwIfSessionReadAborted(options.signal);
-    const mainPath = await this.resolveSessionLocation(id, true);
+    const mainPath = await raceSessionRead(this.serializedRead(id, options, Date.now(), () =>
+      this.resolveSessionLocation(id, true)), options);
     if (mainPath === null) {
       throw new SessionReadError('data_changed', 'Session moved before page preparation');
     }
@@ -5107,41 +5126,13 @@ export class FileSessionStorage implements KodaXSessionStorage {
   ): Promise<ConversationPageCacheChunk | null> {
     throwIfSessionReadAborted(options.signal);
     normalizeSessionReadTimeout(options.timeoutMs);
-    const startedAt = Date.now();
-    const operation = (async (): Promise<ConversationPageCacheChunk | null> => {
-      await this.awaitOwnWrites(id, options, startedAt);
-      const mainPath = await this.resolveSessionLocation(id, true);
-      if (mainPath === null) return null;
-      const topologyIdentity = this.verifiedLocationTopology(id);
-      try {
-        const before = await readStableSessionBundleBoundaryAtPath(
-          this.sessionsDir,
-          id,
-          mainPath,
-        );
-        const chunk = await readPreparedConversationChunk(mainPath, before, {
-          ...input,
-          signal: options.signal,
-        });
-        const after = await readStableSessionBundleBoundaryAtPath(
-          this.sessionsDir,
-          id,
-          mainPath,
-        );
-        this.assertLocationTopologyUnchanged(id, topologyIdentity);
-        if (before !== after || chunk === null) {
-          throw new ConversationPageCacheStaleError('Conversation history changed; request a fresh page');
-        }
-        if (chunk === undefined) {
-          throw new Error(`Transcript entry index is out of range: ${input.entryIndex}`);
-        }
-        return chunk;
-      } catch (error: unknown) {
-        if (error instanceof ConversationPageCacheStaleError) {
-          throw new SessionReadError('data_changed', error.message);
-        }
-        throw error;
+    const operation = (async (): Promise<ConversationPageCacheChunk> => {
+      const chunk = await this.readConversationCachePrefix(id, (mainPath) =>
+        readPreparedConversationChunk(mainPath, undefined, { ...input, signal: options.signal }));
+      if (chunk === undefined) {
+        throw new Error(`Transcript entry index is out of range: ${input.entryIndex}`);
       }
+      return chunk;
     })();
     return raceSessionRead(operation, options);
   }
@@ -5154,8 +5145,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
     throwIfSessionReadAborted(options.signal);
     normalizeSessionReadTimeout(options.timeoutMs);
     const startedAt = Date.now();
-    const operation = (async (): Promise<SessionReadSnapshot | null> => {
-      await this.awaitOwnWrites(id, options, startedAt);
+    const operation = this.serializedRead(id, options, startedAt, async (): Promise<SessionReadSnapshot | null> => {
       const draft = this.drafts.get(id);
       if (draft) {
         const revision = `draft:${id}:${createHash('sha256').update(JSON.stringify(draft)).digest('hex')}`;
@@ -5165,7 +5155,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
       const mainPath = await this.resolveSessionLocation(id, true);
       if (mainPath === null) return null;
       return this.readFullSnapshotAtPath(id, mainPath, options.signal, false);
-    })();
+    });
     return raceSessionRead(operation, options);
   }
 
@@ -5185,10 +5175,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
     );
       const main = bundle.files.find((file) => file.kind === 'main');
       if (main === undefined) {
-        throw new SessionReadError(
-          'data_changed',
-          'Session main file moved during the read boundary',
-        );
+        throw writerActiveReadError('Session main file moved during the read boundary');
       }
       const persisted = await readPersistedSessionFile(
         main.path,

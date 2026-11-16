@@ -2,7 +2,6 @@
 name: git-workflow
 description: 执行明确的 Git 操作，例如查看状态、提交、建分支、push、stash 或创建 PR。只有在用户明确要求实际执行这些 Git 操作时才使用；不要用于单纯解释 Git 概念或讨论策略。
 user-invocable: true
-allowed-tools: "Read, Grep, Glob, Bash(git *, gh *, node *)"
 argument-hint: "[status|commit|branch|push|pr|stash] [args]"
 compatibility: "Requires Git for local operations. Remote actions use an available, authorized hosting tool and the repository's authentication rules."
 ---

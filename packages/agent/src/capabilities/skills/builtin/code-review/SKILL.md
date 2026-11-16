@@ -2,7 +2,6 @@
 name: code-review
 description: 审查代码、diff、提交或当前 git 改动，重点发现 bug、行为回归、边界条件遗漏、安全风险、性能问题和缺失测试。当用户提到 code review、review 这段代码、帮我看看改动有没有问题、审查 PR/提交时使用；不要用于单纯解释代码或直接实现需求。
 user-invocable: true
-allowed-tools: "Read, Grep, Glob, Bash(git status, git status *, git diff, git diff *, git log, git log *, git show, git show *, git ls-files, git ls-files *, git rev-parse, git rev-parse *, git ls-tree, git ls-tree *, git blame, git blame *, git cat-file *, npm *, node *, npx *)"
 argument-hint: "[file-or-directory]"
 compatibility: "Works best in a git repository or when the review target is provided explicitly."
 ---

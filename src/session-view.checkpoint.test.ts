@@ -153,3 +153,32 @@ it('rejects history refresh after a settled save failure and recovers only after
     observation.close();
   } finally { await Promise.allSettled([owner.close()]); }
 });
+
+function busyRunOwner(saveMs: number) {
+  let saves = 0;
+  const owner = new SessionViewOwner(async sessionId => ({
+    session: { id: sessionId, title: 'Busy' }, settings: {}, items: [], queue: [], interactions: [], runs: [],
+  }), async () => { saves += 1; await new Promise(resolve => setTimeout(resolve, saveMs)); });
+  owner.events('busy', 'run');
+  const ticker = setInterval(() => owner.checkpoint('busy'), 2);
+  return { owner, saves: () => saves, stop: () => clearInterval(ticker) };
+}
+
+it('returns from flush once earlier checkpoints are saved while a Run keeps checkpointing', async () => {
+  const busy = busyRunOwner(15);
+  try {
+    await new Promise(resolve => setTimeout(resolve, 40));
+    const flushed = busy.owner.flush('busy').then(() => 'flushed');
+    const timeout = new Promise(resolve => setTimeout(resolve, 250, 'timed out'));
+    expect(await Promise.race([flushed, timeout])).toBe('flushed');
+  } finally { busy.stop(); await busy.owner.close(); }
+});
+
+it('spaces consecutive checkpoint saves while no flush is waiting', async () => {
+  const busy = busyRunOwner(1);
+  try {
+    await new Promise(resolve => setTimeout(resolve, 1_100));
+    expect(busy.saves()).toBeLessThanOrEqual(4);
+    expect(busy.saves()).toBeGreaterThanOrEqual(2);
+  } finally { busy.stop(); await busy.owner.close(); }
+});

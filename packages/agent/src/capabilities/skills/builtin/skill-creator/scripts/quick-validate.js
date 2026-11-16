@@ -98,12 +98,7 @@ export async function validateSkillDirectory(skillDir) {
   }
 
   if (frontmatter['allowed-tools'] != null) {
-    const allowedTools = frontmatter['allowed-tools'];
-    const validAllowedTools = typeof allowedTools === 'string'
-      || (Array.isArray(allowedTools) && allowedTools.every((item) => typeof item === 'string'));
-    if (!validAllowedTools) {
-      result.errors.push('allowed-tools must be a string or string array.');
-    }
+    result.warnings.push('allowed-tools is ignored by KodaX; tool access follows the Host permission mode.');
   }
 
   if (frontmatter['disable-model-invocation'] != null
