@@ -23,7 +23,8 @@ All notable changes to this project will be documented in this file.
   writes to the Session. Reading one used to need the Session write lock and the
   newest revision, so scrolling up during a Run failed with "could not be
   verified" or a `.write-locks` conflict. Each cache now keeps an append-only
-  revision log (72 bytes per superseded revision, newest 16,384 retained), and
+  revision log (72 bytes per superseded revision, up to 16,384; when full it
+  compacts to the newest 8,192), and
   keeps it when a Run's full save rebuilds the cache with the old entries as an
   unchanged prefix. Those reads come from that prefix without the write
   boundary, and an older cursor reads the same window after the history grows.
@@ -56,7 +57,13 @@ All notable changes to this project will be documented in this file.
   streaming Run always had one, so `conversationPage` and Session reads timed
   out until the Run ended. A read now waits only for writes queued before it,
   and a later write waits for the read. `sessionViews.flush()` likewise waits
-  only for checkpoints requested before the call.
+  only for checkpoints requested before the call. A read whose filesystem
+  call never returns gives up its turn when its `timeoutMs` budget runs out,
+  so later saves of the Run are not held behind it.
+
+- An older-page lookup that hit a revision log Windows would not open (for
+  example one being replaced) failed with a raw `EPERM`. It now returns
+  `resync_required`, like other revisions the cache cannot prove.
 
 - During a Run, display-history checkpoints are saved at most every 500ms
   instead of back to back. Each one rewrites the whole Session, so the write
