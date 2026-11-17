@@ -6,6 +6,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-beta.11] - 2026-11-16
+
+Eleventh beta of the v0.7.97 line: readable Session history during a
+busy Run and tool-neutral Skills. Older Conversation cache pages, entry
+chunks and cursors stay readable and valid while a Run writes: each
+cache keeps an append-only revision log (format v11), reads run without
+the write boundary or the newest revision, full-save rebuilds keep an
+unchanged prefix, and checkpoint saves are throttled to 500 ms, so
+scrolling back during a Run no longer fails with "could not be
+verified" or `resync_required`; a read blocked by another writer now
+reports `reason: 'writer_active'`. `allowed-tools` in a Skill or command
+no longer restricts tools, hooks or dynamic context — every call follows
+the Host permission mode and sandbox — and the builtin Skills drop the
+field while a packaged Electron app resolves them to `app.asar.unpacked`.
+Session views retain a failed Run's error item, and `ask_user_question`
+reports skipped question texts as `unanswered` in partial results. Every
+v0.7.96 stable and v0.7.97-alpha.1 through beta.10 client contract is
+retained. npm publication remains a manual maintainer action.
+
 ### Fixed
 
 - In a packaged Electron app, builtin Skills now resolve to the `app.asar.unpacked`

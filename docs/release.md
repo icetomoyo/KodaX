@@ -48,6 +48,79 @@ on one commit.
   The step limit is ten minutes because the passing Windows suite alone takes
   about 4.6 minutes.
 
+## v0.7.97-beta.11 release preparation
+
+Release state: `v0.7.97-beta.11` was published on 2026-11-16 as a GitHub
+prerelease from run 43850422130 at `b351ce378` (all five archive builds,
+Full CI and the npm package gates green after three failed-job re-runs;
+13 assets). npm publication has not occurred. The release is the
+eleventh beta of the v0.7.97 line: readable
+Session history during a busy Run and tool-neutral Skills. Older
+Conversation cache pages, entry chunks and cursors stay readable and
+valid while a Run writes: each cache keeps an append-only revision log
+(cache format v11) with prefix-preserving full-save rebuilds, reads run
+without the write boundary or the newest revision, checkpoint saves are
+throttled to 500 ms, and a read blocked by another writer reports
+`data.reason: 'writer_active'` instead of `source_changed`
+(`ClientHistoryResyncReason` gains `'writer_active'`). `allowed-tools`
+in a Skill or command no longer restricts tools, hooks or dynamic
+context — every call follows the Host permission mode and sandbox — the
+builtin Skills drop the field, and a packaged Electron app resolves
+builtin Skills to the `app.asar.unpacked` copy. Session views retain a
+failed Run's `type: 'error'` item with `sourceRunId` and the safe
+failure message, and `ask_user_question` names skipped question texts
+as `unanswered` in partial results while duplicate question texts in
+one batch are rejected before asking. Every v0.7.96 stable and
+v0.7.97-alpha.1 through beta.10 client contract is retained.
+
+The CI/Release in-place upgrade gates now pin the published
+`0.7.97-beta.10` tarball (published 2026-11-14T23:49:40Z; registry
+dist.integrity sha512-33dnqhfD…gQLQ== packs to the same bytes as the
+kodax-ai-kodax-0.7.97-beta.10.tgz asset of the v0.7.97-beta.10 GitHub
+Release, sha256 360498dc…b2e615). Run that fixture locally with Windows
+`tar.exe` ahead of Git's GNU `tar` on `PATH`: GNU `tar` reads the `C:`
+drive in the archive path as a remote host.
+
+Local candidate validation on Windows with Node 24.22.1: full build
+(after the version bump, so `dist` carries 0.7.97-beta.11), source and
+test typechecks, the self-knowledge/`kodax_manual` registry suite
+(52 passed), `tests/release-workflow.test.ts` (28 passed),
+`tests/tracker-consistency.test.ts` (4 passed), `test:host-cutover`
+(3 passed; the unified-release fixture's `npm pack --json` parsing
+needs npm 10 — the local run used npm 10.9.10 under Node 24 because
+npm 12.2.0 emits a keyed object instead of the array manifest), the
+real published beta.10 Host in-place upgrade (1 passed) against the
+integrity-pinned public tarball, and `test:bundle` (106 passed; this
+workstation has no npm on `PATH`, so the `npm pack` fixtures ran
+through a temporary npm 10.9.10 `npm.cmd` shim). The packaged Electron
+daemon gate runs in Release CI.
+
+This release follows the single publishing dispatch described under
+[Current release execution](#current-release-execution): `target=all`
+with `release_tag=v0.7.97-beta.11` runs Full CI, all five archive
+builds and the npm package gates, then creates the tag at the dispatched
+commit and the GitHub pre-release from that run's artifacts. Ordinary
+branch pushes do not run CI; the thirteen commits between the beta.10
+dispatch and this candidate first ran through a candidate-only CI
+dispatch on the release commit (run 43846367041, every job green).
+The publishing dispatch (run 43850422130 at `b351ce378`) then failed
+`build (darwin-x64)` on three consecutive attempts, each time on a
+different untouched bundled test with the same
+`daemon_startup_failed` readiness timeout: `informational commands
+remain available with corrupt core config` at its 90-second deadline,
+then `shared Host retains a bounded Skill catalog: ama/profile` and
+`bundled SDK preserves MCP output end to end: host-denied-sa` each at
+about 61 seconds, while the identical bundle suite stayed green on
+darwin-arm64, both Linux builds, Windows (packaged Electron job) and
+in the candidate-only dispatch — runner-class slowness on
+`macos-15-intel` during GitHub's 2026-11-16 partially degraded service
+day. The fourth failed-job re-run on a fresh runner passed every job
+and the run published. The universal npm tarball asset is
+`kodax-ai-kodax-0.7.97-beta.11.tgz`, sha256 `93ee716f…8b53c6`,
+matching `SHA256SUMS`. Cross-platform manual acceptance, installed
+Space/SDK acceptance, the Space dependency bump and npm publication
+remain separate maintainer steps.
+
 ## v0.7.97-beta.10 release preparation
 
 Release state: `v0.7.97-beta.10` was published on 2026-11-15 as a GitHub

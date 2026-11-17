@@ -251,6 +251,14 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('reason. Every v0.7.96 stable and v0.7.97-alpha.1 through beta.6 contract is retained.');
   });
 
+  it('documents the v0.7.97-beta.11 readable history and tool-neutral Skills release', () => {
+    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
+
+    expect(sdk).toContain('The v0.7.97-beta.11 release keeps Session history readable while a Run writes and makes Skills');
+    expect(sdk).toContain('write boundary or the newest revision, full-save rebuilds keep an unchanged prefix, and');
+    expect(sdk).toContain('v0.7.96 stable and v0.7.97-alpha.1 through beta.10 contract is retained.');
+  });
+
   it('documents the v0.7.97-beta.10 merged-input acknowledgement', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
 
