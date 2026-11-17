@@ -145,6 +145,9 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
   ].join('\n');
   const planFirstContract = [
     'PLAN-FIRST GUIDANCE:',
+    // Evidence/verification duties read as "inspect the machine first": weak models ran `dir`/`uname`
+    // before answering how-to questions, and tied answers about other systems to the local host.
+    `- ${staticText("worker.answerDirectly")}`,
     staticText("worker.planFirstContract.text"),
     staticText("worker.planFirstContract.text.1"),
     staticText("worker.planFirstContract.text.2"),

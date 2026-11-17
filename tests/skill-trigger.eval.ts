@@ -10,7 +10,7 @@ import { randomInt } from 'node:crypto';
 import { getProvider, getProviderModels, getCostRate, calculateCost } from '../packages/llm/src/index.js';
 import { inputHash, type FrozenInput } from './first-turn-eval-support.js';
 
-const LIMITS = Object.freeze({ maxProviderCalls: 1400, maxCallsPerCell: 1, maxRoundsPerCell: 1, maxOutputTokens: 8192, maxTotalTokens: 30_000_000, maxExternalSpendUsd: 30, timeoutMs: 180_000 });
+const LIMITS = Object.freeze({ maxProviderCalls: 1700, maxCallsPerCell: 1, maxRoundsPerCell: 1, maxOutputTokens: 8192, maxTotalTokens: 30_000_000, maxExternalSpendUsd: 30, timeoutMs: 180_000 });
 const routes = {
   'zhipu/glm52': { provider: 'zhipu-coding', model: 'glm-5.2', env: 'ZHIPU_CODING_API_KEY' },
   'ark/k27': { provider: 'ark-coding', model: 'kimi-k2.7-code', env: 'ARK_CODING_API_KEY', alwaysThinks: true },

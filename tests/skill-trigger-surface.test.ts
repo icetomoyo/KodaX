@@ -78,4 +78,11 @@ describe('default first-turn surface', () => {
   it('marks routing labels as a guess the request overrides', () => {
     for (const request of requests) expect(request.text).toContain('These labels are a keyword guess from the request text');
   });
+
+  it('scopes local inspection and the host OS rule to this machine', () => {
+    for (const request of requests) {
+      expect(request.text).toContain('Answer directly when general knowledge covers the question.');
+      expect(request.text).toContain('When the user asks about another system');
+    }
+  });
 });

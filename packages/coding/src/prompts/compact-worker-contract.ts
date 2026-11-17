@@ -11,7 +11,7 @@ export function compactWorkerContract(original: string): string {
   const specialistRule = '- SPECIALIST ROUTING: when a registered specialist Agent matches the task domain, use its canonical `agent_id` from `list_dispatchable_agents`.';
   return [
     `${staticText("merge.compact-worker.0")}${core.includes('run_workflow') ? ' (including run_workflow prompts)' : ''}${staticText("merge.compact-worker.1")}`,
-    `${staticText("merge.compact-worker.2")}${PLAN_BATCH_GUIDANCE}${staticText("merge.compact-worker.3")}${reader}${staticText("merge.compact-worker.4")}`,
+    `TASK AND PLAN\n${staticText("worker.answerDirectly")}\n${staticText("merge.compact-worker.2")}${PLAN_BATCH_GUIDANCE}${staticText("merge.compact-worker.3")}${reader}${staticText("merge.compact-worker.4")}`,
     staticText("merge.compact-worker.5"),
     ...(core.includes(specialistRule) ? ['When a registered specialist matches the task domain, use its canonical agent_id from list_dispatchable_agents.'] : []),
     repo,
