@@ -35,7 +35,7 @@ Use this skill in tests.
 
     expect(prompt).toContain('## Available Skills');
     expect(prompt).toContain('prompt-skill');
-    expect(prompt).toContain('BLOCKING REQUIREMENT');
+    expect(prompt).toContain('When no description clearly covers the request');
   });
 
   it('refreshes the catalog before a Run when a Skill was added mid-session', async () => {

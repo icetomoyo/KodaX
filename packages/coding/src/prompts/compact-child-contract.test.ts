@@ -115,7 +115,7 @@ describe('builtin child paired compact contract', () => {
       edit: ['Read first', 'unique in the whole current file', 'Later anchors', 'failure leaves file unchanged', 'never full-file rewrite'],
       bash: ['grep/glob', 'write/edit', 'not shell redirection/wrappers', 'run_in_background', 'recoverable artifact preview'],
       grep: ['literal:true', 'multiline', 'count', 'scan_offset', 'SOURCE_INCOMPLETE'],
-      skill: ['discovered matching Skill', 'before responding', 'never read SKILL.md', 'template substitution'],
+      skill: ['when the user names a listed Skill', 'clearly covers the request', 'never read SKILL.md', 'template substitution'],
       memory_recall: ['current MemorySession-scoped', 'absent from current context', 'before unrelated repo exploration', 'facts require normal tools'],
       session_history_search: ['missing detail', 'do not guess', 'read needed hit', 'hit.entryRevision'],
       session_history_read: ['cited persisted entry', 'nextOffset', 'entryRevision', 'whole-history snapshot'],

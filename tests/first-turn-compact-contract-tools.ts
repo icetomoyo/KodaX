@@ -76,7 +76,7 @@ export const compactToolText: Readonly<Record<string, CompactToolText>> = {
   session_history_search: { description: 'Find omitted persisted history only when the request needs missing historical detail; do not guess from checkpoint. Bounded snippets/stable citations; then read only needed entries.',
     annotations: { 'properties.query': 'Specific phrase/ID/command/historical fact.', 'properties.limit': '1–20; default 8.',
       'properties.role': null, 'properties.scope': 'Default compacted; all only if active-tail search needed.' } },
-  skill: { description: 'Invoke a discovered matching Skill before responding, per Available Skills blocking requirement. Returns expanded/resolved instructions for next turn. Load via skill, never read SKILL.md. Optional free-form args forwarded for template substitution (most ignore it).',
+  skill: { description: 'Required before other work when the user names a listed Skill or its description clearly covers the request; otherwise do not call it. Returns expanded/resolved instructions for next turn. Load via skill, never read SKILL.md, which bypasses the resolver. Optional free-form args forwarded for template substitution (most ignore it).',
     annotations: { 'properties.skill': 'Skill name; leading slash accepted.', 'properties.args': null } },
   spawn_agent: { description: 'Start a named direct child under the Worker collaboration/ownership policy. Runtime mints its canonical path and enforces shared concurrency/work budgets.',
     annotations: { 'properties.task_name': 'Stable direct-child name.', 'properties.objective': 'Bounded goal, constraints, evidence and output shape.', 'properties.scope': 'Bounded scope hint.',

@@ -3,6 +3,7 @@ import type { KodaXTaskRoutingDecision } from '../types.js';
 import {
   buildWorkerInstructions,
   buildWorkerReviewFanoutContract,
+  buildWorkerRoutingContext,
   EXPLICIT_WORKFLOW_POLICY,
   ULTRA_AGENT_POLICY,
   WORKER_AGENT_NAME,
@@ -325,5 +326,17 @@ describe('buildWorkerInstructions', () => {
     expect(output).toContain('- Complexity: moderate');
     expect(output).toContain('same natural language as the user\'s request');
     expect(output).toContain('`model_hint` intentionally');
+  });
+
+  it('renders only classified routing facts so placeholders are not read as instructions', () => {
+    const output = buildWorkerRoutingContext({ ...baseDecision, primaryTask: 'unknown', confidence: 0.4, requiresBrainstorm: true });
+    // A bare "Brainstorm required: yes" sat beside the Skill catalog and was invoked as a Skill name.
+    expect(output).not.toContain('Brainstorm');
+    expect(output).not.toContain('Primary task');
+    expect(output).not.toContain('not classified');
+    expect(output).not.toContain('Review target');
+    expect(output).toContain('- Risk: medium');
+    expect(buildWorkerRoutingContext({ ...baseDecision, reviewScale: 'large', reviewTarget: 'current-worktree' }))
+      .toContain('- Review scale: large\n- Review target: current-worktree');
   });
 });

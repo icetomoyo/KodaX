@@ -440,6 +440,7 @@ Behavioral-neutral hygiene refactor 通常 2 alias × 2 case × 3 runs 已足以
 9. **共享截断即不可判定**：所有臂都撞上同一预算截断时比较无结论。修正题目范围只能开新修订，并只重跑受影响用例。
 10. **传输失败先取证**：先收集 HTTP status、request id 和响应进度时序，再归因 provider 或网络。`codex-cli` 适配器会忽略本地 system/tools，不能用于隔离 harness 收益。
 11. **夹具来自真实 Runtime**：checkpoint 输入由真实 Runtime 生成，不手工拼接路由；冒烟前确认 source 与 dist 是同一模块；工具定义快照不对可执行元数据做 `structuredClone`。
+12. **首轮夹具要覆盖默认用户面**：包括真实 Skill 目录、AMA root 的 Actor 客户端、`filterModelToolAliases` 后的工具名，以及经 `markOrdinaryRootToolContract` 加 `createManagedRunContextMessage` 打开的生产投影。运行上下文要带 `resolveRoleRunContext` 加的 `=== Managed Run Context ===` 信封：system prompt 只授权信封内文本，上下文投影也以结束标记为边界，缺信封的夹具和生产不是同一个请求。冒烟前确认实际请求里出现了压缩投影文本。此前的首轮夹具用空 agent home 且未接 Actor，模型从未见过 Skill 目录和压缩后的 BLOCKING 文本，强制调用 Skill 的退化因此在 beta.5 到 beta.10 间漏检。参考 `tests/skill-trigger.capture.ts`。
 
 ---
 

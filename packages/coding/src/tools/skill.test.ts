@@ -396,7 +396,9 @@ describe('toolSkill (claudecode-parity skill invocation)', () => {
     });
     expect(result).toContain('[Tool Error]');
     expect(result).toContain('unknown skill "does-not-exist"');
-    expect(result).toContain('available Skill catalog');
+    expect(result).toContain('Only names in the Skill catalog exist');
+    // Steers back to the task rather than inviting another guessed name.
+    expect(result).toContain('continue it directly with normal tools');
   });
 
   it('keeps unknown-Skill errors bounded and never discloses disabled names', async () => {
@@ -413,7 +415,7 @@ describe('toolSkill (claudecode-parity skill invocation)', () => {
       const result = await toolSkill({ skill }, { backups: new Map(), executionCwd: tempDir, skillRegistry: registry });
       expect(result.length).toBeLessThanOrEqual(8_000);
       expect(result.includes('disabled-in-model-catalog')).toBe(false);
-      expect(result).toContain('available Skill catalog');
+      expect(result).toContain('Only names in the Skill catalog exist');
       expect(result).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/u);
     }
   });

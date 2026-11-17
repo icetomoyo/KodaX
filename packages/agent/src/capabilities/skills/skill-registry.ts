@@ -29,19 +29,27 @@ function catalogText(value: string, limit: number): string {
     : `${normalized.slice(0, limit - 1).replace(/[\uD800-\uDBFF]$/, '')}…`;
 }
 
-/** Canonical catalog teaching; reusable by request views without changing SDK formatting. */
+/**
+ * Canonical catalog teaching, the single model-facing source (request views must not
+ * restate it). Conditional by design: an unconditional "invoke first" mandate made
+ * models hunt for, guess or force a Skill on ordinary requests (beta.5-beta.11 regression).
+ */
 export const SKILL_CATALOG_INSTRUCTIONS = [
     '## Available Skills',
     '',
-    'When users ask you to perform tasks, check if any of the available skills below match the request. Skills provide specialized capabilities and step-by-step instructions for specific workflows.',
+    'Each Skill below is a playbook for one kind of work.',
     '',
-    'If the current task context already contains an "Active skill invocation" or a host-expanded Skill block for the referenced name, that explicit user invocation is already complete. Follow the expanded instructions and do NOT call the `skill` tool for that Skill again.',
+    'When the user names a listed Skill, or a Skill\'s description clearly covers what the user asks for, you must invoke it with the `skill` tool before any other tool call or answer on the task. Its instructions shape the whole approach.',
     '',
-    'When users reference a "slash command" or "/<something>" (e.g. "/feature-list-tracker", "/skill:foo") and the host has not already expanded it, they are referring to a skill. Invoke it via the `skill` tool with the skill name.',
+    'A matching Skill comes before any other "first step" or "first tool" rule in your instructions, because the Skill decides how those tools are used.',
     '',
-    "**BLOCKING REQUIREMENT**: When a model-visible Skill matches the user's request and the host has not already expanded it, you MUST invoke it via the `skill` tool BEFORE generating any other response about the task. Loading the Skill is not optional and not something to defer — it is the FIRST action you take.",
+    'When no description clearly covers the request, work on it directly and do not mention Skills, because a forced or guessed Skill pulls the work off course.',
     '',
-    'NEVER mention a model-discovered Skill without actually calling the `skill` tool. This rule does not apply to a host-expanded active user invocation, which must not be called again. Do not guess at Skill names — only use Skills listed below. Do NOT call `read` on a `SKILL.md` path to load a Skill — that is the legacy path and bypasses the resolver.',
+    'A slash reference such as "/name" or "/skill:name" is the user invoking that Skill. Call `skill` with that name unless the host has already expanded it. Pass the text after the name as `args`.',
+    '',
+    'An "Active skill invocation" or host-expanded Skill block in the context means the user\'s invocation is complete. Follow that block without calling `skill` for it again, because a second call loads the same instructions twice.',
+    '',
+    'Only the names listed below are available to you; a guessed name fails. Load a Skill through `skill` rather than `read` on its SKILL.md, because `read` bypasses the resolver.',
     '',
   ].join('\n');
 
@@ -67,7 +75,9 @@ export function formatSkillsSystemPrompt(
   }
   const omitted = visibleSkills.length - included;
   if (shortened > 0 || omitted > 0) {
-    const notice = `[Skill catalog shortened: ${shortened} entries shortened; ${omitted} Skills omitted. Explicit invocation of registered Skills remains available.]`;
+    // The notice must not invite guessing hidden names: an earlier "explicit invocation remains
+    // available" wording led models to probe unlisted (even model-disabled) Skills.
+    const notice = `[Skill catalog shortened: ${shortened} entries shortened; ${omitted} Skills not listed. An unlisted Skill runs only when the user names it, so do not guess unlisted names.]`;
     lines.push('', notice);
     emitKodaXDiagnostic({ source: 'agent:skills', level: 'warn', message: notice,
       detail: { code: 'skill_catalog_shortened', total: visibleSkills.length, included, omitted, shortened } });

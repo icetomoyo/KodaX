@@ -41,8 +41,8 @@ export const DEFERRED_TOOL_HINTS: Readonly<Record<string, string>> = Object.free
   semantic_lookup: 'Search indexed symbols, modules or processes, not raw text. refresh rebuilds the index; use it only when stale.',
 
   // Repo intelligence
-  repo_overview:   'Workspace structure snapshot. Reuse a supplied overview while applicable; query when missing or outdated.',
-  changed_scope:   'For change-set reviews, list worktree/range changes first; keep explicit audit scope. After scope, fan out independent review lanes before reading every diff.',
+  repo_overview:   'Workspace structure snapshot for repository work that needs structure. Reuse a supplied overview while applicable; a new session or task alone needs no call.',
+  changed_scope:   'For change-set reviews, list worktree/range changes to set scope; keep explicit audit scope. After scope, fan out independent review lanes before reading every diff.',
   module_context:  'Module deps, entries, symbols, tests/docs and evidence. Query module or target_path directly.',
   symbol_context:  'Definition, signature, imports and probable callers/callees. Query symbol directly; module disambiguates.',
   process_context: 'Approximate static process summary/steps. Query entry, module or target_path directly.',

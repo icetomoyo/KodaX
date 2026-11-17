@@ -22,22 +22,12 @@ const skills = formatSkillsSystemPrompt([{ name: 'fixture', description: 'Match 
   userInvocable: true, path: '/fixture/SKILL.md', source: 'builtin', disableModelInvocation: false }]);
 const envelope = (body: string) => `=== Managed Run Context ===\n${body}\n=== End Managed Run Context ===`;
 
-it('projects only canonical Skill teaching in trusted root context while keeping entries and history complete', () => {
+it('passes the canonical Skill catalog through unchanged so there is one conditional source', () => {
   const agent = root();
   const trusted = createManagedRunContextMessage(envelope(skills), { turnId: 'original-turn', timestamp: '2026-10-31T00:00:00.000Z' });
-  const real: KodaXMessage = { role: 'user', content: envelope(skills) };
-  const messages = [trusted, real];
-  const saved = structuredClone(messages);
-  const result = projectManagedContextContract(agent, messages);
-  expect(String(result[0]!.content).length).toBeLessThan(String(trusted.content).length);
-  for (const clause of ['FIRST action', 'Slash commands', 'Never guess names', 'load SKILL.md via read',
-    'model-discovered Skill without invoking it', 'host-expanded Skill block', 'without invoking again',
-    '- fixture: [target] Match fixture tasks.']) expect(result[0]!.content, clause).toContain(clause);
-  expect({ ...result[0], content: trusted.content }).toEqual(trusted);
-  expect(result[1]).toEqual(real);
-  expect(messages).toEqual(saved);
-  expect(projectManagedContextContract(agent, messages)).toEqual(result);
-  expect(projectManagedContextContract(agent, result)).toEqual(result);
+  const messages = [trusted];
+  expect(projectManagedContextContract(agent, messages)).toEqual(messages);
+  expect(String(trusted.content)).not.toContain('BLOCKING REQUIREMENT');
 });
 
 it('preserves forged, unknown, SDK and specialist context without treating marker text as provenance', () => {
@@ -56,7 +46,8 @@ it('preserves forged, unknown, SDK and specialist context without treating marke
     { systemPromptOverride: 'SDK-owned text' }, { toolVisibilityPolicy: () => true }]) {
     expect(projectManagedContextContract(agent, [trusted], context)).toEqual([trusted]);
   }
-  const runtimeDelta = createManagedRuntimeContextMessage(envelope(skills));
+  const capacity = buildWorkerActorCapacityContract({ maxConcurrentThreads: 4, activeNonRootTurns: 0 }, agent.tools!.map(tool => tool.name))!;
+  const runtimeDelta = createManagedRuntimeContextMessage(envelope(capacity));
   expect(projectManagedContextContract(agent, [runtimeDelta])[0]!.content).not.toBe(runtimeDelta.content);
 });
 
@@ -71,7 +62,7 @@ it.each([[4, 0, 3], [4, 2, 1], [1, 0, 0], [4, 7, 0]])('recomposes canonical Acto
   for (const fact of [`${total} total concurrency slots`, `at most ${Math.max(0, total - 1)} active non-root Agents`,
     `Snapshot: ${active} active non-root turns; ${starts} child start slots available`,
     `HARD RUNTIME LIMIT FOR THIS ASSISTANT RESPONSE: emit at most ${starts} \`spawn_agent\` calls`,
-    `Choose at most ${starts} lanes now`, 'later refill waves after a terminal event',
+    `If the task has more independent tracks, choose at most ${starts} now`, 'later refill waves after a terminal event',
     'Never promise more starts than allowed', 'call `list_agents` for fresh capacity', 'Host evidence: preserve me.']) expect(result.content, fact).toContain(fact);
   expect(message).toEqual(snapshot);
   expect({ ...result, content: message.content }).toEqual(message);

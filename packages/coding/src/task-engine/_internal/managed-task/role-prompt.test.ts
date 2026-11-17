@@ -82,7 +82,7 @@ describe('createRolePrompt — runtime identity in workspace section', () => {
         undefined, undefined, 'kodax/role/worker', undefined,
         buildContext(), undefined, false, mode,
       );
-      expect(rendered.match(/(?:^|\n)(?:- )?Primary task:/g)).toHaveLength(1);
+      expect(rendered.match(/(?:^|\n)(?:- )?Work intent:/g)).toHaveLength(1);
       expect(rendered.match(/(?:^|\n)(?:- )?Risk:/g)).toHaveLength(1);
       expect(rendered).toContain(`Assurance intent: ${decision.assuranceIntent ?? 'default'}`);
       expect(rendered).toContain('Current round instructions:\nContinue from the saved milestone.');
@@ -330,7 +330,7 @@ describe('FEATURE_144 — AMA worker capability-context parity', () => {
       'DYNAMIC_CAPABILITY_SENTINEL',
       'TEAM_STATE_SENTINEL',
       '1 non-root turns are active',
-      'Primary task:',
+      'Routing decision summary:',
       'VERIFICATION_SENTINEL',
       'TOOL_POLICY_SENTINEL',
       'METADATA_SENTINEL',
@@ -371,7 +371,7 @@ describe('FEATURE_144 — AMA worker capability-context parity', () => {
     for (const role of roles) {
       const rendered = renderRole(role, block, 'context');
       const capIdx = rendered.indexOf('FROZEN_MCP_MARKER');
-      const decisionIdx = rendered.indexOf('Primary task:');
+      const decisionIdx = rendered.indexOf('Routing decision summary:');
       expect(decisionIdx, `role=${role}: decisionSummary present`).toBeGreaterThanOrEqual(0);
       expect(capIdx, `role=${role}: capability block present`).toBeGreaterThan(decisionIdx);
     }
@@ -383,7 +383,7 @@ describe('FEATURE_144 — AMA worker capability-context parity', () => {
       // Workspace + decision summary still present; no orphan blank gap
       // means the filter() chain dropped the undefined entry cleanly.
       expect(rendered).toContain('## Environment');
-      expect(rendered).toContain('Primary task:');
+      expect(rendered).toContain('Routing decision summary:');
       // Sentinel: no MCP / project-agents content leaks in when the
       // parent didn't pre-compute one.
       expect(rendered).not.toContain('## MCP Capability Provider');
@@ -399,8 +399,8 @@ describe('FEATURE_144 — AMA worker capability-context parity', () => {
       // and decision summary.
       expect(renderedEmpty).toContain('## Environment');
       expect(renderedWs).toContain('## Environment');
-      expect(renderedEmpty).toContain('Primary task:');
-      expect(renderedWs).toContain('Primary task:');
+      expect(renderedEmpty).toContain('Routing decision summary:');
+      expect(renderedWs).toContain('Routing decision summary:');
     }
   });
 });
@@ -432,7 +432,7 @@ describe('FEATURE_114 Slice 2 — worker role prompt entry wire', () => {
     const rendered = renderWorker();
     expect(rendered).toContain('## Environment');
     expect(rendered).toContain('Working Directory:');
-    expect(rendered).toContain('Primary task:');
+    expect(rendered).toContain('Routing decision summary:');
     expect(rendered).toContain('Workspace discipline:');
     expect(rendered).toContain('Preserve any exact machine-readable closing contract');
   });
@@ -440,7 +440,7 @@ describe('FEATURE_114 Slice 2 — worker role prompt entry wire', () => {
   it('decisionSummary is de-harnessed and the Worker self-judges via EXECUTION GUIDANCE (ADR-043)', () => {
     const rendered = renderWorker();
     // Semantic routing fields stay (they help; see decisionSummary eval).
-    expect(rendered).toContain('Primary task:');
+    expect(rendered).toContain('Routing decision summary:');
     expect(rendered).toContain('Risk:');
     // The collapsed/vestige harness-tier classification lines were removed (P1.6).
     expect(rendered).not.toContain('Harness:');
@@ -521,7 +521,7 @@ describe('FEATURE_114 Slice 2 — worker role prompt entry wire', () => {
     });
     const envIdx = rendered.indexOf('## Environment');
     const capIdx = rendered.indexOf('FROZEN_MCP_MARKER');
-    const decisionIdx = rendered.indexOf('Primary task:');
+    const decisionIdx = rendered.indexOf('Routing decision summary:');
     expect(envIdx).toBeGreaterThanOrEqual(0);
     expect(capIdx).toBeGreaterThan(envIdx);
     expect(decisionIdx).toBeGreaterThan(capIdx);

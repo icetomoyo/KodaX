@@ -241,6 +241,10 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
     .filter(hasTool);
   const repoIntelligenceTools = [
     'REPO INTELLIGENCE TOOLS:',
+    // Stated where the procedures live: weak models followed the changed_scope / `bash git`
+    // steps below instead of a matching review or Git Skill named only in the catalog.
+    hasTool('skill')
+      ? '- When a listed Skill matches the request, load it with `skill` before any tool below, because the Skill decides how these tools are used.' : undefined,
     hasTool('relationship_scan')
       ? staticText("worker.repoIntelligenceTools.text") : undefined,
     hasTool('module_context')
@@ -350,21 +354,29 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
     .join('\n\n');
 }
 
+/**
+ * Renders only classified routing facts. Unclassified placeholders carry no signal, and the
+ * bare `requiresBrainstorm` flag (true for every low-confidence "unknown" request) lost its
+ * explanation when the router overlay retired: next to the Skill catalog, models read
+ * "Brainstorm required: yes" as a Skill to invoke. The flag still drives routing internally.
+ */
 export function buildWorkerRoutingContext(
   decision: KodaXTaskRoutingDecision,
 ): string {
   return [
     `You are the Worker — KodaX's single primary agent for this task. Routing decision summary:`,
-    `- Primary task: ${decision.primaryTask}`,
+    // Keyword-heuristic labels (reasoning.ts): stated as fact, a wrong guess ("refactor", "Risk: high" for a
+    // process question) steered ordinary requests. Kept as hints because review focus benefits from them.
+    '- These labels are a keyword guess from the request text. When one disagrees with what the user asked, follow the request.',
+    decision.primaryTask !== 'unknown' ? `- Primary task: ${decision.primaryTask}` : undefined,
     `- Assurance intent: ${decision.assuranceIntent ?? 'default'}`,
     `- Work intent: ${decision.workIntent}`,
     `- Risk: ${decision.riskLevel}`,
     `- Complexity: ${decision.complexity}`,
-    `- Review scale: ${decision.reviewScale ?? 'not classified'}`,
-    `- Review target: ${decision.reviewTarget ?? 'general'}`,
+    decision.reviewScale ? `- Review scale: ${decision.reviewScale}` : undefined,
+    decision.reviewTarget ? `- Review target: ${decision.reviewTarget}` : undefined,
     `- Independent QA needed: ${decision.needsIndependentQA ? 'yes' : 'no'}`,
-    `- Brainstorm required: ${decision.requiresBrainstorm ? 'yes' : 'no'}`,
-  ].join('\n');
+  ].filter((line): line is string => line !== undefined).join('\n');
 }
 
 export function buildWorkerInstructions(

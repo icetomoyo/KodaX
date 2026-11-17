@@ -21,7 +21,7 @@ export const baselineFingerprints: Readonly<Record<string, string>> = {
   "send_message": "742ab8ec72d9c441dfcf908ee6eaa9ed33a5832118359c39d481207612d3df9d",
   "session_history_read": "d3e935412b816c4e1a9ba4744a6142a25b0adb25cc2b03c84adc532934555dd5",
   "session_history_search": "dba2690c7ea398fa3fe4323a8cfcc77b66d25da2617e43763a717b05003b8407",
-  "skill": "546132436d8083f0865a96a78ebb8c5fd0ea1022adf7f669a67000dad4dc3320",
+  "skill": "5a5aacc0ba66035053566191c8845416ef9a359416f1aa34509c901799529da1",
   "spawn_agent": "37888c9af3114206179bd840d2f0414968d8933f754120e21250c668f4c715c7",
   "todo_create": "9a5fa077bd155a91a9ec51c081fd80c78adc4953e379d35791cce9c763ee22ce",
   "todo_list": "a731f78e974a358f3d4ec339bd6d8e7141e7262ee2625aae7f57c32c117d684e",
