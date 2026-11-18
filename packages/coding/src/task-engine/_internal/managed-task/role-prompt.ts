@@ -257,7 +257,6 @@ export function createRolePrompt(
       );
       const reviewFanoutContract = buildWorkerReviewFanoutContract(
         decision,
-        rolePromptContext?.actorCapacity,
         rolePromptContext?.availableToolNames,
       );
       const workerInstructions = buildWorkerStableInstructions(rolePromptContext?.availableToolNames);

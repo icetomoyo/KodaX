@@ -100,7 +100,7 @@ export async function captureSkillTriggerInputs(
 }
 
 // Files whose bytes reach the captured request; candidates must not drift after freeze.
-const SOURCE_FILES = ['packages/agent/src/capabilities/skills/skill-registry.ts', 'packages/coding/src/prompts/managed-context-contract.ts',
+const SOURCE_FILES = ['packages/agent/src/capabilities/skills/skill-registry.ts',
   'packages/coding/src/prompts/static-text.json', 'packages/coding/src/tools/managed-tool-text.ts', 'packages/coding/src/agents/worker-role-prompt.ts',
   'packages/coding/src/task-engine/_internal/managed-task/role-prompt.ts', 'packages/coding/src/prompts/builder.ts',
   'packages/coding/src/prompts/compact-worker-contract.ts', 'packages/coding/src/prompts/managed-system-contract.ts',

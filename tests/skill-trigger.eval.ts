@@ -10,7 +10,7 @@ import { randomInt } from 'node:crypto';
 import { getProvider, getProviderModels, getCostRate, calculateCost } from '../packages/llm/src/index.js';
 import { inputHash, type FrozenInput } from './first-turn-eval-support.js';
 
-const LIMITS = Object.freeze({ maxProviderCalls: 1900, maxCallsPerCell: 1, maxRoundsPerCell: 1, maxOutputTokens: 8192, maxTotalTokens: 30_000_000, maxExternalSpendUsd: 30, timeoutMs: 180_000 });
+const LIMITS = Object.freeze({ maxProviderCalls: 3000, maxCallsPerCell: 1, maxRoundsPerCell: 1, maxOutputTokens: 8192, maxTotalTokens: 60_000_000, maxExternalSpendUsd: 30, timeoutMs: 180_000 });
 const routes = {
   'zhipu/glm52': { provider: 'zhipu-coding', model: 'glm-5.2', env: 'ZHIPU_CODING_API_KEY' },
   'ark/k27': { provider: 'ark-coding', model: 'kimi-k2.7-code', env: 'ARK_CODING_API_KEY', alwaysThinks: true },
@@ -23,7 +23,10 @@ const routes = {
 } as const;
 type RouteId = keyof typeof routes;
 const isRoute = (value: string): value is RouteId => Object.hasOwn(routes, value);
-const REASONING = { enabled: false, effort: 'none' } as const;
+// 'auto' is what the product sends under its default reasoning mode; 'off' isolates the prompt from thinking.
+const reasoningSetting = process.env.KODAX_SKILL_EVAL_REASONING ?? 'off';
+if (reasoningSetting !== 'off' && reasoningSetting !== 'auto') throw new Error('KODAX_SKILL_EVAL_REASONING must be off or auto');
+const REASONING = reasoningSetting === 'auto' ? { enabled: true, effort: 'auto' } as const : { enabled: false, effort: 'none' } as const;
 /** Always-thinking models reject an explicit 'none'; omitting reasoning lets them use their default effort. */
 const reasoningFor = (id: RouteId) => ('alwaysThinks' in routes[id] ? undefined : REASONING);
 

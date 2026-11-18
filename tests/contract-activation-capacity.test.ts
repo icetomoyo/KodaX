@@ -17,10 +17,9 @@ it('uses a real full controller and adapter-projected capacity without changing 
     expect(pair.facts.inspectChild).toMatchObject({ path: '/root/inspect-child', capabilities: { filesystem: 'read' } });
     expect(JSON.parse(pair.facts.denial)).toMatchObject({ ok: false, error: { code: 'agent_limit_reached', activeNonRootTurns: 3 } });
     expect(pair.baseline.messages.slice(1)).toEqual(pair.candidate.messages.slice(1));
-    expect(pair.baseline.messages[0]!.content).toContain('At this prompt snapshot, 3 non-root turns are active and 0 child start slots are available');
-    expect(pair.candidate.messages[0]!.content).toContain('Snapshot: 3 active non-root turns; 0 child start slots available');
-    expect(pair.candidate.messages[0]!.content).toContain('emit at most 0 `spawn_agent` calls');
-    expect(pair.candidate.messages[0]!.content).not.toContain('At this prompt snapshot');
+    expect(pair.baseline.messages[0]!.content).toContain('No child slot is free right now');
+    expect(pair.candidate.messages[0]!.content).toBe(pair.baseline.messages[0]!.content);
+    expect(pair.candidate.messages[0]!.content).not.toContain('emit at most');
     expect(pair.baseline.system).toContain(`Working Directory: ${pair.facts.workspace}`); expect(pair.candidate.system).toContain('Candidate actual');
     expect(pair.candidate.system).toContain(`Working Directory: ${pair.facts.workspace}`);
     expect(pair.candidate.tools).toEqual(base.tools);

@@ -28,18 +28,21 @@ export function buildWorkerActorCapacityGuidance(
 ): readonly string[] {
   if (actorCapacity === undefined) return [];
   if (availableToolNames !== undefined && !availableToolNames.includes('spawn_agent')) return [];
-  const availableStartSlots = Math.max(
-    0,
-    actorCapacity.maxConcurrentThreads - 1 - actorCapacity.activeNonRootTurns,
-  );
+  // State the free-slot count the spawn decision needs as a fact. Leaving the subtraction
+  // to the model failed: without it, models in a partly busy tree started more children
+  // than were free (eval d-1: 8 of 9 cells).
+  const childLimit = Math.max(0, actorCapacity.maxConcurrentThreads - 1);
+  if (childLimit === 0) {
+    return ['- Only you run in this session, so `spawn_agent` calls are rejected. Do the work yourself.'];
+  }
+  const free = Math.max(0, childLimit - actorCapacity.activeNonRootTurns);
   return [
-    `- This Actor tree has ${actorCapacity.maxConcurrentThreads} total concurrency slots; the root occupies one reserved slot, so at most ${Math.max(0, actorCapacity.maxConcurrentThreads - 1)} non-root Agents can run at once.`,
-    `- At this prompt snapshot, ${actorCapacity.activeNonRootTurns} non-root turns are active and ${availableStartSlots} child start slots are available.`,
-    `- HARD RUNTIME LIMIT FOR THIS ASSISTANT RESPONSE: emit at most ${availableStartSlots} \`spawn_agent\` calls. Calls beyond this number will be rejected; do not attempt them.`,
-    `- If the task has more independent tracks, select at most ${availableStartSlots} for the first wave. Keep the remaining tracks with the root or name them as a later refill wave after a terminal event.`,
-    availableToolNames === undefined || availableToolNames.includes('list_agents')
-      ? staticText("worker.buildWorkerActorCapacityGuidance.text")
-      : staticText("worker.buildWorkerActorCapacityGuidance.text.1"),
+    `- This session runs at most ${childLimit} child Agent${childLimit === 1 ? '' : 's'} at a time.`,
+    free === 0
+      ? '- No child slot is free right now, so do the work yourself or wait for a running Agent to finish before starting another.'
+      : `- Right now ${free} of ${childLimit} child slot${childLimit === 1 ? '' : 's'} ${free === 1 ? 'is' : 'are'} free.`,
+    staticText("worker.buildWorkerActorCapacityGuidance.text"),
+    staticText("worker.buildWorkerActorCapacityGuidance.text.1"),
   ];
 }
 
@@ -50,12 +53,11 @@ export function buildWorkerActorCapacityContract(
   const guidance = buildWorkerActorCapacityGuidance(actorCapacity, availableToolNames);
   return guidance.length === 0
     ? undefined
-    : ['ACTOR CAPACITY (authoritative runtime fact):', ...guidance].join('\n');
+    : ['ACTOR CAPACITY:', ...guidance].join('\n');
 }
 
 export function buildWorkerReviewFanoutContract(
   decision: KodaXTaskRoutingDecision,
-  actorCapacity: WorkerActorCapacity | undefined,
   availableToolNames?: readonly string[],
 ): string | undefined {
   const reviewTarget = decision.reviewTarget ?? 'general';
@@ -86,8 +88,6 @@ export function buildWorkerReviewFanoutContract(
       generalScope,
     ].filter((line): line is string => line !== undefined).join('\n');
   }
-  const noStartSlot = actorCapacity !== undefined
-    && actorCapacity.maxConcurrentThreads - 1 - actorCapacity.activeNonRootTurns <= 0;
   const scopeAcquisition = availableToolNames === undefined || availableToolNames.includes('changed_scope')
     ? 'call `changed_scope` once' : 'establish it with the available tools';
 
@@ -98,7 +98,6 @@ export function buildWorkerReviewFanoutContract(
     staticText("worker.buildWorkerReviewFanoutContract.text.3"),
     generalScope
       ?? `- When the exact diff scope is unknown, ${scopeAcquisition} and split the review from its file groups before reading every diff yourself, because the reviewers will read those diffs.`,
-    noStartSlot ? staticText("worker.launchRule.text.1") : undefined,
   ].filter((line): line is string => line !== undefined).join('\n');
 }
 
@@ -387,7 +386,7 @@ export function buildWorkerInstructions(
   void isResumeAfterReviseFailure;
 
   const actorCapacityContract = buildWorkerActorCapacityContract(actorCapacity, availableToolNames);
-  const reviewFanoutContract = buildWorkerReviewFanoutContract(decision, actorCapacity, availableToolNames);
+  const reviewFanoutContract = buildWorkerReviewFanoutContract(decision, availableToolNames);
 
   return [
     buildWorkerRoutingContext(decision),

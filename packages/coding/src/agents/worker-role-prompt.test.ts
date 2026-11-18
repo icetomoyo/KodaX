@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { KodaXTaskRoutingDecision } from '../types.js';
 import {
+  buildWorkerActorCapacityContract,
   buildWorkerInstructions,
   buildWorkerReviewFanoutContract,
   buildWorkerRoutingContext,
@@ -95,7 +96,7 @@ describe('buildWorkerInstructions', () => {
   it('keeps spawn guidance and capacity without inventing unavailable child controls', () => {
     const output = buildWorkerInstructions(baseDecision, undefined, false,
       { maxConcurrentThreads: 4, activeNonRootTurns: 1 }, ['spawn_agent']);
-    expect(output).toContain('emit at most 2 `spawn_agent` calls');
+    expect(output).toContain('Right now 2 of 3 child slots are free.');
     expect(output).toContain('PARALLEL-FIRST COLLABORATION');
     expect(output).toContain('read_only:true');
     expect(output).toContain('unresolved ownership');
@@ -252,9 +253,6 @@ describe('buildWorkerInstructions', () => {
       primaryTask: 'review',
       complexity: 'systemic',
       reviewTarget: 'general',
-    }, {
-      maxConcurrentThreads: 4,
-      activeNonRootTurns: 0,
     });
 
     expect(output).toContain('REVIEW BREADTH:');
@@ -264,18 +262,34 @@ describe('buildWorkerInstructions', () => {
     expect(output).not.toContain('call `changed_scope` once');
   });
 
-  it('reports a full Actor tree instead of a start quota', () => {
-    const output = buildWorkerReviewFanoutContract({
+  it('reports a full Actor tree once, in the capacity block', () => {
+    const output = buildWorkerInstructions({
       ...baseDecision,
       primaryTask: 'review',
       reviewScale: 'massive',
       reviewTarget: 'compare-range',
-    }, {
-      maxConcurrentThreads: 4,
-      activeNonRootTurns: 3,
-    });
+    }, undefined, false, { maxConcurrentThreads: 4, activeNonRootTurns: 3 });
 
-    expect(output).toContain('No child start slot is free right now.');
+    expect(output.match(/No child slot is free right now/g)).toHaveLength(1);
+    expect(output.indexOf('No child slot is free')).toBeLessThan(output.indexOf('REVIEW BREADTH'));
+  });
+
+  it('states the free child-slot count as a fact without a per-response quota', () => {
+    const busy = buildWorkerActorCapacityContract({ maxConcurrentThreads: 4, activeNonRootTurns: 2 });
+    const idle = buildWorkerActorCapacityContract({ maxConcurrentThreads: 4, activeNonRootTurns: 0 });
+
+    expect(busy).toContain('- Right now 1 of 3 child slots is free.');
+    expect(busy).not.toContain('No child slot is free');
+    expect(idle).toContain('- Right now 3 of 3 child slots are free.');
+    expect(`${busy}\n${idle}`).not.toMatch(/HARD RUNTIME LIMIT|emit at most|including you/);
+  });
+
+  it('tells a single-Agent session that spawning is rejected', () => {
+    const output = buildWorkerInstructions(baseDecision, undefined, false,
+      { maxConcurrentThreads: 1, activeNonRootTurns: 0 }, ['spawn_agent']);
+
+    expect(output).toContain('Only you run in this session');
+    expect(output).not.toContain('No child slot is free');
   });
 
   it('keeps a broad review local and scoped when delegation is unavailable', () => {
@@ -284,7 +298,7 @@ describe('buildWorkerInstructions', () => {
       primaryTask: 'review',
       complexity: 'systemic',
       reviewTarget: 'general',
-    }, undefined, ['read', 'grep']);
+    }, ['read', 'grep']);
 
     expect(output).toContain('Delegation is unavailable in this run');
     expect(output).toContain('Stay inside the repository or module scope the user named');
@@ -318,12 +332,11 @@ describe('buildWorkerInstructions', () => {
       activeNonRootTurns: 0,
     });
 
-    expect(output).toContain('4 total concurrency slots');
-    expect(output).toContain('root occupies one reserved slot');
-    expect(output).toContain('3 child start slots are available');
-    expect(output).toContain('HARD RUNTIME LIMIT FOR THIS ASSISTANT RESPONSE');
-    expect(output).toContain('emit at most 3 `spawn_agent` calls');
-    expect(output).toContain('must not claim that you are dispatching more Agents');
+    expect(output).toContain('This session runs at most 3 child Agents at a time.');
+    expect(output).toContain('Right now 3 of 3 child slots are free.');
+    expect(output).toContain('made when no child slot is free is rejected');
+    expect(output).toContain('matches the Agents that actually run');
+    expect(output).not.toMatch(/HARD RUNTIME LIMIT|emit at most|No child slot is free/);
     expect(output.indexOf('ACTOR CAPACITY')).toBeLessThan(output.indexOf('PLAN-FIRST GUIDANCE'));
   });
 

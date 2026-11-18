@@ -121,7 +121,6 @@
     "packages/coding/src/agent-runtime/work-mode.test.ts",
     "packages/coding/src/tools/managed-tool-contract.test.ts",
     "packages/coding/src/prompts/managed-system-contract.test.ts",
-    "packages/coding/src/prompts/managed-context-contract.test.ts",
     "packages/coding/src/media/visual-owner.test.ts",
     "packages/coding/src/agent-runtime/middleware/auto-resume.test.ts",
     "packages/agent/src/capabilities/skills/skill-registry.test.ts",

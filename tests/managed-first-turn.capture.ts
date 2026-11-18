@@ -4,12 +4,16 @@
 // Usage: KODAX_MANAGED_CAPTURE_OUT=<new file> KODAX_MANAGED_CAPTURE_CASES=<cases.json> [KODAX_MANAGED_CAPTURE_STAGE=name]
 //   vite-node -c vitest.config.ts tests/managed-first-turn.capture.ts
 // Output matches the skill-trigger capture shape, so tests/skill-trigger.eval.ts replays it.
+// KODAX_MANAGED_CAPTURE_CATALOG=builtin passes the builtin Skill catalog the way the REPL does; run it
+// with USERPROFILE/HOME pointed at an empty dir, because ~/.agents/skills is always scanned.
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { KodaXBaseProvider, registerModelProvider, type KodaXMessage, type KodaXProviderConfig, type KodaXToolDefinition } from '@kodax-ai/llm';
 import { SkillRegistry } from '@kodax-ai/agent';
+import { setAgentConfigHome } from '../packages/agent/src/runtime/agent-home.js';
+import { initializeSkillRegistry, resetSkillRegistry } from '../packages/agent/src/capabilities/skills/skill-registry.js';
 import type { KodaXWorkMode } from '../packages/coding/src/types.js';
 import { createKodaXRuntime } from './runtime-fixture.js';
 import { CACHE_GOLDEN, writeCacheFixture } from '../benchmark/datasets/search-entry-complex/fixture.js';
@@ -34,9 +38,20 @@ async function writeDirtyWorkspace(workspace: string): Promise<void> {
 
 // The capture stub replies with text, so the Run ends after one root response.
 const PROVIDER = 'managed-capture';
+type CatalogKind = 'none' | 'builtin';
 const MODEL = 'capture-model';
 
-async function captureCase(root: string, testCase: ManagedCaptureCase): Promise<FrozenInput> {
+/** The REPL hands the run its project registry and that registry's catalog snippet. */
+async function skillContext(workspace: string, catalog: CatalogKind) {
+  if (catalog === 'none') return { skillsPrompt: '', skillRegistry: new SkillRegistry(workspace) };
+  resetSkillRegistry();
+  const skillRegistry = await initializeSkillRegistry(workspace);
+  const skillsPrompt = skillRegistry.getSystemPromptSnippet();
+  if (!skillsPrompt.includes('## Available Skills')) throw new Error('Builtin capture must carry a model-visible Skill catalog');
+  return { skillsPrompt, skillRegistry };
+}
+
+async function captureCase(root: string, testCase: ManagedCaptureCase, catalog: CatalogKind): Promise<FrozenInput> {
   const directory = await fs.mkdtemp(path.join(root, `${testCase.id}-`));
   const workspace = path.join(directory, 'workspace');
   await writeDirtyWorkspace(workspace);
@@ -59,7 +74,7 @@ async function captureCase(root: string, testCase: ManagedCaptureCase): Promise<
     const handle = await runtime.runs.start({ sessionId: session.id, mode: 'managed_task', prompt: testCase.task, options: {
       provider: PROVIDER, model: MODEL, agentMode: 'ama', reasoningMode: 'off', lsp: false, maxIter: 2, disablePromptCache: true, workMode: testCase.workMode,
       learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['eval-isolated'] } }),
-      context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt: '', skillRegistry: new SkillRegistry(workspace), repoIntelligenceMode: 'auto', resolveShellPermissionMode: () => 'full-access' },
+      context: { executionCwd: workspace, gitRoot: workspace, ...await skillContext(workspace, catalog), repoIntelligenceMode: 'auto', resolveShellPermissionMode: () => 'full-access' },
     } });
     const result = await handle.result;
     if (result.error) throw new Error(`${testCase.id}: ${result.error.name}: ${result.error.message}`);
@@ -68,6 +83,7 @@ async function captureCase(root: string, testCase: ManagedCaptureCase): Promise<
     unregister();
   }
   if (!captured) throw new Error(`${testCase.id}: no root request captured`);
+  if (catalog === 'builtin' && !JSON.stringify(captured).includes('## Available Skills')) throw new Error(`${testCase.id}: Skill catalog missing from the request`);
   return captured;
 }
 
@@ -76,7 +92,14 @@ const casesFile = process.env.KODAX_MANAGED_CAPTURE_CASES;
 if (!out || !casesFile) throw new Error('KODAX_MANAGED_CAPTURE_OUT and KODAX_MANAGED_CAPTURE_CASES are required');
 const cases = JSON.parse(await fs.readFile(casesFile, 'utf8')) as ManagedCaptureCase[];
 if (new Set(cases.map(c => c.id)).size !== cases.length) throw new Error('Duplicate case id');
+const catalog = (process.env.KODAX_MANAGED_CAPTURE_CATALOG ?? 'none') as CatalogKind;
+if (catalog !== 'none' && catalog !== 'builtin') throw new Error('KODAX_MANAGED_CAPTURE_CATALOG must be none or builtin');
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-managed-capture-'));
+if (catalog === 'builtin') {
+  const skillHome = path.join(root, 'skill-home');
+  await fs.mkdir(skillHome);
+  setAgentConfigHome(skillHome);
+}
 const rows = [];
 // Repository intelligence and routing signals race a 2s budget, so a cold attempt can drop blocks.
 // Keeping the most complete of several attempts gives both arms the full context.
@@ -84,7 +107,7 @@ const attempts = Number(process.env.KODAX_MANAGED_CAPTURE_ATTEMPTS ?? '3');
 for (const testCase of cases) {
   let input: FrozenInput | undefined;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const candidate = await captureCase(root, testCase);
+    const candidate = await captureCase(root, testCase, catalog);
     if (!input || JSON.stringify(candidate).length > JSON.stringify(input).length) input = candidate;
   }
   if (!input) throw new Error('KODAX_MANAGED_CAPTURE_ATTEMPTS must be at least 1');
@@ -93,5 +116,5 @@ for (const testCase of cases) {
 }
 const source = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true }).trim();
 await fs.mkdir(path.dirname(out), { recursive: true });
-await fs.writeFile(out, JSON.stringify({ stage: process.env.KODAX_MANAGED_CAPTURE_STAGE ?? 'adhoc', source, sourceHashes: await sourceHashes(), catalog: 'none', fixtureRoot: root, cases: rows }, null, 2) + '\n', { flag: 'wx' });
+await fs.writeFile(out, JSON.stringify({ stage: process.env.KODAX_MANAGED_CAPTURE_STAGE ?? 'adhoc', source, sourceHashes: await sourceHashes(), catalog, fixtureRoot: root, cases: rows }, null, 2) + '\n', { flag: 'wx' });
 process.stdout.write(JSON.stringify({ out, cases: rows.map(r => ({ id: r.id, workMode: r.workMode, hash: r.hash, tools: r.input.tools.length })) }) + '\n');

@@ -233,7 +233,9 @@ export function resolveRoleRuntimeStateFingerprint(
   if (!context) return undefined;
   const snapshot = {
     scratchDir: context.workspace?.scratchDir,
-    actorCapacity: context.actorCapacity,
+    // Keyed on the rendered text: count changes the model cannot act on, such as
+    // in a run without `spawn_agent`, render nothing and emit no refresh.
+    actorCapacity: buildWorkerActorCapacityContract(context.actorCapacity, context.availableToolNames),
     teamMode: context.teamModeFingerprint,
   };
   return Object.values(snapshot).every((value) => value === undefined)

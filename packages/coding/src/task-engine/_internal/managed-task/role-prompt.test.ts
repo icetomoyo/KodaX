@@ -330,7 +330,7 @@ describe('FEATURE_144 — AMA worker capability-context parity', () => {
       'ROUND_QUERY_SENTINEL',
       'DYNAMIC_CAPABILITY_SENTINEL',
       'TEAM_STATE_SENTINEL',
-      '1 non-root turns are active',
+      'This session runs at most 3 child Agents at a time.',
       'Routing decision summary:',
       'VERIFICATION_SENTINEL',
       'TOOL_POLICY_SENTINEL',
@@ -689,10 +689,10 @@ describe('F270 — explicit Workflow activation policy', () => {
     expect(rendered).toContain('Use it directly');
     expect(rendered).toContain('Do not call `agent_output` speculatively');
     expect(rendered).toContain('do not retry `spawn_agent` while the reported capacity is still full');
-    expect(rendered).toContain('4 total concurrency slots');
-    expect(rendered).toContain('2 child start slots are available');
-    expect(rendered).toMatch(/^ACTOR CAPACITY \(authoritative runtime fact\):/);
-    expect(rendered).toContain('emit at most 2 `spawn_agent` calls');
+    expect(rendered).toMatch(/^ACTOR CAPACITY:/);
+    expect(rendered).toContain('This session runs at most 3 child Agents at a time.');
+    expect(rendered).toContain('A `spawn_agent` call made when no child slot is free is rejected');
+    expect(rendered).not.toMatch(/emit at most|No child slot is free/);
   });
 
   it('places a broad-review fan-out decision beside current Actor capacity', () => {
@@ -932,6 +932,6 @@ describe('F270 — explicit Workflow activation policy', () => {
 
     expect(rendered.match(/REVIEW BREADTH:/g)).toHaveLength(1);
     expect(rendered).toContain('Split a review this broad into read-only Agents');
-    expect(rendered).not.toContain('No child start slot is free right now');
+    expect(rendered).not.toContain('No child slot is free');
   });
 });

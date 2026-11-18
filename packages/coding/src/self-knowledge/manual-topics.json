@@ -923,7 +923,7 @@
       "separate `credentialRef` broker.",
       "",
       "AMA uses parallel-first collaboration: when two or more substantive lanes are independent",
-      "and child start slots are available, fan them out through ordinary Actor operations.",
+      "and a child slot is free, fan them out through ordinary Actor operations.",
       "Solo work is reserved for genuinely indivisible or strongly serial tasks. Optional",
       "`quality_strategy` metadata records provenance without admitting or blocking a turn. Runtime derives",
       "a bounded, fact-only `PatternTrace`; it distinguishes coverage, replication, and",

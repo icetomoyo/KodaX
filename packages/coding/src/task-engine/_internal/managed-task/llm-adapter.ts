@@ -28,7 +28,6 @@ import { canProjectManagedToolContracts, projectManagedToolContracts } from '../
 import { projectToolSearchResultParameters } from '../../../tools/tool-search-model-result.js';
 import { projectManagedToolActivation, type ManagedToolActivationFacts } from '../../../tools/managed-tool-activation.js';
 import { projectManagedSystemContract } from '../../../prompts/managed-system-contract.js';
-import { projectManagedContextContract } from '../../../prompts/managed-context-contract.js';
 import { getRegisteredToolDefinition } from '../../../tools/registry.js';
 import { filterModelToolAliases } from '../../../agent-runtime/tool-resolution.js';
 
@@ -554,12 +553,11 @@ export function buildRunnerLlmAdapter(
       [...projectManagedToolActivation(agent, assembledTools, options.context, source, getToolActivationFacts?.())];
     wireTools = activateTools(transcript);
     const projectSearchResults = (source: readonly KodaXMessage[], tools: readonly KodaXToolDefinition[] = wireTools): KodaXMessage[] => {
-      const projected = projectManagedContextContract(agent, source, options.context);
       if (!canProjectManagedToolContracts(agent, options.context)
-        || getRegisteredToolDefinition('tool_search')?.source.kind !== 'builtin') return projected;
+        || getRegisteredToolDefinition('tool_search')?.source.kind !== 'builtin') return [...source];
       const native = new Set(tools.map(tool => tool.name));
       const leaves = getScriptModelContracts(agent, tools)?.leaves.filter(tool => !native.has(tool.name)) ?? [];
-      return projectToolSearchResultParameters(projected, [...tools, ...leaves]);
+      return projectToolSearchResultParameters(source, [...tools, ...leaves]);
     };
     const buildWireSystem = (source: string, tools: readonly KodaXToolDefinition[]) =>
       withEffectivePermissionContext(withScriptModeGuidance(agent, tools,

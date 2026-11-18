@@ -803,6 +803,7 @@ describe('managed runner queue routing', () => {
     let deliveredEntryIds: Readonly<Record<string, string>> | undefined;
     const actorSession = new CodingActorSession({
       sessionId,
+      maxConcurrentThreadsPerSession: 2,
       executor: {
         execute: async () => {
           await vi.waitFor(() => expect(inputWindowOpen).toBe(true));
@@ -3565,14 +3566,12 @@ describe('runManagedTaskViaRunner — end-to-end', () => {
       expect(ephemeralSuffix).toBeUndefined();
       const managedContext = transcript.find((message) =>
         message._source === 'managed-run-context');
-      expect(managedContext?.content).toContain('This Actor tree has 4 total concurrency slots');
-      expect(managedContext?.content).toContain('0 non-root turns are active');
-      expect(managedContext?.content).toContain('3 child start slots are available');
+      expect(managedContext?.content).toContain('This session runs at most 3 child Agents at a time.');
       expect(managedContext?._synthetic).toBe(true);
       expect(transcript.indexOf(managedContext!)).toBeLessThan(
         transcript.findIndex((message) => message._synthetic !== true && message.role === 'user'),
       );
-      expect(systemPrompt).not.toContain('ACTOR CAPACITY (authoritative runtime fact):');
+      expect(systemPrompt).not.toContain('ACTOR CAPACITY:');
     } finally {
       await controller.shutdown('test complete');
     }
@@ -3591,7 +3590,7 @@ describe('runManagedTaskViaRunner — end-to-end', () => {
         }
       }),
     };
-    const controller = await createAgentActorController({ executor });
+    const controller = await createAgentActorController({ executor, maxConcurrentThreadsPerSession: 2 });
     testActorControllers.push(controller);
     const options = {
       ...makeOptions(),
@@ -3650,9 +3649,9 @@ describe('runManagedTaskViaRunner — end-to-end', () => {
 
       expect(suffixes.every((suffix) => suffix === undefined)).toBe(true);
       expect(transcripts[0]?.find((message) => message._source === 'managed-run-context')?.content)
-        .toContain('0 non-root turns are active');
+        .not.toContain('No child slot is free');
       expect(transcripts[1]?.find((message) => message._source === 'managed-runtime-context')?.content)
-        .toContain('1 non-root turns are active');
+        .toContain('No child slot is free right now');
       const deltaIndex = transcripts[1]?.findIndex((message) =>
         message._source === 'managed-runtime-context') ?? -1;
       const correctionIndex = transcripts[1]?.findIndex((message) => (

@@ -39,6 +39,20 @@ describe('managed run context layout', () => {
     expect(later).toBe(first);
   });
 
+  it('keys the Actor capacity fingerprint on the guidance the model sees', () => {
+    const at = (activeNonRootTurns: number, availableToolNames?: readonly string[]) =>
+      resolveRoleRuntimeStateFingerprint({
+        originalTask: 'task',
+        actorCapacity: { maxConcurrentThreads: 4, activeNonRootTurns },
+        ...(availableToolNames ? { availableToolNames } : {}),
+      });
+
+    expect(at(1)).not.toBe(at(0));
+    expect(at(3)).not.toBe(at(2));
+    expect(at(4)).toBe(at(3));
+    expect(at(2, ['read'])).toBe(at(0, ['read']));
+  });
+
   it('keeps the latest real user instruction after canonical context', () => {
     const canonical = {
       role: 'user' as const,

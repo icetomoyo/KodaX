@@ -70,8 +70,7 @@ export async function prepareActivationCapacityPair(directory: string, baseline:
       return { textBlocks: [{ text: 'Offline request projection only; original task not executed.' }], toolBlocks: [] };
     })([{ role: 'system', content: alignedCandidate.system }, ...messages], agent);
     if (requests !== 1 || !projected || inputHash(messages) !== inputHash(saved)) throw new Error('Adapter must project exactly once without changing canonical state');
-    if (!String(projected[0]?.content).includes('Snapshot: 3 active non-root turns; 0 child start slots available')
-      || String(projected[0]?.content).includes('At this prompt snapshot')) throw new Error('Actual adapter did not apply candidate capacity contract');
+    if (!String(projected[0]?.content).includes('No child slot is free right now')) throw new Error('Actual adapter did not carry the canonical capacity contract');
     if (inputHash(projected.slice(1)) !== inputHash(messages.slice(1))) throw new Error('Capacity projection changed task or original refusal');
     const facts = { snapshot, inspectChild, admissions, listed, denial, workspace, adapterToolNames,
       environmentProjection: { baselineBefore: inputHash(baseline.system), baselineAfter: inputHash(alignedBaseline.system),

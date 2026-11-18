@@ -741,6 +741,8 @@ function errorFact(error: unknown): Readonly<Record<string, unknown>> {
         ? { hint: 'Use the Runtime that owns this Session, or stop that Runtime before retrying.' }
         : record.code === 'actor_owner_unknown'
           ? { hint: 'Stop the pre-v0.7.78 Runtime cleanly, then retry the Session operation.' }
+        : record.code === 'agent_limit_reached'
+          ? { hint: 'No child slot is free, so another start now is rejected too. Do this track yourself, or start it after a running Agent finishes.' }
         : record.retryable === true
           ? { hint: 'Wait for an active Agent turn to finish, then replan.' }
           : {}),

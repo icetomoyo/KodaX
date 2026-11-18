@@ -48,13 +48,15 @@ function restoreUngatedRepoFallback(current: string): string {
 }
 
 /** Rebuild the audited Worker checkpoint from current canonical teaching: before plan batching, answer-directly,
- * multi-Run envelopes, the un-jargoned model_hint tier and the pull-tool-gated repo fallback. */
+ * multi-Run envelopes, the un-jargoned model_hint tier, free-slot wording and the pull-tool-gated repo fallback. */
 export function replayAuditedWorkerCheckpoint(current: string): string {
   if (current.split(WORKER_TRUST_CURRENT).length !== 2) throw new Error('Canonical Worker trust rules changed; reconstruct the audited checkpoint explicitly');
   return restoreUngatedRepoFallback(current.replace(`- ${PLAN_BATCH_GUIDANCE}\n`, '').replace(`- ${staticText('worker.answerDirectly')}\n`, '')
     .replace(WORKER_TRUST_CURRENT, () => WORKER_TRUST_BEFORE_RETENTION)
     .replace('`"fast"` only for read-only mechanical lookups', '`"fast"` only for evaluated read-only mechanical lookups')
-    .replace('fast only for read-only mechanical lookups', 'fast only for evaluated read-only mechanical lookups'));
+    .replace('fast only for read-only mechanical lookups', 'fast only for evaluated read-only mechanical lookups')
+    .replace('lanes and a child slot is free, fan them out', 'lanes and child start slots are available, fan them out')
+    .replace('dependencies, or no child slot is free.', 'dependencies, or no child start slot is available.'));
 }
 
 export function buildRestructuredWorkerContract(original: string): string {
