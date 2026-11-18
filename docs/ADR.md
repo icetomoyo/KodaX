@@ -1,5 +1,47 @@
 # KodaX Architecture Decision Records
 
+## Prompt variants keep conditions; Actor capacity states free slots — 2026-11-18 (unreleased)
+
+Issue 415 came from a compact prompt projection that dropped a condition. The
+Skill catalog rule became an unconditional "invoke a matching Skill first".
+
+**Decision.** A projection may shorten a rule. It must keep the condition under
+which the rule applies, and the reason when the rule forbids something. Each
+model-facing fact has one owner. The Skill trigger lives only in the catalog,
+and the compact Worker text no longer restates it. The Actor capacity block is
+the only place that states the child-slot limit; REVIEW BREADTH no longer
+repeats it. Prompt evals capture production request bytes from the real
+managed Runtime. A synthetic fixture missed the worktree state and produced
+misses that production did not have.
+
+**Decision.** The Actor capacity block states the free slot count as a fact,
+or says that none is free. The runtime refresh resends it when it changes. A
+rejected `spawn_agent` result gives a next step. The scheduler's hard limit,
+the structured `agent_limit_reached` error and the Workflow wait-and-retry stay
+as the backstop. Proactive delegation stays on.
+
+**Rejected alternatives.** Each was tested on `glm-5.3-flash`,
+`deepseek-flash` and `kimi-for-coding` with blind review:
+
+- *Soften the catalog only.* The compact text still restated the mandate, so
+  the trigger kept two owners.
+- *Add a "load the matching Skill first" line to each procedure.*
+  `deepseek-flash` Skill misses went 4 → 5.
+- *Remove the competing review and commit lines.* No measurable effect (R-1).
+  The remaining misses came from the fixture lacking worktree state (R-2: 15/15
+  with production bytes).
+- *Codex-style capacity.* Codex uses a static "N slots including you" line, no
+  refresh and a bare limit error. It over-spawned in 18/36 busy, full and
+  rejected cells, against 0/36 for the free-count text. Codex is explicit-only
+  by default, so its static line rarely meets a busy tree. KodaX delegates
+  proactively and needs the live count.
+- *Leave the subtraction to the model.* With the old block, 8/9 partly busy
+  cells started more children than were free (d-1).
+
+**Consequences.** Canonical and compact Worker texts remain separate sources
+until the prompt store moves to sections. Substrate: 068b89d15 for the d-4
+eval; the fix commits are 4788f47a9, 36fac9eeb, 068b89d15 and d02236f84.
+
 ## Session default isolation — 2026-11-11 (released in v0.7.97-beta.6)
 
 The Host captures user-level Session defaults once at Session creation, or on

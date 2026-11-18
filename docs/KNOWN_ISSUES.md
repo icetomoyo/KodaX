@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-16_
+_Last Updated: 2026-11-18_
 
 ---
 
@@ -46,6 +46,75 @@ This predates the child contract projection; the eval uses raw per-call usage,
 not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
+
+## Issue 415: Ordinary requests start with a Skill search, and weak models load unrelated Skills
+
+- Priority: High
+- Status: Resolved
+- Introduced: `v0.7.97-beta.5`, compact Worker projection (2e8268354)
+- Created / Resolved: 2026-11-17 / 2026-11-18
+- Fixed: unreleased (4788f47a9, 36fac9eeb, 068b89d15, d02236f84)
+
+### Original Problem
+
+A beta.10 customer reported that ordinary requests, such as installing an
+offline RPM with Docker, made the Agent look for Skills first. `glm-5.3-flash`
+and `deepseek-flash` then loaded unrelated Skills such as `git-workflow` or
+`tdd`. The compact Worker projection rendered the catalog rule as an
+unconditional "invoke a matching Skill as the FIRST action". Several
+amplifiers made it worse: a "Brainstorm required" routing flag, an overflow
+notice that invited guessing unlisted names, and a `kodax_manual` description
+that lost its "KodaX itself" scope.
+
+The audit that followed found the same pattern elsewhere. A projection dropped
+a condition, a keyword guess read as a rule, or the text named tools the mode
+did not have:
+
+- knowledge questions probed the workspace first;
+- the host OS rule leaked into answers about other systems;
+- "open a PR" counted as a review;
+- Script mode presented leaf tools as native.
+
+It also found that the Worker started more child Agents than were free in a
+partly busy tree. The capacity block gave the total, the active count and a
+hard limit, and left the subtraction to the model.
+
+### Resolution
+
+- The Skill catalog holds the only Skill trigger. It contains one conditional
+  "must" plus a no-match path, slash/args handling and a note that guessed
+  names fail. The compact projection no longer restates it.
+- The other dropped conditions are restored; see the commit messages for the
+  full list.
+- ACTOR CAPACITY states the child limit and how many slots are free right now,
+  or that none is. The runtime refresh carries the same fact. A single-slot
+  session gets one line. The scheduler limit is unchanged.
+- A rejected `spawn_agent` result carries a next step: do the track yourself,
+  or start it after a running Agent finishes.
+- The compact context projection (`managed-context-contract`) is deleted. It
+  rewrote the capacity block and would have kept the old wording alive.
+
+### Remaining Limits
+
+- The canonical and compact Worker texts are still two sources pinned by
+  hashes. This bug class can recur when one changes without the other. A
+  section-based prompt store is the planned fix.
+- `glm-5.3-flash` sometimes sends a `skill` call with arguments and no name. The
+  tool rejects it and the model retries. No wrong Skill loads.
+- `deepseek-flash` can run `git status` before loading `git-workflow` for a
+  commit request when the first turn has no worktree state. With production
+  request bytes it loaded the Skill in 15/15 cells.
+
+### Verification
+
+See [the regression guide](test-guides/ISSUE_415_v0.7.97_REGRESSION_GUIDE.md).
+Paid evals on `glm-5.3-flash`, `deepseek-flash` and `kimi-for-coding` used
+production request bytes, preregistered metrics and blind review:
+
+- Wrong Skill calls on ordinary requests fell to 0 in every candidate batch.
+- Local probes on knowledge questions fell 6 → 2.
+- Over-spawn in busy, full and rejected trees was 0/36 with the new capacity
+  text, against 18/36 for a Codex-style control.
 
 ## Issue 410: A client exit stop with a connected peer drains the Host and answers late
 
@@ -3049,6 +3118,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 415 | High | Resolved | Ordinary requests start with a Skill search, and weak models load unrelated Skills | `v0.7.97-beta.5` (compact Worker projection) | unreleased (after `v0.7.97-beta.11`) | 2026-11-17 | 2026-11-18 |
 | 410 | Medium | Resolved | A client exit stop with a connected peer drains the Host and answers late | `v0.7.97-alpha.2` (client exit receipts) | `v0.7.97-beta.9` | 2026-11-13 | 2026-11-13 |
 | 409 | High | Resolved | Windows daemon Job proof and failed-start cleanup prevent recovery | observed in v0.7.97-beta.4 (customer report); PowerShell Job probe since v0.7.97-alpha.7 | `v0.7.97-beta.8` | 2026-11-12 | 2026-11-12 |
 | 408 | Medium | Resolved | Space SDK leaks user image labels, rejects non-PNG attachments and loses extension approval attribution | observed in v0.7.97-beta.6; visual input/tools since beta.5 | `v0.7.97-beta.7` | 2026-11-12 | 2026-11-12 |
@@ -18680,7 +18750,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 288 (46 Open including 1 needs-info, 242 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 289 (46 Open including 1 needs-info, 243 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md

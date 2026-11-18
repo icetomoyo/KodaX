@@ -1133,6 +1133,16 @@ Child Agents are controlled through one Runtime-owned Actor/Turn tree:
 - one scheduler, mailbox, event stream, and root-owned work budget cover native,
   constructed, Workflow-owned, and external turns.
 
+The model sees child capacity as a fact, not as arithmetic. The ACTOR CAPACITY
+block in the first request states how many child Agents the session runs at
+once, and either how many are free now or that none is. The runtime refresh
+resends that line when the free count changes. A single-slot session gets one
+line saying `spawn_agent` is rejected. `AgentTurnScheduler.reserve` remains the
+backstop. It counts active turns only, so idle Actors hold no slot. When none is
+free it throws `AgentLimitReachedError`, and `spawn_agent` returns a structured
+`agent_limit_reached` result with the limit, the active count and a next-step
+hint. Workflows wait on `waitForAgentCapacity` and retry instead.
+
 The model-visible `wait_agent` schema contains only `timeout_ms` (10 seconds to
 1 hour, default 2 minutes). The handler subscribes to the caller's MessageQueue
 with read-register-recheck, does not consume the wake message, and returns one
@@ -1417,6 +1427,14 @@ paths use the same loader-visibility check before disclosing a catalog.
 Profile verification defaults, per-task verification overrides and execution
 guidance still reach Solo requests through their request-only Run context;
 retaining the Skill catalog does not drop those existing obligations.
+
+The Skill trigger has one owner: the model catalog section. It asks for a Skill
+only when a description clearly covers the request. It also gives the no-match
+path and the slash/args handling, and says that guessed names fail. Worker
+texts, including the compact projection, do not restate it. Routing labels are
+marked as a keyword guess the request overrides, so they cannot imply a Skill
+either. `tests/skill-trigger-surface.test.ts` pins these conditions on the
+assembled first-turn request.
 
 Runtime default and Markdown bindings use the common bounded formatter over
 their admitted Registry entries. Catalog omission never changes the binding's

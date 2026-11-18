@@ -655,6 +655,7 @@ describe('F270 canonical collaboration tools', () => {
         activeNonRootTurns: 3,
         availableNonRootSlots: 0,
         retryable: true,
+        hint: expect.stringContaining('Do this track yourself'),
       },
     });
     expect(listed.actors.some((actor) => actor.path === '/root/d')).toBe(false);

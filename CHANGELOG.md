@@ -6,6 +6,31 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Ordinary requests no longer start with a Skill search, and weak models no
+  longer load unrelated Skills (Issue 415, reported on beta.10). Since beta.5
+  the compact Worker prompt said "invoke a matching Skill as the FIRST action"
+  with no condition. The Skill catalog now asks for a Skill only when its
+  description clearly covers the request, and says to work directly
+  otherwise. The same audit restored other conditions the compact prompt had
+  dropped:
+  - knowledge questions are answered directly instead of probing the
+    workspace first;
+  - the host OS rule applies to commands for this machine, and requests about
+    another system get commands for that system;
+  - `kodax_manual` is scoped to KodaX itself;
+  - routing labels are marked as a guess the request overrides;
+  - "open a PR" no longer counts as a review request;
+  - a review naming one file or concern is not split across Agents;
+  - Script mode no longer presents leaf tools as native.
+
+- In a partly busy session, the Worker no longer starts more child Agents than
+  there are free slots. The capacity block states how many child slots are
+  free right now. A rejected `spawn_agent` result tells the model to do that
+  track itself or start it after a running Agent finishes. The runtime limit
+  itself is unchanged.
+
 ---
 
 ## [0.7.97-beta.11] - 2026-11-16
