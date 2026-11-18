@@ -630,7 +630,7 @@ export function buildRunnerLlmAdapter(
       usage?: KodaXTokenUsage;
     };
     if (overrideStream) {
-      emitEffectiveTaskConfig(options, { agentMode: options.agentMode ?? 'ama',
+      emitEffectiveTaskConfig(options, { agentMode: 'ama',
         toolScope: (agent.tools ?? []).map(tool => tool.name), modelToolScope: wireTools.map(tool => tool.name) });
       system = buildWireSystem(baseSystem, wireTools);
       streamResult = await overrideStream(
@@ -658,7 +658,7 @@ export function buildRunnerLlmAdapter(
       // Fit conservatively against the existing full instructions, then project
       // using the actual disclosed contracts. No iterative fitting or tool loss.
       const providerName = options.provider ?? provider.name ?? 'anthropic';
-      emitEffectiveTaskConfig(options, { agentMode: options.agentMode ?? 'ama',
+      emitEffectiveTaskConfig(options, { agentMode: 'ama',
         toolScope: (agent.tools ?? []).map(tool => tool.name), modelToolScope: wireTools.map(tool => tool.name) });
       const reasoningCache = getProviderReasoningCacheOptions(provider, activeModel ?? provider.getModel(), options.context?.configHome);
       const rejectedEfforts = reasoningCache.rejectedReasoningEfforts ?? [];
@@ -814,7 +814,7 @@ export function buildRunnerLlmAdapter(
       // Clean incomplete tool calls and validate tool history before
       // every provider call (CAP-002). Both helpers come from
       // `agent-runtime/history-cleanup.ts` and are shared with the
-      // SA-mode substrate (see catch-terminals.ts:runCatchCleanup).
+      // direct-engine substrate (see catch-terminals.ts:runCatchCleanup).
       providerMessages = cleanupIncompleteToolCalls(providerMessages);
       providerMessages = validateAndFixToolHistory(providerMessages);
       providerMessages = options.context?.toolResultRecovery?.project(providerMessages) ?? providerMessages;

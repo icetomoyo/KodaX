@@ -91,7 +91,7 @@ async function client() {
     process.send({ kind: 'connected', owner });
     const session = await runtime.sessions.create({ projectPath: home });
     const run = await runtime.runs.start({ sessionId: session.id, prompt: 'Return the local acceptance marker.',
-      options: { agentMode: 'sa' } });
+      options: {} });
     const result = await run.result;
     assert.equal(result.phase, 'completed', JSON.stringify(result));
     assert.ok(JSON.stringify(result.result).includes(output), JSON.stringify(result));

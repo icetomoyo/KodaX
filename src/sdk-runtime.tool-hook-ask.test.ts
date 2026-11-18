@@ -71,7 +71,7 @@ it('preserves each extension ask through the client Interaction and permission a
   const { runtime, session, start, pendingFor, extension } = await setup();
   extension.registerHook('tool:before', () => ({ decision: 'ask', reason: 'Requires a billing check.' }),
     { source: { kind: 'runtime', id: 'billing', label: 'Billing policy' } });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', workMode: 'coding', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { workMode: 'coding', permissionMode: 'full-access' });
   const runId = await start();
   const [request] = await pendingFor(runId);
   const [interaction] = await listClientInteractions({ userInputs: runtime.userInputs, permissions: runtime.permissions }, { sessionId: session.id });
@@ -88,7 +88,7 @@ it('preserves each extension ask through the client Interaction and permission a
 
 it('asks a person in Full Access with the reason, and the answer cannot become a grant', async () => {
   const { runtime, session, deleted, start, pendingFor } = await setup();
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', workMode: 'coding', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { workMode: 'coding', permissionMode: 'full-access' });
   const runId = await start();
   const [request, ...others] = await pendingFor(runId);
   expect(others).toEqual([]);
@@ -106,7 +106,7 @@ it('asks a person in Full Access with the reason, and the answer cannot become a
 // A read-only tool passes admission in every mode, so only the extension asks.
 it.each(['plan', 'accept-edits', 'auto', 'full-access'] as const)('asks a person in %s mode', async (permissionMode) => {
   const { runtime, session, deleted, start, pendingFor } = await setup({ sideEffect: 'readonly' });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', workMode: 'coding', permissionMode });
+  await runtime.sessions.updateSettings(session.id, { workMode: 'coding', permissionMode });
   const runId = await start();
   const [request, ...others] = await pendingFor(runId);
   expect(others).toEqual([]);
@@ -119,7 +119,7 @@ it.each(['plan', 'accept-edits', 'auto', 'full-access'] as const)('asks a person
 
 it('blocks the call when the person rejects it', async () => {
   const { runtime, session, deleted, start, pendingFor } = await setup();
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', workMode: 'coding', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { workMode: 'coding', permissionMode: 'full-access' });
   const runId = await start();
   const [request] = await pendingFor(runId);
   await runtime.permissions.respond(request!.id, { type: 'reject', reason: 'Not now.' });
@@ -130,7 +130,7 @@ it('blocks the call when the person rejects it', async () => {
 it('asks once when the Host already asked, and a saved grant does not skip the ask', async () => {
   // A second, unanswered request would time out and block the call.
   const { runtime, session, deleted, start, pendingFor } = await setup({ permissionTimeoutMs: 3_000 });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', workMode: 'coding' });
+  await runtime.sessions.updateSettings(session.id, { workMode: 'coding' });
   const first = await start();
   const [hostRequest, ...others] = await pendingFor(first);
   expect(others).toEqual([]);
@@ -151,7 +151,7 @@ it('asks once when the Host already asked, and a saved grant does not skip the a
 
 it('lets an embedder answer the ask itself, and blocks when its events cannot ask', async () => {
   const { runtime, session, deleted, start } = await setup();
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', workMode: 'coding' });
+  await runtime.sessions.updateSettings(session.id, { workMode: 'coding' });
   const requestToolApproval = vi.fn(async () => true);
   const answered = await start({ beforeToolExecute: async () => true, requestToolApproval });
   expect((await runtime.runs.await(answered)).phase).toBe('completed');

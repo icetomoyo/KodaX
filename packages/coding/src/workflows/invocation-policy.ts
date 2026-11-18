@@ -42,7 +42,7 @@ export function hasExplicitNaturalLanguageWorkflowIntent(input: string): boolean
  * `run_workflow` tool, which scouts the codebase first and authors a script
  * from real findings (file paths, the actual sub-problems, a concrete
  * outputSchema). A blind host-side generator cannot investigate, so pre-empting
- * NL here produced shallow, disjointed workflows. SA has no workflow host.
+ * NL here produced shallow, disjointed workflows. Direct (non-AMA) runs have no workflow host.
  *
  * The decision is the source alone, so this takes no agent mode or input text:
  * the earlier NL detection (explicit/complexity/negation regexes) existed only

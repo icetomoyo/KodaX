@@ -157,7 +157,7 @@ async function fixture() {
     name: 'Other input owner', instanceId: 'input-peer', instanceSecret: 'peer'.repeat(16),
   } });
   const session = await client.sessions.create({ projectPath: homeDir });
-  await client.sessions.updateSettings(session.id, { agentMode: 'sa', workMode: 'agent', permissionMode: 'full-access' });
+  await client.sessions.updateSettings(session.id, { workMode: 'agent', permissionMode: 'full-access' });
   const active = await client.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Hold the first request.' });
   await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(1);
   return { homeDir, requests, peer, session, active, release, get client() { return client; }, get host() { return host; },
@@ -280,7 +280,7 @@ it('recovers the committed withdrawal after its success frame is lost and the Ho
     // the recalled bytes on the actual provider wire, without inventing an archive.
     state.release();
     const recalledSession = await state.client.sessions.create({ projectPath: state.homeDir });
-    await state.client.sessions.updateSettings(recalledSession.id, { agentMode: 'sa', workMode: 'agent', permissionMode: 'full-access' });
+    await state.client.sessions.updateSettings(recalledSession.id, { workMode: 'agent', permissionMode: 'full-access' });
     const submitted = await state.client.inputs.submit({ ...recalled, sessionId: recalledSession.id, inputId: 'recalled-image', delivery: 'immediate' });
     expect((await state.client.runs.await(submitted.runId!)).phase).toBe('completed');
     expect(state.requests).toHaveLength(2);

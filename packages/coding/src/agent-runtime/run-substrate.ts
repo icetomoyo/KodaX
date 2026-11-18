@@ -547,7 +547,7 @@ function withCompletionEventOnce(events: KodaXEvents): KodaXEvents {
 }
 
 /**
- * Substrate executor body — the full SA execution pipeline (provider
+ * Substrate executor body — the full direct-engine execution pipeline (provider
  * resolution, tool loop, microcompact, edit recovery, extension queue,
  * managed protocol, terminals). FEATURE_100 (v0.7.29) renamed this from
  * `runKodaX` to `runSubstrate` so the public-facing `runKodaX`
@@ -1129,8 +1129,9 @@ async function runSubstrateInContext(
       agentId: messageQueueAgentId, maxPriority: 'user' as const, mode: 'prompt' as const,
       predicate: createRuntimeDeliveryPredicate(queue.getSnapshot(), messageQueueAgentId),
     };
-    // Host SA owns only its Session queue; an unscoped legacy queue belongs
-    // to a standalone embedder. Actor-backed Runs retain their exact route.
+    // For an unscoped run, a Host port with `consumePendingInputs` owns its
+    // Session queue; otherwise the unscoped legacy queue belongs to a
+    // standalone embedder. Actor-backed Runs retain their exact route.
     // Claim before the async append so a withdrawal cannot take back an input already entering history.
     const prompts = inputPort.consumePendingInputs && messageQueueAgentId === undefined ? [] : queue.dequeue(promptFilter);
     const notify = (inputs: readonly import('@kodax-ai/agent').QueuedMessage[], appended: readonly KodaXMessage[]) => {
@@ -1900,7 +1901,7 @@ async function runSubstrateInContext(
       const reservedResponseTokens = streamProvider.getEffectiveMaxOutputTokens(
         turnState.currentModelOverride,
       );
-      emitEffectiveTaskConfig(options, { agentMode: options.agentMode ?? 'sa',
+      emitEffectiveTaskConfig(options, { agentMode: 'ama',
         toolScope: fullActiveToolDefinitions.map(tool => tool.name), modelToolScope: activeToolDefinitions.map(tool => tool.name) });
       const physicalReserveTokens = reservedResponseTokens
         + (memorySession === undefined ? 0 : MEMORY_EVIDENCE_TOKEN_RESERVE);
@@ -2394,16 +2395,15 @@ async function runSubstrateInContext(
           // recovery (drop thinking blocks once, retry once) gated by
           // its own latch inside the coordinator. Bypass the maxRetries
           // gate so it can fire even when normal retries are exhausted.
-          // Mirrors the runner-driven path at runner-driven.ts:2654.
+          // Mirrors the AMA Worker adapter in
+          // task-engine/_internal/managed-task/llm-adapter.ts.
           //
           // The mirror is intentional, not migration debt: this file is
-          // the SA-mode substrate body and runner-driven.ts is the AMA-mode
-          // path (V2 Worker single-loop after FEATURE_193 retired the V1
-          // Scout/Planner/Generator/Evaluator chain). They are two parallel
-          // execution modes dispatched by `task-engine.ts:dispatchManagedTask`,
-          // sharing the same provider stack and therefore seeing the same
-          // thinking-mode errors. Per CLAUDE.md "abstract only after 3+
-          // real cases", 2 call sites stay duplicated. v0.7.28.
+          // the direct-engine body (`runKodaX`) and llm-adapter.ts drives
+          // the AMA Worker (`runManagedTask`). The two entries share the
+          // same provider stack and therefore see the same thinking-mode
+          // errors. Per CLAUDE.md "abstract only after 3+ real cases",
+          // 2 call sites stay duplicated. v0.7.28.
           if (decision.action === 'sanitize_thinking_and_retry') {
             const recovery = recoveryCoordinator.executeRecovery(providerMessages, decision);
             telemetryRecovery(decision.action, recovery);
@@ -2597,7 +2597,7 @@ async function runSubstrateInContext(
         ...result, toolBlocks: signal === 'COMPLETE' ? [] : visibleToolBlocks,
       }));
       // GOAL 2: stamp when the LLM stream completed so the session entry carries
-      // a real per-message time (SA path; parallel to runner.ts). Additive.
+      // a real per-message time (direct-engine path; parallel to runner.ts). Additive.
       messages.push({
         role: 'assistant',
         content: assistantContent,

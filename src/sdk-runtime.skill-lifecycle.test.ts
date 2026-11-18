@@ -107,7 +107,7 @@ it.each(['stop', 'close'] as const)('retains Skill execution ownership and input
   let observer: Awaited<ReturnType<typeof createKodaXRuntime>> | undefined;
   try {
     const session = await runtime.sessions.create({ projectPath: projectRoot });
-    await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', agentMode: 'sa' });
+    await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
     const input = { sessionId: session.id, inputId: 'same-skill', text: '/skill:context' };
     const accepted = await runtime.runs.acceptInput(input);
     await expect.poll(() => shell.mock.calls.length).toBe(1);

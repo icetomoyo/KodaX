@@ -72,7 +72,7 @@ try {
   child = pty.spawn(process.execPath, ['--require', path.join(repo, 'scripts/production-env.cjs'),
     '--import', pathToFileURL(path.join(repo, 'node_modules/tsx/dist/loader.mjs')).href,
     path.join(repo, 'src/kodax_bootstrap.ts'), '--provider', 'legacy-local', '--model', 'acceptance-model',
-    '--agent-mode', 'sa', '--effort', 'off'], { name: 'xterm-256color', cols: 110, rows: 32, cwd: homeDir,
+    '--effort', 'off'], { name: 'xterm-256color', cols: 110, rows: 32, cwd: homeDir,
     env: { ...environment, HOME: homeDir, USERPROFILE: homeDir, KODAX_HOME: path.join(homeDir, '.kodax'),
       KODAX_ACCEPTANCE_KEY: 'local-fixture-only', KODAX_TRACING: '0', KODAX_FORCE_INK: '1',
       KODAX_TUI_RENDERER: 'legacy', KODAX_FORCE_CLASSIC_REPL: '0', TERM: 'xterm-256color',

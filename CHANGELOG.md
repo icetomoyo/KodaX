@@ -31,6 +31,46 @@ All notable changes to this project will be documented in this file.
   track itself or start it after a running Agent finishes. The runtime limit
   itself is unchanged.
 
+- A `config.json` that an older REPL left at `agentMode: "sa"` no longer
+  sends Space and daemon sessions to the direct engine without Actor tools.
+  Product sessions now run AMA whatever that file says.
+
+- In a standalone REPL without a Host, Auto mode can now run a shell
+  command that falls back to the host because no OS sandbox is available.
+  The AMA Worker called the host review without the current call's context,
+  so the review always refused. It now passes the call's Agent, transcript
+  and cancellation, as the direct engine already did.
+
+- When a read-only tool fails in an AMA Worker, a same-named MCP tool can
+  now serve the call, as it already could on the direct engine.
+
+- With `repoIntelligenceMode: 'off'`, the AMA Worker no longer offers
+  repository-intelligence tools or teaches them in its prompt. The direct
+  engine already hid them.
+
+### Changed
+
+- SA mode is retired from every caller (FEATURE_310). `agentMode: 'sa'` is
+  still accepted and selects no behavior, like `amaw`:
+  - Product inputs, session settings and `runManagedTask` run AMA;
+  - `runKodaX` and a `runs.start` without `mode` treat it as unset and stay
+    on the direct engine.
+
+  The SA-only child-Agent exclusions and the `[Direct Path Rule]` prompt
+  overlay are gone. Hosts that need the direct engine start
+  `runs.start({ mode: 'coding' })`; `Run.mode` is the public fact that tells
+  the two engines apart. Stored Run records that say `'sa'` stay readable.
+  Under `runManagedTask`, `context.systemPromptOverride` now follows AMA
+  rules: it is prepended to the Worker prompt instead of replacing it.
+  See the SA section in [SDK_MIGRATION.md](docs/SDK_MIGRATION.md).
+
+- The self-review note appended after a run of edits no longer says
+  "SA mode has no Evaluator". It also no longer suggests re-running the task
+  under AMA for an independent Evaluator pass. AMA has had no Evaluator since
+  it became a single Worker, so that advice was wrong. The note still asks the
+  model to re-read the diff and run the project's checks. An A/B eval found
+  that weak models self-review at least as well with the new text.
+
 ---
 
 ## [0.7.97-beta.11] - 2026-11-16

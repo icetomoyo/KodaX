@@ -195,7 +195,7 @@ describe('executeCommand', () => {
       reasoningMode: 'off',
       parallel: false,
       permissionMode: 'accept-edits',
-      agentMode: 'sa',
+      agentMode: 'ama',
     };
     exitCalled = false;
     savedSession = null;
@@ -362,7 +362,7 @@ describe('Command Aliases', () => {
       reasoningMode: 'off',
       parallel: false,
       permissionMode: 'accept-edits',
-      agentMode: 'sa',
+      agentMode: 'ama',
     };
     callbacks = {
       exit: () => {},
@@ -467,7 +467,7 @@ describe('Mode Switching Detailed', () => {
       reasoningMode: 'off',
       parallel: false,
       permissionMode: 'accept-edits',
-      agentMode: 'sa',
+      agentMode: 'ama',
     };
     callbacks = {
       exit: () => {},

@@ -79,7 +79,7 @@ afterEach(async () => {
 
 it('hosts one goal state both clients read, with explicit lifecycle conflicts', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
 
   expect(await second.sessions.readGoal(session.id)).toBeNull();
   // Goal entries anchor to the active branch, so a session without any
@@ -129,7 +129,7 @@ it('hosts one goal state both clients read, with explicit lifecycle conflicts', 
 
 it('appends notices through the Host so both clients see them in the view', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
 
   await first.sessions.appendNotice(session.id, { content: 'Migrated to Host-owned notices.' });
   // Notices stay display-only: nothing but learning-review judge frames
@@ -146,7 +146,7 @@ it('appends notices through the Host so both clients see them in the view', asyn
 
 it('keeps an explicit order when both clients create a goal concurrently', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const round = await first.inputs.submit({ sessionId: session.id, inputId: 'warmup', text: 'Warm up.' });
   await runtime.runs.await(round.runId!);
 
@@ -168,7 +168,7 @@ it('keeps an explicit order when both clients create a goal concurrently', async
 
 it('does not resurrect runs from an active goal after a Host restart', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const round = await first.inputs.submit({ sessionId: session.id, inputId: 'warmup', text: 'Warm up.' });
   await runtime.runs.await(round.runId!);
   await first.sessions.createGoal(session.id, { objective: 'Survives restarts without running' });

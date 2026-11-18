@@ -13,7 +13,7 @@ import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtim
 import { BUILTIN_COMMANDS, type CommandCallbacks, type CurrentConfig } from '../packages/repl/src/interactive/commands.js';
 import { createInteractiveContext } from '../packages/repl/src/interactive/context.js';
 
-it('probes and forgets capabilities in the actual Host used by subsequent SA and AMA requests', async () => {
+it('probes and forgets capabilities in the actual Host used by subsequent direct and AMA requests', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-capabilities-'));
   const requestedEfforts: (string | undefined)[] = [];
   const requests: unknown[] = [];
@@ -82,7 +82,7 @@ it('probes and forgets capabilities in the actual Host used by subsequent SA and
           },
         };
         const config: CurrentConfig = {
-          ...selection, thinking: true, reasoningMode: 'auto', agentMode: 'sa', permissionMode: 'accept-edits',
+          ...selection, agentMode: 'ama', thinking: true, reasoningMode: 'auto', permissionMode: 'accept-edits',
         };
         const beforeProbe = requests.length;
         await providerCommand.handler(['probe'], context, callbacks, config);
@@ -90,16 +90,18 @@ it('probes and forgets capabilities in the actual Host used by subsequent SA and
           expect.objectContaining({ reasoning_effort: 'high' }),
         ]));
         expect(requests.length).toBeGreaterThan(beforeProbe);
-        for (const agentMode of ['sa', 'ama'] as const) {
+        for (const mode of ['coding', 'managed_task'] as const) {
           const session = await client.sessions.create({ projectPath: homeDir });
           await client.sessions.updateSettings(session.id, {
-            ...selection, agentMode, permissionMode: 'full-access', effort: 'high',
+            ...selection, agentMode: 'ama', permissionMode: 'full-access', effort: 'high',
           });
           requestedEfforts.length = 0;
-          const accepted = await client.inputs.submit({ sessionId: session.id, inputId: `narrow-${agentMode}`, text: 'Reply briefly.' });
-          if (!accepted.runId) throw new Error('Expected an immediate Run.');
-          expect((await runtime.runs.get(accepted.runId)).mode).toBe(agentMode === 'ama' ? 'managed_task' : 'coding');
-          await runtime.runs.await(accepted.runId);
+          const runId = mode === 'coding'
+            ? (await runtime.runs.start({ sessionId: session.id, prompt: 'Reply briefly.', mode })).runId
+            : (await client.inputs.submit({ sessionId: session.id, inputId: 'narrow-ama', text: 'Reply briefly.' })).runId;
+          if (!runId) throw new Error('Expected an immediate Run.');
+          expect((await runtime.runs.get(runId)).mode).toBe(mode);
+          await runtime.runs.await(runId);
           await awaitLatestCodingMemoryReviewDrain(5_000);
           expect(requestedEfforts.length).toBeGreaterThan(0);
           expect(requestedEfforts).not.toContain('high');
@@ -124,49 +126,47 @@ it('probes and forgets capabilities in the actual Host used by subsequent SA and
         runtime.catalog.forgetCapabilities = forget;
         expect(await client.catalog.reasoningEfforts(selection)).toContain('high');
         const restored = await client.sessions.create({ projectPath: homeDir });
-        await client.sessions.updateSettings(restored.id, { ...selection, agentMode: 'sa', effort: 'high', permissionMode: 'full-access' });
+        await client.sessions.updateSettings(restored.id, { ...selection, effort: 'high', permissionMode: 'full-access' });
         requestedEfforts.length = 0;
         const accepted = await client.inputs.submit({ sessionId: restored.id, inputId: 'restored', text: 'Reply briefly.' });
         if (!accepted.runId) throw new Error('Expected an immediate Run.');
         await runtime.runs.await(accepted.runId);
         await awaitLatestCodingMemoryReviewDrain(5_000);
         expect(requestedEfforts).toContain('high');
-        for (const agentMode of ['sa', 'ama'] as const) {
-          // Both execution paths inherit high; only an actual rejection may lower the wire effort.
-          rejectActualEffort = 'high';
-          const sentEffort = 'medium';
-          await awaitLatestCodingMemoryReviewDrain(5_000);
-          await client.catalog.forgetCapabilities(selection);
-          const session = await client.sessions.create({ projectPath: homeDir });
-          await client.sessions.updateSettings(session.id, { ...selection, agentMode, effort: 'high', permissionMode: 'full-access' });
-          const saved = await client.sessions.getSettings(session.id);
-          const defaults = await client.config.read();
-          const notices: string[] = [];
-          const noticeIds = new Set<string>(), completedRuns = new Set<string>();
-          let actualReasoning: import('@kodax-ai/coding/client-contract').ClientSessionActivity['reasoning'];
-          const observation = await client.sessions.observe(session.id, view => {
-            notices.push(...view.items.filter(item => item.type === 'info').map(item => item.text));
-            for (const item of view.items) if (item.type === 'info' && item.text.startsWith('[Reasoning]')) noticeIds.add(item.id);
-            for (const run of view.runs) if (run.phase === 'completed') completedRuns.add(run.runId);
-            actualReasoning = view.activity?.reasoning;
-          });
-          try {
-            const run = await client.inputs.submit({ sessionId: session.id, inputId: `rejected-${agentMode}`, text: 'Reply briefly.' });
-            expect(await client.runs.await(run.runId!)).toMatchObject({ phase: 'completed' });
-            await expect.poll(() => notices.join('\n'), { message: agentMode }).toContain(`rejected effort '${rejectActualEffort}'`);
-            await expect.poll(() => notices.join('\n')).toContain(`sent effort '${sentEffort}' (requested '${rejectActualEffort}'; unverified)`);
-            expect(actualReasoning).toMatchObject({ requestedEffort: 'high', sentEffort: 'medium', verified: false });
-            expect(await client.sessions.getSettings(session.id)).toEqual(saved);
-            expect(await client.config.read()).toEqual(defaults);
-            const beforeNext = requests.length, noticeCount = noticeIds.size;
-            const next = await client.inputs.submit({ sessionId: session.id, inputId: `learned-${agentMode}`, text: 'Reply briefly again.' });
-            expect(await client.runs.await(next.runId!)).toMatchObject({ phase: 'completed' });
-            await expect.poll(() => completedRuns.has(next.runId!)).toBe(true);
-            expect(requests.slice(beforeNext)).not.toContainEqual(expect.objectContaining({ reasoning_effort: 'high' }));
-            expect(noticeIds.size).toBe(noticeCount);
-            expect(actualReasoning).toMatchObject({ requestedEffort: 'high', sentEffort: 'medium', verified: false });
-          } finally { observation.close(); }
-        }
+        // The Run inherits high; only an actual rejection may lower the wire effort.
+        rejectActualEffort = 'high';
+        const sentEffort = 'medium';
+        await awaitLatestCodingMemoryReviewDrain(5_000);
+        await client.catalog.forgetCapabilities(selection);
+        const session = await client.sessions.create({ projectPath: homeDir });
+        await client.sessions.updateSettings(session.id, { ...selection, agentMode: 'ama', effort: 'high', permissionMode: 'full-access' });
+        const saved = await client.sessions.getSettings(session.id);
+        const defaults = await client.config.read();
+        const notices: string[] = [];
+        const noticeIds = new Set<string>(), completedRuns = new Set<string>();
+        let actualReasoning: import('@kodax-ai/coding/client-contract').ClientSessionActivity['reasoning'];
+        const observation = await client.sessions.observe(session.id, view => {
+          notices.push(...view.items.filter(item => item.type === 'info').map(item => item.text));
+          for (const item of view.items) if (item.type === 'info' && item.text.startsWith('[Reasoning]')) noticeIds.add(item.id);
+          for (const run of view.runs) if (run.phase === 'completed') completedRuns.add(run.runId);
+          actualReasoning = view.activity?.reasoning;
+        });
+        try {
+          const run = await client.inputs.submit({ sessionId: session.id, inputId: 'rejected', text: 'Reply briefly.' });
+          expect(await client.runs.await(run.runId!)).toMatchObject({ phase: 'completed' });
+          await expect.poll(() => notices.join('\n')).toContain(`rejected effort '${rejectActualEffort}'`);
+          await expect.poll(() => notices.join('\n')).toContain(`sent effort '${sentEffort}' (requested '${rejectActualEffort}'; unverified)`);
+          expect(actualReasoning).toMatchObject({ requestedEffort: 'high', sentEffort: 'medium', verified: false });
+          expect(await client.sessions.getSettings(session.id)).toEqual(saved);
+          expect(await client.config.read()).toEqual(defaults);
+          const beforeNext = requests.length, noticeCount = noticeIds.size;
+          const next = await client.inputs.submit({ sessionId: session.id, inputId: 'learned', text: 'Reply briefly again.' });
+          expect(await client.runs.await(next.runId!)).toMatchObject({ phase: 'completed' });
+          await expect.poll(() => completedRuns.has(next.runId!)).toBe(true);
+          expect(requests.slice(beforeNext)).not.toContainEqual(expect.objectContaining({ reasoning_effort: 'high' }));
+          expect(noticeIds.size).toBe(noticeCount);
+          expect(actualReasoning).toMatchObject({ requestedEffort: 'high', sentEffort: 'medium', verified: false });
+        } finally { observation.close(); }
         await client.disconnect();
         const beforeDisconnectedCommands = requests.length;
         expect(await providerCommand.handler(['probe'], context, callbacks, config)).toMatchObject({ success: false });

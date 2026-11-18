@@ -136,7 +136,7 @@ it('initializes legacy Session defaults once while preserving explicit settings 
 it('uses isolated model defaults for actual Runs, including clear, fork and Host restart', async () => {
   await first.config.patch({ provider: 'product-catalog-test', model: 'original-model', effort: 'low' });
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await first.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   await second.config.patch({ model: 'peer-model', effort: 'max' });
   async function run(id: string, expected: string | undefined) {
     const accepted = await first.inputs.submit({ sessionId: id, inputId: randomUUID(), text: 'Say hello.' });
@@ -224,8 +224,8 @@ it('selects a Host-only model through the actual model command and clears it whe
   await first.config.patch({ providerModels: { 'openai': ['host-only'] } });
   const session = await first.sessions.create({ projectPath: homeDir });
   const current: CurrentConfig = {
-    provider: 'openai', thinking: false, reasoningMode: 'off',
-    agentMode: 'sa', permissionMode: 'full-access',
+    provider: 'openai', agentMode: 'ama', thinking: false, reasoningMode: 'off',
+    permissionMode: 'full-access',
   };
   const callbacks: CommandCallbacks = {
     config: first.config, catalog: first.catalog,
@@ -291,15 +291,15 @@ it('selects a Host-only model through the actual model command and clears it whe
   finally { observation.close(); }
   const other = await first.sessions.create({ projectPath: homeDir });
   await first.sessions.updateSettings(other.id, { agentMode: 'ama' });
+  await first.config.patch({ agentMode: null });
   const patch = runtime.config.patch;
-  await first.config.patch({ agentMode: 'sa' });
   runtime.config.patch = async () => { throw new Error('Injected Host save failure'); };
   try {
     expect(await modeCommand.handler(['ama'], context, callbacks, current)).toMatchObject({
       success: false, message: expect.stringMatching(/Host default save failed:.*Session applied/),
     });
     expect(await second.sessions.getSettings(session.id)).toMatchObject({ agentMode: 'ama' });
-    expect(await second.config.read()).toMatchObject({ agentMode: 'sa' });
+    expect(await second.config.read()).not.toHaveProperty('agentMode');
   } finally { runtime.config.patch = patch; }
   runtime.config.patch = async input => { await patch(input); throw new Error('Injected post-save failure'); };
   try {
@@ -344,7 +344,7 @@ it('applies explicit execution controls and exposes only their safe effective fa
     },
   };
   const context = await createInteractiveContext({});
-  const current: CurrentConfig = { provider: 'product-catalog-test', thinking: false, reasoningMode: 'off', agentMode: 'sa', permissionMode: 'full-access' };
+  const current: CurrentConfig = { provider: 'product-catalog-test', agentMode: 'ama', thinking: false, reasoningMode: 'off', permissionMode: 'full-access' };
   for (const [name, field] of [['stall-log', 'stallLog']] as const) {
     const command = BUILTIN_COMMANDS.find(item => item.name === name)!;
     expect(await command.handler(['on'], context, callbacks, current)).toMatchObject({ success: true });
@@ -444,7 +444,7 @@ it('finds resumable Host sessions beyond the first window and agrees with the re
   // The seed Run supplies saved history; repository analysis is outside this
   // discovery contract and otherwise scans the real checkout under CI load.
   await first.sessions.updateSettings(session.id, {
-    provider: 'product-catalog-test', agentMode: 'sa', repoIntelligenceMode: 'off',
+    provider: 'product-catalog-test', repoIntelligenceMode: 'off',
   });
   const run = await first.inputs.submit({ sessionId: session.id, inputId: 'discovery-fixture', text: 'Saved history' });
   if (!run.runId) throw new Error('Expected immediate fixture run');
@@ -524,7 +524,7 @@ it('changes the fallback used by real Workflow child execution', async () => {
   }
 }, 30_000);
 
-it.each(['ama', 'sa'] as const)('uses the Host goal journal during an actual %s Run without a completion sidecar', async agentMode => {
+it('uses the Host goal journal during an actual Run without a completion sidecar', async () => {
   const requests: string[] = [];
   let turn = 0;
   class GoalProvider extends KodaXBaseProvider {
@@ -546,7 +546,7 @@ it.each(['ama', 'sa'] as const)('uses the Host goal journal during an actual %s 
   }
   registerModelProvider('goal-result-test', () => new GoalProvider());
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { provider: 'goal-result-test', agentMode, permissionMode: 'full-access', repoIntelligenceMode: 'off', maxIter: 4 });
+  await first.sessions.updateSettings(session.id, { provider: 'goal-result-test', agentMode: 'ama', permissionMode: 'full-access', repoIntelligenceMode: 'off', maxIter: 4 });
   const accepted = await first.inputs.submit({ sessionId: session.id, inputId: 'goal-result', text: 'Create a goal, inspect the requested result, and mark the goal complete when finished.' });
   if (!accepted.runId) throw new Error('Expected immediate run');
   expect((await first.runs.await(accepted.runId)).phase).toBe('completed');
@@ -555,7 +555,7 @@ it.each(['ama', 'sa'] as const)('uses the Host goal journal during an actual %s 
   expect((await second.sessions.readHistory(session.id)).items.length).toBeGreaterThan(4);
  });
 
-it('keeps SA goal continuation out of user history while preserving the original input', async () => {
+it('keeps goal continuation out of user history while preserving the original input', async () => {
   let turn = 0;
   class Provider extends KodaXBaseProvider {
     readonly name = 'goal-continuation-test'; readonly supportsThinking = false;
@@ -572,7 +572,7 @@ it('keeps SA goal continuation out of user history while preserving the original
   }
   registerModelProvider('goal-continuation-test', () => new Provider());
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { provider: 'goal-continuation-test', agentMode: 'sa', permissionMode: 'full-access', repoIntelligenceMode: 'off', maxIter: 5 });
+  await first.sessions.updateSettings(session.id, { provider: 'goal-continuation-test', permissionMode: 'full-access', repoIntelligenceMode: 'off', maxIter: 5 });
   const original = 'Create a goal and finish the requested result.';
   const accepted = await first.inputs.submit({ sessionId: session.id, inputId: 'goal-continuation', text: original });
   if (!accepted.runId) throw new Error('Expected immediate Run');

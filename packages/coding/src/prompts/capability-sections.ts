@@ -2,7 +2,7 @@
  * v0.7.35.1 FEATURE_142 Batch E — Capability Context Sections.
  *
  * Single source of truth for the 14 capability-context prompt sections
- * the SA path (`buildSystemPromptSnapshot` in `builder.ts`) assembles.
+ * the direct engine (`buildSystemPromptSnapshot` in `builder.ts`) assembles.
  * Extracted to dedupe with a future AMA worker integration (Batch F /
  * v0.7.36 FEATURE_143). Each section's id, order, content shape, and
  * inclusion condition is preserved byte-equivalently from
@@ -26,7 +26,7 @@
  *
  * Why this lives in `@kodax-ai/coding/src/prompts/` and NOT
  * `@kodax-ai/agent/`:
- *   - All callers (builder.ts SA path + future AMA role-prompt) are
+ *   - All callers (builder.ts direct-engine path + AMA `runner-driven.ts`) are
  *     coding-internal. A future `@kodax-ai/data-analysis-agent` would
  *     have its own builder + role-prompt with its own section set
  *     (e.g. `prompt-overlay` is coding-routing-specific). Cross-agent
@@ -36,11 +36,11 @@
  *     `@kodax-ai/agent` / `@kodax-ai/agent` cross-package dependencies,
  *     breaking the "agent doesn't depend on application-layer
  *     packages" promise.
- *   - The drift problem this batch solves is "SA / AMA assemble the
+ *   - The drift problem this batch solves is "direct engine / AMA assemble the
  *     same content twice" — a coding-internal duplication, not a
  *     cross-package boundary issue.
  *
- * Behavior contract: the SA path's emitted sections array (and thus
+ * Behavior contract: the direct-engine path's emitted sections array (and thus
  * `KodaXPromptSnapshot.rendered`) MUST stay byte-equivalent to the
  * pre-Batch E `buildSystemPromptSnapshot` output. `builder.test.ts` is
  * the integration-level guard for this contract.
@@ -234,8 +234,8 @@ export async function buildCapabilityContextSections(
 
   // Static EXECUTION GUIDANCE replaces the old router `prompt-overlay` section
   // (EXECUTION_MODE / HARNESS_PROFILE overlays + [Task Routing] classification
-  // dump) — the SA agent self-judges the kind of work, matching the AMA Worker
-  // (ADR-043 P1.7). Shared verbatim via `execution-guidance.ts`. The AMA path
+  // dump) — the direct-engine agent self-judges the kind of work, matching the
+  // AMA Worker (ADR-043 P1.7). Shared verbatim via `execution-guidance.ts`. The AMA path
   // excludes this section (it carries EXECUTION_GUIDANCE inside
   // `buildWorkerInstructions`); see `AMA_OWNED_SECTION_IDS` in runner-driven.
   sections.push(
@@ -246,19 +246,17 @@ export async function buildCapabilityContextSections(
     ),
   );
 
-  // `context.promptOverlay` now carries ONLY the SA task-family Direct Path Rule
-  // (output-shaping, e.g. "lookup → concise answer with file paths", which the
-  // generic EXECUTION GUIDANCE does not cover) and any caller-supplied overlay —
-  // NOT the retired router overlay (that lived in `reasoningPlan.promptOverlay`,
-  // now always ''). Dropping it with the router overlay in P1.7 was an
-  // unintended regression (ADR-043 Phase 3 follow-up); re-emit it so the Direct
-  // Path Rule + SDK caller overlay reach the SA prompt again.
+  // `context.promptOverlay` carries only caller-supplied overlay (SDK, Skill or
+  // command invocation), NOT the retired router overlay (that lived in
+  // `reasoningPlan.promptOverlay`, now always ''). Dropping it with the router
+  // overlay in P1.7 was an unintended regression (ADR-043 Phase 3 follow-up);
+  // re-emit it so the caller overlay reaches the direct-engine prompt.
   if (options.context?.promptOverlay?.trim()) {
     sections.push(
       createPromptSection(
         'prompt-overlay',
         options.context.promptOverlay,
-        'Task-shaping rule for this request plus any caller-supplied context.',
+        'Caller-supplied overlay for this request (SDK, Skill or command invocation).',
       ),
     );
   }

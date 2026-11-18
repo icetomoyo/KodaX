@@ -5,8 +5,8 @@
  * provider max-output-tokens + prompt-cache, lsp, workflow concurrency).
  *
  * Both public SDK entries derive their ALS scope from this helper so no entry
- * can silently diverge: `runManagedTask` (AMA/AMAW/SA dispatch) AND `runKodaX`
- * (the blocking SA entry that `startKodaX` wraps). Before this was shared,
+ * can silently diverge: `runManagedTask` (the AMA Worker) AND `runKodaX`
+ * (the blocking direct-engine entry that `startKodaX` wraps). Before this was shared,
  * `runKodaX` / `startKodaX` established no scope at all, so a consumer calling
  * `runKodaX({ modelTiers, maxOutputTokens, ... })` had every field silently
  * dropped — readers fell back to the shared `process.env`, breaking both the

@@ -1,7 +1,7 @@
 // Zero-network capture of the first root request through the real managed Runtime, per work mode.
 // Unlike tests/skill-trigger.capture.ts this runs repository intelligence and routing on a dirty
 // Git worktree, so review breadth, PR routing and Script-mode guidance reach the request as shipped.
-// Usage: KODAX_MANAGED_CAPTURE_OUT=<new file> KODAX_MANAGED_CAPTURE_CASES=<cases.json> [KODAX_MANAGED_CAPTURE_STAGE=name]
+// Usage: KODAX_MANAGED_CAPTURE_OUT=<new file> KODAX_MANAGED_CAPTURE_CASES=<cases.json> [KODAX_MANAGED_CAPTURE_STAGE=name] [KODAX_MANAGED_CAPTURE_REPO_MODE=auto|off|light|full]
 //   vite-node -c vitest.config.ts tests/managed-first-turn.capture.ts
 // Output matches the skill-trigger capture shape, so tests/skill-trigger.eval.ts replays it.
 // KODAX_MANAGED_CAPTURE_CATALOG=builtin passes the builtin Skill catalog the way the REPL does; run it
@@ -40,6 +40,9 @@ async function writeDirtyWorkspace(workspace: string): Promise<void> {
 const PROVIDER = 'managed-capture';
 type CatalogKind = 'none' | 'builtin';
 const MODEL = 'capture-model';
+const REPO_MODES = ['auto', 'off', 'light', 'full'] as const;
+const repoMode = (process.env.KODAX_MANAGED_CAPTURE_REPO_MODE ?? 'auto') as typeof REPO_MODES[number];
+if (!REPO_MODES.includes(repoMode)) throw new Error(`KODAX_MANAGED_CAPTURE_REPO_MODE must be one of ${REPO_MODES.join(', ')}`);
 
 /** The REPL hands the run its project registry and that registry's catalog snippet. */
 async function skillContext(workspace: string, catalog: CatalogKind) {
@@ -74,7 +77,7 @@ async function captureCase(root: string, testCase: ManagedCaptureCase, catalog: 
     const handle = await runtime.runs.start({ sessionId: session.id, mode: 'managed_task', prompt: testCase.task, options: {
       provider: PROVIDER, model: MODEL, agentMode: 'ama', reasoningMode: 'off', lsp: false, maxIter: 2, disablePromptCache: true, workMode: testCase.workMode,
       learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['eval-isolated'] } }),
-      context: { executionCwd: workspace, gitRoot: workspace, ...await skillContext(workspace, catalog), repoIntelligenceMode: 'auto', resolveShellPermissionMode: () => 'full-access' },
+      context: { executionCwd: workspace, gitRoot: workspace, ...await skillContext(workspace, catalog), repoIntelligenceMode: repoMode, resolveShellPermissionMode: () => 'full-access' },
     } });
     const result = await handle.result;
     if (result.error) throw new Error(`${testCase.id}: ${result.error.name}: ${result.error.message}`);

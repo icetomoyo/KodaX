@@ -91,7 +91,7 @@ it.each(['coding', 'script'] as const)('rejects a trusted Agent requirement in %
     const probe = await connectKodaXRuntime({ homeDir: state.homeDir, endpoint: state.endpoint });
     try { expect(probe.capabilities.productExecutionModeConstraint).toEqual({ version: 1 }); }
     finally { await probe.close(); }
-    await state.client.sessions.updateSettings(state.session.id, { workMode: wrongMode, agentMode: 'sa', permissionMode: 'full-access' });
+    await state.client.sessions.updateSettings(state.session.id, { workMode: wrongMode, permissionMode: 'full-access' });
     await expect(state.client.inputs.submit({ sessionId: state.session.id, inputId: 'wrong-mode', text: 'Do the Partner task.' }))
       .rejects.toMatchObject({ code: 'execution_mode_mismatch' });
     expect(state.requests).toHaveLength(0);
@@ -107,7 +107,7 @@ it.each(['coding', 'script'] as const)('rejects a trusted Agent requirement in %
 it('retains locked Agent mode and the pending constraint when Main reconnects with weaker authority', async () => {
   const state = await fixture({ holdFirst: true, defaultSkill: false, staticAuthorization: true });
   try {
-    await state.client.sessions.updateSettings(state.session.id, { workMode: 'agent', agentMode: 'sa', permissionMode: 'full-access' });
+    await state.client.sessions.updateSettings(state.session.id, { workMode: 'agent', permissionMode: 'full-access' });
     const active = await state.client.inputs.submit({ sessionId: state.session.id, inputId: 'initial', text: 'Hold Agent task.' });
     await expect.poll(() => state.requests.length, { timeout: 15_000 }).toBe(1);
     const pending = { sessionId: state.session.id, inputId: 'constrained', text: 'Keep original Agent requirement.', delivery: 'after_turn' as const };
@@ -132,7 +132,7 @@ it.each([true, false])('preserves rejected queued input at actual mode admission
   const state = await fixture({ holdFirst: true, defaultSkill });
   try {
     state.requireAgent(false);
-    await state.client.sessions.updateSettings(state.session.id, { workMode: 'coding', agentMode: 'sa', permissionMode: 'full-access' });
+    await state.client.sessions.updateSettings(state.session.id, { workMode: 'coding', permissionMode: 'full-access' });
     const active = await state.client.inputs.submit({ sessionId: state.session.id, inputId: 'initial', text: 'Hold initial Coding task.' });
     await expect.poll(() => state.requests.length, { timeout: 15_000 }).toBe(1);
     const pending = { sessionId: state.session.id, inputId: 'queued-agent', text: 'Original queued Partner input', delivery: 'after_turn' as const };
@@ -149,7 +149,7 @@ it.each([true, false])('preserves rejected queued input at actual mode admission
       admissionError: { code: 'execution_mode_mismatch' } });
     expect(await state.client.inputs.withdraw(pending.sessionId, pending.inputId)).toEqual(pending);
     const agentSession = await state.client.sessions.create({ projectPath: state.homeDir, surface: 'partner' });
-    await state.client.sessions.updateSettings(agentSession.id, { workMode: 'agent', agentMode: 'sa', permissionMode: 'full-access' });
+    await state.client.sessions.updateSettings(agentSession.id, { workMode: 'agent', permissionMode: 'full-access' });
     await state.client.inputs.submit({ ...pending, sessionId: agentSession.id });
     await expect.poll(async () => (await state.client.inputs.read(agentSession.id, pending.inputId))?.runId, { timeout: 15_000 }).toBeTruthy();
     const accepted = await state.client.inputs.read(agentSession.id, pending.inputId);

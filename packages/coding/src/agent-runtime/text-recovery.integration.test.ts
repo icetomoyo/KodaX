@@ -15,7 +15,7 @@ afterEach(async () => {
   if (directory) { expect(path.dirname(directory)).toBe(tmpdir()); await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
-it.each(['SA', 'AMA'] as const)('%s diagnoses an image rejected after admission and continues without changing raw history', async runtime => {
+it.each(['Direct', 'AMA'] as const)('%s diagnoses an image rejected after admission and continues without changing raw history', async runtime => {
   directory = await mkdtemp(path.join(tmpdir(), 'kodax-text-recovery-runtime-'));
   vi.stubEnv('KODAX_HOME', directory); vi.stubEnv('TEXT_RECOVERY_KEY', 'test');
   const file = path.join(directory, 'header.png');
@@ -41,7 +41,7 @@ it.each(['SA', 'AMA'] as const)('%s diagnoses an image rejected after admission 
       thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
   });
   registerModelProvider('text-recovery', () => provider);
-  const result = await (runtime === 'SA' ? runKodaX : runManagedTaskViaRunner)({ provider: 'text-recovery', reasoningMode: 'off', maxIter: 2,
+  const result = await (runtime === 'Direct' ? runKodaX : runManagedTaskViaRunner)({ provider: 'text-recovery', reasoningMode: 'off', maxIter: 2,
     context: { executionCwd: directory, managedTaskWorkspaceDir: directory }, session: { initialMessages: history } }, '总价六万元，每项两万元，启动前支付');
   expect(result.success).toBe(true);
   expect(diagnose).toHaveBeenCalledOnce(); expect(stream).toHaveBeenCalledTimes(2);
@@ -51,7 +51,7 @@ it.each(['SA', 'AMA'] as const)('%s diagnoses an image rejected after admission 
   expect(await readFile(file)).toEqual(await readFile('tests/fixtures/images/valid-png.png'));
 });
 
-for (const runtime of ['SA', 'AMA'] as const) {
+for (const runtime of ['Direct', 'AMA'] as const) {
   for (const outcome of ['resume', 'queued-input', 'second-rejection'] as const) {
     it(`${runtime} uses actual wire image evidence and handles ${outcome}`, async () => {
       directory = await mkdtemp(path.join(tmpdir(), 'kodax-text-recovery-wire-'));
@@ -94,7 +94,7 @@ for (const runtime of ['SA', 'AMA'] as const) {
       Reflect.set(provider, '_client', { chat: { completions: { create } } });
       registerModelProvider('wire-recovery', () => provider);
       try {
-        const result = await (runtime === 'SA' ? runKodaX : runManagedTaskViaRunner)({ provider: 'wire-recovery',
+        const result = await (runtime === 'Direct' ? runKodaX : runManagedTaskViaRunner)({ provider: 'wire-recovery',
           reasoningMode: 'off', maxIter: 2, lsp: false, session: { id: sessionId, initialMessages: history },
           context: { executionCwd: directory, managedTaskWorkspaceDir: directory, actorSession } },
         '总价六万元，每项两万元，启动前支付').catch(error => {

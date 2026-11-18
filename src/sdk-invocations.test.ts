@@ -276,7 +276,7 @@ it('admits and saves a Skill input before dynamic execution, and rejects busy in
   try {
     const session = await runtime.sessions.create({ projectPath: projectRoot });
     sessionId = session.id;
-    await runtime.sessions.updateSettings(sessionId, { agentMode: 'sa', permissionMode: 'full-access' });
+    await runtime.sessions.updateSettings(sessionId, { permissionMode: 'full-access' });
     submitting = runtime.runs.acceptInput({ sessionId, inputId: 'dynamic-first', text: '/skill:dyn-context' });
     await expect.poll(() => observed.length).toBe(1);
     expect(observed).toEqual([{ saved: true, run: true }]);
@@ -320,7 +320,7 @@ it('does not execute dynamic Skill context if saving its accepted user input fai
   }
 });
 
-it.each(['sa', 'ama'] as const)('stops dynamic Skill preparation in %s before invoking the model', async (agentMode) => {
+it('stops dynamic Skill preparation before invoking the model', async () => {
   const projectRoot = await seedSkillProject();
   const capture = vi.fn();
   registerModelProvider('t37-probe', () => new ProbeProvider(capture));
@@ -339,7 +339,7 @@ it.each(['sa', 'ama'] as const)('stops dynamic Skill preparation in %s before in
   });
   try {
     const session = await runtime.sessions.create({ projectPath: projectRoot });
-    await runtime.sessions.updateSettings(session.id, { agentMode, permissionMode: 'full-access' });
+    await runtime.sessions.updateSettings(session.id, { agentMode: 'ama', permissionMode: 'full-access' });
     const accepted = await runtime.runs.acceptInput({ sessionId: session.id, inputId: 'stop-preparation', text: '/skill:dyn-context' });
     await expect.poll(() => signal).toBeDefined();
     await runtime.runs.abort(accepted.runId!);
@@ -370,7 +370,7 @@ it.each(['immediate', 'after_turn'] as const)('expands a %s Skill Host-side at a
   try {
     const session = await runtime.sessions.create({ projectPath: projectRoot });
     await runtime.sessions.updateSettings(session.id, {
-      agentMode: 'sa', permissionMode: 'full-access',
+      permissionMode: 'full-access',
     });
     // The first input keeps the session busy; the Skill input must wait in
     // the queue and only expand when the queue drains.
@@ -407,7 +407,7 @@ it.each(['immediate', 'after_turn'] as const)('expands a %s Skill Host-side at a
   }
 }, 60_000);
 
-it.each(['sa', 'ama'] as const)('isolates a fork Skill in %s and keeps parent conversation intact', async agentMode => {
+it('isolates a fork Skill and keeps parent conversation intact', async () => {
   const projectRoot = await seedSkillProject();
   await writeFile(path.join(projectRoot, '.kodax', 'skills', 'audit-helper', 'SKILL.md'),
     '---\nname: audit-helper\ndescription: isolated audit\ncontext: fork\n---\nFORK-REQUEST $ARGUMENTS\n');
@@ -417,10 +417,10 @@ it.each(['sa', 'ama'] as const)('isolates a fork Skill in %s and keeps parent co
   const runtime = await createKodaXRuntime({ homeDir: projectRoot, sharedDaemonHost: true, defaultProvider: 't37-probe' });
   try {
     const session = await runtime.sessions.create({ projectPath: projectRoot });
-    await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+    await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
     const first = await runtime.runs.acceptInput({ sessionId: session.id, inputId: 'parent', text: 'PARENT-PRIVATE-CONTEXT' });
     await runtime.runs.await(first.runId!);
-    await runtime.sessions.updateSettings(session.id, { agentMode });
+    await runtime.sessions.updateSettings(session.id, { agentMode: 'ama' });
     captured.length = 0;
     const fork = await runtime.runs.acceptInput({ sessionId: session.id, inputId: 'fork', text: '/audit-helper fresh context' });
     const completed = await runtime.runs.await(fork.runId!);
@@ -443,7 +443,7 @@ it.each(['sa', 'ama'] as const)('isolates a fork Skill in %s and keeps parent co
   }
 }, 60_000);
 
-it.each(['sa', 'ama'] as const)('keeps a fork Skill settlement unknown in %s when its parent result cannot be saved', async agentMode => {
+it('keeps a fork Skill settlement unknown when its parent result cannot be saved', async () => {
   const projectRoot = await seedSkillProject();
   await writeFile(path.join(projectRoot, '.kodax', 'skills', 'audit-helper', 'SKILL.md'),
     '---\nname: audit-helper\ndescription: isolated audit\ncontext: fork\n---\nFORK-REQUEST $ARGUMENTS\n');
@@ -460,7 +460,7 @@ it.each(['sa', 'ama'] as const)('keeps a fork Skill settlement unknown in %s whe
   });
   try {
     const session = await runtime.sessions.create({ projectPath: projectRoot });
-    await runtime.sessions.updateSettings(session.id, { agentMode, permissionMode: 'full-access' });
+    await runtime.sessions.updateSettings(session.id, { agentMode: 'ama', permissionMode: 'full-access' });
     const fork = await runtime.runs.acceptInput({ sessionId: session.id, inputId: 'fork', text: '/audit-helper fresh context' });
     const completed = await runtime.runs.await(fork.runId!);
     expect(completed).toMatchObject({ phase: 'unknown', error: { code: 'run_settlement_not_persisted' } });

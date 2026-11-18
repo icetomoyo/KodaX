@@ -135,7 +135,7 @@ it('resolves complete legacy turns through the daemon Product API and preserves 
       })).resolves.toMatchObject({ id: session.id });
       expect((await storage.load(session.id))!.messages).toHaveLength(3);
       const fresh = await client.sessions.create({ projectPath: root });
-      await client.sessions.updateSettings(fresh.id, { permissionMode: 'full-access', agentMode: 'sa' });
+      await client.sessions.updateSettings(fresh.id, { permissionMode: 'full-access' });
       let freshView: import('@kodax-ai/coding/client-contract').ClientSessionView | undefined;
       const freshObservation = await client.sessions.observe(fresh.id, next => { freshView = next; });
       try {

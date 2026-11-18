@@ -200,7 +200,7 @@ async function prepareCodingLearnedSkillBindingUnsafe(
         ),
       ],
       // A trusted host's formal catalog stays authoritative; append only learned
-      // entries instead of replacing it with filesystem discovery (SA and AMA).
+      // entries instead of replacing it with filesystem discovery (direct engine and AMA).
       skillsPrompt: [
         options.context?.skillsPrompt?.trim(),
         formatSkillsSystemPrompt(registry.list().filter(skill => options.context?.skillsPrompt === undefined || skill.source === 'learned')),

@@ -21,7 +21,7 @@ afterEach(async () => {
 // runtime is combined, and whether the model calls the tool directly or
 // through the `tool_call` bridge. Child agents and Actor children run on these
 // same entry points with the parent's runtime, so these rows cover them too.
-it.for(['sa', 'ama'].flatMap(mode => ['plain', 'combined'].flatMap(runtimeKind =>
+it.for(['direct', 'ama'].flatMap(mode => ['plain', 'combined'].flatMap(runtimeKind =>
   [true, false].flatMap(withEvents => ['direct', 'bridge'].map(via => ({ mode, runtimeKind, withEvents, via }))))))(
   'enforces extension tool:before in $mode via $via ($runtimeKind runtime, events: $withEvents)',
   async ({ mode, runtimeKind, withEvents, via }, testContext) => {
@@ -60,8 +60,8 @@ it.for(['sa', 'ama'].flatMap(mode => ['plain', 'combined'].flatMap(runtimeKind =
     }
     cleanups.push(registerModelProvider('tool-gate-fixture', () => new Provider()));
     const events: KodaXEvents | undefined = withEvents ? { beforeToolExecute: async () => true } : undefined;
-    const run = mode === 'sa' ? runKodaX : runManagedTask;
-    const result = await run({ provider: 'tool-gate-fixture', agentMode: mode === 'sa' ? 'sa' : 'ama', reasoningMode: 'quick',
+    const run = mode === 'direct' ? runKodaX : runManagedTask;
+    const result = await run({ provider: 'tool-gate-fixture', ...(mode === 'ama' ? { agentMode: 'ama' as const } : {}), reasoningMode: 'quick',
       lsp: false, events, abortSignal: testContext.signal,
       extensionRuntime: runtimeKind === 'combined' ? combineExtensionRuntimes(sessionRuntime, globalRuntime) : sessionRuntime,
       context: { executionCwd: directory, gitRoot: directory, configHome: path.join(directory, '.kodax'), repoIntelligenceMode: 'off' },

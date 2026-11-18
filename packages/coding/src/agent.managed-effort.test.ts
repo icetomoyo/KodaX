@@ -13,7 +13,7 @@ import { awaitLatestCodingMemoryReviewDrain } from './memory-runtime.js';
 
 it.for([
   ...['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'auto'].map(effort => ({ effort, mode: 'ama', kind: 'none' })),
-  ...['sa', 'ama'].flatMap(mode => ['session', 'defaults', 'hydrate', 'hook', 'runtime', 'race', 'aba'].map(kind => ({ effort: 'high', mode, kind }))),
+  ...['direct', 'ama'].flatMap(mode => ['session', 'defaults', 'hydrate', 'hook', 'runtime', 'race', 'aba'].map(kind => ({ effort: 'high', mode, kind }))),
   { effort: 'high', mode: 'ama', kind: 'budget' },
 ])('carries $mode effort $effort through Provider and tool context ($kind)', async ({ effort, mode, kind }, testContext) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-managed-effort-'));
@@ -79,7 +79,7 @@ it.for([
         : `export default api => api.hook('${kind === 'hydrate' ? 'session:hydrate' : 'tool:before'}', () => api.runtime.setThinkingLevel('max'));`);
       await runtime!.loadExtension(extensionPath);
     }
-    running = (mode === 'sa' ? runKodaX : runManagedTask)({ provider: 'managed-effort-fixture', agentMode: mode === 'sa' ? 'sa' : 'ama',
+    running = (mode === 'direct' ? runKodaX : runManagedTask)({ provider: 'managed-effort-fixture', ...(mode === 'ama' ? { agentMode: 'ama' as const } : {}),
       effort, reasoningMode: 'quick', lsp: false, sessionControl: control, extensionRuntime: runtime, abortSignal: testContext.signal,
       context: { executionCwd: directory, gitRoot: directory, configHome: path.join(directory, '.kodax'),
         repoIntelligenceMode: 'off' }, maxIter: 5 }, 'Reply briefly.');

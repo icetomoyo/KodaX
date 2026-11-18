@@ -54,7 +54,7 @@ export function withHostInvocation<T>(original: KodaXOptions, prompt: string, ex
       options = await applyRuntimeSkillInvocationPolicy(options, prompt);
       const ctx = buildToolExecutionContext({ options, sessionId, runtime, managedProtocolPayloadRef: { current: undefined } });
       bindVisualObservationAdmission(ctx, options, state);
-      emitEffectiveTaskConfig(options, { agentMode: options.agentMode ?? 'ama', toolScope: state.activeTools.filter(name => isToolDiscoverable(name, ctx)) });
+      emitEffectiveTaskConfig(options, { agentMode: 'ama', toolScope: state.activeTools.filter(name => isToolDiscoverable(name, ctx)) });
       const messages = appendPromptIfNotDuplicate(resumed.messages, prompt, options.context?.inputArtifacts,
         undefined, options.session?.inputId);
       const save = async (): Promise<void> => {

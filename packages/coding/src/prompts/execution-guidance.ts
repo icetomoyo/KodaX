@@ -3,14 +3,14 @@ import { staticText } from './static-text.js';
  * Static EXECUTION GUIDANCE — the harness-LLM-judgment block the agent
  * self-applies INSTEAD of being told its execution mode / harness tier by the
  * keyword router (ADR-043). Shared verbatim by both the AMA Worker
- * (`buildWorkerInstructions`) and the top-level SA path (`capability-sections`)
+ * (`buildWorkerInstructions`) and the direct-engine path (`capability-sections`)
  * so the two execution paths give the agent the same self-judgment guidance and
  * neither receives the old router `prompt-overlay`.
  *
  * The text is deliberately free of harness-tier / mode labels (ADR-033 §4): it
  * describes how to approach each kind of work as informal use-cases the LLM
  * matches against, not a classification table. Validated against the canonical
- * 5-alias panel for both the Worker (H3) and the SA path (P1.7).
+ * 5-alias panel for both the Worker (H3) and the direct-engine path (P1.7).
  */
 export const TOOL_RECOVERY_GUIDANCE = staticText("t11.prompts/execution-guidance.0");
 

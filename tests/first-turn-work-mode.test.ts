@@ -70,7 +70,8 @@ it.each<{ workMode: KodaXWorkMode; candidate: boolean }>([
   try {
     const result = await runManagedTask({ provider: 'work-mode-offline', workMode, agentMode: 'ama',
       maxIter: 8, reasoningMode: 'off', lsp: false,
-      context: { executionCwd: directory, gitRoot: directory, repoIntelligenceMode: 'off' },
+      // 'light' keeps repo-intel tools offered so the coding/agent tool difference stays visible.
+      context: { executionCwd: directory, gitRoot: directory, repoIntelligenceMode: 'light' },
       events: { beforeToolExecute: async (name, input) => {
         if (!['read', 'edit', 'bash'].includes(name)) return '[Tool Error] Outside fixture scope';
         if (name === 'bash' ? input.command !== 'node --test fixture.test.mjs' : input.path !== 'value.mjs') {

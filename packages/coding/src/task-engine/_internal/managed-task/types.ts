@@ -23,7 +23,7 @@ import type {
 
 /**
  * The set of AMA roles whose tool surface is controlled by the
- * exclude-based wiring contract. Excludes `direct` (an SA fast-path
+ * exclude-based wiring contract. Excludes `direct` (a single-pass
  * pseudo-role) since direct runs do not pass through the AMA
  * chain-builder's exclude resolution.
  *
@@ -83,7 +83,7 @@ export interface RunnerChainPromptContext {
    * FEATURE_247 (R1) — SDK-consumer agent-profile instructions (e.g. KodaX-Space
    * Partner). When set, prepended to the Worker role prompt as the governing
    * directive so a Partner profile behaves consistently on the AMA/AMAW path
-   * (the SA path uses `context.systemPromptOverride`). Absent ⇒ byte-identical
+   * (the direct engine uses `context.systemPromptOverride`). Absent ⇒ byte-identical
    * default coding worker prompt.
    */
   readonly partnerInstructions?: string;

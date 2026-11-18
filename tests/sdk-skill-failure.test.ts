@@ -62,7 +62,7 @@ it('keeps local Skill failures across an independent daemon and IPC, then execut
     expect(owner?.pid).toBeDefined();
     expect(owner?.pid).not.toBe(process.pid);
     const session = await daemon.sessions.create({ projectPath: project });
-    await daemon.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+    await daemon.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
     const input = { sessionId: session.id, prompt: prepared.invocation.prompt,
       options: { context: { skillInvocation: prepared.invocation.skillInvocation },
         timeouts: { llm: { maxRetryDelaySec: 0.01 } } } };

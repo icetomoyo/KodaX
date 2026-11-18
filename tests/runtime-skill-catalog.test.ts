@@ -18,7 +18,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true, maxRetries: 5 })));
 });
 
-it.each(['sa', 'managed-sa', 'ama', 'runner'] as const)('keeps an admitted Skill discoverable under Markdown/profile instructions in %s', async mode => {
+it.each(['direct', 'ama', 'runner'] as const)('keeps an admitted Skill discoverable under Markdown/profile instructions in %s', async mode => {
   const root = await mkdtemp(path.join(tmpdir(), 'kodax-profile-catalog-'));
   roots.push(root);
   const configHome = path.join(root, '.kodax');
@@ -52,8 +52,8 @@ it.each(['sa', 'managed-sa', 'ama', 'runner'] as const)('keeps an admitted Skill
     const scoped: KodaXOptions = { ...options, provider: name, reasoningMode: 'off', maxIter: 3,
       context: { ...options.context, configHome, gitRoot: root, executionCwd: root, repoIntelligenceMode: 'off' } };
     if (mode === 'runner') return (await Runner.run(createDefaultCodingAgent(), 'Inspect evidence.', { presetOptions: scoped })).data;
-    return mode === 'sa' ? runKodaX(scoped, 'Inspect evidence.')
-      : runManagedTask({ ...scoped, agentMode: mode === 'managed-sa' ? 'sa' : 'ama' }, 'Inspect evidence.');
+    return mode === 'direct' ? runKodaX(scoped, 'Inspect evidence.')
+      : runManagedTask({ ...scoped, agentMode: 'ama' }, 'Inspect evidence.');
   };
   for (const entry of ['binding', 'sdk-profile'] as const) {
     requests.length = 0;
@@ -80,7 +80,7 @@ it.each(['sa', 'managed-sa', 'ama', 'runner'] as const)('keeps an admitted Skill
       taskVerification: { summary: 'TASK_VERIFY', requiredChecks: ['TASK_CHECK'] } } });
     expect(requests[0]!.system, entry).toContain('PROFILE_INSTRUCTIONS');
     expect(requests[0]!.tools).toContain('skill');
-    // AMA carries capability catalogs in request messages, while SA uses system.
+    // AMA carries capability catalogs in request messages, while the direct engine uses system.
     const modelContext = `${requests[0]!.system}\n${JSON.stringify(requests[0]!.messages)}`;
     expect(modelContext, entry).toContain('- audit-evidence:');
     expect(modelContext).not.toContain('- private-skill:');

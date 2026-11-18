@@ -59,7 +59,7 @@ it('resolves the last committed expert at actual queued consumption without adop
     const session = await client.sessions.create({ projectPath: homeDir, surface: 'partner' });
     sessionId = session.id;
     await client.sessions.updateSettings(session.id, { provider: 'binding-fixture', model: 'fixture', workMode: 'agent',
-      agentMode: 'sa', permissionMode: 'full-access' });
+      permissionMode: 'full-access' });
     inputIds.push('first');
     const first = await client.inputs.submit({ sessionId: session.id, inputId: 'first', text: 'Original first question' });
     await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(1);

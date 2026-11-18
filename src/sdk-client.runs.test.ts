@@ -72,7 +72,7 @@ afterEach(async () => {
 
 it('reads the same lifecycle facts from both clients and separates stop acceptance from the terminal state', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
   await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(1);
 

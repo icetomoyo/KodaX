@@ -6,7 +6,7 @@ This is **加强 B** of the 5 重保险 listed in [v0.7.29.md](../../../../../do
 
 ## Why this is separate from goldens
 
-Goldens (`tests/sa-refactor-goldens/`) lock end-to-end behavior shape. They catch "did this session change?". But:
+Goldens (`tests/sa-refactor-goldens/`, deleted in FEATURE_310 after FEATURE_100 shipped) locked end-to-end behavior shape. They catch "did this session change?". But:
 
 - Goldens depend on session sample coverage — a capability that fires only in rare corner cases (e.g., post-tool failure with strong evidence) might not appear in any of the 30-50 selected sessions
 - Goldens depend on provider determinism — mock provider hides certain real-provider variance

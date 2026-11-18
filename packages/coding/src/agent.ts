@@ -2,7 +2,7 @@
  * KodaX Agent — public SDK entry post-FEATURE_100 P3.6r/P3.6s.
  *
  * `runKodaX(opts, prompt)` is the stable SDK signature; internally it
- * delegates to `Runner.run(createDefaultCodingAgent(), …)` so SA
+ * delegates to `Runner.run(createDefaultCodingAgent(), …)` so direct-engine
  * execution always flows through the Layer-A frame (Option Y deletion
  * per ADR-020 / v0.7.29 §239 §371). Substrate body lives in
  * `agent-runtime/run-substrate.ts` (`runSubstrate`) and is wired via
@@ -36,8 +36,8 @@ export async function runKodaX(
   const normalizedOptions: KodaXOptions = policyOptions.agentMode === undefined
     ? policyOptions
     : { ...policyOptions, agentMode: normalizeKodaXAgentMode(policyOptions.agentMode) };
-  // FEATURE_103 (v0.7.29): apply L5 user-followup escalation at the SA
-  // entry. When the user's prompt contains a doubt or deepen marker
+  // FEATURE_103 (v0.7.29): apply L5 user-followup escalation at the
+  // direct-engine entry. When the user's prompt contains a doubt or deepen marker
   // (and, for doubt, there is a prior assistant turn in the session),
   // bump the L1 ceiling one rank. Off remains off (kill switch). Pure
   // option transform — no escalation = same reference returned.
@@ -57,8 +57,8 @@ export async function runKodaX(
   // `runKodaX` is a public SDK entry (and the target `startKodaX` wraps), so
   // without this the per-run overrides (modelTiers / maxOutputTokens /
   // disablePromptCache / lsp / workflow) would be silently dropped whenever a
-  // consumer calls it directly rather than via `runManagedTask`. When reached
-  // through `runManagedTask` (SA dispatch) this simply re-establishes the same
+  // consumer calls it directly rather than via `runManagedTask`. When a caller
+  // nests it inside an existing scope this simply re-establishes the same
   // scope — nesting replaces with an identical config, so it is idempotent.
   let failure: unknown;
   try {

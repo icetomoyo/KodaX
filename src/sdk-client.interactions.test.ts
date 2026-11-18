@@ -95,8 +95,7 @@ function questionToolCall(): KodaXToolUseBlock {
 }
 
 it.each([
-  ...(['absent', 'legacy', 'cleared', 'accept-edits', 'plan'] as const).map(mode => ({ mode, agentMode: 'sa' as const })),
-  { mode: 'absent' as const, agentMode: 'ama' as const },
+  ...(['absent', 'legacy', 'cleared', 'accept-edits', 'plan'] as const).map(mode => ({ mode, agentMode: 'ama' as const })),
 ])(
   'uses the Host effective permission default for questions ($mode/$agentMode) without saving an override', async ({ mode, agentMode }) => {
     scriptedToolCall = () => [questionToolCall()];
@@ -140,7 +139,7 @@ it('exposes the full plan through both Product clients and applies only the firs
   const plan = `Final plan\n${'Review the complete implementation and validation details.\n'.repeat(400)}END OF PLAN`;
   scriptedToolCall = () => [{ type: 'tool_use', id: 'exit-plan', name: 'exit_plan_mode', input: { plan } }];
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'plan' });
+  await first.sessions.updateSettings(session.id, { permissionMode: 'plan' });
   const active = await first.inputs.submit({ sessionId: session.id, inputId: 'plan', text: 'Prepare the plan.' });
   await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(1);
   expect(exposedTools[0]).toContain('exit_plan_mode');
@@ -165,7 +164,7 @@ it('exposes the full plan through both Product clients and applies only the firs
 it.each(['reject', 'cancel', 'stop'] as const)('keeps Host permission in plan mode after plan approval %s', async action => {
   scriptedToolCall = () => [{ type: 'tool_use', id: 'exit-plan', name: 'exit_plan_mode', input: { plan: 'Review this plan first.' } }];
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'plan' });
+  await first.sessions.updateSettings(session.id, { permissionMode: 'plan' });
   const active = await first.inputs.submit({ sessionId: session.id, inputId: `plan-${action}`, text: 'Prepare the plan.' });
   let approval: ClientInteraction | undefined;
   await expect.poll(async () => {
@@ -184,7 +183,7 @@ it.each(['reject', 'cancel', 'stop'] as const)('keeps Host permission in plan mo
 
 it('invokes an explicit Product tool through IPC once without a model turn', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await first.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const file = path.join(homeDir, 'direct-read.txt');
   await writeFile(file, 'original tool content');
   const invocation = { sessionId: session.id, inputId: 'direct-read', name: 'read', input: { path: file }, rawInput: '!read direct-read.txt' };
@@ -199,7 +198,7 @@ it('invokes an explicit Product tool through IPC once without a model turn', asy
 
 it('cancels an explicit tool at its permission boundary through Product Session Stop', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'accept-edits' });
+  await first.sessions.updateSettings(session.id, { permissionMode: 'accept-edits' });
   const marker = path.join(homeDir, '.kodax', 'direct-stop.txt');
   const started = await first.runs.startTool({ sessionId: session.id, inputId: 'direct-write', name: 'write',
     input: { path: marker, content: 'must not write' }, rawInput: '!write direct-stop.txt' });
@@ -220,7 +219,7 @@ function questionToolCallForRace(): KodaXToolUseBlock[] {
 
 it('keeps constrained questions pending after invalid answers and consumes only one valid IPC answer', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await first.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const started = await first.runs.startTool({ sessionId: session.id, inputId: 'constraints', rawInput: '!ask Choose two', name: 'ask_user_question',
     input: { question: 'Choose two', multi_select: true, min_selections: 2, max_selections: 2,
       allow_custom_input: false, options: ['red', 'green', 'blue'].map(value => ({ label: value, value })) } });
@@ -251,7 +250,7 @@ function pendingQuestion(views: readonly ClientSessionView[]): ClientInteraction
 it('shows the same pending question to both clients, accepts only the first answer, and reconnects to it', async () => {
   scriptedToolCall = () => [questionToolCall()];
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const firstViews: ClientSessionView[] = [];
   const secondViews: ClientSessionView[] = [];
   const firstObservation = await first.sessions.observe(session.id, (view) => firstViews.push(view));
@@ -317,7 +316,7 @@ it.each(['select', 'input', 'multi'] as const)('reports an initial %s prompt fai
     : kind === 'input' ? { question: 'Name?', kind: 'input' }
       : { question: 'Choices?', questions: [{ question: 'Choose?', options: [{ label: 'Ship', value: 'ship' }] }] } }];
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await first.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'Ask.',
     options: { events: { askUser: fail, askUserInput: fail, askUserMulti: fail } } });
   try {
@@ -346,7 +345,7 @@ it.each(['select', 'input', 'multi'] as const)('continues the Run with a normal 
       : { ...questionToolCall().input, kind, default: kind === 'input' ? 'suggestion' : 'ship' },
   }];
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const active = await first.inputs.submit({ sessionId: session.id, inputId: 'optional-timeout', text: 'Ask an optional question.' });
   await expect(first.runs.await(active.runId!)).resolves.toMatchObject({ phase: 'completed' });
   expect(JSON.stringify(requests.at(-1))).toContain('unanswered');
@@ -358,7 +357,7 @@ it.each(['select', 'input', 'multi'] as const)('continues the Run with a normal 
 it.each(['skipped', 'non_interactive'] as const)('skips an ordinary question (%s) and rejects its late reply while a new request is pending', async reason => {
   scriptedToolCall = () => [questionToolCall()];
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const started = await first.inputs.submit({ sessionId: session.id, inputId: 'optional-skip', text: 'Ask.' });
   await expect.poll(async () => (await second.interactions.list({ sessionId: session.id })).length, { timeout: 15_000 }).toBe(1);
   const [old] = await second.interactions.list({ sessionId: session.id });
@@ -400,7 +399,7 @@ it('returns multi-question answers with arrays, zero selections, and custom inpu
     },
   }];
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const views: ClientSessionView[] = [];
   const observation = await second.sessions.observe(session.id, (view) => views.push(view));
   try {
@@ -441,7 +440,7 @@ it('returns multi-question answers with arrays, zero selections, and custom inpu
 it('settles exactly one winner when both clients answer the same question concurrently', async () => {
   scriptedToolCall = questionToolCallForRace;
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const views: ClientSessionView[] = [];
   const observation = await second.sessions.observe(session.id, (view) => views.push(view));
   try {
@@ -464,7 +463,7 @@ it('settles exactly one winner when both clients answer the same question concur
 
 it.each(['cancel', 'stop'] as const)('settles question %s separately from stopping the Run and rejects late answers', async action => {
   scriptedToolCall = () => [questionToolCall()];  const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const views: ClientSessionView[] = [];
   const observation = await second.sessions.observe(session.id, (view) => views.push(view));
   try {
@@ -500,7 +499,7 @@ it('approves one pending permission once, executes the action once, and invalida
     input: { path: path.join(homeDir, '.kodax', 'perm-marker.txt'), content: 'perm-once' },
   }];
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'accept-edits' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'accept-edits' });
   const marker = path.join(homeDir, '.kodax', 'perm-marker.txt');
   const views: ClientSessionView[] = [];
   const observation = await second.sessions.observe(session.id, (view) => views.push(view));

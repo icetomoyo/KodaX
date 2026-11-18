@@ -32,7 +32,7 @@ async function readAll(read) {
 
 for (const scenario of ['recoverable', 'without-read', 'storage-failure',
   'skill-model-denied-read', 'skill-explicit-denied-read', 'skill-model-unrelated-hook',
-  'host-denied-sa', 'host-denied-ama']) {
+  'host-denied-unlabeled', 'host-denied-ama']) {
   test(`bundled SDK preserves MCP output end to end: ${scenario}`, { timeout: 120_000 }, async (t) => {
     const homeDir = await mkdtemp(path.join(tmpdir(), 'kodax-bundle-mcp-output-'));
     const configHome = path.join(homeDir, '.kodax');
@@ -41,7 +41,8 @@ for (const scenario of ['recoverable', 'without-read', 'storage-failure',
     const modelSkill = usesSkill && !scenario.includes('explicit');
     const deniedRead = usesSkill && scenario.includes('denied-read');
     const hostRecovery = scenario.startsWith('host-denied-');
-    const agentMode = scenario.endsWith('-ama') ? 'ama' : 'sa';
+    // runs.start without a mode is the direct engine; only the ama label differs.
+    const agentMode = scenario.endsWith('-ama') ? 'ama' : undefined;
     const recoverable = scenario === 'recoverable' || scenario === 'skill-model-unrelated-hook' || hostRecovery;
     const skillDir = path.join(homeDir, '.kodax', 'skills', 'report-only');
     const skillFile = path.join(skillDir, 'SKILL.md');
@@ -217,13 +218,13 @@ for (const scenario of ['recoverable', 'without-read', 'storage-failure',
     const session = await runtime.sessions.create({ projectPath: homeDir, mcpServers: {
       demo: { type: 'stdio', command: process.execPath, args: [serverPath] },
     } });
-    await runtime.sessions.updateSettings(session.id, { provider, model: 'fixture', agentMode,
+    await runtime.sessions.updateSettings(session.id, { provider, model: 'fixture', ...(agentMode ? { agentMode } : {}),
       permissionMode: hostRecovery ? 'accept-edits' : 'full-access' });
     const prepared = usesSkill && !modelSkill
       ? await runtime.invocations.prepareSkill({ projectRoot: homeDir, name: 'report-only', sessionId: session.id }) : undefined;
     if (prepared) assert.equal(prepared.kind, 'prepared');
     const run = await runtime.runs.start({ sessionId: session.id, prompt: prepared?.invocation.prompt ?? `MCP-E2E ${scenario}`,
-      options: { agentMode, context: { repoIntelligenceMode: 'off',
+      options: { ...(agentMode ? { agentMode } : {}), context: { repoIntelligenceMode: 'off',
         ...(prepared ? { skillInvocation: prepared.invocation.skillInvocation } : {}),
         ...(scenario === 'without-read' ? { excludeTools: ['read'] } : {}) } },
       ...(lease ? { credential: { leaseId: lease.id, mode: 'scoped', providers: [provider] } } : {}),

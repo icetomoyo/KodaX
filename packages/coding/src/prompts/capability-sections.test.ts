@@ -203,9 +203,8 @@ describe('buildCapabilityContextSections', () => {
     expect(sectionIds).toContain('skills-addendum');
     // The static `execution-guidance` block is always emitted (it replaced the
     // router overlay text in P1.7). The `prompt-overlay` section is re-emitted
-    // when `context.promptOverlay` is set — it now carries only the SA Direct
-    // Path Rule + caller-supplied overlay, not the retired router overlay
-    // (ADR-043 Phase 3 regression fix).
+    // when `context.promptOverlay` is set — it carries only the caller-supplied
+    // overlay, not the retired router overlay (ADR-043 Phase 3 regression fix).
     expect(sectionIds).toContain('execution-guidance');
     expect(sectionIds).toContain('prompt-overlay');
     const overlaySection = sections.find((s) => s.id === 'prompt-overlay');

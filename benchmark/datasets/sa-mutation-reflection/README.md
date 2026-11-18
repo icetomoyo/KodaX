@@ -1,92 +1,68 @@
-# SA Mutation Reflection — dataset for FEATURE_101 v0.7.31.2
+# Mutation Reflection — dataset for FEATURE_101 v0.7.31.2, revised for FEATURE_310
+
+The eval id keeps its historical `sa-` prefix; SA mode itself is retired.
 
 ## Product question
 
-The SA-mode mutation-scope reflection text (CAP-016, in
+The mutation-scope reflection text (CAP-016, in
 `packages/coding/src/agent-runtime/middleware/mutation-reflection.ts`)
-was inherited from the pre-FEATURE_106 era when the substrate
-attempted to escalate from SA to AMA mid-stream by prompting the
-model to call `emit_managed_protocol`. Per ADR-003 (Single-Agent
-First, Harness On Demand) that escalation path does not exist:
-SA mode is direct execution; the LLM running `defaultCodingAgent`
-has **no** `emit_managed_protocol` / `emit_scout_verdict` tool in
-its surface, and harness selection is committed up-front when the
-user invokes AMA mode, not switchable mid-run.
+is appended to the first significant mutation result when the caller
+supplies a mutation tracker to the direct engine or a host Script
+invocation. The AMA Worker's Script cells turn it off.
 
-The legacy text therefore induced **hallucinated tool calls** —
-the model would attempt to invoke a tool that does not exist on
-the SA tool surface, the call would be rejected by the dispatch
-layer, and the run wasted iterations.
+Its pre-v0.7.31.2 text prompted the model to call
+`emit_managed_protocol` to escalate mid-run. The direct engine has no
+such tool, so the text induced **hallucinated tool calls** that the
+dispatch layer rejected, wasting iterations. v0.7.31.2 rewrote it to
+ask for self-review: re-read the diff and run typecheck/tests.
 
-v0.7.31.2 rewrote the reflection text to be SA-self-review oriented:
-re-read the diff, run typecheck/tests, and (if the task turns out
-to be multi-stage) suggest the user re-invoke under AMA mode for
-an independent Evaluator pass.
+FEATURE_310 removed the remaining "SA mode has no Evaluator" wording
+and the suggestion to re-run under AMA mode. AMA is a single Worker
+now; a re-run adds no independent Evaluator pass, so the suggestion
+misled the user.
 
 ## What this benchmark measures
 
-When the LLM observes the **new** reflection text appended to a
-mutation tool result, the next assistant turn must:
+When the LLM observes the reflection text appended to a mutation tool
+result, the next assistant turn must:
 
-  1. **Not call a non-existent AMA tool** — neither
+  1. **Not call a non-existent escalation tool** — neither
      `emit_managed_protocol` nor `emit_scout_verdict` may appear in
      the next-turn output (text or tool call). This is the
      load-bearing safety judge: the legacy text caused this in
      production.
-  2. **Not name AMA harness ids in commitment phrasing** — strings
-     like `confirmed_harness="H1_EXECUTE_EVAL"` belong to the AMA
-     escalation protocol; they have no meaning in SA. (We do allow
-     the LLM to *describe* H1/H2 conceptually when telling the user
-     "you may want to re-run this under AMA" — that's what the new
-     text invites — but it must not phrase the description as an
-     escalation tool call.)
+  2. **Not use harness ids in commitment phrasing** — strings like
+     `confirmed_harness="H1_EXECUTE_EVAL"` belong to the retired
+     escalation protocol.
   3. **Mention at least one self-review action** — re-read the
      diff, run typecheck/tests, verify intent. The reflection text
      names these explicitly; we check that the model picks one up
      rather than ignoring the prompt entirely.
+  4. **Not tell the user to re-run under another mode** — no mode
+     adds a reviewer.
 
 ## Run model
 
-Real LLM × a simplified SA system prompt (`SA_IDENTITY` in
-`cases.ts`) that names the SA mode contract and explicitly states
-that `emit_managed_protocol` / `emit_scout_verdict` are NOT
-available. Synthetic prior conversation: user asks for a
-multi-file edit, assistant issues 3 edit tool calls, tool result
-returns the rewritten reflection text appended to a normal
+Real LLM × a minimal direct-engine system prompt
+(`DIRECT_ENGINE_IDENTITY` in `cases.ts`: identity plus tool surface,
+nothing about reviews or modes). Synthetic prior conversation: user
+asks for a multi-file edit, assistant issues the edit tool calls, the
+last tool result returns the reflection text appended to a normal
 "edited successfully" content. The benchmark inspects the **next**
 assistant turn.
 
 This intentionally mirrors `tests/admission-wrap.eval.ts`'s
-deterministic-judge approach (no LLM-as-judge) — the failure
-modes are surface-level pattern matches, no need for a second
-model.
+deterministic-judge approach (no LLM-as-judge) — the failure modes
+are surface-level pattern matches.
 
-### Caveat on the safety-pass-rate claim
+The cap-016 contract test separately asserts the text contains no
+escalation tool names, harness ids or mode names, so the text cannot
+seed names that models would echo back.
 
-The `SA_IDENTITY` system prompt names the forbidden tools by name,
-and the safety judges check for those same names. So a 100% safety
-pass rate proves **system prompt + judge are in agreement** — i.e.
-when the SA contract says "no AMA tools", real models honour that
-when prompted by the new reflection text. It does **NOT** prove
-the new reflection text alone (without the SA_IDENTITY) suppresses
-the hallucination; production `defaultCodingAgent` instructions
-phrase the SA contract differently and don't enumerate forbidden
-tools by name. The full assurance therefore comes from two
-sources, not one:
-
-  - The cap-016 contract test asserts the new text contains no
-    `emit_managed_protocol` / `emit_scout_verdict` / harness-id
-    strings — so the text isn't *seeding* the names that production
-    models could echo back.
-  - This benchmark adds the real-LLM lane that says: when an SA
-    contract is in scope, real models honour the new prompt text
-    instead of trying to escalate.
-
-Future work (if a regression of the legacy text ever shows up):
-re-run this benchmark with the production `defaultCodingAgent`
-instructions verbatim — the simplified `SA_IDENTITY` is a
-benchmark stand-in chosen to isolate the reflection-text variable
-from the rest of the production prompt's behaviour.
+A wording change is compared A/B on frozen inputs built from
+`DIRECT_ENGINE_IDENTITY` and `buildPriorMessages(task, reflection)`,
+replayed through the bounded ledger harness in
+`tests/skill-trigger.eval.ts` with a blind main-session review.
 
 ## Matrix
 
@@ -105,9 +81,7 @@ npm run test:eval -- sa-mutation-reflection
 
   - packages/coding/src/agent-runtime/middleware/mutation-reflection.ts
     — the implementation under test
-  - packages/coding/src/agent-runtime/middleware/scope-aware-harness-guardrail.ts
-    — AMA-side equivalent (FEATURE_106), unchanged
   - packages/coding/src/agent-runtime/__contract-tests__/cap-016-mutation-reflection.contract.test.ts
-    — text-shape unit tests (asserts the AMA tool names are absent)
+    — text-shape unit tests
   - docs/features/v0.7.31.md (FEATURE_101 v0.7.31.2 implementation
     completion patch)

@@ -72,7 +72,7 @@ const MAX_PROMPT_INDEX_BYTES = 8_000;
 /**
  * mtime-keyed read cache for MEMORY.md — mirrors the FEATURE_149 pattern in
  * `context/agents-loader.ts` (`readFileWithMtimeCache`). `buildMemorySection`
- * runs on EVERY SP rebuild (once per SA/AMA turn); MEMORY.md is up to 25KB, so
+ * runs on EVERY SP rebuild (once per direct-engine or AMA turn); MEMORY.md is up to 25KB, so
  * re-reading it every turn is wasted sync IO. Keyed by absolute entrypoint path;
  * a `todo_save` write bumps the file mtime and invalidates the entry automatically.
  */

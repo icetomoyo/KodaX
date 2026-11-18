@@ -172,7 +172,7 @@ export function appendPromptIfNotDuplicate(
       content: buildPromptMessageContent(prompt, inputArtifacts),
       ...(turnId !== undefined ? { turnId } : {}),
       ...(inputId !== undefined ? { inputId } : {}),
-      // GOAL 2: real submit-time for the user turn (SA/CLI submission path).
+      // GOAL 2: real submit-time for the user turn (direct-engine and AMA submission path).
       timestamp: new Date().toISOString(),
     },
   ];

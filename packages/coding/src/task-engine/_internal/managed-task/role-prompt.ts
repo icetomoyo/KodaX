@@ -117,12 +117,12 @@ export function createRolePrompt(
   const sharedClosingRule = WORKER_CLOSING_RULE;
 
   // v0.7.26 NEW-1 — inject the workspace environment at prompt head.
-  // Legacy SA path gets this via `buildSystemPrompt` (Working Directory
+  // The direct engine gets this via `buildSystemPrompt` (Working Directory
   // + environment-context); the Runner-driven path bypasses that
   // builder entirely. Without this block, managed workers guess paths
   // (e.g. `cd /d/user/kodax/workspace` when
   // the real cwd is `C:\Works\GitWorks\...`). Name the block after the
-  // SA surface so the LLM can correlate with anything it already
+  // direct-engine surface so the LLM can correlate with anything it already
   // learned from `buildSystemPrompt`.
   const workspace = rolePromptContext?.workspace;
   const workspaceSection = workspace
@@ -192,7 +192,7 @@ export function createRolePrompt(
     ? rolePromptContext.teamModeSection
     : undefined;
 
-  // v0.7.26 fix — managed workers bypass `buildSystemPrompt` (legacy SA
+  // v0.7.26 fix — managed workers bypass `buildSystemPrompt` (direct-engine
   // path), so the base `SYSTEM_PROMPT` discipline sections (tmp-directory
   // rule, mkdir warning, cross-platform notes) never reached the LLM. The
   // result: workers wrote scratch files to project root / system tmp

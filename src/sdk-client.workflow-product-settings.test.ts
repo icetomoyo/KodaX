@@ -35,7 +35,7 @@ it('product workflows honor the same implicit and explicit Edits permission mode
   const client = await connectKodaXClient({ homeDir, endpoint: endpointPath });
   try {
     const session = await client.sessions.create({ projectPath: homeDir });
-    await client.sessions.updateSettings(session.id, { provider: 'audit-workflow-default', agentMode: 'sa' });
+    await client.sessions.updateSettings(session.id, { provider: 'audit-workflow-default' });
     let displayedMode: string | undefined;
     const observation = await client.sessions.observe(session.id, view => { displayedMode = view.settings.permissionMode; });
     expect(displayedMode).toBe('accept-edits');
@@ -76,7 +76,7 @@ it('product workflows honor the same implicit and explicit Edits permission mode
     await client.runs.await(lowLevel.runId);
     for (const entry of ['input', 'tool'] as const) {
       const other = await client.sessions.create({ projectPath: homeDir });
-      await client.sessions.updateSettings(other.id, { provider: 'audit-workflow-default', agentMode: 'sa' });
+      await client.sessions.updateSettings(other.id, { provider: 'audit-workflow-default' });
       const run = entry === 'input'
         ? await client.inputs.submit({ sessionId: other.id, inputId: 'write-input', text: 'Write the fixture file.' })
         : await client.runs.startTool({ sessionId: other.id, inputId: 'write-tool', rawInput: 'Write the fixture file.',

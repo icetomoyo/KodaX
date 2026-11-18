@@ -86,7 +86,7 @@ async function runLockedSmoke(): Promise<void> {
     const result = await runWithProviderRequestObserver(fact => { facts.push(fact); }, async () => {
       const handle = await runtimeForRun.runs.start({ sessionId: session.id,
         prompt: '请读取 sum.js，把 add 的实现修正为加法，保留现有注释和格式。这是一个简单修复，只需精确编辑并简短报告完成，不需要运行命令或创建计划。', options: {
-      provider: providerName, agentMode: 'sa', maxIter: 3, reasoningMode: 'off',
+      provider: providerName, maxIter: 3, reasoningMode: 'off',
       maxOutputTokens: 2048, lsp: false, disablePromptCache: true, abortSignal: controller.signal,
       context: { executionCwd: fixture, gitRoot: fixture, skillsPrompt: '', skillRegistry: new SkillRegistry(fixture),
         repoIntelligenceMode: 'off', resolveShellPermissionMode: () => 'full-access',

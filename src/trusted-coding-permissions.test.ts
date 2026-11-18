@@ -86,7 +86,7 @@ describe('public SDK trusted text permissions', () => {
       const guardrails: ToolGuardrail[] = [{ kind: 'tool', name: 'auto-mode',
           beforeTool: async () => ({ action: 'allow' }),
       }];
-      const result = await run({ provider: 'text-permission-test', agentMode: 'sa', reasoningMode: 'off', lsp: false,
+      const result = await run({ provider: 'text-permission-test', reasoningMode: 'off', lsp: false,
         guardrails: mode === 'auto' ? guardrails : undefined,
         context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt: '', repoIntelligenceMode: 'off',
           systemPromptOverride: 'Perform the requested text tools.', resolveShellPermissionMode: () => mode },
@@ -287,7 +287,7 @@ describe('public SDK trusted text permissions', () => {
         { textBlocks: [{ type: 'text', text: 'Done.' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' },
       ];
       const guardrails: ToolGuardrail[] = [{ kind: 'tool', name: 'auto-mode', beforeTool: async () => ({ action: 'allow' }) }];
-      await run({ provider: 'text-permission-test', reasoningMode: 'off', agentMode: 'sa', lsp: false, guardrails,
+      await run({ provider: 'text-permission-test', reasoningMode: 'off', lsp: false, guardrails,
         context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt: '', repoIntelligenceMode: 'off',
           systemPromptOverride: 'Use tools.', resolveShellPermissionMode: () => 'auto' },
       }, 'Write through tool_call.');

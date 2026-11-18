@@ -230,7 +230,7 @@ hide replaceable managed context from ordinary topology while retaining the
 physical audit track and fail-closed ambiguity. `web-search.ts` owns the
 DuckDuckGo HTML → Bing RSS → Bing HTML bounded fallback and custom-endpoint
 isolation. The coding runtime owns `RunScopedToolDefinition` materialization,
-registry-first dispatch, permission predicates, and AMA/SA tool wiring; the
+registry-first dispatch, permission predicates, and AMA/direct-engine tool wiring; the
 Runtime daemon reverse bridge owns lease binding, revocation, catalog context,
 and `host:` authorization. These are additive to MCP and do not modify Shell
 or sandbox implementations.
@@ -946,7 +946,7 @@ text-only, and cost tracking keeps their base/cache rates separate.
 `KodaXProviderStreamOptions.promptCacheKey` is separate from the transport
 `sessionId`. Coding derives a domain-separated SHA-256 value from the stable
 logical context ID: the root uses its resumable Session identity and a child
-uses `${root}/agent/${encodeURIComponent(canonicalAgentId)}`. AMA, SA, retry,
+uses `${root}/agent/${encodeURIComponent(canonicalAgentId)}`. AMA, the direct engine, retry,
 max-token continuation, non-streaming fallback, and compaction reuse the same
 value. `disablePromptCache` omits it. Anthropic- and OpenAI-compatible
 serializers emit the protocol field only when `promptCacheAffinity` is enabled;
@@ -1371,12 +1371,12 @@ Invocation has two distinct trust paths:
   after the token as `$ARGUMENTS`, then inject the expanded Skill for that turn.
 
 Busy Ink follow-ups that resolve to a known Skill remain raw, user-authored
-queue entries with `delivery: host`. AMA mid-turn drain, SA interrupt drain,
+queue entries with `delivery: host`. AMA mid-turn drain, direct-engine interrupt drain,
 and idle-yield resume never splice those entries directly into model context;
 the next host round performs the same resolve, expand, policy, hook, and
 finalize pipeline as an immediate invocation. Built-in and extension slash
-commands keep their existing mid-task guard. Both SA and AMA inject the active
-Skill's full expanded content exactly once, including SA workflow children
+commands keep their existing mid-task guard. Both the direct engine and AMA inject the active
+Skill's full expanded content exactly once, including direct-engine workflow children
 that use a specialist `systemPromptOverride`.
 
 Child delegation trusts only the structured `skillInvocation` supplied by the
@@ -1412,20 +1412,20 @@ Skill tool results include only the Skill expansion and newly supplied Skill
 guidance; existing Host prompt overlays remain in system context.
 
 Formal discovery uses `gitRoot` when supplied, independently of execution cwd
-and Learned Area identity. SA/AMA omit the model catalog when the Skill loader
+and Learned Area identity. The direct engine and AMA omit the model catalog when the Skill loader
 is unavailable; an already expanded explicit invocation remains usable.
 Rediscovery invalidates full-body caches, including loads still in flight.
 
 Markdown Agent bindings pass their behavior instructions through `agentProfile`
-instead of converting them into a complete prompt override. Solo composes that
+instead of converting them into a complete prompt override. The direct engine composes that
 profile base with the admitted model catalog and any explicit active Skill;
-Adaptive retains the profile instructions in its Worker prompt. Direct SDK,
-managed Solo and public Runner entries share the same final Solo composition.
+Adaptive retains the profile instructions in its Worker prompt. Direct SDK
+and public Runner entries share the same final direct-engine composition.
 A caller's explicit `systemPromptOverride` keeps its complete-replacement
 semantics and priority; it does not acquire an automatic catalog. Both prompt
 paths use the same loader-visibility check before disclosing a catalog.
 Profile verification defaults, per-task verification overrides and execution
-guidance still reach Solo requests through their request-only Run context;
+guidance still reach direct-engine requests through their request-only Run context;
 retaining the Skill catalog does not drop those existing obligations.
 
 The Skill trigger has one owner: the model catalog section. It asks for a Skill

@@ -1,7 +1,7 @@
 import { staticText } from './prompts/static-text.js';
 /**
  * FEATURE_296 (ADR-067) request-assembly recovery rungs shared by the AMA
- * adapter (task-engine) and the SA substrate (agent-runtime).
+ * adapter (task-engine) and the direct-engine substrate (agent-runtime).
  *
  * - `degradeIrreducibleUserInputs`: when cumulative user input cannot fit the
  *   complete request even at the floor reserve, the request copy is

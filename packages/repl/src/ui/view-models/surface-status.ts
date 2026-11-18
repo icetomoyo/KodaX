@@ -79,7 +79,7 @@ export function buildSurfaceStatusBarProps(
     ?? activity?.usage?.totalTokens;
   const currentTokens = options.isLoading
     ? activity?.context?.tokenCount ?? parentTokens
-    : options.agentMode === 'sa' ? parentTokens : options.parentContextTokens ?? parentTokens ?? lastRunContextTokens;
+    : options.parentContextTokens ?? parentTokens ?? lastRunContextTokens;
   const scope = options.isLoading ? activity?.context?.scope ?? 'parent' : 'parent';
   const executionBudget = options.isLoading && activity?.contextBudget?.scope === scope ? activity.contextBudget : undefined;
   const contextUsage = executionBudget && currentTokens !== undefined ? {

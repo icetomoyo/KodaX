@@ -33,8 +33,9 @@ test('split SDK discovers packaged built-in skills from the installed distributi
   assert.match((await registry.loadFull('visual-review')).content, /Temporal/);
 });
 
-for (const agentMode of ['sa', 'ama']) for (const kind of ['default', 'profile']) {
-  test(`shared Host retains a bounded Skill catalog: ${agentMode}/${kind}`, async t => {
+// runs.start without a mode is the direct engine in both legs; only the ama label differs.
+for (const agentMode of [undefined, 'ama']) for (const kind of ['default', 'profile']) {
+  test(`shared Host retains a bounded Skill catalog: ${agentMode ?? 'unlabeled'}/${kind}`, async t => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-shared-skill-catalog-'));
     const configHome = path.join(root, '.kodax');
     const workspace = path.join(root, 'workspace');
@@ -95,7 +96,7 @@ for (const agentMode of ['sa', 'ama']) for (const kind of ['default', 'profile']
     assert.ok(owner); assert.notEqual(owner.pid, process.pid);
     const lease = await runtime.credentials.registerScoped({ providers: [provider] }, async () => 'offline-fixture');
     const session = await runtime.sessions.create({ projectPath: workspace });
-    await runtime.sessions.updateSettings(session.id, { provider, model: 'fixture', agentMode, permissionMode: 'full-access', reasoningMode: 'off' });
+    await runtime.sessions.updateSettings(session.id, { provider, model: 'fixture', ...(agentMode ? { agentMode } : {}), permissionMode: 'full-access', reasoningMode: 'off' });
     const run = await runtime.runs.start({ sessionId: session.id, prompt: 'Inspect evidence.',
       authorization: { credential: { leaseId: lease.id, mode: 'scoped', providers: [provider] },
         ...(kind === 'profile' ? { profile: { agentProfile: { instructions: 'PROFILE_SHARED' } } } : {}) } });

@@ -111,7 +111,7 @@ async function startScenario(inputText: string): Promise<CrashScenario> {
   const first = await ensureKodaXRuntime({ homeDir, daemonStartupTimeoutMs: 60_000 });
   const client = await connectKodaXClient({ homeDir });
   const session = await client.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await first.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const accepted = await client.inputs.submit({
     sessionId: session.id, inputId: 'crash-input', text: inputText,
   });

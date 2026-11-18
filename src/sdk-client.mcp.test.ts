@@ -98,7 +98,7 @@ afterEach(async () => {
 
 it('reloads the actual Host MCP provider used by subsequent model tool calls', async () => {
   const session = await client!.sessions.create({ projectPath: homeDir });
-  await client!.sessions.updateSettings(session.id, { provider: 'product-mcp-test', permissionMode: 'full-access', agentMode: 'sa' });
+  await client!.sessions.updateSettings(session.id, { provider: 'product-mcp-test', permissionMode: 'full-access' });
   const initial = await client!.inputs.submit({ sessionId: session.id, inputId: 'cold-start', text: 'Call the echo MCP tool.' });
   if (!initial.runId) throw new Error('Expected an immediate Run.');
   await runtime!.runs.await(initial.runId);
@@ -126,7 +126,7 @@ it('keeps the second session MCP provider usable after deleting the first privat
   const firstPrivate = await client!.sessions.create({ projectPath: homeDir, mcpServers: privateConfig });
   const secondPrivate = await client!.sessions.create({ projectPath: homeDir, mcpServers: privateConfig });
   for (const privateSession of [firstPrivate, secondPrivate]) {
-    await client!.sessions.updateSettings(privateSession.id, { provider: 'product-mcp-test', permissionMode: 'full-access', agentMode: 'sa' });
+    await client!.sessions.updateSettings(privateSession.id, { provider: 'product-mcp-test', permissionMode: 'full-access' });
   }
   const invokePrivate = async (sessionId: string, inputId: string) => {
     results.length = 0;

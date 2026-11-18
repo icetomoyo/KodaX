@@ -650,19 +650,16 @@ user input
   -> KodaXResult + session updates + UI/events
 ```
 
-Current main-agent modes use a single Provider/tool loop. Solo (`sa`) remains
-an active mode: `runKodaX` enters the shared Runner frame and coding substrate,
-with collaboration tools excluded by managed Solo dispatch. Adaptive (`ama`)
-uses the Runner-driven Worker and can dispatch child Actors. The retired V1
-Scout/Planner/Generator/Evaluator pipeline is not a current execution mode;
-`amaw` is only an input alias for `ama`. Optional reviewers are ordinary child
-Actors, using existing evidence and artifact channels. The main agent checks
-actual results and owns the final answer.
-
-ADR-020 retired the separate SA execution body and Option Y dispatcher facade;
-it retained the Solo product mode and the thin `runKodaX` SDK entry. A remaining
-`sa` dispatch branch therefore does not imply that the old independent engine
-was restored.
+The main agent uses a single Provider/tool loop. `ama` is the only agent mode:
+the Runner-driven Worker can dispatch child Actors. `sa` and `amaw` are
+deprecated inputs. Managed entries run AMA for them, and `runKodaX` treats `sa`
+as unlabeled. The direct engine (`runKodaX`, Runtime `coding` Runs) is not a
+mode: it enters the same Runner frame and coding substrate, and `Run.mode`
+reports which engine a Run used. The retired V1
+Scout/Planner/Generator/Evaluator pipeline is not a current execution mode.
+Optional reviewers are ordinary child Actors, using existing evidence and
+artifact channels. The main agent checks actual results and owns the final
+answer.
 
 Artifact evidence uses one `ArtifactExecutionPort`: independent Node hosts use
 the optional runtime; shared CLI/Space consumers use the existing Host's tool
@@ -979,7 +976,7 @@ the model writes into a child objective is not provenance: a new reference
 there remains a model invocation and must pass the model-tool gate.
 Queued explicit Skill text is host-owned: runtime mid-turn and idle-resume
 drains cannot expose it to the model before trusted expansion. The expanded
-active Skill is then present exactly once in either the SA or AMA system
+active Skill is then present exactly once in either the direct or AMA system
 context. Daemon transports rehydrate tool and hook policy from their
 local trusted registry and wait for PostToolUse completion rather than trusting
 serialized client policy.

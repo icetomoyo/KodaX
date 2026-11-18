@@ -129,7 +129,7 @@ export function resolveRoleInstructions(role: KodaXTaskRole,
 
   );
   // FEATURE_247 (R1): a Partner profile (or any SDK-consumer profile) can carry
-  // its own behavior instructions. On the SA path the embedder uses
+  // its own behavior instructions. On the direct engine the embedder uses
   // `context.systemPromptOverride`; the AMA/AMAW Worker builds its role prompt
   // internally, so we PREPEND the profile instructions here as the governing
   // directive while keeping the managed-task scaffolding (todo / dispatch /

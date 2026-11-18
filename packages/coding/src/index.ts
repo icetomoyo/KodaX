@@ -1072,7 +1072,7 @@ export {
 } from './coding-preset.js';
 
 // FEATURE_085 (v0.7.26): adapter wrapping the legacy per-tool truncation
-// policy as a Layer A ToolGuardrail.afterTool. Opt-in — the SA preset path
+// policy as a Layer A ToolGuardrail.afterTool. Opt-in — the direct-engine (coding preset) path
 // continues to call applyToolResultGuardrail directly.
 export {
   TOOL_RESULT_TRUNCATION_GUARDRAIL_NAME,

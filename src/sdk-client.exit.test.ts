@@ -58,7 +58,7 @@ it('keeps replacement Host work alive across reconnects and replays of a verifie
     writeRuntimeDaemonShutdownOutcome(paths, { version: 1, runtimeId: old.runtimeId, pid: old.host.owner.pid,
       status: 'succeeded', completedAt: '2026-10-26T00:01:00.000Z' });
     const session = await client.sessions.create({ projectPath: homeDir });
-    await client.sessions.updateSettings(session.id, { provider: 'exit-replacement-test', agentMode: 'sa', permissionMode: 'full-access' });
+    await client.sessions.updateSettings(session.id, { provider: 'exit-replacement-test', permissionMode: 'full-access' });
     const run = await client.inputs.submit({ sessionId: session.id, inputId: 'replacement-work', text: 'Keep working.' });
     await expect.poll(() => entered, { timeout: 15_000 }).toBe(true);
     for (let restart = 0; restart < 3; restart += 1) {
@@ -118,7 +118,7 @@ it('durably settles only this client work, protects the other client, and resume
   try {
     const a = await first.sessions.create({ projectPath: homeDir });
     const b = await other.sessions.create({ projectPath: homeDir });
-    for (const session of [a, b]) await first.sessions.updateSettings(session.id, { provider: 'exit-test', agentMode: 'sa', permissionMode: 'full-access' });
+    for (const session of [a, b]) await first.sessions.updateSettings(session.id, { provider: 'exit-test', permissionMode: 'full-access' });
     const own = await first.inputs.submit({ sessionId: a.id, inputId: 'own', text: 'Wait.' });
     const foreign = await other.inputs.submit({ sessionId: b.id, inputId: 'foreign', text: 'Keep working.' });
     await expect.poll(async () => {
@@ -274,7 +274,7 @@ it('cancels ordinary owned work while an uncooperative compaction stays unknown 
   try {
     const session = await client.sessions.create({ projectPath: homeDir });
     const busy = await client.sessions.create({ projectPath: homeDir });
-    for (const item of [session, busy]) await client.sessions.updateSettings(item.id, { provider: 'uncooperative-compact', agentMode: 'sa', permissionMode: 'full-access' });
+    for (const item of [session, busy]) await client.sessions.updateSettings(item.id, { provider: 'uncooperative-compact', permissionMode: 'full-access' });
     for (let index = 0; index < 3; index += 1) {
       const warm = await client.inputs.submit({ sessionId: session.id, inputId: `warm-${index}`, text: 'Preserve ownership evidence. '.repeat(700) });
       expect((await client.runs.await(warm.runId!)).phase).toBe('completed');

@@ -73,11 +73,11 @@ it('runs one round over the client plane with view-driven display', async () => 
   try {
     const session = await runtime.sessions.create({ title: 'T17 plane', surface: 'repl', projectPath: homeDir });
     await plane.updateSettings?.(session.id, clientSessionSettings({
-      provider: 't17-probe', model: 't17-selected', agentMode: 'sa',
+      provider: 't17-probe', model: 't17-selected', agentMode: 'ama',
       permissionMode: 'accept-edits', thinking: false, reasoningMode: 'off',
     }, 7));
     expect(await runtime.sessions.getSettings(session.id)).toMatchObject({
-      provider: 't17-probe', model: 't17-selected', agentMode: 'sa',
+      provider: 't17-probe', model: 't17-selected', agentMode: 'ama',
       permissionMode: 'accept-edits', thinking: false, reasoningMode: 'off', maxIter: 7,
     });
 
@@ -121,7 +121,7 @@ it('runs one round over the client plane with view-driven display', async () => 
     // agentMode, preserving that independent Host-owned model selection.
     await runtime.sessions.updateSettings(session.id, { model: 'external-model' });
     await plane.updateSettings?.(session.id, changedClientSessionSettings(
-      { agentMode: 'sa', model: 't17-selected' },
+      { model: 't17-selected' },
       { agentMode: 'ama', model: 't17-selected' },
     ));
     expect(await runtime.sessions.getSettings(session.id)).toMatchObject({
@@ -164,7 +164,7 @@ it('stops a client-plane round with a receipt and maps it to the interrupted res
   try {
     const session = await runtime.sessions.create({ title: 'T17 stop', surface: 'repl', projectPath: homeDir });
     await runtime.sessions.updateSettings(session.id, {
-      agentMode: 'sa', permissionMode: 'full-access',
+      permissionMode: 'full-access',
     });
     const controller = new AbortController();
     const roundPromise = runClientPlaneRound({
@@ -205,7 +205,7 @@ it('queues a follow-up Host-side and rides the continuation run to its result', 
   try {
     const session = await runtime.sessions.create({ title: 'T17 queue', surface: 'repl', projectPath: homeDir });
     await runtime.sessions.updateSettings(session.id, {
-      agentMode: 'sa', permissionMode: 'full-access',
+      permissionMode: 'full-access',
     });
     const views: ClientSessionView[] = [];
     const close = await plane.observe(session.id, (view) => views.push(view));

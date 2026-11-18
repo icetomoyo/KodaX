@@ -12833,46 +12833,6 @@ describe("createKodaXRuntime", () => {
     await expect(run.result).resolves.toMatchObject({ phase: "unknown" });
   });
 
-  it("rejects interrupt delivery when the active run has no safe Actor boundary", async () => {
-    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
-    const runtime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "sessions"),
-      defaultProvider: "mock-provider",
-    });
-    const session = await runtime.sessions.create({
-      title: "SA Interrupt Test",
-    });
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions) =>
-      fakeRunningSession(options, new Promise<KodaXResult>(() => undefined)),
-    );
-
-    const first = await runtime.runs.start({
-      sessionId: session.id,
-      prompt: "first",
-      options: { agentMode: "sa" },
-    });
-    await expect(
-      runtime.runs.submitInput({
-        sessionId: session.id,
-        afterRunId: first.runId,
-        delivery: "interrupt",
-        input: { type: "text", text: "unsupported here" },
-      }),
-    ).resolves.toEqual({
-      accepted: false,
-      delivery: "interrupt",
-      sessionId: session.id,
-      afterRunId: first.runId,
-      reason: "unsupported_capability",
-    });
-    expect(getMessageQueue().size()).toBe(0);
-
-    await runtime.runs.abort(first.runId);
-    await runtime.close();
-    await expect(first.result).resolves.toMatchObject({ phase: "unknown" });
-  });
-
   it("does not leave queued input behind when interrupt cloning fails", async () => {
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
@@ -13607,7 +13567,7 @@ describe("createKodaXRuntime", () => {
       _runtime: { revision: 1, owner: { ownerId: 'dead-generation-owner', runtimeId: 'dead-runtime',
         pid: action === 'session-stop-unverified-owner' ? process.pid : 2147483647, startedAt: '2026-10-21T00:00:00Z' } } }));
     await fs.writeFile(path.join(directory, 'generation-recovery.json'), JSON.stringify({ version: 1, checkpoint,
-      start: { prompt: 'Keep exports unchanged.', options: { agentMode: 'sa', context: { systemPromptOverride: 'Keep all constraints.' } }, requiredBindings: [] },
+      start: { prompt: 'Keep exports unchanged.', options: { context: { systemPromptOverride: 'Keep all constraints.' } }, requiredBindings: [] },
       requiresCredential: action === 'leases', requiresHostTools: action === 'leases', actorTurnBaseline: [],
       ...(action === 'queue-save-failure' || action === 'claim-save-failure' ? { pendingInputs: [{ skill: false,
         ...(action === 'claim-save-failure' ? { principalId: 'recovery-client' } : {}),
@@ -13779,7 +13739,7 @@ describe("createKodaXRuntime", () => {
     const homeDir = path.join(tempRoot, 'pending-restarts');
     const first = await createKodaXRuntime({ homeDir, defaultProvider: 'mock-provider' });
     const session = await first.sessions.create({ title: 'Retain foreign input' });
-    await first.sessions.updateSettings(session.id, { agentMode: 'sa' });
+    await first.sessions.updateSettings(session.id, {});
     await first.close();
     const directory = path.join(homeDir, '.kodax', 'runtime', 'pending-inputs');
     await fs.mkdir(directory, { recursive: true });
@@ -13787,18 +13747,18 @@ describe("createKodaXRuntime", () => {
     await fs.writeFile(path.join(directory, `${session.id}.json`), JSON.stringify([{ input, skill: false, principalId: 'client-B' }]));
     const second = await createKodaXRuntime({ homeDir, defaultProvider: 'mock-provider' });
     expect(await second.runs.getInput(session.id, input.inputId)).toMatchObject({ state: 'queued' });
-    expect(codingMock.startKodaX).not.toHaveBeenCalled();
+    expect(codingMock.runManagedTask).not.toHaveBeenCalled();
     await second.close();
     const third = await createKodaXRuntime({ homeDir, defaultProvider: 'mock-provider' });
     try {
       expect(await third.runs.getInput(session.id, input.inputId)).toMatchObject({ state: 'queued' });
       await expect(withProductExecution({ principalId: 'client-A', bindRun: async value => value }, () => third.runs.acceptInput(input))).rejects.toThrow(/principal/);
-      codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions, prompt: string) => {
+      codingMock.runManagedTask.mockImplementationOnce(async (_options: KodaXOptions, prompt: string) => {
         expect(prompt).toBe(input.text);
-        return fakeRunningSession(options, Promise.resolve({ success: true, lastText: 'Confirmed', messages: [], sessionId: session.id }));
+        return { success: true, lastText: 'Confirmed', messages: [], sessionId: session.id };
       });
       await withProductExecution({ principalId: 'client-B', key: 'fresh-B', bindRun: async value => value }, () => third.runs.acceptInput(input));
-      await vi.waitFor(() => expect(codingMock.startKodaX).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(codingMock.runManagedTask).toHaveBeenCalledTimes(1));
       await vi.waitFor(async () => expect(await third.runs.getInput(session.id, input.inputId)).toMatchObject({ state: 'submitted' }));
       expect(JSON.parse(await fs.readFile(path.join(directory, `${session.id}.json`), 'utf8'))).toEqual([]);
     } finally { await third.close(); }
@@ -13912,7 +13872,7 @@ describe("createKodaXRuntime", () => {
         activeEntryId: lineage.activeEntryId, turnId: 'close-turn', messagesDigest: createHash('sha256').update(JSON.stringify(messages)).digest('hex') } });
       return { success: true, lastText: 'should remain suspended', messages, sessionId: session.id };
     })()));
-    const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'Preserve constraints', options: { agentMode: 'sa' } });
+    const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'Preserve constraints', mode: 'coding' });
     await vi.waitFor(async () => expect((await runtime.runs.get(handle.runId)).contextRecovery?.checkpoint).toBeDefined());
     await runtime.close();
     expect((await handle.result).phase).toBe('recovering');
@@ -15372,7 +15332,7 @@ describe("createKodaXRuntime", () => {
     await restarted.close();
   });
 
-  it("uses the Actor owner fence for SA root Runs across Runtimes", async () => {
+  it("uses the Actor owner fence for direct root Runs across Runtimes", async () => {
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const sessionsDir = path.join(tempRoot, "sa-owner-sessions");
     const owner = await createKodaXRuntime({
@@ -15386,7 +15346,7 @@ describe("createKodaXRuntime", () => {
       defaultProvider: "mock-provider",
     });
     const session = await owner.sessions.create({
-      title: "SA Root Run Owner",
+      title: "Direct Root Run Owner",
     });
     codingMock.startKodaX.mockImplementation(
       (options: KodaXOptions): RunningSession =>
@@ -15394,8 +15354,8 @@ describe("createKodaXRuntime", () => {
     );
     const handle = await owner.runs.start({
       sessionId: session.id,
-      prompt: "keep the SA root Run active",
-      options: { agentMode: "sa" },
+      prompt: "keep the direct root Run active",
+      mode: "coding",
     });
 
     await expect(contender.sessions.archive(session.id)).rejects.toMatchObject({
@@ -16681,7 +16641,7 @@ describe("createKodaXRuntime", () => {
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot, defaultProvider: "mock-provider" });
     const session = await runtime.sessions.create({ projectPath: tempRoot });
-    await runtime.sessions.updateSettings(session.id, { permissionMode: "full-access", agentMode: "sa" });
+    await runtime.sessions.updateSettings(session.id, { permissionMode: "full-access" });
     let dynamicOutput = "";
     codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
       const result = (async () => {

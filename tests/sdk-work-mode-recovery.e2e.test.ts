@@ -84,7 +84,7 @@ it.each(['agent', 'coding'] as const)('retains the original Agent constraint on 
     }
     expect(required).toBe('agent');
     if (workMode === 'agent') {
-      await client.sessions.updateSettings(sessionId, { provider: 'mode-recovery', model: 'fixture', workMode: 'coding', agentMode: 'sa', permissionMode: 'full-access' });
+      await client.sessions.updateSettings(sessionId, { provider: 'mode-recovery', model: 'fixture', workMode: 'coding', permissionMode: 'full-access' });
       await client.inputs.submit(pending);
       await expect.poll(async () => (await client.inputs.read(sessionId, pending.inputId))?.admissionError?.code,
         { timeout: 5_000 }).toBe('execution_mode_mismatch');
@@ -158,7 +158,7 @@ it('keeps a cold mixed pending queue separated after both inputs bind to the sam
   } });
   const peer = await connectKodaXClient({ homeDir, endpoint });
   try {
-    await peer.sessions.updateSettings(sessionId, { workMode: 'coding', agentMode: 'sa', permissionMode: 'full-access' });
+    await peer.sessions.updateSettings(sessionId, { workMode: 'coding', permissionMode: 'full-access' });
     const active = await client.runs.startTool({ sessionId, inputId: 'hold-before-rebind', rawInput: 'Hold while rebinding both inputs.',
       name: 'hold_mixed_queue', input: {} });
     await expect.poll(() => holding, { timeout: 10_000 }).toBe(true);

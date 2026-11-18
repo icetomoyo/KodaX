@@ -43,7 +43,7 @@ it('applies a Main-declared default Skill in the Host while preserving the origi
   try {
     const session = await client.sessions.create({ projectPath: homeDir, surface: 'partner' });
     await client.sessions.updateSettings(session.id, { provider: 'expert-fixture', model: 'fixture', workMode: 'agent',
-      agentMode: 'sa', permissionMode: 'full-access' });
+      permissionMode: 'full-access' });
     const accepted = await client.inputs.submit({ sessionId: session.id, inputId: 'plain-question', text: 'My original question' });
     expect(accepted.runId).toBeTruthy();
     expect((await client.runs.await(accepted.runId!)).phase).toBe('completed');

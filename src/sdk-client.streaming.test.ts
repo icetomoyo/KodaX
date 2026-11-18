@@ -12,7 +12,7 @@ import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 
-it.each(['sa', 'ama'] as const)('exposes bounded live thinking and tool input facts from the real %s Provider through the Host', async agentMode => {
+it('exposes bounded live thinking and tool input facts from the real Provider through the Host', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-streaming-'));
   let releaseThinking!: () => void;
   let releaseTool!: () => void;
@@ -62,7 +62,7 @@ it.each(['sa', 'ama'] as const)('exposes bounded live thinking and tool input fa
   const client = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
   const session = await client.sessions.create({ projectPath: homeDir });
   await client.sessions.updateSettings(session.id, { provider: 'streaming-facts-test', model: 'stream-model',
-    agentMode, permissionMode: 'full-access', effort: 'high' });
+    agentMode: 'ama', permissionMode: 'full-access', effort: 'high' });
   const views: ClientSessionView[] = [];
   const observation = await client.sessions.observe(session.id, view => views.push(view));
   let runId: string | undefined;

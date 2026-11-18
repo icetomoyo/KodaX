@@ -224,8 +224,8 @@ import {
   createRunnerToolResultBatchTransform,
   resolveRunnerToolResultBudget,
 } from './runner-tool-result-batch.js';
-// CAP-003/004/005/006/007: shared event emit helpers. Both SA (substrate
-// frame) and AMA (this runner-driven path) fire through the same
+// CAP-003/004/005/006/007: shared event emit helpers. Both the direct engine
+// (substrate frame) and AMA (this runner-driven path) fire through the same
 // surface so the contract for each event lives in exactly one place.
 import {
   createLiveTurnScope,
@@ -241,8 +241,8 @@ import {
 } from '../agent-runtime/event-emitter.js';
 import { withDurableCompactionPersistence } from '../agent-runtime/durable-compaction.js';
 // CAP-008: shared initial-messages resolver. Three-tier fallback
-// (inline → storage.load → empty) for AMA frame entry; SA already
-// uses this from `run-substrate.ts`.
+// (inline → storage.load → empty) for AMA frame entry; the direct engine
+// already uses this from `run-substrate.ts`.
 import { appendPromptIfNotDuplicate, resolveInitialMessages, type ResolvedInitialMessages } from '../agent-runtime/middleware/auto-resume.js';
 import { createExtensionRuntimeSessionController } from '../agent-runtime/middleware/extension-queue.js';
 import {
@@ -253,8 +253,8 @@ import {
 } from '../agent-runtime/runtime-session-state.js';
 // CAP-010: shared tri-state permission gate. AMA's
 // `toolObserver.beforeTool` delegates to this so the extension
-// `tool:before` hook fires on AMA path (pre-FEATURE_100 only SA hit
-// it).
+// `tool:before` hook fires on AMA path (pre-FEATURE_100 only the direct
+// engine hit it).
 import { getToolExecutionOverride } from '../agent-runtime/permission-gate.js';
 import { applyToolVisibilityPolicy, filterExcludedTools } from '../agent-runtime/tool-resolution.js';
 import { listRunScopedTools, runScopedToolMap } from '../agent-runtime/run-scoped-tools.js';
@@ -271,7 +271,7 @@ import {
 } from '../constants.js';
 // CAP-048: shared tool-execution-context builder. Centralizes
 // FEATURE_074 (set_permission_mode NOT forwarded) and FEATURE_067
-// (onChildProgress undefined) invariants so AMA and SA can't drift.
+// (onChildProgress undefined) invariants so AMA and the direct engine can't drift.
 import { buildToolExecutionContext } from '../agent-runtime/tool-execution-context.js';
 // FEATURE_192 v0.7.44 — `/goal` lifecycle adapter. Owns the
 // composition of FEATURE_164 mid-turn drain + FEATURE_192 goal
@@ -916,7 +916,7 @@ async function runManagedTaskViaRunnerInContext(
     modelOverride: defaults.modelSelection.model ?? options.modelOverride,
     effort: defaults.thinkingLevel ?? options.effort };
   // FEATURE_103 (v0.7.29): apply L5 user-followup escalation once at the
-  // AMA entry. Mirrors the SA `runKodaX` wiring so the bumped ceiling
+  // AMA entry. Mirrors the direct-engine `runKodaX` wiring so the bumped ceiling
   // propagates uniformly through createReasoningPlan, buildRunnerLlmAdapter,
   // and the per-iteration L1-L4 resolver inside the Runner loop. When no
   // signal fires, the helper returns the input options reference unchanged.
@@ -973,7 +973,7 @@ async function runManagedTaskViaRunnerInContext(
   await runOwnedMemoryWork(effectiveOptions, () => maybeRunMemoryMaintenanceWindow(effectiveOptions));
   effectiveOptions.abortSignal?.throwIfAborted();
   // Fire onSessionStart early so REPL / CLI listeners bound to session
-  // init trigger for AMA runs the same way they trigger for SA runs.
+  // init trigger for AMA runs the same way they trigger for direct-engine runs.
   // Ad-hoc askUser callers without a stable host session id get a run-local id:
   // checkpoint resume should prefer a safe miss over cross-session attachment.
   const shouldAttachInitialSessionId = Boolean(effectiveOptions.session?.id)
@@ -1250,7 +1250,7 @@ async function runManagedTaskViaRunnerInContext(
     // onComplete fires on every terminal — success, block, or error —
     // so REPL can re-render its status bar. NOTE: AMA path's
     // onComplete fires in finally (i.e. AFTER onError on the error
-    // branch), whereas SA's onComplete is mutually exclusive with
+    // branch), whereas the direct engine's onComplete is mutually exclusive with
     // onError (CAP-084). This is a pre-FEATURE_100 behavioral
     // divergence preserved deliberately — REPL listeners on the AMA
     // path rely on the universal-cleanup semantics. Future work to
@@ -1382,7 +1382,7 @@ async function runManagedTaskViaRunnerInner(
   //     safety boundary
   //   - exitPlanMode: FEATURE_074 exit_plan_mode tool fails
   // CAP-048: build base tool-execution-context via the shared substrate
-  // helper so SA and AMA construct ctx through the same path. This
+  // helper so the direct engine and AMA construct ctx through the same path. This
   // delivers two AMA-side regression fixes:
   //   1. `managedProtocolRole` + `emitManagedProtocol` — pre-FEATURE_100
   //      AMA's inline ctx omitted both, so worker tools that called
@@ -1754,7 +1754,7 @@ async function runManagedTaskViaRunnerInner(
   // the recorder so Scout's post-emit `skillMap` / `scope` reach
   // downstream Generator / Evaluator prompts at invocation time.
   // v0.7.26 NEW-1 — resolve workspace environment once so every role
-  // prompt can tell the LLM where it is running. The SA path injects
+  // prompt can tell the LLM where it is running. The direct engine injects
   // `Working Directory: ${executionCwd}` via `buildSystemPrompt`, but
   // the Runner-driven path bypasses that builder. Without this block,
   // Scout/Planner/Generator/Evaluator all guess paths (e.g. the
@@ -1768,12 +1768,12 @@ async function runManagedTaskViaRunnerInner(
     osRelease: os.release(),
     // Forward the active provider/model so each role's `## Environment`
     // block discloses runtime identity. Mirrors the runtime-fact section
-    // the SA path emits via `buildSystemPrompt`'s `getRuntimeFact`.
+    // the direct engine emits via `buildSystemPrompt`'s `getRuntimeFact`.
     provider: options.provider,
     model: options.modelOverride ?? options.model,
   };
 
-  // v0.7.35.1 FEATURE_144 — pre-compute the SA path's capability-context
+  // v0.7.35.1 FEATURE_144 — pre-compute the direct-engine capability-context
   // section set ONCE per AMA entry so each role's prompt assembly
   // skips the FS / extension-runtime calls. Filtered to the 6 sections
   // not already covered by `workspaceSection` /
@@ -1796,10 +1796,10 @@ async function runManagedTaskViaRunnerInner(
       managedWorkspace.executionCwd,
     );
     // The AMA Worker owns these sections via `buildWorkerInstructions` /
-    // `role-prompt.ts`, so they are excluded from the SA-style capability
+    // `role-prompt.ts`, so they are excluded from the direct-engine-style capability
     // block to avoid double emission. `execution-guidance` is here because the
-    // Worker carries EXECUTION_GUIDANCE inside `buildWorkerInstructions`; the SA
-    // path gets the same block via the capability section instead (ADR-043 P1.7).
+    // Worker carries EXECUTION_GUIDANCE inside `buildWorkerInstructions`; the
+    // direct engine gets the same block via the capability section instead (ADR-043 P1.7).
     // The old `prompt-overlay` section was removed (router overlay retired).
     const AMA_OWNED_SECTION_IDS = new Set<string>([
       'base-system',
@@ -2088,7 +2088,7 @@ async function runManagedTaskViaRunnerInner(
   // task-family guidance, work intent, brainstorm directives,
   // provider-policy notes, explicit-reason trail) is now routed
   // through the role-prompt builder's system-prompt section
-  // (`ManagedRolePromptContext.promptOverlay`), matching the SA-path
+  // (`ManagedRolePromptContext.promptOverlay`), matching the direct-engine
   // `capability-sections.ts` injection surface. The previous Shard 6d-L
   // stitching put this onto the user prompt head, which made the
   // routing notes look like user input to the LLM instead of platform
@@ -2098,7 +2098,7 @@ async function runManagedTaskViaRunnerInner(
   // Session continuity: when the caller passes `options.session.initialMessages`
   // (REPL multi-turn, session resume, plan-mode replay), prepend them as the
   // Runner transcript so the Scout/Planner/Generator/Evaluator see full
-  // prior context — same behaviour as the SA-mode entry via the session
+  // prior context — same behaviour as the direct-engine entry via the session
   // loader.
   //
   // v0.7.26 parity (C1): the user message content is built through
@@ -2108,10 +2108,10 @@ async function runManagedTaskViaRunnerInner(
   // LLM sees a plain-text prompt and never perceives the image —
   // round-boundary reshape only rewrites outgoing `result.messages` for
   // display, not the inbound prompt — apply the lift here so the AMA
-  // entry message carries multimodal blocks like the SA entry does.
+  // entry message carries multimodal blocks like the direct-engine entry does.
   //
   // CAP-008: resolve initial messages through the substrate helper so AMA
-  // gets the same three-tier resolution SA gets:
+  // gets the same three-tier resolution the direct engine gets:
   //   1. caller-supplied `options.session.initialMessages` (REPL multi-turn,
   //      plan-mode replay, explicit resume) — preferred
   //   2. `options.session.storage.load(sessionId)` — recover a previously
@@ -2126,7 +2126,7 @@ async function runManagedTaskViaRunnerInner(
     await options.context.actorSession?.resumeGenerationChildren(options.context.runtimeRunId);
   }
   // FEATURE_294: run-scoped host tools join the AMA candidate name list so the
-  // lease-bound surface stays consistent with the SA path; policy filtering
+  // lease-bound surface stays consistent with the direct engine; policy filtering
   // resolves their metadata from the run-scoped map (fail-closed elsewhere).
   const runScopedToolDefs = listRunScopedTools(extensionRuntime);
   const runtimeSessionState = buildRuntimeSessionState({
@@ -2410,7 +2410,7 @@ async function runManagedTaskViaRunnerInner(
   const permissionEventsObserver: RunnerToolObserver = {
     // CAP-010 tri-state permission gate: plan-mode / accept-edits /
     // extension "tool:before" hooks run here. Delegates to the shared
-    // substrate helper so SA and AMA evaluate the same gate chain —
+    // substrate helper so the direct engine and AMA evaluate the same gate chain —
     // pre-FEATURE_100 the AMA path only invoked
     // `events.beforeToolExecute` and dropped the extension
     // `tool:before` branch entirely; substrate parity restores it.
@@ -2420,7 +2420,7 @@ async function runManagedTaskViaRunnerInner(
     beforeTool: async (call) => {
       if (skillLoadBatch && !isSkillToolCall(call)) return SKILL_ACTION_DEFERRED;
       if (scriptMode && call.name === SCRIPT_TOOL_NAME) return true;
-      // Like SA dispatch, the bridge gates its concrete target; gating the
+      // Like direct-engine dispatch, the bridge gates its concrete target; gating the
       // wrapper too would ask twice for one operation.
       if (call.name === TOOL_CALL_NAME || call.name === TOOL_DESCRIBE_NAME) return true;
       const override = await getToolExecutionOverride(
@@ -2439,7 +2439,7 @@ async function runManagedTaskViaRunnerInner(
       // etc.) so REPL transcript doesn't surface them. Pre-FEATURE_100
       // AMA emitted every tool call regardless of visibility — REPL
       // showed `emit_managed_protocol` invocations as if they were
-      // user-facing. SA always filtered via isVisibleToolName; AMA now
+      // user-facing. The direct engine always filtered via isVisibleToolName; AMA now
       // does too.
       if (!isVisibleToolName(call.name)) return;
       options.events?.onToolUseStart?.({

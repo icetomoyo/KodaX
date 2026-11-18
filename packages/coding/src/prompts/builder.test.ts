@@ -429,7 +429,7 @@ describe('buildSystemPrompt', () => {
     expect(normalized).toContain('Working Directory: <CWD>');
     expect(normalized).toContain('## Repository Intelligence\nFROZEN-REPO-CTX');
     // Static EXECUTION GUIDANCE is always present; the caller-supplied
-    // context.promptOverlay (Direct Path Rule / SDK overlay) is re-emitted
+    // context.promptOverlay (caller / SDK overlay) is re-emitted
     // alongside it (ADR-043 Phase 3 regression fix — P1.7 had dropped it with
     // the retired router overlay). Only the router overlay text itself is gone.
     expect(normalized).toContain('EXECUTION GUIDANCE');

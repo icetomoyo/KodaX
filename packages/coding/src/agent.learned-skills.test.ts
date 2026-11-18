@@ -10,7 +10,7 @@ import { runManagedTask } from './task-engine.js';
 import { runKodaX } from './agent.js';
 import { awaitLatestCodingMemoryReviewDrain } from './memory-runtime.js';
 
-const cases = (['sa', 'ama'] as const).flatMap(mode => [
+const cases = (['direct', 'ama'] as const).flatMap(mode => [
   ...(['success', 'error', 'cancel'] as const).map(ending => ({ mode, ending, catalog: 'HOST_CUSTOM_SKILL_CATALOG_MUST_SURVIVE', label: 'custom' })),
   ...['', '   '].map(catalog => ({ mode, ending: 'success' as const, catalog, label: catalog === '' ? 'empty' : 'whitespace' })),
 ]);
@@ -68,8 +68,8 @@ it.each(cases)(
   }
   const unregister = registerModelProvider('learned-entry-fixture', () => new Provider());
   try {
-    const running = (mode === 'sa' ? runKodaX : runManagedTask)({ provider: 'learned-entry-fixture', abortSignal: controller.signal,
-      agentMode: mode, effort: 'none', lsp: false, maxIter: 3, session: { id: identity.sessionId },
+    const running = (mode === 'direct' ? runKodaX : runManagedTask)({ provider: 'learned-entry-fixture', abortSignal: controller.signal,
+      ...(mode === 'ama' ? { agentMode: mode } : {}), effort: 'none', lsp: false, maxIter: 3, session: { id: identity.sessionId },
       events: { runMemoryWork: async work => {
         activeMemoryWork++;
         try { await work(controller.signal); } finally { activeMemoryWork--; }

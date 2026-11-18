@@ -17,7 +17,7 @@
  * features — FEATURE_120 collaboration controls, FEATURE_161 (4 of
  * 8 repo-intel pull tools the Worker prompt teaches), and the four web
  * tools (web_search / web_fetch / code_search / semantic_lookup). The
- * AMA path is shielded from SA-path defaults so wiring drift went
+ * AMA path is shielded from direct-engine defaults so wiring drift went
  * undetected by every test layer (handler unit tests pass, prompt
  * teaches the tool, registry registers it, CHILD_EXCLUDE excludes the
  * non-existent child copy — no test asserted "agent.tools actually
@@ -32,7 +32,7 @@ import { filterMcpToolNames, listToolDefinitions } from '../../../tools/registry
 import { isSessionHistoryTool } from '../../../tools/session-history.js';
 import type { AmaRole } from './types.js';
 
-/** Tools every AMA role excludes — specialized paths (SA-root, construction). */
+/** Tools every AMA role excludes — specialized paths (construction, self-modify). */
 const AMA_BASELINE_EXCLUDE: ReadonlySet<string> = new Set([
   // FEATURE_193 (v0.7.43) deep V1 cleanup: `emit_managed_protocol` was the
   // SA-preset entry point for the V1 chain; with the chain retired and the

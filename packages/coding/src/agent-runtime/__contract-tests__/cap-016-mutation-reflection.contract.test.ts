@@ -11,12 +11,11 @@
  *   • `isMutationTool(name)` — predicate for mutation tool names.
  *   • `isMutationScopeSignificant(tracker)` — file-count OR line-count
  *     threshold predicate.
- *   • `buildMutationScopeReflection(tracker)` — text builder. v0.7.31.2
- *     rewrote the body to be SA-self-review oriented (header line +
- *     senior-engineer rhetorical line + 3 self-review action lines)
- *     after the legacy "six canonical lines" with `emit_managed_protocol`
- *     references was found to induce hallucinated tool calls in SA
- *     mode (which has no AMA escalation tools on its surface).
+ *   • `buildMutationScopeReflection(tracker)` — text builder. The body is
+ *     self-review oriented (header line + senior-engineer rhetorical line +
+ *     2 self-review action lines). The legacy "six canonical lines" with
+ *     `emit_managed_protocol` references induced hallucinated tool calls on
+ *     the direct engine, which has no escalation tools on its surface.
  *
  * - CAP-MUTATION-REFLECT-002: read-only tool name → `isMutationTool`
  *   returns false (so the call site short-circuits before invoking
@@ -90,7 +89,7 @@ describe('CAP-016: mutation scope reflection contract', () => {
     expect(isMutationScopeSignificant(makeTracker([['a.ts', 60], ['b.ts', 60]]))).toBe(true);
   });
 
-  it('CAP-MUTATION-REFLECT-001e: buildMutationScopeReflection produces the SA-self-review text including file count, total lines, file list, and the senior-engineer rhetorical prompt', () => {
+  it('CAP-MUTATION-REFLECT-001e: buildMutationScopeReflection produces the self-review text including file count, total lines, file list, and the senior-engineer rhetorical prompt', () => {
     const text = buildMutationScopeReflection(
       makeTracker([['src/foo.ts', 40], ['src/bar.ts', 80]]),
     );
@@ -99,13 +98,14 @@ describe('CAP-016: mutation scope reflection contract', () => {
     expect(text).toContain('  - src/foo.ts (~40 lines)');
     expect(text).toContain('  - src/bar.ts (~80 lines)');
     expect(text).toContain('A senior engineer would pause here.');
-    expect(text).toContain('SA mode has no Evaluator');
-    // v0.7.31.2 — the text MUST NOT reference the AMA escalation tool
-    // names (`emit_managed_protocol`, `emit_scout_verdict`,
-    // `H1_EXECUTE_EVAL`, `H2_PLAN_EXECUTE_EVAL`). SA mode has no mid-run
-    // escalation path, and the legacy tool names produced hallucinated
-    // tool calls when the LLM took the prompt at face value. Equivalent
-    // AMA prompting lives in `scope-aware-harness-guardrail.ts`.
+    expect(text).toContain('No separate reviewer checks this run');
+    // SA mode is retired and AMA no longer has an Evaluator pass, so the text
+    // must not name a mode or suggest a re-run that would add a reviewer.
+    expect(text).not.toMatch(/\bSA\b|\bAMA\b|Evaluator/);
+    // The text MUST NOT reference the retired escalation tool names
+    // (`emit_managed_protocol`, `emit_scout_verdict`, `H1_EXECUTE_EVAL`,
+    // `H2_PLAN_EXECUTE_EVAL`): the legacy names produced hallucinated tool
+    // calls when the LLM took the prompt at face value.
     expect(text).not.toContain('emit_managed_protocol');
     expect(text).not.toContain('emit_scout_verdict');
     expect(text).not.toContain('H1_EXECUTE_EVAL');

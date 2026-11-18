@@ -11,8 +11,8 @@
  *   - text + image artifacts (paste / drag) → return a multimodal content
  *     block array: a text block followed by one image block per artifact
  *
- * Always applied at the SINGLE SA entry-message build site
- * (`agent.ts:1263`); the runner-driven (AMA) path hits the same function via
+ * Applied at the direct engine's entry-message build site
+ * (`appendPromptIfNotDuplicate` in `middleware/auto-resume.ts`); the runner-driven (AMA) path hits the same function via
  * the package re-export.
  *
  * Migration history: extracted from `input-artifacts.ts` to `agent-runtime/`

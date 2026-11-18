@@ -3,7 +3,7 @@ import type { CurrentConfig } from '../commands/types.js';
 import { applyClientSessionViewSettings, changedClientSessionSettings, clientSessionSettings } from './client-session-settings.js';
 
 const initial: CurrentConfig = { provider: 'anthropic', model: 'startup-model', permissionMode: 'accept-edits',
-  agentMode: 'sa', thinking: false, reasoningMode: 'off' };
+  agentMode: 'ama', thinking: false, reasoningMode: 'off' };
 
 it('restores or clears the work mode independently of model, permission and AMA settings', () => {
   const selected = applyClientSessionViewSettings(initial, { settings: { workMode: 'script' } });
@@ -20,8 +20,8 @@ it('retains unknown Host defaults for display without writing stale local modes 
   expect(cleared.hostSettings).toEqual({});
   expect(changedClientSessionSettings(clientSessionSettings(cleared), clientSessionSettings({ ...cleared, model: 'next' })))
     .toEqual({ model: 'next' });
-  const restored = applyClientSessionViewSettings(cleared, { settings: { permissionMode: 'auto', reasoningMode: 'off', thinking: false, agentMode: 'sa' } });
-  expect(restored).toMatchObject({ permissionMode: 'auto', reasoningMode: 'off', thinking: false, agentMode: 'sa' });
+  const restored = applyClientSessionViewSettings(cleared, { settings: { permissionMode: 'auto', reasoningMode: 'off', thinking: false, agentMode: 'ama' } });
+  expect(restored).toMatchObject({ permissionMode: 'auto', reasoningMode: 'off', thinking: false, agentMode: 'ama' });
 });
 
 it('displays another client selection from Host facts', () => {

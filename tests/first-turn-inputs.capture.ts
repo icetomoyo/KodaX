@@ -38,7 +38,7 @@ interface CapturedInput { readonly system: string; readonly messages: readonly K
 try {
   const snapshot = await buildSystemPromptSnapshot({ provider: 'zhipu-coding', context: { executionCwd: workspace, gitRoot: workspace } }, true);
   const excluded = new Set(['memory_recall', 'memory_intent', 'session_history_search', 'session_history_read', 'run_skill_script']);
-  const saTools = getActiveToolDefinitions(listToolDefinitions().map(t => t.name).filter(n => !excluded.has(n)), 'full', false, false, false).filter(t => t.name !== 'run_workflow');
+  const directTools = getActiveToolDefinitions(listToolDefinitions().map(t => t.name).filter(n => !excluded.has(n)), 'full', false, false, false).filter(t => t.name !== 'run_workflow');
   const managedOwned = new Set(['base-system', 'base-system-suffix', 'environment-context', 'runtime-fact', 'working-directory', 'session-scratch-directory', 'repo-intelligence-context', 'execution-guidance', 'active-skill-invocation']);
   const stableIds = new Set(['project-agents', 'self-knowledge-routing', 'memory-rules', 'tool-construction']);
   const shared = snapshot.sections.filter(s => !managedOwned.has(s.id));
@@ -80,8 +80,8 @@ try {
       'packages/coding/src/tools/tool-definitions.ts',
       'packages/coding/src/prompts/builder.ts',
     ].map(async file => [file, createHash('sha256').update(await fs.readFile(new URL(`../${file}`, import.meta.url))).digest('hex')]))),
-    methodology: 'Zero network; actual production SA component builders and managed Worker adapter overrideStream boundary. Empty deterministic isolated home/non-Git workspace. All production tool descriptions and schema, no stubs. No optional hosts/AGENTS/skills/MCP/history/permission suffix/preturn. Synthetic controlled histories, not real compaction. Provider HTTP serialization is a separate capture. No tool execution.',
-    sa: { system: snapshot.rendered, tools: saTools, hash: hash({ system: snapshot.rendered, tools: saTools }) },
+    methodology: 'Zero network; actual production direct-engine component builders and managed Worker adapter overrideStream boundary. Empty deterministic isolated home/non-Git workspace. All production tool descriptions and schema, no stubs. No optional hosts/AGENTS/skills/MCP/history/permission suffix/preturn. Synthetic controlled histories, not real compaction. Provider HTTP serialization is a separate capture. No tool execution.',
+    direct: { system: snapshot.rendered, tools: directTools, hash: hash({ system: snapshot.rendered, tools: directTools }) },
     cases,
   };
   const directory = path.join(os.tmpdir(), 'kodax-eval-dumps', 'first-turn-tokens-v1');

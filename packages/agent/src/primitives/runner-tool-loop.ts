@@ -8,9 +8,9 @@
  * tool_result content blocks, and loops until the LLM stops emitting tool
  * calls (or MAX_TOOL_LOOP_ITERATIONS is reached).
  *
- * This Shard only lands the capability. No built-in Agent consumes it yet —
- * the coding preset (SA path) continues to dispatch through
- * `registerPresetDispatcher` unchanged.
+ * This Shard only landed the capability. At the time no built-in Agent
+ * consumed it — the coding preset (the direct-engine path) continued to
+ * dispatch through `registerPresetDispatcher` unchanged.
  *
  * @experimental Shape may be refined during the v0.7.26 shard rollout.
  */

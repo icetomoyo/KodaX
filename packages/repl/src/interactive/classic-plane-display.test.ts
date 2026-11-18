@@ -73,7 +73,7 @@ it.each(['client', 'unavailable'] as const)('retires answered questions and %s o
 
 it('updates classic settings from its existing display observation without writing them back', async () => {
   let config: CurrentConfig = { provider: 'anthropic', model: 'startup', permissionMode: 'accept-edits',
-    agentMode: 'sa', thinking: false, reasoningMode: 'off' };
+    agentMode: 'ama', thinking: false, reasoningMode: 'off' };
   let receive: ((view: ClientSessionView) => void) | undefined;
   let subscriptions = 0;
   const close = await attachClassicPlaneDisplay({

@@ -52,7 +52,7 @@ it('stops a yielded Script on an independent Host and lets two clients immediate
   const runtime = await connectKodaXRuntime({ homeDir, endpoint });
   try {
     const session = await client.sessions.create({ projectPath: homeDir });
-    await client.sessions.updateSettings(session.id, { workMode: 'script', agentMode: 'sa', permissionMode: 'full-access' });
+    await client.sessions.updateSettings(session.id, { workMode: 'script', permissionMode: 'full-access' });
     const active = await client.inputs.submit({ sessionId: session.id, inputId: 'script-stop', text: 'Run the long Script and wait for Stop.' });
     await expect.poll(() => running, { timeout: 20_000 }).toMatchObject({ status: 'running', cleanupComplete: false });
     await client.runs.stop(active.runId!);

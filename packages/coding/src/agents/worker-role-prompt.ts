@@ -271,7 +271,7 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
       ? staticText("worker.repoIntelligenceTools.text.8") : undefined,
   ].filter((line): line is string => line !== undefined).join('\n');
 
-  // Static EXECUTION GUIDANCE (shared with the SA path) replaces the
+  // Static EXECUTION GUIDANCE (shared with the direct-engine path) replaces the
   // router-injected EXECUTION_MODE / HARNESS_PROFILE overlays — the Worker
   // self-judges the kind of work instead of being told by a keyword router.
   // See `prompts/execution-guidance.ts` + ADR-043.

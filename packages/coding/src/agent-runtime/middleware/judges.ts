@@ -6,8 +6,8 @@
  * - docs/features/v0.7.29-capability-inventory.md#cap-018-post-tool-judge
  * - docs/features/v0.7.29-capability-inventory.md#cap-088-tool-evidence-summarizer-for-auto-reroute-input
  *
- * Class 3 (declarable opt-in middleware). Two judges fire from the SA
- * loop in `auto` reasoning mode:
+ * Class 3 (declarable opt-in middleware). Two judges fired from the
+ * direct-engine loop in `auto` reasoning mode (retired; see Default for):
  *
  *   - **Pre-answer judge** (CAP-017): right before the model emits a
  *     final answer, when the response has the *shape* of a real review
@@ -43,9 +43,9 @@
  * and contain regex / string-shape heuristics that have been tuned over
  * multiple releases.
  *
- * **Default for**: `defaultCodingAgent` (preserves SA current behavior);
- * post-tool judge ALSO enabled on `generatorAgent` per FEATURE_100 design
- * — give Generator mid-iteration adaptive recovery.
+ * **Default for**: none. The V1 judges are retired: `DEFAULT_CODING_MIDDLEWARE`
+ * in `coding-preset.ts` declares both disabled, no engine call site invokes
+ * these predicates, and the V1 `generatorAgent` no longer exists.
  *
  * Migration history: extracted from `agent.ts:1106-1154`
  * (`looksLikeReviewProgressUpdate` 1106-1124 +

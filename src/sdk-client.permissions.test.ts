@@ -101,7 +101,7 @@ function sessionSuggestion(permission: ClientInteraction): { readonly id: string
 it('lets a new client distinguish and revoke same-label grants in different Sessions', async () => {
   const sessions = await Promise.all([first.sessions.create({ projectPath: homeDir }), first.sessions.create({ projectPath: homeDir })]);
   for (const [index, session] of sessions.entries()) {
-    await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'accept-edits' });
+    await first.sessions.updateSettings(session.id, { permissionMode: 'accept-edits' });
     scriptedToolCall = () => [writeMarkerCall(`scope-${index}`, 'scope-marker.txt', 'same operation')];
     const context = await submitAndView(session.id, `grant-${index}`);
     try {
@@ -147,7 +147,7 @@ it('reject and cancel decide this execution once and late answers never restart 
   // Rejection blocks exactly this action with its reason.
   scriptedToolCall = () => [writeMarkerCall('call-reject-1', 'reject-marker.txt', 'rejected')];
   const rejectSession = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(rejectSession.id, { agentMode: 'sa', permissionMode: 'accept-edits' });
+  await runtime.sessions.updateSettings(rejectSession.id, { permissionMode: 'accept-edits' });
   let context = await submitAndView(rejectSession.id, 'reject-run');
   try {
     const rejected = await first.interactions.respond(pendingPermission(context.views)!.requestId, {
@@ -162,7 +162,7 @@ it('reject and cancel decide this execution once and late answers never restart 
   // Cancellation dismisses the request; a late answer cannot restart the action.
   scriptedToolCall = () => [writeMarkerCall('call-cancel-1', 'cancel-marker.txt', 'cancelled')];
   const cancelSession = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(cancelSession.id, { agentMode: 'sa', permissionMode: 'accept-edits' });
+  await runtime.sessions.updateSettings(cancelSession.id, { permissionMode: 'accept-edits' });
   context = await submitAndView(cancelSession.id, 'cancel-run');
   try {
     const cancelTarget = pendingPermission(context.views)!;
@@ -181,7 +181,7 @@ it('reject and cancel decide this execution once and late answers never restart 
 it('stopping the run during a pending permission invalidates it without restarting work', async () => {
   scriptedToolCall = () => [writeMarkerCall('call-stop-1', 'stop-marker.txt', 'stopped')];
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'accept-edits' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'accept-edits' });
   const context = await submitAndView(session.id, 'stop-run');
   try {
     const target = pendingPermission(context.views)!;
@@ -199,7 +199,7 @@ it('stopping the run during a pending permission invalidates it without restarti
 it('keeps allowed work out of the reviewer and revokes grants by their own identity', async () => {
   scriptedToolCall = () => [writeMarkerCall('call-grant-1', 'grant-marker.txt', 'granted once')];
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'accept-edits' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'accept-edits' });
   let context = await submitAndView(session.id, 'grant-run');
   let marker: string;
   try {

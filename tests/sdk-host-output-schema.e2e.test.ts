@@ -57,7 +57,7 @@ it('describes a leased Host output schema on demand through an independent Host 
       return { credential: { mode: 'scoped', leaseId: credential.id, providers: ['schema-fixture'] }, hostTools: { leaseId: lease.id }, profile: {} };
     } });
     const session = await client.sessions.create({ projectPath: homeDir });
-    await client.sessions.updateSettings(session.id, { workMode: 'script', agentMode: 'sa', permissionMode: 'full-access' });
+    await client.sessions.updateSettings(session.id, { workMode: 'script', permissionMode: 'full-access' });
     const active = await client.inputs.submit({ sessionId: session.id, inputId: 'inspect-schema', text: 'Inspect the selected Host contract without executing it.' });
     expect((await client.runs.await(active.runId!)).phase).toBe('completed');
     expect(deliveredMenu).toContain('geometry.read-grid');

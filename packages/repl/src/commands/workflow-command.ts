@@ -305,31 +305,13 @@ export const workflowCommand: Command = {
   usage: '/workflow [help | list | pending | runs | show | pause | resume | stop | delete | prune | rerun | save | rename | revise | create | <name> [args] | <request>]',
   argumentHint: 'help | list | pending | runs [--all|--limit N] | show [runId] | pause <runId> | resume <runId> | stop [runId] | delete [--force] [--run|--saved] <runId|savedName> | prune --dry-run|--keep N|--older-than Nd | rerun <runId|savedName> [args] | save <runId> <name> | rename <runId|alias|savedName> <newName> | revise [--replace] <runId|alias|savedName> <change> | create <request> | <name> [args]',
   detailedHelp: printWorkflowHelp,
-  handler: async (args, context, callbacks, currentConfig) => {
+  handler: async (args, context, callbacks) => {
     if ((args[0] ?? '').toLowerCase() === 'pending') {
       await printLearningPendingForFilter(resolveLearningCommandCwd(context), 'workflow');
       return;
     }
 
     const invocation = parseWorkflowInvocation(args);
-
-    // FEATURE_246: Solo (SA) mode is a single agent — it runs no workflows and
-    // spawns no sub-agents. Reject the execution-class subcommands (create / run
-    // a workflow by name / rerun); read-only and management subcommands (list,
-    // runs, show, save, rename, revise, delete, prune, pause/resume/stop) stay so
-    // a user can still inspect and tidy runs left by an earlier AMA/AMAW session.
-    if (
-      currentConfig.agentMode === 'sa'
-      && (invocation.kind === 'create' || invocation.kind === 'rerun' || invocation.kind === 'start')
-    ) {
-      console.log(
-        chalk.yellow(
-          '\n[workflow] Workflows run multiple agents, which Solo (SA) mode does not support.\n'
-          + 'Switch with /agent-mode ama, then request it explicitly via /workflow.\n',
-        ),
-      );
-      return;
-    }
 
     const projectKey = deriveProjectKeyFromRoot(process.cwd()).key;
     const baseDir = getAgentConfigPath('workflow-runs', projectKey);
@@ -350,9 +332,7 @@ export const workflowCommand: Command = {
     // FEATURE_246 (ADR-047): turn a free-text request into a workflow. The Worker
     // authors it itself (scout-then-author via run_workflow), returned as an
     // agent-turn invocation. Shared by the explicit `create` subcommand and the
-    // bare `/workflow <prompt>` form. Only reached in AMA — Solo (SA) mode
-    // rejects execution-class workflow commands upstream (see the guard below).
-    // The command carries a structured explicit-intent marker; there is no hidden
+    // bare `/workflow <prompt>` form. The command carries a structured explicit-intent marker; there is no hidden
     // mode elevation and task complexity alone cannot activate a Workflow.
     const createWorkflowFromText = async (request: string): Promise<CommandResultData | undefined> => {
       return {

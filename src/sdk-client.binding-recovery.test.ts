@@ -46,7 +46,7 @@ it.each([
   const lineage = createSessionLineage(messages);
   const binding = { businessBinding: { id: 'original-expert', revision: 'r1', data: { connector: 'original' } },
     defaultSkill: { name: 'original-method' } };
-  const options: KodaXOptions = { provider: 'recovery-fixture', agentMode: 'sa', workMode: 'agent', context: {
+  const options: KodaXOptions = { provider: 'recovery-fixture', workMode: 'agent', context: {
     gitRoot: homeDir, executionCwd: homeDir, rawUserInput: 'Original question', agentProfile: { instructions: 'ORIGINAL-PERSONA' },
     skillInvocation: { name: 'original-method', path: skillPath, expandedContent: 'ORIGINAL-PREPARED-CONTEXT', runtimePolicy: { enforceAtRuntime: true } },
   } };
@@ -100,7 +100,7 @@ it.each([
     // authority must not turn its requested Agent string into a new selection.
     expect(await client.runs.read(runId)).toMatchObject({ workMode: 'coding' });
     await expect(client.sessions.updateSettings(sessionId, { workMode: 'agent' })).rejects.toMatchObject({ code: 'conflict' });
-    await client.sessions.updateSettings(sessionId, { provider: 'recovery-fixture', model: 'fixture', agentMode: 'sa', workMode: 'coding', permissionMode: 'full-access' });
+    await client.sessions.updateSettings(sessionId, { provider: 'recovery-fixture', model: 'fixture', workMode: 'coding', permissionMode: 'full-access' });
     expect(seen).toEqual(['changed', 'revoked', 'fresh']);
     expect(requests).toHaveLength(1);
     expect(requests[0]!.includes('ORIGINAL-PERSONA')).toBe(true);

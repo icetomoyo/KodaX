@@ -354,7 +354,7 @@ it.each([
     host = await startHost(homeDir);
     client = await connect();
     const session = await client.sessions.create({ surface: 'partner', projectPath: homeDir });
-    await client.sessions.updateSettings(session.id, { agentMode: 'sa', workMode: 'agent', permissionMode: 'full-access', reasoningMode: 'off' });
+    await client.sessions.updateSettings(session.id, { workMode: 'agent', permissionMode: 'full-access', reasoningMode: 'off' });
     const accepted = await client.inputs.submit({ sessionId: session.id, inputId: 'root-recovery', text: 'Continue the same root task after recovery.' });
     let previousWaitingSince: string | undefined;
     for (let next = 1; next <= 2; next += 1) {
@@ -391,8 +391,10 @@ it.each([
     expect(bindings).toBe(3);
     expect(allowedCalls).toEqual(freshProfile === 'narrow' || freshProfile === 'empty' ? [] : ['FRESH_LEASE_EXECUTED']);
     const messages = requests.flatMap(value => value.messages);
+    // The AMA Runner rejects an undeclared tool with its own wording.
+    const undeclared = /not active|not declared/;
     expect(String(messages.find(message => message.tool_call_id === 'read-original')?.content))
-      .toContain(freshProfile === 'empty' ? 'not active' : 'ORIGINAL_READ_SCOPE');
+      .toMatch(freshProfile === 'empty' ? undeclared : /ORIGINAL_READ_SCOPE/);
     const snapshot = (await client.runs.read(accepted.runId!)).effectiveConfig!;
     const scope = snapshot.toolScope;
     if (freshProfile === 'empty') expect(scope).toEqual([]);
@@ -407,7 +409,7 @@ it.each([
       expect(scope).toContain('recovery_extension');
     } else {
       for (const id of ['widen-write', 'widen-metadata']) {
-        expect(String(messages.find(message => message.tool_call_id === id)?.content), id).toContain('not active');
+        expect(String(messages.find(message => message.tool_call_id === id)?.content), id).toMatch(undeclared);
       }
       await expect(readFile(join(homeDir, 'forbidden.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
       await expect(readFile(join(homeDir, 'metadata-forbidden.txt'))).rejects.toMatchObject({ code: 'ENOENT' });

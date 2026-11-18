@@ -3,6 +3,7 @@ import type { ToolSideEffect } from './tools/side-effect.js';
 
 /** Last assembled execution surface. Visibility does not grant effect permission. */
 export interface KodaXEffectiveTaskConfig {
+  /** New Runs report `ama`; `sa` and `amaw` appear only in records stored by older Hosts. */
   readonly agentMode: 'sa' | 'ama' | 'amaw';
   readonly workMode: 'agent' | 'coding' | 'script';
   readonly agentProfile?: KodaXAgentProfile;
@@ -70,9 +71,9 @@ export interface KodaXAgentProfile {
   /** Human-facing display name. Opaque to the core. */
   readonly name?: string;
   /**
-   * Behavior instructions prepended to the AMA Worker prompt or used as the SA
-   * base prompt, retaining the admitted Skill catalog in either mode. An explicit
-   * `context.systemPromptOverride` still replaces the complete SA prompt.
+   * Behavior instructions prepended to the AMA Worker prompt or used as the
+   * direct-engine base prompt, retaining the admitted Skill catalog on either path. An explicit
+   * `context.systemPromptOverride` still replaces the complete direct-engine prompt.
    */
   readonly instructions?: string;
   /**

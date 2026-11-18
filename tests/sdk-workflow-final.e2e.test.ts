@@ -203,7 +203,7 @@ it.each([
     const peerSession = await peer.sessions.create({ projectPath: peerProjectRoot });
     let peerRunId: string | undefined;
     if (peerActive) {
-      await peer.sessions.updateSettings(peerSession.id, { workMode: 'coding', agentMode: 'sa', permissionMode: 'full-access' });
+      await peer.sessions.updateSettings(peerSession.id, { workMode: 'coding', permissionMode: 'full-access' });
       peerRunId = (await peer.runs.startTool({ sessionId: peerSession.id, inputId: 'hold-peer-project',
         rawInput: 'Keep working in this project checkout.', name: 'hold_peer_project', input: {} })).runId;
       await expect.poll(() => peerEntered, { timeout: 10_000 }).toBe(true);

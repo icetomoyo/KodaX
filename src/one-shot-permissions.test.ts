@@ -45,7 +45,7 @@ it('rejects only its accepted one-shot permission even when the permission preda
   try {
     const session = await client.sessions.create({ projectPath: homeDir });
     const foreign = await client.sessions.create({ projectPath: homeDir });
-    for (const id of [session.id, foreign.id]) await client.sessions.updateSettings(id, { agentMode: 'sa', permissionMode: 'accept-edits' });
+    for (const id of [session.id, foreign.id]) await client.sessions.updateSettings(id, { permissionMode: 'accept-edits' });
     foreignRunId = (await client.inputs.submit({ sessionId: foreign.id, inputId: 'foreign', text: 'Foreign write.' })).runId;
     const scopedClient = { ...client,
       sessions: { ...client.sessions, observe: async (...args: Parameters<typeof client.sessions.observe>) => {
@@ -65,7 +65,7 @@ it('rejects only its accepted one-shot permission even when the permission preda
       } },
     };
     pending = runOneShotClientTask({ client: scopedClient, runtime, abortSignal: controller.signal,
-      options: { provider: 'one-shot-permission-test', agentMode: 'sa', session: { id: session.id } }, prompt: 'Own write.' });
+      options: { provider: 'one-shot-permission-test', session: { id: session.id } }, prompt: 'Own write.' });
     let finished = false;
     void pending.then(() => { finished = true; });
     await expect.poll(() => finished, { timeout: 5_000 }).toBe(true);

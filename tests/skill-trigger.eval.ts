@@ -36,7 +36,7 @@ interface CaseMeta { id: string; group: string; expected: string }
 interface Ledger { calls: number; chargedTokens: number; chargedUsd: number; reservedTokens: number; reservedUsd: number; unknownUsageCalls: number }
 
 // v1 (panel-1) is closed with its own ledger; v2 evaluates the iterated candidate on the 2026-11 model pool.
-const dumpRoot = path.join(os.tmpdir(), 'kodax-eval-dumps', 'skill-trigger-v2');
+const dumpRoot = path.join(os.tmpdir(), 'kodax-eval-dumps', process.env.KODAX_SKILL_EVAL_DUMP_DIR ?? 'skill-trigger-v2');
 const readJson = async <T>(file: string): Promise<T> => JSON.parse(await fs.readFile(file, 'utf8')) as T;
 const armA = await readJson<Capture>(process.env.KODAX_SKILL_EVAL_A ?? path.join(dumpRoot, 'baseline-builtin-inputs.json'));
 const armB = await readJson<Capture>(process.env.KODAX_SKILL_EVAL_B ?? path.join(dumpRoot, 'candidate-builtin-inputs.json'));

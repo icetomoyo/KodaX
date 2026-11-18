@@ -20,10 +20,10 @@ function gate() {
 }
 
 it.each([
-  { agentMode: 'sa', compact: false },
-  { agentMode: 'ama', compact: false },
-  { agentMode: 'ama', compact: true },
-] as const)('applies live $agentMode Session settings at the next request (compaction: $compact)', async ({ agentMode, compact }) => {
+  { mode: 'coding', compact: false },
+  { mode: 'managed_task', compact: false },
+  { mode: 'managed_task', compact: true },
+] as const)('applies live Session settings to the next $mode request (compaction: $compact)', async ({ mode, compact }) => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-live-settings-'));
   const samples = Array.from({ length: 5 }, (_, index) => path.join(homeDir, `sample-${index}.txt`));
   await Promise.all(samples.map((sample, index) => writeFile(sample, `sample content ${index}`)));
@@ -88,7 +88,7 @@ it.each([
       try {
         const session = await client.sessions.create({ title: 'Live settings', projectPath: homeDir });
         if (compact) {
-          await client.sessions.updateSettings(session.id, { provider: 'live-settings-first', agentMode: 'sa', permissionMode: 'full-access' });
+          await client.sessions.updateSettings(session.id, { provider: 'live-settings-first', permissionMode: 'full-access' });
           const previous = await client.inputs.submit({ sessionId: session.id, inputId: 'history', text: 'Describe the prior work context.' });
           if (previous.runId === undefined) throw new Error('Expected a prior history Run.');
           await runtime.runs.await(previous.runId);
@@ -97,7 +97,7 @@ it.each([
         }
         await client.sessions.updateSettings(session.id, {
           provider: 'live-settings-first', model: 'initial-model', effort: 'high',
-          permissionMode: 'full-access', agentMode,
+          permissionMode: 'full-access',
           ...(compact ? { compactionTriggerTokens: 120_000 } : {}),
         });
         let compactionStartedCount = 0;
@@ -105,9 +105,12 @@ it.each([
           { sessionId: session.id, type: 'context.compaction.started' },
           () => { compactionStartedCount += 1; },
         );
-        const accepted = await client.inputs.submit({ sessionId: session.id, inputId: 'read-input', text: 'Read sample-0.txt, sample-1.txt and sample-2.txt and briefly report their content. Do not modify files.' });
+        const text = 'Read sample-0.txt, sample-1.txt and sample-2.txt and briefly report their content. Do not modify files.';
+        const accepted = mode === 'coding'
+          ? await runtime.runs.start({ sessionId: session.id, prompt: text, mode })
+          : await client.inputs.submit({ sessionId: session.id, inputId: 'read-input', text });
         if (accepted.runId === undefined) throw new Error('An idle Session must start the submitted input.');
-        expect((await runtime.runs.get(accepted.runId)).mode).toBe(agentMode === 'ama' ? 'managed_task' : 'coding');
+        expect((await runtime.runs.get(accepted.runId)).mode).toBe(mode);
         await entered[0]!.promise;
         const first = { provider: 'live-settings-first', model: 'initial-model', reasoning: { enabled: true, effort: 'high' } };
         expect(mainRequests[0]).toEqual(first);

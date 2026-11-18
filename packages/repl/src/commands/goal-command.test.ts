@@ -57,7 +57,7 @@ const CONFIG = {
   provider: 'anthropic',
   thinking: false,
   reasoningMode: 'auto' as const,
-  agentMode: 'sa' as const,
+  agentMode: 'ama' as const,
   permissionMode: 'default' as const,
 };
 

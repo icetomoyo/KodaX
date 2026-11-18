@@ -10,7 +10,7 @@ import {
 import { startKodaX, runManagedTask } from '../index.js';
 import type { KodaXOptions } from '../types.js';
 
-it.each(['sa', 'ama'] as const)('%s resumes an accepted input after tool output without duplicating its query', async (agentMode) => {
+it.each(['direct', 'ama'] as const)('%s resumes an accepted input after tool output without duplicating its query', async (engine) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-input-identity-'));
   const requests: KodaXMessage[][] = [];
   class IdentityProvider extends KodaXBaseProvider {
@@ -35,11 +35,11 @@ it.each(['sa', 'ama'] as const)('%s resumes an accepted input after tool output 
   try {
     const execute = async (inputId: string, initialMessages: KodaXMessage[]) => {
       const options: KodaXOptions = {
-        provider: 'input-identity-test', agentMode, reasoningMode: 'off', maxIter: 1, lsp: false,
+        provider: 'input-identity-test', ...(engine === 'ama' ? { agentMode: 'ama' as const } : {}), reasoningMode: 'off', maxIter: 1, lsp: false,
         context: { configHome: directory, executionCwd: directory, gitRoot: directory, skillsPrompt: '', repoIntelligenceMode: 'off' },
-        session: { id: `identity-${agentMode}`, inputId, initialMessages },
+        session: { id: `identity-${engine}`, inputId, initialMessages },
       };
-      return agentMode === 'sa' ? startKodaX(options, prompt).result : runManagedTask(options, prompt);
+      return engine === 'direct' ? startKodaX(options, prompt).result : runManagedTask(options, prompt);
     };
     await execute('accepted-input', [accepted, toolCall, toolResult]);
     expect(requests.length).toBeGreaterThan(0);

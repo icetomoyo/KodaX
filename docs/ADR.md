@@ -1,5 +1,40 @@
 # KodaX Architecture Decision Records
 
+## SA mode is retired from every caller — 2026-11-18 (unreleased)
+
+ADR-072 moved CLI, REPL and unset Product turns to AMA but kept SA for explicit
+SDK Runs. That remainder still had effects. A config.json `agentMode: "sa"`
+written by an older REPL overrode the Product default. Every Space and daemon
+Session then lost its Actor tools without a warning.
+
+**Decision.** `agentMode: 'sa'` is accepted as deprecated input and carries no
+behavior, following the AMAW precedent. `runManagedTask` and Runtime Sessions
+run the AMA Worker for it, and the SA branch, its solo tool exclusions and its
+Direct Path overlay are deleted. `runKodaX` treats `'sa'` as unlabeled, which
+it already behaved as. The direct engine is not SA and stays: explicit
+`runs.start({ mode: 'coding' })` Runs, Markdown Agent bindings and captured
+Runs keep it. `Run.mode` (`coding` or `managed_task`) is now the only public
+fact that tells the two engines apart, and new Runs report `agentMode: 'ama'`.
+Stored Run records that say `'sa'` stay readable as written. CLI
+`--agent-mode sa` and REPL `/agent-mode sa` keep their migration errors.
+
+**Rejected alternatives.**
+
+- *Keep SA for explicit SDK callers.* No shipped caller selects it. CLI, REPL
+  and Space all run AMA. The branch kept a second prompt surface, and dozens of
+  tests used it as a shortcut to a direct turn instead of testing AMA.
+- *Map `'sa'` to `'ama'` inside `runKodaX` as well.* Inside `runKodaX`,
+  `'ama'` attaches an Actor host and the Workflow host. That would add tools to
+  direct calls that never had them. Unlabeled keeps those calls byte-identical.
+- *Rename the `sa-mutation-reflection` eval id.* The name refers to the
+  mutation reflection middleware. Renaming it would break comparison with past
+  results.
+
+**Consequences.** An embedder that relied on SA to withhold child Agents uses
+`excludeTools`, an Agent profile or a tool policy instead. ADR-012 and ADR-072
+keep their history, and their "SA remains for explicit SDK Runs" clause no
+longer holds.
+
 ## Prompt variants keep conditions; Actor capacity states free slots — 2026-11-18 (unreleased)
 
 Issue 415 came from a compact prompt projection that dropped a condition. The
@@ -1289,7 +1324,8 @@ Consequence:
 
 **Status**: Accepted; the user-facing SA/AMA switch is superseded by
 [ADR-072](#adr-072-work-modes-and-the-model-facing-tool-contract). CLI and REPL
-use AMA; SA remains only for explicit SDK Runs and Runs that already captured it.
+use AMA. SA was then retired from every caller (see "SA mode is retired from every
+caller", 2026-11-18); only Runs that already captured the direct engine keep it.
 
 `Project` 描述任务语境，`SA / AMA` 描述执行拓扑；二者可以合法组合。
 

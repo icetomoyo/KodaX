@@ -18,7 +18,7 @@ const REPLY_TEXT = 'A sufficiently detailed recorded summary of the exchange tha
 
 it.each([true, false])('retains the previous saved turn across new input (checkpoint: %s)', async keepCheckpoint => {
   const session = await client.sessions.create({ projectPath: homeDir });
-  await client.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await client.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const storage = new FileSessionStorage({ sessionsDir: path.join(homeDir, '.kodax', 'sessions'), configHome: path.join(homeDir, '.kodax') });
   const data = (await storage.load(session.id))!;
   data.messages = [{ role: 'user', inputId: 'old-query', content: 'Review the existing changes' }];
@@ -190,7 +190,7 @@ it('keeps checkpointed tools before continuations when the real byte-budget page
 
 it('preserves accepted user identity when the literal text mentions internal worker prompts', async () => {
   const session = await client.sessions.create({ projectPath: homeDir });
-  await client.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await client.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const text = 'Explain the string "You are the Generator role" in this source.';
   const accepted = await client.inputs.submit({ sessionId: session.id, inputId: 'quoted-role', text });
   await runtime.runs.await(accepted.runId!);
@@ -309,7 +309,7 @@ afterEach(async () => {
 
 it.each(['assistant', 'tool'] as const)('reads a frozen oversized %s by its original identity after it leaves the view and is archived', async kind => {
   const session = await client.sessions.create({ projectPath: homeDir });
-  await client.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await client.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const storage = new FileSessionStorage({ sessionsDir: path.join(homeDir, '.kodax', 'sessions'), configHome: path.join(homeDir, '.kodax') });
   const data = await storage.load(session.id);
   if (!data) throw new Error('Fixture session missing');
@@ -382,7 +382,7 @@ it('invalidates frozen tool and output locators after switching the canonical br
 
 it('shows pre-compaction conversation history in the current view after compaction', async () => {
   const session = await client.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const ancient = await client.inputs.submit({
     sessionId: session.id, inputId: 'ancient', text: 'Ancient pre-compaction fact worth keeping.',
   });
@@ -422,7 +422,7 @@ it('shows pre-compaction conversation history in the current view after compacti
 
 it('keeps settled output single between live items and conversation history', async () => {
   const session = await client.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const views: ClientSessionView[] = [];
   const observation = await client.sessions.observe(session.id, (view) => views.push(view));
   try {

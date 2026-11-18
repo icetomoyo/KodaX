@@ -7,8 +7,8 @@
  * v0.7.35.1 FEATURE_142 Batch E: the 13 capability-context sections
  * formerly inlined here have been hoisted to
  * `./capability-sections.ts:buildCapabilityContextSections`. This file
- * keeps the SA-path orchestration (cwd resolution, snapshot assembly)
- * and delegates section construction to the shared helper. SA output
+ * keeps the direct-engine orchestration (cwd resolution, snapshot assembly)
+ * and delegates section construction to the shared helper. Its output
  * is byte-equivalent to the pre-Batch E rendering — `builder.test.ts`
  * is the integration-level guard for that contract.
  */

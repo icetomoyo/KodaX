@@ -37,7 +37,7 @@ export function buildManualToolDescription(productName = DEFAULT_PRODUCT_NAME): 
  * when building the model-visible tool list. Returns the def unchanged for any
  * other tool, or when no (or the default 'KodaX') product name is set — so the
  * default Coding Agent tool surface is byte-identical. Generic over the def
- * shape so both the SA (`getActiveToolDefinitions`) and AMA
+ * shape so both the direct-engine (`getActiveToolDefinitions`) and AMA
  * (`buildAgentToolsFromRegistry`) assembly paths can share it.
  */
 export function withManualToolBranding<

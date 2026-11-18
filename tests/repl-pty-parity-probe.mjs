@@ -64,7 +64,7 @@ function openTerminal(homeDir, mode, extraArgs = []) {
   const child = pty.spawn(process.execPath, [...bootstrap,
     ...targetExtraArgs,
     '--provider', 'parity-local', '--model', 'parity-model', '--effort', 'off',
-    '--agent-mode', 'sa', '--max-iter', '7', ...extraArgs], {
+    '--max-iter', '7', ...extraArgs], {
     name: 'xterm-256color', cols: 110, rows: 32, cwd: homeDir,
     env: { ...environment, HOME: homeDir, USERPROFILE: homeDir, KODAX_HOME: path.join(homeDir, '.kodax'),
       KODAX_ACCEPTANCE_KEY: 'local-fixture-only', KODAX_TRACING: '0',

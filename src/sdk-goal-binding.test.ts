@@ -19,7 +19,7 @@ const CONFIG = {
   provider: 't34-probe',
   thinking: false,
   reasoningMode: 'auto' as const,
-  agentMode: 'sa' as const,
+  agentMode: 'ama' as const,
   permissionMode: 'full-access' as const,
 };
 

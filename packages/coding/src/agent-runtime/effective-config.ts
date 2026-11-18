@@ -3,7 +3,7 @@
  */
 
 import type {
-  KodaXAgentMode,
+  KodaXCanonicalAgentMode,
   KodaXEffectiveTaskConfig,
   KodaXOptions,
   KodaXTaskVerificationContract,
@@ -41,7 +41,7 @@ export function resolveEffectiveVerification(
 export function emitEffectiveTaskConfig(
   options: KodaXOptions,
   args: {
-    readonly agentMode: KodaXAgentMode;
+    readonly agentMode: KodaXCanonicalAgentMode;
     readonly toolScope: readonly string[];
     readonly modelToolScope?: readonly string[];
   },

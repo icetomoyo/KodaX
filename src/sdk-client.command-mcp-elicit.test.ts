@@ -142,7 +142,7 @@ it.each(['checked-tool', 'sa-continuation'] as const)('retains the shared MCP Se
     try {
       const active = await first.sessions.create({ projectPath: homeDir });
       await first.sessions.updateSettings(active.id, {
-        provider: 'product-mcp-elicit-test', permissionMode: 'full-access', agentMode: 'sa',
+        provider: 'product-mcp-elicit-test', permissionMode: 'full-access',
       });
       const idle = await first.sessions.create({ projectPath: homeDir });
       const activeViews: ClientSessionView[] = [];

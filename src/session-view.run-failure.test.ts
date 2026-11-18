@@ -31,7 +31,7 @@ it('records a provider failure as a retained error item after its input, without
   try {
     let client = toKodaXProductClient(runtime);
     const session = await client.sessions.create({ projectPath: homeDir });
-    await client.sessions.updateSettings(session.id, { agentMode: 'sa', reasoningMode: 'off' });
+    await client.sessions.updateSettings(session.id, { reasoningMode: 'off' });
     const views: ClientSessionView[] = [];
     let observation = await client.sessions.observe(session.id, view => views.push(view));
     const failed = await client.inputs.submit({ sessionId: session.id, inputId: 'first', text: 'First question.' });

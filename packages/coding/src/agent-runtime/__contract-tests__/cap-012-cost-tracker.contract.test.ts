@@ -46,7 +46,7 @@ describe('CAP-012: per-session CostTracker contract', () => {
       model: 'deepseek-v4-flash',
       inputTokens: 1000,
       outputTokens: 200,
-      role: 'sa',
+      role: 'worker',
     });
     const t2 = recordUsage(t1, {
       provider: 'deepseek',
@@ -54,7 +54,7 @@ describe('CAP-012: per-session CostTracker contract', () => {
       inputTokens: 2000,
       outputTokens: 500,
       cacheReadTokens: 100,
-      role: 'sa',
+      role: 'worker',
     });
 
     // Original empty tracker untouched
@@ -71,15 +71,15 @@ describe('CAP-012: per-session CostTracker contract', () => {
 
   it('CAP-COST-TRACKER-001c: getSummary aggregates per-provider and per-role breakdowns', () => {
     let tracker = createCostTracker();
-    tracker = recordUsage(tracker, { provider: 'deepseek', model: 'deepseek-v4-flash', inputTokens: 100, outputTokens: 50, role: 'sa' });
-    tracker = recordUsage(tracker, { provider: 'deepseek', model: 'deepseek-v4-flash', inputTokens: 200, outputTokens: 80, role: 'sa' });
+    tracker = recordUsage(tracker, { provider: 'deepseek', model: 'deepseek-v4-flash', inputTokens: 100, outputTokens: 50, role: 'worker' });
+    tracker = recordUsage(tracker, { provider: 'deepseek', model: 'deepseek-v4-flash', inputTokens: 200, outputTokens: 80, role: 'worker' });
     tracker = recordUsage(tracker, { provider: 'kimi-code', model: 'kimi-k2', inputTokens: 300, outputTokens: 100, role: 'generator' });
 
     const summary = getSummary(tracker);
     expect(summary.byProvider.deepseek?.calls).toBe(2);
     expect(summary.byProvider.deepseek?.inputTokens).toBe(300);
     expect(summary.byProvider['kimi-code']?.calls).toBe(1);
-    expect(summary.byRole.sa?.calls).toBe(2);
+    expect(summary.byRole.worker?.calls).toBe(2);
     expect(summary.byRole.generator?.calls).toBe(1);
   });
 

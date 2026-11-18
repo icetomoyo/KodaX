@@ -1,14 +1,10 @@
 /**
  * FEATURE_247 (R1) — Partner profile identity + instruction injection.
  *
- * Two behavioral changes are locked here, both gated on an
- * `options.context.agentProfile` being present so the default Coding Agent
- * path stays byte-identical:
- *
- *  - SA path: a profile's `instructions` remain distinct from a complete
- *    `systemPromptOverride` so prompt composition retains the Skill catalog.
- *  - AMA path: the Worker role prompt PREPENDS the profile instructions
- *    (`resolveRoleInstructions`), and only for the primary `worker` role.
+ * The behavior is gated on an `options.context.agentProfile` being present so
+ * the default Coding Agent path stays byte-identical: the Worker role prompt
+ * PREPENDS the profile instructions (`resolveRoleInstructions`), and only for
+ * the primary `worker` role.
  */
 
 import {
@@ -35,59 +31,11 @@ const OK_RESULT: KodaXResult = {
   sessionId: 's',
 };
 
-function saDeps() {
-  const runSA = vi.fn().mockResolvedValue(OK_RESULT);
-  const runAMA = vi.fn();
-  const buildPlan = vi.fn();
-  return { runSA, runAMA, buildPlan };
+function amaDeps() {
+  const runAMA = vi.fn().mockResolvedValue(OK_RESULT);
+  const buildPlan = vi.fn().mockResolvedValue({ effort: 'none', decision: {}, promptOverlay: '' });
+  return { runAMA, buildPlan };
 }
-
-describe('FEATURE_247 R1: SA-path profile instructions', () => {
-  it('preserves profile instructions separately from a caller prompt override', async () => {
-    const deps = saDeps();
-    await dispatchManagedTask(
-      {
-        agentMode: 'sa',
-        provider: 'anthropic',
-        context: { agentProfile: { surface: 'partner', instructions: 'PARTNER_SYS' } },
-      } as KodaXOptions,
-      'answer a question',
-      deps,
-    );
-    const [opts] = deps.runSA.mock.calls[0]!;
-    expect(opts.context.agentProfile.instructions).toBe('PARTNER_SYS');
-    expect(opts.context.systemPromptOverride).toBeUndefined();
-  });
-
-  it('lets an explicit systemPromptOverride win over profile instructions', async () => {
-    const deps = saDeps();
-    await dispatchManagedTask(
-      {
-        agentMode: 'sa',
-        provider: 'anthropic',
-        context: {
-          systemPromptOverride: 'EXPLICIT',
-          agentProfile: { instructions: 'PARTNER_SYS' },
-        },
-      } as KodaXOptions,
-      'answer a question',
-      deps,
-    );
-    const [opts] = deps.runSA.mock.calls[0]!;
-    expect(opts.context.systemPromptOverride).toBe('EXPLICIT');
-  });
-
-  it('leaves systemPromptOverride undefined for the default Coding Agent (no profile)', async () => {
-    const deps = saDeps();
-    await dispatchManagedTask(
-      { agentMode: 'sa', provider: 'anthropic', context: {} } as KodaXOptions,
-      'answer a question',
-      deps,
-    );
-    const [opts] = deps.runSA.mock.calls[0]!;
-    expect(opts.context.systemPromptOverride).toBeUndefined();
-  });
-});
 
 describe('FEATURE_247 R1: AMA-path Worker prompt prepends profile instructions', () => {
   const decision = buildFallbackRoutingDecision('do the task');
@@ -153,7 +101,7 @@ describe('FEATURE_247 R4: onEffectiveConfig snapshot', () => {
 
   it('does not invent an effective scope when execution has not assembled tools', async () => {
     const onEffectiveConfig = vi.fn();
-    await dispatchManagedTask({ provider: 'fixture', agentMode: 'sa', events: { onEffectiveConfig } }, 'Inspect', saDeps());
+    await dispatchManagedTask({ provider: 'fixture', events: { onEffectiveConfig } }, 'Inspect', amaDeps());
     expect(onEffectiveConfig).not.toHaveBeenCalled();
   });
 

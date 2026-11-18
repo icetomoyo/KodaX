@@ -19,8 +19,10 @@ import {
   getRegisteredToolDefinition,
   toolRequiresSerialExecution,
   isMcpToolName,
+  isRepoIntelligenceWorkingToolName,
   listToolDefinitions,
 } from '../../../tools/registry.js';
+import { resolveKodaXAutoRepoMode } from '../../../repo-intelligence/runtime.js';
 import {
   executeRunScopedTool,
   listRunScopedTools,
@@ -97,7 +99,7 @@ function buildTodoToolBundle(
 /**
  * FEATURE_250 — is this tool deferred (hint-swapped) on the managed path?
  *
- * The managed path defers the SAME tools the SA path defers, EXCEPT mcp_*.
+ * The managed path defers the SAME tools the direct engine defers, EXCEPT mcp_*.
  * mcp_call can mutate remote state and the mcp_* family was not covered by the
  * two-hop reachability eval, so they stay resident with full descriptions here.
  * Everything else in the deferred set (repo-intel + web/code/workflow) is
@@ -114,6 +116,9 @@ function isManagedToolVisibleForContext(
   ctx: KodaXToolExecutionContext,
 ): boolean {
   if (exclude.has(name)) return false;
+  // Matches the direct engine: with repository intelligence off, its working tools are not offered.
+  if (resolveKodaXAutoRepoMode(ctx.parentAgentConfig?.repoIntelligenceMode) === 'off'
+    && isRepoIntelligenceWorkingToolName(name)) return false;
   const activeTools = (ctx.extensionRuntime as ExtensionRuntimeContract | undefined)?.getDefaults?.().activeTools;
   if (activeTools && !activeTools.includes(name) && !lookupRunScopedTool(ctx.extensionRuntime, name)) return false;
   return isToolDiscoverable(name, ctx);

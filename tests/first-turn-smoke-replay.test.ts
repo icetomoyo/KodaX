@@ -45,7 +45,7 @@ describe('zero-network replay of first-turn live smoke', () => {
     registerModelProvider(providerName, () => new ReplayProvider());
     try {
       const result = await runKodaX({
-        provider: providerName, agentMode: 'sa', maxIter: 3, reasoningMode: 'off',
+        provider: providerName, maxIter: 3, reasoningMode: 'off',
         maxOutputTokens: 2048, lsp: false, disablePromptCache: true, abortSignal: controller.signal,
         context: { executionCwd: fixture, gitRoot: fixture, skillsPrompt: '', skillRegistry: new SkillRegistry(fixture),
           repoIntelligenceMode: 'off', resolveShellPermissionMode: () => 'full-access',
@@ -116,7 +116,7 @@ describe('zero-network replay of first-turn live smoke', () => {
       const session = await runtime.sessions.create({ projectPath: workspace });
       await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', executionCwd: workspace });
       const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'Read sum.js and change subtraction to addition, preserving the comment and formatting.', options: {
-        agentMode: 'sa', reasoningMode: 'off', maxIter: 3, maxOutputTokens: 2048, lsp: false, disablePromptCache: true,
+        reasoningMode: 'off', maxIter: 3, maxOutputTokens: 2048, lsp: false, disablePromptCache: true,
         context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt: '', skillRegistry: new SkillRegistry(workspace), repoIntelligenceMode: 'off', toolVisibilityPolicy: tool => tool.name === 'read' || tool.name === 'edit' },
       } });
       const result = await handle.result;

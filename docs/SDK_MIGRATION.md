@@ -12,10 +12,29 @@ Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附�
 原命令超时、秘密环境变量白名单和显式 Bash 执行契约保留。
 
 Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` 保留，
-Solo 和 Adaptive 都会向模型提供可用且已授权的 Skill 目录。运行时绑定生成的
+直连引擎和 Adaptive 都会向模型提供可用且已授权的 Skill 目录。运行时绑定生成的
 目录共用 8,000 UTF-16 单元上限；省略目录项不会删除已绑定的授权。
-调用方显式设置的 `systemPromptOverride` 仍是 Solo 的完整提示覆盖，不自动追加
-可选 Skill 目录。`sa` 当前仍是可执行的 Solo 模式；`amaw` 才是归一为 `ama` 的旧别名。
+调用方显式设置的 `systemPromptOverride` 仍是直连引擎的完整提示覆盖，不自动追加
+可选 Skill 目录。`sa` 和 `amaw` 都是已弃用的输入，见下一节。
+
+## SA 模式退役（未发布）
+
+`agentMode: 'sa'` 仍可传入，但不再选择任何行为，与 `amaw` 的处理方式相同：
+
+- `runManagedTask`、会话设置和 Product 输入收到 `'sa'` 时运行 AMA Worker。
+  原来 SA 的子 Agent/Workflow 工具排除和 `[Direct Path Rule]` 叠加提示已删除。
+- `runKodaX` 和未指定 `mode` 的 `runs.start` 把 `'sa'` 当作未指定，仍是直连引擎。
+- 需要直连引擎的 Host 使用 `runs.start({ mode: 'coding' })`。`Run.mode`
+  （`coding` / `managed_task`）是区分两种引擎的唯一公开事实；新 Run 的
+  `effectiveConfig.agentMode` 和会话视图都报 `'ama'`。
+- 需要"不派子 Agent"的 Host 改用 `excludeTools`、`agentProfile` 或工具策略。
+- `runManagedTask` 带 `'sa'` 时，`context.systemPromptOverride` 按 AMA 语义作为 Worker 指令
+  前置，不再整体替换系统提示词。需要整体替换的调用方改用 `runKodaX` 或
+  `runs.start({ mode: 'coding' })`。
+- config.json 里旧 REPL 写入的 `agentMode: "sa"` 不再覆盖 Product 默认值；REPL 启动时把它
+  迁移掉并给出 `KODAX_AGENT_MODE_MIGRATED` 警告。之前它会让 Space 和 daemon 会话悄悄失去 Actor 工具。
+- 已持久化的 Run 记录里的 `'sa'` 原样可读。CLI `--agent-mode sa` 与 REPL `/agent-mode sa`
+  的迁移报错不变。
 
 ## beta.10 之后：Skill `allowed-tools` 不再生效（未发布）
 
@@ -418,7 +437,7 @@ promotion，保留配置有限锁忙重试与原凭证来源，再走 Space 生�
 
 Partner 默认具备所选通用 Agent 工作面的能力：persona、surface/profileId 和专家验证
 不是隐式只读权限。使用 Session `workMode:'agent'`，不需要为了准入创建 profile。
-`agentMode:'sa'` 仍保留 Solo 子 Agent 排除；AMA 保留协作能力。实际操作仍受显式工具
+AMA 保留协作能力（当时的 `agentMode:'sa'` Solo 排除已随文首“SA 模式退役”删除）。实际操作仍受显式工具
 策略、permissionMode、审批、连接器绑定、管理员策略和沙箱限制，不自动升级为 Full Access。
 
 有现有 persona/策略时，可信 Main 通过 `authorizeExecution` 的
@@ -483,7 +502,7 @@ Artifact 既可通过 Host lease，也可通过原生 adapter 使用；原生路
 显式禁 write 时仍应拒绝。离线回归使用真实 Artifact runtime 生成 PPTX；不据此宣称
 实际 Space 部署已迁移，或真实连接器与专家模型的质量已经验收。
 
-Script＋SA 使用托管 Script 执行入口并保留 Solo 排除项。运行中切换计划权限或
+Script＋SA 组合及其 Solo 排除项已随文首“SA 模式退役”删除。运行中切换计划权限或
 planModeEffort 会更新下一次物理请求的 effort。Actor 恢复保留
 `resumeCheckpoint:true` 和空 objective，经 `actorCheckpointRecovery.version === 1`
 门禁继续原 turn；旧 Host 明确要求升级。

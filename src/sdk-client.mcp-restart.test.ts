@@ -74,7 +74,7 @@ it('rebuilds per-Session MCP resources across a Host restart and drops removed s
     removedId = removed.id;
     for (const session of [survivor, removed]) {
       await first.client.sessions.updateSettings(session.id, {
-        provider: 'product-mcp-restart-test', permissionMode: 'full-access', agentMode: 'sa',
+        provider: 'product-mcp-restart-test', permissionMode: 'full-access',
       });
     }
     const invoke = async (sessionId: string, inputId: string) => {

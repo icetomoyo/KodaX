@@ -7,7 +7,7 @@
  *
  * Persists `.kodax/sessions/<id>.json` so that `/resume <id>` and
  * `--continue` can reload a run mid-flight. Called at four sites in the
- * SA loop:
+ * direct-engine loop:
  *
  *   1. mid-flow after auto-reroute (CAP-019 plan accepted) — persists
  *      so that a crash between iterations is recoverable.

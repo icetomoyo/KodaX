@@ -5,8 +5,8 @@
  * external SDK consumers can wire KodaX into OpenTelemetry, Langfuse or a
  * custom sink without pulling @kodax-ai/core or @kodax-ai/coding.
  *
- * The `Runner` (FEATURE_080/v0.7.23) accepts an optional tracer; the SA
- * path emits `AgentSpan` / `GenerationSpan` / `ToolCallSpan` as of Slice 8.
+ * The `Runner` (FEATURE_080/v0.7.23) accepts an optional tracer; the
+ * direct-engine (`runKodaX`) path emits `AgentSpan` / `GenerationSpan` / `ToolCallSpan` as of Slice 8.
  *
  * @experimental API shape locked at v0.8.0.
  */

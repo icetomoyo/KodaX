@@ -18,7 +18,7 @@ vi.mock('@kodax-ai/coding', async (original) => ({
 it.each([true, false])('clears active Session overrides to the same Host settings as the next Run (profile=%s)', async hasProfile => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-effective-settings-'));
   await mkdir(path.join(homeDir, '.kodax'), { recursive: true });
-  const profileSettings = hasProfile ? { permissionMode: 'plan', thinking: true, reasoningMode: 'deep', agentMode: 'sa' } : {};
+  const profileSettings = hasProfile ? { permissionMode: 'plan', thinking: true, reasoningMode: 'deep' } : {};
   await writeFile(path.join(homeDir, '.kodax', 'config.json'), JSON.stringify(profileSettings));
   const runtime = await createKodaXRuntime({ homeDir, defaultProvider: 'mock-provider' });
   let captured: KodaXOptions | undefined;
@@ -35,7 +35,7 @@ it.each([true, false])('clears active Session overrides to the same Host setting
   const views: ClientSessionView[] = [];
   const observation = await runtime.sessions.observeView(session.id, view => views.push(view));
   try {
-    await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', thinking: false, reasoningMode: 'off', agentMode: 'sa' });
+    await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', thinking: false, reasoningMode: 'off' });
     const start = () => runtime.runs.start({ sessionId: session.id, prompt: 'wait',
       options: { events: { beforeToolExecute: async () => 'original-policy' } } });
     const active = await start();
@@ -43,7 +43,7 @@ it.each([true, false])('clears active Session overrides to the same Host setting
     expect(await runtime.sessions.getSettings(session.id)).toEqual({});
     // Product views resolve their built-in default without granting a low-level
     // Run an undeclared policy; its original approval hook still owns this call.
-    await expect.poll(() => views.at(-1)?.settings).toEqual({ provider: 'mock-provider', permissionMode: 'accept-edits', agentMode: 'sa', ...profileSettings });
+    await expect.poll(() => views.at(-1)?.settings).toEqual({ provider: 'mock-provider', permissionMode: 'accept-edits', agentMode: 'ama', ...profileSettings });
     const decide = () => captured!.events!.beforeToolExecute!(hasProfile ? 'edit' : 'bash',
       hasProfile ? { path: path.join(process.cwd(), 'file.ts'), old_string: 'old', new_string: 'new' } : { command: 'echo test' });
     const activeDecision = await decide();

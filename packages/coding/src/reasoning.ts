@@ -1204,8 +1204,8 @@ export async function createReasoningPlan(
 
   return {
     effort,
-    // Router prompt-overlay retired (ADR-043): the Worker (H3) and SA (P1.7)
-    // paths self-judge from the static EXECUTION GUIDANCE block, so the field
+    // Router prompt-overlay retired (ADR-043): the Worker (H3) and direct-engine
+    // (P1.7) paths self-judge from the static EXECUTION GUIDANCE block, so the field
     // stays on the plan type but no longer carries router-injected text.
     promptOverlay: '',
     decision: finalDecision,

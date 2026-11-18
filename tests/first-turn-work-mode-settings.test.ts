@@ -127,7 +127,7 @@ it('selects each work mode before the first Run and locks it after the Run settl
       const entered = new Promise<void>(resolve => { enter = resolve; });
       gate = new Promise<void>(resolve => { release = resolve; });
       const run = await runtime.runs.start({ sessionId: session.id, mode: 'managed_task', prompt: `Verify ${mode} mode; read fixture.txt in Script.`,
-        options: { lsp: false, reasoningMode: 'off', context: { repoIntelligenceMode: 'off' } } });
+        options: { lsp: false, reasoningMode: 'off', context: { repoIntelligenceMode: 'light' } } });
       await Promise.race([entered, run.result.then(result => { throw new Error(`Run ended before fixture entry: ${JSON.stringify(result)}`); })]);
       const snapshot = await runtime.sessions.getSettingsVersioned(session.id);
       const otherMode = mode === 'coding' ? 'agent' : 'coding';

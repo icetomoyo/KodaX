@@ -331,28 +331,22 @@ export function buildBusyStatusText({
 }
 
 function resolveIterationSegments({
-  agentMode,
   managedPhase,
   managedHarnessProfile,
   managedRound,
   managedMaxRounds,
   managedGlobalWorkBudget,
   managedBudgetUsage,
-  currentIteration,
-  maxIter,
 }: Pick<
   StatusBarProps,
-  | "agentMode"
   | "managedPhase"
   | "managedHarnessProfile"
   | "managedRound"
   | "managedMaxRounds"
   | "managedGlobalWorkBudget"
   | "managedBudgetUsage"
-  | "currentIteration"
-  | "maxIter"
->): Array<{ label: "Round" | "Work" | "Iter"; current: number; max: number }> {
-  const segments: Array<{ label: "Round" | "Work" | "Iter"; current: number; max: number }> = [];
+>): Array<{ label: "Round" | "Work"; current: number; max: number }> {
+  const segments: Array<{ label: "Round" | "Work"; current: number; max: number }> = [];
 
   if (managedPhase === "routing" || managedPhase === "preflight") {
     return segments;
@@ -372,19 +366,13 @@ function resolveIterationSegments({
       current: managedBudgetUsage,
       max: managedGlobalWorkBudget,
     });
-  } else if (agentMode === "sa" && currentIteration && maxIter) {
-    segments.push({
-      label: "Iter",
-      current: currentIteration,
-      max: maxIter,
-    });
   }
 
   return segments;
 }
 
 function formatLabeledIterationStatus(
-  segments: Array<{ label: "Round" | "Work" | "Iter"; current: number; max: number }>,
+  segments: Array<{ label: "Round" | "Work"; current: number; max: number }>,
 ): string | undefined {
   if (segments.length === 0) {
     return undefined;
@@ -412,8 +400,6 @@ function buildStatusBarSegments(props: StatusBarProps): StatusBarSegment[] {
     isCompacting,
     toolInputCharCount,
     toolInputContent,
-    currentIteration,
-    maxIter,
     contextUsage,
     contextTokens,
     learning,
@@ -458,15 +444,12 @@ function buildStatusBarSegments(props: StatusBarProps): StatusBarSegment[] {
   });
 
   const iterationSegments = agentMode === undefined ? [] : resolveIterationSegments({
-    agentMode,
     managedPhase,
     managedHarnessProfile,
     managedRound,
     managedMaxRounds,
     managedGlobalWorkBudget,
     managedBudgetUsage,
-    currentIteration,
-    maxIter,
   });
   const iterationStatus = formatLabeledIterationStatus(iterationSegments);
   if (iterationStatus) {

@@ -45,7 +45,7 @@ it('keeps a raw one-shot Skill and its cancellable preparation inside the Host R
   let pending: Promise<unknown> | undefined;
   try {
     const session = await client.sessions.create({ projectPath: root, title: 'Raw Skill' });
-    await client.sessions.updateSettings(session.id, { permissionMode: 'full-access', agentMode: 'sa' });
+    await client.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
     const controller = new AbortController();
     const raw = 'please use /cli-helper inspect src';
     pending = runOneShotClientTask({ client, runtime, options: { provider: 'one-shot-skill-test', session: { id: session.id } },

@@ -448,7 +448,7 @@ export interface SessionManager {
   /**
    * v0.7.43 — the raw write-side storage instance. SDK embedders pass
    * this into `runKodaX({ session: { id, scope, storage } })` so the
-   * SA / AMA loops write per-turn JSONL snapshots to disk. Without an
+   * direct-engine / AMA loops write per-turn JSONL snapshots to disk. Without an
    * injected storage, `saveSessionSnapshot` is a silent no-op and the
    * sessions directory stays empty regardless of `session.id`.
    *

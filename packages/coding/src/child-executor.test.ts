@@ -478,7 +478,7 @@ describe('executeChildAgents — guardrails propagation (FEATURE_092 phase 2b.7b
           readonly systemPromptOverride?: string;
         };
       };
-      expect(childOptions.agentMode).toBe('sa');
+      expect(childOptions.agentMode).toBeUndefined();
       expect(childOptions.context?.excludeTools).toEqual(expect.arrayContaining([
         'list_dispatchable_agents',
         'spawn_agent',

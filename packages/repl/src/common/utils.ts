@@ -935,16 +935,20 @@ export function isProviderConfigured(name: string): boolean {
 
 class InvalidAgentModeConfigError extends Error {}
 
+function isRetiredAgentMode(mode: string): boolean {
+  return mode === 'sa' || mode === 'amaw' || mode === 'ama-workflow';
+}
+
 function migrateLegacyAgentModeConfig<
   T extends { readonly agentMode?: string; readonly schemaVersion?: number },
 >(parsed: T): Omit<T, 'agentMode'> & { readonly agentMode?: KodaXAgentMode } {
   const mode = parsed.agentMode;
-  if (mode === undefined || mode === 'ama' || mode === 'sa') {
+  if (mode === undefined || mode === 'ama') {
     return parsed as Omit<T, 'agentMode'> & { readonly agentMode?: KodaXAgentMode };
   }
-  if (mode !== 'amaw' && mode !== 'ama-workflow') {
+  if (!isRetiredAgentMode(mode)) {
     throw new InvalidAgentModeConfigError(
-      `Invalid agentMode "${mode}" in ${KODAX_CONFIG_FILE}. Expected "ama" or "sa".`,
+      `Invalid agentMode "${mode}" in ${KODAX_CONFIG_FILE}. Expected "ama".`,
     );
   }
   const migrated = {
@@ -957,7 +961,7 @@ function migrateLegacyAgentModeConfig<
       const persisted = readPersistedCoreConfig();
       if (!persisted) return;
       const persistedMode = persisted.value.agentMode;
-      if (persistedMode !== 'amaw' && persistedMode !== 'ama-workflow') return;
+      if (typeof persistedMode !== 'string' || !isRetiredAgentMode(persistedMode)) return;
       writePersistedCoreConfig({
         ...persisted.value,
         agentMode: 'ama',
@@ -974,8 +978,11 @@ function migrateLegacyAgentModeConfig<
     // on disk, while the current process uses the canonical in-memory value.
   }
   if (!agentModeMigrationNoticeEmitted) {
+    const reason = mode === 'sa'
+      ? 'SA selection was retired; every turn runs AMA.'
+      : 'Workflow use is now explicit intent.';
     process.emitWarning(
-      `Migrated persisted agentMode "${mode}" to "ama". Workflow use is now explicit intent.`,
+      `Migrated persisted agentMode "${mode}" to "ama". ${reason}`,
       { code: 'KODAX_AGENT_MODE_MIGRATED' },
     );
     agentModeMigrationNoticeEmitted = true;

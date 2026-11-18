@@ -56,8 +56,8 @@ export interface BuildOptions {
   sessionId?: string;
   /** Reasoning plan mode (default: 'auto') */
   reasoningMode?: 'auto' | 'manual';
-  /** agentMode flag on options (default: 'sa') */
-  agentMode?: 'sa' | 'ama';
+  /** agentMode flag on options (default: unset) */
+  agentMode?: 'ama';
 }
 
 /**

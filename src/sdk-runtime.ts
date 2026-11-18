@@ -272,6 +272,7 @@ import type {
 } from "@kodax-ai/coding";
 import {
   isValidTokenBudget,
+  normalizeKodaXAgentMode,
   buildSessionGoalRuntimeBinding,
   planGoalCreate,
   planGoalTransition,
@@ -4655,7 +4656,7 @@ async function createKodaXRuntimeInternal(
     const activeRun = [...runs.values()].find(run => run.sessionId === sessionId && !run.terminalEmitted);
     const effectiveSettings = resolveEffectiveRuntimeSessionSettings(config, rawSettings, true);
     const settings = { ...effectiveSettings,
-      ...(activeRun ? { agentMode: activeRun.mode === 'coding' ? 'sa' as const : 'ama' as const } : {}) };
+      ...(activeRun ? { agentMode: 'ama' as const } : {}) };
     const contextBudget = resolveClientContextBudget(config, effectiveSettings, options.defaultProvider, options.defaultModel);
     return { session, settings: toClientSessionSettings(settings), contextBudget, items: restoreSessionViewItems(sessionId, data, conversation?.messages, liveItems, conversation?.boundaries),
       ...(data ? { committedOutputIds: [...committedSessionOutputIds(data, conversation?.messages ?? [])] } : {}),
@@ -7087,7 +7088,8 @@ function createRuntimeSessionSettingsOwner(
 
   const initialize = (sessionId: string, loaded: RuntimeVersionedValue<RuntimeSessionSettings>) => {
     if (SESSION_DEFAULTS_CAPTURED in loaded.value) return loaded;
-    const { workMode: _workMode, ...defaults } = parseRuntimeSessionSettings(readDefaults());
+    const { workMode: _workMode, ...defaults } = withCanonicalAgentMode(
+      parseRuntimeSessionSettings(readDefaults()));
     const initialized = { revision: loaded.revision,
       value: withCapturedSessionDefaults({ ...loaded.value }, defaults) };
     if (!pendingDraftSettings.has(sessionId)) persistence.saveSessionSettingsVersioned(sessionId, initialized);
@@ -11865,10 +11867,6 @@ async function createRuntimeRunService(deps: {
             runtimePolicy: { enforceAtRuntime: true } } };
         const continuation = { ...createRunOptions(), toolInvocation: undefined, abortSignal: abortController.signal, sessionControl };
         abortController.signal.throwIfAborted();
-        if (continuation.agentMode === 'sa' && continuation.workMode !== 'script') {
-          record.running = startKodaX(continuation, start.prompt);
-          return record.running.result;
-        }
         return runManagedTask(continuation, start.prompt);
       }, runOptions.extensionRuntime, record.runId);
       const interruptedRunEvidence = runOptions.toolInvocation === undefined
@@ -12539,12 +12537,10 @@ async function createRuntimeRunService(deps: {
         options.workflow = { maxConcurrency: concurrency };
       }
     }
-    const ownedActorSession = await deps.actorRegistry.forSession(
+    const actorSession = await deps.actorRegistry.forSession(
       input.sessionId,
       options.maxConcurrentThreadsPerSession,
     );
-    const actorSession =
-      options.agentMode === "sa" ? undefined : ownedActorSession;
     const queuesBehindDurabilityRepair =
       requiredAfterRun?.phase === "unknown"
       && requiredAfterRun.actorDurabilityFailure !== undefined
@@ -12740,7 +12736,7 @@ async function createRuntimeRunService(deps: {
         : {}),
       mode: options.toolInvocation !== undefined || options.workMode === 'script' ? "managed_task" : input.mode
         ?? (queuesBehindDurabilityRepair ? requiredAfterRun?.mode : undefined)
-        ?? (productInput !== undefined ? (options.agentMode === "sa" ? "coding" : "managed_task") : undefined)
+        ?? (productInput !== undefined ? "managed_task" : undefined)
         ?? "coding",
       workMode: resolveWorkMode(options),
       ...(requiredAfterRun !== undefined && input.mode === undefined
@@ -22322,7 +22318,7 @@ function buildEffectiveRuntimeOptions(
   const thinking = options.thinking ?? settings.thinking;
   const reasoningMode = options.reasoningMode ?? settings.reasoningMode;
   const requestedAgentMode = options.agentMode ?? settings.agentMode;
-  const agentMode = requestedAgentMode === "amaw" ? "ama" : requestedAgentMode;
+  const agentMode = normalizeKodaXAgentMode(requestedAgentMode);
   const workMode = options.workMode ?? settings.workMode;
   const maxIter = options.maxIter ?? settings.maxIter;
   const compaction =
@@ -23520,9 +23516,10 @@ function resolveEffectiveRuntimeSessionSettings(config: unknown, overrides: Runt
   const defaults = capturedSessionDefaults(overrides);
   const retainDefaults = (value: RuntimeSessionSettings): RuntimeSessionSettings => defaults === undefined
     ? value : withCapturedSessionDefaults(value, defaults);
-  const { workMode: _profileWorkMode, ...profileSettings } = defaults ?? parseRuntimeSessionSettings(config);
+  const { workMode: _profileWorkMode, ...profileSettings } = withCanonicalAgentMode(
+    defaults ?? parseRuntimeSessionSettings(config));
   const settings: RuntimeSessionSettings = { ...(productSession ? { permissionMode: 'accept-edits' as const, agentMode: 'ama' as const } : {}),
-    ...profileSettings, ...overrides };
+    ...profileSettings, ...withCanonicalAgentMode(overrides) };
   if (settings.permissionMode === 'plan' && overrides.effort === undefined && overrides.planModeEffort !== undefined) {
     return retainDefaults({ ...settings, effort: overrides.planModeEffort });
   }
@@ -23531,6 +23528,19 @@ function resolveEffectiveRuntimeSessionSettings(config: unknown, overrides: Runt
     return retainDefaults({ ...settings, effort: profileSettings.planModeEffort });
   }
   return retainDefaults(settings);
+}
+
+/**
+ * config.json, captured profile defaults and stored Session settings may still
+ * carry a retired agent mode written by an older REPL or SDK client. `amaw`
+ * reads as `ama`. `sa` is dropped so the Product default applies instead of
+ * silently routing every Session to the direct engine without Actors.
+ */
+function withCanonicalAgentMode(settings: RuntimeSessionSettings): RuntimeSessionSettings {
+  const agentMode = normalizeKodaXAgentMode(settings.agentMode);
+  if (agentMode === settings.agentMode) return settings;
+  const { agentMode: _retired, ...rest } = settings;
+  return agentMode === undefined ? rest : { ...rest, agentMode };
 }
 
 function parseRuntimeSessionSettings(value: unknown): RuntimeSessionSettings {

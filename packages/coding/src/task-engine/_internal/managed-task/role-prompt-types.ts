@@ -20,7 +20,7 @@ export interface ManagedRolePromptContext {
   /**
    * v0.7.26 NEW-1 — workspace environment the role should assume.
    * Without this the managed-worker system prompt never tells the LLM
-   * where it is running; the SA path injects `Working Directory: ...`
+   * where it is running; the direct engine injects `Working Directory: ...`
    * via `buildSystemPrompt`, but the Runner-driven path bypassed that
    * builder entirely, causing managed workers to guess paths (e.g.
    * bash-cd into invented directories).
@@ -79,7 +79,7 @@ export interface ManagedRolePromptContext {
    * FEATURE_143 (v0.7.36) — routing-notes overlay (`plan.promptOverlay`)
    * that v0.7.26 FEATURE_084 mistakenly stitched onto the user prompt
    * head. Now flows here instead so the role-prompt builder can emit
-   * it as a system-prompt section, matching the SA path's
+   * it as a system-prompt section, matching the direct engine's
    * `capability-sections.ts` behavior. Carries: task-family guidance,
    * work intent, brainstorm directives, provider-policy notes,
    * explicit-reason trail.

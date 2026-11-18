@@ -932,7 +932,6 @@ async function createWorkflowChildDigest(
         ...(input.model ? { model: input.model } : {}),
         effort: input.effort ?? input.options.parentOptions.effort,
         reasoningMode: input.options.parentOptions.reasoningMode,
-        agentMode: 'sa',
         maxIter: 1,
         abortSignal: controller.signal,
         extensionRuntime: input.options.parentOptions.extensionRuntime,
@@ -1091,7 +1090,6 @@ async function resolveChildStructuredOutput(input: {
         ...(input.model ? { model: input.model } : {}),
         effort: input.effort ?? input.options.parentOptions.effort,
         reasoningMode: input.options.parentOptions.reasoningMode,
-        agentMode: 'sa',
         maxIter: 1,
         abortSignal: controller.signal,
         extensionRuntime: input.options.parentOptions.extensionRuntime,
@@ -1418,10 +1416,11 @@ async function runReadChildBody(
         effort: childEffort,
         sessionControl: recoveryControl,
         reasoningMode: options.parentOptions.reasoningMode,
-        // The child stays on the direct runKodaX/Runner substrate. Preserve AMA
-        // capability semantics only for Runtime Actor children so recursive
-        // collaboration and future AMA-gated surfaces remain truthful.
-        agentMode: options.actorControl ? 'ama' : 'sa',
+        // The child stays on the direct runKodaX/Runner substrate. Only Runtime
+        // Actor children carry the AMA label, which keeps recursive collaboration
+        // and AMA-gated surfaces available to them. Other leaf children stay
+        // unlabeled, so those AMA gates stay closed.
+        ...(options.actorControl ? { agentMode: 'ama' as const } : {}),
         maxIter: options.maxIterationsPerChild,
         abortSignal: options.abortSignal,
         extensionRuntime: options.parentOptions.extensionRuntime,
@@ -1736,10 +1735,11 @@ async function runWriteChildBody(
         effort: childEffort,
         reasoningMode: options.parentOptions.reasoningMode,
         sessionControl: recoveryControl,
-        // The child stays on the direct runKodaX/Runner substrate. Preserve AMA
-        // capability semantics only for Runtime Actor children so recursive
-        // collaboration and future AMA-gated surfaces remain truthful.
-        agentMode: options.actorControl ? 'ama' : 'sa',
+        // The child stays on the direct runKodaX/Runner substrate. Only Runtime
+        // Actor children carry the AMA label, which keeps recursive collaboration
+        // and AMA-gated surfaces available to them. Other leaf children stay
+        // unlabeled, so those AMA gates stay closed.
+        ...(options.actorControl ? { agentMode: 'ama' as const } : {}),
         maxIter: options.maxIterationsPerChild,
         abortSignal: options.abortSignal,
         extensionRuntime: options.parentOptions.extensionRuntime,

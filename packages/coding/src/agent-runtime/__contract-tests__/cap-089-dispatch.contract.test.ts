@@ -2,31 +2,26 @@
  * Contract test for CAP-089: task-engine.ts mode dispatcher
  *
  * Test obligations:
- * - CAP-DISPATCH-001: SA mode → runKodaX (now FUNCTION-LEVEL via
- *   FEATURE_100 P3.6t `dispatchManagedTask` DI deps)
- * - CAP-DISPATCH-002: AMA mode → runManagedTaskViaRunner (same)
- * - CAP-DISPATCH-003: default agentMode = 'ama'
+ * - CAP-DISPATCH-001: retired "sa" input runs the AMA Worker unchanged
+ * - CAP-DISPATCH-002: AMA mode → runManagedTaskViaRunner via buildPlan
+ * - CAP-DISPATCH-003: retired labels never reach the Worker: 'sa' runs unlabeled, 'amaw' as 'ama'
  *
- * Risk: HIGH (load-bearing fork point — getting the default wrong
- * silently routes every unannotated task to the SA path, losing AMA
- * orchestration entirely).
+ * Risk: HIGH (load-bearing entry point — every managed task passes here).
  *
  * Class: 1
  *
- * Verified location: task-engine.ts:53 `resolveManagedAgentMode`,
- * task-engine.ts:91+ `dispatchManagedTask` (extracted from inline
- * `executeRunManagedTask` with explicit `ManagedDispatchDeps` so
- * contract tests inject mock SA/AMA executors).
+ * Verified location: task-engine.ts `dispatchManagedTask` (explicit `ManagedDispatchDeps` so contract tests
+ * inject a mock AMA executor).
  *
  * Time-ordering constraint: at top of runManagedTask; the result is
  * wrapped by reshapeToUserConversation (CAP-092).
  *
- * STATUS: ACTIVE since FEATURE_100 P3.6t.
+ * STATUS: ACTIVE since FEATURE_100 P3.6t. FEATURE_310 removed the SA branch.
  */
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { dispatchManagedTask, resolveManagedAgentMode } from '../../task-engine.js';
+import { dispatchManagedTask } from '../../task-engine.js';
 import type { KodaXOptions, KodaXResult } from '../../types.js';
 
 function emptyResult(): KodaXResult {
@@ -38,28 +33,31 @@ function emptyResult(): KodaXResult {
   };
 }
 
+function amaDeps() {
+  const runAMA = vi.fn().mockResolvedValue(emptyResult());
+  const buildPlan = vi.fn().mockResolvedValue({ effort: 'none', decision: {}, promptOverlay: '' });
+  return { runAMA, buildPlan };
+}
+
 describe('CAP-089: task-engine.ts mode dispatcher contract', () => {
-  it('CAP-DISPATCH-001: when agentMode is "sa", dispatchManagedTask routes to runSA (and not runAMA)', async () => {
-    const runSA = vi.fn().mockResolvedValue(emptyResult());
-    const runAMA = vi.fn().mockResolvedValue(emptyResult());
-    const buildPlan = vi.fn();
+  it('CAP-DISPATCH-001: retired "sa" input runs the AMA Worker without overlay or tool exclusions', async () => {
+    const deps = amaDeps();
     await dispatchManagedTask(
-      { agentMode: 'sa' } as KodaXOptions,
-      'do thing',
-      { runSA, runAMA, buildPlan },
+      { agentMode: 'sa', context: { promptOverlay: 'caller-only' } } as KodaXOptions,
+      'review the diff for issues',
+      deps,
     );
-    expect(runSA).toHaveBeenCalledTimes(1);
-    expect(runAMA).not.toHaveBeenCalled();
-    expect(buildPlan).not.toHaveBeenCalled();
-    // SA branch threads `prompt` and the augmented options (with
-    // direct-path overlay) into runSA.
-    const [opts, prompt] = runSA.mock.calls[0]!;
-    expect(prompt).toBe('do thing');
-    expect(opts.agentMode).toBe('sa');
+    expect(deps.buildPlan).toHaveBeenCalledTimes(1);
+    expect(deps.runAMA).toHaveBeenCalledTimes(1);
+    const [opts, prompt] = deps.runAMA.mock.calls[0]!;
+    expect(prompt).toBe('review the diff for issues');
+    expect(opts.context?.promptOverlay).toBe('caller-only');
+    expect(opts.context?.excludeTools).toBeUndefined();
+    // The retired label must not reach the Worker, where it would surface in effectiveConfig.
+    expect('agentMode' in opts).toBe(false);
   });
 
   it('CAP-DISPATCH-002: when agentMode is "ama", dispatchManagedTask routes to runAMA via buildPlan', async () => {
-    const runSA = vi.fn();
     const runAMA = vi.fn().mockResolvedValue(emptyResult());
     const buildPlan = vi.fn().mockResolvedValue({
       effort: 'none',
@@ -69,9 +67,8 @@ describe('CAP-089: task-engine.ts mode dispatcher contract', () => {
     await dispatchManagedTask(
       { agentMode: 'ama', context: { executionCwd: '/tmp/x' } } as KodaXOptions,
       'plan thing',
-      { runSA, runAMA, buildPlan },
+      { runAMA, buildPlan },
     );
-    expect(runSA).not.toHaveBeenCalled();
     expect(buildPlan).toHaveBeenCalledTimes(1);
     expect(runAMA).toHaveBeenCalledTimes(1);
     // runAMA receives (options, prompt, undefined, plan) in this order
@@ -81,29 +78,21 @@ describe('CAP-089: task-engine.ts mode dispatcher contract', () => {
     expect(plan).toBeDefined();
   });
 
-  it('CAP-DISPATCH-003a: when options.agentMode is undefined, resolveManagedAgentMode defaults to "ama"', () => {
-    expect(resolveManagedAgentMode({} as KodaXOptions)).toBe('ama');
-  });
+  it.each([['ama', 'ama'], ['amaw', 'ama'], ['sa', undefined]] as const)(
+    'CAP-DISPATCH-003b: "%s" input reaches the Worker as %s',
+    async (mode, expected) => {
+      const deps = amaDeps();
+      await dispatchManagedTask({ agentMode: mode } as KodaXOptions, 'p', deps);
+      expect(deps.runAMA.mock.calls[0]![0].agentMode).toBe(expected);
+    },
+  );
 
-  it('CAP-DISPATCH-003b: explicit "sa" agentMode is preserved verbatim', () => {
-    expect(resolveManagedAgentMode({ agentMode: 'sa' } as KodaXOptions)).toBe('sa');
-  });
-
-  it('CAP-DISPATCH-003c: explicit "ama" agentMode is preserved verbatim', () => {
-    expect(resolveManagedAgentMode({ agentMode: 'ama' } as KodaXOptions)).toBe('ama');
-  });
-
-  it('CAP-DISPATCH-003c.1: deprecated "amaw" input is normalized to AMA', () => {
-    expect(resolveManagedAgentMode({ agentMode: 'amaw' } as KodaXOptions)).toBe('ama');
-  });
-
-  it('CAP-DISPATCH-003d: dispatchManagedTask propagates the default ("ama") when no agentMode is set', async () => {
-    const runSA = vi.fn();
-    const runAMA = vi.fn().mockResolvedValue(emptyResult());
-    const buildPlan = vi.fn().mockResolvedValue({ effort: 'none', decision: {}, promptOverlay: '' });
-    await dispatchManagedTask({} as KodaXOptions, 'p', { runSA, runAMA, buildPlan });
-    expect(runSA).not.toHaveBeenCalled();
-    expect(runAMA).toHaveBeenCalledTimes(1);
+  it('CAP-DISPATCH-003d: an unlabeled call runs the Worker and stays unlabeled', async () => {
+    const deps = amaDeps();
+    const options = {} as KodaXOptions;
+    await dispatchManagedTask(options, 'p', deps);
+    expect(deps.runAMA).toHaveBeenCalledTimes(1);
+    expect(deps.runAMA.mock.calls[0]![0]).toBe(options);
   });
 
   it.each([
@@ -112,18 +101,12 @@ describe('CAP-089: task-engine.ts mode dispatcher contract', () => {
   ] as const)(
     'CAP-DISPATCH-004: attributes natural-language Workflow intent for %s',
     async (prompt, expectedIntent) => {
-      const runSA = vi.fn();
-      const runAMA = vi.fn().mockResolvedValue(emptyResult());
-      const buildPlan = vi.fn().mockResolvedValue({ effort: 'none', decision: {}, promptOverlay: '' });
+      const deps = amaDeps();
 
-      await dispatchManagedTask({ agentMode: 'ama' } as KodaXOptions, prompt, {
-        runSA,
-        runAMA,
-        buildPlan,
-      });
+      await dispatchManagedTask({ agentMode: 'ama' } as KodaXOptions, prompt, deps);
 
-      const [planOptions] = buildPlan.mock.calls[0]!;
-      const [runOptions] = runAMA.mock.calls[0]!;
+      const [planOptions] = deps.buildPlan.mock.calls[0]!;
+      const [runOptions] = deps.runAMA.mock.calls[0]!;
       expect(planOptions.context?.workflowIntent).toBe(expectedIntent);
       expect(runOptions.context?.workflowIntent).toBe(expectedIntent);
     },

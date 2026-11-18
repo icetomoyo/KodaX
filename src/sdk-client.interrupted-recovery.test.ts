@@ -12,7 +12,7 @@ import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 
-it.each(['sa', 'ama'] as const)('uses saved %s Host output after IPC detach and restart without persisting recovery instructions', async agentMode => {
+it('uses saved Host output after IPC detach and restart without persisting recovery instructions', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-client-recovery-'));
   let holding = true;
   const bodies: string[] = [];
@@ -55,7 +55,7 @@ it.each(['sa', 'ama'] as const)('uses saved %s Host output after IPC detach and 
   try {
     const session = await active.client.sessions.create({ projectPath: homeDir });
     sessionId = session.id;
-    await active.client.sessions.updateSettings(session.id, { provider: 'interrupted-recovery-test', model: 'fixture', agentMode, permissionMode: 'full-access' });
+    await active.client.sessions.updateSettings(session.id, { provider: 'interrupted-recovery-test', model: 'fixture', agentMode: 'ama', permissionMode: 'full-access' });
     const views: ClientSessionView[] = [];
     observation = await active.client.sessions.observe(session.id, view => views.push(view));
     activeRunId = (await active.client.inputs.submit({ sessionId: session.id, inputId: 'first', text: 'Begin work.' })).runId;
