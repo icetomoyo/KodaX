@@ -53,7 +53,7 @@ export interface RuntimeCapabilityRequirements {
   /** Require durable accepted-input and completed-turn boundaries for managed Runs. */
   readonly managedRunDurability?: 1;
   /** Require fail-closed root fencing plus automatic same-owner Actor settlement repair. */
-  readonly actorSettlementConvergence?: 1 | 2;
+  readonly actorSettlementConvergence?: 1 | 2 | 3;
   /** Require Session-local event ordering and scoped event access. */
   readonly daemonManagement?: 1;
   /** Require a read-only inventory of initialized logical daemon clients. */
@@ -121,7 +121,7 @@ export const KODAX_RUNTIME_SDK_CAPABILITIES = Object.freeze({
   sharedSessionSettings: 2,
   durableRecoveryQueries: 1,
   managedRunDurability: 1,
-  actorSettlementConvergence: 2,
+  actorSettlementConvergence: 3,
   daemonManagement: 1,
   daemonClientInventory: 1,
   daemonOrphanExit: 1,

@@ -2656,6 +2656,157 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
+  describe("Stop on a Run whose owner was unconfirmed at startup", () => {
+    const livenessId = "b".repeat(32);
+    type OwnerMode = "unresponsive" | "alive" | "dead";
+
+    // A loopback owner endpoint whose liveness answer the test switches.
+    const startOwnerEndpoint = async () => {
+      let mode: OwnerMode = "unresponsive";
+      const sockets = new Set<net.Socket>();
+      const server = net.createServer((socket) => {
+        sockets.add(socket);
+        socket.on("close", () => sockets.delete(socket));
+        if (mode === "alive") socket.end(`${livenessId}\n`);
+      });
+      await new Promise<void>((resolve, reject) => {
+        server.once("listening", resolve);
+        server.once("error", reject);
+        server.listen({ host: "127.0.0.1", port: 0 });
+      });
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        throw new Error("Owner liveness test server did not bind");
+      }
+      const close = async (): Promise<void> => {
+        for (const socket of sockets) socket.destroy();
+        if (!server.listening) return;
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => error ? reject(error) : resolve());
+        });
+      };
+      return {
+        port: address.port,
+        async become(next: OwnerMode): Promise<void> {
+          mode = next;
+          if (next === "dead") await close();
+        },
+        close,
+      };
+    };
+
+    const startWithUnconfirmedOwner = async (runId: string) => {
+      const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
+      const sessionsDir = path.join(tempRoot, "sessions");
+      const setup = await createKodaXRuntime({
+        homeDir: tempRoot,
+        sessionsDir,
+        defaultProvider: "mock-provider",
+      });
+      const session = await setup.sessions.create({ title: runId });
+      await setup.close();
+      const owner = await startOwnerEndpoint();
+      const statusFile = path.join(
+        tempRoot, ".kodax", "runtime", "runs", runId, "status.json",
+      );
+      await fs.mkdir(path.dirname(statusFile), { recursive: true });
+      await fs.writeFile(statusFile, JSON.stringify({
+        runId,
+        sessionId: session.id,
+        phase: "running",
+        stage: "executing",
+        startedAt: "2026-07-30T00:00:00.000Z",
+        provider: "mock-provider",
+        _runtime: {
+          revision: 1,
+          owner: {
+            ownerId: `${runId}-owner`,
+            runtimeId: `${runId}-runtime`,
+            pid: process.pid,
+            startedAt: "2026-07-30T00:00:00.000Z",
+            livenessId,
+            livenessPort: owner.port,
+          },
+        },
+      }), "utf-8");
+      // Startup probes the unresponsive owner, gets `unknown`, and leaves the Run.
+      const runtime = await createKodaXRuntime({
+        homeDir: tempRoot,
+        sessionsDir,
+        defaultProvider: "mock-provider",
+      });
+      return { runtime, owner, sessionId: session.id, statusFile };
+    };
+
+    it("re-probes on Stop and recovers the Run once its owner is dead", async () => {
+      const { runtime, owner, sessionId, statusFile } =
+        await startWithUnconfirmedOwner("run-owner-died-after-startup");
+      try {
+        await owner.become("dead");
+
+        await expect(runtime.runs.abort("run-owner-died-after-startup"))
+          .resolves.toMatchObject({
+            accepted: false,
+            phase: "interrupted",
+            outcome: "interrupted",
+          });
+        expect(JSON.parse(await fs.readFile(statusFile, "utf-8")))
+          .toMatchObject({ phase: "interrupted", error: "daemon_crashed" });
+
+        codingMock.startKodaX.mockImplementation(
+          (options: KodaXOptions): RunningSession => fakeRunningSession(
+            options,
+            Promise.resolve({ success: true, lastText: "done", messages: [], sessionId }),
+          ),
+        );
+        const next = await runtime.runs.start({ sessionId, prompt: "new work" });
+        await expect(next.result).resolves.toMatchObject({ phase: "completed" });
+        await expect(runtime.sessions.archive(sessionId)).resolves.toBeUndefined();
+      } finally {
+        await owner.close();
+        await runtime.close();
+      }
+    });
+
+    it("leaves the Run untouched and names the live owner when Stop finds it alive", async () => {
+      const { runtime, owner, statusFile } =
+        await startWithUnconfirmedOwner("run-owner-alive-after-startup");
+      try {
+        await owner.become("alive");
+        const before = await fs.readFile(statusFile);
+
+        await expect(runtime.runs.abort("run-owner-alive-after-startup"))
+          .rejects.toMatchObject({
+            code: "conflict",
+            message: expect.stringContaining("live Runtime run-owner-alive-after-startup-runtime"),
+          });
+        expect(await fs.readFile(statusFile)).toEqual(before);
+      } finally {
+        await owner.close();
+        await runtime.close();
+      }
+    });
+
+    it("leaves the Run untouched with a retryable error while the owner stays unconfirmed", async () => {
+      const { runtime, owner, statusFile } =
+        await startWithUnconfirmedOwner("run-owner-still-unconfirmed");
+      try {
+        const before = await fs.readFile(statusFile);
+
+        await expect(runtime.runs.abort("run-owner-still-unconfirmed"))
+          .rejects.toMatchObject({
+            code: "conflict",
+            retryable: true,
+            message: expect.stringContaining("could not be confirmed alive or dead"),
+          });
+        expect(await fs.readFile(statusFile)).toEqual(before);
+      } finally {
+        await owner.close();
+        await runtime.close();
+      }
+    });
+  });
+
   it("does not restore a terminal for an ownerless legacy Run and reads it conservatively", async () => {
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runId = "run-terminal-event-won";
@@ -2745,6 +2896,39 @@ describe("createKodaXRuntime", () => {
     expect(recovered?.interruptInputs?.[1]).not.toHaveProperty("entryId");
     expect(await fs.readFile(statusFile)).toEqual(originalStatus);
     await runtime.close();
+  });
+
+  it("lets the Host stop while a stopped Run's executor never returns", async () => {
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot, defaultProvider: "mock-provider" });
+    const session = await runtime.sessions.create({ title: "Hung Stop" });
+    // The executor ignores abort, like a tool call that never returns.
+    codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession =>
+      fakeRunningSession(options, new Promise<KodaXResult>(() => undefined)));
+    const handle = await runtime.runs.start({ sessionId: session.id, prompt: "hang" });
+    try {
+      await expect(runtime.status.preflight()).resolves.toMatchObject({
+        canStop: false, blockers: ["active_runs"],
+      });
+      await runtime.runs.abort(handle.runId);
+      await expect(runtime.runs.get(handle.runId)).resolves.toMatchObject({
+        phase: "unknown", stop: { state: "unknown" },
+      });
+      // Stopping the Host ends what the Stop could not; restart recovery
+      // interrupts the Run.
+      await expect(runtime.status.preflight()).resolves.toMatchObject({
+        canStop: true, blockers: [], activeRuns: [],
+      });
+    } finally {
+      await runtime.close();
+    }
+    const restarted = await createKodaXRuntime({ homeDir: tempRoot, defaultProvider: "mock-provider" });
+    try {
+      const recovered = await restarted.runs.get(handle.runId);
+      expect(recovered.phase, JSON.stringify(recovered)).toBe("interrupted");
+    } finally {
+      await restarted.close();
+    }
   });
 
   it("persists non-terminal run status while a run is active", async () => {
@@ -3727,6 +3911,46 @@ describe("createKodaXRuntime", () => {
         requirements: { actorSettlementConvergence: 2 },
       }),
     ).rejects.toThrow(/does not support.*actorSettlementConvergence/i);
+  });
+
+  // A v2 daemon leaves an unrepairable Actor Run unknown forever; clients that
+  // render the v3 "failed while the Session stays fenced" state must require v3.
+  it("lets a client require Actor settlement convergence v3", async () => {
+    const { connectKodaXRuntime } = await import("../tests/runtime-fixture.js");
+    const daemonAt = (version: number): RuntimeDaemonClientTransport => ({
+      async request(method) {
+        if (method !== "initialize") return null;
+        return {
+          identity: {
+            runtimeId: `daemon-actor-settlement-v${version}`,
+            mode: "daemon",
+            profile: "default",
+            startedAt: "2026-11-17T00:00:00.000Z",
+            version: "0.7.84",
+          },
+          capabilities: {
+            ...SESSION_EVENT_JOURNAL_CAPABILITY,
+            actorSettlementConvergence: { version },
+          },
+        };
+      },
+      subscribe() {
+        return { close() {} };
+      },
+    });
+
+    await expect(
+      connectKodaXRuntime({
+        transport: daemonAt(2),
+        requirements: { actorSettlementConvergence: 3 },
+      }),
+    ).rejects.toThrow(/does not support.*actorSettlementConvergence/i);
+    const runtime = await connectKodaXRuntime({
+      transport: daemonAt(3),
+      requirements: { actorSettlementConvergence: 3 },
+    });
+    expect(runtime.capabilities?.actorSettlementConvergence).toMatchObject({ version: 3 });
+    await runtime.close();
   });
 
   it("emits one canonical post-commit compaction event with stable context ownership", async () => {
@@ -9842,7 +10066,7 @@ describe("createKodaXRuntime", () => {
     }
   });
 
-  it("stops automatic Actor repair when durable ownership changes", async () => {
+  it("never takes over a live foreign Actor owner while repair retries in the background", async () => {
     vi.useFakeTimers();
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const originalBeginSave = FileSessionStorage.prototype.beginActorSnapshotSave;
@@ -9893,7 +10117,9 @@ describe("createKodaXRuntime", () => {
           owner: {
             ownerId: "foreign-owner",
             runtimeId: "foreign-runtime",
-            pid: 4242,
+            // A live pid without a liveness endpoint reads as possibly alive,
+            // so the owner can never be taken over.
+            pid: process.pid,
             startedAt: new Date().toISOString(),
           },
         },
@@ -9940,18 +10166,27 @@ describe("createKodaXRuntime", () => {
       await vi.waitFor(() => {
         expect(foreignOwnerLoads).toBeGreaterThan(0);
       });
-      const loadsAfterConflict = foreignOwnerLoads;
+      const savesAfterConflict = save.mock.calls.length;
 
-      await new Promise<void>((resolve) => setTimeout(resolve, 1_500));
-      expect(foreignOwnerLoads).toBe(loadsAfterConflict);
+      // The conflict cannot be repaired in-process, so the Run gets its final
+      // failure. Background reclaim keeps probing the owner, but a live
+      // foreign owner is never taken over and the Session stays fenced.
+      await vi.waitFor(async () => {
+        await expect(runtime.runs.get(run.runId)).resolves.toMatchObject({
+          phase: "failed",
+          terminal: { code: "actor_settlement_not_persisted", effectOutcome: "unknown" },
+        });
+      });
       await expect(runtime.runs.abort(run.runId)).resolves.toMatchObject({
-        phase: "unknown",
+        accepted: false,
       });
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
-      await expect(runtime.runs.get(run.runId)).resolves.toMatchObject({
-        phase: "unknown",
-        lifecycleError: { code: "actor_settlement_not_persisted" },
-      });
+      await new Promise<void>((resolve) => setTimeout(resolve, 1_500));
+      await expect(runtime.runs.start({
+        sessionId: session.id,
+        prompt: "while a foreign owner holds the Actor tree",
+        mode: "managed_task",
+      })).rejects.toMatchObject({ code: "actor_settlement_not_persisted" });
+      expect(save.mock.calls.length).toBe(savesAfterConflict);
     } finally {
       releaseLateSettlement?.();
       peek.mockRestore();
@@ -15220,12 +15455,10 @@ describe("createKodaXRuntime", () => {
       runId: handle.runId,
       phase: "unknown",
     });
+    // Stop was requested, so the unconfirmed Run does not block Host stop.
     await expect(runtime.status.preflight()).resolves.toMatchObject({
-      canStop: false,
-      activeRuns: [expect.objectContaining({
-        runId: handle.runId,
-        phase: "unknown",
-      })],
+      canStop: true,
+      activeRuns: [],
     });
 
     await runtime.close();
@@ -20186,6 +20419,42 @@ describe("createKodaXRuntime", () => {
 
     subscription.close();
     await runtime.close();
+  });
+
+  it("lets the Host stop while a stopped Workflow never returns", async () => {
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
+    const { getDefaultWorkflowRunManager } = await import("@kodax-ai/agent");
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir: tempRoot });
+    const runId = `hung-workflow-${Date.now()}`;
+    let finishWorkflow: (() => void) | undefined;
+    // The Workflow ignores abort, like a child agent whose tool never returns.
+    const run = getDefaultWorkflowRunManager().start<WorkflowOutcome>({
+      runId,
+      workflow: "hung-stop-test",
+      processMetadata: { source: "sdk", hostMetadata: { sessionId: "workflow-session" } },
+      runFn: async () => {
+        await new Promise<void>((resolve) => { finishWorkflow = resolve; });
+        return { kind: "completed", result: "late" };
+      },
+      classify: classifyWorkflowOutcome,
+      onError: workflowErrorOutcome,
+    });
+    try {
+      await flushMicrotasks();
+      await expect(runtime.status.preflight()).resolves.toMatchObject({
+        canStop: false, blockers: ["active_workflows"],
+      });
+      expect(await runtime.workflows.stop(runId)).toBe(true);
+      await flushMicrotasks();
+      expect(await runtime.workflows.get(runId)).toMatchObject({ status: "running" });
+      await expect(runtime.status.preflight()).resolves.toMatchObject({
+        canStop: true, blockers: [], activeWorkflows: [],
+      });
+    } finally {
+      finishWorkflow?.();
+      await run.done;
+      await runtime.close();
+    }
   });
 });
 

@@ -6,6 +6,82 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **SDK capability `actorSettlementConvergence` is now `3`.** A Stop whose
+  Actor settlement cannot be confirmed now always gets a final outcome instead
+  of staying `unknown` while Runtime retries. What embedders see:
+  - If a Stop's save misses its 5-second deadline and commits later, Runtime
+    reconciles it and the Run ends `cancelled` / `interrupted` with Stop
+    `confirmed` as usual. Previously every Stop retry failed with "conflicting
+    terminal fact" and the UI stayed on "stopping" forever (GitHub #2).
+  - If the Actor tree still cannot be confirmed — another owner holds it, the
+    snapshot cannot be repaired, or repair runs past 5 minutes — the Run ends
+    `phase: 'failed'` with `terminal.code: 'actor_settlement_not_persisted'`,
+    `terminal.effectOutcome: 'unknown'` and Stop `confirmed`. A `run.failed`
+    event is published, and `runs.await()` resolves.
+  - That Session stays **fenced** after the Run ends: `runs.start` rejects with
+    `actor_settlement_not_persisted`, and Session history mutations reject
+    with `conflict`. Runtime heals the Session in the background without a
+    restart: it retries the repair, or, when the repair cannot succeed,
+    reclaims the Actor tree from disk the way a restart would and marks its
+    unfinished turns `interrupted`. Reclaim waits until every tool call
+    admitted before the fence has returned and no other live process owns the
+    tree. Then the fence lifts and queued Runs start.
+  - A Host restart is needed only when a Session save or a pre-fence tool call
+    never returns. While another live process owns the tree, the Session stays
+    fenced (`actor_owner_conflict`) and heals by itself once that process
+    exits.
+  - A fenced Session no longer keeps the Host from stopping. Its Actor turns
+    can never commit, so `status.preflight()` leaves them out of
+    `activeAgentTurns` and `blockers`. Host stop, `kodax daemon restart`, idle
+    exit and a client's complete exit (for example quitting Space) now go
+    through. Previously such a Host refused every stop, and quitting Space left
+    it running, so the restart could not happen.
+  - A Run or Workflow that was asked to stop no longer keeps the Host from
+    stopping, even when its executor never returns (a tool call or child
+    agent that ignores abort). `status.preflight()` leaves it out of
+    `activeRuns`, `activeWorkflows` and `blockers`. Host exit ends that work,
+    and the next Host marks the Run `interrupted`. Previously the Run stayed
+    `unknown` and every Host stop, including Space's force close, was refused.
+  - `runtime.close()` still rejects with `AgentShutdownPersistenceError`
+    (`code: 'actor_shutdown_not_persisted'`) for a fenced Actor tree, but it now
+    closes the rest of the Runtime before rejecting. When that is the only
+    failure, the daemon logs a warning and reports a successful shutdown; the
+    next Host reclaims the tree once the old process has exited.
+  - `runs.abort()` on a Run whose owner could not be probed at startup now
+    probes again. A dead owner's Run is interrupted. A live owner gives
+    `conflict` naming that Runtime. An owner still unconfirmed gives
+    `conflict` with `retryable: true`, so the client can retry Stop.
+  - Workflow-owned Runs follow the same rules.
+
+  **Action for embedders (Space included):** render `failed` +
+  `actor_settlement_not_persisted` as "stopped; this Session is recovering",
+  not as a model error. Do not offer immediate resend on that Session; enable
+  input again when `runs.start` stops rejecting or the next queued Run starts.
+  If `runs.start` still rejects with `actor_settlement_not_persisted` a few
+  minutes after the Run failed, offer a Host restart to recover the Session.
+  Treat `effectOutcome: 'unknown'` as "side effects may have happened". Add
+  `requirements: { actorSettlementConvergence: 3 }` to `connectKodaXRuntime` /
+  auto-start once you render this state: an idle v2 daemon is then replaced,
+  and a v2 daemon that cannot be replaced fails the connection instead of
+  leaving Runs `unknown`. Clients that still require `2` keep working
+  unchanged against a v3 Host.
+
+### Fixed
+
+- `runtime.close()` no longer leaves Actor repair writing to Session storage
+  after it returns, including when close itself fails on a fenced Session.
+- An Actor storage reload that never settles no longer holds the Actor mutation
+  queue during an owner takeover; it is bounded to the 5-second settlement
+  deadline.
+- A Stop save that is rejected but still commits is now read back by revision
+  and owner instead of being rolled back, so the next save is no longer
+  misread as an owner takeover.
+- A failed terminal status save after Actor repair no longer becomes an
+  unhandled rejection that ends the daemon; the Run reports
+  `run_settlement_not_persisted`, and a later Stop can finish it.
+
 ---
 
 ## [0.7.97-beta.11] - 2026-11-16

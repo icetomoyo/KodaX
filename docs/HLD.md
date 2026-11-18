@@ -367,8 +367,18 @@ same phased boundary, so its queue, lock, and post-commit waits are not charged
 to the five-second canonical deadline. On unknown durability, Runtime
 fail-closes root and child work, suppresses later effects, and automatically
 reloads only an exact same-owner snapshot before durably quiescing remaining
-turns. Owner conflicts and unresolved storage remain unknown rather than being
-treated as successful cancellation. Same-owner repair and abort close effect
+turns. A turn already terminal in that snapshot keeps its durable fact over a
+pending executor intent; a non-`interrupted` mismatch is reported, not fenced.
+A write whose result is unknown is read back by revision and owner before it
+is adopted, rolled back, or fenced. Owner conflicts, unrepairable snapshots,
+and repair past its five-minute budget are never treated as successful
+cancellation: the Run ends `failed` with `effectOutcome: unknown`, while the
+Session stays fenced until background repair succeeds or the Runtime reclaims
+the tree in-process the way restart recovery does, once pre-fence effects have
+settled and no live foreign owner holds it (`actorSettlementConvergence:3`). A fenced
+Session never blocks Host stop: preflight skips the turns of a fenced controller, and
+the daemon treats a close that failed only on such trees as a completed shutdown,
+leaving the trees to the next Host. Same-owner repair and abort close effect
 admission; the logical convergence boundary also waits for each exact tool
 execution admitted before the fence. The Session route then releases without
 waiting for the old executor Promise. An abort-ignoring provider remains unable

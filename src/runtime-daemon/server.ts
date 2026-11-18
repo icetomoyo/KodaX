@@ -2869,7 +2869,7 @@ function runtimeDaemonCapabilities(
       persistenceFailure: "fail_closed",
     },
     actorSettlementConvergence: {
-      version: 2,
+      version: 3,
       rootFence: "fail_closed",
       sameOwnerRepair: "automatic",
       unknownAfterTurnQueue: true,
