@@ -40,9 +40,7 @@ import {
 } from '../../../agents/worker-role-prompt.js';
 import {
   formatFullSkillSection,
-  formatRoleRoundSummarySection,
   formatSkillInvocationSummary,
-  formatSkillMapSection,
   formatTaskMetadata,
   formatToolPolicy,
   formatVerificationContract,
@@ -214,29 +212,14 @@ export function createRolePrompt(
   const toolPolicySection = formatToolPolicy(toolPolicy);
   const agentSection = `Assigned native agent identity: ${agent}`;
   const skillInvocation = rolePromptContext?.skillInvocation;
-  const skillMap = rolePromptContext?.skillMap;
-  // FEATURE_193 (v0.7.43): removed `role === 'generator' ? undefined : ...`
-  // guard — generator role deleted. Worker always reads previousRoleSummaries.
-  const previousRoleSummary = rolePromptContext?.previousRoleSummaries?.[role];
-  // FEATURE_193 (v0.7.43): scoutSkillSection and plannerSkillSection deleted
-  // with scout/planner roles.
+  // The skill map and same-role summaries came from the retired Scout chain and
+  // are never populated now; their sections and the Scout/Evaluator wording went with them.
   const generatorSkillSection = skillInvocation
     ? [
-      skillMap ? formatSkillMapSection(skillMap, rolePromptContext?.skillMapArtifactPath) : undefined,
       formatSkillInvocationSummary(skillInvocation, rolePromptContext?.skillExecutionArtifactPath),
-      // Harness collapsed to H0_DIRECT in V2 (ADR-043) — the H2/Planner variant
-      // never fired, so the emitted text is unchanged.
-      'You own execution. Treat the raw skill as the authoritative execution reference and the skill map as the lightweight coordination surface shared with Scout/Evaluator.',
+      'You own execution. Treat the expanded skill below as the authoritative execution reference.',
       formatFullSkillSection(skillInvocation),
-    ].filter((section): section is string => Boolean(section)).join('\n\n')
-    : skillMap
-      ? [
-        formatSkillMapSection(skillMap, rolePromptContext?.skillMapArtifactPath),
-        'Treat the skill map as the coordination surface shared with Scout/Evaluator. If any obligation conflicts with the contract, surface it in your handoff.',
-      ].join('\n\n')
-      : undefined;
-  const previousRoleSummarySection = previousRoleSummary
-    ? formatRoleRoundSummarySection(previousRoleSummary)
+    ].join('\n\n')
     : undefined;
   // FEATURE_193 (v0.7.43): reviewLikeTask, reviewPresentationRule,
   // repoWorkingToolsEnabled, diffPagingToolsEnabled deleted — only used by
@@ -310,7 +293,6 @@ export function createRolePrompt(
           workerSkillSection,
           roundInstructionSection,
           metadataSection,
-          previousRoleSummarySection,
           runtimeState ? teamModeSection : undefined,
           capabilityContextSection,
         ].filter((section): section is string => Boolean(section)).join('\n\n');
@@ -335,7 +317,6 @@ export function createRolePrompt(
         toolPolicySection,
         parallelBatchGuidance,
         workerSkillSection,
-        previousRoleSummarySection,
         collaborationPolicy,
         workflowPolicy,
         // The standalone Worker fragment (plan-first contract + scope

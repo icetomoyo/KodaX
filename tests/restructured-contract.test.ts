@@ -27,9 +27,20 @@ function historicalTools(tools: readonly KodaXToolDefinition[]): KodaXToolDefini
       const { name, description, input_schema } = getBuiltinToolDefinition(tool.name)!;
       return { name, description, input_schema: structuredClone(input_schema) };
     }
-    if (!['spawn_agent', 'send_message', 'todo_create'].includes(tool.name)) return tool;
-    const frozen = structuredClone(tool);
+    if (!['spawn_agent', 'send_message', 'todo_create', 'todo_update', 'read'].includes(tool.name)) return tool;
+    // Script leaves carry handlers, so clone the contract data rather than the whole tool.
+    const frozen = { ...tool, input_schema: structuredClone(tool.input_schema) };
     const properties = frozen.input_schema.properties as Record<string, { description: string }>;
+    if (tool.name === 'read') {
+      frozen.description = frozen.description.replace(
+        'inline vision, so inspect them rather than rejecting as binary. Attached or inlined images are already visible; rereading only repeats them.',
+        'inline vision; inspect, do not reject as binary or reread already attached/inlined images. PDF: read_pdf extension; if absent request enabling/installing it.');
+      return frozen;
+    }
+    if (tool.name === 'todo_update') {
+      properties.status!.description = properties.status!.description.replace('deleted: remove.', 'deleted: remove + todo:deleted.');
+      return frozen;
+    }
     if (tool.name === 'spawn_agent') {
       frozen.description = 'Start a named direct-child Agent; returns its canonical path. Runtime atomically enforces shared session concurrency/work budgets. read_only:false retains the parent ceiling; shared edits are already visible, never reapply them. Worktree requires an explicit merge-back strategy.';
       properties.model_hint!.description = 'balanced default/inherited; fast focused lookup, deep heavy analysis/synthesis. Unconfigured tiers inherit; omit if unsure.';
@@ -37,7 +48,9 @@ function historicalTools(tools: readonly KodaXToolDefinition[]): KodaXToolDefini
     } else if (tool.name === 'send_message') {
       frozen.description = 'Bounded message, no new turn: running receives at next safe boundary; idle retains until next turn. Direct parent/child, admitted peer or bounded broadcast; Runtime validates forwarding lineage against cycles.';
     } else {
-      frozen.description = frozen.description.replace('Add one semantic milestone', 'Add one pending semantic milestone');
+      frozen.description = frozen.description.replace('Add one semantic milestone', 'Add one pending semantic milestone')
+        .replace('This records planned work, not execution. Plan work with several distinct deliverables. Skip trivial or informational tasks, because a one-step plan only adds noise.',
+          'This records planned work, not execution; skip trivial/informational tasks.');
       delete properties.status;
       properties.activeForm!.description = 'Present-continuous in_progress spinner label.';
     }
@@ -78,9 +91,10 @@ async function fixture(script = false, historical = true): Promise<FrozenInput &
   if (historical && scriptContracts) {
     // The frozen experiment predates native-bridge teaching. Reconstruct that
     // presentation explicitly; never teach its projector to rewrite new bytes.
-    const historicalEntry = { ...scriptContracts.entry, description: buildScriptModelDescription(scriptContracts.leaves) };
+    const leaves = historicalTools(scriptContracts.leaves);
+    const historicalEntry = { ...scriptContracts.entry, description: buildScriptModelDescription(leaves) };
     return { ...captured, tools: captured.tools.map(tool => tool.name === 'script_exec' ? historicalEntry : tool),
-      scriptContracts: { ...scriptContracts, entry: historicalEntry } };
+      scriptContracts: { ...scriptContracts, entry: historicalEntry, leaves } };
   }
   return { ...captured, ...(scriptContracts ? { scriptContracts } : {}) };
 }
@@ -93,7 +107,9 @@ it('does not apply the frozen historical projector to newly evolved production t
 it('shares current Worker decisions while preserving the discoverable native bridge and Script control protocol', async () => {
   const ordinary = await fixture(false, false);
   const script = await fixture(true, false);
-  expect(script.system).toBe(ordinary.system);
+  // Script mode keeps the shared Worker prefix and appends where its file tools live,
+  // because the shared text names read/edit/grep as if they were native.
+  expect(script.system.startsWith(`${ordinary.system}\n\nSCRIPT MODE\n`)).toBe(true);
   expect(script.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(['tool_call', 'script_exec', 'script_wait']));
   expect(script.scriptContracts?.entry.description).toContain('Native tool_call({name,input})');
   expect(script.scriptContracts?.entry.input_schema.properties).toMatchObject({

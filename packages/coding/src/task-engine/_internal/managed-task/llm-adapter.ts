@@ -32,7 +32,7 @@ import { projectManagedContextContract } from '../../../prompts/managed-context-
 import { getRegisteredToolDefinition } from '../../../tools/registry.js';
 import { filterModelToolAliases } from '../../../agent-runtime/tool-resolution.js';
 
-import { canReadWithModelTools, getScriptModelContracts, projectScriptModelTools } from '../../../agent-runtime/script/model.js';
+import { canReadWithModelTools, getScriptModelContracts, projectScriptModelTools, withScriptModeGuidance } from '../../../agent-runtime/script/model.js';
 import type {
   KodaXContentBlock,
   KodaXEphemeralSuffix,
@@ -562,7 +562,8 @@ export function buildRunnerLlmAdapter(
       return projectToolSearchResultParameters(projected, [...tools, ...leaves]);
     };
     const buildWireSystem = (source: string, tools: readonly KodaXToolDefinition[]) =>
-      withEffectivePermissionContext(projectManagedSystemContract(agent, tools, source, options.context), options.context);
+      withEffectivePermissionContext(withScriptModeGuidance(agent, tools,
+        projectManagedSystemContract(agent, tools, source, options.context)), options.context);
 
     // Built-in Worker/Script roots inherit the current Session effort.
     // Only an explicitly declared specialist profile adds a role constraint.

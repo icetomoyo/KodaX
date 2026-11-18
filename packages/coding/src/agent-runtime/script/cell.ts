@@ -159,7 +159,7 @@ export async function runScriptCell(input: ScriptCellInput): Promise<ScriptCellR
       if (message.kind === 'done') { finish({ status: 'completed', value: message.value }); return; }
       if (message.kind === 'failed') { finish({ status: 'failed', error: message.error }); return; }
       if (message.kind !== 'call') { finish({ status: 'failed', error: 'Invalid Script worker message.' }); return; }
-      if (++calls > input.limits.maxCalls) { finish({ status: 'failed', error: 'Script tool-call limit exceeded.' }); return; }
+      if (++calls > input.limits.maxCalls) { finish({ status: 'failed', error: `Script tool-call limit (${input.limits.maxCalls}) exceeded. Calls before the limit kept their effects; continue the remaining calls in a new cell.` }); return; }
       const earlier = tail;
       const earlierAdmission = admissionTail;
       let releaseAdmission!: () => void;

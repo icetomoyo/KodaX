@@ -1302,8 +1302,10 @@ function buildRiskHints(
   if (docOnly) {
     hints.push('Changes are currently limited to docs/tests; implementation files are untouched.');
   }
-  if (changedFiles.some((file) => file.areaId === '.')) {
-    hints.push('Workspace-root files changed; validate repo-wide implications.');
+  // A root CHANGELOG or README edit carries no repo-wide risk; as a bare mandate this hint
+  // sent narrow reviews across the whole repository.
+  if (changedFiles.some((file) => file.areaId === '.' && file.category !== 'docs' && file.category !== 'tests')) {
+    hints.push('Workspace-root source or config changed; its effects can reach every package.');
   }
   return hints;
 }

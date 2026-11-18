@@ -76,7 +76,7 @@ describe('default first-turn surface', () => {
   });
 
   it('marks routing labels as a guess the request overrides', () => {
-    for (const request of requests) expect(request.text).toContain('These labels are a keyword guess from the request text');
+    for (const request of requests) expect(request.text).toContain('These labels are a heuristic guess from the request wording');
   });
 
   it('scopes local inspection and the host OS rule to this machine', () => {

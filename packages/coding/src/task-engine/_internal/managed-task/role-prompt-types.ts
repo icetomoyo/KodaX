@@ -6,10 +6,7 @@
  */
 
 import type {
-  KodaXRoleRoundSummary,
   KodaXSkillInvocationContext,
-  KodaXSkillMap,
-  KodaXTaskRole,
 } from '../../../types.js';
 
 export interface ManagedRolePromptContext {
@@ -17,10 +14,7 @@ export interface ManagedRolePromptContext {
   /** Executable tools after role/host policy. Omitted preserves standalone guidance. */
   availableToolNames?: readonly string[];
   skillInvocation?: KodaXSkillInvocationContext;
-  skillMap?: KodaXSkillMap;
   skillExecutionArtifactPath?: string;
-  skillMapArtifactPath?: string;
-  previousRoleSummaries?: Partial<Record<KodaXTaskRole, KodaXRoleRoundSummary>>;
   /** FEATURE_067: Evaluator review prompt for write fan-out diffs from Generator's child agents. */
   childWriteReviewPrompt?: string;
   /**

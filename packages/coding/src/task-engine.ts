@@ -82,8 +82,11 @@ export function buildDirectPathTaskFamilyPromptOverlay(
         : family === 'investigation'
           ? '[Direct Path Rule] Return diagnosis, evidence, and next steps.'
           : undefined;
+  // The family is a keyword guess; as a bare rule it forced a review report onto "open a PR".
+  const guessedRule = familyRule
+    && `${familyRule} This answer shape is a guess from the request wording. When the request asks for something else, follow the request.`;
 
-  return [...sections, familyRule].filter(Boolean).join('\n\n');
+  return [...sections, guessedRule].filter(Boolean).join('\n\n');
 }
 
 /**

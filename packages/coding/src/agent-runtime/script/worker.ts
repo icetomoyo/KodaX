@@ -119,7 +119,7 @@ export async function scriptWorkerMain(): Promise<void> {
       globalThis.text = value => __emit(typeof value === 'string' ? value : JSON.stringify(value) ?? String(value));
     `)).dispose();
     const call = vm.newFunction('__hostCall', (name, input) => {
-      if (++sequence > data.maxCalls) throw new Error('Script tool-call limit exceeded.');
+      if (++sequence > data.maxCalls) throw new Error(`Script tool-call limit (${data.maxCalls}) exceeded. Calls before the limit kept their effects; continue the remaining calls in a new cell.`);
       const nameText = vm.getString(name);
       const inputText = vm.getString(input);
       if (Buffer.byteLength(nameText) + Buffer.byteLength(inputText) > data.maxTransferBytes) throw new Error('Script tool input exceeds the transfer limit.');

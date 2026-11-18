@@ -27,7 +27,9 @@ const compactChildToolNames = new Set([
   'read', 'send_message', 'session_history_read', 'session_history_search', 'skill', 'spawn_agent',
   'todo_create', 'todo_list', 'todo_update', 'tool_call', 'tool_search', 'wait_agent', 'write',
 ]);
-const collaborationTeaching = 'For broad multi-file reviews, launch distinct read-only lanes once scope is known. Implementation lanes require read_only:false and disjoint write ownership with exact exclusive paths/generated outputs.';
+const collaborationTeaching = 'For broad multi-file reviews, launch distinct read-only lanes once scope is known.';
+// A read-only child cannot grant write access it lacks, so implementation-lane teaching follows its own write tools.
+const writeLaneTeaching = 'Implementation lanes require read_only:false and disjoint write ownership with exact exclusive paths/generated outputs.';
 const waitTeaching = 'Continue useful non-overlapping work first; wait_agent sparingly when required Agent evidence is on the critical path.';
 const todoTeaching = 'Plan non-trivial work; resume existing milestones and inspect the plan only when uncertain to avoid duplicates. Milestones are deliverables, not child Agents; several Agents may support one. Keep one in_progress item per owner. Use the requested language, otherwise the request primary language, for Todo subject/description/activeForm/note; retain source identifiers, paths, commands and quotes.';
 
@@ -55,6 +57,7 @@ export function buildCompactChildContractCandidate(
   }
   const retained = [
     ...(names.has('spawn_agent') ? [collaborationTeaching] : []),
+    ...(names.has('spawn_agent') && names.has('write') ? [writeLaneTeaching] : []),
     ...(names.has('wait_agent') ? [waitTeaching] : []),
     ...(names.has('todo_create') || names.has('todo_update') ? [todoTeaching] : []),
   ];

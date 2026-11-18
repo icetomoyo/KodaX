@@ -1,0 +1,97 @@
+// Zero-network capture of the first root request through the real managed Runtime, per work mode.
+// Unlike tests/skill-trigger.capture.ts this runs repository intelligence and routing on a dirty
+// Git worktree, so review breadth, PR routing and Script-mode guidance reach the request as shipped.
+// Usage: KODAX_MANAGED_CAPTURE_OUT=<new file> KODAX_MANAGED_CAPTURE_CASES=<cases.json> [KODAX_MANAGED_CAPTURE_STAGE=name]
+//   vite-node -c vitest.config.ts tests/managed-first-turn.capture.ts
+// Output matches the skill-trigger capture shape, so tests/skill-trigger.eval.ts replays it.
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { KodaXBaseProvider, registerModelProvider, type KodaXMessage, type KodaXProviderConfig, type KodaXToolDefinition } from '@kodax-ai/llm';
+import { SkillRegistry } from '@kodax-ai/agent';
+import type { KodaXWorkMode } from '../packages/coding/src/types.js';
+import { createKodaXRuntime } from './runtime-fixture.js';
+import { CACHE_GOLDEN, writeCacheFixture } from '../benchmark/datasets/search-entry-complex/fixture.js';
+import { inputHash, type FrozenInput } from './first-turn-eval-support.js';
+import { sourceHashes } from './skill-trigger.capture.js';
+
+interface ManagedCaptureCase { readonly id: string; readonly task: string; readonly workMode: KodaXWorkMode }
+
+const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, windowsHide: true, encoding: 'utf8' });
+
+/** Committed multi-package repo plus an uncommitted fix across three packages and two root docs. */
+async function writeDirtyWorkspace(workspace: string): Promise<void> {
+  await writeCacheFixture(workspace);
+  git(workspace, 'init', '-q');
+  git(workspace, 'config', 'core.autocrlf', 'false');
+  git(workspace, 'add', '--all');
+  git(workspace, '-c', 'user.name=Eval Fixture', '-c', 'user.email=eval-fixture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture baseline');
+  for (const [file, content] of Object.entries(CACHE_GOLDEN)) await fs.writeFile(path.join(workspace, file), content);
+  await fs.appendFile(path.join(workspace, 'README.md'), '\nTenant keys are opaque and collision-free across any string encoding.\n');
+  await fs.writeFile(path.join(workspace, 'CHANGELOG.md'), '# Changelog\n\n## Unreleased\n- Fix tenant isolation and TTL boundaries in the cache client.\n');
+}
+
+// The capture stub replies with text, so the Run ends after one root response.
+const PROVIDER = 'managed-capture';
+const MODEL = 'capture-model';
+
+async function captureCase(root: string, testCase: ManagedCaptureCase): Promise<FrozenInput> {
+  const directory = await fs.mkdtemp(path.join(root, `${testCase.id}-`));
+  const workspace = path.join(directory, 'workspace');
+  await writeDirtyWorkspace(workspace);
+  let captured: FrozenInput | undefined;
+  class CaptureProvider extends KodaXBaseProvider {
+    readonly name = PROVIDER;
+    readonly supportsThinking = false;
+    protected readonly config: KodaXProviderConfig = { apiKeyEnv: 'KODAX_MANAGED_CAPTURE_KEY', model: MODEL, contextWindow: 128000, supportsThinking: false };
+    async stream(messages: KodaXMessage[], tools: KodaXToolDefinition[], system: string) {
+      // The root Worker request is the first one carrying the managed tool menu; auxiliary judges carry one tool.
+      if (!captured && tools.length > 1) captured = JSON.parse(JSON.stringify({ messages, tools, system })) as FrozenInput;
+      return { textBlocks: [{ type: 'text' as const, text: 'capture only' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' as const };
+    }
+  }
+  const unregister = registerModelProvider(PROVIDER, () => new CaptureProvider());
+  const runtime = await createKodaXRuntime({ mode: 'embedded', homeDir: path.join(directory, 'home'), defaultProvider: PROVIDER, defaultModel: MODEL });
+  try {
+    const session = await runtime.sessions.create({ projectPath: workspace });
+    await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', executionCwd: workspace });
+    const handle = await runtime.runs.start({ sessionId: session.id, mode: 'managed_task', prompt: testCase.task, options: {
+      provider: PROVIDER, model: MODEL, agentMode: 'ama', reasoningMode: 'off', lsp: false, maxIter: 2, disablePromptCache: true, workMode: testCase.workMode,
+      learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['eval-isolated'] } }),
+      context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt: '', skillRegistry: new SkillRegistry(workspace), repoIntelligenceMode: 'auto', resolveShellPermissionMode: () => 'full-access' },
+    } });
+    const result = await handle.result;
+    if (result.error) throw new Error(`${testCase.id}: ${result.error.name}: ${result.error.message}`);
+  } finally {
+    await runtime.close();
+    unregister();
+  }
+  if (!captured) throw new Error(`${testCase.id}: no root request captured`);
+  return captured;
+}
+
+const out = process.env.KODAX_MANAGED_CAPTURE_OUT;
+const casesFile = process.env.KODAX_MANAGED_CAPTURE_CASES;
+if (!out || !casesFile) throw new Error('KODAX_MANAGED_CAPTURE_OUT and KODAX_MANAGED_CAPTURE_CASES are required');
+const cases = JSON.parse(await fs.readFile(casesFile, 'utf8')) as ManagedCaptureCase[];
+if (new Set(cases.map(c => c.id)).size !== cases.length) throw new Error('Duplicate case id');
+const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-managed-capture-'));
+const rows = [];
+// Repository intelligence and routing signals race a 2s budget, so a cold attempt can drop blocks.
+// Keeping the most complete of several attempts gives both arms the full context.
+const attempts = Number(process.env.KODAX_MANAGED_CAPTURE_ATTEMPTS ?? '3');
+for (const testCase of cases) {
+  let input: FrozenInput | undefined;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const candidate = await captureCase(root, testCase);
+    if (!input || JSON.stringify(candidate).length > JSON.stringify(input).length) input = candidate;
+  }
+  if (!input) throw new Error('KODAX_MANAGED_CAPTURE_ATTEMPTS must be at least 1');
+  rows.push({ id: testCase.id, task: testCase.task, workMode: testCase.workMode, input, hash: inputHash(input) });
+  process.stderr.write(`captured ${testCase.id}\n`);
+}
+const source = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true }).trim();
+await fs.mkdir(path.dirname(out), { recursive: true });
+await fs.writeFile(out, JSON.stringify({ stage: process.env.KODAX_MANAGED_CAPTURE_STAGE ?? 'adhoc', source, sourceHashes: await sourceHashes(), catalog: 'none', fixtureRoot: root, cases: rows }, null, 2) + '\n', { flag: 'wx' });
+process.stdout.write(JSON.stringify({ out, cases: rows.map(r => ({ id: r.id, workMode: r.workMode, hash: r.hash, tools: r.input.tools.length })) }) + '\n');

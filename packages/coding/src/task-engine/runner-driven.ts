@@ -1917,12 +1917,11 @@ async function runManagedTaskViaRunnerInner(
     };
     // v0.7.26 C4 parity — surface the caller's skill invocation + the
     // on-disk artefact paths so role prompts can quote a stable filesystem
-    // location (skill-execution.md / skill-map.md). Matches legacy
+    // location (skill-execution.md). Matches legacy
     // `task-engine.ts:withManagedSkillArtifactPromptPaths`.
     if (skillInvocationCtx) {
       ctx.skillInvocation = skillInvocationCtx;
       ctx.skillExecutionArtifactPath = skillArtifactPaths.rawSkillPath;
-      ctx.skillMapArtifactPath = skillArtifactPaths.skillMapMarkdownPath;
     }
     // FEATURE_193 (v0.7.43): ctx.skillMap / ctx.scoutScope / ctx.previousRoleSummaries
     // population branches removed — all three derived from V1 `recorder.scout` /

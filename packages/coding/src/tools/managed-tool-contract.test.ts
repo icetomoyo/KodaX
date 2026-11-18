@@ -112,7 +112,7 @@ describe('ordinary managed root tool presentation', () => {
     const before = JSON.stringify(tools);
     // Changing canonical teaching requires re-auditing the shorter wording, not silently carrying it forward.
     // History now distinguishes entry evidence versions from strict global snapshots.
-    expect(createHash('sha256').update(JSON.stringify(tools.filter(tool => tool.name !== 'ask_user_question').map(contract))).digest('hex')).toMatchInlineSnapshot(`"b32c25f5bc51c4bea9d7f68ddaa9f219f156b784b1d21b1df80afe09804a8770"`);
+    expect(createHash('sha256').update(JSON.stringify(tools.filter(tool => tool.name !== 'ask_user_question').map(contract))).digest('hex')).toMatchInlineSnapshot(`"3cf5dd42cc1a1a02bfc091f3f4cb9867dd09d2dc1951a279b52d9f82b498ee7b"`);
     const agent = markRegistryManagedAgent({ name: 'worker', instructions: '', tools }, { backups: new Map() });
     markOrdinaryRootToolContract(agent);
     const projected = projectManagedToolContracts(agent, tools);

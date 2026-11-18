@@ -57,7 +57,8 @@ describe('builtin child paired compact contract', () => {
     expect(candidate.system).toContain('final response MUST be text only');
     expect(candidate.system).toContain('SAME response');
     expect(candidate.system).toContain('distinct read-only lanes');
-    expect(candidate.system).toContain('exclusive paths/generated outputs');
+    // A read-only child cannot start a writer under its permission ceiling.
+    expect(candidate.system.includes('exclusive paths/generated outputs')).toBe(!readOnly);
     expect(candidate.system).toContain('critical path');
     expect(candidate.system).toContain('one in_progress item per owner');
     expect(candidate.system).toContain('deliverables, not child Agents');
@@ -110,7 +111,7 @@ describe('builtin child paired compact contract', () => {
     const canonical = childContract(false);
     const candidate = buildCompactChildContractCandidate(canonical, { source: 'builtin-child' });
     for (const [name, obligations] of Object.entries({
-      read: ['line_offset', 'run-scoped', 'not network', 'already attached', 'read_pdf'],
+      read: ['line_offset', 'run-scoped', 'not network', 'already visible'],
       write: ['explicitly requested', 'existing changes: edit', 'stream-failed', 'skeleton', 'mutation/diff checks', 'UTF-8'],
       edit: ['Read first', 'unique in the whole current file', 'Later anchors', 'failure leaves file unchanged', 'never full-file rewrite'],
       bash: ['grep/glob', 'write/edit', 'not shell redirection/wrappers', 'run_in_background', 'recoverable artifact preview'],
@@ -123,11 +124,16 @@ describe('builtin child paired compact contract', () => {
       agent_output: ['controlled Actor/Turn', 'Never poll'],
       todo_update: ['before work', 'only after finishing', 'vetoed', 're-read and revise', 'Inactive store'],
       tool_call: ['Target policy, permissions and result guardrails reapply'],
-      tool_search: ['Native tools callable directly', 'full active-tool contracts', 'Keep using returned schema'],
+      tool_search: ['Listed tools are called directly', 'full active-tool contracts', 'Keep using returned schema'],
     })) {
       const tool = candidate.tools.find(item => item.name === name)!;
       const teaching = JSON.stringify(tool).toLowerCase();
       for (const obligation of obligations) expect(teaching, `${name}: ${obligation}`).toContain(obligation.toLowerCase());
+    }
+    // read_pdf is an extension; naming it here pointed sessions without it at an absent tool.
+    // read itself returns the PDF guidance when a PDF is actually opened.
+    for (const contract of [canonical, candidate]) {
+      expect(JSON.stringify(contract.tools.find(tool => tool.name === 'read'))).not.toContain('read_pdf');
     }
     expect(candidate.tools.find(tool => tool.name === 'memory_intent'))
       .toBe(canonical.tools.find(tool => tool.name === 'memory_intent'));

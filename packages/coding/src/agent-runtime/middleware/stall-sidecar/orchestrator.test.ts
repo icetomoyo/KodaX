@@ -11,6 +11,7 @@ import { KodaXBaseProvider } from '@kodax-ai/llm';
 import { createStallDetector } from '../../../multi-instance/stall-detector.js';
 import { createStallOrchestrator } from './orchestrator.js';
 import { createStallSidecarToolObserver } from './index.js';
+import { STALL_NUDGE_FRAME } from './prompts.js';
 import {
   REPORT_TOOL,
   SIDECAR_SYSTEM_PROMPT,
@@ -32,7 +33,7 @@ it('does not spend a delayed read-loop intervention on an unrelated plan creatio
   expect(await handle.observer.beforeTool?.({ id: 'plan', name: 'todo_create', input: { subject: 'Implement the remaining repair' } })).toBe(true);
   expect(await handle.observer.beforeTool?.({ id: 'other', name: 'read', input: { path: 'another-file.js' } })).toBe(true);
   // Planning does not disable the existing loop intervention if inspection resumes.
-  expect(await handle.observer.beforeTool?.(repeated)).toBe('Stop the repeated inspection and edit the source.');
+  expect(await handle.observer.beforeTool?.(repeated)).toBe(`${STALL_NUDGE_FRAME}\nStop the repeated inspection and edit the source.`);
   expect(await handle.observer.beforeTool?.(repeated)).toBe(true);
 });
 
@@ -47,7 +48,7 @@ it('keeps repository-family interventions relevant while allowing the repair bou
   for (const file of ['a', 'b', 'c']) await handle.observer.onToolCall?.({ id: file, name: 'read', input: { path: file } });
   await ready;
   expect(await handle.observer.beforeTool?.({ id: 'plan', name: 'todo_create', input: { subject: 'Repair' } })).toBe(true);
-  expect(await handle.observer.beforeTool?.({ id: 'grep', name: 'grep', input: { pattern: 'another broad query' } })).toBe('Stop broad inspection.');
+  expect(await handle.observer.beforeTool?.({ id: 'grep', name: 'grep', input: { pattern: 'another broad query' } })).toBe(`${STALL_NUDGE_FRAME}\nStop broad inspection.`);
 });
 
 it('drops an in-flight inspection verdict after an existing progress boundary', async () => {

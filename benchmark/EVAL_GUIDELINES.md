@@ -242,6 +242,7 @@ OK = process exit 0 是个**极其弱的信号**：
 1. 测试 worker-role-prompt 章节改动时，eval driver 必须包含 production 实际 `KodaXToolDefinition.description` 字节（不是简化版）。harness 的 `tools: readonly KodaXToolDefinition[]` 参数把它们走 LLM API tools 通道下发，与 production 一致
 2. 测试 tool description 本身改动时，**v_baseline 用 pre-change description bytes**、**v_proposed 用 post-change description bytes**，二者必须 byte-aligned，schema (`input_schema`) 不变只动 description
 3. 测试 prompt 章节 X 改动时，driver 必须包含**所有与 X 交互的章节 Y/Z**（PLAN-FIRST 改动测试要带 SCOPE COMMITMENT + PLAN-LIST HYGIENE + DISPATCH，不能只 mock PLAN-FIRST）
+4. 改动依赖工作区状态的 prompt（路由标签、REVIEW BREADTH、仓库智能块、风险提示、Script 模式）时，capture 必须走真实 managed Runtime。工作区必须是带 Git 历史、并且有未提交改动的仓库，仓库智能开启，work mode 与被测模式一致。原因：`tests/skill-trigger.capture.ts` 关闭仓库智能，用空工作区，并且走 fallback 路由。这些 prompt 在那份 capture 里根本不会出现。用它评审这类改动，A/B 两臂是逐字节相同的。参考实现：`tests/managed-first-turn.capture.ts`。仓库智能和路由信号有 2s 预算，冷启动时可能丢块，所以每个 case 取多次 capture 中最完整的一次，并在发送前对比两臂的差异，确认差异只来自被测改动
 
 **参考实现**：`tests/feature-189-todo-desc-refactor-pilot.eval.ts`（4 个 todo_* desc 通过 tools param 下发 baseline vs proposed）。
 

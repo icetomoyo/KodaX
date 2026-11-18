@@ -38,6 +38,15 @@ describe('buildWorkerInstructions', () => {
     expect(output).not.toContain('`code_search`');
     expect(output).toContain('PLAN-FIRST GUIDANCE:');
   });
+  it('teaches pull-tool fallback only when a pull-tool is on the menu', () => {
+    // Agent mode has no repo pull-tools; capsule and fallback lines pointed at absent tools.
+    const without = buildWorkerInstructions(baseDecision, undefined, false, undefined, ['grep', 'glob', 'read']);
+    expect(without).not.toContain('capsules summarize');
+    expect(without).not.toContain('If a pull-tool returns');
+    const withPull = buildWorkerInstructions(baseDecision, undefined, false, undefined, ['grep', 'glob', 'read', 'module_context']);
+    expect(withPull).toContain('capsules summarize');
+    expect(withPull).toContain('If a pull-tool returns');
+  });
   it('preserves full planning guidance with the consolidated item reader', () => {
     const output = buildWorkerInstructions(baseDecision, undefined, false, undefined,
       ['todo_create', 'todo_update', 'todo_list', 'wait_agent']);
@@ -207,17 +216,16 @@ describe('buildWorkerInstructions', () => {
       activeNonRootTurns: 0,
     });
 
-    expect(output).toContain('BROAD REVIEW FAN-OUT (authoritative task policy):');
-    expect(output).toContain('Review scale: large');
-    expect(output).toContain('Review target: current-worktree');
-    expect(output).toContain('Independent QA needed: yes');
-    expect(output).toContain('start at least 2 distinct read-only review Agents');
-    expect(output).toContain('call `changed_scope` once, then fan out');
-    expect(output).toContain('before the root reads every diff');
+    expect(output).toContain('REVIEW BREADTH:');
+    expect(output).toContain('The diff under review is large.');
+    expect(output).toContain('Split a review this broad into read-only Agents');
+    expect(output).toContain('When the request names one file, one change or one concern, review it yourself');
+    expect(output).toContain('call `changed_scope` once and split the review from its file groups');
+    expect(output).not.toMatch(/authoritative task policy|at least 2|state that reason explicitly/);
     expect(output.indexOf('ACTOR CAPACITY')).toBeLessThan(
-      output.indexOf('BROAD REVIEW FAN-OUT'),
+      output.indexOf('REVIEW BREADTH'),
     );
-    expect(output.indexOf('BROAD REVIEW FAN-OUT')).toBeLessThan(
+    expect(output.indexOf('REVIEW BREADTH')).toBeLessThan(
       output.indexOf('PLAN-FIRST GUIDANCE'),
     );
   });
@@ -234,7 +242,8 @@ describe('buildWorkerInstructions', () => {
       activeNonRootTurns: 0,
     });
 
-    expect(output).not.toContain('BROAD REVIEW FAN-OUT (authoritative task policy):');
+    expect(output).not.toContain('REVIEW BREADTH:');
+    expect(output).not.toContain('Review scale: massive');
   });
 
   it('fans out a systemic repository review without expanding into unrelated changes', () => {
@@ -248,11 +257,38 @@ describe('buildWorkerInstructions', () => {
       activeNonRootTurns: 0,
     });
 
-    expect(output).toContain('BROAD REVIEW FAN-OUT (authoritative task policy):');
-    expect(output).toContain('Review scale: systemic-scope');
-    expect(output).toContain('Preserve the exact user-requested repository/module scope');
-    expect(output).toContain('do not expand into unrelated dirty-worktree changes');
+    expect(output).toContain('REVIEW BREADTH:');
+    expect(output).toContain('The request reads as a repository-wide review.');
+    expect(output).toContain('Stay inside the repository or module scope the user named');
+    expect(output).toContain('Unrelated dirty-worktree changes are outside this review');
     expect(output).not.toContain('call `changed_scope` once');
+  });
+
+  it('reports a full Actor tree instead of a start quota', () => {
+    const output = buildWorkerReviewFanoutContract({
+      ...baseDecision,
+      primaryTask: 'review',
+      reviewScale: 'massive',
+      reviewTarget: 'compare-range',
+    }, {
+      maxConcurrentThreads: 4,
+      activeNonRootTurns: 3,
+    });
+
+    expect(output).toContain('No child start slot is free right now.');
+  });
+
+  it('keeps a broad review local and scoped when delegation is unavailable', () => {
+    const output = buildWorkerReviewFanoutContract({
+      ...baseDecision,
+      primaryTask: 'review',
+      complexity: 'systemic',
+      reviewTarget: 'general',
+    }, undefined, ['read', 'grep']);
+
+    expect(output).toContain('Delegation is unavailable in this run');
+    expect(output).toContain('Stay inside the repository or module scope the user named');
+    expect(output).not.toContain('read-only Agents');
   });
 
   it('requires milestone updates when progress happens instead of batching them at termination', () => {

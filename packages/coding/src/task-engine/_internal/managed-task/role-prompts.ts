@@ -195,8 +195,9 @@ export function resolveRoleRunContextUpdate(
     '=== Managed Run Context ===',
     [
       'Context update for this task.',
-      'Session facts from earlier Managed Run Context envelopes, such as available Skills, MCP capabilities and repository snapshots, still apply unless this update replaces them.',
-      'Task guidance in earlier envelopes, such as routing, verification and tool policy, applied only to its own task.',
+      // Example facts stay out: naming Skills, MCP or snapshots implied them in sessions that had none.
+      'Session facts from earlier Managed Run Context envelopes still apply unless this update replaces them.',
+      'Task guidance in earlier envelopes, such as routing and verification, applied only to its own task.',
     ].join('\n'),
     taskContext,
     promptContext.repoIntelligenceContext?.trim(),

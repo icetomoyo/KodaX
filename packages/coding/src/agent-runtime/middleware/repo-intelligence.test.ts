@@ -32,7 +32,7 @@ it.each([0.71, 0.72])('CAP-REPO-INTEL-002/003: full preturn preserves current ev
   expect(result).toContain('## Active Module Intelligence\ncurrent module evidence');
   expect(result).toContain('## Active Impact Intelligence\ncurrent impact evidence');
   if (confidence === 0.71) {
-    expect(result).toContain('## Repo Intelligence Guidance\n- Current repository intelligence is low-confidence for this area.\n- Validate critical edits with `module_context`, `symbol_context`, `grep`, and `read` before committing to a change.');
+    expect(result).toContain('## Repo Intelligence Guidance\n- Current repository intelligence is low-confidence for this area.\n- Confirm its claims against the source before an edit relies on them.');
   } else expect(result).not.toContain('## Repo Intelligence Guidance');
 });
 

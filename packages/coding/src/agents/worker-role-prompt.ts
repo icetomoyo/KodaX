@@ -71,45 +71,35 @@ export function buildWorkerReviewFanoutContract(
   ) {
     return undefined;
   }
+  // The gate reads keyword and diff-size signals, so the block states what it saw and leaves the
+  // breadth to the requested scope: phrased as an authoritative quota it split one-file reviews.
+  const observed = isDiffScopedReview
+    ? `- The diff under review is ${decision.reviewScale}.`
+    : '- The request reads as a repository-wide review.';
+  const generalScope = isDiffScopedReview ? undefined : staticText("worker.scopeRule.text");
   if (availableToolNames !== undefined && !availableToolNames.includes('spawn_agent')) {
     return [
-      'BROAD REVIEW (available capability):',
+      'REVIEW BREADTH:',
+      observed,
       staticText("worker.buildWorkerReviewFanoutContract.text"),
       staticText("worker.buildWorkerReviewFanoutContract.text.1"),
-    ].join('\n');
+      generalScope,
+    ].filter((line): line is string => line !== undefined).join('\n');
   }
-  const availableStartSlots = actorCapacity === undefined
-    ? undefined
-    : Math.max(
-        0,
-        actorCapacity.maxConcurrentThreads - 1 - actorCapacity.activeNonRootTurns,
-      );
-  const launchRule = availableStartSlots === undefined
-    ? staticText("worker.launchRule.text")
-    : availableStartSlots >= 2
-      ? '- Current capacity permits a review wave: start at least 2 distinct read-only review Agents.'
-      : availableStartSlots === 1
-        ? '- Start 1 read-only review Agent and keep a separate review lane with the root.'
-        : staticText("worker.launchRule.text.1");
+  const noStartSlot = actorCapacity !== undefined
+    && actorCapacity.maxConcurrentThreads - 1 - actorCapacity.activeNonRootTurns <= 0;
   const scopeAcquisition = availableToolNames === undefined || availableToolNames.includes('changed_scope')
-    ? 'call `changed_scope` once' : 'establish the requested scope with available tools';
-  const diffTool = availableToolNames === undefined || availableToolNames.includes('changed_diff')
-    ? 'changed_diff' : availableToolNames.includes('changed_diff_bundle') ? 'changed_diff_bundle' : undefined;
-  const diffReading = diffTool ? `\`${diffTool}\` or before ` : '';
-  const scopeRule = isDiffScopedReview
-    ? `- If the exact diff scope is unknown, ${scopeAcquisition}, then fan out before ${diffReading}the root reads every diff.`
-    : staticText("worker.scopeRule.text");
+    ? 'call `changed_scope` once' : 'establish it with the available tools';
 
   return [
-    'BROAD REVIEW FAN-OUT (authoritative task policy):',
-    `- Review scale: ${decision.reviewScale ?? 'systemic-scope'}`,
-    `- Review target: ${decision.reviewTarget ?? 'general'}`,
-    `- Independent QA needed: ${decision.needsIndependentQA ? 'yes' : 'no'}`,
-    launchRule,
-    scopeRule,
+    'REVIEW BREADTH:',
+    observed,
     staticText("worker.buildWorkerReviewFanoutContract.text.2"),
     staticText("worker.buildWorkerReviewFanoutContract.text.3"),
-  ].join('\n');
+    generalScope
+      ?? `- When the exact diff scope is unknown, ${scopeAcquisition} and split the review from its file groups before reading every diff yourself, because the reviewers will read those diffs.`,
+    noStartSlot ? staticText("worker.launchRule.text.1") : undefined,
+  ].filter((line): line is string => line !== undefined).join('\n');
 }
 
 /**
@@ -242,6 +232,9 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
   // Capability snapshots come from the executable tool set, never task keywords.
   const lspTools = ['lsp_workspace_symbols', 'lsp_implementation', 'lsp_incoming_calls', 'lsp_outgoing_calls']
     .filter(hasTool);
+  // Capsule and pull-tool fallback lines only make sense when a pull-tool is on the menu.
+  const hasRepoPullTool = ['relationship_scan', 'module_context', 'symbol_context', 'impact_estimate',
+    'process_context', 'repo_overview', 'changed_scope'].some(hasTool);
   const repoIntelligenceTools = [
     'REPO INTELLIGENCE TOOLS:',
     // Stated where the procedures live: weak models followed the changed_scope / `bash git`
@@ -273,8 +266,8 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
       ? '- Prefer grep/glob for local content/path lookup.' : undefined,
     hasTool('semantic_lookup')
       ? '- Use `semantic_lookup` for concepts rather than exact strings.' : undefined,
-    staticText("worker.repoIntelligenceTools.text.6"),
-    staticText("worker.repoIntelligenceTools.text.7"),
+    hasRepoPullTool ? staticText("worker.repoIntelligenceTools.text.6") : undefined,
+    hasRepoPullTool ? staticText("worker.repoIntelligenceTools.text.7") : undefined,
     hasTool('changed_diff_bundle') || hasTool('changed_diff')
       ? staticText("worker.repoIntelligenceTools.text.8") : undefined,
   ].filter((line): line is string => line !== undefined).join('\n');
@@ -368,15 +361,16 @@ export function buildWorkerRoutingContext(
 ): string {
   return [
     `You are the Worker — KodaX's single primary agent for this task. Routing decision summary:`,
-    // Keyword-heuristic labels (reasoning.ts): stated as fact, a wrong guess ("refactor", "Risk: high" for a
-    // process question) steered ordinary requests. Kept as hints because review focus benefits from them.
-    '- These labels are a keyword guess from the request text. When one disagrees with what the user asked, follow the request.',
+    // Heuristic labels (reasoning.ts, review-routing.ts): stated as fact, a wrong guess ("refactor", "Risk: high"
+    // for a process question) steered ordinary requests. Kept as hints because review focus benefits from them.
+    '- These labels are a heuristic guess from the request wording and the worktree state. When one disagrees with what the user asked, follow the request.',
     decision.primaryTask !== 'unknown' ? `- Primary task: ${decision.primaryTask}` : undefined,
     `- Assurance intent: ${decision.assuranceIntent ?? 'default'}`,
     `- Work intent: ${decision.workIntent}`,
     `- Risk: ${decision.riskLevel}`,
     `- Complexity: ${decision.complexity}`,
-    decision.reviewScale ? `- Review scale: ${decision.reviewScale}` : undefined,
+    // Review scale measures the dirty worktree; for a general review that is not what the user asked about.
+    decision.reviewScale && decision.reviewTarget !== 'general' ? `- Review scale: ${decision.reviewScale}` : undefined,
     decision.reviewTarget ? `- Review target: ${decision.reviewTarget}` : undefined,
     `- Independent QA needed: ${decision.needsIndependentQA ? 'yes' : 'no'}`,
   ].filter((line): line is string => line !== undefined).join('\n');

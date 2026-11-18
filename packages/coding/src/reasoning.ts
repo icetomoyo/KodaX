@@ -655,6 +655,14 @@ const GREETING_ONLY_PATTERN = /^(?:\s|[!,.?，。！？])*?(?:hi|hello|hey|yo|�
 const LOOKUP_PATTERN = /\b(where is|which file|what file|where does|where do|defined in|located in|file manages|manages this|which component|which function)\b/i;
 const LOOKUP_PATTERN_ZH = /在哪个文件|在哪管理|在哪里定义|哪个文件|哪个函数|哪个组件|文件位置|在哪\b|在哪里\b/;
 const REVIEW_PATTERN = /\b(review|code review|audit|pr|pull request|merge blocker|look at the changes|changed files)\b/i;
+// Opening a PR is git work: read as a review, "帮我开个PR" got the broad-review fan-out block.
+const PR_CREATION_PATTERN = /\b(open|create|submit|raise|file|make|draft|send|write|prepare)\s+(?:(?:a|an|the|my|this|new)\s+)*(?:pr|pull request)\b/gi;
+const PR_CREATION_PATTERN_ZH = /(提交|创建|发起|开|提|发|建)(?:一)?(?:个|下)?\s*(?:pr|pull request)\b/gi;
+
+/** Keeps the verb so the request still classifies as the work it is, minus the PR noun. */
+function withoutPrCreation(prompt: string): string {
+  return prompt.replace(PR_CREATION_PATTERN, '$1').replace(PR_CREATION_PATTERN_ZH, '$1');
+}
 const REVIEW_PATTERN_ZH = /审查|评审|review一下|看下改动|代码改动/;
 const PLAN_PATTERN = /\b(plan|design|architecture|proposal|strategy|roadmap)\b/i;
 const PLAN_PATTERN_ZH = /计划|设计|架构|方案|策略|路线图/;
@@ -722,7 +730,8 @@ export function inferIntentGate(prompt: string): KodaXIntentGateDecision {
   }
 
   const hasLookupSignal = LOOKUP_PATTERN.test(trimmed) || LOOKUP_PATTERN_ZH_CLEAN.test(trimmed);
-  const hasReviewSignal = REVIEW_PATTERN.test(trimmed) || REVIEW_PATTERN_ZH_CLEAN.test(trimmed);
+  const reviewText = withoutPrCreation(trimmed);
+  const hasReviewSignal = REVIEW_PATTERN.test(reviewText) || REVIEW_PATTERN_ZH_CLEAN.test(reviewText);
   const hasPlanSignal = PLAN_PATTERN.test(trimmed) || PLAN_PATTERN_ZH_CLEAN.test(trimmed);
   const hasInvestigationSignal = INVESTIGATION_PATTERN.test(trimmed) || INVESTIGATION_PATTERN_ZH_CLEAN.test(trimmed);
   const hasImplementationSignal = IMPLEMENTATION_PATTERN.test(trimmed) || IMPLEMENTATION_PATTERN_ZH_CLEAN.test(trimmed);
@@ -948,7 +957,7 @@ function inferTaskSignal(prompt: string): {
   confidence: number;
   reason: string;
 } {
-  const normalized = ` ${prompt.toLowerCase()} `;
+  const normalized = ` ${withoutPrCreation(prompt).toLowerCase()} `;
   const scores = Object.entries(TASK_TYPE_KEYWORDS).map(([task, keywords]) => ({
     task: task as Exclude<KodaXTaskType, 'unknown'>,
     score: scoreTaskTypeKeywords(normalized, keywords),
@@ -1654,10 +1663,7 @@ function applyRepoSignalsToDecision(
     };
   }
 
-  if (
-    repoSignals.suggestedComplexity
-    && complexityRank(repoSignals.suggestedComplexity) > complexityRank(inferredComplexity)
-  ) {
+  if (complexityRank(complexity) > complexityRank(inferredComplexity)) {
     repoNotes.push(
       `Repository intelligence elevated task complexity to ${repoSignals.suggestedComplexity} (changedFiles=${repoSignals.changedFileCount}, touchedModules=${repoSignals.touchedModuleCount}, impactedModules=${repoSignals.impactedModuleCount ?? 0}).`,
     );
@@ -1821,7 +1827,9 @@ function stabilizeRoutingDecision(
       workIntent,
     },
   );
-  const complexity = repoSignalsAllowed
+  // A review's breadth is what the user asked to review. Worktree size is already reviewScale; as
+  // complexity it made a one-file review "systemic" in any dirty worktree.
+  const complexity = repoSignalsAllowed && stabilized.primaryTask !== 'review'
     ? maxComplexity(inferredComplexity, repoSignals?.suggestedComplexity)
     : inferredComplexity;
   const reviewScale = decision.reviewScale ?? deriveReviewScaleFromSignals(repoSignals, prompt);

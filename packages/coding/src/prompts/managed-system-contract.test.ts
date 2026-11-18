@@ -264,7 +264,7 @@ it('requires a fresh rule-retention audit when canonical Worker, Memory or manua
   expect(createHash('sha256').update(buildMemoryRulesSection('.')).digest('hex')).toMatchInlineSnapshot(`"01871d37b8549217ed5c952d4397955e6cbc9cdba220e0eef892e019fdacd695"`);
   expect(createHash('sha256').update(SELF_KNOWLEDGE_ROUTING_RULE).digest('hex')).toMatchInlineSnapshot(`"04524b9249e1671e767df654adf4aaa4c43afd569a1b8d3420866d0f817594c5"`);
   // Audit checkpoint, never used to enable runtime projection or accept custom prompts.
-  expect(createHash('sha256').update(buildWorkerStableInstructions()).digest('hex')).toMatchInlineSnapshot(`"774f597b5ad034fccf056f7ed3b6217be63758ebc3a9634208b08cd5ddcf8e6c"`);
+  expect(createHash('sha256').update(buildWorkerStableInstructions()).digest('hex')).toMatchInlineSnapshot(`"45c3e6ee816d70a325f916d7ceae44332d30c4b7c43f1c1d24408780d02f3e07"`);
 });
 
 it('gives operation teaching one owner while retaining dispatch decisions', async () => {
@@ -279,7 +279,7 @@ it('gives operation teaching one owner while retaining dispatch decisions', asyn
     expect(message.description).toContain('idle retains until next turn');
     expect(message.description).toContain('broadcast capped at 20');
     const spawn = tools.find(tool => tool.name === 'spawn_agent')!;
-    expect(JSON.stringify(spawn)).toContain('evaluated read-only mechanical lookup');
+    expect(JSON.stringify(spawn)).toContain('fast: read-only mechanical lookup');
     expect(JSON.stringify(spawn)).toContain('write-capable fast stays on parent tier');
     expect(projected).toContain('same assistant response');
     expect(projected).toContain('root concurrency/work budgets');

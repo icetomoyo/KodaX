@@ -1949,7 +1949,7 @@ async function buildChildBriefing(
   const parts: string[] = [
     `# Child Agent Task`,
     ``,
-    `You are a focused sub-agent executing a specific task in parallel with siblings.`,
+    `You are a focused sub-agent executing a specific task for a parent agent.`,
     `Complete this task efficiently — every iteration the parent waits on adds end-to-end latency. You have a hard limit of ${maxIter} iterations.`,
     ``,
     `## Environment`,

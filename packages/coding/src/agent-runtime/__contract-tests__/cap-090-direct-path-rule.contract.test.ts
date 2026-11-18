@@ -43,6 +43,8 @@ describe('CAP-090: SA-path task-family prompt overlay (direct path rules) contra
     expect(overlay).toContain('[Direct Path Rule]');
     expect(overlay).toContain('Return a review report, not a plan');
     expect(overlay).toContain('Findings first');
+    // The family is guessed from keywords, so the request keeps precedence.
+    expect(overlay).toContain('When the request asks for something else, follow the request.');
   });
 
   it('CAP-DIRECT-PATH-RULE-002: lookup task family produces a "[Direct Path Rule]" overlay with the lookup instruction', () => {

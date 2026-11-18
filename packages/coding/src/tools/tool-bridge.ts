@@ -69,7 +69,7 @@ export const TOOL_DESCRIBE_DEFINITION: LocalToolDefinition = {
 export const TOOL_CALL_DEFINITION: LocalToolDefinition = {
   name: TOOL_CALL_NAME,
   description:
-    'Call one active tool through the portable bridge after discovering or describing it. The runtime re-applies the target tool policy, permission checks, and result guardrails.',
+    'Call one active tool by name once its input contract is known from tool_search, tool_describe or a contract listed in this request. The runtime re-applies the target tool policy, permission checks, and result guardrails.',
   input_schema: {
     type: 'object',
     properties: {

@@ -32,6 +32,9 @@ import { staticText } from '../../../prompts/static-text.js';
 
 import type { KodaXMessage, KodaXToolDefinition } from '@kodax-ai/llm';
 
+/** Main-agent-facing frame for a blocked repeat; the nudge text follows it. */
+export const STALL_NUDGE_FRAME = '[Stall check] This call did not run, because it repeats earlier calls without new progress. Suggested next step:';
+
 /**
  * Sidecar SYSTEM_PROMPT — pinned by the FEATURE_178 eval. Establishes
  * (a) role separation (sidecar is reading, not authoring), (b) the

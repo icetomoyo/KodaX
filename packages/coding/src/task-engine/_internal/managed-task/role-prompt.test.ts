@@ -113,10 +113,11 @@ describe('createRolePrompt — runtime identity in workspace section', () => {
         for (const unavailable of ['todo_create', 'todo_update', 'todo_get', 'todo_list', 'spawn_agent', 'wait_agent', 'send_message', 'followup_task', 'interrupt_agent', 'list_agents', 'agent_output']) {
           expect(firstRequest.includes(unavailable), `${agent}: unavailable ${unavailable}`).toBe(false);
         }
-        expect(firstRequest).not.toContain('start at least 2 distinct read-only review Agents');
+        expect(firstRequest).not.toContain('Split a review this broad into read-only Agents');
         expect(firstRequest.includes('`module_context`')).toBe(availableToolNames.length > 0);
         expect(firstRequest).toContain('requested scope');
-        expect(firstRequest).toContain('read/grep');
+        // With no repository tools at all, a read/grep fallback would name absent tools.
+        expect(firstRequest.includes('read/grep')).toBe(availableToolNames.length > 0);
         expect(firstRequest).toContain('verify the requested result');
         expect(firstRequest).not.toContain('run_workflow');
         expect(resolveRoleRuntimeStateContext(ctx)).toBeUndefined();
@@ -724,11 +725,11 @@ describe('F270 — explicit Workflow activation policy', () => {
     expect(rendered).toContain('Review scale: massive');
     expect(rendered).toContain('Review target: compare-range');
     expect(rendered).toContain('Independent QA needed: yes');
-    expect(rendered).toContain('BROAD REVIEW FAN-OUT (authoritative task policy):');
+    expect(rendered).toContain('REVIEW BREADTH:');
     expect(rendered.indexOf('ACTOR CAPACITY')).toBeLessThan(
-      rendered.indexOf('BROAD REVIEW FAN-OUT'),
+      rendered.indexOf('REVIEW BREADTH'),
     );
-    expect(rendered.indexOf('BROAD REVIEW FAN-OUT')).toBeLessThan(
+    expect(rendered.indexOf('REVIEW BREADTH')).toBeLessThan(
       rendered.indexOf('Primary task:'),
     );
   });
@@ -744,8 +745,9 @@ describe('F270 — explicit Workflow activation policy', () => {
     ['请对比 v0.7.76 到 v0.7.79 的变更并审查合并阻塞问题。', 'compare-range'],
     ['Review 38aa0dfb^..HEAD for merge blockers.', 'compare-range'],
     ['Audit v0.7.76...v0.7.79 for merge blockers.', 'compare-range'],
+    ['Please review the latest changes in the current code.', 'current-worktree'],
   ] as const)(
-    'routes the natural review request "%s" into the authoritative fan-out prompt',
+    'routes the natural review request "%s" into the review-breadth prompt',
     (prompt, expectedTarget) => {
       const repoSignals: KodaXRepoRoutingSignals = {
         changedFileCount: 45,
@@ -792,8 +794,8 @@ describe('F270 — explicit Workflow activation policy', () => {
       expect(routed.reviewTarget).toBe(expectedTarget);
       expect(routed.plan.decision.primaryTask).toBe('review');
       expect(rendered).toContain(`Review target: ${expectedTarget}`);
-      expect(rendered).toContain('BROAD REVIEW FAN-OUT (authoritative task policy):');
-      expect(rendered).toContain('call `changed_scope` once, then fan out');
+      expect(rendered).toContain('REVIEW BREADTH:');
+      expect(rendered).toContain('call `changed_scope` once and split the review from its file groups');
     },
   );
 
@@ -827,6 +829,45 @@ describe('F270 — explicit Workflow activation policy', () => {
 
     expect(routed.plan.decision.primaryTask).toBe('bugfix');
     expect(routed.applied).not.toBe(true);
+  });
+
+  it.each([
+    'Review the null check in src/auth.ts',
+    '帮我开个PR',
+    'Open a PR for this fix',
+  ])('keeps the narrow request "%s" free of review-breadth guidance in a large dirty worktree', (prompt) => {
+    const repoSignals: KodaXRepoRoutingSignals = {
+      changedFileCount: 45,
+      changedLineCount: 6_500,
+      addedLineCount: 3_800,
+      deletedLineCount: 2_700,
+      touchedModuleCount: 6,
+      changedModules: ['agent', 'coding', 'repl'],
+      crossModule: true,
+      reviewScale: 'massive',
+      suggestedComplexity: 'systemic',
+      riskHints: [],
+      plannerBias: true,
+      investigationBias: false,
+      lowConfidence: false,
+    };
+    const routed = applyCurrentDiffReviewRoutingFloor(
+      { effort: 'medium', decision: buildFallbackRoutingDecision(prompt, undefined, { repoSignals }), promptOverlay: '' },
+      prompt,
+      repoSignals,
+    );
+    const rendered = createRolePrompt(
+      'worker', prompt, routed.plan.decision, undefined, undefined, 'kodax/role/worker', undefined,
+      {
+        ...buildContext({ provider: 'p', model: 'm' }),
+        originalTask: prompt,
+        actorCapacity: { maxConcurrentThreads: 4, activeNonRootTurns: 0 },
+      },
+      undefined, false, 'context',
+    );
+
+    expect(rendered).not.toContain('REVIEW BREADTH');
+    expect(rendered).not.toContain('Review scale: massive');
   });
 
   it.each([
@@ -889,8 +930,8 @@ describe('F270 — explicit Workflow activation policy', () => {
       },
     );
 
-    expect(rendered.match(/BROAD REVIEW FAN-OUT \(authoritative task policy\):/g)).toHaveLength(1);
-    expect(rendered).toContain('Start 1 read-only review Agent');
-    expect(rendered).not.toContain('when at least 2 child start slots are available');
+    expect(rendered.match(/REVIEW BREADTH:/g)).toHaveLength(1);
+    expect(rendered).toContain('Split a review this broad into read-only Agents');
+    expect(rendered).not.toContain('No child start slot is free right now');
   });
 });
