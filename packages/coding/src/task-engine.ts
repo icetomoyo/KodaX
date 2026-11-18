@@ -190,19 +190,15 @@ export async function dispatchManagedTask(
   prompt: string,
   deps: ManagedDispatchDeps = defaultManagedDispatchDeps,
 ): Promise<KodaXResult> {
-  // Shard 6d-L: AMA entry must run the same `createReasoningPlan` the legacy
-  // task engine ran (task-engine.ts:1670-1702). The reasoning plan produces
-  // `decision.primaryTask` / `decision.mutationSurface` / `decision.riskLevel`
-  // / `decision.taskFamily` / `decision.harnessProfile` etc. Without this the
-  // Runner-driven path used placeholder `conversation` / `simple` / `low`
-  // values, which broke every downstream branch that read `contract.primaryTask`
-  // (agent.ts has 10+ such branches in direct-engine guardrails).
+  // The AMA Worker runs the same `createReasoningPlan` as the direct engine.
+  // Its decision (`primaryTask`, `mutationSurface`, `riskLevel`, `taskFamily`,
+  // `harnessProfile`) feeds the Worker contract; without it the Runner path
+  // fell back to placeholder `conversation` / `simple` / `low` values.
   //
-  // `createReasoningPlan` also computes `plan.promptOverlay` — a block of
-  // per-task routing notes (task-family guidance, work intent, brainstorm
-  // directives, provider policy notes) legacy injected into every managed
-  // worker's prompt. We thread it into the Runner chain so Scout/Planner/
-  // Generator/Evaluator see the same contextual overlay as legacy workers.
+  // The plan also carries `promptOverlay`, the per-task routing notes
+  // (task-family guidance, work intent, brainstorm directives, provider
+  // policy notes). `runManagedTaskViaRunner` renders it into the Worker's
+  // role prompt, the same surface the direct engine uses.
   const canonical = withCanonicalAgentMode(options);
   const naturalLanguageInput = canonical.context?.rawUserInput ?? prompt;
   const workflowIntent = canonical.context?.workflowIntent

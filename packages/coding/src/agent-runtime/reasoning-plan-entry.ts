@@ -39,13 +39,6 @@
  * (overriding any stale `options.reasoningMode`), then merges
  * `context` field-by-field. Don't reorder.
  *
- * **Wire-up note**: this function is passed as the `buildExecutionState`
- * callback to CAP-019's `maybeAdvanceAutoReroute` to avoid a cycle —
- * CAP-019 lives in `middleware/auto-reroute.ts`; if CAP-052 imported
- * from there directly the cycle would close. The DI callback pattern
- * in CAP-019 was chosen specifically for this case; it stays even
- * after CAP-052 has its own module.
- *
  * Migration history: extracted from `agent.ts:3066-3120` —
  * pre-FEATURE_100 baseline — during FEATURE_100 P2 (CAP-052 batch).
  */

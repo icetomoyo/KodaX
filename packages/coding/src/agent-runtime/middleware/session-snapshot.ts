@@ -6,15 +6,14 @@
  * - docs/features/v0.7.29-capability-inventory.md#cap-013-error-snapshot-persistence-on-crash
  *
  * Persists `.kodax/sessions/<id>.json` so that `/resume <id>` and
- * `--continue` can reload a run mid-flight. Called at four sites in the
- * direct-engine loop:
+ * `--continue` can reload a run mid-flight. The direct engine calls it at
+ * three sites:
  *
- *   1. mid-flow after auto-reroute (CAP-019 plan accepted) — persists
- *      so that a crash between iterations is recoverable.
- *   2. success terminal (turn loop ended cleanly).
- *   3. error terminal (catch branch) — CAP-013, includes
+ *   1. after each tool round (`run-substrate.ts`), so a crash between
+ *      iterations is recoverable.
+ *   2. error terminal (`catch-terminals.ts`) — CAP-013, includes
  *      `errorMetadata` so the user sees the reason on resume.
- *   4. limit-reached terminal.
+ *   3. limit-reached terminal (`iteration-limit-terminal.ts`).
  *
  * **Standalone behavior preserved from FEATURE_100 baseline**:
  * - When `options.session?.storage` is absent, returns immediately

@@ -139,7 +139,7 @@ export function createRolePrompt(
             ? 'macOS'
             : workspace.platform
       }${workspace.osRelease ? ` (${workspace.osRelease})` : ''}`,
-      // Runtime fact — managed workers (Scout/Planner/Generator/Evaluator)
+      // Runtime fact — the AMA Worker and its children
       // bypass `buildSystemPrompt` and would otherwise have no provider /
       // model context, causing the LLM to fall back on pretraining
       // identity (e.g. GLM-5.1 self-reporting as Claude). Preflight

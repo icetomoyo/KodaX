@@ -1757,7 +1757,7 @@ async function runManagedTaskViaRunnerInner(
   // prompt can tell the LLM where it is running. The direct engine injects
   // `Working Directory: ${executionCwd}` via `buildSystemPrompt`, but
   // the Runner-driven path bypasses that builder. Without this block,
-  // Scout/Planner/Generator/Evaluator all guess paths (e.g. the
+  // the AMA Worker and its children guess paths (e.g. the
   // reported `cd /d/user/kodax/workspace` against a real cwd of
   // `C:\Works\GitWorks\...`).
   const managedWorkspace = {
@@ -2097,7 +2097,7 @@ async function runManagedTaskViaRunnerInner(
 
   // Session continuity: when the caller passes `options.session.initialMessages`
   // (REPL multi-turn, session resume, plan-mode replay), prepend them as the
-  // Runner transcript so the Scout/Planner/Generator/Evaluator see full
+  // Runner transcript so the AMA Worker sees full
   // prior context — same behaviour as the direct-engine entry via the session
   // loader.
   //

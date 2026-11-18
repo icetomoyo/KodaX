@@ -342,11 +342,8 @@ import {
   KodaXExtensionRuntime,
 } from '../extensions/runtime.js';
 
-// CAP-019 (`AutoReroutePlan`) lives in
-// `agent-runtime/middleware/auto-reroute.ts` since FEATURE_100 P2.
 // CAP-015 (`RunnableToolCall`) lives in
-// `agent-runtime/middleware/edit-recovery.ts` since FEATURE_100 P2;
-// imported above for use in the dispatch loop.
+// `agent-runtime/middleware/edit-recovery.ts`; see the CAP-015 note above.
 //
 // `MessageContentBlock` (alias for the array element type of
 // `KodaXMessage.content`) used to live here for the local content-block
@@ -372,8 +369,8 @@ import {
 // `shouldEmitRepoIntelligenceTrace`) lives in
 // `agent-runtime/middleware/repo-intelligence.ts` since FEATURE_100 P2.
 // `emitRepoIntelligenceTrace` is imported above for the 'routing' stage
-// emission at frame entry; `buildAutoRepoIntelligenceContext` is also
-// re-exported so `runner-driven.ts:64` keeps working unchanged.
+// emission at frame entry. `agent.ts` re-exports
+// `buildAutoRepoIntelligenceContext` for `runner-driven.ts`.
 
 // CAP-028 (`gracefulCompactDegradation`) lives in
 // `agent-runtime/compaction-fallback.ts` since FEATURE_100 P2.
@@ -469,15 +466,8 @@ import {
 // CAP-027 (`estimateProviderPayloadBytes`, `bucketProviderPayloadSize`) lives
 // in `agent-runtime/provider-payload.ts` since FEATURE_100 P2.
 
-// CAP-019 (`maybeBuildAutoReroutePlan`, `maybeAdvanceAutoReroute`) lives in
-// `agent-runtime/middleware/auto-reroute.ts` since FEATURE_100 P2.
-// `maybeAdvanceAutoReroute` takes `buildExecutionState` as a callback so
-// that `buildReasoningExecutionState` (CAP-052, still in this file) does
-// not need to be moved together — see auto-reroute.ts docstring.
-//
-// CAP-017 + CAP-018 (`looksLikeReviewProgressUpdate`,
-// `isReviewFinalAnswerCandidate`, `hasStrongToolFailureEvidence`) live in
-// `agent-runtime/middleware/judges.ts` since FEATURE_100 P2.
+// CAP-019 auto-reroute is retired, and with it the engine's calls to the
+// CAP-017 / CAP-018 judge predicates in `agent-runtime/middleware/judges.ts`.
 
 // CAP-024 (`executeToolCall`) lives in
 // `agent-runtime/tool-dispatch.ts` since FEATURE_100 P2. agent.ts no
@@ -3298,22 +3288,9 @@ async function runSubstrateInContext(
   }
 }
 
-// `buildAutoRepoIntelligenceContext` body lives in
-// `agent-runtime/middleware/repo-intelligence.ts` since FEATURE_100 P2.
-// Imported above for the in-file call site at `buildReasoningExecutionState`,
-// and re-exported so `runner-driven.ts:64` keeps working unchanged.
-
 // CAP-052 (`buildReasoningExecutionState`) lives in
 // `agent-runtime/reasoning-plan-entry.ts` since FEATURE_100 P2.
-// Imported above for the 4 call sites: initial frame entry, every
-// reroute apply, and as the `buildExecutionState` callback to CAP-019
-// `maybeAdvanceAutoReroute` (DI cycle break — see auto-reroute.ts
-// docstring).
-
-// CAP-088 (`summarizeToolEvidence` + `looksLikeToolRuntimeEvidence`)
-// lives in `agent-runtime/middleware/judges.ts` since FEATURE_100 P2
-// (shared with CAP-017 / CAP-018). Imported above for the post-tool
-// judge call site.
+// Imported above for the frame-entry call site.
 
 // `getGitRoot` (CAP-011 helper) lives in
 // `agent-runtime/middleware/session-snapshot.ts` since FEATURE_100 P2.

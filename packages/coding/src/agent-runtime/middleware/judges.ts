@@ -19,10 +19,9 @@
  *     the tool evidence contains failure signals, invoke auto-reroute
  *     to potentially switch task family (e.g., review → bugfix).
  *
- * The gating IF that wraps each `maybeAdvanceAutoReroute` call lives at
- * the call site in `agent.ts` (and will move to the substrate executor's
- * judge hook chain in P3). What lives here are the **predicates** that
- * decide whether the call site should fire:
+ * Auto-reroute (CAP-019) and its call sites are gone, so nothing in the
+ * engine calls these predicates; their contract tests keep them pinned.
+ * The **predicates** decided whether a judge should fire:
  *
  *   - `isReviewFinalAnswerCandidate(prompt, plan, lastText)` — gates the
  *     pre-answer judge.
@@ -30,7 +29,7 @@
  *     judge.
  *   - `summarizeToolEvidence(toolBlocks, toolResults)` (CAP-088) —
  *     constructs the `toolEvidence` string that feeds into the
- *     `hasStrongToolFailureEvidence` gate. Three invariants are
+ *     `hasStrongToolFailureEvidence` gate. Four invariants are
  *     load-bearing:
  *       (a) only includes results whose content passes
  *           `looksLikeToolRuntimeEvidence` (delegates to

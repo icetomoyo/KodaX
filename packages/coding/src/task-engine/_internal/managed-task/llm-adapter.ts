@@ -425,7 +425,7 @@ export function buildRunnerLlmAdapter(
     // post-compact-file-content, ...] after compaction+inject, and after a
     // handoff `replaceSystemMessage` only swaps [0] — the rest stay leading
     // system entries. Keeping only the first one would strand agent role
-    // instructions (Scout/Planner/Generator/Evaluator) behind the summary and
+    // instructions (the Worker role prompt) behind the summary and
     // still leak secondary system messages into the transcript, which the
     // provider layer now merges but which would otherwise confuse strict
     // proxies that reject any non-leading system message.
