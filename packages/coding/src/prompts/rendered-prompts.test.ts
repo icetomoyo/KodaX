@@ -17,7 +17,7 @@ import { markOrdinaryRootToolContract, projectManagedToolContracts } from '../to
 import { listToolDefinitions } from '../tools/index.js';
 import { filterExcludedTools, getActiveToolDefinitions } from '../agent-runtime/tool-resolution.js';
 import { CHILD_AGENT_SYSTEM_PROMPT, CHILD_EXCLUDE_TOOLS_BASE } from '../child-executor.js';
-import { buildWorkerStableInstructions } from '../agents/worker-role-prompt.js';
+import { buildWorkerStableInstructions, buildWorkerStableSections } from '../agents/worker-role-prompt.js';
 import { projectManagedSystemContract } from './managed-system-contract.js';
 import { buildCompactChildContractCandidate } from './compact-child-contract.js';
 
@@ -104,6 +104,50 @@ describe('rendered Worker contract for reduced tool sets', () => {
   ] as const)('%s', async (label, names) => {
     await expect(buildWorkerStableInstructions(names) + '\n')
       .toMatchFileSnapshot(expected(`worker.stable.${label}.md`));
+  });
+
+  // Tags decide what an embedder can omit, so a retag needs the same review as a text change.
+  it('pins the block tags for every tool set', () => {
+    const tags = (names?: readonly string[]) => buildWorkerStableSections(names).map(({ id, tag }) => `${id}:${tag}`);
+    expect({ all: tags(), none: tags([]), readOnly: tags(['read', 'grep', 'glob', 'todo_list']) }).toMatchInlineSnapshot(`
+      {
+        "all": [
+          "context-trust:contract",
+          "parallel-work:guidance",
+          "plan-first:guidance",
+          "plan-list-hygiene:guidance",
+          "scope-commitment:guidance",
+          "mutation-discipline:guidance",
+          "repo-intelligence-tools:capability",
+          "agent-collaboration:capability",
+          "agent-steering:capability",
+          "execution-guidance:guidance",
+          "termination:contract",
+        ],
+        "none": [
+          "context-trust:contract",
+          "parallel-work:guidance",
+          "plan-first:guidance",
+          "scope-commitment:guidance",
+          "mutation-discipline:guidance",
+          "repo-intelligence-tools:capability",
+          "agent-collaboration:capability",
+          "execution-guidance:guidance",
+          "termination:contract",
+        ],
+        "readOnly": [
+          "context-trust:contract",
+          "parallel-work:guidance",
+          "plan-first:guidance",
+          "scope-commitment:guidance",
+          "mutation-discipline:guidance",
+          "repo-intelligence-tools:capability",
+          "agent-collaboration:capability",
+          "execution-guidance:guidance",
+          "termination:contract",
+        ],
+      }
+    `);
   });
 });
 

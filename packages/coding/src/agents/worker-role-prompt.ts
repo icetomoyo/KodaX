@@ -6,6 +6,7 @@ import type {
   KodaXTaskVerificationContract,
 } from '../types.js';
 import { EXECUTION_GUIDANCE, PLAN_BATCH_GUIDANCE } from '../prompts/execution-guidance.js';
+import type { KodaXPromptSectionTag } from '../prompts/sections.js';
 // F270 keeps the prompt on the canonical Actor wait/completion vocabulary;
 // the runner may still use its generic wake loop internally.
 
@@ -98,40 +99,64 @@ export function buildWorkerReviewFanoutContract(
   ].filter((line): line is string => line !== undefined).join('\n');
 }
 
-/**
- * Pure builder. Returns the system prompt the role-prompt entry point
- * splices in for the V2 Worker (the only active AMA role after
- * FEATURE_193). Intentionally context-light — the runner-driven path
- * layers workspace / capability / overlay sections around this on top.
- */
-export function buildWorkerStableInstructions(availableToolNames?: readonly string[]): string {
-  // Omitted means no capability snapshot; an explicit empty list is authoritative.
-  const hasTool = (name: string): boolean => availableToolNames === undefined
-    || availableToolNames.includes(name);
-  const batchEditTool = hasTool('edit') ? 'edit' : 'multi_edit';
-  const diffTool = hasTool('changed_diff') ? 'changed_diff'
-    : hasTool('changed_diff_bundle') ? 'changed_diff_bundle' : undefined;
-  // Runtime passes model-visible names: a surviving legacy reader may be needed
-  // because the list tool is absent or overridden by a different contract.
-  const todoReader = availableToolNames?.includes('todo_get') ? 'todo_get'
-    : hasTool('todo_list') ? 'todo_list' : undefined;
-  const todoReadCall = todoReader === 'todo_list' ? 'todo_list({id})' : 'todo_get(id)';
-  const fullTodo = ['todo_create', 'todo_update', 'todo_list', 'wait_agent'].every(hasTool);
-  const fullCollaboration = ['spawn_agent', 'wait_agent', 'send_message', 'followup_task', 'list_agents', 'agent_output', 'interrupt_agent'].every(hasTool);
-  const managedRunContextTrust = [
-    'MANAGED RUN CONTEXT TRUST:',
-    staticText("worker.context-trust"),
-  ].join('\n');
-  const planFirstContract = [
-    'PLAN-FIRST GUIDANCE:',
+interface WorkerTools {
+  /** Omitted means no capability snapshot; an explicit empty list is authoritative. */
+  readonly names: readonly string[] | undefined;
+  readonly has: (name: string) => boolean;
+  readonly fullTodo: boolean;
+  readonly fullCollaboration: boolean;
+}
+
+/** One rendered block of the Worker stable instructions. */
+export interface WorkerSection {
+  readonly id: string;
+  readonly tag: KodaXPromptSectionTag;
+  readonly text: string;
+}
+
+interface WorkerSectionDefinition {
+  readonly id: string;
+  readonly tag: KodaXPromptSectionTag;
+  /** Returns undefined when the block does not apply to this tool set. */
+  readonly render: (tools: WorkerTools) => string | undefined;
+}
+
+function workerTools(names: readonly string[] | undefined): WorkerTools {
+  const has = (name: string): boolean => names === undefined || names.includes(name);
+  return {
+    names,
+    has,
+    fullTodo: ['todo_create', 'todo_update', 'todo_list', 'wait_agent'].every(has),
+    fullCollaboration: ['spawn_agent', 'wait_agent', 'send_message', 'followup_task', 'list_agents', 'agent_output', 'interrupt_agent'].every(has),
+  };
+}
+
+function block(heading: string, items: readonly (string | undefined)[]): string {
+  return [heading, ...items].filter((line): line is string => line !== undefined).join('\n');
+}
+
+// Runtime passes model-visible names: a surviving legacy reader may be needed
+// because the list tool is absent or overridden by a different contract.
+function todoReader(tools: WorkerTools): 'todo_get' | 'todo_list' | undefined {
+  return tools.names?.includes('todo_get') ? 'todo_get'
+    : tools.has('todo_list') ? 'todo_list' : undefined;
+}
+
+function renderPlanFirst(tools: WorkerTools): string {
+  if (!tools.fullTodo) return renderLimitedPlan(tools);
+  return block('PLAN-FIRST GUIDANCE:', [
     // Evidence/verification duties read as "inspect the machine first": weak models ran `dir`/`uname`
     // before answering how-to questions, and tied answers about other systems to the local host.
     `- ${staticText("worker.answer-directly")}`,
     staticText("worker.plan-first.rules"),
     `- ${PLAN_BATCH_GUIDANCE}`,
     staticText("worker.plan-first.replan"),
-  ].join('\n');
+  ]);
+}
 
+function renderPlanListHygiene(tools: WorkerTools): string | undefined {
+  if (!tools.fullTodo) return undefined;
+  const todoReadCall = todoReader(tools) === 'todo_list' ? 'todo_list({id})' : 'todo_get(id)';
   // v0.7.42 — plan-list hygiene: staleness refresh + dedup. The two
   // checks below are explicit because production sessions show two
   // recurring failure modes when this discipline is implicit:
@@ -147,52 +172,53 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
   // teach the same "read latest before mutate" / "scan before insert"
   // discipline (see `c:/Works/claudecode/src/tools/TaskUpdateTool/`
   // and `TaskCreateTool/`).
-  const planListHygiene = [
-    'PLAN-LIST HYGIENE (staleness + dedup):',
+  return block('PLAN-LIST HYGIENE (staleness + dedup):', [
     `- BEFORE \`todo_update\`, call \`${todoReadCall}\` only when another Actor/runtime event may actually have changed that item since you last saw it (for example after a wait/resume boundary). Ordinary consecutive model turns do not require a resynchronization ritual.`,
     staticText("worker.plan-hygiene"),
-  ].join('\n');
+  ]);
+}
 
-  const scopeCommitment = [
-    'SCOPE COMMITMENT:',
+function renderScopeCommitment(tools: WorkerTools): string {
+  return block('SCOPE COMMITMENT:', [
     staticText("worker.scope.contract"),
-    hasTool('todo_update')
+    tools.has('todo_update')
       ? staticText("worker.scope.disproved-premise-todo")
       : staticText("worker.scope.disproved-premise"),
     staticText("worker.scope.reuse-and-review"),
-  ].join('\n');
+  ]);
+}
 
-  const mutationDiscipline = [
-    'MUTATION DISCIPLINE:',
+function renderMutationDiscipline(tools: WorkerTools): string {
+  const batchEditTool = tools.has('edit') ? 'edit' : 'multi_edit';
+  return block('MUTATION DISCIPLINE:', [
     staticText("worker.mutation.read-and-edit"),
     `- For multiple edits to one file, batch with \`${batchEditTool}\` instead of separate calls — atomic, cheaper, structure-preserving.`,
     staticText("worker.mutation.write-and-scratch"),
-  ].join('\n');
+  ]);
+}
 
-  const dispatchRules = [
-    'AGENT COLLABORATION:',
+function renderCollaboration(tools: WorkerTools): string {
+  if (!tools.fullCollaboration) return renderLimitedCollaboration(tools);
+  return block('AGENT COLLABORATION:', [
     staticText("worker.collaboration.rules"),
     // FEATURE_169 v0.7.40 — dispatch objective quality (F0a + F0b). Suite 0
     // v2 audit VALID (bash disagreement 8.9%, pull-correct 3.3%): C bash=0%
     // (vs A=9% baseline-low ceiling-flatten), pull-correct mention 41→76%
     // (+35pp lift), 5/6 alias C ≥ 70%.
     staticText("worker.collaboration.objective-quality"),
-    hasTool('run_workflow')
+    tools.has('run_workflow')
       ? staticText("worker.collaboration.objective-language-workflow")
       : staticText("worker.collaboration.objective-language"),
     staticText("worker.collaboration.pull-tools"),
-    hasTool('list_dispatchable_agents')
+    tools.has('list_dispatchable_agents')
       ? staticText("worker.collaboration.specialist-routing") : undefined,
-  ].filter((line): line is string => line !== undefined).join('\n');
+  ]);
+}
 
-  const parallelFirstCollaboration = [
-    staticText("worker.parallel-first"),
-  ].join('\n');
-
-  const childSteeringRules = [
-    staticText("worker.agent-steering"),
-  ].join('\n');
-
+function renderRepoIntelligenceTools(tools: WorkerTools): string {
+  const hasTool = tools.has;
+  const diffTool = hasTool('changed_diff') ? 'changed_diff'
+    : hasTool('changed_diff_bundle') ? 'changed_diff_bundle' : undefined;
   // Keep first-choice guidance visible even when rich tool descriptions are deferred.
   // Capability snapshots come from the executable tool set, never task keywords.
   const lspTools = ['lsp_workspace_symbols', 'lsp_implementation', 'lsp_incoming_calls', 'lsp_outgoing_calls']
@@ -200,8 +226,7 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
   // Capsule and pull-tool fallback lines only make sense when a pull-tool is on the menu.
   const hasRepoPullTool = ['relationship_scan', 'module_context', 'symbol_context', 'impact_estimate',
     'process_context', 'repo_overview', 'changed_scope'].some(hasTool);
-  const repoIntelligenceTools = [
-    'REPO INTELLIGENCE TOOLS:',
+  return block('REPO INTELLIGENCE TOOLS:', [
     // Stated where the procedures live: weak models followed the changed_scope / `bash git`
     // steps below instead of a matching review or Git Skill named only in the catalog.
     hasTool('skill')
@@ -234,35 +259,31 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
     hasRepoPullTool ? staticText("worker.repo-tools.pull-fallback") : undefined,
     hasTool('changed_diff_bundle') || hasTool('changed_diff')
       ? staticText("worker.repo-tools.structured-diff") : undefined,
-  ].filter((line): line is string => line !== undefined).join('\n');
+  ]);
+}
 
-  // Static EXECUTION GUIDANCE (shared with the direct-engine path) replaces the
-  // router-injected EXECUTION_MODE / HARNESS_PROFILE overlays — the Worker
-  // self-judges the kind of work instead of being told by a keyword router.
-  // See `prompts/execution-guidance.ts` + ADR-043.
-
-  const handoffRules = [
-    'TERMINATION:',
-    staticText("worker.termination"),
-  ].join('\n');
-
-  const limitedPlanGuidance = [
-    'PLAN-FIRST GUIDANCE (available capability):',
+function renderLimitedPlan(tools: WorkerTools): string {
+  const hasTool = tools.has;
+  const reader = todoReader(tools);
+  return block('PLAN-FIRST GUIDANCE (available capability):', [
     staticText("worker.limited-plan.rules"),
     hasTool('todo_create')
       ? staticText("worker.limited-plan.todo-create") : undefined,
     hasTool('todo_update')
       ? staticText("worker.limited-plan.todo-update") : undefined,
-    todoReader && hasTool('todo_update')
-      ? `- Use \`${todoReader}\` with id before changing an item only when another Actor or runtime event may have changed it since last seen; ordinary consecutive turns need no refresh ritual.` : undefined,
+    reader && hasTool('todo_update')
+      ? `- Use \`${reader}\` with id before changing an item only when another Actor or runtime event may have changed it since last seen; ordinary consecutive turns need no refresh ritual.` : undefined,
     hasTool('todo_list')
       ? staticText("worker.limited-plan.todo-list") : undefined,
-    todoReader && !hasTool('todo_update')
-      ? `- Use \`${todoReader}\` with id when the state of an existing milestone is uncertain.` : undefined,
+    reader && !hasTool('todo_update')
+      ? `- Use \`${reader}\` with id when the state of an existing milestone is uncertain.` : undefined,
     staticText("worker.limited-plan.language"),
-  ].filter((line): line is string => line !== undefined).join('\n');
-  const limitedCollaboration = [
-    'AGENT COLLABORATION (available capability):',
+  ]);
+}
+
+function renderLimitedCollaboration(tools: WorkerTools): string {
+  const hasTool = tools.has;
+  return block('AGENT COLLABORATION (available capability):', [
     hasTool('spawn_agent')
       ? staticText("worker.limited-collaboration.spawn") : undefined,
     hasTool('spawn_agent') && hasTool('list_dispatchable_agents')
@@ -279,30 +300,56 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
     hasTool('interrupt_agent')
       ? staticText("worker.limited-collaboration.interrupt") : undefined,
     staticText("worker.limited-collaboration.integrate"),
-  ].filter((line): line is string => line !== undefined).join('\n');
-  const limitedHandoff = [
-    'TERMINATION:',
+  ]);
+}
+
+function renderTermination(tools: WorkerTools): string {
+  if (tools.fullTodo && tools.fullCollaboration) return block('TERMINATION:', [staticText("worker.termination")]);
+  return block('TERMINATION:', [
     staticText("worker.limited-termination.verify"),
-    hasTool('todo_update')
+    tools.has('todo_update')
       ? staticText("worker.limited-termination.todo-check") : undefined,
     staticText("worker.limited-termination.summary"),
-  ].filter((line): line is string => line !== undefined).join('\n');
+  ]);
+}
 
-  return [
-    managedRunContextTrust,
-    hasTool('spawn_agent') ? parallelFirstCollaboration : staticText("worker.local-execution"),
-    fullTodo ? planFirstContract : limitedPlanGuidance,
-    fullTodo ? planListHygiene : undefined,
-    scopeCommitment,
-    mutationDiscipline,
-    repoIntelligenceTools,
-    fullCollaboration ? dispatchRules : limitedCollaboration,
-    fullCollaboration ? childSteeringRules : undefined,
-    EXECUTION_GUIDANCE,
-    fullTodo && fullCollaboration ? handoffRules : limitedHandoff,
-  ]
-    .filter((part): part is string => Boolean(part?.length))
-    .join('\n\n');
+// Order is the rendered order. Tags say what each block is for; see KodaXPromptSectionTag.
+// Plan, scope and mutation blocks are guidance: the tool descriptions still teach each tool.
+const WORKER_SECTIONS: readonly WorkerSectionDefinition[] = [
+  { id: 'context-trust', tag: 'contract', render: () => block('MANAGED RUN CONTEXT TRUST:', [staticText("worker.context-trust")]) },
+  { id: 'parallel-work', tag: 'guidance', render: tools => tools.has('spawn_agent') ? staticText("worker.parallel-first") : staticText("worker.local-execution") },
+  { id: 'plan-first', tag: 'guidance', render: renderPlanFirst },
+  { id: 'plan-list-hygiene', tag: 'guidance', render: renderPlanListHygiene },
+  { id: 'scope-commitment', tag: 'guidance', render: renderScopeCommitment },
+  { id: 'mutation-discipline', tag: 'guidance', render: renderMutationDiscipline },
+  { id: 'repo-intelligence-tools', tag: 'capability', render: renderRepoIntelligenceTools },
+  { id: 'agent-collaboration', tag: 'capability', render: renderCollaboration },
+  { id: 'agent-steering', tag: 'capability', render: tools => tools.fullCollaboration ? staticText("worker.agent-steering") : undefined },
+  // Static EXECUTION GUIDANCE (shared with the direct-engine path) replaces the
+  // router-injected EXECUTION_MODE / HARNESS_PROFILE overlays — the Worker
+  // self-judges the kind of work instead of being told by a keyword router.
+  // See `prompts/execution-guidance.ts` + ADR-043.
+  { id: 'execution-guidance', tag: 'guidance', render: () => EXECUTION_GUIDANCE },
+  { id: 'termination', tag: 'contract', render: renderTermination },
+];
+
+/** The Worker stable blocks that apply to this tool set, in rendered order. */
+export function buildWorkerStableSections(availableToolNames?: readonly string[]): readonly WorkerSection[] {
+  const tools = workerTools(availableToolNames);
+  return WORKER_SECTIONS.flatMap(({ id, tag, render }) => {
+    const text = render(tools);
+    return text ? [{ id, tag, text }] : [];
+  });
+}
+
+/**
+ * Pure builder. Returns the system prompt the role-prompt entry point
+ * splices in for the V2 Worker (the only active AMA role after
+ * FEATURE_193). Intentionally context-light — the runner-driven path
+ * layers workspace / capability / overlay sections around this on top.
+ */
+export function buildWorkerStableInstructions(availableToolNames?: readonly string[]): string {
+  return buildWorkerStableSections(availableToolNames).map(section => section.text).join('\n\n');
 }
 
 /**

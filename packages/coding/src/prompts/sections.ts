@@ -17,6 +17,12 @@ export type KodaXPromptSectionStability =
   | 'project'
   | 'specialist';
 
+/**
+ * What a prompt section is for: `contract` is text the runtime protocol depends on,
+ * `capability` teaches an available tool, and `guidance` is KodaX's default way of working.
+ */
+export type KodaXPromptSectionTag = 'contract' | 'capability' | 'guidance';
+
 export interface KodaXPromptSectionDefinition {
   id: string;
   title: string;
