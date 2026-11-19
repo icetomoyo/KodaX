@@ -1,0 +1,5 @@
+<!-- @key t12.tools/model-tool-definition.0 -->
+Edit one existing file with one or more replacements in edits. Read first. Each old_string must be unique in the whole current file unless replace_all is true. Matching tries exact text then normalized anchors. Edits apply sequentially; later anchors must refer to the result of earlier edits. Any failed edit leaves the file unchanged; successful batches commit once. On failure, inspect the reported edit index and re-read or use a smaller unique anchor; do not rewrite the whole file to bypass an edit failure. Split oversized replacements into smaller edits.
+
+<!-- @key t12.tools/model-tool-definition.1 -->
+Read paged diffs for one or more explicit changed paths. Prefer this over broad git diff output during reviews. Includes untracked files; use base_ref and optional target_ref for a comparison range. offset and limit_per_path apply independently to every path. Follow per-path continuation hints when truncated; at most 64 unique paths per call.

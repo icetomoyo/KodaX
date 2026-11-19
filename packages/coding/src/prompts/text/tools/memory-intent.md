@@ -1,0 +1,8 @@
+<!-- @key t12.tools/memory-intent.0 -->
+(?:(?:from\s+now\s+on|going\s+forward),?\s*)?(?:one\s+more\s+thing:\s*)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need)\s+you\s+to\s+(?:please\s+)?|i(?:'d|\s+would)\s+like\s+you\s+to\s+(?:please\s+)?|go\s+ahead\s+and\s+)?
+
+<!-- @key t12.tools/memory-intent.1 -->
+(?:(?:from\s+now\s+on|going\s+forward),?\s*)?(?:one\s+more\s+thing:\s*)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need)\s+you\s+to\s+(?:please\s+)?|i(?:'d|\s+would)\s+like\s+you\s+to\s+(?:please\s+)?|go\s+ahead\s+and\s+)?
+
+<!-- @key t12i.tools/memory-intent.block.0 -->
+Manage durable Memory in response to a natural-language user request. Use list when the user asks what is remembered; return concise accepted Memory with stable ref ids. Use remember for a new fact, preference, policy, or procedure, correct with one exact targetRefId, and forget with one exact targetRefId. Use decisions/show only when the user asks what needs attention; approve/reject require one exact decision ref and an exact authorizing quote. For mutations, userQuote must be the exact affirmative instruction clause from the current user message. For remember/correct, statement must itself be an exact claim span from that message; never paraphrase or infer durable content. Classify remember as fact, policy, preference, or procedure; every new claim needs a stable semantic claimKey so later updates address the same claim. The host applies safe explicit requests immediately; broad or ambiguous requests ask for clarification, conflicts become readable decisions, and restricted content is rejected.

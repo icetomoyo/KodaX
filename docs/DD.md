@@ -494,6 +494,17 @@ before any process starts, and non-Windows entry points never read it. The pack
 test checks the resource whitelist, that the root and standalone Agent copies
 are identical, and both hashes.
 
+Prompt text is packaged the same way, in
+`packages/coding/src/prompts/static-text.json`, but that file is generated.
+Authors edit `.md` sources under `packages/coding/src/prompts/text/`: the text
+for a consumer `X.ts` lives in `text/X.md` as `<!-- @key name -->` entries,
+and tool input schemas live in `text/tools/tool-definitions.schemas.json`.
+`npm run prompts:text` regenerates the store, and `tests/prompt-text.test.ts` and
+`npm run build` fail when the two drift. Bodies are byte-exact. Leading or
+trailing whitespace goes in the marker (`lead="\n"`, `trail=" "`), so an editor
+cannot change it unseen. `packages/coding/src/prompts/rendered-prompts.test.ts`
+snapshots the assembled Worker, child and tool text in `prompts/expected/`.
+
 To change the ceiling:
 
 1. Reproduce the failure on the real builder.
