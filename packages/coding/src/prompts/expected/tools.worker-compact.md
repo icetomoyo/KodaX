@@ -389,7 +389,7 @@ Detect circular import/dependency chains (Tarjan SCC) over the module-level impo
 
 ## edit
 
-Read first. Apply edits sequentially to one existing file; each old_string must be unique in the whole current file unless replace_all. Exact matching, then normalized anchors. Later anchors refer to earlier edits’ results. Commit once; any failure leaves file unchanged. On failure inspect edit index, reread or use a smaller unique anchor, never full-file rewrite to bypass failure. Split oversized replacements.
+Read first so each old_string matches the current text. Apply edits sequentially to one existing file; each old_string must be unique in the whole current file unless replace_all. Exact matching, then normalized anchors. Later anchors refer to earlier edits’ results. Commit once; any failure leaves file unchanged. On failure inspect edit index, reread or use a smaller unique anchor, never full-file rewrite to bypass failure. Split oversized replacements.
 
 ```json
 {
