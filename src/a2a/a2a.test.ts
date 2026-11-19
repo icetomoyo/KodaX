@@ -965,35 +965,6 @@ describe('FEATURE_267 bidirectional A2A', () => {
     }
   });
 
-  it('uses a dedicated Runtime Session for each A2A Task in the same context', async () => {
-    const dataDir = temporaryRoot();
-    const server = createKodaXA2AServer(serverOptions(fakeRuntime(), dataDir));
-    await server.whenReady();
-    try {
-      for (const messageId of ['same-context-first', 'same-context-second']) {
-        const response = await server.handle(directRpcRequest('SendMessage', {
-          message: {
-            messageId,
-            contextId: 'shared-a2a-context',
-            role: 'ROLE_USER',
-            parts: [{ text: messageId }],
-          },
-        }, messageId));
-        expect(response.status).toBe(200);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    } finally {
-      await server.close();
-    }
-
-    const records = JSON.parse(
-      readFileSync(path.join(dataDir, 'tasks.json'), 'utf8'),
-    ) as Array<{ readonly contextId: string; readonly sessionId: string }>;
-    expect(records).toHaveLength(2);
-    expect(records.every((record) => record.contextId === 'shared-a2a-context')).toBe(true);
-    expect(new Set(records.map((record) => record.sessionId)).size).toBe(2);
-  });
-
   it('does not publish Runtime progress micro-events as A2A task updates', async () => {
     const dataDir = temporaryRoot();
     const controlled = pendingRuntime();

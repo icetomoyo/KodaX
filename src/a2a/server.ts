@@ -1065,18 +1065,7 @@ class KodaXA2AServerRuntime implements KodaXA2AServer {
     const contextKey = sha256(`${key}\0${contextId}`);
     const workspaceRoot = related?.workspaceRoot
       ?? await options.preparedExecution?.prepareWorkspace(contextKey);
-    const session = await options.runtime.sessions.create({
-          title: `A2A: ${options.agent.name}`,
-          surface: 'a2a',
-          ...(options.execution?.profileId || options.agent.profileId
-            ? { profileId: options.execution?.profileId ?? options.agent.profileId }
-            : {}),
-          ...(workspaceRoot
-            ? { projectPath: workspaceRoot, gitRoot: workspaceRoot }
-            : options.agent.projectPath
-              ? { projectPath: options.agent.projectPath }
-              : {}),
-        });
+    const session = await this.contextSession(contextKey, workspaceRoot, options);
     const taskId = randomUUID();
     const timestamp = nowIso(this.#now);
     return this.#store.save({
@@ -1106,6 +1095,40 @@ class KodaXA2AServerRuntime implements KodaXA2AServer {
       runtimeEventBytes: 0,
       ...(acceptedOutputModes ? { acceptedOutputModes } : {}),
     });
+  }
+
+  /**
+   * Every task in one principal's context continues the same Runtime Session, so
+   * the model keeps the conversation and gateways see one session id. The id is
+   * derived from the context key: it survives task pruning and restarts without
+   * a ledger, and it never reveals the client's contextId. The Host queues a run
+   * behind an active run in the same Session.
+   */
+  private async contextSession(
+    contextKey: string,
+    workspaceRoot: string | undefined,
+    options: PreparedA2AServerOptions,
+  ): Promise<{ readonly id: string }> {
+    const sessionId = `a2a-${contextKey}`;
+    try {
+      return await options.runtime.sessions.create({
+        sessionId,
+        title: `A2A: ${options.agent.name}`,
+        surface: 'a2a',
+        ...(options.execution?.profileId || options.agent.profileId
+          ? { profileId: options.execution?.profileId ?? options.agent.profileId }
+          : {}),
+        ...(workspaceRoot
+          ? { projectPath: workspaceRoot, gitRoot: workspaceRoot }
+          : options.agent.projectPath
+            ? { projectPath: options.agent.projectPath }
+            : {}),
+      });
+    } catch (error: unknown) {
+      // An earlier task of this context created it.
+      if (isRecord(error) && error.code === 'conflict') return { id: sessionId };
+      throw error;
+    }
   }
 
   private appendMessage(record: A2AServerTaskRecord, message: A2AMessage, digest: string): A2AServerTaskRecord {
