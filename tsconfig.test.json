@@ -149,7 +149,8 @@
     "packages/repl/src/interactive/invocation-runtime.test.ts",
     "tests/issue-376-plan-exit.eval.ts",
     "tests/f311-entry-matrix.test.ts",
-    "tests/f311-worker-root.eval.ts"
+    "tests/f311-worker-root.eval.ts",
+    "tests/f311-sdk-default-root.eval.ts"
   ],
   "exclude": ["node_modules", "dist"]
 }
