@@ -167,6 +167,8 @@ export interface BootstrapConstructionRuntimeResult {
   readonly loaded: number;
   readonly failed: number;
   readonly tampered: number;
+  /** Marked active in the project but never approved on this machine (Issue 419). */
+  readonly unapproved: number;
   /**
    * FEATURE_191 (v0.7.43) — count of markdown-defined agents registered
    * from `~/.kodax/agents/*.md` and `<cwd>/.kodax/agents/*.md`. Kept
@@ -202,6 +204,7 @@ export async function bootstrapConstructionRuntime(
     loaded: rehydrated.loaded,
     failed: rehydrated.failed,
     tampered: rehydrated.tampered,
+    unapproved: rehydrated.unapproved,
     markdownLoaded: markdown.loaded,
     markdownFailures: markdown.failed,
   };

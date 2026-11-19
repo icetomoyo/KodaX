@@ -61,6 +61,7 @@ import {
   remaining as remainingBudget,
 } from './budget.js';
 import { readDisableState } from './disable-state.js';
+import { loadConstructionApprovals, recordConstructionApproval } from './approvals.js';
 import {
   runSelfModifyDiffSummary,
   type SelfModifyDiffSummary,
@@ -678,14 +679,20 @@ export async function activate(handle: StagedHandle): Promise<void> {
   await registerActiveArtifact(artifact, { admittedHandle });
 
   // Immutable update — persist a NEW artifact record rather than mutating
-  // the caller's reference. Records contentHash for rehydrate integrity.
-  const activated: ConstructionArtifact = {
+  // the caller's reference. The machine-local approval is what lets a
+  // later boot rehydrate it (Issue 419).
+  await persistApprovedActivation(artifact);
+}
+
+async function persistApprovedActivation(artifact: ConstructionArtifact): Promise<void> {
+  const contentHash = computeContentHash(artifact.content);
+  await recordConstructionApproval(_options.cwd, artifact, contentHash);
+  await persistArtifact({
     ...artifact,
     status: 'active',
     activatedAt: Date.now(),
-    contentHash: computeContentHash(artifact.content),
-  };
-  await persistArtifact(activated);
+    contentHash,
+  });
 }
 
 /**
@@ -880,13 +887,7 @@ async function runSelfModifyActivation(
     admittedHandle: input.admittedHandle,
     deferred: true,
   });
-  const activated: ConstructionArtifact = {
-    ...next,
-    status: 'active',
-    activatedAt: Date.now(),
-    contentHash: computeContentHash(next.content),
-  };
-  await persistArtifact(activated);
+  await persistApprovedActivation(next);
   await appendAuditEntry(
     {
       ts: new Date().toISOString(),
@@ -1071,18 +1072,17 @@ async function registerActiveAgentArtifact(
  *
  * Integrity check: each artifact's `contentHash` (recorded at activate
  * time) is recomputed and compared to the persisted value. Mismatches
- * are tampered = skipped with a stderr warning. This catches naive
- * cross-session edits to the manifest JSON (e.g. an LLM rewriting the
- * file via the Write tool without recomputing the hash). Sophisticated
- * attackers who recompute the hash can bypass this — defense scoped to
- * single-user CLI integrity, not multi-tenant supply chain.
+ * are tampered = skipped with a warning. This catches naive
+ * cross-session edits to the manifest JSON.
  *
- * Legacy artifacts written before contentHash existed are accepted as-is
- * (no hash to compare against) and the missing hash is back-filled on a
- * future activate() — keeps upgrades from breaking previously-approved
- * tools.
+ * Approval check (Issue 419): the manifest is repository data, so a
+ * cloned repository can ship `status: 'active'` with a self-consistent
+ * hash. An artifact loads only when the machine-local approval record
+ * (see approvals.ts) holds this project root, name@version and content
+ * hash. Everything else — including manifests without a hash — counts
+ * as unapproved and stays unloaded until activated again.
  *
- * Returns counts so callers can surface a loaded/failed/tampered banner.
+ * Returns counts so callers can surface a loaded/failed/tampered/unapproved banner.
  * Failures are emitted through the diagnostic channel and rehydration
  * continues for the remaining artifacts; a single bad manifest must not
  * break boot.
@@ -1091,26 +1091,37 @@ export async function rehydrateActiveArtifacts(): Promise<{
   loaded: number;
   failed: number;
   tampered: number;
+  unapproved: number;
 }> {
   const all = await loadAllArtifacts(_options.cwd);
   const active = all.filter((a) => a.status === 'active');
+  if (active.length === 0) return { loaded: 0, failed: 0, tampered: 0, unapproved: 0 };
+  const isApproved = await loadConstructionApprovals(_options.cwd);
 
   let loaded = 0;
   let failed = 0;
   let tampered = 0;
+  let unapproved = 0;
 
   for (const artifact of active) {
-    if (artifact.contentHash) {
-      const recomputed = computeContentHash(artifact.content);
-      if (recomputed !== artifact.contentHash) {
-        tampered += 1;
-        emitKodaXDiagnostic({
-          source: 'coding:construction',
-          level: 'warn',
-          message: `Refusing to rehydrate ${artifact.name}@${artifact.version}: contentHash mismatch (manifest was edited after activation). Re-stage and re-activate to re-approve.`,
-        });
-        continue;
-      }
+    const recomputed = computeContentHash(artifact.content);
+    if (artifact.contentHash && recomputed !== artifact.contentHash) {
+      tampered += 1;
+      emitKodaXDiagnostic({
+        source: 'coding:construction',
+        level: 'warn',
+        message: `Refusing to rehydrate ${artifact.name}@${artifact.version}: contentHash mismatch (manifest was edited after activation). Re-stage and re-activate to re-approve.`,
+      });
+      continue;
+    }
+    if (!artifact.contentHash || !isApproved(artifact, recomputed)) {
+      unapproved += 1;
+      emitKodaXDiagnostic({
+        source: 'coding:construction',
+        level: 'warn',
+        message: `Not loading ${artifact.kind} ${artifact.name}@${artifact.version}: it is marked active in this project but was not approved on this machine. Activate it again from a KodaX session to approve it.`,
+      });
+      continue;
     }
     try {
       await registerActiveArtifact(artifact);
@@ -1126,7 +1137,7 @@ export async function rehydrateActiveArtifacts(): Promise<{
     }
   }
 
-  return { loaded, failed, tampered };
+  return { loaded, failed, tampered, unapproved };
 }
 
 /**

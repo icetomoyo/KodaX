@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-18_
+_Last Updated: 2026-11-19_
 
 ---
 
@@ -46,6 +46,75 @@ This predates the child contract projection; the eval uses raw per-call usage,
 not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
+
+## Issue 419: Opening a repository runs its constructed tool code without approval
+
+- Priority: High
+- Status: Resolved
+- Introduced: `v0.7.28` (FEATURE_087/088 constructed tool rehydrate)
+- Created / Resolved: 2026-11-19 / 2026-11-19
+- Fixed: unreleased (after `v0.7.97-beta.11`)
+
+### Original Problem
+
+Constructed tools and agents live in the project at `.kodax/constructed/`.
+At startup the Ink REPL, `kodax constructed` and `kodax self-modify` call
+`rehydrateActiveArtifacts()` (`InkREPL.tsx:12173`, `constructed_cli.ts:69`,
+`self_modify_cli.ts:61`). It registers every manifest whose `status` is
+`'active'` and imports the tool's JavaScript in a Worker with no permission
+flags (`construction/runtime.ts:1090-1130`, `handler-worker-client.ts:154`).
+
+The only check compares the manifest's `contentHash` with a hash of its own
+`content`, both stored in the same file. A repository author can compute it,
+and a manifest with no `contentHash` is accepted as a legacy artifact. So a
+cloned repository that ships an "active" manifest gets its code run as soon as
+the user starts KodaX inside it, without the activation approval the user would
+see for a tool built in their own session. Found by code reading during the
+prompt-customization review (2026-11-19); not reproduced.
+
+Expected: only artifacts that this user approved on this machine are
+rehydrated. Approval evidence must live where the repository cannot write it.
+
+### Resolution
+
+- Activation records an approval in
+  `<config home>/runtime/construction-approvals.json`. That covers both the
+  policy-gated path and the self-modify ask-user path. Tools cannot write to
+  `runtime/`; Agent Home protection already covers it. Each entry holds the
+  canonical project root, kind, name, version and content hash.
+- Rehydrate loads an artifact only when an entry matches all five. Everything
+  else is skipped with a warning and counted as `unapproved`. This includes
+  manifests with no hash, manifests copied from another root, and anything
+  read while the approval file is unreadable. The REPL banner reports the
+  count.
+- To approve a skipped artifact, activate it again. The policy dialog or the
+  self-modify dialog asks the user as usual.
+- The approval file is written under the KodaX file lock and replaced with a
+  rename. If it cannot be read, a warning is shown and the next activation
+  rewrites it.
+
+Files changed: `construction/approvals.ts` (new), `construction/runtime.ts`,
+`construction/types.ts`, `repl/src/common/construction-bootstrap.ts`,
+`repl/src/ui/InkREPL.tsx`.
+
+Tests added in `construction/runtime.test.ts`:
+
+- a planted manifest with a matching hash is refused;
+- a manifest with no hash is refused;
+- an approval does not carry over to another project root;
+- the approval record lives in Agent Home `runtime/`;
+- an unreadable record loads nothing and warns.
+
+`construction-bootstrap.test.ts` now seeds prior versions through an approved
+activation instead of writing an active manifest by hand.
+
+### Remaining Limits
+
+- Tools and agents activated before this fix have no approval entry. Each one
+  must be activated once more after upgrading.
+- Markdown agents in `<project>/.kodax/agents/` still load without trust. They
+  are instructions, not code. Per-root trust for project sources is planned
+  separately.
 
 ## Issue 415: Ordinary requests start with a Skill search, and weak models load unrelated Skills
 
@@ -3118,6 +3187,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 419 | High | Resolved | Opening a repository runs its constructed tool code without approval | `v0.7.28` | unreleased (after `v0.7.97-beta.11`) | 2026-11-19 | 2026-11-19 |
 | 415 | High | Resolved | Ordinary requests start with a Skill search, and weak models load unrelated Skills | `v0.7.97-beta.5` (compact Worker projection) | unreleased (after `v0.7.97-beta.11`) | 2026-11-17 | 2026-11-18 |
 | 410 | Medium | Resolved | A client exit stop with a connected peer drains the Host and answers late | `v0.7.97-alpha.2` (client exit receipts) | `v0.7.97-beta.9` | 2026-11-13 | 2026-11-13 |
 | 409 | High | Resolved | Windows daemon Job proof and failed-start cleanup prevent recovery | observed in v0.7.97-beta.4 (customer report); PowerShell Job probe since v0.7.97-alpha.7 | `v0.7.97-beta.8` | 2026-11-12 | 2026-11-12 |
@@ -18750,12 +18820,18 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 289 (46 Open including 1 needs-info, 243 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 290 (46 Open including 1 needs-info, 244 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-19: Issue 419
+
+- Constructed tools and agents load at startup only with a machine-local
+  approval record; a repository can no longer ship an "active" tool that runs
+  on open. Earlier activations need one re-activation; unreleased.
 
 ### 2026-11-13: Issue 410
 

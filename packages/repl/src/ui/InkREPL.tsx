@@ -12171,15 +12171,19 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   try {
     const { bootstrapConstructionRuntime } = await import('../common/construction-bootstrap.js');
     const construction = await bootstrapConstructionRuntime(gitRoot ?? process.cwd());
-    if (construction.loaded > 0 || construction.failed > 0 || construction.tampered > 0) {
+    const constructionSkipped = construction.failed + construction.tampered + construction.unapproved;
+    if (construction.loaded > 0 || constructionSkipped > 0) {
       const failedSuffix = construction.failed > 0 ? `; ${construction.failed} failed` : '';
       const tamperedSuffix = construction.tampered > 0
         ? `; ${construction.tampered} skipped due to manifest contentHash mismatch — re-stage and re-activate to re-approve`
         : '';
+      const unapprovedSuffix = construction.unapproved > 0
+        ? `; ${construction.unapproved} not loaded because they were not approved on this machine — activate them again to approve`
+        : '';
       emitKodaXDiagnostic({
         source: 'repl:construction',
-        level: construction.failed > 0 || construction.tampered > 0 ? 'warn' : 'info',
-        message: `Rehydrated ${construction.loaded} active tool(s)${failedSuffix}${tamperedSuffix}.`,
+        level: constructionSkipped > 0 ? 'warn' : 'info',
+        message: `Rehydrated ${construction.loaded} active tool(s)${failedSuffix}${tamperedSuffix}${unapprovedSuffix}.`,
       });
     }
     // FEATURE_191 — surface markdown-defined agent count + per-file failures
