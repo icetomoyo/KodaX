@@ -7,15 +7,14 @@ import { LearnedAreaStore, commitLearnedSkillRevision, createLearnedCapabilitySc
 import { KodaXBaseProvider, KodaXProviderError, registerModelProvider, type KodaXMessage, type KodaXProviderConfig,
   type KodaXStreamResult, type KodaXToolDefinition } from '@kodax-ai/llm';
 import { runManagedTask } from './task-engine.js';
-import { runLeafAgent } from './agent.js';
 import { awaitLatestCodingMemoryReviewDrain } from './memory-runtime.js';
 
-const cases = (['direct', 'ama'] as const).flatMap(mode => [
-  ...(['success', 'error', 'cancel'] as const).map(ending => ({ mode, ending, catalog: 'HOST_CUSTOM_SKILL_CATALOG_MUST_SURVIVE', label: 'custom' })),
-  ...['', '   '].map(catalog => ({ mode, ending: 'success' as const, catalog, label: catalog === '' ? 'empty' : 'whitespace' })),
-]);
+const cases = [
+  ...(['success', 'error', 'cancel'] as const).map(ending => ({ ending, catalog: 'HOST_CUSTOM_SKILL_CATALOG_MUST_SURVIVE', label: 'custom' })),
+  ...['', '   '].map(catalog => ({ ending: 'success' as const, catalog, label: catalog === '' ? 'empty' : 'whitespace' })),
+];
 it.each(cases)(
-  'offers, admits and releases a project canary through $mode ($ending, $label catalog)', async ({ mode, ending, catalog }) => {
+  'offers, admits and releases a project canary through the managed Worker ($ending, $label catalog)', async ({ ending, catalog }) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-learned-entry-'));
   const project = path.join(root, 'project');
   const configHome = path.join(root, 'home');
@@ -38,7 +37,7 @@ it.each(cases)(
   let activeMemoryWork = 0, completedNotice = false, ownedReleases = 0;
   const originalWrite = LearnedAreaStore.prototype.writeCapability;
   const write = vi.spyOn(LearnedAreaStore.prototype, 'writeCapability').mockImplementation(async function (this: LearnedAreaStore, value) {
-    if (mode === 'ama' && value.schemaVersion === 2 && value.capabilityId === record.capabilityId
+    if (value.schemaVersion === 2 && value.capabilityId === record.capabilityId
       && value.canary.invocationCount > 0 && value.canary.binding === undefined) {
       expect(activeMemoryWork).toBeGreaterThan(0);
       expect(completedNotice).toBe(false);
@@ -68,8 +67,8 @@ it.each(cases)(
   }
   const unregister = registerModelProvider('learned-entry-fixture', () => new Provider());
   try {
-    const running = (mode === 'direct' ? runLeafAgent : runManagedTask)({ provider: 'learned-entry-fixture', abortSignal: controller.signal,
-      ...(mode === 'ama' ? { agentMode: mode } : {}), effort: 'none', lsp: false, maxIter: 3, session: { id: identity.sessionId },
+    const running = runManagedTask({ provider: 'learned-entry-fixture', abortSignal: controller.signal,
+      agentMode: 'ama', effort: 'none', lsp: false, maxIter: 3, session: { id: identity.sessionId },
       events: { runMemoryWork: async work => {
         activeMemoryWork++;
         try { await work(controller.signal); } finally { activeMemoryWork--; }
@@ -77,17 +76,10 @@ it.each(cases)(
       context: { executionCwd: project, gitRoot: project, configHome, memoryIdentity: identity, repoIntelligenceMode: 'off',
         skillsPrompt: catalog },
     }, 'Load the project verification instructions.');
-    if (mode === 'ama' && ending !== 'success') {
-      if (ending === 'error') await expect(running).rejects.toBe(failure);
-      else await expect(running).rejects.toMatchObject({ name: 'AbortError' });
-    } else if (ending === 'error') {
-      expect((await running).success).toBe(false);
-    } else {
-      const result = await running;
-      expect(result.success).toBe(true);
-      if (ending === 'cancel') expect(result.interrupted).toBe(true);
-    }
-    // AMA keeps its dynamic catalog outside the stable system prefix.
+    if (ending === 'error') await expect(running).rejects.toBe(failure);
+    else if (ending === 'cancel') await expect(running).rejects.toMatchObject({ name: 'AbortError' });
+    else expect((await running).success).toBe(true);
+    // The managed Worker keeps its dynamic catalog outside the stable system prefix.
     expect(`${requests[0]?.system}\n${JSON.stringify(requests[0]?.messages)}`).toContain('verify-release');
     const prompt = `${requests[0]?.system}\n${JSON.stringify(requests[0]?.messages)}`;
     if (catalog.trim()) expect(prompt).toContain(catalog);
@@ -98,7 +90,7 @@ it.each(cases)(
     if (completed?.schemaVersion !== 2) throw new Error('Expected a scoped learned capability');
     expect(completed.canary).toMatchObject({ invocationCount: 1, verifiedSuccesses: 0 });
     expect(completed.canary).not.toHaveProperty('binding');
-    if (mode === 'ama') expect(ownedReleases).toBeGreaterThan(0);
+    expect(ownedReleases).toBeGreaterThan(0);
     const receipts = await listLearnedSkillUsageReceipts(store, identity.sessionId);
     expect(receipts.map(receipt => receipt.kind).sort()).toEqual(['invoked', 'offered', 'outcome']);
     expect(receipts.find(receipt => receipt.kind === 'outcome')).toMatchObject({ outcome: 'inconclusive' });

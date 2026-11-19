@@ -71,9 +71,9 @@ export interface KodaXAgentProfile {
   /** Human-facing display name. Opaque to the core. */
   readonly name?: string;
   /**
-   * Behavior instructions prepended to the AMA Worker prompt or used as the
-   * direct-engine base prompt, retaining the admitted Skill catalog on either path. An explicit
-   * `context.systemPromptOverride` still replaces the complete direct-engine prompt.
+   * Behavior instructions prepended to the managed Worker prompt or used as a
+   * leaf Agent's base prompt, retaining the admitted Skill catalog on either path. An explicit
+   * `context.systemPromptOverride` still replaces a leaf Agent's complete prompt.
    */
   readonly instructions?: string;
   /**

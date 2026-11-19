@@ -13,7 +13,7 @@ import {
   KodaXNetworkError,
   registerModelProvider,
 } from '@kodax-ai/llm';
-import { runLeafAgent } from './agent.js';
+import { runTestLeaf as runLeafAgent } from './agent-runtime/test-leaf.js';
 import type { KodaXPromptCacheDiagnosticEvent } from './types.js';
 
 const TEST_PROVIDER_NAME = 'feature-045-recovery-provider';

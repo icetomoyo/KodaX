@@ -1023,11 +1023,9 @@ async function runSubstrateInContext(
     options.context?.interruptedRunEvidence,
     messages,
   );
-  const verificationRunContext = (options.context?.systemPromptOverride || options.context?.agentProfile?.instructions)
-    ? [options.context.agentProfile ? EXECUTION_GUIDANCE : undefined,
-        formatVerificationContract(resolveEffectiveVerification(options))]
-        .filter((section): section is string => Boolean(section)).join('\n\n')
-    : undefined;
+  const verificationRunContext = [options.context?.agentProfile ? EXECUTION_GUIDANCE : undefined,
+    formatVerificationContract(resolveEffectiveVerification(options))]
+    .filter((section): section is string => Boolean(section)).join('\n\n') || undefined;
   let title = resumed.title || (
     transcriptPrompt.slice(0, 50) + (transcriptPrompt.length > 50 ? '...' : '')
   );

@@ -42,7 +42,7 @@ import {
   type KodaXDiagnostic,
 } from '@kodax-ai/agent';
 
-import { runLeafAgent } from '../../agent.js';
+import { runTestLeaf as runLeafAgent } from '../test-leaf.js';
 
 const PROVIDER_NAME = 'cap-005-test-provider';
 const API_KEY_ENV = 'CAP_005_TEST_PROVIDER_API_KEY';

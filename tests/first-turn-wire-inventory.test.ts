@@ -113,7 +113,7 @@ it('inventories first serialized requests for isolated content and real Runtime 
     'packages/coding/src/task-engine/_internal/managed-task/role-prompt.ts',
     'packages/coding/src/agents/worker-role-prompt.ts',
     'packages/coding/src/task-engine/runner-driven.ts',
-    'packages/coding/src/prompts/builder.ts',
+    'packages/coding/src/prompts/capability-sections.ts',
     'packages/coding/src/agent-runtime/script/model.ts',
     'packages/coding/src/agent-runtime/script/pilot.ts',
     'packages/coding/src/work-mode.ts',

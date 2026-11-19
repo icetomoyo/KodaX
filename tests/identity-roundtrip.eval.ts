@@ -26,7 +26,7 @@
 import { describe, it, expect } from 'vitest';
 import type { KodaXMessage } from '@kodax-ai/llm';
 import { getProvider } from '@kodax-ai/llm';
-import { buildSystemPrompt } from '@kodax-ai/coding';
+import { buildWorkerSystemPrompt } from '../benchmark/harness/worker-system-prompt.js';
 
 interface ProbeCase {
   id: string;
@@ -94,13 +94,13 @@ async function callProviderOnce(
   userPrompt: string,
 ): Promise<string> {
   const provider = getProvider(providerName);
-  const systemPrompt = await buildSystemPrompt(
+  const systemPrompt = await buildWorkerSystemPrompt(
     {
       provider: providerName,
       model,
       context: { executionCwd: process.cwd() },
     },
-    true,
+    userPrompt,
   );
 
   const messages: KodaXMessage[] = [

@@ -17,7 +17,6 @@ import {
   type UnifiedLearningReviewResult,
 } from '@kodax-ai/agent';
 import {
-  buildSystemPrompt,
   getToolDefinition,
   LEARNING_REVIEW_PROMPT_SHA256,
   LEARNING_REVIEW_SCHEMA_SHA256,
@@ -35,6 +34,7 @@ import {
 import type { ModelAlias } from '../../harness/aliases.js';
 import { MODEL_ALIASES } from '../../harness/aliases.js';
 import { runOneShot } from '../../harness/harness.js';
+import { buildWorkerSystemPrompt } from '../../harness/worker-system-prompt.js';
 import {
   FEATURE_263_DOWNSTREAM_CASES,
   FEATURE_263_REVIEWER_CASES,
@@ -685,7 +685,7 @@ function downstreamPriorMessages(
 async function buildAllDownstreamSystemPrompts(): Promise<Readonly<Record<string, string>>> {
   const repositoryRoot = git('rev-parse', '--show-toplevel').trim();
   const entries = await Promise.all(FEATURE_263_DOWNSTREAM_CASES.map(async (evalCase) => {
-    const prompt = await buildSystemPrompt({
+    const prompt = await buildWorkerSystemPrompt({
       provider: 'feature-263-eval',
       context: {
         executionCwd: repositoryRoot,
@@ -696,7 +696,7 @@ async function buildAllDownstreamSystemPrompts(): Promise<Readonly<Record<string
           'The transcript contains the exact result of the already-completed skill call.',
         ].join('\n'),
       },
-    }, false);
+    }, evalCase.task, false);
     return [evalCase.id, prompt] as const;
   }));
   return Object.fromEntries(entries);

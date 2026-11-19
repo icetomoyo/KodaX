@@ -117,13 +117,9 @@ export function createRolePrompt(
 
 
   // v0.7.26 NEW-1 — inject the workspace environment at prompt head.
-  // The direct engine gets this via `buildSystemPrompt` (Working Directory
-  // + environment-context); the Runner-driven path bypasses that
-  // builder entirely. Without this block, managed workers guess paths
-  // (e.g. `cd /d/user/kodax/workspace` when
-  // the real cwd is `C:\Works\GitWorks\...`). Name the block after the
-  // direct-engine surface so the LLM can correlate with anything it already
-  // learned from `buildSystemPrompt`.
+  // Without this block, managed workers guess paths (e.g.
+  // `cd /d/user/kodax/workspace` when the real cwd is
+  // `C:\Works\GitWorks\...`).
   const workspace = rolePromptContext?.workspace;
   const workspaceSection = workspace
     ? [
@@ -139,9 +135,8 @@ export function createRolePrompt(
             ? 'macOS'
             : workspace.platform
       }${workspace.osRelease ? ` (${workspace.osRelease})` : ''}`,
-      // Runtime fact — the AMA Worker and its children
-      // bypass `buildSystemPrompt` and would otherwise have no provider /
-      // model context, causing the LLM to fall back on pretraining
+      // Runtime fact — without it the Worker and its children have no
+      // provider / model context, causing the LLM to fall back on pretraining
       // identity (e.g. GLM-5.1 self-reporting as Claude). Preflight
       // (2026-04, ark-coding/glm-5.1) confirmed two lines here flip the
       // answer from "I'm Claude" to "I'm GLM-5.1".
@@ -160,9 +155,8 @@ export function createRolePrompt(
     ].join('\n')
     : undefined;
 
-  // v0.7.35.1 FEATURE_144 — capability-context sections the AMA worker
-  // bypasses by going through `runner-driven.ts` instead of
-  // `buildSystemPrompt`. Pre-computed parent-side so each per-role
+  // v0.7.35.1 FEATURE_144 — capability-context sections (MCP, project
+  // rules, git, snapshot, skills, tool construction). Pre-computed parent-side so each per-role
   // invocation reuses the same MCP / AGENTS.md / git / project-snapshot
   // / tool-construction / skills truth. See
   // `ManagedRolePromptContext.capabilityContextBlock` JSDoc for the
@@ -195,12 +189,10 @@ export function createRolePrompt(
     ? rolePromptContext.teamModeSection
     : undefined;
 
-  // v0.7.26 fix — managed workers bypass `buildSystemPrompt` (direct-engine
-  // path), so the base `SYSTEM_PROMPT` discipline sections (tmp-directory
-  // rule, mkdir warning, cross-platform notes) never reached the LLM. The
-  // result: workers wrote scratch files to project root / system tmp
-  // instead of `.agent/tmp/`. Re-inject the essential discipline as a
-  // shared block prepended to every role's prompt.
+  // v0.7.26 fix — without the scratch-file discipline (tmp-directory rule,
+  // mkdir warning, cross-platform notes), workers wrote scratch files to the
+  // project root / system tmp instead of `.agent/tmp/`. This shared block is
+  // prepended to every role's prompt.
   // The workspace block states the host shell, so the dense rules drop the per-platform command table.
   const sharedWorkerDiscipline = workspace
     ? staticText("managed-worker.workspace-discipline.known-host") : WORKER_WORKSPACE_DISCIPLINE;

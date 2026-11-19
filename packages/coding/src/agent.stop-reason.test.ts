@@ -18,7 +18,7 @@ import {
   type KodaXDiagnostic,
 } from '@kodax-ai/agent';
 
-import { runLeafAgent } from './agent.js';
+import { runTestLeaf as runLeafAgent } from './agent-runtime/test-leaf.js';
 
 const TEST_PROVIDER_NAME = 'stop-reason-scripted-provider';
 const TEST_PROVIDER_API_KEY_ENV = 'STOP_REASON_SCRIPTED_PROVIDER_API_KEY';

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { KodaXBaseProvider, registerModelProvider, type KodaXMessage, type KodaXProviderConfig,
   type KodaXStreamResult, type KodaXToolDefinition } from '@kodax-ai/llm';
-import { runLeafAgent } from './agent.js';
+import { runTestLeaf as runLeafAgent } from './agent-runtime/test-leaf.js';
 import { createExtensionRuntime } from './extensions/runtime.js';
 import { awaitLatestCodingMemoryReviewDrain } from './memory-runtime.js';
 

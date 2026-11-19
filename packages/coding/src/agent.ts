@@ -2,7 +2,7 @@
  * KodaX leaf executor.
  *
  * `runLeafAgent(opts, prompt)` delegates to
- * `Runner.run(createDefaultCodingAgent(), …)` so leaf execution flows through
+ * `Runner.run(createCodingAgent(runSubstrate), …)` so leaf execution flows through
  * the Layer-A frame (ADR-020). The substrate body lives in
  * `agent-runtime/run-substrate.ts` (`runSubstrate`) and is wired via the
  * `Agent.substrateExecutor` closure attached in `coding-preset.ts`.
@@ -12,7 +12,8 @@ import { Runner } from '@kodax-ai/agent';
 import { resolveWorkMode } from './work-mode.js';
 import { runWithScopedConfig } from '@kodax-ai/llm';
 
-import { createDefaultCodingAgent } from './coding-preset.js';
+import { runSubstrate } from './agent-runtime/run-substrate.js';
+import { createCodingAgent } from './coding-preset.js';
 import { applyFollowupEscalationToOptions } from './reasoning.js';
 import { deriveRunScopedConfig } from './run-scoped-config.js';
 import {
@@ -62,7 +63,7 @@ export async function runLeafAgent(
   let failure: unknown;
   try {
     return await runWithScopedConfig(deriveRunScopedConfig(runtimeOptions), async () => {
-      const result = await Runner.run<KodaXResult>(createDefaultCodingAgent(), prompt, {
+      const result = await Runner.run<KodaXResult>(createCodingAgent(runSubstrate), prompt, {
         presetOptions: runtimeOptions,
         abortSignal: runtimeOptions.abortSignal,
         // FEATURE_092 (v0.7.33): forward caller-supplied run-scoped guardrails.
@@ -77,7 +78,7 @@ export async function runLeafAgent(
       if (!result.data) {
         throw new Error(
           'runLeafAgent: substrate executor did not lift KodaXResult onto RunResult.data — '
-          + 'verify createDefaultCodingAgent().substrateExecutor in coding-preset.ts',
+          + 'verify createCodingAgent().substrateExecutor in coding-preset.ts',
         );
       }
       return result.data;

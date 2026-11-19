@@ -7,7 +7,7 @@ import { Runner, SkillRegistry } from '@kodax-ai/agent';
 import { KodaXBaseProvider, registerModelProvider, type KodaXMessage, type KodaXToolDefinition,
   type KodaXStreamResult, type KodaXProviderStreamOptions } from '@kodax-ai/llm';
 import { runKodaX, runManagedTask } from '../packages/coding/src/task-engine.js';
-import { createDefaultCodingAgent } from '../packages/coding/src/coding-preset.js';
+import { createDefaultCodingAgent } from '../packages/coding/src/default-coding-agent.js';
 import type { KodaXOptions } from '../packages/coding/src/types.js';
 import { FileSessionStorage } from '../packages/repl/src/interactive/storage.js';
 

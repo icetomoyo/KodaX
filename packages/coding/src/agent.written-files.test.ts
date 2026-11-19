@@ -12,7 +12,7 @@ import {
   KodaXBaseProvider, clearRuntimeModelProviders, registerModelProvider,
   type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult,
 } from '@kodax-ai/llm';
-import { runLeafAgent } from './agent.js';
+import { runTestLeaf as runLeafAgent } from './agent-runtime/test-leaf.js';
 import { runManagedTaskViaRunner } from './task-engine/runner-driven.js';
 import type { KodaXOptions } from './types.js';
 

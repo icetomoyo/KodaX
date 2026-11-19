@@ -11,7 +11,7 @@ import {
   type KodaXStreamResult,
   type KodaXToolDefinition,
 } from '@kodax-ai/llm';
-import { runLeafAgent } from './agent.js';
+import { runTestLeaf as runLeafAgent } from './agent-runtime/test-leaf.js';
 import { LEARNING_REVIEW_TOOL } from './learning-reviewer.js';
 import { awaitLatestCodingMemoryReviewDrain } from './memory-runtime.js';
 

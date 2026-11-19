@@ -77,7 +77,7 @@ import {
   resolveMemoryRoot,
   resolveMemoryEntrypoint,
 } from '@kodax-ai/agent';
-import { buildSystemPrompt } from '@kodax-ai/coding';
+import { buildWorkerSystemPrompt } from '../benchmark/harness/worker-system-prompt.js';
 
 import { availableAliases, type ModelAlias } from '../benchmark/harness/aliases.js';
 import { runOneShot } from '../benchmark/harness/harness.js';
@@ -441,12 +441,12 @@ describe('FEATURE_124 Phase E — memory subsystem smoke eval', () => {
               const memoryDir = resolveMemoryRoot(tempCwd);
               c.seed(memoryDir);
 
-              const systemPrompt = await buildSystemPrompt(
+              const systemPrompt = await buildWorkerSystemPrompt(
                 {
                   provider: 'openai',
                   context: { executionCwd: tempCwd, gitRoot: tempCwd },
                 },
-                true,
+                c.userMessage,
               );
 
               // eslint-disable-next-line no-console

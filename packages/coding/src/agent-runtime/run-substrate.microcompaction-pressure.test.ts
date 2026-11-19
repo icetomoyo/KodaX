@@ -19,7 +19,7 @@ import type {
 } from '@kodax-ai/llm';
 import { compact as mockedCompact } from '@kodax-ai/agent';
 
-import { runSubstrate } from './run-substrate.js';
+import { runTestSubstrate as runSubstrate } from './test-leaf.js';
 
 const compactMock = mockedCompact as unknown as ReturnType<typeof vi.fn>;
 

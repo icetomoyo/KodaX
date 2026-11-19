@@ -36,7 +36,7 @@ import {
   KODAX_ESCALATED_MAX_OUTPUT_TOKENS,
   registerModelProvider,
 } from '@kodax-ai/llm';
-import { runLeafAgent } from './agent.js';
+import { runTestLeaf as runLeafAgent } from './agent-runtime/test-leaf.js';
 import { readTransientTextArtifact } from './transient-text-artifacts.js';
 import { USER_INPUT_MEMORY_SYSTEM } from './user-input-memory.js';
 

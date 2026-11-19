@@ -6,7 +6,7 @@ import { Runner, SkillRegistry } from '@kodax-ai/agent';
 import { KodaXBaseProvider, registerModelProvider, type KodaXMessage,
   type KodaXToolDefinition, type KodaXStreamResult } from '@kodax-ai/llm';
 import { runManagedTask } from '../packages/coding/src/task-engine.js';
-import { createDefaultCodingAgent } from '../packages/coding/src/coding-preset.js';
+import { createDefaultCodingAgent } from '../packages/coding/src/default-coding-agent.js';
 import type { KodaXOptions } from '../packages/coding/src/types.js';
 import { createRuntimeAgentBindingService } from '../src/runtime-agent-binding.js';
 
@@ -78,7 +78,7 @@ it.each(['ama', 'runner'] as const)('keeps an admitted Skill discoverable under 
       taskVerification: { summary: 'TASK_VERIFY', requiredChecks: ['TASK_CHECK'] } } });
     expect(requests[0]!.system, entry).toContain('PROFILE_INSTRUCTIONS');
     expect(requests[0]!.tools).toContain('skill');
-    // AMA carries capability catalogs in request messages, while the Runner preset uses system.
+    // The managed Worker carries capability catalogs in request messages.
     const modelContext = `${requests[0]!.system}\n${JSON.stringify(requests[0]!.messages)}`;
     expect(modelContext, entry).toContain('- audit-evidence:');
     expect(modelContext).not.toContain('- private-skill:');
@@ -87,7 +87,8 @@ it.each(['ama', 'runner'] as const)('keeps an admitted Skill discoverable under 
       expect(modelContext).toContain('TASK_VERIFY');
       expect(modelContext).toContain('PROFILE_EVIDENCE');
       expect(modelContext).toContain('TASK_CHECK');
-      // The Runner preset still renders system.md; the managed Worker renders its own execution section.
+      // Both entries run the managed Worker. Its full sections need the AMA delegation tools;
+      // a root without them gets the limited sections, which carry the shared execution guidance.
       expect(modelContext).toContain(mode === 'ama' ? 'EXECUTION, RECOVERY AND DELIVERY' : 'EXECUTION GUIDANCE (match your approach');
     }
     expect(JSON.stringify(requests[1]?.messages), entry).toContain('BODY_audit-evidence');
@@ -100,9 +101,11 @@ it.each(['ama', 'runner'] as const)('keeps an admitted Skill discoverable under 
   expect(requests[0]!.tools).not.toContain('skill');
   expect(`${requests[0]!.system}\n${JSON.stringify(requests[0]!.messages)}`).not.toContain('- audit-evidence:');
   expect(requests[0]!.system).toContain('PROFILE_INSTRUCTIONS');
-  if (mode !== 'ama') {
-    requests.length = 0;
-    await execute({ provider: name, context: { ...profileContext, systemPromptOverride: 'COMPLETE_CALLER_OVERRIDE' } });
-    expect(requests[0]!.system).toBe('COMPLETE_CALLER_OVERRIDE');
-  }
+  requests.length = 0;
+  await execute({ provider: name, context: { ...profileContext, systemPromptOverride: 'COMPLETE_CALLER_OVERRIDE' } });
+  // On the managed Worker an override replaces identity and guidance; KodaX still appends its runtime blocks.
+  expect(requests[0]!.system.startsWith('COMPLETE_CALLER_OVERRIDE')).toBe(true);
+  expect(requests[0]!.system).toContain('## Environment');
+  expect(requests[0]!.system).not.toContain('PROFILE_INSTRUCTIONS');
+  expect(requests[0]!.system).not.toContain('EXECUTION GUIDANCE (match your approach');
 });

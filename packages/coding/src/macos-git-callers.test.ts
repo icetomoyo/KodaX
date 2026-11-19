@@ -82,7 +82,7 @@ describe('SDK callers when macOS Git would request developer tools', () => {
     const sections = await buildCapabilityContextSections({
       provider: 'anthropic', context: { executionCwd: cwd },
     }, true);
-    expect(sections.some((section) => section.id === 'working-directory')).toBe(true);
+    expect(sections.some((section) => section.id === 'project-snapshot')).toBe(true);
     expect(sections.some((section) => section.id === 'git-context')).toBe(false);
     expect(childProcess.exec).not.toHaveBeenCalled();
   });

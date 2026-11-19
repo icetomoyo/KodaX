@@ -4,8 +4,6 @@
  * 提示词模块统一导出
  */
 
-export { SYSTEM_PROMPT } from './system.js';
-export { buildSystemPrompt, buildSystemPromptSnapshot } from './builder.js';
 export { buildCapabilityContextSections } from './capability-sections.js';
 export {
   PROMPT_SECTION_REGISTRY,

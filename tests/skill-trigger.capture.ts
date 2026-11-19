@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { createAgentActorController } from '../packages/agent/src/actors/index.js';
 import { setAgentConfigHome } from '../packages/agent/src/runtime/agent-home.js';
 import { initializeSkillRegistry, resetSkillRegistry } from '../packages/agent/src/capabilities/skills/skill-registry.js';
-import { buildSystemPromptSnapshot } from '../packages/coding/src/prompts/builder.js';
+import { buildCapabilityContextSections } from '../packages/coding/src/prompts/capability-sections.js';
 import { buildRunnerAgentChain } from '../packages/coding/src/task-engine/_internal/managed-task/agent-chain.js';
 import { buildRunnerLlmAdapter } from '../packages/coding/src/task-engine/_internal/managed-task/llm-adapter.js';
 import { createRolePrompt } from '../packages/coding/src/task-engine/_internal/managed-task/role-prompt.js';
@@ -56,12 +56,10 @@ export async function captureSkillTriggerInputs(
     const skillsPrompt = registry.getSystemPromptSnippet();
     if (!skillsPrompt.includes('## Available Skills')) throw new Error('Capture must include a model-visible Skill catalog');
     const context = { executionCwd: workspace, gitRoot: workspace, skillsPrompt };
-    const snapshot = await buildSystemPromptSnapshot({ provider: 'zhipu-coding', context }, true);
-    const owned = new Set(['base-system', 'base-system-suffix', 'environment-context', 'runtime-fact', 'working-directory', 'session-scratch-directory', 'repo-intelligence-context', 'execution-guidance', 'active-skill-invocation']);
+    const shared = await buildCapabilityContextSections({ provider: 'zhipu-coding', context }, true);
     const stableIds = new Set(['project-agents', 'self-knowledge-routing', 'memory-rules', 'tool-construction']);
-    const shared = snapshot.sections.filter(section => !owned.has(section.id));
     // Default CLI/REPL runs are AMA: the root holds an Actor client, which adds delegation tools and
-    // with them the full Worker contract. KODAX_SKILL_CAPTURE_ACTOR=0 models SA.
+    // with them the full Worker contract. KODAX_SKILL_CAPTURE_ACTOR=0 models a root without one.
     const actor = process.env.KODAX_SKILL_CAPTURE_ACTOR === '0' ? undefined
       : await createAgentActorController({ executor: { execute: async () => ({ output: 'capture only' }) } });
     const actorControl = actor?.bind('/root');
@@ -103,7 +101,7 @@ export async function captureSkillTriggerInputs(
 // Files whose bytes reach the captured request; candidates must not drift after freeze.
 const SOURCE_FILES = ['packages/agent/src/capabilities/skills/skill-registry.ts',
   'packages/coding/src/prompts/static-text.json', 'packages/coding/src/tools/tool-definitions.ts', 'packages/coding/src/agents/worker-role-prompt.ts',
-  'packages/coding/src/task-engine/_internal/managed-task/role-prompt.ts', 'packages/coding/src/prompts/builder.ts',
+  'packages/coding/src/task-engine/_internal/managed-task/role-prompt.ts',
   'packages/coding/src/prompts/capability-sections.ts',
   'packages/coding/src/tools/tool-definitions.ts', 'packages/coding/src/tools/deferred-tools.ts', 'packages/coding/src/tools/skill.ts'];
 

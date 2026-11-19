@@ -14,7 +14,7 @@ import {
   registerModelProvider,
 } from '@kodax-ai/llm';
 import { ContextCapacityError } from '@kodax-ai/agent';
-import { runLeafAgent } from './agent.js';
+import { runTestLeaf as runLeafAgent } from './agent-runtime/test-leaf.js';
 import type { RuntimeContextBudgetSnapshot } from './agent-runtime/context-budget.js';
 import type { RuntimeToolExposurePlan } from './agent-runtime/tool-exposure-planner.js';
 import type { KodaXPromptCacheDiagnosticEvent } from './types.js';

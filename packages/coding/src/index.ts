@@ -582,9 +582,6 @@ export {
 // ============== Prompts ==============
 
 export {
-  SYSTEM_PROMPT,
-  buildSystemPrompt,
-  buildSystemPromptSnapshot,
   buildCapabilityContextSections,
   PROMPT_SECTION_REGISTRY,
   buildPromptSnapshot,
@@ -1068,10 +1065,8 @@ export {
   workerAgent,
 } from './agents/task-engine-agents.js';
 
-export {
-  DEFAULT_CODING_AGENT_NAME,
-  createDefaultCodingAgent,
-} from './coding-preset.js';
+export { DEFAULT_CODING_AGENT_NAME } from './coding-preset.js';
+export { createDefaultCodingAgent } from './default-coding-agent.js';
 
 // FEATURE_085 (v0.7.26): adapter wrapping the legacy per-tool truncation
 // policy as a Layer A ToolGuardrail.afterTool. Opt-in — the direct-engine (coding preset) path

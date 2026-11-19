@@ -11,7 +11,7 @@ import { getProvider, type KodaXBaseProvider } from '../packages/llm/src/index.j
 import type { KodaXMessage, KodaXStreamResult, KodaXToolDefinition } from '../packages/llm/src/types.js';
 import { compact, COMPACTION_SUMMARY_PREFIX, COMPACTED_HISTORY_RECOVERY_GUIDANCE } from '../packages/agent/src/session-lineage/compaction/compaction.js';
 import { getAgentConfigHome, setAgentConfigHome } from '../packages/agent/src/runtime/agent-home.js';
-import { buildSystemPromptSnapshot } from '../packages/coding/src/prompts/builder.js';
+import { buildWorkerSystemPrompt } from '../benchmark/harness/worker-system-prompt.js';
 import { CODING_SUMMARY_PROMPT, CODING_UPDATE_SUMMARY_PROMPT } from '../packages/coding/src/agent-runtime/coding-compaction-prompts.js';
 import { KODAX_TOOLS } from '../packages/coding/src/tools/registry.js';
 import { toolRead } from '../packages/coding/src/tools/read.js';
@@ -54,8 +54,9 @@ export async function prepareDocumentPilot(directory: string, options: { provide
   process.env.KODAX_HOME = configHome;
   setAgentConfigHome(configHome);
   try {
-    system = (await buildSystemPromptSnapshot({ provider: 'deepseek', model: 'deepseek-flash', workMode: 'coding',
-      context: { executionCwd: workspace, gitRoot: workspace, repoIntelligenceMode: 'off' } }, true)).rendered;
+    system = await buildWorkerSystemPrompt({ provider: 'deepseek', model: 'deepseek-flash', workMode: 'coding',
+      context: { executionCwd: workspace, gitRoot: workspace, repoIntelligenceMode: 'off' } },
+      'Answer a read-scope question about a long document from the supplied source ranges.');
   } finally {
     if (oldHome === undefined) delete process.env.KODAX_HOME; else process.env.KODAX_HOME = oldHome;
     setAgentConfigHome(oldAgentHome);
@@ -101,7 +102,7 @@ export async function prepareDocumentPilot(directory: string, options: { provide
   const sourceFiles = ['tests/small-context-document-pilot.eval.ts', 'tests/small-context-document-pilot-support.ts',
     'packages/agent/src/session-lineage/compaction/compaction.ts', 'packages/agent/src/session-lineage/compaction/summary-generator.ts',
     'packages/agent/src/session-lineage/compaction/query-ledger.ts', 'packages/agent/src/tokenizer.ts',
-    'packages/coding/src/agent-runtime/coding-compaction-prompts.ts', 'packages/coding/src/prompts/builder.ts',
+    'packages/coding/src/agent-runtime/coding-compaction-prompts.ts', 'packages/coding/src/task-engine/_internal/managed-task/role-prompt.ts',
     'packages/coding/src/prompts/capability-sections.ts', 'packages/coding/src/tools/tool-definitions.ts', 'packages/coding/src/tools/read.ts'];
   const providerSources = (await fs.readdir('packages/llm/src', { recursive: true })).filter(file => file.endsWith('.ts') && !file.endsWith('.test.ts'));
   for (const file of [...sourceFiles, ...providerSources.map(file => `packages/llm/src/${file.replaceAll('\\', '/')}`)]) {

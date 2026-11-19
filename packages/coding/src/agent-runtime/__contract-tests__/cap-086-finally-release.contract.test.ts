@@ -44,7 +44,7 @@ import type {
   KodaXToolDefinition,
 } from '@kodax-ai/llm';
 
-import { runLeafAgent } from '../../agent.js';
+import { runTestLeaf as runLeafAgent } from '../test-leaf.js';
 import {
   createExtensionRuntime,
   getActiveExtensionRuntime,

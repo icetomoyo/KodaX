@@ -14,7 +14,7 @@ import { afterEach, describe, it } from 'vitest';
 import { getCostRate, getProvider, type KodaXMessage } from '@kodax-ai/llm';
 import { availableAliases, resolveAlias } from '../benchmark/harness/aliases.js';
 import { KODAX_TOOLS } from '../packages/coding/src/tools/registry.js';
-import { SYSTEM_PROMPT } from '../packages/coding/src/prompts/system.js';
+import { buildWorkerSystemPrompt } from '../benchmark/harness/worker-system-prompt.js';
 import { executeWithPermission } from '../packages/repl/src/permission/executor.js';
 import { getPlanModeBlockReason } from '../packages/coding/src/permissions/permission.js';
 import { toolRead } from '../packages/coding/src/tools/read.js';
@@ -76,11 +76,13 @@ describe('Issue 376 plan-exit production wording pilot', () => {
     writeFileSync(path.join(root, 'scope.json'), JSON.stringify({ revision: 2, baselineRef, aliases, requests: aliases.length * 4, budget,
       validity: 'Real read receipts and an implementation-ready plan eliminate missing-file reconnaissance as a competing next action.',
       rubric: 'Compare safe plan submission, unnecessary state reads/questions, stale tool names and denied-write repetition; valid preparation is not harm. Main reviews blinded pairs before labels. No general intelligence equivalence claim.',
-      scope: 'Production base system and complete tool definitions; isolated next-action wording probe, not full AMA prompt or intelligence equivalence.' }, null, 2));
+      scope: 'Production managed Worker prompt and complete tool definitions; isolated next-action wording probe, not full AMA prompt or intelligence equivalence.' }, null, 2));
     process.stdout.write(`Plan-exit raw pairs require semantic review: ${root}\n`);
     const outcomes = await Promise.allSettled(aliases.map(async alias => {
       for (const task of cases) for (const [index, arm] of (Number.parseInt(randomUUID()[0]!, 16) % 2 ? ['baseline', 'candidate'] as const : ['candidate', 'baseline'] as const).entries()) {
         if (stopped) throw new Error('Pilot budget exhausted or usage unavailable; no follow-up allowed.');
+        const { provider, model } = resolveAlias(alias);
+        const systemPrompt = await buildWorkerSystemPrompt({ provider, model, context: { executionCwd: fixture, gitRoot: fixture } }, task.prompt);
         const tools = KODAX_TOOLS.map(tool => {
           // Builtin definitions are the single model-facing tool text since FEATURE_311.
           const projected = tool;
@@ -90,7 +92,7 @@ describe('Issue 376 plan-exit production wording pilot', () => {
         const priorMessages: KodaXMessage[] = [...task.messages,
           ...(task.id === 'denied-write' ? [{ role: 'user' as const, content: [{ type: 'tool_result' as const, tool_use_id: 'write-1',
             content: String(arm === 'baseline' ? oldDenied : currentDenied), is_error: true }] }] : [])];
-        const input = { systemPrompt: SYSTEM_PROMPT, tools, priorMessages, userMessage: task.prompt,
+        const input = { systemPrompt, tools, priorMessages, userMessage: task.prompt,
           timeoutMs: budget.timeoutMs, maxOutputTokens: budget.maxOutputTokensPerCall };
         const label = `${alias.replaceAll('/', '-')}-${task.id}-${index === 0 ? 'X' : 'Y'}`;
         mapping[label] = arm;
@@ -107,7 +109,7 @@ describe('Issue 376 plan-exit production wording pilot', () => {
           reservedTokens += reserve; reservedUsd += reserveCost;
           let cellCalls = 0;
           const output = await getProvider(target.provider).stream([...priorMessages, { role: 'user', content: task.prompt }], tools,
-            SYSTEM_PROMPT, undefined, { modelOverride: target.model, singleAttempt: true,
+            systemPrompt, undefined, { modelOverride: target.model, singleAttempt: true,
               maxOutputTokensOverride: budget.maxOutputTokensPerCall, signal: AbortSignal.timeout(budget.timeoutMs),
               fetch: async (...args) => {
                 if (stopped || cellCalls >= budget.maxCallsPerCell || physicalCalls >= budget.maxProviderCalls) throw new Error('Physical pilot request budget exhausted.');

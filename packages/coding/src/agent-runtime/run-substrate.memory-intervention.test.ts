@@ -23,10 +23,8 @@ import { compact as mockedCompact } from '@kodax-ai/agent';
 
 import { MEMORY_EVIDENCE_PREFIX } from '../memory/rendering.js';
 import type { RuntimeContextBudgetSnapshot } from './context-budget.js';
-import {
-  runSubstrate,
-  shouldInstallProductionLearningReviewer,
-} from './run-substrate.js';
+import { shouldInstallProductionLearningReviewer } from './run-substrate.js';
+import { runTestSubstrate as runSubstrate } from './test-leaf.js';
 
 const compactMock = mockedCompact as unknown as ReturnType<typeof vi.fn>;
 const PROVIDER_NAME = 'memory-intervention-runtime-test';

@@ -12,7 +12,7 @@ import {
   KodaXBaseProvider,
   registerModelProvider,
 } from '@kodax-ai/llm';
-import { runLeafAgent } from './agent.js';
+import { runTestLeaf as runLeafAgent } from './agent-runtime/test-leaf.js';
 
 const TEST_PROVIDER_NAME = 'feature-029-bridge-provider';
 const TEST_PROVIDER_API_KEY_ENV = 'FEATURE_029_BRIDGE_PROVIDER_API_KEY';
@@ -120,11 +120,8 @@ describe('runLeafAgent provider policy integration', () => {
     expect(Feature029BridgeProvider.calls[0]?.system).toContain(
       '[Provider Constraint] WARN:',
     );
-    // Router harness/mode overlay retired (ADR-043 P1.7): the SA agent now
-    // self-judges from the static EXECUTION GUIDANCE block instead of being
-    // told its harness tier. Provider-policy notes (asserted above) still flow
-    // via the separate provider-policy-gate path — they are NOT affected.
-    expect(Feature029BridgeProvider.calls[0]?.system).toContain('EXECUTION GUIDANCE');
+    // The retired router overlay must not return; provider-policy notes still
+    // flow through the separate provider-policy gate.
     expect(Feature029BridgeProvider.calls[0]?.system).not.toContain('[Harness Profile');
     expect(
       Feature029BridgeProvider.calls[0]?.system.match(

@@ -374,7 +374,7 @@ const WORKER_SECTIONS: readonly WorkerSectionDefinition[] = [
   { id: 'repo-intelligence-tools', tag: 'capability', render: renderRepoIntelligenceTools },
   { id: 'agent-collaboration', tag: 'capability', render: renderCollaboration },
   { id: 'agent-steering', tag: 'capability', render: tools => tools.fullCollaboration ? staticText("worker.agent-steering") : undefined },
-  // Static EXECUTION GUIDANCE (shared with the direct-engine path) replaces the
+  // Static EXECUTION GUIDANCE (shared with agentProfile leaf runs) replaces the
   // router-injected EXECUTION_MODE / HARNESS_PROFILE overlays — the Worker
   // self-judges the kind of work instead of being told by a keyword router.
   // See `prompts/execution-guidance.ts` + ADR-043.

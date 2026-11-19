@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { clearRuntimeModelProviders, createCustomProvider, KodaXProviderError, registerModelProvider } from '@kodax-ai/llm';
-import { runLeafAgent } from '../agent.js';
+import { runTestLeaf as runLeafAgent } from './test-leaf.js';
 import { runManagedTaskViaRunner } from '../task-engine/runner-driven.js';
 import { _resetMessageQueueForTests, actorQueueId, getMessageQueue } from '@kodax-ai/agent';
 import { CodingActorSession } from './actor-runtime.js';

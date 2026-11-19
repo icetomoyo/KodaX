@@ -6,7 +6,7 @@ import { KodaXBaseProvider, registerModelProvider, type KodaXMessage, type KodaX
   type KodaXReasoningRequest, type KodaXStreamResult, type KodaXToolDefinition } from '@kodax-ai/llm';
 import type { KodaXProviderStreamOptions } from '@kodax-ai/llm';
 import { runManagedTask } from './task-engine.js';
-import { runLeafAgent } from './agent.js';
+import { runTestLeaf as runLeafAgent } from './agent-runtime/test-leaf.js';
 import { createSessionControl } from './running-session.js';
 import { createExtensionRuntime } from './extensions/runtime.js';
 import { awaitLatestCodingMemoryReviewDrain } from './memory-runtime.js';

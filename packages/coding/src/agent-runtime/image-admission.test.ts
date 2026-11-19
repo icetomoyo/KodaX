@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createAgent, Runner } from '@kodax-ai/agent';
 import { clearRuntimeModelProviders, createCustomProvider, registerModelProvider, type KodaXMessage } from '@kodax-ai/llm';
-import { runLeafAgent } from '../agent.js';
+import { runTestLeaf as runLeafAgent } from './test-leaf.js';
 import { runManagedTaskViaRunner } from '../task-engine/runner-driven.js';
 import { CodingActorSession } from './actor-runtime.js';
 import * as providerHook from './provider-hook.js';

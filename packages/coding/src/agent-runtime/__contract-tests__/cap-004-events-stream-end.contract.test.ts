@@ -29,7 +29,7 @@ import type {
   KodaXToolDefinition,
 } from '@kodax-ai/llm';
 
-import { runLeafAgent } from '../../agent.js';
+import { runTestLeaf as runLeafAgent } from '../test-leaf.js';
 
 const PROVIDER_NAME = 'cap-004-test-provider';
 const API_KEY_ENV = 'CAP_004_TEST_PROVIDER_API_KEY';

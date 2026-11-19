@@ -27,7 +27,7 @@ import type {
   KodaXToolDefinition,
 } from '@kodax-ai/llm';
 
-import { runLeafAgent } from '../agent.js';
+import { runTestLeaf as runLeafAgent } from './test-leaf.js';
 import { deriveCodingMemoryIdentity } from '../memory-runtime.js';
 import { CodingActorSession } from './actor-runtime.js';
 

@@ -1,36 +1,29 @@
 /**
- * Unit test for coding-preset wiring.
- *
- * v0.7.23 (FEATURE_080): tested the "Option Y" path —
- *   `registerPresetDispatcher` registered a dispatcher; `Runner.run`
- *   routed to it via the registry.
- *
- * v0.7.29 (FEATURE_100): Option Y deleted per ADR-020. The substrate
- *   executor is now attached directly to the Agent declaration via
- *   `Agent.substrateExecutor`; `Runner.run` consults that field
- *   *before* the registry. This test reflects the new shape — a mock
- *   executor is attached to a custom Agent (NOT registered globally),
- *   exercising the declaration-borne dispatch path.
+ * Unit test for coding-preset wiring: `Runner.run` dispatches a coding Agent
+ * through `Agent.substrateExecutor` (ADR-020). The public preset runs the
+ * managed Worker; the internal leaf declaration runs the direct substrate.
  */
 
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('./agent-runtime/run-substrate.js', () => ({
-  runSubstrate: vi.fn(async () => ({
-    success: true,
-    lastText: 'mocked substrate output',
-    messages: [{ role: 'assistant' as const, content: 'mocked substrate output' }],
-    sessionId: 'mock-substrate-session',
-  })),
+const mockedResult = vi.hoisted(() => async () => ({
+  success: true,
+  lastText: 'mocked output',
+  messages: [{ role: 'assistant' as const, content: 'mocked output' }],
+  sessionId: 'mock-session',
 }));
+vi.mock('./agent-runtime/run-substrate.js', () => ({ runSubstrate: vi.fn(mockedResult) }));
+vi.mock('./task-engine.js', () => ({ runManagedTask: vi.fn(mockedResult) }));
 
 import { Runner, createAgent, type PresetDispatcher } from '@kodax-ai/agent';
 import { runSubstrate } from './agent-runtime/run-substrate.js';
 import {
   DEFAULT_CODING_AGENT_NAME,
-  createDefaultCodingAgent,
+  createCodingAgent,
   extractFinalAssistantText,
 } from './coding-preset.js';
+import { createDefaultCodingAgent } from './default-coding-agent.js';
+import { runManagedTask } from './task-engine.js';
 import type { KodaXResult } from './types.js';
 
 function makeResult(partial: Partial<KodaXResult>): KodaXResult {
@@ -62,6 +55,32 @@ describe('coding-preset', () => {
     expect(typeof agent.substrateExecutor).toBe('function');
   });
 
+  it('the public preset runs a root Run on the managed Worker', async () => {
+    vi.mocked(runManagedTask).mockClear();
+    vi.mocked(runSubstrate).mockClear();
+
+    const result = await Runner.run(createDefaultCodingAgent(), 'Fix the bug.', {
+      presetOptions: { provider: 'test-provider' },
+      tracer: null,
+    });
+
+    expect(result.output).toBe('mocked output');
+    expect(vi.mocked(runManagedTask).mock.calls[0]?.[1]).toBe('Fix the bug.');
+    expect(vi.mocked(runManagedTask).mock.calls[0]?.[0].provider).toBe('test-provider');
+    expect(runSubstrate).not.toHaveBeenCalled();
+  });
+
+  it('a leaf declaration runs the executor it was built with', async () => {
+    vi.mocked(runManagedTask).mockClear();
+    vi.mocked(runSubstrate).mockClear();
+    const agent = createCodingAgent(runSubstrate);
+
+    await Runner.run(agent, 'Inspect the file.', { presetOptions: { provider: 'test-provider' }, tracer: null });
+
+    expect(vi.mocked(runSubstrate).mock.calls[0]?.[2]).toBe(agent);
+    expect(runManagedTask).not.toHaveBeenCalled();
+  });
+
   it('Runner.run delegates to Agent.substrateExecutor (declaration-borne, no registry)', async () => {
     const mock: PresetDispatcher = vi.fn(async () => ({
       output: 'mocked coding output',
@@ -89,7 +108,7 @@ describe('coding-preset', () => {
     );
   });
 
-  it('preserves top-level Runner permission intent through the default coding substrate', async () => {
+  it('preserves top-level Runner permission intent through the default coding preset', async () => {
     const permissionIntent = {
       rootUserIntent: 'Review the current changes without modifying files.',
       delegatedObjective: 'Inspect the permission implementation.',
@@ -97,7 +116,7 @@ describe('coding-preset', () => {
       scopeHint: 'packages/repl/src/permission',
       readOnly: true,
     } as const;
-    vi.mocked(runSubstrate).mockClear();
+    vi.mocked(runManagedTask).mockClear();
 
     await Runner.run(createDefaultCodingAgent(), 'Review the current changes.', {
       permissionIntent,
@@ -110,7 +129,7 @@ describe('coding-preset', () => {
       tracer: null,
     });
 
-    const substrateOptions = vi.mocked(runSubstrate).mock.calls[0]?.[0];
+    const substrateOptions = vi.mocked(runManagedTask).mock.calls[0]?.[0];
     expect(substrateOptions?.context?.permissionIntent).toEqual(permissionIntent);
     expect(substrateOptions?.context?.configHome).toBe('C:\\kodax-config');
   });
@@ -120,14 +139,14 @@ describe('coding-preset', () => {
       rootUserIntent: 'Inspect the current state.',
       readOnly: true,
     } as const;
-    vi.mocked(runSubstrate).mockClear();
+    vi.mocked(runManagedTask).mockClear();
 
     await Runner.run(createDefaultCodingAgent(), 'Inspect the current state.', {
       presetOptions: { context: { permissionIntent: presetIntent } },
       tracer: null,
     });
 
-    expect(vi.mocked(runSubstrate).mock.calls[0]?.[0].context?.permissionIntent)
+    expect(vi.mocked(runManagedTask).mock.calls[0]?.[0].context?.permissionIntent)
       .toEqual(presetIntent);
   });
 

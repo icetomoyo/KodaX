@@ -20,9 +20,7 @@ export interface ManagedRolePromptContext {
   /**
    * v0.7.26 NEW-1 — workspace environment the role should assume.
    * Without this the managed-worker system prompt never tells the LLM
-   * where it is running; the direct engine injects `Working Directory: ...`
-   * via `buildSystemPrompt`, but the Runner-driven path bypassed that
-   * builder entirely, causing managed workers to guess paths (e.g.
+   * where it is running, causing managed workers to guess paths (e.g.
    * bash-cd into invented directories).
    */
   workspace?: {
@@ -58,11 +56,10 @@ export interface ManagedRolePromptContext {
    *   - `git-context`             (branch / status snapshot)
    *   - `project-snapshot`        (lightweight repo tree)
    *
-   * `environment-context` / `working-directory` / `runtime-fact` are
-   * already in `workspaceSection`; `repo-intelligence-context` and
-   * `prompt-overlay` ride on the user prompt via separate Runner
-   * paths (`prebuiltRepoIntelligenceContext` / Shard 6d-L overlay
-   * stitching). Filtering avoids duplicate emission.
+   * The environment, working directory and runtime fact live in
+   * `workspaceSection`; repository intelligence and `prompt-overlay` ride
+   * on the user prompt via separate Runner paths
+   * (`prebuiltRepoIntelligenceContext` / Shard 6d-L overlay stitching).
    *
    * Pre-computed parent-side so each per-role prompt invocation does
    * NOT trigger fresh AGENTS.md / git status / project FS walks.

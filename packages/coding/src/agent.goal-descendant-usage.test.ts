@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { KodaXProviderConfig, KodaXStreamResult } from '@kodax-ai/llm';
 import { clearRuntimeModelProviders, KodaXBaseProvider, registerModelProvider } from '@kodax-ai/llm';
 import { appendGoalEntry, readLatestGoalState, type KodaXSessionLineage } from '@kodax-ai/agent';
-import { runLeafAgent } from './agent.js';
+import { runTestLeaf as runLeafAgent } from './agent-runtime/test-leaf.js';
 import { buildGoalRuntimeBinding } from './goal/runtime-wiring.js';
 import { buildCreatedGoal } from './goal/state.js';
 

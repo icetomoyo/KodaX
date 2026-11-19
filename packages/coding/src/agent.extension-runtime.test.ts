@@ -13,7 +13,7 @@ import type {
 import type { KodaXSessionData, KodaXSessionStorage } from '@kodax-ai/agent';
 import { KodaXBaseProvider } from '@kodax-ai/llm';
 import { clearRuntimeModelProviders } from '@kodax-ai/llm';
-import { runLeafAgent } from './agent.js';
+import { runTestLeaf as runLeafAgent } from './agent-runtime/test-leaf.js';
 import { createExtensionRuntime, getActiveExtensionRuntime } from './extensions/index.js';
 import { LEARNING_REVIEW_TOOL } from './learning-reviewer.js';
 import { awaitLatestCodingMemoryReviewDrain } from './memory-runtime.js';

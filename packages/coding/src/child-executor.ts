@@ -2228,8 +2228,8 @@ export async function resolveEvidenceRef(
  * conventions) unless the project's AGENTS.md is in their system prompt.
  *
  * The original FEATURE_117 design ("strip read-path context") was inverted
- * after Phase 3 fact-check showed `systemPromptOverride` already short-
- * circuits `buildSystemPrompt` for ALL children — there was nothing to
+ * after Phase 3 fact-check showed `systemPromptOverride` already replaces
+ * the whole leaf prompt for ALL children — there was nothing to
  * strip. The real gap is the opposite direction: write children silently
  * skip the project rules. This helper restores them only for the write
  * path.

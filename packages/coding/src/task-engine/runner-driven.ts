@@ -1764,9 +1764,7 @@ async function runManagedTaskViaRunnerInner(
   // the recorder so Scout's post-emit `skillMap` / `scope` reach
   // downstream Generator / Evaluator prompts at invocation time.
   // v0.7.26 NEW-1 — resolve workspace environment once so every role
-  // prompt can tell the LLM where it is running. The direct engine injects
-  // `Working Directory: ${executionCwd}` via `buildSystemPrompt`, but
-  // the Runner-driven path bypasses that builder. Without this block,
+  // prompt can tell the LLM where it is running. Without this block,
   // the AMA Worker and its children guess paths (e.g. the
   // reported `cd /d/user/kodax/workspace` against a real cwd of
   // `C:\Works\GitWorks\...`).
@@ -1777,8 +1775,7 @@ async function runManagedTaskViaRunnerInner(
     platform: process.platform,
     osRelease: os.release(),
     // Forward the active provider/model so each role's `## Environment`
-    // block discloses runtime identity. Mirrors the runtime-fact section
-    // the direct engine emits via `buildSystemPrompt`'s `getRuntimeFact`.
+    // block discloses runtime identity.
     provider: options.provider,
     model: options.modelOverride ?? options.model,
   };
@@ -1801,31 +1798,10 @@ async function runManagedTaskViaRunnerInner(
   let amaSkillCatalogText: string | undefined;
   let amaMcpCatalogText: string | undefined;
   try {
-    const capabilitySections = await buildCapabilityContextSections(
+    const filtered = await buildCapabilityContextSections(
       options,
       isNewSessionForCapabilities,
       managedWorkspace.executionCwd,
-    );
-    // The AMA Worker owns these sections via `buildWorkerInstructions` /
-    // `role-prompt.ts`, so they are excluded from the direct-engine-style capability
-    // block to avoid double emission. `execution-guidance` is here because the
-    // Worker carries EXECUTION_GUIDANCE inside `buildWorkerInstructions`; the
-    // direct engine gets the same block via the capability section instead (ADR-043 P1.7).
-    // The old `prompt-overlay` section was removed (router overlay retired).
-    const AMA_OWNED_SECTION_IDS = new Set<string>([
-      'base-system',
-      'base-system-suffix',
-      'environment-context',
-      'runtime-fact',
-      'working-directory',
-      'session-scratch-directory',
-      'repo-intelligence-context',
-      'execution-guidance',
-      // Injected through selectedSkillText below with the same formatter.
-      'active-skill-invocation',
-    ]);
-    const filtered = capabilitySections.filter(
-      (section) => !AMA_OWNED_SECTION_IDS.has(section.id),
     );
     const AMA_STABLE_CAPABILITY_SECTION_IDS = new Set<string>([
       'project-agents',
