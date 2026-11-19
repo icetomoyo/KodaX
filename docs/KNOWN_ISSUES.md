@@ -1028,11 +1028,19 @@ Still open at `08ce2f742`; F-ids match the removed list.
   git-context/project-snapshot only when `messages.length === 1`
   (`run-substrate.ts:1439`), so the system prompt shifts on request two. The cost
   is unmeasured; measure with `probe:prompt-cache` before changing it (F-18).
-- ADR-033 debt: quantitative thresholds in `static-text.json`
-  (`worker.repoIntelligenceTools`, `exit_plan_mode.properties.plan`), a compound
-  condition in `compact-worker-contract`, a bare "Read first." in the compact
-  edit description, and "≤40 lines, ≤3 bullet levels" in `managed-tool-text.ts`
-  (F-19). Eval added for denied-write recovery: `tests/feature-189-batch5-exit-plan-mode-rejection.eval.ts`
+- ADR-033 debt (F-19): two real violations were fixed on 2026-11-19, each with
+  a blind A/B eval and no regression. `worker.repo-tools.module-context` now
+  names the need, a module's overall shape, instead of "3+ files" (5a168b5f4).
+  The managed edit description says why to read first (c16288618). Three
+  audited items stay as written. The plan limit "≤40 lines, ≤3 bullet levels"
+  in `exit_plan_mode` is an output format budget, not a decision threshold.
+  "Two or more substantive independent lanes and a child slot is free" defines
+  when a split pays off, and Issue 415 re-evaluated it. The interrupt rule "no
+  progress signal AND a faster path exists" is one action with two
+  prerequisites; the next line already says to wait while a child makes
+  progress. Still open: the `repo-explorer` builtin
+  agent says "Use module_context before reading 3 or more files in one module"
+  (`construction/builtin-agents.md`). Eval added for denied-write recovery: `tests/feature-189-batch5-exit-plan-mode-rejection.eval.ts`
   compares pre/post-2ee4a782d wording on a seeded rejection turn; run results are pending (F-46).
 - Metadata: the Codex CLI bridge declares `prompt-only`/128K while the
   capability table says `codex-cli-effort`; which wins is unverified (F-20).
