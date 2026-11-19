@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type { Agent } from '@kodax-ai/agent';
 import type { KodaXMessage, KodaXToolDefinition } from '@kodax-ai/llm';
 import type { KodaXContextOptions } from '../types.js';
-import { canProjectManagedToolContracts, projectManagedToolContract } from './managed-tool-contract.js';
+import { canProjectManagedToolContracts } from './managed-tool-contract.js';
 import { getRegistryManagedAgentContext, projectModelToolDefinition } from './model-tool-definition.js';
 import { getBuiltinToolDefinition, getRegisteredToolDefinition } from './registry.js';
 import { resolveToolBridgeTarget } from './tool-bridge.js';
@@ -49,7 +49,7 @@ function hasImage(messages: readonly KodaXMessage[]): boolean {
 function canonical(tool: KodaXToolDefinition): boolean {
   const builtin = getBuiltinToolDefinition(tool.name);
   if (!builtin || getRegisteredToolDefinition(tool.name)?.source.kind !== 'builtin') return false;
-  const expected = projectManagedToolContract(projectModelToolDefinition(builtin, { kind: 'builtin' }));
+  const expected = projectModelToolDefinition(builtin, { kind: 'builtin' });
   return tool.description === expected.description && isDeepStrictEqual(tool.input_schema, expected.input_schema);
 }
 

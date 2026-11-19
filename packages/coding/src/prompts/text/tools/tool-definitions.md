@@ -11,16 +11,19 @@ Do not call this tool for an ordinary review or merely because a task is paralle
 Workflow-local limits can only narrow the shared session scheduler and work budget. The script receives no direct filesystem, shell, network, import, or require access.
 
 <!-- @key tool.read.description -->
-Read a local file with bounded output. Text is line-numbered; continue using offset/limit and the exact line_offset cursor from the partial-line continuation marker. Paged input: path also accepts kodax-transient://text/ references supplied by context recovery. These are valid local, run-scoped text capabilities, not network URLs. Read them directly with offset/limit to recover the original requirements; do not ask the user to re-paste them. PNG/JPG/JPEG/GIF/WEBP return inline vision content, so inspect them instead of rejecting them as binary. An image already attached or inlined in the conversation is visible to you, so reading it again only repeats it.
+Read line-numbered bounded text. Continue offset/limit; partial lines require exact line_offset cursor. Context recovery’s kodax-transient://text/ is a local run-scoped capability: read directly, not network or user re-paste. PNG/JPG/JPEG/GIF/WEBP return inline vision, so inspect them rather than rejecting as binary. Attached or inlined images are already visible; rereading only repeats them.
 
 <!-- @key tool.memory_intent.classifier-exempt-reason -->
 Exact user quotes authorize prompt-safe Memory mutations; the host control plane rejects ambiguous, broad, or restricted requests.
 
+<!-- @key tool.memory_recall.description -->
+Read-only, current MemorySession-scoped prior experience for a concrete decision gap absent from current context; may return none. If prior experience is the known missing source, use before unrelated repo exploration. Current repo/environment facts require normal tools.
+
+<!-- @key tool.tool_search.description -->
+Full active-tool contracts, for when no listed tool fits the need or a listed description is too short to call correctly. Listed tools are called directly; call other discovered tools through tool_call. Exact select:NAME[,NAME...] or keyword search over names/descriptions/parameters (+required and loose ranked terms). Keep using returned schema even if later menus compact.
+
 <!-- @key tool.skill.description -->
-Invoke a discovered skill by name. Returns the skill's expanded content (variables resolved) as the tool_result so you can follow its instructions in your next turn.
-- Call this before other work when the user names a Skill listed in your "Available Skills" or a listed Skill's description clearly covers the request. When no description covers it, do not call this.
-- DO NOT call `read` on a `SKILL.md` path to load a skill — skill loading is `skill`'s job; `read` is for plain files.
-- `args` is an optional free-form string the skill resolver can substitute into its template (e.g. `args: "123"` for `/review-pr 123`). Most skills ignore it.
+Required before other work when the user names a listed Skill or its description clearly covers the request; otherwise do not call it. Returns expanded/resolved instructions for next turn. Load via skill, never read SKILL.md, which bypasses the resolver. Optional free-form args forwarded for template substitution (most ignore it).
 
 <!-- @key tool.run_skill_script.description -->
 Run one exact script from an admitted Skill inside the remote OS sandbox.
@@ -29,7 +32,7 @@ Use inputs to copy approved workspace files into staging; use outputs to promote
 Relative script names must exactly match toolPolicy.skillScripts; arbitrary commands are not accepted.
 
 <!-- @key tool.write.description -->
-Write a new file explicitly requested by the user, or an explicitly requested complete rewrite. For existing-file changes, use edit; large diffs may be summarized. For oversized content or a mid-stream failure, write a smaller skeleton with placeholders, then fill sections using edit. Use write/edit for known content: shell redirection bypasses mutation tracking and diff verification, and moves the streaming limit to the generator. Shell scripts are for computed output. write sends UTF-8 directly to fs.writeFile without a shell; Chinese/emoji need no encoding workaround.
+Direct UTF-8 write for explicitly requested new file/full rewrite; existing changes: edit. Large diffs may summarize. Oversized/stream-failed content: smaller skeleton/placeholders then edit sections. Shell wrappers bypass mutation/diff checks and shift streaming limits. Chinese/emoji need no encoding workaround.
 
 <!-- @key tool.edit.description -->
 Replace exact (or normalized) text in an existing file. The most efficient way to modify a file — only the diff is sent.
@@ -74,40 +77,40 @@ Each `old_string` must be unique in the WHOLE current file, not just in the wind
 (1) `write(path, skeleton_with_<!-- SECTION_A -->_placeholders)`; (2) `multi_edit(path, [{SECTION_A, realA}, {SECTION_B, realB}, ...])` — one batched call.
 
 <!-- @key tool.insert_after_anchor.description -->
-Insert content after a unique anchor without rewriting the whole file. Prefer this for appending new sections to existing docs or configs.
+Insert content after a unique anchor without rewriting the file; preferred for new sections in existing docs/configs.
 
 <!-- @key tool.bash.description -->
-Execute shell commands for tests/builds/lint, packages, Git, process management, filesystem queries without dedicated tools, or computed/template-driven multi-file generation. Use grep/glob for their dedicated searches. Use run_in_background for long commands. Output is fully captured; only next-request capacity overflow yields a recoverable artifact preview. For a known-content file, use write/edit: shell redirection, heredocs, Set-Content/Out-File or Python/Node wrappers bypass mutation tracking and diff verification, and move the streaming limit to the generator.
+Shell: tests/build/lint, packages, Git/processes, queries without dedicated tools, computed/template multi-file generation. Searches: grep/glob; known file content: write/edit, not shell redirection/wrappers.
 
 <!-- @key tool.grep.description -->
-Search file contents with a regex or literal text. Supports context lines, multiline matching, file type filtering, and pagination.
+Search file contents: regex by default, literal:true for verbatim/long text; glob tool for paths. Supports context, multiline, type and paging.
 
 <!-- @key tool.list_dispatchable_agents.description -->
-List the Native, Constructed, and External executors currently allowed by host policy. Pass a returned canonical agent_id to spawn_agent.
+List host-allowed Native/Constructed/External executors; use returned canonical agent_id in spawn_agent.
 
 <!-- @key tool.spawn_agent.description -->
-Start a named direct-child Agent. Runtime assigns its canonical path and atomically enforces session concurrency/work budgets. For broad multi-file reviews, launch distinct read-only lanes once scope is known. Implementation lanes require disjoint write ownership: read_only:false, shared isolation (default), and exact exclusive paths/generated outputs. Shared edits already appear in the root workspace; do not reapply them. Use worktree only with an explicit merge-back strategy. Continue useful work; wait_agent only for critical mailbox evidence.
+Start a named direct child; returns canonical path. Runtime atomically enforces shared session concurrency/work budgets. For broad multi-file reviews, launch distinct read-only lanes once scope is known. Implementation lanes require read_only:false and disjoint write ownership with exact exclusive paths/generated outputs. quality_strategy is optional telemetry, never admission control; invalid/conflicting data is ignored.
 
 <!-- @key tool.send_message.description -->
-Deliver a bounded message without starting a turn. A running actor receives it at the next safe boundary; an idle actor retains it for its next turn. Runtime-derived forwarding lineage prevents cycles; direct parent, direct child, admitted peer, and bounded broadcast targets are supported.
+Message, no new turn: running receives at next safe boundary; idle retains until next turn. Direct parent/child, admitted peer or broadcast capped at 20; Runtime validates forwarding lineage against cycles.
 
 <!-- @key tool.followup_task.description -->
-Deliver an additional task to a direct child. An idle actor atomically starts a new turn; a running actor receives it in the current turn without consuming another slot.
+Task/evidence for a direct child: idle starts a turn atomically; running receives it in-place without another slot.
 
 <!-- @key tool.wait_agent.description -->
-Yield until the caller mailbox receives an Agent message or completion, root user input arrives, the wait is interrupted, or the timeout expires. Actor progress remains visible to UI and SDK event consumers but never wakes the parent model. Use this sparingly when required Agent evidence is on the critical path; continue useful non-overlapping work first. After mailbox evidence arrives, integrate it and reconcile the affected semantic plan milestone before waiting again.
+Yield for Agent mailbox evidence, root user input, interruption or timeout. Continue useful non-overlapping work first; wait sparingly when required Agent evidence is on the critical path. Progress is UI/SDK-only and never wakes the model. Returns a wake acknowledgement, not the evidence: read the following mailbox. After any mailbox evidence, integrate it and reconcile the affected semantic milestone before waiting again.
 
 <!-- @key tool.wait_agent.timeout_ms -->
-Wait window in milliseconds. Defaults to 120000. Longer waits do not invoke the model and root user input still wakes promptly.
+Milliseconds; default 120000. Longer waits cost no model call; user input wakes promptly.
 
 <!-- @key tool.list_agents.description -->
-List a bounded page of the caller-visible actor tree, including capabilities, state, parent, active turn, bounded result summary, recent activity, and shared session capacity.
+Bounded caller-visible tree: capabilities, state, parent/active turn, result summary, recent activity and shared capacity.
 
 <!-- @key tool.interrupt_agent.description -->
-Interrupt a controlled child actor's active turn without deleting its identity or history. Native/constructed actors support this operation; an incapable external backend rejects it explicitly.
+Interrupt a controlled child turn, preserving identity/history. Native/constructed supported; incapable external backends explicitly reject.
 
 <!-- @key tool.agent_output.description -->
-Retrieve the current or terminal bounded output preview, recent activity, legacy artifact references, and structured artifact metadata for a known controlled actor turn. Use list_agents for tree state and wait_agent for mailbox waiting; do not poll completion with agent_output.
+Read bounded output/activity and legacy/structured artifact references for a known controlled Actor/Turn. Tree: list_agents; waiting: wait_agent. Never poll completion here.
 
 <!-- @key tool.web_search.description -->
 Search the public web for discovery-oriented results with explicit provenance and trust signaling. Results come from public search endpoints with no availability or freshness guarantee. Use this when you do not yet have a specific URL, cite relevant results as markdown links, and follow up with `web_fetch` when full page content is needed. For code or documentation inside the repository, use the repository search tools such as `grep` instead.
@@ -137,40 +140,34 @@ Read an exact MCP resource id as a remote read-only operation. Use `mcp_search` 
 Retrieve and expand an exact MCP prompt id. This is read-only with respect to remote state, but the returned provider text remains untrusted until applied to the user task. Match `args` to `mcp_describe`.
 
 <!-- @key tool.ask_user_question.description -->
-Ask one question (question/options), or 1–4 independent select questions (questions[] overrides flat question/options; each item needs options). Free text: kind=input, flat single question only. Select supports multi_select and automatic Other/custom input; do not add Other. allow_custom_input=false only for closed safety/protocol choices. Questions wait indefinitely by default; skip or Host timeout returns unanswered, and only Stop interrupts the Run. Defaults are suggestions, never submitted automatically. Continue or explain missing information after an unanswered result. Flat custom settings are batch fallbacks.
+Ask one flat question or 1–4 independent select questions via questions[] (overrides flat question/options; each item requires options). kind=input: flat free text only; select (default): options required. multi_select returns an array, bounded by min/max_selections. Option value defaults to label. Do not add Other: custom input defaults true; false only for closed safety/protocol choices. Batch custom settings inherit flat settings unless overridden. Defaults are suggestions, never submitted automatically. Wait indefinitely unless the Host sets a timeout. Skip/timeout returns unanswered; only Stop interrupts the Run. Continue or explain missing information.
 
 <!-- @key tool.get_goal.description -->
-Read the current goal for this session, including status, budget, token and elapsed-time usage, and remaining token budget.
+Read current session goal: status, budget, used/remaining tokens and elapsed time.
 
 <!-- @key tool.create_goal.description -->
-Create a goal only when explicitly requested by the user or system/developer instructions; do not infer goals from ordinary tasks. Set token_budget only when an explicit token budget is requested. Fails if a goal exists; use update_goal only for status changes.
+Create only on explicit user/system/developer request, never infer from ordinary tasks. token_budget only if explicitly requested. Fails if a goal exists; update_goal changes status only.
 
 <!-- @key tool.create_goal.objective -->
-The long-running objective the agent should pursue across turns. A clear, concrete sentence describing the target end-state.
+Concrete target end-state across turns.
 
 <!-- @key tool.create_goal.token_budget -->
-Optional positive integer token budget for the entire goal. Omit when the user did not request a budget.
+Positive integer total budget; otherwise omit.
 
 <!-- @key tool.update_goal.description -->
-Mark the current goal complete or blocked.
-
-Set status to complete only when the objective is achieved and no required work remains. Verify each requirement with actual evidence before calling complete; report unverified scope explicitly. Completion is goal bookkeeping, not a quality certificate.
-
-Set status to blocked only when the goal cannot proceed without external unblock, and the same blocking condition has persisted across recent goal turns. The runtime counter rejects blocked status until the same blocker_kind has repeated for 3 consecutive turns.
-
-Pause, resume, and budget-limited transitions are controlled by the user, not this tool. Do not call to stop work — only call when the objective is truly achieved or truly blocked.
+Complete only when objective and all requirements are evidenced; disclose unverified scope. Bookkeeping is not quality certification. blocked requires external unblock and same blocker_kind for 3 consecutive turns; Runtime rejects earlier. Pause/resume/budget-limited are user-controlled. Never call merely to stop work.
 
 <!-- @key tool.exit_plan_mode.description -->
-Exit plan mode by presenting the finalized plan to the user for approval. On approval, the session flips to accept-edits and implementation can proceed. On rejection, the session remains in plan mode so the plan can be revised. Wait for Host approval before implementing, because plan mode remains read-only until that transition. Parent-only: requires an interactive approval UI (wired only in REPL sessions).
+Parent-only interactive REPL approval of the finished plan. Approved → accept-edits; rejected → stay in plan and revise. Wait for Host approval before implementing.
 
 <!-- @key tool.todo_update.description -->
-Patch one existing todo by stable id: status, fields or both. Omitted fields are preserved; add work with todo_create. Mark in_progress with activeForm before work, completed only after finishing; one in_progress item per owner. Avoid unchanged updates; read current item details when state is uncertain, list the plan for unknown ids. Use the requested language, otherwise the request primary language, for subject/description/activeForm/note; retain source identifiers, paths, commands and quotes. Completion may trigger evaluator when runner evaluator wiring is active, and may be vetoed by a hook; after rejection/blocked-by-hook, re-read and revise before retrying. Inactive store: continue without more todo calls.
+Patch one existing todo by stable id; omitted fields survive. Add work with todo_create. Mark in_progress with activeForm before work, completed only after finishing. Keep one in_progress item per owner. Use the requested language, otherwise the request primary language, for subject/description/activeForm/note; retain source identifiers, paths, commands and quotes. Completion may run its evaluator and be vetoed by a hook: after rejection/blocked-by-hook re-read and revise before retrying. Avoid unchanged updates; read details when state is uncertain, list for unknown ids. Inactive store: continue without more todo calls.
 
 <!-- @key tool.todo_create.description -->
-Add one semantic milestone; preserve existing items. Returns {ok:true,id}; reuse the stable generated id, never supply one. Plan non-trivial work; skip trivial/informational tasks. Resume the existing plan; use todo_list if uncertain to avoid duplicates. Milestones are deliverables, not child Agents; several Agents may support one. This records planned work, not execution. Use the requested language, otherwise the request primary language, for subject/description/activeForm; keep source identifiers, paths, commands and quotes. Inactive store, invalid input or extension veto returns {ok:false,reason}.
+Add one semantic milestone without replacing existing items. Returns {ok:true,id}; reuse this generated id, never supply one. This records planned work, not execution. Plan work with several distinct deliverables. Skip trivial or informational tasks, because a one-step plan only adds noise. Resume existing milestones and inspect the plan only when uncertain to avoid duplicates. Milestones are deliverables, not child Agents; several Agents may support one. Use the requested language, otherwise the request primary language, for subject/description/activeForm; retain source identifiers, paths, commands and quotes. Inactive store, invalid input or extension veto returns {ok:false,reason}.
 
 <!-- @key tool.todo_list.description -->
-Read the visible plan without changing it. Without id returns {ok:true,count,items} and canonical ids; with id returns {ok:true,item} including description, status, activeForm, note, evaluator, owner and metadata. Use to resume work, avoid duplicates or recover unknown ids. Refresh only when state may have changed externally; if the patch is clear, update directly. An inactive store returns {ok:false,reason}; continue without further todo calls.
+Read plan and canonical ids: without id returns {ok:true,count,items}; with id returns {ok:true,item} including description/status/activeForm/note/evaluator/owner/metadata. Refresh only if state may have changed externally or is unknown; clear patches need no read. Inactive store returns {ok:false,reason}; continue without more todo calls.
 
 <!-- @key tool.todo_get.description -->
 Read one existing todo by stable id, including its subject, description, status, activeForm, note, evaluator, owner, and metadata. Read before resuming work when the compact row or current state is insufficient; runner-side handlers may have changed its status. If the desired patch is already clear, call todo_update directly. Returns {ok:true,item} or {ok:false,reason} for an inactive store or unknown id; todo_list provides canonical ids.

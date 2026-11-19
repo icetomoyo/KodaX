@@ -7,8 +7,6 @@
 import { randomUUID } from 'node:crypto';
 import { buildLocalExecutionFailure } from '../execution-failure.js';
 import { withEffectivePermissionContext } from '../prompts/effective-permissions.js';
-import { claimBuiltinChildContract } from '../prompts/child-contract-scope.js';
-import { projectBuiltinChildRequestContract } from '../prompts/compact-child-contract.js';
 ﻿import {
   KodaXExtensionSessionRecord,
   KodaXExtensionSessionState,
@@ -785,7 +783,6 @@ async function runSubstrateInContext(
   declaredAgent: Agent | undefined,
   setImagePreparation: (enabled: boolean) => void,
 ): Promise<KodaXResult> {
-  const childContractSource = claimBuiltinChildContract(options.context);
   const textRecovery = createTextRecoveryState();
   const previousActiveRuntime = getActiveExtensionRuntime();
   const runtime = options.extensionRuntime ?? previousActiveRuntime;
@@ -1878,16 +1875,11 @@ async function runSubstrateInContext(
         nativeDeferredAvailable: false,
         unlockedDeferredTools,
       });
-      let activeToolDefinitions = fitToolSchemasToContext(applyToolExposurePlan(
+      const activeToolDefinitions = fitToolSchemasToContext(applyToolExposurePlan(
         fullActiveToolDefinitions,
         exposurePlan,
       ), { contextWindow, systemTokens: countTokens(effectiveSystemPrompt),
         reservedResponseTokens: streamProvider.getEffectiveMaxOutputTokens(turnState.currentModelOverride) });
-      const childRequestContract = projectBuiltinChildRequestContract(childContractSource,
-        { system: policySystemPrompt, tools: activeToolDefinitions }, fullActiveToolDefinitions);
-      const requestPolicySystemPrompt = childRequestContract.system;
-      effectiveSystemPrompt = withEffectivePermissionContext(requestPolicySystemPrompt, options.context);
-      activeToolDefinitions = [...childRequestContract.tools];
       const reservedResponseTokens = streamProvider.getEffectiveMaxOutputTokens(
         turnState.currentModelOverride,
       );
@@ -2126,7 +2118,7 @@ async function runSubstrateInContext(
             }),
           );
         }
-        effectiveSystemPrompt = withEffectivePermissionContext(requestPolicySystemPrompt, options.context);
+        effectiveSystemPrompt = withEffectivePermissionContext(policySystemPrompt, options.context);
         attempt += 1;
         // Recovery may replace providerMessages between attempts. Rebase the
         // same fixed request overhead onto the exact messages sent next.
@@ -2313,7 +2305,7 @@ async function runSubstrateInContext(
             // failure, fall through to recovery-action branches with
             // the new error.
             emitContextBudgetSnapshot(wireMessages, requestMaxOutputTokens);
-            effectiveSystemPrompt = withEffectivePermissionContext(requestPolicySystemPrompt, options.context);
+            effectiveSystemPrompt = withEffectivePermissionContext(policySystemPrompt, options.context);
             let fallbackCacheDiagnostic = emitPromptCacheDiagnosticRequest({
               events,
               enabled: options.context?.contextDiagnostics === true,

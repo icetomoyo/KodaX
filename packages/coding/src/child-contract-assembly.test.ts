@@ -9,11 +9,8 @@ import { executeChildAgents, CHILD_AGENT_SYSTEM_PROMPT, type ChildExecutorOption
 import { runKodaX } from './agent.js';
 import { getBuiltinToolDefinition, listToolDefinitions } from './tools/index.js';
 import { projectModelToolDefinition } from './tools/model-tool-definition.js';
-import { projectManagedToolContract } from './tools/managed-tool-contract.js';
 import { _resetAgentResolverForTesting, registerConstructedAgent } from './construction/agent-resolver.js';
 import { clearAgentsLoaderCacheForTesting } from './context/agents-loader.js';
-import * as childScope from './prompts/child-contract-scope.js';
-import * as childContract from './prompts/compact-child-contract.js';
 
 const providerName = 'child-contract-assembly';
 const providerKey = 'KODAX_CHILD_CONTRACT_ASSEMBLY_KEY';
@@ -36,7 +33,9 @@ class ContractProvider extends KodaXBaseProvider {
   }
 }
 
-describe('builtin child request contract through real executor and substrate', () => {
+const unified = (name: string) => projectModelToolDefinition(getBuiltinToolDefinition(name)!, { kind: 'builtin' });
+
+describe('child request contract through real executor and substrate', () => {
   let root: string;
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'kodax-child-contract-'));
@@ -64,37 +63,28 @@ describe('builtin child request contract through real executor and substrate', (
   const ctx = () => ({ backups: new Map(), executionCwd: root, gitRoot: root,
     resolveShellPermissionMode: () => 'full-access' as const });
 
-  it.each([true, false])('compacts the real readonly=%s child request without removing live authority or tools', async readOnly => {
-    const claim = vi.spyOn(childScope, 'claimBuiltinChildContract');
-    const project = vi.spyOn(childContract, 'projectBuiltinChildRequestContract');
+  it.each([true, false])('sends the unified tool text on the real readonly=%s child request with live authority', async readOnly => {
     writeFileSync(join(root, 'AGENTS.md'), '# Rules\n\nKeep the project sentinel unchanged.\n');
     const result = await executeChildAgents([bundle(readOnly)], ctx(), options());
     expect(result.results[0]?.status).toBe('completed');
     expect(captured).toHaveLength(1);
-    expect(claim.mock.results[0]?.value, 'executor provenance must reach the real substrate').toBeDefined();
-    const [source, request, full] = project.mock.calls[0]!;
-    expect(request.tools, 'normal fit must preserve the complete menu').toEqual(full);
-    const base = { system: source!.system, tools: request.tools };
-    expect(childContract.buildCompactChildContractCandidate(base, { source: 'builtin-child' }), 'canonical pair must qualify').not.toBe(base);
     const wire = captured[0]!;
     expect(wire.system).toContain(CHILD_AGENT_SYSTEM_PROMPT);
-    expect(wire.system).toContain('## Shared tool obligations');
+    expect(wire.system).not.toContain('## Shared tool obligations');
     expect(wire.system).toContain('Current permission mode: full-access');
     expect(wire.system).toContain(readOnly ? 'Current task scope: read-only' : 'Ordinary local text targets');
     expect(wire.system.includes('Keep the project sentinel unchanged.')).toBe(!readOnly);
     for (const name of ['read', 'glob', 'grep', 'spawn_agent', 'todo_update']) {
       const actual = wire.tools.find(tool => tool.name === name)!;
-      const canonical = projectModelToolDefinition(getBuiltinToolDefinition(name)!, { kind: 'builtin' });
-      const expected = projectManagedToolContract(canonical);
+      const expected = unified(name);
       expect(actual.description, name).toBe(expected.description);
       expect(actual.input_schema, name).toEqual(expected.input_schema);
     }
     expect(wire.tools.some(tool => tool.name === 'edit')).toBe(!readOnly);
     expect(wire.tools.some(tool => ['get_goal', 'create_goal', 'update_goal'].includes(tool.name))).toBe(false);
-    expect(wire.messages.some(message => JSON.stringify(message).includes('## Shared tool obligations'))).toBe(false);
   });
 
-  it('does not project a matching SDK override or a specialist using the identical builtin instructions', async () => {
+  it('gives an SDK override and a specialist the same tool text as a builtin child', async () => {
     await runKodaX({ provider: providerName, reasoningMode: 'off', maxIter: 1,
       context: { executionCwd: root, currentAgentId: 'sdk-child', systemPromptOverride: CHILD_AGENT_SYSTEM_PROMPT,
         repoIntelligenceMode: 'off' } }, 'Inspect.');
@@ -106,20 +96,21 @@ describe('builtin child request contract through real executor and substrate', (
     expect(captured).toHaveLength(2);
     for (const wire of captured) {
       expect(wire.system).not.toContain('## Shared tool obligations');
-      expect(wire.tools.find(tool => tool.name === 'glob')?.description)
-        .toBe(getBuiltinToolDefinition('glob')!.description);
+      for (const name of ['read', 'grep', 'glob']) {
+        expect(wire.tools.find(tool => tool.name === name)?.description, name).toBe(unified(name).description);
+      }
     }
   });
 
-  it('keeps a custom visibility policy on the canonical contract', async () => {
+  it('keeps the unified tool text under a custom visibility policy', async () => {
     await executeChildAgents([bundle(true)], { ...ctx(), toolVisibilityPolicy: () => true }, options());
     expect(captured).toHaveLength(1);
     expect(captured[0]!.system).not.toContain('## Shared tool obligations');
     expect(captured[0]!.tools.find(tool => tool.name === 'glob')?.description)
-      .toBe(getBuiltinToolDefinition('glob')!.description);
+      .toBe(unified('glob').description);
   });
 
-  it('preserves the paired child contract and live permission on non-streaming recovery', async () => {
+  it('preserves the child contract and live permission on non-streaming recovery', async () => {
     let mode: 'full-access' | 'plan' = 'full-access';
     const complete = vi.spyOn(ContractProvider.prototype, 'complete');
     response = () => {
@@ -134,14 +125,13 @@ describe('builtin child request contract through real executor and substrate', (
     expect(captured[0]!.system).toContain('Current permission mode: full-access');
     expect(captured.at(-1)!.system).toContain('Current permission mode: plan');
     for (const wire of captured) {
-      expect(wire.system).toContain('## Shared tool obligations');
       expect(wire.system).toContain(CHILD_AGENT_SYSTEM_PROMPT);
       expect(wire.tools.find(tool => tool.name === 'glob')?.description).toBe('Find file paths by glob.');
       expect(wire.tools).toEqual(captured[0]!.tools);
     }
   });
 
-  it('retains the paired teaching across turns while refreshing live permission changes', async () => {
+  it('retains the tool text across turns while refreshing live permission changes', async () => {
     writeFileSync(join(root, 'evidence.txt'), 'Current evidence.');
     let mode: 'full-access' | 'plan' = 'full-access';
     response = () => {
@@ -159,9 +149,7 @@ describe('builtin child request contract through real executor and substrate', (
     expect(captured[1]!.system).toContain('Current permission mode: plan');
     expect(captured[1]!.system).toContain('Read-only planning. Do not perform ordinary file mutations.');
     for (const wire of captured) {
-      expect(wire.system).toContain('## Shared tool obligations');
       expect(wire.tools.find(tool => tool.name === 'glob')?.description).toBe('Find file paths by glob.');
-      expect(wire.messages.some(message => JSON.stringify(message).includes('## Shared tool obligations'))).toBe(false);
     }
   });
 });

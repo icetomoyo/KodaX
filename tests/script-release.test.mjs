@@ -62,7 +62,7 @@ test('actual npm tarball runs Script in a clean directory and fails explicitly o
       process.env.KODAX_PACK_MODE_KEY='offline'; process.env.KODAX_HOME=path.join(process.cwd(),'home');
       try { await assertWorkModeAvailable({workMode:'script'}); }
       catch(error) { process.stdout.write(JSON.stringify({ready:false,error:String(error)})); process.exit(0); }
-      assert.equal(KODAX_TOOLS.find(t=>t.name==='glob').description,'Find files matching a pattern.');
+      assert.equal(KODAX_TOOLS.find(t=>t.name==='glob').description,'Find file paths by glob.');
       let calls=0; let nativeCalls=0; let workMode='script'; let scriptShell; let scriptQuestion;
       const originalSource='PACKED_SOURCE_VALUE';let hostCalls=0;
       const extensionRuntime={

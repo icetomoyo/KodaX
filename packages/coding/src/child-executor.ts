@@ -37,7 +37,6 @@ import { resolveExecutionCwd, resolveExecutionPath } from './runtime-paths.js';
 import { actorQueueId } from './agent-runtime/actor-queue.js';
 import { countTokens } from './tokenizer.js';
 import { CHILD_AGENT_SYSTEM_PROMPT } from './prompts/child-system-contract.js';
-import { withBuiltinChildContract } from './prompts/child-contract-scope.js';
 export { CHILD_AGENT_SYSTEM_PROMPT } from './prompts/child-system-contract.js';
 import { resolveProvider } from './providers/index.js';
 import { resolveModelHintTier } from './model-hint-routing.js';
@@ -1498,9 +1497,7 @@ async function runReadChildBody(
         events: childEvents,
       },
       briefing,
-      (runOptions, childPrompt) => withBuiltinChildContract(bundle.specialistName ? undefined : {
-        agentId: childContextAgentId(bundle, options), system: systemPromptOverride,
-      }, () => runFn(runOptions, childPrompt)),
+      (runOptions, childPrompt) => runFn(runOptions, childPrompt),
       {
         onUsage: (total) => { fallbackTokensUsed = total; },
         onFallback: ({ fromProvider, toProvider, reason }) => {
@@ -1817,9 +1814,7 @@ async function runWriteChildBody(
         events: childEvents,
       },
       briefing,
-      (runOptions, childPrompt) => withBuiltinChildContract(bundle.specialistName ? undefined : {
-        agentId: childContextAgentId(bundle, options), system: systemPromptOverride,
-      }, () => runFn(runOptions, childPrompt)),
+      (runOptions, childPrompt) => runFn(runOptions, childPrompt),
       {
         onUsage: (total) => { fallbackTokensUsed = total; },
         onFallback: ({ fromProvider, toProvider, reason }) => {

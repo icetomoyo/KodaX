@@ -4,7 +4,7 @@ import type { Agent } from '@kodax-ai/agent';
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
 import type { KodaXContextOptions } from '../types.js';
 import { buildWorkerStableInstructions } from '../agents/worker-role-prompt.js';
-import { canProjectManagedToolContracts, projectManagedToolContract } from '../tools/managed-tool-contract.js';
+import { canProjectManagedToolContracts } from '../tools/managed-tool-contract.js';
 import { projectModelToolDefinition } from '../tools/model-tool-definition.js';
 import { getBuiltinToolDefinition, getRegisteredToolDefinition } from '../tools/registry.js';
 import { getScriptModelContracts } from '../agent-runtime/script/model.js';
@@ -39,7 +39,7 @@ export function projectManagedSystemContract(agent: Agent, tools: readonly KodaX
     const actual = effective.find(tool => tool.name === name);
     const builtin = getBuiltinToolDefinition(name);
     if (!actual || !builtin || getRegisteredToolDefinition(name)?.source.kind !== 'builtin') return false;
-    const expected = projectManagedToolContract(projectModelToolDefinition(builtin, { kind: 'builtin' }));
+    const expected = projectModelToolDefinition(builtin, { kind: 'builtin' });
     return actual.description === expected.description && isDeepStrictEqual(actual.input_schema, expected.input_schema);
   };
   if (!requiredTools.every(has)) return system;

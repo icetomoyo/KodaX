@@ -19,17 +19,13 @@ const DEFAULT_PRODUCT_NAME = 'KodaX';
 export function buildManualToolDescription(productName = DEFAULT_PRODUCT_NAME): string {
   const name = productName.trim() || DEFAULT_PRODUCT_NAME;
   // Only KodaX's own manual asserts the ~/.kodax / KODAX_* paths; a re-branded
-  // product keeps the anti-Claude-Code/Codex framing without KodaX specifics.
-  const configClause = name === DEFAULT_PRODUCT_NAME
-    ? ` — ${name} uses ~/.kodax/config.json and KODAX_* env vars, not .claude/settings.json or config.toml.`
-    : '.';
+  // product keeps the other-product framing without KodaX specifics.
   return [
-    `Look up how to use, install, configure, troubleshoot, or extend ${name} itself.`,
-    staticText("kodax-manual.coverage"),
-    `Call this first for any "how do I … in ${name}" question and answer from its result.`,
-    `Do not answer ${name} product questions from pretraining, because pretraining mixes in Claude Code and Codex CLI details that do not match ${name}${configClause}`,
-    'Pass an exact topic id, or a free-text query, or neither to get the topic index. It explains where to check a value rather than reading your secrets.',
-  ].join('\n');
+    `First source for using, installing, configuring, troubleshooting or extending ${name} itself, including its SDK.`,
+    staticText("kodax-manual.answer-source"),
+    ...(name === DEFAULT_PRODUCT_NAME ? [staticText("kodax-manual.config-paths")] : []),
+    staticText("kodax-manual.lookup"),
+  ].join(' ');
 }
 
 /**

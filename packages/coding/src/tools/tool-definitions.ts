@@ -130,6 +130,13 @@ function toolInputSchema(key: Parameters<typeof staticText>[0]): KodaXToolDefini
   return JSON.parse(staticText(key)) as KodaXToolDefinition['input_schema'];
 }
 
+/** One shell contract; the Script pilot states its foreground-only boundary in the same place. */
+export function shellToolDescription(execution: 'native' | 'foreground'): string {
+  return staticText("tool.bash.description") + ' '
+    + (execution === 'native' ? 'Long commands: run_in_background. ' : 'Foreground commands only; use native bash for background commands. ')
+    + 'Full output captured; only next-request capacity overflow yields recoverable artifact preview.';
+}
+
 /**
  * Classifier projection helper for `stage_*` construction tools whose input
  * is the artifact serialized as a JSON string. Parses opportunistically and
@@ -303,8 +310,8 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     input_schema: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'The absolute path to the file' },
-        content: { type: 'string', description: 'The content to write' },
+        path: { type: 'string', description: 'Absolute file path.' },
+        content: { type: 'string' },
       },
       required: ['path', 'content'],
     },
@@ -352,7 +359,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'bash',
-    description: staticText("tool.bash.description"),
+    description: shellToolDescription('native'),
     input_schema: toolInputSchema('tool.bash.input_schema'),
     handler: toolBash,
     sideEffect: 'mutates-shell',
@@ -373,12 +380,12 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'glob',
-    description: 'Find files matching a pattern.',
+    description: 'Find file paths by glob.',
     input_schema: {
       type: 'object',
       properties: {
-        pattern: { type: 'string', description: 'The glob pattern' },
-        path: { type: 'string', description: 'Directory to search' },
+        pattern: { type: 'string' },
+        path: { type: 'string', description: 'Search directory.' },
       },
       required: ['pattern'],
     },
@@ -522,12 +529,8 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     input_schema: {
       type: 'object',
       properties: {
-        target: {
-          type: 'string',
-          description:
-            'Canonical controlled actor path or direct-child task name.',
-        },
-        turn_id: { type: 'string', description: 'Optional exact turn id. Defaults to the actor\'s latest turn.' },
+        target: { type: 'string', description: 'Canonical controlled path or direct-child name.' },
+        turn_id: { type: 'string', description: 'Exact turn; default latest.' },
       },
       required: ['target'],
     },
@@ -709,12 +712,12 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'worktree_create',
-    description: 'Create a new git worktree with an isolated branch for safe agent work.',
+    description: 'Create isolated Git worktree/branch for Agent work.',
     input_schema: {
       type: 'object',
       properties: {
-        branch_name: { type: 'string', description: 'Optional explicit branch name' },
-        description: { type: 'string', description: 'Optional description to auto-generate branch name from' },
+        branch_name: { type: 'string', description: 'Explicit branch; optional.' },
+        description: { type: 'string', description: 'Input used to generate a branch name.' },
       },
     },
     handler: toolWorktreeCreate,
@@ -729,7 +732,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'worktree_remove',
-    description: 'Remove a git worktree and optionally its branch.',
+    description: 'Keep/remove a Git worktree directory and optionally its branch.',
     input_schema: toolInputSchema('tool.worktree_remove.input_schema'),
     handler: toolWorktreeRemove,
     sideEffect: 'mutates-fs',
@@ -845,7 +848,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     input_schema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'Optional stable todo id for full item detail; omit to list the plan.' },
+        id: { type: 'string', description: 'Stable item ID; omitted lists plan.' },
       },
     },
     handler: toolTodoList,

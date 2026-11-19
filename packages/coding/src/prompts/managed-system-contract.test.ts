@@ -6,7 +6,7 @@ import { buildRunnerAgentChain } from '../task-engine/_internal/managed-task/age
 import { buildRunnerLlmAdapter } from '../task-engine/_internal/managed-task/llm-adapter.js';
 import { buildFallbackRoutingDecision } from '../reasoning.js';
 import { markOrdinaryRootToolContract } from '../tools/managed-tool-contract.js';
-import { inheritOrdinaryRootToolContract, projectManagedToolContracts } from '../tools/managed-tool-contract.js';
+import { inheritOrdinaryRootToolContract } from '../tools/managed-tool-contract.js';
 import { projectManagedSystemContract } from './managed-system-contract.js';
 import { createScriptPilot } from '../agent-runtime/script/pilot.js';
 import { withScriptModelTool } from '../agent-runtime/script/model.js';
@@ -51,7 +51,7 @@ function expectDirectWorktreeBridge(worker: Agent, canonical: readonly KodaXTool
     'worktree_create: Create isolated Git worktree/branch', '"branch_name"?: string', '"description"?: string',
     'worktree_remove: Keep/remove a Git worktree', '"action": "keep" | "remove"', '"worktree_path": string',
     '"discard_changes"?: boolean', 'true bypasses uncommitted/local-commit safety checks']) expect(description, clause).toContain(clause);
-  const expected = projectManagedToolContracts(worker, canonical);
+  const expected = canonical;
   for (const name of ['read', 'write', 'edit', 'bash', 'grep', 'glob', 'todo_create', 'todo_update', 'todo_list',
     'spawn_agent', 'wait_agent', 'send_message', 'followup_task', 'list_agents', 'agent_output', 'interrupt_agent',
     'create_goal', 'get_goal', 'update_goal', 'memory_intent', 'memory_recall', 'kodax_manual']) {
@@ -208,7 +208,7 @@ it('preserves SDK, host and incomplete or changed tool contracts, including trim
     const original = instructions(worker);
     expect(projectManagedSystemContract(worker, worker.tools!, original)).toBe(original);
     markOrdinaryRootToolContract(worker);
-    const tools = projectManagedToolContracts(worker, worker.tools!);
+    const tools = worker.tools!;
     expect(projectManagedSystemContract(worker, tools, original)).not.toBe(original);
     for (const host of [{ currentAgentId: 'child' }, { agentProfile: { id: 'reviewer' } },
       { toolVisibilityPolicy: () => true }, { systemPromptOverride: 'Host-specific instructions' }]) {
@@ -244,7 +244,7 @@ it('retains Memory and manual rules whenever their own complete operation contra
   const { worker, controller } = await fixture();
   try {
     markOrdinaryRootToolContract(worker);
-    const tools = projectManagedToolContracts(worker, worker.tools!);
+    const tools = worker.tools!;
     const memory = buildMemoryRulesSection('.');
     const original = `${instructions(worker)}\n\n${memory}\n\n${SELF_KNOWLEDGE_ROUTING_RULE}`;
     const compact = projectManagedSystemContract(worker, tools, original);
@@ -276,7 +276,7 @@ it('gives operation teaching one owner while retaining dispatch decisions', asyn
   try {
     const original = instructions(worker);
     markOrdinaryRootToolContract(worker);
-    const tools = projectManagedToolContracts(worker, worker.tools!);
+    const tools = worker.tools!;
     const projected = projectManagedSystemContract(worker, tools, original);
     expect(projected).not.toContain('send_message does not wake an idle actor');
     const message = tools.find(tool => tool.name === 'send_message')!;
@@ -308,7 +308,7 @@ it.each(['win32', 'darwin', 'linux', undefined] as const)('retains actual platfo
       }) }).worker;
     const original = instructions(worker);
     markOrdinaryRootToolContract(worker);
-    const projected = projectManagedSystemContract(worker, projectManagedToolContracts(worker, worker.tools!), original);
+    const projected = projectManagedSystemContract(worker, worker.tools!, original);
     expect(projected).toContain('Helper scripts / scratch files are a last resort');
     expect(projected).toContain('Preserve any exact machine-readable closing contract');
     if (platform) {
@@ -319,7 +319,6 @@ it.each(['win32', 'darwin', 'linux', undefined] as const)('retains actual platfo
     } else {
       expect(projected).toContain('Cross-platform shell:');
     }
-    expect(projectManagedSystemContract(worker, worker.tools!, original)).toBe(original);
   } finally { await controller.shutdown('Platform contract capture finished'); }
 });
 

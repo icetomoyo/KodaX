@@ -48,7 +48,7 @@ Activate a staged-and-tested artifact. Invokes the construction policy gate, reg
 
 ## agent_output
 
-Retrieve the current or terminal bounded output preview, recent activity, legacy artifact references, and structured artifact metadata for a known controlled actor turn. Use list_agents for tree state and wait_agent for mailbox waiting; do not poll completion with agent_output.
+Read bounded output/activity and legacy/structured artifact references for a known controlled Actor/Turn. Tree: list_agents; waiting: wait_agent. Never poll completion here.
 
 ```json
 {
@@ -56,11 +56,11 @@ Retrieve the current or terminal bounded output preview, recent activity, legacy
   "properties": {
     "target": {
       "type": "string",
-      "description": "Canonical controlled actor path or direct-child task name."
+      "description": "Canonical controlled path or direct-child name."
     },
     "turn_id": {
       "type": "string",
-      "description": "Optional exact turn id. Defaults to the actor's latest turn."
+      "description": "Exact turn; default latest."
     }
   },
   "required": [
@@ -71,7 +71,7 @@ Retrieve the current or terminal bounded output preview, recent activity, legacy
 
 ## ask_user_question
 
-Ask one question (question/options), or 1–4 independent select questions (questions[] overrides flat question/options; each item needs options). Free text: kind=input, flat single question only. Select supports multi_select and automatic Other/custom input; do not add Other. allow_custom_input=false only for closed safety/protocol choices. Questions wait indefinitely by default; skip or Host timeout returns unanswered, and only Stop interrupts the Run. Defaults are suggestions, never submitted automatically. Continue or explain missing information after an unanswered result. Flat custom settings are batch fallbacks.
+Ask one flat question or 1–4 independent select questions via questions[] (overrides flat question/options; each item requires options). kind=input: flat free text only; select (default): options required. multi_select returns an array, bounded by min/max_selections. Option value defaults to label. Do not add Other: custom input defaults true; false only for closed safety/protocol choices. Batch custom settings inherit flat settings unless overridden. Defaults are suggestions, never submitted automatically. Wait indefinitely unless the Host sets a timeout. Skip/timeout returns unanswered; only Stop interrupts the Run. Continue or explain missing information.
 
 ```json
 {
@@ -90,7 +90,7 @@ Ask one question (question/options), or 1–4 independent select questions (ques
           },
           "header": {
             "type": "string",
-            "description": "Short progress label, at most 12 chars."
+            "description": "Progress label, ≤12 chars."
           },
           "options": {
             "type": "array",
@@ -104,8 +104,7 @@ Ask one question (question/options), or 1–4 independent select questions (ques
                   "type": "string"
                 },
                 "value": {
-                  "type": "string",
-                  "description": "Returned value; defaults to label."
+                  "type": "string"
                 }
               },
               "required": [
@@ -117,32 +116,25 @@ Ask one question (question/options), or 1–4 independent select questions (ques
             "type": "boolean"
           },
           "min_selections": {
-            "type": "integer",
-            "description": "Minimum choices when multi_select=true."
+            "type": "integer"
           },
           "max_selections": {
-            "type": "integer",
-            "description": "Maximum choices when multi_select=true."
+            "type": "integer"
           },
           "default": {
-            "type": "string",
-            "description": "Suggested option value for display. Never submitted automatically."
+            "type": "string"
           },
           "allow_custom_input": {
-            "type": "boolean",
-            "description": "Defaults to the flat setting or true; false only for closed safety/protocol choices."
+            "type": "boolean"
           },
           "custom_input_label": {
-            "type": "string",
-            "description": "Custom-choice label; falls back to flat setting or \"Other...\"."
+            "type": "string"
           },
           "custom_input_prompt": {
-            "type": "string",
-            "description": "Custom-choice prompt; falls back to flat setting."
+            "type": "string"
           },
           "custom_input_default": {
-            "type": "string",
-            "description": "Custom-choice initial text; falls back to flat setting."
+            "type": "string"
           }
         },
         "required": [
@@ -158,12 +150,10 @@ Ask one question (question/options), or 1–4 independent select questions (ques
       "enum": [
         "select",
         "input"
-      ],
-      "description": "Default select; input ignores options and does not support questions[]."
+      ]
     },
     "options": {
       "type": "array",
-      "description": "Choices; required for select, ignored for input.",
       "items": {
         "type": "object",
         "properties": {
@@ -174,8 +164,7 @@ Ask one question (question/options), or 1–4 independent select questions (ques
             "type": "string"
           },
           "value": {
-            "type": "string",
-            "description": "Returned value; defaults to label."
+            "type": "string"
           }
         },
         "required": [
@@ -184,36 +173,31 @@ Ask one question (question/options), or 1–4 independent select questions (ques
       }
     },
     "multi_select": {
-      "type": "boolean",
-      "description": "Select only: allow multiple choices; answer is an array."
+      "type": "boolean"
     },
     "min_selections": {
-      "type": "integer",
-      "description": "Minimum choices when multi_select=true."
+      "type": "integer"
     },
     "max_selections": {
-      "type": "integer",
-      "description": "Maximum choices when multi_select=true."
+      "type": "integer"
     },
     "allow_custom_input": {
-      "type": "boolean",
-      "description": "Automatic custom choice defaults true; false only for closed safety/protocol choices."
+      "type": "boolean"
     },
     "custom_input_label": {
       "type": "string",
-      "description": "Automatic custom-choice label; default \"Other...\"."
+      "description": "Custom-choice label; default \"Other...\"."
     },
     "custom_input_prompt": {
       "type": "string",
-      "description": "Prompt for the automatic custom choice."
+      "description": "Custom-choice prompt."
     },
     "custom_input_default": {
       "type": "string",
-      "description": "Initial text for the automatic custom choice."
+      "description": "Custom-choice initial text."
     },
     "default": {
-      "type": "string",
-      "description": "Suggested option value (select) or initial text (input) for display. Never submitted automatically."
+      "type": "string"
     }
   }
 }
@@ -221,27 +205,26 @@ Ask one question (question/options), or 1–4 independent select questions (ques
 
 ## bash
 
-Execute shell commands for tests/builds/lint, packages, Git, process management, filesystem queries without dedicated tools, or computed/template-driven multi-file generation. Use grep/glob for their dedicated searches. Use run_in_background for long commands. Output is fully captured; only next-request capacity overflow yields a recoverable artifact preview. For a known-content file, use write/edit: shell redirection, heredocs, Set-Content/Out-File or Python/Node wrappers bypass mutation tracking and diff verification, and move the streaming limit to the generator.
+Shell: tests/build/lint, packages, Git/processes, queries without dedicated tools, computed/template multi-file generation. Searches: grep/glob; known file content: write/edit, not shell redirection/wrappers. Long commands: run_in_background. Full output captured; only next-request capacity overflow yields recoverable artifact preview.
 
 ```json
 {
   "type": "object",
   "properties": {
     "command": {
-      "type": "string",
-      "description": "The command to execute"
+      "type": "string"
     },
     "description": {
       "type": "string",
-      "description": "Clear, concise description of what this command does"
+      "description": "Concise command purpose."
     },
     "timeout": {
       "type": "number",
-      "description": "Timeout in seconds"
+      "description": "Seconds."
     },
     "run_in_background": {
       "type": "boolean",
-      "description": "Run command in background. Returns immediately with output file path. Use read tool to check output later."
+      "description": "Return immediately with output path; read it later."
     }
   },
   "required": [
@@ -426,7 +409,7 @@ Search paths and file contents for a literal string, or query an extension searc
 
 ## create_goal
 
-Create a goal only when explicitly requested by the user or system/developer instructions; do not infer goals from ordinary tasks. Set token_budget only when an explicit token budget is requested. Fails if a goal exists; use update_goal only for status changes.
+Create only on explicit user/system/developer request, never infer from ordinary tasks. token_budget only if explicitly requested. Fails if a goal exists; update_goal changes status only.
 
 ```json
 {
@@ -434,11 +417,11 @@ Create a goal only when explicitly requested by the user or system/developer ins
   "properties": {
     "objective": {
       "type": "string",
-      "description": "The long-running objective the agent should pursue across turns. A clear, concrete sentence describing the target end-state."
+      "description": "Concrete target end-state across turns."
     },
     "token_budget": {
       "type": "number",
-      "description": "Optional positive integer token budget for the entire goal. Omit when the user did not request a budget."
+      "description": "Positive integer total budget; otherwise omit."
     }
   },
   "required": [
@@ -479,27 +462,23 @@ Replace exact (or normalized) text in an existing file. The most efficient way t
   "type": "object",
   "properties": {
     "path": {
-      "type": "string",
-      "description": "The file to edit"
+      "type": "string"
     },
     "edits": {
       "type": "array",
       "minItems": 1,
-      "description": "Replacements applied sequentially to this file; any failure leaves the file unchanged.",
       "items": {
         "type": "object",
         "properties": {
           "old_string": {
-            "type": "string",
-            "description": "Unique text to replace; exact match then normalized fallback"
+            "type": "string"
           },
           "new_string": {
-            "type": "string",
-            "description": "Replacement text"
+            "type": "string"
           },
           "replace_all": {
             "type": "boolean",
-            "description": "Replace every occurrence; defaults to false"
+            "description": "All occurrences; default false."
           }
         },
         "required": [
@@ -529,7 +508,7 @@ Replace exact (or normalized) text in an existing file. The most efficient way t
 
 ## exit_plan_mode
 
-Exit plan mode by presenting the finalized plan to the user for approval. On approval, the session flips to accept-edits and implementation can proceed. On rejection, the session remains in plan mode so the plan can be revised. Wait for Host approval before implementing, because plan mode remains read-only until that transition. Parent-only: requires an interactive approval UI (wired only in REPL sessions).
+Parent-only interactive REPL approval of the finished plan. Approved → accept-edits; rejected → stay in plan and revise. Wait for Host approval before implementing.
 
 ```json
 {
@@ -537,7 +516,7 @@ Exit plan mode by presenting the finalized plan to the user for approval. On app
   "properties": {
     "plan": {
       "type": "string",
-      "description": "The finalized plan to present to the user. Include the full plan content, not a summary, so the user can make an informed approval decision. Keep the plan tight: at most 40 lines total, 3 bullet-depth levels, one sentence per bullet. If the plan exceeds this budget, split it into phases and present only the current phase — the user can approve phase-by-phase."
+      "description": "Full plan, not summary: ≤40 lines, ≤3 bullet levels, one sentence/bullet. If larger, present the current phase for phase-by-phase approval."
     }
   },
   "required": [
@@ -548,7 +527,7 @@ Exit plan mode by presenting the finalized plan to the user for approval. On app
 
 ## followup_task
 
-Deliver an additional task to a direct child. An idle actor atomically starts a new turn; a running actor receives it in the current turn without consuming another slot.
+Task/evidence for a direct child: idle starts a turn atomically; running receives it in-place without another slot.
 
 ```json
 {
@@ -556,15 +535,15 @@ Deliver an additional task to a direct child. An idle actor atomically starts a 
   "properties": {
     "target": {
       "type": "string",
-      "description": "Canonical child path or direct-child task name."
+      "description": "Canonical child path or direct-child name."
     },
     "objective": {
       "type": "string",
-      "description": "Additional objective or changed evidence."
+      "description": "Additional objective/evidence."
     },
     "quality_strategy": {
       "type": "object",
-      "description": "Optional telemetry/provenance for PatternTrace reconstruction. It never controls otherwise legal follow-up admission; invalid or conflicting metadata is ignored."
+      "description": "Optional PatternTrace provenance; never admission control. Invalid/conflicting data ignored."
     }
   },
   "required": [
@@ -576,7 +555,7 @@ Deliver an additional task to a direct child. An idle actor atomically starts a 
 
 ## get_goal
 
-Read the current goal for this session, including status, budget, token and elapsed-time usage, and remaining token budget.
+Read current session goal: status, budget, used/remaining tokens and elapsed time.
 
 ```json
 {
@@ -587,19 +566,18 @@ Read the current goal for this session, including status, budget, token and elap
 
 ## glob
 
-Find files matching a pattern.
+Find file paths by glob.
 
 ```json
 {
   "type": "object",
   "properties": {
     "pattern": {
-      "type": "string",
-      "description": "The glob pattern"
+      "type": "string"
     },
     "path": {
       "type": "string",
-      "description": "Directory to search"
+      "description": "Search directory."
     }
   },
   "required": [
@@ -610,23 +588,22 @@ Find files matching a pattern.
 
 ## grep
 
-Search file contents with a regex or literal text. Supports context lines, multiline matching, file type filtering, and pagination.
+Search file contents: regex by default, literal:true for verbatim/long text; glob tool for paths. Supports context, multiline, type and paging.
 
 ```json
 {
   "type": "object",
   "properties": {
     "pattern": {
-      "type": "string",
-      "description": "Regex, or literal text when literal is true, to match in file contents."
+      "type": "string"
     },
     "literal": {
       "type": "boolean",
-      "description": "Match text verbatim, including long strings. Default false (regex). Use glob for paths."
+      "description": "Default false."
     },
     "path": {
       "type": "string",
-      "description": "File or directory; defaults to cwd."
+      "description": "File/directory; default cwd."
     },
     "glob": {
       "type": "string",
@@ -634,7 +611,7 @@ Search file contents with a regex or literal text. Supports context lines, multi
     },
     "type": {
       "type": "string",
-      "description": "File type such as ts (includes .ts/.tsx/.mts/.cts). Use glob for an exact extension, e.g. *.ts."
+      "description": "ts includes ts/tsx/mts/cts; glob for exact extension."
     },
     "output_mode": {
       "type": "string",
@@ -643,11 +620,11 @@ Search file contents with a regex or literal text. Supports context lines, multi
         "files_with_matches",
         "count"
       ],
-      "description": "content (default): matching lines; files_with_matches: paths; count: per-file match counts."
+      "description": "Default content (lines); files_with_matches (paths); count (per-file counts)."
     },
     "ignore_case": {
       "type": "boolean",
-      "description": "Case-insensitive matching; default false."
+      "description": "Default false."
     },
     "-i": {
       "type": "boolean",
@@ -655,11 +632,11 @@ Search file contents with a regex or literal text. Supports context lines, multi
     },
     "-A": {
       "type": "number",
-      "description": "Following context lines; content mode only."
+      "description": "Following lines; content mode."
     },
     "-B": {
       "type": "number",
-      "description": "Preceding context lines; content mode only."
+      "description": "Preceding lines; content mode."
     },
     "-C": {
       "type": "number",
@@ -667,19 +644,19 @@ Search file contents with a regex or literal text. Supports context lines, multi
     },
     "context": {
       "type": "number",
-      "description": "Context lines on both sides; content mode only."
+      "description": "Both sides; content mode."
     },
     "multiline": {
       "type": "boolean",
-      "description": "Allow . and matches across newlines; default false."
+      "description": "Cross-line matches and dot; default false."
     },
     "head_limit": {
       "type": "number",
-      "description": "Limit output to first N entries. Defaults to 250. Pass 0 to remove the entry-count cap; the source byte budget still applies."
+      "description": "Entry cap, default 250; 0 uncaps count, not source bytes."
     },
     "offset": {
       "type": "number",
-      "description": "Entries to skip; default 0."
+      "description": "Entries skipped; default 0."
     },
     "scan_offset": {
       "type": "number",
@@ -726,23 +703,21 @@ Estimate affected modules/symbols and possible callers for a symbol, path or mod
 
 ## insert_after_anchor
 
-Insert content after a unique anchor without rewriting the whole file. Prefer this for appending new sections to existing docs or configs.
+Insert content after a unique anchor without rewriting the file; preferred for new sections in existing docs/configs.
 
 ```json
 {
   "type": "object",
   "properties": {
     "path": {
-      "type": "string",
-      "description": "The file to update"
+      "type": "string"
     },
     "anchor": {
       "type": "string",
-      "description": "A unique heading or nearby marker to insert after"
+      "description": "Unique heading/marker."
     },
     "content": {
-      "type": "string",
-      "description": "The content to insert after the anchor"
+      "type": "string"
     }
   },
   "required": [
@@ -755,7 +730,7 @@ Insert content after a unique anchor without rewriting the whole file. Prefer th
 
 ## interrupt_agent
 
-Interrupt a controlled child actor's active turn without deleting its identity or history. Native/constructed actors support this operation; an incapable external backend rejects it explicitly.
+Interrupt a controlled child turn, preserving identity/history. Native/constructed supported; incapable external backends explicitly reject.
 
 ```json
 {
@@ -763,11 +738,11 @@ Interrupt a controlled child actor's active turn without deleting its identity o
   "properties": {
     "target": {
       "type": "string",
-      "description": "Canonical controlled actor path or direct-child task name."
+      "description": "Canonical controlled path or direct-child name."
     },
     "reason": {
       "type": "string",
-      "description": "Optional attributable interruption reason."
+      "description": "Attributable reason."
     },
     "scope": {
       "type": "string",
@@ -775,7 +750,7 @@ Interrupt a controlled child actor's active turn without deleting its identity o
         "turn",
         "subtree"
       ],
-      "description": "Interrupt only the target Turn (default) or every active Turn in its controlled subtree. Actors remain reusable."
+      "description": "Default turn; subtree interrupts all controlled active turns. Actors remain reusable."
     }
   },
   "required": [
@@ -786,11 +761,7 @@ Interrupt a controlled child actor's active turn without deleting its identity o
 
 ## kodax_manual
 
-Look up how to use, install, configure, troubleshoot, or extend KodaX itself.
-Covers providers, custom providers, config, permissions, sandboxing, slash commands, tools, custom agents, skills, extensions, MCP, A2A, repo intelligence, sessions, context compaction, memory, the doctor command, and the SDK.
-Call this first for any "how do I … in KodaX" question and answer from its result.
-Do not answer KodaX product questions from pretraining, because pretraining mixes in Claude Code and Codex CLI details that do not match KodaX — KodaX uses ~/.kodax/config.json and KODAX_* env vars, not .claude/settings.json or config.toml.
-Pass an exact topic id, or a free-text query, or neither to get the topic index. It explains where to check a value rather than reading your secrets.
+First source for using, installing, configuring, troubleshooting or extending KodaX itself, including its SDK. Other software is outside the manual. Answer from results, not other-product pretraining. KodaX uses ~/.kodax/config.json/KODAX_*, not .claude/settings.json/config.toml. Use an exact topic or free-text query. Omit both for the topic index. Explains where to check values, never reads secrets.
 
 ```json
 {
@@ -798,11 +769,11 @@ Pass an exact topic id, or a free-text query, or neither to get the topic index.
   "properties": {
     "topic": {
       "type": "string",
-      "description": "A manual topic id (e.g. \"providers\", \"config\", \"agents\", \"extensions\", \"doctor\"). Unknown topics return the index."
+      "description": "Exact topic ID; unknown returns index."
     },
     "query": {
       "type": "string",
-      "description": "A free-text question when you do not know the topic id (English or Chinese)."
+      "description": "Free-text question (English/Chinese)."
     }
   },
   "required": []
@@ -811,7 +782,7 @@ Pass an exact topic id, or a free-text query, or neither to get the topic index.
 
 ## list_agents
 
-List a bounded page of the caller-visible actor tree, including capabilities, state, parent, active turn, bounded result summary, recent activity, and shared session capacity.
+Bounded caller-visible tree: capabilities, state, parent/active turn, result summary, recent activity and shared capacity.
 
 ```json
 {
@@ -819,7 +790,7 @@ List a bounded page of the caller-visible actor tree, including capabilities, st
   "properties": {
     "path_prefix": {
       "type": "string",
-      "description": "Optional canonical or caller-relative Actor path prefix."
+      "description": "Canonical/caller-relative path prefix."
     },
     "state": {
       "type": "string",
@@ -827,16 +798,15 @@ List a bounded page of the caller-visible actor tree, including capabilities, st
         "running",
         "idle",
         "closed"
-      ],
-      "description": "Optional Actor state filter."
+      ]
     },
     "after_path": {
       "type": "string",
-      "description": "Exclusive canonical path cursor returned as nextAfterPath."
+      "description": "Exclusive nextAfterPath cursor."
     },
     "limit": {
       "type": "number",
-      "description": "Page size, 1-50. Defaults to 20."
+      "description": "1–50; default 20."
     }
   }
 }
@@ -844,7 +814,7 @@ List a bounded page of the caller-visible actor tree, including capabilities, st
 
 ## list_dispatchable_agents
 
-List the Native, Constructed, and External executors currently allowed by host policy. Pass a returned canonical agent_id to spawn_agent.
+List host-allowed Native/Constructed/External executors; use returned canonical agent_id in spawn_agent.
 
 ```json
 {
@@ -855,7 +825,7 @@ List the Native, Constructed, and External executors currently allowed by host p
       "items": {
         "type": "string"
       },
-      "description": "Optional skills every returned agent must declare."
+      "description": "Every returned agent must declare all listed skills."
     },
     "required_capabilities": {
       "type": "object",
@@ -876,11 +846,11 @@ List the Native, Constructed, and External executors currently allowed by host p
           "type": "boolean"
         }
       },
-      "description": "Optional lifecycle capabilities required for this dispatch."
+      "description": "Required lifecycle capabilities."
     },
     "read_only": {
       "type": "boolean",
-      "description": "When true, exclude external agents whose declared remote effect is write or unknown."
+      "description": "true excludes external write/unknown remote effects."
     }
   }
 }
@@ -1257,7 +1227,7 @@ Discover MCP capabilities without loading every remote schema. Omit `query` for 
 
 ## memory_intent
 
-Manage durable Memory in response to a natural-language user request. Use list when the user asks what is remembered; return concise accepted Memory with stable ref ids. Use remember for a new fact, preference, policy, or procedure, correct with one exact targetRefId, and forget with one exact targetRefId. Use decisions/show only when the user asks what needs attention; approve/reject require one exact decision ref and an exact authorizing quote. For mutations, userQuote must be the exact affirmative instruction clause from the current user message. For remember/correct, statement must itself be an exact claim span from that message; never paraphrase or infer durable content. Classify remember as fact, policy, preference, or procedure; every new claim needs a stable semantic claimKey so later updates address the same claim. The host applies safe explicit requests immediately; broad or ambiguous requests ask for clarification, conflicts become readable decisions, and restricted content is rejected.
+Governed Memory: list accepted claims/refs; remember; correct/forget exact claim ref; decisions/show only when asked. Every mutation needs an exact affirmative current-user userQuote. remember/correct statement must be an exact claim span, never inferred/paraphrased, with claimKind; new claims require stable claimKey. approve/reject need exact decision ref plus authorization. Safe requests apply; ambiguity asks; conflicts become decisions; restricted content rejected.
 
 ```json
 {
@@ -1274,16 +1244,14 @@ Manage durable Memory in response to a natural-language user request. Use list w
         "show",
         "approve",
         "reject"
-      ],
-      "description": "The Memory operation requested by the user."
+      ]
     },
     "statement": {
-      "type": "string",
-      "description": "A concise durable claim for remember or correct."
+      "type": "string"
     },
     "targetRefId": {
       "type": "string",
-      "description": "One exact ref returned by list/recall; required for correct and forget."
+      "description": "Exact list/recall claim ref, or exact decision ref."
     },
     "claimKind": {
       "type": "string",
@@ -1292,20 +1260,18 @@ Manage durable Memory in response to a natural-language user request. Use list w
         "policy",
         "preference",
         "procedure"
-      ],
-      "description": "The durable claim category for remember or correct."
+      ]
     },
     "claimKey": {
       "type": "string",
-      "description": "Stable semantic identity such as project.package_manager or user.preference.editor; required for every new claim."
+      "description": "Stable identity, e.g. project.package_manager."
     },
     "userQuote": {
-      "type": "string",
-      "description": "An exact quote from the current user message authorizing a mutation."
+      "type": "string"
     },
     "reason": {
       "type": "string",
-      "description": "Optional user-supplied rejection reason."
+      "description": "User-supplied rejection reason."
     }
   },
   "required": [
@@ -1316,7 +1282,7 @@ Manage durable Memory in response to a natural-language user request. Use list w
 
 ## memory_recall
 
-Recall governed prior experience for one specific decision-relevant gap. Use only when current context does not answer a concrete historical need. When prior execution experience is the known missing source, use this before unrelated repository exploration. Do not use for current repository or environment facts; verify those with normal tools. The query is read-only, exactly scoped to the current MemorySession, and may return no claim.
+Read-only, current MemorySession-scoped prior experience for a concrete decision gap absent from current context; may return none. If prior experience is the known missing source, use before unrelated repo exploration. Current repo/environment facts require normal tools.
 
 ```json
 {
@@ -1324,7 +1290,7 @@ Recall governed prior experience for one specific decision-relevant gap. Use onl
   "properties": {
     "need": {
       "type": "string",
-      "description": "One concrete prior-experience gap relevant to the current decision."
+      "description": "Concrete prior-experience gap."
     }
   },
   "required": [
@@ -1456,7 +1422,7 @@ Inspect an approximate static process capsule selected by entry, module or targe
 
 ## read
 
-Read a local file with bounded output. Text is line-numbered; continue using offset/limit and the exact line_offset cursor from the partial-line continuation marker. Paged input: path also accepts kodax-transient://text/ references supplied by context recovery. These are valid local, run-scoped text capabilities, not network URLs. Read them directly with offset/limit to recover the original requirements; do not ask the user to re-paste them. PNG/JPG/JPEG/GIF/WEBP return inline vision content, so inspect them instead of rejecting them as binary. An image already attached or inlined in the conversation is visible to you, so reading it again only repeats it.
+Read line-numbered bounded text. Continue offset/limit; partial lines require exact line_offset cursor. Context recovery’s kodax-transient://text/ is a local run-scoped capability: read directly, not network or user re-paste. PNG/JPG/JPEG/GIF/WEBP return inline vision, so inspect them rather than rejecting as binary. Attached or inlined images are already visible; rereading only repeats them.
 
 ```json
 {
@@ -1464,19 +1430,19 @@ Read a local file with bounded output. Text is line-numbered; continue using off
   "properties": {
     "path": {
       "type": "string",
-      "description": "The absolute file path or a kodax-transient://text/ reference supplied by context recovery"
+      "description": "Absolute path or supplied kodax-transient://text/ reference."
     },
     "offset": {
       "type": "number",
-      "description": "Line number to start from (text files only)"
+      "description": "Starting text line number."
     },
     "limit": {
       "type": "number",
-      "description": "Number of lines to read (text files only)"
+      "description": "Text lines."
     },
     "line_offset": {
       "type": "number",
-      "description": "Zero-based Unicode character offset within the first selected line. Use the exact value from a partial-line continuation marker."
+      "description": "0-based Unicode character offset within first line; use exact continuation cursor."
     }
   },
   "required": [
@@ -1844,7 +1810,7 @@ Search repository intelligence for symbol-, module-, or process-aware semantic m
 
 ## send_message
 
-Deliver a bounded message without starting a turn. A running actor receives it at the next safe boundary; an idle actor retains it for its next turn. Runtime-derived forwarding lineage prevents cycles; direct parent, direct child, admitted peer, and bounded broadcast targets are supported.
+Message, no new turn: running receives at next safe boundary; idle retains until next turn. Direct parent/child, admitted peer or broadcast capped at 20; Runtime validates forwarding lineage against cycles.
 
 ```json
 {
@@ -1852,15 +1818,15 @@ Deliver a bounded message without starting a turn. A running actor receives it a
   "properties": {
     "to": {
       "type": "string",
-      "description": "A visible canonical actor path, direct-child/peer task name, the literal \"parent\", or \"*\" for a bounded broadcast. Self-targeted sends are rejected."
+      "description": "Visible canonical path, child/peer name, parent, or * broadcast. Self rejected."
     },
     "content": {
       "type": "string",
-      "description": "Message body. Runtime wraps it in an authenticated <agent-message> frame before delivery."
+      "description": "Body; Runtime authenticates agent-message frame."
     },
     "forwarded_message_id": {
       "type": "string",
-      "description": "Message id from a received <agent-message> frame. Supply only when forwarding that message; Runtime derives and validates the forwarding chain. Omit for a fresh message."
+      "description": "Received agent-message ID only when forwarding; Runtime derives chain. Fresh message: omit."
     },
     "classification": {
       "type": "string",
@@ -1869,7 +1835,7 @@ Deliver a bounded message without starting a turn. A running actor receives it a
         "internal",
         "sensitive"
       ],
-      "description": "Data classification. Defaults to internal; forwarding cannot downgrade the source classification."
+      "description": "Default internal; cannot downgrade source classification."
     }
   },
   "required": [
@@ -1881,7 +1847,7 @@ Deliver a bounded message without starting a turn. A running actor receives it a
 
 ## session_history_read
 
-Read one exact persisted session-history entry cited by session_history_search. Content is returned in bounded character chunks. Use selected hit.entryRevision as revision; reuse returned entryRevision for nextOffset or stale recovery. It checks this entry across normal message appends. Top-level search revision remains a strict whole-history snapshot.
+Read cited persisted entry in bounded character chunks. Use selected hit.entryRevision as revision; reuse returned entryRevision for nextOffset or stale recovery. It checks this entry across normal message appends. Top-level search revision remains a strict whole-history snapshot.
 
 ```json
 {
@@ -1889,7 +1855,7 @@ Read one exact persisted session-history entry cited by session_history_search. 
   "properties": {
     "entry_id": {
       "type": "string",
-      "description": "Exact selected hit.entryId returned by session_history_search."
+      "description": "Exact hit.entryId."
     },
     "revision": {
       "type": "string",
@@ -1897,7 +1863,7 @@ Read one exact persisted session-history entry cited by session_history_search. 
     },
     "offset": {
       "type": "number",
-      "description": "Zero-based character offset (default 0)."
+      "description": "0-based characters; default 0."
     }
   },
   "required": [
@@ -1908,7 +1874,7 @@ Read one exact persisted session-history entry cited by session_history_search. 
 
 ## session_history_search
 
-Search exact persisted entries that are no longer present in the compacted model context. Use this only when a user request depends on an omitted historical detail; do not guess from the checkpoint. Results are bounded snippets with stable entry citations. Read the needed hit using its entryRevision as read.revision.
+Find omitted persisted history only when missing detail is needed; do not guess from checkpoint. Bounded snippets/stable citations; read needed hit with hit.entryRevision as read.revision.
 
 ```json
 {
@@ -1916,19 +1882,18 @@ Search exact persisted entries that are no longer present in the compacted model
   "properties": {
     "query": {
       "type": "string",
-      "description": "Specific phrase, identifier, command, or historical fact to find."
+      "description": "Specific phrase/ID/command/historical fact."
     },
     "limit": {
       "type": "number",
-      "description": "Maximum snippets to return (1-20, default 8)."
+      "description": "1–20; default 8."
     },
     "role": {
       "type": "string",
       "enum": [
         "user",
         "assistant"
-      ],
-      "description": "Optional message-role filter."
+      ]
     },
     "scope": {
       "type": "string",
@@ -1936,7 +1901,7 @@ Search exact persisted entries that are no longer present in the compacted model
         "compacted",
         "all"
       ],
-      "description": "Defaults to compacted history; use all only when active-tail search is required."
+      "description": "Default compacted; all only if active-tail search needed."
     }
   },
   "required": [
@@ -1947,10 +1912,7 @@ Search exact persisted entries that are no longer present in the compacted model
 
 ## skill
 
-Invoke a discovered skill by name. Returns the skill's expanded content (variables resolved) as the tool_result so you can follow its instructions in your next turn.
-- Call this before other work when the user names a Skill listed in your "Available Skills" or a listed Skill's description clearly covers the request. When no description covers it, do not call this.
-- DO NOT call `read` on a `SKILL.md` path to load a skill — skill loading is `skill`'s job; `read` is for plain files.
-- `args` is an optional free-form string the skill resolver can substitute into its template (e.g. `args: "123"` for `/review-pr 123`). Most skills ignore it.
+Required before other work when the user names a listed Skill or its description clearly covers the request; otherwise do not call it. Returns expanded/resolved instructions for next turn. Load via skill, never read SKILL.md, which bypasses the resolver. Optional free-form args forwarded for template substitution (most ignore it).
 
 ```json
 {
@@ -1958,11 +1920,10 @@ Invoke a discovered skill by name. Returns the skill's expanded content (variabl
   "properties": {
     "skill": {
       "type": "string",
-      "description": "The skill name (e.g. \"commit\", \"review-pr\"). Leading slash is tolerated."
+      "description": "Skill name; leading slash accepted."
     },
     "args": {
-      "type": "string",
-      "description": "Optional arguments forwarded to the skill resolver."
+      "type": "string"
     }
   },
   "required": [
@@ -1973,7 +1934,7 @@ Invoke a discovered skill by name. Returns the skill's expanded content (variabl
 
 ## spawn_agent
 
-Start a named direct-child Agent. Runtime assigns its canonical path and atomically enforces session concurrency/work budgets. For broad multi-file reviews, launch distinct read-only lanes once scope is known. Implementation lanes require disjoint write ownership: read_only:false, shared isolation (default), and exact exclusive paths/generated outputs. Shared edits already appear in the root workspace; do not reapply them. Use worktree only with an explicit merge-back strategy. Continue useful work; wait_agent only for critical mailbox evidence.
+Start a named direct child; returns canonical path. Runtime atomically enforces shared session concurrency/work budgets. For broad multi-file reviews, launch distinct read-only lanes once scope is known. Implementation lanes require read_only:false and disjoint write ownership with exact exclusive paths/generated outputs. quality_strategy is optional telemetry, never admission control; invalid/conflicting data is ignored.
 
 ```json
 {
@@ -1981,33 +1942,32 @@ Start a named direct-child Agent. Runtime assigns its canonical path and atomica
   "properties": {
     "task_name": {
       "type": "string",
-      "description": "Stable direct-child name used in the Runtime-minted canonical actor path."
+      "description": "Stable direct-child name."
     },
     "objective": {
       "type": "string",
-      "description": "Detailed multi-step goal for this child agent"
+      "description": "Bounded goal, constraints, evidence and output shape."
     },
     "read_only": {
       "type": "boolean",
-      "description": "true (default) narrows filesystem access to read-only; false retains the parent ceiling."
+      "description": "Default true; false retains parent permission ceiling."
     },
     "scope": {
       "type": "string",
-      "description": "Optional bounded scope hint (e.g. \"packages/llm/src/\")"
+      "description": "Bounded scope hint."
     },
     "evidence_refs": {
       "type": "array",
       "items": {
         "type": "string"
       },
-      "description": "Optional known evidence. Prefix with file:, diff:, finding:, or exact agent-turn:<canonical-path>#turn=<id>. Legacy agent:<path> resolves latest. Actor output must already be terminal and visible."
+      "description": "file:/diff:/finding:/agent-turn:<canonical-path>#turn=<id>; legacy agent:<path> means latest. Actor output must be terminal/visible."
     },
     "constraints": {
       "type": "array",
       "items": {
         "type": "string"
-      },
-      "description": "Optional constraints"
+      }
     },
     "model_hint": {
       "type": "string",
@@ -2016,23 +1976,23 @@ Start a named direct-child Agent. Runtime assigns its canonical path and atomica
         "balanced",
         "deep"
       ],
-      "description": "Routing tier: fast for focused lookups (few files/simple grep), deep for heavy multi-file analysis/synthesis, balanced (default/omitted) for normal inherited selection. Unconfigured tiers fall back to the inherited provider/model. Omit when unsure."
+      "description": "balanced: ordinary work (default); fast: read-only mechanical lookup; deep: architecture/adversarial checks/severity/final synthesis. Unconfigured tiers inherit; write-capable fast stays on parent tier. Omit if unsure."
     },
     "agent_id": {
       "type": "string",
-      "description": "Select a registered specialist matching the task instead of a generic child."
+      "description": "Matching specialist canonical ID."
     },
     "provider": {
       "type": "string",
-      "description": "Override provider for a deliberate cross-family check. Omit to inherit; an unconfigured provider falls back to yours."
+      "description": "Deliberate cross-family override; unconfigured/omitted inherits."
     },
     "model": {
       "type": "string",
-      "description": "Model id paired with provider. Omit to inherit."
+      "description": "Paired provider model ID; omitted inherits."
     },
     "effort": {
       "type": "string",
-      "description": "Reasoning effort (off, low, medium, high, xhigh, max). Omit/auto inherits parent/default. A specialist selected by agent_id locks its declared effort; conflicting dispatch or provider/model-unsupported values are rejected."
+      "description": "off/low/medium/high/xhigh/max; omitted/auto inherits. agent_id locks specialist effort; conflicts/unsupported values rejected."
     },
     "isolation": {
       "type": "string",
@@ -2040,14 +2000,14 @@ Start a named direct-child Agent. Runtime assigns its canonical path and atomica
         "shared",
         "worktree"
       ],
-      "description": "Optional execution isolation."
+      "description": "Default shared: edits are visible in the root workspace; do not reapply them. Worktree needs an explicit merge-back strategy."
     },
     "fork_turns": {
-      "description": "History fork: all (default), none, or a positive recent-turn count."
+      "description": "History: all (default), none, or positive recent-turn count."
     },
     "quality_strategy": {
       "type": "object",
-      "description": "Telemetry only: {schemaVersion:1,stageId,pattern,role,laneRelation?,targetEvidenceRefs?}. Does not control legal spawn admission; invalid metadata is ignored. Actor targets require exact agent-turn refs."
+      "description": "{schemaVersion:1,stageId,pattern,role,laneRelation?,targetEvidenceRefs?}; Actor refs require exact agent-turn."
     }
   },
   "required": [
@@ -2196,7 +2156,7 @@ Run the full Phase 2 check pipeline (shape → AST → provider schema → handl
 
 ## todo_create
 
-Add one semantic milestone; preserve existing items. Returns {ok:true,id}; reuse the stable generated id, never supply one. Plan non-trivial work; skip trivial/informational tasks. Resume the existing plan; use todo_list if uncertain to avoid duplicates. Milestones are deliverables, not child Agents; several Agents may support one. This records planned work, not execution. Use the requested language, otherwise the request primary language, for subject/description/activeForm; keep source identifiers, paths, commands and quotes. Inactive store, invalid input or extension veto returns {ok:false,reason}.
+Add one semantic milestone without replacing existing items. Returns {ok:true,id}; reuse this generated id, never supply one. This records planned work, not execution. Plan work with several distinct deliverables. Skip trivial or informational tasks, because a one-step plan only adds noise. Resume existing milestones and inspect the plan only when uncertain to avoid duplicates. Milestones are deliverables, not child Agents; several Agents may support one. Use the requested language, otherwise the request primary language, for subject/description/activeForm; retain source identifiers, paths, commands and quotes. Inactive store, invalid input or extension veto returns {ok:false,reason}.
 
 ```json
 {
@@ -2204,7 +2164,7 @@ Add one semantic milestone; preserve existing items. Returns {ok:true,id}; reuse
   "properties": {
     "subject": {
       "type": "string",
-      "description": "Non-empty imperative milestone title shown in the plan row."
+      "description": "Nonempty imperative plan-row title."
     },
     "status": {
       "type": "string",
@@ -2216,11 +2176,11 @@ Add one semantic milestone; preserve existing items. Returns {ok:true,id}; reuse
     },
     "description": {
       "type": "string",
-      "description": "Optional multi-line work context available in full item detail; absent from compact row. Omit when subject suffices."
+      "description": "Full-detail multiline context, absent from compact row; omit if title suffices."
     },
     "activeForm": {
       "type": "string",
-      "description": "Optional present-continuous label shown by the in_progress spinner."
+      "description": "Supply for each milestone: present-continuous in_progress spinner label."
     },
     "evaluator": {
       "type": "string",
@@ -2229,11 +2189,11 @@ Add one semantic milestone; preserve existing items. Returns {ok:true,id}; reuse
         "test",
         "lint"
       ],
-      "description": "Optional milestone check on completion when runner evaluator wiring is active: build/test/lint runs npm run build/npm test/npm run lint; failure returns stderr. Use sparingly for real checks."
+      "description": "When wired, completion runs build/test/lint = npm run build/npm test/npm run lint; failure returns stderr. Sparingly for real checks."
     },
     "metadata": {
       "type": "object",
-      "description": "Optional opaque hook/eval data; not shown in UI. Omit when unused."
+      "description": "Opaque hook/eval data, not UI; omit if unused."
     }
   },
   "required": [
@@ -2263,7 +2223,7 @@ Read one existing todo by stable id, including its subject, description, status,
 
 ## todo_list
 
-Read the visible plan without changing it. Without id returns {ok:true,count,items} and canonical ids; with id returns {ok:true,item} including description, status, activeForm, note, evaluator, owner and metadata. Use to resume work, avoid duplicates or recover unknown ids. Refresh only when state may have changed externally; if the patch is clear, update directly. An inactive store returns {ok:false,reason}; continue without further todo calls.
+Read plan and canonical ids: without id returns {ok:true,count,items}; with id returns {ok:true,item} including description/status/activeForm/note/evaluator/owner/metadata. Refresh only if state may have changed externally or is unknown; clear patches need no read. Inactive store returns {ok:false,reason}; continue without more todo calls.
 
 ```json
 {
@@ -2271,7 +2231,7 @@ Read the visible plan without changing it. Without id returns {ok:true,count,ite
   "properties": {
     "id": {
       "type": "string",
-      "description": "Optional stable todo id for full item detail; omit to list the plan."
+      "description": "Stable item ID; omitted lists plan."
     }
   }
 }
@@ -2279,7 +2239,7 @@ Read the visible plan without changing it. Without id returns {ok:true,count,ite
 
 ## todo_update
 
-Patch one existing todo by stable id: status, fields or both. Omitted fields are preserved; add work with todo_create. Mark in_progress with activeForm before work, completed only after finishing; one in_progress item per owner. Avoid unchanged updates; read current item details when state is uncertain, list the plan for unknown ids. Use the requested language, otherwise the request primary language, for subject/description/activeForm/note; retain source identifiers, paths, commands and quotes. Completion may trigger evaluator when runner evaluator wiring is active, and may be vetoed by a hook; after rejection/blocked-by-hook, re-read and revise before retrying. Inactive store: continue without more todo calls.
+Patch one existing todo by stable id; omitted fields survive. Add work with todo_create. Mark in_progress with activeForm before work, completed only after finishing. Keep one in_progress item per owner. Use the requested language, otherwise the request primary language, for subject/description/activeForm/note; retain source identifiers, paths, commands and quotes. Completion may run its evaluator and be vetoed by a hook: after rejection/blocked-by-hook re-read and revise before retrying. Avoid unchanged updates; read details when state is uncertain, list for unknown ids. Inactive store: continue without more todo calls.
 
 ```json
 {
@@ -2333,7 +2293,7 @@ Patch one existing todo by stable id: status, fields or both. Omitted fields are
     },
     "id": {
       "type": "string",
-      "description": "Existing canonical todo id; must match the current plan."
+      "description": "Canonical current-plan ID."
     },
     "status": {
       "type": "string",
@@ -2345,23 +2305,23 @@ Patch one existing todo by stable id: status, fields or both. Omitted fields are
         "cancelled",
         "deleted"
       ],
-      "description": "Optional transition: failed needs retry; skipped is unnecessary; cancelled retains a struck-through breadcrumb; deleted removes the row. Only Runtime may restore pending after revise."
+      "description": "failed: retry needed; skipped: unnecessary; cancelled: breadcrumb; deleted: remove. Only Runtime restores pending after revise."
     },
     "note": {
       "type": "string",
-      "description": "Optional reason/detail; omit to preserve."
+      "description": "Reason/detail; omitted preserves."
     },
     "activeForm": {
       "type": "string",
-      "description": "Present-continuous spinner label; required for in_progress. Omit on terminal transitions to preserve the previous value."
+      "description": "Required present-continuous label for in_progress; omit terminal transition to preserve."
     },
     "subject": {
       "type": "string",
-      "description": "Optional replacement imperative title; must be non-empty."
+      "description": "Nonempty replacement imperative title."
     },
     "description": {
       "type": "string",
-      "description": "Optional replacement multi-line work context; empty string clears it."
+      "description": "Replacement multiline context; empty clears."
     },
     "evaluator": {
       "type": "string",
@@ -2370,11 +2330,11 @@ Patch one existing todo by stable id: status, fields or both. Omitted fields are
         "test",
         "lint"
       ],
-      "description": "Optional replacement completion check when runner evaluator wiring is active: build/test/lint runs npm run build/npm test/npm run lint. Failure returns stderr."
+      "description": "When wired: build/test/lint → npm run build/npm test/npm run lint on completion; failure returns stderr."
     },
     "metadata": {
       "type": "object",
-      "description": "Opaque hook/eval data, not UI. Shallow-merge: keys overwrite, nested objects are not deep-merged; null values delete keys, allowing merge+delete together. Whole-field null clears all (handler accepts it despite object schema)."
+      "description": "Opaque, not UI. Shallow merge, not deep merge; null values delete keys; whole-field null clears (handler accepts despite object schema)."
     }
   }
 }
@@ -2382,7 +2342,7 @@ Patch one existing todo by stable id: status, fields or both. Omitted fields are
 
 ## tool_call
 
-Call one active tool by name once its input contract is known from tool_search, tool_describe or a contract listed in this request. The runtime re-applies the target tool policy, permission checks, and result guardrails.
+Call one active tool by name once its input contract is known from tool_search, tool_describe or a contract listed in this request. Target policy, permissions and result guardrails reapply.
 
 ```json
 {
@@ -2390,11 +2350,11 @@ Call one active tool by name once its input contract is known from tool_search, 
   "properties": {
     "name": {
       "type": "string",
-      "description": "Name of the active target tool to call."
+      "description": "Active tool name."
     },
     "input": {
       "type": "object",
-      "description": "JSON object passed as the target tool input."
+      "description": "Target JSON arguments."
     }
   },
   "required": [
@@ -2429,7 +2389,7 @@ Return the full description and input schema for active tools. Compatibility ent
 
 ## tool_search
 
-Look up full contracts for active tools when no tool listed in this request fits the need, or when a listed description is too short to call correctly. Tools listed in this request are called directly; call a discovered tool that is not listed through tool_call. Use query="select:NAME[,NAME...]" for exact lookup across discoverable tools. Keyword queries search their names, descriptions and parameters, with +required terms and loose ranked terms. Results include full descriptions and schemas. Use the returned contract even if later tool lists remain compact.
+Full active-tool contracts, for when no listed tool fits the need or a listed description is too short to call correctly. Listed tools are called directly; call other discovered tools through tool_call. Exact select:NAME[,NAME...] or keyword search over names/descriptions/parameters (+required and loose ranked terms). Keep using returned schema even if later menus compact.
 
 ```json
 {
@@ -2437,11 +2397,11 @@ Look up full contracts for active tools when no tool listed in this request fits
   "properties": {
     "query": {
       "type": "string",
-      "description": "Either `select:ToolName[,ToolName...]` for exact lookup, or keyword search (`+keyword required loose terms`)."
+      "description": "select:NAME[,NAME...] or +required loose keywords."
     },
     "max_results": {
       "type": "number",
-      "description": "Maximum number of results to return (default 5, capped at 15). Ignored in `select:` mode."
+      "description": "Default 5, max 15; ignored for select:."
     }
   },
   "required": [
@@ -2463,13 +2423,7 @@ Revert the last file modification.
 
 ## update_goal
 
-Mark the current goal complete or blocked.
-
-Set status to complete only when the objective is achieved and no required work remains. Verify each requirement with actual evidence before calling complete; report unverified scope explicitly. Completion is goal bookkeeping, not a quality certificate.
-
-Set status to blocked only when the goal cannot proceed without external unblock, and the same blocking condition has persisted across recent goal turns. The runtime counter rejects blocked status until the same blocker_kind has repeated for 3 consecutive turns.
-
-Pause, resume, and budget-limited transitions are controlled by the user, not this tool. Do not call to stop work — only call when the objective is truly achieved or truly blocked.
+Complete only when objective and all requirements are evidenced; disclose unverified scope. Bookkeeping is not quality certification. blocked requires external unblock and same blocker_kind for 3 consecutive turns; Runtime rejects earlier. Pause/resume/budget-limited are user-controlled. Never call merely to stop work.
 
 ```json
 {
@@ -2480,12 +2434,11 @@ Pause, resume, and budget-limited transitions are controlled by the user, not th
       "enum": [
         "complete",
         "blocked"
-      ],
-      "description": "Target goal status."
+      ]
     },
     "blocker_kind": {
       "type": "string",
-      "description": "Required when status=blocked. A short identifier for the persistent obstacle (e.g. \"awaiting-user-permission\", \"missing-dependency\"). The runtime counter compares this string across turns."
+      "description": "Required blocked: stable obstacle ID compared across turns, e.g. awaiting-user-permission."
     }
   },
   "required": [
@@ -2721,7 +2674,7 @@ Sample original raster pixels from 1–4 ordered historical regions, at equal-gr
 
 ## wait_agent
 
-Yield until the caller mailbox receives an Agent message or completion, root user input arrives, the wait is interrupted, or the timeout expires. Actor progress remains visible to UI and SDK event consumers but never wakes the parent model. Use this sparingly when required Agent evidence is on the critical path; continue useful non-overlapping work first. After mailbox evidence arrives, integrate it and reconcile the affected semantic plan milestone before waiting again.
+Yield for Agent mailbox evidence, root user input, interruption or timeout. Continue useful non-overlapping work first; wait sparingly when required Agent evidence is on the critical path. Progress is UI/SDK-only and never wakes the model. Returns a wake acknowledgement, not the evidence: read the following mailbox. After any mailbox evidence, integrate it and reconcile the affected semantic milestone before waiting again.
 
 ```json
 {
@@ -2731,7 +2684,7 @@ Yield until the caller mailbox receives an Agent message or completion, root use
       "type": "number",
       "minimum": 10000,
       "maximum": 3600000,
-      "description": "Wait window in milliseconds. Defaults to 120000. Longer waits do not invoke the model and root user input still wakes promptly."
+      "description": "Milliseconds; default 120000. Longer waits cost no model call; user input wakes promptly."
     }
   }
 }
@@ -2786,7 +2739,7 @@ Search the public web for discovery-oriented results with explicit provenance an
 
 ## worktree_create
 
-Create a new git worktree with an isolated branch for safe agent work.
+Create isolated Git worktree/branch for Agent work.
 
 ```json
 {
@@ -2794,11 +2747,11 @@ Create a new git worktree with an isolated branch for safe agent work.
   "properties": {
     "branch_name": {
       "type": "string",
-      "description": "Optional explicit branch name"
+      "description": "Explicit branch; optional."
     },
     "description": {
       "type": "string",
-      "description": "Optional description to auto-generate branch name from"
+      "description": "Input used to generate a branch name."
     }
   }
 }
@@ -2806,7 +2759,7 @@ Create a new git worktree with an isolated branch for safe agent work.
 
 ## worktree_remove
 
-Remove a git worktree and optionally its branch.
+Keep/remove a Git worktree directory and optionally its branch.
 
 ```json
 {
@@ -2817,16 +2770,15 @@ Remove a git worktree and optionally its branch.
       "enum": [
         "keep",
         "remove"
-      ],
-      "description": "Whether to keep or remove the worktree directory and branch"
+      ]
     },
     "worktree_path": {
       "type": "string",
-      "description": "Absolute path to the worktree directory"
+      "description": "Absolute worktree path."
     },
     "discard_changes": {
       "type": "boolean",
-      "description": "If true, bypass safety checks for uncommitted changes or local commits"
+      "description": "true bypasses uncommitted/local-commit safety checks."
     }
   },
   "required": [
@@ -2838,7 +2790,7 @@ Remove a git worktree and optionally its branch.
 
 ## write
 
-Write a new file explicitly requested by the user, or an explicitly requested complete rewrite. For existing-file changes, use edit; large diffs may be summarized. For oversized content or a mid-stream failure, write a smaller skeleton with placeholders, then fill sections using edit. Use write/edit for known content: shell redirection bypasses mutation tracking and diff verification, and moves the streaming limit to the generator. Shell scripts are for computed output. write sends UTF-8 directly to fs.writeFile without a shell; Chinese/emoji need no encoding workaround.
+Direct UTF-8 write for explicitly requested new file/full rewrite; existing changes: edit. Large diffs may summarize. Oversized/stream-failed content: smaller skeleton/placeholders then edit sections. Shell wrappers bypass mutation/diff checks and shift streaming limits. Chinese/emoji need no encoding workaround.
 
 ```json
 {
@@ -2846,11 +2798,10 @@ Write a new file explicitly requested by the user, or an explicitly requested co
   "properties": {
     "path": {
       "type": "string",
-      "description": "The absolute path to the file"
+      "description": "Absolute file path."
     },
     "content": {
-      "type": "string",
-      "description": "The content to write"
+      "type": "string"
     }
   },
   "required": [

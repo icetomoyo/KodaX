@@ -64,13 +64,9 @@ describe('next-stage controlled evaluation', () => {
     expect(pairs).toHaveLength(4);
     for (const pair of pairs) {
       expect(pair.baseline.tools.map(tool => tool.name)).toEqual(pair.candidate.tools.map(tool => tool.name));
-      if (pair.id.startsWith('child')) {
-        expect(pair.baseline.tools.some(tool => tool.name === 'get_goal')).toBe(false);
-        expect(pair.candidate.system).not.toBe(pair.baseline.system);
-      } else {
-        expect(pair.candidate.system).toBe(pair.baseline.system);
-        expect(pair.candidate.tools).toEqual(pair.baseline.tools);
-      }
+      if (pair.id.startsWith('child')) expect(pair.baseline.tools.some(tool => tool.name === 'get_goal')).toBe(false);
+      expect(pair.candidate.system).toBe(pair.baseline.system);
+      expect(pair.candidate.tools).toEqual(pair.baseline.tools);
     }
   }, 120_000);
 });

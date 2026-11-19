@@ -5,12 +5,11 @@ import { buildManualToolDescription, withManualToolBranding } from './tool-descr
 // The exact default description — a byte-identity pin so the single-source-of-
 // truth builder can never silently drift the model-visible tool surface.
 const KODAX_DESCRIPTION = [
-  'Look up how to use, install, configure, troubleshoot, or extend KodaX itself.',
-  'Covers providers, custom providers, config, permissions, sandboxing, slash commands, tools, custom agents, skills, extensions, MCP, A2A, repo intelligence, sessions, context compaction, memory, the doctor command, and the SDK.',
-  'Call this first for any "how do I … in KodaX" question and answer from its result.',
-  'Do not answer KodaX product questions from pretraining, because pretraining mixes in Claude Code and Codex CLI details that do not match KodaX — KodaX uses ~/.kodax/config.json and KODAX_* env vars, not .claude/settings.json or config.toml.',
-  'Pass an exact topic id, or a free-text query, or neither to get the topic index. It explains where to check a value rather than reading your secrets.',
-].join('\n');
+  'First source for using, installing, configuring, troubleshooting or extending KodaX itself, including its SDK.',
+  'Other software is outside the manual. Answer from results, not other-product pretraining.',
+  'KodaX uses ~/.kodax/config.json/KODAX_*, not .claude/settings.json/config.toml.',
+  'Use an exact topic or free-text query. Omit both for the topic index. Explains where to check values, never reads secrets.',
+].join(' ');
 
 describe('FEATURE_221 buildManualToolDescription (white-label tool description)', () => {
   it('default (KodaX) is byte-identical to the prior static literal', () => {
@@ -20,12 +19,11 @@ describe('FEATURE_221 buildManualToolDescription (white-label tool description)'
 
   it('re-brands the product name and drops the ~/.kodax config-path leak for a consumer', () => {
     const d = buildManualToolDescription('KodaX-Space');
-    expect(d).toContain('extend KodaX-Space itself');
-    expect(d).toContain('do not match KodaX-Space.');
+    expect(d).toContain('extending KodaX-Space itself');
     expect(d).not.toContain('~/.kodax');
     expect(d).not.toContain('KODAX_');
-    // Anti-confusion framing (Claude Code / Codex) is still present.
-    expect(d).toContain('Claude Code and Codex CLI');
+    // Anti-confusion framing is still present.
+    expect(d).toContain('not other-product pretraining');
   });
 
   it('trims / defaults an empty product name to KodaX', () => {

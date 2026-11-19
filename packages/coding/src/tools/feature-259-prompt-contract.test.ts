@@ -49,7 +49,7 @@ describe('FEATURE_259 prompt contracts', () => {
     const waitDescription = getToolDefinition('wait_agent')?.description ?? '';
     const createDescription = getToolDefinition('todo_create')?.description ?? '';
 
-    expect(waitDescription).toContain('reconcile the affected semantic plan milestone');
+    expect(waitDescription).toContain('reconcile the affected semantic milestone');
     expect(waitDescription).toContain('before waiting again');
     expect(createDescription).toContain('semantic milestone');
     expect(createDescription).toContain('Milestones are deliverables, not child Agents');

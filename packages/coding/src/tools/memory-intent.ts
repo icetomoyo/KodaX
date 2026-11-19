@@ -26,33 +26,16 @@ export const MEMORY_INTENT_TOOL_SCHEMA = {
     operation: {
       type: 'string' as const,
       enum: ['list', 'remember', 'correct', 'forget', 'decisions', 'show', 'approve', 'reject'],
-      description: 'The Memory operation requested by the user.',
     },
-    statement: {
-      type: 'string' as const,
-      description: 'A concise durable claim for remember or correct.',
-    },
-    targetRefId: {
-      type: 'string' as const,
-      description: 'One exact ref returned by list/recall; required for correct and forget.',
-    },
+    statement: { type: 'string' as const },
+    targetRefId: { type: 'string' as const, description: 'Exact list/recall claim ref, or exact decision ref.' },
     claimKind: {
       type: 'string' as const,
       enum: ['fact', 'policy', 'preference', 'procedure'],
-      description: 'The durable claim category for remember or correct.',
     },
-    claimKey: {
-      type: 'string' as const,
-      description: 'Stable semantic identity such as project.package_manager or user.preference.editor; required for every new claim.',
-    },
-    userQuote: {
-      type: 'string' as const,
-      description: 'An exact quote from the current user message authorizing a mutation.',
-    },
-    reason: {
-      type: 'string' as const,
-      description: 'Optional user-supplied rejection reason.',
-    },
+    claimKey: { type: 'string' as const, description: 'Stable identity, e.g. project.package_manager.' },
+    userQuote: { type: 'string' as const },
+    reason: { type: 'string' as const, description: 'User-supplied rejection reason.' },
   },
   required: ['operation'],
 };

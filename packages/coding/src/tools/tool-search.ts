@@ -22,6 +22,7 @@
  */
 
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
+import { staticText } from '../prompts/static-text.js';
 import { VISUAL_TOOL_NAMES } from '@kodax-ai/agent/media';
 import type { LocalToolDefinition, ToolHandlerSync } from './types.js';
 import type { KodaXToolExecutionContext } from '../types.js';
@@ -230,23 +231,17 @@ export const toolSearchHandler: ToolHandlerSync = async (input, context) => {
  */
 export const TOOL_SEARCH_DEFINITION: LocalToolDefinition = {
   name: 'tool_search',
-  description: [
-    'Look up full contracts for active tools when no tool listed in this request fits the need, or when a listed description is too short to call correctly.',
-    'Tools listed in this request are called directly; call a discovered tool that is not listed through tool_call.',
-    'Use query="select:NAME[,NAME...]" for exact lookup across discoverable tools. Keyword queries search their names, descriptions and parameters, with +required terms and loose ranked terms.',
-    'Results include full descriptions and schemas. Use the returned contract even if later tool lists remain compact.',
-  ].join(' '),
+  description: staticText("tool.tool_search.description"),
   input_schema: {
     type: 'object',
     properties: {
       query: {
         type: 'string',
-        description:
-          'Either `select:ToolName[,ToolName...]` for exact lookup, or keyword search (`+keyword required loose terms`).',
+        description: 'select:NAME[,NAME...] or +required loose keywords.',
       },
       max_results: {
         type: 'number',
-        description: 'Maximum number of results to return (default 5, capped at 15). Ignored in `select:` mode.',
+        description: 'Default 5, max 15; ignored for select:.',
       },
     },
     required: ['query'],

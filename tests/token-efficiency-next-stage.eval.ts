@@ -22,9 +22,9 @@ const phase = process.env.KODAX_NEXT_STAGE_PHASE;
 const root = path.resolve(process.env.KODAX_NEXT_STAGE_ROOT ?? path.join(os.tmpdir(), 'kodax-eval-dumps', REVISION));
 const SOURCE_FILES = [
   'tests/token-efficiency-next-stage.eval.ts', 'tests/token-efficiency-next-stage-fixtures.ts',
-  'packages/coding/src/prompts/compact-child-contract.ts', 'packages/coding/src/child-executor.ts',
+  'packages/coding/src/child-executor.ts',
   'packages/coding/src/prompts/child-system-contract.ts',
-  'packages/coding/src/tools/edit.ts', 'packages/coding/src/tools/managed-tool-text.ts',
+  'packages/coding/src/tools/edit.ts',
   'packages/coding/src/tools/tool-definitions.ts', 'packages/coding/src/tools/managed-tool-contract.ts',
 ];
 const redact = (text: string) => Object.values(NEXT_STAGE_ROUTES).reduce((value, route) => {

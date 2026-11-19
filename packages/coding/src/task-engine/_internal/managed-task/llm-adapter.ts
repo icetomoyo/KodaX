@@ -24,7 +24,7 @@ import type { RuntimeSessionState } from '../../../agent-runtime/runtime-session
 import { markRuntimeSelectionChanged } from '../../../agent-runtime/runtime-session-state.js';
 import { withEffectivePermissionContext } from '../../../prompts/effective-permissions.js';
 import { getRegistryManagedAgentContext } from '../../../tools/model-tool-definition.js';
-import { canProjectManagedToolContracts, projectManagedToolContracts } from '../../../tools/managed-tool-contract.js';
+import { canProjectManagedToolContracts } from '../../../tools/managed-tool-contract.js';
 import { projectToolSearchResultParameters } from '../../../tools/tool-search-model-result.js';
 import { projectManagedToolActivation, type ManagedToolActivationFacts } from '../../../tools/managed-tool-activation.js';
 import { projectManagedSystemContract } from '../../../prompts/managed-system-contract.js';
@@ -547,7 +547,7 @@ export function buildRunnerLlmAdapter(
       wireTools = wireTools.filter(tool => tool.name !== 'code_search');
     }
 
-    wireTools = [...projectScriptModelTools(agent, projectManagedToolContracts(agent, wireTools, options.context))];
+    wireTools = [...projectScriptModelTools(agent, wireTools)];
     const assembledTools = wireTools;
     const activateTools = (source: readonly KodaXMessage[]) =>
       [...projectManagedToolActivation(agent, assembledTools, options.context, source, getToolActivationFacts?.())];

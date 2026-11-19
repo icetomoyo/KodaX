@@ -1,9 +1,10 @@
 /**
  * Rendered prompt snapshots: the exact text the model receives for the
- * Worker (canonical and compact), the builtin child and the tool contracts.
+ * Worker (canonical and compact), the builtin child and the one tool contract
+ * source every entry sends.
  *
  * A prompt edit shows up here as a readable text diff, and the canonical and
- * compact files sit side by side so one cannot drift from the other unseen.
+ * compact Worker files sit side by side so one cannot drift from the other unseen.
  * Refactors of prompt storage must leave every file unchanged.
  * Update intentionally with `npx vitest run <this file> -u` and review the diff.
  */
@@ -13,13 +14,12 @@ import type { KodaXToolDefinition } from '@kodax-ai/llm';
 import { createAgentActorController } from '../../../agent/src/actors/index.js';
 import { buildRunnerAgentChain } from '../task-engine/_internal/managed-task/agent-chain.js';
 import { buildFallbackRoutingDecision } from '../reasoning.js';
-import { markOrdinaryRootToolContract, projectManagedToolContracts } from '../tools/managed-tool-contract.js';
+import { markOrdinaryRootToolContract } from '../tools/managed-tool-contract.js';
 import { listToolDefinitions } from '../tools/index.js';
 import { filterExcludedTools, getActiveToolDefinitions } from '../agent-runtime/tool-resolution.js';
 import { CHILD_AGENT_SYSTEM_PROMPT, CHILD_EXCLUDE_TOOLS_BASE } from '../child-executor.js';
 import { buildWorkerStableInstructions, buildWorkerStableSections } from '../agents/worker-role-prompt.js';
 import { projectManagedSystemContract } from './managed-system-contract.js';
-import { buildCompactChildContractCandidate } from './compact-child-contract.js';
 import { renderApplicationContextSections } from './prompt-spec.js';
 import { createRolePrompt } from '../task-engine/_internal/managed-task/role-prompt.js';
 
@@ -40,7 +40,7 @@ function renderTools(tools: readonly KodaXToolDefinition[]): string {
   ].join('\n')).join('\n\n') + '\n';
 }
 
-async function renderWorker(platform: Platform): Promise<{ canonical: string; compact: string; tools: string }> {
+async function renderWorker(platform: Platform): Promise<{ canonical: string; compact: string; tools: string; list: readonly KodaXToolDefinition[] }> {
   const controller = await createAgentActorController({ executor: { execute: async () => ({ output: 'unused' }) } });
   try {
     const context = { backups: new Map(), actorControl: controller.bind('/root'),
@@ -57,26 +57,21 @@ async function renderWorker(platform: Platform): Promise<{ canonical: string; co
       ? worker.instructions(undefined)
       : worker.instructions ?? '';
     markOrdinaryRootToolContract(worker);
-    const tools = projectManagedToolContracts(worker, worker.tools!);
+    const tools = worker.tools!;
     const compact = projectManagedSystemContract(worker, tools, canonical);
     expect(compact, 'the fixture must take the compact projection').not.toBe(canonical);
-    return { canonical: canonical + '\n', compact: compact + '\n', tools: renderTools(tools) };
+    return { canonical: canonical + '\n', compact: compact + '\n', tools: renderTools(tools), list: tools };
   } finally {
     await controller.shutdown('Rendered prompt capture finished');
   }
 }
 
-function childContract(readOnly: boolean) {
+function childTools(readOnly: boolean): readonly KodaXToolDefinition[] {
   const names = filterExcludedTools(listToolDefinitions().map(tool => tool.name), [
     ...CHILD_EXCLUDE_TOOLS_BASE,
     ...(readOnly ? ['write', 'edit', 'multi_edit', 'insert_after_anchor', 'undo'] : []),
   ]);
-  const canonical = {
-    system: CHILD_AGENT_SYSTEM_PROMPT,
-    tools: getActiveToolDefinitions(names, 'off')
-      .map(({ name, description, input_schema }) => ({ name, description, input_schema })),
-  };
-  return { compact: buildCompactChildContractCandidate(canonical, { source: 'builtin-child' }) };
+  return getActiveToolDefinitions(names, 'off');
 }
 
 describe('rendered Worker root prompt', () => {
@@ -90,9 +85,9 @@ describe('rendered Worker root prompt', () => {
     await expect(rendered.compact).toMatchFileSnapshot(expected(`worker.compact.${label}.md`));
   });
 
-  it('compact tool contracts', async () => {
+  it('tool contracts', async () => {
     const rendered = await renderWorker('linux');
-    await expect(rendered.tools).toMatchFileSnapshot(expected('tools.worker-compact.md'));
+    await expect(rendered.tools).toMatchFileSnapshot(expected('tools.worker.md'));
   });
 });
 
@@ -188,15 +183,23 @@ describe('rendered builtin child prompt', () => {
     await expect(`${CHILD_AGENT_SYSTEM_PROMPT}\n`).toMatchFileSnapshot(expected('child.canonical.md'));
   });
 
-  it.each([['read', true], ['write', false]] as const)('%s lane, compact', async (lane, readOnly) => {
-    const { compact } = childContract(readOnly);
-    await expect(`${compact.system}\n`).toMatchFileSnapshot(expected(`child.${lane}.compact.md`));
-    await expect(renderTools(compact.tools)).toMatchFileSnapshot(expected(`tools.child-${lane}-compact.md`));
+  it.each([['read', true], ['write', false]] as const)('%s lane sends the same tool text as the Worker', async (_lane, readOnly) => {
+    const worker = (await renderWorker('linux')).list;
+    const tools = childTools(readOnly);
+    expect(tools.some(tool => tool.name === 'edit')).toBe(!readOnly);
+    // Inventories differ by role; shared tools must carry identical text.
+    const shared = tools.filter(tool => worker.some(item => item.name === tool.name));
+    expect(shared.map(tool => tool.name)).toEqual(expect.arrayContaining(['read', 'grep', 'glob', 'spawn_agent', 'todo_update']));
+    for (const tool of shared) {
+      const expectedTool = worker.find(item => item.name === tool.name);
+      expect({ description: tool.description, input_schema: tool.input_schema }, tool.name)
+        .toEqual({ description: expectedTool!.description, input_schema: expectedTool!.input_schema });
+    }
   });
 });
 
-describe('rendered canonical tool contracts', () => {
+describe('rendered builtin tool contracts', () => {
   it('every builtin tool', async () => {
-    await expect(renderTools(listToolDefinitions())).toMatchFileSnapshot(expected('tools.canonical.md'));
+    await expect(renderTools(listToolDefinitions())).toMatchFileSnapshot(expected('tools.builtin.md'));
   });
 });

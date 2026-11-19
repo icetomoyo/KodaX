@@ -119,39 +119,6 @@ it('shares current Worker decisions while preserving the discoverable native bri
   expect(restructuredContractInput(script, true, script.scriptContracts)).toBe(script);
 });
 
-it('uses structured Script contracts to share Worker decisions while retaining the exact execution protocol', async () => {
-  const before = await fixture(true);
-  expect(before.scriptContracts?.leaves.some(tool => tool.name === 'read')).toBe(true);
-  const after = restructuredContractInput(before, true, before.scriptContracts);
-  expect(after.system).not.toBe(before.system);
-  expect(after.system).toContain('TASK AND PLAN');
-  expect(after.tools.find(tool => tool.name === 'script_exec')).toEqual(before.tools.find(tool => tool.name === 'script_exec'));
-  expect(after.tools.map(tool => tool.input_schema)).toEqual(before.tools.map(tool => tool.input_schema));
-  expect(after.messages).toBe(before.messages);
-  expect(restructuredContractInput(before, true)).toBe(before);
-  const missingEntry = { ...before, tools: before.tools.filter(tool => tool.name !== 'script_exec') };
-  expect(restructuredContractInput(missingEntry, true, before.scriptContracts)).toBe(missingEntry);
-  const missingLeaf = { ...before.scriptContracts!, leaves: before.scriptContracts!.leaves.filter(tool => tool.name !== 'read') };
-  expect(restructuredContractInput(before, true, missingLeaf)).toBe(before);
-  const changed = { ...before, tools: before.tools.map(tool => tool.name === 'script_exec' ? { ...tool, description: tool.description + ' host rule' } : tool) };
-  expect(restructuredContractInput(changed, true, before.scriptContracts)).toBe(changed);
-});
-
-it('restructures a complete ordinary-root request without changing history, tool menu or parameter structure', async () => {
-  const before = await fixture();
-  const frozen = structuredClone(before);
-  const after = restructuredContractInput(before, true);
-  expect(after.system.length, JSON.stringify(before.tools.map(tool => tool.name))).toBeLessThan(before.system.length);
-  expect(after.messages).toBe(before.messages);
-  expect(after.tools.map(tool => tool.name)).toEqual(before.tools.map(tool => tool.name));
-  // This candidate changes descriptions, not even schema annotations.
-  expect(after.tools.map(tool => tool.input_schema)).toEqual(before.tools.map(tool => tool.input_schema));
-  for (const name of ['ask_user_question', 'undo', 'edit', 'read', 'bash']) {
-    expect(after.tools.find(tool => tool.name === name)).toEqual(before.tools.find(tool => tool.name === name));
-  }
-  expect(before).toEqual(frozen);
-});
-
 it('keeps SDK, child, specialist, Script and incomplete/custom composition intact', async () => {
   const before = await fixture();
   expect(restructuredContractInput(before, false)).toBe(before);
@@ -167,21 +134,6 @@ it('keeps SDK, child, specialist, Script and incomplete/custom composition intac
   const script = { ...before, tools: [...before.tools,
     { name: 'script_exec', description: 'Script', input_schema: { type: 'object' as const, properties: {} } }] };
   expect(restructuredContractInput(script, true)).toBe(script);
-});
-
-it('keeps historical evaluation inputs replayable while retaining the adopted Todo timing rule', async () => {
-  const current = await fixture();
-  const names = ['spawn_agent', 'todo_create', 'todo_list', 'todo_update', 'wait_agent'];
-  const historical = { ...current, tools: current.tools.map(tool => names.includes(tool.name)
-    ? { ...tool, description: getBuiltinToolDefinition(tool.name)!.description
-      .replace('Add one semantic milestone', 'Add one pending semantic milestone') } : tool) };
-  const oldCandidate = restructuredContractInput(historical, true);
-  const newCandidate = restructuredContractInput(current, true);
-  expect(oldCandidate.system).not.toBe(historical.system);
-  expect(newCandidate.system).toBe(oldCandidate.system);
-  expect(oldCandidate.tools.find(tool => tool.name === 'todo_update')!.description).not.toContain('before work');
-  expect(newCandidate.tools.find(tool => tool.name === 'todo_update')!.description).toContain('before work');
-  expect(newCandidate.tools).toEqual(current.tools);
 });
 
 it('retains newly evolved shared rules even when their tool schemas did not change', async () => {

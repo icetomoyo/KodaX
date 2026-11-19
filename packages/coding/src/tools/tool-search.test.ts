@@ -409,7 +409,7 @@ describe('FEATURE_189 B.2 — tool_search handler', () => {
     );
 
     expect(out.match(/<function>/g)).toHaveLength(3);
-    expect(out).toContain('only when explicitly requested');
+    expect(out).toContain('only on explicit user/system/developer request');
     expect(out).toContain('3 consecutive turns');
   });
 
@@ -518,9 +518,9 @@ describe('FEATURE_189 B.2 — tool_search handler', () => {
     expect(TOOL_SEARCH_DEFINITION.planModeAllowed).toBe(true);
     expect(TOOL_SEARCH_DEFINITION.description).not.toContain('get_goal / create_goal / update_goal');
     expect(TOOL_SEARCH_DEFINITION.description).not.toContain('mcp_*');
-    expect(TOOL_SEARCH_DEFINITION.description).toContain('Tools listed in this request are called directly');
-    expect(TOOL_SEARCH_DEFINITION.description).toContain('call a discovered tool that is not listed through tool_call');
-    expect(TOOL_SEARCH_DEFINITION.description).toContain('even if later tool lists remain compact');
+    expect(TOOL_SEARCH_DEFINITION.description).toContain('Listed tools are called directly');
+    expect(TOOL_SEARCH_DEFINITION.description).toContain('call other discovered tools through tool_call');
+    expect(TOOL_SEARCH_DEFINITION.description).toContain('even if later menus compact');
     expect(TOOL_SEARCH_DEFINITION.description).not.toContain('AMAW');
   });
 });
@@ -582,7 +582,7 @@ describe('FEATURE_189 B.2 — getActiveToolDefinitions deferred description swap
         .toBe(getToolDefinition(name)?.description);
     }
     expect(defs.find((definition) => definition.name === 'create_goal')?.description)
-      .toContain('only when explicitly requested');
+      .toContain('only on explicit user/system/developer request');
     expect(defs.find((definition) => definition.name === 'update_goal')?.description)
       .toContain('3 consecutive turns');
   });

@@ -1409,7 +1409,7 @@ Required before other work when the user names a listed Skill or its description
 
 ## spawn_agent
 
-Start a named direct child; returns canonical path. Runtime atomically enforces shared session concurrency/work budgets. quality_strategy is optional telemetry, never admission control; invalid/conflicting data is ignored.
+Start a named direct child; returns canonical path. Runtime atomically enforces shared session concurrency/work budgets. For broad multi-file reviews, launch distinct read-only lanes once scope is known. Implementation lanes require read_only:false and disjoint write ownership with exact exclusive paths/generated outputs. quality_strategy is optional telemetry, never admission control; invalid/conflicting data is ignored.
 
 ```json
 {
@@ -1522,7 +1522,7 @@ Definition, signature, imports and probable callers/callees. Query symbol direct
 
 ## todo_create
 
-Add one semantic milestone without replacing existing items. Returns {ok:true,id}; reuse this generated id, never supply one. This records planned work, not execution. Plan work with several distinct deliverables. Skip trivial or informational tasks, because a one-step plan only adds noise. Inactive store, invalid input or extension veto returns {ok:false,reason}.
+Add one semantic milestone without replacing existing items. Returns {ok:true,id}; reuse this generated id, never supply one. This records planned work, not execution. Plan work with several distinct deliverables. Skip trivial or informational tasks, because a one-step plan only adds noise. Resume existing milestones and inspect the plan only when uncertain to avoid duplicates. Milestones are deliverables, not child Agents; several Agents may support one. Use the requested language, otherwise the request primary language, for subject/description/activeForm; retain source identifiers, paths, commands and quotes. Inactive store, invalid input or extension veto returns {ok:false,reason}.
 
 ```json
 {
@@ -1605,7 +1605,7 @@ Read plan and canonical ids: without id returns {ok:true,count,items}; with id r
 
 ## todo_update
 
-Patch one existing todo by stable id; omitted fields survive. Add work with todo_create. Mark in_progress with activeForm before work, completed only after finishing. Completion may run its evaluator and be vetoed by a hook: after rejection/blocked-by-hook re-read and revise before retrying. Avoid unchanged updates; read details when state is uncertain, list for unknown ids. Inactive store: continue without more todo calls.
+Patch one existing todo by stable id; omitted fields survive. Add work with todo_create. Mark in_progress with activeForm before work, completed only after finishing. Keep one in_progress item per owner. Use the requested language, otherwise the request primary language, for subject/description/activeForm/note; retain source identifiers, paths, commands and quotes. Completion may run its evaluator and be vetoed by a hook: after rejection/blocked-by-hook re-read and revise before retrying. Avoid unchanged updates; read details when state is uncertain, list for unknown ids. Inactive store: continue without more todo calls.
 
 ```json
 {
@@ -1772,7 +1772,7 @@ Complete only when objective and all requirements are evidenced; disclose unveri
 
 ## wait_agent
 
-Yield for Agent mailbox evidence, root user input, interruption or timeout. Progress is UI/SDK-only and never wakes the model. Returns a wake acknowledgement, not the evidence: read the following mailbox. After any mailbox evidence, integrate it and reconcile the affected semantic milestone before waiting again.
+Yield for Agent mailbox evidence, root user input, interruption or timeout. Continue useful non-overlapping work first; wait sparingly when required Agent evidence is on the critical path. Progress is UI/SDK-only and never wakes the model. Returns a wake acknowledgement, not the evidence: read the following mailbox. After any mailbox evidence, integrate it and reconcile the affected semantic milestone before waiting again.
 
 ```json
 {

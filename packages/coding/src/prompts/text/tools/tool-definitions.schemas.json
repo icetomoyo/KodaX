@@ -66,27 +66,23 @@
     "type": "object",
     "properties": {
       "path": {
-        "type": "string",
-        "description": "The file to edit"
+        "type": "string"
       },
       "edits": {
         "type": "array",
         "minItems": 1,
-        "description": "Replacements applied sequentially to this file; any failure leaves the file unchanged.",
         "items": {
           "type": "object",
           "properties": {
             "old_string": {
-              "type": "string",
-              "description": "Unique text to replace; exact match then normalized fallback"
+              "type": "string"
             },
             "new_string": {
-              "type": "string",
-              "description": "Replacement text"
+              "type": "string"
             },
             "replace_all": {
               "type": "boolean",
-              "description": "Replace every occurrence; defaults to false"
+              "description": "All occurrences; default false."
             }
           },
           "required": [
@@ -154,16 +150,15 @@
     "type": "object",
     "properties": {
       "pattern": {
-        "type": "string",
-        "description": "Regex, or literal text when literal is true, to match in file contents."
+        "type": "string"
       },
       "literal": {
         "type": "boolean",
-        "description": "Match text verbatim, including long strings. Default false (regex). Use glob for paths."
+        "description": "Default false."
       },
       "path": {
         "type": "string",
-        "description": "File or directory; defaults to cwd."
+        "description": "File/directory; default cwd."
       },
       "glob": {
         "type": "string",
@@ -171,7 +166,7 @@
       },
       "type": {
         "type": "string",
-        "description": "File type such as ts (includes .ts/.tsx/.mts/.cts). Use glob for an exact extension, e.g. *.ts."
+        "description": "ts includes ts/tsx/mts/cts; glob for exact extension."
       },
       "output_mode": {
         "type": "string",
@@ -180,11 +175,11 @@
           "files_with_matches",
           "count"
         ],
-        "description": "content (default): matching lines; files_with_matches: paths; count: per-file match counts."
+        "description": "Default content (lines); files_with_matches (paths); count (per-file counts)."
       },
       "ignore_case": {
         "type": "boolean",
-        "description": "Case-insensitive matching; default false."
+        "description": "Default false."
       },
       "-i": {
         "type": "boolean",
@@ -192,11 +187,11 @@
       },
       "-A": {
         "type": "number",
-        "description": "Following context lines; content mode only."
+        "description": "Following lines; content mode."
       },
       "-B": {
         "type": "number",
-        "description": "Preceding context lines; content mode only."
+        "description": "Preceding lines; content mode."
       },
       "-C": {
         "type": "number",
@@ -204,19 +199,19 @@
       },
       "context": {
         "type": "number",
-        "description": "Context lines on both sides; content mode only."
+        "description": "Both sides; content mode."
       },
       "multiline": {
         "type": "boolean",
-        "description": "Allow . and matches across newlines; default false."
+        "description": "Cross-line matches and dot; default false."
       },
       "head_limit": {
         "type": "number",
-        "description": "Limit output to first N entries. Defaults to 250. Pass 0 to remove the entry-count cap; the source byte budget still applies."
+        "description": "Entry cap, default 250; 0 uncaps count, not source bytes."
       },
       "offset": {
         "type": "number",
-        "description": "Entries to skip; default 0."
+        "description": "Entries skipped; default 0."
       },
       "scan_offset": {
         "type": "number",
@@ -232,33 +227,32 @@
     "properties": {
       "task_name": {
         "type": "string",
-        "description": "Stable direct-child name used in the Runtime-minted canonical actor path."
+        "description": "Stable direct-child name."
       },
       "objective": {
         "type": "string",
-        "description": "Detailed multi-step goal for this child agent"
+        "description": "Bounded goal, constraints, evidence and output shape."
       },
       "read_only": {
         "type": "boolean",
-        "description": "true (default) narrows filesystem access to read-only; false retains the parent ceiling."
+        "description": "Default true; false retains parent permission ceiling."
       },
       "scope": {
         "type": "string",
-        "description": "Optional bounded scope hint (e.g. \"packages/llm/src/\")"
+        "description": "Bounded scope hint."
       },
       "evidence_refs": {
         "type": "array",
         "items": {
           "type": "string"
         },
-        "description": "Optional known evidence. Prefix with file:, diff:, finding:, or exact agent-turn:<canonical-path>#turn=<id>. Legacy agent:<path> resolves latest. Actor output must already be terminal and visible."
+        "description": "file:/diff:/finding:/agent-turn:<canonical-path>#turn=<id>; legacy agent:<path> means latest. Actor output must be terminal/visible."
       },
       "constraints": {
         "type": "array",
         "items": {
           "type": "string"
-        },
-        "description": "Optional constraints"
+        }
       },
       "model_hint": {
         "type": "string",
@@ -267,23 +261,23 @@
           "balanced",
           "deep"
         ],
-        "description": "Routing tier: fast for focused lookups (few files/simple grep), deep for heavy multi-file analysis/synthesis, balanced (default/omitted) for normal inherited selection. Unconfigured tiers fall back to the inherited provider/model. Omit when unsure."
+        "description": "balanced: ordinary work (default); fast: read-only mechanical lookup; deep: architecture/adversarial checks/severity/final synthesis. Unconfigured tiers inherit; write-capable fast stays on parent tier. Omit if unsure."
       },
       "agent_id": {
         "type": "string",
-        "description": "Select a registered specialist matching the task instead of a generic child."
+        "description": "Matching specialist canonical ID."
       },
       "provider": {
         "type": "string",
-        "description": "Override provider for a deliberate cross-family check. Omit to inherit; an unconfigured provider falls back to yours."
+        "description": "Deliberate cross-family override; unconfigured/omitted inherits."
       },
       "model": {
         "type": "string",
-        "description": "Model id paired with provider. Omit to inherit."
+        "description": "Paired provider model ID; omitted inherits."
       },
       "effort": {
         "type": "string",
-        "description": "Reasoning effort (off, low, medium, high, xhigh, max). Omit/auto inherits parent/default. A specialist selected by agent_id locks its declared effort; conflicting dispatch or provider/model-unsupported values are rejected."
+        "description": "off/low/medium/high/xhigh/max; omitted/auto inherits. agent_id locks specialist effort; conflicts/unsupported values rejected."
       },
       "isolation": {
         "type": "string",
@@ -291,14 +285,14 @@
           "shared",
           "worktree"
         ],
-        "description": "Optional execution isolation."
+        "description": "Default shared: edits are visible in the root workspace; do not reapply them. Worktree needs an explicit merge-back strategy."
       },
       "fork_turns": {
-        "description": "History fork: all (default), none, or a positive recent-turn count."
+        "description": "History: all (default), none, or positive recent-turn count."
       },
       "quality_strategy": {
         "type": "object",
-        "description": "Telemetry only: {schemaVersion:1,stageId,pattern,role,laneRelation?,targetEvidenceRefs?}. Does not control legal spawn admission; invalid metadata is ignored. Actor targets require exact agent-turn refs."
+        "description": "{schemaVersion:1,stageId,pattern,role,laneRelation?,targetEvidenceRefs?}; Actor refs require exact agent-turn."
       }
     },
     "required": [
@@ -424,7 +418,7 @@
             },
             "header": {
               "type": "string",
-              "description": "Short progress label, at most 12 chars."
+              "description": "Progress label, ≤12 chars."
             },
             "options": {
               "type": "array",
@@ -438,8 +432,7 @@
                     "type": "string"
                   },
                   "value": {
-                    "type": "string",
-                    "description": "Returned value; defaults to label."
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -451,32 +444,25 @@
               "type": "boolean"
             },
             "min_selections": {
-              "type": "integer",
-              "description": "Minimum choices when multi_select=true."
+              "type": "integer"
             },
             "max_selections": {
-              "type": "integer",
-              "description": "Maximum choices when multi_select=true."
+              "type": "integer"
             },
             "default": {
-              "type": "string",
-              "description": "Suggested option value for display. Never submitted automatically."
+              "type": "string"
             },
             "allow_custom_input": {
-              "type": "boolean",
-              "description": "Defaults to the flat setting or true; false only for closed safety/protocol choices."
+              "type": "boolean"
             },
             "custom_input_label": {
-              "type": "string",
-              "description": "Custom-choice label; falls back to flat setting or \"Other...\"."
+              "type": "string"
             },
             "custom_input_prompt": {
-              "type": "string",
-              "description": "Custom-choice prompt; falls back to flat setting."
+              "type": "string"
             },
             "custom_input_default": {
-              "type": "string",
-              "description": "Custom-choice initial text; falls back to flat setting."
+              "type": "string"
             }
           },
           "required": [
@@ -492,12 +478,10 @@
         "enum": [
           "select",
           "input"
-        ],
-        "description": "Default select; input ignores options and does not support questions[]."
+        ]
       },
       "options": {
         "type": "array",
-        "description": "Choices; required for select, ignored for input.",
         "items": {
           "type": "object",
           "properties": {
@@ -508,8 +492,7 @@
               "type": "string"
             },
             "value": {
-              "type": "string",
-              "description": "Returned value; defaults to label."
+              "type": "string"
             }
           },
           "required": [
@@ -518,36 +501,31 @@
         }
       },
       "multi_select": {
-        "type": "boolean",
-        "description": "Select only: allow multiple choices; answer is an array."
+        "type": "boolean"
       },
       "min_selections": {
-        "type": "integer",
-        "description": "Minimum choices when multi_select=true."
+        "type": "integer"
       },
       "max_selections": {
-        "type": "integer",
-        "description": "Maximum choices when multi_select=true."
+        "type": "integer"
       },
       "allow_custom_input": {
-        "type": "boolean",
-        "description": "Automatic custom choice defaults true; false only for closed safety/protocol choices."
+        "type": "boolean"
       },
       "custom_input_label": {
         "type": "string",
-        "description": "Automatic custom-choice label; default \"Other...\"."
+        "description": "Custom-choice label; default \"Other...\"."
       },
       "custom_input_prompt": {
         "type": "string",
-        "description": "Prompt for the automatic custom choice."
+        "description": "Custom-choice prompt."
       },
       "custom_input_default": {
         "type": "string",
-        "description": "Initial text for the automatic custom choice."
+        "description": "Custom-choice initial text."
       },
       "default": {
-        "type": "string",
-        "description": "Suggested option value (select) or initial text (input) for display. Never submitted automatically."
+        "type": "string"
       }
     }
   },
@@ -602,7 +580,7 @@
       },
       "id": {
         "type": "string",
-        "description": "Existing canonical todo id; must match the current plan."
+        "description": "Canonical current-plan ID."
       },
       "status": {
         "type": "string",
@@ -614,23 +592,23 @@
           "cancelled",
           "deleted"
         ],
-        "description": "Optional transition: failed needs retry; skipped is unnecessary; cancelled retains a struck-through breadcrumb; deleted removes the row. Only Runtime may restore pending after revise."
+        "description": "failed: retry needed; skipped: unnecessary; cancelled: breadcrumb; deleted: remove. Only Runtime restores pending after revise."
       },
       "note": {
         "type": "string",
-        "description": "Optional reason/detail; omit to preserve."
+        "description": "Reason/detail; omitted preserves."
       },
       "activeForm": {
         "type": "string",
-        "description": "Present-continuous spinner label; required for in_progress. Omit on terminal transitions to preserve the previous value."
+        "description": "Required present-continuous label for in_progress; omit terminal transition to preserve."
       },
       "subject": {
         "type": "string",
-        "description": "Optional replacement imperative title; must be non-empty."
+        "description": "Nonempty replacement imperative title."
       },
       "description": {
         "type": "string",
-        "description": "Optional replacement multi-line work context; empty string clears it."
+        "description": "Replacement multiline context; empty clears."
       },
       "evaluator": {
         "type": "string",
@@ -639,11 +617,11 @@
           "test",
           "lint"
         ],
-        "description": "Optional replacement completion check when runner evaluator wiring is active: build/test/lint runs npm run build/npm test/npm run lint. Failure returns stderr."
+        "description": "When wired: build/test/lint → npm run build/npm test/npm run lint on completion; failure returns stderr."
       },
       "metadata": {
         "type": "object",
-        "description": "Opaque hook/eval data, not UI. Shallow-merge: keys overwrite, nested objects are not deep-merged; null values delete keys, allowing merge+delete together. Whole-field null clears all (handler accepts it despite object schema)."
+        "description": "Opaque, not UI. Shallow merge, not deep merge; null values delete keys; whole-field null clears (handler accepts despite object schema)."
       }
     }
   },
@@ -652,7 +630,7 @@
     "properties": {
       "subject": {
         "type": "string",
-        "description": "Non-empty imperative milestone title shown in the plan row."
+        "description": "Nonempty imperative plan-row title."
       },
       "status": {
         "type": "string",
@@ -664,11 +642,11 @@
       },
       "description": {
         "type": "string",
-        "description": "Optional multi-line work context available in full item detail; absent from compact row. Omit when subject suffices."
+        "description": "Full-detail multiline context, absent from compact row; omit if title suffices."
       },
       "activeForm": {
         "type": "string",
-        "description": "Optional present-continuous label shown by the in_progress spinner."
+        "description": "Supply for each milestone: present-continuous in_progress spinner label."
       },
       "evaluator": {
         "type": "string",
@@ -677,11 +655,11 @@
           "test",
           "lint"
         ],
-        "description": "Optional milestone check on completion when runner evaluator wiring is active: build/test/lint runs npm run build/npm test/npm run lint; failure returns stderr. Use sparingly for real checks."
+        "description": "When wired, completion runs build/test/lint = npm run build/npm test/npm run lint; failure returns stderr. Sparingly for real checks."
       },
       "metadata": {
         "type": "object",
-        "description": "Optional opaque hook/eval data; not shown in UI. Omit when unused."
+        "description": "Opaque hook/eval data, not UI; omit if unused."
       }
     },
     "required": [
@@ -865,19 +843,19 @@
     "properties": {
       "path": {
         "type": "string",
-        "description": "The absolute file path or a kodax-transient://text/ reference supplied by context recovery"
+        "description": "Absolute path or supplied kodax-transient://text/ reference."
       },
       "offset": {
         "type": "number",
-        "description": "Line number to start from (text files only)"
+        "description": "Starting text line number."
       },
       "limit": {
         "type": "number",
-        "description": "Number of lines to read (text files only)"
+        "description": "Text lines."
       },
       "line_offset": {
         "type": "number",
-        "description": "Zero-based Unicode character offset within the first selected line. Use the exact value from a partial-line continuation marker."
+        "description": "0-based Unicode character offset within first line; use exact continuation cursor."
       }
     },
     "required": [
@@ -888,20 +866,19 @@
     "type": "object",
     "properties": {
       "command": {
-        "type": "string",
-        "description": "The command to execute"
+        "type": "string"
       },
       "description": {
         "type": "string",
-        "description": "Clear, concise description of what this command does"
+        "description": "Concise command purpose."
       },
       "timeout": {
         "type": "number",
-        "description": "Timeout in seconds"
+        "description": "Seconds."
       },
       "run_in_background": {
         "type": "boolean",
-        "description": "Run command in background. Returns immediately with output file path. Use read tool to check output later."
+        "description": "Return immediately with output path; read it later."
       }
     },
     "required": [
@@ -916,7 +893,7 @@
         "items": {
           "type": "string"
         },
-        "description": "Optional skills every returned agent must declare."
+        "description": "Every returned agent must declare all listed skills."
       },
       "required_capabilities": {
         "type": "object",
@@ -937,11 +914,11 @@
             "type": "boolean"
           }
         },
-        "description": "Optional lifecycle capabilities required for this dispatch."
+        "description": "Required lifecycle capabilities."
       },
       "read_only": {
         "type": "boolean",
-        "description": "When true, exclude external agents whose declared remote effect is write or unknown."
+        "description": "true excludes external write/unknown remote effects."
       }
     }
   },
@@ -950,15 +927,15 @@
     "properties": {
       "to": {
         "type": "string",
-        "description": "A visible canonical actor path, direct-child/peer task name, the literal \"parent\", or \"*\" for a bounded broadcast. Self-targeted sends are rejected."
+        "description": "Visible canonical path, child/peer name, parent, or * broadcast. Self rejected."
       },
       "content": {
         "type": "string",
-        "description": "Message body. Runtime wraps it in an authenticated <agent-message> frame before delivery."
+        "description": "Body; Runtime authenticates agent-message frame."
       },
       "forwarded_message_id": {
         "type": "string",
-        "description": "Message id from a received <agent-message> frame. Supply only when forwarding that message; Runtime derives and validates the forwarding chain. Omit for a fresh message."
+        "description": "Received agent-message ID only when forwarding; Runtime derives chain. Fresh message: omit."
       },
       "classification": {
         "type": "string",
@@ -967,7 +944,7 @@
           "internal",
           "sensitive"
         ],
-        "description": "Data classification. Defaults to internal; forwarding cannot downgrade the source classification."
+        "description": "Default internal; cannot downgrade source classification."
       }
     },
     "required": [
@@ -980,7 +957,7 @@
     "properties": {
       "path_prefix": {
         "type": "string",
-        "description": "Optional canonical or caller-relative Actor path prefix."
+        "description": "Canonical/caller-relative path prefix."
       },
       "state": {
         "type": "string",
@@ -988,16 +965,15 @@
           "running",
           "idle",
           "closed"
-        ],
-        "description": "Optional Actor state filter."
+        ]
       },
       "after_path": {
         "type": "string",
-        "description": "Exclusive canonical path cursor returned as nextAfterPath."
+        "description": "Exclusive nextAfterPath cursor."
       },
       "limit": {
         "type": "number",
-        "description": "Page size, 1-50. Defaults to 20."
+        "description": "1–50; default 20."
       }
     }
   },
@@ -1006,11 +982,11 @@
     "properties": {
       "target": {
         "type": "string",
-        "description": "Canonical controlled actor path or direct-child task name."
+        "description": "Canonical controlled path or direct-child name."
       },
       "reason": {
         "type": "string",
-        "description": "Optional attributable interruption reason."
+        "description": "Attributable reason."
       },
       "scope": {
         "type": "string",
@@ -1018,7 +994,7 @@
           "turn",
           "subtree"
         ],
-        "description": "Interrupt only the target Turn (default) or every active Turn in its controlled subtree. Actors remain reusable."
+        "description": "Default turn; subtree interrupts all controlled active turns. Actors remain reusable."
       }
     },
     "required": [
@@ -1098,16 +1074,15 @@
         "enum": [
           "keep",
           "remove"
-        ],
-        "description": "Whether to keep or remove the worktree directory and branch"
+        ]
       },
       "worktree_path": {
         "type": "string",
-        "description": "Absolute path to the worktree directory"
+        "description": "Absolute worktree path."
       },
       "discard_changes": {
         "type": "boolean",
-        "description": "If true, bypass safety checks for uncommitted changes or local commits"
+        "description": "true bypasses uncommitted/local-commit safety checks."
       }
     },
     "required": [
@@ -1410,7 +1385,7 @@
     "properties": {
       "plan": {
         "type": "string",
-        "description": "The finalized plan to present to the user. Include the full plan content, not a summary, so the user can make an informed approval decision. Keep the plan tight: at most 40 lines total, 3 bullet-depth levels, one sentence per bullet. If the plan exceeds this budget, split it into phases and present only the current phase — the user can approve phase-by-phase."
+        "description": "Full plan, not summary: ≤40 lines, ≤3 bullet levels, one sentence/bullet. If larger, present the current phase for phase-by-phase approval."
       }
     },
     "required": [
@@ -1425,12 +1400,11 @@
         "enum": [
           "complete",
           "blocked"
-        ],
-        "description": "Target goal status."
+        ]
       },
       "blocker_kind": {
         "type": "string",
-        "description": "Required when status=blocked. A short identifier for the persistent obstacle (e.g. \"awaiting-user-permission\", \"missing-dependency\"). The runtime counter compares this string across turns."
+        "description": "Required blocked: stable obstacle ID compared across turns, e.g. awaiting-user-permission."
       }
     },
     "required": [
@@ -1442,15 +1416,15 @@
     "properties": {
       "target": {
         "type": "string",
-        "description": "Canonical child path or direct-child task name."
+        "description": "Canonical child path or direct-child name."
       },
       "objective": {
         "type": "string",
-        "description": "Additional objective or changed evidence."
+        "description": "Additional objective/evidence."
       },
       "quality_strategy": {
         "type": "object",
-        "description": "Optional telemetry/provenance for PatternTrace reconstruction. It never controls otherwise legal follow-up admission; invalid or conflicting metadata is ignored."
+        "description": "Optional PatternTrace provenance; never admission control. Invalid/conflicting data ignored."
       }
     },
     "required": [
@@ -1499,16 +1473,14 @@
     "type": "object",
     "properties": {
       "path": {
-        "type": "string",
-        "description": "The file to update"
+        "type": "string"
       },
       "anchor": {
         "type": "string",
-        "description": "A unique heading or nearby marker to insert after"
+        "description": "Unique heading/marker."
       },
       "content": {
-        "type": "string",
-        "description": "The content to insert after the anchor"
+        "type": "string"
       }
     },
     "required": [
@@ -1577,11 +1549,10 @@
     "properties": {
       "skill": {
         "type": "string",
-        "description": "The skill name (e.g. \"commit\", \"review-pr\"). Leading slash is tolerated."
+        "description": "Skill name; leading slash accepted."
       },
       "args": {
-        "type": "string",
-        "description": "Optional arguments forwarded to the skill resolver."
+        "type": "string"
       }
     },
     "required": [
@@ -1593,11 +1564,11 @@
     "properties": {
       "topic": {
         "type": "string",
-        "description": "A manual topic id (e.g. \"providers\", \"config\", \"agents\", \"extensions\", \"doctor\"). Unknown topics return the index."
+        "description": "Exact topic ID; unknown returns index."
       },
       "query": {
         "type": "string",
-        "description": "A free-text question when you do not know the topic id (English or Chinese)."
+        "description": "Free-text question (English/Chinese)."
       }
     },
     "required": []

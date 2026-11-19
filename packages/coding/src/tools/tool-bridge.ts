@@ -69,18 +69,12 @@ export const TOOL_DESCRIBE_DEFINITION: LocalToolDefinition = {
 export const TOOL_CALL_DEFINITION: LocalToolDefinition = {
   name: TOOL_CALL_NAME,
   description:
-    'Call one active tool by name once its input contract is known from tool_search, tool_describe or a contract listed in this request. The runtime re-applies the target tool policy, permission checks, and result guardrails.',
+    'Call one active tool by name once its input contract is known from tool_search, tool_describe or a contract listed in this request. Target policy, permissions and result guardrails reapply.',
   input_schema: {
     type: 'object',
     properties: {
-      name: {
-        type: 'string',
-        description: 'Name of the active target tool to call.',
-      },
-      input: {
-        type: 'object',
-        description: 'JSON object passed as the target tool input.',
-      },
+      name: { type: 'string', description: 'Active tool name.' },
+      input: { type: 'object', description: 'Target JSON arguments.' },
     },
     required: ['name', 'input'],
   },

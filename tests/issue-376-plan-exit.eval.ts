@@ -15,7 +15,6 @@ import { getCostRate, getProvider, type KodaXMessage } from '@kodax-ai/llm';
 import { availableAliases, resolveAlias } from '../benchmark/harness/aliases.js';
 import { KODAX_TOOLS } from '../packages/coding/src/tools/registry.js';
 import { SYSTEM_PROMPT } from '../packages/coding/src/prompts/system.js';
-import { projectManagedToolContract } from '../packages/coding/src/tools/managed-tool-contract.js';
 import { executeWithPermission } from '../packages/repl/src/permission/executor.js';
 import { getPlanModeBlockReason } from '../packages/coding/src/permissions/permission.js';
 import { toolRead } from '../packages/coding/src/tools/read.js';
@@ -83,7 +82,8 @@ describe('Issue 376 plan-exit production wording pilot', () => {
       for (const task of cases) for (const [index, arm] of (Number.parseInt(randomUUID()[0]!, 16) % 2 ? ['baseline', 'candidate'] as const : ['candidate', 'baseline'] as const).entries()) {
         if (stopped) throw new Error('Pilot budget exhausted or usage unavailable; no follow-up allowed.');
         const tools = KODAX_TOOLS.map(tool => {
-          const projected = task.managed ? projectManagedToolContract(tool) : tool;
+          // Builtin definitions are the single model-facing tool text since FEATURE_311.
+          const projected = tool;
           return arm === 'baseline' && tool.name === 'exit_plan_mode'
             ? { ...projected, description: task.managed ? oldManaged : historical['tool.exit_plan_mode.description']! } : projected;
         });
