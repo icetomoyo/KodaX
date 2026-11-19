@@ -50,18 +50,38 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Every root Run uses the managed Worker, and every entry sends the same tool
+  descriptions (FEATURE_311). `runKodaX`, `startKodaX`, `KodaXClient`,
+  `createKodaXTaskRunner`, the Runner preset and `runs.start` without `mode`
+  used to run the older direct engine and its `system.md` prompt. They now get
+  the same Worker as Space and the REPL, so prompt and token optimizations
+  reach them too. Signatures are unchanged. What changes for embedders:
+  - a root Run carries the Run Context envelope, and under `agentMode: 'ama'`
+    also the Actor and Workflow tools; use `excludeTools` or a tool policy to
+    drop them;
+  - `runs.start({ mode: 'coding' })` is ignored with a warning, and stored
+    `coding` Runs resume on the managed Worker;
+  - `systemPromptOverride` replaces the KodaX identity and guidance, while
+    KodaX still appends its runtime sections;
+  - `maxIter` bounds the root Run and ends with `limitReached`;
+  - aborting rejects with `AbortError` instead of resolving as interrupted;
+  - an enforced Skill that cannot be found reports `skill_not_found`;
+  - `SYSTEM_PROMPT`, `buildSystemPrompt` and `buildSystemPromptSnapshot` are
+    removed.
+
+  Persona, override and tool-policy roots now also get the compact Worker
+  and tool text, which cut first-request input by about 28-34% in evals. See
+  [SDK_MIGRATION.md](docs/SDK_MIGRATION.md#统一提示词链路未发布).
+
 - SA mode is retired from every caller (FEATURE_310). `agentMode: 'sa'` is
   still accepted and selects no behavior, like `amaw`:
   - Product inputs, session settings and `runManagedTask` run AMA;
-  - `runKodaX` and a `runs.start` without `mode` treat it as unset and stay
-    on the direct engine.
+  - `runKodaX` and a `runs.start` without `mode` treat it as unset.
 
   The SA-only child-Agent exclusions and the `[Direct Path Rule]` prompt
-  overlay are gone. Hosts that need the direct engine start
-  `runs.start({ mode: 'coding' })`; `Run.mode` is the public fact that tells
-  the two engines apart. Stored Run records that say `'sa'` stay readable.
-  Under `runManagedTask`, `context.systemPromptOverride` now follows AMA
-  rules: it is prepended to the Worker prompt instead of replacing it.
+  overlay are gone. Stored Run records that say `'sa'` stay readable.
+  Under `runManagedTask`, `context.systemPromptOverride` no longer replaces
+  the whole prompt; the FEATURE_311 entry above says what it replaces.
   See the SA section in [SDK_MIGRATION.md](docs/SDK_MIGRATION.md).
 
 - The self-review note appended after a run of edits no longer says

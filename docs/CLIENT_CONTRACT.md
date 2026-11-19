@@ -451,7 +451,7 @@ Run 的 Provider 失败，主任务结果继续读取 `runs` 及其 `failureDeta
 | usage/cost | usage 来自最近响应快照，costReport 是单独的可选报告；不与上下文占用或工作预算混算。usage 没有独立 scope 字段，不能断言为父会话总账 |
 | 冻结/空闲状态 | Ink 冻结浏览停用实时 managed/iteration/compacting 的活动投影，使用冻结显示状态；终态后不因残留 activity 继续显示忙碌。未知数值用“—”或省略，未知状态显示通用文字，不补 0、不默认 success |
 
-顶层 contextBudget 描述当前选择的有效配置，空闲时不能冒充某次请求的最终容量。activity.contextBudget 来自既有执行预算事件，保留执行器实际使用的 compaction.triggerTokens/physicalCapacityTokens、reservedResponseTokens 和 reservedMemoryTokens；直连父执行有 Memory 时包含其预留，worker 的预算沿自己的上下文发出，不能套用父预留。物理容量包含执行器既有安全余量；当前上下文计数包含其 system/tool envelope，客户端不重算阈值。这里的响应预留属于压缩准入策略，不能当作之后每次 Provider 请求实际 max_tokens 的不可变凭证。
+顶层 contextBudget 描述当前选择的有效配置，空闲时不能冒充某次请求的最终容量。activity.contextBudget 来自既有执行预算事件，保留执行器实际使用的 compaction.triggerTokens/physicalCapacityTokens、reservedResponseTokens 和 reservedMemoryTokens；managed 根执行的 reservedMemoryTokens 为 0，worker 的预算沿自己的上下文发出，不能套用父预留。物理容量包含执行器既有安全余量；当前上下文计数包含其 system/tool envelope，客户端不重算阈值。这里的响应预留属于压缩准入策略，不能当作之后每次 Provider 请求实际 max_tokens 的不可变凭证。
 
 产品 Ink 在运行时优先使用匹配 scope 的执行预算，未知 worker 预算只显示数量与归属；空闲使用父配置窗口。最终阈值未知时不显示推算的压力颜色。配置预留、上下文占用与 usage 不混算。独立嵌入 REPL 保留本地配置解析路径。压缩常开，没有新增可写开关。
 
@@ -646,7 +646,7 @@ CLI 的 Ink、classic、单次输入使用 Host Client 投影；SDK `/client` �
 
 `activity.todos`、`children`、`managedTask`、`costReport` 是 Host 事实，终端直接消费；本地加载状态不能覆盖另一个客户端启动的活动 Run。`managedTask.childFanoutClass` 与 fanoutCount 共同驱动原 AMA 后台条。模型内调用工作流时，`activity.workflow` 复用已有 `ClientWorkflowProcess`，保留阶段、计数、状态和名称；子代理摘要作为可补读、可保存的显示项提供。临时 Worker 进度仍只属于活动面，不变成用户对话。
 
-内置 AMA Worker、直连引擎和 Script 根执行直接继承 Session effort；不能用已退役的
+managed Worker 与 Script 根执行直接继承 Session effort；不能用已退役的
 `balanced/deep` 角色默认压低 `high/xhigh/max`。显式 specialist 策略与子任务自身
 选择独立；子任务显式 `auto` 表示 provider 自选，不等于省略并继承父级。
 旧 Agent profile 在创建、构造 admission/resolution 等边界转换为原生 effort；

@@ -12,10 +12,39 @@ Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附�
 原命令超时、秘密环境变量白名单和显式 Bash 执行契约保留。
 
 Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` 保留，
-直连引擎和 Adaptive 都会向模型提供可用且已授权的 Skill 目录。运行时绑定生成的
+根运行都会向模型提供可用且已授权的 Skill 目录。运行时绑定生成的
 目录共用 8,000 UTF-16 单元上限；省略目录项不会删除已绑定的授权。
-调用方显式设置的 `systemPromptOverride` 仍是直连引擎的完整提示覆盖，不自动追加
-可选 Skill 目录。`sa` 和 `amaw` 都是已弃用的输入，见下一节。
+`systemPromptOverride` 在根运行上的语义见[统一提示词链路](#统一提示词链路未发布)。
+`sa` 和 `amaw` 都是已弃用的输入，见 [SA 模式退役](#sa-模式退役未发布)。
+
+## 统一提示词链路（未发布）
+
+每个根运行都走 managed Worker，每个入口发出同一套工具说明。原来的直连根引擎和
+`system.md` 已删除。SDK 客户已不再直接依赖直连引擎，因此没有弃用期。
+
+- `runKodaX`、`startKodaX`、`KodaXClient`、`createKodaXTaskRunner` / `runOrchestration`、
+  `Runner.run(createDefaultCodingAgent())`，以及不带 `mode` 的 `runs.start` 都运行
+  managed Worker。公开签名不变。根运行因此带 Run Context 信封，并按 `agentMode` 提供
+  Actor 与 Workflow 工具。不需要这些工具时，用 `excludeTools` 或工具策略去掉。
+- `runs.start({ mode: 'coding' })` 和 daemon `run.start` 的 `mode: 'coding'` 仍被接受，但会被
+  忽略并给出 `runtime.runs.start` 警告诊断。新 Run 的 `Run.mode` 一律是 `managed_task`。
+  已持久化的 `coding` Run 记录照常可读，恢复时在 managed Worker 上继续。
+- 不带 `agentMode` 的根运行用 Worker 的精简段落（执行指导、Run Context 信任、收尾）。
+  `agentMode: 'ama'` 的根运行用完整段落（信任与范围、并行工作、执行与交付）。两者来自同一个源头，
+  按可用工具裁剪。
+- `systemPromptOverride` 放在系统提示词最前面，替换 KodaX 的身份和编码指导。
+  KodaX 仍追加环境、Memory、Run Context 信任等运行时段落。不再丢弃整份提示词，
+  也不再与 KodaX 默认身份叠加。`agentProfile.instructions` 只替换身份，工作指导保留。
+- `context.prompt` 现在在 `runKodaX` 上可用。只有内部叶子执行器拒绝它，错误码仍是
+  `prompt_spec_requires_managed_run`。
+- `maxIter` 限制根运行的 LLM 轮数，跨空闲让出与恢复累计；到达上限时以成功结束并带
+  `limitReached`。不设 `maxIter` 时只有每个 Runner 的保险上限。
+- `session.autoResume` / `session.resume` 选最近一次持久化的会话，与原直连引擎一致。
+- 中止根运行时，`runKodaX` 以 `AbortError` 拒绝，不再返回 `interrupted: true` 的成功结果。
+- 强制 Skill 在自发现来源里找不到时，报 `skill_not_found`，不再报 `skill_not_registered`。
+- 删除的导出：`SYSTEM_PROMPT`、`buildSystemPrompt`、`buildSystemPromptSnapshot`，以及只服务于
+  直连提示词的 registry 槽位 `base`、`runtime-context`、`base-suffix`。
+  `buildCapabilityContextSections` 只产出 managed Worker 仍在用的共享能力段落。
 
 ## 应用提示词定制（未发布）
 
@@ -52,9 +81,8 @@ profile: await services.createExecutionProfile({
   包含 Managed Run Context 标记。所有条目文本合计不超过 8,000 字符。格式不对的 spec
   在开始工作前以 `invalid_params` 拒绝。
 
-`prompt` 只用于 managed Run，Product Client 的 Run 都是 managed。直连的
-`runs.start({ mode: 'coding' })` 或 `runKodaX` 带 `context.prompt` 时以
-`prompt_spec_requires_managed_run` 拒绝。Host 必须声明 `promptSpec.version === 1`；
+`prompt` 用于根运行，现在所有根运行都是 managed（见[统一提示词链路](#统一提示词链路未发布)）。
+只有内部叶子执行器以 `prompt_spec_requires_managed_run` 拒绝它。Host 必须声明 `promptSpec.version === 1`；
 旧 Host 在输入发出前以 `daemon_upgrade_required` 拒绝。
 
 ## SA 模式退役（未发布）
@@ -63,14 +91,12 @@ profile: await services.createExecutionProfile({
 
 - `runManagedTask`、会话设置和 Product 输入收到 `'sa'` 时运行 AMA Worker。
   原来 SA 的子 Agent/Workflow 工具排除和 `[Direct Path Rule]` 叠加提示已删除。
-- `runKodaX` 和未指定 `mode` 的 `runs.start` 把 `'sa'` 当作未指定，仍是直连引擎。
-- 需要直连引擎的 Host 使用 `runs.start({ mode: 'coding' })`。`Run.mode`
-  （`coding` / `managed_task`）是区分两种引擎的唯一公开事实；新 Run 的
-  `effectiveConfig.agentMode` 和会话视图都报 `'ama'`。
+- `runKodaX` 和未指定 `mode` 的 `runs.start` 把 `'sa'` 当作未指定，运行不带 `agentMode` 的
+  managed Worker。直连引擎已删除，见[统一提示词链路](#统一提示词链路未发布)。
+  新 Run 的 `effectiveConfig.agentMode` 和会话视图都报 `'ama'`。
 - 需要"不派子 Agent"的 Host 改用 `excludeTools`、`agentProfile` 或工具策略。
 - `runManagedTask` 带 `'sa'` 时，`context.systemPromptOverride` 按 AMA 语义作为 Worker 指令
-  前置，不再整体替换系统提示词。需要整体替换的调用方改用 `runKodaX` 或
-  `runs.start({ mode: 'coding' })`。
+  前置，不再整体替换系统提示词。
 - config.json 里旧 REPL 写入的 `agentMode: "sa"` 不再覆盖 Product 默认值；REPL 启动时把它
   迁移掉并给出 `KODAX_AGENT_MODE_MIGRATED` 警告。之前它会让 Space 和 daemon 会话悄悄失去 Actor 工具。
 - 已持久化的 Run 记录里的 `'sa'` 原样可读。CLI `--agent-mode sa` 与 REPL `/agent-mode sa`

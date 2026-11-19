@@ -1,5 +1,83 @@
 # KodaX Architecture Decision Records
 
+## Every root Run uses one Worker and one tool text — 2026-11-19 (unreleased)
+
+The 2026-10-26/27 first-turn token work left the source text alone. It built the
+full system prompt and tool descriptions, then swapped in compact text when an
+exact match held. Any mismatch silently kept the full text. Two tool text sets
+and two Workers had to be maintained. Issue 415 and the missing reason in the
+compact `edit` text came from that layer. Persona, override, tool-policy and
+specialist roots never got the compact text, and neither did direct root Runs.
+`runs.start()` without `mode` still ran the pre-ADR-033 `system.md`. That
+default came from `runKodaX` when the Runtime was built in v0.7.78, without a
+decision.
+
+**Decision.** Each role has one prompt source.
+
+- Each builtin tool has one description, written compact at the source. The
+  collaboration, write-lane, wait and Todo sentences that the child patch
+  carried moved into `spawn_agent`, `wait_agent`, `todo_create` and
+  `todo_update`. Leaf Runs without a Worker therefore keep that teaching. The
+  request-time projection is deleted. `tool_call` and `tool_search` may append
+  contracts for deferred tools the Run actually has.
+- The Worker is written compact at the source and trimmed to the tools a Run
+  has. An `ama` root gets the full sections. A root without `agentMode` gets the
+  trimmed sections. The regex rewrite and the eligibility marks are deleted.
+- Every root Run goes through the managed Worker. That covers `runKodaX`,
+  `startKodaX`, `KodaXClient`, `createKodaXTaskRunner`, the Runner preset, and
+  Runtime and daemon `runs.start`. An explicit `mode: 'coding'` is ignored with a
+  warning. Stored `coding` Runs resume on the managed Worker. `system.md`,
+  `SYSTEM_PROMPT`, `buildSystemPrompt` and `buildSystemPromptSnapshot` are
+  deleted.
+- The leaf executor stays as an internal entry. Child Agents, specialists and
+  one-shot digest and repair calls run on it with their own prompts, and it
+  refuses to run without one.
+- On a root, `systemPromptOverride` goes first and replaces the KodaX identity
+  and guidance. KodaX still appends its runtime sections. `agentProfile.instructions`
+  replaces only the identity, because REPL Markdown persona Agents rely on the
+  planning, parallel-work and verification guidance.
+- Managed roots gained what the direct engine had: `maxIter` with
+  `limitReached`, `session.autoResume`, and the `startKodaX` session marker.
+  Abort rejects with `AbortError`.
+
+**Rejected alternatives.**
+
+- *Keep the projection and widen its eligibility.* Every new caller shape would
+  need another exact-match rule, and a miss would still fall back silently.
+- *Keep the direct engine as a deprecated Runtime mode for one release.* SDK
+  customers no longer call `runKodaX` directly (owner, 2026-11-19). A kept path
+  would keep `system.md` as a second root prompt.
+- *Treat `agentProfile.instructions` as `kodaxGuidance: 'omit'`.* REPL persona
+  Agents would lose the planning, parallel-work and verification guidance.
+- *Retire the leaf executor as well.* Children need a complete prompt override,
+  `maxIter` and generation checkpoints without a Worker. Running them through
+  the Worker would stack two prompts.
+
+**Consequences.** A change to the Worker or to a tool description reaches every
+entry. `tests/f311-entry-matrix.test.ts` pins each entry and both child kinds to
+one Worker and one tool text, and checks that the retired sources stay deleted.
+A root Run now carries the Run Context envelope, and under `ama` it also has the
+Actor and Workflow tools. Callers that do not want them use `excludeTools` or a
+tool policy. This entry supersedes three earlier statements: "The direct engine
+rejects a spec" (2026-11-19 prompt spec), "The direct engine is not SA and
+stays" (2026-11-18 SA retirement) and "Canonical and compact Worker texts
+remain separate sources" (2026-11-18 prompt variants).
+
+Paid evals used blind pairs on `glm-5.3-flash`, `kimi-for-coding` and
+`deepseek-flash`. One tool text, 48 calls: persona 2 candidate, 2 baseline,
+1 mixed and 13 tie; ordinary root 2 candidate, 0 baseline and 4 tie. One Worker
+on persona and override roots, 72 calls: persona 3, 2, 1 and 12; override 2, 2,
+0 and 14. Input per call fell 28% and 34%. The baseline wins trace to provider
+noise or to `omit` dropping the parallel-work paragraph, which the host owns by
+design. Step 3 compared the SDK default root (`runs.start` without a mode, AMA on the
+Runtime Host) on the direct engine with `system.md` against the managed Worker
+with its Run Context envelope, over parallel dispatch, ownership, Todo
+continuation, one question round, edit recovery, Memory, Skill trigger and plain
+lookup (48 calls, $0.067). Blind verdicts: 18 tie, 4 baseline, 1 candidate,
+1 mixed. Re-sampling the losing cells did not reproduce them: the baseline made
+the Todo-continuation edit 0 of 4 times, the candidate 1 of 4. So the
+attribution is provider noise. Input per call fell 5.8%.
+
 ## Applications shape managed-Run prompts through one spec — 2026-11-19 (unreleased)
 
 Customers need KodaX to answer as their product, not as a coding agent. The
@@ -7396,12 +7474,10 @@ could not be attributed to a single change and regressed specific models.
    Run is refused with no fallback; low-level `runKodaX` and Hosts without the
    work-mode capability reject it. Script's value is data-dependent
    composition, not first-turn tokens.
-7. All managed modes use one compact shared contract by default, with no
-   switch (`projectManagedSystemContract` / `projectManagedToolContracts` in
-   `managed-task/llm-adapter.ts`). It applies only to ordinary managed roots;
-   a same-name host override keeps its own contract. The first request,
-   retries, continuations and request measurement share one projection. Tool
-   fitting is budgeted against the full original system, and the canonical
+7. All managed modes use one compact shared contract, with no switch. Since
+   2026-11-19 it is the source text itself, not a request-time projection, and
+   every root Run sends it (see "Every root Run uses one Worker and one tool
+   text"). A same-name host override keeps its own contract. The canonical
    transcript is never rewritten. Tool schemas own parameter semantics; the
    Worker owns planning, scope, collaboration, resume and verification. Prompts
    are never shortened by making the model discover something, load a Skill or

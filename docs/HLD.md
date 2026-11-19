@@ -653,9 +653,12 @@ user input
 The main agent uses a single Provider/tool loop. `ama` is the only agent mode:
 the Runner-driven Worker can dispatch child Actors. `sa` and `amaw` are
 deprecated inputs. Managed entries run AMA for them, and `runKodaX` treats `sa`
-as unlabeled. The direct engine (`runKodaX`, Runtime `coding` Runs) is not a
-mode: it enters the same Runner frame and coding substrate, and `Run.mode`
-reports which engine a Run used. The retired V1
+as unlabeled. Every root Run, from any SDK entry or Runtime `runs.start`, runs
+the managed Worker; the direct root engine and `system.md` are retired, and an
+explicit Runtime `mode: 'coding'` is ignored with a warning. A root without
+`agentMode` gets the Worker trimmed to its tools. The internal leaf executor
+runs child Agents, specialists and one-shot calls with their own prompts. Each
+builtin tool has one description on every entry. The retired V1
 Scout/Planner/Generator/Evaluator pipeline is not a current execution mode.
 Optional reviewers are ordinary child Actors, using existing evidence and
 artifact channels. The main agent checks actual results and owns the final
@@ -781,8 +784,8 @@ drops the Worker sections tagged as guidance and keeps contract text, tool
 teaching and `AGENTS.md`. Context entries are application rules and references.
 They travel as keyed Managed Run Context sections, not system prompt text, so the
 system prompt stays cacheable and a removed key is retired by name. Rules also
-reach every write descendant, including Workflow children. The direct engine
-rejects a spec. See the 2026-11-19 ADR entry on application prompt specs.
+reach every write descendant, including Workflow children. Only the internal
+leaf executor rejects a spec. See the 2026-11-19 ADR entry on application prompt specs.
 
 Generated constructed handlers are a narrower coding-layer isolation case.
 Each active handler runs in a persistent Worker, while `ctx.tools.*` calls

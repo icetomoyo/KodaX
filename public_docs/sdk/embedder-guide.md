@@ -101,13 +101,14 @@ export async function selectWorkMode(
 Independent `/coding` uses `runManagedTask` for Script and requires writable
 Session storage. A `persistedByHost:true` owner supplies atomic
 `appendSessionRecords(id, records)`; a missing Session or failed append stops
-Script execution without replaying effects. `runKodaX`/`startKodaX` reject Script.
+Script execution without replaying effects. `runKodaX` and `startKodaX` run the
+same managed path, so the same storage rule applies to them.
 Explicit SDK profiles, specialist children and tool-visibility policies retain
 their declared scope instead of being replaced by product presets. CLI
 `--agent-mode sa/amaw` is a migration error. SDK input `agentMode: 'amaw'` is
-normalized to AMA. `'sa'` is deprecated and treated as unset, so managed entries run AMA. A host that wants the direct engine
-starts an explicit `runs.start({ mode: 'coding' })` Run or calls `runKodaX`. Script availability does not prove model adoption or
-task-efficiency parity.
+normalized to AMA. `'sa'` is deprecated and treated as unset, so managed entries run AMA.
+The direct engine is gone; see [One prompt chain for every root Run](#one-prompt-chain-for-every-root-run-unreleased).
+Script availability does not prove model adoption or task-efficiency parity.
 
 Model-visible tool consolidation does not delete the underlying independently
 usable SDK executors. Native exposure, discoverable capabilities and permission
@@ -127,6 +128,41 @@ metadata; changed or newly loaded tools require fresh authorization. Root
 `authorization.tools` can also express a separate ceiling without a persona.
 This contract requires `productExecutionProfile.version === 2`; older Hosts fail
 explicitly. See the [Main example and boundaries](../../docs/SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复未发布).
+
+#### One prompt chain for every root Run (unreleased)
+
+Chinese: [统一提示词链路](../../docs/SDK_MIGRATION.md#统一提示词链路未发布).
+
+Every root Run uses the managed Worker, and every entry sends the same tool
+descriptions. The direct root engine and its `system.md` prompt are removed.
+Public signatures do not change.
+
+- `runKodaX`, `startKodaX`, `KodaXClient`, `createKodaXTaskRunner` with
+  `runOrchestration`, `Runner.run(createDefaultCodingAgent())` and `runs.start`
+  without `mode` all run the managed Worker. A root Run gets the Run Context
+  envelope and, under `agentMode: 'ama'`, the Actor and Workflow tools. Use
+  `excludeTools` or a tool policy if you don't want them.
+- `runs.start({ mode: 'coding' })` and daemon `run.start` with `mode: 'coding'`
+  are accepted and ignored, with a `runtime.runs.start` warning diagnostic. New
+  Runs report `Run.mode: 'managed_task'`. Stored `coding` Runs stay readable and
+  resume on the managed Worker.
+- A root without `agentMode` gets the Worker's short sections (execution
+  guidance, Run Context trust, termination). An `ama` root gets the full sections
+  (trust and scope, parallel work, execution and delivery). Both come from one
+  source, trimmed to the tools the Run has.
+- `systemPromptOverride` goes first and replaces the KodaX identity and guidance.
+  KodaX still appends its runtime sections. `agentProfile.instructions` replaces
+  only the identity.
+- `maxIter` bounds root LLM turns across idle yields and resumes. Reaching it
+  ends with success and `limitReached`. `session.autoResume` and
+  `session.resume` pick the most recent persisted Session.
+- Aborting a root Run rejects `runKodaX` with an `AbortError`. It no longer
+  resolves with `interrupted: true`.
+- An enforced Skill that self-discovery cannot find reports `skill_not_found`
+  instead of `skill_not_registered`.
+- `SYSTEM_PROMPT`, `buildSystemPrompt` and `buildSystemPromptSnapshot` are
+  removed. `buildCapabilityContextSections` emits only the shared capability
+  sections the Worker still uses.
 
 #### Application prompt customization (unreleased)
 
@@ -167,9 +203,8 @@ profile: await services.createExecutionProfile({
   text together is limited to 8,000 characters. A malformed spec rejects with
   `invalid_params` before any work starts.
 
-`prompt` applies only to managed Runs. Product Client Runs are managed. A direct
-`runs.start({ mode: 'coding' })` or `runKodaX` call with `context.prompt`
-rejects with `prompt_spec_requires_managed_run`. The Host must advertise
+`prompt` applies to root Runs, and every root Run is managed. Only the internal
+leaf executor rejects it, with `prompt_spec_requires_managed_run`. The Host must advertise
 `promptSpec.version === 1`. An older Host rejects with `daemon_upgrade_required`
 before the input is sent.
 
@@ -3123,10 +3158,11 @@ runKodaX({
 
 ### What each field / companion gates
 
-- **R1 — identity + instructions.** `agentProfile.instructions` is prepended to the
-  Adaptive Worker prompt and serves as the direct-engine base prompt while retaining the
-  admitted Skill catalog. Profile instructions remain distinct from an explicit
-  `context.systemPromptOverride`, which keeps complete-replacement priority.
+- **R1 — identity + instructions.** `agentProfile.instructions` replaces the KodaX
+  identity in the Worker prompt and keeps the working guidance and the admitted Skill
+  catalog. An explicit `context.systemPromptOverride` goes first and also replaces the
+  KodaX guidance; KodaX still appends its runtime sections (environment, Memory,
+  Run Context trust).
 - **R2 — `context.toolVisibilityPolicy`.** A predicate applied when the
   model-visible tool list is built (in addition to `excludeTools`); tools it returns
   `false` for are hidden from the model.
@@ -6329,7 +6365,9 @@ The v0.7.x public declarations retain the following migration aliases:
 | Legacy source | Current source | Contract |
 |---|---|---|
 | `agentMode: 'amaw'` | `'ama'` | accepted as deprecated input and normalized to AMA; no separate AMAW runtime is restored |
-| `agentMode: 'sa'` | `'ama'`, or `runs.start({ mode: 'coding' })` for a direct Run | accepted as deprecated input; Product inputs, session settings and `runManagedTask` run AMA; under `runManagedTask`, `context.systemPromptOverride` is prepended to the Worker prompt instead of replacing it; `runKodaX` and a `runs.start` without `mode` treat it as unset; stored Run records keep their recorded value |
+| `agentMode: 'sa'` | `'ama'` | accepted as deprecated input; Product inputs, session settings and `runManagedTask` run AMA; `runKodaX` and a `runs.start` without `mode` treat it as unset and run the managed Worker without `agentMode`; stored Run records keep their recorded value |
+| `runs.start({ mode: 'coding' })` | omit `mode` | accepted and ignored with a warning diagnostic; every new Run is `managed_task`; stored `coding` Runs stay readable and resume on the managed Worker |
+| `SYSTEM_PROMPT`, `buildSystemPrompt`, `buildSystemPromptSnapshot` | none | removed with the direct engine; use `systemPromptOverride` or `agentProfile.instructions` |
 | `SkillSource` | `ResolvedSkillSource` | formal source union remains `project \| user \| plugin \| builtin`; only resolved discovery output adds `learned` |
 | `RuntimeDaemonPreflight.activeAgentTasks` | `activeAgentTurns` | both required fields are returned and reference the same array throughout the 0.7.x line |
 | `permissionMode: 'auto-in-project'` | `'auto'` | accepted only as input and immediately canonicalized; never persisted or advertised as a fifth profile |

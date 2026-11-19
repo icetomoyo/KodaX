@@ -506,19 +506,32 @@ start or end with whitespace: separators between pieces live in the consumer's
 join, so an editor cannot change them unseen. `packages/coding/src/prompts/rendered-prompts.test.ts`
 snapshots the assembled Worker, child and tool text in `prompts/expected/`.
 
+Each role has one prompt source. Every root entry (`runKodaX`, `startKodaX`,
+`KodaXClient`, `createKodaXTaskRunner`, the Runner preset in
+`default-coding-agent.ts`, Runtime `runs.start`) reaches `runManagedTask`, and
+`task-engine/runner-driven.ts` renders the Worker from
+`agents/worker-role-prompt.ts`. With the full Todo and collaboration tools (an
+`ama` root) the Worker emits its full sections; otherwise it emits the trimmed
+sections. No regex rewrite or second Worker exists. Each builtin tool has one
+description, in `text/tools/tool-definitions.md`. `projectManagedToolActivation`
+only appends to `tool_call` the direct contracts of deferred tools the Run
+actually has, and to `tool_search` a note when no visual tool is loaded. The leaf
+executor (`runLeafAgent` in `agent.ts`) runs child Agents, specialists and
+one-shot digest or repair calls. It has no Worker and throws without
+`systemPromptOverride` or `agentProfile.instructions`. `tests/f311-entry-matrix.test.ts`
+pins every entry and both child kinds to one Worker and one tool text.
+
 Application prompt specs (`context.prompt`, `KodaXPromptSpec` in
 `execution-profile-contract.ts`) are admitted by `assertKodaXPromptSpec` in
-`prompts/prompt-spec.ts` at `runManagedTask` and Runtime `startRun`. A Runtime
-Run resolved to `coding` mode, and `runKodaX`, reject a spec through
+`prompts/prompt-spec.ts` at `runManagedTask` (which `runKodaX` delegates to) and
+Runtime `startRun`. Only the internal leaf executor rejects a spec, through
 `assertPromptSpecOnManagedRun`. Under `omit`, `createRolePrompt` filters the
-Worker section table by its guidance tag and uses the neutral routing line. The
-root compact projection is skipped, because the stable text no longer matches
-the canonical bytes. `renderApplicationContextSections` emits one
+Worker section table by its guidance tag and uses the neutral routing line.
+`renderApplicationContextSections` emits one
 `app-rule:KEY` or `app-reference:KEY` section per entry.
 `managed-run-context-retention.ts` diffs those sections like any other and labels a
 retired one "application rule KEY". The write-child system prompt appends
-`renderApplicationRules` after project rules (`child-executor.ts`), and
-`compact-child-contract.ts` keeps that suffix byte for byte. The rendered rules
+`renderApplicationRules` after project rules (`child-executor.ts`). The rendered rules
 ride `parentAgentConfig.applicationRules` on the root tool context. Every Actor
 turn runs against that context, so a child's own children inherit them.
 `workflow-runner.ts` and `resumeWorkflowGenerationTurn` copy the same value into
@@ -984,7 +997,7 @@ text-only, and cost tracking keeps their base/cache rates separate.
 `KodaXProviderStreamOptions.promptCacheKey` is separate from the transport
 `sessionId`. Coding derives a domain-separated SHA-256 value from the stable
 logical context ID: the root uses its resumable Session identity and a child
-uses `${root}/agent/${encodeURIComponent(canonicalAgentId)}`. AMA, the direct engine, retry,
+uses `${root}/agent/${encodeURIComponent(canonicalAgentId)}`. The managed Worker, the leaf executor, retry,
 max-token continuation, non-streaming fallback, and compaction reuse the same
 value. `disablePromptCache` omits it. Anthropic- and OpenAI-compatible
 serializers emit the protocol field only when `promptCacheAffinity` is enabled;
@@ -1409,12 +1422,12 @@ Invocation has two distinct trust paths:
   after the token as `$ARGUMENTS`, then inject the expanded Skill for that turn.
 
 Busy Ink follow-ups that resolve to a known Skill remain raw, user-authored
-queue entries with `delivery: host`. AMA mid-turn drain, direct-engine interrupt drain,
+queue entries with `delivery: host`. Worker mid-turn drain, leaf-executor interrupt drain,
 and idle-yield resume never splice those entries directly into model context;
 the next host round performs the same resolve, expand, policy, hook, and
 finalize pipeline as an immediate invocation. Built-in and extension slash
-commands keep their existing mid-task guard. Both the direct engine and AMA inject the active
-Skill's full expanded content exactly once, including direct-engine workflow children
+commands keep their existing mid-task guard. Both the managed Worker and the leaf executor inject the active
+Skill's full expanded content exactly once, including Workflow children
 that use a specialist `systemPromptOverride`.
 
 Child delegation trusts only the structured `skillInvocation` supplied by the
@@ -1450,26 +1463,27 @@ Skill tool results include only the Skill expansion and newly supplied Skill
 guidance; existing Host prompt overlays remain in system context.
 
 Formal discovery uses `gitRoot` when supplied, independently of execution cwd
-and Learned Area identity. The direct engine and AMA omit the model catalog when the Skill loader
+and Learned Area identity. Root and leaf Runs omit the model catalog when the Skill loader
 is unavailable; an already expanded explicit invocation remains usable.
 Rediscovery invalidates full-body caches, including loads still in flight.
 
 Markdown Agent bindings pass their behavior instructions through `agentProfile`
-instead of converting them into a complete prompt override. The direct engine composes that
-profile base with the admitted model catalog and any explicit active Skill;
-Adaptive retains the profile instructions in its Worker prompt. Direct SDK
-and public Runner entries share the same final direct-engine composition.
-A caller's explicit `systemPromptOverride` keeps its complete-replacement
-semantics and priority; it does not acquire an automatic catalog. Both prompt
-paths use the same loader-visibility check before disclosing a catalog.
+instead of converting them into a complete prompt override. The managed Worker
+replaces only its identity with the profile instructions and keeps its working
+guidance, the admitted model catalog and any explicit active Skill. SDK entries
+and the public Runner preset share that composition, because every root Run is
+managed. A caller's explicit `systemPromptOverride` goes first and replaces the
+KodaX identity and guidance; KodaX still appends its runtime sections
+(environment, Memory, Run Context trust). Root and leaf prompts use the same
+loader-visibility check before disclosing a catalog.
 Profile verification defaults, per-task verification overrides and execution
-guidance still reach direct-engine requests through their request-only Run context;
+guidance reach root requests through the Run Context envelope;
 retaining the Skill catalog does not drop those existing obligations.
 
 The Skill trigger has one owner: the model catalog section. It asks for a Skill
 only when a description clearly covers the request. It also gives the no-match
 path and the slash/args handling, and says that guessed names fail. Worker
-texts, including the compact projection, do not restate it. Routing labels are
+texts do not restate it. Routing labels are
 marked as a keyword guess the request overrides, so they cannot imply a Skill
 either. `tests/skill-trigger-surface.test.ts` pins these conditions on the
 assembled first-turn request.

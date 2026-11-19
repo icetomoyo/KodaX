@@ -2090,9 +2090,10 @@ export interface KodaXContextOptions {
    */
   workModePolicy?: 'intersect';
   /**
-   * FEATURE_067 v3: On the direct engine (`runKodaX`, children) this replaces
-   * the entire system prompt. On a managed Run it is prepended to the Worker
-   * prompt as the governing directive, in place of `agentProfile.instructions`.
+   * FEATURE_067 v3: On a root Run (managed Worker) it goes first and replaces
+   * the KodaX identity and guidance; Environment, Memory and trust sections are
+   * still appended. On the internal leaf executor (child Agents, digests and
+   * repairs) it replaces the entire system prompt.
    */
   systemPromptOverride?: string;
   /** Application prompt customization; managed Runs only. See {@link KodaXPromptSpec}. */

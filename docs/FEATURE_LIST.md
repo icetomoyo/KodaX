@@ -24,8 +24,8 @@
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
 | Total tracked features | `92` |
 | InProgress | `3` |
-| Planned | `18` |
-| Completed | `65` |
+| Planned | `17` |
+| Completed | `66` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
 | Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 310, 311` |
 | Archive cutoff | Shipped / canceled / absorbed / shelved items through `v0.7.49` are archived. |
@@ -34,9 +34,8 @@
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 66 | `310, 306, 305, 304, 303, 302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| Completed | 67 | `311, 310, 306, 305, 304, 303, 302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 2 | `298, 225` | `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
-| Planned, 0.7.98 | 1 | `311` | One prompt source per role and one tool text set on every entry; all root Runs move to the managed Worker. |
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
@@ -90,7 +89,7 @@
 | `v0.7.95` | `0` |
 | `v0.7.96` | `0` |
 | `v0.7.97` | `1` |
-| `v0.7.98` | `1` |
+| `v0.7.98` | `0` |
 | `v0.7.99` | `1` |
 | `v0.7.100` | `0` |
 | `v0.7.105` | `0` |
@@ -2405,7 +2404,6 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
-| `311` | Unified Prompt Chain | Core / Prompt + Runtime | High | `v0.7.98` | [v0.7.98](features/v0.7.98.md#feature_311-unified-prompt-chain) — Planned |
 | `300` | Git Execution Consolidation with Shared macOS Preflight | Refactor | Medium | `v0.7.99` | [v0.7.99](features/v0.7.99.md#feature_300-git-execution-consolidation-with-shared-macos-preflight) — Planned; design only |
 | `287` | Advisor Mode Virtual Provider | Enhancement / LLM Provider + Session Quality | High | `v0.8.13` | [v0.8.13](features/v0.8.13.md#feature_287-advisor-mode-virtual-provider) |
 | `288` | CLI-Space Daemon Profile Alignment | Enhancement / Runtime + Multi-Client UX | High | `v0.8.14` | [v0.8.14](features/v0.8.14.md#feature_288-cli-space-daemon-profile-alignment) |
@@ -2428,7 +2426,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 ## 2026-11-19 FEATURE_311 Addition
 
-- Status: Planned 2026-11-19. Planned under `v0.7.98`, a planning identifier. ID 311 is unused on
+- Status: Completed 2026-11-20, unreleased. Planned under `v0.7.98`, a planning identifier. ID 311 is unused on
   both `KodaX` and `KodaX-next-dev`.
 - Source: the 2026-10-26/27 first-turn token work replaced canonical text with compact text at request
   time and silently kept canonical text whenever an exact match failed. Two tool text sets and two Worker
@@ -2541,7 +2539,8 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Version | Design | Notes |
 |---|---|---|---|---|
-| `310` | SA Mode Residue Removal | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_310-sa-mode-residue-removal) | Public and config.json `agentMode: 'sa'` normalize the way `amaw` did: managed entries run AMA, `runKodaX` and `runs.start` without a mode stay on the direct engine, and persisted `'sa'` records stay readable. The SA dispatch branch, Direct Path overlay, `'sa'` labels and the FEATURE_100 golden recorder are gone; ADR "SA mode is retired from every caller" records it. The `sa-mutation-reflection` eval id keeps its name. |
+| `311` | Unified Prompt Chain | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_311-unified-prompt-chain) | Every root Run uses the managed Worker and every entry sends one tool text: the request-time projection, the canonical Worker and tool texts, the direct root engine and `system.md` are deleted. `runs.start({ mode: 'coding' })` is ignored with a warning; the leaf executor stays internal for child Agents. `tests/f311-entry-matrix.test.ts` pins every entry; ADR "Every root Run uses one Worker and one tool text" records it. |
+| `310` | SA Mode Residue Removal | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_310-sa-mode-residue-removal) | Public and config.json `agentMode: 'sa'` normalize the way `amaw` did: managed entries run AMA, `runKodaX` and `runs.start` without a mode treat it as unset, and persisted `'sa'` records stay readable. The SA dispatch branch, Direct Path overlay, `'sa'` labels and the FEATURE_100 golden recorder are gone; ADR "SA mode is retired from every caller" records it. The `sa-mutation-reflection` eval id keeps its name. |
 | `306` | Data Root Resolver and Copy | `v0.7.98` (shipped in `v0.7.97-beta.9`) | [v0.7.98](features/v0.7.98.md#feature_306-data-root-resolver-and-copy) | `resolveKodaXHome` resolves the data root without touching `process.env` and ignores a relative `KODAX_HOME` with a warning; `copyKodaXDataRoot` copies a data root into an empty target under an incomplete marker, skips per-Host state, refuses a running Host and rebases absolute paths in `.json` / `.jsonl`. Source: Space F148 / ADR-011; the Space dependency bump follows the release. |
 | `305` | One Host per KODAX_HOME | `v0.7.98` (shipped in `v0.7.97-beta.6`) | [v0.7.98](features/v0.7.98.md#feature_305-one-host-per-kodax_home) | One Host serves each `KODAX_HOME`; the Host-location `profile` SDK option and `--profile` CLI flag are removed with `runtime_host_migration_required` errors (ADR-075). Legacy-slot Hosts are found through the storage-owner redirect and profile-split Session state merges once (Issue 407); the Space dependency bump follows the release. |
 | `304` | Ask Result for Extension Tool Policy | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_304-ask-result-for-extension-tool-policy) | Extension `tool:before` may return `{ decision: 'ask', reason }`; block wins over ask. The Host raises an allow-once-only permission request with the reason in every mode, including Full Access and granted calls; a Host without `requestToolApproval` blocks. Capability `toolHookAsk: { version: 1 }` on embedded and daemon. The official sandbox asks for recursive and out-of-workspace deletes. |
