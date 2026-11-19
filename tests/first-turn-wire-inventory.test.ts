@@ -143,7 +143,7 @@ it('inventories first serialized requests for isolated content and real Runtime 
     for (const protocol of ['openai', 'anthropic'] as const) {
       for (const mode of ['direct', 'ama', 'agent', 'script'] as const) {
         for (const scenario of scenarios) {
-          // The Runtime Host always runs the AMA Worker; the direct engine has no Host path.
+          // The Runtime Host always runs the AMA Worker; a root without agentMode has no Host cell.
           if (mode === 'direct' && scenario === 'runtime-host') continue;
           const cell = `${protocol}-${mode}-${scenario}`;
           const directory = path.join(root, cell);

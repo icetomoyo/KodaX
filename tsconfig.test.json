@@ -147,7 +147,9 @@
     "packages/llm/src/providers/model-modality-wire.test.ts",
     "packages/llm/src/providers/provider-capabilities.test.ts",
     "packages/repl/src/interactive/invocation-runtime.test.ts",
-    "tests/issue-376-plan-exit.eval.ts"
+    "tests/issue-376-plan-exit.eval.ts",
+    "tests/f311-entry-matrix.test.ts",
+    "tests/f311-worker-root.eval.ts"
   ],
   "exclude": ["node_modules", "dist"]
 }

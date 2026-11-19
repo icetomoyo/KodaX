@@ -48,6 +48,9 @@ if (!REPO_MODES.includes(repoMode)) throw new Error(`KODAX_MANAGED_CAPTURE_REPO_
 // With a lane, the root's first response spawns one child and its first request is captured too.
 const childLane = process.env.KODAX_MANAGED_CAPTURE_CHILD as 'read' | 'write' | undefined;
 if (childLane !== undefined && childLane !== 'read' && childLane !== 'write') throw new Error('KODAX_MANAGED_CAPTURE_CHILD must be read or write');
+// KODAX_MANAGED_CAPTURE_ENTRY=sdk-default starts the Run the way an SDK caller does by default:
+// runs.start without mode, agentMode or workMode.
+const sdkDefault = process.env.KODAX_MANAGED_CAPTURE_ENTRY === 'sdk-default';
 const CHILD_OBJECTIVE = 'Fix the TTL boundary in packages/cache-client so an entry expires exactly at its TTL, and report the change.';
 
 /** The REPL hands the run its project registry and that registry's catalog snippet. */
@@ -95,8 +98,9 @@ async function captureCase(root: string, testCase: ManagedCaptureCase, catalog: 
   try {
     const session = await runtime.sessions.create({ projectPath: workspace });
     await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', executionCwd: workspace });
-    const handle = await runtime.runs.start({ sessionId: session.id, mode: 'managed_task', prompt: testCase.task, options: {
-      provider: PROVIDER, model: MODEL, agentMode: 'ama', reasoningMode: 'off', lsp: false, maxIter: childLane ? 4 : 2, disablePromptCache: true, workMode: testCase.workMode,
+    const handle = await runtime.runs.start({ sessionId: session.id, ...(sdkDefault ? {} : { mode: 'managed_task' as const }), prompt: testCase.task, options: {
+      provider: PROVIDER, model: MODEL, ...(sdkDefault ? {} : { agentMode: 'ama' as const, workMode: testCase.workMode }),
+      reasoningMode: 'off', lsp: false, maxIter: childLane ? 4 : 2, disablePromptCache: true,
       learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['eval-isolated'] } }),
       context: { executionCwd: workspace, gitRoot: workspace, ...await skillContext(workspace, catalog), repoIntelligenceMode: repoMode, resolveShellPermissionMode: () => 'full-access',
         ...testCase.context },
