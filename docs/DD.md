@@ -518,14 +518,19 @@ the canonical bytes. `renderApplicationContextSections` emits one
 `managed-run-context-retention.ts` diffs those sections like any other and labels a
 retired one "application rule KEY". The write-child system prompt appends
 `renderApplicationRules` after project rules (`child-executor.ts`), and
-`compact-child-contract.ts` keeps that suffix byte for byte. The profile reaches
+`compact-child-contract.ts` keeps that suffix byte for byte. The rendered rules
+ride `parentAgentConfig.applicationRules` on the root tool context. Every Actor
+turn runs against that context, so a child's own children inherit them.
+`workflow-runner.ts` and `resumeWorkflowGenerationTurn` copy the same value into
+Workflow child options. The profile reaches
 the Run through `RuntimeExecutionProfile.prompt` and the daemon server's
 `bindTrustedRunInput`. Generation recovery keeps `prompt` as declarative
 context (`runtime-generation-recovery.ts`). Capability `promptSpec` v1 is checked
 in `client-runtime-adapter.ts`, `execution-services.ts` and
 `runtime-daemon/client.ts`. Tests: `prompts/prompt-spec.test.ts`, the
-`worker.omit.*` snapshots, `runner-driven.compaction-context.test.ts` and
-`src/sdk-prompt-spec.test.ts`.
+`worker.omit.*` snapshots, `runner-driven.compaction-context.test.ts`,
+`workflows/workflow-runner.test.ts`, `tests/prompt-spec-descendants.test.ts`
+and `src/sdk-prompt-spec.test.ts`.
 
 To change the ceiling:
 

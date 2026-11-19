@@ -352,6 +352,10 @@ describe('runWorkflowModule', () => {
         repoIntelligenceMode: 'off',
         repoIntelligenceTrace: true,
         contextDiagnostics: true,
+        prompt: { context: [
+          { key: 'no-shell', kind: 'rule', text: 'Do not run shell commands.' },
+          { key: 'faq', kind: 'reference', text: 'FAQ text.' },
+        ] },
       },
     };
 
@@ -373,6 +377,9 @@ describe('runWorkflowModule', () => {
     expect(childExecutorMock.calls[0]?.options.parentOptions?.repoIntelligenceTrace).toBe(true);
     expect(childExecutorMock.calls[0]?.options.parentOptions?.contextDiagnostics).toBe(true);
     expect(childExecutorMock.calls[0]?.options.parentOptions?.disablePromptCache).toBe(false);
+    const applicationRules = childExecutorMock.calls[0]?.options.parentOptions?.applicationRules;
+    expect(applicationRules).toContain('## Application rule: no-shell');
+    expect(applicationRules).not.toContain('FAQ text.');
   });
 
   it('uses a read-only workflow manifest as the default for child agents', async () => {

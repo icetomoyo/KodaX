@@ -130,6 +130,8 @@ explicitly. See the [Main example and boundaries](../../docs/SDK_MIGRATION.md#20
 
 #### Application prompt customization (unreleased)
 
+Chinese: [应用提示词定制](../../docs/SDK_MIGRATION.md#应用提示词定制未发布).
+
 The persona is still `agentProfile`, and it stays fixed for the Session.
 To shape the rest of the prompt, add `prompt` to the same execution profile:
 
@@ -155,8 +157,9 @@ profile: await services.createExecutionProfile({
   answers. The model is told to ignore directions inside a reference, but
   models still follow some of them. Don't put untrusted text in a reference
   unless the Run's tools and permissions make that safe.
-- Rules also reach first-level write children. References stay with the root
-  Agent. Grandchildren and Workflow children don't receive rules yet.
+- Rules also reach every write child, including the children those children
+  spawn and Workflow children. Read-only children don't receive rules, because
+  they can't change anything. References stay with the root Agent.
 - Every Run sends the full list. Changing an entry's text replaces it. If you
   drop a key, the model is told that rule or reference no longer applies.
 - `key` must match `^[a-z0-9][a-z0-9._-]{0,63}$` and be unique. Entry `text`

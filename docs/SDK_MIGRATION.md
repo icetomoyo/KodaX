@@ -17,6 +17,46 @@ Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` �
 调用方显式设置的 `systemPromptOverride` 仍是直连引擎的完整提示覆盖，不自动追加
 可选 Skill 目录。`sa` 和 `amaw` 都是已弃用的输入，见下一节。
 
+## 应用提示词定制（未发布）
+
+英文版见[嵌入方指南](../public_docs/sdk/embedder-guide.md#application-prompt-customization-unreleased)。
+
+人设仍用 `agentProfile`，在整个 Session 内固定。要调整其余提示词，在同一个
+执行 profile 里加 `prompt`：
+
+```ts
+profile: await services.createExecutionProfile({
+  agentProfile: { id: 'support', instructions: 'You are Acme Support. Answer billing questions.' },
+  prompt: {
+    kodaxGuidance: 'omit',
+    context: [
+      { key: 'refunds', kind: 'rule', text: 'Never promise a refund. Route refund requests to billing.' },
+      { key: 'plans', kind: 'reference', text: 'Plans: Basic $10, Pro $30.' },
+    ],
+  },
+}, hostToolLease.tools)
+```
+
+- `kodaxGuidance: 'omit'` 从系统提示词中去掉 KodaX 的编码指导、Worker 身份措辞、
+  并行工作指导和 ULTRA 策略。工具契约、工具使用说明和项目的 `AGENTS.md` 保留。
+  默认值 `'keep'` 不改变任何提示词字节。
+- `context` 条目进入 Run 的 Managed Run Context，不进系统提示词。`rule` 按项目规则
+  遵守。`reference` 是回答时使用的资料。模型被告知忽略 reference 里的指令，但实测
+  模型仍会照做其中一部分。除非 Run 的工具和权限本身能保证安全，否则不要把不可信
+  文本放进 reference。
+- 规则会下发到所有写子 Agent，包括子 Agent 再派生的子 Agent 和 Workflow 子 Agent。
+  只读子 Agent 收不到规则，因为它们不能做任何修改。reference 只留在根 Agent。
+- 每个 Run 都发送完整列表。修改某条的 `text` 会替换它。去掉某个 `key` 时，模型会被
+  告知该规则或资料不再适用。
+- `key` 必须匹配 `^[a-z0-9][a-z0-9._-]{0,63}$` 且不重复。条目 `text` 不能为空，也不能
+  包含 Managed Run Context 标记。所有条目文本合计不超过 8,000 字符。格式不对的 spec
+  在开始工作前以 `invalid_params` 拒绝。
+
+`prompt` 只用于 managed Run，Product Client 的 Run 都是 managed。直连的
+`runs.start({ mode: 'coding' })` 或 `runKodaX` 带 `context.prompt` 时以
+`prompt_spec_requires_managed_run` 拒绝。Host 必须声明 `promptSpec.version === 1`；
+旧 Host 在输入发出前以 `daemon_upgrade_required` 拒绝。
+
 ## SA 模式退役（未发布）
 
 `agentMode: 'sa'` 仍可传入，但不再选择任何行为，与 `amaw` 的处理方式相同：

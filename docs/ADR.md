@@ -17,8 +17,9 @@ as `prompt` in the trusted execution profile. It has two parts.
   entry is one Managed Run Context section. The system prompt stays stable for
   the prompt cache. Retention diffs entries by key, so a removed key produces a
   "No longer available" line. A changed entry is replaced in place. Rules
-  reach first-level write children the same way project rules do, because they
-  constrain changes. References stay with the root.
+  reach every write child, its own write children and Workflow write children
+  the same way project rules do, because they constrain changes. Read-only
+  children and references stay out of child prompts.
 
 The persona stays `agentProfile`, fixed per Session. The direct engine rejects
 a spec with `prompt_spec_requires_managed_run`. Hosts advertise `promptSpec`
@@ -37,10 +38,9 @@ v1, and clients reject a profile `prompt` before sending it to an older Host.
   opencode have none of these. Home `AGENTS.md` already serves as the
   enterprise rule source.
 
-**Consequences.** Grandchildren and Workflow children don't receive rules yet.
-Neutral identity wording applies only under `omit`. The embedded core runtime
-does not apply product authorization. Only the daemon server binds it, and that
-is the path the public SDK uses.
+**Consequences.** Neutral identity wording applies only under `omit`. The
+embedded core runtime does not apply product authorization. Only the daemon
+server binds it, and that is the path the public SDK uses.
 
 A reference lowers injection risk but does not remove it. In paid evals on
 `glm-5.3-flash`, `deepseek-flash` and `kimi-for-coding`, an instruction placed
