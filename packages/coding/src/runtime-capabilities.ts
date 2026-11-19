@@ -16,6 +16,8 @@ export interface RuntimeCapabilityRequirements {
   readonly productExecutionBinding?: 1;
   readonly productInputRecovery?: 1;
   readonly productExecutionModeConstraint?: 1;
+  /** Require `context.prompt` and execution-profile `prompt` on managed Runs. */
+  readonly promptSpec?: 1;
   /** Reject hosts that do not advertise an installed external Agent executor plane. */
   readonly externalAgents?: boolean;
   /** Require owner/revision-fenced external Agent registration administration. */
@@ -133,6 +135,7 @@ export const KODAX_RUNTIME_SDK_CAPABILITIES = Object.freeze({
   actorControlPlane: 1,
   sandboxRuntime: 11,
   runtimeAutoModeGuardrail: 6,
+  promptSpec: 1,
 } as const satisfies Required<Omit<RuntimeCapabilityRequirements, 'externalAgents'>>);
 
 export type RuntimeCapabilityName = keyof typeof KODAX_RUNTIME_SDK_CAPABILITIES;

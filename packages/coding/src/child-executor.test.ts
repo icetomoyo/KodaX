@@ -2133,6 +2133,25 @@ describe('FEATURE_117 v2 — write-child AGENTS.md inject', () => {
     expect(opts.context.systemPromptOverride).not.toContain('# Project Context');
   });
 
+  it('write child receives application rules after project rules; a read-only child does not', async () => {
+    writeFileSync(join(tmpRoot, 'AGENTS.md'), '# Project Rules\n\n- PROJECT_RULE_SENTINEL\n');
+    const applicationRules = '## Application rule: house\nThe application running KodaX set this rule. Follow it like a project rule.\nAPP_RULE_SENTINEL';
+    for (const readOnly of [false, true]) {
+      mockRunKodaX.mockResolvedValueOnce({
+        success: true, lastText: 'done', messages: [{ role: 'assistant', content: '' }], sessionId: 's1',
+      });
+      await executeChildAgents(
+        [createBundle({ id: `cb-app-${readOnly}`, readOnly, objective: 'Refactor' })],
+        createTmpCtx(tmpRoot),
+        createOptions({ parentOptions: { provider: 'anthropic', applicationRules } }),
+      );
+    }
+    const [write, read] = mockRunKodaX.mock.calls.map(call => String(call[0].context?.systemPromptOverride));
+    expect(write.endsWith(`\n\n${applicationRules}`)).toBe(true);
+    expect(write.indexOf('PROJECT_RULE_SENTINEL')).toBeLessThan(write.indexOf('APP_RULE_SENTINEL'));
+    expect(read).toBe(CHILD_AGENT_SYSTEM_PROMPT);
+  });
+
   it('read-only child does NOT receive AGENTS.md content (read path stays minimal)', async () => {
     writeFileSync(
       join(tmpRoot, 'AGENTS.md'),

@@ -81,6 +81,14 @@ describe('builtin child paired compact contract', () => {
     const canonical = { ...childContract(false), system: CHILD_AGENT_SYSTEM_PROMPT + rules };
     const candidate = buildCompactChildContractCandidate(canonical, { source: 'builtin-child' });
     expect(candidate.system).toContain(CHILD_AGENT_SYSTEM_PROMPT + rules);
+    // Application rules follow the base directly when the project has no rules.
+    const appRules = '\n\n## Application rule: house\nThe application running KodaX set this rule. Follow it like a project rule.\nBe brief.';
+    for (const suffix of [appRules, rules + appRules]) {
+      const withRules = { ...childContract(false), system: CHILD_AGENT_SYSTEM_PROMPT + suffix };
+      const projected = buildCompactChildContractCandidate(withRules, { source: 'builtin-child' });
+      expect(projected).not.toBe(withRules);
+      expect(projected.system).toContain(CHILD_AGENT_SYSTEM_PROMPT + suffix);
+    }
     const readonly = buildCompactChildContractCandidate(childContract(), { source: 'builtin-child' });
     expect(readonly.tools.some(tool => ['write', 'edit', 'undo'].includes(tool.name))).toBe(false);
   });

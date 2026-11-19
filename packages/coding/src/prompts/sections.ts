@@ -65,7 +65,8 @@ const PROMPT_SLOT_ORDER: Record<KodaXPromptSectionSlot, number> = {
   specialist: 800,
 };
 
-export const PROMPT_SECTION_REGISTRY: Record<string, KodaXPromptSectionDefinition> = {
+// Frozen: a mutated registry would let any importer rewrite the direct-engine prompt behind every Run.
+export const PROMPT_SECTION_REGISTRY: Readonly<Record<string, Readonly<KodaXPromptSectionDefinition>>> = Object.freeze({
   'base-system': {
     id: 'base-system',
     title: 'Base System Prompt',
@@ -264,7 +265,7 @@ export const PROMPT_SECTION_REGISTRY: Record<string, KodaXPromptSectionDefinitio
     order: 100,
     stability: 'specialist',
   },
-};
+});
 
 export function createPromptSection(
   id: keyof typeof PROMPT_SECTION_REGISTRY,

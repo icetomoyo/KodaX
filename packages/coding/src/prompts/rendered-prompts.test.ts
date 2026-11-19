@@ -20,6 +20,8 @@ import { CHILD_AGENT_SYSTEM_PROMPT, CHILD_EXCLUDE_TOOLS_BASE } from '../child-ex
 import { buildWorkerStableInstructions, buildWorkerStableSections } from '../agents/worker-role-prompt.js';
 import { projectManagedSystemContract } from './managed-system-contract.js';
 import { buildCompactChildContractCandidate } from './compact-child-contract.js';
+import { renderApplicationContextSections } from './prompt-spec.js';
+import { createRolePrompt } from '../task-engine/_internal/managed-task/role-prompt.js';
 
 const TASK = 'Review the relevant modules and make the requested change; preserve existing work.';
 const expected = (name: string): string => `./expected/${name}`;
@@ -148,6 +150,35 @@ describe('rendered Worker contract for reduced tool sets', () => {
         ],
       }
     `);
+  });
+});
+
+describe('rendered Worker with an application prompt spec', () => {
+  // An application persona drops KodaX guidance but keeps contracts, tool teaching and its own entries.
+  const spec = {
+    kodaxGuidance: 'omit',
+    context: [
+      { key: 'house-style', kind: 'rule', text: 'Answer in British English.' },
+      { key: 'product-faq', kind: 'reference', text: 'Refunds take five working days.' },
+    ],
+  } as const;
+  const sections = renderApplicationContextSections(spec);
+  const join = (kind: 'rule' | 'reference') =>
+    sections.filter(section => section.kind === kind).map(section => section.content).join('\n\n');
+  const render = (mode: 'stable' | 'context') => createRolePrompt(
+    'worker', TASK, buildFallbackRoutingDecision(TASK), undefined, undefined, 'kodax/role/worker', undefined,
+    {
+      originalTask: TASK,
+      workspace: { executionCwd: '/fixture', platform: 'linux' },
+      omitKodaxGuidance: true,
+      applicationRules: join('rule'),
+      applicationReferences: join('reference'),
+    },
+    undefined, false, mode,
+  ) + '\n';
+
+  it.each(['stable', 'context'] as const)('%s', async (mode) => {
+    await expect(render(mode)).toMatchFileSnapshot(expected(`worker.omit.${mode}.md`));
   });
 });
 

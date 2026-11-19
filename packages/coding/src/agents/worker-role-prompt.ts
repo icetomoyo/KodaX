@@ -348,8 +348,10 @@ export function buildWorkerStableSections(availableToolNames?: readonly string[]
  * FEATURE_193). Intentionally context-light — the runner-driven path
  * layers workspace / capability / overlay sections around this on top.
  */
-export function buildWorkerStableInstructions(availableToolNames?: readonly string[]): string {
-  return buildWorkerStableSections(availableToolNames).map(section => section.text).join('\n\n');
+export function buildWorkerStableInstructions(availableToolNames?: readonly string[], omitGuidance = false): string {
+  return buildWorkerStableSections(availableToolNames)
+    .filter(section => !omitGuidance || section.tag !== 'guidance')
+    .map(section => section.text).join('\n\n');
 }
 
 /**
@@ -357,12 +359,16 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
  * bare `requiresBrainstorm` flag (true for every low-confidence "unknown" request) lost its
  * explanation when the router overlay retired: next to the Skill catalog, models read
  * "Brainstorm required: yes" as a Skill to invoke. The flag still drives routing internally.
+ * `neutralIdentity` drops the KodaX self-description so an application persona stands alone.
  */
 export function buildWorkerRoutingContext(
   decision: KodaXTaskRoutingDecision,
+  neutralIdentity = false,
 ): string {
   return [
-    `You are the Worker — KodaX's single primary agent for this task. Routing decision summary:`,
+    neutralIdentity
+      ? 'Routing decision summary for this task:'
+      : `You are the Worker — KodaX's single primary agent for this task. Routing decision summary:`,
     // Heuristic labels (reasoning.ts, review-routing.ts): stated as fact, a wrong guess ("refactor", "Risk: high"
     // for a process question) steered ordinary requests. Kept as hints because review focus benefits from them.
     '- These labels are a heuristic guess from the request wording and the worktree state. When one disagrees with what the user asked, follow the request.',

@@ -14,13 +14,15 @@ import { KodaXBaseProvider, registerModelProvider, type KodaXMessage, type KodaX
 import { SkillRegistry } from '@kodax-ai/agent';
 import { setAgentConfigHome } from '../packages/agent/src/runtime/agent-home.js';
 import { initializeSkillRegistry, resetSkillRegistry } from '../packages/agent/src/capabilities/skills/skill-registry.js';
-import type { KodaXWorkMode } from '../packages/coding/src/types.js';
+import type { KodaXContextOptions, KodaXWorkMode } from '../packages/coding/src/types.js';
 import { createKodaXRuntime } from './runtime-fixture.js';
 import { CACHE_GOLDEN, writeCacheFixture } from '../benchmark/datasets/search-entry-complex/fixture.js';
 import { inputHash, type FrozenInput } from './first-turn-eval-support.js';
 import { sourceHashes } from './skill-trigger.capture.js';
 
-interface ManagedCaptureCase { readonly id: string; readonly task: string; readonly workMode: KodaXWorkMode }
+// `context` carries what a Product execution profile adds (persona, prompt spec, intersect policy).
+interface ManagedCaptureCase { readonly id: string; readonly task: string; readonly workMode: KodaXWorkMode;
+  readonly context?: Pick<KodaXContextOptions, 'agentProfile' | 'prompt' | 'workModePolicy'> }
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, windowsHide: true, encoding: 'utf8' });
 
@@ -96,7 +98,8 @@ async function captureCase(root: string, testCase: ManagedCaptureCase, catalog: 
     const handle = await runtime.runs.start({ sessionId: session.id, mode: 'managed_task', prompt: testCase.task, options: {
       provider: PROVIDER, model: MODEL, agentMode: 'ama', reasoningMode: 'off', lsp: false, maxIter: childLane ? 4 : 2, disablePromptCache: true, workMode: testCase.workMode,
       learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['eval-isolated'] } }),
-      context: { executionCwd: workspace, gitRoot: workspace, ...await skillContext(workspace, catalog), repoIntelligenceMode: repoMode, resolveShellPermissionMode: () => 'full-access' },
+      context: { executionCwd: workspace, gitRoot: workspace, ...await skillContext(workspace, catalog), repoIntelligenceMode: repoMode, resolveShellPermissionMode: () => 'full-access',
+        ...testCase.context },
     } });
     const result = await handle.result;
     if (result.error) throw new Error(`${testCase.id}: ${result.error.name}: ${result.error.message}`);

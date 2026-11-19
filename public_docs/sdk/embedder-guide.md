@@ -128,6 +128,48 @@ metadata; changed or newly loaded tools require fresh authorization. Root
 This contract requires `productExecutionProfile.version === 2`; older Hosts fail
 explicitly. See the [Main example and boundaries](../../docs/SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复未发布).
 
+#### Application prompt customization (unreleased)
+
+The persona is still `agentProfile`, and it stays fixed for the Session.
+To shape the rest of the prompt, add `prompt` to the same execution profile:
+
+```ts
+profile: await services.createExecutionProfile({
+  agentProfile: { id: 'support', instructions: 'You are Acme Support. Answer billing questions.' },
+  prompt: {
+    kodaxGuidance: 'omit',
+    context: [
+      { key: 'refunds', kind: 'rule', text: 'Never promise a refund. Route refund requests to billing.' },
+      { key: 'plans', kind: 'reference', text: 'Plans: Basic $10, Pro $30.' },
+    ],
+  },
+}, hostToolLease.tools)
+```
+
+- `kodaxGuidance: 'omit'` removes KodaX's coding guidance, Worker identity
+  wording, parallel-work guidance and ULTRA policy from the system prompt. Tool
+  contracts, tool teaching and the project's `AGENTS.md` stay. The default,
+  `'keep'`, changes no prompt bytes.
+- `context` entries go into the Run's Managed Run Context, not the system prompt.
+  A `rule` is followed like a project rule. A `reference` is information for
+  answers. The model is told to ignore directions inside a reference, but
+  models still follow some of them. Don't put untrusted text in a reference
+  unless the Run's tools and permissions make that safe.
+- Rules also reach first-level write children. References stay with the root
+  Agent. Grandchildren and Workflow children don't receive rules yet.
+- Every Run sends the full list. Changing an entry's text replaces it. If you
+  drop a key, the model is told that rule or reference no longer applies.
+- `key` must match `^[a-z0-9][a-z0-9._-]{0,63}$` and be unique. Entry `text`
+  must be nonempty. It must not contain a Managed Run Context marker. All entry
+  text together is limited to 8,000 characters. A malformed spec rejects with
+  `invalid_params` before any work starts.
+
+`prompt` applies only to managed Runs. Product Client Runs are managed. A direct
+`runs.start({ mode: 'coding' })` or `runKodaX` call with `context.prompt`
+rejects with `prompt_spec_requires_managed_run`. The Host must advertise
+`promptSpec.version === 1`. An older Host rejects with `daemon_upgrade_required`
+before the input is sent.
+
 Query `runs.read(runId).effectiveConfig` for the last assembled execution surface:
 `workMode`, `agentMode`, profile, verification, executable `toolScope` and projected
 `modelToolScope`. Explicit tool calls omit the model scope. Snapshots update at

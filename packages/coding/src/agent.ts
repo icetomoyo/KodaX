@@ -26,12 +26,14 @@ import {
   awaitRuntimeSkillInvocationPolicy,
 } from './skill-invocation-policy.js';
 import { normalizeKodaXAgentMode, type KodaXOptions, type KodaXResult } from './types.js';
+import { assertPromptSpecOnManagedRun } from './prompts/prompt-spec.js';
 
 export async function runKodaX(
   options: KodaXOptions,
   prompt: string,
 ): Promise<KodaXResult> {
   if (resolveWorkMode(options) === 'script') throw new Error('Script requires the managed Run entry: use runManagedTask with Session storage.');
+  assertPromptSpecOnManagedRun(options.context?.prompt);
   const policyOptions = await applyRuntimeSkillInvocationPolicy(options, prompt);
   const normalizedOptions: KodaXOptions = policyOptions.agentMode === undefined
     ? policyOptions

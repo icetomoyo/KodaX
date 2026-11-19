@@ -33,7 +33,7 @@ const CONTEXT_KEYS = new Set(['gitRoot', 'executionCwd', 'shellExecution', 'cont
   'skillsPrompt', 'rawUserInput', 'skillInvocation', 'commandInvocation', 'repoIntelligenceContext',
   'inputArtifacts', 'promptOverlay', 'taskSurface', 'liveTurn', 'managedTaskWorkspaceDir',
   'managedProtocolEmission', 'excludeTools', 'systemPromptOverride', 'taskMetadata', 'taskVerification',
-  'agentProfile', 'workModePolicy', 'currentAgentId', 'parentAgentId', 'workflowIntent']);
+  'agentProfile', 'prompt', 'workModePolicy', 'currentAgentId', 'parentAgentId', 'workflowIntent']);
 
 /** Persist resolved input/configuration; process-local authority must be rebound. */
 export function captureGenerationResume(input: { readonly prompt: string; readonly options: RuntimeKodaXOptions }): RuntimeGenerationResume {

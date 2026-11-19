@@ -157,6 +157,8 @@ import {
   type KodaXSkillInvocationErrorCode,
   reduceOutputSegmentProjection,
   runManagedTask,
+  assertKodaXPromptSpec,
+  assertPromptSpecOnManagedRun,
   runToolInvocation,
   runScopedToolMap,
   normalizeShellExecutionContract,
@@ -2180,6 +2182,7 @@ export type RuntimeDaemonContextOptions = Pick<
   | "taskMetadata"
   | "taskVerification"
   | "agentProfile"
+  | "prompt"
   | "workModePolicy"
   | "currentAgentId"
   | "parentAgentId"
@@ -4328,6 +4331,7 @@ async function createKodaXRuntimeInternal(
     productExecutionBinding: { version: 1 },
     productInputRecovery: { version: 1 },
     productExecutionModeConstraint: { version: 1 },
+    promptSpec: { version: 1 },
     sessionDrafts: { version: 1 },
     productHistoryBoundaries: { version: 1 },
     productHistoryTurnResolution: { version: 2 },
@@ -5915,6 +5919,7 @@ function assertRuntimeCapabilities(
     requirements?.sandboxRuntime === undefined &&
     requirements?.runtimeAutoModeGuardrail === undefined &&
     requirements?.sessionDrafts === undefined && requirements?.sessionPromotion === undefined && requirements?.productExecutionBinding === undefined && requirements?.productInputRecovery === undefined && requirements?.productExecutionModeConstraint === undefined && requirements?.productClient === undefined &&
+    requirements?.promptSpec === undefined &&
     requirements?.productHistoryBoundaries === undefined && requirements?.productHistoryTurnResolution === undefined && requirements?.productHistoryLocation === undefined &&
     requirements?.productExecutionAuthorization === undefined && requirements?.productExitControl === undefined
     && requirements?.productExecutionFacts === undefined && requirements?.productActorAuthorization === undefined
@@ -5936,6 +5941,7 @@ function assertRuntimeCapabilities(
     ['productExecutionBinding', requirements.productExecutionBinding],
     ['productInputRecovery', requirements.productInputRecovery],
     ['productExecutionModeConstraint', requirements.productExecutionModeConstraint],
+    ['promptSpec', requirements.promptSpec],
     ["productHistoryBoundaries", requirements.productHistoryBoundaries],
     ['productHistoryTurnResolution', requirements.productHistoryTurnResolution],
     ['productHistoryLocation', requirements.productHistoryLocation],
@@ -6198,6 +6204,7 @@ function firstUpgradeableCapability(
     'productExecutionBinding',
     'productInputRecovery',
     'productExecutionModeConstraint',
+    'promptSpec',
     "productHistoryBoundaries",
     'productHistoryTurnResolution',
     'productHistoryLocation',
@@ -12418,6 +12425,7 @@ async function createRuntimeRunService(deps: {
     if (input.inputId !== undefined && (!input.inputId.trim() || input.options?.toolInvocation === undefined || typeof input.prompt !== 'string' || !input.prompt.trim())) {
       throw new Error('A tool inputId requires a tool invocation and nonempty raw prompt.');
     }
+    if (input.options?.context?.prompt !== undefined) assertKodaXPromptSpec(input.options.context.prompt);
     const productInput = trustedInput.productInput ?? (input.inputId === undefined ? undefined : {
       sessionId: input.sessionId, inputId: input.inputId, text: input.prompt!,
     });
@@ -12459,6 +12467,7 @@ async function createRuntimeRunService(deps: {
       const originalContext = recovery.data.start.options.context;
       input = { ...input, options: { ...input.options, executionBinding: recovery.data.start.options.executionBinding, context: { ...input.options?.context,
         agentProfile: originalContext?.agentProfile, taskVerification: originalContext?.taskVerification,
+        prompt: originalContext?.prompt,
       } } };
       trustedInput = input as RuntimeTrustedStartRunInput;
     }
@@ -12545,6 +12554,11 @@ async function createRuntimeRunService(deps: {
       requiredAfterRun?.phase === "unknown"
       && requiredAfterRun.actorDurabilityFailure !== undefined
       && !requiredAfterRun.terminalEmitted;
+    const runMode: RuntimeRunRecord['mode'] = options.toolInvocation !== undefined || options.workMode === 'script' ? "managed_task" : input.mode
+      ?? (queuesBehindDurabilityRepair ? requiredAfterRun?.mode : undefined)
+      ?? (productInput !== undefined ? "managed_task" : undefined)
+      ?? "coding";
+    if (runMode === "coding") assertPromptSpecOnManagedRun(options.context?.prompt);
     if (actorSession !== undefined) {
       const observedHealth = actorSession.health();
       const health = observedHealth.state === "recovering"
@@ -12734,10 +12748,7 @@ async function createRuntimeRunService(deps: {
       ...(options.reasoningMode !== undefined
         ? { reasoning: options.reasoningMode }
         : {}),
-      mode: options.toolInvocation !== undefined || options.workMode === 'script' ? "managed_task" : input.mode
-        ?? (queuesBehindDurabilityRepair ? requiredAfterRun?.mode : undefined)
-        ?? (productInput !== undefined ? "managed_task" : undefined)
-        ?? "coding",
+      mode: runMode,
       workMode: resolveWorkMode(options),
       ...(requiredAfterRun !== undefined && input.mode === undefined
         ? { inheritModeAfterDurabilityRepair: true }

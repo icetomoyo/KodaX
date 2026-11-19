@@ -59,6 +59,7 @@ import type {
   KodaXResult,
 } from './types.js';
 import { normalizeKodaXAgentMode } from './types.js';
+import { assertKodaXPromptSpec } from './prompts/prompt-spec.js';
 
 /**
  * Retired labels must not reach the Worker, which gates Actor and Workflow hosts
@@ -131,6 +132,7 @@ export async function runManagedTask(
   options: KodaXOptions,
   prompt: string,
 ): Promise<KodaXResult> {
+  if (options.context?.prompt !== undefined) assertKodaXPromptSpec(options.context.prompt);
   const catalogOptions = await ensureManagedSkillCatalog(options);
   const runtimeOptions = await applyRuntimeSkillInvocationPolicy(catalogOptions, prompt);
   // Run-scoped config via AsyncLocalStorage (concurrency-safe): each concurrent

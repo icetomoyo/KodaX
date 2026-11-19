@@ -753,6 +753,7 @@ async function executeCodingActorTurn(
         sandbox: parentConfig?.sandbox ?? options.sandbox,
         permissionIntent: parentConfig?.permissionIntent
           ?? options.context?.permissionIntent,
+        applicationRules: parentConfig?.applicationRules,
         extensionRuntime: parentCtx.extensionRuntime,
         events: parentCtx.parentEvents?.onContextCapacityBlocked ? {
           ...parentCtx.parentEvents,

@@ -38,10 +38,12 @@ describe('generation recovery admission', () => {
   it('preserves Partner mode composition while requiring a fresh tool-policy binding', () => {
     const resume = captureGenerationResume({ prompt: 'Continue', options: { workMode: 'agent', context: {
       workModePolicy: 'intersect', agentProfile: { id: 'partner' }, excludeTools: ['bash'],
+      prompt: { kodaxGuidance: 'omit', context: [{ key: 'tone', kind: 'rule', text: 'Be brief.' }] },
       toolVisibilityPolicy: () => false,
     } } });
     expect(resume.options).toMatchObject({ workMode: 'agent', context: {
       workModePolicy: 'intersect', agentProfile: { id: 'partner' }, excludeTools: ['bash'],
+      prompt: { kodaxGuidance: 'omit', context: [{ key: 'tone', kind: 'rule', text: 'Be brief.' }] },
     } });
     expect(resume.requiredBindings).toEqual([{ path: 'context.toolVisibilityPolicy', type: 'function' }]);
     expect(() => rebindGenerationOptions(resume, {})).toThrow('toolVisibilityPolicy');

@@ -110,7 +110,9 @@ export function createRolePrompt(
   // ceiling:` (V1 vestige) lines were dropped — they were the ADR-033
   // classification-table residue and an eval confirmed removing them is
   // behaviour-neutral (the harness tier collapsed; see ADR-043 Phase 2).
-  const decisionSummary = buildWorkerRoutingContext(decision);
+  // An application persona replaces KodaX's identity wording and default working style.
+  const omitGuidance = rolePromptContext?.omitKodaxGuidance === true;
+  const decisionSummary = buildWorkerRoutingContext(decision, omitGuidance);
 
   const sharedClosingRule = WORKER_CLOSING_RULE;
 
@@ -169,6 +171,9 @@ export function createRolePrompt(
   const capabilityContextSection = rolePromptContext?.capabilityContextBlock?.trim()
     ? rolePromptContext.capabilityContextBlock
     : undefined;
+  // Rules sit with the task contract so the hard cap never sheds them; references sit with the evidence.
+  const applicationRulesSection = rolePromptContext?.applicationRules?.trim() || undefined;
+  const applicationReferencesSection = rolePromptContext?.applicationReferences?.trim() || undefined;
   const stableCapabilityContextSection =
     rolePromptContext?.stableCapabilityContextBlock?.trim()
       ? rolePromptContext.stableCapabilityContextBlock
@@ -208,7 +213,7 @@ export function createRolePrompt(
   const metadataSection = formatTaskMetadata(metadata);
   const verificationSection = formatVerificationContract(verification);
   const toolPolicySection = formatToolPolicy(toolPolicy);
-  const agentSection = `Assigned native agent identity: ${agent}`;
+  const agentSection = omitGuidance ? undefined : `Assigned native agent identity: ${agent}`;
   const skillInvocation = rolePromptContext?.skillInvocation;
   // The skill map and same-role summaries came from the retired Scout chain and
   // are never populated now; their sections and the Scout/Evaluator wording went with them.
@@ -222,7 +227,7 @@ export function createRolePrompt(
   // FEATURE_193 (v0.7.43): reviewLikeTask, reviewPresentationRule,
   // repoWorkingToolsEnabled, diffPagingToolsEnabled deleted — only used by
   // V1 scout/planner/generator cases.
-  const parallelBatchGuidance = [
+  const parallelBatchGuidance = omitGuidance ? undefined : [
     'When multiple read-only tool calls are independent, emit them in the same response so parallel mode can run them together.',
     'Only serialize tool calls when a later call depends on an earlier result.',
     'Keep parallel batches focused: prefer a few narrow grep/read/diff calls over many tiny sequential probes.',
@@ -257,9 +262,9 @@ export function createRolePrompt(
         decision,
         rolePromptContext?.availableToolNames,
       );
-      const workerInstructions = buildWorkerStableInstructions(rolePromptContext?.availableToolNames);
-      const collaborationPolicy = rolePromptContext?.availableToolNames === undefined
-        || rolePromptContext.availableToolNames.includes('spawn_agent') ? ULTRA_AGENT_POLICY : undefined;
+      const workerInstructions = buildWorkerStableInstructions(rolePromptContext?.availableToolNames, omitGuidance);
+      const collaborationPolicy = !omitGuidance && (rolePromptContext?.availableToolNames === undefined
+        || rolePromptContext.availableToolNames.includes('spawn_agent')) ? ULTRA_AGENT_POLICY : undefined;
       const workflowPolicy = rolePromptContext?.availableToolNames === undefined
         || rolePromptContext.availableToolNames.includes('run_workflow') ? EXPLICIT_WORKFLOW_POLICY : undefined;
       if (renderMode === 'stable') {
@@ -288,9 +293,11 @@ export function createRolePrompt(
           verificationSection,
           toolPolicySection,
           workerSkillSection,
+          applicationRulesSection,
           roundInstructionSection,
           metadataSection,
           runtimeState ? teamModeSection : undefined,
+          applicationReferencesSection,
           capabilityContextSection,
         ].filter((section): section is string => Boolean(section)).join('\n\n');
       }
@@ -303,10 +310,12 @@ export function createRolePrompt(
         // the legacy roles get.
         workspaceSection,
         workspaceRunContextSection,
+        applicationReferencesSection,
         capabilityContextSection,
         teamModeSection,
         decisionSummary,
         originalTaskSection,
+        applicationRulesSection,
         roundInstructionSection,
         agentSection,
         metadataSection,

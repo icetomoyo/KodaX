@@ -153,6 +153,22 @@ describe('retained session section diff', () => {
       .toEqual(['git-context', 'project-snapshot', 'repo-intelligence-context']);
   });
 
+  it('diffs application entries by key and retires a removed one by name', () => {
+    const rule = { id: 'app-rule:house', content: '## Application rule: house\nBe brief.' };
+    const faq = { id: 'app-reference:faq', content: '## Application reference: faq\nOld answer.' };
+    const diff = diffRetainedSessionSections(
+      [rule, faq],
+      [rule, { id: 'app-reference:faq', content: '## Application reference: faq\nNew answer.' }],
+    );
+    expect(diff.restated.map((section) => section.content)).toEqual(['## Application reference: faq\nNew answer.']);
+    expect(diff.retiredLabels).toEqual([]);
+
+    const removed = diffRetainedSessionSections(diff.effective, [faq]);
+    expect(removed.retiredLabels).toEqual(['application rule house']);
+    expect(removed.effective.map((section) => section.id)).toEqual(['app-reference:faq']);
+    expect(isRetainedSessionSection('app-rule:house')).toBe(true);
+  });
+
   it('treats task-specific capability sections as not retained', () => {
     expect(isRetainedSessionSection('skills-addendum')).toBe(true);
     expect(isRetainedSessionSection('repo-intelligence-context')).toBe(true);

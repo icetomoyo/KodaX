@@ -85,6 +85,28 @@ export interface KodaXAgentProfile {
 }
 
 /**
+ * Application prompt customization for one managed Run. The direct engine
+ * (`runKodaX`, `runs.start` in `coding` mode) rejects it.
+ */
+export interface KodaXPromptSpec {
+  /**
+   * `omit` drops KodaX's default working style and its Worker identity wording.
+   * Protocol text, tool teaching and project rules (AGENTS.md) stay. Default `keep`.
+   */
+  readonly kodaxGuidance?: 'keep' | 'omit';
+  /** Exactly this Run's entries; an entry absent from a later Run is retired. */
+  readonly context?: readonly KodaXPromptContextEntry[];
+}
+
+export interface KodaXPromptContextEntry {
+  /** Stable name, `[a-z0-9][a-z0-9._-]{0,63}`, unique within the spec. */
+  readonly key: string;
+  /** A `rule` is followed like a project rule and reaches write children; a `reference` is evidence for the root only. */
+  readonly kind: 'rule' | 'reference';
+  readonly text: string;
+}
+
+/**
  * FEATURE_247 (R2) — a minimal, stable per-tool view handed to a
  * {@link KodaXToolVisibilityPolicy}. Only the load-bearing declarative metadata
  * is exposed (never the handler / full schema) so the contract stays stable as

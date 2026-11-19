@@ -109,6 +109,12 @@ export interface ManagedRolePromptContext {
   teamModeSection?: string;
   /** Clock-free identity for Team Mode change detection. */
   teamModeFingerprint?: string;
+  /** `context.prompt.kodaxGuidance: 'omit'`: drop guidance-tagged text and KodaX identity wording. */
+  omitKodaxGuidance?: boolean;
+  /** Rendered `context.prompt` rule entries; a context update carries only new or changed ones. */
+  applicationRules?: string;
+  /** Rendered `context.prompt` reference entries, same retention as rules. */
+  applicationReferences?: string;
   /** Per-round Actor scheduler facts used to size a spawn wave before tool calls. */
   actorCapacity?: {
     readonly maxConcurrentThreads: number;

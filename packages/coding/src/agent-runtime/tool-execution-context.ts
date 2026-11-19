@@ -58,6 +58,7 @@ import {
   SESSION_HISTORY_TOOL_NAMES,
 } from '../tools/session-history.js';
 import { CodingActorSession } from './actor-runtime.js';
+import { renderApplicationRules } from '../prompts/prompt-spec.js';
 import {
   applyToolVisibilityPolicy,
   filterExcludedTools,
@@ -234,6 +235,9 @@ export function buildToolExecutionContext(
       ...(options.sandbox !== undefined ? { sandbox: options.sandbox } : {}),
       ...(options.context?.permissionIntent !== undefined
         ? { permissionIntent: options.context.permissionIntent }
+        : {}),
+      ...(options.context?.prompt?.context?.some((entry) => entry.kind === 'rule')
+        ? { applicationRules: renderApplicationRules(options.context.prompt) }
         : {}),
     },
     parentEvents: events,

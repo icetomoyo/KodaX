@@ -1,6 +1,7 @@
 /** Manual bounded Layer-2 probe: does the first response invoke a Skill only when one fits?
  * Default is preflight only (no model calls). KODAX_SKILL_EVAL_RUN=1 dispatches one reviewed batch.
  * Inputs are frozen captures from tests/skill-trigger.capture.ts; model tool calls are observed, never executed.
+ * Other first-turn replays reuse it with KODAX_SKILL_EVAL_RUBRIC and their own arms, meta and dump dir.
  * Run: vite-node -c vitest.config.ts tests/skill-trigger.eval.ts
  */
 import fs from 'node:fs/promises';
@@ -136,7 +137,7 @@ if (process.env.KODAX_SKILL_EVAL_RUN === '1') {
             usage: out.usage, estimatedUsd: out.cost, durationMs: out.durationMs, error: out.error, mechanical: observe(toolCalls, text) };
           evidence.push(row);
           await persist(path.join(directory, `${id.replace('/', '-')}-${cell.id}-r${runIndex}-${blindArm}.json`), row);
-          await persist(path.join(directory, 'blind-evidence.json'), { rubric: 'Blind paired review per route×case×run: X vs Y. Was invoking/not invoking a Skill right for the request? Any ritual tool/skill-availability talk, wrong Skill, missed fitting Skill, or refusal? preferred X/Y/tie, severity, reason.', runsRaw: evidence, mainSessionReview: [] });
+          await persist(path.join(directory, 'blind-evidence.json'), { rubric: process.env.KODAX_SKILL_EVAL_RUBRIC ?? 'Blind paired review per route×case×run: X vs Y. Was invoking/not invoking a Skill right for the request? Any ritual tool/skill-availability talk, wrong Skill, missed fitting Skill, or refusal? preferred X/Y/tie, severity, reason.', runsRaw: evidence, mainSessionReview: [] });
           if (out.error || !out.usage) throw new Error(`Provider error or missing usage on ${id}/${cell.id}; lane stopped for review, no retry`);
         }
       }

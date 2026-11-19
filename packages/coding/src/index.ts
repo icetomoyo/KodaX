@@ -590,6 +590,8 @@ export {
   orderPromptSections,
   renderPromptSections,
 } from './prompts/index.js';
+
+export { PROMPT_SPEC_TEXT_LIMIT, assertKodaXPromptSpec, assertPromptSpecOnManagedRun } from './prompts/prompt-spec.js';
 export type {
   KodaXPromptSectionSlot,
   KodaXPromptSectionStability,

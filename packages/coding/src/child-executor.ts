@@ -218,6 +218,7 @@ export interface ChildExecutorOptions {
   readonly parentOptions: Readonly<Partial<
     Pick<KodaXOptions, 'provider' | 'model' | 'effort' | 'reasoningMode' | 'thinking' | 'extensionRuntime' | 'events' | 'compaction' | 'disablePromptCache' | 'sandbox'>
     & Pick<KodaXContextOptions, 'repoIntelligenceMode' | 'repoIntelligenceTrace' | 'contextDiagnostics' | 'shellExecution' | 'permissionIntent'>
+    & { readonly applicationRules: string }
   >>;
   readonly parentRole: string;
   readonly parentHarness: string;
@@ -1667,6 +1668,7 @@ async function runWriteChildBody(
     specialistSystemPrompt,
     childCtx.assertReadablePath,
     childCtx.projectRulesRoot,
+    options.parentOptions.applicationRules,
   );
   const excludeTools = restrictToolsForChildRuntime(
     [...(childCtx.excludeTools ?? []), ...specialistExcludeTools],
@@ -2251,6 +2253,7 @@ function buildWriteSystemPrompt(
   baseSystemPrompt: string = CHILD_AGENT_SYSTEM_PROMPT,
   assertReadablePath?: (candidate: string) => void,
   projectRulesRoot?: string,
+  applicationRules?: string,
 ): string {
   // Sync — `loadInstructionFiles` reads via `readFileSync` and the helper has no
   // async I/O. Kept synchronous so the single mtime-stat-and-cache walk
@@ -2258,19 +2261,21 @@ function buildWriteSystemPrompt(
   // spawn (FEATURE_119 H2 fan-out can dispatch 4-8 children in one wave).
   const agentsFiles = loadInstructionFiles({ cwd: gitRoot, projectRoot: gitRoot, assertReadablePath, projectRulesRoot });
   const formatted = formatAgentsForPrompt(agentsFiles);
-  if (!formatted) return baseSystemPrompt;
+  // Application rules go last: the child compact contract matches on the prefix up to the project rules.
+  const withApplicationRules = (prompt: string): string => (applicationRules ? `${prompt}\n\n${applicationRules}` : prompt);
+  if (!formatted) return withApplicationRules(baseSystemPrompt);
 
   // `formatted` already has its own `# Project Context` H1 + `## … Rules`
   // H2s + `---` dividers. Don't re-wrap with another H2 (`## Mutation
   // Policy`) — the heading hierarchy would invert (H2 → H1 inside) and
   // muddle the structure for the LLM. Just prepend a short framing
   // sentence so the child knows these rules apply to its mutations.
-  return [
+  return withApplicationRules([
     baseSystemPrompt,
     '',
     'Project rules apply to your mutations. Follow them as the parent agent would:',
     formatted,
-  ].join('\n');
+  ].join('\n'));
 }
 
 /**

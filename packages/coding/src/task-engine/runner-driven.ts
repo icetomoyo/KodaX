@@ -62,6 +62,7 @@ import {
   createUserInputDegradationCache,
 } from '../capacity-recovery.js';
 import { buildCapabilityContextSections } from '../prompts/capability-sections.js';
+import { omitsKodaXGuidance, renderApplicationContextSections, type ApplicationContextSection } from '../prompts/prompt-spec.js';
 import { getSessionScratchDir } from '../session-scratch.js';
 import {
   buildAutoRepoIntelligenceContext,
@@ -1861,6 +1862,15 @@ async function runManagedTaskViaRunnerInner(
     });
   }
   const promptOverlay = plan?.promptOverlay?.trim();
+  const omitKodaxGuidance = omitsKodaXGuidance(options.context?.prompt);
+  const applicationSections = renderApplicationContextSections(options.context?.prompt);
+  const applicationContext = (sections: readonly ApplicationContextSection[]) => {
+    const join = (kind: ApplicationContextSection['kind']): string | undefined => sections
+      .filter((section) => section.kind === kind).map((section) => section.content).join('\n\n') || undefined;
+    const applicationRules = join('rule');
+    const applicationReferences = join('reference');
+    return { ...(applicationRules ? { applicationRules } : {}), ...(applicationReferences ? { applicationReferences } : {}) };
+  };
   let workerAvailableToolNames: readonly string[] | undefined;
   const rolePromptContextFactory: RolePromptContextFactory = (role) => {
     let teamModeBlock: string | undefined;
@@ -1914,6 +1924,8 @@ async function runManagedTaskViaRunnerInner(
       // Pre-FEATURE_143 this was stitched onto the user prompt head;
       // see runner-driven.ts:promptWithOverlay for the migration.
       promptOverlay: promptOverlay,
+      ...(omitKodaxGuidance ? { omitKodaxGuidance } : {}),
+      ...applicationContext(applicationSections),
     };
     // v0.7.26 C4 parity — surface the caller's skill invocation + the
     // on-disk artefact paths so role prompts can quote a stable filesystem
@@ -1984,7 +1996,8 @@ async function runManagedTaskViaRunnerInner(
 
   );
   // Root and managed children both arrive here after their own role/host filters.
-  if (chainPromptContext && !chainPromptContext.partnerInstructions) {
+  // The compact contracts are fused rewrites of the full KodaX text; a persona or omitted guidance keeps the canonical text.
+  if (chainPromptContext && !chainPromptContext.partnerInstructions && !omitKodaxGuidance) {
     markOrdinaryRootToolContract(chain.worker);
   }
   // Keep executable capability separate from any deferred model-facing projection.
@@ -2024,6 +2037,7 @@ async function runManagedTaskViaRunnerInner(
     ...(prebuiltRepoIntelligenceContext?.trim()
       ? [{ id: 'repo-intelligence-context', content: prebuiltRepoIntelligenceContext }]
       : []),
+    ...applicationSections.map(({ id, content }) => ({ id, content })),
   ];
   // Session sections the model has seen in full in this Run's transcript.
   let effectiveSessionSections: readonly RetainedContextSection[] = currentSessionSections;
@@ -2243,6 +2257,10 @@ async function runManagedTaskViaRunnerInner(
         .filter((section) => !isRetainedSessionSection(section.id) || restatedIds.has(section.id))
         .map((section) => section.content)
         .join('\n\n') || undefined,
+      // Unchanged entries stay in the retained envelopes; restate only new or changed ones.
+      applicationRules: undefined,
+      applicationReferences: undefined,
+      ...applicationContext(applicationSections.filter((section) => restatedIds.has(section.id))),
     }, sessionDiff.retiredLabels);
     const updateContent = withInterruptedRunRecovery(updateBody) ?? updateBody;
     const update = createManagedRunContextMessage(updateContent, contextMetadata);

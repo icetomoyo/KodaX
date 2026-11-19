@@ -2686,6 +2686,7 @@ async function bindTrustedRunInput(input: {
               context: {
               ...optionalRecord(safeTransportOptions.context),
               ...(input.profile.agentProfile === undefined ? {} : { agentProfile: structuredClone(input.profile.agentProfile) }),
+              ...(input.profile.prompt === undefined ? {} : { prompt: structuredClone(input.profile.prompt) }),
               ...(input.profile.taskVerification === undefined ? {} : { taskVerification: structuredClone(input.profile.taskVerification) }),
               workModePolicy: 'intersect',
               toolVisibilityPolicy: createExecutionToolPolicy(executionToolCeiling!,
@@ -2786,6 +2787,7 @@ function runtimeDaemonCapabilities(
   delete safeOverrides.productExecutionBinding;
   delete safeOverrides.productInputRecovery;
   delete safeOverrides.productExecutionModeConstraint;
+  delete safeOverrides.promptSpec;
   delete safeOverrides.productHistoryBoundaries;
   delete safeOverrides.productHistoryTurnResolution;
   delete safeOverrides.productHistoryLocation;
@@ -2847,6 +2849,8 @@ function runtimeDaemonCapabilities(
       ? { productInputRecovery: { version: 1 } } : {}),
     ...(isRecord(ownerCapabilities.productExecutionModeConstraint) && ownerCapabilities.productExecutionModeConstraint.version === 1
       ? { productExecutionModeConstraint: { version: 1 } } : {}),
+    ...(isRecord(ownerCapabilities.promptSpec) && ownerCapabilities.promptSpec.version === 1
+      ? { promptSpec: { version: 1 } } : {}),
     ...(isRecord(ownerCapabilities.productExecutionFacts) && ownerCapabilities.productExecutionFacts.version === 1
       ? { productExecutionFacts: { version: 1 } } : {}),
     ...(isRecord(ownerCapabilities.providerProbeAuthorization) && ownerCapabilities.providerProbeAuthorization.version === 1

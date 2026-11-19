@@ -1,5 +1,57 @@
 # KodaX Architecture Decision Records
 
+## Applications shape managed-Run prompts through one spec — 2026-11-19 (unreleased)
+
+Customers need KodaX to answer as their product, not as a coding agent. The
+only replacement seam was `systemPromptOverride`. That seam replaces the whole
+prompt, so tool contracts and safety text go with it.
+
+**Decision.** A managed Run accepts `context.prompt`. Product clients send it
+as `prompt` in the trusted execution profile. It has two parts.
+
+- `kodaxGuidance: 'omit'` removes the text KodaX tags as guidance. That covers
+  coding style, Worker identity wording, parallel-work guidance and ULTRA
+  policy. Contract text, tool teaching and `AGENTS.md` stay, because those
+  carry safety and correctness. The default `'keep'` changes no prompt bytes.
+- `context` is a list of keyed entries, each a `rule` or a `reference`. Each
+  entry is one Managed Run Context section. The system prompt stays stable for
+  the prompt cache. Retention diffs entries by key, so a removed key produces a
+  "No longer available" line. A changed entry is replaced in place. Rules
+  reach first-level write children the same way project rules do, because they
+  constrain changes. References stay with the root.
+
+The persona stays `agentProfile`, fixed per Session. The direct engine rejects
+a spec with `prompt_spec_requires_managed_run`. Hosts advertise `promptSpec`
+v1, and clients reject a profile `prompt` before sending it to an older Host.
+
+**Rejected alternatives.**
+
+- *Fragment ids that replace individual sections.* The ids would become
+  public API over text that changes every release. The two guidance levels
+  cover the customer cases.
+- *Rules in the system prompt.* Changing a rule would invalidate the whole
+  prompt cache, and the system prompt has no way to retire a removed rule.
+- *A per-entry `trusted` flag.* The rule/reference split already states how
+  far the model should follow the text. A flag would only restate that split.
+- *A persona store, persona lock or platform policy source.* pi, codex and
+  opencode have none of these. Home `AGENTS.md` already serves as the
+  enterprise rule source.
+
+**Consequences.** Grandchildren and Workflow children don't receive rules yet.
+Neutral identity wording applies only under `omit`. The embedded core runtime
+does not apply product authorization. Only the daemon server binds it, and that
+is the path the public SDK uses.
+
+A reference lowers injection risk but does not remove it. In paid evals on
+`glm-5.3-flash`, `deepseek-flash` and `kimi-for-coding`, an instruction placed
+inside a reference was still followed in most runs. Embedders must not put
+untrusted text in a reference and rely on the model to ignore it. Admission
+rejects envelope markers with any spacing or `=` count, because the eval showed
+a near-miss end marker defeating the reference wording.
+
+The same evals found no regression. Persona and rule cases tied the status quo.
+A no-shell rule kept write children off `bash` where the status quo used it.
+
 ## SA mode is retired from every caller — 2026-11-18 (unreleased)
 
 ADR-072 moved CLI, REPL and unset Product turns to AMA but kept SA for explicit

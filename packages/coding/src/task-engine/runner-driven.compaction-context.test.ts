@@ -391,3 +391,43 @@ it('creates one stable run-local affinity identity when the SDK host omits sessi
   expect(affinityKeys.every((key) => /^[a-f0-9]{64}$/.test(key ?? ''))).toBe(true);
   expect(new Set(affinityKeys).size).toBe(1);
 }, 30_000);
+
+it('carries application entries in the envelope and retires a removed rule on the next Run', async () => {
+  const requests: PhysicalRequest[] = [];
+  registerScriptedProvider(false, requests, []);
+  compactMock.mockImplementation(async (messages: KodaXMessage[]) => compactedResult(messages));
+  const session = { id: 'compaction-context-application', managedContextRetention: {} };
+  const rule = { key: 'house', kind: 'rule', text: 'APP_RULE_SENTINEL' } as const;
+  const faq = (text: string) => ({ key: 'faq', kind: 'reference', text } as const);
+  const withSpec = (options: KodaXOptions, context: readonly (typeof rule | ReturnType<typeof faq>)[]): KodaXOptions => ({
+    ...options, context: { ...options.context, prompt: { kodaxGuidance: 'omit', context } },
+  });
+  const firstPrompt = 'Inspect the README, then report completion.';
+  const first = await runManagedTaskViaRunner(
+    withSpec({ ...makeOptions([], false), session }, [rule, faq('APP_REFERENCE_V1')]),
+    firstPrompt, undefined, makePlan(firstPrompt),
+  );
+  const firstRunRequests = requests.length;
+  const secondPrompt = 'Summarize what changed.';
+  await runManagedTaskViaRunner(
+    withSpec({ ...makeOptions([], false), session: { ...session, initialMessages: first.messages } }, [faq('APP_REFERENCE_V2')]),
+    secondPrompt, undefined, makePlan(secondPrompt),
+  );
+
+  const isWorkerRequest = (request: PhysicalRequest) => JSON.stringify(request.messages).includes(SKILLS_ADDENDUM_SENTINEL);
+  const firstRun = requests.slice(0, firstRunRequests).filter(isWorkerRequest);
+  expect(firstRun.length).toBeGreaterThanOrEqual(2);
+  for (const request of firstRun) {
+    // An application persona removes KodaX identity wording; entries live in the envelope only.
+    expect(request.system).not.toContain('Assigned native agent identity');
+    expect(request.system).not.toContain('APP_RULE_SENTINEL');
+    const physical = JSON.stringify(request.messages);
+    expect(countOccurrences(physical, 'APP_RULE_SENTINEL')).toBe(1);
+    expect(countOccurrences(physical, 'APP_REFERENCE_V1')).toBe(1);
+  }
+  expect(JSON.stringify(first.messages)).not.toContain('APP_RULE_SENTINEL');
+
+  const nextRun = JSON.stringify(requests.slice(firstRunRequests).find(isWorkerRequest)!.messages);
+  expect(nextRun).toContain('No longer available: application rule house.');
+  expect(countOccurrences(nextRun, 'APP_REFERENCE_V2')).toBe(1);
+}, 30_000);

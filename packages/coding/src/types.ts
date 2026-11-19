@@ -149,8 +149,8 @@ import type {
 // `sideEffect` contract. Imported from the leaf `./tools/side-effect.js` (not
 // `./tools/types.js`) so there is no import cycle — `tools/types.ts` imports
 // `KodaXToolExecutionContext` back from here.
-import type { KodaXEffectiveTaskConfig, KodaXAgentProfile, KodaXTaskVerificationContract, KodaXToolVisibilityPolicy } from './execution-profile-contract.js';
-export type { KodaXEffectiveTaskConfig, KodaXAgentProfile, KodaXTaskCapabilityHint, KodaXTaskVerificationCriterion, KodaXRuntimeVerificationContract, KodaXTaskVerificationContract, KodaXToolVisibilityMeta, KodaXToolVisibilityPolicy } from './execution-profile-contract.js';
+import type { KodaXEffectiveTaskConfig, KodaXAgentProfile, KodaXPromptSpec, KodaXTaskVerificationContract, KodaXToolVisibilityPolicy } from './execution-profile-contract.js';
+export type { KodaXEffectiveTaskConfig, KodaXAgentProfile, KodaXPromptSpec, KodaXPromptContextEntry, KodaXTaskCapabilityHint, KodaXTaskVerificationCriterion, KodaXRuntimeVerificationContract, KodaXTaskVerificationContract, KodaXToolVisibilityMeta, KodaXToolVisibilityPolicy } from './execution-profile-contract.js';
 import type { KodaXAgentScope } from './construction/agent-resolver.js';
 
 // Re-export all types from @kodax-ai/agent
@@ -2090,11 +2090,13 @@ export interface KodaXContextOptions {
    */
   workModePolicy?: 'intersect';
   /**
-   * FEATURE_067 v3: Override the entire system prompt for this run.
-   * When set, buildSystemPromptSnapshot is skipped — only this string is used.
-   * Used for child agents that need a focused, lightweight prompt instead of the full system.
+   * FEATURE_067 v3: On the direct engine (`runKodaX`, children) this replaces
+   * the entire system prompt. On a managed Run it is prepended to the Worker
+   * prompt as the governing directive, in place of `agentProfile.instructions`.
    */
   systemPromptOverride?: string;
+  /** Application prompt customization; managed Runs only. See {@link KodaXPromptSpec}. */
+  prompt?: KodaXPromptSpec;
   /** Optional structured metadata carried into the managed task contract. */
   taskMetadata?: Record<string, KodaXJsonValue>;
   /** Optional structured verification contract carried into managed tasks. */
@@ -3000,6 +3002,8 @@ export interface KodaXToolExecutionContext {
     readonly shellExecution?: KodaXShellExecutionContract;
     readonly sandbox?: KodaXSandboxOptions;
     readonly permissionIntent?: import('@kodax-ai/agent').GuardrailPermissionIntent;
+    /** Rendered `context.prompt` rule entries; write children append them after project rules. */
+    readonly applicationRules?: string;
   };
   /** Parent SDK/REPL callback surface used to preserve nested Agent telemetry. */
   parentEvents?: KodaXEvents;

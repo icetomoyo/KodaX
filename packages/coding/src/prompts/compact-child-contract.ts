@@ -18,6 +18,8 @@ export interface ChildContractCandidateSource {
 }
 
 const writeRulesBoundary = '\n\nProject rules apply to your mutations. Follow them as the parent agent would:\n';
+// Write children append application rules after any project rules; without project rules they follow the base directly.
+const applicationRulesBoundary = '\n\n## Application rule: ';
 const requiredChildTools = ['read', 'bash', 'glob', 'grep'];
 // Explicitly audited set: new root projections do not automatically become child projections.
 // Memory mutation teaching stays canonical: children do not inherit root Memory rules.
@@ -43,7 +45,8 @@ export function buildCompactChildContractCandidate(
 ): ChildContractCandidate {
   if (provenance.source !== 'builtin-child' || provenance.specialistName) return canonical;
   if (canonical.system !== CHILD_AGENT_SYSTEM_PROMPT
-    && !canonical.system.startsWith(CHILD_AGENT_SYSTEM_PROMPT + writeRulesBoundary)) return canonical;
+    && !canonical.system.startsWith(CHILD_AGENT_SYSTEM_PROMPT + writeRulesBoundary)
+    && !canonical.system.startsWith(CHILD_AGENT_SYSTEM_PROMPT + applicationRulesBoundary)) return canonical;
   const names = new Set(canonical.tools.map(tool => tool.name));
   if (names.size !== canonical.tools.length || !requiredChildTools.every(name => names.has(name))) return canonical;
   for (const tool of canonical.tools) {

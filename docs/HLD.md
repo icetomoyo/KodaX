@@ -775,6 +775,15 @@ does not replace execution permissions. Work modes and the shared compact
 contract are decided in
 [ADR-072](ADR.md#adr-072-work-modes-and-the-model-facing-tool-contract).
 
+Applications customize a managed Run's prompt through `context.prompt`; Product
+clients set it as `prompt` in the trusted execution profile. `kodaxGuidance: 'omit'`
+drops the Worker sections tagged as guidance and keeps contract text, tool
+teaching and `AGENTS.md`. Context entries are application rules and references.
+They travel as keyed Managed Run Context sections, not system prompt text, so the
+system prompt stays cacheable and a removed key is retired by name. Rules also
+reach first-level write children. The direct engine rejects a spec. See the
+2026-11-19 ADR entry on application prompt specs.
+
 Generated constructed handlers are a narrower coding-layer isolation case.
 Each active handler runs in a persistent Worker, while `ctx.tools.*` calls
 return to the host through reverse RPC and still traverse capability,

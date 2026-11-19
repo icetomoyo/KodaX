@@ -506,6 +506,27 @@ start or end with whitespace: separators between pieces live in the consumer's
 join, so an editor cannot change them unseen. `packages/coding/src/prompts/rendered-prompts.test.ts`
 snapshots the assembled Worker, child and tool text in `prompts/expected/`.
 
+Application prompt specs (`context.prompt`, `KodaXPromptSpec` in
+`execution-profile-contract.ts`) are admitted by `assertKodaXPromptSpec` in
+`prompts/prompt-spec.ts` at `runManagedTask` and Runtime `startRun`. A Runtime
+Run resolved to `coding` mode, and `runKodaX`, reject a spec through
+`assertPromptSpecOnManagedRun`. Under `omit`, `createRolePrompt` filters the
+Worker section table by its guidance tag and uses the neutral routing line. The
+root compact projection is skipped, because the stable text no longer matches
+the canonical bytes. `renderApplicationContextSections` emits one
+`app-rule:KEY` or `app-reference:KEY` section per entry.
+`managed-run-context-retention.ts` diffs those sections like any other and labels a
+retired one "application rule KEY". The write-child system prompt appends
+`renderApplicationRules` after project rules (`child-executor.ts`), and
+`compact-child-contract.ts` keeps that suffix byte for byte. The profile reaches
+the Run through `RuntimeExecutionProfile.prompt` and the daemon server's
+`bindTrustedRunInput`. Generation recovery keeps `prompt` as declarative
+context (`runtime-generation-recovery.ts`). Capability `promptSpec` v1 is checked
+in `client-runtime-adapter.ts`, `execution-services.ts` and
+`runtime-daemon/client.ts`. Tests: `prompts/prompt-spec.test.ts`, the
+`worker.omit.*` snapshots, `runner-driven.compaction-context.test.ts` and
+`src/sdk-prompt-spec.test.ts`.
+
 To change the ceiling:
 
 1. Reproduce the failure on the real builder.

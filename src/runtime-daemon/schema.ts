@@ -1496,7 +1496,7 @@ function executionAuthorizationSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
     binding: objectSchema({ leaseId: stringSchema }, ['leaseId']),
     businessBinding: objectSchema({ id: stringSchema, revision: stringSchema, data: objectAnySchema }, ['id', 'revision']),
-    profile: objectSchema({ agentProfile: objectAnySchema, taskVerification: objectAnySchema,
+    profile: objectSchema({ agentProfile: objectAnySchema, prompt: objectAnySchema, taskVerification: objectAnySchema,
       requiredWorkMode: { enum: ['agent'] },
       defaultSkill: objectSchema({ name: { type: 'string', maxLength: 128 } }, ['name']),
       tools: arraySchema(stringSchema), toolMetadata: arraySchema(objectSchema({ name: stringSchema,

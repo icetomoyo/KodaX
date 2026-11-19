@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import type { KodaXMessage } from '../../../types.js';
+import { applicationContextLabel } from '../../../prompts/prompt-spec.js';
 import { isManagedRunContextMessage } from './managed-run-context.js';
 
 /** One session-scoped part of the Managed Run Context, keyed by capability section id. */
@@ -44,8 +45,11 @@ const RETAINED_EVIDENCE_SECTION_IDS = new Set(['git-context', 'project-snapshot'
 // that computed the project snapshot restates it even when unchanged.
 const ALWAYS_RESTATED_SECTION_ID = 'project-snapshot';
 
+// Application entries are facts: an entry the next Run omits no longer applies.
+const factLabel = (id: string): string | undefined => RETAINED_FACT_LABELS[id] ?? applicationContextLabel(id);
+
 export function isRetainedSessionSection(id: string): boolean {
-  return id in RETAINED_FACT_LABELS || RETAINED_EVIDENCE_SECTION_IDS.has(id);
+  return factLabel(id) !== undefined || RETAINED_EVIDENCE_SECTION_IDS.has(id);
 }
 
 function digestOrdinaryMessages(messages: readonly KodaXMessage[]): string {
@@ -134,7 +138,7 @@ export function diffRetainedSessionSections(
   const missing = previous.filter((section) => !currentIds.has(section.id));
   const keptEvidence = missing.filter((section) => RETAINED_EVIDENCE_SECTION_IDS.has(section.id));
   const retiredLabels = missing.flatMap((section) => {
-    const label = RETAINED_FACT_LABELS[section.id];
+    const label = factLabel(section.id);
     return label === undefined ? [] : [label];
   });
   return { restated, retiredLabels, effective: [...current, ...keptEvidence] };
