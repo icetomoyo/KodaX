@@ -201,7 +201,7 @@ test('built SDK preserves Skill discovery, activation, permissions and refresh a
   await registry.discover();
   const catalog = registry.getSystemPromptSnippet();
   assert.ok(catalog.length <= 8_000);
-  assert.match(catalog, /Skills omitted/);
+  assert.match(catalog, /\[Skill catalog shortened: .*Skills not listed\./);
   assert.ok(!catalog.includes('- z-catalog-39:'));
   cursor = 0; requests = [];
   actions = [{ name: 'skill', input: { skill: 'missing' } }];

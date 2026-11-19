@@ -491,6 +491,16 @@ async function assertSelectedSettings(state) {
   assert.equal(settings.maxIter, 7);
 }
 
+// Work mode can change only before the session's first Run.
+async function checkWorkModeBeforeFirstRun(state) {
+  for (const mode of ['agent', 'script', 'coding']) {
+    await state.terminal.submit(`/work-mode ${mode}`);
+    await waitFor(`/work-mode ${mode} updates Host`, async () =>
+      ((await state.client.sessions.getSettings(state.sessionId)).workMode ?? 'coding') === mode);
+    await delay(400);
+  }
+}
+
 async function checkProviderCapabilities(state) {
   const selection = { provider: 'acceptance-local', model: 'acceptance-model' };
   const initialRequests = state.requests.length;
@@ -676,9 +686,12 @@ async function checkHostSessionTransitions(state) {
 async function checkSettings(state) {
   // Read complete labels here; narrow/resize rendering is exercised separately.
   if (state.mode === 'ink') await state.terminal.resize(220, 32);
+  // Runs have settled in this session, so work mode is locked; switching is tested in checkHostSettingCommands.
+  const lockedMode = (await state.client.sessions.getSettings(state.sessionId)).workMode ?? 'coding';
+  await state.terminal.submit(`/work-mode ${lockedMode === 'agent' ? 'coding' : 'agent'}`);
+  await waitFor('locked work mode notice', () => state.terminal.screen().includes('Work mode is fixed after the first run'));
+  assert.equal((await state.client.sessions.getSettings(state.sessionId)).workMode ?? 'coding', lockedMode);
   for (const [command, field, expected] of [
-    ['/work-mode agent', 'workMode', 'agent'], ['/work-mode script', 'workMode', 'script'],
-    ['/work-mode coding', 'workMode', 'coding'],
     ['/mode plan', 'permissionMode', 'plan'], ['/mode accept-edits', 'permissionMode', 'accept-edits'],
   ]) {
     await state.terminal.submit(command);
@@ -1482,6 +1495,7 @@ async function run(mode) {
       await check(state, 'exit', checkExit);
       return;
     }
+    await check(state, 'work-mode-before-first-run', checkWorkModeBeforeFirstRun);
     await check(state, 'host-provider-capabilities', checkProviderCapabilities);
     await check(state, 'host-setting-commands', checkHostSettingCommands);
     if (mode === 'ink') await check(state, 'model-command-visible-feedback', checkModelNotices);
