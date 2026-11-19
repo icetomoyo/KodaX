@@ -1,7 +1,7 @@
 // Zero-network capture of the first root request through the real managed Runtime, per work mode.
 // Unlike tests/skill-trigger.capture.ts this runs repository intelligence and routing on a dirty
 // Git worktree, so review breadth, PR routing and Script-mode guidance reach the request as shipped.
-// Usage: KODAX_MANAGED_CAPTURE_OUT=<new file> KODAX_MANAGED_CAPTURE_CASES=<cases.json> [KODAX_MANAGED_CAPTURE_STAGE=name] [KODAX_MANAGED_CAPTURE_REPO_MODE=auto|off|light|full]
+// Usage: KODAX_MANAGED_CAPTURE_OUT=<new file> KODAX_MANAGED_CAPTURE_CASES=<cases.json> [KODAX_MANAGED_CAPTURE_STAGE=name] [KODAX_MANAGED_CAPTURE_REPO_MODE=auto|off|light|full] [KODAX_MANAGED_CAPTURE_CHILD=read|write]
 //   vite-node -c vitest.config.ts tests/managed-first-turn.capture.ts
 // Output matches the skill-trigger capture shape, so tests/skill-trigger.eval.ts replays it.
 // KODAX_MANAGED_CAPTURE_CATALOG=builtin passes the builtin Skill catalog the way the REPL does; run it
@@ -43,6 +43,10 @@ const MODEL = 'capture-model';
 const REPO_MODES = ['auto', 'off', 'light', 'full'] as const;
 const repoMode = (process.env.KODAX_MANAGED_CAPTURE_REPO_MODE ?? 'auto') as typeof REPO_MODES[number];
 if (!REPO_MODES.includes(repoMode)) throw new Error(`KODAX_MANAGED_CAPTURE_REPO_MODE must be one of ${REPO_MODES.join(', ')}`);
+// With a lane, the root's first response spawns one child and its first request is captured too.
+const childLane = process.env.KODAX_MANAGED_CAPTURE_CHILD as 'read' | 'write' | undefined;
+if (childLane !== undefined && childLane !== 'read' && childLane !== 'write') throw new Error('KODAX_MANAGED_CAPTURE_CHILD must be read or write');
+const CHILD_OBJECTIVE = 'Fix the TTL boundary in packages/cache-client so an entry expires exactly at its TTL, and report the change.';
 
 /** The REPL hands the run its project registry and that registry's catalog snippet. */
 async function skillContext(workspace: string, catalog: CatalogKind) {
@@ -54,19 +58,34 @@ async function skillContext(workspace: string, catalog: CatalogKind) {
   return { skillsPrompt, skillRegistry };
 }
 
-async function captureCase(root: string, testCase: ManagedCaptureCase, catalog: CatalogKind): Promise<FrozenInput> {
+interface CapturedCase { readonly root: FrozenInput; readonly child?: FrozenInput }
+
+async function captureCase(root: string, testCase: ManagedCaptureCase, catalog: CatalogKind): Promise<CapturedCase> {
   const directory = await fs.mkdtemp(path.join(root, `${testCase.id}-`));
   const workspace = path.join(directory, 'workspace');
   await writeDirtyWorkspace(workspace);
   let captured: FrozenInput | undefined;
+  let child: FrozenInput | undefined;
+  const freeze = (input: FrozenInput): FrozenInput => JSON.parse(JSON.stringify(input)) as FrozenInput;
+  const reply = { textBlocks: [{ type: 'text' as const, text: 'capture only' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' as const };
   class CaptureProvider extends KodaXBaseProvider {
     readonly name = PROVIDER;
     readonly supportsThinking = false;
     protected readonly config: KodaXProviderConfig = { apiKeyEnv: 'KODAX_MANAGED_CAPTURE_KEY', model: MODEL, contextWindow: 128000, supportsThinking: false };
+    // Child admission checks provider configuration; the stub never needs a key.
+    override isConfigured(): boolean { return true; }
     async stream(messages: KodaXMessage[], tools: KodaXToolDefinition[], system: string) {
       // The root Worker request is the first one carrying the managed tool menu; auxiliary judges carry one tool.
-      if (!captured && tools.length > 1) captured = JSON.parse(JSON.stringify({ messages, tools, system })) as FrozenInput;
-      return { textBlocks: [{ type: 'text' as const, text: 'capture only' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' as const };
+      if (tools.length <= 1) return reply;
+      if (!captured) {
+        captured = freeze({ messages, tools, system });
+        if (!childLane) return reply;
+        return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use' as const, toolBlocks: [{ type: 'tool_use' as const, id: 'capture-spawn', name: 'spawn_agent',
+          input: { task_name: 'capture-child', objective: CHILD_OBJECTIVE, read_only: childLane === 'read' } }] };
+      }
+      // Later root requests keep the root system prompt; the first other one is the child's.
+      if (childLane && !child && system !== captured.system) child = freeze({ messages, tools, system });
+      return reply;
     }
   }
   const unregister = registerModelProvider(PROVIDER, () => new CaptureProvider());
@@ -75,7 +94,7 @@ async function captureCase(root: string, testCase: ManagedCaptureCase, catalog: 
     const session = await runtime.sessions.create({ projectPath: workspace });
     await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', executionCwd: workspace });
     const handle = await runtime.runs.start({ sessionId: session.id, mode: 'managed_task', prompt: testCase.task, options: {
-      provider: PROVIDER, model: MODEL, agentMode: 'ama', reasoningMode: 'off', lsp: false, maxIter: 2, disablePromptCache: true, workMode: testCase.workMode,
+      provider: PROVIDER, model: MODEL, agentMode: 'ama', reasoningMode: 'off', lsp: false, maxIter: childLane ? 4 : 2, disablePromptCache: true, workMode: testCase.workMode,
       learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['eval-isolated'] } }),
       context: { executionCwd: workspace, gitRoot: workspace, ...await skillContext(workspace, catalog), repoIntelligenceMode: repoMode, resolveShellPermissionMode: () => 'full-access' },
     } });
@@ -87,7 +106,9 @@ async function captureCase(root: string, testCase: ManagedCaptureCase, catalog: 
   }
   if (!captured) throw new Error(`${testCase.id}: no root request captured`);
   if (catalog === 'builtin' && !JSON.stringify(captured).includes('## Available Skills')) throw new Error(`${testCase.id}: Skill catalog missing from the request`);
-  return captured;
+  if (!childLane) return { root: captured };
+  if (!child) throw new Error(`${testCase.id}: no ${childLane} child request captured`);
+  return { root: captured, child };
 }
 
 const out = process.env.KODAX_MANAGED_CAPTURE_OUT;
@@ -108,16 +129,19 @@ const rows = [];
 // Keeping the most complete of several attempts gives both arms the full context.
 const attempts = Number(process.env.KODAX_MANAGED_CAPTURE_ATTEMPTS ?? '3');
 for (const testCase of cases) {
-  let input: FrozenInput | undefined;
+  let best: CapturedCase | undefined;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const candidate = await captureCase(root, testCase, catalog);
-    if (!input || JSON.stringify(candidate).length > JSON.stringify(input).length) input = candidate;
+    if (!best || JSON.stringify(candidate.root).length > JSON.stringify(best.root).length) best = candidate;
   }
-  if (!input) throw new Error('KODAX_MANAGED_CAPTURE_ATTEMPTS must be at least 1');
-  rows.push({ id: testCase.id, task: testCase.task, workMode: testCase.workMode, input, hash: inputHash(input) });
+  if (!best) throw new Error('KODAX_MANAGED_CAPTURE_ATTEMPTS must be at least 1');
+  const { root: input, child } = best;
+  rows.push({ id: testCase.id, task: testCase.task, workMode: testCase.workMode, input, hash: inputHash(input),
+    ...child ? { childLane, child, childHash: inputHash(child) } : {} });
   process.stderr.write(`captured ${testCase.id}\n`);
 }
 const source = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true }).trim();
 await fs.mkdir(path.dirname(out), { recursive: true });
 await fs.writeFile(out, JSON.stringify({ stage: process.env.KODAX_MANAGED_CAPTURE_STAGE ?? 'adhoc', source, sourceHashes: await sourceHashes(), catalog, fixtureRoot: root, cases: rows }, null, 2) + '\n', { flag: 'wx' });
-process.stdout.write(JSON.stringify({ out, cases: rows.map(r => ({ id: r.id, workMode: r.workMode, hash: r.hash, tools: r.input.tools.length })) }) + '\n');
+process.stdout.write(JSON.stringify({ out, cases: rows.map(r => ({ id: r.id, workMode: r.workMode, hash: r.hash, tools: r.input.tools.length,
+  ...r.child ? { childHash: r.childHash, childTools: r.child.tools.length } : {} })) }) + '\n');
