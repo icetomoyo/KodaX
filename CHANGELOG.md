@@ -6,6 +6,37 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Provider HTTP requests send `X-Session-Id` with the root session id, so a
+  gateway such as Kodax-Fabric can reconcile a conversation's requests,
+  including those from child agents, workflows and compaction. A configured
+  `X-Session-Id` header wins. Endpoints that require a session header, such
+  as opencode-go, now accept KodaX requests (Issue 416, ADR-077).
+
+### Changed
+
+- New session ids are UUIDv7 (for example
+  `0196f7a2-3b4c-7d5e-8f90-a1b2c3d4e5f6`) instead of
+  `YYYYMMDD_HHMMSS_<suffix>`. Existing ids keep working. Code that read the
+  creation date from the id must use the stored `createdAt` or
+  `lastMessageAt`. `/sessions` and `kodax -s list` now show a time column,
+  and the session picker shows the last 8 characters of an id.
+- REPL `/clear` saves a non-empty conversation and continues under a new
+  session id, like `/new` without the confirmation. It prints
+  `/resume <previous id>` to get the cleared conversation back.
+
+### Fixed
+
+- Host `sessions.create({ sessionId })` and `sessions.fork({ newSessionId })`
+  reject ids that are not 1-128 characters from `[A-Za-z0-9_-]`, Windows
+  device names, and ids starting with `archived-`, with `invalid_params`. An id
+  such as `../escape` used to write outside the sessions directory (Issue 417).
+- A2A Tasks that share a `contextId` continue one Runtime Session per
+  principal, so a follow-up Task sees the earlier exchanges. Since `v0.7.85`
+  each Task had started a fresh Session. A Task sent while another Task of the
+  context runs now waits for it (Issue 418, ADR-077).
+
 ---
 
 ## [0.7.97-beta.11] - 2026-11-16
@@ -5724,7 +5755,7 @@ manual maintainer action.
 
 ### Added
 
-- **FEATURE_222 — MCP `2025-11-25` reverse capabilities: roots, elicitation (form + url), and OAuth discovery/login/step-up.** KodaX's self-built MCP client now serves the server→client requests it previously stubbed (`capabilities: {}` → real handlers), aligned to the Claude Code / Codex MCP clients. A capability is advertised **only** when the host injects its handler ("declaration = implementation promise"), so it is incrementally safe and a headless host degrades to the old behaviour. **roots:** a connected server can call `roots/list` and KodaX answers with the workspace as `file://` roots (CLI + ACP). **elicitation:** a server can ask the user for input — every prompt shows **which MCP server is asking** (anti-phishing); `form` mode maps the requested schema (string / number / enum / boolean / confirm-only) onto the host's ask-user dialogs and lets the user **review the exact values before they are sent**; `url` mode is an anti-phishing consent gate (shows the full URL + domain, never auto-opens, never exposes the URL to the model); a `-32042 UrlElicitationRequired` from a tool call is closed by eliciting, waiting for `notifications/elicitation/complete`, then retrying (bounded). The `ask_user_question` primitive moved down to `@kodax-ai/agent` so coding tools and MCP elicitation share one host-injected surface, resolved live at call time. **OAuth:** zero-config authentication — on a `401` KodaX discovers the authorization server (RFC 9728 Protected Resource Metadata → RFC 8414 / OIDC metadata), dynamically registers a client (RFC 7591), and runs PKCE (**S256 required — refuses to downgrade**) with the RFC 8707 `resource` indicator through a `127.0.0.1` loopback callback that is **listening before the URL is shown** (no lost-redirect race; consent uses the same anti-phishing url prompt — the browser is never opened for you), then persists + refreshes the token; a mid-session `403 insufficient_scope` triggers a step-up re-login. MCP `config.auth` endpoint fields are now **optional** (provide them only to pin a static pre-registered client). New `@kodax-ai/agent` MCP exports include `setActiveUserInteraction`, `discoverOAuthEndpoints`, `performOAuthLogin`, and `McpAuthRequiredError`, plus the coding-layer `buildMcpReverseCapabilities`. **Not implemented (deliberate):** Client ID Metadata Documents (SEP-991) — DCR is the registration baseline (matches Codex). Covered by 130+ MCP tests including fake-MCP-server end-to-end cases (elicitation, `-32042` retry, OAuth callback race/buffer/cleanup, S256 refusal, and the full `401 → discovery → DCR → consent → loopback → token → retry`). See [docs/features/v0.7.48.md FEATURE_222](docs/features/v0.7.48.md).
+- **FEATURE_222 — MCP `2025-11-25` reverse capabilities: roots, elicitation (form + url), and OAuth discovery/login/step-up.** KodaX's self-built MCP client now serves the server→client requests it previously stubbed (`capabilities: {}` → real handlers), aligned to the Claude Code / Codex MCP clients. A capability is advertised **only** when the host injects its handler ("declaration = implementation promise"), so it is incrementally safe and a headless host degrades to the old behaviour. **roots:** a connected server can call `roots/list` and KodaX answers with the workspace as `file://` roots (CLI + ACP). **elicitation:** a server can ask the user for input — every prompt shows **which MCP server is asking** (anti-phishing); `form` mode maps the requested schema (string / number / enum / boolean / confirm-only) onto the host's ask-user dialogs and lets the user **review the exact values before they are sent**; `url` mode is an anti-phishing consent gate (shows the full URL + domain, never auto-opens, never exposes the URL to the model); a `-32042 UrlElicitationRequired` from a tool call is closed by eliciting, waiting for `notifications/elicitation/complete`, then retrying (bounded). The `ask_user_question` primitive moved down to `@kodax-ai/agent` so coding tools and MCP elicitation share one host-injected surface, resolved live at call time. **OAuth:** zero-config authentication — on a `401` KodaX discovers the authorization server (RFC 9728 Protected Resource Metadata → RFC 8416 / OIDC metadata), dynamically registers a client (RFC 7591), and runs PKCE (**S256 required — refuses to downgrade**) with the RFC 8707 `resource` indicator through a `127.0.0.1` loopback callback that is **listening before the URL is shown** (no lost-redirect race; consent uses the same anti-phishing url prompt — the browser is never opened for you), then persists + refreshes the token; a mid-session `403 insufficient_scope` triggers a step-up re-login. MCP `config.auth` endpoint fields are now **optional** (provide them only to pin a static pre-registered client). New `@kodax-ai/agent` MCP exports include `setActiveUserInteraction`, `discoverOAuthEndpoints`, `performOAuthLogin`, and `McpAuthRequiredError`, plus the coding-layer `buildMcpReverseCapabilities`. **Not implemented (deliberate):** Client ID Metadata Documents (SEP-991) — DCR is the registration baseline (matches Codex). Covered by 130+ MCP tests including fake-MCP-server end-to-end cases (elicitation, `-32042` retry, OAuth callback race/buffer/cleanup, S256 refusal, and the full `401 → discovery → DCR → consent → loopback → token → retry`). See [docs/features/v0.7.48.md FEATURE_222](docs/features/v0.7.48.md).
 - **MCP config `type: "http"` — transport auto-detection (ecosystem config compat).** Other MCP clients' config files use `type: "http"` as a single entry that means "an HTTP MCP server, figure out the flavour". KodaX now accepts it as a **config-layer alias** (not a wire protocol): it POSTs `initialize` as Streamable HTTP first and, only on `400/404/405`, falls back to the legacy HTTP+SSE transport — `401`/`403`/`5xx`/network errors never fall back (so an auth challenge still reaches the OAuth flow). The resolved transport is recorded in diagnostics (`http:auto->streamable-http` / `http:auto->sse`). Accepted by the REPL config validator and the ACP conversion path too.
 
 ### Changed

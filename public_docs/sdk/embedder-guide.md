@@ -5061,6 +5061,13 @@ task; it does not cancel the Runtime run, and clients can continue with
 
 When a task enters `INPUT_REQUIRED`, the next accepted input answers the pending
 interaction on the original Runtime run; it does not start a replacement run.
+
+Tasks that share a `contextId` continue one Runtime Session per authenticated
+principal, so a follow-up Task sees the earlier exchanges. The Session id is
+`a2a-` and a SHA-256 of the principal key and the context id; the raw context
+id never reaches the Session id or provider requests. A Task sent while
+another Task of the context is running, or waiting in `INPUT_REQUIRED`, waits
+until that run ends. Tasks created before this change keep their own Sessions.
 History length and list filters are validated and bounded. Task listing uses a
 stable opaque cursor, while per-principal retention prunes only the oldest
 terminal records. Terminal subscriptions and failed-start resources are closed

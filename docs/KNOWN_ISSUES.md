@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-16_
+_Last Updated: 2026-11-18_
 
 ---
 
@@ -3049,6 +3049,9 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 418 | High | Resolved | A2A Tasks in one context lose the earlier conversation | `v0.7.85` (FEATURE_291) | unreleased (after `v0.7.97-beta.11`) | 2026-11-18 | 2026-11-18 |
+| 417 | High | Resolved | Host `create` and `fork` accept session ids that leave the sessions directory | observed on `v0.7.97-beta.11`; first affected version unknown | unreleased (after `v0.7.97-beta.11`) | 2026-11-17 | 2026-11-17 |
+| 416 | High | Resolved | Provider requests carry no session id for gateways | every released version | unreleased (after `v0.7.97-beta.11`) | 2026-11-17 | 2026-11-17 |
 | 410 | Medium | Resolved | A client exit stop with a connected peer drains the Host and answers late | `v0.7.97-alpha.2` (client exit receipts) | `v0.7.97-beta.9` | 2026-11-13 | 2026-11-13 |
 | 409 | High | Resolved | Windows daemon Job proof and failed-start cleanup prevent recovery | observed in v0.7.97-beta.4 (customer report); PowerShell Job probe since v0.7.97-alpha.7 | `v0.7.97-beta.8` | 2026-11-12 | 2026-11-12 |
 | 408 | Medium | Resolved | Space SDK leaks user image labels, rejects non-PNG attachments and loses extension approval attribution | observed in v0.7.97-beta.6; visual input/tools since beta.5 | `v0.7.97-beta.7` | 2026-11-12 | 2026-11-12 |
@@ -3345,6 +3348,123 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ---
 
 ## Issue Details
+
+### Issue 418: A2A Tasks in one context lose the earlier conversation
+
+- Priority: High
+- Status: Resolved
+- Introduced: `v0.7.85` (FEATURE_291)
+- Created: 2026-11-18
+- Fixed: unreleased (after `v0.7.97-beta.11`)
+- Resolution Date: 2026-11-18
+- Related: Issue 416, ADR-061, ADR-077
+
+**Original Problem.** Each A2A Task created its own Runtime Session. A client
+that sent a follow-up as a new Task in the same `contextId` reached a model
+with none of the earlier exchanges. With Issue 416, a gateway would also see a
+different `X-Session-Id` for each Task of one A2A conversation. Up to
+`v0.7.84`, a new Task reused the Session of an earlier Task in its context.
+FEATURE_291 gave every Task its own Session along with its own event cursor.
+Found while checking which session id A2A runs send.
+
+**Resolution.** Tasks in one principal's context share the Runtime Session
+`a2a-<sha256(principal key, contextId)>`. The first Task creates it. Later
+Tasks reuse the id when `create` reports a conflict. Each Task keeps its own
+cursor, and replay and subscription stay run-scoped. The Host queues a run
+behind the Session's active run, so overlapping Tasks run in order. Tasks
+created before the fix keep their own Sessions, so the first new Task in an
+existing context starts the shared Session empty.
+
+**Files Changed.** `src/a2a/server.ts`.
+
+**Tests Added.** `src/a2a/context-session.test.ts` drives a real Runtime. It
+checks that a second Task in a context sees the first question and answer,
+that other contexts and other principals get separate Sessions, and that a
+Task sent while another runs waits and then sees the first answer. The
+`src/a2a/a2a.test.ts` case that required one Session per Task was removed.
+
+### Issue 417: Host `create` and `fork` accept session ids that leave the sessions directory
+
+- Priority: High
+- Status: Resolved
+- Introduced: observed on `v0.7.97-beta.11`; first affected version unknown
+- Created: 2026-11-17
+- Fixed: unreleased (after `v0.7.97-beta.11`)
+- Resolution Date: 2026-11-17
+- Related: Issue 416, ADR-077
+
+**Original Problem.** Host `create({ sessionId })` and
+`fork({ newSessionId })` used the caller's id as a file name without checking
+it. An id such as `../escape` wrote the session file outside the sessions
+directory. Such ids would also have reached gateways in `X-Session-Id`
+(Issue 416). Found while reviewing the Issue 416 fix.
+
+**Resolution.** A new caller id must be 1-128 characters from
+`[A-Za-z0-9_-]`, must not be a Windows device name (`CON`, `PRN`, `AUX`,
+`NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`, any case), and must not start with
+`archived-`. Anything else fails with `invalid_params` before any file is
+written. Ids of existing sessions are read as stored. `load`, `resume`, and a
+`session.id` passed directly to `runKodaX` are not checked; this change does
+not cover them.
+
+**Files Changed.** `src/sdk-runtime.ts`.
+
+**Tests Added.** `src/sdk-runtime.session-id.test.ts` checks that `create`
+rejects traversal, path separators, dots, colons, spaces, empty and
+over-long ids, device names in any case, and the `archived-` prefix. It checks
+that `fork` rejects traversal, dots and device names, and that a 128-character
+opaque id is accepted.
+
+### Issue 416: Provider requests carry no session id for gateways
+
+- Priority: High
+- Status: Resolved
+- Introduced: every released version
+- Created: 2026-11-17
+- Fixed: unreleased (after `v0.7.97-beta.11`)
+- Resolution Date: 2026-11-17
+- Related: Issue 215, Issue 248, Issue 417, ADR-077
+- Context: customer report against KodaX CLI and Space with a custom provider
+  behind Kodax-Fabric
+
+**Original Problem.** KodaX CLI and Space sent no conversation id on
+provider requests, either for custom providers or for built-in ones. A
+gateway could not group a conversation's requests. Kodax-Fabric reads
+`X-Session-Id` to reconcile usage with KodaX sessions, and opencode-go
+answers 400 when no session header is present. Issue 215's `promptCacheKey`
+is hashed and sent only to providers with cache affinity enabled, so it cannot
+fill this role.
+
+**Resolution.** Every provider HTTP request sends `X-Session-Id` with the
+raw root logical session id. The id travels in run-scoped configuration. Child
+agents, Host workflows, REPL `/compact`, the runner-driven managed task,
+memory review and the capability probe send their root conversation's id. A
+header that is already configured wins. A non-header-safe id is left out.
+New session ids are UUIDv7. Session lists show a timestamp, and short ids show
+the last 8 characters. REPL `/clear` with messages now saves the conversation
+and continues under a new id. A live opencode-go probe succeeded with only
+`X-Session-Id`.
+
+**Files Changed.** LLM `run-scoped-config.ts` and
+`providers/request-extensions.ts`; coding `run-scoped-config.ts`,
+`agent-runtime/run-substrate.ts`, `task-engine/runner-driven.ts`,
+`memory-runtime.ts`, `running-session.ts`, `session-scratch.ts`; Agent
+`session-lineage/session.ts` and `recovery-seed.ts`; REPL `/clear`, `/new`,
+`/compact`, the capability probe, session lists and the picker; root
+`src/sdk-runtime.ts`, `src/runtime-daemon/server.ts` and `src/kodax_cli.ts`.
+
+**Tests Added.**
+- `packages/llm/src/providers/session-header.test.ts` covers the header on
+  each custom-provider protocol (OpenAI, Anthropic, Responses, Mistral, pi
+  messages, Gemini, Bedrock). It also covers no header outside a session, a
+  configured header winning, and unsafe ids being left out.
+- `packages/coding/src/session-header.wire.test.ts` checks the wire header
+  for an explicit id, a generated id (equal to `result.sessionId`), a child
+  agent, and the runner-driven path.
+- Root, daemon, REPL, capability-probe and `/clear` tests check the
+  conversation id on their paths.
+- The CAP-044 contract and the session tests check the UUIDv7 format and
+  ordering.
 
 ### Issue 408: Space SDK image projection, attachment access and approval attribution
 
@@ -9452,6 +9572,8 @@ installed beside the executable.
 - **Fixed**: v0.7.79 development
 - **Created**: 2026-07-31
 - **Resolved**: 2026-07-31
+- **Later change**: since Issue 416 (ADR-077), new ids are UUIDv7. This
+  Issue's uniqueness tests still apply.
 
 #### Original Problem
 
@@ -11984,6 +12106,9 @@ cache properties so reconnecting hosts can distinguish "reported zero" from
 - **Fixed**: v0.7.77 development
 - **Created**: 2026-07-27
 - **Resolved**: 2026-07-27
+- **Later change**: Issue 416 (ADR-077) also sends the raw root session id as
+  `X-Session-Id`, for gateway reconciliation. `promptCacheKey` stays hashed and
+  separate.
 
 #### Original Problem
 
@@ -18680,12 +18805,23 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 288 (46 Open including 1 needs-info, 242 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 291 (46 Open including 1 needs-info, 245 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 0
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-18: Issue 418
+
+- A2A Tasks in one principal's context continue one Runtime Session, so a
+  follow-up Task sees the earlier exchanges (Issue 418, ADR-077).
+
+### 2026-11-17: Issues 416-417
+
+- Provider requests send `X-Session-Id`, new session ids are UUIDv7 and REPL
+  `/clear` starts a new session (Issue 416, ADR-077). Host `create`/`fork`
+  reject session ids that are not plain portable names (Issue 417).
 
 ### 2026-11-13: Issue 410
 

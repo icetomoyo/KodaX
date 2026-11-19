@@ -742,6 +742,12 @@ or Agent names or changing ACP conversation mapping. Kimi Code lowers it to
 Anthropic-compatible `metadata.user_id`; public Kimi and official OpenAI lower
 it to `prompt_cache_key`. Unverified compatible endpoints remain unchanged.
 
+Separately, every provider HTTP request carries `X-Session-Id` with the raw root
+logical session id, so gateways can reconcile a conversation across child
+agents, workflows and compaction (ADR-077). The id travels in run-scoped
+configuration rather than in provider options. A header that is already
+configured wins. New session ids are UUIDv7.
+
 ## 5. Coding Runtime
 
 `packages/coding` owns KodaX-specific agent behavior:
