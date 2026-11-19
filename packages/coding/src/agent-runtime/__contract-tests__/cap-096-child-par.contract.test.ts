@@ -24,7 +24,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../agent.js', () => ({
-  runKodaX: vi.fn(),
+  runLeafAgent: vi.fn(),
 }));
 
 // FEATURE_188 v0.7.42 — child-executor no longer imports worktree
@@ -32,13 +32,13 @@ vi.mock('../../agent.js', () => ({
 // vi.mock('../../tools/worktree.js') stub.
 
 import { executeChildAgents } from '../../child-executor.js';
-import { runKodaX } from '../../agent.js';
+import { runLeafAgent } from '../../agent.js';
 import type {
   KodaXChildContextBundle,
   KodaXChildFanoutClass,
 } from '../../types.js';
 
-const mockRunKodaX = runKodaX as ReturnType<typeof vi.fn>;
+const mockRunKodaX = runLeafAgent as ReturnType<typeof vi.fn>;
 
 function createBundle(overrides: Partial<KodaXChildContextBundle> = {}): KodaXChildContextBundle {
   return {

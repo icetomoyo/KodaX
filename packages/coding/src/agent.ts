@@ -1,17 +1,11 @@
 /**
- * KodaX Agent — public SDK entry post-FEATURE_100 P3.6r/P3.6s.
+ * KodaX leaf executor.
  *
- * `runKodaX(opts, prompt)` is the stable SDK signature; internally it
- * delegates to `Runner.run(createDefaultCodingAgent(), …)` so direct-engine
- * execution always flows through the Layer-A frame (Option Y deletion
- * per ADR-020 / v0.7.29 §239 §371). Substrate body lives in
- * `agent-runtime/run-substrate.ts` (`runSubstrate`) and is wired via
- * the `Agent.substrateExecutor` closure attached in `coding-preset.ts`.
- *
- * v0.7.42: `runRunKodaXInternal` is the shared implementation. The
- * embedder-facing `startKodaX` (non-blocking, returns `RunningSession`)
- * lives in `./running-session.ts` and wraps the same internal path —
- * no dual route (per feedback_no_parallel_refactor_paths).
+ * `runLeafAgent(opts, prompt)` delegates to
+ * `Runner.run(createDefaultCodingAgent(), …)` so leaf execution flows through
+ * the Layer-A frame (ADR-020). The substrate body lives in
+ * `agent-runtime/run-substrate.ts` (`runSubstrate`) and is wired via the
+ * `Agent.substrateExecutor` closure attached in `coding-preset.ts`.
  */
 
 import { Runner } from '@kodax-ai/agent';
@@ -28,7 +22,12 @@ import {
 import { normalizeKodaXAgentMode, type KodaXOptions, type KodaXResult } from './types.js';
 import { assertPromptSpecOnManagedRun } from './prompts/prompt-spec.js';
 
-export async function runKodaX(
+/**
+ * Internal leaf executor: one Agent on the direct substrate, with no managed
+ * Worker. Child Agents and their digest/repair one-shots run here. Public root
+ * Runs go through the managed task engine instead.
+ */
+export async function runLeafAgent(
   options: KodaXOptions,
   prompt: string,
 ): Promise<KodaXResult> {
@@ -56,12 +55,10 @@ export async function runKodaX(
         },
       };
   // Establish the run-scoped config (AsyncLocalStorage) around the whole run.
-  // `runKodaX` is a public SDK entry (and the target `startKodaX` wraps), so
-  // without this the per-run overrides (modelTiers / maxOutputTokens /
-  // disablePromptCache / lsp / workflow) would be silently dropped whenever a
-  // consumer calls it directly rather than via `runManagedTask`. When a caller
-  // nests it inside an existing scope this simply re-establishes the same
-  // scope — nesting replaces with an identical config, so it is idempotent.
+  // Without this the per-run overrides (modelTiers / maxOutputTokens /
+  // disablePromptCache / lsp / workflow) would be dropped for a leaf that is
+  // not already inside a managed scope. When a caller nests it inside an
+  // existing scope this re-establishes the same scope, so it is idempotent.
   let failure: unknown;
   try {
     return await runWithScopedConfig(deriveRunScopedConfig(runtimeOptions), async () => {
@@ -79,7 +76,7 @@ export async function runKodaX(
       // return a truncated `RunResult` typed as `KodaXResult`).
       if (!result.data) {
         throw new Error(
-          'runKodaX: substrate executor did not lift KodaXResult onto RunResult.data — '
+          'runLeafAgent: substrate executor did not lift KodaXResult onto RunResult.data — '
           + 'verify createDefaultCodingAgent().substrateExecutor in coding-preset.ts',
         );
       }
@@ -92,6 +89,9 @@ export async function runKodaX(
     await awaitRuntimeSkillInvocationPolicy(policyOptions, failure);
   }
 }
+
+/** Public root entry. Temporarily the leaf executor until root Runs switch to managed. */
+export const runKodaX = runLeafAgent;
 
 export { buildAutoRepoIntelligenceContext } from './agent-runtime/middleware/repo-intelligence.js';
 export {

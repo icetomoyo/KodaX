@@ -8,7 +8,7 @@ import { getSkillRegistry, resetSkillRegistry } from '@kodax-ai/agent';
 
 // Mock runKodaX before importing child-executor
 vi.mock('./agent.js', () => ({
-  runKodaX: vi.fn(),
+  runLeafAgent: vi.fn(),
 }));
 
 vi.mock('./tools/worktree.js', () => ({
@@ -36,7 +36,7 @@ import {
 } from './child-executor.js';
 import { clearAgentsLoaderCacheForTesting } from './context/agents-loader.js';
 import type { ChildExecutorOptions, WorkflowChildDigestUpdate } from './child-executor.js';
-import { runKodaX } from './agent.js';
+import { runLeafAgent } from './agent.js';
 import {
   _resetAgentResolverForTesting,
   registerConstructedAgent,
@@ -51,7 +51,7 @@ import { TOOL_RECOVERY_GUIDANCE } from './prompts/execution-guidance.js';
 import { filterExcludedTools, getActiveToolDefinitions } from './agent-runtime/tool-resolution.js';
 import { listToolDefinitions } from './tools/index.js';
 
-const mockRunKodaX = runKodaX as ReturnType<typeof vi.fn>;
+const mockRunKodaX = runLeafAgent as ReturnType<typeof vi.fn>;
 const mockToolWorktreeCreate = vi.mocked(createWorkflowWorktree);
 const mockToolWorktreeRemove = vi.mocked(removeWorkflowWorktree);
 

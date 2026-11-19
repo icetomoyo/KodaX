@@ -23,7 +23,7 @@
  *
  * Verified location: child-executor.ts:196-241 (executeReadChild);
  * :243-317 (executeWriteChild). The lazy-loader bridge
- * `getRunKodaX()` (child-executor.ts:33-67) imports `runKodaX` from
+ * `getRunLeaf()` (child-executor.ts:33-67) imports `runKodaX` from
  * `./agent.js`, which is the FEATURE_100 P3.6s thin Runner.run shim.
  *
  * Time-ordering constraint: triggered mid-turn during parent's tool
@@ -39,7 +39,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // in child-executor (`getRunKodaX`) resolves through `./agent.js`, so
 // we mock that module surface.
 vi.mock('../../agent.js', () => ({
-  runKodaX: vi.fn(),
+  runLeafAgent: vi.fn(),
 }));
 
 // FEATURE_188 v0.7.42 — write children no longer use worktree; remove the
@@ -51,7 +51,7 @@ import {
   CHILD_EXCLUDE_TOOLS_BASE,
   executeChildAgents,
 } from '../../child-executor.js';
-import { runKodaX } from '../../agent.js';
+import { runLeafAgent } from '../../agent.js';
 import {
   _resetAgentResolverForTesting,
   registerConstructedAgent,
@@ -62,7 +62,7 @@ import type {
   KodaXChildFanoutClass,
 } from '../../types.js';
 
-const mockRunKodaX = runKodaX as ReturnType<typeof vi.fn>;
+const mockRunKodaX = runLeafAgent as ReturnType<typeof vi.fn>;
 
 function createBundle(overrides: Partial<KodaXChildContextBundle> = {}): KodaXChildContextBundle {
   return {

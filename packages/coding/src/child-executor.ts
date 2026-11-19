@@ -94,18 +94,18 @@ import type {
   WorkflowEventCorrelation,
 } from '@kodax-ai/agent';
 import { resolveRoleEffort } from './reasoning-effort.js';
-// FEATURE_093 (v0.7.24): lazy-load `runKodaX` to break the cycle
+// FEATURE_093 (v0.7.24): lazy-load the leaf executor to break the cycle
 // `agent.ts → extensions/runtime.ts → tools/index.ts → tools/registry.ts
 // → child-executor.ts → agent.ts`. The runtime import defers agent resolution
 // until a child is actually spawned, by which point the parent module graph
 // has fully initialised. No top-level `import ... from './agent.js'` or
 // `typeof import('./agent.js')` references — both count as edges in madge.
-type RunKodaXFn = (options: KodaXOptions, prompt: string) => Promise<KodaXResult>;
-let _runKodaXCache: RunKodaXFn | undefined;
-let _runKodaXLoadPromise: Promise<RunKodaXFn> | undefined;
-async function getRunKodaX(): Promise<RunKodaXFn> {
-  if (_runKodaXCache) return _runKodaXCache;
-  if (!_runKodaXLoadPromise) {
+type RunLeafFn = (options: KodaXOptions, prompt: string) => Promise<KodaXResult>;
+let _runLeafCache: RunLeafFn | undefined;
+let _runLeafLoadPromise: Promise<RunLeafFn> | undefined;
+async function getRunLeaf(): Promise<RunLeafFn> {
+  if (_runLeafCache) return _runLeafCache;
+  if (!_runLeafLoadPromise) {
     // The specifier MUST be a string literal inside import(). esbuild only
     // bundles dynamic imports whose argument is a literal; a computed
     // specifier (e.g. `const spec = './agent.js'; import(spec)`) is left as a
@@ -124,21 +124,20 @@ async function getRunKodaX(): Promise<RunKodaXFn> {
     // still tripping), the vanilla native error surfaces as a cryptic
     // "Cannot find module './agent.js'" deep inside a dispatch call.
     // Restate what went wrong + what the caller should check.
-    _runKodaXLoadPromise = import('./agent.js')
-      .then((agentModule: { runKodaX?: RunKodaXFn }) => {
-        const runKodaX = agentModule.runKodaX;
-        if (typeof runKodaX !== 'function') {
+    _runLeafLoadPromise = import('./agent.js')
+      .then((agentModule: { runLeafAgent?: RunLeafFn }) => {
+        const runLeafAgent = agentModule.runLeafAgent;
+        if (typeof runLeafAgent !== 'function') {
           throw new Error(
-            `[child-executor] Agent module loaded but \`runKodaX\` export is missing or not a function. ` +
-            `This indicates an API break in packages/coding/src/agent.ts. ` +
-            `Check that \`export { runKodaX }\` is still present.`,
+            `[child-executor] Agent module loaded but \`runLeafAgent\` export is missing or not a function. ` +
+            `This indicates an API break in packages/coding/src/agent.ts.`,
           );
         }
-        _runKodaXCache = runKodaX;
-        return runKodaX;
+        _runLeafCache = runLeafAgent;
+        return runLeafAgent;
       })
       .catch((err: unknown) => {
-        _runKodaXLoadPromise = undefined;
+        _runLeafLoadPromise = undefined;
         if (err instanceof Error && err.message.startsWith('[child-executor]')) {
           throw err;
         }
@@ -150,7 +149,7 @@ async function getRunKodaX(): Promise<RunKodaXFn> {
         );
       });
   }
-  return _runKodaXLoadPromise;
+  return _runLeafLoadPromise;
 }
 
 const WORKFLOW_CHILD_DIGEST_SYSTEM_PROMPT = [
@@ -899,7 +898,7 @@ function selectContextDiagnosticEvents(
 
 async function createWorkflowChildDigest(
   input: {
-    readonly runFn: RunKodaXFn;
+    readonly runFn: RunLeafFn;
     readonly result: KodaXResult;
     readonly provider: string;
     readonly model?: string;
@@ -997,7 +996,7 @@ async function createWorkflowChildDigest(
 
 function scheduleWorkflowChildDigest(
   input: {
-    readonly runFn: RunKodaXFn;
+    readonly runFn: RunLeafFn;
     readonly result: KodaXResult;
     readonly provider: string;
     readonly model?: string;
@@ -1045,7 +1044,7 @@ const STRUCTURED_OUTPUT_REPAIR_TIMEOUT_MS = 15_000;
  * never changes the child's terminal status.
  */
 async function resolveChildStructuredOutput(input: {
-  readonly runFn: RunKodaXFn;
+  readonly runFn: RunLeafFn;
   readonly result: KodaXResult;
   readonly provider: string;
   readonly model?: string;
@@ -1404,7 +1403,7 @@ async function runReadChildBody(
   let fallbackTokensUsed = 0;
   try {
     const childStartedAt = Date.now();
-    const runFn = await getRunKodaX();
+    const runFn = await getRunLeaf();
     const childSession = buildChildRunSession(options, options.initialMessages);
     const childEffort = resolveChildEffort(bundle, effortOverride, options.parentOptions, reasoningProfile);
     let actualProvider = provider;
@@ -1416,7 +1415,7 @@ async function runReadChildBody(
         effort: childEffort,
         sessionControl: recoveryControl,
         reasoningMode: options.parentOptions.reasoningMode,
-        // The child stays on the direct runKodaX/Runner substrate. Only Runtime
+        // The child stays on the direct leaf/Runner substrate. Only Runtime
         // Actor children carry the AMA label, which keeps recursive collaboration
         // and AMA-gated surfaces available to them. Other leaf children stay
         // unlabeled, so those AMA gates stay closed.
@@ -1722,7 +1721,7 @@ async function runWriteChildBody(
   let fallbackTokensUsed = 0;
   try {
     const childStartedAt = Date.now();
-    const runFn = await getRunKodaX();
+    const runFn = await getRunLeaf();
     const childSession = buildChildRunSession(options, options.initialMessages);
     const childEffort = resolveChildEffort(bundle, effortOverride, options.parentOptions, reasoningProfile);
     let actualProvider = provider;
@@ -1734,7 +1733,7 @@ async function runWriteChildBody(
         effort: childEffort,
         reasoningMode: options.parentOptions.reasoningMode,
         sessionControl: recoveryControl,
-        // The child stays on the direct runKodaX/Runner substrate. Only Runtime
+        // The child stays on the direct leaf/Runner substrate. Only Runtime
         // Actor children carry the AMA label, which keeps recursive collaboration
         // and AMA-gated surfaces available to them. Other leaf children stay
         // unlabeled, so those AMA gates stay closed.
