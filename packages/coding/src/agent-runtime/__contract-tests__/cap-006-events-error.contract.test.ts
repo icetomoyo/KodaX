@@ -39,7 +39,7 @@ import type {
   KodaXToolDefinition,
 } from '@kodax-ai/llm';
 
-import { runKodaX } from '../../agent.js';
+import { runLeafAgent } from '../../agent.js';
 
 const PROVIDER_NAME = 'cap-006-test-provider';
 const API_KEY_ENV = 'CAP_006_TEST_PROVIDER_API_KEY';
@@ -110,7 +110,7 @@ class ToolThenFailProvider extends KodaXBaseProvider {
   }
 }
 
-// Issue 128: contract tests drive runKodaX end-to-end and flake at 5000ms
+// Issue 128: contract tests drive runLeafAgent end-to-end and flake at 5000ms
 // default under heavy parallel vitest load. Match the 30s contract-test budget.
 describe('CAP-006: onError event contract', { timeout: 30_000 }, () => {
   beforeEach(() => {
@@ -129,7 +129,7 @@ describe('CAP-006: onError event contract', { timeout: 30_000 }, () => {
 
   it('CAP-EVENTS-ERROR-001: fires with the same Error instance the substrate caught (payload identity preserved)', async () => {
     const onError = vi.fn();
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: PROVIDER_NAME,
         model: 'baseline-model',
@@ -152,7 +152,7 @@ describe('CAP-006: onError event contract', { timeout: 30_000 }, () => {
 
   it('keeps a safe structured failure when the request after a tool result fails', async () => {
     const onTurnFailed = vi.fn();
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: TOOL_FAILURE_PROVIDER_NAME,
         model: 'tool-failure-model',

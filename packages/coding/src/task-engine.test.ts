@@ -411,6 +411,15 @@ describe('runManagedTask', () => {
     } finally { discover.mockRestore(); }
   });
 
+  it('reports an enforced Skill missing from self-discovered sources as not found', async () => {
+    const discover = vi.spyOn(SkillRegistry.prototype, 'discover').mockResolvedValue(undefined);
+    try {
+      await expect(ensureManagedSkillCatalog({ provider: 'anthropic', context: {
+        skillInvocation: { name: 'draft-response', runtimePolicy: { enforceAtRuntime: true } },
+      } })).rejects.toMatchObject({ code: 'skill_not_found', source: 'local', stage: 'skill_load' });
+    } finally { discover.mockRestore(); }
+  });
+
   it('waits for runtime-owned PostToolUse hooks before returning', async () => {
     const root = await createTempDir('kodax-managed-skill-hook-');
     const skillDir = path.join(root, '.kodax', 'skills', 'delayed-skill');

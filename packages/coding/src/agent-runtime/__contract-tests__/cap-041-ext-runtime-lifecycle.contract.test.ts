@@ -46,7 +46,7 @@ import type {
   KodaXToolDefinition,
 } from '@kodax-ai/llm';
 
-import { runKodaX } from '../../agent.js';
+import { runLeafAgent } from '../../agent.js';
 import {
   combineExtensionRuntimes,
   createExtensionRuntime,
@@ -90,7 +90,7 @@ class LifecycleProvider extends KodaXBaseProvider {
   }
 }
 
-// Issue 128: contract tests drive runKodaX end-to-end and flake at 5000ms
+// Issue 128: contract tests drive runLeafAgent end-to-end and flake at 5000ms
 // default under heavy parallel vitest load. Match the root 30s ceiling.
 describe('CAP-041: extension runtime activation lifecycle contract', { timeout: 30_000 }, () => {
   let baselineRuntime: ReturnType<typeof getActiveExtensionRuntime>;
@@ -113,7 +113,7 @@ describe('CAP-041: extension runtime activation lifecycle contract', { timeout: 
     const hydrateSpy = vi.spyOn(runtime, 'hydrateSession');
 
     registerModelProvider(PROVIDER_NAME, () => new LifecycleProvider('success'));
-    await runKodaX(
+    await runLeafAgent(
       { provider: PROVIDER_NAME, model: 'baseline-model' },
       'do thing',
     );
@@ -138,7 +138,7 @@ describe('CAP-041: extension runtime activation lifecycle contract', { timeout: 
 
     registerModelProvider(PROVIDER_NAME, () => new LifecycleProvider('success'));
     try {
-      const result = await runKodaX(
+      const result = await runLeafAgent(
         {
           provider: PROVIDER_NAME,
           model: 'baseline-model',
@@ -170,7 +170,7 @@ describe('CAP-041: extension runtime activation lifecycle contract', { timeout: 
     });
 
     registerModelProvider(PROVIDER_NAME, () => new LifecycleProvider('success'));
-    await runKodaX(
+    await runLeafAgent(
       { provider: PROVIDER_NAME, model: 'baseline-model' },
       'do thing',
     );
@@ -194,7 +194,7 @@ describe('CAP-041: extension runtime activation lifecycle contract', { timeout: 
     });
 
     registerModelProvider(PROVIDER_NAME, () => new LifecycleProvider('throw'));
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       { provider: PROVIDER_NAME, model: 'baseline-model' },
       'do thing',
     );

@@ -44,6 +44,7 @@ describe('zero-network replay of first-turn live smoke', () => {
     setAgentConfigHome(path.join(fixture, 'home'));
     registerModelProvider(providerName, () => new ReplayProvider());
     try {
+      // The managed Worker rejects on caller abort; the hook aborts at the third tool call.
       const result = await runKodaX({
         provider: providerName, maxIter: 3, reasoningMode: 'off',
         maxOutputTokens: 2048, lsp: false, disablePromptCache: true, abortSignal: controller.signal,
@@ -58,7 +59,10 @@ describe('zero-network replay of first-turn live smoke', () => {
           guards.push({ name, input, meta, toolCalls, abortedBefore: controller.signal.aborted, resolved, target, allowed });
           return allowed;
         } },
-      }, '请读取 sum.js，把 add 的实现修正为加法，保留现有注释和格式。这是一个简单修复，只需精确编辑并简短报告完成，不需要运行命令或创建计划。');
+      }, '请读取 sum.js，把 add 的实现修正为加法，保留现有注释和格式。这是一个简单修复，只需精确编辑并简短报告完成，不需要运行命令或创建计划。').catch((error: unknown) => {
+        if (error instanceof Error && error.name === 'AbortError' && controller.signal.aborted) return { aborted: error.message };
+        throw error;
+      });
       const content = await fs.readFile(target, 'utf8');
       const directory = path.join(os.tmpdir(), 'kodax-eval-dumps', 'first-turn-tokens-v1');
       await fs.mkdir(directory, { recursive: true });

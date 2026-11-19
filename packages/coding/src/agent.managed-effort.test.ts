@@ -6,7 +6,7 @@ import { KodaXBaseProvider, registerModelProvider, type KodaXMessage, type KodaX
   type KodaXReasoningRequest, type KodaXStreamResult, type KodaXToolDefinition } from '@kodax-ai/llm';
 import type { KodaXProviderStreamOptions } from '@kodax-ai/llm';
 import { runManagedTask } from './task-engine.js';
-import { runKodaX } from './agent.js';
+import { runLeafAgent } from './agent.js';
 import { createSessionControl } from './running-session.js';
 import { createExtensionRuntime } from './extensions/runtime.js';
 import { awaitLatestCodingMemoryReviewDrain } from './memory-runtime.js';
@@ -79,7 +79,7 @@ it.for([
         : `export default api => api.hook('${kind === 'hydrate' ? 'session:hydrate' : 'tool:before'}', () => api.runtime.setThinkingLevel('max'));`);
       await runtime!.loadExtension(extensionPath);
     }
-    running = (mode === 'direct' ? runKodaX : runManagedTask)({ provider: 'managed-effort-fixture', ...(mode === 'ama' ? { agentMode: 'ama' as const } : {}),
+    running = (mode === 'direct' ? runLeafAgent : runManagedTask)({ provider: 'managed-effort-fixture', ...(mode === 'ama' ? { agentMode: 'ama' as const } : {}),
       effort, reasoningMode: 'quick', lsp: false, sessionControl: control, extensionRuntime: runtime, abortSignal: testContext.signal,
       context: { executionCwd: directory, gitRoot: directory, configHome: path.join(directory, '.kodax'),
         repoIntelligenceMode: 'off' }, maxIter: 5 }, 'Reply briefly.');

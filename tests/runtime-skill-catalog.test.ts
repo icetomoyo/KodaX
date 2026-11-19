@@ -5,7 +5,6 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { Runner, SkillRegistry } from '@kodax-ai/agent';
 import { KodaXBaseProvider, registerModelProvider, type KodaXMessage,
   type KodaXToolDefinition, type KodaXStreamResult } from '@kodax-ai/llm';
-import { runKodaX } from '../packages/coding/src/agent.js';
 import { runManagedTask } from '../packages/coding/src/task-engine.js';
 import { createDefaultCodingAgent } from '../packages/coding/src/coding-preset.js';
 import type { KodaXOptions } from '../packages/coding/src/types.js';
@@ -18,7 +17,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true, maxRetries: 5 })));
 });
 
-it.each(['direct', 'ama', 'runner'] as const)('keeps an admitted Skill discoverable under Markdown/profile instructions in %s', async mode => {
+it.each(['ama', 'runner'] as const)('keeps an admitted Skill discoverable under Markdown/profile instructions in %s', async mode => {
   const root = await mkdtemp(path.join(tmpdir(), 'kodax-profile-catalog-'));
   roots.push(root);
   const configHome = path.join(root, '.kodax');
@@ -52,8 +51,7 @@ it.each(['direct', 'ama', 'runner'] as const)('keeps an admitted Skill discovera
     const scoped: KodaXOptions = { ...options, provider: name, reasoningMode: 'off', maxIter: 3,
       context: { ...options.context, configHome, gitRoot: root, executionCwd: root, repoIntelligenceMode: 'off' } };
     if (mode === 'runner') return (await Runner.run(createDefaultCodingAgent(), 'Inspect evidence.', { presetOptions: scoped })).data;
-    return mode === 'direct' ? runKodaX(scoped, 'Inspect evidence.')
-      : runManagedTask({ ...scoped, agentMode: 'ama' }, 'Inspect evidence.');
+    return runManagedTask({ ...scoped, agentMode: 'ama' }, 'Inspect evidence.');
   };
   for (const entry of ['binding', 'sdk-profile'] as const) {
     requests.length = 0;
@@ -80,7 +78,7 @@ it.each(['direct', 'ama', 'runner'] as const)('keeps an admitted Skill discovera
       taskVerification: { summary: 'TASK_VERIFY', requiredChecks: ['TASK_CHECK'] } } });
     expect(requests[0]!.system, entry).toContain('PROFILE_INSTRUCTIONS');
     expect(requests[0]!.tools).toContain('skill');
-    // AMA carries capability catalogs in request messages, while the direct engine uses system.
+    // AMA carries capability catalogs in request messages, while the Runner preset uses system.
     const modelContext = `${requests[0]!.system}\n${JSON.stringify(requests[0]!.messages)}`;
     expect(modelContext, entry).toContain('- audit-evidence:');
     expect(modelContext).not.toContain('- private-skill:');
@@ -89,7 +87,7 @@ it.each(['direct', 'ama', 'runner'] as const)('keeps an admitted Skill discovera
       expect(modelContext).toContain('TASK_VERIFY');
       expect(modelContext).toContain('PROFILE_EVIDENCE');
       expect(modelContext).toContain('TASK_CHECK');
-      // The direct engine and Runner still render system.md; the managed Worker renders its own execution section.
+      // The Runner preset still renders system.md; the managed Worker renders its own execution section.
       expect(modelContext).toContain(mode === 'ama' ? 'EXECUTION, RECOVERY AND DELIVERY' : 'EXECUTION GUIDANCE (match your approach');
     }
     expect(JSON.stringify(requests[1]?.messages), entry).toContain('BODY_audit-evidence');

@@ -158,12 +158,10 @@ import {
   reduceOutputSegmentProjection,
   runManagedTask,
   assertKodaXPromptSpec,
-  assertPromptSpecOnManagedRun,
   runToolInvocation,
   runScopedToolMap,
   normalizeShellExecutionContract,
   shellExecutionContractFingerprint,
-  startKodaX,
   toolBash,
   buildPromptMessageContent,
   ToolResultBatchCapacityError,
@@ -270,7 +268,6 @@ import type {
   RuntimeToolExposurePlan,
   ToolCallSignal,
   KodaXVideoInputArtifact,
-  RunningSession,
 } from "@kodax-ai/coding";
 import {
   isValidTokenBudget,
@@ -3725,7 +3722,6 @@ interface RuntimeRunRecord {
   lifecycleError?: RuntimeRunLifecycleError;
   terminal?: RuntimeTerminalFact;
   readonly result: Promise<RuntimeRunResult>;
-  running?: RunningSession;
   sessionControl?: KodaXSessionMutators;
   abortController?: AbortController;
   preparation?: Promise<unknown>;
@@ -3744,7 +3740,6 @@ interface RuntimeRunRecord {
   /** Survives start-Promise release; Actor state alone cannot settle Workflow resources. */
   workflowOwned?: boolean;
   mode: RuntimeRunMode;
-  readonly inheritModeAfterDurabilityRepair?: boolean;
   readonly origin?: RuntimeRunStatus["origin"];
   readonly continuation?: Omit<RuntimeContinuationStatus, "state">;
   readonly interruptInputs: RuntimeInterruptInputRecord[];
@@ -3760,12 +3755,6 @@ interface RuntimeRunRecord {
   interruptInputOpen: boolean;
   releaseAbortSignalSubscription?: () => void;
   start?: PendingRunStart;
-  executorTerminalSignal?: {
-    readonly signal: "completed" | "failed";
-    readonly error?: Error;
-    readonly failure?: RuntimeRunFailureFact;
-    readonly interruptedAtSignal: boolean;
-  };
   actorHealthBaseState?: RuntimeActorHealthBaseRunState;
   settlementFinished?: boolean;
   unconfirmedResult?: RuntimeRunResult;
@@ -5581,7 +5570,6 @@ async function createKodaXRuntimeInternal(
       const suspended = [...runs.values()].filter(run => run.generationSuspended);
       for (const run of suspended) {
         run.abortController?.abort(new DOMException('Host suspended at a generation checkpoint.', 'AbortError'));
-        run.running?.abort();
       }
       await Promise.allSettled(suspended.map(run => run.result));
       if (!agentPlaneClosed) {
@@ -5750,7 +5738,7 @@ async function createKodaXRuntimeInternal(
           toolCeiling: record.recoveryToolCeiling,
           executionTarget: { kind: 'actor_turn', actorPath: execution.actor.path, turnId: execution.turn.turnId }, display: {}, permissions, userInputs,
           enableSharedInteractions: true, onPlanApproved: async () => false, onTurnStarted: () => {},
-          onExecutorTerminal: () => {}, onPhase: phase => { if (!record.generationSuspended) record.phase = phase; },
+          onPhase: phase => { if (!record.generationSuspended) record.phase = phase; },
           onContextRecoveryPrepared: () => persistGenerationRecovery(record, persistence),
           onContextRecoveryChanged: () => { saveRunStatusSafely(bus, persistence, record, statusFromRecord(record)); },
           onEffectiveConfigChanged: () => { saveRunStatusSafely(bus, persistence, record, statusFromRecord(record)); },
@@ -10751,7 +10739,6 @@ async function createRuntimeRunService(deps: {
       productQueue.markDropped(record.sessionId, inputId),
     );
     releaseAbortSignalSubscription(record);
-    record.running?.abort(error);
     record.abortController?.abort(error);
     deps.permissions.rejectForRun(record.runId, message);
     deps.userInputs.rejectForRun(record.runId, message);
@@ -10814,7 +10801,6 @@ async function createRuntimeRunService(deps: {
       cancellationController.signal.aborted
       || record.stop !== undefined
       || deps.isClosed()
-      || record.running?.aborted === true
       || record.abortController?.signal.aborted === true
       || record.start?.options.abortSignal?.aborted === true
     ) {
@@ -11070,101 +11056,6 @@ async function createRuntimeRunService(deps: {
     }
   };
 
-  const settleFromExecutorSignal = (
-    record: RuntimeRunRecord,
-    signal: "completed" | "failed",
-    error?: Error,
-  ): void => {
-    if (record.generationSuspended || record.terminalEmitted || record.executorTerminalSignal !== undefined) {
-      return;
-    }
-    record.interruptInputOpen = false;
-    record.executorTerminalSignal = {
-      signal,
-      ...(error !== undefined ? { error } : {}),
-      ...(signal === "failed"
-        ? {
-            failure: captureRunFailureFact(
-              record,
-              error ?? new Error("Runtime executor reported failure"),
-            ),
-          }
-        : {}),
-      interruptedAtSignal:
-        record.running?.aborted === true
-        || record.start?.options.abortSignal?.aborted === true
-        || record.abortController?.signal.aborted === true,
-    };
-    // The executor emits its terminal callback immediately before its result
-    // Promise resolves. Give that Promise the rest of the current event-loop
-    // turn so the authoritative result (including KodaXResult payload) wins.
-    // This fallback runs on the next turn only when the Promise was lost.
-    setImmediate(() => {
-      void (async () => {
-      if (record.settlementFinished === true) return;
-      // A resolved executor Promise owns any asynchronous Host-side settlement.
-      if (executorPromiseSettled(record)) return;
-      const latched = record.executorTerminalSignal;
-      if (latched === undefined) return;
-      const actorHealth = await awaitActorFinalization(record);
-      if (actorHealth.state === "unknown") {
-        finishUnconfirmedRun(
-          record,
-          unknownActorSettlementResult(record),
-        );
-        return;
-      }
-      if (actorDurabilityFailureApplies(record)) {
-        if (!executorPromiseSettled(record)) return;
-        finishRun(
-          record,
-          applyRunFailureFact(record, record.actorDurabilityFailure),
-        );
-        return;
-      }
-      if (latched.signal === "failed") {
-        finishRun(
-          record,
-          applyRunFailureFact(
-            record,
-            latched.failure
-              ?? captureRunFailureFact(
-                record,
-                latched.error ?? new Error("Runtime executor reported failure"),
-              ),
-          ),
-        );
-        return;
-      }
-      if (!record.terminalEmitted) {
-        markRunTerminal(
-          deps.bus,
-          deps.persistence,
-          record,
-          latched.interruptedAtSignal ? "interrupted" : "completed",
-        );
-      }
-      finishRun(record, {
-        runId: record.runId,
-        sessionId: record.sessionId,
-        phase: record.phase,
-        ...(record.terminal !== undefined
-          ? { terminal: record.terminal }
-          : {}),
-        ...(record.stop !== undefined ? { stop: record.stop } : {}),
-      });
-      })().catch((error: unknown) => {
-        emitKodaXDiagnostic({
-          source: "runtime.run.finalization",
-          level: "error",
-          message: `Failed to settle Runtime run ${record.runId} after its executor terminal signal.`,
-          detail: error,
-        });
-        finishRunSettlementFailure(record, error);
-      });
-    });
-  };
-
   const captureRunFailureFact = (
     record: RuntimeRunRecord,
     error: unknown,
@@ -11331,54 +11222,6 @@ async function createRuntimeRunService(deps: {
     ) {
       return applyRunFailureFact(record, record.actorDurabilityFailure);
     }
-    const executorSignal = record.executorTerminalSignal;
-    if (
-      executorSignal !== undefined
-      && (
-        record.actorDurabilityFailure === undefined
-        || executorPromiseSettled(record)
-      )
-      && !record.terminalEmitted
-      && canApplyExecutorTerminalSignal(record)
-    ) {
-      if (executorSignal.signal === "failed") {
-        return applyRunFailureFact(
-          record,
-          executorSignal.failure
-            ?? captureRunFailureFact(
-              record,
-              executorSignal.error
-                ?? new Error("Runtime executor reported failure"),
-            ),
-        );
-      }
-      markRunTerminal(
-        deps.bus,
-        deps.persistence,
-        record,
-        executorSignal.interruptedAtSignal ? "interrupted" : "completed",
-      );
-      return {
-        runId: record.runId,
-        sessionId: record.sessionId,
-        phase: record.phase,
-        ...(record.terminal !== undefined
-          ? { terminal: record.terminal }
-          : {}),
-        ...(record.stop !== undefined ? { stop: record.stop } : {}),
-      };
-    }
-    if (executorSignal !== undefined && record.terminalEmitted) {
-      return {
-        runId: record.runId,
-        sessionId: record.sessionId,
-        phase: record.phase,
-        ...(record.terminal !== undefined
-          ? { terminal: record.terminal }
-          : {}),
-        ...(record.stop !== undefined ? { stop: record.stop } : {}),
-      };
-    }
     const wasQueued = record.phase === "queued";
     if (wasQueued) {
       removeQueuedRun(queueBySession, record);
@@ -11397,7 +11240,6 @@ async function createRuntimeRunService(deps: {
     releaseAbortSignalSubscription(record);
     record.providerCredentialScope?.close(reason);
     const abortError = new DOMException(reason, "AbortError");
-    record.running?.abort(abortError);
     if (!record.independentActorRef) record.abortController?.abort(abortError);
     record.resumeContextCapacity?.();
     const actorCancellation = requestManagedActorCancellation(record, reason);
@@ -11523,18 +11365,6 @@ async function createRuntimeRunService(deps: {
       finishRun(record, applyRunFailureFact(record, failure));
       return;
     }
-    // Executor callbacks are deliberately fallback-only. A returned Promise
-    // result or rejection above is the stronger fact when both are present.
-    if (record.executorTerminalSignal !== undefined) {
-      finishRun(
-        record,
-        cancelRun(
-          record,
-          record.stop?.reason ?? "runtime run recovered",
-          false,
-        ),
-      );
-    }
   };
 
   const launchRecord = (record: RuntimeRunRecord): void => {
@@ -11612,8 +11442,6 @@ async function createRuntimeRunService(deps: {
           state.denials = createAutoModeDenialTracker();
         }
       },
-      onExecutorTerminal: (signal, error) =>
-        settleFromExecutorSignal(record, signal, error),
       onContextRecoveryPrepared: () => persistGenerationRecovery(record, deps.persistence, productQueue.snapshot(record.sessionId)),
       onContextRecoveryChanged: () => { publishRunUpdate(record); },
       onEffectiveConfigChanged: () => { publishRunUpdate(record); },
@@ -11622,7 +11450,6 @@ async function createRuntimeRunService(deps: {
           record.generationSuspended
           ||
           record.terminalEmitted
-          || record.executorTerminalSignal !== undefined
           || record.phase === "unknown"
           || record.stop?.state === "unknown"
         ) {
@@ -11656,7 +11483,6 @@ async function createRuntimeRunService(deps: {
       onStage: (stage, activeSubtaskCount) => {
         if (
           record.terminalEmitted
-          || record.executorTerminalSignal !== undefined
           || record.phase === "unknown"
           || record.stop?.state === "unknown"
         ) {
@@ -11834,194 +11660,10 @@ async function createRuntimeRunService(deps: {
       },
     );
     const executeUnobserved = (recoveryEvidence: readonly KodaXInterruptedRunEvidence[] = []): void => {
-    if (record.mode === "managed_task") {
-      const sessionControl = createSessionControl();
-      record.sessionControl = sessionControl;
-      const abortController = record.abortController ?? new AbortController();
-      record.abortController = abortController;
-      const upstreamSignal = runOptions.abortSignal;
-      const handleUpstreamAbort = (): void => {
-        record.releaseAbortSignalSubscription = undefined;
-        record.interruptInputOpen = false;
-        const upstreamReason = upstreamSignal?.reason;
-        cancelRun(
-          record,
-          upstreamReason instanceof Error
-            ? upstreamReason.message
-            : typeof upstreamReason === "string" && upstreamReason.trim().length > 0
-              ? upstreamReason
-              : "external abort requested",
-          true,
-        );
-      };
-      if (upstreamSignal?.aborted) {
-        handleUpstreamAbort();
-      }
-      const executeCommandTool = (): Promise<KodaXResult> => withExtensionRuntimeContext(async () => {
-        const value = await runToolInvocation({ ...runOptions, abortSignal: abortController.signal },
-          runOptions.toolInvocation!, record.start!.prompt);
-        const command = record.start?.commandInput;
-        if (!command || !value.success || value.interrupted || abortController.signal.aborted || record.stop) return value;
-        const result = JSON.parse(value.lastText) as import('@kodax-ai/coding').ExtensionCommandResult;
-        if (result.success === false) return { ...value, success: false, lastText: result.message ?? value.lastText };
-        if (!result.invocation) return { ...value, lastText: result.message ?? '' };
-        const invocation = result.invocation;
-        const start = record.start!;
-        const model = resolveSkillModelOverride(record.provider, invocation.model);
-        if (model !== undefined) record.model = model;
-        start.options.context = { ...start.options.context, rawUserInput: start.prompt, promptOverlay: invocation.prompt,
-          commandInvocation: { ...invocation, name: invocation.displayName ?? command.name, source: 'extension',
-            runtimePolicy: { enforceAtRuntime: true } } };
-        const continuation = { ...createRunOptions(), toolInvocation: undefined, abortSignal: abortController.signal, sessionControl };
-        abortController.signal.throwIfAborted();
-        return runManagedTask(continuation, start.prompt);
-      }, runOptions.extensionRuntime, record.runId);
-      const interruptedRunEvidence = runOptions.toolInvocation === undefined
-        ? recoveryEvidence
-        : [];
-      record.workflowOwned = record.start?.workflow !== undefined;
-      const managedOperation = () =>
-        runOptions.toolInvocation !== undefined
-        ? runWithMcpCallContext({ sessionId: record.sessionId, events }, executeCommandTool)
-        : record.start?.workflow
-        ? runWithMcpCallContext({ sessionId: record.sessionId, events }, () => executeRuntimeWorkflow(
-          record.start!.workflow!, runOptions, record.runId, record.sessionId, abortController.signal,
-        ))
-        : runWithMcpCallContext({ sessionId: record.sessionId, events }, () => runManagedTask(
-          {
-            ...runOptions,
-            sessionControl,
-            ...(interruptedRunEvidence.length > 0
-              ? { context: { ...runOptions.context, interruptedRunEvidence } }
-              : {}),
-            abortSignal: abortController.signal,
-          },
-          record.start!.prompt,
-        ));
-      const managedResult =
-        record.providerCredentialScope !== undefined
-          ? runWithProviderCredentialLeaseScope(
-              record.providerCredentialScope,
-              managedOperation,
-            )
-          : record.providerCredential !== undefined
-          ? runWithProviderCredential(
-              record.provider,
-              record.providerCredential,
-              managedOperation,
-            )
-          : managedOperation();
-      if (upstreamSignal !== undefined && !upstreamSignal.aborted) {
-        upstreamSignal.addEventListener("abort", handleUpstreamAbort, {
-          once: true,
-        });
-        record.releaseAbortSignalSubscription = () => {
-          upstreamSignal.removeEventListener("abort", handleUpstreamAbort);
-        };
-      } else if (upstreamSignal?.aborted && !abortController.signal.aborted) {
-        handleUpstreamAbort();
-      }
-      registerActiveQueueRoute(record);
-      void managedResult
-        .then(async (value): Promise<RuntimeRunResult> => {
-          if (record.generationSuspended) return resultFromStatus(statusFromRecord(record));
-          record.capturedExecutorResult = value;
-          value = await mergeForkSkillResult(record, value);
-          record.capturedExecutorResult = value;
-          const phase = record.terminalEmitted
-            ? record.phase
-            : value.interrupted
-              ? "interrupted"
-              : value.success
-                ? "completed"
-                : "failed";
-          const actorHealth = await awaitActorFinalization(record);
-          if (actorHealth.state === "unknown") {
-            return unknownActorSettlementResult(record, value);
-          }
-          if (actorDurabilityFailureApplies(record)) {
-            return applyRunFailureFact(record, record.actorDurabilityFailure);
-          }
-          await persistWorkflowFinal(record, value.lastText);
-          scheduleWorkflowCleanup(record);
-          markRunTerminal(
-            deps.bus,
-            deps.persistence,
-            record,
-            phase,
-            terminalFromExecutorResult(record, value, phase),
-          );
-          return {
-            runId: record.runId,
-            sessionId: record.sessionId,
-            phase: record.phase,
-            result: value,
-            ...(record.error !== undefined
-              ? { error: createRuntimePublicError(record.error) }
-              : {}),
-            ...(record.terminal !== undefined
-              ? { terminal: record.terminal }
-              : {}),
-            ...(record.failureDetail !== undefined
-              ? { failureDetail: record.failureDetail }
-              : {}),
-            ...(record.stop !== undefined ? { stop: record.stop } : {}),
-          };
-        }, async (error: unknown) => {
-          const failure = captureRunFailureFact(record, error);
-          record.capturedExecutorFailure = failure;
-          const actorHealth = await awaitActorFinalization(record);
-          if (actorHealth.state === "unknown") {
-            record.unconfirmedFailure = failure;
-            return unknownActorSettlementResult(record);
-          }
-          await persistWorkflowFinal(record, getDefaultWorkflowRunManager().get(record.runId)?.error
-            ?? failure.error?.message ?? 'Workflow failed.');
-          scheduleWorkflowCleanup(record);
-          return applyRunFailureFact(record, failure);
-        })
-        .then((result) => {
-          return finishAccordingToTerminalFact(record, result);
-        })
-        .catch((error: unknown) => finishRunSettlementFailure(record, error));
-      return;
-    }
-
-    const codingEvidence = recoveryEvidence;
-    const codingOperation = () => runWithMcpCallContext(
-      { sessionId: record.sessionId, events },
-      () => startKodaX(
-        codingEvidence.length > 0
-          ? { ...runOptions, context: { ...runOptions.context, interruptedRunEvidence: codingEvidence } }
-          : runOptions,
-        record.start!.prompt),
-    );
-    let running: RunningSession;
-    if (record.providerCredentialScope !== undefined) {
-      running = runWithProviderCredentialLeaseScope(
-        record.providerCredentialScope,
-        codingOperation,
-      );
-    } else if (record.providerCredential !== undefined) {
-      let scopedRunning: RunningSession | undefined;
-      const credentialLifetime = runWithProviderCredential(
-        record.provider,
-        record.providerCredential,
-        () => {
-          scopedRunning = codingOperation();
-          return scopedRunning.result.then(() => undefined);
-        },
-      );
-      void credentialLifetime.catch(() => undefined);
-      if (scopedRunning === undefined) {
-        throw new Error('Credential-bound coding Run did not start synchronously.');
-      }
-      running = scopedRunning;
-    } else {
-      running = codingOperation();
-    }
-    record.running = running;
-    record.sessionControl = running;
+    const sessionControl = createSessionControl();
+    record.sessionControl = sessionControl;
+    const abortController = record.abortController ?? new AbortController();
+    record.abortController = abortController;
     const upstreamSignal = runOptions.abortSignal;
     const handleUpstreamAbort = (): void => {
       record.releaseAbortSignalSubscription = undefined;
@@ -12039,16 +11681,73 @@ async function createRuntimeRunService(deps: {
     };
     if (upstreamSignal?.aborted) {
       handleUpstreamAbort();
-    } else if (upstreamSignal !== undefined) {
+    }
+    const executeCommandTool = (): Promise<KodaXResult> => withExtensionRuntimeContext(async () => {
+      const value = await runToolInvocation({ ...runOptions, abortSignal: abortController.signal },
+        runOptions.toolInvocation!, record.start!.prompt);
+      const command = record.start?.commandInput;
+      if (!command || !value.success || value.interrupted || abortController.signal.aborted || record.stop) return value;
+      const result = JSON.parse(value.lastText) as import('@kodax-ai/coding').ExtensionCommandResult;
+      if (result.success === false) return { ...value, success: false, lastText: result.message ?? value.lastText };
+      if (!result.invocation) return { ...value, lastText: result.message ?? '' };
+      const invocation = result.invocation;
+      const start = record.start!;
+      const model = resolveSkillModelOverride(record.provider, invocation.model);
+      if (model !== undefined) record.model = model;
+      start.options.context = { ...start.options.context, rawUserInput: start.prompt, promptOverlay: invocation.prompt,
+        commandInvocation: { ...invocation, name: invocation.displayName ?? command.name, source: 'extension',
+          runtimePolicy: { enforceAtRuntime: true } } };
+      const continuation = { ...createRunOptions(), toolInvocation: undefined, abortSignal: abortController.signal, sessionControl };
+      abortController.signal.throwIfAborted();
+      return runManagedTask(continuation, start.prompt);
+    }, runOptions.extensionRuntime, record.runId);
+    const interruptedRunEvidence = runOptions.toolInvocation === undefined
+      ? recoveryEvidence
+      : [];
+    record.workflowOwned = record.start?.workflow !== undefined;
+    const managedOperation = () =>
+      runOptions.toolInvocation !== undefined
+      ? runWithMcpCallContext({ sessionId: record.sessionId, events }, executeCommandTool)
+      : record.start?.workflow
+      ? runWithMcpCallContext({ sessionId: record.sessionId, events }, () => executeRuntimeWorkflow(
+        record.start!.workflow!, runOptions, record.runId, record.sessionId, abortController.signal,
+      ))
+      : runWithMcpCallContext({ sessionId: record.sessionId, events }, () => runManagedTask(
+        {
+          ...runOptions,
+          sessionControl,
+          ...(interruptedRunEvidence.length > 0
+            ? { context: { ...runOptions.context, interruptedRunEvidence } }
+            : {}),
+          abortSignal: abortController.signal,
+        },
+        record.start!.prompt,
+      ));
+    const managedResult =
+      record.providerCredentialScope !== undefined
+        ? runWithProviderCredentialLeaseScope(
+            record.providerCredentialScope,
+            managedOperation,
+          )
+        : record.providerCredential !== undefined
+        ? runWithProviderCredential(
+            record.provider,
+            record.providerCredential,
+            managedOperation,
+          )
+        : managedOperation();
+    if (upstreamSignal !== undefined && !upstreamSignal.aborted) {
       upstreamSignal.addEventListener("abort", handleUpstreamAbort, {
         once: true,
       });
       record.releaseAbortSignalSubscription = () => {
         upstreamSignal.removeEventListener("abort", handleUpstreamAbort);
       };
+    } else if (upstreamSignal?.aborted && !abortController.signal.aborted) {
+      handleUpstreamAbort();
     }
     registerActiveQueueRoute(record);
-    void running.result
+    void managedResult
       .then(async (value): Promise<RuntimeRunResult> => {
         if (record.generationSuspended) return resultFromStatus(statusFromRecord(record));
         record.capturedExecutorResult = value;
@@ -12068,6 +11767,8 @@ async function createRuntimeRunService(deps: {
         if (actorDurabilityFailureApplies(record)) {
           return applyRunFailureFact(record, record.actorDurabilityFailure);
         }
+        await persistWorkflowFinal(record, value.lastText);
+        scheduleWorkflowCleanup(record);
         markRunTerminal(
           deps.bus,
           deps.persistence,
@@ -12083,15 +11784,16 @@ async function createRuntimeRunService(deps: {
           ...(record.error !== undefined
             ? { error: createRuntimePublicError(record.error) }
             : {}),
-          ...(record.failureDetail !== undefined
-            ? { failureDetail: record.failureDetail }
-            : {}),
           ...(record.terminal !== undefined
             ? { terminal: record.terminal }
+            : {}),
+          ...(record.failureDetail !== undefined
+            ? { failureDetail: record.failureDetail }
             : {}),
           ...(record.stop !== undefined ? { stop: record.stop } : {}),
         };
       }, async (error: unknown) => {
+        if (record.generationSuspended) return resultFromStatus(statusFromRecord(record));
         const failure = captureRunFailureFact(record, error);
         record.capturedExecutorFailure = failure;
         const actorHealth = await awaitActorFinalization(record);
@@ -12099,9 +11801,14 @@ async function createRuntimeRunService(deps: {
           record.unconfirmedFailure = failure;
           return unknownActorSettlementResult(record);
         }
+        await persistWorkflowFinal(record, getDefaultWorkflowRunManager().get(record.runId)?.error
+          ?? failure.error?.message ?? 'Workflow failed.');
+        scheduleWorkflowCleanup(record);
         return applyRunFailureFact(record, failure);
       })
-      .then((result) => finishAccordingToTerminalFact(record, result))
+      .then((result) => {
+        return finishAccordingToTerminalFact(record, result);
+      })
       .catch((error: unknown) => finishRunSettlementFailure(record, error));
   };
 
@@ -12175,15 +11882,6 @@ async function createRuntimeRunService(deps: {
     if (!next || next.phase !== "queued") {
       drainNext(sessionId);
       return;
-    }
-    if (next.inheritModeAfterDurabilityRepair === true) {
-      const predecessor = next.continuation === undefined
-        ? undefined
-        : deps.runs.get(next.continuation.afterRunId);
-      if (predecessor?.actorDurabilityFailure !== undefined) {
-        next.mode = predecessor.mode;
-        publishRunUpdate(next);
-      }
     }
     startRecord(next);
   };
@@ -12554,11 +12252,10 @@ async function createRuntimeRunService(deps: {
       requiredAfterRun?.phase === "unknown"
       && requiredAfterRun.actorDurabilityFailure !== undefined
       && !requiredAfterRun.terminalEmitted;
-    const runMode: RuntimeRunRecord['mode'] = options.toolInvocation !== undefined || options.workMode === 'script' ? "managed_task" : input.mode
-      ?? (queuesBehindDurabilityRepair ? requiredAfterRun?.mode : undefined)
-      ?? (productInput !== undefined ? "managed_task" : undefined)
-      ?? "coding";
-    if (runMode === "coding") assertPromptSpecOnManagedRun(options.context?.prompt);
+    if (input.mode === "coding" && !recovery) {
+      emitKodaXDiagnostic({ source: "runtime.runs.start", level: "warn",
+        message: "runs.start mode 'coding' is deprecated and ignored; every root Run uses the managed Worker." });
+    }
     if (actorSession !== undefined) {
       const observedHealth = actorSession.health();
       const health = observedHealth.state === "recovering"
@@ -12672,7 +12369,6 @@ async function createRuntimeRunService(deps: {
       onPhase: (record, phase) => {
         if (
           record.terminalEmitted
-          || record.executorTerminalSignal !== undefined
           || record.phase === "unknown"
           || record.stop?.state === "unknown"
           || record.phase === phase
@@ -12748,11 +12444,8 @@ async function createRuntimeRunService(deps: {
       ...(options.reasoningMode !== undefined
         ? { reasoning: options.reasoningMode }
         : {}),
-      mode: runMode,
+      mode: "managed_task",
       workMode: resolveWorkMode(options),
-      ...(requiredAfterRun !== undefined && input.mode === undefined
-        ? { inheritModeAfterDurabilityRepair: true }
-        : {}),
       ...((input as RuntimeTrustedStartRunInput).providerCredential !==
       undefined
         ? {
@@ -13450,32 +13143,6 @@ async function createRuntimeRunService(deps: {
         revision: persisted.revision,
       });
     }
-    if (
-      run?.executorTerminalSignal !== undefined
-      && !run.terminalEmitted
-      && canApplyExecutorTerminalSignal(run)
-    ) {
-      if (options?.redirect === true) {
-        // The executor already latched its terminal callback, so this branch
-        // settles without requestRunStop. Persist the redirect reason anyway:
-        // the retained follow-up input must continue once the Run settles,
-        // whatever terminal phase the executor reports.
-        const redirectStop = deps.persistence.requestRunStop(
-          runId,
-          reason,
-          run.ownedByRuntime === true ? deps.runOwner.ownerId : undefined,
-        );
-        applyAuthoritativeRunStatus(run, redirectStop.status);
-      }
-      cancelRun(run, reason, false);
-      const terminal = deps.persistence.loadRunStatus(runId);
-      return runtimeRunStopReceipt({
-        accepted: false,
-        effectDeliveryAllowed: false,
-        status: terminal?.status ?? statusFromRecord(run),
-        revision: terminal?.revision ?? 0,
-      });
-    }
     const stop = deps.persistence.requestRunStop(
       runId,
       reason,
@@ -13499,7 +13166,6 @@ async function createRuntimeRunService(deps: {
         removeQueuedRun(queueBySession, run);
       }
       releaseAbortSignalSubscription(run);
-      run.running?.abort(new DOMException(reason, "AbortError"));
       if (!run.independentActorRef) run.abortController?.abort(new DOMException(reason, "AbortError"));
       const actorCancellation = requestManagedActorCancellation(
         run,
@@ -13705,7 +13371,7 @@ async function createRuntimeRunService(deps: {
           },
         };
         return startRun({ ...trusted, sessionId: record.sessionId, prompt: recovery.start.prompt,
-          mode: persisted.status.mode, options, permissionBroker: 'runtime' }, 'runtime.runs.start', { persisted, data: recovery, workMode });
+          options, permissionBroker: 'runtime' }, 'runtime.runs.start', { persisted, data: recovery, workMode });
       });
     },
     startAdmitted: (input) => startRun(input, 'runtime.runs.start'),
@@ -20990,10 +20656,6 @@ function wrapKodaXEvents(input: {
   readonly enableSharedInteractions: boolean;
   readonly record: RuntimeRunRecord;
   readonly onTurnStarted: () => void;
-  readonly onExecutorTerminal: (
-    signal: "completed" | "failed",
-    error?: Error,
-  ) => void;
   readonly onPhase: (phase: RuntimeRunPhase) => void;
   readonly onContextRecoveryChanged: () => void;
   readonly onEffectiveConfigChanged: () => void;
@@ -21025,7 +20687,6 @@ function wrapKodaXEvents(input: {
     enableSharedInteractions,
     record,
     onTurnStarted,
-    onExecutorTerminal,
     onPhase,
     onStage,
     onMidTurnUserMessages,
@@ -21753,14 +21414,12 @@ function wrapKodaXEvents(input: {
     onComplete(meta) {
       if (actorDurabilityFenced()) return;
       record.interruptInputOpen = false;
-      if (record.mode !== "managed_task") onExecutorTerminal("completed");
       emit("run.progress", { kind: "complete", meta }, meta);
       externalCallbacks()?.onComplete?.(meta);
     },
     onError(error, meta) {
       if (actorDurabilityFenced()) return;
       record.interruptInputOpen = false;
-      if (record.mode !== "managed_task") onExecutorTerminal("failed", error);
       const trustedManagedAbort =
         record.mode === "managed_task"
         && record.stop !== undefined
@@ -21773,8 +21432,7 @@ function wrapKodaXEvents(input: {
           severity: "error",
           message: trustedManagedAbort
             ? "Managed provider observed Runtime Stop."
-            : record.executorTerminalSignal?.failure?.failureDetail?.safeMessage
-              ?? captureRuntimeFailureDetail(error, record).safeMessage,
+            : captureRuntimeFailureDetail(error, record).safeMessage,
         },
         meta,
       );

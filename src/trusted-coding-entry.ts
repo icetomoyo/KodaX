@@ -96,17 +96,17 @@ export function withTrustedTextMutationHost<TOptions extends KodaXOptions>(
   } as TOptions, approvals);
 }
 
-/** KodaX-owned direct SDK entry with the native trusted-text authority bound. */
+/** KodaX-owned root SDK entry (managed Worker) with the native trusted-text authority bound. */
 export function runKodaX(options: KodaXOptions, prompt: string): Promise<KodaXResult> {
   return runCodingKodaX(withTrustedTextMutationHost(options), prompt);
 }
 
-/** Non-blocking KodaX-owned direct SDK entry with the same trusted-text authority. */
+/** Non-blocking KodaX-owned root SDK entry with the same trusted-text authority. */
 export function startKodaX(options: KodaXOptions, prompt: string): RunningSession {
   return startCodingKodaX(withTrustedTextMutationHost(options), prompt);
 }
 
-/** Managed KodaX entry with the same direct trusted-text authority. */
+/** Managed KodaX entry with the same trusted-text authority. */
 export function runManagedTask(options: KodaXOptions, prompt: string): Promise<KodaXResult> {
   return runCodingManagedTask(withTrustedTextMutationHost(options), prompt);
 }
@@ -146,7 +146,7 @@ export function createDefaultCodingAgent(
   });
 }
 
-/** Stateful direct SDK client with a fresh text authority for each send. */
+/** Stateful SDK client with a fresh text authority for each send. */
 export class KodaXClient extends CodingKodaXClient {
   constructor(options: KodaXOptions) {
     super(options, runKodaX);

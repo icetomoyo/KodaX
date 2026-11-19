@@ -110,11 +110,16 @@ export async function ensureManagedSkillCatalog(
     ?? process.cwd();
   const registry = boundRegistry ?? new SkillRegistry(projectRoot);
   if (!boundRegistry) {
+    const invocation = options.context?.skillInvocation;
     try { await registry.discover(); }
     catch (cause: unknown) {
-      const invocation = options.context?.skillInvocation;
       if (!invocation?.runtimePolicy?.enforceAtRuntime || cause instanceof Error && cause.name === 'AbortError') throw cause;
       throw new KodaXSkillInvocationError('skill_registry_unavailable', invocation.name, { cause });
+    }
+    // This registry came from trusted discovery, not the Host. A missing Skill
+    // must report as not found rather than as absent from a Host registry.
+    if (invocation?.runtimePolicy?.enforceAtRuntime && !registry.discoveryIncomplete && !registry.has(invocation.name)) {
+      throw new KodaXSkillInvocationError('skill_not_found', invocation.name);
     }
   }
 
@@ -126,6 +131,11 @@ export async function ensureManagedSkillCatalog(
       skillsPrompt: formatSkillsSystemPrompt(registry.list()),
     },
   };
+}
+
+/** Public root entry. Every root Run goes through the managed Worker. */
+export function runKodaX(options: KodaXOptions, prompt: string): Promise<KodaXResult> {
+  return runManagedTask(options, prompt);
 }
 
 export async function runManagedTask(
@@ -143,7 +153,7 @@ export async function runManagedTask(
   // the CLI / config.json path (env-bridged, single-session). Only the fields
   // the caller actually set enter the store, so the CLI path stays on env.
   // Shared derivation (deriveRunScopedConfig) is the single source of truth so
-  // this and the direct `runKodaX` entry never diverge on which fields are scoped.
+  // this and the leaf executor never diverge on which fields are scoped.
   let failure: unknown;
   try {
     return await runWithScopedConfig(

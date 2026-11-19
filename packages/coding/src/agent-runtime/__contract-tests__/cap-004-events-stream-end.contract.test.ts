@@ -29,7 +29,7 @@ import type {
   KodaXToolDefinition,
 } from '@kodax-ai/llm';
 
-import { runKodaX } from '../../agent.js';
+import { runLeafAgent } from '../../agent.js';
 
 const PROVIDER_NAME = 'cap-004-test-provider';
 const API_KEY_ENV = 'CAP_004_TEST_PROVIDER_API_KEY';
@@ -60,7 +60,7 @@ class TextOnlyProvider extends KodaXBaseProvider {
   }
 }
 
-// Issue 128: contract tests drive runKodaX end-to-end and flake at 5000ms
+// Issue 128: contract tests drive runLeafAgent end-to-end and flake at 5000ms
 // default under heavy parallel vitest load. Bump per-suite to 15s.
 describe('CAP-004: onStreamEnd event contract', { timeout: 15_000 }, () => {
   beforeEach(() => {
@@ -75,7 +75,7 @@ describe('CAP-004: onStreamEnd event contract', { timeout: 15_000 }, () => {
 
   it('CAP-EVENTS-STREAM-END-001: fires at least once after the provider stream finalizes (text-only single-turn run)', async () => {
     const onStreamEnd = vi.fn();
-    await runKodaX(
+    await runLeafAgent(
       {
         provider: PROVIDER_NAME,
         model: 'baseline-model',

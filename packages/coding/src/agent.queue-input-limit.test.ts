@@ -11,7 +11,7 @@ import {
   type KodaXStreamResult,
   type KodaXToolDefinition,
 } from '@kodax-ai/llm';
-import { runKodaX } from './agent.js';
+import { runLeafAgent } from './agent.js';
 import { LEARNING_REVIEW_TOOL } from './learning-reviewer.js';
 import { awaitLatestCodingMemoryReviewDrain } from './memory-runtime.js';
 
@@ -69,7 +69,7 @@ describe('Direct-engine Host queue consumption at the iteration limit', () => {
     }
 
     registerModelProvider(PROVIDER, () => new QueueLimitProvider());
-    const result = await runKodaX({
+    const result = await runLeafAgent({
       provider: PROVIDER, model: 'queue-limit-test', maxIter: 1, lsp: false,
       session: {
         id: 'queue-limit-session', persistedByHost: false,

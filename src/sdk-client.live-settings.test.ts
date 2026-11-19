@@ -20,10 +20,10 @@ function gate() {
 }
 
 it.each([
-  { mode: 'coding', compact: false },
-  { mode: 'managed_task', compact: false },
-  { mode: 'managed_task', compact: true },
-] as const)('applies live Session settings to the next $mode request (compaction: $compact)', async ({ mode, compact }) => {
+  { entry: 'runs.start', compact: false },
+  { entry: 'inputs.submit', compact: false },
+  { entry: 'inputs.submit', compact: true },
+] as const)('applies live Session settings to the next $entry request (compaction: $compact)', async ({ entry, compact }) => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-live-settings-'));
   const samples = Array.from({ length: 5 }, (_, index) => path.join(homeDir, `sample-${index}.txt`));
   await Promise.all(samples.map((sample, index) => writeFile(sample, `sample content ${index}`)));
@@ -106,11 +106,11 @@ it.each([
           () => { compactionStartedCount += 1; },
         );
         const text = 'Read sample-0.txt, sample-1.txt and sample-2.txt and briefly report their content. Do not modify files.';
-        const accepted = mode === 'coding'
-          ? await runtime.runs.start({ sessionId: session.id, prompt: text, mode })
+        const accepted = entry === 'runs.start'
+          ? await runtime.runs.start({ sessionId: session.id, prompt: text })
           : await client.inputs.submit({ sessionId: session.id, inputId: 'read-input', text });
         if (accepted.runId === undefined) throw new Error('An idle Session must start the submitted input.');
-        expect((await runtime.runs.get(accepted.runId)).mode).toBe(mode);
+        expect((await runtime.runs.get(accepted.runId)).mode).toBe('managed_task');
         await entered[0]!.promise;
         const first = { provider: 'live-settings-first', model: 'initial-model', reasoning: { enabled: true, effort: 'high' } };
         expect(mainRequests[0]).toEqual(first);

@@ -42,6 +42,7 @@ const childExecutorMock = vi.hoisted(() => ({
         readonly repoIntelligenceTrace?: unknown;
         readonly contextDiagnostics?: unknown;
         readonly disablePromptCache?: unknown;
+        readonly applicationRules?: string;
       };
     };
   }>,

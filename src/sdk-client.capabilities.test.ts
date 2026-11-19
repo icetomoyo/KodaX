@@ -90,17 +90,17 @@ it('probes and forgets capabilities in the actual Host used by subsequent direct
           expect.objectContaining({ reasoning_effort: 'high' }),
         ]));
         expect(requests.length).toBeGreaterThan(beforeProbe);
-        for (const mode of ['coding', 'managed_task'] as const) {
+        for (const entry of ['runs.start', 'inputs.submit'] as const) {
           const session = await client.sessions.create({ projectPath: homeDir });
           await client.sessions.updateSettings(session.id, {
             ...selection, agentMode: 'ama', permissionMode: 'full-access', effort: 'high',
           });
           requestedEfforts.length = 0;
-          const runId = mode === 'coding'
-            ? (await runtime.runs.start({ sessionId: session.id, prompt: 'Reply briefly.', mode })).runId
+          const runId = entry === 'runs.start'
+            ? (await runtime.runs.start({ sessionId: session.id, prompt: 'Reply briefly.' })).runId
             : (await client.inputs.submit({ sessionId: session.id, inputId: 'narrow-ama', text: 'Reply briefly.' })).runId;
           if (!runId) throw new Error('Expected an immediate Run.');
-          expect((await runtime.runs.get(runId)).mode).toBe(mode);
+          expect((await runtime.runs.get(runId)).mode).toBe('managed_task');
           await runtime.runs.await(runId);
           await awaitLatestCodingMemoryReviewDrain(5_000);
           expect(requestedEfforts.length).toBeGreaterThan(0);

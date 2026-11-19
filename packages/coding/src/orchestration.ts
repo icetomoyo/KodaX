@@ -1,7 +1,7 @@
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { runKodaX } from './agent.js';
+import { runKodaX } from './task-engine.js';
 import type {
   KodaXEvents,
   KodaXOptions,

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createAgent, Runner } from '@kodax-ai/agent';
 import { clearRuntimeModelProviders, createCustomProvider, registerModelProvider, type KodaXMessage } from '@kodax-ai/llm';
-import { runKodaX } from '../agent.js';
+import { runLeafAgent } from '../agent.js';
 import { runManagedTaskViaRunner } from '../task-engine/runner-driven.js';
 import { CodingActorSession } from './actor-runtime.js';
 import * as providerHook from './provider-hook.js';
@@ -91,7 +91,7 @@ for (const runtime of ['substrate', 'managed'] as const) {
       context: { executionCwd: directory, managedTaskWorkspaceDir: directory },
       session: { initialMessages: [{ role: 'user' as const, content: [{ type: 'image' as const, path: filePath }] }] },
       maxIter: 2 };
-    await (runtime === 'substrate' ? runKodaX(options, 'Return OK.') : runManagedTaskViaRunner(options, 'Return OK.'));
+    await (runtime === 'substrate' ? runLeafAgent(options, 'Return OK.') : runManagedTaskViaRunner(options, 'Return OK.'));
     expect(inspect).not.toHaveBeenCalled();
   });
 }
@@ -131,7 +131,7 @@ for (const runtime of ['runner', 'substrate', 'managed'] as const) {
       const options = { provider: 'image-admission', reasoningMode: 'off' as const,
         context: { executionCwd: directory, managedTaskWorkspaceDir: directory },
         session: { initialMessages: messages }, maxIter: 2 };
-      const result = await (runtime === 'substrate' ? runKodaX(options, 'Inspect images.')
+      const result = await (runtime === 'substrate' ? runLeafAgent(options, 'Inspect images.')
         : runManagedTaskViaRunner(options, 'Inspect images.'));
       expect(result.success).toBe(true);
     }
@@ -184,7 +184,7 @@ it('substrate admits history when a prepare hook switches CLI to native', async 
     expect(await prepareImageBlock(image)).toMatchObject({ data: bytes.toString('base64') });
     return { textBlocks: [{ type: 'text', text: 'OK' }], toolBlocks: [], thinkingBlocks: [], stopReason: 'end_turn' };
   });
-  const result = await runKodaX({ provider: 'admission-cli', reasoningMode: 'off', maxIter: 2,
+  const result = await runLeafAgent({ provider: 'admission-cli', reasoningMode: 'off', maxIter: 2,
     context: { executionCwd: directory }, session: { initialMessages: [{ role: 'user', content: [image] }] } }, 'Inspect.');
   expect(result.success).toBe(true);
   expect(inspect).toHaveBeenCalledOnce();

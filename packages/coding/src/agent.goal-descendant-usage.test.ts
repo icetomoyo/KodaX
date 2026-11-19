@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { KodaXProviderConfig, KodaXStreamResult } from '@kodax-ai/llm';
 import { clearRuntimeModelProviders, KodaXBaseProvider, registerModelProvider } from '@kodax-ai/llm';
 import { appendGoalEntry, readLatestGoalState, type KodaXSessionLineage } from '@kodax-ai/agent';
-import { runKodaX } from './agent.js';
+import { runLeafAgent } from './agent.js';
 import { buildGoalRuntimeBinding } from './goal/runtime-wiring.js';
 import { buildCreatedGoal } from './goal/state.js';
 
@@ -54,7 +54,7 @@ describe('descendant goal usage on the direct substrate', () => {
 
   it('reports each child provider call to the inherited goal sink', async () => {
     const goalUsageSink = vi.fn();
-    await runKodaX({ provider: PROVIDER_NAME, reasoningMode: 'off', maxIter: 1,
+    await runLeafAgent({ provider: PROVIDER_NAME, reasoningMode: 'off', maxIter: 1,
       context: { repoIntelligenceMode: 'off', currentAgentId: '/root/child', goalUsageSink } }, 'inspect');
     expect(goalUsageSink).toHaveBeenCalledExactlyOnceWith(CALL_USAGE);
   });
@@ -71,7 +71,7 @@ describe('descendant goal usage on the direct substrate', () => {
     });
     binding.lifecycleCtx.chargeDescendantUsage?.({ inputTokens: 1500, outputTokens: 100, totalTokens: 1600, cachedReadTokens: 200 });
 
-    await runKodaX({ provider: PROVIDER_NAME, reasoningMode: 'off', maxIter: 1,
+    await runLeafAgent({ provider: PROVIDER_NAME, reasoningMode: 'off', maxIter: 1,
       context: { repoIntelligenceMode: 'off', goalRuntime: binding } }, 'continue');
 
     expect(readLatestGoalState(lineage)?.tokensUsed).toBe(24 + 1400);
@@ -87,7 +87,7 @@ describe('descendant goal usage on the direct substrate', () => {
       hasPendingUserInput: () => false });
     binding.lifecycleCtx.chargeDescendantUsage?.({ inputTokens: 1500, outputTokens: 0, totalTokens: 1500 });
 
-    await runKodaX({ provider: PROVIDER_NAME, reasoningMode: 'off', maxIter: 1,
+    await runLeafAgent({ provider: PROVIDER_NAME, reasoningMode: 'off', maxIter: 1,
       context: { repoIntelligenceMode: 'off', goalRuntime: binding } }, 'continue');
 
     expect(readLatestGoalState(lineage)).toMatchObject({ status: 'budget_limited', tokensUsed: 1500 });
@@ -102,7 +102,7 @@ describe('descendant goal usage on the direct substrate', () => {
     const replacement = buildCreatedGoal('replacement work', 1000);
     beforeResponse = () => { lineage = appendGoalEntry(appendGoalEntry(lineage, null, 'cleared'), replacement, 'created'); };
 
-    await runKodaX({ provider: PROVIDER_NAME, reasoningMode: 'off', maxIter: 1,
+    await runLeafAgent({ provider: PROVIDER_NAME, reasoningMode: 'off', maxIter: 1,
       context: { repoIntelligenceMode: 'off', currentAgentId: '/root/child',
         goalUsageSink: binding.lifecycleCtx.chargeDescendantUsage } }, 'inspect');
 
@@ -120,7 +120,7 @@ describe('descendant goal usage on the direct substrate', () => {
       }, getLatestUsage: () => undefined, getTurnStartMs: () => undefined, hasPendingUserInput: () => false });
     binding.lifecycleCtx.chargeDescendantUsage!({ inputTokens: 500, outputTokens: 0, totalTokens: 500 });
 
-    await runKodaX({ provider: PROVIDER_NAME, reasoningMode: 'off', maxIter: 1,
+    await runLeafAgent({ provider: PROVIDER_NAME, reasoningMode: 'off', maxIter: 1,
       context: { repoIntelligenceMode: 'off', goalRuntime: binding } }, 'continue');
 
     expect(readLatestGoalState(lineage)?.tokensUsed).toBe(2024);
@@ -138,7 +138,7 @@ describe('descendant goal usage on the direct substrate', () => {
     const first = bind();
     first.lifecycleCtx.chargeDescendantUsage!({ inputTokens: 1500, outputTokens: 0, totalTokens: 1500 });
 
-    const result = await runKodaX({ provider: PROVIDER_NAME, reasoningMode: 'off', maxIter: 1,
+    const result = await runLeafAgent({ provider: PROVIDER_NAME, reasoningMode: 'off', maxIter: 1,
       context: { repoIntelligenceMode: 'off', goalRuntime: first } }, 'continue');
     expect(result.success).toBe(false);
     failWrite = false;

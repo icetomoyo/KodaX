@@ -224,7 +224,7 @@ export async function runNaturalRuntime(directory: string, id: NaturalCaseId | P
       const handle = await runWithProviderRequestAttribution({ kind: 'actor_turn', actorPath: '/root', turnId: `natural-fixture-${randomUUID()}` }, () => active.runs.start({
         sessionId: session.id, mode: 'managed_task', prompt: turn.prompt,
         options: { provider: providerName, model: options.model ?? 'fixture', agentMode: 'ama', workMode: options.workMode ?? 'coding',
-          lsp: false, reasoningMode: options.reasoning ?? 'off', effort: options.effort ?? 'none', maxIter: limits.calls, maxOutputTokens: options.maxOutputTokens ?? 4096, abortSignal: signal, disablePromptCache: true,
+          lsp: false, reasoningMode: options.reasoning ?? 'off', effort: options.effort ?? 'none', maxIter: limits.calls + 1, maxOutputTokens: options.maxOutputTokens ?? 4096, abortSignal: signal, disablePromptCache: true,
           guardrails: [boundary],
           learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['eval-isolated'] } }),
           context: { executionCwd: workspace, gitRoot: workspace, shellExecution: execution.shellExecution,

@@ -19,28 +19,29 @@ import type { ClientItemContent } from '@kodax-ai/coding/client-contract';
 import { createClassicPlaneDisplayDiffer } from '../packages/repl/src/interactive/classic-plane-display.js';
 import { clientViewToHistoryItems, readFrozenClientPlaneItems } from '../packages/repl/src/ui/client-plane.js';
 
-it('projects the actual request compaction capacity including Memory reserve without enabling diagnostics', async () => {
+it('projects the actual request compaction capacity for root and worker Runs without enabling diagnostics', async () => {
   const session = await client.sessions.create({ projectPath: homeDir });
   await client.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const views: ClientSessionView[] = [];
   const observation = await client.sessions.observe(session.id, view => views.push(view));
   try {
-    // The direct engine reserves Memory separately; the AMA Worker counts it in its system messages.
-    await (await runtime.runs.start({ sessionId: session.id, prompt: 'Ask round 1', mode: 'coding' })).result;
-    await expect.poll(() => views.at(-1)?.activity?.contextBudget?.reservedMemoryTokens).toBe(3200);
+    // The managed Worker counts Memory in its system messages, so no separate reserve is projected.
+    await (await runtime.runs.start({ sessionId: session.id, prompt: 'Ask round 1' })).result;
+    await expect.poll(() => views.at(-1)?.activity?.contextBudget?.scope).toBe('parent');
     const budget = views.at(-1)!.activity!.contextBudget!;
-    expect(budget).toMatchObject({ scope: 'parent', provider: 'product-history-page-test', compaction: {
+    expect(budget).toMatchObject({ scope: 'parent', provider: 'product-history-page-test', reservedMemoryTokens: 0, compaction: {
       enabled: true, triggerPercent: 75, triggerTokens: expect.any(Number), physicalCapacityTokens: expect.any(Number),
     } });
-    expect(budget.compaction.physicalCapacityTokens).toBeLessThan(budget.contextWindow - budget.reservedResponseTokens - 3200);
+    expect(budget.compaction.physicalCapacityTokens).toBeLessThanOrEqual(budget.contextWindow - budget.reservedResponseTokens);
     const worker = await runtime.runs.start({ sessionId: session.id, prompt: 'Worker request', options: {
       context: { currentAgentId: '/root/scout', parentAgentId: '/root' },
     } });
     await worker.result;
     await expect.poll(() => views.at(-1)?.activity?.contextBudget?.scope).toBe('worker');
     expect(views.at(-1)?.activity?.contextBudget?.reservedMemoryTokens).toBe(0);
+    // Root and worker Runs share the managed Worker, so they project the same capacity.
     expect(views.at(-1)?.activity?.contextBudget?.compaction.physicalCapacityTokens)
-      .toBeGreaterThan(budget.compaction.physicalCapacityTokens!);
+      .toBe(budget.compaction.physicalCapacityTokens);
   } finally { observation.close(); }
 }, 30_000);
 

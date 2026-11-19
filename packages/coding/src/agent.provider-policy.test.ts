@@ -12,7 +12,7 @@ import {
   KodaXBaseProvider,
   registerModelProvider,
 } from '@kodax-ai/llm';
-import { runKodaX } from './agent.js';
+import { runLeafAgent } from './agent.js';
 
 const TEST_PROVIDER_NAME = 'feature-029-bridge-provider';
 const TEST_PROVIDER_API_KEY_ENV = 'FEATURE_029_BRIDGE_PROVIDER_API_KEY';
@@ -66,7 +66,7 @@ class Feature029BridgeProvider extends KodaXBaseProvider {
   }
 }
 
-describe('runKodaX provider policy integration', () => {
+describe('runLeafAgent provider policy integration', () => {
   beforeEach(() => {
     Feature029BridgeProvider.calls = [];
     process.env[TEST_PROVIDER_API_KEY_ENV] = 'test-key';
@@ -82,7 +82,7 @@ describe('runKodaX provider policy integration', () => {
   });
 
   it('blocks long-running flows on lossy bridge providers before the provider stream starts', async () => {
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: TEST_PROVIDER_NAME,
         context: {
@@ -101,7 +101,7 @@ describe('runKodaX provider policy integration', () => {
   });
 
   it('injects provider policy notes into warning-only execution flows', async () => {
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: TEST_PROVIDER_NAME,
         reasoningMode: 'off',
@@ -133,7 +133,7 @@ describe('runKodaX provider policy integration', () => {
     ).toBe(1);
     expect(result.routingDecision?.primaryTask).toBe('review');
     expect(result.routingDecision?.harnessProfile).toBe('H0_DIRECT');
-  // 180_000 (was 90_000 → 60_000 → 30_000): runKodaX with mock provider
+  // 180_000 (was 90_000 → 60_000 → 30_000): runLeafAgent with mock provider
   // takes ~22-26s baseline (system prompt build + routing pipeline +
   // iteration scaffolding). Under full-suite parallel load (~4800
   // concurrent tests as of v0.7.37) the wall-clock has pushed past
@@ -141,7 +141,7 @@ describe('runKodaX provider policy integration', () => {
   // version adds tests so the headroom needs to grow with the suite.
   // 180s gives ~150s headroom against the worst observed wall-clock.
   // NOTE: Vitest's timeout aborts the it-block but does NOT cancel
-  // the runKodaX substrate's in-flight provider.stream — a timeout
+  // the runLeafAgent substrate's in-flight provider.stream — a timeout
   // here therefore cascades into the next test's
   // `Feature029BridgeProvider.calls` length assertion (leaked call
   // lands in the next test's bucket). Keeping deterministic headroom
@@ -149,7 +149,7 @@ describe('runKodaX provider policy integration', () => {
   }, 180_000);
 
   it('allows benign text-only prompts that merely mention MCP, project mode, or screenshots', async () => {
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: TEST_PROVIDER_NAME,
         reasoningMode: 'off',

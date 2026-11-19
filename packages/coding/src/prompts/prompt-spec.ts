@@ -58,11 +58,11 @@ export function assertKodaXPromptSpec(value: unknown): asserts value is KodaXPro
   if (total > PROMPT_SPEC_TEXT_LIMIT) throw invalid(`entry text totals ${total} characters; the limit is ${PROMPT_SPEC_TEXT_LIMIT}`);
 }
 
-/** The direct engine has no Managed Run Context or tagged Worker sections to apply a spec to. */
+/** The leaf executor has no Managed Run Context or tagged Worker sections to apply a spec to. */
 export function assertPromptSpecOnManagedRun(spec: KodaXPromptSpec | undefined): void {
   if (spec === undefined) return;
   throw Object.assign(new Error(
-    'context.prompt requires a managed Run: use runManagedTask or runs.start({ mode: "managed_task" }).',
+    'context.prompt applies to root Runs only (runKodaX, runManagedTask or runs.start), not to a leaf Agent.',
   ), { code: 'prompt_spec_requires_managed_run' as const });
 }
 

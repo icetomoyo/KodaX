@@ -18,28 +18,16 @@ const originalEffort = process.env.KODAX_EFFORT;
 
 const acpServerState = vi.hoisted(() => ({
   capturedOptions: [] as unknown[],
-  startKodaX: vi.fn((options: { session?: { id?: string } }) => {
+  runManagedTask: vi.fn((options: { session?: { id?: string }; abortSignal?: AbortSignal }) => {
     acpServerState.capturedOptions.push(options);
     const sessionId = options.session?.id ?? 'missing-session';
-    return {
-      id: sessionId,
-      attached: true,
-      currentProvider: 'openai',
-      currentModel: undefined,
-      currentReasoning: undefined,
-      aborted: false,
-      setProvider: vi.fn(),
-      setModel: vi.fn(),
-      setReasoning: vi.fn(),
-      abort: vi.fn(),
-      result: Promise.resolve<KodaXResult>({
-        lastText: "",
-        interrupted: false,
-        success: true,
-        messages: [],
-        sessionId,
-      }),
-    };
+    return Promise.resolve<KodaXResult>({
+      lastText: "",
+      interrupted: false,
+      success: true,
+      messages: [],
+      sessionId,
+    });
   }),
   prepareRuntimeConfig: vi.fn<() => RuntimeConfigMock>(() => ({
     provider: 'openai',
@@ -81,8 +69,7 @@ vi.mock('@kodax-ai/coding', async (importOriginal) => {
     registerCustomProviders: vi.fn(),
     resolveProvider: vi.fn(() => ({})),
     generateSessionId: vi.fn(async () => 'generated-session'),
-    runManagedTask: vi.fn(),
-    startKodaX: acpServerState.startKodaX,
+    runManagedTask: acpServerState.runManagedTask,
     shutdownDefaultLspService: vi.fn(async () => undefined),
   };
 });
@@ -180,7 +167,7 @@ describe('KodaXAcpServer reasoning effort forwarding', () => {
     delete process.env.KODAX_PROVIDER;
     delete process.env.KODAX_EFFORT;
     acpServerState.capturedOptions = [];
-    acpServerState.startKodaX.mockClear();
+    acpServerState.runManagedTask.mockClear();
     acpServerState.prepareRuntimeConfig.mockClear();
     acpServerState.prepareRuntimeConfig.mockReturnValue({
       provider: 'openai',
@@ -369,7 +356,7 @@ describe('KodaXAcpServer reasoning effort forwarding', () => {
     const sessionId = await createSession(server);
 
     await expect(server.prompt(makePrompt(sessionId, '   '))).rejects.toThrow(/Reasoning effort cannot be empty/);
-    expect(acpServerState.startKodaX).not.toHaveBeenCalled();
+    expect(acpServerState.runManagedTask).not.toHaveBeenCalled();
     await server.dispose();
   });
 
@@ -381,7 +368,7 @@ describe('KodaXAcpServer reasoning effort forwarding', () => {
       defaultProvider: 'openai',
     });
     const abortSpies: Array<ReturnType<typeof vi.fn>> = [];
-    acpServerState.startKodaX.mockImplementation((options: { session?: { id?: string } }) => {
+    acpServerState.runManagedTask.mockImplementation((options: { session?: { id?: string }; abortSignal?: AbortSignal }) => {
       acpServerState.capturedOptions.push(options);
       const sessionId = options.session?.id ?? 'missing-session';
       let resolveResult: ((result: KodaXResult) => void) | undefined;
@@ -399,26 +386,15 @@ describe('KodaXAcpServer reasoning effort forwarding', () => {
         resolveResult = undefined;
       });
       abortSpies.push(abort);
-      return {
-        id: sessionId,
-        attached: true,
-        currentProvider: 'openai',
-        currentModel: undefined,
-        currentReasoning: undefined,
-        aborted: false,
-        setProvider: vi.fn(),
-        setModel: vi.fn(),
-        setReasoning: vi.fn(),
-        abort,
-        result,
-      };
+      options.abortSignal?.addEventListener('abort', () => abort(options.abortSignal?.reason), { once: true });
+      return result;
     });
     const server = createTestServer({ runtime, provider: 'openai', logLevel: 'off' });
 
     try {
       const sessionId = await createSession(server);
       const first = server.prompt(makePrompt(sessionId));
-      await waitForCondition('first ACP coding run', () => acpServerState.startKodaX.mock.calls.length === 1);
+      await waitForCondition('first ACP coding run', () => acpServerState.runManagedTask.mock.calls.length === 1);
 
       const second = server.prompt(makePrompt(sessionId));
       await waitForCondition('queued ACP runtime run', async () => {
@@ -439,7 +415,7 @@ describe('KodaXAcpServer reasoning effort forwarding', () => {
       await expect(expectSettles(second, 'queued cancelled prompt')).resolves.toMatchObject({
         stopReason: 'cancelled',
       });
-      expect(acpServerState.startKodaX).toHaveBeenCalledTimes(1);
+      expect(acpServerState.runManagedTask).toHaveBeenCalledTimes(1);
       expect(abortSpies[0]).toHaveBeenCalledOnce();
       const cancelledRuns = await runtime.runs.list({ sessionId });
       expect(cancelledRuns).toHaveLength(2);
@@ -484,7 +460,7 @@ describe('KodaXAcpServer product client face behaviors (T19)', () => {
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-acp-perm-'));
     delete process.env.KODAX_PROVIDER;
     delete process.env.KODAX_EFFORT;
-    acpServerState.startKodaX.mockReset();
+    acpServerState.runManagedTask.mockReset();
     acpServerState.capturedOptions = [];
   });
 
@@ -502,24 +478,11 @@ describe('KodaXAcpServer product client face behaviors (T19)', () => {
   it('answers a runtime permission escalation via client.interactions.respond', async () => {
     const runtime = await createKodaXRuntime({ homeDir: testHome, defaultProvider: 'openai' });
     let releaseExecutor: ((result: KodaXResult) => void) | undefined;
-    acpServerState.startKodaX.mockImplementationOnce(
-      (options: { session?: { id?: string } }) => {
-        const sessionId = options.session?.id ?? 'missing-session';
-        return {
-          id: sessionId,
-          attached: true,
-          currentProvider: 'openai',
-          currentModel: undefined,
-          currentReasoning: undefined,
-          aborted: false,
-          setProvider: vi.fn(),
-          setModel: vi.fn(),
-          setReasoning: vi.fn(),
-          abort: vi.fn(),
-          result: new Promise<KodaXResult>((resolve) => {
-            releaseExecutor = resolve;
-          }),
-        };
+    acpServerState.runManagedTask.mockImplementationOnce(
+      () => {
+        return new Promise<KodaXResult>((resolve) => {
+          releaseExecutor = resolve;
+        });
       },
     );
     const server = new KodaXAcpServer({ runtime, homeDir: testHome });
@@ -578,24 +541,11 @@ describe('KodaXAcpServer product client face behaviors (T19)', () => {
   it('does not hang when the Host settles a permission before the ACP client answers (T19)', async () => {
     const runtime = await createKodaXRuntime({ homeDir: testHome, defaultProvider: 'openai' });
     let releaseExecutor: ((result: KodaXResult) => void) | undefined;
-    acpServerState.startKodaX.mockImplementationOnce(
-      (options: { session?: { id?: string } }) => {
-        const sessionId = options.session?.id ?? 'missing-session';
-        return {
-          id: sessionId,
-          attached: true,
-          currentProvider: 'openai',
-          currentModel: undefined,
-          currentReasoning: undefined,
-          aborted: false,
-          setProvider: vi.fn(),
-          setModel: vi.fn(),
-          setReasoning: vi.fn(),
-          abort: vi.fn(),
-          result: new Promise<KodaXResult>((resolve) => {
-            releaseExecutor = resolve;
-          }),
-        };
+    acpServerState.runManagedTask.mockImplementationOnce(
+      () => {
+        return new Promise<KodaXResult>((resolve) => {
+          releaseExecutor = resolve;
+        });
       },
     );
     const server = new KodaXAcpServer({ runtime, homeDir: testHome });
@@ -656,7 +606,7 @@ describe('KodaXAcpServer product client face behaviors (T19)', () => {
   it('streams append-only text and tool status over the notification face and continues a session (T19)', async () => {
     const runtime = await createKodaXRuntime({ homeDir: testHome, defaultProvider: 'openai' });
     const resolvers: Array<(result: KodaXResult) => void> = [];
-    acpServerState.startKodaX.mockImplementation((options: { session?: { id?: string } }) => {
+    acpServerState.runManagedTask.mockImplementation((options: { session?: { id?: string }; abortSignal?: AbortSignal }) => {
       acpServerState.capturedOptions.push(options);
       const sessionId = options.session?.id ?? 'missing-session';
       let resolveResult: ((result: KodaXResult) => void) | undefined;
@@ -673,19 +623,8 @@ describe('KodaXAcpServer product client face behaviors (T19)', () => {
         resolveResult?.(resolved);
         resolveResult = undefined;
       });
-      return {
-        id: sessionId,
-        attached: true,
-        currentProvider: 'openai',
-        currentModel: undefined,
-        currentReasoning: undefined,
-        aborted: false,
-        setProvider: vi.fn(),
-        setModel: vi.fn(),
-        setReasoning: vi.fn(),
-        abort,
-        result,
-      };
+      options.abortSignal?.addEventListener('abort', () => abort(), { once: true });
+      return result;
     });
 
     const server = new KodaXAcpServer({ runtime, homeDir: testHome });
@@ -723,8 +662,8 @@ describe('KodaXAcpServer product client face behaviors (T19)', () => {
       };
     };
     const promptPromise = server.prompt(makePrompt(sessionId));
-    await waitForCondition('first ACP coding run', () => acpServerState.startKodaX.mock.calls.length === 1);
-    const firstEvents = (acpServerState.startKodaX.mock.calls[0]?.[0] as CapturedRunEvents).events;
+    await waitForCondition('first ACP coding run', () => acpServerState.runManagedTask.mock.calls.length === 1);
+    const firstEvents = (acpServerState.runManagedTask.mock.calls[0]?.[0] as CapturedRunEvents).events;
     firstEvents.onTextDelta('Hel');
     firstEvents.onTextDelta('lo');
     firstEvents.onToolUseStart({ id: 'call-stream-1', name: 'bash', input: { command: 'ls' } });
@@ -753,8 +692,8 @@ describe('KodaXAcpServer product client face behaviors (T19)', () => {
 
     const sessionsCreateSpy = vi.spyOn(runtime.sessions, 'create');
     const secondPrompt = server.prompt(makePrompt(sessionId));
-    await waitForCondition('second ACP coding run', () => acpServerState.startKodaX.mock.calls.length === 2);
-    expect(acpServerState.startKodaX.mock.calls[1]?.[0]).toMatchObject({ session: { id: sessionId } });
+    await waitForCondition('second ACP coding run', () => acpServerState.runManagedTask.mock.calls.length === 2);
+    expect(acpServerState.runManagedTask.mock.calls[1]?.[0]).toMatchObject({ session: { id: sessionId } });
     expect(sessionsCreateSpy).not.toHaveBeenCalled();
     resolvers.at(-1)!({ success: true, lastText: 'done', messages: [], sessionId });
     await expect(expectSettles(secondPrompt, 'continued session prompt')).resolves.toMatchObject({

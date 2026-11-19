@@ -6,7 +6,7 @@ import { AgentActorController } from '@kodax-ai/agent';
 import { clearRuntimeModelProviders, KodaXBaseProvider, KodaXNetworkError, registerModelProvider,
   type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult, type KodaXToolDefinition } from '@kodax-ai/llm';
 import { executeChildAgents, CHILD_AGENT_SYSTEM_PROMPT, type ChildExecutorOptions } from './child-executor.js';
-import { runKodaX } from './agent.js';
+import { runLeafAgent } from './agent.js';
 import { getBuiltinToolDefinition, listToolDefinitions } from './tools/index.js';
 import { projectModelToolDefinition } from './tools/model-tool-definition.js';
 import { _resetAgentResolverForTesting, registerConstructedAgent } from './construction/agent-resolver.js';
@@ -85,7 +85,7 @@ describe('child request contract through real executor and substrate', () => {
   });
 
   it('gives an SDK override and a specialist the same tool text as a builtin child', async () => {
-    await runKodaX({ provider: providerName, reasoningMode: 'off', maxIter: 1,
+    await runLeafAgent({ provider: providerName, reasoningMode: 'off', maxIter: 1,
       context: { executionCwd: root, currentAgentId: 'sdk-child', systemPromptOverride: CHILD_AGENT_SYSTEM_PROMPT,
         repoIntelligenceMode: 'off' } }, 'Inspect.');
     registerConstructedAgent({ kind: 'agent', name: 'matching-specialist', version: '1.0.0',

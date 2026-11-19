@@ -25,11 +25,10 @@
  *   - `result`            — `Promise<KodaXResult>` (same shape
  *                          `runKodaX` returns)
  *
- * `runKodaX` is now a thin wrapper over `startKodaX(...).result` so
- * there is no dual code path (per feedback_no_parallel_refactor_paths).
+ * Both entries run the same managed root Run.
  */
 
-import { runKodaX } from './agent.js';
+import { runManagedTask } from './task-engine.js';
 import { markStartKodaXGeneratedSessionId } from './agent-runtime/middleware/session-snapshot.js';
 import type {
   KodaXOptions,
@@ -135,11 +134,10 @@ export function startKodaX(
     sessionControl: control,
   };
 
-  // Kick off the run. `runKodaX` returns the Promise immediately —
-  // by the time control returns to the caller, the substrate's
-  // `_attach` has not yet fired, so any sync setter calls land in
-  // the pre-attach queue and replay on attach.
-  const result = runKodaX(effectiveOptions, prompt);
+  // Kick off the run. It returns the Promise immediately — by the time
+  // control returns to the caller, the Run's `_attach` has not yet fired,
+  // so any sync setter calls land in the pre-attach queue and replay on attach.
+  const result = runManagedTask(effectiveOptions, prompt);
 
   return {
     id: sessionId,

@@ -93,7 +93,7 @@ it('runs Product turns as AMA when a legacy config.json still selects sa', async
   }
 });
 
-it('defaults Product turns to AMA, ignores a retired sa setting and keeps explicit direct Runs', async () => {
+it('defaults Product turns to AMA, ignores a retired sa setting and routes a deprecated coding mode to the managed Worker', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-ama-admission-'));
   const { runtime, client, mainRequests, holdNextRequest, release, close } = await startAdmissionHost(homeDir);
   try {
@@ -123,9 +123,9 @@ it('defaults Product turns to AMA, ignores a retired sa setting and keeps explic
     expect((await runtime.runs.await(legacyInput.runId!)).phase).toBe('completed');
     runningObservation.close();
 
-    const direct = await runtime.runs.start({ sessionId: session.id, prompt: 'Direct engine turn.', mode: 'coding' });
-    expect((await runtime.runs.get(direct.runId)).mode).toBe('coding');
-    expect((await direct.result).phase).toBe('completed');
+    const legacyMode = await runtime.runs.start({ sessionId: session.id, prompt: 'Deprecated coding mode turn.', mode: 'coding' });
+    expect((await runtime.runs.get(legacyMode.runId)).mode).toBe('managed_task');
+    expect((await legacyMode.result).phase).toBe('completed');
   } finally {
     await close();
   }

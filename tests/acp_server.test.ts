@@ -15,23 +15,19 @@ import {
 import type {
   KodaXExtensionRuntime,
   KodaXOptions,
-  KodaXReasoningMode,
   KodaXResult,
-  RunningSession,
 } from '@kodax-ai/coding';
 import type { AcpLogLevel } from '../src/acp_logger.js';
 import type { AcpEventSink, AcpRuntimeEvent } from '../src/acp_events.js';
 import { FileSessionStorage } from '@kodax-ai/repl';
 
 const {
-  runKodaXMock,
-  startKodaXMock,
+  runManagedTaskMock,
   buildMcpReverseCapabilitiesMock,
   discoverDefaultExtensionsMock,
   registerConfiguredMcpCapabilityProviderMock,
 } = vi.hoisted(() => ({
-  runKodaXMock: vi.fn<[KodaXOptions, string], Promise<KodaXResult>>(),
-  startKodaXMock: vi.fn<[KodaXOptions, string], RunningSession>(),
+  runManagedTaskMock: vi.fn<[KodaXOptions, string], Promise<KodaXResult>>(),
   buildMcpReverseCapabilitiesMock: vi.fn(),
   discoverDefaultExtensionsMock: vi.fn(async () => [] as string[]),
   registerConfiguredMcpCapabilityProviderMock: vi.fn(),
@@ -54,63 +50,9 @@ const { prepareRuntimeConfigMock } = vi.hoisted(() => ({
 // `matchesBashPatternByExtractedPrefix(extracted, 'echo test')`.
 vi.mock('@kodax-ai/coding', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@kodax-ai/coding')>();
-  startKodaXMock.mockImplementation((options, prompt) => {
-    const abortController = new AbortController();
-    if (options.abortSignal?.aborted) {
-      abortController.abort(options.abortSignal.reason);
-    } else {
-      options.abortSignal?.addEventListener(
-        'abort',
-        () => abortController.abort(options.abortSignal?.reason),
-        { once: true },
-      );
-    }
-
-    let provider = options.provider ?? '';
-    let model = options.modelOverride ?? options.model;
-    let reasoning: KodaXReasoningMode | undefined = options.reasoningMode;
-    const result = Promise.resolve()
-      .then(() => runKodaXMock({
-        ...options,
-        abortSignal: abortController.signal,
-      }, prompt));
-
-    return {
-      id: options.session?.id ?? 'mock-session',
-      get currentProvider() {
-        return provider;
-      },
-      get currentModel() {
-        return model;
-      },
-      get currentReasoning() {
-        return reasoning;
-      },
-      get aborted() {
-        return abortController.signal.aborted;
-      },
-      get attached() {
-        return true;
-      },
-      setProvider(name) {
-        provider = name;
-      },
-      setModel(nextModel) {
-        model = nextModel;
-      },
-      setReasoning(nextReasoning) {
-        reasoning = nextReasoning;
-      },
-      abort(reasonArg) {
-        abortController.abort(reasonArg);
-      },
-      result,
-    };
-  });
   return {
     ...actual,
-    runKodaX: runKodaXMock,
-    startKodaX: startKodaXMock,
+    runManagedTask: runManagedTaskMock,
     buildMcpReverseCapabilities: buildMcpReverseCapabilitiesMock,
     discoverDefaultExtensions: discoverDefaultExtensionsMock,
     registerConfiguredMcpCapabilityProvider: registerConfiguredMcpCapabilityProviderMock,
@@ -155,7 +97,7 @@ function assertIsolatedAcpTestPath(candidate: string): void {
   }
 }
 
-function createResult(overrides: Partial<Awaited<ReturnType<typeof runKodaXMock>>> = {}) {
+function createResult(overrides: Partial<Awaited<ReturnType<typeof runManagedTaskMock>>> = {}) {
   return {
     success: true,
     lastText: '',
@@ -281,7 +223,7 @@ async function createHarness(options: {
 describe('KodaXAcpServer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    runKodaXMock.mockResolvedValue(createResult());
+    runManagedTaskMock.mockResolvedValue(createResult());
     prepareRuntimeConfigMock.mockReturnValue({
       provider: 'openai',
       thinking: false,
@@ -312,7 +254,7 @@ describe('KodaXAcpServer', () => {
   });
 
   it('streams assistant and tool events over ACP notifications', async () => {
-    runKodaXMock.mockImplementation(async (options, prompt: string) => {
+    runManagedTaskMock.mockImplementation(async (options, prompt: string) => {
       expect(prompt).toBe('Review this repository');
       options.events?.onTextDelta?.('Hello from ACP');
       options.events?.onToolUseStart?.({
@@ -471,7 +413,7 @@ describe('KodaXAcpServer', () => {
         return undefined;
       },
     );
-    runKodaXMock.mockImplementation(async (options) => {
+    runManagedTaskMock.mockImplementation(async (options) => {
       const runtime = options.extensionRuntime;
       expect(runtime).toBeDefined();
       if (!runtime) {
@@ -512,7 +454,7 @@ describe('KodaXAcpServer', () => {
   });
 
   it('keeps an Edits Bash call silent before its sandbox attempt', async () => {
-    runKodaXMock.mockImplementation(async (options) => {
+    runManagedTaskMock.mockImplementation(async (options) => {
       const decision = await options.events?.beforeToolExecute?.(
         'bash',
         { command: 'echo test > README.md' },
@@ -534,7 +476,7 @@ describe('KodaXAcpServer', () => {
 
   it('bridges an Auto[LLM] Runtime permission boundary through ACP', async () => {
     let harness: Awaited<ReturnType<typeof createHarness>>;
-    runKodaXMock.mockImplementation(async () => {
+    runManagedTaskMock.mockImplementation(async () => {
       const runtime = harness.runtime;
       if (!runtime) throw new Error('Expected an injected Runtime.');
       const [run] = await runtime.runs.list({ sessionId: harness.sessionId });
@@ -572,7 +514,7 @@ describe('KodaXAcpServer', () => {
   });
 
   it('keeps accept-edits mode aligned with REPL by not requesting permission for read tools', async () => {
-    runKodaXMock.mockImplementation(async (options) => {
+    runManagedTaskMock.mockImplementation(async (options) => {
       const decision = await options.events?.beforeToolExecute?.(
         'read',
         { path: 'README.md' },
@@ -593,7 +535,7 @@ describe('KodaXAcpServer', () => {
   });
 
   it('does not ask or change mode for repeated pre-sandbox Edits calls', async () => {
-    runKodaXMock.mockImplementation(async (options) => {
+    runManagedTaskMock.mockImplementation(async (options) => {
       const firstDecision = await options.events?.beforeToolExecute?.(
         'bash',
         { command: 'echo test > README.md' },
@@ -633,7 +575,7 @@ describe('KodaXAcpServer', () => {
   it('cancels the active prompt through the ACP cancel notification', async () => {
     let sawAbort = false;
 
-    runKodaXMock.mockImplementation(async (options) => {
+    runManagedTaskMock.mockImplementation(async (options) => {
       await new Promise<void>((resolve) => {
         options.abortSignal?.addEventListener('abort', () => {
           sawAbort = true;
@@ -652,7 +594,7 @@ describe('KodaXAcpServer', () => {
       prompt: [{ type: 'text', text: 'Cancel this run' }],
     });
 
-    await waitForCondition('active ACP coding run', () => runKodaXMock.mock.calls.length === 1);
+    await waitForCondition('active ACP coding run', () => runManagedTaskMock.mock.calls.length === 1);
     await harness.client.cancel({ sessionId: harness.sessionId });
 
     const response = await promptPromise;
@@ -697,7 +639,7 @@ describe('KodaXAcpServer', () => {
         message: expect.stringContaining('Prompt must include at least one text or resource block with content'),
       });
 
-      expect(runKodaXMock).not.toHaveBeenCalled();
+      expect(runManagedTaskMock).not.toHaveBeenCalled();
     } finally {
       consoleErrorSpy.mockRestore();
     }
@@ -708,7 +650,7 @@ describe('KodaXAcpServer', () => {
     const sessionCwd = path.join(originalCwd, 'src');
     const harness = await createHarness({ sessionCwd });
 
-    runKodaXMock.mockImplementation(async (options) => {
+    runManagedTaskMock.mockImplementation(async (options) => {
       expect(options.context?.executionCwd).toBe(path.resolve(sessionCwd));
       expect(process.cwd()).toBe(originalCwd);
       return createResult();
@@ -724,7 +666,7 @@ describe('KodaXAcpServer', () => {
 
   it('returns prompt usage and reuses the latest token snapshot on the next ACP turn', async () => {
     let callCount = 0;
-    runKodaXMock.mockImplementation(async (options) => {
+    runManagedTaskMock.mockImplementation(async (options) => {
       callCount += 1;
 
       if (callCount === 1) {
@@ -800,7 +742,7 @@ describe('KodaXAcpServer', () => {
       sessionCwd: path.join(defaultCwd, 'some-other-dir'),
     });
 
-    runKodaXMock.mockImplementationOnce(async (options) => {
+    runManagedTaskMock.mockImplementationOnce(async (options) => {
       expect(options.context?.executionCwd).toBe(defaultCwd);
       return createResult();
     });
@@ -844,7 +786,7 @@ describe('KodaXAcpServer', () => {
   });
 
   it('fails closed when the ACP client cannot complete a permission request', async () => {
-    runKodaXMock.mockImplementation(async (options) => {
+    runManagedTaskMock.mockImplementation(async (options) => {
       const decision = await options.events?.beforeToolExecute?.(
         'write',
         { path: 'README.md', content: '# test' },
@@ -868,7 +810,7 @@ describe('KodaXAcpServer', () => {
   });
 
   it('logs dropped ACP notifications without failing the prompt', async () => {
-    runKodaXMock.mockImplementation(async (options) => {
+    runManagedTaskMock.mockImplementation(async (options) => {
       options.events?.onTextDelta?.('Hello from ACP');
       return createResult({ lastText: 'Hello from ACP' });
     });
@@ -907,7 +849,7 @@ describe('KodaXAcpServer', () => {
   });
 
   it('treats abort-style runtime errors as cancellation without emitting ACP error text', async () => {
-    runKodaXMock.mockImplementation(async (options) => {
+    runManagedTaskMock.mockImplementation(async (options) => {
       options.abortSignal?.throwIfAborted?.();
       throw new DOMException('This operation was aborted', 'AbortError');
     });
@@ -952,7 +894,7 @@ describe('KodaXAcpServer', () => {
   });
 
   it('emits ACP lifecycle runtime events and still writes stderr logs through the default sink', async () => {
-    runKodaXMock.mockResolvedValue(createResult({ lastText: 'done' }));
+    runManagedTaskMock.mockResolvedValue(createResult({ lastText: 'done' }));
 
     const harness = await createHarness({ logLevel: 'info' });
     await harness.client.prompt({
@@ -992,7 +934,7 @@ describe('KodaXAcpServer', () => {
 
   it('emits structured permission negotiation events', async () => {
     let harness: Awaited<ReturnType<typeof createHarness>>;
-    runKodaXMock.mockImplementation(async () => {
+    runManagedTaskMock.mockImplementation(async () => {
       const runtime = harness.runtime;
       if (!runtime) throw new Error('Expected an injected Runtime.');
       const [run] = await runtime.runs.list({ sessionId: harness.sessionId });

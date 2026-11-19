@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { KodaXBaseProvider, registerModelProvider, type KodaXMessage, type KodaXProviderConfig,
   type KodaXStreamResult, type KodaXToolDefinition } from '@kodax-ai/llm';
 import { runManagedTask } from './task-engine.js';
-import { runKodaX } from './agent.js';
+import { runLeafAgent } from './agent.js';
 import { combineExtensionRuntimes, createExtensionRuntime } from './extensions/runtime.js';
 import { awaitLatestCodingMemoryReviewDrain } from './memory-runtime.js';
 import type { KodaXEvents } from './types.js';
@@ -60,7 +60,7 @@ it.for(['direct', 'ama'].flatMap(mode => ['plain', 'combined'].flatMap(runtimeKi
     }
     cleanups.push(registerModelProvider('tool-gate-fixture', () => new Provider()));
     const events: KodaXEvents | undefined = withEvents ? { beforeToolExecute: async () => true } : undefined;
-    const run = mode === 'direct' ? runKodaX : runManagedTask;
+    const run = mode === 'direct' ? runLeafAgent : runManagedTask;
     const result = await run({ provider: 'tool-gate-fixture', ...(mode === 'ama' ? { agentMode: 'ama' as const } : {}), reasoningMode: 'quick',
       lsp: false, events, abortSignal: testContext.signal,
       extensionRuntime: runtimeKind === 'combined' ? combineExtensionRuntimes(sessionRuntime, globalRuntime) : sessionRuntime,

@@ -2,11 +2,11 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { KodaXOptions, KodaXResult } from '../types.js';
 import type { WorkflowProcessEvent, WorkflowProcessSnapshot } from '@kodax-ai/agent';
 
-// Mock the deepest dependency (runKodaX) so startKodaX's real option-merging
-// runs but no agent loop executes. Capture the effective options runKodaX sees.
+// Mock the managed Run entry so startKodaX's real option-merging
+// runs but no agent loop executes. Capture the effective options the Run sees.
 const runKodaXMock = vi.fn<[KodaXOptions, string], Promise<KodaXResult>>();
-vi.mock('../agent.js', () => ({
-  runKodaX: (options: KodaXOptions, prompt: string) => runKodaXMock(options, prompt),
+vi.mock('../task-engine.js', () => ({
+  runManagedTask: (options: KodaXOptions, prompt: string) => runKodaXMock(options, prompt),
 }));
 
 const { authorWorkflowViaWorker, buildScoutThenAuthorPrompt, SCOUT_THEN_AUTHOR_PROMPT_LINES } =

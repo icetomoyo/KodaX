@@ -213,6 +213,8 @@ export type {
   KodaXAgentMode,
   KodaXCanonicalAgentMode,
   KodaXAgentProfile,
+  KodaXPromptSpec,
+  KodaXPromptContextEntry,
   KodaXEffectiveTaskConfig,
   KodaXToolVisibilityMeta,
   KodaXToolVisibilityPolicy,
@@ -699,10 +701,8 @@ export type {
 
 // ============== Agent ==============
 
-export {
-  runKodaX,
-  checkPromiseSignal,
-} from './agent.js';
+export { runKodaX } from './task-engine.js';
+export { checkPromiseSignal } from './agent.js';
 
 // v0.7.42 — non-blocking SDK entry (closes gap 6 reported by KodaX Space).
 // `startKodaX` returns a `RunningSession` handle so embedders can flip

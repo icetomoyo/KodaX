@@ -55,7 +55,6 @@ import type {
   KodaXResult,
   KodaXShellSandbox,
   KodaXToolSandboxObservationUpdate,
-  RunningSession,
 } from "@kodax-ai/coding";
 import {
   CANCELLED_TOOL_RESULT_MESSAGE,
@@ -89,7 +88,6 @@ import { toolSkill } from "../packages/coding/src/tools/skill.js";
 
 const codingMock = vi.hoisted(() => ({
   runManagedTask: vi.fn(),
-  startKodaX: vi.fn(),
   beforeGoalBinding: null as null | (() => Promise<void>),
 }));
 
@@ -240,7 +238,6 @@ vi.mock("@kodax-ai/coding", async (importOriginal) => {
   return {
     ...actual,
     runManagedTask: codingMock.runManagedTask,
-    startKodaX: codingMock.startKodaX,
     async buildSessionGoalRuntimeBinding(...args: Parameters<typeof actual.buildSessionGoalRuntimeBinding>) {
       await codingMock.beforeGoalBinding?.();
       return actual.buildSessionGoalRuntimeBinding(...args);
@@ -306,7 +303,6 @@ describe("createKodaXRuntime", () => {
   beforeEach(async () => {
     tempRoot = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), "kodax-runtime-"));
     codingMock.runManagedTask.mockReset();
-    codingMock.startKodaX.mockReset();
     codingMock.beforeGoalBinding = null;
     replMock.bootstrapAutoMode.mockReset();
     replMock.compactSession.mockReset();
@@ -1236,17 +1232,14 @@ describe("createKodaXRuntime", () => {
       title: "Owner Identity Boundary",
       projectPath: ownerHome,
     });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession =>
-        fakeRunningSession(
-          options,
-          Promise.resolve({
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> =>
+        Promise.resolve({
             success: true,
             lastText: "done",
             messages: [],
             sessionId: session.id,
           }),
-        ),
     );
 
     try {
@@ -1270,7 +1263,7 @@ describe("createKodaXRuntime", () => {
       });
       await handle.result;
 
-      const runOptions = codingMock.startKodaX.mock.calls[0]?.[0];
+      const runOptions = codingMock.runManagedTask.mock.calls[0]?.[0];
       expect(runOptions?.context?.configHome).toBe(
         path.join(ownerHome, ".kodax"),
       );
@@ -1724,18 +1717,15 @@ describe("createKodaXRuntime", () => {
     });
 
     let capturedOptions: KodaXOptions | undefined;
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         capturedOptions = options;
-        return fakeRunningSession(
-          options,
-          Promise.resolve({
+        return Promise.resolve({
             success: true,
             lastText: "settings done",
             messages: [],
             sessionId: session.id,
-          }),
-        );
+          });
       },
     );
 
@@ -1893,18 +1883,15 @@ describe("createKodaXRuntime", () => {
     });
     await runtime.sessions.updateSettings(session.id, { agentMode: "amaw" });
     let effectiveAgentMode: unknown;
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         effectiveAgentMode = options.agentMode;
-        return fakeRunningSession(
-          options,
-          Promise.resolve({
+        return Promise.resolve({
             success: true,
             lastText: "done",
             messages: [],
             sessionId: session.id,
-          }),
-        );
+          });
       },
     );
 
@@ -1931,18 +1918,15 @@ describe("createKodaXRuntime", () => {
       title: "Plan Bridge Test",
     });
     const capturedOptions: KodaXOptions[] = [];
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         capturedOptions.push(options);
-        return fakeRunningSession(
-          options,
-          Promise.resolve({
+        return Promise.resolve({
             success: true,
             lastText: "done",
             messages: [],
             sessionId: session.id,
-          }),
-        );
+          });
       },
     );
 
@@ -2302,13 +2286,10 @@ describe("createKodaXRuntime", () => {
       sessionId: "cross-runtime-index-session",
     });
     let finishRun: ((value: KodaXResult) => void) | undefined;
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => fakeRunningSession(
-        options,
-        new Promise<KodaXResult>((resolve) => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => new Promise<KodaXResult>((resolve) => {
           finishRun = resolve;
         }),
-      ),
     );
     const handle = await first.runs.start({
       sessionId: session.id,
@@ -2756,9 +2737,9 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Active Status Persistence",
     });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession =>
-        fakeRunningSession(options, new Promise<KodaXResult>(() => undefined)),
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> =>
+        new Promise<KodaXResult>(() => undefined),
     );
 
     const handle = await runtime.runs.start({
@@ -2793,14 +2774,11 @@ describe("createKodaXRuntime", () => {
       title: "Shared live Run ownership",
     });
     let finishRun: ((result: KodaXResult) => void) | undefined;
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession =>
-        fakeRunningSession(
-          options,
-          new Promise<KodaXResult>((resolve) => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> =>
+        new Promise<KodaXResult>((resolve) => {
             finishRun = resolve;
           }),
-        ),
     );
     const handle = await first.runs.start({
       sessionId: session.id,
@@ -2844,14 +2822,14 @@ describe("createKodaXRuntime", () => {
 
     const firstStatus = await second.runs.get(handle.runId);
     await first.close();
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession =>
-        fakeRunningSession(options, Promise.resolve({
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> =>
+        Promise.resolve({
           success: true,
           lastText: "second owner done",
           messages: [],
           sessionId: session.id,
-        })),
+        }),
     );
     const successor = await second.runs.start({
       sessionId: session.id,
@@ -2878,21 +2856,18 @@ describe("createKodaXRuntime", () => {
     });
     let capturedOptions: KodaXOptions | undefined;
 
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions, prompt: string): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions, prompt: string): Promise<KodaXResult> => {
         expect(["inspect these inputs", "inspect artifact ref"]).toContain(
           prompt,
         );
         capturedOptions = options;
-        return fakeRunningSession(
-          options,
-          Promise.resolve({
+        return Promise.resolve({
             success: true,
             lastText: "artifact done",
             messages: [],
             sessionId: session.id,
-          }),
-        );
+          });
       },
     );
 
@@ -3096,7 +3071,7 @@ describe("createKodaXRuntime", () => {
       } as unknown as Parameters<typeof runtime.runs.start>[0]),
     ).rejects.toThrow("Unsupported runtime input type: audio");
 
-    expect(codingMock.startKodaX).not.toHaveBeenCalled();
+    expect(codingMock.runManagedTask).not.toHaveBeenCalled();
     await expect(runtime.runs.list()).resolves.toEqual([]);
 
     await runtime.close();
@@ -3507,9 +3482,9 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Active Mutation Conflict",
     });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession =>
-        fakeRunningSession(options, new Promise<KodaXResult>(() => undefined)),
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> =>
+        new Promise<KodaXResult>(() => undefined),
     );
     const run = await runtime.runs.start({
       sessionId: session.id,
@@ -3562,8 +3537,8 @@ describe("createKodaXRuntime", () => {
       });
     });
 
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions, prompt: string): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions, prompt: string): Promise<KodaXResult> => {
         expect(prompt).toBe("hello runtime");
         const sessionId = options.session?.id ?? "missing-session";
         queueMicrotask(() => {
@@ -3633,15 +3608,12 @@ describe("createKodaXRuntime", () => {
             },
           );
         });
-        return fakeRunningSession(
-          options,
-          Promise.resolve({
+        return Promise.resolve({
             success: true,
             lastText: "done",
             messages: [],
             sessionId,
-          }),
-        );
+          });
       },
     );
 
@@ -3739,8 +3711,8 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Canonical Compact Event",
     });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         queueMicrotask(() => {
           options.events?.onCompactedMessages?.(
             [{ role: "user", content: "checkpoint" }],
@@ -3786,15 +3758,12 @@ describe("createKodaXRuntime", () => {
             strategy: "full_prefix",
           });
         });
-        return fakeRunningSession(
-          options,
-          Promise.resolve({
+        return Promise.resolve({
             success: true,
             lastText: "done",
             messages: [],
             sessionId: session.id,
-          }),
-        );
+          });
       },
     );
 
@@ -3848,7 +3817,7 @@ describe("createKodaXRuntime", () => {
     expect(eventJson).not.toContain("PRIVATE_ATTACHMENT");
     expect(Buffer.byteLength(eventJson, "utf8")).toBeLessThan(4_096);
     expect(
-      codingMock.startKodaX.mock.calls[0]?.[0].session?.persistedByHost,
+      codingMock.runManagedTask.mock.calls[0]?.[0].session?.persistedByHost,
     ).toBe(false);
     await runtime.close();
   });
@@ -3863,8 +3832,8 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Compaction Outcome Events",
     });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         queueMicrotask(() => {
           options.events?.onContextCompactionSkipped?.({
             reason: "compactable_below_threshold",
@@ -3892,15 +3861,12 @@ describe("createKodaXRuntime", () => {
             cooldownTurnsRemaining: 2,
           });
         });
-        return fakeRunningSession(
-          options,
-          Promise.resolve({
+        return Promise.resolve({
             success: true,
             lastText: "done",
             messages: [],
             sessionId: session.id,
-          }),
-        );
+          });
       },
     );
 
@@ -3961,7 +3927,7 @@ describe("createKodaXRuntime", () => {
       releaseQueuedInput = resolve;
     });
 
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions) => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions) => {
       const result = (async (): Promise<KodaXResult> => {
         const storage = options.session?.storage;
         if (!storage) throw new Error("Runtime canonical storage missing");
@@ -4042,7 +4008,7 @@ describe("createKodaXRuntime", () => {
         );
         throw new Error("simulated daemon crash during queued turn");
       })();
-      return fakeRunningSession(options, result);
+      return result;
     });
 
     const lifecycleCollector = collectEvents(runtime, session.id);
@@ -4247,8 +4213,8 @@ describe("createKodaXRuntime", () => {
       title: "Live Projection Retention",
     });
     const chunk = "x".repeat(2 * 1024 * 1024);
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         const sessionId = options.session?.id ?? session.id;
         options.events?.onToolUseStart?.(
           { id: "long-tool", name: "bash", input: { command: "long-running" } },
@@ -4268,10 +4234,7 @@ describe("createKodaXRuntime", () => {
             timestamp: "2026-07-09T00:00:00.000Z",
           });
         }
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
 
@@ -4333,14 +4296,11 @@ describe("createKodaXRuntime", () => {
       title: "Observation Listener Failure",
     });
     let finishRun: ((result: KodaXResult) => void) | undefined;
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession =>
-        fakeRunningSession(
-          options,
-          new Promise<KodaXResult>((resolve) => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> =>
+        new Promise<KodaXResult>((resolve) => {
             finishRun = resolve;
           }),
-        ),
     );
     const run = await runtime.runs.start({
       sessionId: session.id,
@@ -4385,8 +4345,8 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Child Activity Projection",
     });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         const rootMeta = {
           sessionId: session.id,
           turnId: "turn-root",
@@ -4441,10 +4401,7 @@ describe("createKodaXRuntime", () => {
         options.events?.onTodoUpdate?.([], {
           workflowCorrelation: { workflowRunId: "workflow-child" },
         });
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
 
@@ -6923,8 +6880,8 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Parallel Tool Projection",
     });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         const meta = { sessionId: session.id, turnId: "turn-tools" };
         options.events?.onToolUseStart?.({ id: "tool-a", name: "read" }, meta);
         options.events?.onToolUseStart?.({ id: "tool-b", name: "bash" }, meta);
@@ -6932,10 +6889,7 @@ describe("createKodaXRuntime", () => {
           { id: "tool-a", name: "read", content: "done" },
           meta,
         );
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
 
@@ -6975,18 +6929,15 @@ describe("createKodaXRuntime", () => {
       session.id,
       "assistant.delta",
     );
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         queueMicrotask(() => {
           options.events?.onTextDelta?.("buffered delta", {
             sessionId: session.id,
             turnId: "turn-buffered",
           });
         });
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
 
@@ -7014,20 +6965,14 @@ describe("createKodaXRuntime", () => {
     const secondSession = await runtime.sessions.create({ title: "Timer B" });
     let firstEvents: KodaXOptions["events"];
     let secondEvents: KodaXOptions["events"];
-    codingMock.startKodaX
-      .mockImplementationOnce((options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask
+      .mockImplementationOnce((options: KodaXOptions): Promise<KodaXResult> => {
         firstEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       })
-      .mockImplementationOnce((options: KodaXOptions): RunningSession => {
+      .mockImplementationOnce((options: KodaXOptions): Promise<KodaXResult> => {
         secondEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       });
     const firstRun = await runtime.runs.start({
       sessionId: firstSession.id,
@@ -7066,13 +7011,10 @@ describe("createKodaXRuntime", () => {
       title: "Subscription Disconnect Flush",
     });
     let activeEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         activeEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
     const disconnectedEvents: RuntimeEvent[] = [];
@@ -7118,13 +7060,10 @@ describe("createKodaXRuntime", () => {
       title: "Shared Connection Disconnect Flush",
     });
     let activeEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         activeEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
     const firstEvents: RuntimeEvent[] = [];
@@ -7191,8 +7130,8 @@ describe("createKodaXRuntime", () => {
     runtime.events.subscribe({ sessionId: session.id }, (event) => {
       seen.push(event);
     });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         queueMicrotask(() => {
           for (let index = 0; index < thinkingCount; index += 1) {
             options.events?.onThinkingDelta?.(thinkingChunk, {
@@ -7213,12 +7152,12 @@ describe("createKodaXRuntime", () => {
             });
           }
         });
-        return fakeRunningSession(options, Promise.resolve({
+        return Promise.resolve({
           success: true,
           lastText: textChunk.repeat(textCount),
           messages: [],
           sessionId: session.id,
-        }));
+        });
       },
     );
 
@@ -7368,8 +7307,8 @@ describe("createKodaXRuntime", () => {
     });
     const firstFragment = "a".repeat(7 * 1024);
     const secondFragment = "b".repeat(7 * 1024);
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         queueMicrotask(() => {
           options.events?.onTextDelta?.(firstFragment, {
             sessionId: session.id,
@@ -7380,12 +7319,12 @@ describe("createKodaXRuntime", () => {
             turnId: "turn-size-limit",
           });
         });
-        return fakeRunningSession(options, Promise.resolve({
+        return Promise.resolve({
           success: true,
           lastText: firstFragment + secondFragment,
           messages: [],
           sessionId: session.id,
-        }));
+        });
       },
     );
 
@@ -7426,8 +7365,8 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Tool Input Delta Coalescing",
     });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         queueMicrotask(() => {
           options.events?.onToolUseStart?.(
             { id: "tool-a", name: "edit" },
@@ -7458,12 +7397,12 @@ describe("createKodaXRuntime", () => {
           options.events?.onToolInputDelta?.("unknown", "first");
           options.events?.onToolInputDelta?.("unknown", "second");
         });
-        return fakeRunningSession(options, Promise.resolve({
+        return Promise.resolve({
           success: true,
           lastText: "done",
           messages: [],
           sessionId: session.id,
-        }));
+        });
       },
     );
 
@@ -7497,8 +7436,8 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Latest Tool Progress",
     });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         queueMicrotask(() => {
           options.events?.onToolUseStart?.(
             { id: "tool-progress", name: "bash" },
@@ -7515,12 +7454,12 @@ describe("createKodaXRuntime", () => {
             { sessionId: session.id, toolId: "tool-progress" },
           );
         });
-        return fakeRunningSession(options, Promise.resolve({
+        return Promise.resolve({
           success: true,
           lastText: "done",
           messages: [],
           sessionId: session.id,
-        }));
+        });
       },
     );
 
@@ -7549,12 +7488,9 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({ title: "Payload Snapshot" });
     const collector = collectEvents(runtime, session.id, "tool.progress");
     let activeEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions) => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions) => {
       activeEvents = options.events;
-      return fakeRunningSession(
-        options,
-        new Promise<KodaXResult>(() => undefined),
-      );
+      return new Promise<KodaXResult>(() => undefined);
     });
     const run = await runtime.runs.start({
       sessionId: session.id,
@@ -7592,13 +7528,10 @@ describe("createKodaXRuntime", () => {
       title: "Progress Frequency Limit",
     });
     let activeEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         activeEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
     const seen: RuntimeEvent[] = [];
@@ -7662,13 +7595,10 @@ describe("createKodaXRuntime", () => {
       title: "Interleaved Progress Frequency Limit",
     });
     let activeEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         activeEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
     const seen: RuntimeEvent[] = [];
@@ -7723,13 +7653,10 @@ describe("createKodaXRuntime", () => {
       title: "Parallel Workflow Progress",
     });
     let activeEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         activeEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
     const collector = collectEvents(runtime, session.id, "workflow.updated");
@@ -7769,14 +7696,11 @@ describe("createKodaXRuntime", () => {
       title: "Run Settlement Persistence Fence",
     });
     let rejectRun: ((error: Error) => void) | undefined;
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession =>
-        fakeRunningSession(
-          options,
-          new Promise<KodaXResult>((_resolve, reject) => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> =>
+        new Promise<KodaXResult>((_resolve, reject) => {
             rejectRun = reject;
           }),
-        ),
     );
     const run = await runtime.runs.start({
       sessionId: session.id,
@@ -7842,10 +7766,10 @@ describe("createKodaXRuntime", () => {
     });
     const session = await runtime.sessions.create({ title: "Unknown Run Update" });
     let rejectRun: ((error: Error) => void) | undefined;
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions) =>
-      fakeRunningSession(options, new Promise<KodaXResult>((_resolve, reject) => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions) =>
+      new Promise<KodaXResult>((_resolve, reject) => {
         rejectRun = reject;
-      })),
+      }),
     );
     const run = await runtime.runs.start({
       sessionId: session.id,
@@ -7901,10 +7825,10 @@ describe("createKodaXRuntime", () => {
       title: "Terminal status committed before cleanup failure",
     });
     let resolveRun: ((result: KodaXResult) => void) | undefined;
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions) =>
-      fakeRunningSession(options, new Promise<KodaXResult>((resolve) => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions) =>
+      new Promise<KodaXResult>((resolve) => {
         resolveRun = resolve;
-      })),
+      }),
     );
     const run = await runtime.runs.start({
       sessionId: session.id,
@@ -7983,13 +7907,11 @@ describe("createKodaXRuntime", () => {
       title: "Error Boundary Flush",
     });
     let errorEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementationOnce(
-      (options: KodaXOptions): RunningSession => {
+    let rejectErrorRun: ((error: Error) => void) | undefined;
+    codingMock.runManagedTask.mockImplementationOnce(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         errorEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>((_resolve, reject) => { rejectErrorRun = reject; });
       },
     );
     const failedCollector = collectEvents(runtime, errorSession.id);
@@ -8007,7 +7929,9 @@ describe("createKodaXRuntime", () => {
       id: "error-progress",
       message: "error progress last",
     });
-    errorEvents?.onError?.(new Error("stream failed"));
+    const streamFailure = new Error("stream failed");
+    errorEvents?.onError?.(streamFailure);
+    rejectErrorRun?.(streamFailure);
     await expectSettles(failed.result, "delta error boundary");
     const failedReplay = failedCollector.events;
 
@@ -8026,13 +7950,10 @@ describe("createKodaXRuntime", () => {
       title: "Cancel Boundary Flush",
     });
     let cancelEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementationOnce(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementationOnce(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         cancelEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
     const cancelledCollector = collectEvents(runtime, cancelSession.id);
@@ -8072,13 +7993,10 @@ describe("createKodaXRuntime", () => {
       title: "Coalesced Observation Handoff",
     });
     let activeEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         activeEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
     const allDeltas = collectEvents(runtime, session.id, "assistant.delta");
@@ -8129,13 +8047,10 @@ describe("createKodaXRuntime", () => {
       title: "Replacement Output Projection",
     });
     let activeEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         activeEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
     const rawCollector = collectEvents(
@@ -8239,8 +8154,8 @@ describe("createKodaXRuntime", () => {
       }
     });
 
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         const sessionId = options.session?.id ?? "missing-session";
         const childSessionId = `${sessionId}-child-worker`;
         queueMicrotask(() => {
@@ -8430,15 +8345,12 @@ describe("createKodaXRuntime", () => {
             cachedReadTokens: 96,
           });
         });
-        return fakeRunningSession(
-          options,
-          Promise.resolve({
+        return Promise.resolve({
             success: true,
             lastText: "diagnostics forwarded",
             messages: [],
             sessionId,
-          }),
-        );
+          });
       },
     );
 
@@ -8535,24 +8447,18 @@ describe("createKodaXRuntime", () => {
         });
       },
     );
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions, prompt: string): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions, prompt: string): Promise<KodaXResult> => {
         const sessionId = options.session?.id ?? session.id;
         starts.push(prompt);
         if (prompt === "first") {
-          return fakeRunningSession(
-            options,
-            new Promise<KodaXResult>((resolve) => {
+          return new Promise<KodaXResult>((resolve) => {
               finishFirst = resolve;
-            }),
-          );
+            });
         }
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>((resolve) => {
+        return new Promise<KodaXResult>((resolve) => {
             finishSecond = resolve;
-          }),
-        );
+          });
       },
     );
 
@@ -8617,8 +8523,8 @@ describe("createKodaXRuntime", () => {
     replMock.beforeLoadSession = async (call) => {
       if (call === 1) await firstLoadBlocked;
     };
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions) =>
-      fakeRunningSession(options, new Promise<KodaXResult>(() => undefined)),
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions) =>
+      new Promise<KodaXResult>(() => undefined),
     );
 
     const firstStart = runtime.runs.start({
@@ -8650,9 +8556,9 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({ title: 'Queue handoff during admission' });
     const starts: string[] = [];
     const finishers: Array<(value: KodaXResult) => void> = [];
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions, prompt: string) => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions, prompt: string) => {
       starts.push(prompt);
-      return fakeRunningSession(options, new Promise<KodaXResult>((resolve) => finishers.push(resolve)));
+      return new Promise<KodaXResult>((resolve) => finishers.push(resolve));
     });
     let entered!: () => void;
     let release!: () => void;
@@ -8699,15 +8605,12 @@ describe("createKodaXRuntime", () => {
     });
     const starts: string[] = [];
     const finishers: Array<(value: KodaXResult) => void> = [];
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions, prompt: string): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions, prompt: string): Promise<KodaXResult> => {
         starts.push(prompt);
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>((resolve) => {
+        return new Promise<KodaXResult>((resolve) => {
             finishers.push(resolve);
-          }),
-        );
+          });
       },
     );
 
@@ -8785,7 +8688,7 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
-  it("keeps a healthy managed-task after-turn continuation in coding mode by default", async () => {
+  it("runs a healthy after-turn continuation on the managed Worker", async () => {
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -8806,19 +8709,11 @@ describe("createKodaXRuntime", () => {
       }
       return Promise.resolve({
         success: true,
-        lastText: "unexpected managed continuation",
+        lastText: "managed continuation completed",
         messages: [],
         sessionId: options.session?.id ?? "missing-session",
       });
     });
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions) => (
-      fakeRunningSession(options, Promise.resolve({
-        success: true,
-        lastText: "coding continuation completed",
-        messages: [],
-        sessionId: options.session?.id ?? "missing-session",
-      }))
-    ));
 
     const first = await runtime.runs.start({
       sessionId: session.id,
@@ -8846,10 +8741,9 @@ describe("createKodaXRuntime", () => {
       phase: "completed",
     });
     await expect(runtime.runs.get(continuation.runId)).resolves.toMatchObject({
-      mode: "coding",
+      mode: "managed_task",
     });
-    expect(codingMock.runManagedTask).toHaveBeenCalledOnce();
-    expect(codingMock.startKodaX).toHaveBeenCalledOnce();
+    expect(codingMock.runManagedTask).toHaveBeenCalledTimes(2);
     await runtime.close();
   });
 
@@ -8933,10 +8827,10 @@ describe("createKodaXRuntime", () => {
     });
     const session = await runtime.sessions.create({ title: "Interrupted Coding" });
     const seen: Array<KodaXOptions["context"]> = [];
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions): Promise<KodaXResult> => {
       seen.push(options.context);
       if (seen.length > 1) {
-        return fakeRunningSession(options, Promise.resolve({ success: true, lastText: "resumed", messages: [], sessionId: session.id }));
+        return Promise.resolve({ success: true, lastText: "resumed", messages: [], sessionId: session.id });
       }
       const result = (async (): Promise<KodaXResult> => {
         const storage = options.session?.storage;
@@ -8952,7 +8846,7 @@ describe("createKodaXRuntime", () => {
         options.events?.onTextDelta?.("Script drafted; rendering next.", { ...request, seq: 2 });
         throw new Error("provider connection lost");
       })();
-      return fakeRunningSession(options, result);
+      return result;
     });
 
     const first = await runtime.runs.start({ sessionId: session.id, prompt: "lost work", mode: "coding" });
@@ -9022,13 +8916,10 @@ describe("createKodaXRuntime", () => {
     });
     const starts: string[] = [];
     const finishers: Array<(value: KodaXResult) => void> = [];
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions, prompt: string): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions, prompt: string): Promise<KodaXResult> => {
         starts.push(prompt);
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>((resolve) => finishers.push(resolve)),
-        );
+        return new Promise<KodaXResult>((resolve) => finishers.push(resolve));
       },
     );
 
@@ -9140,7 +9031,7 @@ describe("createKodaXRuntime", () => {
           sessionId: session.id,
           prompt: "must remain outside shared admission",
         })).rejects.toMatchObject({ code: "session_not_admitted" });
-        expect(codingMock.startKodaX).not.toHaveBeenCalled();
+        expect(codingMock.runManagedTask).not.toHaveBeenCalled();
       } finally {
         await shared.close();
       }
@@ -10393,13 +10284,10 @@ describe("createKodaXRuntime", () => {
     let restoreRename = false;
     try {
       let finishRoot: ((value: KodaXResult) => void) | undefined;
-      codingMock.startKodaX.mockImplementation(
-        (options: KodaXOptions): RunningSession => fakeRunningSession(
-          options,
-          new Promise<KodaXResult>((resolve) => {
+      codingMock.runManagedTask.mockImplementation(
+        (options: KodaXOptions): Promise<KodaXResult> => new Promise<KodaXResult>((resolve) => {
             finishRoot = resolve;
           }),
-        ),
       );
       const session = await runtime.sessions.create({
         title: "Keep local terminal fact",
@@ -10481,13 +10369,10 @@ describe("createKodaXRuntime", () => {
     let restoreRename = false;
     try {
       let finishRoot: ((value: KodaXResult) => void) | undefined;
-      codingMock.startKodaX.mockImplementation(
-        (options: KodaXOptions): RunningSession => fakeRunningSession(
-          options,
-          new Promise<KodaXResult>((resolve) => {
+      codingMock.runManagedTask.mockImplementation(
+        (options: KodaXOptions): Promise<KodaXResult> => new Promise<KodaXResult>((resolve) => {
             finishRoot = resolve;
           }),
-        ),
       );
       const session = await runtime.sessions.create({
         title: "Persistent Stop terminal failure",
@@ -11436,15 +11321,12 @@ describe("createKodaXRuntime", () => {
     });
     let activeEvents: KodaXOptions["events"];
     let finishCoding: ((value: KodaXResult) => void) | undefined;
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         activeEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>((resolve) => {
+        return new Promise<KodaXResult>((resolve) => {
             finishCoding = resolve;
-          }),
-        );
+          });
       },
     );
 
@@ -11482,47 +11364,6 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
-  it("settles a coding Run from the executor completion signal even if its result promise is lost", async () => {
-    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
-    const runtime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "sessions"),
-      defaultProvider: "mock-provider",
-    });
-    const session = await runtime.sessions.create({
-      title: "Explicit Completion Boundary",
-    });
-    let activeEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
-        activeEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
-      },
-    );
-
-    const run = await runtime.runs.start({
-      sessionId: session.id,
-      prompt: "finish through the explicit executor signal",
-    });
-    activeEvents?.onComplete?.();
-
-    await expectSettles(run.result, "executor-completed Run").then((result) => {
-      expect(result).toMatchObject({ phase: "completed" });
-    });
-    await expect(runtime.runs.get(run.runId)).resolves.toMatchObject({
-      phase: "completed",
-      terminal: {
-        kind: "completed",
-        code: "completed",
-        effectOutcome: "known",
-      },
-    });
-    await runtime.close();
-  });
-
   it("preserves an asynchronously finalized coding payload at the completion boundary", async () => {
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
@@ -11533,10 +11374,8 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Asynchronous Coding Finalization",
     });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => fakeRunningSession(
-        options,
-        (async (): Promise<KodaXResult> => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => (async (): Promise<KodaXResult> => {
           await new Promise<void>((resolve) => setImmediate(resolve));
           options.events?.onComplete?.();
           return {
@@ -11546,7 +11385,6 @@ describe("createKodaXRuntime", () => {
             sessionId: session.id,
           };
         })(),
-      ),
     );
 
     const run = await runtime.runs.start({
@@ -11564,49 +11402,7 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
-  it("keeps a latched executor completion authoritative when Stop races before fallback settlement", async () => {
-    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
-    const runtime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "sessions"),
-      defaultProvider: "mock-provider",
-    });
-    const session = await runtime.sessions.create({
-      title: "Completion Before Stop",
-    });
-    let activeEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
-        activeEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
-      },
-    );
-
-    const run = await runtime.runs.start({
-      sessionId: session.id,
-      prompt: "complete before Stop",
-    });
-    activeEvents?.onComplete?.();
-    await runtime.runs.abort(run.runId);
-
-    await expectSettles(run.result, "completion before Stop").then((result) => {
-      expect(result).toMatchObject({ phase: "completed" });
-      expect(result.stop).toBeUndefined();
-    });
-    await expect(runtime.runs.get(run.runId)).resolves.toMatchObject({
-      phase: "completed",
-      terminal: {
-        kind: "completed",
-        code: "completed",
-      },
-    });
-    await runtime.close();
-  });
-
-  it("returns an unknown Stop receipt while a latched completion waits for an active child", async () => {
+  it("returns an unknown Stop receipt while a completed root waits for an active child", async () => {
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const external = deferredExternalAgentFixture("stop-latched-child");
     const runtime = await createKodaXRuntime({
@@ -11631,13 +11427,10 @@ describe("createKodaXRuntime", () => {
         objective: "Remain active while the root executor completes.",
         metadata: { agentId: external.registration.agentId },
       });
-      codingMock.startKodaX.mockImplementation(
-        (options: KodaXOptions): RunningSession => {
+      codingMock.runManagedTask.mockImplementation(
+        (options: KodaXOptions): Promise<KodaXResult> => {
           activeEvents = options.events;
-          return fakeRunningSession(
-            options,
-            new Promise<KodaXResult>(() => undefined),
-          );
+          return new Promise<KodaXResult>(() => undefined);
         },
       );
       const handle = await runtime.runs.start({
@@ -11675,7 +11468,7 @@ describe("createKodaXRuntime", () => {
     ["external AbortSignal", "abort"],
     ["Runtime close", "close"],
   ] as const)(
-    "does not let %s bypass Actor finalization for a latched completion",
+    "does not let %s bypass Actor finalization for a completed root",
     async (_label, trigger) => {
       const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
       const key = `terminal-gate-${trigger}`;
@@ -11702,13 +11495,10 @@ describe("createKodaXRuntime", () => {
           objective: "Keep Actor finalization pending.",
           metadata: { agentId: external.registration.agentId },
         });
-        codingMock.startKodaX.mockImplementation(
-          (options: KodaXOptions): RunningSession => {
+        codingMock.runManagedTask.mockImplementation(
+          (options: KodaXOptions): Promise<KodaXResult> => {
             activeEvents = options.events;
-            return fakeRunningSession(
-              options,
-              new Promise<KodaXResult>(() => undefined),
-            );
+            return new Promise<KodaXResult>(() => undefined);
           },
         );
         const handle = await runtime.runs.start({
@@ -11992,24 +11782,18 @@ describe("createKodaXRuntime", () => {
     let firstEvents: KodaXOptions["events"];
     let finishFirst: ((value: KodaXResult) => void) | undefined;
     let finishSecond: ((value: KodaXResult) => void) | undefined;
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions, prompt: string): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions, prompt: string): Promise<KodaXResult> => {
         starts.push(prompt);
         if (prompt === "first") {
           firstEvents = options.events;
-          return fakeRunningSession(
-            options,
-            new Promise<KodaXResult>((resolve) => {
+          return new Promise<KodaXResult>((resolve) => {
               finishFirst = resolve;
-            }),
-          );
+            });
         }
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>((resolve) => {
+        return new Promise<KodaXResult>((resolve) => {
             finishSecond = resolve;
-          }),
-        );
+          });
       },
     );
 
@@ -12050,138 +11834,6 @@ describe("createKodaXRuntime", () => {
     });
     await expect(second.result).resolves.toMatchObject({ phase: "completed" });
     await runtime.close();
-  });
-
-  it("keeps Session mutations fenced until a latched executor settlement finishes", async () => {
-    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
-    const runtime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "sessions"),
-      defaultProvider: "mock-provider",
-    });
-    const session = await runtime.sessions.create({
-      title: "Terminal Settlement Mutation Fence",
-    });
-    const abortController = new AbortController();
-    let activeEvents: KodaXOptions["events"];
-    let finishExecutor: ((value: KodaXResult) => void) | undefined;
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
-        activeEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>((resolve) => {
-            finishExecutor = resolve;
-          }),
-        );
-      },
-    );
-    const run = await runtime.runs.start({
-      sessionId: session.id,
-      prompt: "settle before Session mutation",
-      options: { abortSignal: abortController.signal },
-    });
-
-    vi.useFakeTimers({ toFake: ["setImmediate"] });
-    try {
-      activeEvents?.onComplete?.();
-      abortController.abort(new Error("abort after completion callback"));
-      await expect(runtime.runs.get(run.runId)).resolves.toMatchObject({
-        phase: "completed",
-      });
-      await expect(runtime.sessions.archive(session.id)).rejects.toMatchObject({
-        code: "conflict",
-      });
-    } finally {
-      finishExecutor?.({
-        success: true,
-        lastText: "executor cleanup finished",
-        messages: [],
-        sessionId: session.id,
-      });
-      await expect(run.result).resolves.toMatchObject({ phase: "completed" });
-      await vi.runAllTimersAsync();
-      vi.useRealTimers();
-      await runtime.close();
-    }
-  });
-
-  it.each([false, true])("persists a latched completion before Runtime close releases owner liveness with another checkpoint wait=%s", async (withCheckpointWait) => {
-    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
-    const external = deferredExternalAgentFixture('mixed-close-child');
-    const options = {
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "sessions"),
-      defaultProvider: "mock-provider",
-      externalAgents: { factories: [external.factory], policy: async () => ({ allowed: true }),
-        defaultContext: { actorId: 'mixed-close-host' } },
-    };
-    const firstRuntime = await createKodaXRuntime(options);
-    if (withCheckpointWait) {
-      const waitingSession = await firstRuntime.sessions.create({ title: 'Another Session preparing suspension' });
-      await firstRuntime.admin.agentRegistrations.upsert(external.registration);
-      const child = await firstRuntime.agents.spawn(waitingSession.id, { taskName: 'child', kind: 'external',
-        objective: 'Wait at a checkpoint', metadata: { agentId: external.registration.agentId } });
-      codingMock.startKodaX.mockImplementationOnce((runOptions: KodaXOptions) => {
-        runOptions.events!.onToolExecutionStart!({ id: 'wait', name: 'wait_agent' });
-        runOptions.events!.registerGenerationWait!(() => {});
-        const result = (async (): Promise<KodaXResult> => {
-          const messages: KodaXMessage[] = [{ role: 'user', content: 'Preserve the child request', turnId: 'child-turn' }];
-          const lineage = createSessionLineage(messages);
-          await runOptions.session!.storage!.save(waitingSession.id, { messages, lineage, title: 'Child checkpoint', gitRoot: tempRoot });
-          await runOptions.events!.onContextCapacityBlocked!({ checkpoint: { version: 1,
-            sessionId: waitingSession.id, activeEntryId: lineage.activeEntryId,
-            messagesDigest: createHash('sha256').update(JSON.stringify(messages)).digest('hex') } },
-          runOptions.abortSignal, { childAgentId: child.actorPath, turnId: child.turnId });
-          return { success: true, lastText: '', messages, sessionId: waitingSession.id };
-        })();
-        return fakeRunningSession(runOptions, result);
-      });
-      const waiting = await firstRuntime.runs.start({ sessionId: waitingSession.id, prompt: 'Wait for child' });
-      await vi.waitFor(async () => expect(await firstRuntime.runs.get(waiting.runId)).toMatchObject({
-        contextRecovery: { children: [expect.objectContaining({ agentId: '/root/child' })] },
-      }));
-    }
-    const session = await firstRuntime.sessions.create({
-      title: "Completion Before Runtime Close",
-    });
-    let activeEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementation(
-      (runOptions: KodaXOptions): RunningSession => {
-        activeEvents = runOptions.events;
-        return fakeRunningSession(
-          runOptions,
-          new Promise<KodaXResult>(() => undefined),
-        );
-      },
-    );
-
-    const run = await firstRuntime.runs.start({
-      sessionId: session.id,
-      prompt: "persist completion before owner release",
-    });
-    activeEvents?.onComplete?.();
-    const closeAttempt = firstRuntime.close();
-    const persistedAtClose = JSON.parse(readFileSync(path.join(
-      tempRoot,
-      ".kodax",
-      "runtime",
-      "runs",
-      run.runId,
-      "status.json",
-    ), "utf-8")) as { readonly phase?: string };
-    try { expect(persistedAtClose.phase).toBe("completed"); }
-    finally { external.finish(); await closeAttempt; }
-
-    const secondRuntime = await createKodaXRuntime(options);
-    await expect(secondRuntime.runs.get(run.runId)).resolves.toMatchObject({
-      phase: "completed",
-      terminal: {
-        kind: "completed",
-        code: "completed",
-      },
-    });
-    await secondRuntime.close();
   });
 
   it("does not revive an unknown stopped Run from late progress callbacks", async () => {
@@ -12237,90 +11889,6 @@ describe("createKodaXRuntime", () => {
     await expect(run.result).resolves.toMatchObject({ phase: "unknown" });
   });
 
-  it("settles a coding Run from the executor error signal even if its result promise is lost", async () => {
-    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
-    const runtime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "sessions"),
-      defaultProvider: "mock-provider",
-    });
-    const session = await runtime.sessions.create({
-      title: "Explicit Failure Boundary",
-    });
-    let activeEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
-        activeEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
-      },
-    );
-
-    const run = await runtime.runs.start({
-      sessionId: session.id,
-      prompt: "fail through the explicit executor signal",
-    });
-    activeEvents?.onError?.(new Error("executor failed durably"));
-
-    await expectSettles(run.result, "executor-failed Run").then((result) => {
-      expect(result).toMatchObject({ phase: "failed" });
-    });
-    await expect(runtime.runs.get(run.runId)).resolves.toMatchObject({
-      phase: "failed",
-      error: "Provider request failed.",
-      terminal: {
-        kind: "failed",
-        code: "run_failed",
-        effectOutcome: "known",
-      },
-    });
-    await runtime.close();
-  });
-
-  it("keeps the first executor terminal signal when callbacks race", async () => {
-    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
-    const runtime = await createKodaXRuntime({
-      homeDir: tempRoot,
-      sessionsDir: path.join(tempRoot, "sessions"),
-      defaultProvider: "mock-provider",
-    });
-    const session = await runtime.sessions.create({
-      title: "Terminal Callback Race",
-    });
-    let activeEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
-        activeEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
-      },
-    );
-
-    const terminalCollector = collectEvents(
-      runtime,
-      session.id,
-      "run.failed",
-      "run.completed",
-    );
-    const run = await runtime.runs.start({
-      sessionId: session.id,
-      prompt: "race terminal callbacks",
-    });
-    activeEvents?.onError?.(new Error("first terminal signal"));
-    activeEvents?.onComplete?.();
-
-    await expectSettles(run.result, "terminal callback race").then((result) => {
-      expect(result).toMatchObject({ phase: "failed" });
-    });
-    const terminalEvents = terminalCollector.events;
-    expect(terminalEvents.map((event) => event.type)).toEqual(["run.failed"]);
-    await runtime.close();
-  });
-
   it("rejects interrupt input after a coding run reports its terminal error", async () => {
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
@@ -12333,15 +11901,12 @@ describe("createKodaXRuntime", () => {
     });
     let activeEvents: KodaXOptions["events"];
     let failCoding: ((error: Error) => void) | undefined;
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         activeEvents = options.events;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>((_resolve, reject) => {
+        return new Promise<KodaXResult>((_resolve, reject) => {
             failCoding = reject;
-          }),
-        );
+          });
       },
     );
 
@@ -12386,9 +11951,9 @@ describe("createKodaXRuntime", () => {
       });
       const abortController = new AbortController();
       const neverSettles = new Promise<KodaXResult>(() => undefined);
-      codingMock.startKodaX.mockImplementation(
-        (options: KodaXOptions): RunningSession =>
-          fakeRunningSession(options, neverSettles),
+      codingMock.runManagedTask.mockImplementation(
+        (options: KodaXOptions): Promise<KodaXResult> =>
+          neverSettles,
       );
       codingMock.runManagedTask.mockImplementation(() => neverSettles);
 
@@ -12450,9 +12015,9 @@ describe("createKodaXRuntime", () => {
         "removeEventListener",
       );
       const neverSettles = new Promise<KodaXResult>(() => undefined);
-      codingMock.startKodaX.mockImplementation(
-        (options: KodaXOptions): RunningSession =>
-          fakeRunningSession(options, neverSettles),
+      codingMock.runManagedTask.mockImplementation(
+        (options: KodaXOptions): Promise<KodaXResult> =>
+          neverSettles,
       );
       codingMock.runManagedTask.mockImplementation(() => neverSettles);
 
@@ -12499,15 +12064,12 @@ describe("createKodaXRuntime", () => {
     let activeInterruptInput: NonNullable<
       KodaXOptions["context"]
     >["interruptInput"];
-    codingMock.startKodaX.mockImplementation(
+    codingMock.runManagedTask.mockImplementation(
       (options: KodaXOptions, prompt: string) => {
         starts.push(prompt);
         activeEvents = options.events;
         activeInterruptInput = options.context?.interruptInput;
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
 
@@ -12693,8 +12255,8 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Invalid Interrupt Input Test",
     });
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions) =>
-      fakeRunningSession(options, new Promise<KodaXResult>(() => undefined)),
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions) =>
+      new Promise<KodaXResult>(() => undefined),
     );
     const run = await runtime.runs.start({
       sessionId: session.id,
@@ -12768,12 +12330,9 @@ describe("createKodaXRuntime", () => {
       "run.input.delivered",
     );
     let activeEvents: KodaXOptions["events"];
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions) => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions) => {
       activeEvents = options.events;
-      return fakeRunningSession(
-        options,
-        new Promise<KodaXResult>(() => undefined),
-      );
+      return new Promise<KodaXResult>(() => undefined);
     });
 
     const run = await runtime.runs.start({
@@ -12843,8 +12402,8 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Interrupt Clone Failure Test",
     });
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions) =>
-      fakeRunningSession(options, new Promise<KodaXResult>(() => undefined)),
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions) =>
+      new Promise<KodaXResult>(() => undefined),
     );
     const run = await runtime.runs.start({
       sessionId: session.id,
@@ -12888,8 +12447,8 @@ describe("createKodaXRuntime", () => {
       session.id,
       "run.input.delivered",
     );
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions) =>
-      fakeRunningSession(options, new Promise<KodaXResult>(() => undefined)),
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions) =>
+      new Promise<KodaXResult>(() => undefined),
     );
 
     const first = await runtime.runs.start({
@@ -12951,7 +12510,7 @@ describe("createKodaXRuntime", () => {
     await expect(runtime.runs.start(trustedInput)).rejects.toMatchObject({
       code: "credential_unavailable",
     });
-    expect(codingMock.startKodaX).not.toHaveBeenCalled();
+    expect(codingMock.runManagedTask).not.toHaveBeenCalled();
     await runtime.close();
   });
 
@@ -12963,7 +12522,7 @@ describe("createKodaXRuntime", () => {
       defaultProvider: "mock-provider",
     });
     const session = await runtime.sessions.create({ title: "V1 Credential Lifetime" });
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions) => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions) => {
       const result = Promise.resolve()
         .then(() => withProviderRequestCredential(
           "mock-provider",
@@ -12977,7 +12536,7 @@ describe("createKodaXRuntime", () => {
           messages: [],
           sessionId: options.session?.id ?? session.id,
         }));
-      return fakeRunningSession(options, result);
+      return result;
     });
     const trustedInput = {
       sessionId: session.id,
@@ -13009,15 +12568,12 @@ describe("createKodaXRuntime", () => {
       title: "Credential Error Redaction",
     });
     const collector = collectEvents(runtime, session.id);
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions) => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions) => {
       options.events?.onRetry?.(`provider echoed ${secret}`, 1, 1);
       options.events?.onError?.(new Error(`provider emitted ${secret}`));
-      return fakeRunningSession(
-        options,
-        Promise.reject(Object.assign(new Error(`provider rejected ${secret}`), {
+      return Promise.reject(Object.assign(new Error(`provider rejected ${secret}`), {
           code: "ETIMEDOUT",
-        })),
-      );
+        }));
     });
     const trustedInput = {
       sessionId: session.id,
@@ -13077,7 +12633,7 @@ describe("createKodaXRuntime", () => {
       session.id,
       "run.failed",
     );
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions) => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions) => {
       const error = Object.assign(
         new Error(
           `Model missing-model rejected private prompt fragment at https://user:${secret}@api.example.test/v1/models?api_key=${secret}; `
@@ -13095,7 +12651,7 @@ describe("createKodaXRuntime", () => {
         },
       );
       options.events?.onError?.(error);
-      return fakeRunningSession(options, Promise.reject(error));
+      return Promise.reject(error);
     });
     const trustedInput = {
       sessionId: session.id,
@@ -13164,7 +12720,7 @@ describe("createKodaXRuntime", () => {
       try {
       const facts = JSON.parse(JSON.stringify({ source: 'local', code, skillName: 'draft-response' })) as Record<string, unknown>;
       const error = Object.assign(new Error('EACCES C:\\private\\skill-credentials'), facts);
-      codingMock.startKodaX.mockImplementationOnce(input => fakeRunningSession(input, Promise.reject(error)));
+      codingMock.runManagedTask.mockImplementationOnce(input => Promise.reject(error));
       const run = await runtime.runs.start({ sessionId: session.id, prompt: 'invoke skill' });
       const result = await run.result;
       const detail = { failureKind: 'local_execution', providerErrorCode: code, skillName: 'draft-response',
@@ -13199,9 +12755,9 @@ describe("createKodaXRuntime", () => {
           message: "Local SDK execution failed. TypeError: result.startsWith is not a function",
           safeMessage: "Local SDK execution failed." },
       });
-      codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => {
+      codingMock.runManagedTask.mockImplementationOnce((options: KodaXOptions) => {
         options.events?.onError?.(error);
-        return fakeRunningSession(options, Promise.reject(error));
+        return Promise.reject(error);
       });
       const handle = await runtime.runs.start({ sessionId: session.id, prompt: "Read an image" });
       const result = await handle.result;
@@ -13363,8 +12919,8 @@ describe("createKodaXRuntime", () => {
         failureCase.fields ?? {},
       );
       if (failureCase.name !== undefined) error.name = failureCase.name;
-      codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) =>
-        fakeRunningSession(options, Promise.reject(error)));
+      codingMock.runManagedTask.mockImplementationOnce((options: KodaXOptions) =>
+        Promise.reject(error));
       const handle = await runtime.runs.start({
         sessionId: session.id,
         prompt: `classify ${failureCase.message}`,
@@ -13383,8 +12939,8 @@ describe("createKodaXRuntime", () => {
         rawResponseBody: bodySecret,
       })}`,
     );
-    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) =>
-      fakeRunningSession(options, Promise.reject(jsonError)));
+    codingMock.runManagedTask.mockImplementationOnce((options: KodaXOptions) =>
+      Promise.reject(jsonError));
     const jsonHandle = await runtime.runs.start({
       sessionId: session.id,
       prompt: "select one safe JSON error field",
@@ -13393,8 +12949,8 @@ describe("createKodaXRuntime", () => {
     expect(jsonResult.failureDetail?.safeMessage).toBe("Provider request failed.");
     expect(JSON.stringify(jsonResult)).not.toContain(bodySecret);
 
-    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) =>
-      fakeRunningSession(options, Promise.reject(new Error("x".repeat(5_000)))));
+    codingMock.runManagedTask.mockImplementationOnce((options: KodaXOptions) =>
+      Promise.reject(new Error("x".repeat(5_000))));
     const longHandle = await runtime.runs.start({
       sessionId: session.id,
       prompt: "bound an oversized provider message",
@@ -13403,15 +12959,15 @@ describe("createKodaXRuntime", () => {
     expect(longResult.failureDetail?.safeMessage).toBe("Provider request failed.");
 
     const identifierSecret = "Z9";
-    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) =>
-      fakeRunningSession(options, Promise.reject(Object.assign(
+    codingMock.runManagedTask.mockImplementationOnce((options: KodaXOptions) =>
+      Promise.reject(Object.assign(
         new Error("upstream unavailable"),
         {
           status: 502,
           code: identifierSecret,
           request_id: identifierSecret,
         },
-      ))));
+      )));
     const identifierHandle = await runtime.runs.start({
       sessionId: session.id,
       prompt: "drop secret diagnostic identifiers",
@@ -13438,14 +12994,14 @@ describe("createKodaXRuntime", () => {
       sessionsDir: path.join(tempRoot, 'capacity-wait-sessions'), defaultProvider: 'mock-provider' });
     const session = await runtime.sessions.create({ title: 'Capacity recovery' });
     let resumed = false;
-    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => {
+    codingMock.runManagedTask.mockImplementationOnce((options: KodaXOptions) => {
       const result = (async (): Promise<KodaXResult> => {
         await options.events!.onContextCapacityBlocked!({ requiredTokens: 40_000, availableTokens: 32_768,
           configurationRevision: options.events!.getContextRecoveryRevision!() }, options.abortSignal);
         resumed = true;
         return { success: true, lastText: 'continued', messages: [], sessionId: session.id };
       })();
-      return fakeRunningSession(options, result);
+      return result;
     });
     const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'continue' });
     await vi.waitFor(async () => expect(await runtime.runs.get(handle.runId)).toMatchObject({
@@ -13465,8 +13021,7 @@ describe("createKodaXRuntime", () => {
       sessionsDir: path.join(tempRoot, 'child-capacity-sessions'), defaultProvider: 'mock-provider' });
     const session = await runtime.sessions.create({ title: 'Independent child recovery' });
     const completed: string[] = [];
-    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => fakeRunningSession(options,
-      (async (): Promise<KodaXResult> => {
+    codingMock.runManagedTask.mockImplementationOnce((options: KodaXOptions) => (async (): Promise<KodaXResult> => {
         await Promise.all(['first', 'second'].map(async child => {
           const selection = await options.events!.onContextCapacityBlocked!({ requiredTokens: 40_000 },
             options.abortSignal, { childAgentId: `/root/${child}`, turnId: `turn-${child}` });
@@ -13474,7 +13029,7 @@ describe("createKodaXRuntime", () => {
           completed.push(child);
         }));
         return { success: true, lastText: 'both children continued', messages: [], sessionId: session.id };
-      })()));
+      })());
     const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'use both children' });
     try {
       await vi.waitFor(async () => expect(await runtime.runs.get(handle.runId)).toMatchObject({
@@ -13497,13 +13052,12 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({ title: 'Reset model during recovery' });
     let install!: () => void;
     const gate = new Promise<void>(resolve => { install = resolve; });
-    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => fakeRunningSession(options,
-      (async (): Promise<KodaXResult> => {
+    codingMock.runManagedTask.mockImplementationOnce((options: KodaXOptions) => (async (): Promise<KodaXResult> => {
         const revision = options.events!.getContextRecoveryRevision!();
         await gate;
         await options.events!.onContextCapacityBlocked!({ configurationRevision: revision });
         return { success: true, lastText: 'use default model', messages: [], sessionId: session.id };
-      })()));
+      })());
     const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'continue', options: { model: 'old-model' } });
     await runtime.runs.setModel(handle.runId, undefined);
     install();
@@ -13516,11 +13070,10 @@ describe("createKodaXRuntime", () => {
     const runtime = await createKodaXRuntime({ homeDir: tempRoot,
       sessionsDir: path.join(tempRoot, 'capacity-input-sessions'), defaultProvider: 'mock-provider' });
     const session = await runtime.sessions.create({ title: 'Correct recovery' });
-    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => fakeRunningSession(options,
-      (async (): Promise<KodaXResult> => {
+    codingMock.runManagedTask.mockImplementationOnce((options: KodaXOptions) => (async (): Promise<KodaXResult> => {
         await options.events!.onContextCapacityBlocked!({ configurationRevision: options.events!.getContextRecoveryRevision!() });
         return { success: true, lastText: 'input can now be consumed', messages: [], sessionId: session.id };
-      })()));
+      })());
     const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'continue' });
     await vi.waitFor(async () => expect((await runtime.runs.get(handle.runId))?.phase).toBe('recovering'));
     await runtime.runs.submitInput({ sessionId: session.id, afterRunId: handle.runId,
@@ -13542,7 +13095,7 @@ describe("createKodaXRuntime", () => {
     }));
     const runtime = await createKodaXRuntime({ homeDir: tempRoot });
     expect(await runtime.runs.get('capacity-crashed')).toMatchObject({ contextRecovery });
-    expect(codingMock.startKodaX).not.toHaveBeenCalled();
+    expect(codingMock.runManagedTask).not.toHaveBeenCalled();
     await runtime.close();
   });
 
@@ -13607,14 +13160,13 @@ describe("createKodaXRuntime", () => {
           await expect(stop).resolves.toMatchObject({ receipts: [{ runId: 'generation-run', state: 'confirmed', outcome: 'cancelled' }] });
           expect((await runtime.runs.get('generation-run')).phase).toBe('cancelled');
         }
-        expect(codingMock.startKodaX).not.toHaveBeenCalled();
+        expect(codingMock.runManagedTask).not.toHaveBeenCalled();
         return;
       }
       if (action === 'session-stop') {
-        codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => fakeRunningSession(options,
-          Promise.resolve({ success: true, lastText: 'Unexpected recovery', messages, sessionId: 'generation-session' })));
+        codingMock.runManagedTask.mockImplementationOnce((options: KodaXOptions) => Promise.resolve({ success: true, lastText: 'Unexpected recovery', messages, sessionId: 'generation-session' }));
         await expect(recover()).rejects.toMatchObject({ code: 'conflict' });
-        expect(codingMock.startKodaX).not.toHaveBeenCalled();
+        expect(codingMock.runManagedTask).not.toHaveBeenCalled();
         expect((await runtime.runs.get('generation-run')).phase).toBe('recovering');
         return;
       }
@@ -13627,14 +13179,14 @@ describe("createKodaXRuntime", () => {
         syncBuiltinESMExports();
         try { await expect(recover('expired-binding')).rejects.toThrow(/Recovery storage/); }
         finally { failure.mockRestore(); syncBuiltinESMExports(); }
-        expect(codingMock.startKodaX).not.toHaveBeenCalled();
+        expect(codingMock.runManagedTask).not.toHaveBeenCalled();
         expect(JSON.parse(await fs.readFile(path.join(directory, 'status.json'), 'utf8'))._runtime.owner.ownerId).toBe('dead-generation-owner');
       }
       if (action === 'changed-history') {
         await new FileSessionStorage({ sessionsDir }).save('generation-session', { title: 'Changed', gitRoot: tempRoot,
           messages: [...messages, { role: 'user', content: 'New authoritative instruction.' }] });
         await expect(runtime.runs.recover({ runId: 'generation-run' })).rejects.toThrow(/history changed/);
-        expect(codingMock.startKodaX).not.toHaveBeenCalled();
+        expect(codingMock.runManagedTask).not.toHaveBeenCalled();
         return;
       }
       if (action === 'leases') {
@@ -13660,7 +13212,7 @@ describe("createKodaXRuntime", () => {
           const handler = vi.fn(async () => ({ content: 'fresh verification' }));
           const hostTools = await client.hostTools.register([{ name: 'generation_fresh_read', description: 'Read-only verification',
             inputSchema: { type: 'object' }, sideEffect: 'none' }], { generation_fresh_read: handler });
-          codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => fakeRunningSession(options, Promise.resolve().then(async () => {
+          codingMock.runManagedTask.mockImplementationOnce((options: KodaXOptions) => Promise.resolve().then(async () => {
             expect(options.session?.generationCheckpoint).toEqual(checkpoint);
             const secret = await withProviderRequestCredential('mock-provider', 'primary', options.abortSignal, () => getScopedProviderCredential('mock-provider'));
             expect(secret).toBe('new-recovery-test-secret');
@@ -13672,7 +13224,7 @@ describe("createKodaXRuntime", () => {
             if (!capability?.id) throw new Error('Fresh tool binding missing');
             await extension.executeCapability('mcp', capability.id, {});
             return { success: true, lastText: 'resumed with fresh leases', messages, sessionId: 'generation-session' };
-          })));
+          }));
           const { toKodaXProductClient } = await import('./client-runtime-adapter.js');
           const product = toKodaXProductClient(client, async request => {
             expect(request).toEqual({ kind: 'recovery', input: { sessionId: 'generation-session', runId: 'generation-run' } });
@@ -13681,7 +13233,7 @@ describe("createKodaXRuntime", () => {
           const handle = await product.runs.recover({ runId: 'generation-run', sessionId: 'generation-session' });
           const resumedResult = await product.runs.await(handle.runId);
           expect(resumedResult.phase, JSON.stringify(resumedResult)).toBe('completed');
-          expect(codingMock.startKodaX).toHaveBeenCalledTimes(1);
+          expect(codingMock.runManagedTask).toHaveBeenCalledTimes(1);
           expect(handler).toHaveBeenCalledTimes(1);
         } finally { await client.close(); dispatcher.close(); hub.close(); }
         return;
@@ -13690,10 +13242,10 @@ describe("createKodaXRuntime", () => {
         await runtime.runs.abort('generation-run');
         expect((await runtime.runs.get('generation-run')).phase).toBe('cancelled');
         await expect(runtime.runs.recover({ runId: 'generation-run' })).rejects.toThrow();
-        expect(codingMock.startKodaX).not.toHaveBeenCalled();
+        expect(codingMock.runManagedTask).not.toHaveBeenCalled();
         return;
       }
-      codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions, prompt: string) => {
+      codingMock.runManagedTask.mockImplementationOnce((options: KodaXOptions, prompt: string) => {
         const recoveredSteer = expect.arrayContaining([expect.objectContaining({ inputId: 'pending-exact', content: 'Keep every public export unchanged. Also preserve all tests.' })]);
         const queuedSteers = getMessageQueue().peek({ agentId: actorQueueId('generation-session', '/root'), mode: 'prompt', maxPriority: 'user' });
         if (action === 'withdrawn-steer') expect(queuedSteers).not.toEqual(recoveredSteer);
@@ -13702,13 +13254,13 @@ describe("createKodaXRuntime", () => {
         expect(options.context?.systemPromptOverride).toBe('Keep all constraints.');
         expect(prompt).toBe('Keep exports unchanged.');
         expect(options.toolInvocation).toBeUndefined();
-        return fakeRunningSession(options, Promise.resolve().then(async () => {
+        return Promise.resolve().then(async () => {
           if (action === 'queue-save-failure' || action === 'claim-save-failure') {
             expect(await options.context!.interruptInput!.consumePendingInputs!(async () => {}))
               .toMatchObject([{ inputId: 'pending-after', content: 'Never repeat the migration.' }]);
           }
           return { success: true, lastText: 'continued', messages, sessionId: 'generation-session' };
-        }));
+        });
       });
       if (action === 'concurrent') {
         const other = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir, defaultProvider: 'mock-provider' });
@@ -13717,7 +13269,7 @@ describe("createKodaXRuntime", () => {
           expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
           const success = results.find(result => result.status === 'fulfilled');
           if (success?.status === 'fulfilled') expect((await success.value.result).phase).toBe('completed');
-          expect(codingMock.startKodaX).toHaveBeenCalledTimes(1);
+          expect(codingMock.runManagedTask).toHaveBeenCalledTimes(1);
         } finally { await other.close(); }
         return;
       }
@@ -13725,7 +13277,7 @@ describe("createKodaXRuntime", () => {
       expect(handle.runId).toBe('generation-run');
       const outcome = await handle.result;
       expect(outcome.phase, JSON.stringify(outcome)).toBe('completed');
-      expect(codingMock.startKodaX).toHaveBeenCalledTimes(1);
+      expect(codingMock.runManagedTask).toHaveBeenCalledTimes(1);
       if (action === 'withdrawn-steer') {
         expect((await runtime.runs.get('generation-run')).interruptInputs).toMatchObject([{ inputId: 'pending-exact', state: 'terminal' }]);
         expect(await runtime.runs.getInput('generation-session', 'pending-exact')).toMatchObject({ state: 'withdrawn' });
@@ -13785,7 +13337,7 @@ describe("createKodaXRuntime", () => {
       for (const inputId of ['second', 'third']) {
         expect((await restarted.runs.getInput(session.id, inputId))?.state, inputId).not.toBe('queued');
       }
-      expect(codingMock.startKodaX).not.toHaveBeenCalled();
+      expect(codingMock.runManagedTask).not.toHaveBeenCalled();
     } finally { await restarted.close(); }
   });
 
@@ -13806,7 +13358,7 @@ describe("createKodaXRuntime", () => {
       expect(await runtime.config.readEffective()).toMatchObject({ persistedConfig: { state: 'invalid' } });
       await expect(runtime.runs.start({ sessionId: session.id, prompt: 'Must not switch account' })).rejects.toThrow(/core configuration/i);
       await expect(runtime.config.patch({ effort: 'high' })).rejects.toThrow(/core configuration/i);
-      expect(codingMock.startKodaX).not.toHaveBeenCalled();
+      expect(codingMock.runManagedTask).not.toHaveBeenCalled();
       expect(await fs.readFile(file, 'utf8')).toBe(raw);
       await fs.writeFile(file, JSON.stringify({ provider: 'mock-provider', effort: 'high' }));
       await runtime.config.reload();
@@ -13832,7 +13384,7 @@ describe("createKodaXRuntime", () => {
     try {
       expect(await restored.runs.getInput(healthy.id, queued.inputId)).toMatchObject({ state: 'queued' });
       await expect(restored.runs.start({ sessionId: broken.id, prompt: 'Must not execute' })).rejects.toMatchObject({ code: 'conflict' });
-      expect(codingMock.startKodaX).not.toHaveBeenCalled();
+      expect(codingMock.runManagedTask).not.toHaveBeenCalled();
       expect(await fs.readFile(file, 'utf8')).toBe(raw);
       expect(await restored.sessions.load(healthy.id)).toBeDefined();
     } finally { await restored.close(); }
@@ -13856,7 +13408,7 @@ describe("createKodaXRuntime", () => {
       await expect(stale.runs.withdrawInput(session.id, input.inputId)).rejects.toThrow(/another Host/);
       expect(JSON.parse(await fs.readFile(file, 'utf8'))).toHaveLength(2);
       expect(await stale.runs.getInput(session.id, input.inputId)).toMatchObject({ state: 'queued' });
-      expect(codingMock.startKodaX).not.toHaveBeenCalled();
+      expect(codingMock.runManagedTask).not.toHaveBeenCalled();
     } finally { await first.close(); await stale.close(); }
   });
 
@@ -13864,14 +13416,14 @@ describe("createKodaXRuntime", () => {
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir: path.join(tempRoot, 'generation-close'), defaultProvider: 'mock-provider' });
     const session = await runtime.sessions.create({ title: 'Close checkpoint' });
-    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => fakeRunningSession(options, (async () => {
+    codingMock.runManagedTask.mockImplementationOnce((options: KodaXOptions) => (async () => {
       const messages: KodaXMessage[] = [{ role: 'user', content: 'Preserve constraints', turnId: 'close-turn' }];
       const lineage = createSessionLineage(messages);
       await options.session!.storage!.save(session.id, { messages, lineage, title: 'Close checkpoint', gitRoot: tempRoot });
       await options.events!.onContextCapacityBlocked!({ checkpoint: { version: 1, sessionId: session.id,
         activeEntryId: lineage.activeEntryId, turnId: 'close-turn', messagesDigest: createHash('sha256').update(JSON.stringify(messages)).digest('hex') } });
       return { success: true, lastText: 'should remain suspended', messages, sessionId: session.id };
-    })()));
+    })());
     const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'Preserve constraints', mode: 'coding' });
     await vi.waitFor(async () => expect((await runtime.runs.get(handle.runId)).contextRecovery?.checkpoint).toBeDefined());
     await runtime.close();
@@ -13884,8 +13436,7 @@ describe("createKodaXRuntime", () => {
     expect(recovery.start.requiredBindings).toEqual([]);
     const restarted = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir: path.join(tempRoot, 'generation-close'), defaultProvider: 'mock-provider' });
     try {
-      codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => fakeRunningSession(options,
-        Promise.resolve({ success: true, lastText: 'resumed', messages: [], sessionId: session.id })));
+      codingMock.runManagedTask.mockImplementationOnce((options: KodaXOptions) => Promise.resolve({ success: true, lastText: 'resumed', messages: [], sessionId: session.id }));
       const resumed = await restarted.runs.recover({ runId: handle.runId });
       expect((await resumed.result).phase).toBe('completed');
     } finally { await restarted.close(); }
@@ -13897,12 +13448,11 @@ describe("createKodaXRuntime", () => {
       sessionsDir: path.join(tempRoot, 'capacity-stop-sessions'), defaultProvider: 'mock-provider' });
     const session = await runtime.sessions.create({ title: 'Stop capacity recovery' });
     let resumed = false;
-    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => fakeRunningSession(options,
-      (async (): Promise<KodaXResult> => {
+    codingMock.runManagedTask.mockImplementationOnce((options: KodaXOptions) => (async (): Promise<KodaXResult> => {
         await options.events!.onContextCapacityBlocked!({ requiredTokens: 40_000, availableTokens: 32_768 });
         resumed = true;
         return { success: true, lastText: 'incorrect resume', messages: [], sessionId: session.id };
-      })()));
+      })());
     const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'continue' });
     await vi.waitFor(async () => expect((await runtime.runs.get(handle.runId))?.phase).toBe('recovering'));
     await runtime.runs.abort(handle.runId);
@@ -13926,8 +13476,8 @@ describe("createKodaXRuntime", () => {
       requiredTokens: 901,
       availableTokens: 300,
     });
-    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) =>
-      fakeRunningSession(options, Promise.reject(capacityError)));
+    codingMock.runManagedTask.mockImplementationOnce((options: KodaXOptions) =>
+      Promise.reject(capacityError));
     const handle = await runtime.runs.start({
       sessionId: session.id,
       prompt: "capacity terminal",
@@ -13958,8 +13508,8 @@ describe("createKodaXRuntime", () => {
       currentTokens: 88_000,
       reservedResponseTokens: 10_000,
     });
-    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) =>
-      fakeRunningSession(options, Promise.reject(contextError)));
+    codingMock.runManagedTask.mockImplementationOnce((options: KodaXOptions) =>
+      Promise.reject(contextError));
     const contextHandle = await runtime.runs.start({
       sessionId: session.id,
       prompt: "context capacity shape",
@@ -13977,8 +13527,8 @@ describe("createKodaXRuntime", () => {
     const { KodaXContextOverflowError } = await import('@kodax-ai/llm');
     const overflow = new KodaXContextOverflowError({ contextWindow: 131_072,
       inputTokens: 140_000, inputTokensKind: 'lower_bound' }, 'mock-provider', { httpStatus: 400 });
-    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) =>
-      fakeRunningSession(options, Promise.reject(overflow)));
+    codingMock.runManagedTask.mockImplementationOnce((options: KodaXOptions) =>
+      Promise.reject(overflow));
     const overflowHandle = await runtime.runs.start({ sessionId: session.id, prompt: 'terminal overflow',
       providerCredential: 'capacity-cred-secret', providerCredentialProvider: 'mock-provider',
     } as RuntimeStartRunInput & { readonly providerCredential: string; readonly providerCredentialProvider: string });
@@ -14017,8 +13567,7 @@ describe("createKodaXRuntime", () => {
       const events: RuntimeEvent[] = [];
       const subscription = client.events.subscribe({ sessionId: session.id, type: 'run.failed' }, event => events.push(event));
       await subscription.ready;
-      codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => fakeRunningSession(options,
-        Promise.reject(new KodaXContextOverflowError(facts, 'mock-provider', { httpStatus: 400 }))));
+      codingMock.runManagedTask.mockImplementationOnce((options: KodaXOptions) => Promise.reject(new KodaXContextOverflowError(facts, 'mock-provider', { httpStatus: 400 })));
       const run = await client.runs.start({ sessionId: session.id, prompt: 'terminal capacity rejection' });
       const result = await run.result;
       expect(result.phase).toBe('failed');
@@ -14110,7 +13659,7 @@ describe("createKodaXRuntime", () => {
       defaultProvider: "mock-provider",
     });
     const session = await runtime.sessions.create({ title: "Lazy Credentials" });
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions) => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions) => {
       lateRequest = new Promise<void>((resolve) => {
         releaseLateRequest = resolve;
       }).then(() => withProviderRequestCredential(
@@ -14145,7 +13694,7 @@ describe("createKodaXRuntime", () => {
           sessionId: session.id,
         };
       })();
-      return fakeRunningSession(options, result);
+      return result;
     });
     const trustedInput = {
       sessionId: session.id,
@@ -14203,8 +13752,8 @@ describe("createKodaXRuntime", () => {
         code: "KODAX_CONTEXT_CAPACITY_EXCEEDED",
         ...fields,
       });
-      codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) =>
-        fakeRunningSession(options, Promise.reject(capacityError)));
+      codingMock.runManagedTask.mockImplementationOnce((options: KodaXOptions) =>
+        Promise.reject(capacityError));
       const result = await (await runtime.runs.start({
         sessionId: session.id,
         prompt: "invalid capacity diagnostics",
@@ -14215,7 +13764,7 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
-  it("projects active coding cancellation consistently across Runtime surfaces", async () => {
+  it("projects active root-Run cancellation consistently across Runtime surfaces", async () => {
     const {
       captureRuntimeSessionDiagnostics,
       createKodaXRuntime,
@@ -14233,7 +13782,7 @@ describe("createKodaXRuntime", () => {
     );
     let settleInterrupted: (() => void) | undefined;
     const abortRequested = vi.fn();
-    codingMock.startKodaX.mockImplementationOnce((options: KodaXOptions) => {
+    codingMock.runManagedTask.mockImplementationOnce((options: KodaXOptions) => {
       const result = new Promise<KodaXResult>((resolve) => {
         settleInterrupted = () => resolve({
             success: false,
@@ -14243,17 +13792,13 @@ describe("createKodaXRuntime", () => {
             sessionId: session.id,
           });
       });
-      return {
-        ...fakeRunningSession(options, result),
-        abort() {
-          abortRequested();
-        },
-      };
+      options.abortSignal?.addEventListener("abort", () => abortRequested(), { once: true });
+      return result;
     });
 
     const handle = await runtime.runs.start({
       sessionId: session.id,
-      prompt: "cancel an active coding run",
+      prompt: "cancel an active root run",
     });
     try {
       await expect(runtime.runs.abort(handle.runId)).resolves.toMatchObject({
@@ -14541,8 +14086,8 @@ describe("createKodaXRuntime", () => {
     }> = [];
     let finishFirst: ((value: KodaXResult) => void) | undefined;
     let finishSecond: ((value: KodaXResult) => void) | undefined;
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions, prompt: string): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions, prompt: string): Promise<KodaXResult> => {
         starts.push({
           prompt,
           provider: options.provider,
@@ -14550,19 +14095,13 @@ describe("createKodaXRuntime", () => {
           permission: options.context?.resolveShellPermissionMode?.(),
         });
         if (prompt === "first") {
-          return fakeRunningSession(
-            options,
-            new Promise<KodaXResult>((resolve) => {
+          return new Promise<KodaXResult>((resolve) => {
               finishFirst = resolve;
-            }),
-          );
+            });
         }
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>((resolve) => {
+        return new Promise<KodaXResult>((resolve) => {
             finishSecond = resolve;
-          }),
-        );
+          });
       },
     );
 
@@ -14647,23 +14186,17 @@ describe("createKodaXRuntime", () => {
     let finishFirst: ((value: KodaXResult) => void) | undefined;
     let finishSecond: ((value: KodaXResult) => void) | undefined;
 
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions, prompt: string): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions, prompt: string): Promise<KodaXResult> => {
         starts.push(`${options.session?.id ?? "missing"}:${prompt}`);
         if (prompt === "first-session") {
-          return fakeRunningSession(
-            options,
-            new Promise<KodaXResult>((resolve) => {
+          return new Promise<KodaXResult>((resolve) => {
               finishFirst = resolve;
-            }),
-          );
+            });
         }
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>((resolve) => {
+        return new Promise<KodaXResult>((resolve) => {
             finishSecond = resolve;
-          }),
-        );
+          });
       },
     );
 
@@ -14722,8 +14255,8 @@ describe("createKodaXRuntime", () => {
     });
     const lifecycleCollector = collectEvents(runtime, session.id);
 
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         const sessionId = options.session?.id ?? session.id;
         queueMicrotask(() => {
           startTestOutputSegment(options.events, "request-persist", {
@@ -14736,15 +14269,12 @@ describe("createKodaXRuntime", () => {
             timestamp: new Date().toISOString(),
           });
         });
-        return fakeRunningSession(
-          options,
-          Promise.resolve({
+        return Promise.resolve({
             success: true,
             lastText: "persisted",
             messages: [],
             sessionId,
-          }),
-        );
+          });
       },
     );
 
@@ -14795,17 +14325,14 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Run Retention Test",
     });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions, prompt: string): RunningSession =>
-        fakeRunningSession(
-          options,
-          Promise.resolve({
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions, prompt: string): Promise<KodaXResult> =>
+        Promise.resolve({
             success: true,
             lastText: prompt,
             messages: [],
             sessionId: session.id,
           }),
-        ),
     );
 
     const runsDir = path.join(tempRoot, ".kodax", "runtime", "runs");
@@ -14863,7 +14390,7 @@ describe("createKodaXRuntime", () => {
         prompt: "should not start",
       }),
     ).rejects.toThrow("Session not found: missing-session");
-    expect(codingMock.startKodaX).not.toHaveBeenCalled();
+    expect(codingMock.runManagedTask).not.toHaveBeenCalled();
 
     await runtime.close();
   });
@@ -14884,14 +14411,11 @@ describe("createKodaXRuntime", () => {
     );
     let finishRun: ((value: KodaXResult) => void) | undefined;
 
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession =>
-        fakeRunningSession(
-          options,
-          new Promise<KodaXResult>((resolve) => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> =>
+        new Promise<KodaXResult>((resolve) => {
             finishRun = resolve;
           }),
-        ),
     );
 
     const handle = await runtime.runs.start({
@@ -14950,9 +14474,9 @@ describe("createKodaXRuntime", () => {
       title: "Abort Settle Test",
     });
 
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession =>
-        fakeRunningSession(options, new Promise<KodaXResult>(() => undefined)),
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> =>
+        new Promise<KodaXResult>(() => undefined),
     );
 
     const handle = await runtime.runs.start({
@@ -14988,17 +14512,14 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Terminal Stop Receipt",
     });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession =>
-        fakeRunningSession(
-          options,
-          Promise.resolve({
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> =>
+        Promise.resolve({
             success: true,
             lastText: "done",
             messages: [],
             sessionId: session.id,
           }),
-        ),
     );
     const handle = await runtime.runs.start({
       sessionId: session.id,
@@ -15032,9 +14553,9 @@ describe("createKodaXRuntime", () => {
       session.id,
       "run.cancelled",
     );
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession =>
-        fakeRunningSession(options, new Promise<KodaXResult>(() => undefined)),
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> =>
+        new Promise<KodaXResult>(() => undefined),
     );
     const active = await runtime.runs.start({
       sessionId: session.id,
@@ -15090,9 +14611,9 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Queued Stop Index Failure",
     });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession =>
-        fakeRunningSession(options, new Promise<KodaXResult>(() => undefined)),
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> =>
+        new Promise<KodaXResult>(() => undefined),
     );
     const active = await runtime.runs.start({
       sessionId: session.id,
@@ -15156,9 +14677,9 @@ describe("createKodaXRuntime", () => {
       title: "Unconfirmed Stop Test",
     });
 
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession =>
-        fakeRunningSession(options, new Promise<KodaXResult>(() => undefined)),
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> =>
+        new Promise<KodaXResult>(() => undefined),
     );
 
     const handle = await runtime.runs.start({
@@ -15201,9 +14722,9 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Active Run Session Mutation Fence",
     });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession =>
-        fakeRunningSession(options, new Promise<KodaXResult>(() => undefined)),
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> =>
+        new Promise<KodaXResult>(() => undefined),
     );
     const handle = await runtime.runs.start({
       sessionId: session.id,
@@ -15235,9 +14756,9 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Run Admission Mutation Gate",
     });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession =>
-        fakeRunningSession(options, new Promise<KodaXResult>(() => undefined)),
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> =>
+        new Promise<KodaXResult>(() => undefined),
     );
 
     let releaseAdmission: (() => void) | undefined;
@@ -15348,9 +14869,9 @@ describe("createKodaXRuntime", () => {
     const session = await owner.sessions.create({
       title: "Direct Root Run Owner",
     });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession =>
-        fakeRunningSession(options, new Promise<KodaXResult>(() => undefined)),
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> =>
+        new Promise<KodaXResult>(() => undefined),
     );
     const handle = await owner.runs.start({
       sessionId: session.id,
@@ -15385,9 +14906,9 @@ describe("createKodaXRuntime", () => {
       title: "Close Settle Test",
     });
 
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession =>
-        fakeRunningSession(options, new Promise<KodaXResult>(() => undefined)),
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> =>
+        new Promise<KodaXResult>(() => undefined),
     );
 
     const first = await runtime.runs.start({
@@ -15424,9 +14945,9 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Queue Route Test",
     });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession =>
-        fakeRunningSession(options, new Promise<KodaXResult>(() => undefined)),
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> =>
+        new Promise<KodaXResult>(() => undefined),
     );
 
     const handle = await runtime.runs.start({
@@ -15473,7 +14994,6 @@ describe("createKodaXRuntime", () => {
       const throwLaunchError = (): never => {
         throw new Error("synchronous launch failure");
       };
-      codingMock.startKodaX.mockImplementation(throwLaunchError);
       codingMock.runManagedTask.mockImplementation(throwLaunchError);
 
       await expect(
@@ -15553,7 +15073,7 @@ describe("createKodaXRuntime", () => {
         objective: "Settle while SDK launch throws.",
         metadata: { agentId: external.registration.agentId },
       });
-      codingMock.startKodaX.mockImplementation((): never => {
+      codingMock.runManagedTask.mockImplementation((): never => {
         external.finish();
         throw new Error("synchronous launch failure");
       });
@@ -15595,8 +15115,8 @@ describe("createKodaXRuntime", () => {
     });
     let approvalDone: Promise<boolean | string> | undefined;
 
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         queueMicrotask(() => {
           approvalDone = options.events?.beforeToolExecute?.(
             "bash",
@@ -15609,10 +15129,7 @@ describe("createKodaXRuntime", () => {
             },
           );
         });
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
 
@@ -15789,8 +15306,8 @@ describe("createKodaXRuntime", () => {
     let answerDone: Promise<unknown> | undefined;
     let resolvePrompt: ((answer: string) => void) | undefined;
     let rejectPrompt: ((error: Error) => void) | undefined;
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         queueMicrotask(() => {
           answerDone = options.events?.askUser?.({
             question: "Continue?",
@@ -15801,10 +15318,7 @@ describe("createKodaXRuntime", () => {
             default: "yes",
           });
         });
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
     const session = await runtime.sessions.create({ title: "Late AskUser" });
@@ -15865,10 +15379,10 @@ describe("createKodaXRuntime", () => {
     let firstAnswer: Promise<unknown> | undefined;
     let rejectOld!: (error: Error) => void;
     let calls = 0;
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions): Promise<KodaXResult> => {
       wrapped = options.events;
       queueMicrotask(() => { firstAnswer = wrapped?.askUser?.(prompt); });
-      return fakeRunningSession(options, new Promise<KodaXResult>(() => undefined));
+      return new Promise<KodaXResult>(() => undefined);
     });
     const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'Ask twice', options: {
       events: { askUser: () => ++calls === 1
@@ -15928,7 +15442,6 @@ describe("createKodaXRuntime", () => {
       mode: "managed_task",
     });
     expect(codingMock.runManagedTask).toHaveBeenCalledOnce();
-    expect(codingMock.startKodaX).not.toHaveBeenCalled();
     const observation = await vi.waitFor(() => runtime.sessions.observe(
       session.id,
       () => undefined,
@@ -16220,12 +15733,9 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({ title: "Failure Test" });
     const failedCollector = collectEvents(runtime, session.id, "run.failed");
 
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession =>
-        fakeRunningSession(
-          options,
-          Promise.reject(new Error("provider exploded")),
-        ),
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> =>
+        Promise.reject(new Error("provider exploded")),
     );
 
     const handle = await runtime.runs.start({
@@ -16298,14 +15808,14 @@ describe("createKodaXRuntime", () => {
           return failureResult;
         });
       } else {
-        codingMock.startKodaX.mockImplementation((options: KodaXOptions) => {
+        codingMock.runManagedTask.mockImplementation((options: KodaXOptions) => {
           const result = Promise.resolve().then(() => {
             options.events?.onError?.(Object.assign(new Error(`raw upstream ${secret}`), {
               executionFailure,
             }));
             return failureResult;
           });
-          return fakeRunningSession(options, result);
+          return result;
         });
       }
 
@@ -16544,8 +16054,8 @@ describe("createKodaXRuntime", () => {
         void runtime.permissions.respond(request.id, { type: "allow_once" });
       }
     });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions, prompt: string): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions, prompt: string): Promise<KodaXResult> => {
         const tool = toolByPrompt[prompt];
         if (!tool)
           throw new Error(`missing permission test tool for ${prompt}`);
@@ -16565,7 +16075,7 @@ describe("createKodaXRuntime", () => {
             sessionId: session.id,
           } satisfies KodaXResult;
         });
-        return fakeRunningSession(options, result);
+        return result;
       },
     );
 
@@ -16643,13 +16153,13 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({ projectPath: tempRoot });
     await runtime.sessions.updateSettings(session.id, { permissionMode: "full-access" });
     let dynamicOutput = "";
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions): Promise<KodaXResult> => {
       const result = (async () => {
         dynamicOutput = await options.skillDynamicContext!.execute!("echo runtime-dynamic-ok", tempRoot);
         await expect(options.skillDynamicContext!.execute!("echo unsafe > forbidden.txt", tempRoot)).rejects.toThrow("read-only");
         return { success: true, lastText: dynamicOutput, messages: [], sessionId: session.id } satisfies KodaXResult;
       })();
-      return fakeRunningSession(options, result);
+      return result;
     });
     try {
       await (await runtime.runs.start({ sessionId: session.id, prompt: "Read Skill context." })).result;
@@ -16720,8 +16230,8 @@ describe("createKodaXRuntime", () => {
       projectPath: projectRoot,
     });
     let expandedSkill = "";
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         const result = Promise.resolve(
           options.events?.beforeToolExecute?.(
             "skill",
@@ -16747,7 +16257,7 @@ describe("createKodaXRuntime", () => {
             sessionId: session.id,
           } satisfies KodaXResult;
         });
-        return fakeRunningSession(options, result);
+        return result;
       },
     );
 
@@ -16809,14 +16319,11 @@ describe("createKodaXRuntime", () => {
       defaultProvider: "mock-provider",
     });
     const capturedOptions = new Map<string, KodaXOptions>();
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         const sessionId = options.session?.id;
         if (sessionId) capturedOptions.set(sessionId, options);
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
     const hostExecute = vi.fn(
@@ -16934,9 +16441,9 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({
       title: "Shared preflight during persistence",
     });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession =>
-        fakeRunningSession(options, new Promise<KodaXResult>(() => undefined)),
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> =>
+        new Promise<KodaXResult>(() => undefined),
     );
     const run = await runtime.runs.start({
       sessionId: session.id,
@@ -16978,9 +16485,9 @@ describe("createKodaXRuntime", () => {
       return undefined;
     });
     let runOptions: KodaXOptions | undefined;
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions): Promise<KodaXResult> => {
       runOptions = options;
-      return fakeRunningSession(options, new Promise<KodaXResult>(() => undefined));
+      return new Promise<KodaXResult>(() => undefined);
     });
     // This SDK contract is independent of machine setup. Real Native execution
     // and missing-cutover rejection have their own Windows OS/backend gates.
@@ -17078,9 +16585,9 @@ describe("createKodaXRuntime", () => {
     } as unknown as AutoModeToolGuardrail;
     replMock.bootstrapAutoMode.mockResolvedValue({ getGuardrail: () => fakeGuardrail });
     let runOptions: KodaXOptions | undefined;
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions): Promise<KodaXResult> => {
       runOptions = options;
-      return fakeRunningSession(options, new Promise<KodaXResult>(() => undefined));
+      return new Promise<KodaXResult>(() => undefined);
     });
     const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir: path.join(tempRoot, "sessions"),
       defaultProvider: "mock-provider", defaultModel: "mock-model", sharedDaemonHost: true });
@@ -17160,9 +16667,9 @@ describe("createKodaXRuntime", () => {
       getGuardrail: () => fakeGuardrail,
     });
     let runOptions: KodaXOptions | undefined;
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions): Promise<KodaXResult> => {
       runOptions = options;
-      return fakeRunningSession(options, new Promise<KodaXResult>(() => undefined));
+      return new Promise<KodaXResult>(() => undefined);
     });
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -17320,9 +16827,9 @@ describe("createKodaXRuntime", () => {
       } as unknown as AutoModeToolGuardrail),
     }));
     let runOptions: KodaXOptions | undefined;
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions): Promise<KodaXResult> => {
       runOptions = options;
-      return fakeRunningSession(options, new Promise<KodaXResult>(() => undefined));
+      return new Promise<KodaXResult>(() => undefined);
     });
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -17447,9 +16954,9 @@ describe("createKodaXRuntime", () => {
       };
     });
     let runOptions: KodaXOptions | undefined;
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions): Promise<KodaXResult> => {
       runOptions = options;
-      return fakeRunningSession(options, new Promise<KodaXResult>(() => undefined));
+      return new Promise<KodaXResult>(() => undefined);
     });
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -17509,9 +17016,9 @@ describe("createKodaXRuntime", () => {
     const projectRoot = path.join(tempRoot, "sandbox-first-edits");
     await fs.mkdir(projectRoot, { recursive: true });
     let runOptions: KodaXOptions | undefined;
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions): Promise<KodaXResult> => {
       runOptions = options;
-      return fakeRunningSession(options, new Promise<KodaXResult>(() => undefined));
+      return new Promise<KodaXResult>(() => undefined);
     });
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -17591,9 +17098,9 @@ describe("createKodaXRuntime", () => {
       "utf8",
     );
     let runOptions: KodaXOptions | undefined;
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions): Promise<KodaXResult> => {
       runOptions = options;
-      return fakeRunningSession(options, new Promise<KodaXResult>(() => undefined));
+      return new Promise<KodaXResult>(() => undefined);
     });
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -17721,9 +17228,9 @@ describe("createKodaXRuntime", () => {
       getGuardrail: () => fakeGuardrail,
     });
     let runOptions: KodaXOptions | undefined;
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions): Promise<KodaXResult> => {
       runOptions = options;
-      return fakeRunningSession(options, new Promise<KodaXResult>(() => undefined));
+      return new Promise<KodaXResult>(() => undefined);
     });
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -17852,9 +17359,9 @@ describe("createKodaXRuntime", () => {
       };
     });
     let runOptions: KodaXOptions | undefined;
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions): Promise<KodaXResult> => {
       runOptions = options;
-      return fakeRunningSession(options, new Promise<KodaXResult>(() => undefined));
+      return new Promise<KodaXResult>(() => undefined);
     });
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -17943,14 +17450,14 @@ describe("createKodaXRuntime", () => {
       executionCwd: missingWorkspace,
     });
     let runOptions: KodaXOptions | undefined;
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions): Promise<KodaXResult> => {
       runOptions = options;
-      return fakeRunningSession(options, Promise.resolve({
+      return Promise.resolve({
         success: true,
         lastText: "ok",
         messages: [],
         sessionId: session.id,
-      }));
+      });
     });
     try {
       await (
@@ -18007,9 +17514,9 @@ describe("createKodaXRuntime", () => {
     await fs.writeFile(linkedTarget, "linked", "utf8");
 
     let runOptions: KodaXOptions | undefined;
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions): Promise<KodaXResult> => {
       runOptions = options;
-      return fakeRunningSession(options, new Promise<KodaXResult>(() => undefined));
+      return new Promise<KodaXResult>(() => undefined);
     });
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -18083,9 +17590,9 @@ describe("createKodaXRuntime", () => {
     await fs.writeFile(arbitraryTarget, "arbitrary", "utf8");
 
     const captured: KodaXOptions[] = [];
-    codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation((options: KodaXOptions): Promise<KodaXResult> => {
       captured.push(options);
-      return fakeRunningSession(options, new Promise<KodaXResult>(() => undefined));
+      return new Promise<KodaXResult>(() => undefined);
     });
     const runtime = await createKodaXRuntime({
       homeDir: tempRoot,
@@ -18449,9 +17956,9 @@ describe("createKodaXRuntime", () => {
         executionCwd: projectRoot,
       });
       let runOptions: KodaXOptions | undefined;
-      codingMock.startKodaX.mockImplementation((options: KodaXOptions): RunningSession => {
+      codingMock.runManagedTask.mockImplementation((options: KodaXOptions): Promise<KodaXResult> => {
         runOptions = options;
-        return fakeRunningSession(options, new Promise<KodaXResult>(() => undefined));
+        return new Promise<KodaXResult>(() => undefined);
       });
       const handle = await runtime.runs.start({
         sessionId: session.id,
@@ -18585,8 +18092,8 @@ describe("createKodaXRuntime", () => {
     let releaseApproval: ((value: boolean) => void) | undefined;
     let approvalDone: Promise<boolean | string> | undefined;
 
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         queueMicrotask(() => {
           approvalDone = options.events?.beforeToolExecute?.(
             "bash",
@@ -18599,10 +18106,7 @@ describe("createKodaXRuntime", () => {
             },
           );
         });
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
 
@@ -18662,8 +18166,8 @@ describe("createKodaXRuntime", () => {
         void runtime.permissions.respond(payload.id, { type: "allow_once" });
       }
     });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         queueMicrotask(() => {
           approvalDone = options.events?.beforeToolExecute?.(
             "bash",
@@ -18676,10 +18180,7 @@ describe("createKodaXRuntime", () => {
             },
           );
         });
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
 
@@ -18726,8 +18227,8 @@ describe("createKodaXRuntime", () => {
       projectPath: projectRoot,
     });
     let approvalDone: Promise<boolean | string> | undefined;
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         queueMicrotask(() => {
           approvalDone = options.events?.beforeToolExecute?.(
             "write",
@@ -18740,10 +18241,7 @@ describe("createKodaXRuntime", () => {
             { sessionId: session.id, toolId: "write-large" },
           );
         });
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
 
@@ -18796,8 +18294,8 @@ describe("createKodaXRuntime", () => {
       title: "Small Write Preview",
     });
     let approvalDone: Promise<boolean | string> | undefined;
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         queueMicrotask(() => {
           const toolInput: Record<string, unknown> = { file_path: "small.txt" };
           Object.defineProperty(toolInput, "content", {
@@ -18812,10 +18310,7 @@ describe("createKodaXRuntime", () => {
             { sessionId: session.id, toolId: "write-small" },
           );
         });
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
 
@@ -18849,8 +18344,8 @@ describe("createKodaXRuntime", () => {
       title: "Hostile Preview Input",
     });
     let approvalDone: Promise<boolean | string> | undefined;
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         queueMicrotask(() => {
           const toolInput = new Proxy<Record<string, unknown>>(
             { path: "safe.txt" },
@@ -18866,10 +18361,7 @@ describe("createKodaXRuntime", () => {
             { sessionId: session.id, toolId: "write-hostile-preview" },
           );
         });
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
 
@@ -19605,8 +19097,8 @@ describe("createKodaXRuntime", () => {
     const session = await runtime.sessions.create({ title: "Shared AskUser" });
     let answerDone: Promise<unknown> | undefined;
 
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         queueMicrotask(() => {
           answerDone = options.events?.askUser?.({
             question: "Continue?",
@@ -19616,10 +19108,7 @@ describe("createKodaXRuntime", () => {
             ],
           });
         });
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
 
@@ -19682,8 +19171,8 @@ describe("createKodaXRuntime", () => {
     let firstAnswer: Promise<unknown> | undefined;
     let secondAnswer: Promise<unknown> | undefined;
 
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         queueMicrotask(() => {
           firstAnswer = options.events?.askUser?.({
             question: "First?",
@@ -19694,10 +19183,7 @@ describe("createKodaXRuntime", () => {
             options: [{ label: "Yes", value: "yes" }],
           });
         });
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
 
@@ -19741,8 +19227,8 @@ describe("createKodaXRuntime", () => {
     let answersDone: Promise<readonly unknown[]> | undefined;
     const promptSignals: AbortSignal[] = [];
 
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         queueMicrotask(() => {
           answersDone = Promise.all([
             options.events?.askUser?.({
@@ -19784,10 +19270,7 @@ describe("createKodaXRuntime", () => {
             }),
           ]);
         });
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
 
@@ -19912,8 +19395,8 @@ describe("createKodaXRuntime", () => {
         void runtime.permissions.respond(payload.id, { type: "allow_once" });
       }
     });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         queueMicrotask(() => {
           approvalDone = options.events?.beforeToolExecute?.(
             "bash",
@@ -19926,10 +19409,7 @@ describe("createKodaXRuntime", () => {
             },
           );
         });
-        return fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
 
@@ -19968,8 +19448,8 @@ describe("createKodaXRuntime", () => {
       secondEvents.push(event.type),
     );
 
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession => {
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
         const sessionId = options.session?.id ?? "missing-session";
         queueMicrotask(() => {
           options.events?.onTextDelta?.(`delta-${sessionId}`, {
@@ -19978,17 +19458,10 @@ describe("createKodaXRuntime", () => {
             timestamp: new Date().toISOString(),
           });
         });
-        const session = fakeRunningSession(
-          options,
-          new Promise<KodaXResult>(() => undefined),
-        );
-        return {
-          ...session,
-          abort(reason?: unknown) {
-            aborts.set(sessionId, (aborts.get(sessionId) ?? 0) + 1);
-            session.abort(reason);
-          },
-        };
+        options.abortSignal?.addEventListener("abort", () => {
+          aborts.set(sessionId, (aborts.get(sessionId) ?? 0) + 1);
+        }, { once: true });
+        return new Promise<KodaXResult>(() => undefined);
       },
     );
 
@@ -20031,9 +19504,9 @@ describe("createKodaXRuntime", () => {
       defaultProvider: "mock-provider",
     });
     const session = await runtime.sessions.create({ title: "Run settings" });
-    codingMock.startKodaX.mockImplementation(
-      (options: KodaXOptions): RunningSession =>
-        fakeRunningSession(options, new Promise<KodaXResult>(() => undefined)),
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> =>
+        new Promise<KodaXResult>(() => undefined),
     );
     const updates: RuntimeEvent[] = [];
     runtime.events.subscribe(
@@ -20234,45 +19707,6 @@ function deferredExternalAgentFixture(key: string): {
     finish() {
       finishChild?.();
     },
-  };
-}
-
-function fakeRunningSession(
-  options: KodaXOptions,
-  result: Promise<KodaXResult>,
-): RunningSession {
-  let aborted = false;
-  let provider = options.provider;
-  let model = options.modelOverride ?? options.model;
-  let reasoning = options.reasoningMode;
-  return {
-    id: options.session?.id ?? "missing-session",
-    get currentProvider() {
-      return provider;
-    },
-    get currentModel() {
-      return model;
-    },
-    get currentReasoning() {
-      return reasoning;
-    },
-    get aborted() {
-      return aborted;
-    },
-    attached: true,
-    setProvider(name) {
-      provider = name;
-    },
-    setModel(nextModel) {
-      model = nextModel;
-    },
-    setReasoning(nextReasoning) {
-      reasoning = nextReasoning;
-    },
-    abort() {
-      aborted = true;
-    },
-    result,
   };
 }
 

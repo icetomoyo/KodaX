@@ -7,7 +7,7 @@ import { LearnedAreaStore, commitLearnedSkillRevision, createLearnedCapabilitySc
 import { KodaXBaseProvider, KodaXProviderError, registerModelProvider, type KodaXMessage, type KodaXProviderConfig,
   type KodaXStreamResult, type KodaXToolDefinition } from '@kodax-ai/llm';
 import { runManagedTask } from './task-engine.js';
-import { runKodaX } from './agent.js';
+import { runLeafAgent } from './agent.js';
 import { awaitLatestCodingMemoryReviewDrain } from './memory-runtime.js';
 
 const cases = (['direct', 'ama'] as const).flatMap(mode => [
@@ -68,7 +68,7 @@ it.each(cases)(
   }
   const unregister = registerModelProvider('learned-entry-fixture', () => new Provider());
   try {
-    const running = (mode === 'direct' ? runKodaX : runManagedTask)({ provider: 'learned-entry-fixture', abortSignal: controller.signal,
+    const running = (mode === 'direct' ? runLeafAgent : runManagedTask)({ provider: 'learned-entry-fixture', abortSignal: controller.signal,
       ...(mode === 'ama' ? { agentMode: mode } : {}), effort: 'none', lsp: false, maxIter: 3, session: { id: identity.sessionId },
       events: { runMemoryWork: async work => {
         activeMemoryWork++;

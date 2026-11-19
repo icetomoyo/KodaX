@@ -90,9 +90,6 @@ export async function runLeafAgent(
   }
 }
 
-/** Public root entry. Temporarily the leaf executor until root Runs switch to managed. */
-export const runKodaX = runLeafAgent;
-
 export { buildAutoRepoIntelligenceContext } from './agent-runtime/middleware/repo-intelligence.js';
 export {
   estimateProviderPayloadBytes,

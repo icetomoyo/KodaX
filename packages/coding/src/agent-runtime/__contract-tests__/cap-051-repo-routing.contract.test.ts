@@ -49,7 +49,7 @@ import type {
   KodaXToolDefinition,
 } from '@kodax-ai/llm';
 
-import { runKodaX } from '../../agent.js';
+import { runLeafAgent } from '../../agent.js';
 import type {
   KodaXRepoIntelligenceTraceEvent,
   KodaXRepoRoutingSignals,
@@ -115,7 +115,7 @@ function makeRoutingSignals(): KodaXRepoRoutingSignals {
   };
 }
 
-// Issue 128: contract tests drive runKodaX end-to-end and flake at 5000ms
+// Issue 128: contract tests drive runLeafAgent end-to-end and flake at 5000ms
 // default under heavy parallel vitest load. Bump per-suite to 15s.
 describe('CAP-051: repo routing signals computation contract', { timeout: 15_000 }, () => {
   beforeEach(() => {
@@ -132,7 +132,7 @@ describe('CAP-051: repo routing signals computation contract', { timeout: 15_000
     const onRepoIntelligenceTrace = vi.fn<(event: KodaXRepoIntelligenceTraceEvent) => void>();
     const signals = makeRoutingSignals();
 
-    await runKodaX(
+    await runLeafAgent(
       {
         provider: PROVIDER_NAME,
         model: 'baseline-model',
@@ -166,7 +166,7 @@ describe('CAP-051: repo routing signals computation contract', { timeout: 15_000
     // throw. The .catch(() => null) wrapper around the inline computation
     // is the broader best-effort guarantee — this test pins the safe
     // gating path.
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: PROVIDER_NAME,
         model: 'baseline-model',

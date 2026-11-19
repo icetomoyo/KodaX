@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
+import { setKodaXDiagnosticSink, type KodaXDiagnostic } from '@kodax-ai/agent';
 import { KodaXBaseProvider, registerModelProvider, clearRuntimeModelProviders,
   type KodaXMessage, type KodaXStreamResult } from '@kodax-ai/llm';
 import { awaitLatestCodingMemoryReviewDrain, type KodaXPromptSpec } from '@kodax-ai/coding';
@@ -71,7 +72,7 @@ it('applies an authorized profile prompt to the product Run envelope', async () 
   }
 }, 120_000);
 
-it('rejects a prompt spec on a direct coding Run and a malformed spec at admission', async () => {
+it('runs a deprecated coding-mode start on the managed Worker and rejects a malformed spec', async () => {
   const homeDir = await mkdtemp(join(tmpdir(), 'kodax-prompt-spec-direct-')); directories.push(homeDir);
   const requests: string[] = [];
   vi.stubEnv('KODAX_PROMPT_SPEC_KEY', 'fixture');
@@ -84,16 +85,22 @@ it('rejects a prompt spec on a direct coding Run and a malformed spec at admissi
     }
   }
   registerModelProvider('prompt-spec-fixture', () => new Provider());
+  const diagnostics: KodaXDiagnostic[] = [];
+  const restoreSink = setKodaXDiagnosticSink(diagnostic => { diagnostics.push(diagnostic); });
   const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'prompt-spec-fixture' });
   try {
     const session = await runtime.sessions.create({ projectPath: homeDir });
-    await expect(runtime.runs.start({ sessionId: session.id, prompt: 'Reply.', mode: 'coding', options: { context: { prompt: spec } } }))
-      .rejects.toMatchObject({ code: 'prompt_spec_requires_managed_run' });
     await expect(runtime.runs.start({ sessionId: session.id, prompt: 'Reply.', mode: 'managed_task',
       options: { context: { prompt: { kodaxGuidance: 'replace' } as never } } }))
       .rejects.toMatchObject({ code: 'invalid_params' });
     expect(requests).toEqual([]);
-  } finally { await runtime.close(); }
+    const handle = await runtime.runs.start({ sessionId: session.id, prompt: 'Reply.', mode: 'coding',
+      options: { context: { prompt: spec } } });
+    await expect(handle.result).resolves.toMatchObject({ phase: 'completed' });
+    await expect(runtime.runs.get(handle.runId)).resolves.toMatchObject({ mode: 'managed_task' });
+    expect(requests.join('\n')).toContain('APP_RULE_SENTINEL');
+    expect(diagnostics).toContainEqual(expect.objectContaining({ source: 'runtime.runs.start', level: 'warn' }));
+  } finally { restoreSink(); await runtime.close(); }
 });
 
 it('rejects a profile prompt before sending work to an older Host', async () => {

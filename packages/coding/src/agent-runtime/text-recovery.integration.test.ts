@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { clearRuntimeModelProviders, createCustomProvider, KodaXProviderError, registerModelProvider } from '@kodax-ai/llm';
-import { runKodaX } from '../agent.js';
+import { runLeafAgent } from '../agent.js';
 import { runManagedTaskViaRunner } from '../task-engine/runner-driven.js';
 import { _resetMessageQueueForTests, actorQueueId, getMessageQueue } from '@kodax-ai/agent';
 import { CodingActorSession } from './actor-runtime.js';
@@ -41,7 +41,7 @@ it.each(['Direct', 'AMA'] as const)('%s diagnoses an image rejected after admiss
       thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
   });
   registerModelProvider('text-recovery', () => provider);
-  const result = await (runtime === 'Direct' ? runKodaX : runManagedTaskViaRunner)({ provider: 'text-recovery', reasoningMode: 'off', maxIter: 2,
+  const result = await (runtime === 'Direct' ? runLeafAgent : runManagedTaskViaRunner)({ provider: 'text-recovery', reasoningMode: 'off', maxIter: 2,
     context: { executionCwd: directory, managedTaskWorkspaceDir: directory }, session: { initialMessages: history } }, '总价六万元，每项两万元，启动前支付');
   expect(result.success).toBe(true);
   expect(diagnose).toHaveBeenCalledOnce(); expect(stream).toHaveBeenCalledTimes(2);
@@ -94,7 +94,7 @@ for (const runtime of ['Direct', 'AMA'] as const) {
       Reflect.set(provider, '_client', { chat: { completions: { create } } });
       registerModelProvider('wire-recovery', () => provider);
       try {
-        const result = await (runtime === 'Direct' ? runKodaX : runManagedTaskViaRunner)({ provider: 'wire-recovery',
+        const result = await (runtime === 'Direct' ? runLeafAgent : runManagedTaskViaRunner)({ provider: 'wire-recovery',
           reasoningMode: 'off', maxIter: 2, lsp: false, session: { id: sessionId, initialMessages: history },
           context: { executionCwd: directory, managedTaskWorkspaceDir: directory, actorSession } },
         '总价六万元，每项两万元，启动前支付').catch(error => {
