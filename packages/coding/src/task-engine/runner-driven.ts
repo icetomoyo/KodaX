@@ -243,7 +243,7 @@ import { withDurableCompactionPersistence } from '../agent-runtime/durable-compa
 // CAP-008: shared initial-messages resolver. Three-tier fallback
 // (inline → storage.load → empty) for AMA frame entry; the direct engine
 // already uses this from `run-substrate.ts`.
-import { appendPromptIfNotDuplicate, resolveInitialMessages, type ResolvedInitialMessages } from '../agent-runtime/middleware/auto-resume.js';
+import { appendPromptIfNotDuplicate, discoverAutoResumeSessionId, resolveInitialMessages, type ResolvedInitialMessages } from '../agent-runtime/middleware/auto-resume.js';
 import { createExtensionRuntimeSessionController } from '../agent-runtime/middleware/extension-queue.js';
 import {
   buildRuntimeSessionState,
@@ -542,6 +542,13 @@ function dropRunnerInjectedSystemMessage(
     firstTranscriptIndex += 1;
   }
   return firstTranscriptIndex > 0 ? messages.slice(firstTranscriptIndex) : messages;
+}
+
+function lastAssistantText(messages: readonly KodaXMessage[]): string {
+  const last = [...messages].reverse().find(message => message.role === 'assistant');
+  if (!last) return '';
+  if (typeof last.content === 'string') return last.content;
+  return last.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('');
 }
 
 function attachTurnIdsFromUserBoundaries(
@@ -936,7 +943,7 @@ async function runManagedTaskViaRunnerInContext(
     resolveProvider(providerName),
     effectiveOptions.modelOverride ?? effectiveOptions.model,
   );
-  const initialSessionId = effectiveOptions.session?.id
+  const initialSessionId = await discoverAutoResumeSessionId(effectiveOptions)
     ?? `runner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const releaseActiveRootQueueRoute = registerActiveRootQueueRoute(
     actorQueueId(initialSessionId, '/root'),
@@ -979,7 +986,10 @@ async function runManagedTaskViaRunnerInContext(
   const shouldAttachInitialSessionId = Boolean(effectiveOptions.session?.id)
     || Boolean(effectiveOptions.session?.storage)
     || Boolean(effectiveOptions.events?.askUser);
+  // Keep the caller's session object when its id already matches, so
+  // non-enumerable markers such as the startKodaX generated-id flag survive.
   const baseOptionsWithSessionId: KodaXOptions = shouldAttachInitialSessionId
+    && effectiveOptions.session?.id !== initialSessionId
     ? {
       ...effectiveOptions,
       session: {
@@ -2745,10 +2755,34 @@ async function runManagedTaskViaRunnerInner(
   // (the wrapper only requires `messages`, so the wider type is
   // structurally OK).
   let generationBudget = options.session?.generationCheckpoint;
-  const runOnce = (agent: Agent, input: readonly KodaXMessage[]) => {
+  // An explicit maxIter bounds root LLM turns across idle-yield resumes,
+  // like the direct engine. Without it only the per-Runner panic fuse applies.
+  let rootIterationsUsed = 0;
+  const limitReachedRef = { current: false };
+  const runOnce = async (agent: Agent, input: readonly KodaXMessage[]) => {
     const resumedBudget = generationBudget;
     generationBudget = undefined;
     iterationStateRef.current = 0;
+    const fuse = Math.min(MANAGED_RUNNER_PANIC_ITERATIONS, resumedBudget?.remainingIterations ?? Infinity);
+    const remainingRootIterations = options.maxIter === undefined
+      ? Infinity : Math.max(0, options.maxIter - rootIterationsUsed);
+    try {
+      return await runOnceWithin(agent, input, resumedBudget, Math.min(fuse, remainingRootIterations));
+    } catch (error) {
+      if (!isRunnerIterationLimitError(error) || remainingRootIterations > fuse) throw error;
+      limitReachedRef.current = true;
+      const messages = readRunnerRecoveryTranscript(error) ?? input;
+      return { output: lastAssistantText(messages), messages };
+    } finally {
+      rootIterationsUsed += iterationStateRef.current;
+    }
+  };
+  const runOnceWithin = (
+    agent: Agent,
+    input: readonly KodaXMessage[],
+    resumedBudget: typeof generationBudget,
+    iterationCap: number,
+  ) => {
     const initialMessages = new Set(input);
     let capacityRevision = options.events?.getContextRecoveryRevision?.();
     const commitManagedMessage = options.session?.persistedByHost === false
@@ -2828,8 +2862,8 @@ async function runManagedTaskViaRunnerInner(
       // and is far too low for a multi-step managed task.
       // A fresh idle-yield resume starts a new Runner invocation and resets
       // this counter. The fuse catches one uninterrupted runaway tool loop;
-      // it never becomes a cumulative managed-task budget.
-      maxToolLoopIterations: Math.min(MANAGED_RUNNER_PANIC_ITERATIONS, resumedBudget?.remainingIterations ?? Infinity),
+      // only an explicit maxIter (see runOnce) adds a cumulative root budget.
+      maxToolLoopIterations: iterationCap,
       maxTotalIterations: Math.min(MANAGED_RUNNER_PANIC_ITERATIONS, resumedBudget?.remainingIterations === undefined
         ? Infinity : resumedBudget.remainingIterations + (resumedBudget.remainingContinuationIterations ?? 0)),
     });
@@ -2874,7 +2908,7 @@ async function runManagedTaskViaRunnerInner(
         // without dispatching" on V1; on V2 only Worker runs and the
         // gate falls through to the child-registry + verdict check.
         hasEmittedHandoff: false,
-        hasEmittedTerminalVerdict: rr.stoppedByHook === true,
+        hasEmittedTerminalVerdict: rr.stoppedByHook === true || limitReachedRef.current,
         // Bug E: queue arm alongside registry arm. Strictly
         // task-notification banners — see comment above for the
         // FEATURE_159 follow-up that narrowed this filter.
@@ -3113,6 +3147,7 @@ async function runManagedTaskViaRunnerInner(
     // `.mutationSurface` / `.taskFamily` the same way they did on the
     // legacy path.
     routingDecision: plan?.decision,
+    ...(limitReachedRef.current ? { limitReached: true } : {}),
   };
   const runtimeSessionSnapshot = snapshotRuntimeSessionState(
     runtimeSessionState,
