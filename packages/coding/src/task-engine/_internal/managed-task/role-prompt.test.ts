@@ -438,7 +438,7 @@ describe('FEATURE_114 Slice 2 — worker role prompt entry wire', () => {
     expect(rendered).toContain('Preserve any exact machine-readable closing contract');
   });
 
-  it('decisionSummary is de-harnessed and the Worker self-judges via EXECUTION GUIDANCE (ADR-043)', () => {
+  it('decisionSummary is de-harnessed and the Worker self-judges via its execution guidance (ADR-043)', () => {
     const rendered = renderWorker();
     // Semantic routing fields stay (they help; see decisionSummary eval).
     expect(rendered).toContain('Routing decision summary:');
@@ -447,14 +447,14 @@ describe('FEATURE_114 Slice 2 — worker role prompt entry wire', () => {
     expect(rendered).not.toContain('Harness:');
     expect(rendered).not.toContain('Topology ceiling:');
     // The Worker self-judges its approach from the static guidance (H3) instead.
-    expect(rendered).toContain('EXECUTION GUIDANCE');
+    expect(rendered).toContain('EXECUTION, RECOVERY AND DELIVERY');
   });
 
   it('teaches language continuity across Actor-event resumes', () => {
     const rendered = renderWorker();
-    expect(rendered).toContain('Actor-event resume summaries: match the primary natural language of the original user request');
-    expect(rendered).toContain('user-visible explanations, progress notes, and final answer');
-    expect(rendered).toContain('Code, identifiers, file paths, tool output, and quoted evidence stay in their source language');
+    expect(rendered).toContain("On Actor-event resume, retain the original request's language.");
+    expect(rendered).toContain("Use the requested language, else the request's primary language, for explanations, progress");
+    expect(rendered).toContain('Code, identifiers, paths, commands and quoted evidence keep their source language.');
   });
 
   it('does NOT route Worker through emit_handoff (FEATURE_190: text-only termination)', () => {
@@ -473,21 +473,21 @@ describe('FEATURE_114 Slice 2 — worker role prompt entry wire', () => {
     // Pinned tokens from `buildWorkerInstructions` — if the entry
     // wire breaks, these disappear and the V2 path silently falls
     // back to a context-only prompt with no planning guidance.
-    expect(rendered).toContain('PLAN-FIRST GUIDANCE:');
-    expect(rendered).toContain('SCOPE COMMITMENT:');
+    expect(rendered).toContain('TASK AND PLAN');
+    expect(rendered).toContain('TRUST AND SCOPE');
     expect(rendered).toContain('MUTATION DISCIPLINE');
-    expect(rendered).toContain('AGENT COLLABORATION:');
+    expect(rendered).toContain('PARALLEL WORK');
     expect(rendered).toContain(
       'Use sub-agents when parallel work would materially improve speed or quality.',
     );
     expect(rendered).toContain(
       'Use `run_workflow` only when the user explicitly requests a Workflow or names a Workflow.',
     );
-    expect(rendered).toContain('the following mailbox block carries the evidence');
-    expect(rendered).toContain('After `AgentLimitReached`');
+    expect(rendered).toContain('Consume the following mailbox');
+    expect(rendered).toContain('After AgentLimitReached');
     // FEATURE_190 (v0.7.43): legacy `EVALUATOR HANDOFF` replaced by
-    // positive text-only termination block.
-    expect(rendered).toContain('TERMINATION');
+    // positive text-only termination.
+    expect(rendered).toContain('When only running children remain, end with text so Runtime suspends');
     expect(rendered).not.toContain('Sidecar Verifier');
     expect(rendered).not.toContain('EVALUATOR HANDOFF');
     expect(rendered).toContain('You are the Worker — KodaX\'s single primary agent');
@@ -685,10 +685,9 @@ describe('F270 — explicit Workflow activation policy', () => {
       actorCapacity: { maxConcurrentThreads: 4, activeNonRootTurns: 1 },
     });
     expect(rendered).toContain('<agent-completed path="..." turn_id="..." state="completed">');
-    expect(rendered).toContain('`wait_agent` returns only a wake acknowledgement');
-    expect(rendered).toContain('Use it directly');
-    expect(rendered).toContain('Do not call `agent_output` speculatively');
-    expect(rendered).toContain('do not retry `spawn_agent` while the reported capacity is still full');
+    // The wake-acknowledgement shape lives in the wait_agent description.
+    expect(rendered).toContain('agent_output is only for missing terminal Actor/Turn structured results/artifact metadata, never completion polling');
+    expect(rendered).toContain('never retry while full');
     expect(rendered).toMatch(/^ACTOR CAPACITY:/);
     expect(rendered).toContain('This session runs at most 3 child Agents at a time.');
     expect(rendered).toContain('A `spawn_agent` call made when no child slot is free is rejected');

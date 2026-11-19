@@ -1,10 +1,8 @@
 /**
  * Rendered prompt snapshots: the exact text the model receives for the
- * Worker (canonical and compact), the builtin child and the one tool contract
- * source every entry sends.
+ * Worker, the builtin child and the one tool contract source every entry sends.
  *
- * A prompt edit shows up here as a readable text diff, and the canonical and
- * compact Worker files sit side by side so one cannot drift from the other unseen.
+ * A prompt edit shows up here as a readable text diff.
  * Refactors of prompt storage must leave every file unchanged.
  * Update intentionally with `npx vitest run <this file> -u` and review the diff.
  */
@@ -14,12 +12,10 @@ import type { KodaXToolDefinition } from '@kodax-ai/llm';
 import { createAgentActorController } from '../../../agent/src/actors/index.js';
 import { buildRunnerAgentChain } from '../task-engine/_internal/managed-task/agent-chain.js';
 import { buildFallbackRoutingDecision } from '../reasoning.js';
-import { markOrdinaryRootToolContract } from '../tools/managed-tool-contract.js';
 import { listToolDefinitions } from '../tools/index.js';
 import { filterExcludedTools, getActiveToolDefinitions } from '../agent-runtime/tool-resolution.js';
 import { CHILD_AGENT_SYSTEM_PROMPT, CHILD_EXCLUDE_TOOLS_BASE } from '../child-executor.js';
 import { buildWorkerStableInstructions, buildWorkerStableSections } from '../agents/worker-role-prompt.js';
-import { projectManagedSystemContract } from './managed-system-contract.js';
 import { renderApplicationContextSections } from './prompt-spec.js';
 import { createRolePrompt } from '../task-engine/_internal/managed-task/role-prompt.js';
 
@@ -40,7 +36,7 @@ function renderTools(tools: readonly KodaXToolDefinition[]): string {
   ].join('\n')).join('\n\n') + '\n';
 }
 
-async function renderWorker(platform: Platform): Promise<{ canonical: string; compact: string; tools: string; list: readonly KodaXToolDefinition[] }> {
+async function renderWorker(platform: Platform): Promise<{ system: string; tools: string; list: readonly KodaXToolDefinition[] }> {
   const controller = await createAgentActorController({ executor: { execute: async () => ({ output: 'unused' }) } });
   try {
     const context = { backups: new Map(), actorControl: controller.bind('/root'),
@@ -53,14 +49,10 @@ async function renderWorker(platform: Platform): Promise<{ canonical: string; co
         workspace: platform ? { executionCwd: '/fixture', platform } : undefined,
       }),
     }).worker;
-    const canonical = typeof worker.instructions === 'function'
+    const system = typeof worker.instructions === 'function'
       ? worker.instructions(undefined)
       : worker.instructions ?? '';
-    markOrdinaryRootToolContract(worker);
-    const tools = worker.tools!;
-    const compact = projectManagedSystemContract(worker, tools, canonical);
-    expect(compact, 'the fixture must take the compact projection').not.toBe(canonical);
-    return { canonical: canonical + '\n', compact: compact + '\n', tools: renderTools(tools), list: tools };
+    return { system: system + '\n', tools: renderTools(worker.tools!), list: worker.tools! };
   } finally {
     await controller.shutdown('Rendered prompt capture finished');
   }
@@ -79,10 +71,9 @@ describe('rendered Worker root prompt', () => {
     ['linux', 'linux'],
     ['win32', 'win32'],
     ['no-platform', undefined],
-  ] as const)('canonical and compact system, %s', async (label, platform) => {
+  ] as const)('system, %s', async (label, platform) => {
     const rendered = await renderWorker(platform);
-    await expect(rendered.canonical).toMatchFileSnapshot(expected(`worker.canonical.${label}.md`));
-    await expect(rendered.compact).toMatchFileSnapshot(expected(`worker.compact.${label}.md`));
+    await expect(rendered.system).toMatchFileSnapshot(expected(`worker.${label}.md`));
   });
 
   it('tool contracts', async () => {
@@ -109,17 +100,12 @@ describe('rendered Worker contract for reduced tool sets', () => {
     expect({ all: tags(), none: tags([]), readOnly: tags(['read', 'grep', 'glob', 'todo_list']) }).toMatchInlineSnapshot(`
       {
         "all": [
-          "context-trust:contract",
-          "parallel-work:guidance",
-          "plan-first:guidance",
-          "plan-list-hygiene:guidance",
-          "scope-commitment:guidance",
-          "mutation-discipline:guidance",
+          "trust-and-scope:contract",
+          "task-and-plan:guidance",
+          "parallel-work:capability",
+          "specialist-routing:capability",
           "repo-intelligence-tools:capability",
-          "agent-collaboration:capability",
-          "agent-steering:capability",
-          "execution-guidance:guidance",
-          "termination:contract",
+          "execution-and-delivery:contract",
         ],
         "none": [
           "context-trust:contract",

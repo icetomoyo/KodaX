@@ -1,3 +1,5 @@
+import { staticText } from '../prompts/static-text.js';
+
 /**
  * FEATURE_218 — the single short prompt rule that routes product questions to
  * the kodax_manual tool. Kept ≤250 tokens so the base/system prompt cache
@@ -34,6 +36,11 @@ export function buildSelfKnowledgeRoutingRule(productName = 'KodaX'): string {
     'to compare. Project AGENTS.md still governs work in the current repo; the',
     `manual governs questions about ${productName} as a product.`,
   ].join('\n');
+}
+
+/** The Worker's dense wording, for a Worker that has the kodax_manual tool. */
+export function buildWorkerSelfKnowledgeRoutingRule(productName = 'KodaX'): string {
+  return staticText("self-knowledge.worker-routing-rule").replaceAll('KodaX', productName);
 }
 
 /** Default KodaX routing rule (backward-compatible const). */

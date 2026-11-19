@@ -360,7 +360,6 @@ const FROZEN_SOURCES = [
   'packages/coding/src/task-engine/_internal/managed-task/role-prompt.ts',
   'packages/coding/src/task-engine/_internal/managed-task/role-prompts.ts',
   'packages/coding/src/agents/worker-role-prompt.ts',
-  'packages/coding/src/prompts/compact-worker-contract.ts',
   'src/sdk-runtime.ts',
   'benchmark/datasets/product-multiturn/fixture.ts',
   'tests/shared-contract-natural-runtime.ts',

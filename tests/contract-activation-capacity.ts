@@ -7,7 +7,6 @@ import type { KodaXToolExecutionContext } from '../packages/coding/src/types.js'
 import { toolListAgents, toolSpawnAgent } from '../packages/coding/src/tools/agent-collaboration.js';
 import { buildRunnerAgentChain } from '../packages/coding/src/task-engine/_internal/managed-task/agent-chain.js';
 import { buildRunnerLlmAdapter } from '../packages/coding/src/task-engine/_internal/managed-task/llm-adapter.js';
-import { markOrdinaryRootToolContract } from '../packages/coding/src/tools/managed-tool-contract.js';
 import { markRegistryManagedAgent } from '../packages/coding/src/tools/model-tool-definition.js';
 import { createManagedRunContextMessage } from '../packages/coding/src/task-engine/_internal/managed-task/managed-run-context.js';
 import { buildWorkerActorCapacityContract, buildWorkerRoutingContext } from '../packages/coding/src/agents/worker-role-prompt.js';
@@ -62,7 +61,6 @@ export async function prepareActivationCapacityPair(directory: string, baseline:
       { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'capacity-denied-spawn', content: denial, is_error: true }] }];
     const saved = structuredClone(messages);
     const agent = markRegistryManagedAgent({ ...buildRunnerAgentChain(context).worker, tools: [...candidate.tools] }, context);
-    markOrdinaryRootToolContract(agent);
     let projected: readonly KodaXMessage[] | undefined, requests = 0, adapterToolNames: string[] = [];
     await buildRunnerLlmAdapter({ provider: 'anthropic', reasoningMode: 'off' }, async (wire, tools) => {
       requests++; projected = structuredClone(wire);

@@ -42,7 +42,8 @@ describe('FEATURE_259 prompt contracts', () => {
     const prompt = buildWorkerInstructions(decision, undefined, false);
     expect(prompt).not.toMatch(/FEATURE_\d+/);
     expect(prompt).not.toMatch(/PLAN-FIRST CONTRACT \([^)]*v0\./);
-    expect(prompt).toContain('Configured `fast`/`deep` tiers select their operator-mapped route');
+    // Tier routing lives in the model_hint schema; the Worker points at it.
+    expect(prompt).toContain('Choose model_hint using its contract');
   });
 
   it('keeps Agent lifecycle and user-visible plan granularity separate', () => {

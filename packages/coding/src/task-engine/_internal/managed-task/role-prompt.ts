@@ -57,8 +57,8 @@ import {
 // directly in parse-helpers.ts. The worker role terminates text-only under
 // F184/F190 architecture with no emit tool.
 
-// Canonical fragments remain unchanged for SDK and specialized roles.
-export const WORKER_CLOSING_RULE = [
+// Without a workspace block the Worker does not know the host shell, so these spell out both platforms.
+const WORKER_CLOSING_RULE = [
     'Preserve any exact machine-readable closing contract requested by the original task.',
     staticText("managed-worker.closing.completion-authority"),
     'Language continuity also applies to Actor-event resume summaries: match the primary natural language of the original user request.',
@@ -67,7 +67,7 @@ export const WORKER_CLOSING_RULE = [
     'When the user asks about another system, such as a Linux server, a container or a remote host, write commands for that system.',
   ].join('\n');
 
-export const WORKER_WORKSPACE_DISCIPLINE = staticText("managed-worker.workspace-discipline");
+const WORKER_WORKSPACE_DISCIPLINE = staticText("managed-worker.workspace-discipline");
 
 /**
  * Build the system prompt for a single managed-task role.
@@ -112,9 +112,9 @@ export function createRolePrompt(
   // behaviour-neutral (the harness tier collapsed; see ADR-043 Phase 2).
   // An application persona replaces KodaX's identity wording and default working style.
   const omitGuidance = rolePromptContext?.omitKodaxGuidance === true;
-  const decisionSummary = buildWorkerRoutingContext(decision, omitGuidance);
+  const neutralIdentity = omitGuidance || rolePromptContext?.neutralIdentity === true;
+  const decisionSummary = buildWorkerRoutingContext(decision, neutralIdentity);
 
-  const sharedClosingRule = WORKER_CLOSING_RULE;
 
   // v0.7.26 NEW-1 — inject the workspace environment at prompt head.
   // The direct engine gets this via `buildSystemPrompt` (Working Directory
@@ -201,7 +201,10 @@ export function createRolePrompt(
   // result: workers wrote scratch files to project root / system tmp
   // instead of `.agent/tmp/`. Re-inject the essential discipline as a
   // shared block prepended to every role's prompt.
-  const sharedWorkerDiscipline = WORKER_WORKSPACE_DISCIPLINE;
+  // The workspace block states the host shell, so the dense rules drop the per-platform command table.
+  const sharedWorkerDiscipline = workspace
+    ? staticText("managed-worker.workspace-discipline.known-host") : WORKER_WORKSPACE_DISCIPLINE;
+  const sharedClosingRule = workspace ? staticText("managed-worker.closing.known-host") : WORKER_CLOSING_RULE;
   const originalTaskSection = `Original user request:\n${originalTask}`;
   const roundInstructionSection = prompt !== originalTask
     ? `Current round instructions:\n${prompt}`
@@ -213,7 +216,7 @@ export function createRolePrompt(
   const metadataSection = formatTaskMetadata(metadata);
   const verificationSection = formatVerificationContract(verification);
   const toolPolicySection = formatToolPolicy(toolPolicy);
-  const agentSection = omitGuidance ? undefined : `Assigned native agent identity: ${agent}`;
+  const agentSection = neutralIdentity ? undefined : `Assigned native agent identity: ${agent}`;
   const skillInvocation = rolePromptContext?.skillInvocation;
   // The skill map and same-role summaries came from the retired Scout chain and
   // are never populated now; their sections and the Scout/Evaluator wording went with them.

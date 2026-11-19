@@ -20,9 +20,9 @@ import { CACHE_GOLDEN, writeCacheFixture } from '../benchmark/datasets/search-en
 import { inputHash, type FrozenInput } from './first-turn-eval-support.js';
 import { sourceHashes } from './skill-trigger.capture.js';
 
-// `context` carries what a Product execution profile adds (persona, prompt spec, intersect policy).
+// `context` carries what a Product execution profile adds (persona, host system prompt, prompt spec, intersect policy).
 interface ManagedCaptureCase { readonly id: string; readonly task: string; readonly workMode: KodaXWorkMode;
-  readonly context?: Pick<KodaXContextOptions, 'agentProfile' | 'prompt' | 'workModePolicy'> }
+  readonly context?: Pick<KodaXContextOptions, 'agentProfile' | 'systemPromptOverride' | 'prompt' | 'workModePolicy'> }
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, windowsHide: true, encoding: 'utf8' });
 

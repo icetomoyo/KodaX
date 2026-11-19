@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type { Agent } from '@kodax-ai/agent';
 import type { KodaXMessage, KodaXToolDefinition } from '@kodax-ai/llm';
 import type { KodaXContextOptions } from '../types.js';
-import { canProjectManagedToolContracts } from './managed-tool-contract.js';
+import { usesManagedToolView } from './managed-tool-contract.js';
 import { getRegistryManagedAgentContext, projectModelToolDefinition } from './model-tool-definition.js';
 import { getBuiltinToolDefinition, getRegisteredToolDefinition } from './registry.js';
 import { resolveToolBridgeTarget } from './tool-bridge.js';
@@ -74,11 +74,11 @@ function flatContract(tool: KodaXToolDefinition): string | undefined {
   return `${tool.name}: ${tool.description}\ninput: {\n${fields.join('\n')}\n}`;
 }
 
-/** Ordinary-root request view only. Execution and discovery inventories remain untouched. */
+/** Managed root request view only. Execution and discovery inventories remain untouched. */
 export function projectManagedToolActivation(agent: Agent, tools: readonly KodaXToolDefinition[],
   context?: KodaXContextOptions, messages: readonly KodaXMessage[] = [],
   facts: ManagedToolActivationFacts = {}): readonly KodaXToolDefinition[] {
-  if (!canProjectManagedToolContracts(agent, context)
+  if (!usesManagedToolView(agent, context)
     || !['tool_call', 'tool_search'].every(name => tools.some(tool => tool.name === name && canonical(tool)))) return tools;
   const compact = new Map<string, string>(), hidden = new Set<string>();
   const observed = observedCalls(messages);

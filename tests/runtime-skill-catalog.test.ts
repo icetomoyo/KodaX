@@ -89,7 +89,8 @@ it.each(['direct', 'ama', 'runner'] as const)('keeps an admitted Skill discovera
       expect(modelContext).toContain('TASK_VERIFY');
       expect(modelContext).toContain('PROFILE_EVIDENCE');
       expect(modelContext).toContain('TASK_CHECK');
-      expect(modelContext).toContain('EXECUTION GUIDANCE (match your approach');
+      // The direct engine and Runner still render system.md; the managed Worker renders its own execution section.
+      expect(modelContext).toContain(mode === 'ama' ? 'EXECUTION, RECOVERY AND DELIVERY' : 'EXECUTION GUIDANCE (match your approach');
     }
     expect(JSON.stringify(requests[1]?.messages), entry).toContain('BODY_audit-evidence');
     expect(requests[0]!.system.split('PROFILE_INSTRUCTIONS')).toHaveLength(2);

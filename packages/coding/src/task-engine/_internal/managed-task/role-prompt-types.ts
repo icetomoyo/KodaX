@@ -109,8 +109,10 @@ export interface ManagedRolePromptContext {
   teamModeSection?: string;
   /** Clock-free identity for Team Mode change detection. */
   teamModeFingerprint?: string;
-  /** `context.prompt.kodaxGuidance: 'omit'`: drop guidance-tagged text and KodaX identity wording. */
+  /** `kodaxGuidance: 'omit'` or a caller system prompt: drop guidance-tagged text and KodaX identity wording. */
   omitKodaxGuidance?: boolean;
+  /** An application persona speaks for itself: drop the KodaX identity wording, keep the working guidance. */
+  neutralIdentity?: boolean;
   /** Rendered `context.prompt` rule entries; a context update carries only new or changed ones. */
   applicationRules?: string;
   /** Rendered `context.prompt` reference entries, same retention as rules. */

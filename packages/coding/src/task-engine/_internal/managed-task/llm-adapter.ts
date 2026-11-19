@@ -24,10 +24,9 @@ import type { RuntimeSessionState } from '../../../agent-runtime/runtime-session
 import { markRuntimeSelectionChanged } from '../../../agent-runtime/runtime-session-state.js';
 import { withEffectivePermissionContext } from '../../../prompts/effective-permissions.js';
 import { getRegistryManagedAgentContext } from '../../../tools/model-tool-definition.js';
-import { canProjectManagedToolContracts } from '../../../tools/managed-tool-contract.js';
+import { usesManagedToolView } from '../../../tools/managed-tool-contract.js';
 import { projectToolSearchResultParameters } from '../../../tools/tool-search-model-result.js';
 import { projectManagedToolActivation, type ManagedToolActivationFacts } from '../../../tools/managed-tool-activation.js';
-import { projectManagedSystemContract } from '../../../prompts/managed-system-contract.js';
 import { getRegisteredToolDefinition } from '../../../tools/registry.js';
 import { filterModelToolAliases } from '../../../agent-runtime/tool-resolution.js';
 
@@ -531,14 +530,13 @@ export function buildRunnerLlmAdapter(
 
     const managedContext = getRegistryManagedAgentContext(agent);
     const registryManaged = managedContext !== undefined;
+    const managedToolView = usesManagedToolView(agent, options.context);
     let wireTools = (registryManaged ? filterModelToolAliases(agent.tools ?? []) : agent.tools ?? [])
       .map(t => ({ name: t.name, description: t.description, input_schema: t.input_schema, ...(t.strict ? { strict: t.strict } : {}), ...(t.grammar ? { grammar: structuredClone(t.grammar) } : {}) }));
 
     // Presentation only: keep the execution inventory and AMA capability teaching intact.
-    // Unknown extension inventories and explicit SDK/child contracts retain native search.
-    if (managedContext
-      && ![managedContext, options.context].some(context =>
-        context?.currentAgentId || context?.agentProfile || context?.toolVisibilityPolicy)
+    // Unknown extension inventories and child contracts retain native search.
+    if (managedContext && managedToolView
       && [managedContext.extensionRuntime, options.extensionRuntime].every(runtime =>
         !runtime || runtime.listCapabilityProviders?.().every(provider => typeof provider.search !== 'function') === true)
       && ['code_search', 'grep', 'glob', 'read', 'tool_search', 'tool_call'].every(name =>
@@ -553,15 +551,14 @@ export function buildRunnerLlmAdapter(
       [...projectManagedToolActivation(agent, assembledTools, options.context, source, getToolActivationFacts?.())];
     wireTools = activateTools(transcript);
     const projectSearchResults = (source: readonly KodaXMessage[], tools: readonly KodaXToolDefinition[] = wireTools): KodaXMessage[] => {
-      if (!canProjectManagedToolContracts(agent, options.context)
+      if (!managedToolView
         || getRegisteredToolDefinition('tool_search')?.source.kind !== 'builtin') return [...source];
       const native = new Set(tools.map(tool => tool.name));
       const leaves = getScriptModelContracts(agent, tools)?.leaves.filter(tool => !native.has(tool.name)) ?? [];
       return projectToolSearchResultParameters(source, [...tools, ...leaves]);
     };
     const buildWireSystem = (source: string, tools: readonly KodaXToolDefinition[]) =>
-      withEffectivePermissionContext(withScriptModeGuidance(agent, tools,
-        projectManagedSystemContract(agent, tools, source, options.context)), options.context);
+      withEffectivePermissionContext(withScriptModeGuidance(agent, tools, source), options.context);
 
     // Built-in Worker/Script roots inherit the current Session effort.
     // Only an explicitly declared specialist profile adds a role constraint.

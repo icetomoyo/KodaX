@@ -23,19 +23,6 @@ function fixture(): FrozenInput {
     messages: [{ role: 'user', content: task }] };
 }
 
-it('makes the eligible root teaching shorter without changing messages or host tool contracts', () => {
-  const before = fixture(); const after = compactContractInput(before, true);
-  expect(after.system.length).toBeLessThan(before.system.length);
-  expect(after.system.startsWith('Host-owned prefix\n')).toBe(true);
-  expect(after.system.endsWith('\nUser-owned suffix')).toBe(true);
-  expect(after.tools).toEqual(before.tools);
-  expect(after.messages).toBe(before.messages);
-  expect(after.system).toContain('resumed/continued');
-  expect(after.system).toContain('same assistant response');
-  expect(after.system).toContain('unresolved ownership');
-  expect(after.system).toContain('do not pursue the prohibited effect through another command, shell or tool');
-});
-
 it('leaves SDK, child, specialist, partial, Script and custom-system consumers untouched', () => {
   const full = fixture();
   expect(compactContractInput(full, false)).toBe(full);

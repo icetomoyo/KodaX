@@ -106,8 +106,6 @@ it('inventories first serialized requests for isolated content and real Runtime 
     'packages/coding/src/tools/managed-tool-contract.ts',
     'packages/coding/src/tools/managed-tool-activation.ts',
     'packages/coding/src/tools/skill.ts',
-    'packages/coding/src/prompts/managed-system-contract.ts',
-    'packages/coding/src/prompts/compact-worker-contract.ts',
     'packages/coding/src/prompts/static-text.json',
     'packages/agent/src/capabilities/skills/skill-registry.ts',
     'packages/coding/src/agent-runtime/middleware/auto-resume.ts',

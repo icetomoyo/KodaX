@@ -37,11 +37,8 @@ describe('language-continuity rule coverage (③)', () => {
 
   it('the AMA Worker instructions carry both the response-language rule and the dispatch-objective-language rule', () => {
     const out = buildWorkerInstructions(decision, undefined, false);
-    // via the embedded EXECUTION_GUIDANCE block
-    expect(out).toContain("primary natural language of the user's request");
-    // the Worker authors each child's objective in the user's language
-    expect(out).toContain('DISPATCH OBJECTIVE LANGUAGE');
-    expect(out).toContain("same natural language as the user's request");
+    // One sentence covers the response and every child objective.
+    expect(out).toContain("Use the requested language, else the request's primary language, for explanations, progress, all Todo text and child objectives");
   });
 
   it('keeps user-visible todo fields in the request language', () => {
@@ -49,8 +46,7 @@ describe('language-continuity rule coverage (③)', () => {
     const todoCreate = BUILTIN_TOOL_DEFINITIONS.find((tool) => tool.name === 'todo_create');
     const todoUpdate = BUILTIN_TOOL_DEFINITIONS.find((tool) => tool.name === 'todo_update');
 
-    expect(out).toContain('TODO LANGUAGE');
-    expect(out).toContain('`subject`, `description`, `activeForm`, and user-visible `note`');
+    expect(out).toContain('all Todo text');
     expect(todoCreate?.description).toContain('requested language, otherwise the request primary language');
     expect(todoUpdate?.description).toContain('requested language, otherwise the request primary language');
   });

@@ -5,7 +5,7 @@ import type {
   KodaXTaskRoutingDecision,
   KodaXTaskVerificationContract,
 } from '../types.js';
-import { EXECUTION_GUIDANCE, PLAN_BATCH_GUIDANCE } from '../prompts/execution-guidance.js';
+import { EXECUTION_GUIDANCE, PLAN_BATCH_GUIDANCE, TOOL_RECOVERY_GUIDANCE } from '../prompts/execution-guidance.js';
 import type { KodaXPromptSectionTag } from '../prompts/sections.js';
 // F270 keeps the prompt on the canonical Actor wait/completion vocabulary;
 // the runner may still use its generic wake loop internally.
@@ -105,6 +105,8 @@ interface WorkerTools {
   readonly has: (name: string) => boolean;
   readonly fullTodo: boolean;
   readonly fullCollaboration: boolean;
+  /** Mixed blocks drop their guidance part themselves; whole guidance blocks are filtered by tag. */
+  readonly omitGuidance: boolean;
 }
 
 /** One rendered block of the Worker stable instructions. */
@@ -121,13 +123,14 @@ interface WorkerSectionDefinition {
   readonly render: (tools: WorkerTools) => string | undefined;
 }
 
-function workerTools(names: readonly string[] | undefined): WorkerTools {
+function workerTools(names: readonly string[] | undefined, omitGuidance: boolean): WorkerTools {
   const has = (name: string): boolean => names === undefined || names.includes(name);
   return {
     names,
     has,
     fullTodo: ['todo_create', 'todo_update', 'todo_list', 'wait_agent'].every(has),
     fullCollaboration: ['spawn_agent', 'wait_agent', 'send_message', 'followup_task', 'list_agents', 'agent_output', 'interrupt_agent'].every(has),
+    omitGuidance,
   };
 }
 
@@ -304,7 +307,6 @@ function renderLimitedCollaboration(tools: WorkerTools): string {
 }
 
 function renderTermination(tools: WorkerTools): string {
-  if (tools.fullTodo && tools.fullCollaboration) return block('TERMINATION:', [staticText("worker.termination")]);
   return block('TERMINATION:', [
     staticText("worker.limited-termination.verify"),
     tools.has('todo_update')
@@ -313,8 +315,55 @@ function renderTermination(tools: WorkerTools): string {
   ]);
 }
 
+// The full tool set gets the dense contract: the tool descriptions already teach
+// each Todo and Agent tool, so these blocks keep only decisions and lifecycle.
+function renderTrustAndScope(tools: WorkerTools): string {
+  const workflowPrompts = tools.has('run_workflow') ? ' (including run_workflow prompts)' : '';
+  return block('TRUST AND SCOPE', [
+    `${staticText("worker.full.trust-and-scope")}${workflowPrompts}. ${staticText("worker.full.source-language")}`,
+  ]);
+}
+
+function renderTaskAndPlan(tools: WorkerTools): string {
+  const reader = todoReader(tools) === 'todo_get' ? 'todo_get(id)' : 'todo_list({id})';
+  return block('TASK AND PLAN', [
+    staticText("worker.answer-directly"),
+    `${staticText("worker.full.plan.milestones")} ${PLAN_BATCH_GUIDANCE}`,
+    `${staticText("worker.full.plan.dedup")} ${reader} ${staticText("worker.full.plan.replanning")}`,
+  ]);
+}
+
+// Dispatch is KodaX working style; the Agent lifecycle rules stay with an application persona.
+function renderParallelWork(tools: WorkerTools): string {
+  return tools.omitGuidance
+    ? block('AGENT COLLABORATION', [staticText("worker.full.collaboration")])
+    : block('PARALLEL WORK', [staticText("worker.full.dispatch"), staticText("worker.full.collaboration")]);
+}
+
+function renderExecutionAndDelivery(tools: WorkerTools): string {
+  return tools.omitGuidance
+    ? block('RECOVERY AND DELIVERY', [TOOL_RECOVERY_GUIDANCE, staticText("worker.full.delivery")])
+    : block('EXECUTION, RECOVERY AND DELIVERY', [
+      renderMutationDiscipline(tools),
+      staticText("worker.full.verification"),
+      TOOL_RECOVERY_GUIDANCE,
+      staticText("worker.full.delivery"),
+    ]);
+}
+
+const FULL_WORKER_SECTIONS: readonly WorkerSectionDefinition[] = [
+  { id: 'trust-and-scope', tag: 'contract', render: renderTrustAndScope },
+  { id: 'task-and-plan', tag: 'guidance', render: renderTaskAndPlan },
+  { id: 'parallel-work', tag: 'capability', render: renderParallelWork },
+  { id: 'specialist-routing', tag: 'capability', render: tools => tools.has('list_dispatchable_agents')
+    ? 'When a registered specialist matches the task domain, use its canonical agent_id from list_dispatchable_agents.' : undefined },
+  { id: 'repo-intelligence-tools', tag: 'capability', render: renderRepoIntelligenceTools },
+  { id: 'execution-and-delivery', tag: 'contract', render: renderExecutionAndDelivery },
+];
+
 // Order is the rendered order. Tags say what each block is for; see KodaXPromptSectionTag.
 // Plan, scope and mutation blocks are guidance: the tool descriptions still teach each tool.
+// A limited tool set gets these blocks, worded for the tools it actually has.
 const WORKER_SECTIONS: readonly WorkerSectionDefinition[] = [
   { id: 'context-trust', tag: 'contract', render: () => block('MANAGED RUN CONTEXT TRUST:', [staticText("worker.context-trust")]) },
   { id: 'parallel-work', tag: 'guidance', render: tools => tools.has('spawn_agent') ? staticText("worker.parallel-first") : staticText("worker.local-execution") },
@@ -334,9 +383,13 @@ const WORKER_SECTIONS: readonly WorkerSectionDefinition[] = [
 ];
 
 /** The Worker stable blocks that apply to this tool set, in rendered order. */
-export function buildWorkerStableSections(availableToolNames?: readonly string[]): readonly WorkerSection[] {
-  const tools = workerTools(availableToolNames);
-  return WORKER_SECTIONS.flatMap(({ id, tag, render }) => {
+export function buildWorkerStableSections(
+  availableToolNames?: readonly string[],
+  omitGuidance = false,
+): readonly WorkerSection[] {
+  const tools = workerTools(availableToolNames, omitGuidance);
+  const sections = tools.fullTodo && tools.fullCollaboration ? FULL_WORKER_SECTIONS : WORKER_SECTIONS;
+  return sections.flatMap(({ id, tag, render }) => {
     const text = render(tools);
     return text ? [{ id, tag, text }] : [];
   });
@@ -349,7 +402,7 @@ export function buildWorkerStableSections(availableToolNames?: readonly string[]
  * layers workspace / capability / overlay sections around this on top.
  */
 export function buildWorkerStableInstructions(availableToolNames?: readonly string[], omitGuidance = false): string {
-  return buildWorkerStableSections(availableToolNames)
+  return buildWorkerStableSections(availableToolNames, omitGuidance)
     .filter(section => !omitGuidance || section.tag !== 'guidance')
     .map(section => section.text).join('\n\n');
 }

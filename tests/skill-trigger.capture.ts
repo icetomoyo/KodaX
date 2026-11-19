@@ -17,7 +17,7 @@ import { buildRunnerLlmAdapter } from '../packages/coding/src/task-engine/_inter
 import { createRolePrompt } from '../packages/coding/src/task-engine/_internal/managed-task/role-prompt.js';
 import { buildFallbackRoutingDecision } from '../packages/coding/src/reasoning.js';
 import { filterModelToolAliases } from '../packages/coding/src/agent-runtime/tool-resolution.js';
-import { markOrdinaryRootToolContract } from '../packages/coding/src/tools/managed-tool-contract.js';
+import { workerStableCapabilityContent } from '../packages/coding/src/prompts/capability-sections.js';
 import { createManagedRunContextMessage } from '../packages/coding/src/task-engine/_internal/managed-task/managed-run-context.js';
 import type { KodaXMessage } from '../packages/llm/src/types.js';
 import { inputHash, type FrozenInput } from './first-turn-eval-support.js';
@@ -61,20 +61,21 @@ export async function captureSkillTriggerInputs(
     const stableIds = new Set(['project-agents', 'self-knowledge-routing', 'memory-rules', 'tool-construction']);
     const shared = snapshot.sections.filter(section => !owned.has(section.id));
     // Default CLI/REPL runs are AMA: the root holds an Actor client, which adds delegation tools and
-    // switches the request onto the compact Worker contract. KODAX_SKILL_CAPTURE_ACTOR=0 models SA.
+    // with them the full Worker contract. KODAX_SKILL_CAPTURE_ACTOR=0 models SA.
     const actor = process.env.KODAX_SKILL_CAPTURE_ACTOR === '0' ? undefined
       : await createAgentActorController({ executor: { execute: async () => ({ output: 'capture only' }) } });
     const actorControl = actor?.bind('/root');
     const chain = buildRunnerAgentChain({ backups: new Map(), executionCwd: workspace, gitRoot: workspace,
       ...(actorControl ? { actorControl, actorTurnRef: { actorPath: '/root', turnId: 'skill-trigger-capture' } } : {}) });
-    // Production ordinary roots get the managed tool/context projections (runner-driven.ts).
-    markOrdinaryRootToolContract(chain.worker);
     const rows = [];
     for (const testCase of cases) {
       const decision = buildFallbackRoutingDecision(testCase.task);
-      const roleContext = { originalTask: testCase.task, availableToolNames: filterModelToolAliases(chain.worker.tools ?? []).map(tool => tool.name),
+      const availableToolNames = filterModelToolAliases(chain.worker.tools ?? []).map(tool => tool.name);
+      const roleContext = { originalTask: testCase.task, availableToolNames,
         workspace: { executionCwd: workspace, gitRoot: workspace, platform: process.platform },
-        stableCapabilityContextBlock: shared.filter(section => stableIds.has(section.id)).map(section => section.content).join('\n\n'),
+        // Same per-tool selection as runner-driven.ts.
+        stableCapabilityContextBlock: shared.filter(section => stableIds.has(section.id))
+          .map(section => workerStableCapabilityContent(section, availableToolNames)).join('\n\n'),
         capabilityContextBlock: shared.filter(section => !stableIds.has(section.id)).map(section => section.content).join('\n\n'),
         ...(actorControl ? { actorCapacity: { maxConcurrentThreads: actorControl.list().maxConcurrentThreads, activeNonRootTurns: actorControl.list().activeNonRootTurns } } : {}) };
       const role = (mode: 'stable' | 'context') => createRolePrompt('worker', testCase.task, decision, undefined, undefined, 'kodax/role/worker', undefined, roleContext, undefined, false, mode);
@@ -103,7 +104,7 @@ export async function captureSkillTriggerInputs(
 const SOURCE_FILES = ['packages/agent/src/capabilities/skills/skill-registry.ts',
   'packages/coding/src/prompts/static-text.json', 'packages/coding/src/tools/tool-definitions.ts', 'packages/coding/src/agents/worker-role-prompt.ts',
   'packages/coding/src/task-engine/_internal/managed-task/role-prompt.ts', 'packages/coding/src/prompts/builder.ts',
-  'packages/coding/src/prompts/compact-worker-contract.ts', 'packages/coding/src/prompts/managed-system-contract.ts',
+  'packages/coding/src/prompts/capability-sections.ts',
   'packages/coding/src/tools/tool-definitions.ts', 'packages/coding/src/tools/deferred-tools.ts', 'packages/coding/src/tools/skill.ts'];
 
 export async function sourceHashes(): Promise<Record<string, string>> {

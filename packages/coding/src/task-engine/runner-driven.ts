@@ -52,7 +52,6 @@ import {
 // the only remaining V2 chain agent is the Worker.
 import { WORKER_AGENT_NAME } from '../agents/task-engine-agents.js';
 import { filterModelToolAliases } from '../agent-runtime/tool-resolution.js';
-import { inheritOrdinaryRootToolContract, markOrdinaryRootToolContract } from '../tools/managed-tool-contract.js';
 import { toolExecution } from '../agent-runtime/tool-dispatch.js';
 import { resolveProvider } from '../providers/index.js';
 import { estimateTokens } from '../tokenizer.js';
@@ -61,7 +60,7 @@ import {
   cleanupUserInputDegradationCache,
   createUserInputDegradationCache,
 } from '../capacity-recovery.js';
-import { buildCapabilityContextSections } from '../prompts/capability-sections.js';
+import { buildCapabilityContextSections, workerStableCapabilityContent } from '../prompts/capability-sections.js';
 import { omitsKodaXGuidance, renderApplicationContextSections, type ApplicationContextSection } from '../prompts/prompt-spec.js';
 import { getSessionScratchDir } from '../session-scratch.js';
 import {
@@ -1786,6 +1785,7 @@ async function runManagedTaskViaRunnerInner(
   const isNewSessionForCapabilities = !options.session?.initialMessages
     || options.session.initialMessages.length === 0;
   let prebuiltCapabilityContextBlock: string | undefined;
+  let prebuiltStableCapabilitySections: readonly RetainedContextSection[] = [];
   let prebuiltStableCapabilityContextBlock: string | undefined;
   let prebuiltDynamicCapabilitySections: readonly RetainedContextSection[] = [];
   let amaSkillCatalogText: string | undefined;
@@ -1837,11 +1837,8 @@ async function runManagedTaskViaRunnerInner(
       .filter((section) => section.id === 'mcp-capability-context')
       .map((section) => section.content)
       .join('\n\n') || undefined;
-    if (stableCapabilitySections.length > 0) {
-      prebuiltStableCapabilityContextBlock = stableCapabilitySections
-        .map((section) => section.content)
-        .join('\n\n');
-    }
+    prebuiltStableCapabilitySections = stableCapabilitySections
+      .map(({ id, content }) => ({ id, content }));
     if (dynamicCapabilitySections.length > 0) {
       prebuiltCapabilityContextBlock = dynamicCapabilitySections
         .map((section) => section.content)
@@ -1862,7 +1859,10 @@ async function runManagedTaskViaRunnerInner(
     });
   }
   const promptOverlay = plan?.promptOverlay?.trim();
-  const omitKodaxGuidance = omitsKodaXGuidance(options.context?.prompt);
+  // A caller system prompt replaces KodaX's identity and working style; a persona replaces only the identity.
+  const omitKodaxGuidance = omitsKodaXGuidance(options.context?.prompt)
+    || Boolean(options.context?.systemPromptOverride?.trim());
+  const neutralIdentity = !omitKodaxGuidance && Boolean(options.context?.agentProfile?.instructions?.trim());
   const applicationSections = renderApplicationContextSections(options.context?.prompt);
   const applicationContext = (sections: readonly ApplicationContextSection[]) => {
     const join = (kind: ApplicationContextSection['kind']): string | undefined => sections
@@ -1925,6 +1925,7 @@ async function runManagedTaskViaRunnerInner(
       // see runner-driven.ts:promptWithOverlay for the migration.
       promptOverlay: promptOverlay,
       ...(omitKodaxGuidance ? { omitKodaxGuidance } : {}),
+      ...(neutralIdentity ? { neutralIdentity } : {}),
       ...applicationContext(applicationSections),
     };
     // v0.7.26 C4 parity — surface the caller's skill invocation + the
@@ -1995,15 +1996,14 @@ async function runManagedTaskViaRunnerInner(
     managedWorkspace.executionCwd,
 
   );
-  // Root and managed children both arrive here after their own role/host filters.
-  // The compact contracts are fused rewrites of the full KodaX text; a persona or omitted guidance keeps the canonical text.
-  if (chainPromptContext && !chainPromptContext.partnerInstructions && !omitKodaxGuidance) {
-    markOrdinaryRootToolContract(chain.worker);
-  }
   // Keep executable capability separate from any deferred model-facing projection.
   // Policy follows executable capabilities, not any later model-view projection.
   // Hiding a native schema must not disable AMA planning or collaboration teaching.
   workerAvailableToolNames = filterModelToolAliases(chain.worker.tools ?? []).map((tool) => tool.name);
+  const stableToolNames = workerAvailableToolNames;
+  prebuiltStableCapabilityContextBlock = prebuiltStableCapabilitySections
+    .map((section) => workerStableCapabilityContent(section, stableToolNames, options.selfManual?.productName))
+    .join('\n\n') || undefined;
   // Per-Runner invocation LLM-turn counter. Idle-yield resumes are fresh
   // invocations and reset this event-display scope below.
   const iterationStateRef = { current: 0 };
@@ -2317,7 +2317,6 @@ async function runManagedTaskViaRunnerInner(
       save: () => persistManagedBoundary(caller.transcript ?? runnerInput),
     }, SCRIPT_MODEL_LIMITS, runCell => runCell(code), scope), createScriptReceiptReader(runtimeSessionState),
   ) : chain.worker;
-  if (scriptMode) inheritOrdinaryRootToolContract(chain.worker, entryAgent, options.context);
   const persistManagedBoundary = async (
     messages: readonly KodaXMessage[],
   ): Promise<void> => {

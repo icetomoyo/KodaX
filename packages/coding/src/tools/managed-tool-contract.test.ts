@@ -7,17 +7,14 @@ import { buildRunnerLlmAdapter } from '../task-engine/_internal/managed-task/llm
 import { buildFallbackRoutingDecision } from '../reasoning.js';
 import { getBuiltinToolDefinition, getToolDefinition } from './registry.js';
 import { projectModelToolDefinition } from './model-tool-definition.js';
-import { canProjectManagedToolContracts, inheritOrdinaryRootToolContract, markOrdinaryRootToolContract } from './managed-tool-contract.js';
+import { usesManagedToolView } from './managed-tool-contract.js';
 import { withScriptModelTool } from '../agent-runtime/script/model.js';
 
 const task = 'Inspect the repository and explain the implementation.';
 const prompt = { prompt: task, decision: buildFallbackRoutingDecision(task) };
-const makeWorker = (context: Partial<KodaXToolExecutionContext> = {}, full = true, partner?: string) => {
-  const worker = buildRunnerAgentChain({ backups: new Map(), ...context }, undefined, undefined, undefined,
+const makeWorker = (context: Partial<KodaXToolExecutionContext> = {}, full = true, partner?: string) =>
+  buildRunnerAgentChain({ backups: new Map(), ...context }, undefined, undefined, undefined,
     full ? { ...prompt, partnerInstructions: partner } : undefined).worker;
-  if (full && !partner) markOrdinaryRootToolContract(worker);
-  return worker;
-};
 const contract = (tool: KodaXToolDefinition) => ({ name: tool.name, description: tool.description, input_schema: tool.input_schema });
 const unified = (name: string) => projectModelToolDefinition(getBuiltinToolDefinition(name)!, { kind: 'builtin' });
 async function capture(agent: Agent, context?: KodaXContextOptions) {
@@ -70,10 +67,18 @@ describe('unified tool text on every managed entry', () => {
       expect(sent.find(tool => tool.name === 'glob')!.description).toBe('Find file paths by glob.');
       expect(JSON.stringify(worker.tools)).toBe(before);
     }
-    for (const context of [{ currentAgentId: 'child' }, { systemPromptOverride: 'Host instructions' }]) {
-      const sent = await capture(makeWorker(), context);
-      expect(sent.find(tool => tool.name === 'glob')!.description).toBe(getToolDefinition('glob')!.description);
-    }
+  });
+
+  it('bridges worktree tools for every root Worker and leaves a child its native menu', async () => {
+    const bridged = (sent: readonly KodaXToolDefinition[]) => !sent.some(tool => tool.name === 'worktree_create')
+      && (sent.find(tool => tool.name === 'tool_call')?.description ?? '').includes('worktree_create');
+    for (const [worker, context] of [
+      [makeWorker(), undefined], [makeWorker({}, false), undefined],
+      [makeWorker({ toolVisibilityPolicy: () => true }), undefined], [makeWorker({ agentProfile: { id: 'reviewer' } }), undefined],
+      [makeWorker(), { systemPromptOverride: 'Host instructions' }], [makeWorker(), { agentProfile: { id: 'reviewer' } }],
+    ] as const) expect(bridged(await capture(worker, context))).toBe(true);
+    expect(bridged(await capture(makeWorker({ currentAgentId: 'child' })))).toBe(false);
+    expect(bridged(await capture(makeWorker(), { currentAgentId: 'child' }))).toBe(false);
   });
 
   it('keeps registry SDK projection identity for builtin tools', () => {
@@ -81,26 +86,15 @@ describe('unified tool text on every managed entry', () => {
     expect(projectModelToolDefinition(raw, { kind: 'builtin' })).toBe(raw);
   });
 
-  it('does not inherit root provenance through SDK construction, copies or unqualified Script wrappers', () => {
-    const sdk = buildRunnerAgentChain({ backups: new Map() }, undefined, undefined, undefined, prompt).worker;
-    expect(canProjectManagedToolContracts(sdk)).toBe(false);
+  it('derives the managed view from registry assembly and the child marker, not from copies', () => {
     const worker = makeWorker();
-    expect(canProjectManagedToolContracts(worker)).toBe(true);
-    expect(canProjectManagedToolContracts(Object.freeze({ ...worker }))).toBe(false);
-    const wrap = () => withScriptModelTool(worker, { backups: new Map() }, worker.tools!,
+    expect(usesManagedToolView(worker)).toBe(true);
+    expect(usesManagedToolView(makeWorker({}, false))).toBe(true);
+    expect(usesManagedToolView(Object.freeze({ ...worker }))).toBe(false);
+    const script = withScriptModelTool(worker, { backups: new Map() }, worker.tools!,
       async () => ({ status: 'completed', receipts: [], hadToolErrors: false }));
-    expect(canProjectManagedToolContracts(wrap())).toBe(false);
-    const script = wrap();
-    inheritOrdinaryRootToolContract(worker, script);
-    expect(canProjectManagedToolContracts(script)).toBe(true);
-    for (const source of [makeWorker({}, false), makeWorker({ currentAgentId: 'child' }),
-      makeWorker({ toolVisibilityPolicy: () => true }), makeWorker({ agentProfile: { id: 'reviewer' } })]) {
-      const unqualified = wrap();
-      inheritOrdinaryRootToolContract(source, unqualified);
-      expect(canProjectManagedToolContracts(unqualified)).toBe(false);
-    }
-    const custom = wrap();
-    inheritOrdinaryRootToolContract(worker, custom, { systemPromptOverride: 'Host instructions' });
-    expect(canProjectManagedToolContracts(custom)).toBe(false);
+    expect(usesManagedToolView(script)).toBe(true);
+    expect(usesManagedToolView(makeWorker({ currentAgentId: 'child' }))).toBe(false);
+    expect(usesManagedToolView(worker, { currentAgentId: 'child' })).toBe(false);
   });
 });

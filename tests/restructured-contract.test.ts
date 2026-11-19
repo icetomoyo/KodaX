@@ -1,85 +1,34 @@
-import { expect, it, vi } from 'vitest';
+import { expect, it } from 'vitest';
 import type { FrozenInput } from './first-turn-eval-support.js';
 import { restructuredContractInput } from './restructured-contract.js';
 import { buildRunnerAgentChain } from '../packages/coding/src/task-engine/_internal/managed-task/agent-chain.js';
 import { buildRunnerLlmAdapter } from '../packages/coding/src/task-engine/_internal/managed-task/llm-adapter.js';
 import { buildFallbackRoutingDecision } from '../packages/coding/src/reasoning.js';
-import { inheritOrdinaryRootToolContract, markOrdinaryRootToolContract } from '../packages/coding/src/tools/managed-tool-contract.js';
 import { createScriptPilot } from '../packages/coding/src/agent-runtime/script/pilot.js';
-import { buildScriptModelDescription, getScriptModelContracts, withScriptModelTool } from '../packages/coding/src/agent-runtime/script/model.js';
+import { getScriptModelContracts, withScriptModelTool } from '../packages/coding/src/agent-runtime/script/model.js';
 import { buildRuntimeSessionState } from '../packages/coding/src/agent-runtime/runtime-session-state.js';
 import { createAgentActorController } from '../packages/agent/src/actors/index.js';
-import { buildMemoryRulesSection } from '../packages/coding/src/prompts/memory-rules.js';
-import { SELF_KNOWLEDGE_ROUTING_RULE } from '../packages/coding/src/self-knowledge/routing-rule.js';
-import { getBuiltinToolDefinition } from '../packages/coding/src/tools/registry.js';
-import { replayAuditedWorkerCheckpoint } from './restructured-worker-contract.js';
 import type { Agent } from '@kodax-ai/agent';
-import type { KodaXToolDefinition } from '../packages/llm/src/types.js';
 
 const instructions = (agent: Agent) => typeof agent.instructions === 'function' ? agent.instructions(undefined) : agent.instructions;
 
-// This experiment is frozen at the pre-rule-ownership checkpoint. Reconstruct
-// its changed contracts and Worker rules explicitly, rather than admitting new
-// hashes to the historical projector or rewriting its recorded model outputs.
-function historicalTools(tools: readonly KodaXToolDefinition[]): KodaXToolDefinition[] {
-  return tools.map(tool => {
-    if (tool.name === 'ask_user_question') {
-      const { name, description, input_schema } = getBuiltinToolDefinition(tool.name)!;
-      return { name, description, input_schema: structuredClone(input_schema) };
-    }
-    if (!['spawn_agent', 'send_message', 'todo_create', 'todo_update', 'read'].includes(tool.name)) return tool;
-    // Script leaves carry handlers, so clone the contract data rather than the whole tool.
-    const frozen = { ...tool, input_schema: structuredClone(tool.input_schema) };
-    const properties = frozen.input_schema.properties as Record<string, { description: string }>;
-    if (tool.name === 'read') {
-      frozen.description = frozen.description.replace(
-        'inline vision, so inspect them rather than rejecting as binary. Attached or inlined images are already visible; rereading only repeats them.',
-        'inline vision; inspect, do not reject as binary or reread already attached/inlined images. PDF: read_pdf extension; if absent request enabling/installing it.');
-      return frozen;
-    }
-    if (tool.name === 'todo_update') {
-      properties.status!.description = properties.status!.description.replace('deleted: remove.', 'deleted: remove + todo:deleted.');
-      return frozen;
-    }
-    if (tool.name === 'spawn_agent') {
-      frozen.description = 'Start a named direct-child Agent; returns its canonical path. Runtime atomically enforces shared session concurrency/work budgets. read_only:false retains the parent ceiling; shared edits are already visible, never reapply them. Worktree requires an explicit merge-back strategy.';
-      properties.model_hint!.description = 'balanced default/inherited; fast focused lookup, deep heavy analysis/synthesis. Unconfigured tiers inherit; omit if unsure.';
-      properties.quality_strategy!.description = 'Telemetry only: {schemaVersion:1,stageId,pattern,role,laneRelation?,targetEvidenceRefs?}; invalid ignored, never admission control. Actor refs require exact agent-turn.';
-    } else if (tool.name === 'send_message') {
-      frozen.description = 'Bounded message, no new turn: running receives at next safe boundary; idle retains until next turn. Direct parent/child, admitted peer or bounded broadcast; Runtime validates forwarding lineage against cycles.';
-    } else {
-      frozen.description = frozen.description.replace('Add one semantic milestone', 'Add one pending semantic milestone')
-        .replace('This records planned work, not execution. Plan work with several distinct deliverables. Skip trivial or informational tasks, because a one-step plan only adds noise.',
-          'This records planned work, not execution; skip trivial/informational tasks.');
-      delete properties.status;
-      properties.activeForm!.description = 'Present-continuous in_progress spinner label.';
-    }
-    return frozen;
-  });
-}
-
-async function fixture(script = false, historical = true): Promise<FrozenInput & { scriptContracts?: ReturnType<typeof getScriptModelContracts> }> {
+async function fixture(script = false): Promise<FrozenInput & { scriptContracts?: ReturnType<typeof getScriptModelContracts> }> {
   const task = 'Review the requested modules, preserve existing progress, and verify the result.';
   const controller = await createAgentActorController({ executor: { execute: async () => ({ output: 'unused' }) } });
   const context = { backups: new Map(), actorControl: controller.bind('/root'),
     actorTurnRef: { actorPath: '/root', turnId: 'contract-fixture' } };
   const worker = buildRunnerAgentChain(context, undefined, undefined, undefined,
     { prompt: task, decision: buildFallbackRoutingDecision(task) }).worker;
-  markOrdinaryRootToolContract(worker);
   const activeTools = worker.tools?.map(tool => tool.name) ?? [];
   const leaves = createScriptPilot({ ctx: context, events: {}, activeToolNames: activeTools,
     runtimeSessionState: buildRuntimeSessionState({ activeTools, modelSelection: {} }) },
   { totalBudget: 4, spentBudget: 0, currentHarness: 'H0_DIRECT' }, worker).tools;
   const entry = script ? withScriptModelTool(worker, context, leaves, async () => { throw new Error('Never execute during capture'); }) : worker;
-  if (script) inheritOrdinaryRootToolContract(worker, entry);
   let captured: FrozenInput | undefined;
   const adapter = buildRunnerLlmAdapter({ provider: 'anthropic' }, async (messages, tools, system) => {
-    // This suite replays the historical experiment, not the adopted root prompt.
-    // Keep real tool assembly but explicitly reconstruct its pre-adoption Worker.
-    // Current production requests are checked in managed-system-contract.test.ts.
+    // Current production requests are checked in worker-system-contract.test.ts.
     expect(system).toContain('TRUST AND SCOPE');
-    captured = { messages, tools: historical ? historicalTools(tools) : tools,
-      system: historical ? replayAuditedWorkerCheckpoint(instructions(worker)) : system };
+    captured = { messages, tools, system };
     return { textBlocks: [{ text: 'fixture' }], toolBlocks: [] };
   });
   const originalInstructions = instructions(worker);
@@ -88,25 +37,17 @@ async function fixture(script = false, historical = true): Promise<FrozenInput &
   } finally { await controller.shutdown('Contract fixture finished'); }
   if (!captured) throw new Error('Missing real adapter request');
   const scriptContracts = script ? getScriptModelContracts(entry, captured.tools) : undefined;
-  if (historical && scriptContracts) {
-    // The frozen experiment predates native-bridge teaching. Reconstruct that
-    // presentation explicitly; never teach its projector to rewrite new bytes.
-    const leaves = historicalTools(scriptContracts.leaves);
-    const historicalEntry = { ...scriptContracts.entry, description: buildScriptModelDescription(leaves) };
-    return { ...captured, tools: captured.tools.map(tool => tool.name === 'script_exec' ? historicalEntry : tool),
-      scriptContracts: { ...scriptContracts, entry: historicalEntry, leaves } };
-  }
   return { ...captured, ...(scriptContracts ? { scriptContracts } : {}) };
 }
 
 it('does not apply the frozen historical projector to newly evolved production tool contracts', async () => {
-  const current = await fixture(false, false);
+  const current = await fixture();
   expect(restructuredContractInput(current, true)).toBe(current);
 });
 
 it('shares current Worker decisions while preserving the discoverable native bridge and Script control protocol', async () => {
-  const ordinary = await fixture(false, false);
-  const script = await fixture(true, false);
+  const ordinary = await fixture();
+  const script = await fixture(true);
   // Script mode keeps the shared Worker prefix and appends where its file tools live,
   // because the shared text names read/edit/grep as if they were native.
   expect(script.system.startsWith(`${ordinary.system}\n\nSCRIPT MODE\n`)).toBe(true);
@@ -119,40 +60,3 @@ it('shares current Worker decisions while preserving the discoverable native bri
   expect(restructuredContractInput(script, true, script.scriptContracts)).toBe(script);
 });
 
-it('keeps SDK, child, specialist, Script and incomplete/custom composition intact', async () => {
-  const before = await fixture();
-  expect(restructuredContractInput(before, false)).toBe(before);
-  for (const name of ['spawn_agent', 'todo_update', 'send_message']) {
-    const missing = { ...before, tools: before.tools.filter(tool => tool.name !== name) };
-    expect(restructuredContractInput(missing, true)).toBe(missing);
-    const custom = { ...before, tools: before.tools.map(tool => tool.name === name
-      ? { ...tool, description: tool.description + ' Host-specific obligation.' } : tool) };
-    expect(restructuredContractInput(custom, true)).toBe(custom);
-  }
-  const custom = { ...before, system: 'Host-defined agent instructions' };
-  expect(restructuredContractInput(custom, true)).toBe(custom);
-  const script = { ...before, tools: [...before.tools,
-    { name: 'script_exec', description: 'Script', input_schema: { type: 'object' as const, properties: {} } }] };
-  expect(restructuredContractInput(script, true)).toBe(script);
-});
-
-it('retains newly evolved shared rules even when their tool schemas did not change', async () => {
-  const before = await fixture();
-  const changedMemory = buildMemoryRulesSection('.') + '\nNEW MEMORY AUTHORIZATION RULE';
-  const changedManual = SELF_KNOWLEDGE_ROUTING_RULE + '\nNEW MANUAL SOURCE RULE';
-  const input = { ...before, system: before.system.replace(buildMemoryRulesSection('.'), '')
-    .replace(SELF_KNOWLEDGE_ROUTING_RULE, '') + `\n\n${changedMemory}\n\n${changedManual}` };
-  vi.resetModules();
-  vi.doMock('../packages/coding/src/prompts/memory-rules.js', () => ({ buildMemoryRulesSection: () => changedMemory }));
-  vi.doMock('../packages/coding/src/self-knowledge/routing-rule.js', () => ({ SELF_KNOWLEDGE_ROUTING_RULE: changedManual }));
-  try {
-    const fresh = await import('./restructured-contract.js');
-    const output = fresh.restructuredContractInput(input, true);
-    expect(output.system.includes(changedMemory)).toBe(true);
-    expect(output.system.includes(changedManual)).toBe(true);
-  } finally {
-    vi.doUnmock('../packages/coding/src/prompts/memory-rules.js');
-    vi.doUnmock('../packages/coding/src/self-knowledge/routing-rule.js');
-    vi.resetModules();
-  }
-});

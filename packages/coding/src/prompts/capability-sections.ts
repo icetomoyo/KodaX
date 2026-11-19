@@ -62,9 +62,9 @@ import { formatFullSkillSection } from '../skill-invocation-format.js';
 import { isToolDiscoverable } from '../tools/tool-search.js';
 import { getModelSkillCatalog } from '../agent-runtime/tool-resolution.js';
 
-import { buildMemoryRulesSection } from './memory-rules.js';
+import { buildMemoryRulesSection, buildWorkerMemoryRules } from './memory-rules.js';
 import { createPromptSection, type KodaXPromptSection } from './sections.js';
-import { buildSelfKnowledgeRoutingRule } from '../self-knowledge/routing-rule.js';
+import { buildSelfKnowledgeRoutingRule, buildWorkerSelfKnowledgeRoutingRule } from '../self-knowledge/routing-rule.js';
 import { EXECUTION_GUIDANCE } from './execution-guidance.js';
 import { SYSTEM_PROMPT } from './system.js';
 import {
@@ -599,4 +599,22 @@ async function getProjectSnapshot(
 
   await walk(cwd, 0);
   return lines.join('\n');
+}
+
+/**
+ * The Worker states the memory and manual rules densely once their tools are on its menu:
+ * the tool descriptions carry the call details, so the section keeps only the decisions.
+ */
+export function workerStableCapabilityContent(
+  section: Pick<KodaXPromptSection, 'id' | 'content'>,
+  toolNames: readonly string[],
+  productName?: string,
+): string {
+  if (section.id === 'memory-rules' && toolNames.includes('memory_intent') && toolNames.includes('memory_recall')) {
+    return buildWorkerMemoryRules();
+  }
+  if (section.id === 'self-knowledge-routing' && toolNames.includes('kodax_manual')) {
+    return buildWorkerSelfKnowledgeRoutingRule(productName);
+  }
+  return section.content;
 }
