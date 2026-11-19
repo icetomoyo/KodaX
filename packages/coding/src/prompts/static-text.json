@@ -31,7 +31,7 @@
   "worker.collaboration.pull-tools": "- For review, change-audit, or module-exploration objectives, briefly recommend the available pull-tool family that fits the evidence needed. Trivial probes do not need this guidance.",
   "worker.collaboration.specialist-routing": "- SPECIALIST ROUTING: when a registered specialist Agent matches the task domain, use its canonical `agent_id` from `list_dispatchable_agents`.",
   "worker.repo-tools.relationship-scan": "- For upstream/downstream, callers/callees, dependencies, process links, or impact questions (上下游、调用链), use `relationship_scan` first.",
-  "worker.repo-tools.module-context": "- Before exploring 3+ files in one module, use `module_context` for its dependencies, entry points, symbols, tests, and docs.",
+  "worker.repo-tools.module-context": "- When a task needs a module's overall shape before you read into it, use `module_context` for its dependencies, entry points, symbols, tests, and docs.",
   "worker.repo-tools.repo-overview": "- Reuse the supplied repository overview while it applies. When repository work needs structure and the overview is missing, outdated, or stale after workspace changes, use `repo_overview`.",
   "worker.repo-tools.changed-scope": "- For compare-changes, what-changed-since-X, or current-worktree/change-set review, acquire scope with one `changed_scope` call before reading any diff.",
   "worker.repo-tools.local-review": "- For change-set review, establish the requested scope before reading diffs. Inspect the relevant review axes locally and synthesize the evidence.",

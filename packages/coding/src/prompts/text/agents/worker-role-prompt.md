@@ -102,7 +102,7 @@ Answer directly when general knowledge covers the question. Check the workspace 
 - For upstream/downstream, callers/callees, dependencies, process links, or impact questions (上下游、调用链), use `relationship_scan` first.
 
 <!-- @key worker.repo-tools.module-context -->
-- Before exploring 3+ files in one module, use `module_context` for its dependencies, entry points, symbols, tests, and docs.
+- When a task needs a module's overall shape before you read into it, use `module_context` for its dependencies, entry points, symbols, tests, and docs.
 
 <!-- @key worker.repo-tools.repo-overview -->
 - Reuse the supplied repository overview while it applies. When repository work needs structure and the overview is missing, outdated, or stale after workspace changes, use `repo_overview`.

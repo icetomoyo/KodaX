@@ -72,7 +72,7 @@ MUTATION DISCIPLINE:
 REPO INTELLIGENCE TOOLS:
 - When a listed Skill matches the request, load it with `skill` before any tool below, because the Skill decides how these tools are used.
 - For upstream/downstream, callers/callees, dependencies, process links, or impact questions (上下游、调用链), use `relationship_scan` first.
-- Before exploring 3+ files in one module, use `module_context` for its dependencies, entry points, symbols, tests, and docs.
+- When a task needs a module's overall shape before you read into it, use `module_context` for its dependencies, entry points, symbols, tests, and docs.
 - Use `symbol_context` before grepping for one symbol and its probable callers/callees.
 - Before planning a rename/refactor, use `impact_estimate` to estimate the blast radius.
 - Use `process_context` to trace execution from an entry point.
