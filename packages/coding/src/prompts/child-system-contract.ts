@@ -3,7 +3,7 @@ import { TOOL_RECOVERY_GUIDANCE } from './execution-guidance.js';
 
 /** Canonical builtin child instructions; write children append project mutation rules. */
 export const CHILD_AGENT_SYSTEM_PROMPT = [
-  staticText('t12i.child-executor.block.0'),
+  staticText("child.system.intro"),
   `- ${TOOL_RECOVERY_GUIDANCE}`,
-  staticText('t12i.child-executor.block.1'),
+  staticText("child.system.rules"),
 ].join('\n');

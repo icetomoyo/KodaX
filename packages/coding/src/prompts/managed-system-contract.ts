@@ -22,7 +22,7 @@ function replaceOnce(system: string, original: string, replacement: string): str
   return system.split(original).length === 2 ? system.replace(original, () => replacement) : system;
 }
 
-const compactMemory = staticText("t12.prompts/managed-system-contract.0");
+const compactMemory = staticText("managed-contract.memory");
 
 /** Project only a proven ordinary-root request, after final tool-schema fitting.
  * Canonical history and SDK instructions remain unchanged. Missing, shortened or
@@ -55,15 +55,15 @@ export function projectManagedSystemContract(agent: Agent, tools: readonly KodaX
   }
   if (has('kodax_manual')) {
     projected = replaceOnce(projected, SELF_KNOWLEDGE_ROUTING_RULE,
-      staticText("t12.prompts/managed-system-contract.1"));
+      staticText("managed-contract.kodax-manual"));
   }
   // Preserve unknown-host guidance; only remove the duplicate command table
   // when the canonical environment already states the current platform/shell.
   if (/^## Environment\nWorking Directory:[\s\S]*?\nShell defaults: (Windows|Unix) shell\./.test(system)) {
     projected = replaceOnce(projected, WORKER_WORKSPACE_DISCIPLINE,
-      staticText("t12.prompts/managed-system-contract.2"));
+      staticText("managed-contract.workspace-discipline"));
     projected = replaceOnce(projected, WORKER_CLOSING_RULE,
-      staticText("t12.prompts/managed-system-contract.3"));
+      staticText("managed-contract.closing"));
   }
   return projected;
 }

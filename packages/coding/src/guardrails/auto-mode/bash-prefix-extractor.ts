@@ -80,7 +80,7 @@ const DANGEROUS_SHELL_PREFIXES = new Set([
  * Anything else (chatty preamble, code fences, multiple lines) is treated
  * as `none` by the post-parse validation.
  */
-export const BASH_POLICY_SPEC = staticText("t11.guardrails/auto-mode/bash-prefix-extractor.0");
+export const BASH_POLICY_SPEC = staticText("auto-mode.bash-prefix-policy");
 
 /**
  * Outcome of a single prefix-extraction call.

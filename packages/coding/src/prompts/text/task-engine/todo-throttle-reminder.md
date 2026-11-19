@@ -1,4 +1,4 @@
-<!-- @key t12i.task-engine/todo-throttle-reminder.block.0 -->
+<!-- @key todo-throttle.create-milestones -->
 If multiple execution steps remain, create concise milestones for the remaining deliverables
 with todo_create({subject:"...", activeForm:"..."}) (one call per item; the store assigns ids).
 Do not create milestones for already completed work just to record its history.

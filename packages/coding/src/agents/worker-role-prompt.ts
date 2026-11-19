@@ -15,7 +15,7 @@ export const ULTRA_AGENT_POLICY =
   'Use sub-agents when parallel work would materially improve speed or quality.';
 
 export const EXPLICIT_WORKFLOW_POLICY =
-  staticText("worker.EXPLICIT_WORKFLOW_POLICY.text");
+  staticText("worker.explicit-workflow-policy");
 
 export interface WorkerActorCapacity {
   readonly maxConcurrentThreads: number;
@@ -41,8 +41,7 @@ export function buildWorkerActorCapacityGuidance(
     free === 0
       ? '- No child slot is free right now, so do the work yourself or wait for a running Agent to finish before starting another.'
       : `- Right now ${free} of ${childLimit} child slot${childLimit === 1 ? '' : 's'} ${free === 1 ? 'is' : 'are'} free.`,
-    staticText("worker.buildWorkerActorCapacityGuidance.text"),
-    staticText("worker.buildWorkerActorCapacityGuidance.text.1"),
+    staticText("worker.capacity.rules"),
   ];
 }
 
@@ -78,13 +77,12 @@ export function buildWorkerReviewFanoutContract(
   const observed = isDiffScopedReview
     ? `- The diff under review is ${decision.reviewScale}.`
     : '- The request reads as a repository-wide review.';
-  const generalScope = isDiffScopedReview ? undefined : staticText("worker.scopeRule.text");
+  const generalScope = isDiffScopedReview ? undefined : staticText("worker.review-breadth.scope");
   if (availableToolNames !== undefined && !availableToolNames.includes('spawn_agent')) {
     return [
       'REVIEW BREADTH:',
       observed,
-      staticText("worker.buildWorkerReviewFanoutContract.text"),
-      staticText("worker.buildWorkerReviewFanoutContract.text.1"),
+      staticText("worker.review-breadth.local"),
       generalScope,
     ].filter((line): line is string => line !== undefined).join('\n');
   }
@@ -94,8 +92,7 @@ export function buildWorkerReviewFanoutContract(
   return [
     'REVIEW BREADTH:',
     observed,
-    staticText("worker.buildWorkerReviewFanoutContract.text.2"),
-    staticText("worker.buildWorkerReviewFanoutContract.text.3"),
+    staticText("worker.review-breadth.fanout"),
     generalScope
       ?? `- When the exact diff scope is unknown, ${scopeAcquisition} and split the review from its file groups before reading every diff yourself, because the reviewers will read those diffs.`,
   ].filter((line): line is string => line !== undefined).join('\n');
@@ -123,31 +120,16 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
   const fullCollaboration = ['spawn_agent', 'wait_agent', 'send_message', 'followup_task', 'list_agents', 'agent_output', 'interrupt_agent'].every(hasTool);
   const managedRunContextTrust = [
     'MANAGED RUN CONTEXT TRUST:',
-    staticText("worker.managedRunContextTrust.text"),
-    staticText("worker.managedRunContextTrust.text.1"),
-    staticText("worker.managedRunContextTrust.text.2"),
-    staticText("worker.managedRunContextTrust.text.3"),
-    staticText("worker.managedRunContextTrust.text.4"),
-    staticText("worker.managedRunContextTrust.text.5"),
-    staticText("worker.managedRunContextTrust.text.6"),
-    staticText("worker.managedRunContextTrust.text.7"),
+    staticText("worker.context-trust"),
   ].join('\n');
   const planFirstContract = [
     'PLAN-FIRST GUIDANCE:',
     // Evidence/verification duties read as "inspect the machine first": weak models ran `dir`/`uname`
     // before answering how-to questions, and tied answers about other systems to the local host.
-    `- ${staticText("worker.answerDirectly")}`,
-    staticText("worker.planFirstContract.text"),
-    staticText("worker.planFirstContract.text.1"),
-    staticText("worker.planFirstContract.text.2"),
-    staticText("worker.planFirstContract.text.3"),
-    staticText("worker.planFirstContract.text.4"),
-    staticText("worker.planFirstContract.text.5"),
-    staticText("worker.planFirstContract.text.6"),
-    staticText("worker.planFirstContract.text.7"),
-    staticText("worker.planFirstContract.text.8"),
+    `- ${staticText("worker.answer-directly")}`,
+    staticText("worker.plan-first.rules"),
     `- ${PLAN_BATCH_GUIDANCE}`,
-    staticText("worker.planFirstContract.text.9"),
+    staticText("worker.plan-first.replan"),
   ].join('\n');
 
   // v0.7.42 — plan-list hygiene: staleness refresh + dedup. The two
@@ -168,63 +150,47 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
   const planListHygiene = [
     'PLAN-LIST HYGIENE (staleness + dedup):',
     `- BEFORE \`todo_update\`, call \`${todoReadCall}\` only when another Actor/runtime event may actually have changed that item since you last saw it (for example after a wait/resume boundary). Ordinary consecutive model turns do not require a resynchronization ritual.`,
-    staticText("worker.planListHygiene.text"),
-    staticText("worker.planListHygiene.text.1"),
-    staticText("worker.planListHygiene.text.2"),
+    staticText("worker.plan-hygiene"),
   ].join('\n');
 
   const scopeCommitment = [
     'SCOPE COMMITMENT:',
-    staticText("worker.scopeCommitment.text"),
+    staticText("worker.scope.contract"),
     hasTool('todo_update')
-      ? staticText("worker.scopeCommitment.text.1")
-      : staticText("worker.scopeCommitment.text.2"),
-    staticText("worker.scopeCommitment.text.3"),
-    staticText("worker.scopeCommitment.text.4"),
+      ? staticText("worker.scope.disproved-premise-todo")
+      : staticText("worker.scope.disproved-premise"),
+    staticText("worker.scope.reuse-and-review"),
   ].join('\n');
 
   const mutationDiscipline = [
     'MUTATION DISCIPLINE:',
-    staticText("worker.mutationDiscipline.text"),
-    staticText("worker.mutationDiscipline.text.1"),
+    staticText("worker.mutation.read-and-edit"),
     `- For multiple edits to one file, batch with \`${batchEditTool}\` instead of separate calls — atomic, cheaper, structure-preserving.`,
-    staticText("worker.mutationDiscipline.text.2"),
-    staticText("worker.mutationDiscipline.text.3"),
+    staticText("worker.mutation.write-and-scratch"),
   ].join('\n');
 
   const dispatchRules = [
     'AGENT COLLABORATION:',
-    staticText("worker.dispatchRules.text"),
-    staticText("worker.dispatchRules.text.1"),
-    staticText("worker.dispatchRules.text.2"),
-    staticText("worker.dispatchRules.text.3"),
-    staticText("worker.dispatchRules.text.4"),
-    staticText("worker.dispatchRules.text.5"),
-    staticText("worker.dispatchRules.text.6"),
-    staticText("worker.dispatchRules.text.7"),
-    staticText("worker.dispatchRules.text.8"),
-    staticText("worker.dispatchRules.text.9"),
-    staticText("worker.dispatchRules.text.10"),
-    staticText("worker.dispatchRules.text.11"),
+    staticText("worker.collaboration.rules"),
     // FEATURE_169 v0.7.40 — dispatch objective quality (F0a + F0b). Suite 0
     // v2 audit VALID (bash disagreement 8.9%, pull-correct 3.3%): C bash=0%
     // (vs A=9% baseline-low ceiling-flatten), pull-correct mention 41→76%
     // (+35pp lift), 5/6 alias C ≥ 70%.
-    staticText("worker.dispatchRules.text.12"),
+    staticText("worker.collaboration.objective-quality"),
     hasTool('run_workflow')
-      ? staticText("worker.dispatchRules.text.13")
-      : staticText("worker.dispatchRules.text.14"),
-    staticText("worker.dispatchRules.text.15"),
+      ? staticText("worker.collaboration.objective-language-workflow")
+      : staticText("worker.collaboration.objective-language"),
+    staticText("worker.collaboration.pull-tools"),
     hasTool('list_dispatchable_agents')
-      ? staticText("worker.dispatchRules.text.16") : undefined,
+      ? staticText("worker.collaboration.specialist-routing") : undefined,
   ].filter((line): line is string => line !== undefined).join('\n');
 
   const parallelFirstCollaboration = [
-    staticText("t12i.agents/worker-role-prompt.block.0"),
+    staticText("worker.parallel-first"),
   ].join('\n');
 
   const childSteeringRules = [
-    staticText("t12i.agents/worker-role-prompt.block.1"),
+    staticText("worker.agent-steering"),
   ].join('\n');
 
   // Keep first-choice guidance visible even when rich tool descriptions are deferred.
@@ -241,9 +207,9 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
     hasTool('skill')
       ? '- When a listed Skill matches the request, load it with `skill` before any tool below, because the Skill decides how these tools are used.' : undefined,
     hasTool('relationship_scan')
-      ? staticText("worker.repoIntelligenceTools.text") : undefined,
+      ? staticText("worker.repo-tools.relationship-scan") : undefined,
     hasTool('module_context')
-      ? staticText("worker.repoIntelligenceTools.text.1") : undefined,
+      ? staticText("worker.repo-tools.module-context") : undefined,
     hasTool('symbol_context')
       ? '- Use `symbol_context` before grepping for one symbol and its probable callers/callees.' : undefined,
     hasTool('impact_estimate')
@@ -251,24 +217,23 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
     hasTool('process_context')
       ? '- Use `process_context` to trace execution from an entry point.' : undefined,
     hasTool('repo_overview')
-      ? staticText("worker.repoIntelligenceTools.text.2") : undefined,
+      ? staticText("worker.repo-tools.repo-overview") : undefined,
     hasTool('changed_scope')
-      ? staticText("worker.repoIntelligenceTools.text.3") : undefined,
+      ? staticText("worker.repo-tools.changed-scope") : undefined,
     hasTool('spawn_agent')
       ? `- For change-set review, establish the requested scope, then fan out before ${diffTool ? '\`' + diffTool + '\` or ' : ''}reading every diff locally. The root reads its own lane and integrates the others.`
-      : staticText("worker.repoIntelligenceTools.text.4"),
+      : staticText("worker.repo-tools.local-review"),
     diffTool ? `- Use \`${diffTool}\` for paged diffs of explicit changed files.` : undefined,
-    staticText("worker.repoIntelligenceTools.text.5"),
+    staticText("worker.repo-tools.audit-scope"),
     lspTools.length > 0
       ? `- For exact file positions or compiler-backed symbol/call hierarchy edges, use the available LSP tools: ${lspTools.map((name) => '\`' + name + '\`').join(', ')}.` : undefined,
     hasTool('grep') && hasTool('glob')
       ? '- Prefer grep/glob for local content/path lookup.' : undefined,
     hasTool('semantic_lookup')
       ? '- Use `semantic_lookup` for concepts rather than exact strings.' : undefined,
-    hasRepoPullTool ? staticText("worker.repoIntelligenceTools.text.6") : undefined,
-    hasRepoPullTool ? staticText("worker.repoIntelligenceTools.text.7") : undefined,
+    hasRepoPullTool ? staticText("worker.repo-tools.pull-fallback") : undefined,
     hasTool('changed_diff_bundle') || hasTool('changed_diff')
-      ? staticText("worker.repoIntelligenceTools.text.8") : undefined,
+      ? staticText("worker.repo-tools.structured-diff") : undefined,
   ].filter((line): line is string => line !== undefined).join('\n');
 
   // Static EXECUTION GUIDANCE (shared with the direct-engine path) replaces the
@@ -278,63 +243,54 @@ export function buildWorkerStableInstructions(availableToolNames?: readonly stri
 
   const handoffRules = [
     'TERMINATION:',
-    staticText("worker.handoffRules.text"),
-    staticText("worker.handoffRules.text.1"),
-    staticText("worker.handoffRules.text.2"),
-    staticText("worker.handoffRules.text.3"),
-    staticText("worker.handoffRules.text.4"),
+    staticText("worker.termination"),
   ].join('\n');
 
   const limitedPlanGuidance = [
     'PLAN-FIRST GUIDANCE (available capability):',
-    staticText("worker.limitedPlanGuidance.text"),
-    staticText("worker.limitedPlanGuidance.text.1"),
-    staticText("worker.limitedPlanGuidance.text.2"),
+    staticText("worker.limited-plan.rules"),
     hasTool('todo_create')
-      ? staticText("worker.limitedPlanGuidance.text.3") : undefined,
+      ? staticText("worker.limited-plan.todo-create") : undefined,
     hasTool('todo_update')
-      ? staticText("worker.limitedPlanGuidance.text.4") : undefined,
+      ? staticText("worker.limited-plan.todo-update") : undefined,
     todoReader && hasTool('todo_update')
       ? `- Use \`${todoReader}\` with id before changing an item only when another Actor or runtime event may have changed it since last seen; ordinary consecutive turns need no refresh ritual.` : undefined,
     hasTool('todo_list')
-      ? staticText("worker.limitedPlanGuidance.text.5") : undefined,
+      ? staticText("worker.limited-plan.todo-list") : undefined,
     todoReader && !hasTool('todo_update')
       ? `- Use \`${todoReader}\` with id when the state of an existing milestone is uncertain.` : undefined,
-    staticText("worker.limitedPlanGuidance.text.6"),
+    staticText("worker.limited-plan.language"),
   ].filter((line): line is string => line !== undefined).join('\n');
   const limitedCollaboration = [
     'AGENT COLLABORATION (available capability):',
     hasTool('spawn_agent')
-      ? staticText("worker.limitedCollaboration.text") : undefined,
-    hasTool('spawn_agent')
-      ? staticText("worker.limitedCollaboration.text.1") : undefined,
+      ? staticText("worker.limited-collaboration.spawn") : undefined,
     hasTool('spawn_agent') && hasTool('list_dispatchable_agents')
       ? '- Use a matching registered specialist\'s canonical agent_id from `list_dispatchable_agents`.' : undefined,
     hasTool('wait_agent')
-      ? staticText("worker.limitedCollaboration.text.2") : undefined,
+      ? staticText("worker.limited-collaboration.wait") : undefined,
     hasTool('send_message')
-      ? staticText("worker.limitedCollaboration.text.3") : undefined,
+      ? staticText("worker.limited-collaboration.send-message") : undefined,
     hasTool('followup_task')
       ? '- Use `followup_task` to start another turn on an idle actor or update a running actor\'s objective.' : undefined,
     hasTool('list_agents') ? '- Use `list_agents` for current tree and capacity state.' : undefined,
     hasTool('agent_output')
-      ? staticText("worker.limitedCollaboration.text.4") : undefined,
+      ? staticText("worker.limited-collaboration.agent-output") : undefined,
     hasTool('interrupt_agent')
-      ? staticText("worker.limitedCollaboration.text.5") : undefined,
-    staticText("worker.limitedCollaboration.text.6"),
-    staticText("worker.limitedCollaboration.text.7"),
+      ? staticText("worker.limited-collaboration.interrupt") : undefined,
+    staticText("worker.limited-collaboration.integrate"),
   ].filter((line): line is string => line !== undefined).join('\n');
   const limitedHandoff = [
     'TERMINATION:',
-    staticText("worker.limitedHandoff.text"),
+    staticText("worker.limited-termination.verify"),
     hasTool('todo_update')
-      ? staticText("worker.limitedHandoff.text.1") : undefined,
-    staticText("worker.limitedHandoff.text.2"),
+      ? staticText("worker.limited-termination.todo-check") : undefined,
+    staticText("worker.limited-termination.summary"),
   ].filter((line): line is string => line !== undefined).join('\n');
 
   return [
     managedRunContextTrust,
-    hasTool('spawn_agent') ? parallelFirstCollaboration : staticText("worker.buildWorkerStableInstructions.text"),
+    hasTool('spawn_agent') ? parallelFirstCollaboration : staticText("worker.local-execution"),
     fullTodo ? planFirstContract : limitedPlanGuidance,
     fullTodo ? planListHygiene : undefined,
     scopeCommitment,

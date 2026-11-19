@@ -54,9 +54,9 @@ describe('prompt text sources', () => {
     expect(result.status, result.stderr).toBe(0);
   });
 
-  it('keep body bytes exact and carry edge whitespace in the marker', () => {
+  it('keep body bytes exact', () => {
     const root = scratchRoot({
-      'a.md': '<!-- @key a.one -->\nLine one\n\n  indented line\n\n\n<!-- @key a.two lead="\\n" trail=" " -->\nEdged\n',
+      'a.md': '<!-- @key a.one -->\nLine one\n\n  indented line\n\n\n<!-- @key a.two -->\nTwo\n',
       'b.schemas.json': '{ "b.schema": { "type": "object", "properties": {} } }\n',
     });
 
@@ -64,7 +64,7 @@ describe('prompt text sources', () => {
     expect(result.status, result.stderr).toBe(0);
     expect(readStore(root)).toEqual({
       'a.one': 'Line one\n\n  indented line',
-      'a.two': '\nEdged ',
+      'a.two': 'Two',
       'b.schema': '{"type":"object","properties":{}}',
     });
   });
@@ -72,7 +72,8 @@ describe('prompt text sources', () => {
   it.each([
     ['a duplicate key', { 'a.md': '<!-- @key k -->\nA\n', 'b.md': '<!-- @key k -->\nB\n' }, /duplicate key k/],
     ['an empty body', { 'a.md': '<!-- @key k -->\n\n<!-- @key j -->\nJ\n' }, /empty body/],
-    ['an unmarked edge space', { 'a.md': '<!-- @key k -->\n Text\n' }, /use lead=/],
+    ['an edge space', { 'a.md': '<!-- @key k -->\n Text\n' }, /starts or ends with whitespace/],
+    ['a malformed marker', { 'a.md': '<!-- @key k -->\nA\n<!-- @key j lead=" " -->\nJ\n' }, /malformed marker/],
     ['text before the first marker', { 'a.md': 'Stray\n<!-- @key k -->\nA\n' }, /before the first/],
   ])('reject %s', (_label, sources, message) => {
     const result = runGenerator(scratchRoot(sources));

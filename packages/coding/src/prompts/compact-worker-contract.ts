@@ -10,11 +10,11 @@ export function compactWorkerContract(original: string): string {
   const reader = core.includes('todo_get(id)') ? 'todo_get(id)' : 'todo_list({id})';
   const specialistRule = '- SPECIALIST ROUTING: when a registered specialist Agent matches the task domain, use its canonical `agent_id` from `list_dispatchable_agents`.';
   return [
-    `${staticText("merge.compact-worker.0")}${core.includes('run_workflow') ? ' (including run_workflow prompts)' : ''}${staticText("merge.compact-worker.1")}`,
-    `TASK AND PLAN\n${staticText("worker.answerDirectly")}\n${staticText("merge.compact-worker.2")}${PLAN_BATCH_GUIDANCE}${staticText("merge.compact-worker.3")}${reader}${staticText("merge.compact-worker.4")}`,
-    staticText("merge.compact-worker.5"),
+    `TRUST AND SCOPE\n${staticText("worker-compact.trust-and-scope")}${core.includes('run_workflow') ? ' (including run_workflow prompts)' : ''}. ${staticText("worker-compact.source-language")}`,
+    `TASK AND PLAN\n${staticText("worker.answer-directly")}\n${staticText("worker-compact.plan.milestones")} ${PLAN_BATCH_GUIDANCE}\n${staticText("worker-compact.plan.dedup")} ${reader} ${staticText("worker-compact.plan.replanning")}`,
+    `PARALLEL WORK\n${staticText("worker-compact.parallel-work")}`,
     ...(core.includes(specialistRule) ? ['When a registered specialist matches the task domain, use its canonical agent_id from list_dispatchable_agents.'] : []),
     repo,
-    `${staticText("merge.compact-worker.6")}${mutation}${staticText("merge.compact-worker.7")}${TOOL_RECOVERY_GUIDANCE}${staticText("merge.compact-worker.8")}`,
+    `EXECUTION, RECOVERY AND DELIVERY\n${mutation}\n${staticText("worker-compact.verification")}\n${TOOL_RECOVERY_GUIDANCE}\n${staticText("worker-compact.delivery")}`,
   ].join('\n\n');
 }

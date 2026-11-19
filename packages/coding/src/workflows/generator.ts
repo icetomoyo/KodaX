@@ -46,9 +46,7 @@ import {
   type KodaXTimeoutConfig,
 } from '../timeouts.js';
 
-export const WORKFLOW_GENERATION_SYSTEM_PROMPT = [
-  staticText("t12i.workflows/generator.block.0"),
-].join('\n');
+export const WORKFLOW_GENERATION_SYSTEM_PROMPT = staticText("workflow-generator.system");
 
 export const DEFAULT_WORKFLOW_GENERATION_TIMEOUT_MS = 120_000;
 const WORKFLOW_GENERATION_TIMEOUT_SEC_ENV = 'KODAX_WORKFLOW_GENERATION_TIMEOUT_SEC';
@@ -875,7 +873,7 @@ function buildReferencedSkillPromptSection(skillContext: string | undefined): st
     'Skill handling requirements:',
     '- Treat the referenced skill instructions above as binding requirements for this workflow generation.',
     '- Preserve skill-specific file layout, naming, and process requirements in child-agent prompts that do the work.',
-    staticText("t12h.workflow-generator.7"),
+    staticText("workflow-generator.skill-paths"),
   ];
 }
 
@@ -887,12 +885,14 @@ export function buildWorkflowGenerationUserPrompt(
     'Task request:',
     request,
     ...buildReferencedSkillPromptSection(skillContext),
-    staticText("t12i.workflows/generator.block.1"),
+    '',
+    staticText("workflow-generator.api-reference"),
+    '',
     `Supported pattern ids: ${WORKFLOW_PATTERN_IDS.join(', ')}`,
     '',
     'Pattern selection guidance:',
     ...renderWorkflowPatternGuidance(),
-    staticText("t12i.workflows/generator.block.2"),
+    staticText("workflow-generator.phase-rules"),
   ].join('\n');
 }
 
@@ -976,7 +976,7 @@ function buildWorkflowGenerationRepairPrompt(input: {
     '- Replace result.output from wf.synthesize(...) with result.text.',
     '- Replace hardcoded wf.wait("...")/wf.snapshot("...")/wf.send("...", ...)/wf.stop("...", ...) calls with handle.taskId/result.taskId variables.',
     '- Replace wf.wait("agent-name") after wf.runAgent(...) with captured runAgent/parallel results; wf.wait only accepts taskId values from spawnAgent handles.',
-    staticText("t12h.workflow-generator.8"),
+    staticText("workflow-generator.repair.preserve-topology"),
     '- Keep the outer run() return displayable, such as { synthesis: finalText }.',
     '- Fix generated JavaScript harness errors, including ReferenceError, wrong wf.* argument shapes, and multi-line prompts/rubrics that need template literals or "\\n".',
   ];

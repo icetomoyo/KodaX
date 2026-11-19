@@ -1,4 +1,4 @@
-<!-- @key t12.prompts/tool-construction.0 -->
+<!-- @key tool-construction.mode -->
 [Tool Construction Mode]
 You may build a new tool at runtime when an existing builtin or extension does not solve the user's task and a thin reusable handler would. Walk the five-step staircase in order — DO NOT skip steps:
 

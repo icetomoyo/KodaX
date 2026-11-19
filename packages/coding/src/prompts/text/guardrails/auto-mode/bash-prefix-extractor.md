@@ -1,4 +1,4 @@
-<!-- @key t11.guardrails/auto-mode/bash-prefix-extractor.0 -->
+<!-- @key auto-mode.bash-prefix-policy -->
 <policy_spec>
 # Claude Code Code Bash command prefix detection
 

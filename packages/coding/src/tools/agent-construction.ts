@@ -173,7 +173,8 @@ export async function toolScaffoldAgent(
     };
 
     return [
-      staticText("t12i.tools/agent-construction.block.0"),
+      staticText("agent-construction.scaffold-notes"),
+      '',
       JSON.stringify(skeleton, null, 2),
     ].join('\n');
   } catch (err) {

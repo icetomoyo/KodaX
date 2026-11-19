@@ -10,14 +10,14 @@ export interface ManagedToolText {
 
 /** Shared shell semantics, with the invocation boundary stated before serialization. */
 export function managedShellDescription(execution: 'native' | 'foreground'): string {
-  return staticText("t12.tools/managed-tool-text.0")
+  return staticText("managed-tool.bash.description") + ' '
     + (execution === 'native' ? 'Long commands: run_in_background. ' : 'Foreground commands only; use native bash for background commands. ')
     + 'Full output captured; only next-request capacity overflow yields recoverable artifact preview.';
 }
 
 export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
   ask_user_question: {
-    description: staticText("t11.tools/managed-tool-text.0"),
+    description: staticText("managed-tool.ask_user_question.description"),
     annotations: { 'properties.questions.items.properties.header': 'Progress label, ≤12 chars.',
       'properties.questions.items.properties.options.items.properties.value': null,
       'properties.questions.items.properties.min_selections': null, 'properties.questions.items.properties.max_selections': null,
@@ -36,7 +36,7 @@ export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
     annotations: { 'properties.command': null, 'properties.description': 'Concise command purpose.', 'properties.run_in_background': 'Return immediately with output path; read it later.', 'properties.timeout': 'Seconds.' } },
   create_goal: { description: 'Create only on explicit user/system/developer request, never infer from ordinary tasks. token_budget only if explicitly requested. Fails if a goal exists; update_goal changes status only.',
     annotations: { 'properties.objective': 'Concrete target end-state across turns.', 'properties.token_budget': 'Positive integer total budget; otherwise omit.' } },
-  edit: { description: staticText("t11.tools/managed-tool-text.1"),
+  edit: { description: staticText("managed-tool.edit.description"),
     annotations: { 'properties.path': null, 'properties.edits': null, 'properties.edits.items.properties.new_string': null,
       'properties.edits.items.properties.old_string': null, 'properties.edits.items.properties.replace_all': 'All occurrences; default false.' } },
   exit_plan_mode: { description: 'Parent-only interactive REPL approval of the finished plan. Approved → accept-edits; rejected → stay in plan and revise. Wait for Host approval before implementing.',
@@ -59,7 +59,7 @@ export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
   interrupt_agent: { description: 'Interrupt a controlled child turn, preserving identity/history. Native/constructed supported; incapable external backends explicitly reject.',
     annotations: { 'properties.target': 'Canonical controlled path or direct-child name.', 'properties.reason': 'Attributable reason.',
       'properties.scope': 'Default turn; subtree interrupts all controlled active turns. Actors remain reusable.' } },
-  kodax_manual: { description: staticText("t11.tools/managed-tool-text.2"),
+  kodax_manual: { description: staticText("managed-tool.kodax_manual.description"),
     annotations: { 'properties.query': 'Free-text question (English/Chinese).', 'properties.topic': 'Exact topic ID; unknown returns index.' } },
   list_agents: { description: 'Bounded caller-visible tree: capabilities, state, parent/active turn, result summary, recent activity and shared capacity.',
     annotations: { 'properties.after_path': 'Exclusive nextAfterPath cursor.', 'properties.limit': '1–50; default 20.',
@@ -67,16 +67,16 @@ export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
   list_dispatchable_agents: { description: 'List host-allowed Native/Constructed/External executors; use returned canonical agent_id in spawn_agent.',
     annotations: { 'properties.read_only': 'true excludes external write/unknown remote effects.', 'properties.required_capabilities': 'Required lifecycle capabilities.',
       'properties.required_skills': 'Every returned agent must declare all listed skills.' } },
-  memory_intent: { description: staticText("t11.tools/managed-tool-text.3"),
+  memory_intent: { description: staticText("managed-tool.memory_intent.description"),
     annotations: { 'properties.operation': null, 'properties.claimKey': 'Stable identity, e.g. project.package_manager.', 'properties.claimKind': null,
       'properties.reason': 'User-supplied rejection reason.', 'properties.statement': null,
       'properties.targetRefId': 'Exact list/recall claim ref, or exact decision ref.', 'properties.userQuote': null } },
-  memory_recall: { description: staticText("t11.tools/managed-tool-text.4"),
+  memory_recall: { description: staticText("managed-tool.memory_recall.description"),
     annotations: { 'properties.need': 'Concrete prior-experience gap.' } },
-  read: { description: staticText("t11.tools/managed-tool-text.5"),
+  read: { description: staticText("managed-tool.read.description"),
     annotations: { 'properties.path': 'Absolute path or supplied kodax-transient://text/ reference.', 'properties.offset': 'Starting text line number.',
       'properties.limit': 'Text lines.', 'properties.line_offset': '0-based Unicode character offset within first line; use exact continuation cursor.' } },
-  send_message: { description: staticText("t12.tools/managed-tool-text.1"),
+  send_message: { description: staticText("managed-tool.send_message.description"),
     annotations: { 'properties.to': 'Visible canonical path, child/peer name, parent, or * broadcast. Self rejected.', 'properties.content': 'Body; Runtime authenticates agent-message frame.',
       'properties.forwarded_message_id': 'Received agent-message ID only when forwarding; Runtime derives chain. Fresh message: omit.',
       'properties.classification': 'Default internal; cannot downgrade source classification.' } },
@@ -86,27 +86,27 @@ export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
   session_history_search: { description: 'Find omitted persisted history only when missing detail is needed; do not guess from checkpoint. Bounded snippets/stable citations; read needed hit with hit.entryRevision as read.revision.',
     annotations: { 'properties.query': 'Specific phrase/ID/command/historical fact.', 'properties.limit': '1–20; default 8.',
       'properties.role': null, 'properties.scope': 'Default compacted; all only if active-tail search needed.' } },
-  skill: { description: staticText("t11.tools/managed-tool-text.6"),
+  skill: { description: staticText("managed-tool.skill.description"),
     annotations: { 'properties.skill': 'Skill name; leading slash accepted.', 'properties.args': null } },
   spawn_agent: {
-    description: staticText("t12.tools/managed-tool-text.2"),
+    description: staticText("managed-tool.spawn_agent.description"),
     annotations: { 'properties.task_name': 'Stable direct-child name.', 'properties.objective': 'Bounded goal, constraints, evidence and output shape.', 'properties.scope': 'Bounded scope hint.',
       'properties.read_only': 'Default true; false retains parent permission ceiling.', 'properties.isolation': 'Default shared: edits are visible in the root workspace; do not reapply them. Worktree needs an explicit merge-back strategy.', 'properties.constraints': null,
       'properties.agent_id': 'Matching specialist canonical ID.', 'properties.evidence_refs': 'file:/diff:/finding:/agent-turn:<canonical-path>#turn=<id>; legacy agent:<path> means latest. Actor output must be terminal/visible.',
-      'properties.fork_turns': 'History: all (default), none, or positive recent-turn count.', 'properties.model_hint': staticText("t12.tools/managed-tool-text.3"),
+      'properties.fork_turns': 'History: all (default), none, or positive recent-turn count.', 'properties.model_hint': staticText("managed-tool.spawn_agent.model_hint"),
       'properties.provider': 'Deliberate cross-family override; unconfigured/omitted inherits.', 'properties.model': 'Paired provider model ID; omitted inherits.',
       'properties.effort': 'off/low/medium/high/xhigh/max; omitted/auto inherits. agent_id locks specialist effort; conflicts/unsupported values rejected.',
       'properties.quality_strategy': '{schemaVersion:1,stageId,pattern,role,laneRelation?,targetEvidenceRefs?}; Actor refs require exact agent-turn.' } },
   todo_create: {
-    description: staticText("t11.tools/managed-tool-text.7"),
+    description: staticText("managed-tool.todo_create.description"),
     annotations: { 'properties.subject': 'Nonempty imperative plan-row title.', 'properties.description': 'Full-detail multiline context, absent from compact row; omit if title suffices.',
       'properties.activeForm': 'Supply for each milestone: present-continuous in_progress spinner label.', 'properties.evaluator': 'When wired, completion runs build/test/lint = npm run build/npm test/npm run lint; failure returns stderr. Sparingly for real checks.',
       'properties.metadata': 'Opaque hook/eval data, not UI; omit if unused.' } },
   todo_list: {
-    description: staticText("t11.tools/managed-tool-text.8"),
+    description: staticText("managed-tool.todo_list.description"),
     annotations: { 'properties.id': 'Stable item ID; omitted lists plan.' } },
   todo_update: {
-    description: staticText("t11.tools/managed-tool-text.9"),
+    description: staticText("managed-tool.todo_update.description"),
     annotations: { 'properties.id': 'Canonical current-plan ID.', 'properties.subject': 'Nonempty replacement imperative title.', 'properties.description': 'Replacement multiline context; empty clears.',
       'properties.activeForm': 'Required present-continuous label for in_progress; omit terminal transition to preserve.',
       'properties.evaluator': 'When wired: build/test/lint → npm run build/npm test/npm run lint on completion; failure returns stderr.',
@@ -114,17 +114,17 @@ export const managedToolText: Readonly<Record<string, ManagedToolText>> = {
       'properties.note': 'Reason/detail; omitted preserves.', 'properties.status': 'failed: retry needed; skipped: unnecessary; cancelled: breadcrumb; deleted: remove. Only Runtime restores pending after revise.' } },
   tool_call: { description: 'Call one active tool by name once its input contract is known from tool_search, tool_describe or a contract listed in this request. Target policy, permissions and result guardrails reapply.',
     annotations: { 'properties.name': 'Active tool name.', 'properties.input': 'Target JSON arguments.' } },
-  tool_search: { description: staticText("t11.tools/managed-tool-text.10"),
+  tool_search: { description: staticText("managed-tool.tool_search.description"),
     annotations: { 'properties.query': 'select:NAME[,NAME...] or +required loose keywords.', 'properties.max_results': 'Default 5, max 15; ignored for select:.' } },
-  update_goal: { description: staticText("t11.tools/managed-tool-text.11"),
+  update_goal: { description: staticText("managed-tool.update_goal.description"),
     annotations: { 'properties.status': null, 'properties.blocker_kind': 'Required blocked: stable obstacle ID compared across turns, e.g. awaiting-user-permission.' } },
   wait_agent: {
-    description: staticText("t11.tools/managed-tool-text.12"),
+    description: staticText("managed-tool.wait_agent.description"),
     annotations: { 'properties.timeout_ms': 'Milliseconds; default 120000. Longer waits cost no model call; user input wakes promptly.' } },
   worktree_create: { description: 'Create isolated Git worktree/branch for Agent work.',
     annotations: { 'properties.branch_name': 'Explicit branch; optional.', 'properties.description': 'Input used to generate a branch name.' } },
   worktree_remove: { description: 'Keep/remove a Git worktree directory and optionally its branch.',
     annotations: { 'properties.action': null, 'properties.worktree_path': 'Absolute worktree path.', 'properties.discard_changes': 'true bypasses uncommitted/local-commit safety checks.' } },
-  write: { description: staticText("t11.tools/managed-tool-text.13"),
+  write: { description: staticText("managed-tool.write.description"),
     annotations: { 'properties.path': 'Absolute file path.', 'properties.content': null } },
 };

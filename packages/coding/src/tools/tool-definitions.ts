@@ -204,13 +204,10 @@ function objectKeysPreview(value: unknown): string {
 
 const RUN_WORKFLOW_DESCRIPTION = [
   EXPLICIT_WORKFLOW_POLICY,
-  staticText("tool.RUN_WORKFLOW_DESCRIPTION.text"),
-  staticText("tool.RUN_WORKFLOW_DESCRIPTION.text.1"),
-  staticText("tool.RUN_WORKFLOW_DESCRIPTION.text.2"),
-  staticText("tool.RUN_WORKFLOW_DESCRIPTION.text.3"),
+  staticText("tool.run_workflow.intro"),
   `Available single-phase shapes:\n${renderWorkflowPatternGuidance().slice(0, -1).join('\n')}`,
   `${WORKFLOW_REVIEW_COMPOSITION_GUIDANCE} Chain more than one pattern when the protocol has more than one shape, match the effort to the request, and disclose every bounded or silent cap.`,
-  staticText("tool.RUN_WORKFLOW_DESCRIPTION.text.4"),
+  staticText("tool.run_workflow.closing"),
 ].join('\n\n');
 
 const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
@@ -238,7 +235,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     sideEffect: 'mutates-state',
     planModeAllowed: false,
     classifierExemptReason:
-      staticText("tool.BUILTIN_TOOL_DEFINITION_SOURCE.classifierExemptReason"),
+      staticText("tool.memory_intent.classifier-exempt-reason"),
     toClassifierInput: () => '',
   },
   {
@@ -270,12 +267,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'skill',
-    description: [
-      staticText("tool.skill.text"),
-      staticText("tool.skill.text.1"),
-      staticText("tool.skill.text.2"),
-      staticText("tool.skill.text.3"),
-    ].join('\n'),
+    description: staticText("tool.skill.description"),
     input_schema: toolInputSchema('tool.skill.input_schema'),
     handler: toolSkill,
     sideEffect: 'mutates-state',
@@ -285,12 +277,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'run_skill_script',
-    description: [
-      'Run one exact script from an admitted Skill inside the remote OS sandbox.',
-      'The script sees only its pinned Skill snapshot and a fresh staging directory.',
-      staticText("tool.run_skill_script.text"),
-      staticText("tool.run_skill_script.text.1"),
-    ].join('\n'),
+    description: staticText("tool.run_skill_script.description"),
     input_schema: toolInputSchema('tool.run_skill_script.input_schema'),
     handler: toolRunSkillScript,
     sideEffect: 'mutates-shell',
@@ -331,16 +318,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'edit',
-    description:
-      staticText("tool.edit.text")
-      + '## When to Use This Tool\n\n'
-      + '- Modifying an existing file with one targeted text change.\n'
-      + staticText("tool.edit.text.1")
-      + '- Filling in one placeholder produced by a prior `write(path, skeleton)`.\n\n'
-      + '## When NOT to Use This Tool\n\n'
-      + staticText("tool.edit.text.2")
-      + staticText("tool.edit.text.3")
-      + staticText("tool.edit.text.4"),
+    description: staticText("tool.edit.description"),
     input_schema: toolInputSchema('tool.edit.input_schema'),
     handler: toolEdit,
     sideEffect: 'mutates-fs',
@@ -351,22 +329,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'multi_edit',
-    description:
-      'Apply multiple exact-text replacements to a single file in ONE atomic tool call.\n\n'
-      + '## When to Use This Tool\n\n'
-      + staticText("tool.multi_edit.text")
-      + '- Bulk renames within one file (use `replace_all: true` per edit).\n'
-      + '- Refactors that touch multiple spots in one file and should land all-or-nothing.\n\n'
-      + '## When NOT to Use This Tool\n\n'
-      + '- For a single change — call `edit` directly; the extra wrapping is unnecessary overhead.\n'
-      + staticText("tool.multi_edit.text.1")
-      + staticText("tool.multi_edit.text.2")
-      + '## Atomicity\n\n'
-      + staticText("tool.multi_edit.text.3")
-      + '## Uniqueness\n\n'
-      + staticText("tool.multi_edit.text.4")
-      + '## Typical Pattern\n\n'
-      + staticText("tool.multi_edit.text.5"),
+    description: staticText("tool.multi_edit.description"),
     input_schema: toolInputSchema('tool.multi_edit.input_schema'),
     handler: toolMultiEdit,
     sideEffect: 'mutates-fs',
@@ -522,7 +485,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     input_schema: {
       type: 'object',
       properties: {
-        timeout_ms: { type: 'number', minimum: 10000, maximum: 3600000, description: staticText("tool.wait_agent.description.1") },
+        timeout_ms: { type: 'number', minimum: 10000, maximum: 3600000, description: staticText("tool.wait_agent.timeout_ms") },
       },
     },
     handler: toolWaitAgent,
@@ -819,12 +782,12 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
         objective: {
           type: 'string',
           description:
-            staticText("tool.create_goal.description.1"),
+            staticText("tool.create_goal.objective"),
         },
         token_budget: {
           type: 'number',
           description:
-            staticText("tool.create_goal.description.2"),
+            staticText("tool.create_goal.token_budget"),
         },
       },
       required: ['objective'],
@@ -1094,9 +1057,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   // ====================================================================
   {
     name: 'scaffold_tool',
-    description:
-      staticText("tool.scaffold_tool.text")
-      + staticText("tool.scaffold_tool.text.1"),
+    description: staticText("tool.scaffold_tool.description"),
     input_schema: toolInputSchema('tool.scaffold_tool.input_schema'),
     handler: toolScaffoldTool,
     // Returns a fillable ConstructionArtifact JSON skeleton (you edit it, then
@@ -1109,9 +1070,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'validate_tool',
-    description:
-      staticText("tool.validate_tool.text")
-      + 'Does NOT touch disk. Use this BEFORE stage_construction to fail fast on malformed handlers.',
+    description: staticText("tool.validate_tool.description"),
     input_schema: toolInputSchema('tool.validate_tool.input_schema'),
     handler: toolValidateTool,
     sideEffect: 'readonly',
@@ -1119,9 +1078,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'stage_construction',
-    description:
-      staticText("tool.stage_construction.text")
-      + 'Run validate_tool first; this tool itself does not re-validate the AST or schema.',
+    description: staticText("tool.stage_construction.description"),
     input_schema: {
       type: 'object',
       properties: {
@@ -1138,9 +1095,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'test_tool',
-    description:
-      staticText("tool.test_tool.text")
-      + staticText("tool.test_tool.text.1"),
+    description: staticText("tool.test_tool.description"),
     input_schema: toolInputSchema('tool.test_tool.input_schema'),
     handler: toolTestTool,
     sideEffect: 'mutates-state',
@@ -1149,10 +1104,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'activate_tool',
-    description:
-      staticText("tool.activate_tool.text")
-      + 'Policy: in the Ink REPL, the user sees an approve/reject dialog before activation. '
-      + staticText("tool.activate_tool.text.1"),
+    description: staticText("tool.activate_tool.description"),
     input_schema: {
       type: 'object',
       properties: {
@@ -1179,9 +1131,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   // ====================================================================
   {
     name: 'scaffold_agent',
-    description:
-      staticText("tool.scaffold_agent.text")
-      + staticText("tool.scaffold_agent.text.1"),
+    description: staticText("tool.scaffold_agent.description"),
     input_schema: toolInputSchema('tool.scaffold_agent.input_schema'),
     handler: toolScaffoldAgent,
     // Returns a fillable agent skeleton (no disk write) — readonly, not
@@ -1192,9 +1142,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'validate_agent',
-    description:
-      staticText("tool.validate_agent.text")
-      + 'Does NOT touch disk. Use this BEFORE stage_agent_construction to fail fast on rejected manifests.',
+    description: staticText("tool.validate_agent.description"),
     input_schema: {
       type: 'object',
       properties: {
@@ -1208,9 +1156,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'stage_agent_construction',
-    description:
-      staticText("tool.stage_agent_construction.text")
-      + 'Run validate_agent first; this tool itself does not re-run admission.',
+    description: staticText("tool.stage_agent_construction.description"),
     input_schema: {
       type: 'object',
       properties: {
@@ -1227,9 +1173,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'test_agent',
-    description:
-      staticText("tool.test_agent.text")
-      + 'Returns ok=true/false with errors / warnings. On ok=true the agent is ready for activate_agent.',
+    description: staticText("tool.test_agent.description"),
     input_schema: {
       type: 'object',
       properties: {
@@ -1245,11 +1189,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'activate_agent',
-    description:
-      staticText("tool.activate_agent.text")
-      + 'and registers the agent in the resolver so Runner.run can find it by name. '
-      + 'Policy: in the Ink REPL, the user sees an approve/reject dialog before activation. '
-      + staticText("tool.activate_agent.text.1"),
+    description: staticText("tool.activate_agent.description"),
     input_schema: {
       type: 'object',
       properties: {
@@ -1276,11 +1216,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   // ====================================================================
   {
     name: SELF_MODIFY_TOOL_NAME,
-    description:
-      'Stage a new version of YOURSELF — the active constructed agent calling this tool. '
-      + staticText("tool.BUILTIN_TOOL_DEFINITION_SOURCE.text")
-      + staticText("tool.BUILTIN_TOOL_DEFINITION_SOURCE.text.1")
-      + staticText("tool.BUILTIN_TOOL_DEFINITION_SOURCE.text.2"),
+    description: staticText("tool.stage_self_modify.description"),
     input_schema: {
       type: 'object',
       properties: {

@@ -1,9 +1,7 @@
 import { staticText } from './static-text.js';
 /** FEATURE_260 — governed memory guidance for the Action Agent. */
 export function buildMemoryRulesSection(_cwd: string): string {
-  return [
-    staticText("t12i.prompts/memory-rules.block.0"),
-  ].join('\n');
+  return staticText("memory-rules.section");
 }
 
 export const MEMORY_RULES_SHA256 = `sha256:${createHash('sha256')

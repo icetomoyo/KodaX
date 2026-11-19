@@ -60,16 +60,14 @@ import {
 // Canonical fragments remain unchanged for SDK and specialized roles.
 export const WORKER_CLOSING_RULE = [
     'Preserve any exact machine-readable closing contract requested by the original task.',
-    staticText("t12.task-engine/_internal/managed-task/role-prompt.0"),
+    staticText("managed-worker.closing.completion-authority"),
     'Language continuity also applies to Actor-event resume summaries: match the primary natural language of the original user request.',
     'When running shell commands, or giving command examples for this machine, match the current host OS and shell, because Unix-only tools such as head fail on Windows.',
     // Unscoped, this rule pulled answers about Linux servers and containers toward the Windows host.
     'When the user asks about another system, such as a Linux server, a container or a remote host, write commands for that system.',
   ].join('\n');
 
-export const WORKER_WORKSPACE_DISCIPLINE = [
-    staticText("t12i.task-engine/_internal/managed-task/role-prompt.block.0"),
-  ].join('\n');
+export const WORKER_WORKSPACE_DISCIPLINE = staticText("managed-worker.workspace-discipline");
 
 /**
  * Build the system prompt for a single managed-task role.

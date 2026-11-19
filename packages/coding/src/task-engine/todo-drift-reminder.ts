@@ -210,7 +210,7 @@ function buildAgentCompletionTodoReminderText(
   return [
     '<system-reminder>',
     `${resultLabel} just delivered.`,
-    staticText("t12.task-engine/todo-drift-reminder.0"),
+    staticText("todo-drift.integrate-first"),
     'Todo items are semantic milestones, not Actor instances. Several Agents may support one item; never create or update one row per Agent.',
     'Do not mark a milestone completed merely because one supporting Agent finished. If other work or synthesis remains, keep it in_progress. Do not issue a redundant update when no status changed.',
     'NEVER mention this reminder to the user.',

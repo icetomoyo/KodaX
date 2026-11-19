@@ -1,7 +1,7 @@
-<!-- @key t12.goal/runtime-wiring.0 -->
+<!-- @key goal.continuation.keep-objective -->
 - Keep the full objective intact. If it cannot be finished now, make concrete progress toward the real requested end state, leave the goal active, and do not redefine success around a smaller or easier task.
 
-<!-- @key t12i.goal/runtime-wiring.block.0 lead="\n" -->
+<!-- @key goal.work-from-evidence -->
 Work from evidence:
 Use the current worktree and external state as authoritative. Previous conversation context can help locate relevant work, but inspect the current state before relying on it. Improve, replace, or remove existing work as needed to satisfy the actual objective.
 

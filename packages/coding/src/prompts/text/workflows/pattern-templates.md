@@ -1,4 +1,4 @@
-<!-- @key t11.workflows/pattern-templates.0 lead="\n" trail="\n" -->
+<!-- @key workflow-template.fan-out-and-synthesize -->
 async function run(wf, args) {
   const request = args.request ?? args.question ?? "Split the task and synthesize the results.";
   const angles = ["scope", "evidence", "risks", "recommendation"];
@@ -17,7 +17,7 @@ async function run(wf, args) {
   });
 }
 
-<!-- @key t11.workflows/pattern-templates.1 lead="\n" trail="\n" -->
+<!-- @key workflow-template.adversarial-verification -->
 async function run(wf, args) {
   const request = args.request ?? args.question ?? "Review the target work.";
   return await wf.phase("adversarial-verification", async () => {
@@ -42,7 +42,7 @@ async function run(wf, args) {
   });
 }
 
-<!-- @key t11.workflows/pattern-templates.2 lead="\n" trail="\n" -->
+<!-- @key workflow-template.tournament -->
 async function run(wf, args) {
   const request = args.request ?? args.question ?? "Find the best option.";
   const approaches = ["conservative", "creative", "risk-focused"];
@@ -61,7 +61,7 @@ async function run(wf, args) {
   });
 }
 
-<!-- @key t11.workflows/pattern-templates.3 lead="\n" trail="\n" -->
+<!-- @key workflow-template.loop-until-done -->
 async function run(wf, args) {
   const request = args.request ?? args.question ?? "Investigate until no new findings remain.";
   const findings = [];
@@ -83,7 +83,7 @@ async function run(wf, args) {
   });
 }
 
-<!-- @key t11.workflows/pattern-templates.4 lead="\n" trail="\n" -->
+<!-- @key workflow-template.generate-and-filter -->
 async function run(wf, args) {
   const request = args.request ?? args.question ?? "Generate options and filter them.";
   const generated = await wf.parallel(
@@ -108,7 +108,7 @@ async function run(wf, args) {
   });
 }
 
-<!-- @key t11.workflows/pattern-templates.5 lead="\n" trail="\n" -->
+<!-- @key workflow-template.classify-and-act -->
 async function run(wf, args) {
   const request = args.request ?? args.question ?? "Classify and route this task.";
   const classification = await wf.runAgent({

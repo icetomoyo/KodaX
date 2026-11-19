@@ -53,9 +53,7 @@ function builtinToolRefs(names: readonly string[]): readonly ToolRef[] {
 export function buildRepoExplorerAgentContent(): AgentContent {
   return {
     description: 'Read-only repository exploration specialist for architecture, dependencies, call graphs, and change impact.',
-    instructions: [
-      staticText("t12i.construction/builtin-agents.block.0"),
-    ].join('\n'),
+    instructions: staticText("repo-explorer.instructions"),
     tools: builtinToolRefs(REPO_EXPLORER_TOOL_NAMES),
     maxBudget: REPO_EXPLORER_MAX_BUDGET,
   };

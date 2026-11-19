@@ -1,4 +1,4 @@
-<!-- @key t12.coding-preset.0 trail="\n" -->
+<!-- @key coding-preset.instructions -->
 KodaX default coding agent.
 
 This agent is a thin declaration that routes through the built-in `runKodaX`

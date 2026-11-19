@@ -1,4 +1,4 @@
-<!-- @key t12i.tools/agent-construction.block.0 trail="\n" -->
+<!-- @key agent-construction.scaffold-notes -->
 Scaffolded agent manifest (fill TODO sections, then call validate_agent):
 
 Manifest schema notes:

@@ -57,7 +57,7 @@ export const COLLABORATION_PATTERN_CATALOG: readonly CollaborationPatternDefinit
 ] as const;
 
 export const WORKFLOW_REVIEW_COMPOSITION_GUIDANCE =
-  staticText("t12.orchestration/pattern-catalog.0");
+  staticText("pattern-catalog.review-composition");
 
 export function getCollaborationPatternDefinition(
   id: CollaborationPatternId,
@@ -73,8 +73,7 @@ export function renderAmaPatternPlaybook(): string {
     ...COLLABORATION_PATTERN_CATALOG.map((definition) =>
       `- \`${definition.id}\`: ${definition.purpose} Evidence: ${definition.expectedEvidence[0]}. Stop: ${definition.stopRules[0]}.`),
     '- Compose stages only when they add decision value. Root remains accountable for synthesis.',
-    staticText("t12.orchestration/pattern-catalog.1"),
-    staticText("t12.orchestration/pattern-catalog.2"),
+    staticText("pattern-catalog.quality-strategy"),
     '- Metadata records optional intent and provenance; it never proves correctness, controls dispatch admission, or requires starting an Agent for telemetry.',
   ].join('\n');
 }

@@ -32,6 +32,6 @@ import { staticText } from '../prompts/static-text.js';
  * coding-flavored prompts, but their architectural surface stays clean.
  */
 
-export const CODING_SUMMARY_PROMPT = staticText("t11.agent-runtime/coding-compaction-prompts.0");
+export const CODING_SUMMARY_PROMPT = staticText("compaction.summary") + '\n';
 
-export const CODING_UPDATE_SUMMARY_PROMPT = staticText("t11.agent-runtime/coding-compaction-prompts.1");
+export const CODING_UPDATE_SUMMARY_PROMPT = staticText("compaction.update-summary");

@@ -1681,7 +1681,7 @@ function applyRepoSignalsToDecision(
     // for the low-confidence area. The new wording flips the recovery
     // path to pull-tools first (matching FEATURE_161 Worker teaching),
     // with raw read/grep only when a specific claim is load-bearing.
-    repoNotes.push(staticText("t12.reasoning.0"));
+    repoNotes.push(staticText("repo-intelligence.low-confidence-note"));
   }
 
   if (

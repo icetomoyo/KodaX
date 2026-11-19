@@ -32,7 +32,7 @@ export function projectModelToolDefinition<T extends KodaXToolDefinition>(tool: 
     const { path, edits } = tool.input_schema.properties;
     return {
       ...tool,
-      description: staticText("t12.tools/model-tool-definition.0"),
+      description: staticText("model-tool.edit.description"),
       input_schema: { ...tool.input_schema, properties: { path, edits }, required: ['path', 'edits'] },
     };
   }
@@ -40,7 +40,7 @@ export function projectModelToolDefinition<T extends KodaXToolDefinition>(tool: 
     const { path: _path, limit: _limit, ...properties } = tool.input_schema.properties;
     return {
       ...tool,
-      description: staticText("t12.tools/model-tool-definition.1"),
+      description: staticText("model-tool.changed_diff.description"),
       input_schema: { ...tool.input_schema, properties, required: ['paths'] },
     };
   }

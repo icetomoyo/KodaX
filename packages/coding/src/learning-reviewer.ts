@@ -16,9 +16,7 @@ import type { KodaXOptions } from './types.js';
 
 const TOOL_NAME = 'commit_episode_learning_review';
 
-export const LEARNING_REVIEW_SYSTEM_PROMPT = [
-  staticText("t12i.learning-reviewer.block.0"),
-].join('\n');
+export const LEARNING_REVIEW_SYSTEM_PROMPT = staticText("learning-reviewer.system");
 
 const STRING_ARRAY = {
   type: 'array',

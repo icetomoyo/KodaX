@@ -40,7 +40,7 @@ import type { KodaXOptions, KodaXResult } from './types.js';
 /** Stable name used as the dispatch key for the built-in coding preset. */
 export const DEFAULT_CODING_AGENT_NAME = 'kodax/coding/default';
 
-const DEFAULT_CODING_INSTRUCTIONS = staticText("t12.coding-preset.0");
+const DEFAULT_CODING_INSTRUCTIONS = staticText("coding-preset.instructions") + '\n';
 
 function extractPrompt(input: string | readonly AgentMessage[]): string {
   if (typeof input === 'string') return input;

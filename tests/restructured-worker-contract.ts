@@ -39,10 +39,10 @@ export const WORKER_TRUST_BEFORE_RETENTION = [
 
 /** The audited Worker taught the pull-tool fallback even when its menu had no pull-tool. */
 function restoreUngatedRepoFallback(current: string): string {
-  const fallback = `${staticText('worker.repoIntelligenceTools.text.6')}\n${staticText('worker.repoIntelligenceTools.text.7')}`;
+  const fallback = staticText('worker.repo-tools.pull-fallback');
   const repo = current.match(/REPO INTELLIGENCE TOOLS:[\s\S]*?(?=\n\n|$)/)?.[0];
   if (!repo || repo.includes(fallback)) return current;
-  const diffRule = `\n${staticText('worker.repoIntelligenceTools.text.8')}`;
+  const diffRule = `\n${staticText('worker.repo-tools.structured-diff')}`;
   const restored = repo.includes(diffRule) ? repo.replace(diffRule, () => `\n${fallback}${diffRule}`) : `${repo}\n${fallback}`;
   return current.replace(repo, () => restored);
 }
@@ -51,7 +51,7 @@ function restoreUngatedRepoFallback(current: string): string {
  * multi-Run envelopes, the un-jargoned model_hint tier, free-slot wording and the pull-tool-gated repo fallback. */
 export function replayAuditedWorkerCheckpoint(current: string): string {
   if (current.split(WORKER_TRUST_CURRENT).length !== 2) throw new Error('Canonical Worker trust rules changed; reconstruct the audited checkpoint explicitly');
-  return restoreUngatedRepoFallback(current.replace(`- ${PLAN_BATCH_GUIDANCE}\n`, '').replace(`- ${staticText('worker.answerDirectly')}\n`, '')
+  return restoreUngatedRepoFallback(current.replace(`- ${PLAN_BATCH_GUIDANCE}\n`, '').replace(`- ${staticText('worker.answer-directly')}\n`, '')
     .replace(WORKER_TRUST_CURRENT, () => WORKER_TRUST_BEFORE_RETENTION)
     .replace('`"fast"` only for read-only mechanical lookups', '`"fast"` only for evaluated read-only mechanical lookups')
     .replace('fast only for read-only mechanical lookups', 'fast only for evaluated read-only mechanical lookups')

@@ -1,4 +1,4 @@
-<!-- @key t11.agent-runtime/coding-compaction-prompts.0 trail="\n" -->
+<!-- @key compaction.summary -->
 Create a structured summary for the conversation below.
 
 This summary will be handed to another coding agent so it can continue the same task with minimal context.
@@ -78,7 +78,7 @@ Output format (strict markdown, inside <summary> tags):
 
 Conversation:
 
-<!-- @key t11.agent-runtime/coding-compaction-prompts.1 -->
+<!-- @key compaction.update-summary -->
 Merge the new conversation content above into <previous-summary>.
 
 Update the structured summary so another coding agent can continue the task immediately.

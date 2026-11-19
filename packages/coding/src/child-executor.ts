@@ -1960,7 +1960,7 @@ async function buildChildBriefing(
     ...(childGitRoot && childGitRoot !== childCwd ? [`Git Root: ${childGitRoot}`] : []),
     `Platform: ${platformLabel} (${os.release()})`,
     shellHint,
-    staticText("t12.child-executor.0"),
+    staticText("child.environment.paths"),
     ``,
     `## Objective`,
     bundle.objective,
@@ -1975,19 +1975,18 @@ async function buildChildBriefing(
       ? bundle.constraints.map((constraint) => `- Binding constraint: ${constraint}`)
       : []),
     bundle.readOnly
-      ? staticText("t12.child-executor.1")
+      ? staticText("child.constraints.read-only")
       : '- You may modify files within the scope listed above.',
     ...(collaboration.canSpawn
       ? [
-          staticText("t12.child-executor.2"),
+          staticText("child.constraints.spawn"),
         ]
       : []),
     ...(collaboration.canMessage
       ? [
           ``,
           `## Runtime Collaboration`,
-          staticText("t12.child-executor.3"),
-          staticText("t12.child-executor.4"),
+          staticText("child.collaboration.messaging"),
         ]
       : []),
     ...(bundle.readOnly
@@ -1997,8 +1996,7 @@ async function buildChildBriefing(
           // FEATURE_188 v0.7.42 (ADR-034) — write children share parent
           // cwd with siblings, so peer-coordination is prompt-enforced.
           `## Coordination with peers`,
-          staticText("t12.child-executor.5"),
-          staticText("t12.child-executor.6"),
+          staticText("child.peer-coordination"),
         ]),
     ``,
     `## Execution Strategy (use parallel tool calls)`,

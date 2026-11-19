@@ -38,15 +38,13 @@ import type { RunnerChainPromptContext } from './types.js';
 // are produced by `createRolePrompt('worker', ...)` via
 // `worker-role-prompt.ts`. Mirrors the other *_FALLBACK constants
 // above; chains with known tools use the capability-aware minimal builder below.
-export const WORKER_INSTRUCTIONS_FALLBACK = [
-  staticText("t12i.task-engine/_internal/managed-task/role-prompts.block.0"),
-].join('\n') + '\n' + EXECUTION_GUIDANCE;
+export const WORKER_INSTRUCTIONS_FALLBACK = staticText("managed-worker.fallback") + '\n' + EXECUTION_GUIDANCE;
 
 /** Minimal standalone chain contract; rich managed prompts are resolved separately. */
 function buildWorkerFallbackInstructions(toolNames: readonly string[]): string {
   const hasTool = (name: string): boolean => toolNames.includes(name);
   return [
-    staticText("t12.task-engine/_internal/managed-task/role-prompts.0"),
+    staticText("managed-worker.minimal.intro"),
     hasTool('todo_create') ? 'Use `todo_create` for new milestones; avoid duplicating existing progress.' : undefined,
     hasTool('todo_update') ? 'Use `todo_update` to reconcile finished milestones before waiting, moving on, or delivering. Keep one milestone per owner in progress; record concrete blockers.' : undefined,
     hasTool('spawn_agent') ? 'Use `spawn_agent` for useful independent lanes with bounded objectives and ownership. Continue non-overlapping work and own final synthesis.' : undefined,
@@ -54,7 +52,7 @@ function buildWorkerFallbackInstructions(toolNames: readonly string[]): string {
     hasTool('send_message') ? 'Use `send_message` for relevant evidence or constraints; it does not start idle actors.' : undefined,
     hasTool('followup_task') ? 'Use `followup_task` to start another idle actor turn or update an objective.' : undefined,
     hasTool('interrupt_agent') ? 'Use `interrupt_agent` when continued child work is no longer useful.' : undefined,
-    staticText("t12.task-engine/_internal/managed-task/role-prompts.1"),
+    staticText("managed-worker.minimal.integrate-children"),
     'Verify the actual result with available tools and report unverified requirements or blockers. End with a brief text-only summary; no tool call is needed to terminate.',
     `Available tools: ${toolNames.length > 0 ? toolNames.join(', ') : 'none'}.`,
     EXECUTION_GUIDANCE,

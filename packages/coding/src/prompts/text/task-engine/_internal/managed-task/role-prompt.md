@@ -1,7 +1,7 @@
-<!-- @key t12.task-engine/_internal/managed-task/role-prompt.0 -->
+<!-- @key managed-worker.closing.completion-authority -->
 Do not claim completion authority unless your role explicitly owns final judgment — a premature complete signal from a non-authoritative role causes the runner to terminate the task before the owning role validates the result.
 
-<!-- @key t12i.task-engine/_internal/managed-task/role-prompt.block.0 -->
+<!-- @key managed-worker.workspace-discipline -->
 Workspace discipline:
 - Helper scripts / scratch files are a last resort, not a default recovery path.
 - The `write` tool creates parent directories automatically. Calling `mkdir` before `write` is redundant and may fail on Windows shells where `mkdir -p` is unsupported.

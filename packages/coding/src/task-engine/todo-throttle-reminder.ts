@@ -166,7 +166,7 @@ export function buildTodoReminderText(
     return [
       '<system-reminder>',
       `You have not committed a plan in ${roundsSinceUpdate} iterations.`,
-      staticText("t12i.task-engine/todo-throttle-reminder.block.0"),
+      staticText("todo-throttle.create-milestones"),
     ].join('\n');
   }
 

@@ -60,11 +60,11 @@ const MAX_CLAUDE_MD_LEN = 4000;
 const MAX_REVIEW_POLICY_LEN = 4000;
 const TRUNCATED_MARKER = '\n…[truncated]…';
 
-const SYSTEM_PROMPT_HEADER = staticText("t11.guardrails/auto-mode/classifier-prompt.0");
+const SYSTEM_PROMPT_HEADER = staticText("auto-mode.classifier.header");
 
-const BUNDLED_POLICY = staticText("t11.guardrails/auto-mode/classifier-prompt.1");
+const BUNDLED_POLICY = staticText("auto-mode.classifier.bundled-policy");
 
-const OUTPUT_CONTRACT = staticText("t11.guardrails/auto-mode/classifier-prompt.2");
+const OUTPUT_CONTRACT = staticText("auto-mode.classifier.output-contract");
 
 export function buildClassifierPrompt(input: BuildClassifierPromptInput): ClassifierPrompt {
   const system = buildSystem(input);

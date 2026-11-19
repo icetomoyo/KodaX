@@ -500,9 +500,10 @@ Authors edit `.md` sources under `packages/coding/src/prompts/text/`: the text
 for a consumer `X.ts` lives in `text/X.md` as `<!-- @key name -->` entries,
 and tool input schemas live in `text/tools/tool-definitions.schemas.json`.
 `npm run prompts:text` regenerates the store, and `tests/prompt-text.test.ts` and
-`npm run build` fail when the two drift. Bodies are byte-exact. Leading or
-trailing whitespace goes in the marker (`lead="\n"`, `trail=" "`), so an editor
-cannot change it unseen. `packages/coding/src/prompts/rendered-prompts.test.ts`
+`npm run build` fail when the two drift. Keys name the surface and section
+(`worker.plan-hygiene`, `tool.read.description`). Bodies are byte-exact and never
+start or end with whitespace: separators between pieces live in the consumer's
+join, so an editor cannot change them unseen. `packages/coding/src/prompts/rendered-prompts.test.ts`
 snapshots the assembled Worker, child and tool text in `prompts/expected/`.
 
 To change the ceiling:

@@ -10,8 +10,7 @@
 //   Body text, kept byte-exact (CRLF read as LF).
 //
 // A body runs to the next marker; blank lines before it are separators. Bodies never
-// start or end with whitespace. A value that does carries it in the marker as JSON
-// strings: <!-- @key some.key lead="\n" trail=" " -->.
+// start or end with whitespace: separators between pieces belong to the consumer's join.
 // A `.json` file maps keys to JSON values, stored as compact JSON text (tool schemas).
 
 import { readdir, readFile, writeFile } from 'node:fs/promises';
@@ -22,8 +21,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const textDir = path.join(root, 'packages/coding/src/prompts/text');
 const output = path.join(root, 'packages/coding/src/prompts/static-text.json');
 
-const MARKER = /^<!-- @key ([A-Za-z0-9._/-]+)((?: (?:lead|trail)="(?:[^"\\]|\\.)*")*) -->$/;
-const ATTRIBUTE = / (lead|trail)=("(?:[^"\\]|\\.)*")/g;
+const MARKER = /^<!-- @key ([A-Za-z0-9._/-]+) -->$/;
 const normalizeLineEndings = (content) => content.replace(/\r\n?/g, '\n');
 
 async function listSources(dir) {
@@ -35,16 +33,6 @@ async function listSources(dir) {
   return files.flat().filter(file => /\.(md|json)$/.test(file)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
-function parseEdges(attributes, where) {
-  const edges = { lead: '', trail: '' };
-  for (const [, name, quoted] of attributes.matchAll(ATTRIBUTE)) {
-    const value = JSON.parse(quoted);
-    if (!/^\s+$/.test(value)) throw new Error(`${where}: ${name} must be whitespace only`);
-    edges[name] = value;
-  }
-  return edges;
-}
-
 function parseMarkdown(content, file) {
   const lines = normalizeLineEndings(content).split('\n');
   const entries = [];
@@ -52,20 +40,22 @@ function parseMarkdown(content, file) {
   for (const [index, line] of lines.entries()) {
     const marker = MARKER.exec(line);
     if (marker) {
-      current = { key: marker[1], ...parseEdges(marker[2], `${file}:${index + 1}`), lines: [], line: index + 1 };
+      current = { key: marker[1], lines: [], line: index + 1 };
       entries.push(current);
+    } else if (line.startsWith('<!-- @key')) {
+      throw new Error(`${file}:${index + 1}: malformed marker; expected <!-- @key name -->`);
     } else if (current) {
       current.lines.push(line);
     } else if (line.trim() !== '') {
       throw new Error(`${file}:${index + 1}: text before the first <!-- @key --> marker`);
     }
   }
-  return entries.map(({ key, lead, trail, lines: body, line }) => {
+  return entries.map(({ key, lines: body, line }) => {
     const text = body.join('\n').replace(/\n+$/, '');
     const where = `${file}:${line} (${key})`;
     if (text === '') throw new Error(`${where}: empty body`);
-    if (/^\s|\s$/.test(text)) throw new Error(`${where}: body starts or ends with whitespace; use lead="..." or trail="..."`);
-    return [key, lead + text + trail];
+    if (/^\s|\s$/.test(text)) throw new Error(`${where}: body starts or ends with whitespace; put separators in the consumer`);
+    return [key, text];
   });
 }
 

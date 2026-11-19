@@ -27,7 +27,7 @@ export async function closeScriptModelSession(agent: Agent): Promise<void> {
 
 /** Structured contracts are serialized once, never recovered by parsing generated teaching. */
 export function buildScriptModelDescription(leaves: readonly KodaXToolDefinition[], nativeBridge = false): string {
-  return staticText("t12.agent-runtime/script/model.0")
+  return staticText("script.description") + ' '
     + (nativeBridge ? 'Native tool_call({name,input}) can call these same tools one at a time without a Script cell. ' : '')
     + `Use native bash for background commands. Limits: ${SCRIPT_MODEL_LIMITS.timeoutMs / 1000}s cell deadline (admitted host calls drain before return), ${SCRIPT_MODEL_LIMITS.maxCalls} attempted calls, ${SCRIPT_MODEL_LIMITS.memoryBytes / 1024 / 1024}MiB VM memory, ${SCRIPT_MODEL_LIMITS.maxTransferBytes / 1024 / 1024}MiB per transfer.\nCallable contracts (JSON Schema):\n`
     + leaves.map(tool => `tools[${JSON.stringify(tool.name)}](input): ${JSON.stringify(tool)}`).join('\n');
@@ -108,7 +108,7 @@ function serializeModelReceipt(cell: ScriptCellResult | ScriptObservation, selec
       value_fields_from_receipts: Object.fromEntries(references) };
   } else return full;
   const compact = JSON.stringify({ ...projected,
-    value_reference_note: staticText("t12.agent-runtime/script/model.1") });
+    value_reference_note: staticText("script.value-reference-note") });
   return compact.length < full.length ? compact : full;
 }
 
@@ -201,8 +201,8 @@ export function projectScriptModelTools<T extends KodaXToolDefinition>(agent: Ag
 export function withScriptModeGuidance(agent: Agent, tools: readonly KodaXToolDefinition[], system: string): string {
   if (!getScriptModelContracts(agent, tools)) return system;
   const bridge = tools.some(tool => tool.name === 'tool_call');
-  const section = ['SCRIPT MODE', staticText('script.modeGuidance.cells'),
-    ...(bridge ? [staticText('script.modeGuidance.bridge')] : [])].join('\n');
+  const section = ['SCRIPT MODE', staticText("script.mode-guidance.cells"),
+    ...(bridge ? [staticText("script.mode-guidance.bridge")] : [])].join('\n');
   return `${system}\n\n${section}`;
 }
 

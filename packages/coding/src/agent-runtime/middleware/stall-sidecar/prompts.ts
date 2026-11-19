@@ -41,9 +41,7 @@ export const STALL_NUDGE_FRAME = '[Stall check] This call did not run, because i
  * decision criteria (isStuck=true / isStuck=false), and (c) the output
  * format (single forced tool call, no narration).
  */
-export const SIDECAR_SYSTEM_PROMPT: string = [
-  staticText("t12i.agent-runtime/middleware/stall-sidecar/prompts.block.0"),
-].join('\n');
+export const SIDECAR_SYSTEM_PROMPT: string = staticText("stall-sidecar.system");
 
 /**
  * `report_stall_judgment` tool definition — pinned by the FEATURE_178
@@ -70,7 +68,7 @@ export const REPORT_TOOL: KodaXToolDefinition = {
       suggestedTool: {
         type: 'string',
         description:
-          staticText("t12.agent-runtime/middleware/stall-sidecar/prompts.3"),
+          staticText("stall-sidecar.schema.next-tool"),
       },
       nudge: {
         type: 'string',

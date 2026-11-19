@@ -80,6 +80,6 @@ export function buildMutationScopeReflectionHeader(tracker: MutationTracker): st
 export function buildMutationScopeReflection(tracker: MutationTracker): string {
   return [
     buildMutationScopeReflectionHeader(tracker),
-    staticText("t12i.agent-runtime/middleware/mutation-reflection.block.0"),
+    staticText("mutation-reflection.pause"),
   ].join('\n');
 }

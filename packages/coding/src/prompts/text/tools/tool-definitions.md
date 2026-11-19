@@ -1,76 +1,76 @@
-<!-- @key tool.RUN_WORKFLOW_DESCRIPTION.text -->
+<!-- @key tool.run_workflow.intro -->
 Author and start a bounded deterministic JavaScript protocol over the Runtime-owned Actor tree. The call returns a run_id and Workflow actor path immediately; inspect progress with list_agents, wait for critical mailbox evidence with wait_agent, read its structured WorkflowOutcome with agent_output, and stop it with interrupt_agent.
 
-<!-- @key tool.RUN_WORKFLOW_DESCRIPTION.text.1 -->
 Make the Workflow acquire and inspect the real scope before analysis, then give child Agents concrete paths, constraints, evidence, and outputSchema values. Write child prompts in the same natural language as the user's request. Declared fields live on result.structured: read your declared fields off result.structured, never off the top-level result, where they are undefined and can produce an empty report.
 
-<!-- @key tool.RUN_WORKFLOW_DESCRIPTION.text.2 -->
 The run(wf, args) body may use wf.runAgent, wf.parallel, wf.pipeline, wf.synthesize, wf.workflow, and wf.artifact. Use wf.pipeline for streaming stages and wf.parallel as a barrier only when a stage needs every prior result.
 
-<!-- @key tool.RUN_WORKFLOW_DESCRIPTION.text.3 -->
 Do not call this tool for an ordinary review or merely because a task is parallel, partitionable, or needs synthesis. Unless the user explicitly requested a Workflow, use adaptive spawn_agent waves instead.
 
-<!-- @key tool.RUN_WORKFLOW_DESCRIPTION.text.4 -->
+<!-- @key tool.run_workflow.closing -->
 Workflow-local limits can only narrow the shared session scheduler and work budget. The script receives no direct filesystem, shell, network, import, or require access.
 
 <!-- @key tool.read.description -->
 Read a local file with bounded output. Text is line-numbered; continue using offset/limit and the exact line_offset cursor from the partial-line continuation marker. Paged input: path also accepts kodax-transient://text/ references supplied by context recovery. These are valid local, run-scoped text capabilities, not network URLs. Read them directly with offset/limit to recover the original requirements; do not ask the user to re-paste them. PNG/JPG/JPEG/GIF/WEBP return inline vision content, so inspect them instead of rejecting them as binary. An image already attached or inlined in the conversation is visible to you, so reading it again only repeats it.
 
-<!-- @key tool.BUILTIN_TOOL_DEFINITION_SOURCE.classifierExemptReason -->
+<!-- @key tool.memory_intent.classifier-exempt-reason -->
 Exact user quotes authorize prompt-safe Memory mutations; the host control plane rejects ambiguous, broad, or restricted requests.
 
-<!-- @key tool.skill.text -->
+<!-- @key tool.skill.description -->
 Invoke a discovered skill by name. Returns the skill's expanded content (variables resolved) as the tool_result so you can follow its instructions in your next turn.
-
-<!-- @key tool.skill.text.1 -->
 - Call this before other work when the user names a Skill listed in your "Available Skills" or a listed Skill's description clearly covers the request. When no description covers it, do not call this.
-
-<!-- @key tool.skill.text.2 -->
 - DO NOT call `read` on a `SKILL.md` path to load a skill — skill loading is `skill`'s job; `read` is for plain files.
-
-<!-- @key tool.skill.text.3 -->
 - `args` is an optional free-form string the skill resolver can substitute into its template (e.g. `args: "123"` for `/review-pr 123`). Most skills ignore it.
 
-<!-- @key tool.run_skill_script.text -->
+<!-- @key tool.run_skill_script.description -->
+Run one exact script from an admitted Skill inside the remote OS sandbox.
+The script sees only its pinned Skill snapshot and a fresh staging directory.
 Use inputs to copy approved workspace files into staging; use outputs to promote generated files after success.
-
-<!-- @key tool.run_skill_script.text.1 -->
 Relative script names must exactly match toolPolicy.skillScripts; arbitrary commands are not accepted.
 
 <!-- @key tool.write.description -->
 Write a new file explicitly requested by the user, or an explicitly requested complete rewrite. For existing-file changes, use edit; large diffs may be summarized. For oversized content or a mid-stream failure, write a smaller skeleton with placeholders, then fill sections using edit. Use write/edit for known content: shell redirection bypasses mutation tracking and diff verification, and moves the streaming limit to the generator. Shell scripts are for computed output. write sends UTF-8 directly to fs.writeFile without a shell; Chinese/emoji need no encoding workaround.
 
-<!-- @key tool.edit.text trail="\n\n" -->
+<!-- @key tool.edit.description -->
 Replace exact (or normalized) text in an existing file. The most efficient way to modify a file — only the diff is sent.
 
-<!-- @key tool.edit.text.1 trail="\n" -->
+## When to Use This Tool
+
+- Modifying an existing file with one targeted text change.
 - Renaming a single occurrence; use `replace_all: true` only when every match in the file should change.
+- Filling in one placeholder produced by a prior `write(path, skeleton)`.
 
-<!-- @key tool.edit.text.2 trail="\n" -->
+## When NOT to Use This Tool
+
 - Without first calling `read` on the file in this conversation — your `old_string` will almost certainly be wrong and the edit will fail with "old_string not found", costing a retry round-trip more expensive than the initial read.
-
-<!-- @key tool.edit.text.3 trail="\n" -->
 - For multiple independent edits to the same file — call `multi_edit` instead, which batches N edits atomically in one tool call.
-
-<!-- @key tool.edit.text.4 -->
 - As a recovery from a failed `edit` by rewriting the whole file via `write` — that discards the partial-edit context and re-streams the entire file, which is exactly what `edit` was designed to avoid. Instead retry with a smaller unique snippet, or use `insert_after_anchor`.
 
-<!-- @key tool.multi_edit.text trail="\n" -->
+<!-- @key tool.multi_edit.description -->
+Apply multiple exact-text replacements to a single file in ONE atomic tool call.
+
+## When to Use This Tool
+
 - Several independent edits to the same file — especially when filling in a skeleton you just created with `write`.
+- Bulk renames within one file (use `replace_all: true` per edit).
+- Refactors that touch multiple spots in one file and should land all-or-nothing.
 
-<!-- @key tool.multi_edit.text.1 trail="\n" -->
+## When NOT to Use This Tool
+
+- For a single change — call `edit` directly; the extra wrapping is unnecessary overhead.
 - Without first calling `read` on the file in this conversation — your first failing `old_string` aborts the ENTIRE batch, so you pay for all the edits in tokens but land none of them.
-
-<!-- @key tool.multi_edit.text.2 trail="\n\n" -->
 - When later edits need to reference text an earlier edit overlaps — edits compose sequentially (each sees the result of the previous), so once `edits[k]` rewrites a region, text inside that region is no longer a valid anchor for `edits[k+1..]`. Either shrink the earlier edit to preserve the anchor, or merge them into one edit.
 
-<!-- @key tool.multi_edit.text.3 trail="\n\n" -->
+## Atomicity
+
 The whole batch is atomic: if any single `old_string` fails to match, NO edits are written to disk and you get back an index pointing at the failing edit. Each `edits[i]` has the same semantics as one `edit` call — exact-match first, then safe-normalized anchor fallback; `replace_all: true` per edit for bulk renames.
 
-<!-- @key tool.multi_edit.text.4 trail="\n\n" -->
+## Uniqueness
+
 Each `old_string` must be unique in the WHOLE current file, not just in the window you last read. A short snippet from a narrow `read` (single line, 6-line window, common phrase) is the #1 cause of "matched N places" errors. Widen the anchor with a nearby unique landmark (heading, function signature, distinctive comment, or a multi-line block), or set `replace_all: true` if every occurrence should change.
 
-<!-- @key tool.multi_edit.text.5 -->
+## Typical Pattern
+
 (1) `write(path, skeleton_with_<!-- SECTION_A -->_placeholders)`; (2) `multi_edit(path, [{SECTION_A, realA}, {SECTION_B, realB}, ...])` — one batched call.
 
 <!-- @key tool.insert_after_anchor.description -->
@@ -97,7 +97,7 @@ Deliver an additional task to a direct child. An idle actor atomically starts a 
 <!-- @key tool.wait_agent.description -->
 Yield until the caller mailbox receives an Agent message or completion, root user input arrives, the wait is interrupted, or the timeout expires. Actor progress remains visible to UI and SDK event consumers but never wakes the parent model. Use this sparingly when required Agent evidence is on the critical path; continue useful non-overlapping work first. After mailbox evidence arrives, integrate it and reconcile the affected semantic plan milestone before waiting again.
 
-<!-- @key tool.wait_agent.description.1 -->
+<!-- @key tool.wait_agent.timeout_ms -->
 Wait window in milliseconds. Defaults to 120000. Longer waits do not invoke the model and root user input still wakes promptly.
 
 <!-- @key tool.list_agents.description -->
@@ -145,10 +145,10 @@ Read the current goal for this session, including status, budget, token and elap
 <!-- @key tool.create_goal.description -->
 Create a goal only when explicitly requested by the user or system/developer instructions; do not infer goals from ordinary tasks. Set token_budget only when an explicit token budget is requested. Fails if a goal exists; use update_goal only for status changes.
 
-<!-- @key tool.create_goal.description.1 -->
+<!-- @key tool.create_goal.objective -->
 The long-running objective the agent should pursue across turns. A clear, concrete sentence describing the target end-state.
 
-<!-- @key tool.create_goal.description.2 -->
+<!-- @key tool.create_goal.token_budget -->
 Optional positive integer token budget for the entire goal. Omit when the user did not request a budget.
 
 <!-- @key tool.update_goal.description -->
@@ -232,56 +232,35 @@ Estimate affected modules/symbols and possible callers for a symbol, path or mod
 <!-- @key tool.cyclic_dependencies.description -->
 Detect circular import/dependency chains (Tarjan SCC) over the module-level import graph. Answers "is there a dependency cycle" — the one question the 1-hop tools (impact_estimate / module_context / symbol_context) cannot. Use when refactoring or moving modules, before merging a PR that reshapes imports, or to enforce a no-cycles rule. Returns each cycle as an ordered module chain with a hop count + severity. Distinct from impact_estimate (that is 1-hop blast radius; this is reachability cycles).
 
-<!-- @key tool.scaffold_tool.text trail=" " -->
-Generate a fillable ConstructionArtifact JSON skeleton for a new tool. Returns a draft you must edit before calling validate_tool / stage_construction.
+<!-- @key tool.scaffold_tool.description -->
+Generate a fillable ConstructionArtifact JSON skeleton for a new tool. Returns a draft you must edit before calling validate_tool / stage_construction. Use this as the FIRST step when authoring a runtime tool — do NOT hand-write the JSON shape from scratch, because the construction schema has required fields and version constraints that hand-authored JSON routinely misses, producing scaffolds the validator rejects.
 
-<!-- @key tool.scaffold_tool.text.1 -->
-Use this as the FIRST step when authoring a runtime tool — do NOT hand-write the JSON shape from scratch, because the construction schema has required fields and version constraints that hand-authored JSON routinely misses, producing scaffolds the validator rejects.
+<!-- @key tool.validate_tool.description -->
+Dry-run validate a candidate tool artifact JSON: shape sanity + AST hard rules (no-eval / no-Function-constructor / require-handler-signature) + provider schema validation. Does NOT touch disk. Use this BEFORE stage_construction to fail fast on malformed handlers.
 
-<!-- @key tool.validate_tool.text trail=" " -->
-Dry-run validate a candidate tool artifact JSON: shape sanity + AST hard rules (no-eval / no-Function-constructor / require-handler-signature) + provider schema validation.
+<!-- @key tool.stage_construction.description -->
+Persist an artifact to .kodax/constructed/<kind>s/<name>/<version>.json with status=staged. Refuses to overwrite an active artifact at the same name+version (bump the version instead). Run validate_tool first; this tool itself does not re-validate the AST or schema.
 
-<!-- @key tool.stage_construction.text trail=" " -->
-Persist an artifact to .kodax/constructed/<kind>s/<name>/<version>.json with status=staged. Refuses to overwrite an active artifact at the same name+version (bump the version instead).
+<!-- @key tool.test_tool.description -->
+Run the full Phase 2 check pipeline (shape → AST → provider schema → handler materialize) on a staged artifact. Returns ok=true/false plus errors/warnings. On ok=true the artifact is ready for activate_tool. LLM static review is NOT run from this tool — the calling agent must drive that separately if desired.
 
-<!-- @key tool.test_tool.text trail=" " -->
-Run the full Phase 2 check pipeline (shape → AST → provider schema → handler materialize) on a staged artifact. Returns ok=true/false plus errors/warnings.
+<!-- @key tool.activate_tool.description -->
+Activate a staged-and-tested artifact. Invokes the construction policy gate, registers the handler into TOOL_REGISTRY, flips status=active. The tool is then immediately callable as `<name>` in subsequent turns. Policy: in the Ink REPL, the user sees an approve/reject dialog before activation. In non-interactive surfaces (ACP / single-shot CLI / child agents) activation is rejected by default — this prevents silent capability expansion without user consent.
 
-<!-- @key tool.test_tool.text.1 -->
-On ok=true the artifact is ready for activate_tool. LLM static review is NOT run from this tool — the calling agent must drive that separately if desired.
+<!-- @key tool.scaffold_agent.description -->
+Generate a fillable AgentArtifact JSON skeleton for a new agent. Returns a draft you must edit before calling validate_agent / stage_agent_construction. Use this as the FIRST step when authoring a runtime agent — do NOT hand-write the JSON shape from scratch, because the construction schema has required fields and version constraints that hand-authored JSON routinely misses, producing scaffolds the validator rejects.
 
-<!-- @key tool.activate_tool.text trail=" " -->
-Activate a staged-and-tested artifact. Invokes the construction policy gate, registers the handler into TOOL_REGISTRY, flips status=active. The tool is then immediately callable as `<name>` in subsequent turns.
+<!-- @key tool.validate_agent.description -->
+Dry-run admission audit on a candidate agent manifest JSON: schema validation + invariant.admit hooks + tool-capability cap + budget cap + handoff DAG check. Does NOT touch disk. Use this BEFORE stage_agent_construction to fail fast on rejected manifests.
 
-<!-- @key tool.activate_tool.text.1 -->
-In non-interactive surfaces (ACP / single-shot CLI / child agents) activation is rejected by default — this prevents silent capability expansion without user consent.
+<!-- @key tool.stage_agent_construction.description -->
+Persist an agent manifest to .kodax/constructed/agents/<name>/<version>.json with status=staged. Refuses to overwrite an existing same-name+version (bump the version instead). Run validate_agent first; this tool itself does not re-run admission.
 
-<!-- @key tool.scaffold_agent.text trail=" " -->
-Generate a fillable AgentArtifact JSON skeleton for a new agent. Returns a draft you must edit before calling validate_agent / stage_agent_construction.
+<!-- @key tool.test_agent.description -->
+Run the agent test pipeline (manifest shape check + Runner.admit + sandbox case execution) on a staged agent. Returns ok=true/false with errors / warnings. On ok=true the agent is ready for activate_agent.
 
-<!-- @key tool.scaffold_agent.text.1 -->
-Use this as the FIRST step when authoring a runtime agent — do NOT hand-write the JSON shape from scratch, because the construction schema has required fields and version constraints that hand-authored JSON routinely misses, producing scaffolds the validator rejects.
+<!-- @key tool.activate_agent.description -->
+Activate a staged-and-tested agent. Invokes the construction policy gate, flips status=active, records contentHash, and registers the agent in the resolver so Runner.run can find it by name. Policy: in the Ink REPL, the user sees an approve/reject dialog before activation. In non-interactive surfaces activation is rejected by default — this prevents silent capability expansion without user consent.
 
-<!-- @key tool.validate_agent.text trail=" " -->
-Dry-run admission audit on a candidate agent manifest JSON: schema validation + invariant.admit hooks + tool-capability cap + budget cap + handoff DAG check.
-
-<!-- @key tool.stage_agent_construction.text trail=" " -->
-Persist an agent manifest to .kodax/constructed/agents/<name>/<version>.json with status=staged. Refuses to overwrite an existing same-name+version (bump the version instead).
-
-<!-- @key tool.test_agent.text trail=" " -->
-Run the agent test pipeline (manifest shape check + Runner.admit + sandbox case execution) on a staged agent.
-
-<!-- @key tool.activate_agent.text trail=" " -->
-Activate a staged-and-tested agent. Invokes the construction policy gate, flips status=active, records contentHash,
-
-<!-- @key tool.activate_agent.text.1 -->
-In non-interactive surfaces activation is rejected by default — this prevents silent capability expansion without user consent.
-
-<!-- @key tool.BUILTIN_TOOL_DEFINITION_SOURCE.text trail=" " -->
-Requires artifact.name === artifact.sourceAgent === your own name, plus an existing active version on disk.
-
-<!-- @key tool.BUILTIN_TOOL_DEFINITION_SOURCE.text.1 trail=" " -->
-Runs hard checks (guardrail ratchet — cannot remove existing guardrails; reasoning ceiling; modification budget) before persisting.
-
-<!-- @key tool.BUILTIN_TOOL_DEFINITION_SOURCE.text.2 -->
-Then call test_agent and activate_agent on the staged version. Activation force-prompts the user (no auto-approve for self-modify) and only takes effect on the NEXT Runner.run, never within the run that submitted the change.
+<!-- @key tool.stage_self_modify.description -->
+Stage a new version of YOURSELF — the active constructed agent calling this tool. Requires artifact.name === artifact.sourceAgent === your own name, plus an existing active version on disk. Runs hard checks (guardrail ratchet — cannot remove existing guardrails; reasoning ceiling; modification budget) before persisting. Then call test_agent and activate_agent on the staged version. Activation force-prompts the user (no auto-approve for self-modify) and only takes effect on the NEXT Runner.run, never within the run that submitted the change.

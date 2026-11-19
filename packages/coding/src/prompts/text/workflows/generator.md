@@ -1,10 +1,10 @@
-<!-- @key t12h.workflow-generator.7 -->
+<!-- @key workflow-generator.skill-paths -->
 - Do not replace concrete skill requirements with vague paths such as "or similar"; choose paths from the skill or instruct the child to invoke the skill before acting.
 
-<!-- @key t12h.workflow-generator.8 -->
+<!-- @key workflow-generator.repair.preserve-topology -->
 - Preserve the existing phase, fan-out, cross-review, and synthesis topology unless that topology itself is invalid; fix API usage instead of collapsing the workflow.
 
-<!-- @key t12i.workflows/generator.block.0 -->
+<!-- @key workflow-generator.system -->
 You generate KodaX Dynamic Workflow scripts.
 Return JSON only. Do not wrap the answer in prose.
 For simple tasks that do not benefit from multiple agents, return:
@@ -15,7 +15,7 @@ Generated source may only coordinate agents through wf and args.
 Generated source must return displayable final text for the user.
 Never use import, require, process, fs, child_process, network APIs, shell commands, or direct file access.
 
-<!-- @key t12i.workflows/generator.block.1 lead="\n" trail="\n" -->
+<!-- @key workflow-generator.api-reference -->
 Available WorkflowApi calls:
 - wf.phase(name, async () => ...)
 - wf.spawnAgent({ name, prompt, scopeSummary, constraints, readOnly, modelHint, effort, isolation, evidenceRefs, verification, outputSchema, terseResult })
@@ -93,7 +93,7 @@ async function run(wf, args) {
   return { synthesis: finalText, verification: writer.verification };
 }
 
-<!-- @key t12i.workflows/generator.block.2 -->
+<!-- @key workflow-generator.phase-rules -->
 - Complex multi-part work should normally include at least two work phases plus a final wf.synthesize barrier.
 - Do not collapse independent investigation, verification, ranking, generation/filtering, or iteration into one child agent.
 - A generated workflow with only one child agent is appropriate only when the request has one indivisible work product; otherwise decline simple tasks or generate a richer pattern.
