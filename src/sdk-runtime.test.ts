@@ -1257,6 +1257,7 @@ describe("createKodaXRuntime", () => {
         options: {
           context: {
             configHome: attackerConfigHome,
+            contextIdentitySessionId: "someone-elses-session",
             memoryIdentity: {
               configHome: attackerConfigHome,
               tenantId: "attacker-tenant",
@@ -1275,6 +1276,7 @@ describe("createKodaXRuntime", () => {
         path.join(ownerHome, ".kodax"),
       );
       expect(runOptions?.context?.memoryIdentity).toBeUndefined();
+      expect(runOptions?.context?.contextIdentitySessionId).toBeUndefined();
     } finally {
       await runtime.close();
     }

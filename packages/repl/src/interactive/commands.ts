@@ -32,6 +32,7 @@ import {
   CODING_UPDATE_SUMMARY_PROMPT,
   applyPostCompactAttachments,
   resolveKodaXManual,
+  runInSessionScope,
 } from '@kodax-ai/coding';
 import type { AgentsFile } from '@kodax-ai/coding';
 import type { ClientCommandInfo, ClientCommandInput, ClientCommandService } from '@kodax-ai/coding/client-contract';
@@ -106,7 +107,7 @@ import { learnCommand } from '../commands/learn-command.js';
 import { memoryCommand } from '../commands/memory-command.js';
 import { goalCommand } from '../commands/goal-command.js';
 import { workflowCommand } from '../commands/workflow-command.js';
-import { newCommand } from '../commands/new-command.js';
+import { currentMessageCount, moveToNewSession, newCommand } from '../commands/new-command.js';
 import { recoverCommand } from '../commands/recover-command.js';
 import { reviewCommand } from '../commands/review-command.js';
 import { agentsCommand } from '../commands/agents-command.js';
@@ -448,23 +449,30 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'clear',
-    description: 'Clear conversation history',
+    description: 'Clear the conversation and continue in a new session',
     handler: async (_args, context, callbacks) => {
-      context.messages = [];  // Clear messages first
+      // A Host replays history by session id, so clearing must move to a new id;
+      // the cleared conversation stays resumable instead of being overwritten.
+      const previousId = context.sessionId;
+      const moved = callbacks.startNewSession !== undefined && await currentMessageCount(context, callbacks) !== 0;
+      if (moved) {
+        await moveToNewSession(context, callbacks);
+      } else {
+        context.messages = [];
+        callbacks.clearHistory();
+      }
       context.contextTokenSnapshot = undefined;
-      callbacks.clearHistory();  // Then clear UI
       console.log(chalk.yellow('\n[Conversation cleared]'));
+      if (moved) console.log(chalk.dim(`Previous conversation: /resume ${previousId}`));
     },
     detailedHelp: () => {
       console.log(chalk.cyan('\n/clear - Clear Conversation History\n'));
       console.log(chalk.bold('Usage:'));
-      console.log(chalk.dim('  /clear             ') + 'Clear all messages in current session');
+      console.log(chalk.dim('  /clear             ') + 'Start fresh in a new session');
       console.log();
       console.log(chalk.bold('Description:'));
-      console.log(chalk.dim('  Removes all messages from the current conversation context.'));
-      console.log(chalk.dim('  Useful for starting fresh while keeping the session.'));
-      console.log();
-      console.log(chalk.yellow('  Warning: This action cannot be undone!'));
+      console.log(chalk.dim('  Saves the current conversation and continues in a new, empty session.'));
+      console.log(chalk.dim('  The cleared conversation can be resumed later with /resume <id>.'));
       console.log();
     },
   },
@@ -657,7 +665,7 @@ export const BUILTIN_COMMANDS: Command[] = [
 
         try {
           // Manual compaction bypasses threshold comparison; automatic compaction remains on.
-          const result = await compact(
+          const result = await runInSessionScope(context.sessionId, () => compact(
             context.messages,
             manualConfig,
             provider,
@@ -670,7 +678,7 @@ export const BUILTIN_COMMANDS: Command[] = [
             currentConfig.model,
             true,
             provider.getEffectiveMaxOutputTokens(currentConfig.model),
-          );
+          ));
 
           if (!result.compacted) {
             console.log(chalk.green('\n[No compaction needed]'));
@@ -1418,7 +1426,7 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log();
       console.log(chalk.bold('Examples:'));
       console.log(chalk.dim('  /load              ') + '# See all sessions');
-      console.log(chalk.dim('  /load 20260219_143052') + '# Load session by ID');
+      console.log(chalk.dim('  /load <session-id>  ') + '# Load session by ID');
       console.log();
       console.log(chalk.bold('Workspace behavior:'));
       console.log(chalk.dim('  /load can resume sessions from sibling workspaces in the same canonical repo.'));
@@ -1600,7 +1608,7 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.dim('  /rm, /del          ') + 'Aliases for /delete');
       console.log();
       console.log(chalk.bold('Examples:'));
-      console.log(chalk.dim('  /delete 20260219_143052') + '  # Delete specific session');
+      console.log(chalk.dim('  /delete <session-id>') + '# Delete specific session');
       console.log(chalk.dim('  /delete all        ') + '# Delete all sessions');
       console.log();
       console.log(chalk.bold('Workspace behavior:'));

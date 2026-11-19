@@ -10,6 +10,15 @@ export function validSessionTimestamp(value: unknown): string | undefined {
   return typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : undefined;
 }
 
+/** Local `YYYY-MM-DD HH:mm` for session lists; session ids are opaque, so lists show this instead. */
+export function formatSessionTimestamp(value: string | undefined): string {
+  if (!value) return 'unknown time';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())} ${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+}
+
 /** Conversation activity is independent of Actor, compaction, and UI metadata writes. */
 export function latestSessionMessageAt(
   entries: readonly KodaXSessionEntry[], prior?: string,

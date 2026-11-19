@@ -272,6 +272,7 @@ export {
   getRunScopedConfig,
   resolvePromptCacheDisabled,
   resolveWorkflowMaxConcurrency,
+  isWireSessionId,
   WORKFLOW_MAX_CONCURRENCY_DEFAULT,
   WORKFLOW_MAX_CONCURRENCY_ABSOLUTE,
 } from './run-scoped-config.js';

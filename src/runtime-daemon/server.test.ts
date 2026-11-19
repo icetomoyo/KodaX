@@ -2668,7 +2668,7 @@ describe('runtime daemon dispatcher', () => {
     }
   });
 
-  it('strips caller-controlled learning owner identity from raw run.start payloads', async () => {
+  it('strips caller-controlled learning owner and conversation identity from raw run.start payloads', async () => {
     const runtime = makeRuntime();
     const start = vi.spyOn(runtime.runs, 'start');
     const dispatcher = createRuntimeDaemonDispatcher({ runtime });
@@ -2684,6 +2684,7 @@ describe('runtime daemon dispatcher', () => {
           context: {
             gitRoot: 'C:\\trusted-project',
             configHome: 'C:\\attacker-home',
+            contextIdentitySessionId: 'someone-elses-session',
             memoryIdentity: {
               tenantId: 'attacker',
               agentId: 'attacker',
@@ -2702,6 +2703,7 @@ describe('runtime daemon dispatcher', () => {
     expect(context).toMatchObject({ gitRoot: 'C:\\trusted-project' });
     expect(context).not.toHaveProperty('configHome');
     expect(context).not.toHaveProperty('memoryIdentity');
+    expect(context).not.toHaveProperty('contextIdentitySessionId');
     dispatcher.close();
   });
 

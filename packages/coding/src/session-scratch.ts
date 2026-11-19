@@ -2,7 +2,8 @@ import path from 'node:path';
 import type { KodaXOptions } from './types.js';
 import { resolveExecutionCwd } from './runtime-paths.js';
 
-const MAX_SCRATCH_SESSION_ID_LENGTH = 80;
+// Matches the Host session id limit so distinct valid ids never share a scratch dir.
+const MAX_SCRATCH_SESSION_ID_LENGTH = 128;
 
 export function sanitizeScratchSessionId(sessionId: string): string {
   const sanitized = sessionId

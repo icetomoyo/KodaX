@@ -63,6 +63,7 @@ import { mergeManagedProtocolPayload } from '../managed-protocol.js';
 // `textContainsManagedBlock`, `MANAGED_PROTOCOL_TOOL_NAME`) is wired
 // inside `agent-runtime/managed-protocol-continue.ts` since FEATURE_100 P3.5b.
 import { generateSessionId, extractTitleFromMessages } from '../session.js';
+import { runInSessionScope } from '../run-scoped-config.js';
 // FEATURE_076 Q4: load-time normalization for pre-v0.7.25 session messages.
 import { normalizeLoadedSessionMessages } from '../task-engine/_internal/round-boundary.js';
 import { renderInterruptedRunRecovery } from '../task-engine/_internal/interrupted-run-recovery.js';
@@ -780,13 +781,17 @@ export async function runSubstrate(
 ): Promise<KodaXResult> {
   const boundOptions = { ...options, context: { ...options.context,
     runtimeRunId: options.context?.runtimeRunId ?? randomUUID() } };
+  // CAP-043: autoResume / resume picks the most recent persisted session when
+  // no explicit id was supplied. Resolved before the run so every provider
+  // request of this conversation carries its id.
+  const sessionId = (await discoverAutoResumeSessionId(options)) ?? await generateSessionId();
   let prepareImages = false;
-  return withPreparedImageHistory(() => withExtensionRuntimeContext(
-    () => runSubstrateInContext(boundOptions, prompt, declaredAgent, (enabled) => { prepareImages = enabled; }),
+  return runInSessionScope(options.context?.contextIdentitySessionId ?? sessionId, () => withPreparedImageHistory(() => withExtensionRuntimeContext(
+    () => runSubstrateInContext(boundOptions, prompt, declaredAgent, (enabled) => { prepareImages = enabled; }, sessionId),
     options.extensionRuntime ?? getActiveExtensionRuntime(),
     boundOptions.context.runtimeRunId,
   ), options.abortSignal, () => prepareImages,
-  options.context?.visualObservationOwner?.expectedImageHash?.bind(options.context.visualObservationOwner));
+  options.context?.visualObservationOwner?.expectedImageHash?.bind(options.context.visualObservationOwner)));
 }
 
 async function runSubstrateInContext(
@@ -794,6 +799,7 @@ async function runSubstrateInContext(
   prompt: string,
   declaredAgent: Agent | undefined,
   setImagePreparation: (enabled: boolean) => void,
+  sessionId: string,
 ): Promise<KodaXResult> {
   const childContractSource = claimBuiltinChildContract(options.context);
   const textRecovery = createTextRecoveryState();
@@ -884,11 +890,6 @@ async function runSubstrateInContext(
     options.compaction,
   );
 
-  // CAP-043: autoResume / resume — pick the most recent persisted
-  // session when no explicit id was supplied. Folded into
-  // `discoverAutoResumeSessionId` during P3.6n.
-  const resolvedSessionId = await discoverAutoResumeSessionId(options);
-  const sessionId = resolvedSessionId ?? await generateSessionId();
   const contextIdentitySessionId = options.context?.contextIdentitySessionId ?? sessionId;
   const requestedLiveTurn = options.context?.liveTurn;
   const currentAgentId = options.context?.currentAgentId;
