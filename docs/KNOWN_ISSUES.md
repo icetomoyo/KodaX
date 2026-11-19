@@ -984,8 +984,9 @@ Still open at `08ce2f742`; F-ids match the removed list.
   type-checked, and `packages/repl/tsconfig.json` excludes
   `terminal-emulator.ts` (F-43). No LLM-free test asserts every default model has
   a rate and a model-level limit.
-- Prompt cache: SA adds git-context/project-snapshot only when
-  `messages.length === 1`, so the system prompt shifts on request two. The cost
+- Prompt cache: the direct `runKodaX` engine (formerly SA) adds
+  git-context/project-snapshot only when `messages.length === 1`
+  (`run-substrate.ts:1439`), so the system prompt shifts on request two. The cost
   is unmeasured; measure with `probe:prompt-cache` before changing it (F-18).
 - ADR-033 debt: quantitative thresholds in `static-text.json`
   (`worker.repoIntelligenceTools`, `exit_plan_mode.properties.plan`), a compound
