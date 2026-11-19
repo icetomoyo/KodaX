@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { createHash } from 'node:crypto';
 import type { Agent } from '@kodax-ai/agent';
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
 import type { KodaXContextOptions, KodaXToolExecutionContext } from '../types.js';
@@ -107,12 +106,14 @@ describe('ordinary managed root tool presentation', () => {
     expect(projectModelToolDefinition(raw, { kind: 'builtin' })).toBe(raw);
   });
 
-  it('rewrites every audited annotation without dropping parameters or mutating the canonical inventory', () => {
+  it('rewrites every audited annotation without dropping parameters or mutating the canonical inventory', async () => {
     const tools = Object.keys(managedToolText).map(name => projectModelToolDefinition(getBuiltinToolDefinition(name)!, { kind: 'builtin' }));
     const before = JSON.stringify(tools);
     // Changing canonical teaching requires re-auditing the shorter wording, not silently carrying it forward.
     // History now distinguishes entry evidence versions from strict global snapshots.
-    expect(createHash('sha256').update(JSON.stringify(tools.filter(tool => tool.name !== 'ask_user_question').map(contract))).digest('hex')).toMatchInlineSnapshot(`"3cf5dd42cc1a1a02bfc091f3f4cb9867dd09d2dc1951a279b52d9f82b498ee7b"`);
+    // ask_user_question has its own managed text; its canonical contract is audited in ../prompts/expected/tools.canonical.md.
+    await expect(tools.filter(tool => tool.name !== 'ask_user_question').map(tool => `## ${tool.name}\n\n${tool.description}\n\n\`\`\`json\n${JSON.stringify(tool.input_schema, null, 2)}\n\`\`\``)
+      .join('\n\n') + '\n').toMatchFileSnapshot('../prompts/expected/tools.managed-text.md');
     const agent = markRegistryManagedAgent({ name: 'worker', instructions: '', tools }, { backups: new Map() });
     markOrdinaryRootToolContract(agent);
     const projected = projectManagedToolContracts(agent, tools);
@@ -131,11 +132,6 @@ describe('ordinary managed root tool presentation', () => {
     // The business parameter called description is retained, unlike schema annotations.
     expect(projected.find(tool => tool.name === 'todo_create')!.input_schema.properties).toHaveProperty('description');
     expect(JSON.stringify(projected.find(tool => tool.name === 'todo_create')!.input_schema)).toContain('Supply for each milestone');
-  });
-
-  it('requires re-audit when the canonical question contract evolves', () => {
-    expect(createHash('sha256').update(JSON.stringify(contract(getBuiltinToolDefinition('ask_user_question')!))).digest('hex'))
-      .toBe('0b712ab5ff41445ed079e6b50fcc5a38acf77b45f9aaceef1b6cd38442f74672');
   });
 
   it('does not inherit eligibility through SDK construction or Script wrappers', () => {

@@ -9,16 +9,14 @@
  * prompt and it shipped to v0.7.35 users; any drift is a behavior
  * regression, not a refactor.
  *
- * The expected SHA-256 digests below were computed from the verbatim
- * v0.7.35 SUMMARY_PROMPT and UPDATE_SUMMARY_PROMPT constants (commit
- * 3788c51 chore: release v0.7.35, file
+ * The snapshot files below hold the verbatim v0.7.35 SUMMARY_PROMPT and
+ * UPDATE_SUMMARY_PROMPT (commit 3788c51 chore: release v0.7.35, file
  * `packages/agent/src/compaction/summary-generator.ts`). If a future
- * change intends to evolve the coding-side prompt, the expected digests
- * must be updated together with a new prompt eval pass that justifies
- * the recall change.
+ * change intends to evolve the coding-side prompt, the snapshots must be
+ * updated together with a new prompt eval pass that justifies the recall
+ * change.
  */
 
-import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -32,23 +30,13 @@ import {
   CODING_UPDATE_SUMMARY_PROMPT,
 } from './coding-compaction-prompts.js';
 
-const sha256 = (input: string): string =>
-  createHash('sha256').update(input).digest('hex');
-
-const V0735_SUMMARY_PROMPT_SHA =
-  '470cb93061fde0f8a82c6585387de909492d8282bb33c344c104b2e0573f8ee6';
-const V0735_UPDATE_SUMMARY_PROMPT_SHA =
-  '86fadb97d0a7616aa3d9b1b0e4d03846ae87afc11838aad5dbb04e8e3323280c';
-
 describe('CODING_SUMMARY_PROMPT byte-equivalence', () => {
-  it('SHA-256 matches the v0.7.35 SUMMARY_PROMPT digest', () => {
-    expect(sha256(CODING_SUMMARY_PROMPT)).toBe(V0735_SUMMARY_PROMPT_SHA);
+  it('matches the v0.7.35 SUMMARY_PROMPT', async () => {
+    await expect(CODING_SUMMARY_PROMPT).toMatchFileSnapshot('../prompts/expected/compaction.summary.md');
   });
 
-  it('SHA-256 matches the v0.7.35 UPDATE_SUMMARY_PROMPT digest', () => {
-    expect(sha256(CODING_UPDATE_SUMMARY_PROMPT)).toBe(
-      V0735_UPDATE_SUMMARY_PROMPT_SHA,
-    );
+  it('matches the v0.7.35 UPDATE_SUMMARY_PROMPT', async () => {
+    await expect(CODING_UPDATE_SUMMARY_PROMPT).toMatchFileSnapshot('../prompts/expected/compaction.update-summary.md');
   });
 
   it('contains the coding-specific phrases (sanity)', () => {

@@ -260,11 +260,15 @@ it('retains Memory and manual rules whenever their own complete operation contra
   } finally { await controller.shutdown('Offline operation coverage finished'); }
 });
 
-it('requires a fresh rule-retention audit when canonical Worker, Memory or manual rules change', () => {
+it('requires a fresh rule-retention audit when canonical Worker, Memory or manual rules change', async () => {
+  // The snapshot files show what changed. The two digests stay because tests/restructured-contract.ts
+  // admits these exact blocks by the same digest; a change needs a re-audit there too.
+  await expect(buildMemoryRulesSection('.') + '\n').toMatchFileSnapshot('./expected/memory-rules.md');
+  await expect(SELF_KNOWLEDGE_ROUTING_RULE + '\n').toMatchFileSnapshot('./expected/kodax-manual-routing.md');
   expect(createHash('sha256').update(buildMemoryRulesSection('.')).digest('hex')).toMatchInlineSnapshot(`"01871d37b8549217ed5c952d4397955e6cbc9cdba220e0eef892e019fdacd695"`);
   expect(createHash('sha256').update(SELF_KNOWLEDGE_ROUTING_RULE).digest('hex')).toMatchInlineSnapshot(`"04524b9249e1671e767df654adf4aaa4c43afd569a1b8d3420866d0f817594c5"`);
   // Audit checkpoint, never used to enable runtime projection or accept custom prompts.
-  expect(createHash('sha256').update(buildWorkerStableInstructions()).digest('hex')).toMatchInlineSnapshot(`"f5460d034cddc592517e0accf46b399dc3980b21ef24534b0d7103170413b23b"`);
+  await expect(buildWorkerStableInstructions() + '\n').toMatchFileSnapshot('./expected/worker.stable.all.md');
 });
 
 it('gives operation teaching one owner while retaining dispatch decisions', async () => {
