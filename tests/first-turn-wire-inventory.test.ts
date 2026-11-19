@@ -109,6 +109,7 @@ it('inventories first serialized requests for isolated content and real Runtime 
     'packages/coding/src/tools/managed-tool-text.ts',
     'packages/coding/src/prompts/managed-system-contract.ts',
     'packages/coding/src/prompts/compact-worker-contract.ts',
+    'packages/coding/src/prompts/static-text.json',
     'packages/agent/src/capabilities/skills/skill-registry.ts',
     'packages/coding/src/agent-runtime/middleware/auto-resume.ts',
     'packages/coding/src/media/visual-owner.ts',
@@ -137,7 +138,9 @@ it('inventories first serialized requests for isolated content and real Runtime 
     sourceHashes: Record<string, string>;
     rows: Array<{ cell: string; fixturePaths: { workspace: string }; wire: ReturnType<typeof metric> }>;
   } : undefined;
-  if (previous) expect(sourceHashes).toEqual(previous.sourceHashes);
+  // Same-source runs prove determinism. A refactor changes these sources by
+  // design, so KODAX_WIRE_COMPARE_REFACTOR=1 compares only the request bodies.
+  if (previous && process.env.KODAX_WIRE_COMPARE_REFACTOR !== '1') expect(sourceHashes).toEqual(previous.sourceHashes);
   vi.stubEnv('KODAX_WIRE_FIXTURE_KEY', 'synthetic-key');
   try {
     for (const protocol of ['openai', 'anthropic'] as const) {
