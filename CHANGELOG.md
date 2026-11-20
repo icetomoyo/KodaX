@@ -25,6 +25,11 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- A2A tasks no longer use the Host owner's memory. Their Runs get no memory
+  hints, cannot record memory, and queue no learning review, so a remote
+  caller can neither read the owner's memory nor plant claims in it. SDK Runs
+  can opt out the same way with `context.hostMemory: 'off'` (Issue 423).
+
 - When a Host trusts a project's `.kodax/exec-policy.jsonc` and the workspace
   path goes through a directory alias (a junction or symlink, or macOS
   `/var`), text tools can no longer rewrite that policy. A trusted root now

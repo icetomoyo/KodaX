@@ -22267,6 +22267,8 @@ function buildEffectiveRuntimeOptions(
     ...(combinedArtifacts.length > 0
       ? { inputArtifacts: combinedArtifacts }
       : {}),
+    // A remote principal drives an A2A Session; its Runs never use the owner's memory (Issue 423).
+    ...(session.runtimeInfo?.surface === "a2a" ? { hostMemory: "off" as const } : {}),
   };
   const provider = options.provider ?? settings.provider;
   const model = options.model ?? settings.model;

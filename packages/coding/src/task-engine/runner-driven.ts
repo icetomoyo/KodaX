@@ -80,6 +80,7 @@ import {
   runOwnedMemoryWork,
 } from '../memory-runtime.js';
 import { installProductionLearningReviewer } from '../learning-reviewer.js';
+import { usesHostMemory } from '../host-memory.js';
 import {
   buildToolMemoryObservations,
   codingMemorySourcePolicy,
@@ -716,8 +717,7 @@ async function startRunnerMemoryRuntime(
   sessionId: string,
   episodeId: string,
 ): Promise<StartedRunnerMemoryRuntime> {
-  if (options.context?.currentAgentId !== undefined
-    || options.context?.parentAgentId !== undefined) {
+  if (!usesHostMemory(options)) {
     return { options: withoutMemoryIntentTool(options) };
   }
   const identity = options.context?.memoryIdentity
@@ -1091,7 +1091,7 @@ async function runManagedTaskViaRunnerInContext(
     },
     events: liveEvents,
   };
-  if (currentAgentId === undefined && parentAgentId === undefined) {
+  if (usesHostMemory(optionsWithLiveEvents)) {
     const memoryIdentity = optionsWithLiveEvents.context?.memoryIdentity
       ?? deriveCodingMemoryIdentity(optionsWithLiveEvents, resolveExecutionCwd(optionsWithLiveEvents.context), initialSessionId);
     await runOwnedMemoryWork(optionsWithLiveEvents, async () => {

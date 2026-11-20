@@ -41,6 +41,7 @@ import {
 
 import { emitResilienceDebug } from './agent-runtime/resilience-debug.js';
 import { runInSessionScope } from './run-scoped-config.js';
+import { usesHostMemory } from './host-memory.js';
 import { resolveExecutionCwd } from './runtime-paths.js';
 import type { KodaXOptions } from './types.js';
 import {
@@ -49,7 +50,7 @@ import {
 } from './learning-reviewer.js';
 
 export async function maybeRunMemoryMaintenanceWindow(options: KodaXOptions): Promise<void> {
-  if (isInternalAgentRun(options)) return;
+  if (!usesHostMemory(options)) return;
 
   const cwd = resolveExecutionCwd(options.context);
   try {
@@ -311,7 +312,7 @@ export function drainCodingMemoryReviewInbox(
   drainDeadlineAtMs?: number,
   preferredJobId?: string,
 ): Promise<EpisodeReviewDrainResult | undefined> {
-  if (isInternalAgentRun(options)
+  if (!usesHostMemory(options)
     || (options.memoryReviewer === undefined && options.learningReviewer === undefined)
     || options.session?.storage === undefined) return Promise.resolve(undefined);
   const drain = runOwnedMemoryWork(options, (abortSignal) => drainStartedCodingMemoryReviewInbox(
@@ -958,7 +959,3 @@ async function reviewEpisodeWithTimeout(
   }
 }
 
-function isInternalAgentRun(options: KodaXOptions): boolean {
-  return options.context?.currentAgentId !== undefined
-    || options.context?.parentAgentId !== undefined;
-}

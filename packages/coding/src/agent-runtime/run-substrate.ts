@@ -187,6 +187,7 @@ import {
   runOwnedMemoryWork,
 } from '../memory-runtime.js';
 import { prepareCodingLearnedSkillBinding } from '../learned-skill-runtime.js';
+import { usesHostMemory } from '../host-memory.js';
 import { bindModelSkillSelection } from '../skill-invocation-policy.js';
 import {
   installProductionLearningReviewer,
@@ -777,8 +778,7 @@ async function runSubstrateInContext(
   await runOwnedMemoryWork(options, async () => {
     learnedSkillBinding = await prepareCodingLearnedSkillBinding(options, memoryIdentity, sessionId);
     try {
-      if (options.context?.currentAgentId === undefined
-        && options.context?.parentAgentId === undefined) {
+      if (usesHostMemory(options)) {
         memoryController = createMemoryControlPlane({
           cwd: resolveExecutionCwd(options.context),
           identity: memoryIdentity,

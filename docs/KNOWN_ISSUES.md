@@ -47,6 +47,66 @@ not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
 
+## Issue 423: A2A callers read and write the Host owner's memory
+
+- Priority: High
+- Status: Resolved
+- Introduced: `v0.7.69` (A2A serving), widened when memory hints, recall and
+  background learning review became default-on
+- Created / Resolved: 2026-11-20 / 2026-11-20
+- Fixed: unreleased (after `v0.7.97-beta.11`)
+
+### Original Problem
+
+A Run started by an A2A task gets the same memory identity as the Host
+owner's own Runs. The identity comes from `deriveCodingMemoryIdentity`
+(config home, workspace, agent id). It has no principal, and the A2A
+`agentContext.actorId` does not reach it. So a top-level A2A Run:
+
+- receives memory hints built from the owner's memory in its prompt;
+- can call `memory_recall` over the owner's governed claims;
+- can record `memory_intent`;
+- queues a background learning review that writes outcomes into the owner's
+  memory and learned skills.
+
+Only Runs with `currentAgentId` or `parentAgentId` (child Agents) skip this.
+Both execution engines (`runner-driven.ts` and `run-substrate.ts`) use that
+check alone.
+
+Impact: a remote principal can see what the owner's memory says about the
+project. It can also plant claims that later steer the owner's own Runs.
+Principals also share one memory, so they can read each other's traces.
+
+Evidence: `src/a2a/server.ts` starts Runs through `runs.start` or a prepared
+Agent binding, in a Session created with `surface: 'a2a'`. The A2A
+context-session test flaked because the learning review of one task called the
+provider while the next task ran.
+
+### Resolution
+
+A2A Runs do not use Host memory. Per-principal memory is not needed now.
+
+- `context.hostMemory: 'off'` (coding) means a Run neither reads nor writes
+  Host memory. `usesHostMemory` (`packages/coding/src/host-memory.ts`) replaces
+  the child-Agent check wherever memory is set up. That covers memory hints,
+  the recall binding, `memory_intent`, the learned-skill binding, maintenance
+  and the learning review inbox, in both engines.
+- The Runtime sets it for every Run in a Session whose surface is `a2a`, after
+  the caller's context, so a caller cannot clear it.
+- As for child Agents, `memory_recall` stays listed but has no binding, so it
+  only answers that no claim applies. The tool list of other Runs is unchanged.
+- Learned skills that an operator binds explicitly for A2A serving are
+  unchanged.
+
+Files: `packages/coding/src/host-memory.ts`, `memory-runtime.ts`,
+`learned-skill-runtime.ts`, `task-engine/runner-driven.ts`,
+`agent-runtime/run-substrate.ts`, `types.ts`, `src/sdk-runtime.ts`.
+
+Tests: `src/sdk-runtime.a2a-memory.test.ts` (an ordinary Session keeps
+`memory_intent` and queues a review; an A2A Session does neither),
+`runner-driven.child-memory.test.ts` (`hostMemory: 'off'`), and
+`src/a2a/context-session.test.ts` no longer filters review calls.
+
 ## Issue 422: A directory alias lets text tools rewrite the trusted project Exec Policy
 
 - Priority: Medium
@@ -3588,6 +3648,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 423 | High | Resolved | A2A callers read and write the Host owner's memory | `v0.7.69` | unreleased (after `v0.7.97-beta.11`) | 2026-11-20 | 2026-11-20 |
 | 422 | Medium | Resolved | A directory alias lets text tools rewrite the trusted project Exec Policy | `v0.7.96-alpha.5` | unreleased (after `v0.7.97-beta.11`) | 2026-11-20 | 2026-11-20 |
 | 421 | High | Resolved | A Stop can wait five minutes and end as a network failure | v0.7.97-alpha.12 | unreleased (after `v0.7.97-beta.11`) | 2026-11-20 | 2026-11-20 |
 | 420 | High | ready | A repository can pre-approve shell commands through its project config | `v0.4.6` | - | 2026-11-19 | - |
@@ -19353,12 +19414,16 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 299 (47 Open including 1 needs-info, 251 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 300 (47 Open including 1 needs-info, 252 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 1 (420)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-20: Issue 423
+
+- A2A Runs no longer read or write the Host owner's memory. Unreleased.
 
 ### 2026-11-20: Issue 422
 
