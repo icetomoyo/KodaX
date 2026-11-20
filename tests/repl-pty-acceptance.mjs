@@ -457,8 +457,8 @@ async function displayedSessionId(state, previousId) {
   if (state.mode === 'classic') await state.terminal.submit('/status');
   return waitFor('displayed Session identity', () => {
     const id = state.mode === 'ink'
-      ? [...state.terminal.rawText().matchAll(/\bsession\s+(\d{8}_\d{6}_[a-z0-9]+)/gi)].at(-1)?.[1]
-      : [...state.terminal.screen().matchAll(/Session ID:\s+([a-z0-9_]+)/gi)].at(-1)?.[1];
+      ? [...state.terminal.rawText().matchAll(/\bsession\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d{8}_\d{6}_[a-z0-9]+)/gi)].at(-1)?.[1]
+      : [...state.terminal.screen().matchAll(/Session ID:\s+([a-z0-9_-]+)/gi)].at(-1)?.[1];
     return id && id !== previousId ? id : undefined;
   });
 }
