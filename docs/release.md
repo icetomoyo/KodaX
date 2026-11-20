@@ -122,11 +122,20 @@ while `extensions/helpers.test.ts` kept timing out at 30 s on the
 same runner. Its stubbed `LOCALAPPDATA` deliberately cold-starts
 PowerShell's module analysis (~22 s per Issue 386), so runner image
 drift had outgrown the default budget: the test now allows 120 s for
-the command and 150 s for the test. The universal npm tarball asset
-is `kodax-ai-kodax-0.7.97-beta.12.tgz` with its `SHA256SUMS`
-checksum. Cross-platform manual acceptance, installed Space/SDK
-acceptance, the Space dependency bump and npm publication remain
-separate maintainer steps.
+the command and 150 s for the test. The first publishing dispatch
+(44784142654) then failed the offline work-mode archive gate on all
+three POSIX builds: the coding-mode root no longer carries
+`relationship_scan`, which is the documented beta.12 behavior — with
+`repoIntelligenceMode: 'off'` the AMA Worker now offers no
+repository-intelligence tools, and that gate fixture runs every mode
+under 'off'. Reproduced locally against a locally built win-x64
+archive (bun 1.4.4, as pinned) after updating the assertion to expect
+the absence; the gate then passed in full (25 s). The dispatch was
+cancelled and re-dispatched from the fix commit. The universal npm
+tarball asset is `kodax-ai-kodax-0.7.97-beta.12.tgz` with its
+`SHA256SUMS` checksum. Cross-platform manual acceptance, installed
+Space/SDK acceptance, the Space dependency bump and npm publication
+remain separate maintainer steps.
 
 ## v0.7.97-beta.11 release preparation
 
