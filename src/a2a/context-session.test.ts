@@ -5,8 +5,9 @@ import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import {
   KodaXBaseProvider, clearRuntimeModelProviders, registerModelProvider,
-  type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult,
+  type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult, type KodaXToolDefinition,
 } from '@kodax-ai/llm';
+import { LEARNING_REVIEW_TOOL } from '@kodax-ai/coding';
 import { createKodaXRuntime } from '../../tests/runtime-fixture.js';
 import { prepareKodaXA2AServer } from './server.js';
 import type { A2AServerOptions, A2ATask } from './types.js';
@@ -20,7 +21,12 @@ class RecordingProvider extends KodaXBaseProvider {
   protected readonly config: KodaXProviderConfig = {
     apiKeyEnv: 'KODAX_A2A_CONTEXT_TEST_KEY', model: 'test', supportsThinking: false,
   };
-  async stream(messages: KodaXMessage[]): Promise<KodaXStreamResult> {
+  async stream(messages: KodaXMessage[], tools: KodaXToolDefinition[]): Promise<KodaXStreamResult> {
+    // A finished Run queues a background learning review on the same provider;
+    // it races the next task, so only conversation turns are recorded.
+    if (tools.some((tool) => tool.name === LEARNING_REVIEW_TOOL.name)) {
+      return { thinkingBlocks: [], stopReason: 'end_turn', toolBlocks: [], textBlocks: [] };
+    }
     seen.push(messages.map((message) => JSON.stringify(message.content)));
     if (seen.length === 1) await firstCallGate;
     return { thinkingBlocks: [], stopReason: 'end_turn', toolBlocks: [],
