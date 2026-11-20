@@ -144,7 +144,9 @@ test('release archive preserves work modes, partial effects, cancellation and re
       assert.ok(names.includes('undo') && names.includes('bash') && names.includes('spawn_agent'));
       assert.equal(names.includes('script_exec'), active.mode === 'script');
       assert.equal(names.includes('read'), active.mode !== 'script');
-      assert.equal(names.includes('relationship_scan'), active.mode === 'coding');
+      // This fixture runs with repoIntelligenceMode 'off', and the AMA Worker
+      // now honors that: no repository-intelligence tool ships in any mode.
+      assert.equal(names.includes('relationship_scan'), false);
       const definitions = (parsed.tools ?? []).map(tool => tool.function ?? tool);
       const shell = definitions.find(tool => tool.name === 'bash');
       assert.ok(shell?.description);
