@@ -234,6 +234,89 @@ as the backstop. Proactive delegation stays on.
 until the prompt store moves to sections. Substrate: 068b89d15 for the d-4
 eval; the fix commits are 4788f47a9, 36fac9eeb, 068b89d15 and d02236f84.
 
+## Stop always ends; an unconfirmed Actor tree fences the Session instead — 2026-11-17 (unreleased)
+
+Status: Accepted. Issues 412 and 413; `actorSettlementConvergence:3`.
+
+**Decision.** A Run's final outcome and the Session's write fence are separate
+facts. When Actor settlement cannot be confirmed, the Run still ends:
+
+- A write whose result is unknown (deadline missed, or the store rejected after
+  starting) is classified by one reader, `settleFailedMutation`. It reads the
+  durable snapshot back and compares revision and owner. `committed` adopts the
+  write, `not_committed` rolls it back, and `unknown` fences.
+- Same-owner repair is bounded by a five-minute budget. When repair fails
+  deterministically (owner conflict, unrepairable snapshot) or runs out of
+  budget, the Run ends `failed` / `actor_settlement_not_persisted` /
+  `effectOutcome: unknown` with Stop `confirmed`. The Session stays fenced, and
+  repair keeps retrying in the background. A successful repair lifts the fence
+  and drains queued Runs.
+- When same-owner repair cannot succeed, Runtime reclaims the tree in-process
+  the way restart recovery does. The registry opens a fresh controller that
+  treats the fenced controller's owner as dead, reloads the durable snapshot
+  and interrupts unfinished turns. The swap happens only after that
+  controller initializes; otherwise the fenced one stays and reclaim retries
+  with backoff. Reclaim waits until every effect admitted before the fence has
+  settled, and a live foreign owner still blocks it. Restart is needed only
+  when a save or a pre-fence effect never settles.
+- That restart must stay possible. A fenced controller commits nothing, so
+  Host preflight does not count its turns as active work. `runtime.close()`
+  closes the rest of the Runtime before rejecting for the fenced tree and keeps
+  the owner liveness endpoint open. A daemon whose only close failure is
+  `actor_shutdown_not_persisted` reports a successful shutdown. Once the
+  process exits, the next Host reclaims the tree as it would for a crash.
+  For the same reason preflight does not count a Run or Workflow that was
+  asked to stop: a tool call that ignores abort can keep its executor from
+  ever returning, and Host exit is what ends it.
+- Workflow-owned Runs are released to the same path when their Promise settles
+  behind the fence; they write no final history and schedule no cleanup.
+- `runs.abort` probes the owner's liveness again for a Run left non-terminal
+  at startup.
+
+**Rejected.** Keeping the Run `unknown` until the store recovers (the v2
+behaviour): a stuck disk or a foreign owner left Stop spinning with no end.
+Letting the fence lapse with the Run: a successor could overlap an Actor tree
+whose children may still have effects in flight. Leaving reclaim to a Host
+restart: a stuck Session needed a restart even when its owner was already
+dead or its store had recovered; the fenced controller can no longer write
+under its owner, and storage saves compare revisions, so a fresh in-process
+controller is as safe as one after restart. Treating every Stop timeout
+as success: a write that did not land would lose the interruption. Counting a
+fenced controller's turns in Host preflight: those turns can never finish, so
+every Host stop, idle exit and client complete exit was refused and the
+restart that recovers them could never happen (quitting Space left the Host
+running).
+
+**Compatibility.** The capability moves to `3` so a client can refuse a Host
+that still leaves such Runs `unknown`. Clients that require `2` keep working;
+they now see `failed` where they saw a lasting `unknown`.
+
+### Same-owner terminal facts win during Stop repair
+
+Repair of an unknown Actor settlement still reloads only a snapshot written
+under this controller's owner, and foreign owners still fail closed. Inside such
+a snapshot, a turn that is already terminal now keeps that durable fact. A
+pending executor settlement intent for the turn no longer has to match it
+exactly. Owner IDs are unique per controller instance, so this controller wrote
+the fact; the in-memory path already applies the first terminal fact the same
+way. An `interrupted` fact is the normal result of Stop racing the executor and
+settles quietly. Any other mismatch keeps the durable fact and reports the lost
+executor result as an `AgentSettlementPersistenceError` background error.
+
+This replaces the v0.7.85 rule (Issue 282 addendum below) that a same-owner
+conflicting terminal fact keeps the controller fenced. Intents are only
+`completed` or `failed`, while Stop writes `interrupted`, so a Stop save that
+committed after its deadline made that conflict certain and every Stop retry
+failed (Issue 412). Keeping the fence was rejected: it trades one unpersisted
+executor result for a Run that cannot end without killing the process. Settlement
+that meets its deadline is unchanged.
+
+A `quiesce` whose mutation is refused before it starts (owner lost, controller
+closing) wrote nothing, so it returns that refusal at once and does not fence.
+In the Runtime, a failed terminal status save after repair leaves the Run
+`unknown` with `run_settlement_not_persisted`, restores its non-terminal fields,
+and never escapes as an unhandled rejection. A later Stop can then finish it.
+
 ## Session default isolation — 2026-11-11 (released in v0.7.97-beta.6)
 
 The Host captures user-level Session defaults once at Session creation, or on

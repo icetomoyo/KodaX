@@ -1197,7 +1197,7 @@ function createLegacyTransport(input: {
         return initializeResult(
           RUNTIME_ID,
           {
-            actorSettlementConvergence: { version: 2 },
+            actorSettlementConvergence: { version: 3 },
             crashOutcomeModel: { version: 2 },
             managedRunDurability: { version: 1 },
             sessionEventJournal: { version: 1 },
@@ -1247,7 +1247,7 @@ function createCurrentTransport(
         productClient: { version: 1 }, productHistoryBoundaries: { version: 1 },
         productExitControl: { version: 1 }, productExecutionFacts: { version: 1 }, productInputRecovery: { version: 1 },
         productHistoryTurnResolution: { version: 2 }, productHistoryLocation: { version: 2 },
-        actorSettlementConvergence: { version: 2 },
+        actorSettlementConvergence: { version: 3 },
         conversationHistory: { version: 2 },
         crashOutcomeModel: { version: 2 },
         daemonClientInventory: { version: 1 },

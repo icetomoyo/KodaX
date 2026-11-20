@@ -66,10 +66,15 @@ Required observations:
    the successor must remain queued until both exact execution leases settle.
    A tool-start event blocked at permission must not hold the route. In every
    case, late callbacks and new effects from the fenced provider stay suppressed.
-5. Repeat without releasing the save. Confirm the Run remains unknown and Stop
-   remains available; no successor Run starts and no completion is fabricated.
-6. Repeat with a genuinely different owner. Confirm the owner conflict remains
-   fail-closed and no automatic takeover occurs.
+5. Repeat without releasing the save. Since `actorSettlementConvergence:3`
+   (Issue 413) the Run stays unknown only for the five-minute repair budget,
+   then ends `failed` / `actor_settlement_not_persisted` with
+   `effectOutcome: unknown`. No successor Run starts and no completion is
+   fabricated; the Session stays fenced until the save is released or the
+   Host restarts.
+6. Repeat with a genuinely different owner. Confirm the Run ends `failed`
+   without waiting for the budget, the Session stays fenced, and no automatic
+   takeover occurs.
 
 ## Pass criteria
 

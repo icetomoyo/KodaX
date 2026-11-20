@@ -172,6 +172,35 @@ commits at canonical replacement while the storage queue continues to serialize
 cache, watermark, topology, hint, and lock maintenance. Same-owner repair uses
 the same phased save contract, and terminal settlement observes an active
 predecessor's canonical phase rather than waiting forever behind a hung rename.
+Repair keeps a terminal turn already in the same-owner snapshot and verifies
+only that it stays terminal; other intents must still match exactly
+(`performUnknownSettlementReconciliation`, Issue 412).
+A failed mutation goes through `settleFailedMutation`, which classifies a
+started write as `committed`, `not_committed`, or `unknown` by reading back
+revision and owner. An owner-takeover reload is bounded by the settlement
+deadline. In the Runtime, `recoverActorDurability` gives the Run its failed
+outcome through `finishUnrepairedActorRun` after a deterministic repair error
+or the `RUNTIME_ACTOR_REPAIR_BUDGET_MS` budget, then keeps retrying until the
+Runtime closes. After a deterministic error each retry is
+`rebuildActorController`: once `activeEffectCount` is zero and the Run is no
+longer Workflow-owned, it calls the Actor registry's `rebuild`. That opens a
+fresh `CodingActorSession` whose `isOwnerAlive` reports the fenced
+controller's owner as dead, and registers it only after `initialize`
+succeeds; the fenced controller is then disposed without a write, only the
+registered controller forwards health, and Runs queued on the old controller
+are rebound to the new one. Workflow-owned Runs are handed over
+by `releaseFencedWorkflow` (Issue 413).
+The registry's `activeTurns` skips a claimed controller whose health is
+`unknown`, so Host preflight does not count fenced turns. `closeRuntime` records
+an Actor registry close failure, closes the remaining components, keeps the
+owner liveness endpoint open, and rethrows. The daemon host's
+`leavesOnlyActorTreesForRecovery` accepts a Runtime close that failed only with
+`actor_shutdown_not_persisted`: it logs a warning, releases the profile lock, and
+the shutdown outcome is `succeeded`.
+Host preflight also skips a Run with a Stop request and a Workflow whose
+snapshot carries `stop`. The agent loop awaits a tool or child agent that
+ignores abort, so such work may never settle; `closeAll` does not await it, and
+restart recovery interrupts the Run.
 Same-owner repair and root abort close effect admission; the logical convergence
 boundary also requires every exact tool execution admitted before the fence to
 settle. The Session route then releases without waiting for the old root executor Promise.

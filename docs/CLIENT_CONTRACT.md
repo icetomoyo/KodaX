@@ -299,7 +299,7 @@ Host 超时或 Stop 结算后才到达的回调异常不能改写结果。未回
 
 接收状态 `submitted` 表示进入对话上下文，不证明 Provider 已接收；`queued` 等待安全交付点；`withdrawn` 已撤回；`dropped` 表示目标 Run 在交付前结束，正文未进入上下文。重新提交被丢弃意图使用新 ID。队列 text 是有界预览，编辑撤回内容应使用 `withdraw` 返回的完整原文。
 
-`runs.stop` 的 `accepted` 仅表示本次创建了持久 Stop 请求；返回的 state/outcome/phase 与 Run 真实终态分别解释。`runs.await` 的 `phase: 'unknown'` 表示终态无法确认，例如终态持久化失败或 Actor 结算不确定；连接可能仍然健康。它绝不是成功或取消，也不保证重新连接可以解决。传输失败通常使在途 Promise reject，应与 unknown 分开处理并保留 error 原因。phase 当前是字符串类型，UI 必须保留未知值的安全显示，不能把不认识的状态当成功。结果中的 error 是错误文本，不能通过是否存在 result 单独推断成功。
+`runs.stop` 的 `accepted` 仅表示本次创建了持久 Stop 请求；返回的 state/outcome/phase 与 Run 真实终态分别解释。`runs.await` 的 `phase: 'unknown'` 表示终态无法确认，例如终态持久化失败；连接可能仍然健康。Host 能力 `actorSettlementConvergence:3` 起，Actor 结算无法确认的 Run 不再停在 unknown，而是以 `failed` + `actor_settlement_not_persisted` + `effectOutcome: 'unknown'` 结束；此后该 Session 保持隔离，`runs.start` 被拒绝，直到 Host 在后台修复或重新接管 Actor 树（无需重启）；只有写盘或隔离前的工具调用永不返回时才需重启 Host；隔离中的 Session 不阻止 Host 停止，preflight 不把它的 Actor turn 计为阻塞项；已请求 Stop 的 Run 或 Workflow 即使执行体不返回也不计为阻塞项，Host 退出后由下一个 Host 标为 `interrupted`。客户端应显示为“已停止，会话恢复中”，不是模型错误，详见 [SDK 迁移指南](SDK_MIGRATION.md#beta11-之后actor-结算收敛-v3未发布)。它绝不是成功或取消，也不保证重新连接可以解决。传输失败通常使在途 Promise reject，应与 unknown 分开处理并保留 error 原因。phase 当前是字符串类型，UI 必须保留未知值的安全显示，不能把不认识的状态当成功。结果中的 error 是错误文本，不能通过是否存在 result 单独推断成功。
 
 delivery 的队列行为如下；空 queue 不能证明所有已知输入已经交付。
 

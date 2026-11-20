@@ -3361,6 +3361,65 @@ unresolved stores fail closed. After repair, Promise terminal facts win over
 fallback callbacks, so a stale callback cannot rewind a terminal Run or emit a
 duplicate outcome. A no-op quiesce does not rewrite the Session.
 
+### Actor settlement convergence v3 (unreleased, after v0.7.97-beta.11)
+
+`KODAX_RUNTIME_SDK_CAPABILITIES.actorSettlementConvergence` is `3`. Under v2,
+a Stop whose Actor settlement stayed unconfirmed left the Run `unknown` while
+Runtime retried, sometimes forever. Under v3, every such Stop reaches a final
+outcome:
+
+- A same-owner save that missed its deadline and committed later is read back
+  and kept. The Run ends `cancelled` or `interrupted` with Stop `confirmed`.
+- If the Actor tree still cannot be confirmed, the Run ends `failed`. This
+  happens when another owner holds the tree, when the snapshot cannot be
+  repaired, or when repair runs past five minutes. The terminal fact is
+  `{ kind: 'failed', code: 'actor_settlement_not_persisted', effectOutcome:
+  'unknown' }`, Stop is `confirmed`, `run.failed` is published, and
+  `runs.await()` resolves.
+- The Session stays fenced after that Run ends. `runs.start` rejects with
+  `actor_settlement_not_persisted`, and Session history mutations reject with
+  `conflict`. Runtime heals the Session in the background without a restart.
+  It retries the repair, or, when the repair cannot succeed, reclaims the Actor
+  tree from disk the way a restart would and marks its unfinished turns
+  `interrupted`. Reclaim waits until every tool call admitted before the fence
+  has returned, and until no other live process owns the tree. Once healed,
+  the fence lifts and queued Runs start.
+- A Host restart is needed only when that wait never ends: a Session save
+  that never returns, or a tool call admitted before the fence that never
+  returns. If `runs.start` still rejects with `actor_settlement_not_persisted`
+  a few minutes after the Run failed, offer the user a Host restart to recover
+  the Session. While another live process owns the tree, restart does not help;
+  `runs.start` then rejects with `actor_owner_conflict` until that process
+  exits.
+- A fenced Session never blocks the Host from stopping. Its Actor turns cannot
+  commit, so `status.preflight()` leaves them out of `activeAgentTurns` and
+  `blockers`, and Host stop, idle exit and a client's complete exit go through.
+  `runtime.close()` still rejects with `AgentShutdownPersistenceError`
+  (`actor_shutdown_not_persisted`) for the fenced tree after closing the rest
+  of the Runtime. The daemon treats that as a successful shutdown, and the
+  next Host reclaims the tree once the old process has exited.
+- `runs.abort()` on a Run whose owner could not be probed at startup probes it
+  again. A dead owner's Run is interrupted. A live owner gives `conflict`. An
+  owner that is still unconfirmed gives `conflict` with `retryable: true`.
+- Workflow-owned Runs follow the same rules.
+
+Render `failed` + `actor_settlement_not_persisted` as "stopped; this Session
+is recovering", not as a model error, and keep resend disabled until
+`runs.start` is accepted again. `effectOutcome: 'unknown'` means side effects
+admitted before the fence may or may not have happened. Once the host renders
+this state, require the capability so an idle v2 daemon is replaced and an
+unreplaceable one fails the connection:
+
+```ts
+const runtime = await connectKodaXRuntime({
+  // ...
+  requirements: { actorSettlementConvergence: 3 },
+});
+```
+
+Hosts that still require `2` keep working against a v3 Runtime; they see the
+new terminal outcome where they previously saw a lasting `unknown`.
+
 ### v0.7.85 Runtime and Memory release boundaries
 
 The v0.7.85 SDK originally added Session-scoped durable Runtime Event Journals;
@@ -6164,7 +6223,9 @@ Runtime construction.
 active and queued runs, running/paused Workflows, every non-terminal External
 Agent task (including `unknown`), pending AskUser/permission records, blockers,
 and `canStop`. The background-work blockers are `active_workflows` and
-`active_agent_tasks`. The current facade counts as one; daemon self-connections
+`active_agent_tasks`. A Run or Workflow that was already asked to stop is not
+listed and does not block, even while its executor has not returned: Host exit
+ends it, and the next Host marks the Run `interrupted`. The current facade counts as one; daemon self-connections
 and bounded health probes do not count. A second process changes the count to
 two, and its awaited `close()` makes the count converge back to one.
 

@@ -103,6 +103,48 @@ profile: await services.createExecutionProfile({
 - 已持久化的 Run 记录里的 `'sa'` 原样可读。CLI `--agent-mode sa` 与 REPL `/agent-mode sa`
   的迁移报错不变。
 
+## beta.11 之后：Actor 结算收敛 v3（未发布）
+
+Host 能力 `actorSettlementConvergence` 从 `2` 升到 `3`。Stop 遇到 Actor 结算无法确认时，
+Run 一定会得到终态，不再停在 `unknown` 等待无限重试（GitHub #2：界面停在“正在修复并停止”）。
+
+- 写盘超时但随后落盘的同 owner Stop 会被读回并采纳：Run 照常以 `cancelled` /
+  `interrupted` 结束，Stop 为 `confirmed`。
+- 仍无法确认 Actor 树时，Run 以 `failed` 结束。适用情形：其他 owner 占用、快照无法修复、
+  修复超过 5 分钟。终态为 `code: 'actor_settlement_not_persisted'`、
+  `effectOutcome: 'unknown'`，Stop 为 `confirmed`；会发布 `run.failed`，`runs.await()` 会返回。
+- 该 Run 结束后 Session 继续隔离（fenced）：`runs.start` 以 `actor_settlement_not_persisted`
+  拒绝，修改 Session 历史以 `conflict` 拒绝。Host 在后台自愈，无需重启：先重试修复；修复不可能成功时，
+  像重启那样从磁盘重新接管 Actor 树，并把未完成的 turn 标为 `interrupted`。接管会等隔离前放行的工具调用
+  全部返回，且没有其他存活进程占用该 Actor 树。自愈后解除隔离，并启动排队的 Run。
+- 只有当 Session 写盘或隔离前放行的工具调用永远不返回时，才需要重启 Host。若另一个存活进程占用该 Actor 树，
+  `runs.start` 以 `actor_owner_conflict` 拒绝；那个进程退出后会自动恢复，重启没有帮助。
+- 隔离中的 Session 不再阻止 Host 停止：它的 Actor turn 已不可能提交，`status.preflight()` 不再把它们列入
+  `activeAgentTurns` 和 `blockers`。Host 停止、`kodax daemon restart`、空闲退出和客户端完整退出（如退出 Space）
+  都能完成。此前这种 Host 拒绝一切停止，退出 Space 后它仍在运行，重启无从进行。
+- 已请求停止的 Run 或 Workflow 不再阻止 Host 停止，即使它的执行体永远不返回（例如工具调用或子 Agent 忽略
+  abort）。`status.preflight()` 不再把它列入 `activeRuns`、`activeWorkflows` 和 `blockers`。Host 退出时这部分
+  工作随之结束，下一个 Host 把该 Run 标为 `interrupted`。此前该 Run 一直是 `unknown`，Host 的一切停止（包括
+  Space 的强制关闭）都被拒绝。
+- 对隔离中的 Actor 树，`runtime.close()` 仍以 `AgentShutdownPersistenceError`
+  （`code: 'actor_shutdown_not_persisted'`）拒绝，但会先关闭 Runtime 的其余部分。只剩这类失败时，daemon
+  记一条警告并报告关闭成功；旧进程退出后，下一个 Host 会接管该 Actor 树。
+- 启动时无法确认 owner 的 Run，`runs.abort()` 会重新探测：owner 已死则中断该 Run；owner 存活返回
+  `conflict`；仍无法确认返回 `conflict` + `retryable: true`，客户端可重试 Stop。
+- Workflow 类型的 Run 同样适用。
+
+客户端（含 Space）需要：
+
+1. 把 `failed` + `actor_settlement_not_persisted` 显示为“已停止，此会话正在恢复”，不要当作模型错误。
+2. 在该 Session 上暂不提供立即重发；`runs.start` 恢复接受或排队的 Run 开始后再开放输入。
+   若 Run 失败几分钟后 `runs.start` 仍以 `actor_settlement_not_persisted` 拒绝，提示用户重启 Host 来恢复该会话。
+3. `effectOutcome: 'unknown'` 表示隔离前已放行的副作用可能已经发生。
+4. 完成上述显示后，在 `connectKodaXRuntime` / 自动启动中加入
+   `requirements: { actorSettlementConvergence: 3 }`：空闲的 v2 daemon 会被替换，
+   无法替换时连接失败，而不是让 Run 停在 `unknown`。
+
+仍要求 `2` 的旧客户端连接 v3 Host 不受影响，只是原先长期 `unknown` 的场景会收到上述 `failed` 终态。
+
 ## beta.10 之后：Skill `allowed-tools` 不再生效（未发布）
 
 Skill 或命令 frontmatter 里的 `allowed-tools` 现在被忽略（与 Codex 一致）：

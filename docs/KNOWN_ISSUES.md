@@ -225,6 +225,185 @@ production request bytes, preregistered metrics and blind review:
 - Over-spawn in busy, full and rejected trees was 0/36 with the new capacity
   text, against 18/36 for a Codex-style control.
 
+## Issue 414: Remaining Stop-chain limits after the v3 settlement fence
+
+- Priority: Low
+- Status: Open
+- Found: verification of the Issue 413 fix, 2026-11-17
+- Introduced: `v0.7.84` (Actor settlement fence); narrowed by Issue 413
+
+Issue 413 gave every unconfirmed Stop a final outcome. These limits remain.
+None has a field report.
+
+- A canonical save that never settles keeps a workflow-owned Run `unknown`
+  until restart, because the Workflow Promise never returns to release it.
+  The restart works: once Stop is requested, the Run does not block Host stop.
+- The agent loop awaits a tool call or child agent that ignores abort, so
+  Stop on such a Run stays unconfirmed until it returns. Host stop is not
+  blocked; Host exit ends the work and restart marks the Run `interrupted`.
+- On the fenced path a Workflow Run writes no final history and keeps its run
+  directory. Restart recovery owns that cleanup.
+- A foreign owner that stays alive keeps the Session fenced
+  (`actor_owner_conflict`). The Session heals once that process exits.
+- In-process reclaim waits for every tool call admitted before the fence. A
+  tool call that never returns keeps the Session fenced until restart. The
+  restart itself works: a fenced Session does not block Host stop, and quitting
+  Space stops the Host.
+- Session archive and delete stay blocked while the fence holds. They do not
+  probe the owner again.
+- `runtime.close()` stops repair but does not await an Actor write already in
+  flight; restart recovery reads whatever landed.
+
+## Issue 413: Stop-chain paths that still wait for a restart or retry without end
+
+- Priority: Medium
+- Status: Resolved (fixed after `v0.7.97-beta.11`, unreleased)
+- Found: code review during Issue 412, 2026-11-17
+- Introduced: `v0.7.84`–`v0.7.85` (late-settlement reconcile and its Runtime recovery loop)
+- Fixed: unreleased (after `v0.7.97-beta.11`), `actorSettlementConvergence:3`
+- Resolution Date: 2026-11-17
+
+Original problem. A review of the Stop and failure paths after Issue 412 found
+these gaps:
+
+- On `AgentSettlementPersistenceError` or `AgentOwnerConflictError`,
+  `recoverActorDurability` stopped retrying. The Run stayed `unknown` and its
+  Session stayed blocked until another Stop or a restart.
+- For any other error the loop retried until the Runtime closed, with no final
+  outcome.
+- `store.load()` during reconcile and owner takeover had no deadline.
+- At startup a Run whose owner liveness was `unknown` stayed non-terminal, and
+  `runs.abort` refused it as owned by another Runtime.
+- Ordinary mutations treated a rejected save still in `commit_inflight` as a
+  definite failure and rolled back. If that save had landed, the next save was
+  read as an owner takeover.
+- A failed `shutdown()` cached its error after a later reconcile healed the
+  controller.
+
+Verification found three more defects:
+
+- Repair kept writing to Session storage after `runtime.close()` returned.
+- Runs queued behind a healed fence stayed queued.
+- Workflow-owned Runs were excluded from the final outcome. The comment called
+  this deliberate, but the Workflow Promise never released the Run, so it
+  stayed `unknown` and Stop spun. Treated as a defect.
+
+**Resolution.**
+
+- `settleFailedMutation` (`packages/agent/src/actors/controller.ts`) is the only
+  classifier of a failed mutation. It reads the durable snapshot back by
+  revision and owner and returns `committed`, `not_committed`, or `unknown`.
+  A same-owner write that landed is adopted. The owner-takeover reload is
+  bounded by the 5-second settlement deadline.
+- Runtime repair (`src/sdk-runtime.ts`) has a 5-minute budget. A deterministic
+  repair error or an exhausted budget ends the Run `failed` /
+  `actor_settlement_not_persisted` / `effectOutcome: unknown` with Stop
+  `confirmed`. The Session stays fenced while repair continues in the
+  background. A successful repair releases queued Runs. `close()` stops the
+  loop.
+- When same-owner repair cannot succeed, the Runtime reclaims the Actor tree
+  in-process instead of waiting for a restart. The registry's `rebuild` opens
+  a fresh controller that treats the fenced controller's owner as dead and
+  interrupts unfinished turns. It swaps the controllers only after that
+  initialization succeeds. Reclaim waits for pre-fence tool calls to settle,
+  and a live foreign owner still blocks it.
+- `runs.abort` probes the owner again for a Run left non-terminal at startup.
+- Workflow-owned Runs are released to the same path once their Promise settles
+  behind the fence.
+- The capability `actorSettlementConvergence` moved to `3`. See the CHANGELOG
+  and `docs/SDK_MIGRATION.md` for embedder guidance.
+
+**Files Changed:** `packages/agent/src/actors/controller.ts`,
+`src/sdk-runtime.ts`, `src/runtime-daemon/server.ts`,
+`packages/coding/src/runtime-capabilities.ts`, `package.json`.
+
+**Tests Added:** `packages/agent/src/actors/controller.ambiguous-write.test.ts`,
+`src/sdk-runtime.actor-stop-late-commit.test.ts` (including the in-process
+reclaim and queued-continuation cases),
+`src/sdk-runtime.actor-stop-late-commit-workflow.test.ts`, the "Stop on a Run
+whose owner was unconfirmed at startup" block, "lets a client require Actor
+settlement convergence v3", "never takes over a live foreign Actor owner
+while repair retries in the background" and the two "lets the Host stop while
+a stopped … never returns" cases in `src/sdk-runtime.test.ts`.
+
+**Verification:** each new test failed before its fix. Remaining limits are in
+Issue 414.
+
+## Issue 412: Stop never finishes after a sibling interruption save commits late
+
+- Priority: High
+- Status: Resolved (fixed after `v0.7.97-beta.11`, unreleased)
+- Observed: Space 0.1.47-beta.1 / SDK 0.7.97-beta.11, GitHub issue
+  icetomoyo/KodaX#2, 2026-11-15
+- Introduced: `v0.7.84` (same-owner late-settlement reconcile); the strict
+  conflict fence was asserted in `v0.7.85`
+- Fixed: unreleased (after `v0.7.97-beta.11`)
+- Resolution Date: 2026-11-17
+
+A Run had two parallel child Actors, `/root/gen-S1-A` and `/root/gen-S1-B`. The
+user pressed Stop while the disk was busy. The Stop wrote both turns as
+`interrupted` in one save. That save missed its 5-second deadline
+(`AgentSettlementAttemptTimeoutError`) and committed about 2 seconds later.
+Every later Stop failed with "The durable Actor snapshot contains a conflicting
+terminal fact". The UI stayed on "正在修复并停止", and after the daemon was
+killed the Run was left `phase: unknown` / `stop_outcome_unconfirmed`.
+
+Root cause, reproduced by test: Stop's `quiesce` marks every live turn
+`interrupted` and aborts their executors. Each aborted executor then records a
+`failed` settlement intent. The timed-out save fenced the controller. Reconcile
+loaded the late snapshot, found `interrupted` where the intent said `failed`, and
+treated it as a conflict. Intents are only ever `completed` or `failed`, so the
+mismatch was deterministic and every retry failed the same way.
+
+Reconcile now lets the durable terminal fact win when the snapshot is ours. That
+matches `applySettlementIntent()` in memory. Owner IDs are unique per controller
+instance, so a terminal fact under our owner was written by this controller. An
+`interrupted` fact is the expected Stop race and settles quietly. Any other
+mismatch keeps the durable fact and reports the unpersisted executor result
+through `onBackgroundError`, so Stop still completes. Foreign owners stay
+fail-closed. Settlement without a timeout is unchanged.
+
+The review of the Stop chain found three more defects on the same path, fixed
+here:
+
+- Two Runtime callbacks that finish a repaired Run (`recoverActorDurability`'s
+  completion and `abortRun`'s cancellation) had no error handling. A terminal
+  status save that failed twice became an unhandled rejection, which ends the
+  daemon process. They now record `run_settlement_not_persisted` like the shell
+  cleanup path.
+- `markRunTerminal` left the in-memory Run looking terminal (`interrupted`,
+  Stop `confirmed`) after its status save failed, while the file still said
+  `unknown`. Close and Stop retries then skipped the Run. It now restores the
+  fields it changed, so a later Stop can finish the Run.
+- `quiesce` waited the 30-second queue deadline when its mutation was refused
+  before it started (owner lost, controller closing). It then reported
+  `actor_settlement_not_persisted` and fenced the controller, which also blocked
+  a shutdown retry. That refusal is now returned at once without a fence.
+
+Remaining gaps on this path are tracked in Issue 413.
+
+**Files Changed:** `packages/agent/src/actors/controller.ts`,
+`src/sdk-runtime.ts`.
+
+**Tests Added:**
+- `packages/agent/src/actors/controller.test.ts`: `settles a Stop whose
+  timed-out sibling interruption commits late`, `adopts a conflicting
+  same-owner terminal fact instead of fencing every retry` (replaces `keeps a
+  conflicting same-owner terminal fact fenced`), and `rejects a Stop that cannot
+  start its mutation without waiting or fencing`.
+- `src/sdk-runtime.actor-stop-late-commit.test.ts`: a Runtime Run with two
+  child Actors whose Stop save commits after its deadline reaches
+  `interrupted` with Stop `confirmed` without a second Stop. When the
+  terminal status save then fails, the daemon stays up, the Run reports
+  `run_settlement_not_persisted`, and a later Stop finishes it.
+
+**Verification:** each new test failed on the old code. The Run-level test
+reproduced the customer's `status.json` (`unknown`,
+`actor_settlement_not_persisted`). It is not yet confirmed why the customer's
+Run was still `unknown` after the daemon was killed. A likely path is a startup
+owner probe that answered `unknown`, which left the Run non-terminal; Issue 413
+makes Stop probe that owner again.
+
 ## Issue 410: A client exit stop with a connected peer drains the Host and answers late
 
 - Priority: Medium
@@ -3239,6 +3418,9 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 | 420 | High | ready | A repository can pre-approve shell commands through its project config | `v0.4.6` | - | 2026-11-19 | - |
 | 419 | High | Resolved | Opening a repository runs its constructed tool code without approval | `v0.7.28` | unreleased (after `v0.7.97-beta.11`) | 2026-11-19 | 2026-11-19 |
 | 415 | High | Resolved | Ordinary requests start with a Skill search, and weak models load unrelated Skills | `v0.7.97-beta.5` (compact Worker projection) | unreleased (after `v0.7.97-beta.11`) | 2026-11-17 | 2026-11-18 |
+| 414 | Low | Open | Remaining Stop-chain limits after the v3 settlement fence | `v0.7.84` | - | 2026-11-17 | - |
+| 413 | Medium | Resolved | Stop-chain paths that still wait for a restart or retry without end | `v0.7.84`-`v0.7.85` | unreleased (after `v0.7.97-beta.11`) | 2026-11-17 | 2026-11-17 |
+| 412 | High | Resolved | Stop never finishes after a sibling interruption save commits late | `v0.7.84` | unreleased (after `v0.7.97-beta.11`) | 2026-11-17 | 2026-11-17 |
 | 410 | Medium | Resolved | A client exit stop with a connected peer drains the Host and answers late | `v0.7.97-alpha.2` (client exit receipts) | `v0.7.97-beta.9` | 2026-11-13 | 2026-11-13 |
 | 409 | High | Resolved | Windows daemon Job proof and failed-start cleanup prevent recovery | observed in v0.7.97-beta.4 (customer report); PowerShell Job probe since v0.7.97-alpha.7 | `v0.7.97-beta.8` | 2026-11-12 | 2026-11-12 |
 | 408 | Medium | Resolved | Space SDK leaks user image labels, rejects non-PNG attachments and loses extension approval attribution | observed in v0.7.97-beta.6; visual input/tools since beta.5 | `v0.7.97-beta.7` | 2026-11-12 | 2026-11-12 |
@@ -18870,7 +19052,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 291 (47 Open including 1 needs-info, 244 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 294 (47 Open including 1 needs-info, 246 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 1 (420)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
@@ -18882,6 +19064,16 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 - Constructed tools and agents load at startup only with a machine-local
   approval record; a repository can no longer ship an "active" tool that runs
   on open. Earlier activations need one re-activation; unreleased.
+
+### 2026-11-17: Issues 412, 413 and 414
+
+- A Stop whose sibling interruption save commits after its deadline now
+  settles instead of failing every retry; Runtime terminal-save failures no
+  longer crash the daemon; unreleased.
+- Issue 413 resolved: an unconfirmed Actor tree now ends the Run `failed`
+  with `effectOutcome: unknown` and fences the Session until repair or
+  restart; `actorSettlementConvergence` is `3`; unreleased.
+- Remaining limits recorded as Issue 414.
 
 ### 2026-11-13: Issue 410
 

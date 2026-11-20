@@ -178,6 +178,20 @@ interface ActorMutationPersistenceOptions {
   readonly returnAtCanonical?: boolean;
 }
 
+/** A save that reached storage; kept so a failed mutation can decide its real outcome. */
+interface StartedActorWrite<T> {
+  readonly attempt: AgentActorSaveAttempt;
+  readonly attempted: AgentActorSnapshot;
+  readonly expectedRevision: number;
+  readonly result: T;
+}
+
+/** The only three durable outcomes a write can have; unknown is never treated as lost. */
+type ActorWriteOutcome =
+  | { readonly kind: 'committed' }
+  | { readonly kind: 'not_committed' }
+  | { readonly kind: 'unknown'; readonly readbackFailure?: unknown };
+
 const UNLIMITED_BUDGET: AgentBudgetPort = {
   async admit() { return { admitted: true }; },
 };
@@ -219,6 +233,8 @@ export class AgentActorController {
   private settlementPersistenceUnknown = false;
   private readonly pendingSettlementIntents = new Map<string, UnknownSettlementIntent>();
   private unknownQuiesceIntent?: UnknownQuiesceIntent;
+  /** A write with an unknown outcome fenced the controller; reconcile adopts storage. */
+  private unknownWritePending = false;
   private unknownSettlementReconciliation?: UnknownSettlementReconciliation;
   private ownershipReleased = false;
   private closing = false;
@@ -709,6 +725,8 @@ export class AgentActorController {
     this.unknownQuiesceIntent ??= quiesceIntent;
     let earlyAbortedTurnId: string | undefined;
     const attempt = { active: true };
+    let interruptionApplied = false;
+    let failedBeforeInterruption = false;
     try {
       let markMutationReady: (() => void) | undefined;
       const mutationReady = new Promise<void>((resolve) => {
@@ -716,6 +734,7 @@ export class AgentActorController {
       });
       const mutation = this.mutate(
         () => {
+          interruptionApplied = true;
           let changed = false;
           for (const turn of this.turns.values()) {
             if (onlyTurnId !== undefined && turn.turnId !== onlyTurnId) continue;
@@ -738,18 +757,16 @@ export class AgentActorController {
           onMutationReady: () => markMutationReady?.(),
         },
       );
-      // mutate() may fail its initial owner assertion before onMutationReady runs. Attach a
-      // rejection observer immediately so the bounded readiness wait cannot surface a delayed
-      // unhandled rejection; the original promise is still awaited below for factual propagation.
-      void mutation.catch(() => undefined);
-      try {
-        await raceSettlementAttempt(
-          mutationReady,
-          Date.now() + SETTLEMENT_QUEUE_WAIT_DEADLINE_MS,
-        );
-      } catch (error: unknown) {
-        throw error;
-      }
+      // mutate() may reject before its interruption runs (owner lost, controller
+      // closing). Nothing reached storage then, so the readiness wait must end
+      // with that definite error instead of the queue deadline.
+      void mutation.catch(() => {
+        failedBeforeInterruption = !interruptionApplied;
+      });
+      await raceSettlementAttempt(
+        Promise.race([mutationReady, mutation.then(() => undefined)]),
+        Date.now() + SETTLEMENT_QUEUE_WAIT_DEADLINE_MS,
+      );
       await raceSettlementAttempt(
         mutation,
         Date.now() + SETTLEMENT_RETRY_DEADLINE_MS,
@@ -759,7 +776,10 @@ export class AgentActorController {
       }
     } catch (error: unknown) {
       attempt.active = false;
-      if (error instanceof AgentOwnerConflictError && earlyAbortedTurnId === undefined) {
+      if (
+        failedBeforeInterruption
+        || (error instanceof AgentOwnerConflictError && earlyAbortedTurnId === undefined)
+      ) {
         if (this.unknownQuiesceIntent === quiesceIntent) {
           this.unknownQuiesceIntent = undefined;
         }
@@ -843,6 +863,7 @@ export class AgentActorController {
       attempt.active = false;
       if (error instanceof AgentSettlementAttemptTimeoutError) {
         const shutdownError = new AgentShutdownPersistenceError(error);
+        this.unknownWritePending = true;
         this.fenceUnknownSettlement();
         this.setHealth({
           state: 'unknown',
@@ -1078,10 +1099,12 @@ export class AgentActorController {
         (result) => this.trackSettlement(
           () => this.completeExecution(plan.turn.turnId, result),
           settlementGeneration,
+          abort.signal,
         ),
         (error: unknown) => this.trackSettlement(
           () => this.failExecution(plan.turn.turnId, error),
           settlementGeneration,
+          abort.signal,
         ),
       )
       .catch((error: unknown) => {
@@ -1098,8 +1121,13 @@ export class AgentActorController {
   private trackSettlement(
     start: () => Promise<void>,
     generation: number,
+    signal: AbortSignal,
   ): Promise<void> {
-    if (this.closing || generation !== this.settlementGeneration) {
+    // Only the controller aborts an executor, and only while it writes that
+    // turn's terminal fact itself (interrupt, close, quiesce) or hands every
+    // live turn to shutdown/fence recovery. That writer owns the fact, so the
+    // aborted executor's result must not race it as a second terminal write.
+    if (this.closing || generation !== this.settlementGeneration || signal.aborted) {
       return Promise.resolve();
     }
     const settlement = start();
@@ -1437,11 +1465,29 @@ export class AgentActorController {
     this.appendEvent(eventKindForTerminal(state), actor.path, turnId, actor.parentPath);
   }
 
+  /**
+   * A turn's terminal fact is write-once: the first one wins and every later
+   * write for that turn is a no-op, in memory and during durable reconcile.
+   */
   private applySettlementIntent(intent: UnknownSettlementIntent): boolean {
     const turn = this.turns.get(intent.turnId);
-    if (!turn || isTerminal(turn.state)) return false;
-    this.finishTurn(intent.turnId, intent.state, intent.result);
-    return true;
+    if (!turn) return false;
+    if (!isTerminal(turn.state)) {
+      this.finishTurn(intent.turnId, intent.state, intent.result);
+      return true;
+    }
+    // An interruption racing the executor's own result is the expected Stop
+    // outcome. Any other differing fact drops executor data, so surface it.
+    if (turn.state !== 'interrupted' && !turnMatchesSettlementIntent(turn, intent)) {
+      this.reportBackgroundError(new AgentSettlementPersistenceError(
+        intent.turnId,
+        new Error(
+          `The Actor turn already holds a ${turn.state} fact; `
+          + `it supersedes the ${intent.state} executor settlement.`,
+        ),
+      ));
+    }
+    return false;
   }
 
   private appendCompletion(
@@ -1903,6 +1949,7 @@ export class AgentActorController {
     const before = this.snapshot();
     const beforeAborts = new Map(this.abortControllers);
     const priorEventSequence = this.eventsLog.at(-1)?.sequence ?? 0;
+    let write: StartedActorWrite<T> | undefined;
     try {
       onMutationReady?.();
       if (commitStillValid?.() === false) {
@@ -1930,6 +1977,7 @@ export class AgentActorController {
         expectedRevision,
       );
       activeSaveAttempt = saveAttempt;
+      write = { attempt: saveAttempt, attempted: attemptedSnapshot, expectedRevision, result };
       this.setActiveMutationSaveAttempt(saveAttempt);
       onSaveAttempt?.(saveAttempt);
       void saveAttempt.completion.catch((error: unknown) => {
@@ -1941,33 +1989,132 @@ export class AgentActorController {
       if (commitStillValid?.() === false) {
         throw new AgentSettlementAttemptExpiredError();
       }
-      this.committedSnapshot = this.snapshot();
-      for (const message of appendedMessages(before, this.committedSnapshot)) {
-        this.publishCommittedMessage(message);
-      }
-      for (const event of this.eventsLog) {
-        if (event.sequence > priorEventSequence) this.publishCommittedEvent(event);
-      }
+      this.publishMutationCommit(before, priorEventSequence);
       releaseMutationTail();
       if (!returnAtCanonical) {
         await saveAttempt.completion.catch(() => undefined);
       }
       return result;
     } catch (error) {
-      const conflict = actorSnapshotConflictFact(error);
-      if (conflict) {
-        throw await this.fenceAfterSnapshotConflict(
-          conflict,
-          before,
-          beforeAborts,
-        );
-      }
-      this.restore(before);
-      replaceMap(this.abortControllers, [...beforeAborts.entries()]);
-      throw error;
+      // The mutation tail stays held until the outcome is decided, so no later
+      // write can build on a revision this controller has not classified.
+      return await this.settleFailedMutation(error, {
+        before,
+        beforeAborts,
+        priorEventSequence,
+        write,
+        commitStillValid,
+      });
     } finally {
       releaseMutationTail();
     }
+  }
+
+  private publishMutationCommit(before: AgentActorSnapshot, priorEventSequence: number): void {
+    this.committedSnapshot = this.snapshot();
+    for (const message of appendedMessages(before, this.committedSnapshot)) {
+      this.publishCommittedMessage(message);
+    }
+    for (const event of this.eventsLog) {
+      if (event.sequence > priorEventSequence) this.publishCommittedEvent(event);
+    }
+  }
+
+  /**
+   * The single place a failed durable write is classified. A committed write is
+   * kept (and succeeds unless its caller already gave up), a lost write rolls
+   * back, and an unknown write fences until reconcile re-reads storage.
+   */
+  private async settleFailedMutation<T>(
+    error: unknown,
+    failure: {
+      readonly before: AgentActorSnapshot;
+      readonly beforeAborts: ReadonlyMap<string, AbortController>;
+      readonly priorEventSequence: number;
+      readonly write: StartedActorWrite<T> | undefined;
+      readonly commitStillValid: (() => boolean) | undefined;
+    },
+  ): Promise<T> {
+    const { before, beforeAborts, write } = failure;
+    const conflict = actorSnapshotConflictFact(error);
+    if (conflict && await this.durableSnapshotIsOwn()) {
+      throw this.fenceOwnAmbiguousWrite(error, before, beforeAborts);
+    }
+    if (conflict) {
+      throw await this.fenceAfterSnapshotConflict(conflict, before, beforeAborts);
+    }
+    const outcome = write === undefined
+      ? { kind: 'not_committed' as const }
+      : await this.classifyStartedWrite(write);
+    if (outcome.kind === 'committed' && write !== undefined) {
+      // Memory keeps the durable revision either way. A caller that gave up has
+      // already fenced, and a fenced controller exposes nothing until reconcile.
+      const callerWaiting = failure.commitStillValid?.() !== false;
+      if (callerWaiting || !this.settlementPersistenceUnknown) {
+        this.publishMutationCommit(before, failure.priorEventSequence);
+      }
+      if (!callerWaiting) throw error;
+      return write.result;
+    }
+    const unknown = outcome.kind === 'unknown' && write !== undefined
+      ? unknownWriteError(error, write.attempt, outcome.readbackFailure)
+      : undefined;
+    // initialize() starts by re-reading storage, so before it completes the
+    // retry itself converges; there is no local work for a fence to protect.
+    if (unknown !== undefined && this.initialized) throw this.fenceUnknownWrite(unknown);
+    this.restore(before);
+    replaceMap(this.abortControllers, [...beforeAborts.entries()]);
+    throw unknown ?? error;
+  }
+
+  private async classifyStartedWrite<T>(write: StartedActorWrite<T>): Promise<ActorWriteOutcome> {
+    const decided = decidedWriteOutcome(write.attempt);
+    if (decided !== undefined) return decided;
+    // Let the store finish its own commit and readback before reading behind it.
+    const settled = await raceSettlementAttempt(
+      write.attempt.completion.then(() => true, () => true),
+      Date.now() + SETTLEMENT_RETRY_DEADLINE_MS,
+    ).catch(() => false);
+    const lateDecision = decidedWriteOutcome(write.attempt);
+    if (lateDecision !== undefined) return lateDecision;
+    if (!settled) return { kind: 'unknown' };
+    return this.readBackStartedWrite(write);
+  }
+
+  /**
+   * Readback after the attempt settled. Only the exact attempted snapshot proves
+   * the write landed. Any other durable snapshot means it is not the current
+   * state: either it never landed or a newer foreign write superseded it, and the
+   * next CAS save surfaces that takeover through fenceAfterSnapshotConflict().
+   */
+  private async readBackStartedWrite<T>(write: StartedActorWrite<T>): Promise<ActorWriteOutcome> {
+    const store = this.options.store;
+    if (!store) return { kind: 'committed' };
+    try {
+      const durable = await raceSettlementAttempt(
+        store.load(),
+        Date.now() + SETTLEMENT_RETRY_DEADLINE_MS,
+      );
+      return durable !== undefined && sameActorSnapshot(durable, write.attempted)
+        ? { kind: 'committed' }
+        : { kind: 'not_committed' };
+    } catch (readbackFailure: unknown) {
+      return { kind: 'unknown', readbackFailure };
+    }
+  }
+
+  private fenceUnknownWrite(
+    persistenceError: AgentSettlementPersistenceError,
+  ): AgentSettlementPersistenceError {
+    this.indeterminateFailure = persistenceError;
+    this.unknownWritePending = true;
+    this.fenceUnknownSettlement();
+    this.setHealth({
+      state: 'unknown',
+      code: persistenceError.code,
+      message: 'An Actor write could not be confirmed or ruled out; storage must be re-read.',
+    });
+    return persistenceError;
   }
 
   private setActiveMutationSaveAttempt(attempt: AgentActorSaveAttempt): void {
@@ -2305,7 +2452,11 @@ export class AgentActorController {
       throw new Error('Actor settlement cannot be reconciled without a durable store.');
     }
     const intents = [...this.pendingSettlementIntents.values()];
-    if (intents.length === 0 && this.unknownQuiesceIntent === undefined) {
+    if (
+      intents.length === 0
+      && this.unknownQuiesceIntent === undefined
+      && !this.unknownWritePending
+    ) {
       throw new AgentSettlementPersistenceError(
         this.health.turnId ?? 'unknown Actor turn',
         new Error('The exact timed-out settlement or cancellation intent is unavailable.'),
@@ -2327,6 +2478,11 @@ export class AgentActorController {
       this.restore(latest);
       replaceMap(this.abortControllers, []);
       let changed = false;
+      // The snapshot is ours (same unique owner), so a terminal fact already in
+      // it was written by this controller before the intent could land. The
+      // first terminal fact wins, exactly as applySettlementIntent() does in
+      // memory; failing here would be deterministic and wedge every Stop retry.
+      const supersededTurnIds = new Set<string>();
       for (const intent of intents) {
         const target = this.turns.get(intent.turnId);
         if (target === undefined) {
@@ -2335,15 +2491,21 @@ export class AgentActorController {
             new Error('The durable Actor snapshot is missing the settlement target.'),
           );
         }
-        if (isTerminal(target.state)) {
-          if (!turnMatchesSettlementIntent(target, intent)) {
-            throw new AgentSettlementPersistenceError(
-              intent.turnId,
-              new Error('The durable Actor snapshot contains a conflicting terminal fact.'),
-            );
-          }
-        } else {
+        if (!isTerminal(target.state)) {
           changed = this.applySettlementIntent(intent) || changed;
+        } else if (!turnMatchesSettlementIntent(target, intent)) {
+          supersededTurnIds.add(intent.turnId);
+          // An interruption racing the executor's own result is the expected
+          // Stop outcome. Any other mismatch loses executor data, so surface it.
+          if (target.state !== 'interrupted') {
+            this.reportBackgroundError(new AgentSettlementPersistenceError(
+              intent.turnId,
+              new Error(
+                `The durable Actor snapshot already holds a ${target.state} fact; `
+                + `it supersedes the unpersisted ${intent.state} executor settlement.`,
+              ),
+            ));
+          }
         }
       }
       const interruptionReason = this.unknownQuiesceIntent?.reason ?? reason;
@@ -2382,7 +2544,10 @@ export class AgentActorController {
       if (
         intents.some((intent) => {
           const verifiedTarget = verified.turns.find((turn) => turn.turnId === intent.turnId);
-          return verifiedTarget === undefined || !turnMatchesSettlementIntent(verifiedTarget, intent);
+          if (verifiedTarget === undefined) return true;
+          return supersededTurnIds.has(intent.turnId)
+            ? !isTerminal(verifiedTarget.state)
+            : !turnMatchesSettlementIntent(verifiedTarget, intent);
         })
         || verified.turns.some((turn) => !isTerminal(turn.state))
       ) {
@@ -2398,7 +2563,11 @@ export class AgentActorController {
       this.settlementPersistenceUnknown = false;
       this.pendingSettlementIntents.clear();
       this.unknownQuiesceIntent = undefined;
+      this.unknownWritePending = false;
       this.indeterminateFailure = undefined;
+      // Same-owner verification just proved no takeover happened, so a shutdown
+      // failure cached while fenced no longer describes this controller.
+      this.shutdownFailure = undefined;
       this.settlementRecoveryMessages.clear();
       this.setHealth({ state: 'healthy' }, true);
       for (const message of appendedMessages(priorCommitted, this.committedSnapshot)) {
@@ -2448,6 +2617,42 @@ export class AgentActorController {
     }
   }
 
+  /**
+   * A revision conflict against our own unique owner means one of our earlier
+   * writes landed after it was reported failed. That is not a takeover.
+   */
+  private async durableSnapshotIsOwn(): Promise<boolean> {
+    const ownerId = this.options.owner?.ownerId;
+    const store = this.options.store;
+    if (ownerId === undefined || store === undefined) return false;
+    try {
+      const latest = await raceSettlementAttempt(
+        store.load(),
+        Date.now() + SETTLEMENT_RETRY_DEADLINE_MS,
+      );
+      return latest?.schemaVersion === 2 && latest.owner?.ownerId === ownerId;
+    } catch (error: unknown) {
+      // An unreadable snapshot cannot prove ownership; the conflict fence below
+      // reloads and reports storage itself.
+      this.reportBackgroundError(error);
+      return false;
+    }
+  }
+
+  private fenceOwnAmbiguousWrite(
+    error: unknown,
+    before: AgentActorSnapshot,
+    beforeAborts: ReadonlyMap<string, AbortController>,
+  ): AgentSettlementPersistenceError {
+    this.restore(before);
+    replaceMap(this.abortControllers, [...beforeAborts.entries()]);
+    const turnId = this.pendingSettlementIntents.keys().next().value ?? 'Actor snapshot';
+    const persistenceError = new AgentSettlementPersistenceError(turnId, error);
+    this.indeterminateFailure = persistenceError;
+    this.unknownQuiesceIntent ??= { reason: 'actor settlement persistence is unknown' };
+    return this.fenceUnknownWrite(persistenceError);
+  }
+
   private async fenceAfterSnapshotConflict(
     conflict: ActorSnapshotConflictFact,
     before: AgentActorSnapshot,
@@ -2462,6 +2667,7 @@ export class AgentActorController {
     ));
     this.pendingSettlementIntents.clear();
     this.unknownQuiesceIntent = undefined;
+    this.unknownWritePending = false;
     this.unknownSettlementReconciliation = undefined;
     const localAborts = [...new Set(beforeAborts.values())];
     replaceMap(this.abortControllers, []);
@@ -2477,7 +2683,13 @@ export class AgentActorController {
     let ownerRuntimeId: string | undefined;
     let currentRevision = conflict.currentRevision;
     try {
-      const latest = await this.options.store?.load();
+      // Bounded so a hung store cannot hold the mutation queue behind a takeover.
+      const latest = this.options.store
+        ? await raceSettlementAttempt(
+          this.options.store.load(),
+          Date.now() + SETTLEMENT_RETRY_DEADLINE_MS,
+        )
+        : undefined;
       if (latest) {
         validateSnapshot(latest, this.scheduler.maxConcurrentThreads);
         this.restore(latest);
@@ -2746,6 +2958,40 @@ function beginActorSaveAttempt(
       timingsMs: {},
     }),
   };
+}
+
+function unknownWriteError(
+  error: unknown,
+  attempt: AgentActorSaveAttempt,
+  readbackFailure: unknown,
+): AgentSettlementPersistenceError {
+  const cause = readbackFailure === undefined
+    ? error
+    : new AggregateError([error, readbackFailure], 'Actor write outcome could not be read back.');
+  return new AgentSettlementPersistenceError(
+    'Actor mutation',
+    settlementPersistenceCause(cause, attempt),
+  );
+}
+
+/** A phase-aware store already knows; a legacy save() rejection stays commit_inflight. */
+function decidedWriteOutcome(attempt: AgentActorSaveAttempt): ActorWriteOutcome | undefined {
+  const phase = attempt.phase();
+  if (phase === 'committed') return { kind: 'committed' };
+  if (phase === 'not_committed') return { kind: 'not_committed' };
+  return undefined;
+}
+
+/**
+ * Saves are revision CAS writes serialized by this controller, so the attempted
+ * revision under the same owner can only be this write. Comparing content would
+ * misread stores that reorder or normalize fields.
+ */
+function sameActorSnapshot(durable: AgentActorSnapshot, attempted: AgentActorSnapshot): boolean {
+  const ownerOf = (snapshot: AgentActorSnapshot) => (
+    snapshot.schemaVersion === 2 ? snapshot.owner?.ownerId : undefined
+  );
+  return durable.revision === attempted.revision && ownerOf(durable) === ownerOf(attempted);
 }
 
 function waitForSettlementRetry(delayMs: number): Promise<void> {
