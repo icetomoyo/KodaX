@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-19_
+_Last Updated: 2026-11-20_
 
 ---
 
@@ -46,6 +46,58 @@ This predates the child contract projection; the eval uses raw per-call usage,
 not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
+
+## Issue 421: A Stop can wait five minutes and end as a network failure
+
+- Priority: High
+- Status: Resolved
+- Introduced: unknown (first seen 2026-11-20 in the PTY acceptance run)
+- Created / Resolved: 2026-11-20 / 2026-11-20
+- Fixed: unreleased (after `v0.7.97-beta.11`)
+
+### Original Problem
+
+In one PTY acceptance run (`external-run-keyboard-stop`), the REPL stopped a
+managed Run that another client had started. The Stop was recorded and the
+Run's abort signal read aborted. The provider request was never cancelled,
+though. The held stream sent no more chunks, and the OpenAI stream loop only
+checks `signal.aborted` when a chunk arrives. So the Run stayed `unknown` with
+`stop_outcome_unconfirmed` until undici's 300 s body timeout. It then ended
+`failed` with `UND_ERR_BODY_TIMEOUT` instead of `interrupted`. Evidence:
+`%TEMP%\kodax-repl-acceptance-KguqlQ`.
+
+Where the abort was lost was not found. More than 70 direct SDK rounds, a
+forced-GC loop and 19 PTY runs on Node 22 and 24 all passed. No defect was
+found in Node 24's `AbortSignal.any`. The provider fact `cancelled` does not
+prove the request was cancelled: `finishWire` also reports it when the Run's
+own controller (the `abortSignals` store) is aborted.
+
+Expected: a Stop ends the Run as `interrupted` promptly, whether or not the
+provider call observes its abort signal.
+
+### Resolution
+
+- The managed LLM adapter races each provider call against the Run's abort
+  signal (`raceManagedProviderStop` in `managed-task/llm-adapter.ts`). That
+  covers the primary call and the L5 continuation call. A provider that honours
+  the signal still settles first and keeps its own error. Otherwise the
+  adapter throws the usual `AbortError` with the recovery transcript after one
+  macrotask.
+- The abandoned call is asked to cancel again through the retry timeout
+  controller. Its late outcome is logged to resilience debug and never
+  raised, so a later body timeout cannot change the Stopped outcome.
+
+Files changed: `packages/coding/src/task-engine/_internal/managed-task/llm-adapter.ts`.
+
+Tests added:
+
+- `managed-task/llm-adapter.stop-bound.test.ts`: a provider that ignores its
+  signal is Stopped within one second. The error carries the recovery
+  transcript, and a late `UND_ERR_BODY_TIMEOUT` is not an unhandled rejection.
+- `src/sdk-runtime.provider-stop-bound.test.ts`: `runs.abort` on a managed
+  Run with that provider ends `interrupted` with stop
+  `{state:'confirmed', outcome:'interrupted'}` and no network failure kind.
+  It timed out at 10 s without the fix.
 
 ## Issue 420: A repository can pre-approve shell commands through its project config
 
@@ -3415,6 +3467,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 421 | High | Resolved | A Stop can wait five minutes and end as a network failure | unknown | unreleased (after `v0.7.97-beta.11`) | 2026-11-20 | 2026-11-20 |
 | 420 | High | ready | A repository can pre-approve shell commands through its project config | `v0.4.6` | - | 2026-11-19 | - |
 | 419 | High | Resolved | Opening a repository runs its constructed tool code without approval | `v0.7.28` | unreleased (after `v0.7.97-beta.11`) | 2026-11-19 | 2026-11-19 |
 | 418 | High | Resolved | A2A Tasks in one context lose the earlier conversation | `v0.7.85` (FEATURE_291) | unreleased (after `v0.7.97-beta.11`) | 2026-11-18 | 2026-11-18 |
@@ -19177,12 +19230,18 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 297 (47 Open including 1 needs-info, 249 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 298 (47 Open including 1 needs-info, 250 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 1 (420)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-20: Issue 421
+
+- A Stop ends a managed Run as interrupted even when the provider call never
+  observes its abort signal; it no longer waits for the body timeout and
+  reports a network failure. Unreleased.
 
 ### 2026-11-19: Issue 419
 

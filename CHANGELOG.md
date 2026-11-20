@@ -16,6 +16,11 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Stopping a managed Run ends it as interrupted right away, even when the
+  provider request does not notice the cancellation. Before, such a Run could
+  sit in an unconfirmed Stop for five minutes and then report a network
+  failure (Issue 421).
+
 - Ordinary requests no longer start with a Skill search, and weak models no
   longer load unrelated Skills (Issue 415, reported on beta.10). Since beta.5
   the compact Worker prompt said "invoke a matching Skill as the FIRST action"

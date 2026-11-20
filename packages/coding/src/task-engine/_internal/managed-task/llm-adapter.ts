@@ -212,6 +212,42 @@ function throwIfManagedProviderAborted(
   throw error;
 }
 
+/**
+ * A Stop ends the provider call even when the provider never observes its
+ * abort signal; a lost body cancellation would otherwise hold the Run until
+ * the HTTP body timeout and report a network failure. The abandoned call is
+ * asked to cancel again and its late outcome is recorded, never raised.
+ */
+async function raceManagedProviderStop<T>(
+  operation: Promise<T>,
+  signal: AbortSignal | undefined,
+  abandon: () => void,
+): Promise<T> {
+  if (!signal) return operation;
+  let onAbort: (() => void) | undefined;
+  let grace: ReturnType<typeof setTimeout> | undefined;
+  const stopped = new Promise<never>((_resolve, reject) => {
+    // A provider that honours the signal settles first and keeps its own cause.
+    onAbort = () => { grace = setTimeout(() => reject(managedProviderAbortError()), 0); };
+    if (signal.aborted) onAbort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([operation, stopped]);
+  } catch (error: unknown) {
+    if (signal.aborted) {
+      abandon();
+      operation.catch((late: unknown) => emitResilienceDebug('[resilience:abandoned-after-stop]', {
+        error: late instanceof Error ? late.name : typeof late,
+      }));
+    }
+    throw error;
+  } finally {
+    clearTimeout(grace);
+    if (onAbort) signal.removeEventListener('abort', onAbort);
+  }
+}
+
 function rethrowObservedManagedProviderAbort(
   signal: AbortSignal | undefined,
   error: Error,
@@ -1022,7 +1058,7 @@ export function buildRunnerLlmAdapter(
         try {
           emitContextBudgetSnapshot(providerMessages, requestMaxOutputTokens);
           let cacheDiagnostic = beginPromptCacheDiagnostic(providerMessages, attempt);
-          raw = await withProviderRequestCredential(
+          raw = await raceManagedProviderStop(withProviderRequestCredential(
             provider,
             'primary',
             retrySignal,
@@ -1038,7 +1074,7 @@ export function buildRunnerLlmAdapter(
                 ...(textRecoveryRetry ? { singleAttempt: true } : {}), signal: credentialSignal },
               credentialSignal,
             ),
-          );
+          ), options.abortSignal, () => retryTimeoutController.abort(new Error('Run stopped')));
           completePromptCacheDiagnostic(cacheDiagnostic, raw.usage);
           // max_tokens escalation: if the capped budget hit the cap and
           // we haven't yet escalated this adapter call, stage
@@ -1451,7 +1487,7 @@ export function buildRunnerLlmAdapter(
             providerMessages,
             attempt + l5Retries,
           );
-          raw = await withProviderRequestCredential(
+          raw = await raceManagedProviderStop(withProviderRequestCredential(
             provider,
             'primary',
             l5Signal,
@@ -1501,7 +1537,7 @@ export function buildRunnerLlmAdapter(
               },
               credentialSignal,
             ),
-          );
+          ), l5Signal, () => undefined);
           completePromptCacheDiagnostic(cacheDiagnostic, raw.usage);
         } catch (error: unknown) {
           rethrowObservedManagedProviderAbort(
