@@ -333,11 +333,9 @@ function renderTaskAndPlan(tools: WorkerTools): string {
   ]);
 }
 
-// Dispatch is KodaX working style; the Agent lifecycle rules stay with an application persona.
-function renderParallelWork(tools: WorkerTools): string {
-  return tools.omitGuidance
-    ? block('AGENT COLLABORATION', [staticText("worker.full.collaboration")])
-    : block('PARALLEL WORK', [staticText("worker.full.dispatch"), staticText("worker.full.collaboration")]);
+// When to fan out is part of how the Agent tools are used, so an application persona keeps it.
+function renderParallelWork(): string {
+  return block('PARALLEL WORK', [staticText("worker.full.dispatch"), staticText("worker.full.collaboration")]);
 }
 
 function renderExecutionAndDelivery(tools: WorkerTools): string {
@@ -363,10 +361,11 @@ const FULL_WORKER_SECTIONS: readonly WorkerSectionDefinition[] = [
 
 // Order is the rendered order. Tags say what each block is for; see KodaXPromptSectionTag.
 // Plan, scope and mutation blocks are guidance: the tool descriptions still teach each tool.
+// Parallel work follows spawn_agent, so it is capability: excluding the tool is the way to turn it off.
 // A limited tool set gets these blocks, worded for the tools it actually has.
 const WORKER_SECTIONS: readonly WorkerSectionDefinition[] = [
   { id: 'context-trust', tag: 'contract', render: () => block('MANAGED RUN CONTEXT TRUST:', [staticText("worker.context-trust")]) },
-  { id: 'parallel-work', tag: 'guidance', render: tools => tools.has('spawn_agent') ? staticText("worker.parallel-first") : staticText("worker.local-execution") },
+  { id: 'parallel-work', tag: 'capability', render: tools => tools.has('spawn_agent') ? staticText("worker.parallel-first") : staticText("worker.local-execution") },
   { id: 'plan-first', tag: 'guidance', render: renderPlanFirst },
   { id: 'plan-list-hygiene', tag: 'guidance', render: renderPlanListHygiene },
   { id: 'scope-commitment', tag: 'guidance', render: renderScopeCommitment },

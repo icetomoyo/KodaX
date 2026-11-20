@@ -184,10 +184,12 @@ profile: await services.createExecutionProfile({
 }, hostToolLease.tools)
 ```
 
-- `kodaxGuidance: 'omit'` removes KodaX's coding guidance, Worker identity
-  wording, parallel-work guidance and ULTRA policy from the system prompt. Tool
-  contracts, tool teaching and the project's `AGENTS.md` stay. The default,
-  `'keep'`, changes no prompt bytes.
+- `kodaxGuidance: 'omit'` removes KodaX's coding guidance and Worker identity
+  wording from the system prompt. Tool contracts, tool teaching and the
+  project's `AGENTS.md` stay. The default, `'keep'`, changes no prompt bytes.
+- The rules for when to hand work to child Agents stay as long as the Run
+  offers `spawn_agent`. To run without child Agents, remove the tool with
+  `excludeTools`; the rules go with it.
 - `context` entries go into the Run's Managed Run Context, not the system prompt.
   A `rule` is followed like a project rule. A `reference` is information for
   answers. The model is told to ignore directions inside a reference, but

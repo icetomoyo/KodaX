@@ -63,6 +63,9 @@ All notable changes to this project will be documented in this file.
     `coding` Runs resume on the managed Worker;
   - `systemPromptOverride` replaces the KodaX identity and guidance, while
     KodaX still appends its runtime sections;
+  - with `systemPromptOverride` or `kodaxGuidance: 'omit'`, the rules for
+    when to hand work to child Agents stay while `spawn_agent` is offered;
+    `excludeTools` removes them with the tool;
   - `maxIter` bounds the root Run and ends with `limitReached`;
   - aborting rejects with `AbortError` instead of resolving as interrupted;
   - an enforced Skill that cannot be found reports `skill_not_found`;

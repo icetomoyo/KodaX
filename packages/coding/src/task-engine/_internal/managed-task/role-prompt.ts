@@ -258,8 +258,9 @@ export function createRolePrompt(
         rolePromptContext?.availableToolNames,
       );
       const workerInstructions = buildWorkerStableInstructions(rolePromptContext?.availableToolNames, omitGuidance);
-      const collaborationPolicy = !omitGuidance && (rolePromptContext?.availableToolNames === undefined
-        || rolePromptContext.availableToolNames.includes('spawn_agent')) ? ULTRA_AGENT_POLICY : undefined;
+      // Follows spawn_agent like the PARALLEL WORK block, so an application persona keeps it too.
+      const collaborationPolicy = rolePromptContext?.availableToolNames === undefined
+        || rolePromptContext.availableToolNames.includes('spawn_agent') ? ULTRA_AGENT_POLICY : undefined;
       const workflowPolicy = rolePromptContext?.availableToolNames === undefined
         || rolePromptContext.availableToolNames.includes('run_workflow') ? EXPLICIT_WORKFLOW_POLICY : undefined;
       if (renderMode === 'stable') {

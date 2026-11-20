@@ -68,8 +68,8 @@ Paid evals used blind pairs on `glm-5.3-flash`, `kimi-for-coding` and
 1 mixed and 13 tie; ordinary root 2 candidate, 0 baseline and 4 tie. One Worker
 on persona and override roots, 72 calls: persona 3, 2, 1 and 12; override 2, 2,
 0 and 14. Input per call fell 28% and 34%. The baseline wins trace to provider
-noise or to `omit` dropping the parallel-work paragraph, which the host owns by
-design. Step 3 compared the SDK default root (`runs.start` without a mode, AMA on the
+noise or to `omit` dropping the parallel-work paragraph. That paragraph now
+follows `spawn_agent` instead; see the application prompt spec entry. Step 3 compared the SDK default root (`runs.start` without a mode, AMA on the
 Runtime Host) on the direct engine with `system.md` against the managed Worker
 with its Run Context envelope, over parallel dispatch, ownership, Todo
 continuation, one question round, edit recovery, Memory, Skill trigger and plain
@@ -88,9 +88,12 @@ prompt, so tool contracts and safety text go with it.
 as `prompt` in the trusted execution profile. It has two parts.
 
 - `kodaxGuidance: 'omit'` removes the text KodaX tags as guidance. That covers
-  coding style, Worker identity wording, parallel-work guidance and ULTRA
-  policy. Contract text, tool teaching and `AGENTS.md` stay, because those
-  carry safety and correctness. The default `'keep'` changes no prompt bytes.
+  coding style, Worker identity wording and parallel tool-call batching.
+  Contract text, tool teaching and `AGENTS.md` stay, because those carry
+  safety and correctness. The default `'keep'` changes no prompt bytes.
+- When to fan out to child Agents is tagged capability, and so is the ULTRA
+  policy. Both follow `spawn_agent`: they stay while the tool is offered, and
+  `excludeTools` removes them with the tool (amended 2026-11-20).
 - `context` is a list of keyed entries, each a `rule` or a `reference`. Each
   entry is one Managed Run Context section. The system prompt stays stable for
   the prompt cache. Retention diffs entries by key, so a removed key produces a
@@ -129,6 +132,18 @@ a near-miss end marker defeating the reference wording.
 
 The same evals found no regression. Persona and rule cases tied the status quo.
 A no-shell rule kept write children off `bash` where the status quo used it.
+
+The 2026-11-20 amendment follows the FEATURE_311 step 2 eval, where an override
+root on glm stopped dispatching once `omit` dropped the PARALLEL WORK block. A
+host persona sets voice and scope. It rarely restates when to use child Agents,
+so the model was left with the tool and no rule for it. *Leave dispatch to the
+host* was rejected for that reason. A blind L2 eval on override roots (D1
+parallel review and O1 child-owned file, glm, kimi and deepseek, 12 calls plus
+24 re-samples, $0.018) compared the two. deepseek dispatched the two
+independent lanes in 2 of 4 samples, against 0 of 4 before. glm and kimi
+dispatched every time in both arms. No arm touched the child's file. glm now
+reads the test file before the root-owned edit in 3 of 4 samples (before: 0 of
+4), which costs one read.
 
 ## SA mode is retired from every caller — 2026-11-18 (unreleased)
 

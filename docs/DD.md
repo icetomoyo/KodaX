@@ -527,6 +527,8 @@ Application prompt specs (`context.prompt`, `KodaXPromptSpec` in
 Runtime `startRun`. Only the internal leaf executor rejects a spec, through
 `assertPromptSpecOnManagedRun`. Under `omit`, `createRolePrompt` filters the
 Worker section table by its guidance tag and uses the neutral routing line.
+`parallel-work` is tagged capability in both section tables, and the ULTRA policy
+line is gated on `spawn_agent` alone, so both survive `omit` while the tool is offered.
 `renderApplicationContextSections` emits one
 `app-rule:KEY` or `app-reference:KEY` section per entry.
 `managed-run-context-retention.ts` diffs those sections like any other and labels a

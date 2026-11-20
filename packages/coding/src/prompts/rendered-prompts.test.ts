@@ -109,7 +109,7 @@ describe('rendered Worker contract for reduced tool sets', () => {
         ],
         "none": [
           "context-trust:contract",
-          "parallel-work:guidance",
+          "parallel-work:capability",
           "plan-first:guidance",
           "scope-commitment:guidance",
           "mutation-discipline:guidance",
@@ -120,7 +120,7 @@ describe('rendered Worker contract for reduced tool sets', () => {
         ],
         "readOnly": [
           "context-trust:contract",
-          "parallel-work:guidance",
+          "parallel-work:capability",
           "plan-first:guidance",
           "scope-commitment:guidance",
           "mutation-discipline:guidance",
@@ -160,6 +160,19 @@ describe('rendered Worker with an application prompt spec', () => {
 
   it.each(['stable', 'context'] as const)('%s', async (mode) => {
     await expect(render(mode)).toMatchFileSnapshot(expected(`worker.omit.${mode}.md`));
+  });
+
+  // When to fan out belongs to the Agent tools: it stays while spawn_agent is offered.
+  it('keeps when-to-dispatch exactly while spawn_agent is available', () => {
+    const dispatch = 'With 2+ substantive independent lanes and available slots';
+    const stable = render('stable');
+    expect(stable).toContain('PARALLEL WORK');
+    expect(stable).toContain(dispatch);
+    expect(stable).toContain('Use sub-agents when parallel work would materially improve speed or quality.');
+    expect(buildWorkerStableInstructions(['read', 'grep', 'spawn_agent', 'wait_agent'], true)).toContain('PARALLEL-FIRST COLLABORATION');
+    const solo = buildWorkerStableInstructions(['read', 'grep'], true);
+    expect(solo).toContain('Delegation is unavailable in this run');
+    expect(solo).not.toContain('PARALLEL-FIRST');
   });
 });
 

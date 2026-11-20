@@ -66,9 +66,10 @@ profile: await services.createExecutionProfile({
 }, hostToolLease.tools)
 ```
 
-- `kodaxGuidance: 'omit'` 从系统提示词中去掉 KodaX 的编码指导、Worker 身份措辞、
-  并行工作指导和 ULTRA 策略。工具契约、工具使用说明和项目的 `AGENTS.md` 保留。
-  默认值 `'keep'` 不改变任何提示词字节。
+- `kodaxGuidance: 'omit'` 从系统提示词中去掉 KodaX 的编码指导和 Worker 身份措辞。
+  工具契约、工具使用说明和项目的 `AGENTS.md` 保留。默认值 `'keep'` 不改变任何提示词字节。
+- 只要 Run 提供 `spawn_agent`，何时交给子 Agent 并行的规则就会保留。不想用子 Agent 时，
+  用 `excludeTools` 去掉这个工具，规则随之消失。
 - `context` 条目进入 Run 的 Managed Run Context，不进系统提示词。`rule` 按项目规则
   遵守。`reference` 是回答时使用的资料。模型被告知忽略 reference 里的指令，但实测
   模型仍会照做其中一部分。除非 Run 的工具和权限本身能保证安全，否则不要把不可信
