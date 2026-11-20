@@ -16,10 +16,11 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-- Stopping a managed Run ends it as interrupted right away, even when the
-  provider request does not notice the cancellation. Before, such a Run could
-  sit in an unconfirmed Stop for five minutes and then report a network
-  failure (Issue 421).
+- On Node 20 and 22, stopping a Run cancels the model request again. After a
+  garbage collection, Node's built-in fetch could lose the cancellation, so
+  the Run sat in an unconfirmed Stop for five minutes and then reported a
+  network failure. Managed Runs now also stop right away when a custom
+  provider ignores the cancellation (Issue 421).
 
 - Ordinary requests no longer start with a Skill search, and weak models no
   longer load unrelated Skills (Issue 415, reported on beta.10). Since beta.5

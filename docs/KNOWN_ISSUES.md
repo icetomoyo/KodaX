@@ -51,7 +51,8 @@ No production accounting change is claimed here. See the
 
 - Priority: High
 - Status: Resolved
-- Introduced: unknown (first seen 2026-11-20 in the PTY acceptance run)
+- Introduced: `v0.7.97-alpha.12` (3a63d8a73 added `redirect: 'error'` to
+  every SDK provider fetch); Node 20 and 22 only
 - Created / Resolved: 2026-11-20 / 2026-11-20
 - Fixed: unreleased (after `v0.7.97-beta.11`)
 
@@ -66,18 +67,58 @@ checks `signal.aborted` when a chunk arrives. So the Run stayed `unknown` with
 `failed` with `UND_ERR_BODY_TIMEOUT` instead of `interrupted`. Evidence:
 `%TEMP%\kodax-repl-acceptance-KguqlQ`.
 
-Where the abort was lost was not found. More than 70 direct SDK rounds, a
-forced-GC loop and 19 PTY runs on Node 22 and 24 all passed. No defect was
-found in Node 24's `AbortSignal.any`. The provider fact `cancelled` does not
+The failing run used Node 22.23.1. The provider fact `cancelled` does not
 prove the request was cancelled: `finishWire` also reports it when the Run's
 own controller (the `abortSignals` store) is aborted.
 
 Expected: a Stop ends the Run as `interrupted` promptly, whether or not the
 provider call observes its abort signal.
 
+### Root Cause
+
+The abort was lost inside undici 6, which Node 20 and 22 bundle as `fetch`.
+Every signal above the fetch did abort. A daemon trace with a GC every 5 ms
+showed the signal the OpenAI SDK listens to aborting with
+`runtime run aborted`, and the SDK aborting its own fetch signal. The server
+socket still stayed open.
+
+- undici links a fetch to its caller's signal only through a `WeakRef` to the
+  internal `Request`'s controller. A `FinalizationRegistry` removes that
+  listener once the `Request` is collected.
+- Nothing keeps that `Request` alive by design. With the default
+  `redirect: 'follow'`, `httpFetch` keeps a shallow copy of the fetch params
+  that still points at `processResponse`, and that closure holds the
+  `Request`. With `redirect: 'error'` the params are reused, `processResponse`
+  is cleared after the headers arrive, and the `Request` becomes collectable
+  while the body is still streaming.
+- `requestExtensionFetch` adds `redirect: 'error'` to every provider fetch.
+  After the next GC, the fetch signal had no undici listener left (the trace
+  saw the count drop from 2 to 1 before the Stop), so the abort never reached
+  the body.
+
+A plain `fetch(url, { signal, redirect: 'error' })` with a forced GC
+reproduces it on Node 20.20.2 (undici 6.24.1) and 22.23.1 (undici 6.27.0).
+Node 24.22.2 (undici 7.30.1) and `redirect: 'follow'` or `'manual'` close the
+socket. Without GC pressure the abort usually wins, which is why the earlier
+reproduction attempts passed.
+
+Node 22's `AbortSignal.any` has a separate GC defect: when an intermediate
+composite is collected, signals later built from it lose the root. The
+provider chain is not exposed to it today. The Run's own signal joins the
+credential signal directly as a leaf, and each later composite stays
+referenced until the stream ends.
+
 ### Resolution
 
-- The managed LLM adapter races each provider call against the Run's abort
+- `requestExtensionFetch` pipes each response body through a stream bound to
+  the caller's signal (`bindBodyToSignal`). The pipe holds the signal
+  strongly, so an abort cancels the undici body, which closes the
+  connection, and errors the reader with the abort reason as fetch itself
+  would. Every provider HTTP path goes through this function: the OpenAI and
+  Anthropic SDK clients, Azure, native HTTP and Bedrock.
+- As a backstop for providers that ignore their signal (for example a custom
+  `registerModelProvider` implementation), the managed LLM adapter races each
+  provider call against the Run's abort
   signal (`raceManagedProviderStop` in `managed-task/llm-adapter.ts`). That
   covers the primary call and the L5 continuation call. A provider that honours
   the signal still settles first and keeps its own error. Otherwise the
@@ -87,10 +128,15 @@ provider call observes its abort signal.
   controller. Its late outcome is logged to resilience debug and never
   raised, so a later body timeout cannot change the Stopped outcome.
 
-Files changed: `packages/coding/src/task-engine/_internal/managed-task/llm-adapter.ts`.
+Files changed: `packages/llm/src/providers/request-extensions.ts`,
+`packages/coding/src/task-engine/_internal/managed-task/llm-adapter.ts`.
 
 Tests added:
 
+- `providers/request-extensions.abort.test.ts`: a held SSE body fetched with
+  `redirect: 'error'` is aborted after forced GC. The reader fails with
+  `AbortError` and the server sees the socket close. It timed out on Node 22
+  without the fix.
 - `managed-task/llm-adapter.stop-bound.test.ts`: a provider that ignores its
   signal is Stopped within one second. The error carries the recovery
   transcript, and a late `UND_ERR_BODY_TIMEOUT` is not an unhandled rejection.
@@ -3467,7 +3513,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 421 | High | Resolved | A Stop can wait five minutes and end as a network failure | unknown | unreleased (after `v0.7.97-beta.11`) | 2026-11-20 | 2026-11-20 |
+| 421 | High | Resolved | A Stop can wait five minutes and end as a network failure | v0.7.97-alpha.12 | unreleased (after `v0.7.97-beta.11`) | 2026-11-20 | 2026-11-20 |
 | 420 | High | ready | A repository can pre-approve shell commands through its project config | `v0.4.6` | - | 2026-11-19 | - |
 | 419 | High | Resolved | Opening a repository runs its constructed tool code without approval | `v0.7.28` | unreleased (after `v0.7.97-beta.11`) | 2026-11-19 | 2026-11-19 |
 | 418 | High | Resolved | A2A Tasks in one context lose the earlier conversation | `v0.7.85` (FEATURE_291) | unreleased (after `v0.7.97-beta.11`) | 2026-11-18 | 2026-11-18 |
@@ -19239,9 +19285,10 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 
 ### 2026-11-20: Issue 421
 
-- A Stop ends a managed Run as interrupted even when the provider call never
-  observes its abort signal; it no longer waits for the body timeout and
-  reports a network failure. Unreleased.
+- On Node 20 and 22 a Stop reaches the provider HTTP stream again: undici
+  dropped the abort after a GC when a fetch used `redirect: 'error'`, so the
+  Run waited for the body timeout and reported a network failure. Managed
+  Runs also stop promptly when a provider ignores its signal. Unreleased.
 
 ### 2026-11-19: Issue 419
 

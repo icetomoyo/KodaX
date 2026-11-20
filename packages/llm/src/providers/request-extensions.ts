@@ -119,14 +119,29 @@ export function observePreparedProviderPayload(prepared: object): void {
     catch (error) { hookFailure('onRequestPrepared', error); }
   }
 }
+const NULL_BODY_STATUSES = new Set([101, 103, 204, 205, 304]);
+/**
+ * Node 20/22 bundle undici 6, which links a fetch to its caller's signal only
+ * through a WeakRef to the internal Request. With `redirect: 'error'` nothing
+ * else keeps that Request alive, so after a GC the caller's abort no longer
+ * reaches the body and the connection stays open. Piping the body through a
+ * stream that holds the signal makes an abort cancel the source and error the
+ * reader with the abort reason, as fetch itself would.
+ */
+function bindBodyToSignal(response: Response, signal: AbortSignal | null | undefined): Response {
+  if (!signal || !response.body || NULL_BODY_STATUSES.has(response.status)) return response;
+  const body = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>(), { signal });
+  const bound = new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+  return Object.defineProperty(bound, 'url', { value: response.url });
+}
 /** Invoked inside the physical observation wrapper; response hooks receive their own body stream. */
 export function requestExtensionFetch(fallback: typeof globalThis.fetch): typeof globalThis.fetch {
   return async (input, init) => {
     const current = requests.getStore();
-    if (!current) return fallback(input, init);
+    if (!current) return bindBodyToSignal(await fallback(input, init), init?.signal);
     const headers = requestHeaders(init?.headers ?? (input instanceof Request ? input.headers : undefined));
     current.measuredCacheWrites = undefined;
-    const response = await (current.options.fetch ?? fallback)(input, { ...init, headers, redirect: 'error' });
+    const response = bindBodyToSignal(await (current.options.fetch ?? fallback)(input, { ...init, headers, redirect: 'error' }), init?.signal);
     const short = response.headers.get('Msh-Usage-Cache-Write-Tokens-5m');
     const long = response.headers.get('Msh-Usage-Cache-Write-Tokens-1h');
     if (short !== null || long !== null) {
