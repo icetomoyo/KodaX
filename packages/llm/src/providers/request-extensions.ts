@@ -4,6 +4,7 @@ import type { KodaXCacheCapabilities, KodaXProviderRequestMetadata, KodaXProvide
 import { KodaXProviderError } from '../errors.js';
 import { applyCachePolicy } from './cache-policy.js';
 import { cacheWritePartition } from './cache-usage.js';
+import { getRunScopedConfig, isWireSessionId } from '../run-scoped-config.js';
 
 interface RequestExtensions { environment: Readonly<Record<string, string | undefined>>; options: KodaXProviderStreamOptions; metadata: KodaXProviderRequestMetadata; cache?: KodaXCacheCapabilities; cacheDisabled: boolean; measuredCacheWrites?: Readonly<Record<string, unknown>>; }
 const requests = new AsyncLocalStorage<RequestExtensions>();
@@ -59,6 +60,9 @@ export function requestHeaders(base?: RequestInit['headers']): Headers {
     headers.delete(affinity);
     if (!current.cacheDisabled && current.options.cacheRetention !== 'none' && current.options.promptCacheKey) headers.set(affinity, current.options.promptCacheKey);
   }
+  // A Host-supplied X-Session-Id wins; an unsafe id is omitted rather than failing every request.
+  const sessionId = getRunScopedConfig()?.sessionId;
+  if (sessionId !== undefined && isWireSessionId(sessionId) && !headers.has('x-session-id')) headers.set('X-Session-Id', sessionId);
   return headers;
 }
 function extensions(value: unknown): Record<string, unknown> {

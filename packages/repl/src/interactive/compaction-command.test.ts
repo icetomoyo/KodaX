@@ -220,6 +220,35 @@ describe('/compact command', () => {
     } finally { log.mockRestore(); }
   });
 
+  it('moves /clear to a new session so a Host stops replaying the cleared history', async () => {
+    // Host-backed REPLs keep no local messages; the Host still holds the conversation.
+    context.messages = [];
+    const order: string[] = [];
+    callbacks.getSessionStatus = vi.fn(async () => ({ messageCount: 3 })) as never;
+    callbacks.saveSession = vi.fn(async () => { order.push('save'); });
+    callbacks.startNewSession = vi.fn(async () => { order.push('start'); });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await BUILTIN_COMMANDS.find(command => command.name === 'clear')!
+        .handler([], context, callbacks, currentConfig);
+      expect(order).toEqual(['save', 'start']);
+      expect(callbacks.clearHistory).toHaveBeenCalledOnce();
+    } finally { log.mockRestore(); }
+  });
+
+  it('keeps the current session when /clear has nothing to clear', async () => {
+    context.messages = [];
+    callbacks.getSessionStatus = vi.fn(async () => ({ messageCount: 0 })) as never;
+    callbacks.startNewSession = vi.fn();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await BUILTIN_COMMANDS.find(command => command.name === 'clear')!
+        .handler([], context, callbacks, currentConfig);
+      expect(callbacks.startNewSession).not.toHaveBeenCalled();
+      expect(callbacks.clearHistory).toHaveBeenCalledOnce();
+    } finally { log.mockRestore(); }
+  });
+
   it('uses the same explicit compaction policy as the automatic run options', async () => {
     callbacks.createKodaXOptions = () => ({
       compaction: { reasoning: { effort: 'low' }, triggerPercent: 60 },

@@ -10,6 +10,7 @@ import {
   applyClientSessionMetadata,
   readClientHistoryPreview,
 } from '../session/client-session.js';
+import { formatSessionTimestamp } from '../session/session-recency.js';
 import type { ClientSession, ClientSessionSettingsPatch, ClientSessionView } from '@kodax-ai/coding/client-contract';
 import type { RuntimeStopCallbacks, RuntimeStopControl } from './runtime-stop.js';
 import * as childProcess from 'child_process';
@@ -191,6 +192,8 @@ interface SessionStorage extends KodaXSessionStorage {
     msgCount: number;
     tag?: string;
     runtimeInfo?: KodaXSessionData['runtimeInfo'];
+    createdAt?: string;
+    lastMessageAt?: string;
   }>>;
 }
 
@@ -412,6 +415,8 @@ class MemorySessionStorage implements SessionStorage {
     title: string;
     msgCount: number;
     tag?: string;
+    createdAt?: string;
+    lastMessageAt?: string;
     runtimeInfo?: KodaXSessionData['runtimeInfo'];
   }>> {
     return Array.from(this.sessions.entries())
@@ -423,6 +428,7 @@ class MemorySessionStorage implements SessionStorage {
           ? countActiveLineageMessages(session.data.lineage)
           : session.data.messages.length,
         ...(session.data.tag !== undefined ? { tag: session.data.tag } : {}),
+        createdAt: session.createdAt,
         ...(session.data.runtimeInfo
           ? {
             runtimeInfo: structuredClone(session.data.runtimeInfo),
@@ -1512,7 +1518,7 @@ Keyboard Shortcuts:
           ? 'Recent Sessions:\n' + sessions.map(item => {
             const workspace = item.runtimeInfo?.workspaceRoot;
             const suffix = workspace === context.runtimeInfo?.workspaceRoot ? ' (current workspace)' : '';
-            return `${item.id} (${item.msgCount} messages) ${item.title.slice(0, 40)}`
+            return `${formatSessionTimestamp(item.lastMessageAt ?? item.createdAt)}  ${item.id} (${item.msgCount} messages) ${item.title.slice(0, 40)}`
               + (workspace ? `\n      workspace: ${formatWorkspaceTruth(item.runtimeInfo)}${suffix}` : '');
           }).join('\n')
           : '[No saved sessions]' };
@@ -1526,7 +1532,7 @@ Keyboard Shortcuts:
           console.log();
         }
         for (const s of sessions.slice(0, 10)) {
-          console.log(`  ${chalk.cyan(s.id)} ${chalk.dim(`(${s.msgCount} messages)`)} ${s.title.slice(0, 40)}`);
+          console.log(`  ${chalk.dim(formatSessionTimestamp(s.lastMessageAt ?? s.createdAt))}  ${chalk.cyan(s.id)} ${chalk.dim(`(${s.msgCount} messages)`)} ${s.title.slice(0, 40)}`);
           if (s.runtimeInfo?.workspaceRoot) {
             const sameWorkspace = context.runtimeInfo?.workspaceRoot === s.runtimeInfo.workspaceRoot;
             const suffix = sameWorkspace ? ' (current workspace)' : '';

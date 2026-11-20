@@ -3718,7 +3718,7 @@ packages/
 3. **Elicitation 反钓鱼三件套**：`McpElicitRequest` 带 `serverId`（runtime 在 dispatch / -32042 / OAuth consent 三处注入）→ form + url prompt 都展示「哪个 MCP server 在请求」；form 收集后加 **review-before-send** 确认（列出将发送的值 + Send/Cancel）；url mode 展示完整 URL + 域名、**绝不自动打开浏览器**、**绝不让 model 窥探 URL/内容**。
    - *Why*：elicitation 是 server→user 的注入面，是钓鱼向量（恶意 server 可伪装索要 token）。最高杠杆防御是「让用户知道是谁在问」+「发送前可审阅」。这是 spec User-Interaction Model 的 client SHOULD。
 
-4. **OAuth 零配置 discovery + 复用 url-elicitation 作 consent gate**。401 → RFC 9728 PRM → RFC 8414/OIDC AS metadata → RFC 7591 DCR → PKCE(S256) + RFC 8707 `resource` → `127.0.0.1` loopback。授权 URL 通过**同一个 url-elicitation 反钓鱼门**展示（不另造 UI）。`config.auth` 端点字段改 optional（零配置）。
+4. **OAuth 零配置 discovery + 复用 url-elicitation 作 consent gate**。401 → RFC 9728 PRM → RFC 8416/OIDC AS metadata → RFC 7591 DCR → PKCE(S256) + RFC 8707 `resource` → `127.0.0.1` loopback。授权 URL 通过**同一个 url-elicitation 反钓鱼门**展示（不另造 UI）。`config.auth` 端点字段改 optional（零配置）。
    - *Why not 静态配置*：成熟客户端（claudecode/codex）都是 discovery-based 零配置；要求用户手填 `authorizationUrl`/`tokenUrl` 不现实。既有 FEATURE_065 静态路径保留（仅在三字段齐备时走）。
    - *Why CIMD 不做*：Client ID Metadata Documents（SEP-991）是*推荐*增强非 MUST，需要 server 端 `client_id_metadata_document_supported`；DCR(RFC 7591) 是注册基线且 codex 也只用 DCR。CIMD 列为 non-goal，待真实目标 server 需要时再评估。**故对外表述为「discovery/login/step-up 完成」而非「完整对齐 2025-11-25」**。
    - *callback 加固*：先监听再展示 URL（消除丢 redirect 竞态，首结果 buffer）；redirect URI 用 `127.0.0.1` 与监听一致（避开 IPv6 `localhost`/`::1` 错配，对齐 codex/RFC 8252）；PKCE 强制 S256，AS 不支持即硬失败拒绝降级到 `plain`。
@@ -6072,8 +6072,10 @@ another Session.
    new live Session replay. Migration starts a fresh journal explicitly.
 6. Daemons advertise `sessionEventJournal:1`; incompatible daemons fail
    capability negotiation.
-7. Each A2A Task owns one Runtime Session and stores its full cursor. A2A
-   projects semantic task lifecycle only, not high-frequency Runtime telemetry.
+7. Each A2A Task stores its full Runtime Session cursor. Tasks in one
+   principal's context share one Runtime Session; ADR-077 amends the original
+   one Session per Task. A2A projects semantic task lifecycle only, not
+   high-frequency Runtime telemetry.
 8. Failure latches, pending batches, retention watermarks, and replacement
    epochs are Session-scoped. A failed Session cannot block another Session;
    deleting and recreating an ID starts a fresh epoch, and legacy watermarks
@@ -7950,3 +7952,97 @@ directory on the data root and never split process or storage by profile.
   user's state.
 - **Deprecate `profile` and remove it in a later major version.** It keeps a
   public option with no meaning and a second code path to test until then.
+
+## ADR-077: Provider Requests Name Their Conversation with `X-Session-Id`
+
+**Status**: Accepted (2026-11-17). Tracks Issues 416, 417 and 418. Unreleased.
+
+**Context**: Provider HTTP requests carried no conversation id. A gateway
+could not group a conversation's requests for billing, quota or audit, so it
+could not reconcile them with KodaX sessions. Kodax-Fabric, our own gateway,
+reads `X-Session-Id`. Some third-party endpoints require a session header:
+opencode-go answers 400 without one. Issue 215 had added an opaque, hashed
+`promptCacheKey` for cache routing. It deliberately exposed no Session name,
+so it cannot be matched to a KodaX session. Session ids were
+`YYYYMMDD_HHMMSS_<suffix>`, which show the local creation time to
+anyone who sees them. Host `create` and `fork` used a caller-chosen id as a
+file name without checking it.
+
+**Decision**:
+
+1. Every provider HTTP request sends `X-Session-Id` with the raw root
+   logical session id. Child agents, workflows, compaction, the capability
+   probe and retries send their root's id, so one conversation has one id.
+   A header that the Host or provider configuration already sets wins. An id
+   that is not visible ASCII of 1-128 characters is left out, and a resilience
+   debug event records that.
+2. `promptCacheKey` stays separate and hashed. Cache routing and reconciliation
+   are different jobs: hashing serves cache routing, and the raw id serves
+   reconciliation.
+3. New session ids are UUIDv7. They sort by creation time, carry no local
+   time zone, and have 74 random bits. Legacy ids remain valid; lists are
+   ordered by stored timestamps, and ids only break ties. Short displays show
+   the last 8 characters, because UUIDv7 prefixes are timestamps and repeat
+   for sessions created close together.
+4. A Host-supplied new id (`create.sessionId`, `fork.newSessionId`) must be
+   1-128 characters from `[A-Za-z0-9_-]`. It must not be a Windows device
+   name and must not start with `archived-`. Anything else fails with
+   `invalid_params`. Existing ids are read as stored.
+5. The Host strips a caller's `contextIdentitySessionId` from run options,
+   so the id sent to gateways is always the Host session's own.
+6. REPL `/clear` saves the conversation and continues under a new session
+   id when the conversation has messages. Keeping the id would let one gateway
+   id name two unrelated conversations and leave the cleared history with no
+   way back. The REPL prints `/resume <old id>`.
+7. A2A Tasks that share a `contextId` continue one Runtime Session per
+   principal. Its id is `a2a-` and the SHA-256 of the principal key and the
+   context id, so a gateway sees one id per A2A conversation and never the
+   caller's context id. The first Task creates the Session. Later Tasks reuse
+   the id when `create` reports a conflict. This replaces ADR-061 item 7's one
+   Session per Task, under which a follow-up Task started without the earlier
+   exchanges (Issue 418). Each Task still keeps its own cursor, because replay
+   and subscription are run-scoped.
+
+**Consequences**:
+
+- Gateways can group and reconcile a conversation, including across
+  compaction and child agents, without a KodaX-specific field.
+- Any provider endpoint, including official ones, sees the session id and,
+  through UUIDv7, its creation time to the millisecond. Legacy ids already
+  showed local time. We accept this, because the id goes only to the endpoint
+  the user configured, together with the conversation content itself.
+- A gateway that pins sessions to one upstream may concentrate long
+  conversations on one backend. We accept that trade-off; the gateway owns
+  routing.
+- The Codex OAuth provider keeps its own `session-id` header contract, which
+  may hold a different value. CLI-bridged providers (Gemini CLI, Codex CLI)
+  make no KodaX HTTP request and send no header.
+- Code that parsed the date out of a session id must use the stored
+  `createdAt` / `lastMessageAt` instead.
+- Host clients that minted ids with other characters must change them. A
+  path such as `../x` used to write outside the sessions directory (Issue 417).
+- The Host runs one Run per Session at a time. A new A2A Task in a busy
+  context waits for the active run, including a run waiting in
+  `INPUT_REQUIRED`.
+- A2A Tasks created before this change keep their own Sessions. The first new
+  Task in such a context starts the shared Session empty.
+- If someone archives a context's Session, new Tasks in that context fail to
+  start.
+
+**Rejected alternatives**:
+
+- **Send a hashed id.** It protects nothing the request body does not already
+  reveal, and it forces every gateway to share the KodaX hash before it can
+  reconcile.
+- **Send `x-opencode-session` or another vendor header.** A live probe showed
+  opencode-go accepts `X-Session-Id`, so a second header adds nothing.
+- **Keep the timestamp id format and only add the header.** Every endpoint
+  would then see the user's local wall-clock time, which reveals their time
+  zone.
+- **Keep the session id on `/clear`.** One gateway id would then cover
+  two unrelated conversations, and the cleared history could not be resumed.
+- **Map A2A contexts to Sessions in a stored ledger.** A ledger needs its own
+  durable writes, recovery and pruning. A derived id gives the same mapping
+  and survives restarts and Task pruning without any of them.
+- **Use the raw `contextId` as the A2A Session id.** The caller chooses it, so
+  it would need escaping to pass the Host id rule, and gateways would see it.

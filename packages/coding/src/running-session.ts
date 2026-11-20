@@ -28,6 +28,7 @@
  * Both entries run the same managed root Run.
  */
 
+import { generateSessionIdSync } from '@kodax-ai/agent';
 import { runManagedTask } from './task-engine.js';
 import { markStartKodaXGeneratedSessionId } from './agent-runtime/middleware/session-snapshot.js';
 import type {
@@ -113,7 +114,7 @@ export function startKodaX(
 
   const rawSessionId = options.session?.id;
   const callerSuppliedSessionId = rawSessionId !== undefined && rawSessionId !== null;
-  const sessionId = rawSessionId ?? generateSessionId();
+  const sessionId = rawSessionId ?? generateSessionIdSync();
   const shouldThreadGeneratedSessionId =
     !callerSuppliedSessionId
     && options.session?.autoResume !== true
@@ -165,15 +166,6 @@ export function startKodaX(
 }
 
 // ============== Internals ==============
-
-/**
- * Generate a fresh session id matching the format substrate consumers
- * elsewhere produce. Format: `sess_<ms-since-epoch>_<8-char-base36>`.
- * Used only when the caller did not supply `options.session.id`.
- */
-function generateSessionId(): string {
-  return `sess_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-}
 
 class SessionControlImpl implements KodaXSessionControl, KodaXSessionMutators {
   private mutators: KodaXSessionMutators | null = null;

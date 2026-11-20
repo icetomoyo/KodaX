@@ -228,6 +228,7 @@ import {
   type CanonicalPermissionMode,
   type SessionPickerItem,
   type SessionDedupeReport,
+  formatSessionTimestamp,
 } from '@kodax-ai/repl';
 import type { AcpPermissionMode } from './acp_server.js';
 import { configureLazyIntegrationCommands, prepareLazyIntegrationCommand } from './integration-cli-lazy.js';
@@ -1980,10 +1981,10 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
     printHelpLine('  kodax                      ', '# Start new session (interactive)');
     printHelpLine('  kodax -c                   ', '# Continue recent conversation');
     printHelpLine('  kodax -r                   ', '# Search and select a saved session');
-    printHelpLine('  kodax -r 20260219_143052   ', '# Resume specific session');
+    printHelpLine('  kodax -r <session-id>      ', '# Resume specific session');
     printHelpLine('  kodax -r "Review runtime"  ', '# Resume a unique exact title; duplicates open the picker');
     printHelpLine('  kodax -s list              ', '# List all sessions');
-    printHelpLine('  kodax -s delete 20260219   ', '# Delete a session');
+    printHelpLine('  kodax -s delete <id>       ', '# Delete a session');
     printHelpLine('  kodax -p "task" --no-session', ' # Run without saving\n');
   },
   project: () => {
@@ -2517,7 +2518,7 @@ function showBasicHelp(): void {
   console.log('Interactive Commands (in REPL mode):');
   console.log('  /help, /h               Show all commands');
   console.log('  /exit, /quit            Exit interactive mode');
-  console.log('  /clear                  Clear conversation history');
+  console.log('  /clear                  Clear the conversation and continue in a new session');
   console.log('  /status                 Show session status');
   process.stdout.write('  /work-mode [agent|coding|script]  Select work mode while idle\n');
   console.log('  /mode [plan|accept-edits|auto|full-access]  Switch permission mode');
@@ -4452,7 +4453,7 @@ complete -c kodax -l version -d 'Show version'`);
       const visible = sessions.slice(0, 50);
       const lines = visible.map((session) => {
         const surface = session.surface ? ` ${session.surface}` : '';
-        return `  ${session.id} [${session.msgCount}]${surface} ${session.title}`;
+        return `  ${formatSessionTimestamp(session.lastMessageAt ?? session.createdAt)}  ${session.id} [${session.msgCount}]${surface} ${session.title}`;
       });
       if (sessions.length > visible.length) {
         lines.push(

@@ -2640,7 +2640,8 @@ async function bindTrustedRunInput(input: {
           ...transportOptions,
           context: Object.fromEntries(
             Object.entries(transportContext).filter(
-              ([key]) => key !== "configHome" && key !== "memoryIdentity"
+              // contextIdentitySessionId names the conversation sent to gateways; only in-process child runs may set it.
+              ([key]) => key !== "configHome" && key !== "memoryIdentity" && key !== "contextIdentitySessionId"
                 && (key !== "commandInvocation" || input.trustedProductPreparation === true),
             ),
           ),

@@ -52,7 +52,7 @@ export function buildRecoverySeed(input: RecoverySeedInput): RecoverySeed {
 
   const summary = truncateText(sections.join('\n\n'), MAX_SUMMARY_LENGTH);
   return {
-    title: `Recovered from ${input.sourceSessionId.slice(0, 8)}`,
+    title: `Recovered from ${input.sourceSessionId.slice(-8)}`,
     summary,
     messages: [{
       role: 'system',

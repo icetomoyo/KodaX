@@ -51,7 +51,8 @@ Both commands must exit successfully.
 
 ## A2A check
 
-Create two A2A Tasks. Confirm they use distinct Runtime Session IDs, recover
+Create two A2A Tasks in different contexts. Confirm they use distinct Runtime
+Session IDs (Tasks in one context share a Session since Issue 418), recover
 after server restart, and do not publish token/tool progress as A2A task
 updates. Confirm progress changes the small `runtime-cursors/` checkpoint but
 does not rewrite `tasks.json`; input-required/resolved and terminal transitions

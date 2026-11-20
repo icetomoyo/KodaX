@@ -45,22 +45,20 @@ function formatSessionTitle(text: string): string {
 }
 
 /**
- * 生成会话 ID
- * 格式: YYYYMMDD_HHMMSS_<suffix>  (suffix = ms base36 + 48-bit random hex)
+ * New session id: an RFC 9562 UUIDv7 (48-bit Unix ms timestamp + 74 random bits).
  *
- * FEATURE_219 (v0.7.46): the date-prefix is preserved (sortable +
- * human-readable), but a per-call suffix makes the id GLOBALLY unique.
- * Under the pre-FEATURE_219 flat layout the filename collision silently
- * masked two same-second sessions (overwrite risk); under the per-project
- * directory layout the same id could otherwise exist in two project folders
- * and make `loadSession(id)` ambiguous. See ADR-038 §7.
+ * The id is sent to providers as `X-Session-Id`, so it carries no local
+ * date or time zone; it still sorts by creation and stays globally unique
+ * across project folders (ADR-038 §7). Ids created before this format
+ * (`YYYYMMDD_HHMMSS_<suffix>`) remain valid for resume and lookup.
  */
 export function generateSessionIdSync(): string {
-  const now = new Date();
-  const datePart = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
-  const timePart = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
-  const suffix = `${now.getMilliseconds().toString(36)}${randomBytes(6).toString('hex')}`;
-  return `${datePart}_${timePart}_${suffix}`;
+  const bytes = randomBytes(16);
+  bytes.writeUIntBE(Date.now(), 0, 6);
+  bytes[6] = 0x70 | (bytes[6]! & 0x0f);
+  bytes[8] = 0x80 | (bytes[8]! & 0x3f);
+  const hex = bytes.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 /** Preserve the established async public API for existing consumers. */

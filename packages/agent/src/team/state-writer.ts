@@ -63,7 +63,7 @@ export interface SessionStateSnapshot {
   readonly currentTodoSummary?: CurrentTodoSummary;
   /**
    * v0.7.43 (FEATURE_173 Part B follow-up) — REPL session id
-   * (e.g. `YYYYMMDD_HHMMSS`). Lets `listRunningSessions()` correlate
+   * (a UUIDv7; older sessions keep `YYYYMMDD_HHMMSS_<suffix>`). Lets `listRunningSessions()` correlate
    * a sibling instance with its `.jsonl` file. Mutable: starts
    * undefined during bootstrap, set after `createInteractiveContext`,
    * re-published on `/new`. Older writers omit this; readers MUST

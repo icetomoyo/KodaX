@@ -602,6 +602,7 @@ export type {
 
 // ============== Session ==============
 
+export { runInSessionScope } from './run-scoped-config.js';
 export {
   generateSessionId,
   extractTitleFromMessages,

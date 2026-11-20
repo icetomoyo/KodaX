@@ -145,6 +145,30 @@ Run 一定会得到终态，不再停在 `unknown` 等待无限重试（GitHub #
 
 仍要求 `2` 的旧客户端连接 v3 Host 不受影响，只是原先长期 `unknown` 的场景会收到上述 `failed` 终态。
 
+## beta.11 之后：`X-Session-Id`、UUIDv7 会话 id 与 id 校验（未发布）
+
+Provider 的每个 HTTP 请求都带 `X-Session-Id`，值为根会话 id。子 Agent、
+Workflow 和压缩的请求带同一个值，网关可以按会话对账（ADR-077）。如果 Provider
+配置已经设置了 `X-Session-Id`，以配置的值为准。
+
+新会话 id 改为 UUIDv7，旧格式 `YYYYMMDD_HHMMSS_<suffix>` 的会话照常读取。
+不要从 id 里解析日期，改用 `createdAt` 或 `lastMessageAt`。UUIDv7 的前缀是时间戳，
+相近时间创建的会话前缀相同。界面要缩短 id 时，显示末尾几位，不要截取前缀。
+
+`sessions.create({ sessionId })` 和 `sessions.fork({ newSessionId })` 对调用方
+指定的 id 做校验。id 必须是 1-128 个 `[A-Za-z0-9_-]` 字符，不能是 Windows 设备名
+（`CON`、`NUL`、`COM1` 等，不区分大小写），也不能以 `archived-` 开头。不合规的 id
+返回 `invalid_params`。已有会话的 id 不受影响。Host 会丢弃调用方在运行选项里传入的
+`context.contextIdentitySessionId`。
+
+REPL 的 `/clear` 在会话有消息时，会先保存当前会话，再换到新会话 id。Space 自己的
+清空操作如果要保持一致，应在清空时创建新会话。
+
+A2A 服务端：同一主体、同一 `contextId` 的 Task 共用一个 Runtime 会话，id 为
+`a2a-` 加主体键与 context id 的 SHA-256，后续 Task 能看到之前的对话（Issue 418）。
+同一 context 中已有 Task 在运行或处于 `INPUT_REQUIRED` 时，新 Task 排队等待。
+此前创建的 Task 保留各自的会话。
+
 ## beta.10 之后：Skill `allowed-tools` 不再生效（未发布）
 
 Skill 或命令 frontmatter 里的 `allowed-tools` 现在被忽略（与 Codex 一致）：

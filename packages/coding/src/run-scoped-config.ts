@@ -17,7 +17,9 @@
  * path (single-session, env-bridged) is untouched — an empty object leaves
  * every reader on its env fallback.
  */
-import type { KodaXRunScopedConfig } from '@kodax-ai/llm';
+import { getRunScopedConfig, isWireSessionId, runWithScopedConfig, type KodaXRunScopedConfig } from '@kodax-ai/llm';
+
+import { emitResilienceDebug } from './agent-runtime/resilience-debug.js';
 
 import type { KodaXOptions } from './types.js';
 
@@ -30,5 +32,23 @@ export function deriveRunScopedConfig(options: KodaXOptions): KodaXRunScopedConf
       : {}),
     ...(options.lsp !== undefined ? { lsp: options.lsp } : {}),
     ...(options.workflow !== undefined ? { workflow: options.workflow } : {}),
+    ...withSessionId(runSessionId(options)),
   };
+}
+
+/** The conversation a run belongs to: child agents name their root; a nested run without one stays in the enclosing conversation. */
+export function runSessionId(options: KodaXOptions): string | undefined {
+  return options.context?.contextIdentitySessionId ?? options.session?.id ?? getRunScopedConfig()?.sessionId;
+}
+
+/** Run `fn` inside `sessionId`'s conversation scope, keeping every other enclosing run-scoped field. */
+export function runInSessionScope<T>(sessionId: string, fn: () => T): T {
+  return runWithScopedConfig({ ...getRunScopedConfig(), ...withSessionId(sessionId) }, fn);
+}
+
+function withSessionId(sessionId: string | undefined): { sessionId?: string } {
+  if (sessionId === undefined) return {};
+  if (isWireSessionId(sessionId)) return { sessionId };
+  emitResilienceDebug('[session-header:omitted]', { reason: 'session id is not header-safe', length: sessionId.length });
+  return {};
 }

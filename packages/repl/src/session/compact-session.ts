@@ -28,6 +28,7 @@ import {
   CODING_UPDATE_SUMMARY_PROMPT,
   resolveProvider,
   applyPostCompactAttachments,
+  runInSessionScope,
 } from '@kodax-ai/coding';
 
 import { FileSessionStorage } from '../interactive/storage.js';
@@ -82,7 +83,14 @@ function resolveStorage(options?: CompactSessionOptions): FileSessionStorage {
  * Compact a session by id, writing the result (lineage + messages) back to
  * storage. Returns failures unless `propagateErrors` is explicitly enabled.
  */
-export async function compactSession(
+export function compactSession(
+  sessionId: string,
+  options?: CompactSessionOptions,
+): Promise<CompactSessionResult> {
+  return runInSessionScope(sessionId, () => compactStoredSession(sessionId, options));
+}
+
+async function compactStoredSession(
   sessionId: string,
   options?: CompactSessionOptions,
 ): Promise<CompactSessionResult> {

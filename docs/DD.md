@@ -1038,6 +1038,28 @@ custom gateways default off. `provider.cache.diagnostics` reports a separate
 the hash does not enter `requestEnvelopeHash` because routing metadata does not
 change prompt bytes.
 
+`KodaXRunScopedConfig.sessionId` names the conversation; it is not a provider
+option. Coding's `deriveRunScopedConfig` sets it from
+`contextIdentitySessionId ?? session.id ?? enclosing scope`, so a child agent
+uses its root's id and a nested run without a session keeps the enclosing one.
+`runInSessionScope(id, fn)` covers paths outside `runKodaX`: Host workflows,
+REPL `/compact`, the runner-driven managed task (its id is generated before the
+first request), memory review of a queued episode (the episode's own session)
+and the provider capability probe. `requestHeaders()` in the LLM
+package adds `X-Session-Id` when the id passes `isWireSessionId` (visible
+ASCII, 1-128 characters) and no `x-session-id` header is already set. Every
+HTTP provider sends requests through `requestExtensionFetch` or calls
+`requestHeaders` directly. The Host removes a caller's
+`contextIdentitySessionId` from run options.
+
+`generateSessionIdSync()` returns UUIDv7: a 48-bit Unix millisecond timestamp,
+then version and variant bits, with the remaining bits from `randomBytes`.
+Host `create` and `fork` accept a caller id only if it is 1-128 characters
+from `[A-Za-z0-9_-]`, is not a Windows device name, and does not start with
+`archived-`. Session scratch directories truncate ids at 128 characters. REPL
+`/clear` with messages calls the same save-then-`startNewSession` helper as
+`/new`.
+
 Codex CLI `turn.completed` usage maps `cached_input_tokens` and
 `cache_write_input_tokens`; Gemini CLI `result.stats.cached` maps cache reads.
 The shared CLI event and pseudo-ACP path preserve those optional counters
@@ -1801,7 +1823,11 @@ A2A lives under `src/a2a` and is published through `@kodax-ai/kodax/a2a`:
   admitted handlers on close, and enforces fixed per-task/per-server/per-stream
   SSE limits. Its loopback listener rejects explicit Fetch-blocked ports and
   retries ephemeral allocation until the returned URL is Fetch-compatible.
-- Each Task owns one Runtime Session. High-frequency Runtime progress updates a
+- Tasks in one principal's context continue one Runtime Session,
+  `a2a-<sha256(principal key, contextId)>` (ADR-077). The first Task creates
+  it. Later Tasks get `conflict` from `create` and reuse the id, so no ledger
+  is kept. The Host queues a run behind the Session's active run. Each Task
+  stores its own cursor. High-frequency Runtime progress updates a
   small per-Task cursor checkpoint under `runtime-cursors/`; semantic Task
   transitions still atomically rewrite `tasks.json`. Restart overlays the
   checkpoint before replay, avoiding full-store writes for every token/tool

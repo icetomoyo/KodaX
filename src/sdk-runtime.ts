@@ -8517,6 +8517,19 @@ function createRuntimeSessionService(
   }
 
   /**
+   * A caller-chosen id becomes a file name and the provider-visible
+   * X-Session-Id, so it must be a plain portable name. Existing ids are
+   * read as stored; only new ones are checked.
+   */
+  function assertNewSessionId(sessionId: string): void {
+    if (/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)
+      && !/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(sessionId)
+      && !sessionId.startsWith("archived-")) return;
+    throw sessionCommandError("invalid_params",
+      'Session id must be 1-128 letters, digits, "_" or "-", not a reserved device name, and not start with "archived-".');
+  }
+
+  /**
    * Session goal commands (FEATURE_298 T32): the Host owns the lineage write,
    * serialized under the session gate so concurrent modifications keep an
    * explicit order. Goal commands never start or resurrect Runs.
@@ -8647,6 +8660,7 @@ function createRuntimeSessionService(
     async create(input = {}) {
       ensureOpen();
       admission.assertCreate(input);
+      if (input.sessionId !== undefined) assertNewSessionId(input.sessionId);
       const sessionId = input.sessionId ?? (await generateSessionId());
       if (creatingSessionIds.has(sessionId)) {
         throw Object.assign(new Error(`Session already exists: ${sessionId}`), {
@@ -9509,6 +9523,7 @@ function createRuntimeSessionService(
 
     async fork(input) {
       ensureOpen();
+      if (input.newSessionId !== undefined) assertNewSessionId(input.newSessionId);
       if (input.turn) {
         if (input.historyBoundary !== undefined || input.selector !== undefined) throw Object.assign(new Error('Conflicting turn selectors.'), { code: 'invalid_params' });
         input = { ...input, historyBoundary: runtimeTurnBoundary(input.sessionId, input.turn, input.before) };
@@ -14370,6 +14385,7 @@ async function executeRuntimeWorkflow(
 ): Promise<KodaXResult> {
   const started = await runWithScopedConfig({ ...getRunScopedConfig(),
     ...(options.workflow === undefined ? {} : { workflow: options.workflow }),
+    sessionId,
   }, () => startManagedWorkflow({ ...workflow, options, runId, signal,
     processMetadata: { ...workflow.processMetadata, hostMetadata: { ...workflow.processMetadata?.hostMetadata,
       ownerSessionId: sessionId, ownerRunId: runId } } }));
@@ -15330,6 +15346,8 @@ function buildRunOptions(input: {
     shellSandbox: callerShellSandbox,
     trustedTextMutationHost: _callerTrustedTextMutationHost,
     goalRuntime: _callerGoalRuntime,
+    // The conversation id sent to gateways is the Host session's, never a caller's choice.
+    contextIdentitySessionId: _callerContextIdentitySessionId,
     ...ownerSafeContext
   } = options.context ?? {};
   const runtimeAutoGuardrail = options.guardrails?.find(isRuntimeAutoModeGuardrail);

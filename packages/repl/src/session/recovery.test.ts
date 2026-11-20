@@ -57,6 +57,11 @@ describe('session recovery memory', () => {
     expect(seed.summary).not.toContain('tool-1');
   });
 
+  it('titles the recovery by the source id tail, which differs between sessions created together', () => {
+    const seed = buildRecoverySeed({ sourceSessionId: '019a9256-3c7e-7b21-8f4d-6a2e9c1b5d03', messages: [] });
+    expect(seed.title).toBe('Recovered from 9c1b5d03');
+  });
+
   it('normalizes empty continuation prompts to continue', () => {
     expect(normalizeRecoveryPrompt('')).toBe('Continue.');
     expect(normalizeRecoveryPrompt('  keep going  ')).toBe('keep going');

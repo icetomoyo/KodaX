@@ -10,6 +10,7 @@ import {
   runSessionPicker,
   type SessionPickerItem,
 } from './SessionPicker.js';
+import { formatSessionTimestamp } from '../session/session-recency.js';
 
 const sessions: SessionPickerItem[] = [
   {
@@ -117,6 +118,29 @@ describe('SessionPicker', () => {
       if (previousTimezone === undefined) delete process.env.TZ;
       else process.env.TZ = previousTimezone;
     }
+  });
+
+  it('formats list times in local time because session ids no longer carry a readable date', () => {
+    const previousTimezone = process.env.TZ;
+    process.env.TZ = 'Asia/Shanghai';
+    try {
+      expect(formatSessionTimestamp('2026-07-29T03:36:34.235Z')).toBe('2026-07-29 11:36');
+      expect(formatSessionTimestamp(undefined)).toBe('unknown time');
+    } finally {
+      if (previousTimezone === undefined) delete process.env.TZ;
+      else process.env.TZ = previousTimezone;
+    }
+  });
+
+  it('shortens ids by their random tail, which differs between sessions created together', () => {
+    const sessions = ['019a9256-3c7e-7b21-8f4d-6a2e9c1b5d03', '019a9256-41f0-7c88-a1d2-77e0b3f4c9a1']
+      .map((id, index) => ({ id, title: `Session ${index}`, msgCount: 1 }));
+    const { lastFrame } = render(
+      <SessionPicker sessions={sessions} onSelect={vi.fn()} onSelectionError={vi.fn()} onCancel={vi.fn()} />,
+    );
+
+    expect(lastFrame()).toContain('· 9c1b5d03');
+    expect(lastFrame()).toContain('· b3f4c9a1');
   });
 
   it('selects and exits through the owned TUI input lifecycle', async () => {

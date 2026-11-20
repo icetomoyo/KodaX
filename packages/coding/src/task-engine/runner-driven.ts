@@ -19,8 +19,10 @@ import type {
   RunnerToolObserver,
   StopHookFn,
 } from '@kodax-ai/agent';
+import { generateSessionIdSync } from '@kodax-ai/agent';
 import { waitForContextRecovery } from '../context-recovery-wait.js';
 import { resolveWorkMode, assertWorkModeAvailable } from '../work-mode.js';
+import { runInSessionScope } from '../run-scoped-config.js';
 import { createScriptPilot } from '../agent-runtime/script/pilot.js';
 import { withScriptCells, createScriptReceiptReader } from '../agent-runtime/script/run.js';
 import { SCRIPT_MODEL_LIMITS, SCRIPT_TOOL_NAME, withScriptModelTool, projectScriptModelTools, canReadWithModelTools, closeScriptModelSession } from '../agent-runtime/script/model.js';
@@ -904,13 +906,18 @@ export async function runManagedTaskViaRunner(
   const extensionRuntime = options.extensionRuntime ?? getActiveExtensionRuntime() ?? undefined;
   const boundOptions = { ...options, extensionRuntime, context: { ...options.context,
     runtimeRunId: options.context?.runtimeRunId ?? randomUUID() } };
-  return withExtensionRuntimeContext(() => runManagedTaskViaRunnerInContext(boundOptions, prompt, adapterOverride, plan),
-    extensionRuntime, boundOptions.context.runtimeRunId);
+  // autoResume / resume continue the latest saved session; the id is fixed before the run so every
+  // provider request of this conversation carries it.
+  const initialSessionId = (await discoverAutoResumeSessionId(options)) ?? generateSessionIdSync();
+  return runInSessionScope(options.context?.contextIdentitySessionId ?? initialSessionId, () => withExtensionRuntimeContext(
+    () => runManagedTaskViaRunnerInContext(boundOptions, prompt, initialSessionId, adapterOverride, plan),
+    extensionRuntime, boundOptions.context.runtimeRunId));
 }
 
 async function runManagedTaskViaRunnerInContext(
   options: KodaXOptions,
   prompt: string,
+  initialSessionId: string,
   adapterOverride?: Parameters<typeof buildRunnerLlmAdapter>[1],
   // Shard 6d-L: accept the reasoning plan produced by `createManagedReasoningPlan`
   // in `task-engine.ts`. Optional so direct Runner invocations from tests
@@ -943,8 +950,6 @@ async function runManagedTaskViaRunnerInContext(
     resolveProvider(providerName),
     effectiveOptions.modelOverride ?? effectiveOptions.model,
   );
-  const initialSessionId = await discoverAutoResumeSessionId(effectiveOptions)
-    ?? `runner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const releaseActiveRootQueueRoute = registerActiveRootQueueRoute(
     actorQueueId(initialSessionId, '/root'),
   );
@@ -3108,7 +3113,7 @@ async function runManagedTaskViaRunnerInner(
     messages: resultMessages,
     // FEATURE_173 (v0.7.42) Part A — kill `runner-${epoch}` ghost-session
     // double-write. Caller-supplied `options.session.id` (the REPL session
-    // file, format `YYYYMMDD_HHMMSS`) always wins. `runOnce` does NOT
+    // file id) always wins. `runOnce` does NOT
     // currently pass an agent-layer Session into Runner.run (would trigger
     // `session.append()`), so `effectiveRunResult.sessionId` is always
     // undefined for production callers. The fallback is the same id emitted
