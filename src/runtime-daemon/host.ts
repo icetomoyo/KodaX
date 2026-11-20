@@ -424,7 +424,6 @@ function normalizeDiagnosticDetail(detail: unknown, seen = new Set<unknown>()): 
   if (Array.isArray(detail)) return detail.map((entry) => normalizeDiagnosticDetail(entry, seen));
   return detail;
 }
-/** @internal Also used before host publication for the existing owner identity probes. */
 /** True when Runtime close failed only on Actor trees it could not release, which restart recovery reclaims. */
 function leavesOnlyActorTreesForRecovery(error: unknown): boolean {
   const errors = error instanceof AggregateError ? error.errors : [error];
@@ -432,6 +431,7 @@ function leavesOnlyActorTreesForRecovery(error: unknown): boolean {
     item instanceof Error && 'code' in item && item.code === 'actor_shutdown_not_persisted');
 }
 
+/** @internal Also used before host publication for the existing owner identity probes. */
 export function appendRuntimeDiagnostic(paths: RuntimeDaemonPaths, diagnostic: KodaXDiagnostic): void {
   // Debug traces (e.g. every cached Job probe) dominated the persisted log;
   // KODAX_DIAGNOSTICS_STDERR=1 still shows them live.

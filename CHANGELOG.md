@@ -14,12 +14,26 @@ All notable changes to this project will be documented in this file.
   `X-Session-Id` header wins. Endpoints that require a session header, such
   as opencode-go, now accept KodaX requests (Issue 416, ADR-077).
 
+- Applications can shape a managed Run's prompt through `context.prompt`
+  (`KodaXPromptSpec`; `prompt` in a product client's execution profile).
+  `kodaxGuidance: 'omit'` drops KodaX's coding guidance and Worker identity
+  wording and keeps tool and safety contracts. Keyed `rule` and `reference`
+  entries travel as Run Context sections, so the system prompt stays cacheable.
+  Rules also reach write children. Hosts advertise `promptSpec` v1, and an
+  older Host rejects a spec with `daemon_upgrade_required`. See the
+  embedder guide.
+
 ### Fixed
 
 - When a Host trusts a project's `.kodax/exec-policy.jsonc` and the workspace
   path goes through a directory alias (a junction or symlink, or macOS
   `/var`), text tools can no longer rewrite that policy. A trusted root now
   also matches its project through such an alias (Issue 422).
+
+- One-shot CLI Runs no longer print
+  `[KodaX] recovering undefined/undefined (undefined, undefined)`. The
+  resolved reasoning setting was forwarded as a provider recovery; it now
+  reaches its own event.
 
 - On Node 20 and 22, stopping a Run cancels the model request again. After a
   garbage collection, Node's built-in fetch could lose the cancellation, so

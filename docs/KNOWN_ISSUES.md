@@ -187,6 +187,10 @@ referenced until the stream ends.
   connection, and errors the reader with the abort reason as fetch itself
   would. Every provider HTTP path goes through this function: the OpenAI and
   Anthropic SDK clients, Azure, native HTTP and Bedrock.
+- A caller may pass a `Request` that carries the signal instead of
+  `init.signal`. That Request's own signal follows the caller's only while
+  the Request is alive, so the bound body also keeps the Request alive. No
+  built-in provider calls fetch this way; a custom `fetch` caller might.
 - As a backstop for providers that ignore their signal (for example a custom
   `registerModelProvider` implementation), the managed LLM adapter races each
   provider call against the Run's abort
@@ -207,7 +211,8 @@ Tests added:
 - `providers/request-extensions.abort.test.ts`: a held SSE body fetched with
   `redirect: 'error'` is aborted after forced GC. The reader fails with
   `AbortError` and the server sees the socket close. It timed out on Node 22
-  without the fix.
+  without the fix. A second case passes the signal on a `Request` input; it
+  also timed out until the body kept that Request alive.
 - `managed-task/llm-adapter.stop-bound.test.ts`: a provider that ignores its
   signal is Stopped within one second. The error carries the recovery
   transcript, and a late `UND_ERR_BODY_TIMEOUT` is not an unhandled rejection.
@@ -371,12 +376,11 @@ hard limit, and left the subtraction to the model.
   or start it after a running Agent finishes.
 - The compact context projection (`managed-context-contract`) is deleted. It
   rewrote the capacity block and would have kept the old wording alive.
+- FEATURE_311 later removed the second Worker and tool text source, so this
+  bug class (one copy changing without the other) can no longer occur.
 
 ### Remaining Limits
 
-- The canonical and compact Worker texts are still two sources pinned by
-  hashes. This bug class can recur when one changes without the other. A
-  section-based prompt store is the planned fix.
 - `glm-5.3-flash` sometimes sends a `skill` call with arguments and no name. The
   tool rejects it and the model retries. No wrong Skill loads.
 - `deepseek-flash` can run `git status` before loading `git-workflow` for a
@@ -3980,8 +3984,9 @@ fill this role.
 
 **Resolution.** Every provider HTTP request sends `X-Session-Id` with the
 raw root logical session id. The id travels in run-scoped configuration. Child
-agents, Host workflows, REPL `/compact`, the runner-driven managed task,
-memory review and the capability probe send their root conversation's id. A
+agents, Host workflows, REPL `/compact`, the runner-driven managed task and
+memory review send their root conversation's id. The capability probe sends
+the id of the Run it serves, and outside a Run its own short one. A
 header that is already configured wins. A non-header-safe id is left out.
 New session ids are UUIDv7. Session lists show a timestamp, and short ids show
 the last 8 characters. REPL `/clear` with messages now saves the conversation

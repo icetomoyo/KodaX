@@ -23,7 +23,14 @@ async function within<T>(promise: Promise<T>, ms: number): Promise<T | 'timeout'
   try { return await Promise.race([promise, timeout]); } finally { clearTimeout(timer); }
 }
 
-it('a caller abort ends a held response body after the internal Request is collected', async () => {
+const callForms = [
+  ['the init signal', (url: string, signal: AbortSignal) =>
+    requestExtensionFetch(globalThis.fetch)(url, { method: 'POST', body: '{}', signal, redirect: 'error' })],
+  ['a Request input signal', (url: string, signal: AbortSignal) =>
+    requestExtensionFetch(globalThis.fetch)(new Request(url, { method: 'POST', body: '{}', signal }), { redirect: 'error' })],
+] as const;
+
+it.each(callForms)('a caller abort through %s ends a held response body after the internal Request is collected', async (_form, call) => {
   let socketClosed = (): void => undefined;
   const closed = new Promise<'closed'>(resolve => { socketClosed = () => resolve('closed'); });
   server = createServer((request, response) => {
@@ -37,8 +44,7 @@ it('a caller abort ends a held response body after the internal Request is colle
   if (address === null || typeof address === 'string') throw new Error('Server has no port.');
 
   const controller = new AbortController();
-  const response = await requestExtensionFetch(globalThis.fetch)(`http://127.0.0.1:${address.port}/v1`,
-    { method: 'POST', body: '{}', signal: controller.signal, redirect: 'error' });
+  const response = await call(`http://127.0.0.1:${address.port}/v1`, controller.signal);
   const reader = response.body!.getReader();
   await reader.read();
   const next = reader.read().then(() => 'chunk', (error: unknown) => (error instanceof Error ? error.name : String(error)));
