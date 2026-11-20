@@ -51,16 +51,17 @@ describe('tool registry', () => {
   });
 
   it('makes the resident spawn surface explicit for broad read-only review fan-out', () => {
-    const description = getToolDefinition('spawn_agent')?.description ?? '';
+    const definition = getToolDefinition('spawn_agent');
+    const description = `${definition?.description ?? ''} ${JSON.stringify(definition?.input_schema ?? {})}`;
 
     expect(description).toContain('broad multi-file review');
     expect(description).toContain('distinct read-only lanes');
     expect(description).toContain('generated outputs');
     expect(description).toContain('disjoint write ownership');
     expect(description).toContain('read_only:false');
-    expect(description).toMatch(/shared isolation \(default\)/);
+    expect(description).toContain('Default shared');
     expect(description).toContain('exact exclusive paths');
-    expect(description).toMatch(/Shared edits.*root workspace.*do not reapply/);
+    expect(description).toMatch(/edits are visible in the root workspace; do not reapply/);
     expect(description).toContain('explicit merge-back strategy');
   });
 
@@ -102,9 +103,9 @@ describe('tool registry', () => {
 
     expect({ promptDelta, schemaDeltas, toolSchemaDelta, staticInputDelta }).toEqual({
       promptDelta: 2_418,
-      schemaDeltas: [257, 215],
-      toolSchemaDelta: 472,
-      staticInputDelta: 2_890,
+      schemaDeltas: [164, 146],
+      toolSchemaDelta: 310,
+      staticInputDelta: 2_728,
     });
     expect(staticInputDelta).toBeLessThanOrEqual(3_000);
   });
@@ -123,9 +124,9 @@ describe('tool registry', () => {
     const desc = planSchema?.description ?? '';
 
     expect(desc).toMatch(/40 lines/);
-    expect(desc).toMatch(/3 bullet-depth|3 levels|3 depth/i);
+    expect(desc).toMatch(/3 bullet-depth|3 bullet levels|3 levels|3 depth/i);
     expect(desc).toMatch(/one sentence|1 sentence|single sentence/i);
-    expect(desc).toMatch(/phases|split/i);
+    expect(desc).toMatch(/phase-by-phase|phases|split/i);
   });
 
   it('F270: spawn_agent schema exposes optional specialist and effort fields', () => {
@@ -139,11 +140,11 @@ describe('tool registry', () => {
     expect(props).toBeDefined();
     expect(props?.agent_id?.type).toBe('string');
     expect(props?.effort?.type).toBe('string');
-    expect(props?.effort?.description).toMatch(/Reasoning effort/);
-    expect(props?.model_hint?.description).toMatch(/Routing tier/);
-    expect(props?.model_hint?.description).toMatch(/fast.*focused lookups/);
-    expect(props?.model_hint?.description).toMatch(/deep.*multi-file/);
-    expect(props?.model_hint?.description).toMatch(/Unconfigured tiers.*inherited provider\/model/);
+    expect(props?.effort?.description).toMatch(/off\/low\/medium\/high\/xhigh\/max/);
+    expect(props?.model_hint?.description).toMatch(/balanced: ordinary work \(default\)/);
+    expect(props?.model_hint?.description).toMatch(/fast: read-only mechanical lookup/);
+    expect(props?.model_hint?.description).toMatch(/deep: architecture/);
+    expect(props?.model_hint?.description).toMatch(/Unconfigured tiers inherit/);
     expect(props?.model_hint?.description).not.toMatch(/no-op|future routing/i);
     expect(required).not.toContain('agent_id');
     expect(required).not.toContain('effort');

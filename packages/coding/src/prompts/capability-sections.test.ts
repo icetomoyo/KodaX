@@ -1,24 +1,20 @@
 /**
- * v0.7.35.1 FEATURE_142 Batch E — capability-sections unit tests.
- *
- * Verifies the 13 capability-context sections are emitted in the
- * documented order with the correct conditional inclusion behavior.
- * The byte-level equivalence with pre-Batch E SA output is enforced at
- * the integration level by `builder.test.ts` — this file pins the
- * unit-level contract (id ordering + conditional inclusion).
+ * Capability-context sections for the managed Worker: which sections appear,
+ * when, and in what order.
  */
 
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAgentActorController, resolveMemoryRoot, setAgentConfigHome } from '@kodax-ai/agent';
 
 import type { KodaXOptions } from '../types.js';
 import type { KodaXAgentScope } from '../construction/agent-resolver.js';
 
+import { createExtensionRuntime } from '../extensions/runtime.js';
 import { buildCapabilityContextSections } from './capability-sections.js';
 import { loadMarkdownAgentScope } from '../construction/markdown-loader.js';
 
@@ -56,19 +52,6 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
-interface FakeExtensionRuntime {
-  readonly mcpContext: string | undefined;
-}
-
-function fakeExtensionRuntime(
-  mcpContext: string | undefined,
-): KodaXOptions['extensionRuntime'] {
-  return {
-    getCapabilityPromptContext: async (kind: string) =>
-      kind === 'mcp' ? mcpContext : undefined,
-  } as unknown as KodaXOptions['extensionRuntime'];
-}
-
 function ids(sections: ReadonlyArray<{ id: string }>): string[] {
   return sections.map((s) => s.id);
 }
@@ -90,12 +73,7 @@ interface MakeOptionsExtras {
   sessionId?: string;
 }
 
-/**
- * Build a fixture KodaXOptions. `provider` defaults to undefined so
- * tests that exercise the "no runtime-fact" branch can omit it; pass
- * `{ provider: 'anthropic' }` explicitly to exercise the with-fact
- * branch.
- */
+/** Build a fixture KodaXOptions; `provider` stays unset unless a test passes one. */
 function makeOptions(
   ctx: PartialContextOptions,
   extras: MakeOptionsExtras = {},
@@ -113,6 +91,7 @@ describe('buildCapabilityContextSections', () => {
   const cleanupDirs: string[] = [];
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     setAgentConfigHome(undefined);
     for (const dir of cleanupDirs.splice(0)) {
       await removeTempDir(dir);
@@ -132,90 +111,72 @@ describe('buildCapabilityContextSections', () => {
     expect(sections.map(section => section.content).join('\n')).not.toContain('Load audit-skill');
   });
 
-  it('always emits base-system, environment-context, working-directory in canonical order (minimal options)', async () => {
+  it('leaves identity, environment and guidance to the managed Worker', async () => {
     const cwd = await createTempDir('kodax-capsec-min-');
     cleanupDirs.push(cwd);
 
     const sections = await buildCapabilityContextSections(
-      makeOptions({ executionCwd: cwd, gitRoot: cwd }),
-      false, // not a new session — skip git/project snapshot
-      cwd,
-    );
-
-    const sectionIds = ids(sections);
-    // base-system MUST be first; environment-context + working-directory
-    // are unconditional and follow in canonical order. Every other
-    // section is conditional and absent in this fixture.
-    expect(sectionIds[0]).toBe('base-system');
-    expect(sectionIds).toContain('environment-context');
-    expect(sectionIds).toContain('working-directory');
-    // working-directory comes AFTER environment-context.
-    expect(sectionIds.indexOf('environment-context'))
-      .toBeLessThan(sectionIds.indexOf('working-directory'));
-  });
-
-  it('runtime-fact section is included only when provider or model is set', async () => {
-    const cwd = await createTempDir('kodax-capsec-rf-');
-    cleanupDirs.push(cwd);
-
-    const without = await buildCapabilityContextSections(
-      makeOptions({ executionCwd: cwd, gitRoot: cwd }),
-      false,
-      cwd,
-    );
-    expect(ids(without)).not.toContain('runtime-fact');
-
-    const withProvider = await buildCapabilityContextSections(
       makeOptions(
-        { executionCwd: cwd, gitRoot: cwd },
-        { provider: 'anthropic' },
+        { executionCwd: cwd, gitRoot: cwd, repoIntelligenceContext: '## Repo intel\n- foo' },
+        { provider: 'anthropic', sessionId: 'session A' },
       ),
       false,
       cwd,
     );
-    expect(ids(withProvider)).toContain('runtime-fact');
-    const rf = withProvider.find((s) => s.id === 'runtime-fact');
-    expect(rf?.content).toContain('provider=anthropic');
+
+    // The Worker prompt already carries these; emitting them here would duplicate them.
+    const sectionIds = ids(sections);
+    for (const workerOwned of [
+      'base-system',
+      'environment-context',
+      'runtime-fact',
+      'working-directory',
+      'session-scratch-directory',
+      'repo-intelligence-context',
+      'execution-guidance',
+    ]) {
+      expect(sectionIds).not.toContain(workerOwned);
+    }
   });
 
-  it('repo-intelligence-context, mcp-capability-context, skills-addendum are conditional; execution-guidance always present', async () => {
+  it('mcp-capability-context, prompt-overlay and skills-addendum are conditional and ordered', async () => {
     const cwd = await createTempDir('kodax-capsec-cond-');
     cleanupDirs.push(cwd);
+    const runtime = createExtensionRuntime();
+    runtime.registerCapabilityProvider({
+      id: 'mcp',
+      kinds: ['tool', 'resource', 'prompt'],
+      getPromptContext: () => '## MCP Capability Provider\nUse mcp_search before calling mcp_call directly.',
+    });
 
     const sections = await buildCapabilityContextSections(
       makeOptions(
         {
           executionCwd: cwd,
           gitRoot: cwd,
-          repoIntelligenceContext: '## Repo intel\n- foo',
           promptOverlay: '## Overlay\n- bar',
           skillsPrompt: 'Use skill X',
         },
-        { extensionRuntime: fakeExtensionRuntime('## MCP\n- minimax') },
+        { extensionRuntime: runtime },
       ),
       false,
       cwd,
     );
+    await runtime.dispose();
 
     const sectionIds = ids(sections);
-    expect(sectionIds).toContain('repo-intelligence-context');
-    expect(sectionIds).toContain('mcp-capability-context');
-    expect(sectionIds).toContain('skills-addendum');
-    // The static `execution-guidance` block is always emitted (it replaced the
-    // router overlay text in P1.7). The `prompt-overlay` section is re-emitted
-    // when `context.promptOverlay` is set — it now carries only the SA Direct
-    // Path Rule + caller-supplied overlay, not the retired router overlay
-    // (ADR-043 Phase 3 regression fix).
-    expect(sectionIds).toContain('execution-guidance');
-    expect(sectionIds).toContain('prompt-overlay');
-    const overlaySection = sections.find((s) => s.id === 'prompt-overlay');
-    expect(overlaySection?.content).toContain('## Overlay\n- bar');
-
-    // Canonical order: repo-intel → mcp → skills.
-    expect(sectionIds.indexOf('repo-intelligence-context'))
-      .toBeLessThan(sectionIds.indexOf('mcp-capability-context'));
+    expect(sections.find((s) => s.id === 'mcp-capability-context')?.content)
+      .toContain('Use mcp_search before calling mcp_call directly.');
+    expect(sections.find((s) => s.id === 'prompt-overlay')?.content).toContain('## Overlay\n- bar');
     expect(sectionIds.indexOf('mcp-capability-context'))
+      .toBeLessThan(sectionIds.indexOf('prompt-overlay'));
+    expect(sectionIds.indexOf('prompt-overlay'))
       .toBeLessThan(sectionIds.indexOf('skills-addendum'));
+
+    const bare = ids(await buildCapabilityContextSections(makeOptions({ executionCwd: cwd, gitRoot: cwd }), false, cwd));
+    expect(bare).not.toContain('mcp-capability-context');
+    expect(bare).not.toContain('prompt-overlay');
+    expect(bare).not.toContain('skills-addendum');
   });
 
   it('project-agents is included when an AGENTS.md exists in the cwd', async () => {
@@ -239,9 +200,59 @@ describe('buildCapabilityContextSections', () => {
     expect(projectAgents?.content).toContain('never use any');
   });
 
-  it('isNewSession=true triggers project-snapshot (best-effort, with cwd as project root)', async () => {
+  it('refreshes project rule bodies without accumulating them', async () => {
+    const cwd = await createTempDir('kodax-capsec-rules-');
+    cleanupDirs.push(cwd);
+    vi.stubEnv('KODAX_HOME', path.join(cwd, 'user-home'));
+    const options = makeOptions({ executionCwd: cwd, gitRoot: cwd }, { provider: 'openai' });
+    const render = async (): Promise<string> =>
+      (await buildCapabilityContextSections(options, false, cwd)).map((s) => s.content).join('\n\n');
+
+    const baseline = await render();
+    const rulesDir = path.join(cwd, '.kodax', 'rules');
+    await fs.mkdir(rulesDir, { recursive: true });
+    // Windows can keep a directory's stamp within one clock tick, so age it first;
+    // otherwise adding the rule right after this render may not change the stamp.
+    const past = new Date(Date.now() - 60_000);
+    await fs.utimes(rulesDir, past, past);
+    expect(await render()).toBe(baseline);
+    const rulePath = path.join(rulesDir, 'testing.md');
+    await fs.writeFile(rulePath, 'FIRST_ACTION_TESTING_RULE');
+    const first = await render();
+    expect(first.match(/FIRST_ACTION_TESTING_RULE/g)).toHaveLength(1);
+    expect(await render()).toBe(first);
+    await fs.writeFile(rulePath, 'UPDATED_TESTING_RULE');
+    const updated = await render();
+    expect(updated).toContain('UPDATED_TESTING_RULE');
+    expect(updated).not.toContain('FIRST_ACTION_TESTING_RULE');
+    await fs.rm(rulePath);
+    expect(await render()).toBe(baseline);
+  });
+
+  it('respects the host readable-path boundary for user rule bodies', async () => {
+    const cwd = await createTempDir('kodax-capsec-bound-rules-');
+    cleanupDirs.push(cwd);
+    const userHome = path.join(cwd, 'user-home');
+    await fs.mkdir(path.join(userHome, 'rules'), { recursive: true });
+    await fs.writeFile(path.join(userHome, 'rules', 'private.md'), 'PRIVATE_USER_RULE');
+    vi.stubEnv('KODAX_HOME', userHome);
+    const options: KodaXOptions = {
+      provider: 'openai',
+      context: {
+        executionCwd: cwd,
+        gitRoot: cwd,
+        assertReadablePath: () => { throw new Error('outside bound workspace'); },
+      },
+    };
+
+    const sections = await buildCapabilityContextSections(options, true, cwd);
+    expect(sections.map((s) => s.content).join('\n')).not.toContain('PRIVATE_USER_RULE');
+  });
+
+  it('isNewSession=true adds a project-snapshot of the executionCwd, not the process cwd', async () => {
     const cwd = await createTempDir('kodax-capsec-new-');
     cleanupDirs.push(cwd);
+    await fs.writeFile(path.join(cwd, 'README.md'), '# temp project', 'utf8');
 
     const sections = await buildCapabilityContextSections(
       makeOptions({ executionCwd: cwd, gitRoot: cwd }),
@@ -249,53 +260,27 @@ describe('buildCapabilityContextSections', () => {
       cwd,
     );
 
-    // project-snapshot is best-effort; getProjectSnapshot always returns
-    // at least `Project: <basename>`. Section presence is sufficient.
-    expect(ids(sections)).toContain('project-snapshot');
+    expect(sections.find((s) => s.id === 'project-snapshot')?.content)
+      .toContain(`Project: ${path.basename(cwd)}`);
   });
 
-  it('working-directory section content reports the executionCwd verbatim', async () => {
-    const cwd = await createTempDir('kodax-capsec-wd-');
+  it('adds tool-construction guidance last, and only in tool construction mode', async () => {
+    const cwd = await createTempDir('kodax-capsec-tc-');
     cleanupDirs.push(cwd);
 
-    const sections = await buildCapabilityContextSections(
-      makeOptions({ executionCwd: cwd, gitRoot: cwd }),
+    const off = await buildCapabilityContextSections(makeOptions({ executionCwd: cwd, gitRoot: cwd }), false, cwd);
+    expect(ids(off)).not.toContain('tool-construction');
+
+    const on = await buildCapabilityContextSections(
+      { provider: 'anthropic', context: { executionCwd: cwd, gitRoot: cwd, toolConstructionMode: true } },
       false,
       cwd,
     );
-
-    const wd = sections.find((s) => s.id === 'working-directory');
-    expect(wd?.content).toBe(`Working Directory: ${cwd}`);
-  });
-
-  it('emits session-scratch-directory only when a session id is available', async () => {
-    const cwd = await createTempDir('kodax-capsec-scratch-');
-    cleanupDirs.push(cwd);
-
-    const withoutSession = await buildCapabilityContextSections(
-      makeOptions({ executionCwd: cwd, gitRoot: cwd }),
-      false,
-      cwd,
-    );
-    expect(ids(withoutSession)).not.toContain('session-scratch-directory');
-
-    const withSession = await buildCapabilityContextSections(
-      makeOptions(
-        { executionCwd: cwd, gitRoot: cwd },
-        { sessionId: 'session A' },
-      ),
-      false,
-      cwd,
-    );
-
-    const sectionIds = ids(withSession);
-    expect(sectionIds).toContain('session-scratch-directory');
-    expect(sectionIds.indexOf('working-directory'))
-      .toBeLessThan(sectionIds.indexOf('session-scratch-directory'));
-    const scratch = withSession.find((s) => s.id === 'session-scratch-directory');
-    expect(scratch?.content).toBe(
-      `Session Scratch Directory: ${path.join(cwd, '.agent', 'tmp', 'sessions', 'session_A')}`,
-    );
+    expect(ids(on).at(-1)).toBe('tool-construction');
+    const section = on.find((s) => s.id === 'tool-construction');
+    expect(section?.content).toContain('[Tool Construction Mode]');
+    expect(section?.content).toContain('scaffold_tool');
+    expect(section?.content).toContain('activate_tool');
   });
 
   it('appends bounded task-relevant memory hints without injecting topic bodies', async () => {

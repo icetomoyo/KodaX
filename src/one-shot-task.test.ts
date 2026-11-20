@@ -26,7 +26,7 @@ const executor = vi.hoisted(() => ({
 vi.mock('@kodax-ai/coding', async (original) => ({
   ...await original<typeof import('@kodax-ai/coding')>(),
   startKodaX: (): RunningSession => {
-    throw new Error('one-shot product runs must not use the SA executor');
+    throw new Error('one-shot product runs must not use the direct engine');
   },
   runManagedTask: executor.managed,
 }));

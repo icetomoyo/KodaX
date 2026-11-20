@@ -103,6 +103,10 @@ DeepSeek Chat Completions 使用 `max_tokens`；OpenAI 默认使用 `max_complet
 
 如果自定义端点确认支持缓存亲和路由，设置 `"promptCacheAffinity": true`。Anthropic 兼容请求将以 `metadata.user_id` 发送不透明的逻辑上下文 Key；OpenAI 兼容请求使用 `prompt_cache_key`。默认为 `false`，因为某些严格的兼容网关会拒绝未知请求字段。
 
+## 会话请求头
+
+发往 Provider HTTP 端点的每个请求都带 `X-Session-Id` 请求头，值为 KodaX 会话 id。子 Agent、Workflow 和压缩发出的请求使用根会话的 id，网关可以据此把同一个会话的请求归到一起。会话 id 采用 UUIDv7，前 12 位十六进制数字是毫秒级创建时间，端点可以由此看出会话的开始时间。如果请求选项已经设置了 `X-Session-Id`，KodaX 保留该值。
+
 ## 视觉 / 图像输入
 
 如果自定义提供商的底层模型支持图像输入，设置 `"imageInput": true`：

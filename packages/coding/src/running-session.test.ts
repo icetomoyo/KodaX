@@ -16,18 +16,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { KodaXMessage, KodaXOptions, KodaXReasoningMode, KodaXResult } from './types.js';
 
-// Hoisted mock — must be defined before any import that pulls in agent.ts.
-vi.mock('./agent.js', () => {
+// Hoisted mock — must be defined before any import that pulls in task-engine.ts.
+vi.mock('./task-engine.js', () => {
   return {
     runKodaX: vi.fn(),
-    checkPromiseSignal: vi.fn(),
   };
 });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let runKodaXMock: any;
 
-import { runKodaX } from './agent.js';
+import { runKodaX } from './task-engine.js';
 import {
   startKodaX,
   createSessionControl,
@@ -75,7 +74,7 @@ describe('startKodaX — handle properties', () => {
     runKodaXMock.mockResolvedValueOnce(fakeKodaXResult());
 
     const session = startKodaX(baseOptions(), 'hi');
-    expect(session.id).toMatch(/^sess_\d+_[a-z0-9]{1,8}$/);
+    expect(session.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     await session.result;
   });
 
@@ -176,7 +175,7 @@ describe('startKodaX — sessionControl wiring', () => {
     } as unknown as KodaXOptions;
     const session = startKodaX(options, 'hi');
     await session.result;
-    expect(session.id).toMatch(/^sess_\d+_[a-z0-9]{1,8}$/);
+    expect(session.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(captured.current?.session?.id).toBe(session.id);
   });
 
@@ -187,7 +186,7 @@ describe('startKodaX — sessionControl wiring', () => {
       'hi',
     );
     await session.result;
-    expect(session.id).toMatch(/^sess_\d+_[a-z0-9]{1,8}$/);
+    expect(session.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(captured.current?.session?.id).toBeUndefined();
     expect(captured.current?.session?.autoResume).toBe(true);
   });

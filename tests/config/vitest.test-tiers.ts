@@ -68,7 +68,6 @@ export const SYSTEM_TEST_FILES = [
   'tests/sdk-builtin-package.test.ts',
   'tests/feature-125-team-mode.integration.test.ts',
   'tests/issue-206-sidecar-tarball.test.ts',
-  'tests/sa-refactor-goldens/selection.test.ts',
   'packages/agent/src/capabilities/mcp/runtime.test.ts',
   'packages/agent/src/capabilities/mcp/transport.test.ts',
   'packages/agent/src/runtime/managed-child-processes.test.ts',

@@ -83,7 +83,7 @@ try {
   const environment = Object.fromEntries(Object.entries(replFixtureEnvironment(homeDir)).filter(([name]) => name.toUpperCase() !== 'NO_COLOR'));
   child = pty.spawn(process.execPath, [path.join(repo, 'scripts/kodax-bin.cjs'),
     '--provider', 'parity-local', '--model', 'parity-model', '--effort', 'off',
-    '--agent-mode', 'sa', '--max-iter', '7'], {
+    '--max-iter', '7'], {
     name: 'xterm-256color', cols: 110, rows: 32, cwd: homeDir,
     env: { ...environment, HOME: homeDir, USERPROFILE: homeDir, KODAX_HOME: path.join(homeDir, '.kodax'),
       KODAX_ACCEPTANCE_KEY: 'local-fixture-only', KODAX_TRACING: '0',

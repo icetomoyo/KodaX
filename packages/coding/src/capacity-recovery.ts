@@ -1,7 +1,7 @@
 import { staticText } from './prompts/static-text.js';
 /**
  * FEATURE_296 (ADR-067) request-assembly recovery rungs shared by the AMA
- * adapter (task-engine) and the SA substrate (agent-runtime).
+ * adapter (task-engine) and the direct-engine substrate (agent-runtime).
  *
  * - `degradeIrreducibleUserInputs`: when cumulative user input cannot fit the
  *   complete request even at the floor reserve, the request copy is
@@ -43,9 +43,9 @@ export const IRREDUCIBLE_INPUT_PREVIEW_TOKENS = 2_000;
 // runtime provenance out of the canonical user history, and budget its bytes.
 const PAGED_INPUT_CONTEXT: KodaXMessage = {
   role: 'system', _synthetic: true, _source: 'capacity-input-context',
-  content: staticText("t12.capacity-recovery.0"),
+  content: staticText("capacity-recovery.paged-context"),
 };
-const PAGED_INPUT_NOTE = staticText("t12.capacity-recovery.1");
+const PAGED_INPUT_NOTE = staticText("capacity-recovery.paged-input-note") + '\n';
 
 /** Per-run request copies plus their process-memory artifact capabilities. */
 export interface UserInputDegradationCache {

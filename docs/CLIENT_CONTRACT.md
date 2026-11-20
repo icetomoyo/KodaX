@@ -185,7 +185,7 @@ permissionMode/planModeEffort 在下一次物理请求采用新选择，已发�
 工具集合：`toolScope` 包含可执行的 deferred/Script 叶工具，`modelToolScope` 是请求模型
 看到的 schema。显式工具调用省略 modelToolScope，旧 Run/尚未装配时省略整个快照。
 快照会随请求更新并持久化，重连与 Host 重启不依赖客户端重新推导；不表示操作已获审批。
-Partner persona 不额外禁止 write/bash/edit/子任务；SA Solo 和显式授权继续约束能力。
+Partner persona 不额外禁止 write/bash/edit/子任务；显式工具策略和授权继续约束能力。
 显式 profile 与工具策略的 Agent 组合参见
 [迁移契约](SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复未发布)。
 
@@ -305,7 +305,7 @@ Host 超时或 Stop 结算后才到达的回调异常不能改写结果。未回
 
 接收状态 `submitted` 表示进入对话上下文，不证明 Provider 已接收；`queued` 等待安全交付点；`withdrawn` 已撤回；`dropped` 表示目标 Run 在交付前结束，正文未进入上下文。重新提交被丢弃意图使用新 ID。队列 text 是有界预览，编辑撤回内容应使用 `withdraw` 返回的完整原文。
 
-`runs.stop` 的 `accepted` 仅表示本次创建了持久 Stop 请求；返回的 state/outcome/phase 与 Run 真实终态分别解释。`runs.await` 的 `phase: 'unknown'` 表示终态无法确认，例如终态持久化失败或 Actor 结算不确定；连接可能仍然健康。它绝不是成功或取消，也不保证重新连接可以解决。传输失败通常使在途 Promise reject，应与 unknown 分开处理并保留 error 原因。phase 当前是字符串类型，UI 必须保留未知值的安全显示，不能把不认识的状态当成功。结果中的 error 是错误文本，不能通过是否存在 result 单独推断成功。
+`runs.stop` 的 `accepted` 仅表示本次创建了持久 Stop 请求；返回的 state/outcome/phase 与 Run 真实终态分别解释。`runs.await` 的 `phase: 'unknown'` 表示终态无法确认，例如终态持久化失败；连接可能仍然健康。Host 能力 `actorSettlementConvergence:3` 起，Actor 结算无法确认的 Run 不再停在 unknown，而是以 `failed` + `actor_settlement_not_persisted` + `effectOutcome: 'unknown'` 结束；此后该 Session 保持隔离，`runs.start` 被拒绝，直到 Host 在后台修复或重新接管 Actor 树（无需重启）；只有写盘或隔离前的工具调用永不返回时才需重启 Host；隔离中的 Session 不阻止 Host 停止，preflight 不把它的 Actor turn 计为阻塞项；已请求 Stop 的 Run 或 Workflow 即使执行体不返回也不计为阻塞项，Host 退出后由下一个 Host 标为 `interrupted`。客户端应显示为“已停止，会话恢复中”，不是模型错误，详见 [SDK 迁移指南](SDK_MIGRATION.md#beta11-之后actor-结算收敛-v3未发布)。它绝不是成功或取消，也不保证重新连接可以解决。传输失败通常使在途 Promise reject，应与 unknown 分开处理并保留 error 原因。phase 当前是字符串类型，UI 必须保留未知值的安全显示，不能把不认识的状态当成功。结果中的 error 是错误文本，不能通过是否存在 result 单独推断成功。
 
 delivery 的队列行为如下；空 queue 不能证明所有已知输入已经交付。
 
@@ -452,12 +452,12 @@ Run 的 Provider 失败，主任务结果继续读取 `runs` 及其 `failureDeta
 | 当前选择 | 产品显示读取 view.settings 的有效选择，编辑覆盖读取 sessions.getSettings；Run 当前可变 provider/model 读取 view.runs，它不是已发出请求的快照。Ink 从 Host view 同步显示配置和现有引用，模型默认名取 Host contextBudget；不会把观察同步写回 Host。显式本地设置仍先等待确认，并保留该等待期间确认的字段。Classic 从现有显示观察同步配置，后续提示符和命令读取同源状态。未指定的模式/推理选择显示 Host default；显式切换报告新选择，不能据此反推 Host 未报告的默认策略 |
 | 父上下文候选值 | 当前 [surface-status.ts](../packages/repl/src/ui/view-models/surface-status.ts) 依次取 activity.parentContextTokens、scope=parent 的 activity.context.tokenCount、view.parentContextTokens |
 | 运行中的上下文 | Ink 优先显示 activity.context.tokenCount（可能来自 worker），缺失再取父候选值；Web 应标明 scope，避免将 worker 值说成父会话长度 |
-| 空闲上下文 | SA 使用父候选值；AMA/AMAW 优先 view.parentContextTokens 的保存态估计，再回退父候选值，避免结束后留下 worker 数字 |
+| 空闲上下文 | 优先 view.parentContextTokens 的保存态估计，再回退父候选值和最后一次 API 读数，避免结束后留下 worker 数字 |
 | 上下文窗口/占比 | 产品 Ink 读取 view.contextBudget，包含 scope=parent、解析后的 provider/model、contextWindow、reservedResponseTokens，以及 compaction.enabled=true、triggerPercent、可选 absoluteTriggerTokens。Host 复用现有窗口与压缩配置解析，设置或 config reload 后刷新同一 view。worker 没有匹配预算时仅显示数量与 scope，不除以父窗口 |
 | usage/cost | usage 来自最近响应快照，costReport 是单独的可选报告；不与上下文占用或工作预算混算。usage 没有独立 scope 字段，不能断言为父会话总账 |
 | 冻结/空闲状态 | Ink 冻结浏览停用实时 managed/iteration/compacting 的活动投影，使用冻结显示状态；终态后不因残留 activity 继续显示忙碌。未知数值用“—”或省略，未知状态显示通用文字，不补 0、不默认 success |
 
-顶层 contextBudget 描述当前选择的有效配置，空闲时不能冒充某次请求的最终容量。activity.contextBudget 来自既有执行预算事件，保留执行器实际使用的 compaction.triggerTokens/physicalCapacityTokens、reservedResponseTokens 和 reservedMemoryTokens；SA 父执行有 Memory 时包含其预留，worker 的预算沿自己的上下文发出，不能套用父预留。物理容量包含执行器既有安全余量；当前上下文计数包含其 system/tool envelope，客户端不重算阈值。这里的响应预留属于压缩准入策略，不能当作之后每次 Provider 请求实际 max_tokens 的不可变凭证。
+顶层 contextBudget 描述当前选择的有效配置，空闲时不能冒充某次请求的最终容量。activity.contextBudget 来自既有执行预算事件，保留执行器实际使用的 compaction.triggerTokens/physicalCapacityTokens、reservedResponseTokens 和 reservedMemoryTokens；managed 根执行的 reservedMemoryTokens 为 0，worker 的预算沿自己的上下文发出，不能套用父预留。物理容量包含执行器既有安全余量；当前上下文计数包含其 system/tool envelope，客户端不重算阈值。这里的响应预留属于压缩准入策略，不能当作之后每次 Provider 请求实际 max_tokens 的不可变凭证。
 
 产品 Ink 在运行时优先使用匹配 scope 的执行预算，未知 worker 预算只显示数量与归属；空闲使用父配置窗口。最终阈值未知时不显示推算的压力颜色。配置预留、上下文占用与 usage 不混算。独立嵌入 REPL 保留本地配置解析路径。压缩常开，没有新增可写开关。
 
@@ -652,7 +652,7 @@ CLI 的 Ink、classic、单次输入使用 Host Client 投影；SDK `/client` �
 
 `activity.todos`、`children`、`managedTask`、`costReport` 是 Host 事实，终端直接消费；本地加载状态不能覆盖另一个客户端启动的活动 Run。`managedTask.childFanoutClass` 与 fanoutCount 共同驱动原 AMA 后台条。模型内调用工作流时，`activity.workflow` 复用已有 `ClientWorkflowProcess`，保留阶段、计数、状态和名称；子代理摘要作为可补读、可保存的显示项提供。临时 Worker 进度仍只属于活动面，不变成用户对话。
 
-内置 AMA Worker、SA 和 Script 根执行直接继承 Session effort；不能用已退役的
+managed Worker 与 Script 根执行直接继承 Session effort；不能用已退役的
 `balanced/deep` 角色默认压低 `high/xhigh/max`。显式 specialist 策略与子任务自身
 选择独立；子任务显式 `auto` 表示 provider 自选，不等于省略并继承父级。
 旧 Agent profile 在创建、构造 admission/resolution 等边界转换为原生 effort；

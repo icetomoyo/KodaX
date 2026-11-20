@@ -161,6 +161,15 @@ opaque logical-context key as `metadata.user_id`; OpenAI-compatible requests
 receive `prompt_cache_key`. The default is `false` because some strict
 compatible gateways reject unknown request fields.
 
+## Session header
+
+Every request to a provider's HTTP endpoint carries an `X-Session-Id` header
+with the KodaX session id. Child agents, workflows and compaction send their
+root session's id, so a gateway can group a whole conversation. Session ids
+are UUIDv7. Their first 12 hex digits encode the creation time in
+milliseconds, so the endpoint can read when the session started. If request
+options already set `X-Session-Id`, KodaX keeps that value.
+
 ## Vision / image input
 
 If your custom provider's underlying model accepts image input (vision), set

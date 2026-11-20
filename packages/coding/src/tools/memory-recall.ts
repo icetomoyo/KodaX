@@ -4,23 +4,18 @@ import type { MemorySession } from '@kodax-ai/agent/experimental-memory';
 
 import type { KodaXToolExecutionContext } from '../types.js';
 import { renderMemoryEvidenceEnvelope } from '../memory/rendering.js';
+import { staticText } from '../prompts/static-text.js';
 
 export const MEMORY_RECALL_TOOL_NAME = 'memory_recall';
 
-export const MEMORY_RECALL_TOOL_DESCRIPTION = [
-  'Recall governed prior experience for one specific decision-relevant gap.',
-  'Use only when current context does not answer a concrete historical need.',
-  'When prior execution experience is the known missing source, use this before unrelated repository exploration.',
-  'Do not use for current repository or environment facts; verify those with normal tools.',
-  'The query is read-only, exactly scoped to the current MemorySession, and may return no claim.',
-].join(' ');
+export const MEMORY_RECALL_TOOL_DESCRIPTION = staticText("tool.memory_recall.description");
 
 export const MEMORY_RECALL_TOOL_SCHEMA = {
   type: 'object' as const,
   properties: {
     need: {
       type: 'string' as const,
-      description: 'One concrete prior-experience gap relevant to the current decision.',
+      description: 'Concrete prior-experience gap.',
     },
   },
   required: ['need'],

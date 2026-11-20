@@ -6,7 +6,7 @@
  *   - docs/features/v0.7.29-capability-inventory.md#cap-081-tool-result-accumulation--editrecoverymessages-append--settle
  *
  * Class 1 (substrate middleware). Four responsibilities, all triggered
- * at the per-turn epilogue of the SA loop:
+ * at the per-turn epilogue of the direct-engine loop:
  *
  *   1. **`createExtensionRuntimeSessionController`** — factory that
  *      produces the controller object passed to `extensionRuntime.bindController`

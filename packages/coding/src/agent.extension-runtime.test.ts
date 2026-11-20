@@ -13,7 +13,7 @@ import type {
 import type { KodaXSessionData, KodaXSessionStorage } from '@kodax-ai/agent';
 import { KodaXBaseProvider } from '@kodax-ai/llm';
 import { clearRuntimeModelProviders } from '@kodax-ai/llm';
-import { runKodaX } from './agent.js';
+import { runTestLeaf as runLeafAgent } from './agent-runtime/test-leaf.js';
 import { createExtensionRuntime, getActiveExtensionRuntime } from './extensions/index.js';
 import { LEARNING_REVIEW_TOOL } from './learning-reviewer.js';
 import { awaitLatestCodingMemoryReviewDrain } from './memory-runtime.js';
@@ -185,7 +185,7 @@ class Feature034ManagedProtocolProvider extends KodaXBaseProvider {
   }
 }
 
-describe('runKodaX extension runtime integration', () => {
+describe('runLeafAgent extension runtime integration', () => {
   let tempDir: string;
 
   beforeEach(async () => {
@@ -230,10 +230,10 @@ describe('runKodaX extension runtime integration', () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  // Every runKodaX integration it-block below passes an explicit 30_000ms
-  // timeout (vitest default is 5_000). A full extension-runtime + runKodaX run
+  // Every runLeafAgent integration it-block below passes an explicit 30_000ms
+  // timeout (vitest default is 5_000). A full extension-runtime + runLeafAgent run
   // is ~3s single but can exceed 5s under full-suite parallel scheduling — and a
-  // 5s timeout aborts the it-block WITHOUT halting the underlying async runKodaX,
+  // 5s timeout aborts the it-block WITHOUT halting the underlying async runLeafAgent,
   // which then keeps writing the shared static `Feature034TestProvider.calls`
   // and pollutes the next test (shows up as `calls` length 2 instead of 1).
   it('lets extensions drive tools, model selection, thinking level, and queued follow-ups', async () => {
@@ -268,7 +268,7 @@ describe('runKodaX extension runtime integration', () => {
     const runtime = createExtensionRuntime();
     await runtime.loadExtension(extensionPath);
 
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: TEST_PROVIDER_NAME,
         extensionRuntime: runtime,
@@ -317,7 +317,7 @@ describe('runKodaX extension runtime integration', () => {
     const runtime = createExtensionRuntime();
     await runtime.loadExtension(extensionPath);
 
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: TEST_PROVIDER_NAME,
         extensionRuntime: runtime,
@@ -385,7 +385,7 @@ describe('runKodaX extension runtime integration', () => {
     let firstReviewDone: () => void = () => {};
     const firstReviewed = new Promise<void>(resolve => { firstReviewDone = resolve; });
     Feature034TestProvider.calls = [];
-    await runKodaX(
+    await runLeafAgent(
       {
         provider: TEST_PROVIDER_NAME,
         extensionRuntime: runtime,
@@ -432,7 +432,7 @@ describe('runKodaX extension runtime integration', () => {
     let secondReviewDone: () => void = () => {};
     const secondReviewed = new Promise<void>(resolve => { secondReviewDone = resolve; });
     Feature034TestProvider.calls = [];
-    await runKodaX(
+    await runLeafAgent(
       {
         provider: TEST_PROVIDER_NAME,
         extensionRuntime: runtime,
@@ -494,7 +494,7 @@ describe('runKodaX extension runtime integration', () => {
 
     try {
       await expect(
-        runKodaX(
+        runLeafAgent(
           {
             provider: 'anthropic',
             extensionRuntime: requestedRuntime,
@@ -555,7 +555,7 @@ describe('runKodaX extension runtime integration', () => {
     const runtime = createExtensionRuntime();
     await runtime.loadExtension(extensionPath);
 
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: TEST_PROVIDER_NAME,
         extensionRuntime: runtime,
@@ -593,7 +593,7 @@ describe('runKodaX extension runtime integration', () => {
     const runtime = createExtensionRuntime();
     await runtime.loadExtension(extensionPath);
 
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: TEST_PROVIDER_NAME,
         extensionRuntime: runtime,
@@ -642,7 +642,7 @@ describe('runKodaX extension runtime integration', () => {
     await runtime.loadExtension(extensionPath);
     try {
       // The Map isolates Session data; the review inbox also needs its own home.
-      await runKodaX({ provider: TEST_PROVIDER_NAME, extensionRuntime: runtime,
+      await runLeafAgent({ provider: TEST_PROVIDER_NAME, extensionRuntime: runtime,
         context: { executionCwd: tempDir, configHome: path.join(tempDir, '.kodax') },
         session: { id: path.basename(tempDir), storage } }, 'A persisted foreground request');
       await started;

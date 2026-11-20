@@ -4,7 +4,7 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { KodaXBaseProvider, registerModelProvider, type KodaXMessage, type KodaXProviderConfig,
   type KodaXStreamResult, type KodaXToolDefinition } from '@kodax-ai/llm';
-import { runKodaX } from './agent.js';
+import { runTestLeaf as runLeafAgent } from './agent-runtime/test-leaf.js';
 import { createExtensionRuntime } from './extensions/runtime.js';
 import { awaitLatestCodingMemoryReviewDrain } from './memory-runtime.js';
 
@@ -42,7 +42,7 @@ describe('CAP-MANAGED-PROTO-002 public terminal results', () => {
         return 'emitted';
       } });
     try {
-      const result = await runKodaX({ provider: 'protocol-terminal-fixture', reasoningMode: 'off', lsp: false,
+      const result = await runLeafAgent({ provider: 'protocol-terminal-fixture', reasoningMode: 'off', lsp: false,
         extensionRuntime: runtime, context, maxIter: terminal === 'limit' ? 1 : 3 }, 'Inspect and report the fixture result.');
       expect(result.managedProtocolPayload?.verdict).toEqual({ source: 'evaluator', status: 'accept', followups: [], userFacingText: 'final text' });
       if (terminal === 'error') expect(result.success).toBe(false);

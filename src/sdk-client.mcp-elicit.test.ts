@@ -104,7 +104,7 @@ class ElicitProvider extends KodaXBaseProvider {
   }
 }
 
-it.each(['sa', 'ama'] as const)('attributes a shared MCP server elicitation to its executing Session (%s)', async agentMode => {
+it('attributes a shared MCP server elicitation to its executing Session', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-mcp-elicit-'));
   const scriptPath = path.join(homeDir, 'elicit-server.cjs');
   await writeFile(scriptPath, ELICIT_SERVER_SOURCE, 'utf8');
@@ -135,7 +135,7 @@ it.each(['sa', 'ama'] as const)('attributes a shared MCP server elicitation to i
     try {
       const active = await first.sessions.create({ projectPath: homeDir });
       await first.sessions.updateSettings(active.id, {
-        provider: 'product-mcp-elicit-test', permissionMode: 'full-access', agentMode,
+        provider: 'product-mcp-elicit-test', permissionMode: 'full-access', agentMode: 'ama',
       });
       const idle = await first.sessions.create({ projectPath: homeDir });
       const activeViews: ClientSessionView[] = [];
@@ -208,7 +208,7 @@ it.each(['confirm', 'url'] as const)('maps an initial UI failure through the rea
   try {
     const session = await runtime.sessions.create({ projectPath: homeDir });
     await runtime.sessions.updateSettings(session.id, {
-      provider: 'product-mcp-elicit-test', permissionMode: 'full-access', agentMode: 'sa',
+      provider: 'product-mcp-elicit-test', permissionMode: 'full-access',
     });
     for (const outcome of ['error', 'decline'] as const) {
       const askUser = vi.fn(async () => {

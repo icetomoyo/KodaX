@@ -136,7 +136,7 @@ describe('FEATURE_267 Runtime local Agent binding', () => {
       } else await service.startDefault(request);
       const context = starts[0]!.options!.context!;
       expect(context.skillsPrompt!.length).toBeLessThanOrEqual(8_000);
-      expect(context.skillsPrompt).toContain('Skills omitted');
+      expect(context.skillsPrompt).toContain('Skills not listed');
       expect(context.skillsPrompt).not.toContain('- catalog-39:');
       expect(context.skillRegistry!.has('catalog-39')).toBe(true);
       expect((await context.skillRegistry!.loadFull('catalog-39')).content).toContain('BODY_catalog-39');

@@ -349,8 +349,8 @@ describe('CAP-048: tool execution context construction contract', () => {
       }).workflowHost,
     ).toBeUndefined();
 
-    // Runs dir set but SA (solo) or an unset mode → no host. SA never hosts a
-    // workflow (also excluded via SA_SOLO_EXCLUDE_TOOLS); an unset mode never hosts.
+    // Runs dir set but the retired 'sa' label or an unset mode → no host. Only
+    // the AMA label hosts a workflow.
     // 'ama' is deliberately NOT in this list post-FEATURE_249 — it now hosts (009).
     for (const agentMode of ['sa', undefined] as const) {
       expect(

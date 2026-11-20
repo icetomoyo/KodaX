@@ -154,7 +154,7 @@ export async function convertLegacyMemory(place: NotePlace): Promise<void> {
 /** Synchronous, side-effect-free, byte-stable while the notes are unchanged. */
 export function renderNoteMemorySection(place: NotePlace): string {
   return [
-    staticText('t13.prompts/note-memory-rules.0'),
+    staticText('note-memory.rules'),
     '',
     renderScope('Project', place.roots.project),
     '',
@@ -188,7 +188,7 @@ function indexListsNotes(root: string): boolean {
  */
 export function noteFailureReminder(place: NotePlace): KodaXEphemeralSuffix | undefined {
   if (!indexListsNotes(place.roots.project) && !indexListsNotes(place.roots.user)) return undefined;
-  return { content: staticText('t13.prompts/note-failure-reminder.0') };
+  return { content: staticText('note-memory.failure-reminder') };
 }
 
 /** Opaque project id recorded on user-scope notes; a hash, so no path is copied into the shared store. */

@@ -25,11 +25,11 @@
  *   - `result`            — `Promise<KodaXResult>` (same shape
  *                          `runKodaX` returns)
  *
- * `runKodaX` is now a thin wrapper over `startKodaX(...).result` so
- * there is no dual code path (per feedback_no_parallel_refactor_paths).
+ * Both entries run the same managed root Run.
  */
 
-import { runKodaX } from './agent.js';
+import { generateSessionIdSync } from '@kodax-ai/agent';
+import { runKodaX } from './task-engine.js';
 import { markStartKodaXGeneratedSessionId } from './agent-runtime/middleware/session-snapshot.js';
 import type {
   KodaXOptions,
@@ -114,7 +114,7 @@ export function startKodaX(
 
   const rawSessionId = options.session?.id;
   const callerSuppliedSessionId = rawSessionId !== undefined && rawSessionId !== null;
-  const sessionId = rawSessionId ?? generateSessionId();
+  const sessionId = rawSessionId ?? generateSessionIdSync();
   const shouldThreadGeneratedSessionId =
     !callerSuppliedSessionId
     && options.session?.autoResume !== true
@@ -135,10 +135,9 @@ export function startKodaX(
     sessionControl: control,
   };
 
-  // Kick off the run. `runKodaX` returns the Promise immediately —
-  // by the time control returns to the caller, the substrate's
-  // `_attach` has not yet fired, so any sync setter calls land in
-  // the pre-attach queue and replay on attach.
+  // Kick off the run. It returns the Promise immediately — by the time
+  // control returns to the caller, the Run's `_attach` has not yet fired,
+  // so any sync setter calls land in the pre-attach queue and replay on attach.
   const result = runKodaX(effectiveOptions, prompt);
 
   return {
@@ -167,15 +166,6 @@ export function startKodaX(
 }
 
 // ============== Internals ==============
-
-/**
- * Generate a fresh session id matching the format substrate consumers
- * elsewhere produce. Format: `sess_<ms-since-epoch>_<8-char-base36>`.
- * Used only when the caller did not supply `options.session.id`.
- */
-function generateSessionId(): string {
-  return `sess_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-}
 
 class SessionControlImpl implements KodaXSessionControl, KodaXSessionMutators {
   private mutators: KodaXSessionMutators | null = null;

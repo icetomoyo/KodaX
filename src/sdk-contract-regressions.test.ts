@@ -40,7 +40,7 @@ function gate() {
   return { promise, resolve };
 }
 
-it('audit: Script selected with supported SA settings should execute via a compatible managed entry', async () => {
+it('audit: Script selected with a retired SA setting executes via the managed entry', async () => {
   const homeDir = await mkdtemp(join(tmpdir(), 'kodax-sdk-script-sa-audit-'));
   directories.push(homeDir);
   let modelCalls = 0;
@@ -59,9 +59,9 @@ it('audit: Script selected with supported SA settings should execute via a compa
     const client = toKodaXProductClient(runtime);
     const session = await client.sessions.create({ title: 'SA Script audit', projectPath: homeDir });
     await client.sessions.updateSettings(session.id, { agentMode: 'sa', workMode: 'script', permissionMode: 'full-access' });
-    expect(await client.sessions.getSettings(session.id)).toMatchObject({ agentMode: 'sa', workMode: 'script' });
     const accepted = await client.inputs.submit({ sessionId: session.id, inputId: 'script-sa-audit', text: 'Reply briefly.' });
     if (!accepted.runId) throw new Error('Expected an admitted Run');
+    expect(await runtime.runs.get(accepted.runId)).toMatchObject({ mode: 'managed_task', workMode: 'script' });
     const result = await client.runs.await(accepted.runId);
     expect(modelCalls).toBeGreaterThan(0);
     expect({ phase: result.phase, error: String(result.error) }).toEqual({ phase: 'completed', error: 'undefined' });
@@ -98,7 +98,7 @@ it.each(['permissionMode', 'planModeEffort'] as const)('audit: live %s change sh
     const client = toKodaXProductClient(runtime);
     await client.config.patch({ effort: 'low' });
     const session = await client.sessions.create({ title: 'Plan effort audit', projectPath: homeDir });
-    await client.sessions.updateSettings(session.id, { provider: 'audit-plan-effort', agentMode: 'sa',
+    await client.sessions.updateSettings(session.id, { provider: 'audit-plan-effort',
       permissionMode: change === 'permissionMode' ? 'full-access' : 'plan', planModeEffort: change === 'permissionMode' ? 'high' : 'low' });
     const accepted = await client.inputs.submit({ sessionId: session.id, inputId: 'effort-audit', text: 'Read the supplied sample file and report.' });
     if (!accepted.runId) throw new Error('Expected an admitted Run');
@@ -180,7 +180,7 @@ it('applies saved execution defaults only to subsequent Runs without changing am
   try {
     const client = toKodaXProductClient(runtime);
     const session = await client.sessions.create({ projectPath: homeDir });
-    await client.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access', reasoningMode: 'off' });
+    await client.sessions.updateSettings(session.id, { permissionMode: 'full-access', reasoningMode: 'off' });
     for (const maxOutputTokens of [1234, 2345]) {
       await client.config.patch({ maxOutputTokens, disablePromptCache: true, lsp: false, fastModel: 'fast-fixture' });
       await client.config.reload();

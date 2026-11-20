@@ -7,14 +7,12 @@ import {
   type KodaXMessage, type KodaXStreamResult, type KodaXToolDefinition,
 } from '@kodax-ai/llm';
 import { runManagedTask, type KodaXWorkMode } from '@kodax-ai/coding';
-import { compactContractInput } from './first-turn-compact-contract.js';
 
 // Deterministic integration, not an intelligence eval: identical scripted decisions,
 // real read/edit/test handlers and AMA completion; no provider/network requests.
-it.each<{ workMode: KodaXWorkMode; candidate: boolean }>([
-  { workMode: 'coding', candidate: false }, { workMode: 'agent', candidate: false },
-  { workMode: 'coding', candidate: true }, { workMode: 'agent', candidate: true },
-])('completes the same read/edit/test task: $workMode compact=$candidate', async ({ workMode, candidate }) => {
+it.each<{ workMode: KodaXWorkMode }>([
+  { workMode: 'coding' }, { workMode: 'agent' },
+])('completes the same read/edit/test task: $workMode', async ({ workMode }) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-work-mode-e2e-'));
   let calls = 0;
   const executed: string[] = [];
@@ -30,16 +28,7 @@ it.each<{ workMode: KodaXWorkMode; candidate: boolean }>([
     protected readonly config = { apiKeyEnv: 'KODAX_WORK_MODE_TEST_KEY', model: 'fixture', supportsThinking: false };
     async stream(messages: KodaXMessage[], tools: KodaXToolDefinition[], system: string): Promise<KodaXStreamResult> {
       expect(tools.find(tool => tool.name === 'glob')?.description).toBe('Find file paths by glob.');
-      if (candidate) {
-        const input = compactContractInput({ system, messages, tools }, true);
-        // Managed roots now arrive with the adopted compact contract. The old
-        // experiment must leave this already-projected request untouched.
-        expect(system).toContain('TRUST AND SCOPE');
-        expect(input.system).toBe(system);
-        expect(input.tools).toBe(tools);
-        expect(input.messages).toBe(messages);
-        tools = [...input.tools];
-      }
+      expect(system).toContain('TRUST AND SCOPE');
       const step = calls++;
       if (step > 3) throw new Error('Unexpected extra provider request after the completed task');
       const names = tools.map(tool => tool.name);
@@ -70,7 +59,8 @@ it.each<{ workMode: KodaXWorkMode; candidate: boolean }>([
   try {
     const result = await runManagedTask({ provider: 'work-mode-offline', workMode, agentMode: 'ama',
       maxIter: 8, reasoningMode: 'off', lsp: false,
-      context: { executionCwd: directory, gitRoot: directory, repoIntelligenceMode: 'off' },
+      // 'light' keeps repo-intel tools offered so the coding/agent tool difference stays visible.
+      context: { executionCwd: directory, gitRoot: directory, repoIntelligenceMode: 'light' },
       events: { beforeToolExecute: async (name, input) => {
         if (!['read', 'edit', 'bash'].includes(name)) return '[Tool Error] Outside fixture scope';
         if (name === 'bash' ? input.command !== 'node --test fixture.test.mjs' : input.path !== 'value.mjs') {

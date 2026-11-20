@@ -8,7 +8,7 @@ import {
 describe("surface-status", () => {
   it("renders Host parent context, usage and iteration instead of disconnected local counters", () => {
     const options = {
-      sessionId: "s1", permissionMode: "accept-edits" as const, agentMode: "sa" as const,
+      sessionId: "s1", permissionMode: "accept-edits" as const, agentMode: "ama" as const,
       provider: "zhipu-coding", model: "glm-5.3-flash", isTranscriptMode: false, isLoading: true,
       streamingState: { isThinking: false, thinkingCharCount: 0, activeToolCalls: [],
         toolInputCharCount: 0, toolInputContent: "", currentIteration: 0, isCompacting: false },
@@ -35,7 +35,6 @@ describe("surface-status", () => {
     } });
     expect(workerBudget.contextUsage).toMatchObject({ currentTokens: 900, contextWindow: 32_000, effectiveTriggerTokens: 24_000 });
     expect(text).toContain("11000→1000 (12000)");
-    expect(text).toContain("Iter 3/7");
     const frozen = buildSurfaceStatusBarProps({ ...options, isTranscriptMode: true });
     expect(frozen.currentIteration).toBe(0);
     expect(frozen.isCompacting).toBe(false);
@@ -50,10 +49,6 @@ describe("surface-status", () => {
     expect(finished.contextUsage?.currentTokens).toBe(700);
     expect(finished.managedPhase).toBeUndefined();
     expect(finished.managedIdleWaiting).toBeUndefined();
-    const completedSa = buildSurfaceStatusBarProps({ ...options, isLoading: false,
-      clientActivity: { runId: 'run', parentContextTokens: 60,
-        context: { tokenCount: 60, tokenSource: 'api', scope: 'parent' } } });
-    expect(completedSa.contextUsage?.currentTokens).toBe(60);
     const fresh = buildSurfaceStatusBarProps({ ...options, clientActivity: undefined });
     expect(fresh.contextUsage?.currentTokens).toBe(700);
     const budget = buildSurfaceStatusBarProps({ ...options, agentMode: 'ama',
@@ -196,10 +191,6 @@ it("shows the last API-known context at idle when the parent dialog has no token
   // fresh session without any truth keeps the dialog estimate
   const fresh = buildSurfaceStatusBarProps({ ...base, clientActivity: undefined });
   expect(fresh.contextUsage?.currentTokens).toBe(10200);
-  // SA idle stays on parent-dialog sources and never shows the worker reading
-  const saIdle = buildSurfaceStatusBarProps({ ...base, agentMode: "sa" as const, parentContextTokens: 700,
-    clientActivity: { ...base.clientActivity, parentContextTokens: 800 } });
-  expect(saIdle.contextUsage?.currentTokens).toBe(800);
 });
 
 it("carries the execution scope on host-budget context usage", () => {  const options = {

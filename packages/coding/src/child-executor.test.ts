@@ -8,7 +8,7 @@ import { getSkillRegistry, resetSkillRegistry } from '@kodax-ai/agent';
 
 // Mock runKodaX before importing child-executor
 vi.mock('./agent.js', () => ({
-  runKodaX: vi.fn(),
+  runLeafAgent: vi.fn(),
 }));
 
 vi.mock('./tools/worktree.js', () => ({
@@ -36,7 +36,7 @@ import {
 } from './child-executor.js';
 import { clearAgentsLoaderCacheForTesting } from './context/agents-loader.js';
 import type { ChildExecutorOptions, WorkflowChildDigestUpdate } from './child-executor.js';
-import { runKodaX } from './agent.js';
+import { runLeafAgent } from './agent.js';
 import {
   _resetAgentResolverForTesting,
   registerConstructedAgent,
@@ -48,11 +48,10 @@ import { hasGenerationWorktree } from './worktree-generation.js';
 import { createExtensionRuntime } from './extensions/runtime.js';
 import type { ExtensionRuntimeContract } from './extensions/runtime-contract.js';
 import { TOOL_RECOVERY_GUIDANCE } from './prompts/execution-guidance.js';
-import { buildCompactChildContractCandidate } from './prompts/compact-child-contract.js';
 import { filterExcludedTools, getActiveToolDefinitions } from './agent-runtime/tool-resolution.js';
 import { listToolDefinitions } from './tools/index.js';
 
-const mockRunKodaX = runKodaX as ReturnType<typeof vi.fn>;
+const mockRunKodaX = runLeafAgent as ReturnType<typeof vi.fn>;
 const mockToolWorktreeCreate = vi.mocked(createWorkflowWorktree);
 const mockToolWorktreeRemove = vi.mocked(removeWorkflowWorktree);
 
@@ -198,15 +197,10 @@ describe('executeChildAgents — guardrails propagation (FEATURE_092 phase 2b.7b
     expect(options.context?.configHome).toBe(runtimeHome);
     expect(options.maxIter).toBe(7);
     expect(managedWorkBudget.spentBudget).toBe(7);
-    const canonical = { system: options.context!.systemPromptOverride!, tools: getActiveToolDefinitions(
-      filterExcludedTools(listToolDefinitions().map(tool => tool.name), options.context?.excludeTools), 'off') };
-    const candidate = buildCompactChildContractCandidate(canonical, { source: 'builtin-child' });
-    expect(candidate).not.toBe(canonical);
-    expect(candidate.system).toContain(canonical.system);
-    expect(candidate.tools.map(tool => tool.name)).toEqual(canonical.tools.map(tool => tool.name));
-    expect(candidate.tools.some(tool => tool.name === 'edit')).toBe(!readOnly);
-    // Building the experiment must not change production options or add a model/discovery request.
-    expect(options.context?.systemPromptOverride).toBe(canonical.system);
+    const tools = getActiveToolDefinitions(
+      filterExcludedTools(listToolDefinitions().map(tool => tool.name), options.context?.excludeTools), 'off');
+    expect(tools.some(tool => tool.name === 'edit')).toBe(!readOnly);
+    expect(options.context?.systemPromptOverride).not.toContain('## Shared tool obligations');
     expect(mockRunKodaX).toHaveBeenCalledTimes(1);
   });
 
@@ -481,7 +475,7 @@ describe('executeChildAgents — guardrails propagation (FEATURE_092 phase 2b.7b
           readonly systemPromptOverride?: string;
         };
       };
-      expect(childOptions.agentMode).toBe('sa');
+      expect(childOptions.agentMode).toBeUndefined();
       expect(childOptions.context?.excludeTools).toEqual(expect.arrayContaining([
         'list_dispatchable_agents',
         'spawn_agent',
@@ -2134,6 +2128,25 @@ describe('FEATURE_117 v2 — write-child AGENTS.md inject', () => {
     expect(opts.context.systemPromptOverride).toBe(CHILD_AGENT_SYSTEM_PROMPT);
     expect(opts.context.systemPromptOverride).not.toContain('Project rules apply');
     expect(opts.context.systemPromptOverride).not.toContain('# Project Context');
+  });
+
+  it('write child receives application rules after project rules; a read-only child does not', async () => {
+    writeFileSync(join(tmpRoot, 'AGENTS.md'), '# Project Rules\n\n- PROJECT_RULE_SENTINEL\n');
+    const applicationRules = '## Application rule: house\nThe application running KodaX set this rule. Follow it like a project rule.\nAPP_RULE_SENTINEL';
+    for (const readOnly of [false, true]) {
+      mockRunKodaX.mockResolvedValueOnce({
+        success: true, lastText: 'done', messages: [{ role: 'assistant', content: '' }], sessionId: 's1',
+      });
+      await executeChildAgents(
+        [createBundle({ id: `cb-app-${readOnly}`, readOnly, objective: 'Refactor' })],
+        createTmpCtx(tmpRoot),
+        createOptions({ parentOptions: { provider: 'anthropic', applicationRules } }),
+      );
+    }
+    const [write, read] = mockRunKodaX.mock.calls.map(call => String(call[0].context?.systemPromptOverride));
+    expect(write.endsWith(`\n\n${applicationRules}`)).toBe(true);
+    expect(write.indexOf('PROJECT_RULE_SENTINEL')).toBeLessThan(write.indexOf('APP_RULE_SENTINEL'));
+    expect(read).toBe(CHILD_AGENT_SYSTEM_PROMPT);
   });
 
   it('read-only child does NOT receive AGENTS.md content (read path stays minimal)', async () => {

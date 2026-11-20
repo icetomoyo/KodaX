@@ -14,7 +14,7 @@ import {
   type KodaXToolDefinition,
 } from '@kodax-ai/llm';
 import { runManagedTaskViaRunner } from './runner-driven.js';
-import { runKodaX } from '../agent.js';
+import { runLeafAgent } from '../agent.js';
 import { KodaXExtensionRuntime, setActiveExtensionRuntime } from '../extensions/runtime.js';
 
 const requests: string[] = [];
@@ -66,7 +66,7 @@ describe('managed result verification', () => {
     const stream = vi.spyOn(provider, 'stream');
     registerModelProvider('result-verification-test', () => provider);
     vi.stubEnv('KODAX_RESULT_VERIFICATION_TEST_KEY', 'test-only');
-    const result = await runKodaX({ provider: 'result-verification-test', reasoningMode: 'off', workMode: 'agent',
+    const result = await runLeafAgent({ provider: 'result-verification-test', reasoningMode: 'off', workMode: 'agent',
       context: { executionCwd: directory, gitRoot: directory, repoIntelligenceMode: 'off',
         workModePolicy, toolVisibilityPolicy: ({ name }) => !['bash', 'write', 'edit', 'spawn_agent'].includes(name),
         systemPromptOverride: 'EXACT_PROFILE_SYSTEM', agentProfile: { verification: {

@@ -2,7 +2,6 @@ import { expect, it } from 'vitest';
 import { KodaXBaseProvider, registerModelProvider, type KodaXMessage, type KodaXToolDefinition, type KodaXStreamResult } from '@kodax-ai/llm';
 import { buildRunnerAgentChain } from './agent-chain.js';
 import { buildRunnerLlmAdapter } from './llm-adapter.js';
-import { inheritOrdinaryRootToolContract, markOrdinaryRootToolContract } from '../../../tools/managed-tool-contract.js';
 import { toolSearchHandler } from '../../../tools/tool-search.js';
 import { getToolDefinition, registerTool } from '../../../tools/index.js';
 import { TOOL_SEARCH_DEFINITION } from '../../../tools/tool-search.js';
@@ -24,7 +23,6 @@ async function history(): Promise<KodaXMessage[]> {
 it('projects only the provider request and retains full canonical tool-search evidence', async () => {
   const context = { backups: new Map<string, string>() };
   const agent = buildRunnerAgentChain(context).worker;
-  markOrdinaryRootToolContract(agent);
   const result = await toolSearchHandler({ query: 'select:web_fetch' }, context);
   const messages: KodaXMessage[] = [
     { role: 'assistant', content: [{ type: 'tool_use', id: 'lookup', name: 'tool_search', input: { query: 'select:web_fetch' } }] },
@@ -41,19 +39,19 @@ it('projects only the provider request and retains full canonical tool-search ev
   expect(JSON.stringify(messages)).toContain('parameters\\":');
 });
 
-it.each<Partial<KodaXContextOptions>>([
-  { currentAgentId: '/root/specialist' }, { agentProfile: { id: 'sdk' } },
-  { systemPromptOverride: 'Host-specific instructions.' }, { toolVisibilityPolicy: () => true },
-])('preserves explicit SDK, specialist and visibility contracts: %j', async context => {
+it.each<[Partial<KodaXContextOptions>, boolean]>([
+  [{ currentAgentId: '/root/specialist' }, false], [{ agentProfile: { id: 'sdk' } }, true],
+  [{ systemPromptOverride: 'Host-specific instructions.' }, true], [{ toolVisibilityPolicy: () => true }, true],
+])('keeps native search results only for a child: %j', async (context, projected) => {
   const agent = buildRunnerAgentChain({ backups: new Map() }).worker;
-  markOrdinaryRootToolContract(agent);
   let sent: readonly KodaXMessage[] = [];
   const messages = await history();
   await buildRunnerLlmAdapter({ provider: 'anthropic', context }, async wire => {
     sent = wire;
     return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
   })(messages, agent);
-  expect(sent).toEqual(messages);
+  if (projected) expect(JSON.stringify(sent)).toContain('current tool contracts');
+  else expect(sent).toEqual(messages);
 });
 
 it('preserves a same-name independently registered search tool', async () => {
@@ -62,7 +60,6 @@ it('preserves a same-name independently registered search tool', async () => {
     { source: { kind: 'extension', id: 'independent-help' } });
   try {
     const agent = buildRunnerAgentChain({ backups: new Map() }).worker;
-    markOrdinaryRootToolContract(agent);
     let sent: readonly KodaXMessage[] = [];
     await buildRunnerLlmAdapter({ provider: 'anthropic' }, async wire => { sent = wire; return { textBlocks: [{ text: 'done' }], toolBlocks: [] }; })(messages, agent);
     expect(sent).toEqual(messages);
@@ -72,11 +69,9 @@ it('preserves a same-name independently registered search tool', async () => {
 it('uses a proven Script leaf contract and leaves canonical history intact', async () => {
   const context: KodaXToolExecutionContext = { backups: new Map() };
   const root = buildRunnerAgentChain(context).worker;
-  markOrdinaryRootToolContract(root);
   const leaf = getToolDefinition('web_fetch');
   if (!leaf) throw new Error('Missing web fetch');
   const script = withScriptModelTool(root, context, [leaf], async () => { throw new Error('No Script execution during capture'); });
-  inheritOrdinaryRootToolContract(root, script);
   const messages = await history();
   const requests: KodaXMessage[][] = [];
   const adapter = buildRunnerLlmAdapter({ provider: 'anthropic' }, async (wire, tools) => {
@@ -112,7 +107,6 @@ it('retains the same projected parameters across real stream retries and non-str
   const unregister = registerModelProvider('search-help-fallback', () => new Fallback());
   try {
     const agent = buildRunnerAgentChain({ backups: new Map() }).worker;
-    markOrdinaryRootToolContract(agent);
     await buildRunnerLlmAdapter({ provider: 'search-help-fallback', reasoningMode: 'off' })(messages, agent);
     expect(sent).toHaveLength(3);
     for (const wire of sent) {
@@ -147,7 +141,6 @@ it('restores the full search schema when actual context fitting removes its nati
     const active = new Set(['read', 'tool_search', 'tool_call', 'host_detail', 'host_other']);
     const context = { backups: new Map<string, string>(), excludeTools: listToolDefinitions().map(tool => tool.name).filter(name => !active.has(name)) };
     const agent = buildRunnerAgentChain(context).worker;
-    markOrdinaryRootToolContract(agent);
     const content = await toolSearchHandler({ query: 'select:host_detail' }, context);
     const messages: KodaXMessage[] = [
       { role: 'assistant', content: [{ type: 'tool_use', id: 'host-help', name: 'tool_search', input: { query: 'select:host_detail' } }] },

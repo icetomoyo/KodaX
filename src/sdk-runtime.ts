@@ -131,6 +131,7 @@ import {
   breakerShouldFallback,
   analyzeAutoModeCall,
   assertTrustedTextMutationPolicy,
+  isSameFilesystemPath,
   assertWorkModeAvailable,
   resolveWorkMode,
   bashSignalCollector,
@@ -158,11 +159,11 @@ import {
   type KodaXSkillInvocationErrorCode,
   reduceOutputSegmentProjection,
   runManagedTask,
+  assertKodaXPromptSpec,
   runToolInvocation,
   runScopedToolMap,
   normalizeShellExecutionContract,
   shellExecutionContractFingerprint,
-  startKodaX,
   toolBash,
   buildPromptMessageContent,
   ToolResultBatchCapacityError,
@@ -269,10 +270,11 @@ import type {
   RuntimeToolExposurePlan,
   ToolCallSignal,
   KodaXVideoInputArtifact,
-  RunningSession,
 } from "@kodax-ai/coding";
 import {
+  describeFailureCause,
   isValidTokenBudget,
+  normalizeKodaXAgentMode,
   buildSessionGoalRuntimeBinding,
   planGoalCreate,
   planGoalTransition,
@@ -2181,6 +2183,7 @@ export type RuntimeDaemonContextOptions = Pick<
   | "taskMetadata"
   | "taskVerification"
   | "agentProfile"
+  | "prompt"
   | "workModePolicy"
   | "currentAgentId"
   | "parentAgentId"
@@ -2452,8 +2455,14 @@ export interface RuntimeFailureDetail {
   readonly stage: RuntimeFailureStage;
   /** Stable KodaX code suitable for programmatic handling. */
   readonly providerErrorCode: RuntimeProviderErrorCode;
-  /** Bounded KodaX-owned display text; never derived from provider response bodies. */
+  /** Bounded KodaX-owned summary; never derived from provider response bodies. */
   readonly safeMessage: string;
+  /**
+   * Underlying reason (Provider response text or exception message), shown
+   * alongside `safeMessage` so users can act on it. Credentials are redacted
+   * and the text is bounded; it is provider-controlled and not a stable code.
+   */
+  readonly detail?: string;
   /** Safe Skill identifier for local loading/policy failures; never a filesystem path. */
   readonly skillName?: string;
   readonly httpStatus?: number;
@@ -3725,7 +3734,6 @@ interface RuntimeRunRecord {
   lifecycleError?: RuntimeRunLifecycleError;
   terminal?: RuntimeTerminalFact;
   readonly result: Promise<RuntimeRunResult>;
-  running?: RunningSession;
   sessionControl?: KodaXSessionMutators;
   abortController?: AbortController;
   preparation?: Promise<unknown>;
@@ -3741,10 +3749,15 @@ interface RuntimeRunRecord {
   shellEffectDrain?: { count: number; promise: Promise<void>; resolve: () => void };
   capturedExecutorResult?: KodaXResult;
   capturedExecutorFailure?: RuntimeRunFailureFact;
-  /** Survives start-Promise release; Actor state alone cannot settle Workflow resources. */
+  /**
+   * Survives start-Promise release; Actor state alone cannot settle Workflow
+   * resources. Cleared once the Workflow Promise settles without a confirmed
+   * Actor tree: from then on the Run settles like any unconfirmed Run.
+   */
   workflowOwned?: boolean;
+  /** Actor repair gave up while the Workflow Promise still owned the Run. */
+  unrepairedActorCause?: Error;
   mode: RuntimeRunMode;
-  readonly inheritModeAfterDurabilityRepair?: boolean;
   readonly origin?: RuntimeRunStatus["origin"];
   readonly continuation?: Omit<RuntimeContinuationStatus, "state">;
   readonly interruptInputs: RuntimeInterruptInputRecord[];
@@ -3761,12 +3774,6 @@ interface RuntimeRunRecord {
   pendingSideReport?: boolean;
   releaseAbortSignalSubscription?: () => void;
   start?: PendingRunStart;
-  executorTerminalSignal?: {
-    readonly signal: "completed" | "failed";
-    readonly error?: Error;
-    readonly failure?: RuntimeRunFailureFact;
-    readonly interruptedAtSignal: boolean;
-  };
   actorHealthBaseState?: RuntimeActorHealthBaseRunState;
   settlementFinished?: boolean;
   unconfirmedResult?: RuntimeRunResult;
@@ -4110,6 +4117,11 @@ const RUNTIME_ACTOR_FINALIZATION_MS = 30_000;
 export const RUNTIME_REDIRECT_STOP_REASON = "runtime run redirected by user";
 const RUNTIME_ACTOR_REPAIR_INITIAL_RETRY_MS = 100;
 const RUNTIME_ACTOR_REPAIR_MAX_RETRY_MS = 30_000;
+// Several File Session writer-eligibility bounds (65 s). After this a Run
+// whose Actor repair has not succeeded gets its final failure; the Session
+// stays fenced until a background repair or restart recovery confirms the
+// Actor tree (Issue 413).
+const RUNTIME_ACTOR_REPAIR_BUDGET_MS = 5 * 60_000;
 const RUNTIME_SESSION_CAPTURE_RETRY_DELAYS_MS = [5, 15] as const;
 const RUNTIME_SESSION_LOAD_RETRY_DELAYS_MS = [10, 25, 50, 100, 200, 400] as const;
 const RUNTIME_LEGACY_LINEAGE_FALLBACK_TIMESTAMP = "1970-01-01T00:00:00.000Z";
@@ -4219,7 +4231,7 @@ export async function createKodaXRuntime(
       sharedSessionSettings: 2 as const,
       ...(autoStart
         ? {
-          actorSettlementConvergence: 2 as const,
+          actorSettlementConvergence: 3 as const,
           crashOutcomeModel: 2 as const,
           managedRunDurability: 1 as const,
           ...(process.platform === "win32"
@@ -4333,6 +4345,7 @@ async function createKodaXRuntimeInternal(
     productExecutionBinding: { version: 1 },
     productInputRecovery: { version: 1 },
     productExecutionModeConstraint: { version: 1 },
+    promptSpec: { version: 1 },
     sessionDrafts: { version: 1 },
     productHistoryBoundaries: { version: 1 },
     sideChat: { version: 1 },
@@ -4408,7 +4421,7 @@ async function createKodaXRuntimeInternal(
       persistenceFailure: "fail_closed",
     },
     actorSettlementConvergence: {
-      version: 2,
+      version: 3,
       rootFence: "fail_closed",
       sameOwnerRepair: "automatic",
       unknownAfterTurnQueue: true,
@@ -4663,7 +4676,7 @@ async function createKodaXRuntimeInternal(
     const activeRun = [...runs.values()].find(run => run.sessionId === sessionId && !run.terminalEmitted);
     const effectiveSettings = resolveEffectiveRuntimeSessionSettings(config, rawSettings, true);
     const settings = { ...effectiveSettings,
-      ...(activeRun ? { agentMode: activeRun.mode === 'coding' ? 'sa' as const : 'ama' as const } : {}) };
+      ...(activeRun ? { agentMode: 'ama' as const } : {}) };
     const contextBudget = resolveClientContextBudget(config, effectiveSettings, options.defaultProvider, options.defaultModel);
     const side = persistence.sideChats.get(sessionId);
     const receipts = side ? [side] : persistence.sideChats.visibleTo(sessionId);
@@ -5088,6 +5101,7 @@ async function createKodaXRuntimeInternal(
   let actorRegistryClosed = false;
   let agentPlaneClosed = agentPlane === undefined;
   let ownerLivenessClosed = false;
+  let hostResourcesClosed = false;
   let busClosed = false;
   const pendingManagedTaskMaintenance = new Set<Promise<void>>();
   const memoryReviewAbort = new AbortController();
@@ -5588,33 +5602,44 @@ async function createKodaXRuntimeInternal(
       closeTranscriptSnapshots = undefined;
       await Promise.all([...pendingManagedTaskMaintenance]);
       await Promise.all([...pendingMemoryWork]);
+      // A fenced Actor keeps its owner for restart recovery and fails every
+      // close() the same way. The rest of the Runtime still closes, so a Host
+      // can exit and let restart recovery reclaim the tree.
+      let actorRegistryError: { readonly error: unknown } | undefined;
       if (!actorRegistryClosed) {
-        await actorRegistry.close("runtime closed");
-        actorRegistryClosed = true;
+        try {
+          await actorRegistry.close("runtime closed");
+          actorRegistryClosed = true;
+        } catch (error: unknown) {
+          actorRegistryError = { error };
+        }
       }
       const suspended = [...runs.values()].filter(run => run.generationSuspended);
       for (const run of suspended) {
         run.abortController?.abort(new DOMException('Host suspended at a generation checkpoint.', 'AbortError'));
-        run.running?.abort();
       }
       await Promise.allSettled(suspended.map(run => run.result));
       if (!agentPlaneClosed) {
         await agentPlane!.close();
         agentPlaneClosed = true;
       }
-      agentStore?.close();
-      await integrations.close();
-      releaseRuntimeAgentHome?.();
-      if (getActiveUserInteraction() === sharedElicitSurface) {
-        setActiveUserInteraction(undefined);
+      if (!hostResourcesClosed) {
+        agentStore?.close();
+        await integrations.close();
+        releaseRuntimeAgentHome?.();
+        if (getActiveUserInteraction() === sharedElicitSurface) {
+          setActiveUserInteraction(undefined);
+        }
+        hostResourcesClosed = true;
       }
       // Keep the liveness endpoint reachable until every executor has stopped
       // and the Actor owner has been durably released. A failed close can then
       // be retried without allowing another Runtime to take over prematurely.
-      if (!ownerLivenessClosed) {
+      if (!ownerLivenessClosed && actorRegistryError === undefined) {
         await ownerLiveness.close();
         ownerLivenessClosed = true;
       }
+      const failures: unknown[] = actorRegistryError === undefined ? [] : [actorRegistryError.error];
       if (!busClosed) {
         const results = await Promise.allSettled([sessionViews.close()]);
         results.push(...await Promise.allSettled([
@@ -5624,10 +5649,10 @@ async function createKodaXRuntimeInternal(
           Promise.resolve().then(() => persistence.close()),
         ]));
         busClosed = results.slice(1).every(result => result.status === 'fulfilled');
-        const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason as unknown] : []);
-        if (failures.length === 1) throw failures[0];
-        if (failures.length > 1) throw new AggregateError(failures, 'Runtime display and event cleanup failed.');
+        failures.push(...results.flatMap(result => result.status === 'rejected' ? [result.reason as unknown] : []));
       }
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1) throw new AggregateError(failures, 'Runtime cleanup failed.');
     })();
     closeAttempt = attempt;
     void attempt.then(
@@ -5753,7 +5778,7 @@ async function createKodaXRuntimeInternal(
         let resolveResult!: (result: RuntimeRunResult | PromiseLike<RuntimeRunResult>) => void;
         Object.assign(record, { result: new Promise<RuntimeRunResult>(resolve => { resolveResult = resolve; }) });
         const execPolicy = await loadExecPolicy({ userConfigDir: configHome, projectRoot: session.gitRoot,
-          trustProjectPolicy: options.execPolicy?.trustedProjectRoots?.some(root => sameHostPath(root, session.gitRoot)) === true,
+          trustProjectPolicy: options.execPolicy?.trustedProjectRoots?.some(root => isSameFilesystemPath(root, session.gitRoot)) === true,
           adminRules: options.execPolicy?.adminRules });
         record.execPolicyRules = execPolicy.rules;
         record.execPolicyErrors = execPolicy.errors;
@@ -5768,7 +5793,7 @@ async function createKodaXRuntimeInternal(
           toolCeiling: record.recoveryToolCeiling,
           executionTarget: { kind: 'actor_turn', actorPath: execution.actor.path, turnId: execution.turn.turnId }, display: {}, permissions, userInputs,
           enableSharedInteractions: true, onPlanApproved: async () => false, onTurnStarted: () => {},
-          onExecutorTerminal: () => {}, onPhase: phase => { if (!record.generationSuspended) record.phase = phase; },
+          onPhase: phase => { if (!record.generationSuspended) record.phase = phase; },
           onContextRecoveryPrepared: () => persistGenerationRecovery(record, persistence),
           onContextRecoveryChanged: () => { saveRunStatusSafely(bus, persistence, record, statusFromRecord(record)); },
           onEffectiveConfigChanged: () => { saveRunStatusSafely(bus, persistence, record, statusFromRecord(record)); },
@@ -5937,7 +5962,8 @@ function assertRuntimeCapabilities(
     requirements?.sandboxRuntime === undefined &&
     requirements?.runtimeAutoModeGuardrail === undefined &&
     requirements?.sessionDrafts === undefined && requirements?.sessionPromotion === undefined && requirements?.productExecutionBinding === undefined && requirements?.productInputRecovery === undefined && requirements?.productExecutionModeConstraint === undefined && requirements?.productClient === undefined &&
-    requirements?.sideChat === undefined && requirements?.productHistoryBoundaries === undefined && requirements?.productHistoryTurnResolution === undefined && requirements?.productHistoryLocation === undefined &&
+    requirements?.sideChat === undefined && requirements?.promptSpec === undefined &&
+    requirements?.productHistoryBoundaries === undefined && requirements?.productHistoryTurnResolution === undefined && requirements?.productHistoryLocation === undefined &&
     requirements?.productExecutionAuthorization === undefined && requirements?.productExitControl === undefined
     && requirements?.productExecutionFacts === undefined && requirements?.productActorAuthorization === undefined
   )
@@ -5958,6 +5984,7 @@ function assertRuntimeCapabilities(
     ['productExecutionBinding', requirements.productExecutionBinding],
     ['productInputRecovery', requirements.productInputRecovery],
     ['productExecutionModeConstraint', requirements.productExecutionModeConstraint],
+    ['promptSpec', requirements.promptSpec],
     ["productHistoryBoundaries", requirements.productHistoryBoundaries],
     ['sideChat', requirements.sideChat],
     ['productHistoryTurnResolution', requirements.productHistoryTurnResolution],
@@ -6197,7 +6224,7 @@ function daemonCapabilityRequirements(
     ...(process.platform === "win32" ? { sandboxRuntime: 11 } : {}),
     ...(options.autoStart === true
       ? {
-          actorSettlementConvergence: 2,
+          actorSettlementConvergence: 3,
           crashOutcomeModel: 2,
           managedRunDurability: 1,
           ...(process.platform === "win32" ? { daemonShutdownVerification: 1 } : {}),
@@ -6221,6 +6248,7 @@ function firstUpgradeableCapability(
     'productExecutionBinding',
     'productInputRecovery',
     'productExecutionModeConstraint',
+    'promptSpec',
     "productHistoryBoundaries",
     'sideChat',
     'productHistoryTurnResolution',
@@ -7112,7 +7140,8 @@ function createRuntimeSessionSettingsOwner(
 
   const initialize = (sessionId: string, loaded: RuntimeVersionedValue<RuntimeSessionSettings>) => {
     if (SESSION_DEFAULTS_CAPTURED in loaded.value) return loaded;
-    const { workMode: _workMode, ...defaults } = parseRuntimeSessionSettings(readDefaults());
+    const { workMode: _workMode, ...defaults } = withCanonicalAgentMode(
+      parseRuntimeSessionSettings(readDefaults()));
     const initialized = { revision: loaded.revision,
       value: withCapturedSessionDefaults({ ...loaded.value }, defaults) };
     if (!pendingDraftSettings.has(sessionId)) persistence.saveSessionSettingsVersioned(sessionId, initialized);
@@ -8522,6 +8551,19 @@ function createRuntimeSessionService(
   }
 
   /**
+   * A caller-chosen id becomes a file name and the provider-visible
+   * X-Session-Id, so it must be a plain portable name. Existing ids are
+   * read as stored; only new ones are checked.
+   */
+  function assertNewSessionId(sessionId: string): void {
+    if (/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)
+      && !/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(sessionId)
+      && !sessionId.startsWith("archived-")) return;
+    throw sessionCommandError("invalid_params",
+      'Session id must be 1-128 letters, digits, "_" or "-", not a reserved device name, and not start with "archived-".');
+  }
+
+  /**
    * Session goal commands (FEATURE_298 T32): the Host owns the lineage write,
    * serialized under the session gate so concurrent modifications keep an
    * explicit order. Goal commands never start or resurrect Runs.
@@ -8697,6 +8739,7 @@ function createRuntimeSessionService(
     async create(input = {}) {
       ensureOpen();
       admission.assertCreate(input);
+      if (input.sessionId !== undefined) assertNewSessionId(input.sessionId);
       const sessionId = input.sessionId ?? (await generateSessionId());
       if (creatingSessionIds.has(sessionId)) {
         throw Object.assign(new Error(`Session already exists: ${sessionId}`), {
@@ -9589,6 +9632,7 @@ function createRuntimeSessionService(
     async fork(input) {
       ensureOpen();
       if (isSideId(input.sessionId)) throw sessionCommandError("conflict", "A side conversation cannot be forked.");
+      if (input.newSessionId !== undefined) assertNewSessionId(input.newSessionId);
       if (input.turn) {
         if (input.historyBoundary !== undefined || input.selector !== undefined) throw Object.assign(new Error('Conflicting turn selectors.'), { code: 'invalid_params' });
         input = { ...input, historyBoundary: runtimeTurnBoundary(input.sessionId, input.turn, input.before) };
@@ -10377,6 +10421,14 @@ async function createRuntimeRunService(deps: {
         error: "owner_liveness_unconfirmed",
       };
     }
+    return recoverDeadOwnerRun(persisted, owner);
+  };
+
+  // The same restart recovery startup applies to a Run whose owner is dead.
+  const recoverDeadOwnerRun = async (
+    persisted: PersistedRuntimeRunStatus,
+    owner: AgentActorOwner,
+  ): Promise<RuntimeRunStatus> => {
     const reconciled = await reconcileIndependentActorRun(persisted, deps.sessionManager, deps.persistence, deps.bus);
     if (reconciled) {
       deps.runs.set(reconciled.status.runId, recordFromPersistedStatus(reconciled.status, false, reconciled.owner, reconciled.actor));
@@ -10629,7 +10681,12 @@ async function createRuntimeRunService(deps: {
     }
     record.settlementFinished = true;
     record.unconfirmedResult = result;
-    if (result.phase === "unknown" && record.phase !== "unknown") {
+    // A Run already `unknown` (an unconfirmed Stop) still publishes a newly
+    // lost terminal save; markRunTerminal() restores the phase it failed to save.
+    if (
+      result.phase === "unknown"
+      && (record.phase !== "unknown" || record.lifecycleError?.code === "run_settlement_not_persisted")
+    ) {
       record.phase = "unknown";
       record.stage = "unknown";
       record.stageChangedAt = new Date().toISOString();
@@ -10791,27 +10848,138 @@ async function createRuntimeRunService(deps: {
     record.capturedExecutorResult !== undefined
     || record.capturedExecutorFailure !== undefined
     || record.independentExecutorSettled === true;
+  // Same-owner repair failed deterministically or ran out of budget. The Run
+  // gets its final failure, but activeRunBySession stays fenced: no successor
+  // may overlap the unconfirmed Actor tree until a background repair or restart
+  // recovery confirms it. Effects admitted before the fence are not awaited;
+  // effectOutcome is unknown.
+  const finishUnrepairedActorRun = (
+    record: RuntimeRunRecord,
+    cause: Error,
+  ): void => {
+    const failure = record.actorDurabilityFailure;
+    if (record.terminalEmitted || failure === undefined) return;
+    if (record.workflowOwned) {
+      // The running Workflow Promise still owns final history and cleanup; it
+      // applies this outcome once it settles without a confirmed Actor tree.
+      record.unrepairedActorCause = cause;
+      return;
+    }
+    emitKodaXDiagnostic({
+      source: "runtime.actor-settlement",
+      level: "error",
+      message: `Runtime run ${record.runId} ended without a durable Actor repair; its Session stays fenced until the Actor tree is confirmed.`,
+      detail: cause,
+    });
+    let result: RuntimeRunResult;
+    try { result = applyRunFailureFact(record, failure); }
+    catch (error: unknown) {
+      finishRunSettlementFailure(record, error);
+      return;
+    }
+    finishUnconfirmedRun(record, result);
+  };
+
+  // Same-owner repair cannot succeed, so reclaim the Actor tree the way
+  // restart recovery does: a fresh controller reads the durable snapshot and
+  // interrupts unfinished turns. It waits until every effect admitted before
+  // the fence has settled, so no old tool call overlaps the reclaimed tree.
+  // A Workflow Run waits until its Promise releases the Run.
+  const rebuildActorController = async (
+    record: RuntimeRunRecord,
+  ): Promise<{ readonly error?: Error }> => {
+    const stale = record.actorSession;
+    if (stale === undefined || record.workflowOwned || (record.activeEffectCount ?? 0) > 0) return {};
+    try {
+      const rebuilt = await deps.actorRegistry.rebuild(record.sessionId, stale);
+      if (rebuilt === undefined) return {};
+      // Runs queued behind the fence were bound to the old controller when
+      // accepted; they execute on whichever controller their record holds.
+      for (const run of deps.runs.values()) {
+        if (run.sessionId === record.sessionId && run.actorSession === stale) {
+          Object.assign(run, { actorSession: rebuilt });
+        }
+      }
+      return {};
+    } catch (error: unknown) {
+      return { error: normalizeError(error) };
+    }
+  };
+
   const recoverActorDurability = async (
     record: RuntimeRunRecord,
     reason: string,
   ): Promise<void> => {
+    const deadline = Date.now() + RUNTIME_ACTOR_REPAIR_BUDGET_MS;
     let retryMs = RUNTIME_ACTOR_REPAIR_INITIAL_RETRY_MS;
+    // Once the Run has its final failure, repair keeps retrying in the
+    // background so a recovered store lifts the Session fence in-process.
+    let runFinished = false;
+    // After a deterministic repair error the old controller is abandoned and
+    // each attempt rebuilds the Actor tree instead.
+    let reclaim = false;
+    let reclaimFailureReported = false;
     for (;;) {
-      const attempt = await requestManagedActorCancellation(record, reason);
+      // A repair whose store read or save never settles must not hold the
+      // final outcome past the budget.
+      let budgetTimer: ReturnType<typeof setTimeout> | undefined;
+      const reclaiming = reclaim;
+      const repair = reclaiming
+        ? rebuildActorController(record)
+        : requestManagedActorCancellation(record, reason);
+      const attempt = runFinished ? await repair : await Promise.race([
+        repair,
+        new Promise<{ readonly error: Error }>((resolve) => {
+          budgetTimer = setTimeout(() => resolve({
+            error: new Error("Actor settlement repair did not finish within its budget."),
+          }), Math.max(0, deadline - Date.now()));
+          budgetTimer.unref?.();
+        }),
+      ]);
+      clearTimeout(budgetTimer);
       if (
         deps.isClosed()
-        || record.terminalEmitted
+        || (record.terminalEmitted && !runFinished)
         || record.actorDurabilityFailure === undefined
         || record.actorSession?.health().state === "healthy"
       ) return;
+      // A live foreign owner can block reclaim for a long time; report it
+      // once rather than on every retry.
+      if (reclaiming && attempt.error !== undefined && !reclaimFailureReported) {
+        reclaimFailureReported = true;
+        emitKodaXDiagnostic({
+          source: "runtime.actor-settlement",
+          level: "warn",
+          message: `The Actor tree of Session ${record.sessionId} could not be reclaimed yet; retrying in the background.`,
+          detail: attempt.error,
+        });
+      }
+      // Retrying same-owner repair cannot change a deterministic error.
       if (
         attempt.error?.name === "AgentOwnerConflictError"
         || attempt.error?.name === "AgentSettlementPersistenceError"
-      ) return;
+      ) {
+        if (!runFinished) finishUnrepairedActorRun(record, attempt.error);
+        runFinished = true;
+        reclaim = true;
+      }
+      if (!runFinished && Date.now() >= deadline) {
+        finishUnrepairedActorRun(
+          record,
+          attempt.error ?? new Error("Actor settlement repair did not finish within its budget."),
+        );
+        runFinished = true;
+      }
       await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, retryMs);
+        const timer = setTimeout(
+          resolve,
+          runFinished ? retryMs : Math.min(retryMs, deadline - Date.now()),
+        );
         timer.unref?.();
       });
+      // close() may have settled during the backoff; a closed Runtime starts no
+      // new Session I/O, and restart recovery owns the still-fenced Actor tree.
+      if (deps.isClosed()) return;
       retryMs = Math.min(retryMs * 2, RUNTIME_ACTOR_REPAIR_MAX_RETRY_MS);
     }
   };
@@ -10852,7 +11020,6 @@ async function createRuntimeRunService(deps: {
       productQueue.markDropped(record.sessionId, inputId),
     );
     releaseAbortSignalSubscription(record);
-    record.running?.abort(error);
     record.abortController?.abort(error);
     deps.permissions.rejectForRun(record.runId, message);
     deps.userInputs.rejectForRun(record.runId, message);
@@ -10862,9 +11029,14 @@ async function createRuntimeRunService(deps: {
       if (record.actorDurabilityRecovery === recovery) {
         record.actorDurabilityRecovery = undefined;
       }
-      if (record.actorSession?.health().state === "healthy") {
-        finishRecoveredUnconfirmedRun(record);
-      }
+      if (record.actorSession?.health().state !== "healthy") return;
+      try {
+        // The budget already gave this Run its failed outcome; a later repair
+        // lifts the Session fence and settles it like any failed Run.
+        if (record.terminalEmitted && record.unconfirmedResult !== undefined) {
+          if (!deps.isClosed()) finishRun(record, record.unconfirmedResult);
+        } else finishRecoveredUnconfirmedRun(record);
+      } catch (error: unknown) { finishRunSettlementFailure(record, error); }
     });
   });
 
@@ -10915,7 +11087,6 @@ async function createRuntimeRunService(deps: {
       cancellationController.signal.aborted
       || record.stop !== undefined
       || deps.isClosed()
-      || record.running?.aborted === true
       || record.abortController?.signal.aborted === true
       || record.start?.options.abortSignal?.aborted === true
     ) {
@@ -11081,6 +11252,15 @@ async function createRuntimeRunService(deps: {
     ...(record.stop !== undefined ? { stop: record.stop } : {}),
   });
 
+  // A Workflow Promise that settles behind the settlement fence gives up the
+  // Run. It wrote no final history and scheduled no cleanup, because
+  // resources-stopped cleanup is unsafe while the Actor tree is unconfirmed;
+  // restart recovery keeps the run directory. Actor repair, or its give-up,
+  // then finishes the Run like any other fenced Run.
+  const releaseFencedWorkflow = (record: RuntimeRunRecord): void => {
+    if (record.actorDurabilityFailure !== undefined) record.workflowOwned = false;
+  };
+
   const finishAccordingToTerminalFact = (
     record: RuntimeRunRecord,
     result: RuntimeRunResult,
@@ -11169,101 +11349,6 @@ async function createRuntimeRunService(deps: {
         });
       }
     }
-  };
-
-  const settleFromExecutorSignal = (
-    record: RuntimeRunRecord,
-    signal: "completed" | "failed",
-    error?: Error,
-  ): void => {
-    if (record.generationSuspended || record.terminalEmitted || record.executorTerminalSignal !== undefined) {
-      return;
-    }
-    record.interruptInputOpen = false;
-    record.executorTerminalSignal = {
-      signal,
-      ...(error !== undefined ? { error } : {}),
-      ...(signal === "failed"
-        ? {
-            failure: captureRunFailureFact(
-              record,
-              error ?? new Error("Runtime executor reported failure"),
-            ),
-          }
-        : {}),
-      interruptedAtSignal:
-        record.running?.aborted === true
-        || record.start?.options.abortSignal?.aborted === true
-        || record.abortController?.signal.aborted === true,
-    };
-    // The executor emits its terminal callback immediately before its result
-    // Promise resolves. Give that Promise the rest of the current event-loop
-    // turn so the authoritative result (including KodaXResult payload) wins.
-    // This fallback runs on the next turn only when the Promise was lost.
-    setImmediate(() => {
-      void (async () => {
-      if (record.settlementFinished === true) return;
-      // A resolved executor Promise owns any asynchronous Host-side settlement.
-      if (executorPromiseSettled(record)) return;
-      const latched = record.executorTerminalSignal;
-      if (latched === undefined) return;
-      const actorHealth = await awaitActorFinalization(record);
-      if (actorHealth.state === "unknown") {
-        finishUnconfirmedRun(
-          record,
-          unknownActorSettlementResult(record),
-        );
-        return;
-      }
-      if (actorDurabilityFailureApplies(record)) {
-        if (!executorPromiseSettled(record)) return;
-        finishRun(
-          record,
-          applyRunFailureFact(record, record.actorDurabilityFailure),
-        );
-        return;
-      }
-      if (latched.signal === "failed") {
-        finishRun(
-          record,
-          applyRunFailureFact(
-            record,
-            latched.failure
-              ?? captureRunFailureFact(
-                record,
-                latched.error ?? new Error("Runtime executor reported failure"),
-              ),
-          ),
-        );
-        return;
-      }
-      if (!record.terminalEmitted) {
-        markRunTerminal(
-          deps.bus,
-          deps.persistence,
-          record,
-          latched.interruptedAtSignal ? "interrupted" : "completed",
-        );
-      }
-      finishRun(record, {
-        runId: record.runId,
-        sessionId: record.sessionId,
-        phase: record.phase,
-        ...(record.terminal !== undefined
-          ? { terminal: record.terminal }
-          : {}),
-        ...(record.stop !== undefined ? { stop: record.stop } : {}),
-      });
-      })().catch((error: unknown) => {
-        emitKodaXDiagnostic({
-          source: "runtime.run.finalization",
-          level: "error",
-          message: `Failed to settle Runtime run ${record.runId} after its executor terminal signal.`,
-          detail: error,
-        });
-        finishRunSettlementFailure(record, error);
-      });
-    });
   };
 
   const captureRunFailureFact = (
@@ -11432,54 +11517,6 @@ async function createRuntimeRunService(deps: {
     ) {
       return applyRunFailureFact(record, record.actorDurabilityFailure);
     }
-    const executorSignal = record.executorTerminalSignal;
-    if (
-      executorSignal !== undefined
-      && (
-        record.actorDurabilityFailure === undefined
-        || executorPromiseSettled(record)
-      )
-      && !record.terminalEmitted
-      && canApplyExecutorTerminalSignal(record)
-    ) {
-      if (executorSignal.signal === "failed") {
-        return applyRunFailureFact(
-          record,
-          executorSignal.failure
-            ?? captureRunFailureFact(
-              record,
-              executorSignal.error
-                ?? new Error("Runtime executor reported failure"),
-            ),
-        );
-      }
-      markRunTerminal(
-        deps.bus,
-        deps.persistence,
-        record,
-        executorSignal.interruptedAtSignal ? "interrupted" : "completed",
-      );
-      return {
-        runId: record.runId,
-        sessionId: record.sessionId,
-        phase: record.phase,
-        ...(record.terminal !== undefined
-          ? { terminal: record.terminal }
-          : {}),
-        ...(record.stop !== undefined ? { stop: record.stop } : {}),
-      };
-    }
-    if (executorSignal !== undefined && record.terminalEmitted) {
-      return {
-        runId: record.runId,
-        sessionId: record.sessionId,
-        phase: record.phase,
-        ...(record.terminal !== undefined
-          ? { terminal: record.terminal }
-          : {}),
-        ...(record.stop !== undefined ? { stop: record.stop } : {}),
-      };
-    }
     const wasQueued = record.phase === "queued";
     if (wasQueued) {
       removeQueuedRun(queueBySession, record);
@@ -11498,7 +11535,6 @@ async function createRuntimeRunService(deps: {
     releaseAbortSignalSubscription(record);
     record.providerCredentialScope?.close(reason);
     const abortError = new DOMException(reason, "AbortError");
-    record.running?.abort(abortError);
     if (!record.independentActorRef) record.abortController?.abort(abortError);
     record.resumeContextCapacity?.();
     const actorCancellation = requestManagedActorCancellation(record, reason);
@@ -11624,18 +11660,6 @@ async function createRuntimeRunService(deps: {
       finishRun(record, applyRunFailureFact(record, failure));
       return;
     }
-    // Executor callbacks are deliberately fallback-only. A returned Promise
-    // result or rejection above is the stronger fact when both are present.
-    if (record.executorTerminalSignal !== undefined) {
-      finishRun(
-        record,
-        cancelRun(
-          record,
-          record.stop?.reason ?? "runtime run recovered",
-          false,
-        ),
-      );
-    }
   };
 
   const launchRecord = (record: RuntimeRunRecord): void => {
@@ -11713,8 +11737,6 @@ async function createRuntimeRunService(deps: {
           state.denials = createAutoModeDenialTracker();
         }
       },
-      onExecutorTerminal: (signal, error) =>
-        settleFromExecutorSignal(record, signal, error),
       onContextRecoveryPrepared: () => persistGenerationRecovery(record, deps.persistence, productQueue.snapshot(record.sessionId)),
       onContextRecoveryChanged: () => { publishRunUpdate(record); },
       onEffectiveConfigChanged: () => { publishRunUpdate(record); },
@@ -11723,7 +11745,6 @@ async function createRuntimeRunService(deps: {
           record.generationSuspended
           ||
           record.terminalEmitted
-          || record.executorTerminalSignal !== undefined
           || record.phase === "unknown"
           || record.stop?.state === "unknown"
         ) {
@@ -11757,7 +11778,6 @@ async function createRuntimeRunService(deps: {
       onStage: (stage, activeSubtaskCount) => {
         if (
           record.terminalEmitted
-          || record.executorTerminalSignal !== undefined
           || record.phase === "unknown"
           || record.stop?.state === "unknown"
         ) {
@@ -11962,198 +11982,10 @@ async function createRuntimeRunService(deps: {
       },
     );
     const executeUnobserved = (recoveryEvidence: readonly KodaXInterruptedRunEvidence[] = []): void => {
-    if (record.mode === "managed_task") {
-      const sessionControl = createSessionControl();
-      record.sessionControl = sessionControl;
-      const abortController = record.abortController ?? new AbortController();
-      record.abortController = abortController;
-      const upstreamSignal = runOptions.abortSignal;
-      const handleUpstreamAbort = (): void => {
-        record.releaseAbortSignalSubscription = undefined;
-        record.interruptInputOpen = false;
-        const upstreamReason = upstreamSignal?.reason;
-        cancelRun(
-          record,
-          upstreamReason instanceof Error
-            ? upstreamReason.message
-            : typeof upstreamReason === "string" && upstreamReason.trim().length > 0
-              ? upstreamReason
-              : "external abort requested",
-          true,
-        );
-      };
-      if (upstreamSignal?.aborted) {
-        handleUpstreamAbort();
-      }
-      const executeCommandTool = (): Promise<KodaXResult> => withExtensionRuntimeContext(async () => {
-        const value = await runToolInvocation({ ...runOptions, abortSignal: abortController.signal },
-          runOptions.toolInvocation!, record.start!.prompt);
-        const command = record.start?.commandInput;
-        if (!command || !value.success || value.interrupted || abortController.signal.aborted || record.stop) return value;
-        const result = JSON.parse(value.lastText) as import('@kodax-ai/coding').ExtensionCommandResult;
-        if (result.success === false) return { ...value, success: false, lastText: result.message ?? value.lastText };
-        if (!result.invocation) return { ...value, lastText: result.message ?? '' };
-        const invocation = result.invocation;
-        const start = record.start!;
-        const model = resolveSkillModelOverride(record.provider, invocation.model);
-        if (model !== undefined) record.model = model;
-        start.options.context = { ...start.options.context, rawUserInput: start.prompt, promptOverlay: invocation.prompt,
-          commandInvocation: { ...invocation, name: invocation.displayName ?? command.name, source: 'extension',
-            runtimePolicy: { enforceAtRuntime: true } } };
-        const continuation = { ...createRunOptions(), toolInvocation: undefined, abortSignal: abortController.signal, sessionControl };
-        abortController.signal.throwIfAborted();
-        if (continuation.agentMode === 'sa' && continuation.workMode !== 'script') {
-          record.running = startKodaX(continuation, start.prompt);
-          return record.running.result;
-        }
-        return runManagedTask(continuation, start.prompt);
-      }, runOptions.extensionRuntime, record.runId);
-      const interruptedRunEvidence = runOptions.toolInvocation === undefined
-        ? recoveryEvidence
-        : [];
-      record.workflowOwned = record.start?.workflow !== undefined;
-      const managedOperation = () =>
-        runOptions.toolInvocation !== undefined
-        ? runWithMcpCallContext({ sessionId: record.sessionId, events }, executeCommandTool)
-        : record.start?.workflow
-        ? runWithMcpCallContext({ sessionId: record.sessionId, events }, () => executeRuntimeWorkflow(
-          record.start!.workflow!, runOptions, record.runId, record.sessionId, abortController.signal,
-        ))
-        : runWithMcpCallContext({ sessionId: record.sessionId, events }, () => runManagedTask(
-          {
-            ...runOptions,
-            sessionControl,
-            ...(interruptedRunEvidence.length > 0
-              ? { context: { ...runOptions.context, interruptedRunEvidence } }
-              : {}),
-            abortSignal: abortController.signal,
-          },
-          record.start!.prompt,
-        ));
-      const managedResult =
-        record.providerCredentialScope !== undefined
-          ? runWithProviderCredentialLeaseScope(
-              record.providerCredentialScope,
-              managedOperation,
-            )
-          : record.providerCredential !== undefined
-          ? runWithProviderCredential(
-              record.provider,
-              record.providerCredential,
-              managedOperation,
-            )
-          : managedOperation();
-      if (upstreamSignal !== undefined && !upstreamSignal.aborted) {
-        upstreamSignal.addEventListener("abort", handleUpstreamAbort, {
-          once: true,
-        });
-        record.releaseAbortSignalSubscription = () => {
-          upstreamSignal.removeEventListener("abort", handleUpstreamAbort);
-        };
-      } else if (upstreamSignal?.aborted && !abortController.signal.aborted) {
-        handleUpstreamAbort();
-      }
-      registerActiveQueueRoute(record);
-      void managedResult
-        .then(async (value): Promise<RuntimeRunResult> => {
-          if (record.generationSuspended) return resultFromStatus(statusFromRecord(record));
-          record.capturedExecutorResult = value;
-          value = await mergeForkSkillResult(record, value);
-          record.capturedExecutorResult = value;
-          const phase = record.terminalEmitted
-            ? record.phase
-            : value.interrupted
-              ? "interrupted"
-              : value.success
-                ? "completed"
-                : "failed";
-          const actorHealth = await awaitActorFinalization(record);
-          if (actorHealth.state === "unknown") {
-            return unknownActorSettlementResult(record, value);
-          }
-          if (actorDurabilityFailureApplies(record)) {
-            return applyRunFailureFact(record, record.actorDurabilityFailure);
-          }
-          await persistWorkflowFinal(record, value.lastText);
-          scheduleWorkflowCleanup(record);
-          markRunTerminal(
-            deps.bus,
-            deps.persistence,
-            record,
-            phase,
-            terminalFromExecutorResult(record, value, phase),
-          );
-          return {
-            runId: record.runId,
-            sessionId: record.sessionId,
-            phase: record.phase,
-            result: value,
-            ...(record.error !== undefined
-              ? { error: createRuntimePublicError(record.error) }
-              : {}),
-            ...(record.terminal !== undefined
-              ? { terminal: record.terminal }
-              : {}),
-            ...(record.failureDetail !== undefined
-              ? { failureDetail: record.failureDetail }
-              : {}),
-            ...(record.stop !== undefined ? { stop: record.stop } : {}),
-          };
-        }, async (error: unknown) => {
-          const failure = captureRunFailureFact(record, error);
-          record.capturedExecutorFailure = failure;
-          const actorHealth = await awaitActorFinalization(record);
-          if (actorHealth.state === "unknown") {
-            record.unconfirmedFailure = failure;
-            return unknownActorSettlementResult(record);
-          }
-          await persistWorkflowFinal(record, getDefaultWorkflowRunManager().get(record.runId)?.error
-            ?? failure.error?.message ?? 'Workflow failed.');
-          scheduleWorkflowCleanup(record);
-          return applyRunFailureFact(record, failure);
-        })
-        .then((result) => {
-          return finishAccordingToTerminalFact(record, result);
-        })
-        .catch((error: unknown) => finishRunSettlementFailure(record, error));
-      return;
-    }
-
-    const codingEvidence = recoveryEvidence;
-    const codingOperation = () => runWithMcpCallContext(
-      { sessionId: record.sessionId, events },
-      () => startKodaX(
-        codingEvidence.length > 0
-          ? { ...runOptions, context: { ...runOptions.context, interruptedRunEvidence: codingEvidence } }
-          : runOptions,
-        record.start!.prompt),
-    );
-    let running: RunningSession;
-    if (record.providerCredentialScope !== undefined) {
-      running = runWithProviderCredentialLeaseScope(
-        record.providerCredentialScope,
-        codingOperation,
-      );
-    } else if (record.providerCredential !== undefined) {
-      let scopedRunning: RunningSession | undefined;
-      const credentialLifetime = runWithProviderCredential(
-        record.provider,
-        record.providerCredential,
-        () => {
-          scopedRunning = codingOperation();
-          return scopedRunning.result.then(() => undefined);
-        },
-      );
-      void credentialLifetime.catch(() => undefined);
-      if (scopedRunning === undefined) {
-        throw new Error('Credential-bound coding Run did not start synchronously.');
-      }
-      running = scopedRunning;
-    } else {
-      running = codingOperation();
-    }
-    record.running = running;
-    record.sessionControl = running;
+    const sessionControl = createSessionControl();
+    record.sessionControl = sessionControl;
+    const abortController = record.abortController ?? new AbortController();
+    record.abortController = abortController;
     const upstreamSignal = runOptions.abortSignal;
     const handleUpstreamAbort = (): void => {
       record.releaseAbortSignalSubscription = undefined;
@@ -12171,16 +12003,73 @@ async function createRuntimeRunService(deps: {
     };
     if (upstreamSignal?.aborted) {
       handleUpstreamAbort();
-    } else if (upstreamSignal !== undefined) {
+    }
+    const executeCommandTool = (): Promise<KodaXResult> => withExtensionRuntimeContext(async () => {
+      const value = await runToolInvocation({ ...runOptions, abortSignal: abortController.signal },
+        runOptions.toolInvocation!, record.start!.prompt);
+      const command = record.start?.commandInput;
+      if (!command || !value.success || value.interrupted || abortController.signal.aborted || record.stop) return value;
+      const result = JSON.parse(value.lastText) as import('@kodax-ai/coding').ExtensionCommandResult;
+      if (result.success === false) return { ...value, success: false, lastText: result.message ?? value.lastText };
+      if (!result.invocation) return { ...value, lastText: result.message ?? '' };
+      const invocation = result.invocation;
+      const start = record.start!;
+      const model = resolveSkillModelOverride(record.provider, invocation.model);
+      if (model !== undefined) record.model = model;
+      start.options.context = { ...start.options.context, rawUserInput: start.prompt, promptOverlay: invocation.prompt,
+        commandInvocation: { ...invocation, name: invocation.displayName ?? command.name, source: 'extension',
+          runtimePolicy: { enforceAtRuntime: true } } };
+      const continuation = { ...createRunOptions(), toolInvocation: undefined, abortSignal: abortController.signal, sessionControl };
+      abortController.signal.throwIfAborted();
+      return runManagedTask(continuation, start.prompt);
+    }, runOptions.extensionRuntime, record.runId);
+    const interruptedRunEvidence = runOptions.toolInvocation === undefined
+      ? recoveryEvidence
+      : [];
+    record.workflowOwned = record.start?.workflow !== undefined;
+    const managedOperation = () =>
+      runOptions.toolInvocation !== undefined
+      ? runWithMcpCallContext({ sessionId: record.sessionId, events }, executeCommandTool)
+      : record.start?.workflow
+      ? runWithMcpCallContext({ sessionId: record.sessionId, events }, () => executeRuntimeWorkflow(
+        record.start!.workflow!, runOptions, record.runId, record.sessionId, abortController.signal,
+      ))
+      : runWithMcpCallContext({ sessionId: record.sessionId, events }, () => runManagedTask(
+        {
+          ...runOptions,
+          sessionControl,
+          ...(interruptedRunEvidence.length > 0
+            ? { context: { ...runOptions.context, interruptedRunEvidence } }
+            : {}),
+          abortSignal: abortController.signal,
+        },
+        record.start!.prompt,
+      ));
+    const managedResult =
+      record.providerCredentialScope !== undefined
+        ? runWithProviderCredentialLeaseScope(
+            record.providerCredentialScope,
+            managedOperation,
+          )
+        : record.providerCredential !== undefined
+        ? runWithProviderCredential(
+            record.provider,
+            record.providerCredential,
+            managedOperation,
+          )
+        : managedOperation();
+    if (upstreamSignal !== undefined && !upstreamSignal.aborted) {
       upstreamSignal.addEventListener("abort", handleUpstreamAbort, {
         once: true,
       });
       record.releaseAbortSignalSubscription = () => {
         upstreamSignal.removeEventListener("abort", handleUpstreamAbort);
       };
+    } else if (upstreamSignal?.aborted && !abortController.signal.aborted) {
+      handleUpstreamAbort();
     }
     registerActiveQueueRoute(record);
-    void running.result
+    void managedResult
       .then(async (value): Promise<RuntimeRunResult> => {
         if (record.generationSuspended) return resultFromStatus(statusFromRecord(record));
         record.capturedExecutorResult = value;
@@ -12195,11 +12084,14 @@ async function createRuntimeRunService(deps: {
               : "failed";
         const actorHealth = await awaitActorFinalization(record);
         if (actorHealth.state === "unknown") {
+          releaseFencedWorkflow(record);
           return unknownActorSettlementResult(record, value);
         }
         if (actorDurabilityFailureApplies(record)) {
           return applyRunFailureFact(record, record.actorDurabilityFailure);
         }
+        await persistWorkflowFinal(record, value.lastText);
+        scheduleWorkflowCleanup(record);
         markRunTerminal(
           deps.bus,
           deps.persistence,
@@ -12215,25 +12107,35 @@ async function createRuntimeRunService(deps: {
           ...(record.error !== undefined
             ? { error: createRuntimePublicError(record.error) }
             : {}),
-          ...(record.failureDetail !== undefined
-            ? { failureDetail: record.failureDetail }
-            : {}),
           ...(record.terminal !== undefined
             ? { terminal: record.terminal }
+            : {}),
+          ...(record.failureDetail !== undefined
+            ? { failureDetail: record.failureDetail }
             : {}),
           ...(record.stop !== undefined ? { stop: record.stop } : {}),
         };
       }, async (error: unknown) => {
+        if (record.generationSuspended) return resultFromStatus(statusFromRecord(record));
         const failure = captureRunFailureFact(record, error);
         record.capturedExecutorFailure = failure;
         const actorHealth = await awaitActorFinalization(record);
         if (actorHealth.state === "unknown") {
+          releaseFencedWorkflow(record);
           record.unconfirmedFailure = failure;
           return unknownActorSettlementResult(record);
         }
+        await persistWorkflowFinal(record, getDefaultWorkflowRunManager().get(record.runId)?.error
+          ?? failure.error?.message ?? 'Workflow failed.');
+        scheduleWorkflowCleanup(record);
         return applyRunFailureFact(record, failure);
       })
-      .then((result) => finishAccordingToTerminalFact(record, result))
+      .then((result) => {
+        const finished = finishAccordingToTerminalFact(record, result);
+        const unrepaired = record.unrepairedActorCause;
+        if (unrepaired !== undefined && !record.workflowOwned) finishUnrepairedActorRun(record, unrepaired);
+        return finished;
+      })
       .catch((error: unknown) => finishRunSettlementFailure(record, error));
   };
 
@@ -12307,15 +12209,6 @@ async function createRuntimeRunService(deps: {
     if (!next || next.phase !== "queued") {
       drainNext(sessionId);
       return;
-    }
-    if (next.inheritModeAfterDurabilityRepair === true) {
-      const predecessor = next.continuation === undefined
-        ? undefined
-        : deps.runs.get(next.continuation.afterRunId);
-      if (predecessor?.actorDurabilityFailure !== undefined) {
-        next.mode = predecessor.mode;
-        publishRunUpdate(next);
-      }
     }
     startRecord(next);
   };
@@ -12558,6 +12451,7 @@ async function createRuntimeRunService(deps: {
     if (input.inputId !== undefined && (!input.inputId.trim() || input.options?.toolInvocation === undefined || typeof input.prompt !== 'string' || !input.prompt.trim())) {
       throw new Error('A tool inputId requires a tool invocation and nonempty raw prompt.');
     }
+    if (input.options?.context?.prompt !== undefined) assertKodaXPromptSpec(input.options.context.prompt);
     const productInput = trustedInput.productInput ?? (input.inputId === undefined ? undefined : {
       sessionId: input.sessionId, inputId: input.inputId, text: input.prompt!,
     });
@@ -12599,6 +12493,7 @@ async function createRuntimeRunService(deps: {
       const originalContext = recovery.data.start.options.context;
       input = { ...input, options: { ...input.options, executionBinding: recovery.data.start.options.executionBinding, context: { ...input.options?.context,
         agentProfile: originalContext?.agentProfile, taskVerification: originalContext?.taskVerification,
+        prompt: originalContext?.prompt,
       } } };
       trustedInput = input as RuntimeTrustedStartRunInput;
     }
@@ -12743,16 +12638,18 @@ async function createRuntimeRunService(deps: {
         options.workflow = { maxConcurrency: concurrency };
       }
     }
-    const ownedActorSession = await deps.actorRegistry.forSession(
+    const actorSession = await deps.actorRegistry.forSession(
       input.sessionId,
       options.maxConcurrentThreadsPerSession,
     );
-    const actorSession =
-      options.agentMode === "sa" ? undefined : ownedActorSession;
     const queuesBehindDurabilityRepair =
       requiredAfterRun?.phase === "unknown"
       && requiredAfterRun.actorDurabilityFailure !== undefined
       && !requiredAfterRun.terminalEmitted;
+    if (input.mode === "coding" && !recovery) {
+      emitKodaXDiagnostic({ source: "runtime.runs.start", level: "warn",
+        message: "runs.start mode 'coding' is deprecated and ignored; every root Run uses the managed Worker." });
+    }
     if (actorSession !== undefined) {
       const observedHealth = actorSession.health();
       const health = observedHealth.state === "recovering"
@@ -12813,7 +12710,7 @@ async function createRuntimeRunService(deps: {
       options.context?.gitRoot ?? admittedSessionContext.gitRoot,
     );
     const trustProjectExecPolicy = deps.execPolicy?.trustedProjectRoots?.some((root) =>
-      sameHostPath(root, execPolicyProjectRoot)
+      isSameFilesystemPath(root, execPolicyProjectRoot)
     ) === true;
     const projectExecPolicyPath = path.join(
       execPolicyProjectRoot,
@@ -12866,7 +12763,6 @@ async function createRuntimeRunService(deps: {
       onPhase: (record, phase) => {
         if (
           record.terminalEmitted
-          || record.executorTerminalSignal !== undefined
           || record.phase === "unknown"
           || record.stop?.state === "unknown"
           || record.phase === phase
@@ -12942,14 +12838,8 @@ async function createRuntimeRunService(deps: {
       ...(options.reasoningMode !== undefined
         ? { reasoning: options.reasoningMode }
         : {}),
-      mode: options.toolInvocation !== undefined || options.workMode === 'script' ? "managed_task" : input.mode
-        ?? (queuesBehindDurabilityRepair ? requiredAfterRun?.mode : undefined)
-        ?? (productInput !== undefined ? (options.agentMode === "sa" ? "coding" : "managed_task") : undefined)
-        ?? "coding",
+      mode: "managed_task",
       workMode: resolveWorkMode(options),
-      ...(requiredAfterRun !== undefined && input.mode === undefined
-        ? { inheritModeAfterDurabilityRepair: true }
-        : {}),
       ...((input as RuntimeTrustedStartRunInput).providerCredential !==
       undefined
         ? {
@@ -13652,32 +13542,6 @@ async function createRuntimeRunService(deps: {
         revision: persisted.revision,
       });
     }
-    if (
-      run?.executorTerminalSignal !== undefined
-      && !run.terminalEmitted
-      && canApplyExecutorTerminalSignal(run)
-    ) {
-      if (options?.redirect === true) {
-        // The executor already latched its terminal callback, so this branch
-        // settles without requestRunStop. Persist the redirect reason anyway:
-        // the retained follow-up input must continue once the Run settles,
-        // whatever terminal phase the executor reports.
-        const redirectStop = deps.persistence.requestRunStop(
-          runId,
-          reason,
-          run.ownedByRuntime === true ? deps.runOwner.ownerId : undefined,
-        );
-        applyAuthoritativeRunStatus(run, redirectStop.status);
-      }
-      cancelRun(run, reason, false);
-      const terminal = deps.persistence.loadRunStatus(runId);
-      return runtimeRunStopReceipt({
-        accepted: false,
-        effectDeliveryAllowed: false,
-        status: terminal?.status ?? statusFromRecord(run),
-        revision: terminal?.revision ?? 0,
-      });
-    }
     const stop = deps.persistence.requestRunStop(
       runId,
       reason,
@@ -13701,7 +13565,6 @@ async function createRuntimeRunService(deps: {
         removeQueuedRun(queueBySession, run);
       }
       releaseAbortSignalSubscription(run);
-      run.running?.abort(new DOMException(reason, "AbortError"));
       if (!run.independentActorRef) run.abortController?.abort(new DOMException(reason, "AbortError"));
       const actorCancellation = requestManagedActorCancellation(
         run,
@@ -13709,7 +13572,9 @@ async function createRuntimeRunService(deps: {
       );
       void actorCancellation.then((attempt) => {
         if (run.independentActorRef) run.abortController?.abort(new DOMException(reason, "AbortError"));
-        if (attempt.error === undefined) finishRecoveredUnconfirmedRun(run);
+        if (attempt.error !== undefined) return;
+        try { finishRecoveredUnconfirmedRun(run); }
+        catch (error: unknown) { finishRunSettlementFailure(run, error); }
       });
       deps.permissions.rejectForRun(run.runId, reason);
       deps.userInputs.rejectForRun(run.runId, reason);
@@ -13907,7 +13772,7 @@ async function createRuntimeRunService(deps: {
           },
         };
         return startRun({ ...trusted, sessionId: record.sessionId, prompt: recovery.start.prompt,
-          mode: persisted.status.mode, options, permissionBroker: 'runtime' }, 'runtime.runs.start', { persisted, data: recovery, workMode });
+          options, permissionBroker: 'runtime' }, 'runtime.runs.start', { persisted, data: recovery, workMode });
       });
     },
     startAdmitted: (input) => startRun(input, 'runtime.runs.start'),
@@ -14330,9 +14195,12 @@ async function createRuntimeRunService(deps: {
         && persisted.owner.ownerId !== deps.runOwner.ownerId
         && !isTerminalRunPhase(persisted.status.phase)
       ) {
+        // Startup may have left this Run alone because its owner did not
+        // answer; Stop asks again so a since-dead owner does not pin it.
+        const ownerState = await inspectRuntimeActorOwner(persisted.owner);
         if (persisted.status.phase === 'recovering' && persisted.status.contextRecovery?.checkpoint
           && !persisted.status.stop && !hasPersistedBlockingShellCleanups(persisted)
-          && await inspectRuntimeActorOwner(persisted.owner) === 'dead') {
+          && ownerState === 'dead') {
           return deps.sessionOperations.run(sessionId, async () => {
             await deps.sessionAdmission.assertRunAccess(sessionId);
             const reconciled = await reconcileIndependentActorRun(persisted, deps.sessionManager, deps.persistence, deps.bus);
@@ -14360,10 +14228,24 @@ async function createRuntimeRunService(deps: {
             return runtimeRunStopReceipt({ accepted: true, effectDeliveryAllowed: false, status: final.status, revision: final.revision });
           });
         }
-        throw createRuntimeConflictError(
-          `Runtime ${deps.runOwner.runtimeId} does not own run ${runId}`,
-          persisted.revision,
-        );
+        if (ownerState === 'alive') {
+          throw createRuntimeConflictError(
+            `Run ${runId} is owned by live Runtime ${persisted.owner.runtimeId}; stop it from that Runtime.`,
+            persisted.revision,
+          );
+        }
+        // Only a dead owner's restart terminal lets this Runtime settle the Stop.
+        const recovered = ownerState === 'dead'
+          ? await recoverDeadOwnerRun(persisted, persisted.owner)
+          : undefined;
+        if (recovered === undefined || !isTerminalRunPhase(recovered.phase)) {
+          throw Object.assign(createRuntimeConflictError(
+            recovered === undefined
+              ? `Run ${runId} owner Runtime ${persisted.owner.runtimeId} could not be confirmed alive or dead; retry Stop.`
+              : `Run ${runId} owner Runtime ${persisted.owner.runtimeId} is gone, but its recovery is not confirmed (${recovered.error ?? recovered.phase}); retry Stop.`,
+            persisted.revision,
+          ), { retryable: true });
+        }
       }
       const stopOperation = deps.sessionOperations.run(sessionId, () => abortRun(runId));
       if (!pendingRunStops.has(runId)) {
@@ -14720,6 +14602,7 @@ async function executeRuntimeWorkflow(
 ): Promise<KodaXResult> {
   const started = await runWithScopedConfig({ ...getRunScopedConfig(),
     ...(options.workflow === undefined ? {} : { workflow: options.workflow }),
+    sessionId,
   }, () => startManagedWorkflow({ ...workflow, options, runId, signal,
     processMetadata: { ...workflow.processMetadata, hostMetadata: { ...workflow.processMetadata?.hostMetadata,
       ownerSessionId: sessionId, ownerRunId: runId } } }));
@@ -15681,6 +15564,8 @@ function buildRunOptions(input: {
     shellSandbox: callerShellSandbox,
     trustedTextMutationHost: _callerTrustedTextMutationHost,
     goalRuntime: _callerGoalRuntime,
+    // The conversation id sent to gateways is the Host session's, never a caller's choice.
+    contextIdentitySessionId: _callerContextIdentitySessionId,
     ...ownerSafeContext
   } = options.context ?? {};
   const runtimeAutoGuardrail = options.guardrails?.find(isRuntimeAutoModeGuardrail);
@@ -15986,6 +15871,12 @@ interface RuntimeAgentActorRegistry {
     operation: "mutate" | "archive" | "unarchive" | "delete",
     mutation: (ownerId?: string) => Promise<T>,
   ): Promise<T>;
+  /**
+   * Replaces a fenced controller with a fresh one that reclaims the Actor tree
+   * from disk, as restart recovery would. Returns the registered controller,
+   * or undefined when the Session is no longer registered.
+   */
+  rebuild(sessionId: string, stale: CodingActorSession): Promise<CodingActorSession | undefined>;
   close(reason: string): Promise<void>;
 }
 
@@ -16004,7 +15895,82 @@ function createRuntimeAgentActorRegistry(
 ): RuntimeAgentActorRegistry {
   const sessions = new Map<string, Promise<CodingActorSession>>();
   const ready = new Map<string, CodingActorSession>();
+  const rebuilds = new Map<string, Promise<CodingActorSession | undefined>>();
   let closed = false;
+
+  const openSession = async (
+    sessionId: string,
+    maxConcurrentThreads: number | undefined,
+    retiredOwnerId?: string,
+  ): Promise<CodingActorSession> => {
+    const store: AgentActorStore = {
+      eligibilityTimeoutMs: sessionManager.storage.actorSnapshotEligibilityTimeoutMs,
+      async load(): Promise<AgentActorSnapshot | undefined> {
+        return (await sessionManager.storage.peek(sessionId))?.actorSnapshot;
+      },
+      beginSave(snapshot, expectedRevision) {
+        return sessionManager.storage.beginActorSnapshotSave(
+          sessionId,
+          snapshot,
+          expectedRevision,
+        );
+      },
+      save(snapshot, expectedRevision) {
+        return sessionManager.storage.saveActorSnapshot(
+          sessionId,
+          snapshot,
+          expectedRevision,
+        );
+      },
+    };
+    const session = new CodingActorSession({
+      historyStorage: sessionManager.storage,
+      sessionId,
+      store,
+      maxConcurrentThreadsPerSession: maxConcurrentThreads,
+      owner: {
+        ownerId: `actor_${randomUUID().replace(/-/g, "")}`,
+        runtimeId: identity.runtimeId,
+        pid: process.pid,
+        startedAt: identity.startedAt,
+        livenessId: ownerLiveness.id,
+        livenessPort: ownerLiveness.port,
+      },
+      // The controller this one replaces is fenced and can no longer write
+      // under its owner, so its owner record counts as dead.
+      isOwnerAlive: (owner) => owner.ownerId !== retiredOwnerId && isRuntimeActorOwnerAlive(owner),
+      // Only the registered controller (or the first one being claimed)
+      // reports health; a replaced controller must not fence later Runs.
+      onHealthChanged: (health) => {
+        const registered = ready.get(sessionId);
+        if (registered === undefined || registered === session) onHealthChanged?.(sessionId, health);
+      },
+      onEventCommitted: (event): void => onEventCommitted?.(sessionId, session.rootControl(), event),
+      ...(plane
+        ? {
+            executor: createExternalActorTurnExecutor({
+              plane,
+              context: defaultContext ?? { actorId: `runtime:${sessionId}` },
+            }),
+          }
+        : {}),
+    });
+    try {
+      await session.initialize();
+      return session;
+    } catch (error: unknown) {
+      if (!session.ownsDurableFence()) throw error;
+      try {
+        await session.close("Actor initialization cleanup");
+      } catch (cleanupError: unknown) {
+        throw new AggregateError(
+          [error, cleanupError],
+          `Actor session ${sessionId} initialization and owner cleanup both failed.`,
+        );
+      }
+      throw error;
+    }
+  };
 
   const claimSession = (
     sessionId: string,
@@ -16040,72 +16006,41 @@ function createRuntimeAgentActorRegistry(
           `Persisted Actor concurrency for ${sessionId} is ${persistedMax}; requested ${maxConcurrentThreads}.`,
         );
       }
-      const store: AgentActorStore = {
-        eligibilityTimeoutMs: sessionManager.storage.actorSnapshotEligibilityTimeoutMs,
-        async load(): Promise<AgentActorSnapshot | undefined> {
-          return (await sessionManager.storage.peek(sessionId))?.actorSnapshot;
-        },
-        beginSave(snapshot, expectedRevision) {
-          return sessionManager.storage.beginActorSnapshotSave(
-            sessionId,
-            snapshot,
-            expectedRevision,
-          );
-        },
-        save(snapshot, expectedRevision) {
-          return sessionManager.storage.saveActorSnapshot(
-            sessionId,
-            snapshot,
-            expectedRevision,
-          );
-        },
-      };
-      const session = new CodingActorSession({
-        historyStorage: sessionManager.storage,
-        sessionId,
-        store,
-        maxConcurrentThreadsPerSession: maxConcurrentThreads ?? persistedMax,
-        owner: {
-          ownerId: `actor_${randomUUID().replace(/-/g, "")}`,
-          runtimeId: identity.runtimeId,
-          pid: process.pid,
-          startedAt: identity.startedAt,
-          livenessId: ownerLiveness.id,
-          livenessPort: ownerLiveness.port,
-        },
-        isOwnerAlive: isRuntimeActorOwnerAlive,
-        onHealthChanged: (health) => onHealthChanged?.(sessionId, health),
-        onEventCommitted: (event): void => onEventCommitted?.(sessionId, session.rootControl(), event),
-        ...(plane
-          ? {
-              executor: createExternalActorTurnExecutor({
-                plane,
-                context: defaultContext ?? { actorId: `runtime:${sessionId}` },
-              }),
-            }
-          : {}),
-      });
-      try {
-        await session.initialize();
-        ready.set(sessionId, session);
-        onHealthChanged?.(sessionId, session.health());
-        return session;
-      } catch (error: unknown) {
-        if (!session.ownsDurableFence()) throw error;
-        try {
-          await session.close("Actor initialization cleanup");
-        } catch (cleanupError: unknown) {
-          throw new AggregateError(
-            [error, cleanupError],
-            `Actor session ${sessionId} initialization and owner cleanup both failed.`,
-          );
-        }
-        throw error;
-      }
+      const session = await openSession(sessionId, maxConcurrentThreads ?? persistedMax);
+      ready.set(sessionId, session);
+      onHealthChanged?.(sessionId, session.health());
+      return session;
     })();
     sessions.set(sessionId, created);
     void created.catch(() => sessions.delete(sessionId));
     return created;
+  };
+
+  const rebuildSession = async (
+    sessionId: string,
+    stale: CodingActorSession,
+  ): Promise<CodingActorSession | undefined> => {
+    if (closed) throw new Error("KodaX runtime is closed");
+    if (ready.get(sessionId) !== stale) return ready.get(sessionId);
+    const rebuilt = await openSession(
+      sessionId,
+      stale.rootControl().list().maxConcurrentThreads,
+      stale.ownerId(),
+    );
+    if (closed) {
+      await rebuilt.close("KodaX runtime closed during Actor rebuild");
+      throw new Error("KodaX runtime is closed");
+    }
+    if (ready.get(sessionId) !== stale) {
+      // The Session was removed meanwhile; its store is gone.
+      rebuilt.disposeAfterStoreRemoval("Actor rebuild superseded");
+      return ready.get(sessionId);
+    }
+    ready.set(sessionId, rebuilt);
+    sessions.set(sessionId, Promise.resolve(rebuilt));
+    stale.disposeAfterStoreRemoval("Actor tree reclaimed by a rebuilt controller");
+    onHealthChanged?.(sessionId, rebuilt.health());
+    return rebuilt;
   };
 
   const forSession = async (
@@ -16147,10 +16082,12 @@ function createRuntimeAgentActorRegistry(
           if (existing) {
             // Claimed controllers already passed admission and own the live
             // Actor authority, including while their durable save is pending.
-            return {
-              sessionId,
-              snapshot: (await existing).rootControl().list(),
-            };
+            const session = await existing;
+            // A fenced controller commits nothing more; restart recovery owns
+            // its turns, like a dead owner's below. Counting them would keep
+            // the Host from ever stopping.
+            if (session.health().state === 'unknown') return undefined;
+            return { sessionId, snapshot: session.rootControl().list() };
           }
           const metadata = await sessionManager.storage.readActorMetadata(sessionId, { signal });
           signal?.throwIfAborted();
@@ -16233,6 +16170,14 @@ function createRuntimeAgentActorRegistry(
         ready.delete(sessionId);
       }
       return result;
+    },
+    rebuild(sessionId, stale) {
+      const inflight = rebuilds.get(sessionId);
+      if (inflight) return inflight;
+      const rebuilding = rebuildSession(sessionId, stale)
+        .finally(() => rebuilds.delete(sessionId));
+      rebuilds.set(sessionId, rebuilding);
+      return rebuilding;
     },
     async close(reason) {
       closed = true;
@@ -16464,9 +16409,13 @@ function createRuntimeStatusService(deps: {
       options?.signal?.throwIfAborted();
       const runs = await deps.listRuns();
       options?.signal?.throwIfAborted();
+      // Work already asked to stop has nothing left to protect. Its executor
+      // may never return (a tool call that ignores abort), and Host exit ends
+      // it; restart recovery then interrupts the Run.
       const activeRuns = runs.filter(
         (run) =>
-          isActiveRunPhase(run.phase) || run.phase === "unknown",
+          (isActiveRunPhase(run.phase) || run.phase === "unknown")
+          && run.stop === undefined,
       );
       const queuedRuns = runs.filter((run) => run.phase === "queued");
       const activeWorkflows = (await deps.workflows.list({})).filter(
@@ -16474,7 +16423,8 @@ function createRuntimeStatusService(deps: {
           workflow.status !== "completed" &&
           workflow.status !== "failed" &&
           workflow.status !== "denied" &&
-          workflow.status !== "stopped",
+          workflow.status !== "stopped" &&
+          workflow.stop === undefined,
       );
       const activeAgentTurns =
         await deps.actors.activeTurns(deps.sessionAdmission.admitsSummary, options?.signal);
@@ -19806,6 +19756,8 @@ function parseRuntimeFailureDetail(
     stage: value.stage,
     providerErrorCode: value.providerErrorCode,
     safeMessage: value.safeMessage,
+    ...(typeof value.detail === "string" && value.detail.length > 0
+      && value.detail.length <= RUNTIME_FAILURE_DETAIL_LIMIT ? { detail: value.detail } : {}),
     ...(typeof value.skillName === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value.skillName)
       ? { skillName: value.skillName } : {}),
     ...(isHttpStatus(value.httpStatus) ? { httpStatus: value.httpStatus } : {}),
@@ -21206,10 +21158,6 @@ function wrapKodaXEvents(input: {
   readonly enableSharedInteractions: boolean;
   readonly record: RuntimeRunRecord;
   readonly onTurnStarted: () => void;
-  readonly onExecutorTerminal: (
-    signal: "completed" | "failed",
-    error?: Error,
-  ) => void;
   readonly onPhase: (phase: RuntimeRunPhase) => void;
   readonly onContextRecoveryChanged: () => void;
   readonly onEffectiveConfigChanged: () => void;
@@ -21241,7 +21189,6 @@ function wrapKodaXEvents(input: {
     enableSharedInteractions,
     record,
     onTurnStarted,
-    onExecutorTerminal,
     onPhase,
     onStage,
     onMidTurnUserMessages,
@@ -21969,14 +21916,12 @@ function wrapKodaXEvents(input: {
     onComplete(meta) {
       if (actorDurabilityFenced()) return;
       record.interruptInputOpen = false;
-      if (record.mode !== "managed_task") onExecutorTerminal("completed");
       emit("run.progress", { kind: "complete", meta }, meta);
       externalCallbacks()?.onComplete?.(meta);
     },
     onError(error, meta) {
       if (actorDurabilityFenced()) return;
       record.interruptInputOpen = false;
-      if (record.mode !== "managed_task") onExecutorTerminal("failed", error);
       const trustedManagedAbort =
         record.mode === "managed_task"
         && record.stop !== undefined
@@ -21989,8 +21934,7 @@ function wrapKodaXEvents(input: {
           severity: "error",
           message: trustedManagedAbort
             ? "Managed provider observed Runtime Stop."
-            : record.executorTerminalSignal?.failure?.failureDetail?.safeMessage
-              ?? captureRuntimeFailureDetail(error, record).safeMessage,
+            : captureRuntimeFailureDetail(error, record).safeMessage,
         },
         meta,
       );
@@ -22545,7 +22489,7 @@ function buildEffectiveRuntimeOptions(
   const thinking = options.thinking ?? settings.thinking;
   const reasoningMode = options.reasoningMode ?? settings.reasoningMode;
   const requestedAgentMode = options.agentMode ?? settings.agentMode;
-  const agentMode = requestedAgentMode === "amaw" ? "ama" : requestedAgentMode;
+  const agentMode = normalizeKodaXAgentMode(requestedAgentMode);
   const workMode = options.workMode ?? settings.workMode;
   const maxIter = options.maxIter ?? settings.maxIter;
   const compaction =
@@ -23757,9 +23701,10 @@ function resolveEffectiveRuntimeSessionSettings(config: unknown, overrides: Runt
   const defaults = capturedSessionDefaults(overrides);
   const retainDefaults = (value: RuntimeSessionSettings): RuntimeSessionSettings => defaults === undefined
     ? value : withCapturedSessionDefaults(value, defaults);
-  const { workMode: _profileWorkMode, ...profileSettings } = defaults ?? parseRuntimeSessionSettings(config);
+  const { workMode: _profileWorkMode, ...profileSettings } = withCanonicalAgentMode(
+    defaults ?? parseRuntimeSessionSettings(config));
   const settings: RuntimeSessionSettings = { ...(productSession ? { permissionMode: 'accept-edits' as const, agentMode: 'ama' as const } : {}),
-    ...profileSettings, ...overrides };
+    ...profileSettings, ...withCanonicalAgentMode(overrides) };
   if (settings.permissionMode === 'plan' && overrides.effort === undefined && overrides.planModeEffort !== undefined) {
     return retainDefaults({ ...settings, effort: overrides.planModeEffort });
   }
@@ -23768,6 +23713,19 @@ function resolveEffectiveRuntimeSessionSettings(config: unknown, overrides: Runt
     return retainDefaults({ ...settings, effort: profileSettings.planModeEffort });
   }
   return retainDefaults(settings);
+}
+
+/**
+ * config.json, captured profile defaults and stored Session settings may still
+ * carry a retired agent mode written by an older REPL or SDK client. `amaw`
+ * reads as `ama`. `sa` is dropped so the Product default applies instead of
+ * silently routing every Session to the direct engine without Actors.
+ */
+function withCanonicalAgentMode(settings: RuntimeSessionSettings): RuntimeSessionSettings {
+  const agentMode = normalizeKodaXAgentMode(settings.agentMode);
+  if (agentMode === settings.agentMode) return settings;
+  const { agentMode: _retired, ...rest } = settings;
+  return agentMode === undefined ? rest : { ...rest, agentMode };
 }
 
 function parseRuntimeSessionSettings(value: unknown): RuntimeSessionSettings {
@@ -24997,6 +24955,11 @@ function runtimeSessionActiveRunOwner(
         run.phase === "queued"
         || isActiveRunPhase(run.phase)
         || run.phase === "unknown"
+        // A Run that ended without Actor repair still fences its Session.
+        || (
+          run.actorDurabilityFailure !== undefined
+          && run.actorSession?.health().state === "unknown"
+        )
         || (
           run.start !== undefined
           && run.settlementFinished !== true
@@ -25100,6 +25063,19 @@ function markRunTerminal(
     saveRunStatusSafely(bus, persistence, run, statusFromRecord(run), expected);
     return;
   }
+  // Restored if the terminal save fails, so the in-memory Run keeps matching
+  // its durable status instead of looking terminal to close and Stop retries.
+  const unsaved = {
+    phase: run.phase,
+    stage: run.stage,
+    stageChangedAt: run.stageChangedAt,
+    activeSubtaskCount: run.activeSubtaskCount,
+    endedAt: run.endedAt,
+    stop: run.stop,
+    error: run.error,
+    lifecycleError: run.lifecycleError,
+    terminal: run.terminal,
+  };
   delete run.lifecycleError;
   if (run.error === "stop_outcome_unconfirmed" || run.error === "shell_cleanup_unconfirmed") delete run.error;
   run.interruptInputOpen = false;
@@ -25166,6 +25142,7 @@ function markRunTerminal(
   const statusPersisted = authoritative !== undefined;
   if (authoritative === undefined) {
     run.terminalEmitted = false;
+    Object.assign(run, unsaved);
     throw new Error(`Failed to persist terminal Runtime run: ${run.runId}`);
   }
   if (
@@ -25339,6 +25316,7 @@ function classifyRuntimeRunFailure(error: unknown): {
 }
 
 const RUNTIME_SAFE_FAILURE_MESSAGE_LIMIT = 1_024;
+const RUNTIME_FAILURE_DETAIL_LIMIT = 1_024;
 const RUNTIME_MAX_RETRY_AFTER_MS = 86_400_000;
 const RUNTIME_PROVIDER_ERROR_CODES: ReadonlySet<string> = new Set<RuntimeProviderErrorCode>([
   "skill_not_found", "skill_not_registered", "skill_registry_unavailable", "skill_policy_restore_failed",
@@ -25438,9 +25416,11 @@ function buildRuntimeFailureDetail(
     : undefined;
   const contextOverflow = source instanceof KodaXContextOverflowError
     ? readRuntimeContextOverflow(source.capacity) : undefined;
+  const detail = runtimeFailureCause(error, run);
   return {
     ...classification,
     safeMessage: runtimeFailurePublicMessage(classification),
+    ...(detail !== undefined ? { detail } : {}),
     ...(httpStatus !== undefined ? { httpStatus } : {}),
     ...(upstreamErrorCode !== undefined ? { upstreamErrorCode } : {}),
     ...(requestId !== undefined ? { requestId } : {}),
@@ -25851,7 +25831,27 @@ function filterRuntimeDiagnosticIdentifier(
   }
 }
 
+function runtimeFailureCause(error: unknown, run: RuntimeRunRecord): string | undefined {
+  try {
+    const carried = readRuntimeExecutionFailure(error);
+    const carriedDetail = isRecord(carried) && typeof carried.detail === "string" ? carried.detail : undefined;
+    return describeFailureCause(carriedDetail ?? error, runtimeCredentialValues(run));
+  } catch {
+    // The cause is diagnostic. If credentials cannot be enumerated, omit it
+    // rather than risk exposing one; the classified summary still applies.
+    return undefined;
+  }
+}
+
 function runtimeSensitiveValues(run: RuntimeRunRecord): readonly string[] {
+  const prompt = run.start?.prompt;
+  return [...new Set([
+    ...runtimeCredentialValues(run),
+    ...(typeof prompt === "string" && prompt.length >= 4 ? [prompt] : []),
+  ])].sort((left, right) => right.length - left.length);
+}
+
+function runtimeCredentialValues(run: RuntimeRunRecord): readonly string[] {
   const credentialValues = [run.providerCredential];
   const registeredCredentialNames = new Set(
     typeof getProviderCredentialEnvironmentNames === "function"
@@ -25866,13 +25866,9 @@ function runtimeSensitiveValues(run: RuntimeRunRecord): readonly string[] {
       credentialValues.push(value);
     }
   }
-  const prompt = run.start?.prompt;
-  return [...new Set([
-    ...credentialValues.filter(
-      (value): value is string => typeof value === "string" && value.length > 0,
-    ),
-    ...(typeof prompt === "string" && prompt.length >= 4 ? [prompt] : []),
-  ])].sort((left, right) => right.length - left.length);
+  return credentialValues.filter(
+    (value): value is string => typeof value === "string" && value.length > 0,
+  );
 }
 
 function runtimeCancellationFailureDetail(): RuntimeFailureDetail {

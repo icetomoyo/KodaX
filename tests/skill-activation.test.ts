@@ -6,9 +6,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { Runner, SkillRegistry } from '@kodax-ai/agent';
 import { KodaXBaseProvider, registerModelProvider, type KodaXMessage, type KodaXToolDefinition,
   type KodaXStreamResult, type KodaXProviderStreamOptions } from '@kodax-ai/llm';
-import { runKodaX } from '../packages/coding/src/agent.js';
-import { runManagedTask } from '../packages/coding/src/task-engine.js';
-import { createDefaultCodingAgent } from '../packages/coding/src/coding-preset.js';
+import { runKodaX, runManagedTask } from '../packages/coding/src/task-engine.js';
+import { createDefaultCodingAgent } from '../packages/coding/src/default-coding-agent.js';
 import type { KodaXOptions } from '../packages/coding/src/types.js';
 import { FileSessionStorage } from '../packages/repl/src/interactive/storage.js';
 
@@ -35,7 +34,8 @@ type Action = { name: string; input: Record<string, unknown> };
 function scriptedProvider(actions: readonly (Action | readonly Action[])[], beforeRequest?: (index: number, messages: KodaXMessage[]) => Promise<void>) {
   const name = `skill-fixture-${++providerNumber}`;
   let cursor = 0;
-  const requests: { system: string; tools: string[]; model?: string }[] = [];
+  // The managed Worker carries catalogs and overlays in request messages, so `context` spans both.
+  const requests: { system: string; context: string; tools: string[]; model?: string }[] = [];
   vi.stubEnv('KODAX_SKILL_TEST_KEY', 'offline-fixture');
   class Provider extends KodaXBaseProvider {
     readonly name = name;
@@ -43,7 +43,8 @@ function scriptedProvider(actions: readonly (Action | readonly Action[])[], befo
     async stream(_messages: KodaXMessage[], tools: KodaXToolDefinition[], system: string,
       _reasoning?: Parameters<KodaXBaseProvider['stream']>[3], streamOptions?: KodaXProviderStreamOptions): Promise<KodaXStreamResult> {
       await beforeRequest?.(cursor, _messages);
-      requests.push({ system, tools: tools.map(tool => tool.name), model: streamOptions?.modelOverride });
+      requests.push({ system, context: `${system}\n${JSON.stringify(_messages)}`, tools: tools.map(tool => tool.name),
+        model: streamOptions?.modelOverride });
       const action = actions[cursor++];
       const batch: readonly Action[] = action === undefined ? [] : 'name' in action ? [action] : action;
       return { textBlocks: action ? [] : [{ type: 'text', text: 'Done.' }], thinkingBlocks: [],
@@ -62,11 +63,11 @@ it('SDK discovers and loads a repository Skill from a subdirectory', async () =>
   await runKodaX({ provider: provider.provider, maxIter: 3, reasoningMode: 'off',
     context: { ...f.context, executionCwd: f.child },
     events: { onToolResult: result => { results.push(result.content); } } }, 'Inspect project code.');
-  expect(provider.requests[0]?.system).toContain('- audit-project:');
+  expect(provider.requests[0]?.context).toContain('- audit-project:');
   expect(results.join('\n')).toContain('Inspect source before answering.');
 });
 
-it.each(['sa', 'ama'] as const)('recovers owned MCP output after refusal without widening read authority in %s', async agentMode => {
+it.each(['runKodaX', 'ama'] as const)('recovers owned MCP output after refusal without widening read authority in %s', async mode => {
  for (const refusal of ['host', 'bridge', 'guardrail', 'missing', 'unrelated', 'guardrail-batch', 'missing-batch'] as const) {
   const readMode = refusal.replace('-batch', '');
   const sameBatch = refusal.endsWith('-batch');
@@ -112,7 +113,8 @@ it.each(['sa', 'ama'] as const)('recovers owned MCP output after refusal without
   const authorize = vi.fn(async (name: string) => name === 'read' && readMode !== 'missing'
     ? 'Host refused this read.' : true);
   vi.stubEnv('KODAX_TOOL_OUTPUT_DIR', path.join(f.root, 'outputs'));
-  const outcome = await (agentMode === 'sa' ? runKodaX : runManagedTask)({ provider: provider.provider, agentMode, maxIter: 5, reasoningMode: 'off',
+  const outcome = await (mode === 'runKodaX' ? runKodaX : runManagedTask)({ provider: provider.provider,
+    ...(mode === 'ama' ? { agentMode: 'ama' as const } : {}), maxIter: 5, reasoningMode: 'off',
     context: { ...f.context, excludeTools: ['skill'] },
     extensionRuntime: { getCapabilityPromptContext: async () => '', executeCapability,
       searchCapabilities: async () => [], describeCapability: async () => ({}) } as KodaXOptions['extensionRuntime'],
@@ -133,8 +135,8 @@ it.each(['sa', 'ama'] as const)('recovers owned MCP output after refusal without
  }
 });
 
-it.each([['sa', 'model'], ['ama', 'model'], ['sa', 'explicit'], ['ama', 'explicit']] as const)(
-  'preserves MCP evidence when a Skill can block recovery in %s/%s', async (agentMode, activation) => {
+it.each([['runKodaX', 'model'], ['ama', 'model'], ['runKodaX', 'explicit'], ['ama', 'explicit']] as const)(
+  'preserves MCP evidence when a Skill can block recovery in %s/%s', async (mode, activation) => {
   const f = await fixture();
   const hookLog = path.join(f.root, 'read-hooks.txt');
   const source = `require('node:fs').appendFileSync(${JSON.stringify(hookLog)},'read\\n');process.stdout.write(JSON.stringify({allow:false}))`;
@@ -162,7 +164,8 @@ it.each([['sa', 'model'], ['ama', 'model'], ['sa', 'explicit'], ['ama', 'explici
   const executeCapability = vi.fn(async () => ({ content: body }));
   const results: { name: string; content: string }[] = [];
   vi.stubEnv('KODAX_TOOL_OUTPUT_DIR', path.join(f.root, 'outputs'));
-  await runManagedTask({ provider: provider.provider, agentMode, maxIter: 5, reasoningMode: 'off', context: {
+  await (mode === 'runKodaX' ? runKodaX : runManagedTask)({ provider: provider.provider,
+    ...(mode === 'ama' ? { agentMode: 'ama' as const } : {}), maxIter: 5, reasoningMode: 'off', context: {
     ...f.context, skillRegistry: registry,
     ...(activation === 'explicit' ? { skillInvocation: { name: skill.name, path: skill.skillFilePath,
       expandedContent: skill.content, runtimePolicy: { enforceAtRuntime: true } } } : {}),
@@ -362,7 +365,7 @@ it('returns Skill-specific guidance without copying the Host prompt overlay into
   await runKodaX({ provider: provider.provider, maxIter: 3, reasoningMode: 'off',
     context: { ...f.context, promptOverlay: 'PRIVATE_HOST_OVERLAY' },
     events: { onToolResult: result => { results.push(result.content); } } }, 'Inspect project code.');
-  expect(provider.requests[0]?.system).toContain('PRIVATE_HOST_OVERLAY');
+  expect(provider.requests[0]?.context).toContain('PRIVATE_HOST_OVERLAY');
   expect(results[0]).toContain('Preferred agent: scoped-auditor');
   expect(results[0]).not.toContain('PRIVATE_HOST_OVERLAY');
 });
@@ -390,7 +393,7 @@ it('refuses a changed policy for an already active Skill instead of loading it u
 });
 
 it.each(['host', 'bridge', 'guardrail', 'hook', 'cancel'] as const)('defers sibling actions after %s refuses Skill activation', async refusal => {
-  for (const agentMode of ['sa', 'ama'] as const) {
+  for (const mode of ['runKodaX', 'ama'] as const) {
     const f = await fixture();
     if (refusal === 'hook') {
       await writeFile(path.join(f.skillDir, 'SKILL.md'), '---\nname: audit-project\ndescription: Inspect project code\nallowed-tools: "Read, Bash"\nhooks:\n  SessionStart:\n    - command: node --version\n---\nInspect code.\n');
@@ -407,7 +410,8 @@ it.each(['host', 'bridge', 'guardrail', 'hook', 'cancel'] as const)('defers sibl
       return true;
     });
     const results: string[] = [];
-    await runManagedTask({ provider: provider.provider, agentMode, maxIter: 3, reasoningMode: 'off', context: f.context,
+    await (mode === 'runKodaX' ? runKodaX : runManagedTask)({ provider: provider.provider,
+      ...(mode === 'ama' ? { agentMode: 'ama' as const } : {}), maxIter: 3, reasoningMode: 'off', context: f.context,
       ...(refusal === 'guardrail' ? { guardrails: [{ kind: 'tool' as const, name: 'refuse-skill',
         beforeTool: async (call: { name: string }) => call.name === 'skill'
           ? { action: 'block' as const, reason: 'Skill denied by guardrail' } : { action: 'pass' as const } }] } : {}),
@@ -425,13 +429,14 @@ it.each(['exclude', 'policy'] as const)('SDK omits the Skill catalog when the lo
       : { toolVisibilityPolicy: ({ name }: { name: string }) => name !== 'skill' }),
   } }, 'Inspect project code.');
   expect(provider.requests[0]?.tools).not.toContain('skill');
-  expect(provider.requests[0]?.system).not.toContain('- audit-project:');
+  expect(provider.requests[0]?.context).not.toContain('- audit-project:');
 });
 
-it.each(['sa', 'ama'] as const)('respects Runtime loader availability in %s execution', async agentMode => {
+it.each(['runKodaX', 'ama'] as const)('respects Runtime loader availability in %s execution', async mode => {
   const f = await fixture();
   const provider = scriptedProvider([]);
-  await runManagedTask({ provider: provider.provider, agentMode, maxIter: 2, reasoningMode: 'off',
+  await (mode === 'runKodaX' ? runKodaX : runManagedTask)({ provider: provider.provider,
+    ...(mode === 'ama' ? { agentMode: 'ama' as const } : {}), maxIter: 2, reasoningMode: 'off',
     context: f.context, extensionRuntime: {
       getDefaults: () => ({ activeTools: ['read'], modelSelection: {} }),
       getCapabilityPromptContext: async () => undefined,

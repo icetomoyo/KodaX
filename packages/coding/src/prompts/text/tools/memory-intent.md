@@ -1,0 +1,2 @@
+<!-- @key memory-intent.description -->
+Governed Memory: list accepted claims/refs; remember; correct/forget exact claim ref; decisions/show only when asked. Every mutation needs an exact affirmative current-user userQuote. remember/correct statement must be an exact claim span, never inferred/paraphrased, with claimKind; new claims require stable claimKey. approve/reject need exact decision ref plus authorization. Safe requests apply; ambiguity asks; conflicts become decisions; restricted content rejected.

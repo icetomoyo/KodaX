@@ -4,6 +4,7 @@ import type { KodaXCacheCapabilities, KodaXProviderRequestMetadata, KodaXProvide
 import { KodaXProviderError } from '../errors.js';
 import { applyCachePolicy } from './cache-policy.js';
 import { cacheWritePartition } from './cache-usage.js';
+import { getRunScopedConfig, isWireSessionId } from '../run-scoped-config.js';
 
 interface RequestExtensions { environment: Readonly<Record<string, string | undefined>>; options: KodaXProviderStreamOptions; metadata: KodaXProviderRequestMetadata; cache?: KodaXCacheCapabilities; cacheDisabled: boolean; measuredCacheWrites?: Readonly<Record<string, unknown>>; }
 const requests = new AsyncLocalStorage<RequestExtensions>();
@@ -59,6 +60,9 @@ export function requestHeaders(base?: RequestInit['headers']): Headers {
     headers.delete(affinity);
     if (!current.cacheDisabled && current.options.cacheRetention !== 'none' && current.options.promptCacheKey) headers.set(affinity, current.options.promptCacheKey);
   }
+  // A Host-supplied X-Session-Id wins; an unsafe id is omitted rather than failing every request.
+  const sessionId = getRunScopedConfig()?.sessionId;
+  if (sessionId !== undefined && isWireSessionId(sessionId) && !headers.has('x-session-id')) headers.set('X-Session-Id', sessionId);
   return headers;
 }
 function extensions(value: unknown): Record<string, unknown> {
@@ -115,14 +119,36 @@ export function observePreparedProviderPayload(prepared: object): void {
     catch (error) { hookFailure('onRequestPrepared', error); }
   }
 }
+const NULL_BODY_STATUSES = new Set([101, 103, 204, 205, 304]);
+const bodySignalOwners = new WeakMap<ReadableStream<Uint8Array>, Request>();
+/**
+ * Node 20/22 bundle undici 6, which links a fetch to its caller's signal only
+ * through a WeakRef to the internal Request. With `redirect: 'error'` nothing
+ * else keeps that Request alive, so after a GC the caller's abort no longer
+ * reaches the body and the connection stays open. Piping the body through a
+ * stream that holds the signal makes an abort cancel the source and error the
+ * reader with the abort reason, as fetch itself would.
+ *
+ * A caller's Request has the same weak link: its own signal follows the
+ * caller's only while that Request is alive. So the bound body keeps the
+ * Request alive for as long as the body is reachable.
+ */
+function bindBodyToSignal(response: Response, input: Parameters<typeof globalThis.fetch>[0], init: RequestInit | undefined): Response {
+  const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+  if (!signal || !response.body || NULL_BODY_STATUSES.has(response.status)) return response;
+  const body = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>(), { signal });
+  if (input instanceof Request && init?.signal == null) bodySignalOwners.set(body, input);
+  const bound = new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+  return Object.defineProperty(bound, 'url', { value: response.url });
+}
 /** Invoked inside the physical observation wrapper; response hooks receive their own body stream. */
 export function requestExtensionFetch(fallback: typeof globalThis.fetch): typeof globalThis.fetch {
   return async (input, init) => {
     const current = requests.getStore();
-    if (!current) return fallback(input, init);
+    if (!current) return bindBodyToSignal(await fallback(input, init), input, init);
     const headers = requestHeaders(init?.headers ?? (input instanceof Request ? input.headers : undefined));
     current.measuredCacheWrites = undefined;
-    const response = await (current.options.fetch ?? fallback)(input, { ...init, headers, redirect: 'error' });
+    const response = bindBodyToSignal(await (current.options.fetch ?? fallback)(input, { ...init, headers, redirect: 'error' }), input, init);
     const short = response.headers.get('Msh-Usage-Cache-Write-Tokens-5m');
     const long = response.headers.get('Msh-Usage-Cache-Write-Tokens-1h');
     if (short !== null || long !== null) {

@@ -1,0 +1,1576 @@
+{
+  "tool.run_skill_script.input_schema": {
+    "type": "object",
+    "properties": {
+      "skill": {
+        "type": "string",
+        "description": "Exact admitted Skill name."
+      },
+      "script": {
+        "type": "string",
+        "description": "Exact Skill-relative script path."
+      },
+      "args": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Arguments passed as data to the script."
+      },
+      "inputs": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Workspace-relative source file."
+            },
+            "as": {
+              "type": "string",
+              "description": "Optional staging-relative destination."
+            }
+          },
+          "required": [
+            "path"
+          ]
+        }
+      },
+      "outputs": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Staging-relative generated file."
+            },
+            "target": {
+              "type": "string",
+              "description": "Workspace-relative destination."
+            }
+          },
+          "required": [
+            "path",
+            "target"
+          ]
+        }
+      }
+    },
+    "required": [
+      "skill",
+      "script"
+    ]
+  },
+  "tool.edit.input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string"
+      },
+      "edits": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "properties": {
+            "old_string": {
+              "type": "string"
+            },
+            "new_string": {
+              "type": "string"
+            },
+            "replace_all": {
+              "type": "boolean",
+              "description": "All occurrences; default false."
+            }
+          },
+          "required": [
+            "old_string",
+            "new_string"
+          ]
+        }
+      },
+      "old_string": {
+        "type": "string",
+        "description": "The text to replace"
+      },
+      "new_string": {
+        "type": "string",
+        "description": "The replacement text"
+      },
+      "replace_all": {
+        "type": "boolean",
+        "description": "Replace all occurrences"
+      }
+    },
+    "required": [
+      "path"
+    ]
+  },
+  "tool.multi_edit.input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "The absolute path to the file"
+      },
+      "edits": {
+        "type": "array",
+        "description": "Sequence of edit operations to apply in order",
+        "items": {
+          "type": "object",
+          "properties": {
+            "old_string": {
+              "type": "string",
+              "description": "The text to replace (matched exactly, then via normalized fallback)"
+            },
+            "new_string": {
+              "type": "string",
+              "description": "The replacement text"
+            },
+            "replace_all": {
+              "type": "boolean",
+              "description": "When true, replace every occurrence of old_string (defaults to false)"
+            }
+          },
+          "required": [
+            "old_string",
+            "new_string"
+          ]
+        }
+      }
+    },
+    "required": [
+      "path",
+      "edits"
+    ]
+  },
+  "tool.grep.input_schema": {
+    "type": "object",
+    "properties": {
+      "pattern": {
+        "type": "string"
+      },
+      "literal": {
+        "type": "boolean",
+        "description": "Default false."
+      },
+      "path": {
+        "type": "string",
+        "description": "File/directory; default cwd."
+      },
+      "glob": {
+        "type": "string",
+        "description": "File glob, e.g. *.{ts,tsx}."
+      },
+      "type": {
+        "type": "string",
+        "description": "ts includes ts/tsx/mts/cts; glob for exact extension."
+      },
+      "output_mode": {
+        "type": "string",
+        "enum": [
+          "content",
+          "files_with_matches",
+          "count"
+        ],
+        "description": "Default content (lines); files_with_matches (paths); count (per-file counts)."
+      },
+      "ignore_case": {
+        "type": "boolean",
+        "description": "Default false."
+      },
+      "-i": {
+        "type": "boolean",
+        "description": "Alias for ignore_case"
+      },
+      "-A": {
+        "type": "number",
+        "description": "Following lines; content mode."
+      },
+      "-B": {
+        "type": "number",
+        "description": "Preceding lines; content mode."
+      },
+      "-C": {
+        "type": "number",
+        "description": "Alias for context"
+      },
+      "context": {
+        "type": "number",
+        "description": "Both sides; content mode."
+      },
+      "multiline": {
+        "type": "boolean",
+        "description": "Cross-line matches and dot; default false."
+      },
+      "head_limit": {
+        "type": "number",
+        "description": "Entry cap, default 250; 0 uncaps count, not source bytes."
+      },
+      "offset": {
+        "type": "number",
+        "description": "Entries skipped; default 0."
+      },
+      "scan_offset": {
+        "type": "number",
+        "description": "Candidate files skipped for SOURCE_INCOMPLETE continuation."
+      }
+    },
+    "required": [
+      "pattern"
+    ]
+  },
+  "tool.spawn_agent.input_schema": {
+    "type": "object",
+    "properties": {
+      "task_name": {
+        "type": "string",
+        "description": "Stable direct-child name."
+      },
+      "objective": {
+        "type": "string",
+        "description": "Bounded goal, constraints, evidence and output shape."
+      },
+      "read_only": {
+        "type": "boolean",
+        "description": "Default true; false retains parent permission ceiling."
+      },
+      "scope": {
+        "type": "string",
+        "description": "Bounded scope hint."
+      },
+      "evidence_refs": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "file:/diff:/finding:/agent-turn:<canonical-path>#turn=<id>; legacy agent:<path> means latest. Actor output must be terminal/visible."
+      },
+      "constraints": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "model_hint": {
+        "type": "string",
+        "enum": [
+          "fast",
+          "balanced",
+          "deep"
+        ],
+        "description": "balanced: ordinary work (default); fast: read-only mechanical lookup; deep: architecture/adversarial checks/severity/final synthesis. Unconfigured tiers inherit; write-capable fast stays on parent tier. Omit if unsure."
+      },
+      "agent_id": {
+        "type": "string",
+        "description": "Matching specialist canonical ID."
+      },
+      "provider": {
+        "type": "string",
+        "description": "Deliberate cross-family override; unconfigured/omitted inherits."
+      },
+      "model": {
+        "type": "string",
+        "description": "Paired provider model ID; omitted inherits."
+      },
+      "effort": {
+        "type": "string",
+        "description": "off/low/medium/high/xhigh/max; omitted/auto inherits. agent_id locks specialist effort; conflicts/unsupported values rejected."
+      },
+      "isolation": {
+        "type": "string",
+        "enum": [
+          "shared",
+          "worktree"
+        ],
+        "description": "Default shared: edits are visible in the root workspace; do not reapply them. Worktree needs an explicit merge-back strategy."
+      },
+      "fork_turns": {
+        "description": "History: all (default), none, or positive recent-turn count."
+      },
+      "quality_strategy": {
+        "type": "object",
+        "description": "{schemaVersion:1,stageId,pattern,role,laneRelation?,targetEvidenceRefs?}; Actor refs require exact agent-turn."
+      }
+    },
+    "required": [
+      "task_name",
+      "objective"
+    ]
+  },
+  "tool.run_workflow.input_schema": {
+    "type": "object",
+    "properties": {
+      "manifest": {
+        "type": "object",
+        "description": "Workflow metadata. Set readOnly false only if child agents must write files. patterns names the shapes the script uses (one or more of: classify-and-act, fan-out-and-synthesize, adversarial-verification, generate-and-filter, tournament, loop-until-done).",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "phases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ordered phase names for progress display."
+          },
+          "readOnly": {
+            "type": "boolean"
+          },
+          "maxAgents": {
+            "type": "number",
+            "description": "Lifetime cap on total child agents across the run."
+          },
+          "maxConcurrency": {
+            "type": "number",
+            "description": "Max simultaneously in-flight child agents."
+          },
+          "patterns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "plannedAgents": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "phases",
+          "readOnly",
+          "maxAgents",
+          "maxConcurrency",
+          "patterns"
+        ]
+      },
+      "source": {
+        "type": "string",
+        "description": "JavaScript module body defining `async function run(wf, args) { ... }`. Coordinate child agents only through `wf`; the script gets no fs/network/shell and may not use import/require. Return displayable final text (for example `{ synthesis }`)."
+      },
+      "args": {
+        "type": "object",
+        "description": "Optional initial arguments passed to run(wf, args)."
+      },
+      "resumeFromRunId": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+        "description": "Optional run id of a prior run of THIS workflow to resume from. Re-submit the same script (edited or not) with the prior run id: unchanged agent calls return their cached results instantly and only the changed/new calls re-run. Scripts must be deterministic for this — Date.now()/Math.random() are disabled."
+      }
+    },
+    "required": [
+      "manifest",
+      "source"
+    ]
+  },
+  "tool.code_search.input_schema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "String query to search for"
+      },
+      "path": {
+        "type": "string",
+        "description": "Optional file or directory scope for the search"
+      },
+      "limit": {
+        "type": "number",
+        "description": "Maximum number of matches to return"
+      },
+      "scan_offset": {
+        "type": "number",
+        "description": "Skip candidate files already scanned by a prior SOURCE_INCOMPLETE continuation."
+      },
+      "case_sensitive": {
+        "type": "boolean",
+        "description": "Whether the query should be matched case-sensitively"
+      },
+      "provider_id": {
+        "type": "string",
+        "description": "Optional extension capability provider id for provider-backed code search"
+      }
+    },
+    "required": [
+      "query"
+    ]
+  },
+  "tool.ask_user_question.input_schema": {
+    "type": "object",
+    "properties": {
+      "question": {
+        "type": "string"
+      },
+      "questions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "question": {
+              "type": "string"
+            },
+            "header": {
+              "type": "string",
+              "description": "Progress label, ≤12 chars."
+            },
+            "options": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "label"
+                ]
+              }
+            },
+            "multi_select": {
+              "type": "boolean"
+            },
+            "min_selections": {
+              "type": "integer"
+            },
+            "max_selections": {
+              "type": "integer"
+            },
+            "default": {
+              "type": "string"
+            },
+            "allow_custom_input": {
+              "type": "boolean"
+            },
+            "custom_input_label": {
+              "type": "string"
+            },
+            "custom_input_prompt": {
+              "type": "string"
+            },
+            "custom_input_default": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "question",
+            "options"
+          ]
+        },
+        "minItems": 1,
+        "maxItems": 4
+      },
+      "kind": {
+        "type": "string",
+        "enum": [
+          "select",
+          "input"
+        ]
+      },
+      "options": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "label": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "label"
+          ]
+        }
+      },
+      "multi_select": {
+        "type": "boolean"
+      },
+      "min_selections": {
+        "type": "integer"
+      },
+      "max_selections": {
+        "type": "integer"
+      },
+      "allow_custom_input": {
+        "type": "boolean"
+      },
+      "custom_input_label": {
+        "type": "string",
+        "description": "Custom-choice label; default \"Other...\"."
+      },
+      "custom_input_prompt": {
+        "type": "string",
+        "description": "Custom-choice prompt."
+      },
+      "custom_input_default": {
+        "type": "string",
+        "description": "Custom-choice initial text."
+      },
+      "default": {
+        "type": "string"
+      }
+    }
+  },
+  "tool.todo_update.input_schema": {
+    "type": "object",
+    "properties": {
+      "op": {
+        "type": "string",
+        "enum": [
+          "init",
+          "update"
+        ],
+        "description": "Operation mode. Default \"update\" when omitted — mutate one item by `id`. \"init\" (legacy / runner-side seeding only) replaces the whole list with `items`; LLMs should NOT call it — it destructively drops any item not echoed back. Use a batch of `todo_create` calls for both initial commitment and mid-task plan growth."
+      },
+      "items": {
+        "type": "array",
+        "description": "op=\"init\" (legacy / runner-side only) payload. Each entry: {id: non-empty string (unique within list), subject: non-empty string (brief title), description?: string (fuller context), activeForm?: present-continuous string}. LLMs should use a batch of `todo_create` calls instead.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "Unique non-empty item id (e.g. \"todo_1\")."
+            },
+            "subject": {
+              "type": "string",
+              "description": "Brief imperative title shown in the plan-list row (e.g. \"Run failing tests\")."
+            },
+            "description": {
+              "type": "string",
+              "description": "Optional fuller context / work instructions read when this item is later picked up. Multi-line OK. Skip when subject alone is enough."
+            },
+            "activeForm": {
+              "type": "string",
+              "description": "Optional present-continuous form (e.g. \"Running failing tests\") shown by the spinner when this item flips to in_progress."
+            },
+            "evaluator": {
+              "type": "string",
+              "enum": [
+                "build",
+                "test",
+                "lint"
+              ],
+              "description": "Optional per-step deterministic evaluator. When set and the item flips to \"completed\", the runner runs `npm run build` / `npm test` / `npm run lint` accordingly; failure surfaces stderr in your next tool result. Use sparingly — only on milestone steps."
+            }
+          },
+          "required": [
+            "id",
+            "subject"
+          ]
+        }
+      },
+      "id": {
+        "type": "string",
+        "description": "Canonical current-plan ID."
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "in_progress",
+          "completed",
+          "failed",
+          "skipped",
+          "cancelled",
+          "deleted"
+        ],
+        "description": "failed: retry needed; skipped: unnecessary; cancelled: breadcrumb; deleted: remove. Only Runtime restores pending after revise."
+      },
+      "note": {
+        "type": "string",
+        "description": "Reason/detail; omitted preserves."
+      },
+      "activeForm": {
+        "type": "string",
+        "description": "Required present-continuous label for in_progress; omit terminal transition to preserve."
+      },
+      "subject": {
+        "type": "string",
+        "description": "Nonempty replacement imperative title."
+      },
+      "description": {
+        "type": "string",
+        "description": "Replacement multiline context; empty clears."
+      },
+      "evaluator": {
+        "type": "string",
+        "enum": [
+          "build",
+          "test",
+          "lint"
+        ],
+        "description": "When wired: build/test/lint → npm run build/npm test/npm run lint on completion; failure returns stderr."
+      },
+      "metadata": {
+        "type": "object",
+        "description": "Opaque, not UI. Shallow merge, not deep merge; null values delete keys; whole-field null clears (handler accepts despite object schema)."
+      }
+    }
+  },
+  "tool.todo_create.input_schema": {
+    "type": "object",
+    "properties": {
+      "subject": {
+        "type": "string",
+        "description": "Nonempty imperative plan-row title."
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "in_progress"
+        ],
+        "description": "Default pending; use in_progress for work starting now, avoiding a separate activation call. Creation never completes work."
+      },
+      "description": {
+        "type": "string",
+        "description": "Full-detail multiline context, absent from compact row; omit if title suffices."
+      },
+      "activeForm": {
+        "type": "string",
+        "description": "Supply for each milestone: present-continuous in_progress spinner label."
+      },
+      "evaluator": {
+        "type": "string",
+        "enum": [
+          "build",
+          "test",
+          "lint"
+        ],
+        "description": "When wired, completion runs build/test/lint = npm run build/npm test/npm run lint; failure returns stderr. Sparingly for real checks."
+      },
+      "metadata": {
+        "type": "object",
+        "description": "Opaque hook/eval data, not UI; omit if unused."
+      }
+    },
+    "required": [
+      "subject"
+    ]
+  },
+  "tool.changed_diff.input_schema": {
+    "type": "object",
+    "properties": {
+      "target_path": {
+        "type": "string",
+        "description": "Optional path inside the workspace to resolve the repository root from"
+      },
+      "base_ref": {
+        "type": "string",
+        "description": "Optional base git ref for compare-range review"
+      },
+      "target_ref": {
+        "type": "string",
+        "description": "Optional target git ref for compare-range review (defaults to HEAD when base_ref is provided)"
+      },
+      "path": {
+        "type": "string",
+        "description": "Changed file path to inspect, relative to the workspace root or absolute inside it"
+      },
+      "paths": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "minItems": 1,
+        "maxItems": 64,
+        "description": "Changed paths inside the workspace; one path is valid"
+      },
+      "limit_per_path": {
+        "type": "number",
+        "description": "Maximum diff lines per path (default 200, maximum 800)"
+      },
+      "offset": {
+        "type": "number",
+        "description": "1-based diff line offset for pagination"
+      },
+      "limit": {
+        "type": "number",
+        "description": "Maximum diff lines to return in this slice"
+      },
+      "context_lines": {
+        "type": "number",
+        "description": "Unified diff context lines to request"
+      }
+    },
+    "required": []
+  },
+  "tool.changed_diff_bundle.input_schema": {
+    "type": "object",
+    "properties": {
+      "target_path": {
+        "type": "string",
+        "description": "Optional path inside the workspace to resolve the repository root from"
+      },
+      "base_ref": {
+        "type": "string",
+        "description": "Optional base git ref for compare-range review"
+      },
+      "target_ref": {
+        "type": "string",
+        "description": "Optional target git ref for compare-range review (defaults to HEAD when base_ref is provided)"
+      },
+      "paths": {
+        "type": "array",
+        "description": "Changed file paths to inspect in one bundle, relative to the workspace root or absolute inside it",
+        "items": {
+          "type": "string"
+        },
+        "maxItems": 64
+      },
+      "offset": {
+        "type": "number",
+        "description": "1-based diff line offset applied to each path in the bundle"
+      },
+      "limit_per_path": {
+        "type": "number",
+        "description": "Maximum diff lines to return per path in this bundle"
+      },
+      "context_lines": {
+        "type": "number",
+        "description": "Unified diff context lines to request"
+      }
+    },
+    "required": [
+      "paths"
+    ]
+  },
+  "tool.relationship_scan.input_schema": {
+    "type": "object",
+    "properties": {
+      "symbol": {
+        "type": "string",
+        "description": "Optional symbol/function/class name to trace"
+      },
+      "module": {
+        "type": "string",
+        "description": "Optional module/package label to trace"
+      },
+      "path": {
+        "type": "string",
+        "description": "Optional repository-relative or absolute path to trace"
+      },
+      "entry": {
+        "type": "string",
+        "description": "Optional entry symbol or file hint for execution/process tracing"
+      },
+      "direction": {
+        "type": "string",
+        "enum": [
+          "upstream",
+          "downstream",
+          "both"
+        ],
+        "description": "Relationship direction to emphasize. Defaults to both."
+      },
+      "depth": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 3,
+        "description": "Requested depth (default 1). Results remain bounded indexed relationships; values above 1 report a gap, not recursive traversal."
+      },
+      "target_path": {
+        "type": "string",
+        "description": "Optional path used to resolve the repository root or narrow context"
+      },
+      "refresh": {
+        "type": "boolean",
+        "description": "When true, rebuild repo intelligence before the first relationship lookup"
+      },
+      "include_lsp": {
+        "type": "boolean",
+        "description": "When true, attach LSP incoming/outgoing call hierarchy evidence when an LSP service is available"
+      },
+      "include_text_search": {
+        "type": "boolean",
+        "description": "When true, attach bounded exact-name grep evidence for cross-checking static relationships"
+      }
+    }
+  },
+  "tool.scaffold_tool.input_schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Tool name (must match the value the LLM will use to invoke it)."
+      },
+      "version": {
+        "type": "string",
+        "description": "Semver string. Defaults to \"0.1.0\"."
+      },
+      "description": {
+        "type": "string",
+        "description": "One-sentence description of what the tool does."
+      },
+      "capabilities": {
+        "type": "object",
+        "description": "Optional starter capabilities; defaults to {tools: []}.",
+        "properties": {
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Whitelist of builtin tool names the handler may call via ctx.tools.<name>."
+          }
+        }
+      }
+    },
+    "required": [
+      "name"
+    ]
+  },
+  "tool.read.input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Absolute path or supplied kodax-transient://text/ reference."
+      },
+      "offset": {
+        "type": "number",
+        "description": "Starting text line number."
+      },
+      "limit": {
+        "type": "number",
+        "description": "Text lines."
+      },
+      "line_offset": {
+        "type": "number",
+        "description": "0-based Unicode character offset within first line; use exact continuation cursor."
+      }
+    },
+    "required": [
+      "path"
+    ]
+  },
+  "tool.bash.input_schema": {
+    "type": "object",
+    "properties": {
+      "command": {
+        "type": "string"
+      },
+      "description": {
+        "type": "string",
+        "description": "Concise command purpose."
+      },
+      "timeout": {
+        "type": "number",
+        "description": "Seconds."
+      },
+      "run_in_background": {
+        "type": "boolean",
+        "description": "Return immediately with output path; read it later."
+      }
+    },
+    "required": [
+      "command"
+    ]
+  },
+  "tool.list_dispatchable_agents.input_schema": {
+    "type": "object",
+    "properties": {
+      "required_skills": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Every returned agent must declare all listed skills."
+      },
+      "required_capabilities": {
+        "type": "object",
+        "properties": {
+          "streaming": {
+            "type": "boolean"
+          },
+          "durableTasks": {
+            "type": "boolean"
+          },
+          "inputRequired": {
+            "type": "boolean"
+          },
+          "cancellation": {
+            "type": "boolean"
+          },
+          "artifacts": {
+            "type": "boolean"
+          }
+        },
+        "description": "Required lifecycle capabilities."
+      },
+      "read_only": {
+        "type": "boolean",
+        "description": "true excludes external write/unknown remote effects."
+      }
+    }
+  },
+  "tool.send_message.input_schema": {
+    "type": "object",
+    "properties": {
+      "to": {
+        "type": "string",
+        "description": "Visible canonical path, child/peer name, parent, or * broadcast. Self rejected."
+      },
+      "content": {
+        "type": "string",
+        "description": "Body; Runtime authenticates agent-message frame."
+      },
+      "forwarded_message_id": {
+        "type": "string",
+        "description": "Received agent-message ID only when forwarding; Runtime derives chain. Fresh message: omit."
+      },
+      "classification": {
+        "type": "string",
+        "enum": [
+          "public",
+          "internal",
+          "sensitive"
+        ],
+        "description": "Default internal; cannot downgrade source classification."
+      }
+    },
+    "required": [
+      "to",
+      "content"
+    ]
+  },
+  "tool.list_agents.input_schema": {
+    "type": "object",
+    "properties": {
+      "path_prefix": {
+        "type": "string",
+        "description": "Canonical/caller-relative path prefix."
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "running",
+          "idle",
+          "closed"
+        ]
+      },
+      "after_path": {
+        "type": "string",
+        "description": "Exclusive nextAfterPath cursor."
+      },
+      "limit": {
+        "type": "number",
+        "description": "1–50; default 20."
+      }
+    }
+  },
+  "tool.interrupt_agent.input_schema": {
+    "type": "object",
+    "properties": {
+      "target": {
+        "type": "string",
+        "description": "Canonical controlled path or direct-child name."
+      },
+      "reason": {
+        "type": "string",
+        "description": "Attributable reason."
+      },
+      "scope": {
+        "type": "string",
+        "enum": [
+          "turn",
+          "subtree"
+        ],
+        "description": "Default turn; subtree interrupts all controlled active turns. Actors remain reusable."
+      }
+    },
+    "required": [
+      "target"
+    ]
+  },
+  "tool.semantic_lookup.input_schema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Semantic query to resolve inside repository intelligence"
+      },
+      "kind": {
+        "type": "string",
+        "enum": [
+          "auto",
+          "symbol",
+          "module",
+          "process"
+        ],
+        "description": "Optional semantic lookup category"
+      },
+      "target_path": {
+        "type": "string",
+        "description": "Optional path hint to scope the semantic lookup"
+      },
+      "limit": {
+        "type": "number",
+        "description": "Maximum number of semantic matches to return"
+      },
+      "refresh": {
+        "type": "boolean",
+        "description": "When true, refresh repository intelligence before searching"
+      }
+    },
+    "required": [
+      "query"
+    ]
+  },
+  "tool.mcp_search.input_schema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Optional search query. Omit or pass an empty string to browse active MCP catalogs."
+      },
+      "server": {
+        "type": "string",
+        "description": "Optional MCP server id filter"
+      },
+      "kind": {
+        "type": "string",
+        "enum": [
+          "tool",
+          "resource",
+          "prompt"
+        ],
+        "description": "Optional MCP capability family filter"
+      },
+      "limit": {
+        "type": "number",
+        "minimum": 1,
+        "description": "Optional maximum items for this page. Inventory otherwise returns everything that fits the current context; ranked search defaults to 8."
+      },
+      "cursor": {
+        "type": "string",
+        "description": "Opaque continuation cursor returned by mcp_search. Pass it alone without query/server/kind/limit."
+      }
+    }
+  },
+  "tool.worktree_remove.input_schema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": [
+          "keep",
+          "remove"
+        ]
+      },
+      "worktree_path": {
+        "type": "string",
+        "description": "Absolute worktree path."
+      },
+      "discard_changes": {
+        "type": "boolean",
+        "description": "true bypasses uncommitted/local-commit safety checks."
+      }
+    },
+    "required": [
+      "action",
+      "worktree_path"
+    ]
+  },
+  "tool.changed_scope.input_schema": {
+    "type": "object",
+    "properties": {
+      "target_path": {
+        "type": "string",
+        "description": "Optional path inside the workspace to resolve the repository root from"
+      },
+      "scope": {
+        "type": "string",
+        "enum": [
+          "unstaged",
+          "staged",
+          "all",
+          "compare"
+        ],
+        "description": "Which git change set to inspect. Defaults to all."
+      },
+      "base_ref": {
+        "type": "string",
+        "description": "Base ref used when scope=compare. Defaults to HEAD~1."
+      },
+      "refresh_overview": {
+        "type": "boolean",
+        "description": "When true, rebuild the repo overview snapshot before analyzing changes"
+      }
+    }
+  },
+  "tool.symbol_context.input_schema": {
+    "type": "object",
+    "properties": {
+      "symbol": {
+        "type": "string",
+        "description": "The symbol name to inspect"
+      },
+      "module": {
+        "type": "string",
+        "description": "Optional module hint to disambiguate the symbol search"
+      },
+      "target_path": {
+        "type": "string",
+        "description": "Optional path inside the workspace to resolve the repository root from"
+      },
+      "refresh": {
+        "type": "boolean",
+        "description": "When true, rebuild repo intelligence before returning the symbol capsule"
+      }
+    }
+  },
+  "tool.process_context.input_schema": {
+    "type": "object",
+    "properties": {
+      "entry": {
+        "type": "string",
+        "description": "Entry symbol or file hint for the process to trace"
+      },
+      "module": {
+        "type": "string",
+        "description": "Optional module hint used to select a process capsule"
+      },
+      "target_path": {
+        "type": "string",
+        "description": "Optional path used to infer the relevant module or entry file"
+      },
+      "refresh": {
+        "type": "boolean",
+        "description": "When true, rebuild repo intelligence before returning the process capsule"
+      }
+    }
+  },
+  "tool.impact_estimate.input_schema": {
+    "type": "object",
+    "properties": {
+      "symbol": {
+        "type": "string",
+        "description": "Optional symbol to estimate impact for"
+      },
+      "module": {
+        "type": "string",
+        "description": "Optional module to estimate impact for"
+      },
+      "path": {
+        "type": "string",
+        "description": "Optional repository-relative or absolute path to estimate impact for"
+      },
+      "target_path": {
+        "type": "string",
+        "description": "Optional path used to resolve the repository root from"
+      },
+      "refresh": {
+        "type": "boolean",
+        "description": "When true, rebuild repo intelligence before returning the impact estimate"
+      }
+    }
+  },
+  "tool.scaffold_agent.input_schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Agent name (resolver lookup key once activated)."
+      },
+      "version": {
+        "type": "string",
+        "description": "Semver string. Defaults to \"0.1.0\"."
+      },
+      "description": {
+        "type": "string",
+        "description": "One-sentence description of the agent's purpose. Becomes the lead line of `instructions`."
+      }
+    },
+    "required": [
+      "name"
+    ]
+  },
+  "tool.lsp_prepare_call_hierarchy.input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "File containing the callable symbol"
+      },
+      "line": {
+        "type": "number",
+        "description": "1-based line of the symbol"
+      },
+      "character": {
+        "type": "number",
+        "description": "Optional 1-based column of the symbol"
+      },
+      "column": {
+        "type": "number",
+        "description": "Alias for character"
+      }
+    },
+    "required": [
+      "path",
+      "line"
+    ]
+  },
+  "tool.lsp_incoming_calls.input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "File containing the callable symbol"
+      },
+      "line": {
+        "type": "number",
+        "description": "1-based line of the symbol"
+      },
+      "character": {
+        "type": "number",
+        "description": "Optional 1-based column of the symbol"
+      },
+      "column": {
+        "type": "number",
+        "description": "Alias for character"
+      }
+    },
+    "required": [
+      "path",
+      "line"
+    ]
+  },
+  "tool.lsp_outgoing_calls.input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "File containing the callable symbol"
+      },
+      "line": {
+        "type": "number",
+        "description": "1-based line of the symbol"
+      },
+      "character": {
+        "type": "number",
+        "description": "Optional 1-based column of the symbol"
+      },
+      "column": {
+        "type": "number",
+        "description": "Alias for character"
+      }
+    },
+    "required": [
+      "path",
+      "line"
+    ]
+  },
+  "tool.lsp_implementation.input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "File containing the symbol"
+      },
+      "line": {
+        "type": "number",
+        "description": "1-based line of the symbol"
+      },
+      "character": {
+        "type": "number",
+        "description": "Optional 1-based column of the symbol"
+      },
+      "column": {
+        "type": "number",
+        "description": "Alias for character"
+      }
+    },
+    "required": [
+      "path",
+      "line"
+    ]
+  },
+  "tool.test_tool.input_schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Artifact name as stored on disk."
+      },
+      "version": {
+        "type": "string",
+        "description": "Artifact version as stored on disk."
+      },
+      "provider": {
+        "type": "string",
+        "description": "Provider whose tool-schema constraints are checked. Defaults to 'anthropic'."
+      }
+    },
+    "required": [
+      "name",
+      "version"
+    ]
+  },
+  "tool.module_context.input_schema": {
+    "type": "object",
+    "properties": {
+      "module": {
+        "type": "string",
+        "description": "Module id, label, or package name to inspect"
+      },
+      "target_path": {
+        "type": "string",
+        "description": "Optional path used to infer the enclosing module"
+      },
+      "refresh": {
+        "type": "boolean",
+        "description": "When true, rebuild repo intelligence before returning the module capsule"
+      }
+    }
+  },
+  "tool.web_fetch.input_schema": {
+    "type": "object",
+    "properties": {
+      "url": {
+        "type": "string",
+        "description": "Remote URL to fetch"
+      },
+      "provider_id": {
+        "type": "string",
+        "description": "Optional extension capability provider id for provider-backed fetch"
+      },
+      "capability_id": {
+        "type": "string",
+        "description": "Optional provider capability id for provider-backed fetch"
+      }
+    }
+  },
+  "tool.lsp_definition.input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "File containing the symbol"
+      },
+      "line": {
+        "type": "number",
+        "description": "1-based line of the symbol"
+      },
+      "character": {
+        "type": "number",
+        "description": "Optional 1-based column of the symbol (defaults to the line start)"
+      }
+    },
+    "required": [
+      "path",
+      "line"
+    ]
+  },
+  "tool.exit_plan_mode.input_schema": {
+    "type": "object",
+    "properties": {
+      "plan": {
+        "type": "string",
+        "description": "Full plan, not summary: ≤40 lines, ≤3 bullet levels, one sentence/bullet. If larger, present the current phase for phase-by-phase approval."
+      }
+    },
+    "required": [
+      "plan"
+    ]
+  },
+  "tool.update_goal.input_schema": {
+    "type": "object",
+    "properties": {
+      "status": {
+        "type": "string",
+        "enum": [
+          "complete",
+          "blocked"
+        ]
+      },
+      "blocker_kind": {
+        "type": "string",
+        "description": "Required blocked: stable obstacle ID compared across turns, e.g. awaiting-user-permission."
+      }
+    },
+    "required": [
+      "status"
+    ]
+  },
+  "tool.followup_task.input_schema": {
+    "type": "object",
+    "properties": {
+      "target": {
+        "type": "string",
+        "description": "Canonical child path or direct-child name."
+      },
+      "objective": {
+        "type": "string",
+        "description": "Additional objective/evidence."
+      },
+      "quality_strategy": {
+        "type": "object",
+        "description": "Optional PatternTrace provenance; never admission control. Invalid/conflicting data ignored."
+      }
+    },
+    "required": [
+      "target",
+      "objective"
+    ]
+  },
+  "tool.validate_tool.input_schema": {
+    "type": "object",
+    "properties": {
+      "artifact_json": {
+        "type": "string",
+        "description": "The full ConstructionArtifact as a JSON string."
+      },
+      "provider": {
+        "type": "string",
+        "description": "Provider whose tool-schema constraints are checked. Defaults to 'anthropic'."
+      }
+    },
+    "required": [
+      "artifact_json"
+    ]
+  },
+  "tool.lsp_hover.input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "File containing the symbol"
+      },
+      "line": {
+        "type": "number",
+        "description": "1-based line of the symbol"
+      },
+      "character": {
+        "type": "number",
+        "description": "Optional 1-based column of the symbol"
+      }
+    },
+    "required": [
+      "path",
+      "line"
+    ]
+  },
+  "tool.insert_after_anchor.input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string"
+      },
+      "anchor": {
+        "type": "string",
+        "description": "Unique heading/marker."
+      },
+      "content": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "path",
+      "anchor",
+      "content"
+    ]
+  },
+  "tool.lsp_workspace_symbols.input_schema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Symbol query text; may be empty for a broad server-supported listing"
+      }
+    }
+  },
+  "tool.lsp_document_symbols.input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "File to outline"
+      }
+    },
+    "required": [
+      "path"
+    ]
+  },
+  "tool.lsp_references.input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "File containing the symbol"
+      },
+      "line": {
+        "type": "number",
+        "description": "1-based line of the symbol"
+      },
+      "character": {
+        "type": "number",
+        "description": "Optional 1-based column of the symbol"
+      }
+    },
+    "required": [
+      "path",
+      "line"
+    ]
+  },
+  "tool.repo_overview.input_schema": {
+    "type": "object",
+    "properties": {
+      "target_path": {
+        "type": "string",
+        "description": "Optional path inside the workspace to resolve the repository root from"
+      },
+      "refresh": {
+        "type": "boolean",
+        "description": "When true, rebuild the repo overview snapshot before returning it"
+      }
+    }
+  },
+  "tool.skill.input_schema": {
+    "type": "object",
+    "properties": {
+      "skill": {
+        "type": "string",
+        "description": "Skill name; leading slash accepted."
+      },
+      "args": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "skill"
+    ]
+  },
+  "tool.kodax_manual.input_schema": {
+    "type": "object",
+    "properties": {
+      "topic": {
+        "type": "string",
+        "description": "Exact topic ID; unknown returns index."
+      },
+      "query": {
+        "type": "string",
+        "description": "Free-text question (English/Chinese)."
+      }
+    },
+    "required": []
+  }
+}

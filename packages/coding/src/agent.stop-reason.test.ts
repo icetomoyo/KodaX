@@ -18,7 +18,7 @@ import {
   type KodaXDiagnostic,
 } from '@kodax-ai/agent';
 
-import { runKodaX } from './agent.js';
+import { runTestLeaf as runLeafAgent } from './agent-runtime/test-leaf.js';
 
 const TEST_PROVIDER_NAME = 'stop-reason-scripted-provider';
 const TEST_PROVIDER_API_KEY_ENV = 'STOP_REASON_SCRIPTED_PROVIDER_API_KEY';
@@ -98,7 +98,7 @@ function syntheticMessageText(messages: readonly KodaXMessage[]): string {
     .join('\n');
 }
 
-describe('runKodaX stopReason normalization', () => {
+describe('runLeafAgent stopReason normalization', () => {
   beforeEach(() => {
     resetProvider();
     process.env[TEST_PROVIDER_API_KEY_ENV] = 'test-key';
@@ -118,7 +118,7 @@ describe('runKodaX stopReason normalization', () => {
     ];
 
     const textDeltas: string[] = [];
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: TEST_PROVIDER_NAME,
         reasoningMode: 'off',
@@ -141,7 +141,7 @@ describe('runKodaX stopReason normalization', () => {
     ];
 
     const segments: Array<{ responseId: string; mode: 'append' | 'replace' }> = [];
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: TEST_PROVIDER_NAME,
         reasoningMode: 'off',
@@ -170,7 +170,7 @@ describe('runKodaX stopReason normalization', () => {
       response('pause_turn', 'paused by provider'),
     ];
 
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: TEST_PROVIDER_NAME,
         reasoningMode: 'off',
@@ -198,7 +198,7 @@ describe('runKodaX stopReason normalization', () => {
       const textDeltas: string[] = [];
       const notices: string[] = [];
 
-      const result = await runKodaX(
+      const result = await runLeafAgent(
         {
           provider: TEST_PROVIDER_NAME,
           reasoningMode: 'off',
@@ -226,7 +226,7 @@ describe('runKodaX stopReason normalization', () => {
     const restoreDiagnostics = setKodaXDiagnosticSink((diagnostic) => diagnostics.push(diagnostic));
 
     try {
-      const result = await runKodaX(
+      const result = await runLeafAgent(
         {
           provider: TEST_PROVIDER_NAME,
           modelOverride: 'gateway-model',

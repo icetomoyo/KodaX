@@ -1498,7 +1498,7 @@ function executionAuthorizationSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
     binding: objectSchema({ leaseId: stringSchema }, ['leaseId']),
     businessBinding: objectSchema({ id: stringSchema, revision: stringSchema, data: objectAnySchema }, ['id', 'revision']),
-    profile: objectSchema({ agentProfile: objectAnySchema, taskVerification: objectAnySchema,
+    profile: objectSchema({ agentProfile: objectAnySchema, prompt: objectAnySchema, taskVerification: objectAnySchema,
       requiredWorkMode: { enum: ['agent'] },
       defaultSkill: objectSchema({ name: { type: 'string', maxLength: 128 } }, ['name']),
       tools: arraySchema(stringSchema), toolMetadata: arraySchema(objectSchema({ name: stringSchema,
@@ -1764,6 +1764,7 @@ function runtimeFailureDetailSchema(): RuntimeDaemonJsonSchema {
       ],
     },
     safeMessage: { type: 'string', maxLength: 1_024 },
+    detail: { type: 'string', maxLength: 1_024 },
       skillName: { type: 'string', maxLength: 128 },
     httpStatus: { type: 'integer', minimum: 100, maximum: 599 },
     upstreamErrorCode: { type: 'string', maxLength: 200 },

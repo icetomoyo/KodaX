@@ -22,7 +22,7 @@ it('shows Host missing and operation failures through the production tree comman
   const binding = createCliSessionCommands(toKodaXProductClient(runtime));
   const context = await createInteractiveContext({ sessionId: session.id, gitRoot: homeDir });
   const config = { provider: 'test', thinking: false, reasoningMode: 'off' as const,
-    agentMode: 'sa' as const, permissionMode: 'accept-edits' as const };
+    agentMode: 'ama' as const, permissionMode: 'accept-edits' as const };
   const callbacks: CommandCallbacks = {
     ui: { select: async () => undefined, confirm: async () => false, input: async () => undefined },
     exit: () => {}, saveSession: async () => {}, loadSession: async () => 'missing',

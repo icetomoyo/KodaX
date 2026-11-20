@@ -61,6 +61,18 @@ async function persistManifest(artifact: AgentArtifact): Promise<void> {
   );
 }
 
+/**
+ * Seed a prior version the way a user would have: activated with approval
+ * in an earlier session. Rehydrate only trusts that approval (Issue 419),
+ * not a manifest that merely says `status: 'active'`.
+ */
+async function seedApprovedAgent(artifact: AgentArtifact): Promise<void> {
+  await persistManifest({ ...artifact, status: 'tested', activatedAt: undefined });
+  configureRuntime({ cwd: tmpRoot, policy: async () => 'approve' });
+  await activate({ artifact, stagedAt: Date.now() });
+  _resetRuntimeForTesting();
+}
+
 function buildAgent(overrides: Partial<AgentArtifact> = {}): AgentArtifact {
   return {
     kind: 'agent',
@@ -84,7 +96,7 @@ describe('bootstrapConstructionRuntime — self-modify ask-user', () => {
   });
 
   it('rejects self-modify activation when no askUser is bound', async () => {
-    await persistManifest(buildAgent({ name: 'alpha', version: '1.0.0' }));
+    await seedApprovedAgent(buildAgent({ name: 'alpha', version: '1.0.0' }));
     await bootstrapConstructionRuntime(tmpRoot);
 
     const next = buildAgent({
@@ -102,7 +114,7 @@ describe('bootstrapConstructionRuntime — self-modify ask-user', () => {
   });
 
   it('surfaces prev/next instructions, severity, and budget through the bound askUser', async () => {
-    await persistManifest(
+    await seedApprovedAgent(
       buildAgent({
         name: 'alpha',
         version: '1.0.0',
@@ -153,7 +165,7 @@ describe('bootstrapConstructionRuntime — self-modify ask-user', () => {
   });
 
   it('rejection at the dialog leaves the prior version active and budget untouched', async () => {
-    await persistManifest(buildAgent({ name: 'alpha', version: '1.0.0' }));
+    await seedApprovedAgent(buildAgent({ name: 'alpha', version: '1.0.0' }));
     await bootstrapConstructionRuntime(tmpRoot);
 
     bindAskUserForConstruction(vi.fn().mockResolvedValue('reject'));
@@ -178,7 +190,7 @@ describe('bootstrapConstructionRuntime — self-modify ask-user', () => {
 
 describe('drainPendingSwaps — REPL turn-boundary contract', () => {
   it('promotes a deferred self-modify swap so the next run sees the new version', async () => {
-    await persistManifest(
+    await seedApprovedAgent(
       buildAgent({
         name: 'alpha',
         version: '1.0.0',

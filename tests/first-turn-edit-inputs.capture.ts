@@ -5,7 +5,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { setAgentConfigHome } from '../packages/agent/src/runtime/agent-home.js';
-import { buildSystemPromptSnapshot } from '../packages/coding/src/prompts/builder.js';
+import { buildCapabilityContextSections } from '../packages/coding/src/prompts/capability-sections.js';
 import { buildRunnerAgentChain } from '../packages/coding/src/task-engine/_internal/managed-task/agent-chain.js';
 import { buildRunnerLlmAdapter } from '../packages/coding/src/task-engine/_internal/managed-task/llm-adapter.js';
 import { createRolePrompt } from '../packages/coding/src/task-engine/_internal/managed-task/role-prompt.js';
@@ -42,10 +42,8 @@ export async function captureEditInputs(fixture: string, stage: 'baseline' | 'ca
   if ((await fs.readdir(workspace)).length || (await fs.readdir(home)).length) throw new Error('Capture fixture must be empty');
   setAgentConfigHome(home);
   try {
-    const snapshot = await buildSystemPromptSnapshot({ provider: 'zhipu-coding', context: { executionCwd: workspace, gitRoot: workspace } }, true);
-    const owned = new Set(['base-system', 'base-system-suffix', 'environment-context', 'runtime-fact', 'working-directory', 'session-scratch-directory', 'repo-intelligence-context', 'execution-guidance', 'active-skill-invocation']);
+    const shared = await buildCapabilityContextSections({ provider: 'zhipu-coding', context: { executionCwd: workspace, gitRoot: workspace } }, true);
     const stableIds = new Set(['project-agents', 'self-knowledge-routing', 'memory-rules', 'tool-construction']);
-    const shared = snapshot.sections.filter(section => !owned.has(section.id));
     const chain = buildRunnerAgentChain({ backups: new Map(), executionCwd: workspace, gitRoot: workspace });
     const cases = [];
     for (const testCase of EDIT_CASES) {
@@ -64,7 +62,7 @@ export async function captureEditInputs(fixture: string, stage: 'baseline' | 'ca
       if (!captured) throw new Error('Adapter did not capture');
       cases.push({ ...testCase, input: captured, hash: inputHash(captured) });
     }
-    const stableFiles = ['packages/coding/src/agents/worker-role-prompt.ts', 'packages/coding/src/task-engine/_internal/managed-task/role-prompt.ts', 'packages/coding/src/task-engine/_internal/managed-task/agent-chain.ts', 'packages/coding/src/task-engine/_internal/managed-task/llm-adapter.ts', 'packages/coding/src/agent-runtime/tool-resolution.ts', 'packages/coding/src/tools/tool-definitions.ts', 'packages/coding/src/prompts/builder.ts', 'packages/coding/src/tools/model-tool-definition.ts', 'packages/coding/src/tools/edit.ts', 'packages/coding/src/tools/multi-edit.ts', 'packages/coding/src/tools/changed-diff.ts', 'src/sdk-runtime.ts'];
+    const stableFiles = ['packages/coding/src/agents/worker-role-prompt.ts', 'packages/coding/src/task-engine/_internal/managed-task/role-prompt.ts', 'packages/coding/src/task-engine/_internal/managed-task/agent-chain.ts', 'packages/coding/src/task-engine/_internal/managed-task/llm-adapter.ts', 'packages/coding/src/agent-runtime/tool-resolution.ts', 'packages/coding/src/tools/tool-definitions.ts', 'packages/coding/src/prompts/capability-sections.ts', 'packages/coding/src/tools/model-tool-definition.ts', 'packages/coding/src/tools/edit.ts', 'packages/coding/src/tools/multi-edit.ts', 'packages/coding/src/tools/changed-diff.ts', 'src/sdk-runtime.ts'];
     const baselineSource = stage === 'candidate'
       ? (JSON.parse(await fs.readFile(path.join(editDumpRoot(), 'baseline-inputs.json'), 'utf8')) as FrozenCapture).source
       : execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true }).trim();

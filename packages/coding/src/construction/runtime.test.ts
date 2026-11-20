@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
+import { createHash } from 'crypto';
 import os from 'os';
 import path from 'path';
 import fs from 'fs/promises';
@@ -23,6 +24,7 @@ import { getRegisteredToolDefinition, getToolRegistrations } from '../tools/regi
 import type { ConstructionArtifact, ToolArtifact } from './types.js';
 
 let tmpRoot: string;
+let agentHomeRoot: string;
 
 function buildToolArtifact(overrides: Partial<ToolArtifact> = {}): ToolArtifact {
   return {
@@ -55,6 +57,8 @@ function buildToolArtifact(overrides: Partial<ToolArtifact> = {}): ToolArtifact 
 
 beforeEach(async () => {
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-runtime-'));
+  agentHomeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-runtime-home-'));
+  setAgentConfigHome(agentHomeRoot);
   configureRuntime({
     cwd: tmpRoot,
     policy: async () => 'approve', // tests assume approval; revoke / reject paths flip explicitly
@@ -65,6 +69,7 @@ afterEach(async () => {
   _resetRuntimeForTesting();
   setAgentConfigHome(undefined);
   await fs.rm(tmpRoot, { recursive: true, force: true });
+  await fs.rm(agentHomeRoot, { recursive: true, force: true });
 });
 
 describe('stage()', () => {
@@ -669,27 +674,106 @@ describe('rehydrateActiveArtifacts()', () => {
     }
   });
 
-  it('rehydrates artifacts written before contentHash existed (legacy compat)', async () => {
-    // Simulate a manifest persisted by an older KodaX version (pre-v0.7.28
-    // hardening) — no contentHash field at all. Must still rehydrate so
-    // upgrades do not break previously-approved tools.
-    const dir = path.join(tmpRoot, '.kodax', 'constructed', 'tools', 'legacy', '1.0.0.json');
-    await fs.mkdir(path.dirname(dir), { recursive: true });
-    const legacy: ConstructionArtifact = {
-      ...buildToolArtifact({ name: 'legacy', version: '1.0.0' }),
+  // Issue 419: an "active" manifest is only evidence of approval when this
+  // user approved it on this machine; the repository can write anything else.
+  async function plantActiveManifest(root: string, name: string, withHash: boolean): Promise<void> {
+    const file = path.join(root, '.kodax', 'constructed', 'tools', name, '1.0.0.json');
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    const base = buildToolArtifact({ name, version: '1.0.0' });
+    const planted: ConstructionArtifact = {
+      ...base,
       status: 'active',
       testedAt: Date.now() - 1000,
       activatedAt: Date.now() - 500,
-      // no contentHash
+      ...(withHash
+        ? { contentHash: createHash('sha256').update(JSON.stringify(base.content)).digest('hex') }
+        : {}),
     };
-    await fs.writeFile(dir, JSON.stringify(legacy, null, 2), 'utf8');
+    await fs.writeFile(file, JSON.stringify(planted, null, 2), 'utf8');
+  }
 
+  async function rehydrateWithDiagnostics(root: string) {
     _resetRuntimeForTesting();
-    configureRuntime({ cwd: tmpRoot });
+    configureRuntime({ cwd: root });
+    const diagnostics: KodaXDiagnostic[] = [];
+    const restoreDiagnostics = setKodaXDiagnosticSink((diagnostic) => diagnostics.push(diagnostic));
+    try {
+      return { result: await rehydrateActiveArtifacts(), diagnostics };
+    } finally {
+      restoreDiagnostics();
+    }
+  }
 
-    const result = await rehydrateActiveArtifacts();
-    expect(result.loaded).toBe(1);
-    expect(result.tampered).toBe(0);
-    expect(getRegisteredToolDefinition('legacy')).toBeDefined();
+  it('refuses a repository-shipped active manifest whose contentHash matches its own content', async () => {
+    await plantActiveManifest(tmpRoot, 'planted', true);
+
+    const { result, diagnostics } = await rehydrateWithDiagnostics(tmpRoot);
+
+    expect(result.loaded).toBe(0);
+    expect(result.unapproved).toBe(1);
+    expect(getRegisteredToolDefinition('planted')).toBeUndefined();
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        source: 'coding:construction',
+        level: 'warn',
+        message: expect.stringContaining('not approved on this machine'),
+      }),
+    ]);
+  });
+
+  it('refuses an active manifest without contentHash', async () => {
+    await plantActiveManifest(tmpRoot, 'legacy', false);
+
+    const { result } = await rehydrateWithDiagnostics(tmpRoot);
+
+    expect(result.loaded).toBe(0);
+    expect(result.unapproved).toBe(1);
+    expect(getRegisteredToolDefinition('legacy')).toBeUndefined();
+  });
+
+  it('does not carry an approval over to another project root', async () => {
+    const handle = await stage(buildToolArtifact({ name: 'moved', version: '1.0.0' }));
+    await testArtifact(handle);
+    await activate(handle);
+    const otherRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-runtime-other-'));
+    try {
+      await fs.cp(path.join(tmpRoot, '.kodax'), path.join(otherRoot, '.kodax'), { recursive: true });
+
+      const { result } = await rehydrateWithDiagnostics(otherRoot);
+
+      expect(result.loaded).toBe(0);
+      expect(result.unapproved).toBe(1);
+      expect(getRegisteredToolDefinition('moved')).toBeUndefined();
+    } finally {
+      await fs.rm(otherRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the approval record outside the repository, in protected Agent Home runtime state', async () => {
+    const handle = await stage(buildToolArtifact({ name: 'recorded', version: '1.0.0' }));
+    await testArtifact(handle);
+    await activate(handle);
+
+    const record = JSON.parse(await fs.readFile(
+      path.join(agentHomeRoot, 'runtime', 'construction-approvals.json'), 'utf8',
+    )) as { approvals: Array<{ kind: string; name: string; version: string }> };
+    expect(record.approvals).toEqual([
+      expect.objectContaining({ kind: 'tool', name: 'recorded', version: '1.0.0' }),
+    ]);
+  });
+
+  it('warns and loads nothing when the approval record is unreadable', async () => {
+    const handle = await stage(buildToolArtifact({ name: 'corrupt', version: '1.0.0' }));
+    await testArtifact(handle);
+    await activate(handle);
+    await fs.writeFile(path.join(agentHomeRoot, 'runtime', 'construction-approvals.json'), '{not json', 'utf8');
+
+    const { result, diagnostics } = await rehydrateWithDiagnostics(tmpRoot);
+
+    expect(result.loaded).toBe(0);
+    expect(result.unapproved).toBe(1);
+    expect(diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ level: 'warn', message: expect.stringContaining('construction approval record') }),
+    ]));
   });
 });

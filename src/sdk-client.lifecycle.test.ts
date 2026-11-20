@@ -76,7 +76,7 @@ it('reports a busy Host and lets another client observe work after the submittin
       const second = await connectKodaXClient(options);
       try {
         const session = await first.sessions.create({ title: 'Background work', projectPath: homeDir });
-        await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', agentMode: 'sa' });
+        await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
         const views: ClientSessionView[] = [];
         const observation = await second.sessions.observe(session.id, (view) => views.push(view));
         try {

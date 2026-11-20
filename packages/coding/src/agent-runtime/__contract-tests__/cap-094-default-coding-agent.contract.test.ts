@@ -18,9 +18,8 @@
  *
  * Class: 1
  *
- * Verified location: coding-preset.ts:125-133 (createDefaultCodingAgent).
- * Post-substrate this moves to `agents/default-coding-agent.ts`; the
- * relocation is deferred to the substrate-executor migration phase.
+ * Verified location: default-coding-agent.ts (createDefaultCodingAgent),
+ * which binds the managed Worker to the shared declaration in coding-preset.ts.
  *
  * Time-ordering constraint: at SDK entry or substrate frame initialization.
  *
@@ -31,10 +30,8 @@
 
 import { describe, expect, it } from 'vitest';
 
-import {
-  DEFAULT_CODING_AGENT_NAME,
-  createDefaultCodingAgent,
-} from '../../coding-preset.js';
+import { DEFAULT_CODING_AGENT_NAME } from '../../coding-preset.js';
+import { createDefaultCodingAgent } from '../../default-coding-agent.js';
 
 describe('CAP-094: default coding agent declaration constructor contract', () => {
   it('CAP-DEFAULT-AGENT-001a: createDefaultCodingAgent() returns an Agent with name "kodax/coding/default" and a non-empty instructions string', () => {

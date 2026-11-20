@@ -1,11 +1,8 @@
 import { createHash } from 'crypto';
 
 export type KodaXPromptSectionSlot =
-  | 'base'
-  | 'runtime-context'
   | 'session-context'
   | 'capability-truth'
-  | 'base-suffix'
   | 'mode-overlay'
   | 'project-rules'
   | 'skill-addendum'
@@ -16,6 +13,12 @@ export type KodaXPromptSectionStability =
   | 'dynamic'
   | 'project'
   | 'specialist';
+
+/**
+ * What a prompt section is for: `contract` is text the runtime protocol depends on,
+ * `capability` teaches an available tool, and `guidance` is KodaX's default way of working.
+ */
+export type KodaXPromptSectionTag = 'contract' | 'capability' | 'guidance';
 
 export interface KodaXPromptSectionDefinition {
   id: string;
@@ -48,72 +51,16 @@ export interface KodaXPromptSnapshot {
 }
 
 const PROMPT_SLOT_ORDER: Record<KodaXPromptSectionSlot, number> = {
-  base: 100,
-  'runtime-context': 200,
   'session-context': 300,
   'capability-truth': 400,
-  'base-suffix': 450,
   'mode-overlay': 500,
   'project-rules': 600,
   'skill-addendum': 700,
   specialist: 800,
 };
 
-export const PROMPT_SECTION_REGISTRY: Record<string, KodaXPromptSectionDefinition> = {
-  'base-system': {
-    id: 'base-system',
-    title: 'Base System Prompt',
-    owner: 'prompts',
-    feature: 'FEATURE_048',
-    slot: 'base',
-    order: 100,
-    stability: 'stable',
-  },
-  'base-system-suffix': {
-    id: 'base-system-suffix',
-    title: 'Base System Prompt Suffix',
-    owner: 'prompts',
-    feature: 'FEATURE_048',
-    slot: 'base-suffix',
-    order: 200,
-    stability: 'stable',
-  },
-  'environment-context': {
-    id: 'environment-context',
-    title: 'Environment Context',
-    owner: 'prompts',
-    feature: 'FEATURE_048',
-    slot: 'runtime-context',
-    order: 100,
-    stability: 'dynamic',
-  },
-  'runtime-fact': {
-    id: 'runtime-fact',
-    title: 'Runtime Fact',
-    owner: 'prompts',
-    feature: 'FEATURE_048',
-    slot: 'runtime-context',
-    order: 150,
-    stability: 'dynamic',
-  },
-  'working-directory': {
-    id: 'working-directory',
-    title: 'Working Directory',
-    owner: 'prompts',
-    feature: 'FEATURE_048',
-    slot: 'runtime-context',
-    order: 200,
-    stability: 'dynamic',
-  },
-  'session-scratch-directory': {
-    id: 'session-scratch-directory',
-    title: 'Session Scratch Directory',
-    owner: 'prompts',
-    feature: 'FEATURE_071',
-    slot: 'runtime-context',
-    order: 250,
-    stability: 'dynamic',
-  },
+// Frozen: a mutated registry would let any importer rewrite the managed Worker's capability context.
+export const PROMPT_SECTION_REGISTRY: Readonly<Record<string, Readonly<KodaXPromptSectionDefinition>>> = Object.freeze({
   'git-context': {
     id: 'git-context',
     title: 'Git Context',
@@ -130,24 +77,6 @@ export const PROMPT_SECTION_REGISTRY: Record<string, KodaXPromptSectionDefinitio
     feature: 'FEATURE_048',
     slot: 'session-context',
     order: 200,
-    stability: 'dynamic',
-  },
-  'long-running-context': {
-    id: 'long-running-context',
-    title: 'Long-Running Context',
-    owner: 'prompts',
-    feature: 'FEATURE_048',
-    slot: 'session-context',
-    order: 300,
-    stability: 'dynamic',
-  },
-  'repo-intelligence-context': {
-    id: 'repo-intelligence-context',
-    title: 'Repository Intelligence Context',
-    owner: 'reasoning',
-    feature: 'FEATURE_048',
-    slot: 'capability-truth',
-    order: 100,
     stability: 'dynamic',
   },
   'mcp-capability-context': {
@@ -176,24 +105,6 @@ export const PROMPT_SECTION_REGISTRY: Record<string, KodaXPromptSectionDefinitio
     slot: 'capability-truth',
     order: 350,
     stability: 'stable',
-  },
-  'execution-guidance': {
-    id: 'execution-guidance',
-    title: 'Execution Guidance',
-    owner: 'prompts',
-    feature: 'FEATURE_048',
-    slot: 'capability-truth',
-    order: 360,
-    stability: 'stable',
-  },
-  'long-running-overlay': {
-    id: 'long-running-overlay',
-    title: 'Long-Running Overlay',
-    owner: 'prompts',
-    feature: 'FEATURE_048',
-    slot: 'mode-overlay',
-    order: 100,
-    stability: 'dynamic',
   },
   'prompt-overlay': {
     id: 'prompt-overlay',
@@ -249,15 +160,6 @@ export const PROMPT_SECTION_REGISTRY: Record<string, KodaXPromptSectionDefinitio
     order: 100,
     stability: 'dynamic',
   },
-  'active-skill-invocation': {
-    id: 'active-skill-invocation',
-    title: 'Active Skill Invocation',
-    owner: 'skills',
-    feature: 'FEATURE_222',
-    slot: 'skill-addendum',
-    order: 200,
-    stability: 'dynamic',
-  },
   'tool-construction': {
     id: 'tool-construction',
     title: 'Tool Construction Mode',
@@ -267,7 +169,7 @@ export const PROMPT_SECTION_REGISTRY: Record<string, KodaXPromptSectionDefinitio
     order: 100,
     stability: 'specialist',
   },
-};
+});
 
 export function createPromptSection(
   id: keyof typeof PROMPT_SECTION_REGISTRY,

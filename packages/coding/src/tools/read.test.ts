@@ -252,9 +252,9 @@ describe('toolRead', () => {
       properties?: Record<string, { description?: string }>;
     } | undefined;
 
-    expect(definition?.description).toContain('partial-line continuation marker');
+    expect(definition?.description).toContain('partial lines require exact line_offset cursor');
     expect(schema?.properties?.line_offset?.description).toContain('Unicode character offset');
-    expect(schema?.properties?.line_offset?.description).toContain('continuation marker');
+    expect(schema?.properties?.line_offset?.description).toContain('continuation cursor');
   });
 
   it.each([

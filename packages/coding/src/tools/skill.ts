@@ -72,7 +72,8 @@ export async function toolSkill(
   if (!registry.has(skillName)) {
     const displayName = skillName.length <= 128 ? skillName
       : `${skillName.slice(0, 127).replace(/[\uD800-\uDBFF]$/, '')}…`;
-    return `[Tool Error] skill: unknown skill ${JSON.stringify(displayName)}. Use an exact name from the available Skill catalog.`;
+    // Steer back to the task: a retry prompt here made models guess name after name (Skill over-trigger chain).
+    return `[Tool Error] skill: unknown skill ${JSON.stringify(displayName)}. Only names in the Skill catalog exist. If no listed Skill fits the request, continue it directly with normal tools.`;
   }
 
   try {

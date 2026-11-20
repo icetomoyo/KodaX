@@ -166,7 +166,7 @@ export function buildTodoReminderText(
     return [
       '<system-reminder>',
       `You have not committed a plan in ${roundsSinceUpdate} iterations.`,
-      staticText("t12i.task-engine/todo-throttle-reminder.block.0"),
+      staticText("todo-throttle.create-milestones"),
     ].join('\n');
   }
 
@@ -181,7 +181,7 @@ export function buildTodoReminderText(
       '<system-reminder>',
       `You have not called todo_update in ${roundsSinceUpdate} iterations. `
         + `All listed items are already in a terminal state. If a new substep emerged, `
-        + `call todo_create({subject:"...", activeForm:"..."}) to insert it (FEATURE_170 v0.7.41); `
+        + `call todo_create({subject:"...", activeForm:"..."}) to insert it; `
         + `do NOT re-seed via todo_update({op:"init"}) — that wipes the completed items.`,
       // FEATURE_151 (v0.7.38) — match Claude Code's `<system-reminder>`
       // suppression discipline (mirrors `messages.ts:3668`).

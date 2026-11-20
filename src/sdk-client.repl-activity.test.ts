@@ -233,7 +233,7 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
         runtimeInfo: { workspaceRoot: workspace, executionCwd: workspace, workspaceKind: 'detected', branch: 'target-branch' },
         messages: [{ role: 'user', content: 'TARGET_FIRST' }, { role: 'assistant', content: 'TARGET_ANSWER' },
           { role: 'user', content: 'TARGET_SECOND' }, { role: 'assistant', content: 'TARGET_LAST' }] });
-      await client.sessions.updateSettings(target, { model: 'target-model', agentMode: 'sa', maxIter: 13 });
+      await client.sessions.updateSettings(target, { model: 'target-model', maxIter: 13 });
       const settings = await client.sessions.getSettings(target);
       if (mode === 'ink') {
         const writeSettings = plane.updateSettings!;
@@ -320,7 +320,7 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
     commandOutput = () => stripVTControlCharacters(logs.mock.calls.flat().join(' ') + writes.join('')).replace(/\s/g, '');
     const classicCommands = sessionCommands('classic');
     holdNextRun = true;
-    const classicRun = await runtime.runs.start({ sessionId: session.id, prompt: 'Classic reasoning feedback', options: { agentMode: 'sa' } });
+    const classicRun = await runtime.runs.start({ sessionId: session.id, prompt: 'Classic reasoning feedback', options: {} });
     if (events!.getCostReport) events!.getCostReport.current = () => 'Total cost: $0.012';
     events!.onIterationEnd?.({ iter: 1, maxIter: 10, tokenCount: 10, tokenSource: 'estimate', scope: 'parent' });
     fixture.ask.mockImplementationOnce(async (rl: readline.Interface) => {
@@ -341,7 +341,7 @@ it('renders current Host activity and accepts follow-ups when attaching Ink to a
       return '/cost';
     }).mockImplementation(async () => (await classicCommands.next()).value ?? '/exit');
     try {
-      await runInteractiveMode({ provider: 'anthropic', agentMode: 'sa', session: { id: session.id, resume: true }, storage: clientStorage,
+      await runInteractiveMode({ provider: 'anthropic', session: { id: session.id, resume: true }, storage: clientStorage,
         clientPlane: plane, sessionCommands: createCliSessionCommands(client) });
       expect(logs.mock.calls.flat().join(' ')).toContain('Total cost: $0.012');
     } finally { readlineSpy.mockRestore(); logs.mockRestore(); stdoutSpy.mockRestore(); }

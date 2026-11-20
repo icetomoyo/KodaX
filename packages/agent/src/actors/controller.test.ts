@@ -6,6 +6,7 @@ import {
   AgentControlError,
   AgentExecutionError,
   AgentLimitReachedError,
+  AgentSettlementPersistenceError,
   createAgentActorController,
   type AgentBudgetPort,
   type AgentActorSaveAttempt,
@@ -3417,6 +3418,142 @@ describe('F270 actor tree and scheduler', () => {
     }
   });
 
+  it('settles a Stop whose timed-out sibling interruption commits late', async () => {
+    vi.useFakeTimers();
+    let releaseLateCommit: (() => void) | undefined;
+    const lateCommit = new Promise<void>((resolve) => { releaseLateCommit = resolve; });
+    let saved: AgentActorSnapshot | undefined;
+    let interruptCommitStarted = false;
+    const persist = async (snapshot: AgentActorSnapshot, expectedRevision: number): Promise<void> => {
+      const actualRevision = saved?.revision ?? 0;
+      if (actualRevision !== expectedRevision) {
+        throw Object.assign(new Error('synthetic Actor revision conflict'), {
+          code: 'actor_snapshot_conflict' as const,
+          expectedRevision,
+          currentRevision: actualRevision,
+        });
+      }
+      saved = structuredClone(snapshot);
+    };
+    const phasedAttempt = (
+      attemptId: string,
+      canonical: Promise<void>,
+      initial: AgentActorSavePhase,
+    ): AgentActorSaveAttempt => {
+      let phase = initial;
+      const settled = canonical.then(() => { phase = 'committed'; });
+      return {
+        dequeued: Promise.resolve(),
+        eligible: Promise.resolve(),
+        canonical: settled,
+        completion: settled,
+        phase: () => phase,
+        cancelBeforeCommit: () => false,
+        diagnostics: () => ({ attemptId, phase, timingsMs: {} }),
+      };
+    };
+    const store: AgentActorStore = {
+      async load() { return saved === undefined ? undefined : structuredClone(saved); },
+      save: persist,
+      beginSave(snapshot, expectedRevision) {
+        const interruptsBoth = snapshot.turns.filter((turn) => turn.state === 'interrupted').length === 2;
+        if (interruptsBoth && !interruptCommitStarted) {
+          interruptCommitStarted = true;
+          return phasedAttempt(
+            'slow-stop',
+            lateCommit.then(() => persist(snapshot, expectedRevision)),
+            'commit_inflight',
+          );
+        }
+        return phasedAttempt('ordinary', persist(snapshot, expectedRevision), 'precommit');
+      },
+    };
+    const abortAware: AgentTurnExecutor = {
+      execute: ({ signal }) => new Promise<AgentExecutionResult>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new Error('aborted by Stop')), { once: true });
+      }),
+    };
+    const onBackgroundError = vi.fn();
+    const controller = await createAgentActorController({
+      executor: abortAware,
+      store,
+      owner: FIRST_OWNER,
+      isOwnerAlive: async () => true,
+      onBackgroundError,
+    });
+    try {
+      const first = await controller.spawn('/root', { taskName: 'gen-S1-A', objective: 'Run in parallel.' });
+      const second = await controller.spawn('/root', { taskName: 'gen-S1-B', objective: 'Run in parallel.' });
+      await vi.advanceTimersByTimeAsync(0);
+
+      const firstStop = controller.quiesce('runtime run aborted').then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      await vi.advanceTimersByTimeAsync(5_001);
+      expect(await firstStop).toBeInstanceOf(AgentSettlementPersistenceError);
+      expect(controller.healthSnapshot().state).toBe('unknown');
+
+      releaseLateCommit?.();
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(saved?.turns.map((turn) => turn.state)).toEqual(['interrupted', 'interrupted']);
+      onBackgroundError.mockClear();
+
+      const retry = controller.quiesce('runtime run aborted');
+      await vi.advanceTimersByTimeAsync(0);
+      await retry;
+
+      expect(controller.healthSnapshot()).toEqual({ state: 'healthy' });
+      expect(controller.list('/root').activeNonRootTurns).toBe(0);
+      expect(onBackgroundError).not.toHaveBeenCalled();
+      for (const turn of [first, second]) {
+        expect(controller.output('/root', turn.actorPath, turn.turnId)).toMatchObject({
+          state: 'interrupted',
+          error: 'runtime run aborted',
+        });
+      }
+    } finally {
+      releaseLateCommit?.();
+      await vi.runAllTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects a Stop that cannot start its mutation without waiting or fencing', async () => {
+    const state = revisionedActorStore();
+    let failNextSave = false;
+    const store: AgentActorStore = {
+      load: () => state.store.load(),
+      async save(next, expectedRevision) {
+        if (failNextSave) {
+          failNextSave = false;
+          throw Object.assign(new Error('Session file is busy.'), { code: 'EBUSY' });
+        }
+        await state.store.save(next, expectedRevision);
+      },
+    };
+    const controller = new AgentActorController({
+      store,
+      executor: new DeferredExecutor(),
+      owner: FIRST_OWNER,
+      isOwnerAlive: async () => true,
+    });
+    await controller.initialize();
+    await controller.spawn('/root', { taskName: 'worker', objective: 'Stop while closing.' });
+    failNextSave = true;
+    await expect(controller.shutdown()).rejects.toThrow('Session file is busy.');
+
+    // The Stop never reaches storage, so its failure is definite and immediate.
+    const stop = controller.quiesce('stop while closing');
+    const outcome = await Promise.race([
+      stop.then(() => 'resolved', (error: unknown) => error),
+      new Promise<string>((resolve) => setTimeout(() => resolve('still waiting'), 1_000)),
+    ]);
+    expect(outcome).toMatchObject({ code: 'actor_closed' });
+    expect(controller.healthSnapshot()).toEqual({ state: 'healthy' });
+    await expect(controller.shutdown()).resolves.toBeUndefined();
+  });
+
   it('reconciles through long storage waits and ignores repair postcommit failure', async () => {
     vi.useFakeTimers();
     let releaseLateCommit: (() => void) | undefined;
@@ -4283,7 +4420,7 @@ describe('F270 actor tree and scheduler', () => {
     }
   });
 
-  it('keeps a conflicting same-owner terminal fact fenced', async () => {
+  it('adopts a conflicting same-owner terminal fact instead of fencing every retry', async () => {
     vi.useFakeTimers();
     try {
       let saved: AgentActorSnapshot | undefined;
@@ -4314,12 +4451,13 @@ describe('F270 actor tree and scheduler', () => {
         },
       };
       const executor = new DeferredExecutor();
+      const onBackgroundError = vi.fn();
       const controller = await createAgentActorController({
         executor,
         store,
         owner: FIRST_OWNER,
         isOwnerAlive: async () => true,
-        onBackgroundError: vi.fn(),
+        onBackgroundError,
       });
       const target = await controller.spawn('/root', {
         taskName: 'conflicting-target',
@@ -4337,13 +4475,21 @@ describe('F270 actor tree and scheduler', () => {
       durableTarget.error = 'conflicting durable failure';
       saved.revision += 1;
 
-      await expect(controller.quiesce('must stay fenced')).rejects.toMatchObject({
-        code: 'actor_settlement_not_persisted',
+      onBackgroundError.mockClear();
+
+      await controller.quiesce('stop after the conflict');
+      // A retry can never rewrite a durable terminal fact, so the durable fact
+      // wins and the lost executor settlement is reported instead of retried.
+      expect(controller.healthSnapshot()).toEqual({ state: 'healthy' });
+      expect(controller.output('/root', target.actorPath, target.turnId)).toMatchObject({
+        state: 'failed',
+        error: 'conflicting durable failure',
       });
-      expect(controller.healthSnapshot()).toMatchObject({
-        state: 'unknown',
-        code: 'actor_settlement_not_persisted',
-      });
+      expect(onBackgroundError).toHaveBeenCalledWith(expect.objectContaining({
+        name: 'AgentSettlementPersistenceError',
+        turnId: target.turnId,
+      }));
+      await controller.quiesce('a later Stop stays settled');
     } finally {
       vi.useRealTimers();
     }

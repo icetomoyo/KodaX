@@ -105,7 +105,7 @@ afterEach(async () => {
 
 it('reads legacy runs conservatively without repairing them from Runtime events', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const round1 = await first.inputs.submit({ sessionId: session.id, inputId: 'round-1', text: 'Ask round 1' });
   await runtime.runs.await(round1.runId!);
   const round2 = await first.inputs.submit({ sessionId: session.id, inputId: 'round-2', text: 'Ask round 2' });
@@ -146,7 +146,7 @@ it('reads legacy runs conservatively without repairing them from Runtime events'
 
 it('keeps legacy paths defined after Runtime event files are deleted', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const round = await first.inputs.submit({ sessionId: session.id, inputId: 'round-1', text: 'Ask round 1' });
   await runtime.runs.await(round.runId!);
   const historyBefore = await first.sessions.readHistory(session.id);

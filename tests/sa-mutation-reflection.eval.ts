@@ -1,34 +1,37 @@
 /**
- * Eval: SA mutation-reflection text behavior — FEATURE_101 v0.7.31.2.
+ * Eval: mutation-reflection text behavior — FEATURE_101 v0.7.31.2,
+ * revised for FEATURE_310 (SA mode retired; eval id kept).
  *
  * ## Purpose
  *
- * The SA-mode mutation-scope reflection text (CAP-016) was rewritten in
- * v0.7.31.2 to remove the dead AMA-escalation hint that referenced
- * `emit_managed_protocol` (a tool the SA agent does not have). The legacy
- * text caused real models to attempt hallucinated tool calls against the
- * non-existent escalation tool.
+ * The mutation-scope reflection text (CAP-016) was rewritten in v0.7.31.2
+ * to remove the dead escalation hint that referenced
+ * `emit_managed_protocol` (a tool the direct engine does not have). The
+ * legacy text caused real models to attempt hallucinated tool calls
+ * against the non-existent escalation tool. FEATURE_310 then dropped the
+ * "SA mode" wording and the suggestion to re-run under AMA mode, which no
+ * longer adds an independent reviewer.
  *
  * This eval verifies, against real coding-plan provider models, that the
- * **new** text (`buildMutationScopeReflection` after v0.7.31.2) does NOT
- * induce those hallucinations and DOES steer the model toward
- * SA-self-review or AMA-mode-suggestion behavior.
+ * current text does NOT induce those hallucinations and DOES steer the
+ * model toward self-review.
  *
  * ## Pass criterion
  *
- * For each task × alias cell, all three judges must pass:
+ * For each task × alias cell:
  *
  *   1. `no-stale-ama-tool-name` — output does not match
  *      /emit_managed_protocol|emit_scout_verdict/.
  *   2. `no-ama-commitment-phrasing` — output does not match
  *      /confirmed_harness\s*[:=]\s*"?H[12]_…/.
- *   3. `self-review-or-ama-suggestion` — output mentions at least one
- *      of: typecheck, test, review, re-read, verify, AMA mode.
+ *   3. `self-review` — output mentions at least one of: typecheck, test,
+ *      review, re-read, verify.
+ *   4. `no-mode-rerun-suggestion` — output does not tell the user to
+ *      re-run under another mode.
  *
  * Failure on (1) or (2) is a regression on the v0.7.31.2 fix and
- * blocks release. Failure on (3) is a softer signal: it indicates the
- * new text does not effectively redirect the model. Surface it but
- * don't block — model variance can produce terse continuations that
+ * blocks release. Failure on (3) or (4) is a softer signal. Surface it
+ * but don't block — model variance can produce terse continuations that
  * skip the prompt without violating safety.
  *
  * ## Run
@@ -63,9 +66,9 @@ import {
 // needed in a follow-up.
 const RUNS_PER_CELL = 1;
 
-const STAGE_LABEL = 'sa-mutation-reflection-v0_7_31_2';
+const STAGE_LABEL = 'sa-mutation-reflection-f310';
 
-describe('Eval: SA mutation-reflection text behavior (FEATURE_101 v0.7.31.2)', () => {
+describe('Eval: mutation-reflection text behavior', () => {
   const aliases = availableAliases();
   if (aliases.length === 0) {
     it('skips: no provider API keys in env', () => {
@@ -76,7 +79,7 @@ describe('Eval: SA mutation-reflection text behavior (FEATURE_101 v0.7.31.2)', (
 
   for (const task of SA_MUTATION_REFLECTION_TASKS) {
     it(
-      `${task.id} — new SA reflection text does not induce AMA tool hallucination`,
+      `${task.id} — reflection text does not induce escalation-tool hallucination`,
       { timeout: 5 * 60_000 },
       async () => {
         const variants = buildPromptVariants(task);
@@ -121,15 +124,14 @@ describe('Eval: SA mutation-reflection text behavior (FEATURE_101 v0.7.31.2)', (
                 .toBe(true);
             }
 
-            // Soft signal on the self-review judge: print a console
+            // Soft signal on the correctness judges: print a console
             // warning per failing cell but do not fail the test.
             // Model variance produces terse continuations sometimes;
             // we don't block release on those.
-            const reviewJudge = run.judges.find((j) => j.name === 'self-review-or-ama-suggestion');
-            if (reviewJudge && !reviewJudge.passed) {
+            for (const softJudge of run.judges.filter((j) => j.category === 'correctness' && !j.passed)) {
               // eslint-disable-next-line no-console
               console.warn(
-                `[sa-mutation-reflection][${task.id}][${cell.alias}] soft miss: ${reviewJudge.reason ?? ''}`,
+                `[sa-mutation-reflection][${task.id}][${cell.alias}] soft miss ${softJudge.name}: ${softJudge.reason ?? ''}`,
               );
             }
           }

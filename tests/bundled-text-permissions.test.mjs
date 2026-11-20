@@ -40,7 +40,7 @@ test('bundled SDK preserves Full Access and exact Auto text approvals', async (t
             ] },
             { textBlocks: [{ type: 'text', text: 'Done.' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' },
           ];
-          const result = await run({ provider: 'bundled-text-permission', agentMode: 'sa', reasoningMode: 'off', lsp: false,
+          const result = await run({ provider: 'bundled-text-permission', reasoningMode: 'off', lsp: false,
             guardrails: mode === 'auto' ? [{ kind: 'tool', name: 'auto-mode', beforeTool: async () => ({ action: 'allow' }) }] : undefined,
             context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt: '', repoIntelligenceMode: 'off',
               systemPromptOverride: 'Use the requested tools.', resolveShellPermissionMode: () => mode },

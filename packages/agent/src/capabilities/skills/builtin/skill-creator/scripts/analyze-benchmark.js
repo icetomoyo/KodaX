@@ -9,7 +9,7 @@ import {
 } from './aggregate-benchmark.js';
 import {
   extractJsonObject,
-  loadKodaXSDK,
+  completeOnce,
   loadRelativeText,
   readJsonFile,
   truncateText,
@@ -116,22 +116,11 @@ ${truncateText(JSON.stringify(input.failureClusters, null, 2), 8000)}
 `;
 }
 
-async function defaultRunAnalyst(prompt, options) {
-  const { runKodaX } = await loadKodaXSDK();
-  const result = await runKodaX(
-    {
-      provider: options.provider ?? 'anthropic',
-      model: options.model,
-      maxIter: options.maxIter ?? 20,
-      effort: options.effort ?? (options.reasoningMode ? undefined : 'medium'),
-      reasoningMode: options.reasoningMode,
-      context: {
-        gitRoot: path.resolve(options.cwd ?? options.workspaceDir ?? process.cwd()),
-      },
-    },
-    prompt
-  );
-  return result.lastText;
+function defaultRunAnalyst(prompt, options) {
+  return completeOnce(prompt, {
+    ...options,
+    effort: options.effort ?? (options.reasoningMode ? undefined : 'medium'),
+  });
 }
 
 export function renderAnalysisMarkdown(analysis) {
@@ -234,8 +223,6 @@ function parseArgs(argv) {
     model: undefined,
     effort: undefined,
     reasoningMode: undefined,
-    maxIter: 20,
-    cwd: process.cwd(),
   };
 
   for (let index = 3; index < argv.length; index += 1) {
@@ -256,10 +243,6 @@ function parseArgs(argv) {
       args.effort = argv[++index];
     } else if (token === '--reasoning' && argv[index + 1]) {
       args.reasoningMode = argv[++index];
-    } else if (token === '--max-iter' && argv[index + 1]) {
-      args.maxIter = Number(argv[++index]);
-    } else if (token === '--cwd' && argv[index + 1]) {
-      args.cwd = argv[++index];
     }
   }
 

@@ -4,9 +4,9 @@
  * Read side: the ordinary-root AMA Worker path. The stable system comes from
  * `resolveRoleInstructions('worker', ..., 'stable')`, the Managed Run Context
  * user message from `resolveRoleRunContext`, capability sections from
- * `buildCapabilityContextSections`, tools from the builtin registry projected
- * with `projectManagedToolContract`, and the compact memory block from
- * `projectManagedSystemContract`. The memory pack comes from the real
+ * `buildCapabilityContextSections` (stable ones through
+ * `workerStableCapabilityContent`), and tools from the builtin registry. The
+ * memory pack comes from the real
  * `createMemoryControlPlane().buildMemoryPack` over a seeded memdir store.
  * Arms A and B differ ONLY in memory pieces: the memory-rules block, the
  * project-memory hint section, and the two memory tools.
@@ -36,8 +36,10 @@ import {
   LEARNING_REVIEW_SYSTEM_PROMPT,
   LEARNING_REVIEW_TOOL,
 } from '../../../packages/coding/src/learning-reviewer.js';
-import { buildCapabilityContextSections } from '../../../packages/coding/src/prompts/capability-sections.js';
-import { projectManagedSystemContract } from '../../../packages/coding/src/prompts/managed-system-contract.js';
+import {
+  buildCapabilityContextSections,
+  workerStableCapabilityContent,
+} from '../../../packages/coding/src/prompts/capability-sections.js';
 import {
   createManagedRunContextMessage,
 } from '../../../packages/coding/src/task-engine/_internal/managed-task/managed-run-context.js';
@@ -47,10 +49,6 @@ import {
   resolveRoleRunContext,
 } from '../../../packages/coding/src/task-engine/_internal/managed-task/role-prompts.js';
 import type { RunnerChainPromptContext } from '../../../packages/coding/src/task-engine/_internal/managed-task/types.js';
-import {
-  markOrdinaryRootToolContract,
-  projectManagedToolContracts,
-} from '../../../packages/coding/src/tools/managed-tool-contract.js';
 import { markRegistryManagedAgent, projectModelToolDefinition } from '../../../packages/coding/src/tools/model-tool-definition.js';
 import { getBuiltinToolDefinition } from '../../../packages/coding/src/tools/registry.js';
 import type {
@@ -69,7 +67,7 @@ const FIXED_NOW = '2026-11-01T09:00:00.000Z';
 const MEMORY_SECTION_IDS = ['memory-rules', 'project-memory'];
 /** Capability sections an ordinary root contributes in this fixture; everything else is AMA-owned or conditional. */
 const CAPABILITY_SECTION_IDS = ['self-knowledge-routing', ...MEMORY_SECTION_IDS];
-/** `requiredTools` of managed-system-contract.ts (module-private there). */
+/** The full Todo and collaboration tool set an ordinary root Worker carries. */
 export const ROOT_TOOLS = ['read', 'write', 'edit', 'bash', 'grep', 'glob',
   'todo_create', 'todo_update', 'todo_list', 'spawn_agent', 'wait_agent',
   'send_message', 'followup_task', 'list_agents', 'agent_output', 'interrupt_agent'];
@@ -168,6 +166,7 @@ async function withLegacyMemory<T>(build: () => Promise<T>): Promise<T> {
 
 async function capabilityBlocks(
   arm: Arm,
+  toolNames: readonly string[],
   pack: MemoryPack | undefined,
   store: SeededStore | undefined,
   cwd: string,
@@ -185,11 +184,12 @@ async function capabilityBlocks(
     .filter((section) => arm === 'B' || !MEMORY_SECTION_IDS.includes(section.id));
   // runner-driven.ts splits these ids into the stable system block; the rest ride the run context.
   const stableIds = ['project-agents', 'self-knowledge-routing', 'memory-rules', 'tool-construction'];
-  const join = (items: typeof kept): string | undefined =>
-    items.length === 0 ? undefined : items.map((section) => section.content).join('\n\n');
+  const join = (items: readonly string[]): string | undefined =>
+    items.length === 0 ? undefined : items.join('\n\n');
   return {
-    stable: join(kept.filter((section) => stableIds.includes(section.id))),
-    dynamic: join(kept.filter((section) => !stableIds.includes(section.id))),
+    stable: join(kept.filter((section) => stableIds.includes(section.id))
+      .map((section) => workerStableCapabilityContent(section, toolNames))),
+    dynamic: join(kept.filter((section) => !stableIds.includes(section.id)).map((section) => section.content)),
   };
 }
 
@@ -201,7 +201,6 @@ function rootAgent(toolNames: readonly string[]): Agent {
   });
   const agent: Agent = { name: WORKER_AGENT_NAME, instructions: '', tools };
   markRegistryManagedAgent(agent, {} as KodaXToolExecutionContext);
-  markOrdinaryRootToolContract(agent);
   return agent;
 }
 
@@ -217,7 +216,7 @@ export function assembleReadCell(
   blocks: CapabilityBlocks,
 ): ReadCellInput {
   const agent = rootAgent(toolNames);
-  const tools = projectManagedToolContracts(agent, agent.tools ?? []);
+  const tools = agent.tools ?? [];
   const availableToolNames = (agent.tools ?? []).map((tool) => tool.name);
   const rolePromptContext: ManagedRolePromptContext = {
     originalTask: readCase.userMessage,
@@ -234,7 +233,7 @@ export function assembleReadCell(
   const stable = resolveRoleInstructions(
     'worker', WORKER_AGENT_NAME, '', promptContext, undefined, undefined, availableToolNames,
   );
-  const systemPrompt = projectManagedSystemContract(agent, tools, stable);
+  const systemPrompt = stable;
   const context = resolveRoleRunContext(
     'worker', WORKER_AGENT_NAME, promptContext, undefined, rolePromptContext,
   );
@@ -253,8 +252,9 @@ export async function buildReadCellInput(readCase: ReadCase, arm: Arm): Promise<
   const seeded = arm === 'B' ? await buildSeededPack(readCase) : undefined;
   const cwd = seeded?.store.cwd ?? path.join(FIXTURE_ROOT, `read-${readCase.id}`, 'cwd');
   mkdirSync(cwd, { recursive: true });
-  const blocks = await capabilityBlocks(arm, seeded?.pack, seeded?.store, cwd);
-  return assembleReadCell(readCase, arm === 'B' ? [...ROOT_TOOLS, ...MEMORY_TOOLS] : ROOT_TOOLS, blocks);
+  const toolNames = arm === 'B' ? [...ROOT_TOOLS, ...MEMORY_TOOLS] : ROOT_TOOLS;
+  const blocks = await capabilityBlocks(arm, toolNames, seeded?.pack, seeded?.store, cwd);
+  return assembleReadCell(readCase, toolNames, blocks);
 }
 
 export interface HintObservation {

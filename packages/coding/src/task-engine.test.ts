@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SkillRegistry } from '@kodax-ai/agent';
 import type { ReasoningPlan } from './reasoning.js';
-import type { KodaXManagedTaskStatusEvent, KodaXRepoRoutingSignals, KodaXTaskRoutingDecision } from './types.js';
+import type { KodaXManagedTaskStatusEvent, KodaXOptions, KodaXRepoRoutingSignals, KodaXTaskRoutingDecision } from './types.js';
 
 const {
   mockCreateReasoningPlan,
@@ -18,7 +18,7 @@ const {
   mockRenderModuleContext,
   mockRenderRepoOverview,
   mockResolveProvider,
-  mockRunDirectKodaX,
+  mockRunManagedTaskViaRunner,
 } = vi.hoisted(() => ({
   mockAnalyzeChangedScope: vi.fn(),
   mockCreateReasoningPlan: vi.fn(),
@@ -30,14 +30,14 @@ const {
   mockRenderModuleContext: vi.fn(() => 'Module context summary'),
   mockRenderRepoOverview: vi.fn(() => 'Repository overview summary'),
   mockResolveProvider: vi.fn(() => ({ name: 'anthropic' })),
-  mockRunDirectKodaX: vi.fn(),
+  mockRunManagedTaskViaRunner: vi.fn(),
 }));
 
-vi.mock('./agent.js', async () => {
-  const actual = await vi.importActual<typeof import('./agent.js')>('./agent.js');
+vi.mock('./task-engine/runner-driven.js', async () => {
+  const actual = await vi.importActual<typeof import('./task-engine/runner-driven.js')>('./task-engine/runner-driven.js');
   return {
     ...actual,
-    runKodaX: mockRunDirectKodaX,
+    runManagedTaskViaRunner: mockRunManagedTaskViaRunner,
   };
 });
 
@@ -411,6 +411,15 @@ describe('runManagedTask', () => {
     } finally { discover.mockRestore(); }
   });
 
+  it('reports an enforced Skill missing from self-discovered sources as not found', async () => {
+    const discover = vi.spyOn(SkillRegistry.prototype, 'discover').mockResolvedValue(undefined);
+    try {
+      await expect(ensureManagedSkillCatalog({ provider: 'anthropic', context: {
+        skillInvocation: { name: 'draft-response', runtimePolicy: { enforceAtRuntime: true } },
+      } })).rejects.toMatchObject({ code: 'skill_not_found', source: 'local', stage: 'skill_load' });
+    } finally { discover.mockRestore(); }
+  });
+
   it('waits for runtime-owned PostToolUse hooks before returning', async () => {
     const root = await createTempDir('kodax-managed-skill-hook-');
     const skillDir = path.join(root, '.kodax', 'skills', 'delayed-skill');
@@ -430,14 +439,13 @@ describe('runManagedTask', () => {
       '',
       'Test.',
     ].join('\n'), 'utf8');
-    mockRunDirectKodaX.mockImplementationOnce(async (options) => {
+    mockRunManagedTaskViaRunner.mockImplementationOnce(async (options: KodaXOptions) => {
       options.events?.onToolResult?.({ id: 'read-1', name: 'read', content: 'ok' });
       return buildAssistantResult('done');
     });
 
     await runManagedTask({
       provider: 'anthropic',
-      agentMode: 'sa',
       events: { beforeToolExecute: async () => true },
       context: {
         gitRoot: root,
@@ -452,61 +460,7 @@ describe('runManagedTask', () => {
     }, 'run delayed skill');
 
     await expect(readFile(marker, 'utf8')).resolves.toBe('done');
-    mockRunDirectKodaX.mockClear();
-  });
-
-  it('keeps SA fully outside AMA and applies direct-path shaping', async () => {
-    const onManagedTaskStatus = vi.fn();
-    mockRunDirectKodaX.mockResolvedValue(
-      buildAssistantResult('状态栏在 packages/repl/src/ui/components/StatusBar.tsx。'),
-    );
-
-    const result = await runManagedTask(
-      {
-        provider: 'anthropic',
-        agentMode: 'sa',
-        events: { onManagedTaskStatus },
-        context: {
-          promptOverlay: '[Base Overlay]',
-        },
-      },
-      '现在状态栏是在哪个文件管理的？',
-    );
-
-    expect(mockCreateReasoningPlan).not.toHaveBeenCalled();
-    expect(mockRunDirectKodaX).toHaveBeenCalledTimes(1);
-    expect(onManagedTaskStatus).not.toHaveBeenCalled();
-    expect(result.managedTask).toBeUndefined();
-    expect(mockRunDirectKodaX.mock.calls[0]?.[0].context?.promptOverlay).toContain(
-      'Return a concise factual answer with the relevant file path(s)',
-    );
-  });
-
-  it('strips the multi-agent / workflow tool cluster from the SA tool surface (no sub-agents, no workflows)', async () => {
-    mockRunDirectKodaX.mockClear();
-    mockRunDirectKodaX.mockResolvedValue(buildAssistantResult('ok'));
-
-    await runManagedTask(
-      {
-        provider: 'anthropic',
-        agentMode: 'sa',
-        context: { excludeTools: ['some_preexisting_tool'] },
-      },
-      'a solo question',
-    );
-
-    const passedExclude = mockRunDirectKodaX.mock.calls.at(-1)?.[0].context?.excludeTools ?? [];
-    // Solo agent: no sub-agents, no workflow.
-    expect(passedExclude).toContain('spawn_agent');
-    expect(passedExclude).toContain('run_workflow');
-    expect(passedExclude).toContain('send_message');
-    expect(passedExclude).toContain('followup_task');
-    expect(passedExclude).toContain('wait_agent');
-    expect(passedExclude).toContain('interrupt_agent');
-    expect(passedExclude).toContain('list_agents');
-    expect(passedExclude).toContain('agent_output');
-    // Pre-existing excludeTools are preserved, not clobbered.
-    expect(passedExclude).toContain('some_preexisting_tool');
+    mockRunManagedTaskViaRunner.mockClear();
   });
 
 });

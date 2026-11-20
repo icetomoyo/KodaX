@@ -45,6 +45,10 @@ export function toKodaXProductClient(
       && (runtime.capabilities?.productExecutionBinding as { version?: number } | undefined)?.version !== 1) {
       throw Object.assign(new Error('Default Skills require an upgraded Host.'), { code: 'daemon_upgrade_required' });
     }
+    if (authorization?.profile?.prompt !== undefined
+      && (runtime.capabilities?.promptSpec as { version?: number } | undefined)?.version !== 1) {
+      throw Object.assign(new Error('Prompt customization requires an upgraded Host.'), { code: 'daemon_upgrade_required' });
+    }
     return { ...input, ...(authorization === undefined ? {} : { authorization: structuredClone(authorization) }) };
   };
   return {

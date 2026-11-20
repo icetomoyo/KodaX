@@ -74,7 +74,7 @@ it('returns a settled boundary outcome without dispatching an oversized write ba
   } finally { await rm(directory, { recursive: true, force: true }); }
 }, 60_000);
 
-it('retains real completed tool feedback when the next main request exceeds the frozen slots', async () => {
+it('retains real completed tool feedback when the Run spends all frozen main slots', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-task-stopped-outcome-test-'));
   let requests = 0;
   try {
@@ -85,10 +85,12 @@ it('retains real completed tool feedback when the next main request exceeds the 
         const file = ['a', 'b', 'c'][requests++];
         return { content: '', tool_calls: [{ id: `read-${requests}`, type: 'function', function: { name: 'read', arguments: JSON.stringify({ path: `${file}.txt` }) } }] };
       } });
-    expect(result.error?.message).toContain('Three main response slots');
+    // The session's maxIter equals the frozen slots, so the managed root ends the Run
+    // before a fourth main request could reach the harness slot guard.
+    expect(result.error).toBeUndefined();
+    expect(result.requestKinds.filter(kind => kind === 'main')).toHaveLength(3);
     expect(result.mainResponses).toBe(3);
     expect(requests).toBe(3);
-    expect(result.visibleCompletionMs).toBeNull();
     expect(result.tools.map(tool => tool.content).join('\n')).toContain('real c');
     expect(result.backgroundSettled).toBe(true);
   } finally { await rm(directory, { recursive: true, force: true }); }

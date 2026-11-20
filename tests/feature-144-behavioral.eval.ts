@@ -39,23 +39,14 @@
  * Skips automatically when `DEEPSEEK_API_KEY` is absent.
  */
 
-import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-import { exec } from 'node:child_process';
-import { promisify } from 'node:util';
-
-import { afterAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import type { KodaXMessage, KodaXToolDefinition, KodaXToolUseBlock } from '@kodax-ai/llm';
 import { getProvider } from '@kodax-ai/llm';
 
-import { buildSystemPrompt, type KodaXOptions } from '@kodax-ai/coding';
 import { createRolePrompt } from '../packages/coding/src/task-engine/_internal/managed-task/role-prompt.js';
 import { buildFallbackRoutingDecision } from '../packages/coding/src/reasoning.js';
 import type { ManagedRolePromptContext } from '../packages/coding/src/task-engine/_internal/managed-task/role-prompt-types.js';
-
-const execAsync = promisify(exec);
 
 // ---------------------------------------------------------------------------
 // Probe alias (1 cheap exploration alias per GUIDELINES 反模式 4)
@@ -283,7 +274,7 @@ function makeGeneratorPrompt(capabilityContextBlock: string | undefined): string
 }
 
 // ---------------------------------------------------------------------------
-// Capability section fixtures — synthetic but shaped like real SA-path content
+// Capability section fixtures — synthetic but shaped like real capability content
 // ---------------------------------------------------------------------------
 
 const D1_CAPABILITY_BLOCK = [
@@ -451,195 +442,6 @@ const ALL_CELLS = [
 ];
 
 // ---------------------------------------------------------------------------
-// SA-path parity probes (post-implementation user concern: "AMA reaches
-// AMA's own bar — but is SA's bar even high?"). The structural ship gate
-// confirmed AMA receives the same 6 sections SA does. The AMA-side
-// behavioral eval above confirmed those sections drive behavior in the
-// AMA Generator role-prompt context. NEITHER answers: "does the SA path,
-// running through buildSystemPromptSnapshot's 13-section concatenation
-// + base-system identity framing, ALSO produce the 4 behaviors at
-// comparable rates?" If SA is itself ≤2/5 on any dimension, then
-// FEATURE_144's parity claim degenerates to "AMA matches an SA path
-// that was also partly broken" — a real architectural finding for
-// v0.7.36 follow-up, NOT blocking v0.7.35.1 ship.
-//
-// Probe shape: build a real git fixture with AGENTS.md + dirty status,
-// build a populated KodaXOptions, render the SA system prompt via
-// `buildSystemPrompt`, run the same 4 user tasks, apply the same
-// mechanical assertions. Direct apples-to-apples vs the AMA cells above.
-// ---------------------------------------------------------------------------
-
-interface SaFixture {
-  cwd: string;
-  cleanup: () => Promise<void>;
-}
-
-async function buildSaFixture(populated: boolean): Promise<SaFixture> {
-  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-fea144-sa-'));
-  // Real git repo so getGitContext picks up branch + dirty status.
-  await execAsync('git init --initial-branch=feature/refactor-logging', { cwd });
-  await execAsync('git config user.email "test@test"', { cwd });
-  await execAsync('git config user.name "test"', { cwd });
-  await fs.writeFile(path.join(cwd, 'notes.md'), '# fixture notes\n', 'utf-8');
-  await fs.mkdir(path.join(cwd, 'src'), { recursive: true });
-  await fs.writeFile(
-    path.join(cwd, 'src', 'foo.ts'),
-    'export function foo() { return 1; }\n',
-    'utf-8',
-  );
-  await fs.writeFile(
-    path.join(cwd, 'src', 'bar.ts'),
-    'export function bar() { return 2; }\n',
-    'utf-8',
-  );
-  await execAsync('git add .', { cwd });
-  await execAsync('git commit -m "init"', { cwd });
-
-  if (populated) {
-    // AGENTS.md so project-agents section emits.
-    await fs.mkdir(path.join(cwd, '.kodax'), { recursive: true });
-    await fs.writeFile(
-      path.join(cwd, '.kodax', 'AGENTS.md'),
-      [
-        '# Project Rules',
-        '',
-        'CRITICAL — every TypeScript file you create MUST start with this exact comment line as the very first line:',
-        `    ${D3_COMPLIANCE_MARKER}`,
-        '',
-        'This is a hard rule. Files without this marker are rejected by CI.',
-      ].join('\n'),
-      'utf-8',
-    );
-    // Dirty git status: modify foo.ts and bar.ts so getGitContext sees
-    // M src/foo.ts / M src/bar.ts.
-    await fs.writeFile(
-      path.join(cwd, 'src', 'foo.ts'),
-      'export function foo() { return 100; } // modified\n',
-      'utf-8',
-    );
-    await fs.writeFile(
-      path.join(cwd, 'src', 'bar.ts'),
-      'export function bar() { return 200; } // modified\n',
-      'utf-8',
-    );
-  }
-
-  return {
-    cwd,
-    cleanup: async () => {
-      await fs.rm(cwd, { recursive: true, force: true });
-    },
-  };
-}
-
-const saFixturesToCleanup: SaFixture[] = [];
-
-async function buildSaPrompt(
-  populated: boolean,
-): Promise<{ prompt: string; fixture: SaFixture }> {
-  const fixture = await buildSaFixture(populated);
-  saFixturesToCleanup.push(fixture);
-  const options: KodaXOptions = {
-    provider: PROBE_PROVIDER,
-    model: PROBE_MODEL,
-    extensionRuntime: populated
-      ? ({
-          getCapabilityPromptContext: async (kind: string) =>
-            kind === 'mcp'
-              ? [
-                  '## MCP Capability Provider',
-                  'Use `mcp_search` to discover MCP tools, then `mcp_describe` to inspect, then `mcp_call` to invoke.',
-                  'When a built-in tool fails or is unavailable, check whether an MCP tool below can accomplish the same goal.',
-                  '',
-                  '### web-tools | status=ready',
-                  '- `mcp:web-tools:tool:fetch_weather` (tool) — Get current weather for a city by name',
-                  '- `mcp:web-tools:tool:search_news` (tool) — Free-text search of recent news headlines',
-                ].join('\n')
-              : undefined,
-        } as unknown as KodaXOptions['extensionRuntime'])
-      : undefined,
-    context: {
-      executionCwd: fixture.cwd,
-      gitRoot: fixture.cwd,
-    },
-  } as unknown as KodaXOptions;
-  // isNewSession=true so git-context + project-snapshot emit.
-  const prompt = await buildSystemPrompt(options, true);
-  return { prompt, fixture };
-}
-
-// SA cells. Built lazily inside the suite so the FS work happens after
-// `it()` registration but before LLM calls.
-let saCells: CellSpec[] | undefined;
-async function buildSaCells(): Promise<CellSpec[]> {
-  const baseline = await buildSaPrompt(false);
-  const treatment = await buildSaPrompt(true);
-  return [
-    {
-      label: 'SA-D1-baseline (no MCP / no AGENTS / clean git)',
-      systemPrompt: baseline.prompt,
-      userMessage: 'What does notes.md say? Read the file and report its contents.',
-      reps: 5,
-      predicate: (r) => r.toolNames.includes('read'),
-    },
-    {
-      label: 'SA-D1-treatment (full 13-section SA prompt)',
-      systemPrompt: treatment.prompt,
-      userMessage: 'What does notes.md say? Read the file and report its contents.',
-      reps: 5,
-      predicate: (r) => r.toolNames.includes('read'),
-    },
-    {
-      label: 'SA-D2-treatment (MCP via extensionRuntime)',
-      systemPrompt: treatment.prompt,
-      userMessage:
-        'I want to know the current weather in Tokyo. Use whatever capability you have available to fetch it.',
-      reps: 5,
-      predicate: (r) =>
-        r.toolNames.some((name) =>
-          ['mcp_search', 'mcp_describe', 'mcp_call'].includes(name),
-        ),
-    },
-    {
-      label: 'SA-D3-treatment (AGENTS.md on disk)',
-      systemPrompt: treatment.prompt,
-      userMessage:
-        'Direct task — no artifact reading needed; this is a fresh file creation. Create utils.ts that exports `add(a: number, b: number): number => a + b`. Call the `write` tool with the full file content right now.',
-      reps: 5,
-      predicate: (r) => {
-        const writeBlock = r.toolBlocks.find((b) => b.name === 'write');
-        if (!writeBlock) return false;
-        const content =
-          typeof writeBlock.input.content === 'string' ? writeBlock.input.content : '';
-        return content.includes(D3_COMPLIANCE_MARKER);
-      },
-    },
-    {
-      label: 'SA-D4-treatment (real dirty git status)',
-      systemPrompt: treatment.prompt,
-      userMessage:
-        'Continue the in-flight refactor — pick one of the files I am currently working on and add a console.log("entered fn") at the top of every exported function in it.',
-      reps: 5,
-      predicate: (r) => {
-        const usedDirtyFile = r.toolBlocks.some((b) => {
-          const p = typeof b.input.path === 'string' ? b.input.path.toLowerCase() : '';
-          return p.includes('foo.ts') || p.includes('bar.ts');
-        });
-        if (usedDirtyFile) return true;
-        const haystack = r.text.toLowerCase();
-        return (
-          haystack.includes('feature/refactor-logging') ||
-          haystack.includes('uncommitted') ||
-          haystack.includes('unstaged') ||
-          haystack.includes('foo.ts') ||
-          haystack.includes('bar.ts')
-        );
-      },
-    },
-  ];
-}
-
-// ---------------------------------------------------------------------------
 // Suite — skipIf when the chosen alias's API key is absent. Per
 // EVAL_GUIDELINES 反模式 3, all cells run serially (no concurrency on a
 // shared-quota provider).
@@ -753,122 +555,5 @@ describe('FEATURE_144 behavioral (Layer 2 single-turn probes, ds/v4flash)', () =
       );
     }
     expect(true).toBe(true);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// SA-path parity verification
-// ---------------------------------------------------------------------------
-
-const saReportRef: { current: FinalReport | undefined } = { current: undefined };
-
-describe('FEATURE_144 SA-path parity (does SA actually work behaviorally?)', () => {
-  const hasKey = Boolean(process.env[PROBE_API_KEY_ENV]);
-
-  describe.skipIf(!hasKey)('with DEEPSEEK_API_KEY', () => {
-    it(
-      'runs all 5 SA cells (D1×2 + D2 + D3 + D4) serially against buildSystemPrompt output',
-      async () => {
-        saCells = await buildSaCells();
-        const cellResults: CellResult[] = [];
-        for (const spec of saCells) {
-          const r = await runCell(spec);
-          cellResults.push(r);
-          // eslint-disable-next-line no-console
-          console.log(`[sa-probe] ${r.label}: ${r.passes}/${r.total}`);
-        }
-        const totalCalls = cellResults.reduce((acc, c) => acc + c.total, 0);
-        saReportRef.current = { cellResults, totalCalls };
-
-        expect(cellResults.length).toBe(5);
-        for (const r of cellResults) {
-          expect(r.total).toBeGreaterThan(0);
-        }
-      },
-      6 * 60_000,
-    );
-
-    it('SA D1 — instruction-following parity (baseline ≈ treatment)', () => {
-      const report = saReportRef.current;
-      expect(report).toBeDefined();
-      const baseline = report!.cellResults[0];
-      const treatment = report!.cellResults[1];
-      // eslint-disable-next-line no-console
-      console.log(`[SA-D1] baseline=${baseline.passes}/${baseline.total} treatment=${treatment.passes}/${treatment.total}`);
-      const baselineOK = baseline.passes >= 4;
-      const clearDegradation = baselineOK && treatment.passes <= 2;
-      expect(clearDegradation, 'SA full prompt shows clear degradation vs minimal').toBe(false);
-    });
-
-    it('SA D2 — mcp_search proactive call (treatment ≥ 3/5)', () => {
-      const report = saReportRef.current;
-      expect(report).toBeDefined();
-      const tx = report!.cellResults[2];
-      // eslint-disable-next-line no-console
-      console.log(`[SA-D2] treatment=${tx.passes}/${tx.total}`);
-      expect(tx.passes, 'SA D2 0/5 — mcp section had no observable effect on SA path').toBeGreaterThan(0);
-    });
-
-    it('SA D3 — AGENTS.md compliance (treatment ≥ 3/5)', () => {
-      const report = saReportRef.current;
-      expect(report).toBeDefined();
-      const tx = report!.cellResults[3];
-      // eslint-disable-next-line no-console
-      console.log(`[SA-D3] treatment=${tx.passes}/${tx.total}`);
-      expect(tx.passes, 'SA D3 0/5 — AGENTS.md rule had no observable effect on SA path').toBeGreaterThan(0);
-    });
-
-    it('SA D4 — git-context informs action (treatment ≥ 3/5)', () => {
-      const report = saReportRef.current;
-      expect(report).toBeDefined();
-      const tx = report!.cellResults[4];
-      // eslint-disable-next-line no-console
-      console.log(`[SA-D4] treatment=${tx.passes}/${tx.total}`);
-      expect(tx.passes, 'SA D4 0/5 — git-context section had no observable effect on SA path').toBeGreaterThan(0);
-    });
-
-    it('SA vs AMA comparison report', () => {
-      const ama = reportRef.current;
-      const sa = saReportRef.current;
-      expect(ama).toBeDefined();
-      expect(sa).toBeDefined();
-      const amaCells = ama!.cellResults;
-      const saCellResults = sa!.cellResults;
-      // eslint-disable-next-line no-console
-      console.log('[parity] dim          AMA       SA');
-      // eslint-disable-next-line no-console
-      console.log(`[parity] D1 baseline  ${amaCells[0].passes}/${amaCells[0].total}      ${saCellResults[0].passes}/${saCellResults[0].total}`);
-      // eslint-disable-next-line no-console
-      console.log(`[parity] D1 treatment ${amaCells[1].passes}/${amaCells[1].total}      ${saCellResults[1].passes}/${saCellResults[1].total}`);
-      // eslint-disable-next-line no-console
-      console.log(`[parity] D2 treatment ${amaCells[2].passes}/${amaCells[2].total}      ${saCellResults[2].passes}/${saCellResults[2].total}`);
-      // eslint-disable-next-line no-console
-      console.log(`[parity] D3 treatment ${amaCells[4].passes}/${amaCells[4].total}      ${saCellResults[3].passes}/${saCellResults[3].total}`);
-      // eslint-disable-next-line no-console
-      console.log(`[parity] D4 treatment ${amaCells[5].passes}/${amaCells[5].total}      ${saCellResults[4].passes}/${saCellResults[4].total}`);
-      // eslint-disable-next-line no-console
-      console.log(`[parity] cost report: AMA=${ama!.totalCalls} calls + SA=${sa!.totalCalls} calls = ${ama!.totalCalls + sa!.totalCalls} total`);
-    });
-
-    it('cost report — SA total LLM calls + sample preview', () => {
-      const report = saReportRef.current;
-      expect(report).toBeDefined();
-      // eslint-disable-next-line no-console
-      console.log(`[sa-cost] SA total LLM calls=${report!.totalCalls} (target ≤ 25, budget ~$0.25 at ds/v4flash)`);
-      for (const cell of report!.cellResults) {
-        const cellSpec = saCells!.find((c) => c.label === cell.label)!;
-        const firstFail = cell.samples.find((s) => !cellSpec.predicate(s));
-        if (firstFail) {
-          // eslint-disable-next-line no-console
-          console.log(
-            `[sa-sample fail] ${cell.label}: tools=[${firstFail.toolNames.join(',')}] text="${firstFail.text.slice(0, 200).replace(/\n/g, ' ')}"`,
-          );
-        }
-      }
-    });
-  });
-
-  afterAll(async () => {
-    await Promise.all(saFixturesToCleanup.splice(0).map((f) => f.cleanup()));
   });
 });

@@ -15,6 +15,7 @@ import type {
 import {
   REPORT_TOOL,
   SIDECAR_SYSTEM_PROMPT,
+  STALL_NUDGE_FRAME,
 } from './prompts.js';
 
 export interface CreateStallSidecarToolObserverOptions {
@@ -82,10 +83,11 @@ export function createStallSidecarToolObserver(
       // nudge text is sitting in the orchestrator. Returning it as a
       // string blocks a matching repeated call with the nudge as its synthesized
       // tool_result — the model sees the nudge instead of the actual
-      // tool output and rethinks.
+      // tool output and rethinks. The frame says the call did not run;
+      // a bare nudge read as that tool's own output.
       const pendingNudge = orchestrator.consumePendingNudge(call);
       if (pendingNudge !== undefined) {
-        return pendingNudge;
+        return `${STALL_NUDGE_FRAME}\n${pendingNudge}`;
       }
       return true;
     },

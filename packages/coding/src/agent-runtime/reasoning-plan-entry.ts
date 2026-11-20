@@ -29,8 +29,8 @@
  *      (joined with double newline) so the system-prompt builder
  *      sees both.
  *
- * Then derives `systemPrompt` (honoring `systemPromptOverride` if
- * provided) and a `providerReasoning` envelope that captures
+ * Then derives `systemPrompt` from `systemPromptOverride` or the Agent
+ * profile instructions (a leaf always has one) and a `providerReasoning` envelope that captures
  * enabled/mode/depth/taskType/executionMode for the provider stream
  * call.
  *
@@ -38,13 +38,6 @@
  * `options` first, then sets `reasoningMode` to the plan's value
  * (overriding any stale `options.reasoningMode`), then merges
  * `context` field-by-field. Don't reorder.
- *
- * **Wire-up note**: this function is passed as the `buildExecutionState`
- * callback to CAP-019's `maybeAdvanceAutoReroute` to avoid a cycle —
- * CAP-019 lives in `middleware/auto-reroute.ts`; if CAP-052 imported
- * from there directly the cycle would close. The DI callback pattern
- * in CAP-019 was chosen specifically for this case; it stays even
- * after CAP-052 has its own module.
  *
  * Migration history: extracted from `agent.ts:3066-3120` —
  * pre-FEATURE_100 baseline — during FEATURE_100 P2 (CAP-052 batch).
@@ -57,11 +50,8 @@ import type {
 } from '../types.js';
 import type { ReasoningPlan } from '../reasoning.js';
 import { buildProviderPolicyHintsForDecision } from '../reasoning.js';
-import { buildSystemPrompt } from '../prompts/index.js';
 import { resolveExecutionCwd } from '../runtime-paths.js';
 import { formatFullSkillSection } from '../skill-invocation-format.js';
-import { resolveEffectiveVerification } from './effective-config.js';
-import { formatVerificationContract } from '../task-engine/_internal/managed-task/formatting.js';
 import { buildAutoRepoIntelligenceContext } from './middleware/repo-intelligence.js';
 import { getModelSkillCatalog } from './tool-resolution.js';
 
@@ -109,19 +99,19 @@ export async function buildReasoningExecutionState(
   };
 
   const instructions = options.context?.systemPromptOverride ?? options.context?.agentProfile?.instructions;
+  // Root Runs use the managed Worker; every leaf caller supplies its own prompt.
+  if (!instructions) {
+    throw new Error('The leaf executor requires systemPromptOverride or agentProfile.instructions; root Runs use the managed Worker.');
+  }
   return {
     effectiveOptions,
-    systemPrompt: instructions
-      ? [
-          instructions,
-          options.context?.systemPromptOverride === undefined ? getModelSkillCatalog(effectiveOptions) : undefined,
-          effectiveOptions.context?.skillInvocation
-            ? formatFullSkillSection(effectiveOptions.context.skillInvocation)
-            : undefined,
-        ].filter((section): section is string => Boolean(section)).join('\n\n')
-      : [await buildSystemPrompt(effectiveOptions, isNewSession),
-      formatVerificationContract(resolveEffectiveVerification(options)),
-        ].filter((section): section is string => Boolean(section)).join('\n\n'),
+    systemPrompt: [
+      instructions,
+      options.context?.systemPromptOverride === undefined ? getModelSkillCatalog(effectiveOptions) : undefined,
+      effectiveOptions.context?.skillInvocation
+        ? formatFullSkillSection(effectiveOptions.context.skillInvocation)
+        : undefined,
+    ].filter((section): section is string => Boolean(section)).join('\n\n'),
     providerReasoning: {
       enabled: reasoningPlan.effort !== 'none',
       effort: reasoningPlan.effort,

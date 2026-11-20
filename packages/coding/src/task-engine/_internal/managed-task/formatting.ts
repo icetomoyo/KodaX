@@ -14,9 +14,7 @@
 import type {
   KodaXJsonValue,
   KodaXManagedTask,
-  KodaXRoleRoundSummary,
   KodaXSkillInvocationContext,
-  KodaXSkillMap,
   KodaXTaskCapabilityHint,
   KodaXTaskToolPolicy,
   KodaXTaskVerificationContract,
@@ -52,39 +50,6 @@ export function formatSkillInvocationSummary(
     skillInvocation.context ? `- Invocation context: ${skillInvocation.context}` : undefined,
     skillInvocation.hookEvents?.length ? `- Hook events: ${skillInvocation.hookEvents.join(', ')}` : undefined,
     rawSkillPath ? `- Raw skill artifact: ${rawSkillPath}` : undefined,
-  ].filter((line): line is string => Boolean(line)).join('\n');
-}
-
-export function formatSkillMapSection(
-  skillMap: KodaXSkillMap,
-  skillMapArtifactPath?: string,
-): string {
-  return [
-    'Skill map:',
-    `- Summary: ${skillMap.skillSummary}`,
-    `- Projection confidence: ${skillMap.projectionConfidence}`,
-    skillMap.preferredAgent ? `- Preferred agent: ${skillMap.preferredAgent}` : undefined,
-    skillMap.preferredModel ? `- Preferred model: ${skillMap.preferredModel}` : undefined,
-    skillMap.invocationContext ? `- Invocation context: ${skillMap.invocationContext}` : undefined,
-    skillMap.hookEvents?.length ? `- Hook events: ${skillMap.hookEvents.join(', ')}` : undefined,
-    skillMap.rawSkillFallbackAllowed ? '- Raw skill fallback: allowed when the map is incomplete or claims conflict.' : undefined,
-    skillMapArtifactPath ? `- Skill map artifact: ${skillMapArtifactPath}` : undefined,
-    formatOptionalListSection('Execution obligations:', skillMap.executionObligations),
-    formatOptionalListSection('Verification obligations:', skillMap.verificationObligations),
-    formatOptionalListSection('Required evidence:', skillMap.requiredEvidence),
-    formatOptionalListSection('Ambiguities:', skillMap.ambiguities),
-  ].filter((line): line is string => Boolean(line)).join('\n');
-}
-
-export function formatRoleRoundSummarySection(summary: KodaXRoleRoundSummary): string {
-  return [
-    'Previous same-role summary:',
-    `- Round: ${summary.round}`,
-    `- Objective: ${summary.objective}`,
-    `- Summary: ${summary.summary}`,
-    formatOptionalListSection('Confirmed conclusions:', summary.confirmedConclusions),
-    formatOptionalListSection('Unresolved questions:', summary.unresolvedQuestions),
-    formatOptionalListSection('Next focus:', summary.nextFocus),
   ].filter((line): line is string => Boolean(line)).join('\n');
 }
 
@@ -175,22 +140,8 @@ export function formatVerificationContract(
         ...verification.criteria.map((criterion) => `- ${criterion.id}: ${criterion.label} (threshold=${criterion.threshold}, weight=${criterion.weight})`),
       ].join('\n')
       : undefined,
-    verification.runtime
-      ? [
-        'Runtime under test:',
-        verification.runtime.cwd ? `- cwd: ${verification.runtime.cwd}` : undefined,
-        verification.runtime.startupCommand ? `- startupCommand: ${verification.runtime.startupCommand}` : undefined,
-        verification.runtime.readySignal ? `- readySignal: ${verification.runtime.readySignal}` : undefined,
-        verification.runtime.baseUrl ? `- baseUrl: ${verification.runtime.baseUrl}` : undefined,
-        verification.runtime.uiFlows?.length ? `- uiFlows: ${verification.runtime.uiFlows.join(' | ')}` : undefined,
-        verification.runtime.apiChecks?.length ? `- apiChecks: ${verification.runtime.apiChecks.join(' | ')}` : undefined,
-        verification.runtime.dbChecks?.length ? `- dbChecks: ${verification.runtime.dbChecks.join(' | ')}` : undefined,
-        verification.runtime.fixtures?.length ? `- fixtures: ${verification.runtime.fixtures.join(' | ')}` : undefined,
-      ].filter((line): line is string => Boolean(line)).join('\n')
-      : undefined,
-    buildRuntimeExecutionGuide(verification)
-      ? `Runtime execution guide:\n${buildRuntimeExecutionGuide(verification)?.trimEnd()}`
-      : undefined,
+    // The guide already lists every runtime field; a separate raw block repeated them.
+    buildRuntimeExecutionGuide(verification)?.trimEnd(),
   ].filter((line): line is string => Boolean(line));
 
   return lines.length > 1 ? lines.join('\n') : undefined;

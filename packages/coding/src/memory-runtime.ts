@@ -41,6 +41,7 @@ import {
 
 import { emitResilienceDebug } from './agent-runtime/resilience-debug.js';
 import { noteWorkSettled } from './memory/note-work-queue.js';
+import { runInSessionScope } from './run-scoped-config.js';
 import { resolveExecutionCwd } from './runtime-paths.js';
 import type { KodaXOptions } from './types.js';
 import {
@@ -372,7 +373,9 @@ async function drainStartedCodingMemoryReviewInbox(
     revalidate: async (entry) => entry.ownerSessionRef === currentSessionId
       ? 'defer'
       : revalidatePendingEpisodeReview(options.session?.storage, entry),
-    review: async (entry, signal) => reviewPendingEpisode(options, controller, entry, signal),
+    // A drained entry may belong to an earlier conversation; its review requests carry that conversation's id.
+    review: (entry, signal) => runInSessionScope(entry.ownerSessionRef,
+      () => reviewPendingEpisode(options, controller, entry, signal)),
     prepareV2Input: async (entry) => ({
       evidence: await buildUnifiedReviewInput(options, identity, controller, entry),
       promptRevision: `sha256:${LEARNING_REVIEW_PROMPT_SHA256}`,
@@ -380,7 +383,7 @@ async function drainStartedCodingMemoryReviewInbox(
       policyRevision: 'project-scoped-canary-v1',
       providerRevision: `${options.provider}:${options.modelOverride ?? options.model ?? 'default'}`,
     }),
-    decideV2: async (_entry, checkpoint, signal) => {
+    decideV2: (entry, checkpoint, signal) => runInSessionScope(entry.ownerSessionRef, async () => {
       if (!isUnifiedLearningReviewModelInput(checkpoint.evidence)) {
         throw new Error('frozen unified review input is invalid');
       }
@@ -405,7 +408,7 @@ async function drainStartedCodingMemoryReviewInbox(
           ? {}
           : { capabilityDecision: normalized.capabilityDecision }),
       };
-    },
+    }),
     listV2Actions: (_entry, decision) =>
       requiredUnifiedReviewCarriers(decision.capabilityDecision),
     applyV2Action: async (entry, decision, carrier, _claim, commitWithAuthority) => (

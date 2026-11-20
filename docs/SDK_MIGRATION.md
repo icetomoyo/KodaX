@@ -12,10 +12,169 @@ Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附�
 原命令超时、秘密环境变量白名单和显式 Bash 执行契约保留。
 
 Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` 保留，
-Solo 和 Adaptive 都会向模型提供可用且已授权的 Skill 目录。运行时绑定生成的
+根运行都会向模型提供可用且已授权的 Skill 目录。运行时绑定生成的
 目录共用 8,000 UTF-16 单元上限；省略目录项不会删除已绑定的授权。
-调用方显式设置的 `systemPromptOverride` 仍是 Solo 的完整提示覆盖，不自动追加
-可选 Skill 目录。`sa` 当前仍是可执行的 Solo 模式；`amaw` 才是归一为 `ama` 的旧别名。
+`systemPromptOverride` 在根运行上的语义见[统一提示词链路](#统一提示词链路未发布)。
+`sa` 和 `amaw` 都是已弃用的输入，见 [SA 模式退役](#sa-模式退役未发布)。
+
+## 统一提示词链路（未发布）
+
+每个根运行都走 managed Worker，每个入口发出同一套工具说明。原来的直连根引擎和
+`system.md` 已删除。SDK 客户已不再直接依赖直连引擎，因此没有弃用期。
+
+- `runKodaX`、`startKodaX`、`KodaXClient`、`createKodaXTaskRunner` / `runOrchestration`、
+  `Runner.run(createDefaultCodingAgent())`，以及不带 `mode` 的 `runs.start` 都运行
+  managed Worker。公开签名不变。根运行因此带 Run Context 信封，并按 `agentMode` 提供
+  Actor 与 Workflow 工具。不需要这些工具时，用 `excludeTools` 或工具策略去掉。
+- `runs.start({ mode: 'coding' })` 和 daemon `run.start` 的 `mode: 'coding'` 仍被接受，但会被
+  忽略并给出 `runtime.runs.start` 警告诊断。新 Run 的 `Run.mode` 一律是 `managed_task`。
+  已持久化的 `coding` Run 记录照常可读，恢复时在 managed Worker 上继续。
+- 不带 `agentMode` 的根运行用 Worker 的精简段落（执行指导、Run Context 信任、收尾）。
+  `agentMode: 'ama'` 的根运行用完整段落（信任与范围、并行工作、执行与交付）。两者来自同一个源头，
+  按可用工具裁剪。
+- `systemPromptOverride` 放在系统提示词最前面，替换 KodaX 的身份和编码指导。
+  KodaX 仍追加环境、Memory、Run Context 信任等运行时段落。不再丢弃整份提示词，
+  也不再与 KodaX 默认身份叠加。`agentProfile.instructions` 只替换身份，工作指导保留。
+- `context.prompt` 现在在 `runKodaX` 上可用。只有内部叶子执行器拒绝它，错误码仍是
+  `prompt_spec_requires_managed_run`。
+- `maxIter` 限制根运行的 LLM 轮数，跨空闲让出与恢复累计；到达上限时以成功结束并带
+  `limitReached`。不设 `maxIter` 时只有每个 Runner 的保险上限。
+- `session.autoResume` / `session.resume` 选最近一次持久化的会话，与原直连引擎一致。
+- 预期结果不再以异常抛出：`runKodaX`、`KodaXClient.send`、`startKodaX().result`、Runner 预设和
+  `createKodaXTaskRunner` 上，Provider 最终失败返回 `success: false`，带 `failure` 和 Session id，
+  下一次 `KodaXClient.send` 继续同一个 Session；中止返回 `interrupted: true`。无效输入和上下文容量错误
+  仍然抛出。`runManagedTask` 仍然抛出，供需要按异常分类的 Host 使用。
+- `failure.detail` 和 `errorMetadata.lastError` 带真实原因：Provider 或本地错误的原文，去掉凭据，
+  上限 1000 字符。`failure.safeMessage` 仍是 KodaX 的固定摘要。原因文本给用户看；分支判断用
+  `failure.errorClass` 或 `safeMessage`，因为原因文本属于 Provider，随版本变化。Runtime 的
+  `failureDetail.detail` 同理（ADR-078）。
+- 强制 Skill 在自发现来源里找不到时，报 `skill_not_found`，不再报 `skill_not_registered`。
+- 删除的导出：`SYSTEM_PROMPT`、`buildSystemPrompt`、`buildSystemPromptSnapshot`，以及只服务于
+  直连提示词的 registry 槽位 `base`、`runtime-context`、`base-suffix`。
+  `buildCapabilityContextSections` 只产出 managed Worker 仍在用的共享能力段落。
+
+## 应用提示词定制（未发布）
+
+英文版见[嵌入方指南](../public_docs/sdk/embedder-guide.md#application-prompt-customization-unreleased)。
+
+人设仍用 `agentProfile`，在整个 Session 内固定。要调整其余提示词，在同一个
+执行 profile 里加 `prompt`：
+
+```ts
+profile: await services.createExecutionProfile({
+  agentProfile: { id: 'support', instructions: 'You are Acme Support. Answer billing questions.' },
+  prompt: {
+    kodaxGuidance: 'omit',
+    context: [
+      { key: 'refunds', kind: 'rule', text: 'Never promise a refund. Route refund requests to billing.' },
+      { key: 'plans', kind: 'reference', text: 'Plans: Basic $10, Pro $30.' },
+    ],
+  },
+}, hostToolLease.tools)
+```
+
+- `kodaxGuidance: 'omit'` 从系统提示词中去掉 KodaX 的编码指导和 Worker 身份措辞。
+  工具契约、工具使用说明和项目的 `AGENTS.md` 保留。默认值 `'keep'` 不改变任何提示词字节。
+- 只要 Run 提供 `spawn_agent`，何时交给子 Agent 并行的规则就会保留。不想用子 Agent 时，
+  用 `excludeTools` 去掉这个工具，规则随之消失。
+- `context` 条目进入 Run 的 Managed Run Context，不进系统提示词。`rule` 按项目规则
+  遵守。`reference` 是回答时使用的资料。模型被告知忽略 reference 里的指令，但实测
+  模型仍会照做其中一部分。除非 Run 的工具和权限本身能保证安全，否则不要把不可信
+  文本放进 reference。
+- 规则会下发到所有写子 Agent，包括子 Agent 再派生的子 Agent 和 Workflow 子 Agent。
+  只读子 Agent 收不到规则，因为它们不能做任何修改。reference 只留在根 Agent。
+- 每个 Run 都发送完整列表。修改某条的 `text` 会替换它。去掉某个 `key` 时，模型会被
+  告知该规则或资料不再适用。
+- `key` 必须匹配 `^[a-z0-9][a-z0-9._-]{0,63}$` 且不重复。条目 `text` 不能为空，也不能
+  包含 Managed Run Context 标记。所有条目文本合计不超过 8,000 字符。格式不对的 spec
+  在开始工作前以 `invalid_params` 拒绝。
+
+`prompt` 用于根运行，现在所有根运行都是 managed（见[统一提示词链路](#统一提示词链路未发布)）。
+只有内部叶子执行器以 `prompt_spec_requires_managed_run` 拒绝它。Host 必须声明 `promptSpec.version === 1`；
+旧 Host 在输入发出前以 `daemon_upgrade_required` 拒绝。
+
+## SA 模式退役（未发布）
+
+`agentMode: 'sa'` 仍可传入，但不再选择任何行为，与 `amaw` 的处理方式相同：
+
+- `runManagedTask`、会话设置和 Product 输入收到 `'sa'` 时运行 AMA Worker。
+  原来 SA 的子 Agent/Workflow 工具排除和 `[Direct Path Rule]` 叠加提示已删除。
+- `runKodaX` 和未指定 `mode` 的 `runs.start` 把 `'sa'` 当作未指定，运行不带 `agentMode` 的
+  managed Worker。直连引擎已删除，见[统一提示词链路](#统一提示词链路未发布)。
+  新 Run 的 `effectiveConfig.agentMode` 和会话视图都报 `'ama'`。
+- 需要"不派子 Agent"的 Host 改用 `excludeTools`、`agentProfile` 或工具策略。
+- `runManagedTask` 带 `'sa'` 时，`context.systemPromptOverride` 按 AMA 语义作为 Worker 指令
+  前置，不再整体替换系统提示词。
+- config.json 里旧 REPL 写入的 `agentMode: "sa"` 不再覆盖 Product 默认值；REPL 启动时把它
+  迁移掉并给出 `KODAX_AGENT_MODE_MIGRATED` 警告。之前它会让 Space 和 daemon 会话悄悄失去 Actor 工具。
+- 已持久化的 Run 记录里的 `'sa'` 原样可读。CLI `--agent-mode sa` 与 REPL `/agent-mode sa`
+  的迁移报错不变。
+
+## beta.11 之后：Actor 结算收敛 v3（未发布）
+
+Host 能力 `actorSettlementConvergence` 从 `2` 升到 `3`。Stop 遇到 Actor 结算无法确认时，
+Run 一定会得到终态，不再停在 `unknown` 等待无限重试（GitHub #2：界面停在“正在修复并停止”）。
+
+- 写盘超时但随后落盘的同 owner Stop 会被读回并采纳：Run 照常以 `cancelled` /
+  `interrupted` 结束，Stop 为 `confirmed`。
+- 仍无法确认 Actor 树时，Run 以 `failed` 结束。适用情形：其他 owner 占用、快照无法修复、
+  修复超过 5 分钟。终态为 `code: 'actor_settlement_not_persisted'`、
+  `effectOutcome: 'unknown'`，Stop 为 `confirmed`；会发布 `run.failed`，`runs.await()` 会返回。
+- 该 Run 结束后 Session 继续隔离（fenced）：`runs.start` 以 `actor_settlement_not_persisted`
+  拒绝，修改 Session 历史以 `conflict` 拒绝。Host 在后台自愈，无需重启：先重试修复；修复不可能成功时，
+  像重启那样从磁盘重新接管 Actor 树，并把未完成的 turn 标为 `interrupted`。接管会等隔离前放行的工具调用
+  全部返回，且没有其他存活进程占用该 Actor 树。自愈后解除隔离，并启动排队的 Run。
+- 只有当 Session 写盘或隔离前放行的工具调用永远不返回时，才需要重启 Host。若另一个存活进程占用该 Actor 树，
+  `runs.start` 以 `actor_owner_conflict` 拒绝；那个进程退出后会自动恢复，重启没有帮助。
+- 隔离中的 Session 不再阻止 Host 停止：它的 Actor turn 已不可能提交，`status.preflight()` 不再把它们列入
+  `activeAgentTurns` 和 `blockers`。Host 停止、`kodax daemon restart`、空闲退出和客户端完整退出（如退出 Space）
+  都能完成。此前这种 Host 拒绝一切停止，退出 Space 后它仍在运行，重启无从进行。
+- 已请求停止的 Run 或 Workflow 不再阻止 Host 停止，即使它的执行体永远不返回（例如工具调用或子 Agent 忽略
+  abort）。`status.preflight()` 不再把它列入 `activeRuns`、`activeWorkflows` 和 `blockers`。Host 退出时这部分
+  工作随之结束，下一个 Host 把该 Run 标为 `interrupted`。此前该 Run 一直是 `unknown`，Host 的一切停止（包括
+  Space 的强制关闭）都被拒绝。
+- 对隔离中的 Actor 树，`runtime.close()` 仍以 `AgentShutdownPersistenceError`
+  （`code: 'actor_shutdown_not_persisted'`）拒绝，但会先关闭 Runtime 的其余部分。只剩这类失败时，daemon
+  记一条警告并报告关闭成功；旧进程退出后，下一个 Host 会接管该 Actor 树。
+- 启动时无法确认 owner 的 Run，`runs.abort()` 会重新探测：owner 已死则中断该 Run；owner 存活返回
+  `conflict`；仍无法确认返回 `conflict` + `retryable: true`，客户端可重试 Stop。
+- Workflow 类型的 Run 同样适用。
+
+客户端（含 Space）需要：
+
+1. 把 `failed` + `actor_settlement_not_persisted` 显示为“已停止，此会话正在恢复”，不要当作模型错误。
+2. 在该 Session 上暂不提供立即重发；`runs.start` 恢复接受或排队的 Run 开始后再开放输入。
+   若 Run 失败几分钟后 `runs.start` 仍以 `actor_settlement_not_persisted` 拒绝，提示用户重启 Host 来恢复该会话。
+3. `effectOutcome: 'unknown'` 表示隔离前已放行的副作用可能已经发生。
+4. 完成上述显示后，在 `connectKodaXRuntime` / 自动启动中加入
+   `requirements: { actorSettlementConvergence: 3 }`：空闲的 v2 daemon 会被替换，
+   无法替换时连接失败，而不是让 Run 停在 `unknown`。
+
+仍要求 `2` 的旧客户端连接 v3 Host 不受影响，只是原先长期 `unknown` 的场景会收到上述 `failed` 终态。
+
+## beta.11 之后：`X-Session-Id`、UUIDv7 会话 id 与 id 校验（未发布）
+
+Provider 的每个 HTTP 请求都带 `X-Session-Id`，值为根会话 id。子 Agent、
+Workflow 和压缩的请求带同一个值，网关可以按会话对账（ADR-077）。如果 Provider
+配置已经设置了 `X-Session-Id`，以配置的值为准。
+
+新会话 id 改为 UUIDv7，旧格式 `YYYYMMDD_HHMMSS_<suffix>` 的会话照常读取。
+不要从 id 里解析日期，改用 `createdAt` 或 `lastMessageAt`。UUIDv7 的前缀是时间戳，
+相近时间创建的会话前缀相同。界面要缩短 id 时，显示末尾几位，不要截取前缀。
+
+`sessions.create({ sessionId })` 和 `sessions.fork({ newSessionId })` 对调用方
+指定的 id 做校验。id 必须是 1-128 个 `[A-Za-z0-9_-]` 字符，不能是 Windows 设备名
+（`CON`、`NUL`、`COM1` 等，不区分大小写），也不能以 `archived-` 开头。不合规的 id
+返回 `invalid_params`。已有会话的 id 不受影响。Host 会丢弃调用方在运行选项里传入的
+`context.contextIdentitySessionId`。
+
+REPL 的 `/clear` 在会话有消息时，会先保存当前会话，再换到新会话 id。Space 自己的
+清空操作如果要保持一致，应在清空时创建新会话。
+
+A2A 服务端：同一主体、同一 `contextId` 的 Task 共用一个 Runtime 会话，id 为
+`a2a-` 加主体键与 context id 的 SHA-256，后续 Task 能看到之前的对话（Issue 418）。
+同一 context 中已有 Task 在运行或处于 `INPUT_REQUIRED` 时，新 Task 排队等待。
+此前创建的 Task 保留各自的会话。
 
 ## beta.10 之后：Skill `allowed-tools` 不再生效（未发布）
 
@@ -418,7 +577,7 @@ promotion，保留配置有限锁忙重试与原凭证来源，再走 Space 生�
 
 Partner 默认具备所选通用 Agent 工作面的能力：persona、surface/profileId 和专家验证
 不是隐式只读权限。使用 Session `workMode:'agent'`，不需要为了准入创建 profile。
-`agentMode:'sa'` 仍保留 Solo 子 Agent 排除；AMA 保留协作能力。实际操作仍受显式工具
+AMA 保留协作能力（当时的 `agentMode:'sa'` Solo 排除已随文首“SA 模式退役”删除）。实际操作仍受显式工具
 策略、permissionMode、审批、连接器绑定、管理员策略和沙箱限制，不自动升级为 Full Access。
 
 有现有 persona/策略时，可信 Main 通过 `authorizeExecution` 的
@@ -483,7 +642,7 @@ Artifact 既可通过 Host lease，也可通过原生 adapter 使用；原生路
 显式禁 write 时仍应拒绝。离线回归使用真实 Artifact runtime 生成 PPTX；不据此宣称
 实际 Space 部署已迁移，或真实连接器与专家模型的质量已经验收。
 
-Script＋SA 使用托管 Script 执行入口并保留 Solo 排除项。运行中切换计划权限或
+Script＋SA 组合及其 Solo 排除项已随文首“SA 模式退役”删除。运行中切换计划权限或
 planModeEffort 会更新下一次物理请求的 effort。Actor 恢复保留
 `resumeCheckpoint:true` 和空 objective，经 `actorCheckpointRecovery.version === 1`
 门禁继续原 turn；旧 Host 明确要求升级。

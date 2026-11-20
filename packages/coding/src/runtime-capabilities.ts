@@ -17,6 +17,8 @@ export interface RuntimeCapabilityRequirements {
   readonly productExecutionBinding?: 1;
   readonly productInputRecovery?: 1;
   readonly productExecutionModeConstraint?: 1;
+  /** Require `context.prompt` and execution-profile `prompt` on managed Runs. */
+  readonly promptSpec?: 1;
   /** Reject hosts that do not advertise an installed external Agent executor plane. */
   readonly externalAgents?: boolean;
   /** Require owner/revision-fenced external Agent registration administration. */
@@ -54,7 +56,7 @@ export interface RuntimeCapabilityRequirements {
   /** Require durable accepted-input and completed-turn boundaries for managed Runs. */
   readonly managedRunDurability?: 1;
   /** Require fail-closed root fencing plus automatic same-owner Actor settlement repair. */
-  readonly actorSettlementConvergence?: 1 | 2;
+  readonly actorSettlementConvergence?: 1 | 2 | 3;
   /** Require Session-local event ordering and scoped event access. */
   readonly daemonManagement?: 1;
   /** Require a read-only inventory of initialized logical daemon clients. */
@@ -123,7 +125,7 @@ export const KODAX_RUNTIME_SDK_CAPABILITIES = Object.freeze({
   sharedSessionSettings: 2,
   durableRecoveryQueries: 1,
   managedRunDurability: 1,
-  actorSettlementConvergence: 2,
+  actorSettlementConvergence: 3,
   daemonManagement: 1,
   daemonClientInventory: 1,
   daemonOrphanExit: 1,
@@ -135,6 +137,7 @@ export const KODAX_RUNTIME_SDK_CAPABILITIES = Object.freeze({
   actorControlPlane: 1,
   sandboxRuntime: 11,
   runtimeAutoModeGuardrail: 6,
+  promptSpec: 1,
 } as const satisfies Required<Omit<RuntimeCapabilityRequirements, 'externalAgents'>>);
 
 export type RuntimeCapabilityName = keyof typeof KODAX_RUNTIME_SDK_CAPABILITIES;

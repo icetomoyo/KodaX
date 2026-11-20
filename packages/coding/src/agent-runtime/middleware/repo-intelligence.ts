@@ -372,7 +372,8 @@ export async function buildAutoRepoIntelligenceContext(
         fallbackGuidance = [
           '## Repo Intelligence Guidance',
           '- Current repository intelligence is low-confidence for this area.',
-          '- Validate critical edits with `module_context`, `symbol_context`, `grep`, and `read` before committing to a change.',
+          // Tool names stay out: this block reaches modes where those tools are absent or script-only.
+          '- Confirm its claims against the source before an edit relies on them.',
         ].join('\n');
       }
     }

@@ -67,7 +67,7 @@ test('teardown aborts an unfinished fixture run before shutting down', { timeout
     const runtime = await connectKodaXRuntime({ homeDir: process.argv[2], autoStart: false });
     try {
       const session = await runtime.sessions.create({ projectPath: process.argv[2] });
-      await runtime.runs.start({ sessionId: session.id, prompt: 'Wait for the fixture response', options: { agentMode: 'sa' } });
+      await runtime.runs.start({ sessionId: session.id, prompt: 'Wait for the fixture response', options: {} });
     } finally { await runtime.close(); }
   `;
   await execute(process.execPath, ['--input-type=module', '-e', code,

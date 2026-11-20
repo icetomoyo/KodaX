@@ -1,24 +1,19 @@
 /**
- * KodaX Agent — public SDK entry post-FEATURE_100 P3.6r/P3.6s.
+ * KodaX leaf executor.
  *
- * `runKodaX(opts, prompt)` is the stable SDK signature; internally it
- * delegates to `Runner.run(createDefaultCodingAgent(), …)` so SA
- * execution always flows through the Layer-A frame (Option Y deletion
- * per ADR-020 / v0.7.29 §239 §371). Substrate body lives in
- * `agent-runtime/run-substrate.ts` (`runSubstrate`) and is wired via
- * the `Agent.substrateExecutor` closure attached in `coding-preset.ts`.
- *
- * v0.7.42: `runRunKodaXInternal` is the shared implementation. The
- * embedder-facing `startKodaX` (non-blocking, returns `RunningSession`)
- * lives in `./running-session.ts` and wraps the same internal path —
- * no dual route (per feedback_no_parallel_refactor_paths).
+ * `runLeafAgent(opts, prompt)` delegates to
+ * `Runner.run(createCodingAgent(runSubstrate), …)` so leaf execution flows through
+ * the Layer-A frame (ADR-020). The substrate body lives in
+ * `agent-runtime/run-substrate.ts` (`runSubstrate`) and is wired via the
+ * `Agent.substrateExecutor` closure attached in `coding-preset.ts`.
  */
 
 import { Runner } from '@kodax-ai/agent';
 import { resolveWorkMode } from './work-mode.js';
 import { runWithScopedConfig } from '@kodax-ai/llm';
 
-import { createDefaultCodingAgent } from './coding-preset.js';
+import { runSubstrate } from './agent-runtime/run-substrate.js';
+import { createCodingAgent } from './coding-preset.js';
 import { applyFollowupEscalationToOptions } from './reasoning.js';
 import { deriveRunScopedConfig } from './run-scoped-config.js';
 import {
@@ -26,18 +21,25 @@ import {
   awaitRuntimeSkillInvocationPolicy,
 } from './skill-invocation-policy.js';
 import { normalizeKodaXAgentMode, type KodaXOptions, type KodaXResult } from './types.js';
+import { assertPromptSpecOnManagedRun } from './prompts/prompt-spec.js';
 
-export async function runKodaX(
+/**
+ * Internal leaf executor: one Agent on the direct substrate, with no managed
+ * Worker. Child Agents and their digest/repair one-shots run here. Public root
+ * Runs go through the managed task engine instead.
+ */
+export async function runLeafAgent(
   options: KodaXOptions,
   prompt: string,
 ): Promise<KodaXResult> {
   if (resolveWorkMode(options) === 'script') throw new Error('Script requires the managed Run entry: use runManagedTask with Session storage.');
+  assertPromptSpecOnManagedRun(options.context?.prompt);
   const policyOptions = await applyRuntimeSkillInvocationPolicy(options, prompt);
   const normalizedOptions: KodaXOptions = policyOptions.agentMode === undefined
     ? policyOptions
     : { ...policyOptions, agentMode: normalizeKodaXAgentMode(policyOptions.agentMode) };
-  // FEATURE_103 (v0.7.29): apply L5 user-followup escalation at the SA
-  // entry. When the user's prompt contains a doubt or deepen marker
+  // FEATURE_103 (v0.7.29): apply L5 user-followup escalation at the
+  // direct-engine entry. When the user's prompt contains a doubt or deepen marker
   // (and, for doubt, there is a prior assistant turn in the session),
   // bump the L1 ceiling one rank. Off remains off (kill switch). Pure
   // option transform — no escalation = same reference returned.
@@ -54,16 +56,14 @@ export async function runKodaX(
         },
       };
   // Establish the run-scoped config (AsyncLocalStorage) around the whole run.
-  // `runKodaX` is a public SDK entry (and the target `startKodaX` wraps), so
-  // without this the per-run overrides (modelTiers / maxOutputTokens /
-  // disablePromptCache / lsp / workflow) would be silently dropped whenever a
-  // consumer calls it directly rather than via `runManagedTask`. When reached
-  // through `runManagedTask` (SA dispatch) this simply re-establishes the same
-  // scope — nesting replaces with an identical config, so it is idempotent.
+  // Without this the per-run overrides (modelTiers / maxOutputTokens /
+  // disablePromptCache / lsp / workflow) would be dropped for a leaf that is
+  // not already inside a managed scope. When a caller nests it inside an
+  // existing scope this re-establishes the same scope, so it is idempotent.
   let failure: unknown;
   try {
     return await runWithScopedConfig(deriveRunScopedConfig(runtimeOptions), async () => {
-      const result = await Runner.run<KodaXResult>(createDefaultCodingAgent(), prompt, {
+      const result = await Runner.run<KodaXResult>(createCodingAgent(runSubstrate), prompt, {
         presetOptions: runtimeOptions,
         abortSignal: runtimeOptions.abortSignal,
         // FEATURE_092 (v0.7.33): forward caller-supplied run-scoped guardrails.
@@ -77,8 +77,8 @@ export async function runKodaX(
       // return a truncated `RunResult` typed as `KodaXResult`).
       if (!result.data) {
         throw new Error(
-          'runKodaX: substrate executor did not lift KodaXResult onto RunResult.data — '
-          + 'verify createDefaultCodingAgent().substrateExecutor in coding-preset.ts',
+          'runLeafAgent: substrate executor did not lift KodaXResult onto RunResult.data — '
+          + 'verify createCodingAgent().substrateExecutor in coding-preset.ts',
         );
       }
       return result.data;

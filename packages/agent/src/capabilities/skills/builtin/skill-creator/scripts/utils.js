@@ -76,6 +76,26 @@ export async function loadKodaXSDK() {
   );
 }
 
+const ONE_REQUEST_SYSTEM = 'Answer the request in the user message using only the material it provides.';
+
+/**
+ * Judges and the description writer need one answer over inline material, not
+ * an agent loop with tools. `effort` wins; a legacy `reasoningMode` maps once.
+ */
+export async function completeOnce(prompt, options) {
+  const sdk = await loadKodaXSDK();
+  const effort = options.effort
+    ?? (options.reasoningMode ? sdk.mapLegacyReasoningModeToEffortIntent(options.reasoningMode) : undefined);
+  const result = await sdk.getProvider(options.provider ?? 'anthropic').stream(
+    [{ role: 'user', content: prompt }],
+    [],
+    ONE_REQUEST_SYSTEM,
+    effort === undefined ? undefined : { effort },
+    options.model ? { modelOverride: options.model } : undefined,
+  );
+  return result.textBlocks.map((block) => block.text).join('');
+}
+
 export function toPosixPath(filePath) {
   return filePath.replace(/\\/g, '/');
 }

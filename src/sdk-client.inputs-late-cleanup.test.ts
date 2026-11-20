@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { setKodaXDiagnosticSink, type KodaXDiagnostic } from '@kodax-ai/agent';
-import type { KodaXOptions, KodaXResult, RunningSession } from '@kodax-ai/coding';
+import type { KodaXOptions, KodaXResult } from '@kodax-ai/coding';
 import { FileSessionStorage } from '@kodax-ai/repl';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { createKodaXRuntime } from "../tests/runtime-fixture.js";
@@ -13,7 +13,7 @@ import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtim
 
 const executor = vi.hoisted(() => ({ start: vi.fn() }));
 vi.mock('@kodax-ai/coding', async (original) => ({
-  ...await original<typeof import('@kodax-ai/coding')>(), startKodaX: executor.start,
+  ...await original<typeof import('@kodax-ai/coding')>(), runManagedTask: executor.start,
 }));
 
 it('keeps an unconfirmed temporary task until its executor settles and reports late cleanup failure after Host close', async () => {
@@ -22,15 +22,11 @@ it('keeps an unconfirmed temporary task until its executor settles and reports l
   let finish: ((result: KodaXResult) => void) | undefined;
   const execution = new Promise<KodaXResult>((resolve) => { finish = resolve; });
   let aborted = false;
-  executor.start.mockImplementation((options: KodaXOptions): RunningSession => ({
-    id: options.session!.id!, currentProvider: options.provider, currentModel: options.model,
-    currentReasoning: options.reasoningMode, attached: true,
-    get aborted() { return aborted; },
-    setProvider() {}, setModel() {}, setReasoning() {},
-    // This public executor port cannot confirm cancellation until its result arrives.
-    abort() { aborted = true; },
-    result: execution,
-  }));
+  // This executor sees the abort but cannot confirm cancellation until its result arrives.
+  executor.start.mockImplementation((options: KodaXOptions): Promise<KodaXResult> => {
+    options.abortSignal?.addEventListener('abort', () => { aborted = true; }, { once: true });
+    return execution;
+  });
   const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'late-executor' });
   const paths = resolveRuntimeDaemonPaths(homeDir);
   const lock = tryAcquireRuntimeDaemonLock(paths, {
@@ -49,7 +45,7 @@ it('keeps an unconfirmed temporary task until its executor settles and reports l
   process.on('unhandledRejection', onUnhandled);
   try {
     const session = await client.sessions.create({ projectPath: homeDir, temporary: true });
-    await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', agentMode: 'sa' });
+    await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
     const accepted = await client.inputs.submit({ sessionId: session.id, inputId: 'late-result', text: 'Finish when possible.' });
     const result = runtime.runs.await(accepted.runId!);
     await host.close();

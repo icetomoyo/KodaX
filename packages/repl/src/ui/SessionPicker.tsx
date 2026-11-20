@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ClientSessionSummary } from '@kodax-ai/coding/client-contract';
 import { Box, Text, render, useApp, useInput } from '../tui/renderer-runtime.js';
 import { resolveInteractiveSurfacePreference } from '../tui/runtime.js';
+import { formatSessionTimestamp } from '../session/session-recency.js';
 
 const SELECTION_TRANSITION_PAINT_MS = 40;
 
@@ -64,18 +65,6 @@ export function buildSessionPickerPage(
     pageIndex: Math.floor(pageStart / safePageSize),
     pageCount: Math.max(1, Math.ceil(sessions.length / safePageSize)),
   };
-}
-
-function formatTimestamp(value: string | undefined): string {
-  if (!value) return 'unknown time';
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  const year = parsed.getFullYear();
-  const month = String(parsed.getMonth() + 1).padStart(2, '0');
-  const day = String(parsed.getDate()).padStart(2, '0');
-  const hour = String(parsed.getHours()).padStart(2, '0');
-  const minute = String(parsed.getMinutes()).padStart(2, '0');
-  return `${year}-${month}-${day} ${hour}:${minute}`;
 }
 
 export function SessionPicker({
@@ -164,7 +153,7 @@ export function SessionPicker({
           const surface = session.surface ? ` · ${session.surface}` : '';
           return (
             <Text key={session.id} color={selected ? 'cyan' : undefined} bold={selected}>
-              {selected ? '❯' : ' '} {title} · {session.msgCount} msgs{surface} · {formatTimestamp(session.lastMessageAt ?? session.createdAt)} · {session.id.slice(0, 8)}
+              {selected ? '❯' : ' '} {title} · {session.msgCount} msgs{surface} · {formatSessionTimestamp(session.lastMessageAt ?? session.createdAt)} · {session.id.slice(-8)}
             </Text>
           );
         })}

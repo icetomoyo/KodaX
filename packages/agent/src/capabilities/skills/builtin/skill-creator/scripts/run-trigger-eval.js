@@ -1,53 +1,66 @@
 #!/usr/bin/env node
 
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  extractJsonObject,
   loadKodaXSDK,
   loadSkill,
+  writeSkill,
 } from './utils.js';
 
-function buildTriggerEvalPrompt(skillName, description, query) {
-  return [
-    'You are evaluating whether a KodaX skill description should trigger for a user request.',
-    'Decide whether the skill should be used based only on the skill name, description, and query.',
-    'Return JSON only with this exact shape:',
-    '{"trigger": true, "reason": "short explanation"}',
-    '',
-    `Skill name: ${skillName}`,
-    `Skill description: ${description}`,
-    `User query: ${query}`,
-  ].join('\n');
+const RECORDED_NOT_RUN = 'Trigger eval: this call was recorded and not run.';
+
+/**
+ * Stage the candidate as a project Skill. Project Skills outrank user, plugin
+ * and builtin Skills, so the candidate shadows an installed copy of itself and
+ * competes with everything else the product catalog shows.
+ */
+async function stageCandidateProject(skill, description) {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'kodax-trigger-eval-'));
+  const skillDir = path.join(projectRoot, '.kodax', 'skills', skill.frontmatter.name);
+  await mkdir(skillDir, { recursive: true });
+  await writeSkill(skillDir, { ...skill.frontmatter, description }, skill.body);
+  return projectRoot;
 }
 
-export function parseTriggerDecision(text) {
-  const parsed = extractJsonObject(text);
-  if (!parsed || typeof parsed !== 'object') {
-    throw new Error('Could not parse trigger decision JSON');
-  }
-
-  return {
-    trigger: parsed.trigger === true,
-    reason: typeof parsed.reason === 'string' ? parsed.reason.trim() : '',
-  };
-}
-
-async function defaultRunPrompt(prompt, options) {
+/**
+ * The first response of the product AMA root. Every call is recorded as it
+ * starts; the gate stops each one from running. A batch with a Skill call defers
+ * its other calls before the gate, so only the start event sees all of them.
+ */
+async function defaultObserveFirstTurn(query, options) {
   const { runKodaX } = await loadKodaXSDK();
-  const result = await runKodaX(
+  const calls = [];
+  await runKodaX(
     {
       provider: options.provider,
-      maxIter: options.maxIter ?? 12,
       model: options.model,
+      agentMode: 'ama',
+      maxIter: 1,
       reasoningMode: options.reasoningMode ?? 'off',
-      thinking: options.reasoningMode ? options.reasoningMode !== 'off' : false,
+      context: { gitRoot: options.projectRoot },
+      events: {
+        onToolUseStart: (tool) => {
+          calls.push({ tool: tool.name, input: tool.input ?? {} });
+        },
+        beforeToolExecute: async () => RECORDED_NOT_RUN,
+      },
     },
-    prompt
+    query
   );
+  return calls;
+}
 
-  return result.lastText;
+function describeCall(call) {
+  if (call.tool !== 'skill') return call.tool;
+  return `skill:${String(call.input?.skill ?? '').replace(/^\//, '')}`;
+}
+
+export function scoreFirstTurn(calls, skillName) {
+  const toolCalls = calls.map(describeCall);
+  return { trigger: toolCalls.includes(`skill:${skillName}`), tool_calls: toolCalls };
 }
 
 export function summarizeTriggerResults(results) {
@@ -83,8 +96,12 @@ export function summarizeTriggerResults(results) {
   return summary;
 }
 
-export async function runTriggerEval(options, runner = defaultRunPrompt) {
+export async function runTriggerEval(options, observe = defaultObserveFirstTurn) {
   const skill = await loadSkill(options.skillPath);
+  if (skill.frontmatter['disable-model-invocation'] === true) {
+    throw new Error('This Skill sets disable-model-invocation, so the model catalog never shows it and it cannot trigger.');
+  }
+  const skillName = skill.frontmatter.name;
   const currentDescription = options.descriptionOverride
     ?? String(skill.frontmatter.description ?? '').trim();
   const evalFile = JSON.parse(await readFile(options.evalsPath, 'utf8'));
@@ -96,62 +113,56 @@ export async function runTriggerEval(options, runner = defaultRunPrompt) {
     ? Math.min(Math.max(options.triggerThreshold, 0), 1)
     : 0.5;
   const results = [];
+  const projectRoot = await stageCandidateProject(skill, currentDescription);
 
-  for (const item of evals) {
-    const query = String(item.query ?? item.prompt ?? '').trim();
-    if (!query) {
-      continue;
-    }
-
-    const shouldTrigger = item.should_trigger === true;
-    let triggers = 0;
-    const attempts = [];
-
-    for (let runIndex = 0; runIndex < runsPerQuery; runIndex += 1) {
-      const response = await runner(
-        buildTriggerEvalPrompt(skill.frontmatter.name, currentDescription, query),
-        options
-      );
-      const parsed = parseTriggerDecision(response);
-      if (parsed.trigger) {
-        triggers += 1;
+  try {
+    for (const item of evals) {
+      const query = String(item.query ?? item.prompt ?? '').trim();
+      if (!query) {
+        continue;
       }
-      attempts.push(parsed);
+
+      const shouldTrigger = item.should_trigger === true;
+      let triggers = 0;
+      const attempts = [];
+
+      for (let runIndex = 0; runIndex < runsPerQuery; runIndex += 1) {
+        const attempt = scoreFirstTurn(await observe(query, { ...options, projectRoot }), skillName);
+        if (attempt.trigger) {
+          triggers += 1;
+        }
+        attempts.push(attempt);
+      }
+
+      const triggerRate = triggers / runsPerQuery;
+      const predictedTrigger = triggerRate >= threshold;
+      results.push({
+        query,
+        should_trigger: shouldTrigger,
+        triggers,
+        runs: runsPerQuery,
+        trigger_rate: triggerRate,
+        predicted_trigger: predictedTrigger,
+        pass: shouldTrigger === predictedTrigger,
+        attempts,
+      });
     }
-
-    const triggerRate = triggers / runsPerQuery;
-    const predictedTrigger = triggerRate >= threshold;
-    const pass = shouldTrigger
-      ? predictedTrigger
-      : !predictedTrigger;
-
-    results.push({
-      query,
-      should_trigger: shouldTrigger,
-      triggers,
-      runs: runsPerQuery,
-      trigger_rate: triggerRate,
-      predicted_trigger: predictedTrigger,
-      pass,
-      attempts,
-    });
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 
-  const summary = summarizeTriggerResults(results);
-
   return {
-    skill_name: skill.frontmatter.name,
+    skill_name: skillName,
     description: currentDescription,
     results,
-    summary,
+    summary: summarizeTriggerResults(results),
     meta: {
       provider: options.provider,
       model: options.model ?? null,
       runs_per_query: runsPerQuery,
       trigger_threshold: threshold,
-      evaluation_kind: 'description_semantic_screening',
-      model_catalog_visible: skill.frontmatter['disable-model-invocation'] !== true,
-      note: 'Single-description semantic screening; not observed Skill tool selection from a competing catalog.',
+      evaluation_kind: 'observed_skill_call',
+      note: 'First response of the AMA root. The candidate is staged as a project Skill over the installed catalog; tool calls are recorded, not run.',
     },
   };
 }
@@ -165,7 +176,6 @@ function parseArgs(argv) {
     output: undefined,
     runsPerQuery: 1,
     triggerThreshold: 0.5,
-    maxIter: 12,
     reasoningMode: 'off',
     descriptionOverride: undefined,
   };
@@ -186,8 +196,6 @@ function parseArgs(argv) {
       args.runsPerQuery = Number(argv[++index]);
     } else if (token === '--trigger-threshold' && argv[index + 1]) {
       args.triggerThreshold = Number(argv[++index]);
-    } else if (token === '--max-iter' && argv[index + 1]) {
-      args.maxIter = Number(argv[++index]);
     } else if (token === '--reasoning' && argv[index + 1]) {
       args.reasoningMode = argv[++index];
     } else if (token === '--description' && argv[index + 1]) {

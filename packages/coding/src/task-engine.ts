@@ -1,16 +1,15 @@
 /**
  * FEATURE_076 + FEATURE_084 (v0.7.26):
  *
- * `runManagedTask` is the single public entry point for AMA/AMAW/SA task runs.
+ * `runManagedTask` is the single public entry point for managed task runs.
  * Its body collapsed dramatically in Shard 6d when the legacy state-machine
  * orchestration (formerly ~6000 lines of role dispatch, protocol parsing,
  * harness escalation, budget accounting, and manual evaluator reshaping)
  * was replaced by the Runner-driven path in `./task-engine/runner-driven.ts`.
  *
- * Dispatch:
- *   - SA mode  -> `runKodaX` with a direct-path prompt overlay.
- *   - AMA mode -> `runManagedTaskViaRunner` (single Worker via Layer-A Runner,
- *                 with optional Actor children).
+ * Dispatch: every agent mode runs `runManagedTaskViaRunner` (single Worker via
+ * Layer-A Runner, with optional Actor children). The retired `sa` and `amaw`
+ * inputs resolve to AMA (FEATURE_310).
  *
  * The outer wrapper also runs `reshapeToUserConversation` so
  * `result.messages` surfaces a clean user-facing {user, assistant} pair
@@ -22,14 +21,12 @@
  */
 import { mapLegacyReasoningModeToEffortIntent, runWithScopedConfig } from '@kodax-ai/llm';
 import { SkillRegistry, formatSkillsSystemPrompt } from '@kodax-ai/agent';
-import { runKodaX } from './agent.js';
 import { deriveRunScopedConfig } from './run-scoped-config.js';
 import { KodaXSkillInvocationError } from './skill-invocation-error.js';
 import {
   applyRuntimeSkillInvocationPolicy,
   awaitRuntimeSkillInvocationPolicy,
 } from './skill-invocation-policy.js';
-import { resolveWorkMode } from './work-mode.js';
 import { hasExplicitNaturalLanguageWorkflowIntent } from './workflows/invocation-policy.js';
 import {
   buildFallbackRoutingDecision,
@@ -39,6 +36,7 @@ import {
 } from './reasoning.js';
 import { resolveProvider } from './providers/index.js';
 import { reshapeToUserConversation } from './task-engine/_internal/round-boundary.js';
+import { readFailureResult } from './execution-failure.js';
 import { runManagedTaskViaRunner } from './task-engine/runner-driven.js';
 import {
   getRepoRoutingSignals,
@@ -57,33 +55,23 @@ import {
   findValidCheckpoint,
 } from './task-engine/_internal/managed-task/checkpoint.js';
 import type {
-  KodaXCanonicalAgentMode,
   KodaXHarnessProfile,
   KodaXOptions,
   KodaXResult,
-  KodaXTaskRoutingDecision,
 } from './types.js';
 import { normalizeKodaXAgentMode } from './types.js';
+import { assertKodaXPromptSpec } from './prompts/prompt-spec.js';
 
-export function resolveManagedAgentMode(options: KodaXOptions): KodaXCanonicalAgentMode {
-  return normalizeKodaXAgentMode(options.agentMode) ?? 'ama';
-}
-
-export function buildDirectPathTaskFamilyPromptOverlay(
-  family: KodaXTaskRoutingDecision['taskFamily'] | undefined,
-  sections: Array<string | undefined>,
-): string {
-  const familyRule = family === 'review'
-    ? '[Direct Path Rule] Return a review report, not a plan. Findings first when issues exist; otherwise explicitly say no findings.'
-    : family === 'lookup'
-      ? '[Direct Path Rule] Return a concise factual answer with the relevant file path(s) and only the minimum supporting detail.'
-      : family === 'planning'
-        ? '[Direct Path Rule] Return a concrete plan, not an implementation report.'
-        : family === 'investigation'
-          ? '[Direct Path Rule] Return diagnosis, evidence, and next steps.'
-          : undefined;
-
-  return [...sections, familyRule].filter(Boolean).join('\n\n');
+/**
+ * Retired labels must not reach the Worker, which gates Actor and Workflow hosts
+ * on `'ama'` and reports the label in effectiveConfig: `'sa'` runs exactly like
+ * an unlabeled call and `'amaw'` as `'ama'`.
+ */
+function withCanonicalAgentMode(options: KodaXOptions): KodaXOptions {
+  const agentMode = normalizeKodaXAgentMode(options.agentMode);
+  if (agentMode === options.agentMode) return options;
+  const { agentMode: _retired, ...unlabeled } = options;
+  return agentMode === undefined ? unlabeled : { ...unlabeled, agentMode };
 }
 
 /**
@@ -123,11 +111,16 @@ export async function ensureManagedSkillCatalog(
     ?? process.cwd();
   const registry = boundRegistry ?? new SkillRegistry(projectRoot);
   if (!boundRegistry) {
+    const invocation = options.context?.skillInvocation;
     try { await registry.discover(); }
     catch (cause: unknown) {
-      const invocation = options.context?.skillInvocation;
       if (!invocation?.runtimePolicy?.enforceAtRuntime || cause instanceof Error && cause.name === 'AbortError') throw cause;
       throw new KodaXSkillInvocationError('skill_registry_unavailable', invocation.name, { cause });
+    }
+    // This registry came from trusted discovery, not the Host. A missing Skill
+    // must report as not found rather than as absent from a Host registry.
+    if (invocation?.runtimePolicy?.enforceAtRuntime && !registry.discoveryIncomplete && !registry.has(invocation.name)) {
+      throw new KodaXSkillInvocationError('skill_not_found', invocation.name);
     }
   }
 
@@ -141,10 +134,28 @@ export async function ensureManagedSkillCatalog(
   };
 }
 
+/**
+ * Public root entry. Every root Run goes through the managed Worker.
+ * Expected outcomes settle as a result, so callers keep the session and history:
+ * a final Provider failure resolves `success: false` with `failure`, and a stop
+ * resolves `interrupted: true`. Invalid input and context-capacity errors throw.
+ * Hosts that classify failures themselves call `runManagedTask`, which throws.
+ */
+export async function runKodaX(options: KodaXOptions, prompt: string): Promise<KodaXResult> {
+  try {
+    return await runManagedTask(options, prompt);
+  } catch (error: unknown) {
+    const settled = readFailureResult(error);
+    if (settled === undefined) throw error;
+    return options.context?.agentProfile ? { ...settled, agentProfile: options.context.agentProfile } : settled;
+  }
+}
+
 export async function runManagedTask(
   options: KodaXOptions,
   prompt: string,
 ): Promise<KodaXResult> {
+  if (options.context?.prompt !== undefined) assertKodaXPromptSpec(options.context.prompt);
   const catalogOptions = await ensureManagedSkillCatalog(options);
   const runtimeOptions = await applyRuntimeSkillInvocationPolicy(catalogOptions, prompt);
   // Run-scoped config via AsyncLocalStorage (concurrency-safe): each concurrent
@@ -155,7 +166,7 @@ export async function runManagedTask(
   // the CLI / config.json path (env-bridged, single-session). Only the fields
   // the caller actually set enter the store, so the CLI path stays on env.
   // Shared derivation (deriveRunScopedConfig) is the single source of truth so
-  // this and the `runKodaX` SA entry never diverge on which fields are scoped.
+  // this and the leaf executor never diverge on which fields are scoped.
   let failure: unknown;
   try {
     return await runWithScopedConfig(
@@ -181,95 +192,47 @@ export async function runManagedTask(
 
 /**
  * Dispatcher dependencies. Defaulted to the production wiring; tests
- * (and CAP-089 / CAP-090 / CAP-091 contract suites) inject mocks to
- * verify the agentMode → executor routing without spinning up the
- * full substrate.
+ * (and CAP-089 / CAP-091 contract suites) inject mocks to verify the
+ * dispatch without spinning up the full substrate.
  *
  * FEATURE_100 P3.6t: extracted from inline `executeRunManagedTask` so
- * CAP-DISPATCH-001 / CAP-DISPATCH-002 / CAP-DIRECT-PATH-RULE-006 /
+ * CAP-DISPATCH-001 / CAP-DISPATCH-002 /
  * CAP-MANAGED-REASONING-002 can be activated as function-level
  * contracts without hoisted vi.mock.
  */
 export interface ManagedDispatchDeps {
-  readonly runSA: (options: KodaXOptions, prompt: string) => Promise<KodaXResult>;
   readonly runAMA: typeof runManagedTaskViaRunner;
   readonly buildPlan: typeof buildManagedReasoningPlan;
 }
 
 export const defaultManagedDispatchDeps: ManagedDispatchDeps = {
-  runSA: runKodaX,
   runAMA: runManagedTaskViaRunner,
   buildPlan: buildManagedReasoningPlan,
 };
-
-// FEATURE_246: Solo (SA) is a single agent — no workflows, sub-agents, or peers.
-// Strip the collaboration cluster from its model-visible tool surface. This is
-// intentionally stricter than Runtime Actor children, which retain the injected
-// collaboration control plane.
-const SA_SOLO_EXCLUDE_TOOLS: readonly string[] = [
-  'list_dispatchable_agents',
-  'spawn_agent',
-  'run_workflow',
-  'send_message',
-  'followup_task',
-  'wait_agent',
-  'interrupt_agent',
-  'list_agents',
-  'agent_output',
-  'emit_managed_protocol',
-];
 
 export async function dispatchManagedTask(
   options: KodaXOptions,
   prompt: string,
   deps: ManagedDispatchDeps = defaultManagedDispatchDeps,
 ): Promise<KodaXResult> {
-  const agentMode = resolveManagedAgentMode(options);
-  if (agentMode === 'sa') {
-    const intentGate = inferIntentGate(prompt);
-    const excludeTools = [
-      ...(options.context?.excludeTools ?? []),
-      ...SA_SOLO_EXCLUDE_TOOLS,
-    ];
-    const saOptions: KodaXOptions = {
-      ...options,
-      context: {
-        ...options.context,
-        promptOverlay: buildDirectPathTaskFamilyPromptOverlay(
-          intentGate.taskFamily,
-          [options.context?.promptOverlay],
-        ),
-        excludeTools,
-      },
-    };
-    if (resolveWorkMode(saOptions) === 'script') {
-      const plan = await deps.buildPlan(saOptions, prompt);
-      return deps.runAMA(saOptions, prompt, undefined, plan);
-    }
-    return deps.runSA(saOptions, prompt);
-  }
-
-  // Shard 6d-L: AMA entry must run the same `createReasoningPlan` the legacy
-  // task engine ran (task-engine.ts:1670-1702). The reasoning plan produces
-  // `decision.primaryTask` / `decision.mutationSurface` / `decision.riskLevel`
-  // / `decision.taskFamily` / `decision.harnessProfile` etc. Without this the
-  // Runner-driven path used placeholder `conversation` / `simple` / `low`
-  // values, which broke every downstream branch that read `contract.primaryTask`
-  // (agent.ts has 10+ such branches in SA guardrails).
+  // The AMA Worker runs the same `createReasoningPlan` as the direct engine.
+  // Its decision (`primaryTask`, `mutationSurface`, `riskLevel`, `taskFamily`,
+  // `harnessProfile`) feeds the Worker contract; without it the Runner path
+  // fell back to placeholder `conversation` / `simple` / `low` values.
   //
-  // `createReasoningPlan` also computes `plan.promptOverlay` — a block of
-  // per-task routing notes (task-family guidance, work intent, brainstorm
-  // directives, provider policy notes) legacy injected into every managed
-  // worker's prompt. We thread it into the Runner chain so Scout/Planner/
-  // Generator/Evaluator see the same contextual overlay as legacy workers.
-  const naturalLanguageInput = options.context?.rawUserInput ?? prompt;
-  const workflowIntent = options.context?.workflowIntent
+  // The plan also carries `promptOverlay`, the per-task routing notes
+  // (task-family guidance, work intent, brainstorm directives, provider
+  // policy notes). `runManagedTaskViaRunner` renders it into the Worker's
+  // role prompt, the same surface the direct engine uses.
+  const canonical = withCanonicalAgentMode(options);
+  const naturalLanguageInput = canonical.context?.rawUserInput ?? prompt;
+  const workflowIntent = canonical.context?.workflowIntent
     ?? (hasExplicitNaturalLanguageWorkflowIntent(naturalLanguageInput) ? 'explicit' : undefined);
   const amaOptions: KodaXOptions = workflowIntent === undefined
-    ? options
+    ? canonical
     : {
-        ...options,
-        context: { ...options.context, workflowIntent },
+        ...canonical,
+        context: { ...canonical.context, workflowIntent },
       };
   const plan = await deps.buildPlan(amaOptions, prompt);
   return deps.runAMA(amaOptions, prompt, undefined, plan);

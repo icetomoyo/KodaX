@@ -79,7 +79,7 @@ describe('managed Worker prompt capability wiring', () => {
         executionCwd: workspace,
         gitRoot: workspace,
         managedTaskWorkspaceDir: workspace,
-        repoIntelligenceMode: 'off',
+        repoIntelligenceMode: 'light',
         toolVisibilityPolicy: ({ name }) => ['read', 'grep', 'module_context'].includes(name),
         ...(role === 'child' ? {
           currentAgentId: '/root/review-child',

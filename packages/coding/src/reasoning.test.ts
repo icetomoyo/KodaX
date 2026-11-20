@@ -243,6 +243,44 @@ describe('reasoning reroute', () => {
     expect(buildFallbackRoutingDecision('Please improve this prompt for release notes.').primaryTask).toBe('unknown');
   });
 
+  it.each(['Open a PR for this fix', 'Create a pull request for my branch', '帮我开个PR', '帮我提交PR'])(
+    'does not read the PR creation request "%s" as a review',
+    (prompt) => {
+      expect(buildFallbackRoutingDecision(prompt).primaryTask).not.toBe('review');
+    },
+  );
+
+  it.each(['Check this PR for bugs', 'Please review this PR for merge blockers.'])(
+    'still reads "%s" as a review',
+    (prompt) => {
+      expect(buildFallbackRoutingDecision(prompt).primaryTask).toBe('review');
+    },
+  );
+
+  it('keeps review complexity on the requested scope instead of the worktree size', () => {
+    const decision = buildFallbackRoutingDecision('Review the null check in src/auth.ts', undefined, {
+      repoSignals: {
+        changedFileCount: 40,
+        changedLineCount: 5000,
+        addedLineCount: 3000,
+        deletedLineCount: 2000,
+        touchedModuleCount: 5,
+        changedModules: ['a', 'b', 'c', 'd', 'e'],
+        crossModule: true,
+        riskHints: [],
+        suggestedComplexity: 'systemic',
+        plannerBias: true,
+        investigationBias: false,
+        lowConfidence: false,
+        reviewScale: 'massive',
+      },
+    });
+
+    expect(decision.primaryTask).toBe('review');
+    expect(decision.complexity).not.toBe('systemic');
+    expect(decision.routingNotes?.join('\n') ?? '').not.toContain('elevated task complexity');
+  });
+
   it('infers append intent while keeping the initial fallback path direct for careful extensions', () => {
     const decision = buildFallbackRoutingDecision(
       'Continue the existing onboarding flow, but brainstorm the safest approach before changing the current logic.',

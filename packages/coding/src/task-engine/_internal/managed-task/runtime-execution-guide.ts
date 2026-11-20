@@ -4,8 +4,8 @@
  * should drive live verification against the runtime declared on the
  * task's verification contract. Pure function of its input.
  *
- * Re-added v0.7.26 during parity audit: `formatVerificationContract` calls
- * this twice for the "Runtime execution guide" subsection; `createRolePrompt`
+ * Re-added v0.7.26 during parity audit: `formatVerificationContract` and the
+ * `runtime-execution.md` snapshot artifact both render it; `createRolePrompt`
  * reaches it only transitively through that formatter.
  */
 
@@ -34,8 +34,8 @@ export function buildRuntimeExecutionGuide(
     '',
     'Execution protocol:',
     runtime.startupCommand
-      ? '1. Start or confirm the runtime using the declared startup command before accepting the task.'
-      : '1. Confirm the target runtime is available before accepting the task.',
+      ? '1. Start or confirm the runtime using the declared startup command before you report the task done.'
+      : '1. Confirm the target runtime is available before you report the task done.',
     runtime.readySignal || runtime.baseUrl
       ? '2. Wait until the runtime is ready, using the ready signal or base URL when available.'
       : '2. Confirm runtime readiness using the strongest observable signal you have.',
@@ -53,8 +53,9 @@ export function buildRuntimeExecutionGuide(
       : undefined,
     '',
     'Evidence requirements:',
-    '- Capture concrete evidence for every hard-threshold criterion before accepting the task.',
-    '- Reject completion if the runtime cannot be started, cannot reach readiness, or any declared flow/check fails.',
+    '- Capture concrete evidence for every hard-threshold criterion before you report the task done.',
+    '- If the runtime cannot start or reach readiness, the task is not done; report that failure.',
+    '- If a declared flow or check fails, the task is not done; report which one failed.',
   ].filter((line): line is string => Boolean(line));
 
   return `${lines.join('\n')}\n`;

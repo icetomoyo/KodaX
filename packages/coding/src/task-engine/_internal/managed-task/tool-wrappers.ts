@@ -10,9 +10,11 @@ import { incrementManagedBudgetUsage } from './budget.js';
 import { isToolResultErrorContent } from '../../../agent-runtime/tool-result-classify.js';
 import { recordWrittenFile } from '../../../agent-runtime/written-files.js';
 import { resolveExecutionCwd } from '../../../runtime-paths.js';
+import { toolResultText } from '../../../tools/tool-result-content.js';
 import type { ManagedTaskBudgetController } from './budget.js';
 import type {
   KodaXEvents,
+  KodaXShellHostExecutionAuthorizer,
   KodaXToolExecutionContext,
   ManagedMutationTracker,
 } from '../../../types.js';
@@ -133,6 +135,24 @@ export function recordMutationForTool(
   }
 }
 
+/**
+ * A Runner-executed tool has no dispatch-level guardrail context, so an Auto
+ * host review would see no caller. Bind the current call's agent, transcript
+ * and cancellation, as the direct engine's tool dispatch does.
+ */
+function bindShellHostReviewContext(
+  baseCtx: KodaXToolExecutionContext,
+  runnerCtx: RunnerToolContext,
+): KodaXShellHostExecutionAuthorizer {
+  const authorize = baseCtx.authorizeShellHostExecution!;
+  return (request) => authorize(request, {
+    agent: runnerCtx.agent,
+    ...(runnerCtx.abortSignal ? { abortSignal: runnerCtx.abortSignal } : {}),
+    ...(runnerCtx.transcript ? { messages: runnerCtx.transcript } : {}),
+    ...(baseCtx.permissionIntent ? { permissionIntent: baseCtx.permissionIntent } : {}),
+  });
+}
+
 export function wrapCodingToolAsRunnable(
   definition: KodaXToolDefinition,
   handler: (
@@ -156,7 +176,7 @@ export function wrapCodingToolAsRunnable(
       const toolResultCapacityTokens = runnerCtx?.transcript
         ? baseCtx.resolveToolResultCapacityTokens?.(runnerCtx.transcript)
         : undefined;
-      const { createContextForToolCall } = await import('../../../agent-runtime/tool-dispatch.js');
+      const { createContextForToolCall, tryMcpFallback } = await import('../../../agent-runtime/tool-dispatch.js');
       const call = runnerCtx?.toolCall ?? { id: toolCallId ?? definition.name, name: definition.name, input };
       const ctxForCall = createContextForToolCall(events ?? {}, call, {
         ...baseCtx,
@@ -164,6 +184,9 @@ export function wrapCodingToolAsRunnable(
           runId: baseCtx.runtimeRunId, callOrdinal: runnerCtx?.toolCallIndex } } : {}),
         ...(runnerCtx?.abortSignal ? { abortSignal: runnerCtx.abortSignal } : {}),
         ...(toolCallId ? { toolCallId } : {}),
+        ...(baseCtx.authorizeShellHostExecution && runnerCtx
+          ? { authorizeShellHostExecution: bindShellHostReviewContext(baseCtx, runnerCtx) }
+          : {}),
         ...(toolResultCapacityTokens !== undefined ? { toolResultCapacityTokens } : {}),
         ...(runnerCtx?.transcript && baseCtx.visualOutputReservations ? {
           reserveVisualOutput: (tokens: number) => baseCtx.visualOutputReservations!.reserve(
@@ -182,7 +205,14 @@ export function wrapCodingToolAsRunnable(
         ctxForCall.invokeCheckedTool = (name, parameters) => baseCtx.invokeCheckedTool!(name, parameters, runnerCtx);
       }
       try {
-        const execute = () => handler(input, ctxForCall);
+        // Mirrors the direct engine's dispatch: a failed read-only tool may be
+        // served by a same-named MCP tool (CAP-025).
+        const execute = async () => {
+          const output = await handler(input, ctxForCall);
+          return ctxForCall.extensionRuntime && toolResultText(output).startsWith('[Tool Error]')
+            ? await tryMcpFallback(definition.name, input, ctxForCall) ?? output
+            : output;
+        };
         // Lazy import avoids the registry -> construction -> AMA module cycle.
         const content = ctxForCall.invokeCheckedTool && toolCallId
           ? await (await import('../../../agent-runtime/tool-dispatch.js')).executeInExtensionScope(

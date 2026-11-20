@@ -58,6 +58,7 @@ import {
   SESSION_HISTORY_TOOL_NAMES,
 } from '../tools/session-history.js';
 import { CodingActorSession } from './actor-runtime.js';
+import { renderApplicationRules } from '../prompts/prompt-spec.js';
 import {
   applyToolVisibilityPolicy,
   filterExcludedTools,
@@ -235,6 +236,9 @@ export function buildToolExecutionContext(
       ...(options.context?.permissionIntent !== undefined
         ? { permissionIntent: options.context.permissionIntent }
         : {}),
+      ...(options.context?.prompt?.context?.some((entry) => entry.kind === 'rule')
+        ? { applicationRules: renderApplicationRules(options.context.prompt) }
+        : {}),
     },
     parentEvents: events,
     // FEATURE_067: onChildProgress removed — progress flows through
@@ -257,8 +261,8 @@ export function buildToolExecutionContext(
     // `count = 0` at each turn boundary via beforeNextTurn.
     // FEATURE_246 Part A2 (ADR-046) — model-launched workflow capability. Wired
     // when the host configured a runs dir AND the turn runs as AMA. The prompt and
-    // tool description limit activation to explicit user Workflow intent. SA (solo)
-    // never hosts a workflow (fails the agentMode gate + SA_SOLO_EXCLUDE_TOOLS). The
+    // tool description limit activation to explicit user Workflow intent. A direct
+    // run without the AMA label never hosts a workflow (fails the agentMode gate). The
     // lazy import keeps the static graph acyclic (workflows -> agent-runtime).
   };
   if (!context.actorControl && (options.agentMode === 'ama' || options.context?.actorSession)) {
@@ -336,9 +340,8 @@ function buildWorkflowToolHost(
   if (runsBaseDir === undefined) return undefined;
   // run_workflow is available only when the host attributes explicit intent.
   // dispatchManagedTask derives that marker from the standalone Workflow product
-  // word; command/SDK paths set it structurally. SA never reaches here with a
-  // run_workflow surface: agentMode 'sa' fails this gate, and SA_SOLO_EXCLUDE_TOOLS
-  // (task-engine.ts) excludes run_workflow regardless.
+  // word; command/SDK paths set it structurally. A run without the AMA label
+  // (a direct run or a leaf child) fails this gate.
   if (options.agentMode !== 'ama') return undefined;
   if (options.context?.workflowIntent !== 'explicit') return undefined;
   // `startInline` starts the run and returns a handle without awaiting it.

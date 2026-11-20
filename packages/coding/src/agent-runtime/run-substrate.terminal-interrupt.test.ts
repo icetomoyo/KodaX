@@ -27,7 +27,7 @@ import type {
   KodaXToolDefinition,
 } from '@kodax-ai/llm';
 
-import { runKodaX } from '../agent.js';
+import { runTestLeaf as runLeafAgent } from './test-leaf.js';
 import { deriveCodingMemoryIdentity } from '../memory-runtime.js';
 import { CodingActorSession } from './actor-runtime.js';
 
@@ -35,7 +35,7 @@ const PROVIDER_NAME = 'terminal-interrupt-provider';
 const API_KEY_ENV = 'TERMINAL_INTERRUPT_PROVIDER_API_KEY';
 const MAX_CONTINUATION_TURNS = 8;
 
-describe('runKodaX Runtime terminal interrupt continuation', { timeout: 30_000 }, () => {
+describe('runLeafAgent Runtime terminal interrupt continuation', { timeout: 30_000 }, () => {
   let actorSession: CodingActorSession | undefined;
 
   beforeEach(() => {
@@ -65,7 +65,7 @@ describe('runKodaX Runtime terminal interrupt continuation', { timeout: 30_000 }
       }
     }
     registerModelProvider(PROVIDER_NAME, () => new LocalFailureProvider());
-    const result = await runKodaX({ provider: PROVIDER_NAME, maxIter: 2, lsp: false,
+    const result = await runLeafAgent({ provider: PROVIDER_NAME, maxIter: 2, lsp: false,
       context: { executionCwd: process.cwd(), repoIntelligenceMode: 'off' },
       events: { beforeToolExecute: async () => { throw new TypeError('result.startsWith is not a function'); } },
     }, 'Read the image');
@@ -131,7 +131,7 @@ describe('runKodaX Runtime terminal interrupt continuation', { timeout: 30_000 }
     registerModelProvider(PROVIDER_NAME, () => new TerminalInterruptProvider());
     actorSession = new CodingActorSession({ sessionId });
 
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: PROVIDER_NAME,
         model: 'baseline-model',
@@ -238,7 +238,7 @@ describe('runKodaX Runtime terminal interrupt continuation', { timeout: 30_000 }
     registerModelProvider(PROVIDER_NAME, () => new HostOwnedInterruptProvider());
     actorSession = new CodingActorSession({ sessionId });
 
-    const result = await runKodaX({
+    const result = await runLeafAgent({
       provider: PROVIDER_NAME,
       model: 'baseline-model',
       maxIter: 1,
@@ -313,7 +313,7 @@ describe('runKodaX Runtime terminal interrupt continuation', { timeout: 30_000 }
 
     registerModelProvider(PROVIDER_NAME, () => new RuntimeInterruptProvider());
     actorSession = new CodingActorSession({ sessionId });
-    const result = await runKodaX({
+    const result = await runLeafAgent({
       provider: PROVIDER_NAME,
       model: 'baseline-model',
       maxIter: 1,
@@ -389,7 +389,7 @@ describe('runKodaX Runtime terminal interrupt continuation', { timeout: 30_000 }
 
     registerModelProvider(PROVIDER_NAME, () => new FailedRuntimeInterruptProvider());
     actorSession = new CodingActorSession({ sessionId });
-    const result = await runKodaX({
+    const result = await runLeafAgent({
       provider: PROVIDER_NAME,
       model: 'baseline-model',
       maxIter: 1,
@@ -457,7 +457,7 @@ describe('runKodaX Runtime terminal interrupt continuation', { timeout: 30_000 }
 
     registerModelProvider(PROVIDER_NAME, () => new ClaimedInterruptProvider());
     actorSession = new CodingActorSession({ sessionId });
-    const result = await runKodaX({
+    const result = await runLeafAgent({
       provider: PROVIDER_NAME, model: 'baseline-model', maxIter: 1, lsp: false,
       session: {
         id: sessionId,
@@ -548,7 +548,7 @@ describe('runKodaX Runtime terminal interrupt continuation', { timeout: 30_000 }
     registerModelProvider(PROVIDER_NAME, () => new MemoryFollowUpProvider());
     actorSession = new CodingActorSession({ sessionId });
     try {
-      const result = await runKodaX({
+      const result = await runLeafAgent({
         provider: PROVIDER_NAME,
         model: 'baseline-model',
         maxIter: 4,
@@ -646,7 +646,7 @@ describe('runKodaX Runtime terminal interrupt continuation', { timeout: 30_000 }
     registerModelProvider(PROVIDER_NAME, () => new CancelledMemoryProvider());
     actorSession = new CodingActorSession({ sessionId });
     try {
-      const result = await runKodaX({
+      const result = await runLeafAgent({
         provider: PROVIDER_NAME,
         model: 'baseline-model',
         maxIter: 4,
@@ -723,7 +723,7 @@ describe('runKodaX Runtime terminal interrupt continuation', { timeout: 30_000 }
     }
 
     registerModelProvider(PROVIDER_NAME, () => new ParentOnlyInternalProvider());
-    const result = await runKodaX({
+    const result = await runLeafAgent({
       provider: PROVIDER_NAME,
       model: 'baseline-model',
       maxIter: 1,
@@ -789,7 +789,7 @@ describe('runKodaX Runtime terminal interrupt continuation', { timeout: 30_000 }
     registerModelProvider(PROVIDER_NAME, () => new ContinuousTerminalInterruptProvider());
     actorSession = new CodingActorSession({ sessionId });
 
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: PROVIDER_NAME,
         model: 'baseline-model',
@@ -869,7 +869,7 @@ describe('runKodaX Runtime terminal interrupt continuation', { timeout: 30_000 }
     registerModelProvider(PROVIDER_NAME, () => new CompleteTerminalInterruptProvider());
     actorSession = new CodingActorSession({ sessionId });
 
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: PROVIDER_NAME,
         model: 'baseline-model',
@@ -942,7 +942,7 @@ describe('runKodaX Runtime terminal interrupt continuation', { timeout: 30_000 }
     registerModelProvider(PROVIDER_NAME, () => new InvalidInterruptProvider());
     actorSession = new CodingActorSession({ sessionId });
 
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: PROVIDER_NAME,
         model: 'baseline-model',
@@ -995,7 +995,7 @@ describe('runKodaX Runtime terminal interrupt continuation', { timeout: 30_000 }
     registerModelProvider(PROVIDER_NAME, () => new FailingProvider());
     actorSession = new CodingActorSession({ sessionId });
 
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: PROVIDER_NAME,
         model: 'baseline-model',

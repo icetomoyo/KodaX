@@ -11,7 +11,7 @@ import type {
   KodaXTaskResultMetadata,
   KodaXToolResultContentItem,
 } from '@kodax-ai/llm';
-import { mapLegacyReasoningModeToEffortIntent, withPreparedImageHistory } from '@kodax-ai/llm';
+import { KodaXContextOverflowError, mapLegacyReasoningModeToEffortIntent, withPreparedImageHistory } from '@kodax-ai/llm';
 import { createVisualOutputReservations } from './visual-output-reservations.js';
 import { bindVisualObservationAdmission, isSessionVisualObservationOwner } from '../media/visual-owner.js';
 import type {
@@ -20,13 +20,16 @@ import type {
   RunnerToolObserver,
   StopHookFn,
 } from '@kodax-ai/agent';
+import { generateSessionIdSync } from '@kodax-ai/agent';
 import { waitForContextRecovery } from '../context-recovery-wait.js';
 import { resolveWorkMode, assertWorkModeAvailable } from '../work-mode.js';
+import { runInSessionScope } from '../run-scoped-config.js';
 import { createScriptPilot } from '../agent-runtime/script/pilot.js';
 import { withScriptCells, createScriptReceiptReader } from '../agent-runtime/script/run.js';
 import { SCRIPT_MODEL_LIMITS, SCRIPT_TOOL_NAME, withScriptModelTool, projectScriptModelTools, canReadWithModelTools, closeScriptModelSession } from '../agent-runtime/script/model.js';
 import {
   Runner,
+  ContextCapacityError,
   collectGuardrails,
   buildSystemPrompt,
   captureEpisodeReviewBranchEpoch,
@@ -54,7 +57,6 @@ import {
 // the only remaining V2 chain agent is the Worker.
 import { WORKER_AGENT_NAME } from '../agents/task-engine-agents.js';
 import { filterModelToolAliases } from '../agent-runtime/tool-resolution.js';
-import { inheritOrdinaryRootToolContract, markOrdinaryRootToolContract } from '../tools/managed-tool-contract.js';
 import { toolExecution } from '../agent-runtime/tool-dispatch.js';
 import { resolveProvider } from '../providers/index.js';
 import { estimateTokens } from '../tokenizer.js';
@@ -63,7 +65,8 @@ import {
   cleanupUserInputDegradationCache,
   createUserInputDegradationCache,
 } from '../capacity-recovery.js';
-import { buildCapabilityContextSections } from '../prompts/capability-sections.js';
+import { buildCapabilityContextSections, workerStableCapabilityContent } from '../prompts/capability-sections.js';
+import { omitsKodaXGuidance, renderApplicationContextSections, type ApplicationContextSection } from '../prompts/prompt-spec.js';
 import { getSessionScratchDir } from '../session-scratch.js';
 import {
   buildAutoRepoIntelligenceContext,
@@ -86,6 +89,11 @@ import {
 import { collectVerifiedCheckFacts, resolveLearnedSkillCanaryOutcome } from '../memory/verified-checks.js';
 import { prepareCodingLearnedSkillBinding } from '../learned-skill-runtime.js';
 import type { KodaXWrittenFile } from '../types.js';
+import {
+  attachFailureResult,
+  buildLocalExecutionFailure,
+  readProviderFailure,
+} from '../execution-failure.js';
 import {
   createMemoryRecallBinding,
 } from '../tools/memory-recall.js';
@@ -229,8 +237,8 @@ import {
   createRunnerToolResultBatchTransform,
   resolveRunnerToolResultBudget,
 } from './runner-tool-result-batch.js';
-// CAP-003/004/005/006/007: shared event emit helpers. Both SA (substrate
-// frame) and AMA (this runner-driven path) fire through the same
+// CAP-003/004/005/006/007: shared event emit helpers. Both the direct engine
+// (substrate frame) and AMA (this runner-driven path) fire through the same
 // surface so the contract for each event lives in exactly one place.
 import {
   createLiveTurnScope,
@@ -246,9 +254,9 @@ import {
 } from '../agent-runtime/event-emitter.js';
 import { withDurableCompactionPersistence } from '../agent-runtime/durable-compaction.js';
 // CAP-008: shared initial-messages resolver. Three-tier fallback
-// (inline → storage.load → empty) for AMA frame entry; SA already
-// uses this from `run-substrate.ts`.
-import { appendPromptIfNotDuplicate, resolveInitialMessages, type ResolvedInitialMessages } from '../agent-runtime/middleware/auto-resume.js';
+// (inline → storage.load → empty) for AMA frame entry; the direct engine
+// already uses this from `run-substrate.ts`.
+import { appendPromptIfNotDuplicate, discoverAutoResumeSessionId, resolveInitialMessages, type ResolvedInitialMessages } from '../agent-runtime/middleware/auto-resume.js';
 import { createExtensionRuntimeSessionController } from '../agent-runtime/middleware/extension-queue.js';
 import {
   buildRuntimeSessionState,
@@ -258,8 +266,8 @@ import {
 } from '../agent-runtime/runtime-session-state.js';
 // CAP-010: shared tri-state permission gate. AMA's
 // `toolObserver.beforeTool` delegates to this so the extension
-// `tool:before` hook fires on AMA path (pre-FEATURE_100 only SA hit
-// it).
+// `tool:before` hook fires on AMA path (pre-FEATURE_100 only the direct
+// engine hit it).
 import { getToolExecutionOverride } from '../agent-runtime/permission-gate.js';
 import { applyToolVisibilityPolicy, filterExcludedTools } from '../agent-runtime/tool-resolution.js';
 import { listRunScopedTools, runScopedToolMap } from '../agent-runtime/run-scoped-tools.js';
@@ -276,7 +284,7 @@ import {
 } from '../constants.js';
 // CAP-048: shared tool-execution-context builder. Centralizes
 // FEATURE_074 (set_permission_mode NOT forwarded) and FEATURE_067
-// (onChildProgress undefined) invariants so AMA and SA can't drift.
+// (onChildProgress undefined) invariants so AMA and the direct engine can't drift.
 import { buildToolExecutionContext } from '../agent-runtime/tool-execution-context.js';
 // FEATURE_192 v0.7.44 — `/goal` lifecycle adapter. Owns the
 // composition of FEATURE_164 mid-turn drain + FEATURE_192 goal
@@ -552,6 +560,13 @@ function dropRunnerInjectedSystemMessage(
   return firstTranscriptIndex > 0 ? messages.slice(firstTranscriptIndex) : messages;
 }
 
+function lastAssistantText(messages: readonly KodaXMessage[]): string {
+  const last = [...messages].reverse().find(message => message.role === 'assistant');
+  if (!last) return '';
+  if (typeof last.content === 'string') return last.content;
+  return last.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('');
+}
+
 function attachTurnIdsFromUserBoundaries(
   messages: readonly KodaXMessage[],
 ): KodaXMessage[] {
@@ -641,6 +656,25 @@ function scheduleManagedTaskMaintenance(
     return;
   }
   queueMicrotask(() => { void maintenance(); });
+}
+
+/**
+ * Same persistence projection as the Turn boundary: internal managed context is
+ * rebuilt per call and never belongs in session history. Undefined means the
+ * failure carried no transcript, so the caller keeps the last known history.
+ */
+function projectFailedRunTranscript(error: unknown): KodaXMessage[] | undefined {
+  const recovered = readRunnerRecoveryTranscript(error);
+  if (recovered === undefined) return undefined;
+  try {
+    return validateAndFixToolHistory(cleanupIncompleteToolCalls(
+      buildPersistableManagedTranscript(recovered as readonly KodaXMessage[])));
+  } catch (projectionError) {
+    emitResilienceDebug('[session:error-snapshot:prepare-error]', {
+      error: projectionError instanceof Error ? projectionError.message : String(projectionError),
+    });
+    return undefined;
+  }
 }
 
 interface ManagedRunRecoveryState {
@@ -948,13 +982,18 @@ export async function runManagedTaskViaRunner(
   const extensionRuntime = options.extensionRuntime ?? getActiveExtensionRuntime() ?? undefined;
   const boundOptions = { ...options, extensionRuntime, context: { ...options.context,
     runtimeRunId: options.context?.runtimeRunId ?? randomUUID() } };
-  return withExtensionRuntimeContext(() => runManagedTaskViaRunnerInContext(boundOptions, prompt, adapterOverride, plan),
-    extensionRuntime, boundOptions.context.runtimeRunId);
+  // autoResume / resume continue the latest saved session; the id is fixed before the run so every
+  // provider request of this conversation carries it.
+  const initialSessionId = (await discoverAutoResumeSessionId(options)) ?? generateSessionIdSync();
+  return runInSessionScope(options.context?.contextIdentitySessionId ?? initialSessionId, () => withExtensionRuntimeContext(
+    () => runManagedTaskViaRunnerInContext(boundOptions, prompt, initialSessionId, adapterOverride, plan),
+    extensionRuntime, boundOptions.context.runtimeRunId));
 }
 
 async function runManagedTaskViaRunnerInContext(
   options: KodaXOptions,
   prompt: string,
+  initialSessionId: string,
   adapterOverride?: Parameters<typeof buildRunnerLlmAdapter>[1],
   // Shard 6d-L: accept the reasoning plan produced by `createManagedReasoningPlan`
   // in `task-engine.ts`. Optional so direct Runner invocations from tests
@@ -967,7 +1006,7 @@ async function runManagedTaskViaRunnerInContext(
     modelOverride: defaults.modelSelection.model ?? options.modelOverride,
     effort: defaults.thinkingLevel ?? options.effort };
   // FEATURE_103 (v0.7.29): apply L5 user-followup escalation once at the
-  // AMA entry. Mirrors the SA `runKodaX` wiring so the bumped ceiling
+  // AMA entry. Mirrors the direct-engine `runKodaX` wiring so the bumped ceiling
   // propagates uniformly through createReasoningPlan, buildRunnerLlmAdapter,
   // and the per-iteration L1-L4 resolver inside the Runner loop. When no
   // signal fires, the helper returns the input options reference unchanged.
@@ -987,8 +1026,6 @@ async function runManagedTaskViaRunnerInContext(
     resolveProvider(providerName),
     effectiveOptions.modelOverride ?? effectiveOptions.model,
   );
-  const initialSessionId = effectiveOptions.session?.id
-    ?? `runner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const releaseActiveRootQueueRoute = registerActiveRootQueueRoute(
     actorQueueId(initialSessionId, '/root'),
   );
@@ -1024,13 +1061,16 @@ async function runManagedTaskViaRunnerInContext(
   await runOwnedMemoryWork(effectiveOptions, () => maybeRunMemoryMaintenanceWindow(effectiveOptions));
   effectiveOptions.abortSignal?.throwIfAborted();
   // Fire onSessionStart early so REPL / CLI listeners bound to session
-  // init trigger for AMA runs the same way they trigger for SA runs.
+  // init trigger for AMA runs the same way they trigger for direct-engine runs.
   // Ad-hoc askUser callers without a stable host session id get a run-local id:
   // checkpoint resume should prefer a safe miss over cross-session attachment.
   const shouldAttachInitialSessionId = Boolean(effectiveOptions.session?.id)
     || Boolean(effectiveOptions.session?.storage)
     || Boolean(effectiveOptions.events?.askUser);
+  // Keep the caller's session object when its id already matches, so
+  // non-enumerable markers such as the startKodaX generated-id flag survive.
   const baseOptionsWithSessionId: KodaXOptions = shouldAttachInitialSessionId
+    && effectiveOptions.session?.id !== initialSessionId
     ? {
       ...effectiveOptions,
       session: {
@@ -1240,6 +1280,14 @@ async function runManagedTaskViaRunnerInContext(
     // Surface onError so top-level consumers can flush telemetry /
     // show UI toast before the rejection propagates.
     const error = err instanceof Error ? err : new Error(String(err));
+    const aborted = optionsWithSessionId.abortSignal?.aborted === true || error.name === 'AbortError';
+    const failure = aborted ? undefined : readProviderFailure(error) ?? buildLocalExecutionFailure(error);
+    const errorMetadata = {
+      lastError: failure?.message ?? error.message,
+      lastErrorTime: Date.now(),
+      consecutiveErrors: (recovery.initial?.errorMetadata?.consecutiveErrors ?? 0) + 1,
+    };
+    const settledMessages = projectFailedRunTranscript(err);
     emitLiveTurnFailed(error);
     emitError(liveEvents, error);
     // v0.7.26 parity (C3): persist an error snapshot so /resume can
@@ -1255,19 +1303,13 @@ async function runManagedTaskViaRunnerInContext(
     if (optionsWithSessionId.session?.storage) {
       try {
         const resolvedInitial = recovery.initial;
-        const recoveredMessages = readRunnerRecoveryTranscript(err);
-        // Same persistence projection as the Turn boundary: internal managed
-        // context is rebuilt per call and never belongs in session history.
         // If loading itself failed, do not replace an unknown saved history.
-        if (recoveredMessages !== undefined || resolvedInitial !== undefined) {
+        if (settledMessages !== undefined || resolvedInitial !== undefined) {
           // Without a current recovery carrier, the latest canonical snapshot
           // may contain completed answers or queued inputs absent from the seed.
           // An empty fragment asks the existing snapshot policy to retain it.
-          const messagesToPersist = recoveredMessages === undefined ? []
-            : validateAndFixToolHistory(cleanupIncompleteToolCalls(
-              buildPersistableManagedTranscript(recoveredMessages as readonly KodaXMessage[])));
           await saveSessionSnapshot(optionsWithSessionId, initialSessionId, {
-            messages: messagesToPersist,
+            messages: settledMessages ?? [],
             title: resolvedInitial?.title || prompt.slice(0, 80),
             gitRoot: optionsWithSessionId.context?.gitRoot ?? undefined,
             runtimeSessionState: recovery.runtimeSessionState ?? (resolvedInitial && buildRuntimeSessionState({
@@ -1275,11 +1317,7 @@ async function runManagedTaskViaRunnerInContext(
               loadedExtensionRecords: resolvedInitial.loadedExtensionRecords,
               activeTools: [], modelSelection: {},
             })),
-            errorMetadata: {
-              lastError: error.message,
-              lastErrorTime: Date.now(),
-              consecutiveErrors: (resolvedInitial?.errorMetadata?.consecutiveErrors ?? 0) + 1,
-            },
+            errorMetadata,
           });
         }
       } catch (snapshotError) {
@@ -1300,12 +1338,18 @@ async function runManagedTaskViaRunnerInContext(
       },
     );
     await completeLearnedSkills();
-    throw err;
+    if (!(error instanceof ContextCapacityError || error instanceof KodaXContextOverflowError)) {
+      const messages = settledMessages ?? recovery.initial?.messages ?? [];
+      attachFailureResult(error, aborted
+        ? { success: true, interrupted: true, lastText: '', messages, sessionId: initialSessionId, errorMetadata }
+        : { success: false, lastText: '', messages, sessionId: initialSessionId, errorMetadata, ...(failure ? { failure } : {}) });
+    }
+    throw error;
   } finally {
     // onComplete fires on every terminal — success, block, or error —
     // so REPL can re-render its status bar. NOTE: AMA path's
     // onComplete fires in finally (i.e. AFTER onError on the error
-    // branch), whereas SA's onComplete is mutually exclusive with
+    // branch), whereas the direct engine's onComplete is mutually exclusive with
     // onError (CAP-084). This is a pre-FEATURE_100 behavioral
     // divergence preserved deliberately — REPL listeners on the AMA
     // path rely on the universal-cleanup semantics. Future work to
@@ -1437,7 +1481,7 @@ async function runManagedTaskViaRunnerInner(
   //     safety boundary
   //   - exitPlanMode: FEATURE_074 exit_plan_mode tool fails
   // CAP-048: build base tool-execution-context via the shared substrate
-  // helper so SA and AMA construct ctx through the same path. This
+  // helper so the direct engine and AMA construct ctx through the same path. This
   // delivers two AMA-side regression fixes:
   //   1. `managedProtocolRole` + `emitManagedProtocol` — pre-FEATURE_100
   //      AMA's inline ctx omitted both, so worker tools that called
@@ -1816,10 +1860,8 @@ async function runManagedTaskViaRunnerInner(
   // the recorder so Scout's post-emit `skillMap` / `scope` reach
   // downstream Generator / Evaluator prompts at invocation time.
   // v0.7.26 NEW-1 — resolve workspace environment once so every role
-  // prompt can tell the LLM where it is running. The SA path injects
-  // `Working Directory: ${executionCwd}` via `buildSystemPrompt`, but
-  // the Runner-driven path bypasses that builder. Without this block,
-  // Scout/Planner/Generator/Evaluator all guess paths (e.g. the
+  // prompt can tell the LLM where it is running. Without this block,
+  // the AMA Worker and its children guess paths (e.g. the
   // reported `cd /d/user/kodax/workspace` against a real cwd of
   // `C:\Works\GitWorks\...`).
   const managedWorkspace = {
@@ -1829,13 +1871,12 @@ async function runManagedTaskViaRunnerInner(
     platform: process.platform,
     osRelease: os.release(),
     // Forward the active provider/model so each role's `## Environment`
-    // block discloses runtime identity. Mirrors the runtime-fact section
-    // the SA path emits via `buildSystemPrompt`'s `getRuntimeFact`.
+    // block discloses runtime identity.
     provider: options.provider,
     model: options.modelOverride ?? options.model,
   };
 
-  // v0.7.35.1 FEATURE_144 — pre-compute the SA path's capability-context
+  // v0.7.35.1 FEATURE_144 — pre-compute the direct-engine capability-context
   // section set ONCE per AMA entry so each role's prompt assembly
   // skips the FS / extension-runtime calls. Filtered to the 6 sections
   // not already covered by `workspaceSection` /
@@ -1847,36 +1888,16 @@ async function runManagedTaskViaRunnerInner(
   const isNewSessionForCapabilities = !options.session?.initialMessages
     || options.session.initialMessages.length === 0;
   let prebuiltCapabilityContextBlock: string | undefined;
+  let prebuiltStableCapabilitySections: readonly RetainedContextSection[] = [];
   let prebuiltStableCapabilityContextBlock: string | undefined;
   let prebuiltDynamicCapabilitySections: readonly RetainedContextSection[] = [];
   let amaSkillCatalogText: string | undefined;
   let amaMcpCatalogText: string | undefined;
   try {
-    const capabilitySections = await buildCapabilityContextSections(
+    const filtered = await buildCapabilityContextSections(
       options,
       isNewSessionForCapabilities,
       managedWorkspace.executionCwd,
-    );
-    // The AMA Worker owns these sections via `buildWorkerInstructions` /
-    // `role-prompt.ts`, so they are excluded from the SA-style capability
-    // block to avoid double emission. `execution-guidance` is here because the
-    // Worker carries EXECUTION_GUIDANCE inside `buildWorkerInstructions`; the SA
-    // path gets the same block via the capability section instead (ADR-043 P1.7).
-    // The old `prompt-overlay` section was removed (router overlay retired).
-    const AMA_OWNED_SECTION_IDS = new Set<string>([
-      'base-system',
-      'base-system-suffix',
-      'environment-context',
-      'runtime-fact',
-      'working-directory',
-      'session-scratch-directory',
-      'repo-intelligence-context',
-      'execution-guidance',
-      // Injected through selectedSkillText below with the same formatter.
-      'active-skill-invocation',
-    ]);
-    const filtered = capabilitySections.filter(
-      (section) => !AMA_OWNED_SECTION_IDS.has(section.id),
     );
     const AMA_STABLE_CAPABILITY_SECTION_IDS = new Set<string>([
       'project-agents',
@@ -1898,11 +1919,8 @@ async function runManagedTaskViaRunnerInner(
       .filter((section) => section.id === 'mcp-capability-context')
       .map((section) => section.content)
       .join('\n\n') || undefined;
-    if (stableCapabilitySections.length > 0) {
-      prebuiltStableCapabilityContextBlock = stableCapabilitySections
-        .map((section) => section.content)
-        .join('\n\n');
-    }
+    prebuiltStableCapabilitySections = stableCapabilitySections
+      .map(({ id, content }) => ({ id, content }));
     if (dynamicCapabilitySections.length > 0) {
       prebuiltCapabilityContextBlock = dynamicCapabilitySections
         .map((section) => section.content)
@@ -1923,6 +1941,18 @@ async function runManagedTaskViaRunnerInner(
     });
   }
   const promptOverlay = plan?.promptOverlay?.trim();
+  // A caller system prompt replaces KodaX's identity and working style; a persona replaces only the identity.
+  const omitKodaxGuidance = omitsKodaXGuidance(options.context?.prompt)
+    || Boolean(options.context?.systemPromptOverride?.trim());
+  const neutralIdentity = !omitKodaxGuidance && Boolean(options.context?.agentProfile?.instructions?.trim());
+  const applicationSections = renderApplicationContextSections(options.context?.prompt);
+  const applicationContext = (sections: readonly ApplicationContextSection[]) => {
+    const join = (kind: ApplicationContextSection['kind']): string | undefined => sections
+      .filter((section) => section.kind === kind).map((section) => section.content).join('\n\n') || undefined;
+    const applicationRules = join('rule');
+    const applicationReferences = join('reference');
+    return { ...(applicationRules ? { applicationRules } : {}), ...(applicationReferences ? { applicationReferences } : {}) };
+  };
   let workerAvailableToolNames: readonly string[] | undefined;
   const rolePromptContextFactory: RolePromptContextFactory = (role) => {
     let teamModeBlock: string | undefined;
@@ -1976,15 +2006,17 @@ async function runManagedTaskViaRunnerInner(
       // Pre-FEATURE_143 this was stitched onto the user prompt head;
       // see runner-driven.ts:promptWithOverlay for the migration.
       promptOverlay: promptOverlay,
+      ...(omitKodaxGuidance ? { omitKodaxGuidance } : {}),
+      ...(neutralIdentity ? { neutralIdentity } : {}),
+      ...applicationContext(applicationSections),
     };
     // v0.7.26 C4 parity — surface the caller's skill invocation + the
     // on-disk artefact paths so role prompts can quote a stable filesystem
-    // location (skill-execution.md / skill-map.md). Matches legacy
+    // location (skill-execution.md). Matches legacy
     // `task-engine.ts:withManagedSkillArtifactPromptPaths`.
     if (skillInvocationCtx) {
       ctx.skillInvocation = skillInvocationCtx;
       ctx.skillExecutionArtifactPath = skillArtifactPaths.rawSkillPath;
-      ctx.skillMapArtifactPath = skillArtifactPaths.skillMapMarkdownPath;
     }
     // FEATURE_193 (v0.7.43): ctx.skillMap / ctx.scoutScope / ctx.previousRoleSummaries
     // population branches removed — all three derived from V1 `recorder.scout` /
@@ -2046,14 +2078,14 @@ async function runManagedTaskViaRunnerInner(
     managedWorkspace.executionCwd,
 
   );
-  // Root and managed children both arrive here after their own role/host filters.
-  if (chainPromptContext && !chainPromptContext.partnerInstructions) {
-    markOrdinaryRootToolContract(chain.worker);
-  }
   // Keep executable capability separate from any deferred model-facing projection.
   // Policy follows executable capabilities, not any later model-view projection.
   // Hiding a native schema must not disable AMA planning or collaboration teaching.
   workerAvailableToolNames = filterModelToolAliases(chain.worker.tools ?? []).map((tool) => tool.name);
+  const stableToolNames = workerAvailableToolNames;
+  prebuiltStableCapabilityContextBlock = prebuiltStableCapabilitySections
+    .map((section) => workerStableCapabilityContent(section, stableToolNames, options.selfManual?.productName))
+    .join('\n\n') || undefined;
   // Per-Runner invocation LLM-turn counter. Idle-yield resumes are fresh
   // invocations and reset this event-display scope below.
   const iterationStateRef = { current: 0 };
@@ -2087,6 +2119,7 @@ async function runManagedTaskViaRunnerInner(
     ...(prebuiltRepoIntelligenceContext?.trim()
       ? [{ id: 'repo-intelligence-context', content: prebuiltRepoIntelligenceContext }]
       : []),
+    ...applicationSections.map(({ id, content }) => ({ id, content })),
   ];
   // Session sections the model has seen in full in this Run's transcript.
   let effectiveSessionSections: readonly RetainedContextSection[] = currentSessionSections;
@@ -2151,7 +2184,7 @@ async function runManagedTaskViaRunnerInner(
   // task-family guidance, work intent, brainstorm directives,
   // provider-policy notes, explicit-reason trail) is now routed
   // through the role-prompt builder's system-prompt section
-  // (`ManagedRolePromptContext.promptOverlay`), matching the SA-path
+  // (`ManagedRolePromptContext.promptOverlay`), matching the direct-engine
   // `capability-sections.ts` injection surface. The previous Shard 6d-L
   // stitching put this onto the user prompt head, which made the
   // routing notes look like user input to the LLM instead of platform
@@ -2160,8 +2193,8 @@ async function runManagedTaskViaRunnerInner(
 
   // Session continuity: when the caller passes `options.session.initialMessages`
   // (REPL multi-turn, session resume, plan-mode replay), prepend them as the
-  // Runner transcript so the Scout/Planner/Generator/Evaluator see full
-  // prior context — same behaviour as the SA-mode entry via the session
+  // Runner transcript so the AMA Worker sees full
+  // prior context — same behaviour as the direct-engine entry via the session
   // loader.
   //
   // v0.7.26 parity (C1): the user message content is built through
@@ -2171,10 +2204,10 @@ async function runManagedTaskViaRunnerInner(
   // LLM sees a plain-text prompt and never perceives the image —
   // round-boundary reshape only rewrites outgoing `result.messages` for
   // display, not the inbound prompt — apply the lift here so the AMA
-  // entry message carries multimodal blocks like the SA entry does.
+  // entry message carries multimodal blocks like the direct-engine entry does.
   //
   // CAP-008: resolve initial messages through the substrate helper so AMA
-  // gets the same three-tier resolution SA gets:
+  // gets the same three-tier resolution the direct engine gets:
   //   1. caller-supplied `options.session.initialMessages` (REPL multi-turn,
   //      plan-mode replay, explicit resume) — preferred
   //   2. `options.session.storage.load(sessionId)` — recover a previously
@@ -2191,7 +2224,7 @@ async function runManagedTaskViaRunnerInner(
     await options.context.actorSession?.resumeGenerationChildren(options.context.runtimeRunId);
   }
   // FEATURE_294: run-scoped host tools join the AMA candidate name list so the
-  // lease-bound surface stays consistent with the SA path; policy filtering
+  // lease-bound surface stays consistent with the direct engine; policy filtering
   // resolves their metadata from the run-scoped map (fail-closed elsewhere).
   const runScopedToolDefs = listRunScopedTools(extensionRuntime);
   const runtimeSessionState = buildRuntimeSessionState({
@@ -2308,6 +2341,10 @@ async function runManagedTaskViaRunnerInner(
         .filter((section) => !isRetainedSessionSection(section.id) || restatedIds.has(section.id))
         .map((section) => section.content)
         .join('\n\n') || undefined,
+      // Unchanged entries stay in the retained envelopes; restate only new or changed ones.
+      applicationRules: undefined,
+      applicationReferences: undefined,
+      ...applicationContext(applicationSections.filter((section) => restatedIds.has(section.id))),
     }, sessionDiff.retiredLabels);
     const updateContent = withInterruptedRunRecovery(updateBody) ?? updateBody;
     const update = createManagedRunContextMessage(updateContent, contextMetadata);
@@ -2364,7 +2401,6 @@ async function runManagedTaskViaRunnerInner(
       save: () => persistManagedBoundary(caller.transcript ?? runnerInput),
     }, SCRIPT_MODEL_LIMITS, runCell => runCell(code), scope), createScriptReceiptReader(runtimeSessionState),
   ) : chain.worker;
-  if (scriptMode) inheritOrdinaryRootToolContract(chain.worker, entryAgent, options.context);
   const persistManagedBoundary = async (
     messages: readonly KodaXMessage[],
   ): Promise<void> => {
@@ -2479,7 +2515,7 @@ async function runManagedTaskViaRunnerInner(
   const permissionEventsObserver: RunnerToolObserver = {
     // CAP-010 tri-state permission gate: plan-mode / accept-edits /
     // extension "tool:before" hooks run here. Delegates to the shared
-    // substrate helper so SA and AMA evaluate the same gate chain —
+    // substrate helper so the direct engine and AMA evaluate the same gate chain —
     // pre-FEATURE_100 the AMA path only invoked
     // `events.beforeToolExecute` and dropped the extension
     // `tool:before` branch entirely; substrate parity restores it.
@@ -2489,7 +2525,7 @@ async function runManagedTaskViaRunnerInner(
     beforeTool: async (call) => {
       if (skillLoadBatch && !isSkillToolCall(call)) return SKILL_ACTION_DEFERRED;
       if (scriptMode && call.name === SCRIPT_TOOL_NAME) return true;
-      // Like SA dispatch, the bridge gates its concrete target; gating the
+      // Like direct-engine dispatch, the bridge gates its concrete target; gating the
       // wrapper too would ask twice for one operation.
       if (call.name === TOOL_CALL_NAME || call.name === TOOL_DESCRIBE_NAME) return true;
       const override = await getToolExecutionOverride(
@@ -2508,7 +2544,7 @@ async function runManagedTaskViaRunnerInner(
       // etc.) so REPL transcript doesn't surface them. Pre-FEATURE_100
       // AMA emitted every tool call regardless of visibility — REPL
       // showed `emit_managed_protocol` invocations as if they were
-      // user-facing. SA always filtered via isVisibleToolName; AMA now
+      // user-facing. The direct engine always filtered via isVisibleToolName; AMA now
       // does too.
       if (!isVisibleToolName(call.name)) return;
       options.events?.onToolUseStart?.({
@@ -2804,10 +2840,34 @@ async function runManagedTaskViaRunnerInner(
   // (the wrapper only requires `messages`, so the wider type is
   // structurally OK).
   let generationBudget = options.session?.generationCheckpoint;
-  const runOnce = (agent: Agent, input: readonly KodaXMessage[]) => {
+  // An explicit maxIter bounds root LLM turns across idle-yield resumes,
+  // like the direct engine. Without it only the per-Runner panic fuse applies.
+  let rootIterationsUsed = 0;
+  const limitReachedRef = { current: false };
+  const runOnce = async (agent: Agent, input: readonly KodaXMessage[]) => {
     const resumedBudget = generationBudget;
     generationBudget = undefined;
     iterationStateRef.current = 0;
+    const fuse = Math.min(MANAGED_RUNNER_PANIC_ITERATIONS, resumedBudget?.remainingIterations ?? Infinity);
+    const remainingRootIterations = options.maxIter === undefined
+      ? Infinity : Math.max(0, options.maxIter - rootIterationsUsed);
+    try {
+      return await runOnceWithin(agent, input, resumedBudget, Math.min(fuse, remainingRootIterations));
+    } catch (error) {
+      if (!isRunnerIterationLimitError(error) || remainingRootIterations > fuse) throw error;
+      limitReachedRef.current = true;
+      const messages = readRunnerRecoveryTranscript(error) ?? input;
+      return { output: lastAssistantText(messages), messages };
+    } finally {
+      rootIterationsUsed += iterationStateRef.current;
+    }
+  };
+  const runOnceWithin = (
+    agent: Agent,
+    input: readonly KodaXMessage[],
+    resumedBudget: typeof generationBudget,
+    iterationCap: number,
+  ) => {
     const initialMessages = new Set(input);
     let capacityRevision = options.events?.getContextRecoveryRevision?.();
     const commitManagedMessage = options.session?.persistedByHost === false
@@ -2887,8 +2947,8 @@ async function runManagedTaskViaRunnerInner(
       // and is far too low for a multi-step managed task.
       // A fresh idle-yield resume starts a new Runner invocation and resets
       // this counter. The fuse catches one uninterrupted runaway tool loop;
-      // it never becomes a cumulative managed-task budget.
-      maxToolLoopIterations: Math.min(MANAGED_RUNNER_PANIC_ITERATIONS, resumedBudget?.remainingIterations ?? Infinity),
+      // only an explicit maxIter (see runOnce) adds a cumulative root budget.
+      maxToolLoopIterations: iterationCap,
       maxTotalIterations: Math.min(MANAGED_RUNNER_PANIC_ITERATIONS, resumedBudget?.remainingIterations === undefined
         ? Infinity : resumedBudget.remainingIterations + (resumedBudget.remainingContinuationIterations ?? 0)),
     });
@@ -2933,7 +2993,7 @@ async function runManagedTaskViaRunnerInner(
         // without dispatching" on V1; on V2 only Worker runs and the
         // gate falls through to the child-registry + verdict check.
         hasEmittedHandoff: false,
-        hasEmittedTerminalVerdict: rr.stoppedByHook === true,
+        hasEmittedTerminalVerdict: rr.stoppedByHook === true || limitReachedRef.current,
         // Bug E: queue arm alongside registry arm. Strictly
         // task-notification banners — see comment above for the
         // FEATURE_159 follow-up that narrowed this filter.
@@ -3158,7 +3218,7 @@ async function runManagedTaskViaRunnerInner(
     messages: resultMessages,
     // FEATURE_173 (v0.7.42) Part A — kill `runner-${epoch}` ghost-session
     // double-write. Caller-supplied `options.session.id` (the REPL session
-    // file, format `YYYYMMDD_HHMMSS`) always wins. `runOnce` does NOT
+    // file id) always wins. `runOnce` does NOT
     // currently pass an agent-layer Session into Runner.run (would trigger
     // `session.append()`), so `effectiveRunResult.sessionId` is always
     // undefined for production callers. The fallback is the same id emitted
@@ -3173,6 +3233,7 @@ async function runManagedTaskViaRunnerInner(
     // `.mutationSurface` / `.taskFamily` the same way they did on the
     // legacy path.
     routingDecision: plan?.decision,
+    ...(limitReachedRef.current ? { limitReached: true } : {}),
   };
   const runtimeSessionSnapshot = snapshotRuntimeSessionState(
     runtimeSessionState,

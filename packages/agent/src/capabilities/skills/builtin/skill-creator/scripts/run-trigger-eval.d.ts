@@ -1,6 +1,12 @@
+/** One observed first response: `skill:<name>` for Skill calls, the tool name otherwise. */
 export interface TriggerEvalAttempt {
   trigger: boolean;
-  reason: string;
+  tool_calls: string[];
+}
+
+export interface ObservedToolCall {
+  tool: string;
+  input: Record<string, unknown>;
 }
 
 export interface TriggerEvalItemResult {
@@ -33,8 +39,7 @@ export interface TriggerEvalReport {
     model?: string | null;
     runs_per_query: number;
     trigger_threshold: number;
-    evaluation_kind: 'description_semantic_screening';
-    model_catalog_visible: boolean;
+    evaluation_kind: 'observed_skill_call';
     note: string;
   };
 }
@@ -47,14 +52,13 @@ export interface TriggerEvalOptions {
   output?: string;
   runsPerQuery?: number;
   triggerThreshold?: number;
-  maxIter?: number;
   reasoningMode?: string;
   descriptionOverride?: string;
 }
 
-export function parseTriggerDecision(text: string): TriggerEvalAttempt;
+export function scoreFirstTurn(calls: ObservedToolCall[], skillName: string): TriggerEvalAttempt;
 export function summarizeTriggerResults(results: TriggerEvalItemResult[]): TriggerEvalSummary;
 export function runTriggerEval(
   options: TriggerEvalOptions,
-  runner?: (prompt: string, options: TriggerEvalOptions) => Promise<string>
+  observe?: (query: string, options: TriggerEvalOptions & { projectRoot: string }) => Promise<ObservedToolCall[]>
 ): Promise<TriggerEvalReport>;

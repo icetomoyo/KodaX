@@ -36,7 +36,7 @@ import {
   KODAX_ESCALATED_MAX_OUTPUT_TOKENS,
   registerModelProvider,
 } from '@kodax-ai/llm';
-import { runKodaX } from './agent.js';
+import { runTestLeaf as runLeafAgent } from './agent-runtime/test-leaf.js';
 import { readTransientTextArtifact } from './transient-text-artifacts.js';
 import { USER_INPUT_MEMORY_SYSTEM } from './user-input-memory.js';
 
@@ -136,7 +136,7 @@ describe('KodaXBaseProvider.getEffectiveMaxOutputTokens', () => {
   });
 });
 
-describe('runKodaX max_tokens continuation (L5)', () => {
+describe('runLeafAgent max_tokens continuation (L5)', () => {
   beforeEach(() => {
     resetProvider();
     process.env[TEST_PROVIDER_API_KEY_ENV] = 'test-key';
@@ -180,7 +180,7 @@ describe('runKodaX max_tokens continuation (L5)', () => {
       mode: 'append' | 'replace';
       outputId?: string;
     }> = [];
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: TEST_PROVIDER_NAME,
         reasoningMode: 'off',
@@ -209,10 +209,10 @@ describe('runKodaX max_tokens continuation (L5)', () => {
       .toEqual(segments.map(segment => segment.outputId));
   }, 30_000);
 
-  it('honors a run-scoped maxOutputTokens passed to runKodaX (SDK ALS wrap)', async () => {
-    // Regression guard for the SDK ALS gap: runKodaX is a public entry (startKodaX
+  it('honors a run-scoped maxOutputTokens passed to runLeafAgent (SDK ALS wrap)', async () => {
+    // Regression guard for the SDK ALS gap: runLeafAgent is a public entry (startKodaX
     // wraps it) and must establish the run-scoped config (AsyncLocalStorage) so
-    // per-run overrides reach the provider. Before runKodaX wrapped in
+    // per-run overrides reach the provider. Before runLeafAgent wrapped in
     // runWithScopedConfig, options.maxOutputTokens was silently dropped and the
     // provider fell back to its capped config default. getEffectiveMaxOutputTokens
     // reads getRunScopedConfig()?.maxOutputTokens ahead of the config default, so a
@@ -228,7 +228,7 @@ describe('runKodaX max_tokens continuation (L5)', () => {
       },
     ];
 
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       { provider: TEST_PROVIDER_NAME, reasoningMode: 'off', maxOutputTokens: SCOPED_BUDGET },
       'Do a small thing.',
     );
@@ -246,7 +246,7 @@ describe('runKodaX max_tokens continuation (L5)', () => {
     }];
     const oversized = `private sentinel\n${'evidence '.repeat(45_000)}`;
 
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       { provider: TEST_PROVIDER_NAME, reasoningMode: 'off' },
       oversized,
     );
@@ -276,7 +276,7 @@ describe('runKodaX max_tokens continuation (L5)', () => {
       },
     ];
 
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       { provider: TEST_PROVIDER_NAME, reasoningMode: 'off' },
       'Generate.',
     );

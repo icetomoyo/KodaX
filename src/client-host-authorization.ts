@@ -3,13 +3,17 @@ import type {
   ClientCommandInput, ClientReviewInput, ClientSubmitInput, ClientToolInvocationInput, ClientWorkflowStartInput,
 } from '@kodax-ai/coding/client-contract';
 import type { AgentSpawnInput, KodaXJsonValue } from '@kodax-ai/agent';
-import type { KodaXAgentProfile, KodaXTaskVerificationContract, KodaXToolVisibilityMeta, KodaXToolVisibilityPolicy } from '@kodax-ai/coding/client-contract';
+import type {
+  KodaXAgentProfile, KodaXPromptSpec, KodaXTaskVerificationContract, KodaXToolVisibilityMeta, KodaXToolVisibilityPolicy,
+} from '@kodax-ai/coding/client-contract';
 
 export interface RuntimeExecutionProfile {
   /** Required root execution mode; independent of tool permissions and child Agent declarations. */
   readonly requiredWorkMode?: 'agent';
   readonly defaultSkill?: RuntimeDefaultSkill;
   readonly agentProfile?: KodaXAgentProfile;
+  /** Application prompt customization; requires the `promptSpec` Host capability. */
+  readonly prompt?: KodaXPromptSpec;
   readonly taskVerification?: KodaXTaskVerificationContract;
   /** Additional ceiling, intersected with the selected mode and Host restrictions. */
   readonly tools?: readonly string[];
@@ -21,6 +25,7 @@ export interface RuntimeExecutionProfileSource {
   readonly requiredWorkMode?: 'agent';
   readonly defaultSkill?: RuntimeDefaultSkill;
   readonly agentProfile?: KodaXAgentProfile;
+  readonly prompt?: KodaXPromptSpec;
   readonly taskVerification?: KodaXTaskVerificationContract;
   readonly toolVisibilityPolicy?: KodaXToolVisibilityPolicy;
   readonly excludeTools?: readonly string[];

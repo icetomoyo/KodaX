@@ -15,9 +15,8 @@ import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 
 it.each([
-  { agentMode: 'sa', continuation: false }, { agentMode: 'ama', continuation: false },
-  { agentMode: 'sa', continuation: true }, { agentMode: 'ama', continuation: true },
-] as const)('preserves $agentMode outputs through HTTP, IPC, commit and restart (continuation=$continuation)', async ({ agentMode, continuation }) => {
+  { continuation: false }, { continuation: true },
+] as const)('preserves outputs through HTTP, IPC, commit and restart (continuation=$continuation)', async ({ continuation }) => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-output-owner-'));
   const answer = 'Report\n\n```js\nexample\n```\n\nEnd';
   let release!: () => void;
@@ -88,7 +87,7 @@ it.each([
     const session = await active.client.sessions.create({ projectPath: homeDir });
     sessionId = session.id;
     await active.client.sessions.updateSettings(session.id, { provider: 'output-owner-test', model: 'fixture',
-      agentMode, permissionMode: 'full-access' });
+      permissionMode: 'full-access' });
     const views: ClientSessionView[] = [];
     const writes: string[] = [];
     const display = createClassicPlaneDisplayDiffer(text => writes.push(text),
@@ -107,7 +106,7 @@ it.each([
     completed = true;
     await expect.poll(() => views.at(-1)?.runs.find(run => run.runId === runId)?.phase).toBe('completed');
     const replies = views.at(-1)!.items.filter(item => item.type === 'assistant');
-    const expectedTexts = continuation && agentMode === 'sa' ? ['Report\n\n', '```js\nexample\n```\n\nEnd'] : [answer];
+    const expectedTexts = [answer];
     expect(replies.map(item => item.text)).toEqual(expectedTexts);
     expect(replies[0]?.id).toBe(liveId);
     expect(new Set(replies.map(item => item.id)).size).toBe(expectedTexts.length);

@@ -3,6 +3,7 @@ import type { ToolSideEffect } from './tools/side-effect.js';
 
 /** Last assembled execution surface. Visibility does not grant effect permission. */
 export interface KodaXEffectiveTaskConfig {
+  /** New Runs report `ama`; `sa` and `amaw` appear only in records stored by older Hosts. */
   readonly agentMode: 'sa' | 'ama' | 'amaw';
   readonly workMode: 'agent' | 'coding' | 'script';
   readonly agentProfile?: KodaXAgentProfile;
@@ -70,9 +71,9 @@ export interface KodaXAgentProfile {
   /** Human-facing display name. Opaque to the core. */
   readonly name?: string;
   /**
-   * Behavior instructions prepended to the AMA Worker prompt or used as the SA
-   * base prompt, retaining the admitted Skill catalog in either mode. An explicit
-   * `context.systemPromptOverride` still replaces the complete SA prompt.
+   * Behavior instructions prepended to the managed Worker prompt or used as a
+   * leaf Agent's base prompt, retaining the admitted Skill catalog on either path. An explicit
+   * `context.systemPromptOverride` still replaces a leaf Agent's complete prompt.
    */
   readonly instructions?: string;
   /**
@@ -81,6 +82,28 @@ export interface KodaXAgentProfile {
    * Verifier.
    */
   readonly verification?: KodaXTaskVerificationContract;
+}
+
+/**
+ * Application prompt customization for one managed Run. The direct engine
+ * (`runKodaX`, `runs.start` in `coding` mode) rejects it.
+ */
+export interface KodaXPromptSpec {
+  /**
+   * `omit` drops KodaX's default working style and its Worker identity wording.
+   * Protocol text, tool teaching and project rules (AGENTS.md) stay. Default `keep`.
+   */
+  readonly kodaxGuidance?: 'keep' | 'omit';
+  /** Exactly this Run's entries; an entry absent from a later Run is retired. */
+  readonly context?: readonly KodaXPromptContextEntry[];
+}
+
+export interface KodaXPromptContextEntry {
+  /** Stable name, `[a-z0-9][a-z0-9._-]{0,63}`, unique within the spec. */
+  readonly key: string;
+  /** A `rule` is followed like a project rule and reaches write children; a `reference` is evidence for the root only. */
+  readonly kind: 'rule' | 'reference';
+  readonly text: string;
 }
 
 /**

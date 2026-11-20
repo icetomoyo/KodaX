@@ -149,8 +149,8 @@ import type {
 // `sideEffect` contract. Imported from the leaf `./tools/side-effect.js` (not
 // `./tools/types.js`) so there is no import cycle — `tools/types.ts` imports
 // `KodaXToolExecutionContext` back from here.
-import type { KodaXEffectiveTaskConfig, KodaXAgentProfile, KodaXTaskVerificationContract, KodaXToolVisibilityPolicy } from './execution-profile-contract.js';
-export type { KodaXEffectiveTaskConfig, KodaXAgentProfile, KodaXTaskCapabilityHint, KodaXTaskVerificationCriterion, KodaXRuntimeVerificationContract, KodaXTaskVerificationContract, KodaXToolVisibilityMeta, KodaXToolVisibilityPolicy } from './execution-profile-contract.js';
+import type { KodaXEffectiveTaskConfig, KodaXAgentProfile, KodaXPromptSpec, KodaXTaskVerificationContract, KodaXToolVisibilityPolicy } from './execution-profile-contract.js';
+export type { KodaXEffectiveTaskConfig, KodaXAgentProfile, KodaXPromptSpec, KodaXPromptContextEntry, KodaXTaskCapabilityHint, KodaXTaskVerificationCriterion, KodaXRuntimeVerificationContract, KodaXTaskVerificationContract, KodaXToolVisibilityMeta, KodaXToolVisibilityPolicy } from './execution-profile-contract.js';
 import type { KodaXAgentScope } from './construction/agent-resolver.js';
 
 // Re-export all types from @kodax-ai/agent
@@ -1217,9 +1217,12 @@ export interface KodaXChildRouteFacts {
  */
 export interface KodaXExecutionFailure {
   readonly source?: 'provider' | 'local';
-  /** Bounded diagnostic, independent of any assistant reply. */
+  /** Summary, safe facts and the underlying reason, independent of any assistant reply. */
   readonly message: string;
+  /** Fixed KodaX summary of the failure category; never contains upstream text. */
   readonly safeMessage: string;
+  /** Underlying reason (Provider response text or exception message): credential-redacted and bounded. */
+  readonly detail?: string;
   readonly errorName?: string;
   readonly errorClass: ResilienceErrorClass | 'local_execution_error';
   /** Most specific safe upstream or KodaX failure code available. */
@@ -1324,21 +1327,21 @@ export interface KodaXChildFinding {
 
 export type KodaXAgentMode =
   | 'ama'
+  /** @deprecated SA was retired; accepted as input only and carries no behavior. */
   | 'sa'
   /** @deprecated AMAW was merged into AMA in v0.7.72; accepted as an input alias only. */
   | 'amaw';
-export type KodaXCanonicalAgentMode = Exclude<KodaXAgentMode, 'amaw'>;
+export type KodaXCanonicalAgentMode = 'ama';
 
-/** Normalize the retired AMAW spelling at every public SDK entry boundary. */
-export function normalizeKodaXAgentMode(mode: KodaXAgentMode): KodaXCanonicalAgentMode;
-export function normalizeKodaXAgentMode(mode: undefined): undefined;
-export function normalizeKodaXAgentMode(
-  mode: KodaXAgentMode | undefined,
-): KodaXCanonicalAgentMode | undefined;
+/**
+ * Normalize retired spellings at every public SDK entry boundary. `amaw` is
+ * AMA. `sa` becomes unlabeled: managed entries then default to AMA, and the
+ * direct `runKodaX` engine keeps the unlabeled behavior `sa` always had there.
+ */
 export function normalizeKodaXAgentMode(
   mode: KodaXAgentMode | undefined,
 ): KodaXCanonicalAgentMode | undefined {
-  return mode === 'amaw' ? 'ama' : mode;
+  return mode === 'sa' || mode === undefined ? undefined : 'ama';
 }
 export type KodaXMemoryStrategy = 'continuous' | 'compact' | 'reset-handoff';
 export type KodaXBudgetDisclosureZone = 'green' | 'yellow' | 'orange' | 'red';
@@ -2092,11 +2095,14 @@ export interface KodaXContextOptions {
    */
   workModePolicy?: 'intersect';
   /**
-   * FEATURE_067 v3: Override the entire system prompt for this run.
-   * When set, buildSystemPromptSnapshot is skipped — only this string is used.
-   * Used for child agents that need a focused, lightweight prompt instead of the full system.
+   * FEATURE_067 v3: On a root Run (managed Worker) it goes first and replaces
+   * the KodaX identity and guidance; Environment, Memory and trust sections are
+   * still appended. On the internal leaf executor (child Agents, digests and
+   * repairs) it replaces the entire system prompt.
    */
   systemPromptOverride?: string;
+  /** Application prompt customization; managed Runs only. See {@link KodaXPromptSpec}. */
+  prompt?: KodaXPromptSpec;
   /** Optional structured metadata carried into the managed task contract. */
   taskMetadata?: Record<string, KodaXJsonValue>;
   /** Optional structured verification contract carried into managed tasks. */
@@ -3004,6 +3010,8 @@ export interface KodaXToolExecutionContext {
     readonly shellExecution?: KodaXShellExecutionContract;
     readonly sandbox?: KodaXSandboxOptions;
     readonly permissionIntent?: import('@kodax-ai/agent').GuardrailPermissionIntent;
+    /** Rendered `context.prompt` rule entries; write children append them after project rules. */
+    readonly applicationRules?: string;
   };
   /** Parent SDK/REPL callback surface used to preserve nested Agent telemetry. */
   parentEvents?: KodaXEvents;
@@ -3158,7 +3166,8 @@ export interface KodaXToolExecutionContext {
    * FEATURE_246 Part A2 (ADR-046): narrow capability the `run_workflow` tool
    * uses to start a managed workflow run. Wired by tool-execution-context (via
    * a lazy import of the coding WorkflowHost) only when the session enables it;
-   * absent in SA / when no runs dir is configured, so the tool fails closed.
+   * absent on direct (non-AMA) runs, without explicit Workflow intent, or when
+   * no runs dir is configured, so the tool fails closed.
    */
   workflowHost?: WorkflowToolHost;
 

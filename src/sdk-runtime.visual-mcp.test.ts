@@ -9,9 +9,8 @@ import { createSessionManager, FileSessionStorage, parseMcpIntegrationDocument, 
 import { NATIVE_PROVIDER_CAPABILITY_PROFILE } from '../packages/llm/src/providers/capability-profile.js';
 import { createKodaXRuntime } from '../tests/runtime-fixture.js';
 
-const cells = (['ama', 'sa'] as const).flatMap(agentMode => (['openai', 'anthropic'] as const)
-  .flatMap(protocol => [false, true].map(bridge => ({ agentMode, protocol, bridge }))));
-it.each(cells)('admits MCP typed bytes with exact call ordinals, permission and restore: $agentMode/$protocol bridge=$bridge', async ({ agentMode, protocol, bridge }) => {
+const cells = (['openai', 'anthropic'] as const).flatMap(protocol => [false, true].map(bridge => ({ protocol, bridge })));
+it.each(cells)('admits MCP typed bytes with exact call ordinals, permission and restore: $protocol bridge=$bridge', async ({ protocol, bridge }) => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-visual-mcp-'));
   const source = path.join(homeDir, 'source.png'); const callsPath = path.join(homeDir, 'calls.txt');
   const png = await new Jimp({ width: 2, height: 1, color: 0x00ff00ff }).getBuffer('image/png');
@@ -62,7 +61,7 @@ it.each(cells)('admits MCP typed bytes with exact call ordinals, permission and 
   let runtime = await createKodaXRuntime(options);
   try {
     const session = await runtime.sessions.create({ projectPath: homeDir });
-    await runtime.sessions.updateSettings(session.id, { agentMode, workMode: 'coding', permissionMode: 'full-access' });
+    await runtime.sessions.updateSettings(session.id, { workMode: 'coding', permissionMode: 'full-access' });
     const input = { sessionId: session.id, inputId: 'mcp-frames', text: 'Read the two MCP frame calls and inspect the original images.' };
     const run = await runtime.runs.acceptInput(input); expect((await runtime.runs.await(run.runId!)).phase).toBe('completed');
     expect(ids).toHaveLength(4);
@@ -95,7 +94,7 @@ it.each(cells)('admits MCP typed bytes with exact call ordinals, permission and 
       && (record.data as { sourceKey: string }).sourceKey === 'mcp:visual:resource:frame');
     expect(resources).toHaveLength(2);
     expect(JSON.stringify(wires.at(-1)).includes('source=mcp:visual:resource:frame')).toBe(true);
-    if (agentMode === 'sa' && protocol === 'openai') {
+    if (protocol === 'openai') {
       resourceMode = false; fallbackMode = true; turn = 0; await writeFile(source, png);
       await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
       const fallback = await runtime.runs.acceptInput({ sessionId: session.id, inputId: 'typed-fallback', text: 'Read the missing path using the available read fallback.' });
@@ -105,7 +104,7 @@ it.each(cells)('admits MCP typed bytes with exact call ordinals, permission and 
       expect(fallbackRecords).toHaveLength(4);
       expect(JSON.stringify(wires.at(-1)).includes('source=mcp:visual:tool:read')).toBe(true);
     }
-    if (agentMode === 'ama' && protocol === 'openai' && !bridge) {
+    if (protocol === 'openai' && !bridge) {
       const failingSession = await runtime.sessions.create({ projectPath: homeDir });
       await runtime.sessions.updateSettings(failingSession.id, { permissionMode: 'full-access', workMode: 'coding' });
       await writeFile(source, png); resourceMode = false; fallbackMode = false; restored = false; turn = 0;
@@ -166,7 +165,7 @@ it('uses final read arguments once for MCP fallback and never calls it after an 
   }, { source: { kind: 'runtime', id: 'final-read-guard', label: 'final-read-guard' } });
   try {
     const session = await runtime.sessions.create({ projectPath: homeDir });
-    await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', workMode: 'coding', permissionMode: 'full-access' });
+    await runtime.sessions.updateSettings(session.id, { workMode: 'coding', permissionMode: 'full-access' });
     const store = createSessionManager({ sessionsDir: path.join(homeDir, '.kodax', 'sessions'), configHome: path.join(homeDir, '.kodax') });
     for (policy of ['allow', 'block', 'ask'] as const) {
       turn = 0;

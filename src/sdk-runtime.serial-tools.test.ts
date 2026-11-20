@@ -7,8 +7,8 @@ import { clearRuntimeModelProviders, KodaXBaseProvider, registerModelProvider, t
 import { createSessionManager } from '@kodax-ai/repl';
 import { createKodaXRuntime } from '../tests/runtime-fixture.js';
 
-it.each((['ama', 'sa'] as const).flatMap(agentMode => [false, true].map(bridge => ({ agentMode, bridge })) ))(
-  'keeps a registered serial predicate through real dispatch: $agentMode bridge=$bridge', async ({ agentMode, bridge }) => {
+it.each([false, true])(
+  'keeps a registered serial predicate through real dispatch: bridge=%s', async bridge => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-tool-serial-'));
   const calls: string[] = [];
   let serial = true; let rootTurn = 0; let parallelStarted = 0; let releaseParallel!: () => void;
@@ -38,7 +38,7 @@ it.each((['ama', 'sa'] as const).flatMap(agentMode => [false, true].map(bridge =
   const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: 'serial-fixture', defaultModel: 'fixture' });
   try {
     const session = await runtime.sessions.create({ projectPath: homeDir });
-    await runtime.sessions.updateSettings(session.id, { agentMode, workMode: 'coding', permissionMode: 'full-access' });
+    await runtime.sessions.updateSettings(session.id, { agentMode: 'ama', workMode: 'coding', permissionMode: 'full-access' });
     const first = await runtime.runs.acceptInput({ sessionId: session.id, inputId: 'serial', text: 'Run the two controlled serial operations.' });
     expect((await runtime.runs.await(first.runId!)).phase).toBe('completed');
     expect(calls).toEqual(['first:start', 'first:end', 'second:start', 'second:end']);

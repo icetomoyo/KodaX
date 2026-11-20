@@ -1,0 +1,6 @@
+<!-- @key pattern-catalog.review-composition -->
+For an explicitly requested review or audit Workflow, combine fan-out-and-synthesize with adversarial-verification: declare ['fan-out-and-synthesize', 'adversarial-verification'], give each verifier a distinct failure-mode angle, and assess every finding against shared evidence and a common rubric. Keep confirmed findings, exclude refuted findings, and disclose unresolved findings; verifier count is not proof. This refutes a reviewer blind spot before synthesis.
+
+<!-- @key pattern-catalog.quality-strategy -->
+- Optional `quality_strategy` metadata may describe a named stage on `spawn_agent` or a stage-changing `followup_task`: use `{schemaVersion:1, stageId, pattern, role, laneRelation?, targetEvidenceRefs?}`. Keep one stable `stageId` across participants in the same stage. Example coverage lane: `{schemaVersion:1,stageId:"interface-coverage",pattern:"fan-out-and-synthesize",role:"investigator",laneRelation:"coverage"}`. Missing or invalid metadata never makes an otherwise legal Agent operation invalid.
+- Use `laneRelation:"coverage"` for distinct scopes, `"replication"` only for genuinely independent checks, and `"opposition"` for challengers. A challenger must name a terminal exact `agent-turn:` or immutable evidence target.

@@ -266,8 +266,8 @@ it('retains AMA planning, collaboration and completion instructions across the t
     const baseline = buildWorkerStableInstructions(coding.worker.tools?.map(tool => tool.name));
     const candidate = buildWorkerStableInstructions(agent.worker.tools?.map(tool => tool.name));
     const common = baseline.split('\n\n').filter(section => !specialized.some(name => section.includes(name)));
-    expect(common.some(section => section.includes('PLAN-FIRST GUIDANCE:'))).toBe(true);
-    expect(common.some(section => section.includes('spawn_agent'))).toBe(true);
+    expect(common.some(section => section.includes('TASK AND PLAN'))).toBe(true);
+    expect(common.some(section => section.includes('PARALLEL WORK'))).toBe(true);
     for (const section of common) expect(candidate).toContain(section);
     expect(agent.worker.tools?.map(tool => tool.name)).toEqual(expect.arrayContaining([
       'spawn_agent', 'send_message', 'followup_task', 'wait_agent', 'list_agents', 'interrupt_agent', 'agent_output',

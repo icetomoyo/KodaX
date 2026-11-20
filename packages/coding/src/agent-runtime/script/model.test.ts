@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import type { RunnableTool } from '@kodax-ai/agent';
-import { withScriptModelTool, canReadWithModelTools, projectScriptModelTools, getScriptModelContracts, buildScriptModelDescription, closeScriptModelSession } from './model.js';
+import { withScriptModelTool, canReadWithModelTools, projectScriptModelTools, getScriptModelContracts, buildScriptModelDescription, closeScriptModelSession, withScriptModeGuidance } from './model.js';
 import { fitToolSchemasToContext } from '../tool-exposure-planner.js';
 import { getToolDefinition } from '../../tools/index.js';
 import type { ScriptCellResult } from './cell.js';
@@ -414,7 +414,7 @@ it('closes the parent model binding after a host persistence failure but permits
   expect((await tool.execute({ code: 1 }, { agent })).isError).toBe(true);
   expect(run).not.toHaveBeenCalled();
   await expect(tool.execute({ code: 'return 1' }, { agent })).rejects.toThrow('receipt persistence failed');
-  expect((await tool.execute({ code: 'return 2' }, { agent })).content).toContain('Script closed');
+  expect((await tool.execute({ code: 'return 2' }, { agent })).content).toContain('Script cells are closed');
   expect(run).toHaveBeenCalledTimes(1);
 });
 
@@ -436,6 +436,22 @@ it('recognizes paged read only when a real Script read binding is in the present
   expect(canReadWithModelTools(script, [])).toBe(false);
   expect(canReadWithModelTools(worker, menu)).toBe(false);
   expect(canReadWithModelTools(worker, worker.tools)).toBe(true);
+});
+
+it('tells the shared Worker prompt where leaf tools run only when the Script entry is presented', () => {
+  const tools = ['read', 'bash', 'tool_call'].map(name => getToolDefinition(name)!);
+  const worker = { name: 'worker', instructions: '', tools };
+  const script = withScriptModelTool(worker, { backups: new Map() }, tools.slice(0, 2),
+    async () => ({ status: 'completed', receipts: [], hadToolErrors: false }));
+  const menu = projectScriptModelTools(script, script.tools!);
+  const system = withScriptModeGuidance(script, menu, 'BASE');
+  expect(system).toMatch(/^BASE\n\nSCRIPT MODE\n/);
+  expect(system).toContain('run inside `script_exec` as tools["NAME"](input)');
+  expect(system).toContain('because the cell keeps raw output out of the conversation');
+  expect(system).toContain('`tool_call` reaches the same tools one call at a time.');
+  expect(withScriptModeGuidance(script, menu.filter(tool => tool.name !== 'tool_call'), 'BASE'))
+    .not.toContain('tool_call');
+  expect(withScriptModeGuidance(worker, worker.tools, 'BASE')).toBe('BASE');
 });
 
 it('exposes structured leaf contracts only behind the unchanged visible Script entry', () => {

@@ -6,10 +6,7 @@
  */
 
 import type {
-  KodaXRoleRoundSummary,
   KodaXSkillInvocationContext,
-  KodaXSkillMap,
-  KodaXTaskRole,
 } from '../../../types.js';
 
 export interface ManagedRolePromptContext {
@@ -17,18 +14,13 @@ export interface ManagedRolePromptContext {
   /** Executable tools after role/host policy. Omitted preserves standalone guidance. */
   availableToolNames?: readonly string[];
   skillInvocation?: KodaXSkillInvocationContext;
-  skillMap?: KodaXSkillMap;
   skillExecutionArtifactPath?: string;
-  skillMapArtifactPath?: string;
-  previousRoleSummaries?: Partial<Record<KodaXTaskRole, KodaXRoleRoundSummary>>;
   /** FEATURE_067: Evaluator review prompt for write fan-out diffs from Generator's child agents. */
   childWriteReviewPrompt?: string;
   /**
    * v0.7.26 NEW-1 — workspace environment the role should assume.
    * Without this the managed-worker system prompt never tells the LLM
-   * where it is running; the SA path injects `Working Directory: ...`
-   * via `buildSystemPrompt`, but the Runner-driven path bypassed that
-   * builder entirely, causing managed workers to guess paths (e.g.
+   * where it is running, causing managed workers to guess paths (e.g.
    * bash-cd into invented directories).
    */
   workspace?: {
@@ -64,11 +56,10 @@ export interface ManagedRolePromptContext {
    *   - `git-context`             (branch / status snapshot)
    *   - `project-snapshot`        (lightweight repo tree)
    *
-   * `environment-context` / `working-directory` / `runtime-fact` are
-   * already in `workspaceSection`; `repo-intelligence-context` and
-   * `prompt-overlay` ride on the user prompt via separate Runner
-   * paths (`prebuiltRepoIntelligenceContext` / Shard 6d-L overlay
-   * stitching). Filtering avoids duplicate emission.
+   * The environment, working directory and runtime fact live in
+   * `workspaceSection`; repository intelligence and `prompt-overlay` ride
+   * on the user prompt via separate Runner paths
+   * (`prebuiltRepoIntelligenceContext` / Shard 6d-L overlay stitching).
    *
    * Pre-computed parent-side so each per-role prompt invocation does
    * NOT trigger fresh AGENTS.md / git status / project FS walks.
@@ -85,7 +76,7 @@ export interface ManagedRolePromptContext {
    * FEATURE_143 (v0.7.36) — routing-notes overlay (`plan.promptOverlay`)
    * that v0.7.26 FEATURE_084 mistakenly stitched onto the user prompt
    * head. Now flows here instead so the role-prompt builder can emit
-   * it as a system-prompt section, matching the SA path's
+   * it as a system-prompt section, matching the direct engine's
    * `capability-sections.ts` behavior. Carries: task-family guidance,
    * work intent, brainstorm directives, provider-policy notes,
    * explicit-reason trail.
@@ -115,6 +106,14 @@ export interface ManagedRolePromptContext {
   teamModeSection?: string;
   /** Clock-free identity for Team Mode change detection. */
   teamModeFingerprint?: string;
+  /** `kodaxGuidance: 'omit'` or a caller system prompt: drop guidance-tagged text and KodaX identity wording. */
+  omitKodaxGuidance?: boolean;
+  /** An application persona speaks for itself: drop the KodaX identity wording, keep the working guidance. */
+  neutralIdentity?: boolean;
+  /** Rendered `context.prompt` rule entries; a context update carries only new or changed ones. */
+  applicationRules?: string;
+  /** Rendered `context.prompt` reference entries, same retention as rules. */
+  applicationReferences?: string;
   /** Per-round Actor scheduler facts used to size a spawn wave before tool calls. */
   actorCapacity?: {
     readonly maxConcurrentThreads: number;

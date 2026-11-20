@@ -292,6 +292,10 @@ export function createRuntimeDaemonClient(
       && (runtimeCapabilities.productExecutionBinding as { version?: number } | undefined)?.version !== 1) {
       return Promise.reject(Object.assign(new Error('Execution bindings require an upgraded Host.'), { code: 'daemon_upgrade_required' }));
     }
+    if (authorization?.profile?.prompt !== undefined
+      && (runtimeCapabilities.promptSpec as { version?: number } | undefined)?.version !== 1) {
+      return Promise.reject(Object.assign(new Error('Prompt customization requires an upgraded Host.'), { code: 'daemon_upgrade_required' }));
+    }
     return options.transport.request(method, params, control);
   };
   const executionBindings = createExecutionBindingClient(request, runtimeCapabilities, sessionId => createExecutionServices(runtime, sessionId));

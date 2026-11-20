@@ -25,9 +25,8 @@
  * Plus the `systemPromptOverride` honor and the `providerReasoning`
  * envelope shape.
  *
- * Tests pass `systemPromptOverride` so we don't pay for the heavy
- * `buildSystemPrompt` I/O — the override-vs-derived branch is pinned
- * separately. The integration round-trip with CAP-051 repo signals +
+ * Tests pass `systemPromptOverride`, as every production leaf caller does;
+ * the leaf rejects a call that supplies no prompt. The integration round-trip with CAP-051 repo signals +
  * FEATURE_078 ceiling clamp is deferred to P3 (needs a Runner-frame
  * fixture).
  *
@@ -53,11 +52,9 @@ function freshPlan(overrides: Record<string, unknown> = {}): ReasoningPlan {
 }
 
 function freshOptions(overrides: Record<string, unknown> = {}): KodaXOptions {
-  // Two short-circuits keep the test fast:
-  //  1. systemPromptOverride avoids the heavy buildSystemPrompt I/O path.
-  //  2. repoIntelligenceMode='off' short-circuits CAP-001's
-  //     buildAutoRepoIntelligenceContext (which would otherwise scan
-  //     the repo / talk to git for every test).
+  // A leaf always carries its own prompt, and repoIntelligenceMode='off' short-circuits CAP-001's
+  // buildAutoRepoIntelligenceContext (which would otherwise scan the
+  // repo / talk to git for every test).
   // Tests that exercise the derived branches override context fields
   // explicitly.
   const ctx = (overrides.context as Record<string, unknown>) ?? {};
@@ -155,13 +152,21 @@ describe('CAP-052: buildReasoningExecutionState — input merging', () => {
 });
 
 describe('CAP-052: buildReasoningExecutionState — systemPrompt resolution', () => {
-  it('CAP-REASONING-PLAN-002a: systemPromptOverride from context wins (does NOT call buildSystemPrompt)', async () => {
+  it('CAP-REASONING-PLAN-002a: systemPromptOverride from context wins', async () => {
     const result = await buildReasoningExecutionState(
       freshOptions({ context: { systemPromptOverride: 'EXPLICIT OVERRIDE' } }),
       freshPlan(),
       true,
     );
     expect(result.systemPrompt).toBe('EXPLICIT OVERRIDE');
+  });
+
+  it('CAP-REASONING-PLAN-002b: a leaf without a prompt is rejected, since root Runs use the managed Worker', async () => {
+    await expect(buildReasoningExecutionState(
+      { provider: 'anthropic', context: { repoIntelligenceMode: 'off' } },
+      freshPlan(),
+      true,
+    )).rejects.toThrow('The leaf executor requires systemPromptOverride or agentProfile.instructions');
   });
 });
 

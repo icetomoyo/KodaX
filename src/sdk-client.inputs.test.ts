@@ -39,7 +39,7 @@ class InputTestProvider extends KodaXBaseProvider {
 
 it('concurrent settings reads cannot reset draft settings during input promotion', async () => {
   await createCliSessionCommands(client).create({ sessionId: 'promoting', title: '', surface: 'repl', projectPath: homeDir });
-  await runtime.sessions.updateSettings('promoting', { permissionMode: 'plan', agentMode: 'sa' });
+  await runtime.sessions.updateSettings('promoting', { permissionMode: 'plan', effort: 'low' });
   let entered!: () => void;
   let release!: () => void;
   const paused = new Promise<void>(resolve => { entered = resolve; });
@@ -61,8 +61,8 @@ it('concurrent settings reads cannot reset draft settings during input promotion
     const accepted = await accepting;
     await runtime.runs.await(accepted.runId!);
   }
-  expect(duringPromotion!).toMatchObject({ permissionMode: 'plan', agentMode: 'sa' });
-  expect(await runtime.sessions.getSettings('promoting')).toMatchObject({ permissionMode: 'plan', agentMode: 'sa' });
+  expect(duringPromotion!).toMatchObject({ permissionMode: 'plan', effort: 'low' });
+  expect(await runtime.sessions.getSettings('promoting')).toMatchObject({ permissionMode: 'plan', effort: 'low' });
 });
 
 it('REPL drafts remain absent from history after rejected input and become durable exactly once on acceptance', async () => {
@@ -73,7 +73,7 @@ it('REPL drafts remain absent from history after rejected input and become durab
   });
   observation.close();
   expect(await storage.list()).toEqual([]);
-  await runtime.sessions.updateSettings('repl-draft', { permissionMode: 'full-access', agentMode: 'sa' });
+  await runtime.sessions.updateSettings('repl-draft', { permissionMode: 'full-access', effort: 'low' });
   await expect(client.inputs.submit({ sessionId: 'repl-draft', inputId: 'rejected', text: '   ' })).rejects.toThrow();
   expect(await storage.list()).toEqual([]);
   const input = { sessionId: 'repl-draft', inputId: 'first-draft-input', text: 'Process this draft once.' };
@@ -90,7 +90,7 @@ it('REPL drafts remain absent from history after rejected input and become durab
   const reopened = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
   try {
     expect(await reopened.sessions.getSettings('repl-draft')).toMatchObject({
-      permissionMode: 'full-access', agentMode: 'sa',
+      permissionMode: 'full-access', effort: 'low',
     });
   } finally { await reopened.close(); }
 });
@@ -100,7 +100,7 @@ it.each([
   { retryInputId: 'retry-promotion', text: 'Retry saving settings.' },
 ])('retries draft settings persistence as $retryInputId after a failed promotion write', async ({ retryInputId, text }) => {
   await createCliSessionCommands(client).create({ sessionId: 'retry-draft', title: '', surface: 'repl', projectPath: homeDir });
-  await runtime.sessions.updateSettings('retry-draft', { permissionMode: 'full-access', agentMode: 'sa' });
+  await runtime.sessions.updateSettings('retry-draft', { permissionMode: 'full-access', effort: 'low' });
   const settingsDir = path.join(homeDir, '.kodax', 'runtime', 'profiles', 'default', 'session-settings');
   await writeFile(settingsDir, 'Block the settings directory for the first write.');
   await expect(client.inputs.submit({ sessionId: 'retry-draft', inputId: 'failed-promotion', text: 'Save settings.' }))
@@ -121,7 +121,7 @@ it.each([
   await client.disconnect(); await host.close(); await runtime.close();
   const reopened = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
   try {
-    expect(await reopened.sessions.getSettings('retry-draft')).toMatchObject({ permissionMode: 'full-access', agentMode: 'sa' });
+    expect(await reopened.sessions.getSettings('retry-draft')).toMatchObject({ permissionMode: 'full-access', effort: 'low' });
   } finally { await reopened.close(); }
 });
 
@@ -129,7 +129,7 @@ it('accepts an immediate input once across clients and rejects reuse for a diffe
   const second = await connectKodaXClient({ homeDir, endpoint: endpointPath });
   try {
     const session = await client.sessions.create({ title: 'One input', projectPath: homeDir });
-    await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', agentMode: 'sa' });
+    await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
     const input = { sessionId: session.id, inputId: 'input-one', text: 'Process this request once.' };
     const [accepted, duplicate] = await Promise.all([client.inputs.submit(input), second.inputs.submit(input)]);
     expect(accepted.state).toBe('submitted');
@@ -191,7 +191,7 @@ afterEach(async () => {
 
 it('persists the canonical input identity before the Provider can consume it', async () => {
   const session = await client.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', agentMode: 'sa' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const input = { sessionId: session.id, inputId: 'durable-input', text: 'Save this before executing.' };
   let persistedAtRequest: Awaited<ReturnType<FileSessionStorage['load']>>;
   onRequest = async () => { persistedAtRequest = await storage.load(session.id); };
@@ -205,7 +205,7 @@ it('persists the canonical input identity before the Provider can consume it', a
 
 it('returns the original acceptance during compaction while rejecting new input', async () => {
   const session = await client.sessions.create({ projectPath: homeDir });
-  await client.sessions.updateSettings(session.id, { permissionMode: 'full-access', agentMode: 'sa' });
+  await client.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const input = { sessionId: session.id, inputId: 'before-compact', text: 'Keep this accepted request identity.' };
   const accepted = await client.inputs.submit(input);
   await runtime.runs.await(accepted.runId!);
@@ -229,7 +229,7 @@ it('returns the original acceptance during compaction while rejecting new input'
 
 it('rejects input persistence failure without starting a Provider or accepting the input', async () => {
   const session = await client.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', agentMode: 'sa' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const input = { sessionId: session.id, inputId: 'cannot-save', text: 'This must not run.' };
   const originalSave = FileSessionStorage.prototype.save;
   vi.spyOn(FileSessionStorage.prototype, 'save').mockImplementation(function (this: FileSessionStorage, id, data) {
@@ -245,7 +245,7 @@ it('rejects input persistence failure without starting a Provider or accepting t
 
 it('deletes a temporary Session after its task settles even when the client disconnects', async () => {
   const session = await client.sessions.create({ projectPath: homeDir, temporary: true });
-  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', agentMode: 'sa' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   let release: () => void = () => undefined;
   const waiting = new Promise<void>((resolve) => { release = resolve; });
   let markEntered = () => {};
@@ -267,7 +267,7 @@ it('deletes a temporary Session after its task settles even when the client disc
 
 it('does not transparently resubmit an old connection after the Host changes', async () => {
   const session = await client.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', agentMode: 'sa' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const input = { sessionId: session.id, inputId: 'old-host-input', text: 'Accept in this Host only.' };
   const accepted = await client.inputs.submit(input);
   await runtime.runs.await(accepted.runId!);
@@ -292,7 +292,7 @@ it('does not transparently resubmit an old connection after the Host changes', a
 
 it('reports temporary Session cleanup failure instead of claiming successful deletion', async () => {
   const session = await client.sessions.create({ projectPath: homeDir, temporary: true });
-  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', agentMode: 'sa' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   vi.spyOn(FileSessionStorage.prototype, 'deleteOwned').mockRejectedValue(new Error('Injected delete failure'));
   const accepted = await client.inputs.submit({ sessionId: session.id, inputId: 'cleanup-failure', text: 'Finish then clean up.' });
   await expect(runtime.runs.await(accepted.runId!)).rejects.toThrow();
@@ -322,7 +322,7 @@ it('delivers a busy queued image through the real Host to the next Provider requ
     baseUrl: `http://127.0.0.1:${address.port}/v1`, apiKeyEnv: 'KODAX_PRODUCT_INPUT_TEST_KEY', model: 'image-test' }]);
   try {
     const session = await client.sessions.create({ projectPath: homeDir });
-    await client.sessions.updateSettings(session.id, { provider: 'product-image-test', model: 'image-test', permissionMode: 'full-access', agentMode: 'sa' });
+    await client.sessions.updateSettings(session.id, { provider: 'product-image-test', model: 'image-test', permissionMode: 'full-access' });
     const imagePath = path.join(homeDir, 'pixel.png');
     await writeFile(imagePath, await readFile('tests/fixtures/images/valid-png.png'));
     const first = await client.inputs.submit({ sessionId: session.id, inputId: 'busy', text: 'Wait before the image.' });

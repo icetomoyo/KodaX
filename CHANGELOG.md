@@ -6,6 +6,255 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Provider HTTP requests send `X-Session-Id` with the root session id, so a
+  gateway such as Kodax-Fabric can reconcile a conversation's requests,
+  including those from child agents, workflows and compaction. A configured
+  `X-Session-Id` header wins. Endpoints that require a session header, such
+  as opencode-go, now accept KodaX requests (Issue 416, ADR-077).
+
+- Applications can shape a managed Run's prompt through `context.prompt`
+  (`KodaXPromptSpec`; `prompt` in a product client's execution profile).
+  `kodaxGuidance: 'omit'` drops KodaX's coding guidance and Worker identity
+  wording and keeps tool and safety contracts. Keyed `rule` and `reference`
+  entries travel as Run Context sections, so the system prompt stays cacheable.
+  Rules also reach write children. Hosts advertise `promptSpec` v1, and an
+  older Host rejects a spec with `daemon_upgrade_required`. See the
+  embedder guide.
+
+### Fixed
+
+- When a Host trusts a project's `.kodax/exec-policy.jsonc` and the workspace
+  path goes through a directory alias (a junction or symlink, or macOS
+  `/var`), text tools can no longer rewrite that policy. A trusted root now
+  also matches its project through such an alias (Issue 422).
+
+- One-shot CLI Runs no longer print
+  `[KodaX] recovering undefined/undefined (undefined, undefined)`. The
+  resolved reasoning setting was forwarded as a provider recovery; it now
+  reaches its own event.
+
+- On Node 20 and 22, stopping a Run cancels the model request again. After a
+  garbage collection, Node's built-in fetch could lose the cancellation, so
+  the Run sat in an unconfirmed Stop for five minutes and then reported a
+  network failure. Managed Runs now also stop right away when a custom
+  provider ignores the cancellation (Issue 421).
+
+- Ordinary requests no longer start with a Skill search, and weak models no
+  longer load unrelated Skills (Issue 415, reported on beta.10). Since beta.5
+  the compact Worker prompt said "invoke a matching Skill as the FIRST action"
+  with no condition. The Skill catalog now asks for a Skill only when its
+  description clearly covers the request, and says to work directly
+  otherwise. The same audit restored other conditions the compact prompt had
+  dropped:
+  - knowledge questions are answered directly instead of probing the
+    workspace first;
+  - the host OS rule applies to commands for this machine, and requests about
+    another system get commands for that system;
+  - `kodax_manual` is scoped to KodaX itself;
+  - routing labels are marked as a guess the request overrides;
+  - "open a PR" no longer counts as a review request;
+  - a review naming one file or concern is not split across Agents;
+  - Script mode no longer presents leaf tools as native.
+
+- In a partly busy session, the Worker no longer starts more child Agents than
+  there are free slots. The capacity block states how many child slots are
+  free right now. A rejected `spawn_agent` result tells the model to do that
+  track itself or start it after a running Agent finishes. The runtime limit
+  itself is unchanged.
+
+- A `config.json` that an older REPL left at `agentMode: "sa"` no longer
+  sends Space and daemon sessions to the direct engine without Actor tools.
+  Product sessions now run AMA whatever that file says.
+
+- In a standalone REPL without a Host, Auto mode can now run a shell
+  command that falls back to the host because no OS sandbox is available.
+  The AMA Worker called the host review without the current call's context,
+  so the review always refused. It now passes the call's Agent, transcript
+  and cancellation, as the direct engine already did.
+
+- When a read-only tool fails in an AMA Worker, a same-named MCP tool can
+  now serve the call, as it already could on the direct engine.
+
+- With `repoIntelligenceMode: 'off'`, the AMA Worker no longer offers
+  repository-intelligence tools or teaches them in its prompt. The direct
+  engine already hid them.
+
+- `runtime.close()` no longer leaves Actor repair writing to Session storage
+  after it returns, including when close itself fails on a fenced Session.
+- An Actor storage reload that never settles no longer holds the Actor mutation
+  queue during an owner takeover; it is bounded to the 5-second settlement
+  deadline.
+- A Stop save that is rejected but still commits is now read back by revision
+  and owner instead of being rolled back, so the next save is no longer
+  misread as an owner takeover.
+- A failed terminal status save after Actor repair no longer becomes an
+  unhandled rejection that ends the daemon; the Run reports
+  `run_settlement_not_persisted`, and a later Stop can finish it.
+
+- Host `sessions.create({ sessionId })` and `sessions.fork({ newSessionId })`
+  reject ids that are not 1-128 characters from `[A-Za-z0-9_-]`, Windows
+  device names, and ids starting with `archived-`, with `invalid_params`. An id
+  such as `../escape` used to write outside the sessions directory (Issue 417).
+- A2A Tasks that share a `contextId` continue one Runtime Session per
+  principal, so a follow-up Task sees the earlier exchanges. Since `v0.7.85`
+  each Task had started a fresh Session. A Task sent while another Task of the
+  context runs now waits for it (Issue 418, ADR-077).
+
+### Changed
+
+- A failed Run now reports why it failed (ADR-078). Before, a Provider
+  failure said only "Provider request failed." and dropped the Provider's
+  own message, so users and support could not tell a missing model from a
+  quota or a proxy error. Now:
+  - `KodaXResult.failure.detail`, `errorMetadata.lastError` and Runtime
+    `failureDetail.detail` carry the Provider or local error text, with its
+    `cause` chain;
+  - credentials are removed from that text: the Run's credential, sensitive
+    environment values, Bearer/`sk-` tokens, `key=value` secrets, URL
+    userinfo and URL query strings; HTML is reduced to text and the detail
+    is capped at 1000 characters;
+  - `safeMessage` stays a fixed KodaX summary, so code that branches on it
+    or on `providerErrorCode` is unaffected.
+- On the managed Worker, `runKodaX`, `KodaXClient.send`, `startKodaX().result`,
+  `Runner.run(createDefaultCodingAgent())` and `createKodaXTaskRunner` no
+  longer reject on expected outcomes. During this unreleased cycle they
+  rejected; the direct engine never did. A final Provider failure resolves
+  with `success: false`, `failure` and the Session id, so `KodaXClient` keeps
+  its Session and the next `send` continues it. A stop resolves with
+  `interrupted: true`. Invalid input and context-capacity errors still
+  throw. `runManagedTask` still throws, for Hosts that classify the error.
+- Every root Run uses the managed Worker, and every entry sends the same tool
+  descriptions (FEATURE_311). `runKodaX`, `startKodaX`, `KodaXClient`,
+  `createKodaXTaskRunner`, the Runner preset and `runs.start` without `mode`
+  used to run the older direct engine and its `system.md` prompt. They now get
+  the same Worker as Space and the REPL, so prompt and token optimizations
+  reach them too. Signatures are unchanged. What changes for embedders:
+  - a root Run carries the Run Context envelope, and under `agentMode: 'ama'`
+    also the Actor and Workflow tools; use `excludeTools` or a tool policy to
+    drop them;
+  - `runs.start({ mode: 'coding' })` is ignored with a warning, and stored
+    `coding` Runs resume on the managed Worker;
+  - `systemPromptOverride` replaces the KodaX identity and guidance, while
+    KodaX still appends its runtime sections;
+  - with `systemPromptOverride` or `kodaxGuidance: 'omit'`, the rules for
+    when to hand work to child Agents stay while `spawn_agent` is offered;
+    `excludeTools` removes them with the tool;
+  - `maxIter` bounds the root Run and ends with `limitReached`;
+  - a final Provider failure resolves with `success: false` and a stop
+    resolves with `interrupted: true`, as before; see the failure entry
+    below;
+  - an enforced Skill that cannot be found reports `skill_not_found`;
+  - `SYSTEM_PROMPT`, `buildSystemPrompt` and `buildSystemPromptSnapshot` are
+    removed.
+
+  Persona, override and tool-policy roots now also get the compact Worker
+  and tool text, which cut first-request input by about 28-34% in evals. See
+  [SDK_MIGRATION.md](docs/SDK_MIGRATION.md#统一提示词链路未发布).
+
+- The skill-creator helper scripts now call the model in the way each job
+  needs:
+  - `run-trigger-eval.js` measures real triggering. It used to ask a model
+    whether one description should trigger. Now it stages the candidate in the
+    full product Skill catalog and records whether the first response of the
+    AMA root calls that Skill. Tool calls are recorded but not run. Reports say
+    `observed_skill_call` and list each attempt's `tool_calls`. Each query now
+    costs about one full first request instead of a short judge request.
+  - `grade-evals.js`, `analyze-benchmark.js`, `compare-runs.js` and
+    `improve-description.js` send one provider request with no tools, instead
+    of running an agent loop. Their `--max-iter` flags are gone; the judges'
+    `--cwd` is gone too.
+  - `run-eval.js` runs on the AMA root, like the product default.
+
+- SA mode is retired from every caller (FEATURE_310). `agentMode: 'sa'` is
+  still accepted and selects no behavior, like `amaw`:
+  - Product inputs, session settings and `runManagedTask` run AMA;
+  - `runKodaX` and a `runs.start` without `mode` treat it as unset.
+
+  The SA-only child-Agent exclusions and the `[Direct Path Rule]` prompt
+  overlay are gone. Stored Run records that say `'sa'` stay readable.
+  Under `runManagedTask`, `context.systemPromptOverride` no longer replaces
+  the whole prompt; the FEATURE_311 entry above says what it replaces.
+  See the SA section in [SDK_MIGRATION.md](docs/SDK_MIGRATION.md).
+
+- The self-review note appended after a run of edits no longer says
+  "SA mode has no Evaluator". It also no longer suggests re-running the task
+  under AMA for an independent Evaluator pass. AMA has had no Evaluator since
+  it became a single Worker, so that advice was wrong. The note still asks the
+  model to re-read the diff and run the project's checks. An A/B eval found
+  that weak models self-review at least as well with the new text.
+
+- **SDK capability `actorSettlementConvergence` is now `3`.** A Stop whose
+  Actor settlement cannot be confirmed now always gets a final outcome instead
+  of staying `unknown` while Runtime retries. What embedders see:
+  - If a Stop's save misses its 5-second deadline and commits later, Runtime
+    reconciles it and the Run ends `cancelled` / `interrupted` with Stop
+    `confirmed` as usual. Previously every Stop retry failed with "conflicting
+    terminal fact" and the UI stayed on "stopping" forever (GitHub #2).
+  - If the Actor tree still cannot be confirmed — another owner holds it, the
+    snapshot cannot be repaired, or repair runs past 5 minutes — the Run ends
+    `phase: 'failed'` with `terminal.code: 'actor_settlement_not_persisted'`,
+    `terminal.effectOutcome: 'unknown'` and Stop `confirmed`. A `run.failed`
+    event is published, and `runs.await()` resolves.
+  - That Session stays **fenced** after the Run ends: `runs.start` rejects with
+    `actor_settlement_not_persisted`, and Session history mutations reject
+    with `conflict`. Runtime heals the Session in the background without a
+    restart: it retries the repair, or, when the repair cannot succeed,
+    reclaims the Actor tree from disk the way a restart would and marks its
+    unfinished turns `interrupted`. Reclaim waits until every tool call
+    admitted before the fence has returned and no other live process owns the
+    tree. Then the fence lifts and queued Runs start.
+  - A Host restart is needed only when a Session save or a pre-fence tool call
+    never returns. While another live process owns the tree, the Session stays
+    fenced (`actor_owner_conflict`) and heals by itself once that process
+    exits.
+  - A fenced Session no longer keeps the Host from stopping. Its Actor turns
+    can never commit, so `status.preflight()` leaves them out of
+    `activeAgentTurns` and `blockers`. Host stop, `kodax daemon restart`, idle
+    exit and a client's complete exit (for example quitting Space) now go
+    through. Previously such a Host refused every stop, and quitting Space left
+    it running, so the restart could not happen.
+  - A Run or Workflow that was asked to stop no longer keeps the Host from
+    stopping, even when its executor never returns (a tool call or child
+    agent that ignores abort). `status.preflight()` leaves it out of
+    `activeRuns`, `activeWorkflows` and `blockers`. Host exit ends that work,
+    and the next Host marks the Run `interrupted`. Previously the Run stayed
+    `unknown` and every Host stop, including Space's force close, was refused.
+  - `runtime.close()` still rejects with `AgentShutdownPersistenceError`
+    (`code: 'actor_shutdown_not_persisted'`) for a fenced Actor tree, but it now
+    closes the rest of the Runtime before rejecting. When that is the only
+    failure, the daemon logs a warning and reports a successful shutdown; the
+    next Host reclaims the tree once the old process has exited.
+  - `runs.abort()` on a Run whose owner could not be probed at startup now
+    probes again. A dead owner's Run is interrupted. A live owner gives
+    `conflict` naming that Runtime. An owner still unconfirmed gives
+    `conflict` with `retryable: true`, so the client can retry Stop.
+  - Workflow-owned Runs follow the same rules.
+
+  **Action for embedders (Space included):** render `failed` +
+  `actor_settlement_not_persisted` as "stopped; this Session is recovering",
+  not as a model error. Do not offer immediate resend on that Session; enable
+  input again when `runs.start` stops rejecting or the next queued Run starts.
+  If `runs.start` still rejects with `actor_settlement_not_persisted` a few
+  minutes after the Run failed, offer a Host restart to recover the Session.
+  Treat `effectOutcome: 'unknown'` as "side effects may have happened". Add
+  `requirements: { actorSettlementConvergence: 3 }` to `connectKodaXRuntime` /
+  auto-start once you render this state: an idle v2 daemon is then replaced,
+  and a v2 daemon that cannot be replaced fails the connection instead of
+  leaving Runs `unknown`. Clients that still require `2` keep working
+  unchanged against a v3 Host.
+
+- New session ids are UUIDv7 (for example
+  `0196f7a2-3b4c-7d5e-8f90-a1b2c3d4e5f6`) instead of
+  `YYYYMMDD_HHMMSS_<suffix>`. Existing ids keep working. Code that read the
+  creation date from the id must use the stored `createdAt` or
+  `lastMessageAt`. `/sessions` and `kodax -s list` now show a time column,
+  and the session picker shows the last 8 characters of an id.
+- REPL `/clear` saves a non-empty conversation and continues under a new
+  session id, like `/new` without the confirmation. It prints
+  `/resume <previous id>` to get the cleared conversation back.
+
 ---
 
 ## [0.7.97-beta.11] - 2026-11-16
@@ -5726,7 +5975,7 @@ manual maintainer action.
 
 ### Added
 
-- **FEATURE_222 — MCP `2025-11-25` reverse capabilities: roots, elicitation (form + url), and OAuth discovery/login/step-up.** KodaX's self-built MCP client now serves the server→client requests it previously stubbed (`capabilities: {}` → real handlers), aligned to the Claude Code / Codex MCP clients. A capability is advertised **only** when the host injects its handler ("declaration = implementation promise"), so it is incrementally safe and a headless host degrades to the old behaviour. **roots:** a connected server can call `roots/list` and KodaX answers with the workspace as `file://` roots (CLI + ACP). **elicitation:** a server can ask the user for input — every prompt shows **which MCP server is asking** (anti-phishing); `form` mode maps the requested schema (string / number / enum / boolean / confirm-only) onto the host's ask-user dialogs and lets the user **review the exact values before they are sent**; `url` mode is an anti-phishing consent gate (shows the full URL + domain, never auto-opens, never exposes the URL to the model); a `-32042 UrlElicitationRequired` from a tool call is closed by eliciting, waiting for `notifications/elicitation/complete`, then retrying (bounded). The `ask_user_question` primitive moved down to `@kodax-ai/agent` so coding tools and MCP elicitation share one host-injected surface, resolved live at call time. **OAuth:** zero-config authentication — on a `401` KodaX discovers the authorization server (RFC 9728 Protected Resource Metadata → RFC 8414 / OIDC metadata), dynamically registers a client (RFC 7591), and runs PKCE (**S256 required — refuses to downgrade**) with the RFC 8707 `resource` indicator through a `127.0.0.1` loopback callback that is **listening before the URL is shown** (no lost-redirect race; consent uses the same anti-phishing url prompt — the browser is never opened for you), then persists + refreshes the token; a mid-session `403 insufficient_scope` triggers a step-up re-login. MCP `config.auth` endpoint fields are now **optional** (provide them only to pin a static pre-registered client). New `@kodax-ai/agent` MCP exports include `setActiveUserInteraction`, `discoverOAuthEndpoints`, `performOAuthLogin`, and `McpAuthRequiredError`, plus the coding-layer `buildMcpReverseCapabilities`. **Not implemented (deliberate):** Client ID Metadata Documents (SEP-991) — DCR is the registration baseline (matches Codex). Covered by 130+ MCP tests including fake-MCP-server end-to-end cases (elicitation, `-32042` retry, OAuth callback race/buffer/cleanup, S256 refusal, and the full `401 → discovery → DCR → consent → loopback → token → retry`). See [docs/features/v0.7.48.md FEATURE_222](docs/features/v0.7.48.md).
+- **FEATURE_222 — MCP `2025-11-25` reverse capabilities: roots, elicitation (form + url), and OAuth discovery/login/step-up.** KodaX's self-built MCP client now serves the server→client requests it previously stubbed (`capabilities: {}` → real handlers), aligned to the Claude Code / Codex MCP clients. A capability is advertised **only** when the host injects its handler ("declaration = implementation promise"), so it is incrementally safe and a headless host degrades to the old behaviour. **roots:** a connected server can call `roots/list` and KodaX answers with the workspace as `file://` roots (CLI + ACP). **elicitation:** a server can ask the user for input — every prompt shows **which MCP server is asking** (anti-phishing); `form` mode maps the requested schema (string / number / enum / boolean / confirm-only) onto the host's ask-user dialogs and lets the user **review the exact values before they are sent**; `url` mode is an anti-phishing consent gate (shows the full URL + domain, never auto-opens, never exposes the URL to the model); a `-32042 UrlElicitationRequired` from a tool call is closed by eliciting, waiting for `notifications/elicitation/complete`, then retrying (bounded). The `ask_user_question` primitive moved down to `@kodax-ai/agent` so coding tools and MCP elicitation share one host-injected surface, resolved live at call time. **OAuth:** zero-config authentication — on a `401` KodaX discovers the authorization server (RFC 9728 Protected Resource Metadata → RFC 8416 / OIDC metadata), dynamically registers a client (RFC 7591), and runs PKCE (**S256 required — refuses to downgrade**) with the RFC 8707 `resource` indicator through a `127.0.0.1` loopback callback that is **listening before the URL is shown** (no lost-redirect race; consent uses the same anti-phishing url prompt — the browser is never opened for you), then persists + refreshes the token; a mid-session `403 insufficient_scope` triggers a step-up re-login. MCP `config.auth` endpoint fields are now **optional** (provide them only to pin a static pre-registered client). New `@kodax-ai/agent` MCP exports include `setActiveUserInteraction`, `discoverOAuthEndpoints`, `performOAuthLogin`, and `McpAuthRequiredError`, plus the coding-layer `buildMcpReverseCapabilities`. **Not implemented (deliberate):** Client ID Metadata Documents (SEP-991) — DCR is the registration baseline (matches Codex). Covered by 130+ MCP tests including fake-MCP-server end-to-end cases (elicitation, `-32042` retry, OAuth callback race/buffer/cleanup, S256 refusal, and the full `401 → discovery → DCR → consent → loopback → token → retry`). See [docs/features/v0.7.48.md FEATURE_222](docs/features/v0.7.48.md).
 - **MCP config `type: "http"` — transport auto-detection (ecosystem config compat).** Other MCP clients' config files use `type: "http"` as a single entry that means "an HTTP MCP server, figure out the flavour". KodaX now accepts it as a **config-layer alias** (not a wire protocol): it POSTs `initialize` as Streamable HTTP first and, only on `400/404/405`, falls back to the legacy HTTP+SSE transport — `401`/`403`/`5xx`/network errors never fall back (so an auth challenge still reaches the OAuth flow). The resolved transport is recorded in diagnostics (`http:auto->streamable-http` / `http:auto->sse`). Accepted by the REPL config validator and the ACP conversion path too.
 
 ### Changed

@@ -14,6 +14,9 @@ export function createExecutionServices(runtime: KodaXRuntime, sessionId?: strin
       if ((runtime.capabilities?.productExecutionProfile as { version?: number } | undefined)?.version !== 2) {
         throw Object.assign(new Error('Execution profiles require an upgraded Host.'), { code: 'daemon_upgrade_required' });
       }
+      if (context.prompt !== undefined && (runtime.capabilities?.promptSpec as { version?: number } | undefined)?.version !== 1) {
+        throw Object.assign(new Error('Prompt customization requires an upgraded Host.'), { code: 'daemon_upgrade_required' });
+      }
       if (context.defaultSkill !== undefined && (runtime.capabilities?.productExecutionBinding as { version?: number } | undefined)?.version !== 1) {
         throw Object.assign(new Error('Default Skills require an upgraded Host.'), { code: 'daemon_upgrade_required' });
       }

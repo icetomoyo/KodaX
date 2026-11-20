@@ -66,7 +66,7 @@ it('prints a plane-bound classic round from the live session view', async () => 
     // The Host reads project settings and performs repo maintenance; keep the fixture off the checkout.
     const session = await runtime.sessions.create({ title: 'T18 classic', surface: 'repl', projectPath: homeDir });
     await runtime.sessions.updateSettings(session.id, {
-      agentMode: 'sa', permissionMode: 'full-access',
+      permissionMode: 'full-access',
     });
 
     const lines: string[] = [];

@@ -103,7 +103,7 @@ function defaultContinuationPrompt(goal: KodaXGoalState): string {
     '',
     'Continuation behavior:',
     '- This goal persists across turns. Ending this turn does not require shrinking the objective to what fits now.',
-    staticText("t12.goal/runtime-wiring.0"),
+    staticText("goal.continuation.keep-objective"),
     '- Temporary rough edges are acceptable while the work is moving in the right direction. Completion still requires the requested end state to be true and verified.',
     '',
     'Budget:',
@@ -111,7 +111,8 @@ function defaultContinuationPrompt(goal: KodaXGoalState): string {
     tokenBudgetLine,
     remainingLine,
     `- Elapsed: ${goal.timeUsedSeconds}s`,
-    staticText("t12i.goal/runtime-wiring.block.0"),
+    '',
+    staticText("goal.work-from-evidence"),
   ].join('\n');
 }
 

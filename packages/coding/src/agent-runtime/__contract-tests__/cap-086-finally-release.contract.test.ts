@@ -11,7 +11,7 @@
  *
  * Risk: HIGH (must run on every terminal — error / cancel / iteration
  * limit / managed-protocol exit / max-tokens exit / provider-rejection
- * exit — to prevent runtime leak across `runKodaX` calls)
+ * exit — to prevent runtime leak across `runLeafAgent` calls)
  *
  * Class: 1
  *
@@ -44,7 +44,7 @@ import type {
   KodaXToolDefinition,
 } from '@kodax-ai/llm';
 
-import { runKodaX } from '../../agent.js';
+import { runTestLeaf as runLeafAgent } from '../test-leaf.js';
 import {
   createExtensionRuntime,
   getActiveExtensionRuntime,
@@ -83,7 +83,7 @@ class FinallyReleaseTestProvider extends KodaXBaseProvider {
     if (this.behavior === 'abort') {
       // Simulate abort propagation: if the caller-supplied signal is
       // aborted (or aborts mid-stream), throw an AbortError. The
-      // runKodaX path treats this as an interrupt terminal and runs
+      // runLeafAgent path treats this as an interrupt terminal and runs
       // the same finally block.
       const abortError = new Error('aborted');
       abortError.name = 'AbortError';
@@ -98,7 +98,7 @@ class FinallyReleaseTestProvider extends KodaXBaseProvider {
   }
 }
 
-// Issue 128: contract tests drive runKodaX end-to-end and flake at 5000ms
+// Issue 128: contract tests drive runLeafAgent end-to-end and flake at 5000ms
 // default under heavy parallel vitest load. Match the root 30s ceiling.
 describe('CAP-086: finally cleanup (extension runtime release) contract', { timeout: 30_000 }, () => {
   let baselineRuntime: ReturnType<typeof getActiveExtensionRuntime>;
@@ -106,8 +106,8 @@ describe('CAP-086: finally cleanup (extension runtime release) contract', { time
   beforeEach(() => {
     process.env[TEST_API_KEY_ENV] = 'test-key';
     // Snapshot whatever runtime the host environment has installed
-    // (may be undefined). The contract guarantee is "post-runKodaX
-    // active runtime === pre-runKodaX active runtime".
+    // (may be undefined). The contract guarantee is "post-runLeafAgent
+    // active runtime === pre-runLeafAgent active runtime".
     baselineRuntime = getActiveExtensionRuntime();
   });
 
@@ -124,7 +124,7 @@ describe('CAP-086: finally cleanup (extension runtime release) contract', { time
     const expectedAfter = installedRuntime;
 
     registerModelProvider(TEST_PROVIDER_NAME, () => new FinallyReleaseTestProvider('success'));
-    await runKodaX(
+    await runLeafAgent(
       {
         provider: TEST_PROVIDER_NAME,
         model: 'baseline-model',
@@ -142,14 +142,14 @@ describe('CAP-086: finally cleanup (extension runtime release) contract', { time
     setActiveExtensionRuntime(installedRuntime);
 
     registerModelProvider(TEST_PROVIDER_NAME, () => new FinallyReleaseTestProvider('throw'));
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: TEST_PROVIDER_NAME,
         model: 'baseline-model',
       },
       'do thing',
     );
-    // runKodaX swallows the provider error into KodaXResult.success=false
+    // runLeafAgent swallows the provider error into KodaXResult.success=false
     // (it does NOT propagate as a thrown exception); the contract is
     // about the finally block — it must run regardless.
     expect(result.success).toBe(false);
@@ -167,7 +167,7 @@ describe('CAP-086: finally cleanup (extension runtime release) contract', { time
     controller.abort();
 
     registerModelProvider(TEST_PROVIDER_NAME, () => new FinallyReleaseTestProvider('abort'));
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: TEST_PROVIDER_NAME,
         model: 'baseline-model',

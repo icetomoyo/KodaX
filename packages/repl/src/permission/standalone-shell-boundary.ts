@@ -10,8 +10,10 @@ import {
   evaluateShellExecPolicy,
   formatExecPolicyConfigurationError,
   formatExecPolicyRejection,
+  isSameFilesystemPath,
   KodaXTrustedTextMutationError,
   loadExecPolicy,
+  targetsProtectedPath,
   type AutoModeToolGuardrail,
   type ExecPolicyRuleInput,
   type KodaXShellHostExecutionAuthorizer,
@@ -151,7 +153,7 @@ function trustedProjectPolicyPath(
 ): string | undefined {
   const root = options.projectRoot;
   return root !== undefined
-    && options.execPolicy?.trustedProjectRoots?.some((candidate) => sameHostPath(candidate, root))
+    && options.execPolicy?.trustedProjectRoots?.some((candidate) => isSameFilesystemPath(candidate, root))
     ? path.join(root, '.kodax', 'exec-policy.jsonc')
     : undefined;
 }
@@ -162,7 +164,7 @@ function protectTrustedProjectPolicy(
 ): KodaXTrustedTextMutationHost | undefined {
   if (host === undefined || protectedPath === undefined) return host;
   const assertAllowed = (candidate: string): void => {
-    if (!sameHostPath(candidate, protectedPath)) return;
+    if (!targetsProtectedPath(candidate, protectedPath)) return;
     throw new KodaXTrustedTextMutationError({
       code: 'text_mutation_policy_denied',
       path: candidate,
@@ -181,14 +183,6 @@ function protectTrustedProjectPolicy(
       return host.commit(input);
     },
   };
-}
-
-function sameHostPath(left: string, right: string): boolean {
-  const resolvedLeft = path.resolve(left);
-  const resolvedRight = path.resolve(right);
-  return process.platform === 'win32'
-    ? resolvedLeft.toLowerCase() === resolvedRight.toLowerCase()
-    : resolvedLeft === resolvedRight;
 }
 
 async function reviewAutoHostBoundary(

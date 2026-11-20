@@ -88,7 +88,7 @@ if (process.argv[2] === '--run-fixture') {
       const crashed = await execute('crash');
       assert.equal(crashed.success, false);
       assert.equal(crashed.errorMetadata.consecutiveErrors, expected);
-      assert.equal(crashed.errorMetadata.lastError, 'Provider request failed. (Error)');
+      assert.equal(crashed.errorMetadata.lastError, 'Provider request failed. (Error): offline-provider-crash');
       assert.equal(crashed.title, 'Preserved original title');
       assert.deepEqual(crashed.extensionState, { fixture: { visits: 7 } });
       assert.equal(crashed.extensionRecords[0].id, 'record-1');

@@ -47,6 +47,33 @@ it('uses the current Runner invocation cancellation signal for handler effects',
   { backups: new Map(), abortSignal: rootSignal });
  expect((await runnable.execute({}, { agent: { name: 'worker' } as Agent, abortSignal: invocationSignal })).content).toBe('ok');
 });
+it('gives the shell host authorizer the current Runner call as its review context', async () => {
+ const authorize = vi.fn(async () => true as const);
+ const signal = new AbortController().signal;
+ const intent = { rootUserIntent: 'Create the effect.' };
+ const transcript = [{ role: 'user' as const, content: 'Create the effect.' }];
+ const runnable = wrapCodingToolAsRunnable({ name: 'bash', description: 'probe', input_schema: { type: 'object', properties: {} } },
+  async (_input, context) => String(await context.authorizeShellHostExecution!({ command: 'git status', toolInput: {}, cwd: '.', executable: 'sh',
+   args: [], reason: 'sandbox_unavailable', toolCallId: 'call' })),
+  { backups: new Map(), permissionIntent: intent, authorizeShellHostExecution: authorize });
+ const agent = { name: 'worker' } as Agent;
+ expect((await runnable.execute({}, { agent, toolCallId: 'call', abortSignal: signal, transcript })).content).toBe('true');
+ expect(authorize).toHaveBeenCalledWith(expect.objectContaining({ toolCallId: 'call' }),
+  { agent, abortSignal: signal, messages: transcript, permissionIntent: intent });
+});
+it('falls back to a same-named MCP tool only for read-only tools', async () => {
+  const executeCapability = vi.fn(async () => ({ content: 'remote frame' }));
+  const extensionRuntime = { searchCapabilities: vi.fn(async () => [{ id: 'mcp:visual:tool:read', name: 'read' }]), executeCapability };
+  const ctx = { backups: new Map(), extensionRuntime } as unknown as Parameters<typeof wrapCodingToolAsRunnable>[2];
+  const wrap = (name: string) => wrapCodingToolAsRunnable({ name, description: 'probe', input_schema: { type: 'object', properties: {} } },
+    async () => `[Tool Error] ${name}: missing`, ctx);
+  const read = await wrap('read').execute({ path: 'missing.png' }, { agent: { name: 'worker' } as Agent });
+  expect(read).toMatchObject({ content: expect.stringContaining('[MCP Fallback via mcp:visual:tool:read]') });
+  expect(read.isError).toBeUndefined();
+  expect(executeCapability).toHaveBeenCalledWith('mcp', 'mcp:visual:tool:read', { path: 'missing.png' });
+  expect((await wrap('write').execute({ path: 'x' }, { agent: { name: 'worker' } as Agent })).content).toBe('[Tool Error] write: missing');
+  expect(executeCapability).toHaveBeenCalledTimes(1);
+});
 
 describe('recordMutationForTool — file mutation tracking', () => {
   it('tracks multi_edit (the bug: was omitted by the old hand-written set)', () => {

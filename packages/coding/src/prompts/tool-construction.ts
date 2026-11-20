@@ -13,7 +13,7 @@ import { staticText } from './static-text.js';
  * staircase deterministically instead of inventing JSON shapes from scratch.
  */
 
-export const TOOL_CONSTRUCTION_PROMPT = staticText("t12.prompts/tool-construction.0");
+export const TOOL_CONSTRUCTION_PROMPT = staticText("tool-construction.mode");
 
 /**
  * Decide whether the tool-construction section should be injected.

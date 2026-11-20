@@ -53,7 +53,7 @@ describe('natural-language Memory management tool', () => {
       requiredParams: ['operation'],
       sideEffect: 'mutates-state',
     });
-    expect(MEMORY_INTENT_TOOL_DESCRIPTION).toContain('applies safe explicit requests immediately');
+    expect(MEMORY_INTENT_TOOL_DESCRIPTION).toContain('Safe requests apply');
     expect(MEMORY_INTENT_TOOL_SCHEMA.properties.operation.enum).toEqual([
       'list',
       'remember',

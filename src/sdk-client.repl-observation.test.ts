@@ -7,7 +7,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
-import type { KodaXOptions, RunningSession } from '@kodax-ai/coding';
+import type { KodaXResult } from '@kodax-ai/coding';
 import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { connectKodaXClient } from './sdk-client.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
@@ -21,7 +21,7 @@ const fixture = vi.hoisted(() => ({ start: vi.fn(), ask: vi.fn(), readline: vi.f
 vi.mock('is-in-ci', () => ({ default: false }));
 vi.mock('readline', async original => ({ ...await original<typeof import('readline')>(), createInterface: (...args: unknown[]) => fixture.readline(...args) }));
 vi.mock('@kodax-ai/coding', async original => ({
-  ...await original<typeof import('@kodax-ai/coding')>(), startKodaX: fixture.start,
+  ...await original<typeof import('@kodax-ai/coding')>(), runManagedTask: fixture.start,
 }));
 vi.mock('../packages/repl/src/interactive/readline-helpers.js', async original => ({
   ...await original<typeof import('../packages/repl/src/interactive/readline-helpers.js')>(), askInput: fixture.ask,
@@ -67,7 +67,7 @@ it.each(['classic', 'ink'] as const)('keeps an unsent %s draft available when ob
   const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
   const client = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
   const session = await client.sessions.create({ title: 'Observation', projectPath: homeDir });
-  await client.sessions.updateSettings(session.id, { agentMode: 'sa' });
+  await client.sessions.updateSettings(session.id, {});
   const plane = createCliClientPlane(client);
   const observe = plane.observe;
   let available = false;
@@ -81,12 +81,8 @@ it.each(['classic', 'ink'] as const)('keeps an unsent %s draft available when ob
     return readInput(...args);
   };
   fixture.start.mockReset();
-  fixture.start.mockImplementation((options: KodaXOptions): RunningSession => ({
-    id: session.id, currentProvider: options.provider, currentModel: options.model,
-    currentReasoning: options.reasoningMode, aborted: false, attached: true,
-    setProvider() {}, setModel() {}, setReasoning() {}, abort() {},
-    result: Promise.resolve({ success: true, lastText: 'Accepted once', messages: [], sessionId: session.id }),
-  }));
+  fixture.start.mockImplementation(async (): Promise<KodaXResult> => (
+    { success: true, lastText: 'Accepted once', messages: [], sessionId: session.id }));
   const input = new PassThrough();
   const output = new PassThrough();
   const createInterface = readline.createInterface;
@@ -113,7 +109,7 @@ it.each(['classic', 'ink'] as const)('keeps an unsent %s draft available when ob
   }).mockResolvedValue('/exit');
   try {
     if (mode === 'classic') {
-      await runInteractiveMode({ provider: 'anthropic', agentMode: 'sa', session: { id: session.id, resume: true },
+      await runInteractiveMode({ provider: 'anthropic', session: { id: session.id, resume: true },
         clientPlane: plane, sessionCommands: createCliSessionCommands(client) });
     } else {
       Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: true });
@@ -128,7 +124,7 @@ it.each(['classic', 'ink'] as const)('keeps an unsent %s draft available when ob
         return mounted;
       });
       const outputText = () => stripVTControlCharacters(stdout.text).replace(/\s/g, '');
-      repl = runInkInteractiveMode({ provider: 'anthropic', agentMode: 'sa', session: { id: session.id, resume: true },
+      repl = runInkInteractiveMode({ provider: 'anthropic', session: { id: session.id, resume: true },
         clientPlane: plane, sessionCommands: createCliSessionCommands(client), hardExitOnClose: false });
       await expect.poll(outputText, { timeout: 10_000 }).toContain('observationunavailable');
       stdin.emit('data', Buffer.from(draft));

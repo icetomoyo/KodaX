@@ -10,7 +10,7 @@ import {
   KodaXResult,
   KodaXMessage,
 } from './types.js';
-import { runKodaX } from './agent.js';
+import { runKodaX } from './task-engine.js';
 
 export class KodaXClient {
   private options: KodaXOptions;

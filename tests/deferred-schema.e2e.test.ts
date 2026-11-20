@@ -27,7 +27,8 @@ it('discovers a deferred builtin and executes its real handler through the manag
       if (round > 3) throw new Error('Four-response graph exceeded.');
       expect(args[1].map(tool => tool.name)).toContain('web_fetch');
       const prior = JSON.stringify(args[0].at(-1));
-      if (round === 1) expect(prior).toContain('parameters');
+      // A visibility-policy root gets the managed view: the schema is already in the request tools.
+      if (round === 1) expect(prior).toContain('Parameters are already in the current tool contracts.');
       if (round === 2) expect(prior).toContain(marker);
       if (round === 3) expect(prior).toMatch(/Exit(?: code)?: 0/);
       const call = [

@@ -1,24 +1,14 @@
 import { staticText } from './prompts/static-text.js';
 /**
- * Default coding agent preset (FEATURE_080 → FEATURE_100).
+ * Coding Agent declarations (FEATURE_080 -> FEATURE_100 -> FEATURE_311).
  *
- * History:
- *   v0.7.23 (FEATURE_080) introduced "Option Y": a `registerPresetDispatcher`
- *   indirection that wrapped `runKodaX` so `Runner.run(defaultCodingAgent, …)`
- *   appeared SDK-native while the body stayed on the legacy path. The trade-off
- *   was deliberate parity insurance during the Layer-A primitives rollout.
+ * `Runner.run` dispatches a coding Agent through `Agent.substrateExecutor`
+ * (ADR-020). One declaration shape serves two executors: the public
+ * `createDefaultCodingAgent()` preset runs the managed Worker, and the
+ * internal leaf executor (`runLeafAgent`) runs the direct substrate.
  *
- *   v0.7.29 (FEATURE_100) deletes Option Y per ADR-020. The substrate executor
- *   is attached directly to the Agent declaration via `Agent.substrateExecutor`
- *   (an Agent field added in this version), and `Runner.run` consults that
- *   field before any registry lookup. No `registerPresetDispatcher` call is
- *   made any more, so `Runner.run(createDefaultCodingAgent(), …)` and
- *   `runKodaX(opts, prompt)` (now a thin `Runner.run` wrapper in `agent.ts`)
- *   share one execution path.
- *
- * This file stays in `@kodax-ai/coding` because the substrate executor closure
- * imports `runSubstrate` from `agent-runtime/run-substrate.ts`. Importing
- * `@kodax-ai/core` alone never loads the substrate body.
+ * The managed preset lives in `default-coding-agent.ts` so this file does not
+ * import the task engine, which already depends on the leaf executor.
  */
 
 import {
@@ -32,15 +22,13 @@ import {
 } from '@kodax-ai/agent';
 import type { MemoryDecisionReceipt } from '@kodax-ai/agent/experimental-memory';
 
-import { runSubstrate } from './agent-runtime/run-substrate.js';
 import { withMemoryDecisionTrace } from './memory/decision-trace.js';
-import { applyRuntimeSkillInvocationPolicy, awaitRuntimeSkillInvocationPolicy } from './skill-invocation-policy.js';
 import type { KodaXOptions, KodaXResult } from './types.js';
 
 /** Stable name used as the dispatch key for the built-in coding preset. */
 export const DEFAULT_CODING_AGENT_NAME = 'kodax/coding/default';
 
-const DEFAULT_CODING_INSTRUCTIONS = staticText("t12.coding-preset.0");
+const DEFAULT_CODING_INSTRUCTIONS = staticText("coding-preset.instructions") + '\n';
 
 function extractPrompt(input: string | readonly AgentMessage[]): string {
   if (typeof input === 'string') return input;
@@ -111,16 +99,20 @@ export function extractFinalAssistantText(result: KodaXResult): string {
   return '';
 }
 
+/** Runs one coding execution for a Runner-dispatched coding Agent. */
+export type CodingAgentExecutor = (
+  options: KodaXOptions,
+  prompt: string,
+  agent: Agent,
+) => Promise<KodaXResult>;
+
 /**
- * Substrate executor closure attached to `createDefaultCodingAgent()`.
- * Adapts the Layer-A `Runner.run` signature → coding-specific
- * `runSubstrate(KodaXOptions, prompt)` and lifts the full `KodaXResult`
- * onto `RunResult.data` so the `runKodaX` shim (and any other internal
- * caller that needs the coding-specific shape — `client.ts`,
- * `task-engine.ts`, `child-executor.ts`, `acp_server.ts`, golden
- * recorder, integration tests) recovers it without a second execution.
+ * Substrate executor closure for a coding Agent declaration.
+ * Adapts the Layer-A `Runner.run` signature to a coding executor and lifts
+ * the full `KodaXResult` onto `RunResult.data`, so internal callers recover
+ * the coding-specific shape without a second execution.
  */
-const codingSubstrate: PresetDispatcher = async (
+const createCodingSubstrate = (execute: CodingAgentExecutor): PresetDispatcher => async (
   agent,
   input,
   opts,
@@ -165,23 +157,16 @@ const codingSubstrate: PresetDispatcher = async (
     : null;
 
   let result: KodaXResult;
-  const ownsSkillPolicy = merged.context?.activateModelSkill === undefined;
-  let runtimeOptions = merged;
-  let failure: unknown;
   try {
-    if (ownsSkillPolicy) runtimeOptions = await applyRuntimeSkillInvocationPolicy(merged, prompt);
     result = tracingContext === undefined
-      ? await runSubstrate(runtimeOptions, prompt, agent)
-      : await withMemoryDecisionTrace(memoryDecisionReceipts, () => runSubstrate(runtimeOptions, prompt, agent));
+      ? await execute(merged, prompt, agent)
+      : await withMemoryDecisionTrace(memoryDecisionReceipts, () => execute(merged, prompt, agent));
   } catch (err) {
-    failure = err;
     if (genSpan) {
       genSpan.setError(err instanceof Error ? err : new Error(String(err)));
       genSpan.end();
     }
     throw err;
-  } finally {
-    if (ownsSkillPolicy) await awaitRuntimeSkillInvocationPolicy(runtimeOptions, failure);
   }
   if (genSpan) {
     genSpan.end();
@@ -216,22 +201,23 @@ export const DEFAULT_CODING_MIDDLEWARE: readonly AgentMiddlewareDeclaration[] = 
 ]);
 
 /**
- * Construct the default coding Agent declaration. SDK consumers may write
- * `Runner.run(createDefaultCodingAgent(), prompt, { presetOptions })` and
- * the Runner will execute the substrate via `Agent.substrateExecutor`.
+ * Construct a coding Agent declaration whose `Runner.run` dispatch calls
+ * `execute`. The public preset passes the managed Worker; the internal leaf
+ * executor passes the direct substrate.
  *
  * `overrides` lets callers attach additional declarative fields
  * (e.g. custom `reasoning` profile, extra `guardrails`, custom
  * `provider`/`model`); these are preserved on the Agent and may be
  * consumed by the substrate executor through `presetOptions`.
  */
-export function createDefaultCodingAgent(
+export function createCodingAgent(
+  execute: CodingAgentExecutor,
   overrides: Partial<Omit<Agent, 'name' | 'instructions'>> = {},
 ): Agent {
   return createAgent({
     name: DEFAULT_CODING_AGENT_NAME,
     instructions: DEFAULT_CODING_INSTRUCTIONS,
-    substrateExecutor: codingSubstrate,
+    substrateExecutor: createCodingSubstrate(execute),
     middleware: DEFAULT_CODING_MIDDLEWARE,
     ...overrides,
   });

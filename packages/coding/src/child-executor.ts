@@ -37,7 +37,6 @@ import { resolveExecutionCwd, resolveExecutionPath } from './runtime-paths.js';
 import { actorQueueId } from './agent-runtime/actor-queue.js';
 import { countTokens } from './tokenizer.js';
 import { CHILD_AGENT_SYSTEM_PROMPT } from './prompts/child-system-contract.js';
-import { withBuiltinChildContract } from './prompts/child-contract-scope.js';
 export { CHILD_AGENT_SYSTEM_PROMPT } from './prompts/child-system-contract.js';
 import { resolveProvider } from './providers/index.js';
 import { resolveModelHintTier } from './model-hint-routing.js';
@@ -95,18 +94,18 @@ import type {
   WorkflowEventCorrelation,
 } from '@kodax-ai/agent';
 import { resolveRoleEffort } from './reasoning-effort.js';
-// FEATURE_093 (v0.7.24): lazy-load `runKodaX` to break the cycle
+// FEATURE_093 (v0.7.24): lazy-load the leaf executor to break the cycle
 // `agent.ts → extensions/runtime.ts → tools/index.ts → tools/registry.ts
 // → child-executor.ts → agent.ts`. The runtime import defers agent resolution
 // until a child is actually spawned, by which point the parent module graph
 // has fully initialised. No top-level `import ... from './agent.js'` or
 // `typeof import('./agent.js')` references — both count as edges in madge.
-type RunKodaXFn = (options: KodaXOptions, prompt: string) => Promise<KodaXResult>;
-let _runKodaXCache: RunKodaXFn | undefined;
-let _runKodaXLoadPromise: Promise<RunKodaXFn> | undefined;
-async function getRunKodaX(): Promise<RunKodaXFn> {
-  if (_runKodaXCache) return _runKodaXCache;
-  if (!_runKodaXLoadPromise) {
+type RunLeafFn = (options: KodaXOptions, prompt: string) => Promise<KodaXResult>;
+let _runLeafCache: RunLeafFn | undefined;
+let _runLeafLoadPromise: Promise<RunLeafFn> | undefined;
+async function getRunLeaf(): Promise<RunLeafFn> {
+  if (_runLeafCache) return _runLeafCache;
+  if (!_runLeafLoadPromise) {
     // The specifier MUST be a string literal inside import(). esbuild only
     // bundles dynamic imports whose argument is a literal; a computed
     // specifier (e.g. `const spec = './agent.js'; import(spec)`) is left as a
@@ -125,21 +124,20 @@ async function getRunKodaX(): Promise<RunKodaXFn> {
     // still tripping), the vanilla native error surfaces as a cryptic
     // "Cannot find module './agent.js'" deep inside a dispatch call.
     // Restate what went wrong + what the caller should check.
-    _runKodaXLoadPromise = import('./agent.js')
-      .then((agentModule: { runKodaX?: RunKodaXFn }) => {
-        const runKodaX = agentModule.runKodaX;
-        if (typeof runKodaX !== 'function') {
+    _runLeafLoadPromise = import('./agent.js')
+      .then((agentModule: { runLeafAgent?: RunLeafFn }) => {
+        const runLeafAgent = agentModule.runLeafAgent;
+        if (typeof runLeafAgent !== 'function') {
           throw new Error(
-            `[child-executor] Agent module loaded but \`runKodaX\` export is missing or not a function. ` +
-            `This indicates an API break in packages/coding/src/agent.ts. ` +
-            `Check that \`export { runKodaX }\` is still present.`,
+            `[child-executor] Agent module loaded but \`runLeafAgent\` export is missing or not a function. ` +
+            `This indicates an API break in packages/coding/src/agent.ts.`,
           );
         }
-        _runKodaXCache = runKodaX;
-        return runKodaX;
+        _runLeafCache = runLeafAgent;
+        return runLeafAgent;
       })
       .catch((err: unknown) => {
-        _runKodaXLoadPromise = undefined;
+        _runLeafLoadPromise = undefined;
         if (err instanceof Error && err.message.startsWith('[child-executor]')) {
           throw err;
         }
@@ -151,7 +149,7 @@ async function getRunKodaX(): Promise<RunKodaXFn> {
         );
       });
   }
-  return _runKodaXLoadPromise;
+  return _runLeafLoadPromise;
 }
 
 const WORKFLOW_CHILD_DIGEST_SYSTEM_PROMPT = [
@@ -218,6 +216,7 @@ export interface ChildExecutorOptions {
   readonly parentOptions: Readonly<Partial<
     Pick<KodaXOptions, 'provider' | 'model' | 'effort' | 'reasoningMode' | 'thinking' | 'extensionRuntime' | 'events' | 'compaction' | 'disablePromptCache' | 'sandbox'>
     & Pick<KodaXContextOptions, 'repoIntelligenceMode' | 'repoIntelligenceTrace' | 'contextDiagnostics' | 'shellExecution' | 'permissionIntent'>
+    & { readonly applicationRules: string }
   >>;
   readonly parentRole: string;
   readonly parentHarness: string;
@@ -899,7 +898,7 @@ function selectContextDiagnosticEvents(
 
 async function createWorkflowChildDigest(
   input: {
-    readonly runFn: RunKodaXFn;
+    readonly runFn: RunLeafFn;
     readonly result: KodaXResult;
     readonly provider: string;
     readonly model?: string;
@@ -932,7 +931,6 @@ async function createWorkflowChildDigest(
         ...(input.model ? { model: input.model } : {}),
         effort: input.effort ?? input.options.parentOptions.effort,
         reasoningMode: input.options.parentOptions.reasoningMode,
-        agentMode: 'sa',
         maxIter: 1,
         abortSignal: controller.signal,
         extensionRuntime: input.options.parentOptions.extensionRuntime,
@@ -999,7 +997,7 @@ async function createWorkflowChildDigest(
 
 function scheduleWorkflowChildDigest(
   input: {
-    readonly runFn: RunKodaXFn;
+    readonly runFn: RunLeafFn;
     readonly result: KodaXResult;
     readonly provider: string;
     readonly model?: string;
@@ -1047,7 +1045,7 @@ const STRUCTURED_OUTPUT_REPAIR_TIMEOUT_MS = 15_000;
  * never changes the child's terminal status.
  */
 async function resolveChildStructuredOutput(input: {
-  readonly runFn: RunKodaXFn;
+  readonly runFn: RunLeafFn;
   readonly result: KodaXResult;
   readonly provider: string;
   readonly model?: string;
@@ -1092,7 +1090,6 @@ async function resolveChildStructuredOutput(input: {
         ...(input.model ? { model: input.model } : {}),
         effort: input.effort ?? input.options.parentOptions.effort,
         reasoningMode: input.options.parentOptions.reasoningMode,
-        agentMode: 'sa',
         maxIter: 1,
         abortSignal: controller.signal,
         extensionRuntime: input.options.parentOptions.extensionRuntime,
@@ -1408,7 +1405,7 @@ async function runReadChildBody(
   let fallbackTokensUsed = 0;
   try {
     const childStartedAt = Date.now();
-    const runFn = await getRunKodaX();
+    const runFn = await getRunLeaf();
     const childSession = buildChildRunSession(options, options.initialMessages);
     const childEffort = resolveChildEffort(bundle, effortOverride, options.parentOptions, reasoningProfile);
     let actualProvider = provider;
@@ -1420,10 +1417,11 @@ async function runReadChildBody(
         effort: childEffort,
         sessionControl: recoveryControl,
         reasoningMode: options.parentOptions.reasoningMode,
-        // The child stays on the direct runKodaX/Runner substrate. Preserve AMA
-        // capability semantics only for Runtime Actor children so recursive
-        // collaboration and future AMA-gated surfaces remain truthful.
-        agentMode: options.actorControl ? 'ama' : 'sa',
+        // The child stays on the direct leaf/Runner substrate. Only Runtime
+        // Actor children carry the AMA label, which keeps recursive collaboration
+        // and AMA-gated surfaces available to them. Other leaf children stay
+        // unlabeled, so those AMA gates stay closed.
+        ...(options.actorControl ? { agentMode: 'ama' as const } : {}),
         maxIter: options.maxIterationsPerChild,
         abortSignal: options.abortSignal,
         extensionRuntime: options.parentOptions.extensionRuntime,
@@ -1501,9 +1499,7 @@ async function runReadChildBody(
         events: childEvents,
       },
       briefing,
-      (runOptions, childPrompt) => withBuiltinChildContract(bundle.specialistName ? undefined : {
-        agentId: childContextAgentId(bundle, options), system: systemPromptOverride,
-      }, () => runFn(runOptions, childPrompt)),
+      (runOptions, childPrompt) => runFn(runOptions, childPrompt),
       {
         onUsage: (total) => { fallbackTokensUsed = total; },
         onFallback: ({ fromProvider, toProvider, reason }) => {
@@ -1671,6 +1667,7 @@ async function runWriteChildBody(
     specialistSystemPrompt,
     childCtx.assertReadablePath,
     childCtx.projectRulesRoot,
+    options.parentOptions.applicationRules,
   );
   const excludeTools = restrictToolsForChildRuntime(
     [...(childCtx.excludeTools ?? []), ...specialistExcludeTools],
@@ -1727,7 +1724,7 @@ async function runWriteChildBody(
   let fallbackTokensUsed = 0;
   try {
     const childStartedAt = Date.now();
-    const runFn = await getRunKodaX();
+    const runFn = await getRunLeaf();
     const childSession = buildChildRunSession(options, options.initialMessages);
     const childEffort = resolveChildEffort(bundle, effortOverride, options.parentOptions, reasoningProfile);
     let actualProvider = provider;
@@ -1739,10 +1736,11 @@ async function runWriteChildBody(
         effort: childEffort,
         reasoningMode: options.parentOptions.reasoningMode,
         sessionControl: recoveryControl,
-        // The child stays on the direct runKodaX/Runner substrate. Preserve AMA
-        // capability semantics only for Runtime Actor children so recursive
-        // collaboration and future AMA-gated surfaces remain truthful.
-        agentMode: options.actorControl ? 'ama' : 'sa',
+        // The child stays on the direct leaf/Runner substrate. Only Runtime
+        // Actor children carry the AMA label, which keeps recursive collaboration
+        // and AMA-gated surfaces available to them. Other leaf children stay
+        // unlabeled, so those AMA gates stay closed.
+        ...(options.actorControl ? { agentMode: 'ama' as const } : {}),
         maxIter: options.maxIterationsPerChild,
         abortSignal: options.abortSignal,
         extensionRuntime: options.parentOptions.extensionRuntime,
@@ -1819,9 +1817,7 @@ async function runWriteChildBody(
         events: childEvents,
       },
       briefing,
-      (runOptions, childPrompt) => withBuiltinChildContract(bundle.specialistName ? undefined : {
-        agentId: childContextAgentId(bundle, options), system: systemPromptOverride,
-      }, () => runFn(runOptions, childPrompt)),
+      (runOptions, childPrompt) => runFn(runOptions, childPrompt),
       {
         onUsage: (total) => { fallbackTokensUsed = total; },
         onFallback: ({ fromProvider, toProvider, reason }) => {
@@ -1953,7 +1949,7 @@ async function buildChildBriefing(
   const parts: string[] = [
     `# Child Agent Task`,
     ``,
-    `You are a focused sub-agent executing a specific task in parallel with siblings.`,
+    `You are a focused sub-agent executing a specific task for a parent agent.`,
     `Complete this task efficiently — every iteration the parent waits on adds end-to-end latency. You have a hard limit of ${maxIter} iterations.`,
     ``,
     `## Environment`,
@@ -1964,7 +1960,7 @@ async function buildChildBriefing(
     ...(childGitRoot && childGitRoot !== childCwd ? [`Git Root: ${childGitRoot}`] : []),
     `Platform: ${platformLabel} (${os.release()})`,
     shellHint,
-    staticText("t12.child-executor.0"),
+    staticText("child.environment.paths"),
     ``,
     `## Objective`,
     bundle.objective,
@@ -1979,19 +1975,18 @@ async function buildChildBriefing(
       ? bundle.constraints.map((constraint) => `- Binding constraint: ${constraint}`)
       : []),
     bundle.readOnly
-      ? staticText("t12.child-executor.1")
+      ? staticText("child.constraints.read-only")
       : '- You may modify files within the scope listed above.',
     ...(collaboration.canSpawn
       ? [
-          staticText("t12.child-executor.2"),
+          staticText("child.constraints.spawn"),
         ]
       : []),
     ...(collaboration.canMessage
       ? [
           ``,
           `## Runtime Collaboration`,
-          staticText("t12.child-executor.3"),
-          staticText("t12.child-executor.4"),
+          staticText("child.collaboration.messaging"),
         ]
       : []),
     ...(bundle.readOnly
@@ -2001,8 +1996,7 @@ async function buildChildBriefing(
           // FEATURE_188 v0.7.42 (ADR-034) — write children share parent
           // cwd with siblings, so peer-coordination is prompt-enforced.
           `## Coordination with peers`,
-          staticText("t12.child-executor.5"),
-          staticText("t12.child-executor.6"),
+          staticText("child.peer-coordination"),
         ]),
     ``,
     `## Execution Strategy (use parallel tool calls)`,
@@ -2238,8 +2232,8 @@ export async function resolveEvidenceRef(
  * conventions) unless the project's AGENTS.md is in their system prompt.
  *
  * The original FEATURE_117 design ("strip read-path context") was inverted
- * after Phase 3 fact-check showed `systemPromptOverride` already short-
- * circuits `buildSystemPrompt` for ALL children — there was nothing to
+ * after Phase 3 fact-check showed `systemPromptOverride` already replaces
+ * the whole leaf prompt for ALL children — there was nothing to
  * strip. The real gap is the opposite direction: write children silently
  * skip the project rules. This helper restores them only for the write
  * path.
@@ -2257,6 +2251,7 @@ function buildWriteSystemPrompt(
   baseSystemPrompt: string = CHILD_AGENT_SYSTEM_PROMPT,
   assertReadablePath?: (candidate: string) => void,
   projectRulesRoot?: string,
+  applicationRules?: string,
 ): string {
   // Sync — `loadInstructionFiles` reads via `readFileSync` and the helper has no
   // async I/O. Kept synchronous so the single mtime-stat-and-cache walk
@@ -2264,19 +2259,21 @@ function buildWriteSystemPrompt(
   // spawn (FEATURE_119 H2 fan-out can dispatch 4-8 children in one wave).
   const agentsFiles = loadInstructionFiles({ cwd: gitRoot, projectRoot: gitRoot, assertReadablePath, projectRulesRoot });
   const formatted = formatAgentsForPrompt(agentsFiles);
-  if (!formatted) return baseSystemPrompt;
+  // Application rules go last: the child compact contract matches on the prefix up to the project rules.
+  const withApplicationRules = (prompt: string): string => (applicationRules ? `${prompt}\n\n${applicationRules}` : prompt);
+  if (!formatted) return withApplicationRules(baseSystemPrompt);
 
   // `formatted` already has its own `# Project Context` H1 + `## … Rules`
   // H2s + `---` dividers. Don't re-wrap with another H2 (`## Mutation
   // Policy`) — the heading hierarchy would invert (H2 → H1 inside) and
   // muddle the structure for the LLM. Just prepend a short framing
   // sentence so the child knows these rules apply to its mutations.
-  return [
+  return withApplicationRules([
     baseSystemPrompt,
     '',
     'Project rules apply to your mutations. Follow them as the parent agent would:',
     formatted,
-  ].join('\n');
+  ].join('\n'));
 }
 
 /**

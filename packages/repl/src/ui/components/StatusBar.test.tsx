@@ -125,7 +125,7 @@ describe("StatusBar", () => {
     const text = getStatusBarText({
       sessionId: "session-1",
       permissionMode: "accept-edits",
-      agentMode: "sa",
+      agentMode: "ama",
       provider: "anthropic",
       model: "sonnet",
     });
@@ -321,20 +321,6 @@ describe("StatusBar", () => {
     });
 
     expect(text).not.toContain("Iter 28/146");
-  });
-
-  it("still shows generic iter counters for SA runs", () => {
-    const text = getStatusBarText({
-      sessionId: "session-1",
-      permissionMode: "accept-edits",
-      agentMode: "sa",
-      provider: "anthropic",
-      model: "sonnet",
-      currentIteration: 3,
-      maxIter: 8,
-    });
-
-    expect(text).toContain("Iter 3/8");
   });
 
   // v0.7.38 FEATURE_156 — idle-wait visual indicator (status-bar render side).

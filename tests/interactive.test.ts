@@ -34,7 +34,7 @@ describe('InteractiveContext', () => {
 
     expect(context.messages).toEqual([]);
     expect(context.sessionId).toBeDefined();
-    expect(context.sessionId).toMatch(/^\d{8}_\d{6}_[0-9a-z]{1,2}[0-9a-f]{12}$/);
+    expect(context.sessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(context.title).toBe('');
     // mode 已移至 CurrentConfig 管理
     expect(context.createdAt).toBeDefined();
@@ -195,7 +195,7 @@ describe('executeCommand', () => {
       reasoningMode: 'off',
       parallel: false,
       permissionMode: 'accept-edits',
-      agentMode: 'sa',
+      agentMode: 'ama',
     };
     exitCalled = false;
     savedSession = null;
@@ -362,7 +362,7 @@ describe('Command Aliases', () => {
       reasoningMode: 'off',
       parallel: false,
       permissionMode: 'accept-edits',
-      agentMode: 'sa',
+      agentMode: 'ama',
     };
     callbacks = {
       exit: () => {},
@@ -467,7 +467,7 @@ describe('Mode Switching Detailed', () => {
       reasoningMode: 'off',
       parallel: false,
       permissionMode: 'accept-edits',
-      agentMode: 'sa',
+      agentMode: 'ama',
     };
     callbacks = {
       exit: () => {},
@@ -627,7 +627,7 @@ describe('Context Management Detailed', () => {
       const sessionIds = contexts.map((context) => context.sessionId);
 
       expect(new Set(sessionIds).size).toBe(sessionIds.length);
-      expect(sessionIds.every((id) => /^\d{8}_\d{6}_[0-9a-z]{1,2}[0-9a-f]{12}$/.test(id))).toBe(true);
+      expect(sessionIds.every((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id))).toBe(true);
     } finally {
       vi.useRealTimers();
     }

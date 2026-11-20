@@ -82,7 +82,7 @@ describe('createRolePrompt — runtime identity in workspace section', () => {
         undefined, undefined, 'kodax/role/worker', undefined,
         buildContext(), undefined, false, mode,
       );
-      expect(rendered.match(/(?:^|\n)(?:- )?Primary task:/g)).toHaveLength(1);
+      expect(rendered.match(/(?:^|\n)(?:- )?Work intent:/g)).toHaveLength(1);
       expect(rendered.match(/(?:^|\n)(?:- )?Risk:/g)).toHaveLength(1);
       expect(rendered).toContain(`Assurance intent: ${decision.assuranceIntent ?? 'default'}`);
       expect(rendered).toContain('Current round instructions:\nContinue from the saved milestone.');
@@ -113,10 +113,11 @@ describe('createRolePrompt — runtime identity in workspace section', () => {
         for (const unavailable of ['todo_create', 'todo_update', 'todo_get', 'todo_list', 'spawn_agent', 'wait_agent', 'send_message', 'followup_task', 'interrupt_agent', 'list_agents', 'agent_output']) {
           expect(firstRequest.includes(unavailable), `${agent}: unavailable ${unavailable}`).toBe(false);
         }
-        expect(firstRequest).not.toContain('start at least 2 distinct read-only review Agents');
+        expect(firstRequest).not.toContain('Split a review this broad into read-only Agents');
         expect(firstRequest.includes('`module_context`')).toBe(availableToolNames.length > 0);
         expect(firstRequest).toContain('requested scope');
-        expect(firstRequest).toContain('read/grep');
+        // With no repository tools at all, a read/grep fallback would name absent tools.
+        expect(firstRequest.includes('read/grep')).toBe(availableToolNames.length > 0);
         expect(firstRequest).toContain('verify the requested result');
         expect(firstRequest).not.toContain('run_workflow');
         expect(resolveRoleRuntimeStateContext(ctx)).toBeUndefined();
@@ -329,8 +330,8 @@ describe('FEATURE_144 — AMA worker capability-context parity', () => {
       'ROUND_QUERY_SENTINEL',
       'DYNAMIC_CAPABILITY_SENTINEL',
       'TEAM_STATE_SENTINEL',
-      '1 non-root turns are active',
-      'Primary task:',
+      'This session runs at most 3 child Agents at a time.',
+      'Routing decision summary:',
       'VERIFICATION_SENTINEL',
       'TOOL_POLICY_SENTINEL',
       'METADATA_SENTINEL',
@@ -371,7 +372,7 @@ describe('FEATURE_144 — AMA worker capability-context parity', () => {
     for (const role of roles) {
       const rendered = renderRole(role, block, 'context');
       const capIdx = rendered.indexOf('FROZEN_MCP_MARKER');
-      const decisionIdx = rendered.indexOf('Primary task:');
+      const decisionIdx = rendered.indexOf('Routing decision summary:');
       expect(decisionIdx, `role=${role}: decisionSummary present`).toBeGreaterThanOrEqual(0);
       expect(capIdx, `role=${role}: capability block present`).toBeGreaterThan(decisionIdx);
     }
@@ -383,7 +384,7 @@ describe('FEATURE_144 — AMA worker capability-context parity', () => {
       // Workspace + decision summary still present; no orphan blank gap
       // means the filter() chain dropped the undefined entry cleanly.
       expect(rendered).toContain('## Environment');
-      expect(rendered).toContain('Primary task:');
+      expect(rendered).toContain('Routing decision summary:');
       // Sentinel: no MCP / project-agents content leaks in when the
       // parent didn't pre-compute one.
       expect(rendered).not.toContain('## MCP Capability Provider');
@@ -399,8 +400,8 @@ describe('FEATURE_144 — AMA worker capability-context parity', () => {
       // and decision summary.
       expect(renderedEmpty).toContain('## Environment');
       expect(renderedWs).toContain('## Environment');
-      expect(renderedEmpty).toContain('Primary task:');
-      expect(renderedWs).toContain('Primary task:');
+      expect(renderedEmpty).toContain('Routing decision summary:');
+      expect(renderedWs).toContain('Routing decision summary:');
     }
   });
 });
@@ -432,28 +433,28 @@ describe('FEATURE_114 Slice 2 — worker role prompt entry wire', () => {
     const rendered = renderWorker();
     expect(rendered).toContain('## Environment');
     expect(rendered).toContain('Working Directory:');
-    expect(rendered).toContain('Primary task:');
+    expect(rendered).toContain('Routing decision summary:');
     expect(rendered).toContain('Workspace discipline:');
     expect(rendered).toContain('Preserve any exact machine-readable closing contract');
   });
 
-  it('decisionSummary is de-harnessed and the Worker self-judges via EXECUTION GUIDANCE (ADR-043)', () => {
+  it('decisionSummary is de-harnessed and the Worker self-judges via its execution guidance (ADR-043)', () => {
     const rendered = renderWorker();
     // Semantic routing fields stay (they help; see decisionSummary eval).
-    expect(rendered).toContain('Primary task:');
+    expect(rendered).toContain('Routing decision summary:');
     expect(rendered).toContain('Risk:');
     // The collapsed/vestige harness-tier classification lines were removed (P1.6).
     expect(rendered).not.toContain('Harness:');
     expect(rendered).not.toContain('Topology ceiling:');
     // The Worker self-judges its approach from the static guidance (H3) instead.
-    expect(rendered).toContain('EXECUTION GUIDANCE');
+    expect(rendered).toContain('EXECUTION, RECOVERY AND DELIVERY');
   });
 
   it('teaches language continuity across Actor-event resumes', () => {
     const rendered = renderWorker();
-    expect(rendered).toContain('Actor-event resume summaries: match the primary natural language of the original user request');
-    expect(rendered).toContain('user-visible explanations, progress notes, and final answer');
-    expect(rendered).toContain('Code, identifiers, file paths, tool output, and quoted evidence stay in their source language');
+    expect(rendered).toContain("On Actor-event resume, retain the original request's language.");
+    expect(rendered).toContain("Use the requested language, else the request's primary language, for explanations, progress");
+    expect(rendered).toContain('Code, identifiers, paths, commands and quoted evidence keep their source language.');
   });
 
   it('does NOT route Worker through emit_handoff (FEATURE_190: text-only termination)', () => {
@@ -472,21 +473,21 @@ describe('FEATURE_114 Slice 2 — worker role prompt entry wire', () => {
     // Pinned tokens from `buildWorkerInstructions` — if the entry
     // wire breaks, these disappear and the V2 path silently falls
     // back to a context-only prompt with no planning guidance.
-    expect(rendered).toContain('PLAN-FIRST GUIDANCE:');
-    expect(rendered).toContain('SCOPE COMMITMENT:');
+    expect(rendered).toContain('TASK AND PLAN');
+    expect(rendered).toContain('TRUST AND SCOPE');
     expect(rendered).toContain('MUTATION DISCIPLINE');
-    expect(rendered).toContain('AGENT COLLABORATION:');
+    expect(rendered).toContain('PARALLEL WORK');
     expect(rendered).toContain(
       'Use sub-agents when parallel work would materially improve speed or quality.',
     );
     expect(rendered).toContain(
       'Use `run_workflow` only when the user explicitly requests a Workflow or names a Workflow.',
     );
-    expect(rendered).toContain('the following mailbox block carries the evidence');
-    expect(rendered).toContain('After `AgentLimitReached`');
+    expect(rendered).toContain('Consume the following mailbox');
+    expect(rendered).toContain('After AgentLimitReached');
     // FEATURE_190 (v0.7.43): legacy `EVALUATOR HANDOFF` replaced by
-    // positive text-only termination block.
-    expect(rendered).toContain('TERMINATION');
+    // positive text-only termination.
+    expect(rendered).toContain('When only running children remain, end with text so Runtime suspends');
     expect(rendered).not.toContain('Sidecar Verifier');
     expect(rendered).not.toContain('EVALUATOR HANDOFF');
     expect(rendered).toContain('You are the Worker — KodaX\'s single primary agent');
@@ -521,7 +522,7 @@ describe('FEATURE_114 Slice 2 — worker role prompt entry wire', () => {
     });
     const envIdx = rendered.indexOf('## Environment');
     const capIdx = rendered.indexOf('FROZEN_MCP_MARKER');
-    const decisionIdx = rendered.indexOf('Primary task:');
+    const decisionIdx = rendered.indexOf('Routing decision summary:');
     expect(envIdx).toBeGreaterThanOrEqual(0);
     expect(capIdx).toBeGreaterThan(envIdx);
     expect(decisionIdx).toBeGreaterThan(capIdx);
@@ -684,14 +685,13 @@ describe('F270 — explicit Workflow activation policy', () => {
       actorCapacity: { maxConcurrentThreads: 4, activeNonRootTurns: 1 },
     });
     expect(rendered).toContain('<agent-completed path="..." turn_id="..." state="completed">');
-    expect(rendered).toContain('`wait_agent` returns only a wake acknowledgement');
-    expect(rendered).toContain('Use it directly');
-    expect(rendered).toContain('Do not call `agent_output` speculatively');
-    expect(rendered).toContain('do not retry `spawn_agent` while the reported capacity is still full');
-    expect(rendered).toContain('4 total concurrency slots');
-    expect(rendered).toContain('2 child start slots are available');
-    expect(rendered).toMatch(/^ACTOR CAPACITY \(authoritative runtime fact\):/);
-    expect(rendered).toContain('emit at most 2 `spawn_agent` calls');
+    // The wake-acknowledgement shape lives in the wait_agent description.
+    expect(rendered).toContain('agent_output is only for missing terminal Actor/Turn structured results/artifact metadata, never completion polling');
+    expect(rendered).toContain('never retry while full');
+    expect(rendered).toMatch(/^ACTOR CAPACITY:/);
+    expect(rendered).toContain('This session runs at most 3 child Agents at a time.');
+    expect(rendered).toContain('A `spawn_agent` call made when no child slot is free is rejected');
+    expect(rendered).not.toMatch(/emit at most|No child slot is free/);
   });
 
   it('places a broad-review fan-out decision beside current Actor capacity', () => {
@@ -724,11 +724,11 @@ describe('F270 — explicit Workflow activation policy', () => {
     expect(rendered).toContain('Review scale: massive');
     expect(rendered).toContain('Review target: compare-range');
     expect(rendered).toContain('Independent QA needed: yes');
-    expect(rendered).toContain('BROAD REVIEW FAN-OUT (authoritative task policy):');
+    expect(rendered).toContain('REVIEW BREADTH:');
     expect(rendered.indexOf('ACTOR CAPACITY')).toBeLessThan(
-      rendered.indexOf('BROAD REVIEW FAN-OUT'),
+      rendered.indexOf('REVIEW BREADTH'),
     );
-    expect(rendered.indexOf('BROAD REVIEW FAN-OUT')).toBeLessThan(
+    expect(rendered.indexOf('REVIEW BREADTH')).toBeLessThan(
       rendered.indexOf('Primary task:'),
     );
   });
@@ -744,8 +744,9 @@ describe('F270 — explicit Workflow activation policy', () => {
     ['请对比 v0.7.76 到 v0.7.79 的变更并审查合并阻塞问题。', 'compare-range'],
     ['Review 38aa0dfb^..HEAD for merge blockers.', 'compare-range'],
     ['Audit v0.7.76...v0.7.79 for merge blockers.', 'compare-range'],
+    ['Please review the latest changes in the current code.', 'current-worktree'],
   ] as const)(
-    'routes the natural review request "%s" into the authoritative fan-out prompt',
+    'routes the natural review request "%s" into the review-breadth prompt',
     (prompt, expectedTarget) => {
       const repoSignals: KodaXRepoRoutingSignals = {
         changedFileCount: 45,
@@ -792,8 +793,8 @@ describe('F270 — explicit Workflow activation policy', () => {
       expect(routed.reviewTarget).toBe(expectedTarget);
       expect(routed.plan.decision.primaryTask).toBe('review');
       expect(rendered).toContain(`Review target: ${expectedTarget}`);
-      expect(rendered).toContain('BROAD REVIEW FAN-OUT (authoritative task policy):');
-      expect(rendered).toContain('call `changed_scope` once, then fan out');
+      expect(rendered).toContain('REVIEW BREADTH:');
+      expect(rendered).toContain('call `changed_scope` once and split the review from its file groups');
     },
   );
 
@@ -827,6 +828,45 @@ describe('F270 — explicit Workflow activation policy', () => {
 
     expect(routed.plan.decision.primaryTask).toBe('bugfix');
     expect(routed.applied).not.toBe(true);
+  });
+
+  it.each([
+    'Review the null check in src/auth.ts',
+    '帮我开个PR',
+    'Open a PR for this fix',
+  ])('keeps the narrow request "%s" free of review-breadth guidance in a large dirty worktree', (prompt) => {
+    const repoSignals: KodaXRepoRoutingSignals = {
+      changedFileCount: 45,
+      changedLineCount: 6_500,
+      addedLineCount: 3_800,
+      deletedLineCount: 2_700,
+      touchedModuleCount: 6,
+      changedModules: ['agent', 'coding', 'repl'],
+      crossModule: true,
+      reviewScale: 'massive',
+      suggestedComplexity: 'systemic',
+      riskHints: [],
+      plannerBias: true,
+      investigationBias: false,
+      lowConfidence: false,
+    };
+    const routed = applyCurrentDiffReviewRoutingFloor(
+      { effort: 'medium', decision: buildFallbackRoutingDecision(prompt, undefined, { repoSignals }), promptOverlay: '' },
+      prompt,
+      repoSignals,
+    );
+    const rendered = createRolePrompt(
+      'worker', prompt, routed.plan.decision, undefined, undefined, 'kodax/role/worker', undefined,
+      {
+        ...buildContext({ provider: 'p', model: 'm' }),
+        originalTask: prompt,
+        actorCapacity: { maxConcurrentThreads: 4, activeNonRootTurns: 0 },
+      },
+      undefined, false, 'context',
+    );
+
+    expect(rendered).not.toContain('REVIEW BREADTH');
+    expect(rendered).not.toContain('Review scale: massive');
   });
 
   it.each([
@@ -889,8 +929,8 @@ describe('F270 — explicit Workflow activation policy', () => {
       },
     );
 
-    expect(rendered.match(/BROAD REVIEW FAN-OUT \(authoritative task policy\):/g)).toHaveLength(1);
-    expect(rendered).toContain('Start 1 read-only review Agent');
-    expect(rendered).not.toContain('when at least 2 child start slots are available');
+    expect(rendered.match(/REVIEW BREADTH:/g)).toHaveLength(1);
+    expect(rendered).toContain('Split a review this broad into read-only Agents');
+    expect(rendered).not.toContain('No child slot is free');
   });
 });

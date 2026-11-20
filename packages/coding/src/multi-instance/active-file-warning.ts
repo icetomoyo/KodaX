@@ -84,7 +84,7 @@ export function buildActiveFileWarningBanner(overlap: ActiveFileOverlap): string
     lines.push(line);
   }
   lines.push(
-    staticText("t12.multi-instance/active-file-warning.0"),
+    staticText("active-file-warning.advice"),
   );
   return lines.join('\n');
 }

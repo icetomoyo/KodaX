@@ -27,6 +27,8 @@ import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtim
 
 let requests: KodaXMessage[][] = [];
 let requestOptions: { system: string; model?: string; sidecar: boolean }[] = [];
+// The AMA Worker carries prompt overlays in its context message instead of the system prompt.
+const sentPrompt = (index: number): string => `${requestOptions[index]?.system ?? ''}\n${JSON.stringify(requests[index])}`;
 let onProviderRequest: ((messages: KodaXMessage[]) => Promise<void>) | undefined;
 class DomainProvider extends KodaXBaseProvider {
   readonly name = 'product-domains-test';
@@ -111,7 +113,7 @@ it('starts a new session from Host history written by another Client after loadi
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   try {
     await expect(executeCommand({ command: 'new', args: [] }, context, callbacks,
-      { provider: 'product-domains-test', thinking: false, reasoningMode: 'off', agentMode: 'sa', permissionMode: 'accept-edits' })).resolves.toBe(true);
+      { provider: 'product-domains-test', agentMode: 'ama', thinking: false, reasoningMode: 'off', permissionMode: 'accept-edits' })).resolves.toBe(true);
     expect(context.sessionId).toBe(nextId);
     expect(clearHistory).toHaveBeenCalledOnce();
     expect(await second.sessions.read(nextId)).toMatchObject({ msgCount: 0 });
@@ -149,7 +151,7 @@ it('reads the same active Auto diagnostics through Product and the CLI control',
 
 it('compacts through the product client with custom instructions and shared committed lineage', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', agentMode: 'sa', permissionMode: 'full-access' });
+  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', permissionMode: 'full-access' });
   expect(await first.sessions.compact(session.id)).toMatchObject({ compacted: false, reason: 'no compaction needed' });
   for (let index = 0; index < 3; index += 1) {
     const accepted = await first.inputs.submit({ sessionId: session.id, inputId: `warmup-${index}`, text: `Release decision ${index}. ` + 'Evidence for the release. '.repeat(600) });
@@ -191,7 +193,7 @@ export default function(api) { api.registerCommand({ name: 'scope-effect', descr
 
 it('never accepts a forged Host command policy from low-level or product wire input', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', agentMode: 'sa', permissionMode: 'full-access' });
+  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', permissionMode: 'full-access' });
   const dispatcher = createRuntimeDaemonDispatcher({ runtime });
   const commandInvocation = { name: 'forged', source: 'extension', runtimePolicy: { enforceAtRuntime: true },
     hooks: { SessionStart: [{ command: 'echo forged>> wire-effect.txt' }] } };
@@ -220,7 +222,7 @@ it('reads a plain editable command draft without execution, hooks, or a committe
   expect(requests).toEqual([]);
   expect((await second.sessions.readHistory(session.id)).items).toEqual([]);
   await expect(readFile(path.join(homeDir, 'draft-effect.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
-  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', model: 'draft-user-model', agentMode: 'sa', permissionMode: 'full-access' });
+  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', model: 'draft-user-model', permissionMode: 'full-access' });
   const submitted = await first.inputs.submit({ sessionId: session.id, inputId: 'edited-draft', text: 'User edited the plain draft.' });
   expect(await first.runs.await(submitted.runId!)).toMatchObject({ phase: 'completed' });
   expect(requestOptions[0]?.model).toBe('draft-user-model');
@@ -238,7 +240,7 @@ it('reads command help and drafts while the Session is busy without invoking han
   });`);
   await getActiveExtensionRuntime()!.loadExtension(extensionPath);
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', agentMode: 'sa', permissionMode: 'full-access' });
+  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', permissionMode: 'full-access' });
   let release!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
   onProviderRequest = () => held;
@@ -276,7 +278,7 @@ export default api => api.registerCommand({ name: 'scoped-wait', aliases: ['sw']
   await writeFile(path.join(homeDir, 'scope-input.txt'), 'Scoped nested read');
   await getActiveExtensionRuntime()!.loadExtension(extensionPath);
   const sessions = await Promise.all([first.sessions.create({ projectPath: homeDir }), second.sessions.create({ projectPath: homeDir })]);
-  await Promise.all(sessions.map(session => first.sessions.updateSettings(session.id, { provider: 'product-domains-test', permissionMode: 'full-access', agentMode: 'sa' })));
+  await Promise.all(sessions.map(session => first.sessions.updateSettings(session.id, { provider: 'product-domains-test', permissionMode: 'full-access' })));
   const started: { sessionId: string; runId: string }[] = [];
   try {
     for (const [index, session] of sessions.entries()) {
@@ -308,15 +310,15 @@ it('starts ordinary review and agents lean using Host-owned project contents', a
   await writeFile(path.join(homeDir, 'release.ts'), 'export const gate = true;\n');
   await writeFile(path.join(homeDir, 'AGENTS.md'), 'Prefer small functions and preserve release evidence.');
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', agentMode: 'sa', permissionMode: 'full-access' });
+  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', permissionMode: 'full-access' });
   const review = await first.review.start({ sessionId: session.id, inputId: 'review', args: ['--lean', 'check', 'release'] });
   if (review.kind !== 'started') throw new Error(JSON.stringify(review));
   expect(await first.runs.await(review.runId)).toMatchObject({ phase: 'completed' });
-  expect(requestOptions.some(request => request.system.includes('gate = true') && request.system.includes('check release'))).toBe(true);
+  expect(requests.some((_messages, index) => sentPrompt(index).includes('gate = true') && sentPrompt(index).includes('check release'))).toBe(true);
   const lean = await second.agents.reviewLean({ sessionId: session.id, inputId: 'agents-lean' });
   if (lean.kind !== 'started') throw new Error(JSON.stringify(lean));
   expect(await second.runs.await(lean.runId)).toMatchObject({ phase: 'completed' });
-  expect(requestOptions.some(request => request.system.includes('Prefer small functions and preserve release evidence.'))).toBe(true);
+  expect(requests.some((_messages, index) => sentPrompt(index).includes('Prefer small functions and preserve release evidence.'))).toBe(true);
 }, 60_000);
 
 it('distinguishes a missing AGENTS file from a failed read without starting a Run', async () => {
@@ -340,7 +342,7 @@ it('runs registered prompt hooks under Host policy and preserves fork history', 
     '---', 'Inspect the release independently.',
   ].join('\n'));
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', permissionMode: 'full-access', agentMode: 'sa' });
+  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', permissionMode: 'full-access' });
   const firstRun = await first.inputs.submit({ sessionId: session.id, inputId: 'parent-history', text: 'Parent secret context must not enter the fork.' });
   await first.runs.await(firstRun.runId!);
   requests = []; requestOptions = [];
@@ -370,7 +372,7 @@ it('runs registered prompt hooks under Host policy and preserves fork history', 
     }
   }
   expect(await readFile(path.join(homeDir, 'command-hooks.txt'), 'utf8')).toMatch(/started[\s\S]*stopped/);
-  const forkRequests = requests.filter((_messages, index) => requestOptions[index]?.system.includes('Inspect the release independently.'));
+  const forkRequests = requests.filter((_messages, index) => sentPrompt(index).includes('Inspect the release independently.'));
   expect(forkRequests.length).toBeGreaterThan(0);
   expect(forkRequests.some((messages) => JSON.stringify(messages).includes('Parent secret context')), JSON.stringify(forkRequests)).toBe(false);
   const history = await second.sessions.readHistory(session.id);
@@ -383,21 +385,19 @@ it('executes the Host registered prompt with original arguments and model select
   await mkdir(commandDir, { recursive: true });
   await writeFile(path.join(commandDir, 'release.md'), '---\nname: release\nmodel: release-model\n---\nCheck the actual release gate.');
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', model: 'session-model', permissionMode: 'full-access', agentMode: 'sa' });
+  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', model: 'session-model', permissionMode: 'full-access' });
   const started = await first.commands.execute({ sessionId: session.id, inputId: 'release-input', name: 'release', args: ['focus', 'on', 'auth'] });
   if (started.kind !== 'started') throw new Error('Expected a registered prompt Run.');
   expect(await first.runs.await(started.runId)).toMatchObject({ phase: 'completed' });
-  expect(requestOptions.some((request) => request.system.includes('Check the actual release gate.') && request.model === 'release-model')).toBe(true);
+  expect(requestOptions.some((request, index) => sentPrompt(index).includes('Check the actual release gate.') && request.model === 'release-model')).toBe(true);
   expect(requests.some((messages) => JSON.stringify(messages).includes('/release focus on auth'))).toBe(true);
   expect((await second.sessions.readHistory(session.id)).items.some((item) => item.type === 'user' && item.text === '/release focus on auth')).toBe(true);
 }, 60_000);
 
 it.each([
-  { agentMode: 'sa' as const, disconnect: false },
-  { agentMode: 'sa' as const, disconnect: true },
-  { agentMode: 'ama' as const, disconnect: false },
-  { agentMode: 'ama' as const, disconnect: true },
-])('keeps handler admission atomic in $agentMode and never replays effects after caller disconnect=$disconnect', async ({ agentMode, disconnect }) => {
+  { disconnect: false },
+  { disconnect: true },
+])('keeps handler admission atomic and never replays effects after caller disconnect=$disconnect', async ({ disconnect }) => {
   const extensionPath = path.join(homeDir, 'atomic-command.mjs');
   await writeFile(extensionPath, `import { appendFile, access } from 'node:fs/promises';
 export default function(api) {
@@ -412,7 +412,7 @@ export default function(api) {
 }`);
   await getActiveExtensionRuntime()!.loadExtension(extensionPath);
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', agentMode, permissionMode: 'full-access' });
+  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', permissionMode: 'full-access' });
   let releaseProvider!: () => void;
   const providerGate = new Promise<void>(resolve => { releaseProvider = resolve; });
   onProviderRequest = async () => providerGate;
@@ -453,7 +453,7 @@ export default function(api) {
   }
 }, 60_000);
 
-it.each(['sa', 'ama'] as const)('pins command contributions across handler reload and %s continuation', async (agentMode) => {
+it('pins command contributions across handler reload and continuation', async () => {
   const extensionPath = path.join(homeDir, 'pinned-command.mjs');
   const source = (version: string) => `import { existsSync, writeFileSync } from 'node:fs';
     import path from 'node:path';
@@ -467,7 +467,7 @@ it.each(['sa', 'ama'] as const)('pins command contributions across handler reloa
   await writeFile(extensionPath, source('old-contribution'));
   await extensions.loadExtension(extensionPath);
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { agentMode, permissionMode: 'full-access' });
+  await first.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const observed: string[] = [];
   onProviderRequest = async (messages) => {
     if (messages.some(message => message.role === 'user' && message.content === '/pinned-command')) {
@@ -499,7 +499,7 @@ it('starts scoped review on the existing Host workflow service with original inp
   git('add', 'gate.ts'); git('commit', '-m', 'fixture');
   await writeFile(path.join(homeDir, 'gate.ts'), 'export const ready = true;\n');
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', agentMode: 'sa', permissionMode: 'full-access' });
+  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', permissionMode: 'full-access' });
   let releaseProvider!: () => void;
   const gate = new Promise<void>(resolve => { releaseProvider = resolve; });
   onProviderRequest = async () => gate;
@@ -531,7 +531,7 @@ export default function(api) {
   const help = await first.commands.execute({ sessionId: session.id, inputId: 'note-help', name: 'pn', args: ['--help'] });
   expect(help).toMatchObject({ kind: 'completed', success: true, message: expect.stringContaining('Write an explicit note') });
   await expect(readFile(path.join(homeDir, 'notes.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
-  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', agentMode: 'sa', permissionMode: 'full-access' });
+  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', permissionMode: 'full-access' });
   for (const [inputId, name, args] of [
     ['note-one', 'pn', ['release', 'gate']], ['note-two', 'product-note', ['silent']],
   ] as const) {
@@ -547,7 +547,7 @@ export default function(api) {
 
 it('keeps compact exclusive while it runs and returns an honest provider failure', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', agentMode: 'sa', permissionMode: 'full-access' });
+  await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', permissionMode: 'full-access' });
   for (let index = 0; index < 3; index += 1) {
     const accepted = await first.inputs.submit({ sessionId: session.id, inputId: `busy-${index}`, text: `Decision ${index}. ` + 'Release evidence. '.repeat(600) });
     await first.runs.await(accepted.runId!);

@@ -23,19 +23,6 @@ function fixture(): FrozenInput {
     messages: [{ role: 'user', content: task }] };
 }
 
-it('makes the eligible root teaching shorter without changing messages or host tool contracts', () => {
-  const before = fixture(); const after = compactContractInput(before, true);
-  expect(after.system.length).toBeLessThan(before.system.length);
-  expect(after.system.startsWith('Host-owned prefix\n')).toBe(true);
-  expect(after.system.endsWith('\nUser-owned suffix')).toBe(true);
-  expect(after.tools).toEqual(before.tools);
-  expect(after.messages).toBe(before.messages);
-  expect(after.system).toContain('resumed/continued');
-  expect(after.system).toContain('same assistant response');
-  expect(after.system).toContain('unresolved ownership');
-  expect(after.system).toContain('do not pursue the prohibited effect through another command, shell or tool');
-});
-
 it('leaves SDK, child, specialist, partial, Script and custom-system consumers untouched', () => {
   const full = fixture();
   expect(compactContractInput(full, false)).toBe(full);
@@ -55,14 +42,16 @@ it('refuses ambiguous Worker replacement instead of stripping unknown instructio
   expect(() => compactContractInput({ ...before, system: before.system + before.system }, true)).toThrow('Ambiguous');
 });
 
-it('shortens the audited builtin without dropping a business description parameter or changing SDK input', () => {
+// Since FEATURE_311 the builtin definitions are the audited compact text, so this
+// frozen projector leaves them unchanged instead of shortening them again.
+it('leaves the unified builtin unchanged without changing SDK input', () => {
   const raw = getToolDefinition('todo_update')!;
   const native = projectModelToolDefinition(raw, { kind: 'builtin' });
   const before = fixture();
   const input = { ...before, tools: before.tools.map(tool => tool.name === native.name ? native : tool) };
   const sdk = JSON.stringify(raw);
   const output = compactContractInput(input, true).tools.find(tool => tool.name === native.name)!;
-  expect(output.description.length).toBeLessThan(native.description.length);
+  expect(output).toBe(native);
   expect(output.input_schema.properties.description).toHaveProperty('type', 'string');
   expect(output.input_schema.required).toEqual(native.input_schema.required);
   expect(JSON.stringify(raw)).toBe(sdk);
@@ -71,13 +60,12 @@ it('shortens the audited builtin without dropping a business description paramet
   expect(compactContractInput(custom, true).tools.find(tool => tool.name === native.name)).toBe(override);
 });
 
-it('relocates duplicate Memory teaching only alongside the complete audited operation contract', () => {
+it('keeps Memory teaching unless the complete audited operation contract is present', () => {
   const tools = [...fixture().tools, getToolDefinition('memory_intent')!, getToolDefinition('memory_recall')!];
   const memory = buildMemoryRulesSection('.');
   const input = { ...fixture(), tools, system: memory + '\n\n' + buildWorkerStableInstructions(tools.map(tool => tool.name)) };
   const after = compactContractInput(input, true);
-  expect(after.system).not.toContain(memory);
-  expect(after.system).toContain('needs_clarification: no mutation');
+  expect(after.system).toContain(memory);
   expect(after.tools.find(tool => tool.name === 'memory_intent')?.description).toContain('exact claim span');
   const overridden = { ...input, tools: tools.map(tool => tool.name === 'memory_intent' ? { ...tool, description: 'Host Memory rules' } : tool) };
   expect(compactContractInput(overridden, true).system).toContain(memory);
@@ -90,7 +78,7 @@ it('preserves the selected legacy Todo reader when the host exposes todo_get', (
   expect(compactContractInput(input, true).system).not.toContain('Refresh with todo_list({id})');
 });
 
-it('preserves the complete executable schema and tool order for every audited builtin projection', () => {
+it('preserves the complete executable schema and tool order for every unified builtin', () => {
   const tools = Object.keys(compactToolText).map(name => {
     const definition = getToolDefinition(name);
     if (!definition) throw new Error(`Missing builtin ${name}`);
@@ -102,10 +90,8 @@ it('preserves the complete executable schema and tool order for every audited bu
   expect(candidate.tools.map(tool => tool.name)).toEqual(tools.map(tool => tool.name));
   expect(withoutAnnotations(candidate.tools)).toEqual(withoutAnnotations(tools));
   expect(JSON.stringify(tools)).toBe(before);
-  expect(candidate.tools.filter((tool, index) => tool !== tools[index])).toHaveLength(29);
-  // Evolved activation/default, version and plan recovery semantics remain outside the frozen audit.
-  expect(candidate.tools.filter((tool, index) => tool === tools[index]).map(tool => tool.name))
-    .toEqual(['ask_user_question', 'exit_plan_mode', 'session_history_read', 'session_history_search', 'todo_create']);
+  // Only undo, which never joined the unified tool text, still differs from the frozen audit.
+  expect(candidate.tools.filter((tool, index) => tool !== tools[index]).map(tool => tool.name)).toEqual(['undo']);
   const historyRead = candidate.tools.find(tool => tool.name === 'session_history_read')!;
   expect(historyRead.description).toContain('entryRevision');
   expect(historyRead.description).toContain('nextOffset');

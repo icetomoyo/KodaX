@@ -27,7 +27,7 @@ const NOTE_BODY_CHARS = 1500;
 
 export const REFLECT_TOOL: KodaXToolDefinition = {
   name: REFLECT_TOOL_NAME,
-  description: staticText('t13.tools/memory-reflect.0'),
+  description: staticText('tool.memory_reflect.description'),
   input_schema: {
     type: 'object',
     properties: {
@@ -51,7 +51,7 @@ const stringList = { type: 'array', items: { type: 'string' } } as const;
 
 export const SKILL_TOOL: KodaXToolDefinition = {
   name: SKILL_TOOL_NAME,
-  description: staticText('t13.tools/skill-propose.0'),
+  description: staticText('tool.skill_propose.description'),
   input_schema: {
     type: 'object',
     properties: {
@@ -69,7 +69,7 @@ export const SKILL_TOOL: KodaXToolDefinition = {
 };
 
 export function reflectionSystemPrompt(): string {
-  return staticText('t13.prompts/note-reflection.0');
+  return staticText('note-reflection.system');
 }
 
 function text(value: unknown): string | undefined {

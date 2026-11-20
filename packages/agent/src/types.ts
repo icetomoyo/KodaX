@@ -502,7 +502,7 @@ export interface KodaXSessionRuntimeInfo {
   reasoningMode?: string;
   /** Permission mode active at session start, e.g. `'auto'` | `'plan'`. */
   permissionMode?: string;
-  /** Agent mode active at session start, e.g. `'sa'` | `'ama'`. */
+  /** Agent mode active at session start, e.g. `'ama'`. */
   agentMode?: string;
   /** Runtime-owned exact linked-worktree roots admitted for this Session. */
   sandboxWorktreeRoots?: string[];

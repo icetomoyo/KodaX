@@ -19,27 +19,29 @@ import type { ClientItemContent } from '@kodax-ai/coding/client-contract';
 import { createClassicPlaneDisplayDiffer } from '../packages/repl/src/interactive/classic-plane-display.js';
 import { clientViewToHistoryItems, readFrozenClientPlaneItems } from '../packages/repl/src/ui/client-plane.js';
 
-it('projects the actual request compaction capacity including Memory reserve without enabling diagnostics', async () => {
+it('projects the actual request compaction capacity for root and worker Runs without enabling diagnostics', async () => {
   const session = await client.sessions.create({ projectPath: homeDir });
-  await client.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await client.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const views: ClientSessionView[] = [];
   const observation = await client.sessions.observe(session.id, view => views.push(view));
   try {
-    await runRound(session.id, 1);
-    await expect.poll(() => views.at(-1)?.activity?.contextBudget?.reservedMemoryTokens).toBe(3200);
+    // The managed Worker counts Memory in its system messages, so no separate reserve is projected.
+    await (await runtime.runs.start({ sessionId: session.id, prompt: 'Ask round 1' })).result;
+    await expect.poll(() => views.at(-1)?.activity?.contextBudget?.scope).toBe('parent');
     const budget = views.at(-1)!.activity!.contextBudget!;
-    expect(budget).toMatchObject({ scope: 'parent', provider: 'product-history-page-test', compaction: {
+    expect(budget).toMatchObject({ scope: 'parent', provider: 'product-history-page-test', reservedMemoryTokens: 0, compaction: {
       enabled: true, triggerPercent: 75, triggerTokens: expect.any(Number), physicalCapacityTokens: expect.any(Number),
     } });
-    expect(budget.compaction.physicalCapacityTokens).toBeLessThan(budget.contextWindow - budget.reservedResponseTokens - 3200);
+    expect(budget.compaction.physicalCapacityTokens).toBeLessThanOrEqual(budget.contextWindow - budget.reservedResponseTokens);
     const worker = await runtime.runs.start({ sessionId: session.id, prompt: 'Worker request', options: {
-      agentMode: 'sa', context: { currentAgentId: '/root/scout', parentAgentId: '/root' },
+      context: { currentAgentId: '/root/scout', parentAgentId: '/root' },
     } });
     await worker.result;
     await expect.poll(() => views.at(-1)?.activity?.contextBudget?.scope).toBe('worker');
     expect(views.at(-1)?.activity?.contextBudget?.reservedMemoryTokens).toBe(0);
+    // Root and worker Runs share the managed Worker, so they project the same capacity.
     expect(views.at(-1)?.activity?.contextBudget?.compaction.physicalCapacityTokens)
-      .toBeGreaterThan(budget.compaction.physicalCapacityTokens!);
+      .toBe(budget.compaction.physicalCapacityTokens);
   } finally { observation.close(); }
 }, 30_000);
 
@@ -156,7 +158,7 @@ it('reads complete MCP originals over IPC and after Host restart while history k
   const session = await client.sessions.create({ projectPath: homeDir, mcpServers: {
     demo: { type: 'stdio', command: process.execPath, args: [server] },
   } });
-  await client.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await client.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const accepted = await client.inputs.submit({ sessionId: session.id, inputId: 'mcp-original', text: 'MCP-REQUEST' });
   expect(await client.runs.await(accepted.runId!)).toMatchObject({ phase: 'completed' });
 
@@ -222,7 +224,7 @@ it('reads complete MCP originals over IPC and after Host restart while history k
 
 it.each(['page', 'entry'] as const)('reads a prepared history %s across the next Run and its Host display checkpoint', async kind => {
   const session = await client.sessions.create({ projectPath: homeDir });
-  await client.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await client.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   await runRound(session.id, 1);
   const earlier = await client.sessions.readHistory(session.id);
   const earlierEntry = await client.sessions.readHistoryEntry(session.id, earlier.items[0]!.id);
@@ -289,7 +291,7 @@ it.each(['page', 'entry'] as const)('reads a prepared history %s across the next
 
 it('shares accepted input identity across history and observation for identical prompts', async () => {
   const session = await client.sessions.create({ projectPath: homeDir });
-  await client.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await client.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   for (const inputId of ['first-identical', 'second-identical']) {
     const accepted = await client.inputs.submit({ sessionId: session.id, inputId, text: 'Same prompt' });
     await runtime.runs.await(accepted.runId!);
@@ -313,7 +315,7 @@ it('shares accepted input identity across history and observation for identical 
 
 it('preserves failed tool outcomes in history after the run settles', async () => {
   const session = await client.sessions.create({ projectPath: homeDir });
-  await client.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await client.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const accepted = await client.inputs.submit({ sessionId: session.id, inputId: 'errors', text: 'ERROR-REQUEST' });
   await runtime.runs.await(accepted.runId!);
   const page = await client.sessions.readHistory(session.id);
@@ -339,7 +341,7 @@ it('preserves failed tool outcomes in history after the run settles', async () =
 
 it('pages older history with stable ids, copyable bodies, and oversized entry reads', async () => {
   const session = await client.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   for (let index = 1; index <= ROUNDS; index += 1) await runRound(session.id, index);
   await runRound(session.id, ROUNDS + 1, true);
 
@@ -416,7 +418,7 @@ it('pages older history with stable ids, copyable bodies, and oversized entry re
 
 it('keeps an older cursor on its revision while history grows and searches the whole history', async () => {
   const session = await client.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   for (let index = 1; index <= ROUNDS; index += 1) await runRound(session.id, index);
 
   const firstPage = await client.sessions.readHistory(session.id, { limit: 3 });

@@ -50,7 +50,7 @@ export type Arm = 'A' | 'C' | 'D';
 const ARMS: readonly Arm[] = ['A', 'C', 'D'];
 const PLANNED_CALLS = RECALL_ALIASES.length * REPETITIONS * RECALL_CASES.length * ARMS.length * MAX_ROUNDS;
 /** The production text, so the run measures exactly what ships. */
-export const REMINDER = staticText('t13.prompts/note-failure-reminder.0');
+export const REMINDER = staticText('note-memory.failure-reminder');
 
 export const RECALL_BUDGET = {
   /** Upper bound; reuse of identical requests and early stops cut it well below. */

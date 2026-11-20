@@ -30,7 +30,8 @@ class QueueProvider extends KodaXBaseProvider {
       }],
     };
     requestModels.push(args[4]?.modelOverride);
-    requestSystems.push(args[2]);
+    // AMA may carry prepared Skill context in messages instead of the system prompt.
+    requestSystems.push(`${args[2]}\n${JSON.stringify(args[0])}`);
     await this.request(args[0]);
     return {
       textBlocks: [{ type: 'text', text: 'This batch completed.' }],
@@ -91,7 +92,7 @@ afterEach(async () => {
 
 it('shares queued input, atomically withdraws exact input, and delivers the remaining batch in the next request', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access', model: 'queue-model-a' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', model: 'queue-model-a' });
   const views: ClientSessionView[] = [];
   const observation = await second.sessions.observe(session.id, (view) => views.push(view));
   try {
@@ -152,7 +153,7 @@ it.each(['after_turn', 'redirect'] as const)('prepares a mid-text Skill on %s co
   ].join('\n'));
   await writeFile(path.join(homeDir, 'skill-state.txt'), 'BEFORE-QUEUE');
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access', model: 'plain-model' });
+  await first.sessions.updateSettings(session.id, { permissionMode: 'full-access', model: 'plain-model' });
   const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
   await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(1);
   const text = 'Please /not-a-skill then use /probecontext now /unknown-argument and keep this.';
@@ -189,7 +190,7 @@ it.each(['after_turn', 'redirect'] as const)('prepares a mid-text Skill on %s co
 
 it('keeps unknown slash tokens, paths and URLs in the ordinary text batch', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await first.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
   await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(1);
   const text = 'Inspect /src/file.ts and https://example.com/a/b with /not-a-skill.';
@@ -216,7 +217,7 @@ it('keeps unknown slash tokens, paths and URLs in the ordinary text batch', asyn
 
 it('bounds queue previews and capacity while only the original principal can retrieve the complete withdrawal', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await first.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
   await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(1);
   const fullText = 'Large pasted instruction. '.repeat(40_000);
@@ -244,7 +245,7 @@ it('bounds queue previews and capacity while only the original principal can ret
 
 it.each(['stop', 'failure'] as const)('retains undelivered text and starts no remaining work after %s', async (ending) => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await first.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
   await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(1);
   const queued = { sessionId: session.id, inputId: 'not-delivered', text: 'Keep this for editing.', delivery: 'after_turn' as const };
@@ -265,7 +266,7 @@ it('keeps queued Skill raw text as its own batch and merges only the plain text 
   await mkdir(skillDir, { recursive: true });
   await writeFile(path.join(skillDir, 'SKILL.md'), '---\nname: review\ndescription: Review changes\n---\nReview the requested diff.');
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await first.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
   await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(1);
   const queued = { sessionId: session.id, delivery: 'after_turn' as const };

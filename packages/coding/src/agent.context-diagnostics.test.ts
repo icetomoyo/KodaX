@@ -14,7 +14,7 @@ import {
   registerModelProvider,
 } from '@kodax-ai/llm';
 import { ContextCapacityError } from '@kodax-ai/agent';
-import { runKodaX } from './agent.js';
+import { runTestLeaf as runLeafAgent } from './agent-runtime/test-leaf.js';
 import type { RuntimeContextBudgetSnapshot } from './agent-runtime/context-budget.js';
 import type { RuntimeToolExposurePlan } from './agent-runtime/tool-exposure-planner.js';
 import type { KodaXPromptCacheDiagnosticEvent } from './types.js';
@@ -63,7 +63,7 @@ class ContextDiagnosticsProvider extends KodaXBaseProvider {
   }
 }
 
-describe('runKodaX context diagnostics', () => {
+describe('runLeafAgent context diagnostics', () => {
   beforeEach(() => {
     ContextDiagnosticsProvider.calls = [];
     process.env[TEST_PROVIDER_API_KEY_ENV] = 'test-key';
@@ -79,7 +79,7 @@ describe('runKodaX context diagnostics', () => {
     const budgets: RuntimeContextBudgetSnapshot[] = [];
     const exposures: RuntimeToolExposurePlan[] = [];
 
-    await runKodaX(
+    await runLeafAgent(
       {
         provider: TEST_PROVIDER_NAME,
         reasoningMode: 'off',
@@ -103,7 +103,7 @@ describe('runKodaX context diagnostics', () => {
     const exposures: RuntimeToolExposurePlan[] = [];
     const cacheDiagnostics: KodaXPromptCacheDiagnosticEvent[] = [];
 
-    await runKodaX(
+    await runLeafAgent(
       {
         provider: TEST_PROVIDER_NAME,
         reasoningMode: 'off',
@@ -183,7 +183,7 @@ describe('runKodaX context diagnostics', () => {
   });
 
   it('propagates a typed capacity failure instead of returning success:false', async () => {
-    await expect(runKodaX(
+    await expect(runLeafAgent(
       {
         provider: TEST_PROVIDER_NAME,
         reasoningMode: 'off',

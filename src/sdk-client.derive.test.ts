@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
   KodaXBaseProvider, clearRuntimeModelProviders, registerModelProvider,
-  type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult,
+  type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult, type KodaXToolDefinition,
 } from '@kodax-ai/llm';
 import { createSessionLineage, withKodaXFileLock } from '@kodax-ai/agent';
 import { FileSessionStorage } from '../packages/repl/src/interactive/storage.js';
@@ -23,8 +23,9 @@ class DeriveProvider extends KodaXBaseProvider {
   protected readonly config: KodaXProviderConfig = {
     apiKeyEnv: 'KODAX_PRODUCT_DERIVE_TEST_KEY', model: 'product-derive-test', supportsThinking: false,
   };
-  async stream(messages: KodaXMessage[]): Promise<KodaXStreamResult> {
+  async stream(messages: KodaXMessage[], _tools: KodaXToolDefinition[], system: string): Promise<KodaXStreamResult> {
     requests.push(structuredClone(messages));
+    systems.push(system);
     if (messages.some(message => message.role === 'user' && message.content === 'REUSED_TOOL_ID')) {
       const count = messages.reduce((total, message) => total + (Array.isArray(message.content)
         ? message.content.filter(block => block.type === 'tool_result').length : 0), 0);
@@ -38,6 +39,7 @@ class DeriveProvider extends KodaXBaseProvider {
 }
 
 let requests: KodaXMessage[][] = [];
+let systems: string[] = [];
 // Judge frames (learning review) are single-user JSON prompts; only rounds
 // carrying the warm-up text are conversational.
 function conversationalRequests(): number {
@@ -61,6 +63,7 @@ let second: Awaited<ReturnType<typeof connectKodaXClient>>;
 beforeEach(async () => {
   homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-derive-'));
   requests = [];
+  systems = [];
   registerModelProvider('product-derive-test', () => new DeriveProvider());
   vi.stubEnv('KODAX_PRODUCT_DERIVE_TEST_KEY', 'test-only');
   await openHost();
@@ -100,7 +103,7 @@ async function runRound(sessionId: string, index: number): Promise<void> {
 
 it('returns canonical operation boundaries and history quality without parsing display IDs', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await first.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   await runRound(session.id, 1);
   await runRound(session.id, 2);
   const page = await first.sessions.readHistory(session.id);
@@ -120,7 +123,7 @@ it('returns canonical operation boundaries and history quality without parsing d
 
 it('derives Retry before a canonical user query, including the first query', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await first.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   await runRound(session.id, 1);
   await runRound(session.id, 2);
   const page = await first.sessions.readHistory(session.id);
@@ -139,7 +142,7 @@ it('keeps repeated provider call IDs separate in public views and full item read
   await writeFile(path.join(homeDir, 'first.txt'), 'FIRST_TOOL_BODY');
   await writeFile(path.join(homeDir, 'second.txt'), 'SECOND_TOOL_BODY');
   const session = await first.sessions.create({ projectPath: homeDir });
-  await first.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await first.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const input = await first.inputs.submit({ sessionId: session.id, inputId: 'reused-tools', text: 'REUSED_TOOL_ID' });
   await expect(first.runs.await(input.runId!)).resolves.toMatchObject({ phase: 'completed' });
   const facts = await first.statistics.readTools(session.id);
@@ -195,7 +198,7 @@ it('keeps repeated provider call IDs separate in public views and full item read
 
 it('forks an idle session at an explicit boundary with settings and source intact', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   await runRound(session.id, 1);
   await runRound(session.id, 2);
 
@@ -253,7 +256,7 @@ it('forks an idle session at an explicit boundary with settings and source intac
 
 it('recovers into a new session via a deterministic seed and continues with one input', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   await runRound(session.id, 1);
   await runRound(session.id, 2);
 
@@ -290,12 +293,12 @@ it('recovers into a new session via a deterministic seed and continues with one 
   });
   await runtime.runs.await(acceptance.runId!);
   expect(continuationRequests()).toBe(1);
-  const continued = [...requests].reverse().find((messages) =>
-    messages.some((message) => typeof message.content === 'string' && message.content.startsWith('Continue from')));
-  expect(continued).toBeDefined();
-  const seedMessage = continued!.find((message) => typeof message.content === 'string' && message.content.includes('Recovered session memory'));
-  expect(seedMessage?.role).toBe('system');
-  expect(seedMessage!.content).toContain(`Source session: ${session.id}`);
+  const continuedIndex = requests.map((messages) =>
+    messages.some((message) => typeof message.content === 'string' && message.content.startsWith('Continue from'))).lastIndexOf(true);
+  expect(continuedIndex).toBeGreaterThanOrEqual(0);
+  // The AMA Worker lifts leading system messages into its system prompt.
+  expect(systems[continuedIndex]).toContain('[Recovered session memory]');
+  expect(systems[continuedIndex]).toContain(`Source session: ${session.id}`);
   const retry = await second.inputs.submit({
     sessionId: recovered.id, inputId: 'recover-continue', text: 'Continue from the recovered memory.',
   });
@@ -336,7 +339,7 @@ it.each(Object.entries(idleSourceReads))(
   '%s waits for its Host display checkpoint before reading the idle source',
   async (_name, readSource) => {
     const session = await first.sessions.create({ projectPath: homeDir });
-    await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+    await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
     // Streaming completion now checkpoints before canonical commit. First
     // finish that real round; hold a separate idle checkpoint to test reads.
     let viewOwner: SessionViewOwner | undefined;
@@ -403,7 +406,7 @@ it.each(Object.entries(idleSourceReads))(
   '%s propagates a failed Host checkpoint instead of reading an older source',
   async (_name, readSource) => {
     const session = await first.sessions.create({ projectPath: homeDir });
-    await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+    await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
     const held = deferred<void>();
     const release = deferred<void>();
     const flushed = deferred<void>();
@@ -442,7 +445,7 @@ it.each(Object.entries(idleSourceReads))(
   '%s rejects a checkpoint failure that settled before the public IPC read',
   async (_name, readSource) => {
     const session = await first.sessions.create({ projectPath: homeDir });
-    await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+    await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
     const writer = vi.spyOn(FileSessionStorage.prototype, 'mutateUiHistory')
       .mockRejectedValue(new Error('late-checkpoint-save-failed'));
     try {

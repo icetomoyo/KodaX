@@ -1,5 +1,322 @@
 # KodaX Architecture Decision Records
 
+## Every root Run uses one Worker and one tool text — 2026-11-19 (unreleased)
+
+The 2026-10-26/27 first-turn token work left the source text alone. It built the
+full system prompt and tool descriptions, then swapped in compact text when an
+exact match held. Any mismatch silently kept the full text. Two tool text sets
+and two Workers had to be maintained. Issue 415 and the missing reason in the
+compact `edit` text came from that layer. Persona, override, tool-policy and
+specialist roots never got the compact text, and neither did direct root Runs.
+`runs.start()` without `mode` still ran the pre-ADR-033 `system.md`. That
+default came from `runKodaX` when the Runtime was built in v0.7.78, without a
+decision.
+
+**Decision.** Each role has one prompt source.
+
+- Each builtin tool has one description, written compact at the source. The
+  collaboration, write-lane, wait and Todo sentences that the child patch
+  carried moved into `spawn_agent`, `wait_agent`, `todo_create` and
+  `todo_update`. Leaf Runs without a Worker therefore keep that teaching. The
+  request-time projection is deleted. `tool_call` and `tool_search` may append
+  contracts for deferred tools the Run actually has.
+- The Worker is written compact at the source and trimmed to the tools a Run
+  has. An `ama` root gets the full sections. A root without `agentMode` gets the
+  trimmed sections. The regex rewrite and the eligibility marks are deleted.
+- Every root Run goes through the managed Worker. That covers `runKodaX`,
+  `startKodaX`, `KodaXClient`, `createKodaXTaskRunner`, the Runner preset, and
+  Runtime and daemon `runs.start`. An explicit `mode: 'coding'` is ignored with a
+  warning. Stored `coding` Runs resume on the managed Worker. `system.md`,
+  `SYSTEM_PROMPT`, `buildSystemPrompt` and `buildSystemPromptSnapshot` are
+  deleted.
+- The leaf executor stays as an internal entry. Child Agents, specialists and
+  one-shot digest and repair calls run on it with their own prompts, and it
+  refuses to run without one.
+- On a root, `systemPromptOverride` goes first and replaces the KodaX identity
+  and guidance. KodaX still appends its runtime sections. `agentProfile.instructions`
+  replaces only the identity, because REPL Markdown persona Agents rely on the
+  planning, parallel-work and verification guidance.
+- Managed roots gained what the direct engine had: `maxIter` with
+  `limitReached`, `session.autoResume`, and the `startKodaX` session marker.
+  Abort rejects with `AbortError`.
+
+**Rejected alternatives.**
+
+- *Keep the projection and widen its eligibility.* Every new caller shape would
+  need another exact-match rule, and a miss would still fall back silently.
+- *Keep the direct engine as a deprecated Runtime mode for one release.* SDK
+  customers no longer call `runKodaX` directly (owner, 2026-11-19). A kept path
+  would keep `system.md` as a second root prompt.
+- *Treat `agentProfile.instructions` as `kodaxGuidance: 'omit'`.* REPL persona
+  Agents would lose the planning, parallel-work and verification guidance.
+- *Retire the leaf executor as well.* Children need a complete prompt override,
+  `maxIter` and generation checkpoints without a Worker. Running them through
+  the Worker would stack two prompts.
+
+**Consequences.** A change to the Worker or to a tool description reaches every
+entry. `tests/f311-entry-matrix.test.ts` pins each entry to one Worker and one
+tool text, and checks that the retired sources stay deleted. It also captures
+the write, read-only, specialist and Workflow-step children.
+`src/sdk-runtime.legacy-coding-run-recovery.test.ts` recovers a stored `coding`
+Run on the Worker with its saved history.
+A root Run now carries the Run Context envelope, and under `ama` it also has the
+Actor and Workflow tools. Callers that do not want them use `excludeTools` or a
+tool policy. This entry supersedes three earlier statements: "The direct engine
+rejects a spec" (2026-11-19 prompt spec), "The direct engine is not SA and
+stays" (2026-11-18 SA retirement) and "Canonical and compact Worker texts
+remain separate sources" (2026-11-18 prompt variants).
+
+Paid evals used blind pairs on `glm-5.3-flash`, `kimi-for-coding` and
+`deepseek-flash`. One tool text, 48 calls: persona 2 candidate, 2 baseline,
+1 mixed and 13 tie; ordinary root 2 candidate, 0 baseline and 4 tie. One Worker
+on persona and override roots, 72 calls: persona 3, 2, 1 and 12; override 2, 2,
+0 and 14. Input per call fell 28% and 34%. The baseline wins trace to provider
+noise or to `omit` dropping the parallel-work paragraph. That paragraph now
+follows `spawn_agent` instead; see the application prompt spec entry. Step 3 compared the SDK default root (`runs.start` without a mode, AMA on the
+Runtime Host) on the direct engine with `system.md` against the managed Worker
+with its Run Context envelope, over parallel dispatch, ownership, Todo
+continuation, one question round, edit recovery, Memory, Skill trigger and plain
+lookup (48 calls, $0.067). Blind verdicts: 18 tie, 4 baseline, 1 candidate,
+1 mixed. Re-sampling the losing cells did not reproduce them: the baseline made
+the Todo-continuation edit 0 of 4 times, the candidate 1 of 4. So the
+attribution is provider noise. Input per call fell 5.8%.
+
+A separate eval covered an in-process `runKodaX` call without `agentMode`. The
+direct engine with `system.md` was compared against the managed Worker, which
+runs without Actors here and so works locally. The checkpoints were Todo
+continuation, one question round, edit recovery, Memory, Skill trigger and
+plain lookup (36 calls, $0.042). Blind verdicts: 14 tie, 2 baseline,
+2 candidate. The decided pairs pointed opposite ways on different models, so
+the attribution is provider noise. Input per call rose 1.2%, because the Run
+Context envelope outweighs the shorter system prompt.
+
+## Applications shape managed-Run prompts through one spec — 2026-11-19 (unreleased)
+
+Customers need KodaX to answer as their product, not as a coding agent. The
+only replacement seam was `systemPromptOverride`. That seam replaces the whole
+prompt, so tool contracts and safety text go with it.
+
+**Decision.** A managed Run accepts `context.prompt`. Product clients send it
+as `prompt` in the trusted execution profile. It has two parts.
+
+- `kodaxGuidance: 'omit'` removes the text KodaX tags as guidance. That covers
+  coding style, Worker identity wording and parallel tool-call batching.
+  Contract text, tool teaching and `AGENTS.md` stay, because those carry
+  safety and correctness. The default `'keep'` changes no prompt bytes.
+- When to fan out to child Agents is tagged capability, and so is the ULTRA
+  policy. Both follow `spawn_agent`: they stay while the tool is offered, and
+  `excludeTools` removes them with the tool (amended 2026-11-20).
+- `context` is a list of keyed entries, each a `rule` or a `reference`. Each
+  entry is one Managed Run Context section. The system prompt stays stable for
+  the prompt cache. Retention diffs entries by key, so a removed key produces a
+  "No longer available" line. A changed entry is replaced in place. Rules
+  reach every write child, its own write children and Workflow write children
+  the same way project rules do, because they constrain changes. Read-only
+  children and references stay out of child prompts.
+
+The persona stays `agentProfile`, fixed per Session. The direct engine rejects
+a spec with `prompt_spec_requires_managed_run`. Hosts advertise `promptSpec`
+v1, and clients reject a profile `prompt` before sending it to an older Host.
+
+**Rejected alternatives.**
+
+- *Fragment ids that replace individual sections.* The ids would become
+  public API over text that changes every release. The two guidance levels
+  cover the customer cases.
+- *Rules in the system prompt.* Changing a rule would invalidate the whole
+  prompt cache, and the system prompt has no way to retire a removed rule.
+- *A per-entry `trusted` flag.* The rule/reference split already states how
+  far the model should follow the text. A flag would only restate that split.
+- *A persona store, persona lock or platform policy source.* pi, codex and
+  opencode have none of these. Home `AGENTS.md` already serves as the
+  enterprise rule source.
+
+**Consequences.** Neutral identity wording applies only under `omit`. The
+embedded core runtime does not apply product authorization. Only the daemon
+server binds it, and that is the path the public SDK uses.
+
+A reference lowers injection risk but does not remove it. In paid evals on
+`glm-5.3-flash`, `deepseek-flash` and `kimi-for-coding`, an instruction placed
+inside a reference was still followed in most runs. Embedders must not put
+untrusted text in a reference and rely on the model to ignore it. Admission
+rejects envelope markers with any spacing or `=` count, because the eval showed
+a near-miss end marker defeating the reference wording.
+
+The same evals found no regression. Persona and rule cases tied the status quo.
+A no-shell rule kept write children off `bash` where the status quo used it.
+
+The 2026-11-20 amendment follows the FEATURE_311 step 2 eval, where an override
+root on glm stopped dispatching once `omit` dropped the PARALLEL WORK block. A
+host persona sets voice and scope. It rarely restates when to use child Agents,
+so the model was left with the tool and no rule for it. *Leave dispatch to the
+host* was rejected for that reason. A blind L2 eval on override roots (D1
+parallel review and O1 child-owned file, glm, kimi and deepseek, 12 calls plus
+24 re-samples, $0.018) compared the two. deepseek dispatched the two
+independent lanes in 2 of 4 samples, against 0 of 4 before. glm and kimi
+dispatched every time in both arms. No arm touched the child's file. glm now
+reads the test file before the root-owned edit in 3 of 4 samples (before: 0 of
+4), which costs one read.
+
+## SA mode is retired from every caller — 2026-11-18 (unreleased)
+
+ADR-072 moved CLI, REPL and unset Product turns to AMA but kept SA for explicit
+SDK Runs. That remainder still had effects. A config.json `agentMode: "sa"`
+written by an older REPL overrode the Product default. Every Space and daemon
+Session then lost its Actor tools without a warning.
+
+**Decision.** `agentMode: 'sa'` is accepted as deprecated input and carries no
+behavior, following the AMAW precedent. `runManagedTask` and Runtime Sessions
+run the AMA Worker for it, and the SA branch, its solo tool exclusions and its
+Direct Path overlay are deleted. `runKodaX` treats `'sa'` as unlabeled, which
+it already behaved as. The direct engine is not SA and stays: explicit
+`runs.start({ mode: 'coding' })` Runs, Markdown Agent bindings and captured
+Runs keep it. `Run.mode` (`coding` or `managed_task`) is now the only public
+fact that tells the two engines apart, and new Runs report `agentMode: 'ama'`.
+Stored Run records that say `'sa'` stay readable as written. CLI
+`--agent-mode sa` and REPL `/agent-mode sa` keep their migration errors.
+
+**Rejected alternatives.**
+
+- *Keep SA for explicit SDK callers.* No shipped caller selects it. CLI, REPL
+  and Space all run AMA. The branch kept a second prompt surface, and dozens of
+  tests used it as a shortcut to a direct turn instead of testing AMA.
+- *Map `'sa'` to `'ama'` inside `runKodaX` as well.* Inside `runKodaX`,
+  `'ama'` attaches an Actor host and the Workflow host. That would add tools to
+  direct calls that never had them. Unlabeled keeps those calls byte-identical.
+- *Rename the `sa-mutation-reflection` eval id.* The name refers to the
+  mutation reflection middleware. Renaming it would break comparison with past
+  results.
+
+**Consequences.** An embedder that relied on SA to withhold child Agents uses
+`excludeTools`, an Agent profile or a tool policy instead. ADR-012 and ADR-072
+keep their history, and their "SA remains for explicit SDK Runs" clause no
+longer holds.
+
+## Prompt variants keep conditions; Actor capacity states free slots — 2026-11-18 (unreleased)
+
+Issue 415 came from a compact prompt projection that dropped a condition. The
+Skill catalog rule became an unconditional "invoke a matching Skill first".
+
+**Decision.** A projection may shorten a rule. It must keep the condition under
+which the rule applies, and the reason when the rule forbids something. Each
+model-facing fact has one owner. The Skill trigger lives only in the catalog,
+and the compact Worker text no longer restates it. The Actor capacity block is
+the only place that states the child-slot limit; REVIEW BREADTH no longer
+repeats it. Prompt evals capture production request bytes from the real
+managed Runtime. A synthetic fixture missed the worktree state and produced
+misses that production did not have.
+
+**Decision.** The Actor capacity block states the free slot count as a fact,
+or says that none is free. The runtime refresh resends it when it changes. A
+rejected `spawn_agent` result gives a next step. The scheduler's hard limit,
+the structured `agent_limit_reached` error and the Workflow wait-and-retry stay
+as the backstop. Proactive delegation stays on.
+
+**Rejected alternatives.** Each was tested on `glm-5.3-flash`,
+`deepseek-flash` and `kimi-for-coding` with blind review:
+
+- *Soften the catalog only.* The compact text still restated the mandate, so
+  the trigger kept two owners.
+- *Add a "load the matching Skill first" line to each procedure.*
+  `deepseek-flash` Skill misses went 4 → 5.
+- *Remove the competing review and commit lines.* No measurable effect (R-1).
+  The remaining misses came from the fixture lacking worktree state (R-2: 15/15
+  with production bytes).
+- *Codex-style capacity.* Codex uses a static "N slots including you" line, no
+  refresh and a bare limit error. It over-spawned in 18/36 busy, full and
+  rejected cells, against 0/36 for the free-count text. Codex is explicit-only
+  by default, so its static line rarely meets a busy tree. KodaX delegates
+  proactively and needs the live count.
+- *Leave the subtraction to the model.* With the old block, 8/9 partly busy
+  cells started more children than were free (d-1).
+
+**Consequences.** Canonical and compact Worker texts remain separate sources
+until the prompt store moves to sections. Substrate: 068b89d15 for the d-4
+eval; the fix commits are 4788f47a9, 36fac9eeb, 068b89d15 and d02236f84.
+
+## Stop always ends; an unconfirmed Actor tree fences the Session instead — 2026-11-17 (unreleased)
+
+Status: Accepted. Issues 412 and 413; `actorSettlementConvergence:3`.
+
+**Decision.** A Run's final outcome and the Session's write fence are separate
+facts. When Actor settlement cannot be confirmed, the Run still ends:
+
+- A write whose result is unknown (deadline missed, or the store rejected after
+  starting) is classified by one reader, `settleFailedMutation`. It reads the
+  durable snapshot back and compares revision and owner. `committed` adopts the
+  write, `not_committed` rolls it back, and `unknown` fences.
+- Same-owner repair is bounded by a five-minute budget. When repair fails
+  deterministically (owner conflict, unrepairable snapshot) or runs out of
+  budget, the Run ends `failed` / `actor_settlement_not_persisted` /
+  `effectOutcome: unknown` with Stop `confirmed`. The Session stays fenced, and
+  repair keeps retrying in the background. A successful repair lifts the fence
+  and drains queued Runs.
+- When same-owner repair cannot succeed, Runtime reclaims the tree in-process
+  the way restart recovery does. The registry opens a fresh controller that
+  treats the fenced controller's owner as dead, reloads the durable snapshot
+  and interrupts unfinished turns. The swap happens only after that
+  controller initializes; otherwise the fenced one stays and reclaim retries
+  with backoff. Reclaim waits until every effect admitted before the fence has
+  settled, and a live foreign owner still blocks it. Restart is needed only
+  when a save or a pre-fence effect never settles.
+- That restart must stay possible. A fenced controller commits nothing, so
+  Host preflight does not count its turns as active work. `runtime.close()`
+  closes the rest of the Runtime before rejecting for the fenced tree and keeps
+  the owner liveness endpoint open. A daemon whose only close failure is
+  `actor_shutdown_not_persisted` reports a successful shutdown. Once the
+  process exits, the next Host reclaims the tree as it would for a crash.
+  For the same reason preflight does not count a Run or Workflow that was
+  asked to stop: a tool call that ignores abort can keep its executor from
+  ever returning, and Host exit is what ends it.
+- Workflow-owned Runs are released to the same path when their Promise settles
+  behind the fence; they write no final history and schedule no cleanup.
+- `runs.abort` probes the owner's liveness again for a Run left non-terminal
+  at startup.
+
+**Rejected.** Keeping the Run `unknown` until the store recovers (the v2
+behaviour): a stuck disk or a foreign owner left Stop spinning with no end.
+Letting the fence lapse with the Run: a successor could overlap an Actor tree
+whose children may still have effects in flight. Leaving reclaim to a Host
+restart: a stuck Session needed a restart even when its owner was already
+dead or its store had recovered; the fenced controller can no longer write
+under its owner, and storage saves compare revisions, so a fresh in-process
+controller is as safe as one after restart. Treating every Stop timeout
+as success: a write that did not land would lose the interruption. Counting a
+fenced controller's turns in Host preflight: those turns can never finish, so
+every Host stop, idle exit and client complete exit was refused and the
+restart that recovers them could never happen (quitting Space left the Host
+running).
+
+**Compatibility.** The capability moves to `3` so a client can refuse a Host
+that still leaves such Runs `unknown`. Clients that require `2` keep working;
+they now see `failed` where they saw a lasting `unknown`.
+
+### Same-owner terminal facts win during Stop repair
+
+Repair of an unknown Actor settlement still reloads only a snapshot written
+under this controller's owner, and foreign owners still fail closed. Inside such
+a snapshot, a turn that is already terminal now keeps that durable fact. A
+pending executor settlement intent for the turn no longer has to match it
+exactly. Owner IDs are unique per controller instance, so this controller wrote
+the fact; the in-memory path already applies the first terminal fact the same
+way. An `interrupted` fact is the normal result of Stop racing the executor and
+settles quietly. Any other mismatch keeps the durable fact and reports the lost
+executor result as an `AgentSettlementPersistenceError` background error.
+
+This replaces the v0.7.85 rule (Issue 282 addendum below) that a same-owner
+conflicting terminal fact keeps the controller fenced. Intents are only
+`completed` or `failed`, while Stop writes `interrupted`, so a Stop save that
+committed after its deadline made that conflict certain and every Stop retry
+failed (Issue 412). Keeping the fence was rejected: it trades one unpersisted
+executor result for a Run that cannot end without killing the process. Settlement
+that meets its deadline is unchanged.
+
+A `quiesce` whose mutation is refused before it starts (owner lost, controller
+closing) wrote nothing, so it returns that refusal at once and does not fence.
+In the Runtime, a failed terminal status save after repair leaves the Run
+`unknown` with `run_settlement_not_persisted`, restores its non-terminal fields,
+and never escapes as an unhandled rejection. A later Stop can then finish it.
+
 ## Session default isolation — 2026-11-11 (released in v0.7.97-beta.6)
 
 The Host captures user-level Session defaults once at Session creation, or on
@@ -1247,7 +1564,8 @@ Consequence:
 
 **Status**: Accepted; the user-facing SA/AMA switch is superseded by
 [ADR-072](#adr-072-work-modes-and-the-model-facing-tool-contract). CLI and REPL
-use AMA; SA remains only for explicit SDK Runs and Runs that already captured it.
+use AMA. SA was then retired from every caller (see "SA mode is retired from every
+caller", 2026-11-18); only Runs that already captured the direct engine keep it.
 
 `Project` 描述任务语境，`SA / AMA` 描述执行拓扑；二者可以合法组合。
 
@@ -3400,7 +3718,7 @@ packages/
 3. **Elicitation 反钓鱼三件套**：`McpElicitRequest` 带 `serverId`（runtime 在 dispatch / -32042 / OAuth consent 三处注入）→ form + url prompt 都展示「哪个 MCP server 在请求」；form 收集后加 **review-before-send** 确认（列出将发送的值 + Send/Cancel）；url mode 展示完整 URL + 域名、**绝不自动打开浏览器**、**绝不让 model 窥探 URL/内容**。
    - *Why*：elicitation 是 server→user 的注入面，是钓鱼向量（恶意 server 可伪装索要 token）。最高杠杆防御是「让用户知道是谁在问」+「发送前可审阅」。这是 spec User-Interaction Model 的 client SHOULD。
 
-4. **OAuth 零配置 discovery + 复用 url-elicitation 作 consent gate**。401 → RFC 9728 PRM → RFC 8414/OIDC AS metadata → RFC 7591 DCR → PKCE(S256) + RFC 8707 `resource` → `127.0.0.1` loopback。授权 URL 通过**同一个 url-elicitation 反钓鱼门**展示（不另造 UI）。`config.auth` 端点字段改 optional（零配置）。
+4. **OAuth 零配置 discovery + 复用 url-elicitation 作 consent gate**。401 → RFC 9728 PRM → RFC 8416/OIDC AS metadata → RFC 7591 DCR → PKCE(S256) + RFC 8707 `resource` → `127.0.0.1` loopback。授权 URL 通过**同一个 url-elicitation 反钓鱼门**展示（不另造 UI）。`config.auth` 端点字段改 optional（零配置）。
    - *Why not 静态配置*：成熟客户端（claudecode/codex）都是 discovery-based 零配置；要求用户手填 `authorizationUrl`/`tokenUrl` 不现实。既有 FEATURE_065 静态路径保留（仅在三字段齐备时走）。
    - *Why CIMD 不做*：Client ID Metadata Documents（SEP-991）是*推荐*增强非 MUST，需要 server 端 `client_id_metadata_document_supported`；DCR(RFC 7591) 是注册基线且 codex 也只用 DCR。CIMD 列为 non-goal，待真实目标 server 需要时再评估。**故对外表述为「discovery/login/step-up 完成」而非「完整对齐 2025-11-25」**。
    - *callback 加固*：先监听再展示 URL（消除丢 redirect 竞态，首结果 buffer）；redirect URI 用 `127.0.0.1` 与监听一致（避开 IPv6 `localhost`/`::1` 错配，对齐 codex/RFC 8252）；PKCE 强制 S256，AS 不支持即硬失败拒绝降级到 `plain`。
@@ -5754,8 +6072,10 @@ another Session.
    new live Session replay. Migration starts a fresh journal explicitly.
 6. Daemons advertise `sessionEventJournal:1`; incompatible daemons fail
    capability negotiation.
-7. Each A2A Task owns one Runtime Session and stores its full cursor. A2A
-   projects semantic task lifecycle only, not high-frequency Runtime telemetry.
+7. Each A2A Task stores its full Runtime Session cursor. Tasks in one
+   principal's context share one Runtime Session; ADR-077 amends the original
+   one Session per Task. A2A projects semantic task lifecycle only, not
+   high-frequency Runtime telemetry.
 8. Failure latches, pending batches, retention watermarks, and replacement
    epochs are Session-scoped. A failed Session cannot block another Session;
    deleting and recreating an ID starts a fresh epoch, and legacy watermarks
@@ -7266,12 +7586,10 @@ could not be attributed to a single change and regressed specific models.
    Run is refused with no fallback; low-level `runKodaX` and Hosts without the
    work-mode capability reject it. Script's value is data-dependent
    composition, not first-turn tokens.
-7. All managed modes use one compact shared contract by default, with no
-   switch (`projectManagedSystemContract` / `projectManagedToolContracts` in
-   `managed-task/llm-adapter.ts`). It applies only to ordinary managed roots;
-   a same-name host override keeps its own contract. The first request,
-   retries, continuations and request measurement share one projection. Tool
-   fitting is budgeted against the full original system, and the canonical
+7. All managed modes use one compact shared contract, with no switch. Since
+   2026-11-19 it is the source text itself, not a request-time projection, and
+   every root Run sends it (see "Every root Run uses one Worker and one tool
+   text"). A same-name host override keeps its own contract. The canonical
    transcript is never rewritten. Tool schemas own parameter semantics; the
    Worker owns planning, scope, collaboration, resume and verification. Prompts
    are never shortened by making the model discover something, load a Skill or
@@ -7755,3 +8073,163 @@ DD §14 lists the modules, files and constants.
   already holds.
 - **Deleting the legacy plane with the default flip.** It is the only rollback,
   and Space still depends on it.
+
+## ADR-077: Provider Requests Name Their Conversation with `X-Session-Id`
+
+**Status**: Accepted (2026-11-17). Tracks Issues 416, 417 and 418. Unreleased.
+
+**Context**: Provider HTTP requests carried no conversation id. A gateway
+could not group a conversation's requests for billing, quota or audit, so it
+could not reconcile them with KodaX sessions. Kodax-Fabric, our own gateway,
+reads `X-Session-Id`. Some third-party endpoints require a session header:
+opencode-go answers 400 without one. Issue 215 had added an opaque, hashed
+`promptCacheKey` for cache routing. It deliberately exposed no Session name,
+so it cannot be matched to a KodaX session. Session ids were
+`YYYYMMDD_HHMMSS_<suffix>`, which show the local creation time to
+anyone who sees them. Host `create` and `fork` used a caller-chosen id as a
+file name without checking it.
+
+**Decision**:
+
+1. Every provider HTTP request sends `X-Session-Id` with the raw root
+   logical session id. Child agents, workflows, compaction, the capability
+   probe and retries send their root's id, so one conversation has one id.
+   A header that the Host or provider configuration already sets wins. An id
+   that is not visible ASCII of 1-128 characters is left out, and a resilience
+   debug event records that.
+2. `promptCacheKey` stays separate and hashed. Cache routing and reconciliation
+   are different jobs: hashing serves cache routing, and the raw id serves
+   reconciliation.
+3. New session ids are UUIDv7. They sort by creation time, carry no local
+   time zone, and have 74 random bits. Legacy ids remain valid; lists are
+   ordered by stored timestamps, and ids only break ties. Short displays show
+   the last 8 characters, because UUIDv7 prefixes are timestamps and repeat
+   for sessions created close together.
+4. A Host-supplied new id (`create.sessionId`, `fork.newSessionId`) must be
+   1-128 characters from `[A-Za-z0-9_-]`. It must not be a Windows device
+   name and must not start with `archived-`. Anything else fails with
+   `invalid_params`. Existing ids are read as stored.
+5. The Host strips a caller's `contextIdentitySessionId` from run options,
+   so the id sent to gateways is always the Host session's own.
+6. REPL `/clear` saves the conversation and continues under a new session
+   id when the conversation has messages. Keeping the id would let one gateway
+   id name two unrelated conversations and leave the cleared history with no
+   way back. The REPL prints `/resume <old id>`.
+7. A2A Tasks that share a `contextId` continue one Runtime Session per
+   principal. Its id is `a2a-` and the SHA-256 of the principal key and the
+   context id, so a gateway sees one id per A2A conversation and never the
+   caller's context id. The first Task creates the Session. Later Tasks reuse
+   the id when `create` reports a conflict. This replaces ADR-061 item 7's one
+   Session per Task, under which a follow-up Task started without the earlier
+   exchanges (Issue 418). Each Task still keeps its own cursor, because replay
+   and subscription are run-scoped.
+
+**Consequences**:
+
+- Gateways can group and reconcile a conversation, including across
+  compaction and child agents, without a KodaX-specific field.
+- Any provider endpoint, including official ones, sees the session id and,
+  through UUIDv7, its creation time to the millisecond. Legacy ids already
+  showed local time. We accept this, because the id goes only to the endpoint
+  the user configured, together with the conversation content itself.
+- A gateway that pins sessions to one upstream may concentrate long
+  conversations on one backend. We accept that trade-off; the gateway owns
+  routing.
+- The Codex OAuth provider keeps its own `session-id` header contract, which
+  may hold a different value. CLI-bridged providers (Gemini CLI, Codex CLI)
+  make no KodaX HTTP request and send no header.
+- Code that parsed the date out of a session id must use the stored
+  `createdAt` / `lastMessageAt` instead.
+- Host clients that minted ids with other characters must change them. A
+  path such as `../x` used to write outside the sessions directory (Issue 417).
+- The Host runs one Run per Session at a time. A new A2A Task in a busy
+  context waits for the active run, including a run waiting in
+  `INPUT_REQUIRED`.
+- A2A Tasks created before this change keep their own Sessions. The first new
+  Task in such a context starts the shared Session empty.
+- If someone archives a context's Session, new Tasks in that context fail to
+  start.
+
+**Rejected alternatives**:
+
+- **Send a hashed id.** It protects nothing the request body does not already
+  reveal, and it forces every gateway to share the KodaX hash before it can
+  reconcile.
+- **Send `x-opencode-session` or another vendor header.** A live probe showed
+  opencode-go accepts `X-Session-Id`, so a second header adds nothing.
+- **Keep the timestamp id format and only add the header.** Every endpoint
+  would then see the user's local wall-clock time, which reveals their time
+  zone.
+- **Keep the session id on `/clear`.** One gateway id would then cover
+  two unrelated conversations, and the cleared history could not be resumed.
+- **Map A2A contexts to Sessions in a stored ledger.** A ledger needs its own
+  durable writes, recovery and pruning. A derived id gives the same mapping
+  and survives restarts and Task pruning without any of them.
+- **Use the raw `contextId` as the A2A Session id.** The caller chooses it, so
+  it would need escaping to pass the Host id rule, and gateways would see it.
+
+## ADR-078: Failed Runs Carry Their Real Cause, and Public Entries Settle Expected Outcomes
+
+**Status**: Accepted (2026-11-20). Unreleased. Amends the Runtime failure
+contract recorded in DD "Classified failures", which kept causes and raw
+errors inside the Runtime boundary.
+
+**Context**: Runtime `failureDetail` and `KodaXResult.failure` gave a fixed
+summary such as "Provider request failed." and dropped the Provider's own
+message. Users and support could not tell a missing model from an exhausted
+quota, a proxy rewrite or a malformed request, and Hosts that filtered
+further showed even less. Separately, FEATURE_311 moved `runKodaX` and every
+entry built on it onto the managed engine, which throws on a final Provider
+failure and on a stop. The direct engine had resolved both. A `KodaXClient`
+therefore lost its Session on the first failed turn, `startKodaX().result`
+rejected when the user pressed Stop, and the Runner preset and task runner
+failed instead of reporting a failed task.
+
+**Decision**:
+
+1. A failure keeps its cause. `KodaXExecutionFailure.detail`,
+   `errorMetadata.lastError` and Runtime `failureDetail.detail` carry the
+   error message and its `cause` chain. One function, `describeFailureCause`,
+   builds the text. It removes credentials: the run credential, the scoped
+   Provider credential, registered and sensitive-name environment values,
+   Bearer and `sk-` tokens, `key=value` secrets, URL userinfo and URL query
+   strings. It reduces HTML to text, strips control characters and caps the
+   text at 1000 characters. `safeMessage` stays a fixed KodaX summary, and
+   classification fields are unchanged.
+2. `runKodaX`, `KodaXClient.send`, `startKodaX().result`, the default coding
+   Runner preset and `createKodaXTaskRunner` settle expected outcomes as a
+   result. A final Provider failure resolves with `success: false`, `failure`,
+   the Session id and the recovered transcript. A stop resolves with
+   `interrupted: true`. Invalid input and context-capacity errors still throw,
+   because the caller must change something before retrying.
+3. `runManagedTask` keeps throwing. Runtime, the REPL and Space classify
+   failures from the thrown error, and changing that path would change their
+   terminal states. The managed engine attaches the settled result to the
+   error; the public entries return it.
+
+**Consequences**:
+
+- Provider-controlled text now reaches Run results, events, status,
+  diagnostics and the Runtime store. The text can include what the Provider
+  echoed back, such as a model name, a file path or part of the request. We
+  accept this. A Host serves one user, the text goes back to that user, and
+  the session already stores the conversation it came from.
+- Redaction is pattern-based. A secret in an unusual shape, not passed as the
+  run credential and not in a sensitive-name environment variable, can pass
+  through.
+- Hosts should show `detail` and branch on `providerErrorCode`, `errorClass`
+  or `safeMessage`, because the detail wording belongs to the Provider.
+- The daemon schema accepts `failureDetail.detail` up to 1024 characters.
+  Older clients drop the unknown field when they parse it.
+
+**Rejected alternatives**:
+
+- **Keep the fixed summary only.** It is what made failures undiagnosable.
+- **Pass the raw message through.** Provider errors and proxies echo
+  credentials and signed URLs.
+- **Make `runManagedTask` resolve as well.** Runtime, the REPL and Space would
+  each need a new classification path for the same outcome, for no gain to
+  the user.
+- **Keep the throwing contract on the public entries and document it.** It
+  breaks every embedder that relied on the direct engine, and the first
+  failure ends a `KodaXClient` conversation.

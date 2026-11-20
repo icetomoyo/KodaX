@@ -5,10 +5,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { buildLocalExecutionFailure } from '../execution-failure.js';
+import { buildLocalExecutionFailure, buildProviderExecutionFailure } from '../execution-failure.js';
 import { withEffectivePermissionContext } from '../prompts/effective-permissions.js';
-import { claimBuiltinChildContract } from '../prompts/child-contract-scope.js';
-import { projectBuiltinChildRequestContract } from '../prompts/compact-child-contract.js';
 ﻿import {
   KodaXExtensionSessionRecord,
   KodaXExtensionSessionState,
@@ -63,6 +61,7 @@ import { mergeManagedProtocolPayload } from '../managed-protocol.js';
 // `textContainsManagedBlock`, `MANAGED_PROTOCOL_TOOL_NAME`) is wired
 // inside `agent-runtime/managed-protocol-continue.ts` since FEATURE_100 P3.5b.
 import { generateSessionId, extractTitleFromMessages } from '../session.js';
+import { runInSessionScope } from '../run-scoped-config.js';
 // FEATURE_076 Q4: load-time normalization for pre-v0.7.25 session messages.
 import { normalizeLoadedSessionMessages } from '../task-engine/_internal/round-boundary.js';
 import { renderInterruptedRunRecovery } from '../task-engine/_internal/interrupted-run-recovery.js';
@@ -347,11 +346,8 @@ import {
   KodaXExtensionRuntime,
 } from '../extensions/runtime.js';
 
-// CAP-019 (`AutoReroutePlan`) lives in
-// `agent-runtime/middleware/auto-reroute.ts` since FEATURE_100 P2.
 // CAP-015 (`RunnableToolCall`) lives in
-// `agent-runtime/middleware/edit-recovery.ts` since FEATURE_100 P2;
-// imported above for use in the dispatch loop.
+// `agent-runtime/middleware/edit-recovery.ts`; see the CAP-015 note above.
 //
 // `MessageContentBlock` (alias for the array element type of
 // `KodaXMessage.content`) used to live here for the local content-block
@@ -377,8 +373,8 @@ import {
 // `shouldEmitRepoIntelligenceTrace`) lives in
 // `agent-runtime/middleware/repo-intelligence.ts` since FEATURE_100 P2.
 // `emitRepoIntelligenceTrace` is imported above for the 'routing' stage
-// emission at frame entry; `buildAutoRepoIntelligenceContext` is also
-// re-exported so `runner-driven.ts:64` keeps working unchanged.
+// emission at frame entry. `agent.ts` re-exports
+// `buildAutoRepoIntelligenceContext` for `runner-driven.ts`.
 
 // CAP-028 (`gracefulCompactDegradation`) lives in
 // `agent-runtime/compaction-fallback.ts` since FEATURE_100 P2.
@@ -474,15 +470,8 @@ import {
 // CAP-027 (`estimateProviderPayloadBytes`, `bucketProviderPayloadSize`) lives
 // in `agent-runtime/provider-payload.ts` since FEATURE_100 P2.
 
-// CAP-019 (`maybeBuildAutoReroutePlan`, `maybeAdvanceAutoReroute`) lives in
-// `agent-runtime/middleware/auto-reroute.ts` since FEATURE_100 P2.
-// `maybeAdvanceAutoReroute` takes `buildExecutionState` as a callback so
-// that `buildReasoningExecutionState` (CAP-052, still in this file) does
-// not need to be moved together — see auto-reroute.ts docstring.
-//
-// CAP-017 + CAP-018 (`looksLikeReviewProgressUpdate`,
-// `isReviewFinalAnswerCandidate`, `hasStrongToolFailureEvidence`) live in
-// `agent-runtime/middleware/judges.ts` since FEATURE_100 P2.
+// CAP-019 auto-reroute is retired, and with it the engine's calls to the
+// CAP-017 / CAP-018 judge predicates in `agent-runtime/middleware/judges.ts`.
 
 // CAP-024 (`executeToolCall`) lives in
 // `agent-runtime/tool-dispatch.ts` since FEATURE_100 P2. agent.ts no
@@ -552,7 +541,7 @@ function withCompletionEventOnce(events: KodaXEvents): KodaXEvents {
 }
 
 /**
- * Substrate executor body — the full SA execution pipeline (provider
+ * Substrate executor body — the full direct-engine execution pipeline (provider
  * resolution, tool loop, microcompact, edit recovery, extension queue,
  * managed protocol, terminals). FEATURE_100 (v0.7.29) renamed this from
  * `runKodaX` to `runSubstrate` so the public-facing `runKodaX`
@@ -565,116 +554,6 @@ function withCompletionEventOnce(events: KodaXEvents): KodaXEvents {
  */
 const MAX_INTERRUPT_CONTINUATION_ITERATIONS = 8;
 
-function safeFailureIdentifier(value: string | undefined): string | undefined {
-  if (value === undefined || value.includes('://') || /^[A-Za-z]:\//.test(value)) return undefined;
-  return /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(value) ? value : undefined;
-}
-
-function safeFailureErrorName(value: string): string | undefined {
-  return value === 'Error' || /^[A-Za-z][A-Za-z0-9_.-]{0,63}Error$/.test(value)
-    ? value
-    : undefined;
-}
-
-function providerFailureMetadata(error: Error): Readonly<Record<string, unknown>> | undefined {
-  const metadata = (error as Error & { readonly metadata?: unknown }).metadata;
-  return typeof metadata === 'object' && metadata !== null
-    ? metadata as Readonly<Record<string, unknown>>
-    : undefined;
-}
-
-function boundedFailureMs(value: number | undefined): number | undefined {
-  return value !== undefined && Number.isSafeInteger(value) && value >= 0 && value <= 86_400_000
-    ? value
-    : undefined;
-}
-
-function terminalProviderFailureMessage(
-  errorClass: KodaXExecutionFailure['errorClass'],
-  failureCode: KodaXExecutionFailure['failureCode'],
-  httpStatus: number | undefined,
-): string {
-  if (failureCode === 'provider_not_registered') return 'Provider is not registered.';
-  if (failureCode === 'request_build_failed') return 'Provider request could not be built.';
-  if (failureCode === 'protocol_mismatch' || errorClass === 'reasoning_content_required') {
-    return 'Provider protocol is incompatible.';
-  }
-  if (failureCode === 'response_stream_error' || errorClass === 'incomplete_stream') {
-    return 'Provider returned an invalid response stream.';
-  }
-  if (httpStatus === 401 || httpStatus === 403) return 'Provider authentication failed.';
-  if (httpStatus === 404) return 'Configured Provider resource was not found.';
-  if (httpStatus !== undefined && httpStatus >= 500) {
-    return 'Provider service failed to process the request.';
-  }
-  if (httpStatus !== undefined && httpStatus >= 400) return 'Provider rejected the request.';
-  if (errorClass === 'rate_limit') return 'Provider rate limit exceeded.';
-  if (errorClass === 'provider_overloaded') return 'Provider service is temporarily unavailable.';
-  if (errorClass === 'request_timeout'
-    || errorClass === 'stream_idle_timeout'
-    || errorClass === 'chunk_timeout') return 'Provider request timed out.';
-  if (errorClass === 'connection_failure') return 'Provider network request failed.';
-  if (errorClass === 'user_abort') return 'Provider request was aborted.';
-  return 'Provider request failed.';
-}
-
-type TerminalProviderMetadata = Pick<
-  KodaXExecutionFailure,
-  | 'failureCode'
-  | 'providerStage'
-  | 'httpStatus'
-  | 'retryable'
-  | 'upstreamCode'
-  | 'requestId'
-  | 'retryAfterMs'
->;
-
-function readTerminalProviderMetadata(error: Error): TerminalProviderMetadata {
-  const metadata = providerFailureMetadata(error);
-  const failureCode = metadata?.failureCode === 'provider_not_registered'
-    || metadata?.failureCode === 'request_build_failed'
-    || metadata?.failureCode === 'protocol_mismatch'
-    || metadata?.failureCode === 'response_stream_error'
-    ? metadata.failureCode
-    : undefined;
-  const providerStage = metadata?.stage === 'catalog'
-    || metadata?.stage === 'request_build'
-    || metadata?.stage === 'transport'
-    || metadata?.stage === 'response_stream'
-    ? metadata.stage
-    : undefined;
-  const httpStatus = typeof metadata?.httpStatus === 'number'
-    && Number.isInteger(metadata.httpStatus)
-    && metadata.httpStatus >= 100
-    && metadata.httpStatus <= 599
-    ? metadata.httpStatus
-    : undefined;
-  const retryAfterMs = typeof metadata?.retryAfterMs === 'number'
-    ? boundedFailureMs(metadata.retryAfterMs)
-    : undefined;
-  return {
-    failureCode,
-    providerStage,
-    httpStatus,
-    retryable: typeof metadata?.retryable === 'boolean' ? metadata.retryable : undefined,
-    upstreamCode: typeof metadata?.upstreamCode === 'string'
-      ? safeFailureIdentifier(metadata.upstreamCode)
-      : undefined,
-    requestId: typeof metadata?.requestId === 'string'
-      ? safeFailureIdentifier(metadata.requestId)
-      : undefined,
-    retryAfterMs,
-  };
-}
-
-function formatTerminalProviderFailureMessage(
-  baseMessage: string,
-  facts: readonly (string | undefined)[],
-): string {
-  const present = facts.filter((fact): fact is string => fact !== undefined);
-  return present.length === 0 ? baseMessage : `${baseMessage} (${present.join('; ')})`;
-}
-
 function terminalTurnError(
   error: Error,
   failure: KodaXExecutionFailure | undefined,
@@ -684,53 +563,6 @@ function terminalTurnError(
   safeError.name = failure.errorName ?? 'KodaXProviderError';
   safeError.stack = undefined;
   return safeError;
-}
-
-function buildTerminalProviderFailure(input: {
-  readonly error: Error;
-  readonly errorClass: KodaXExecutionFailure['errorClass'];
-  readonly requestPhase: KodaXExecutionFailure['requestPhase'];
-  readonly provider: string;
-  readonly model: string;
-  readonly startedAt: number;
-  readonly serverRetryAfterMs?: number;
-}): KodaXExecutionFailure {
-  const metadata = readTerminalProviderMetadata(input.error);
-  const provider = safeFailureIdentifier(input.provider);
-  const model = safeFailureIdentifier(input.model);
-  const errorName = safeFailureErrorName(input.error.name);
-  const code = metadata.upstreamCode ?? metadata.failureCode;
-  const retryAfterMs = boundedFailureMs(input.serverRetryAfterMs) ?? metadata.retryAfterMs;
-  const elapsedMs = boundedFailureMs(Math.max(0, Date.now() - input.startedAt));
-  const safeMessage = terminalProviderFailureMessage(
-    input.errorClass,
-    metadata.failureCode,
-    metadata.httpStatus,
-  );
-  const message = formatTerminalProviderFailureMessage(safeMessage, [
-    errorName,
-    metadata.httpStatus === undefined ? undefined : `HTTP ${metadata.httpStatus}`,
-    metadata.upstreamCode,
-    metadata.failureCode,
-  ]);
-  return {
-    message,
-    safeMessage,
-    ...(errorName === undefined ? {} : { errorName }),
-    errorClass: input.errorClass,
-    ...(code === undefined ? {} : { code }),
-    requestPhase: input.requestPhase,
-    ...(metadata.failureCode === undefined ? {} : { failureCode: metadata.failureCode }),
-    ...(provider === undefined ? {} : { provider }),
-    ...(model === undefined ? {} : { model }),
-    ...(metadata.providerStage === undefined ? {} : { providerStage: metadata.providerStage }),
-    ...(metadata.httpStatus === undefined ? {} : { httpStatus: metadata.httpStatus }),
-    ...(metadata.retryable === undefined ? {} : { retryable: metadata.retryable }),
-    ...(metadata.upstreamCode === undefined ? {} : { upstreamCode: metadata.upstreamCode }),
-    ...(metadata.requestId === undefined ? {} : { requestId: metadata.requestId }),
-    ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
-    ...(elapsedMs === undefined ? {} : { elapsedMs }),
-  };
 }
 
 function attributeProviderRequest(events: KodaXEvents, providerRequestId: string): KodaXEvents {
@@ -785,13 +617,17 @@ export async function runSubstrate(
 ): Promise<KodaXResult> {
   const boundOptions = { ...options, context: { ...options.context,
     runtimeRunId: options.context?.runtimeRunId ?? randomUUID() } };
+  // CAP-043: autoResume / resume picks the most recent persisted session when
+  // no explicit id was supplied. Resolved before the run so every provider
+  // request of this conversation carries its id.
+  const sessionId = (await discoverAutoResumeSessionId(options)) ?? await generateSessionId();
   let prepareImages = false;
-  return withPreparedImageHistory(() => withExtensionRuntimeContext(
-    () => runSubstrateInContext(boundOptions, prompt, declaredAgent, (enabled) => { prepareImages = enabled; }),
+  return runInSessionScope(options.context?.contextIdentitySessionId ?? sessionId, () => withPreparedImageHistory(() => withExtensionRuntimeContext(
+    () => runSubstrateInContext(boundOptions, prompt, declaredAgent, (enabled) => { prepareImages = enabled; }, sessionId),
     options.extensionRuntime ?? getActiveExtensionRuntime(),
     boundOptions.context.runtimeRunId,
   ), options.abortSignal, () => prepareImages,
-  options.context?.visualObservationOwner?.expectedImageHash?.bind(options.context.visualObservationOwner));
+  options.context?.visualObservationOwner?.expectedImageHash?.bind(options.context.visualObservationOwner)));
 }
 
 async function runSubstrateInContext(
@@ -799,8 +635,8 @@ async function runSubstrateInContext(
   prompt: string,
   declaredAgent: Agent | undefined,
   setImagePreparation: (enabled: boolean) => void,
+  sessionId: string,
 ): Promise<KodaXResult> {
-  const childContractSource = claimBuiltinChildContract(options.context);
   const textRecovery = createTextRecoveryState();
   const previousActiveRuntime = getActiveExtensionRuntime();
   const runtime = options.extensionRuntime ?? previousActiveRuntime;
@@ -889,11 +725,6 @@ async function runSubstrateInContext(
     options.compaction,
   );
 
-  // CAP-043: autoResume / resume — pick the most recent persisted
-  // session when no explicit id was supplied. Folded into
-  // `discoverAutoResumeSessionId` during P3.6n.
-  const resolvedSessionId = await discoverAutoResumeSessionId(options);
-  const sessionId = resolvedSessionId ?? await generateSessionId();
   const contextIdentitySessionId = options.context?.contextIdentitySessionId ?? sessionId;
   const requestedLiveTurn = options.context?.liveTurn;
   const currentAgentId = options.context?.currentAgentId;
@@ -1044,11 +875,9 @@ async function runSubstrateInContext(
     options.context?.interruptedRunEvidence,
     messages,
   );
-  const verificationRunContext = (options.context?.systemPromptOverride || options.context?.agentProfile?.instructions)
-    ? [options.context.agentProfile ? EXECUTION_GUIDANCE : undefined,
-        formatVerificationContract(resolveEffectiveVerification(options))]
-        .filter((section): section is string => Boolean(section)).join('\n\n')
-    : undefined;
+  const verificationRunContext = [options.context?.agentProfile ? EXECUTION_GUIDANCE : undefined,
+    formatVerificationContract(resolveEffectiveVerification(options))]
+    .filter((section): section is string => Boolean(section)).join('\n\n') || undefined;
   let title = resumed.title || (
     transcriptPrompt.slice(0, 50) + (transcriptPrompt.length > 50 ? '...' : '')
   );
@@ -1151,8 +980,9 @@ async function runSubstrateInContext(
       agentId: messageQueueAgentId, maxPriority: 'user' as const, mode: 'prompt' as const,
       predicate: createRuntimeDeliveryPredicate(queue.getSnapshot(), messageQueueAgentId),
     };
-    // Host SA owns only its Session queue; an unscoped legacy queue belongs
-    // to a standalone embedder. Actor-backed Runs retain their exact route.
+    // For an unscoped run, a Host port with `consumePendingInputs` owns its
+    // Session queue; otherwise the unscoped legacy queue belongs to a
+    // standalone embedder. Actor-backed Runs retain their exact route.
     // Claim before the async append so a withdrawal cannot take back an input already entering history.
     const prompts = inputPort.consumePendingInputs && messageQueueAgentId === undefined ? [] : queue.dequeue(promptFilter);
     const notify = (inputs: readonly import('@kodax-ai/agent').QueuedMessage[], appended: readonly KodaXMessage[]) => {
@@ -1945,20 +1775,15 @@ async function runSubstrateInContext(
         nativeDeferredAvailable: false,
         unlockedDeferredTools,
       });
-      let activeToolDefinitions = fitToolSchemasToContext(applyToolExposurePlan(
+      const activeToolDefinitions = fitToolSchemasToContext(applyToolExposurePlan(
         fullActiveToolDefinitions,
         exposurePlan,
       ), { contextWindow, systemTokens: countTokens(effectiveSystemPrompt),
         reservedResponseTokens: streamProvider.getEffectiveMaxOutputTokens(turnState.currentModelOverride) });
-      const childRequestContract = projectBuiltinChildRequestContract(childContractSource,
-        { system: policySystemPrompt, tools: activeToolDefinitions }, fullActiveToolDefinitions);
-      const requestPolicySystemPrompt = childRequestContract.system;
-      effectiveSystemPrompt = withEffectivePermissionContext(requestPolicySystemPrompt, options.context);
-      activeToolDefinitions = [...childRequestContract.tools];
       const reservedResponseTokens = streamProvider.getEffectiveMaxOutputTokens(
         turnState.currentModelOverride,
       );
-      emitEffectiveTaskConfig(options, { agentMode: options.agentMode ?? 'sa',
+      emitEffectiveTaskConfig(options, { agentMode: 'ama',
         toolScope: fullActiveToolDefinitions.map(tool => tool.name), modelToolScope: activeToolDefinitions.map(tool => tool.name) });
       const physicalReserveTokens = reservedResponseTokens
         + (memorySession === undefined ? 0 : MEMORY_EVIDENCE_TOKEN_RESERVE);
@@ -2197,7 +2022,7 @@ async function runSubstrateInContext(
             }),
           );
         }
-        effectiveSystemPrompt = withEffectivePermissionContext(requestPolicySystemPrompt, options.context);
+        effectiveSystemPrompt = withEffectivePermissionContext(policySystemPrompt, options.context);
         attempt += 1;
         // Recovery may replace providerMessages between attempts. Rebase the
         // same fixed request overhead onto the exact messages sent next.
@@ -2324,7 +2149,7 @@ async function runSubstrateInContext(
           let error = rawError instanceof Error ? rawError : new Error(String(rawError));
           if (textRecoveryRetry) {
             const classification = classifyResilienceError(error);
-            terminalExecutionFailure = buildTerminalProviderFailure({ error,
+            terminalExecutionFailure = buildProviderExecutionFailure({ error,
               errorClass: classification.errorClass, requestPhase: classification.failureStage,
               provider: turnState.currentProviderName, model: turnState.currentModelOverride ?? streamProvider.getModel(),
               startedAt: boundarySession.snapshot().startedAt });
@@ -2384,7 +2209,7 @@ async function runSubstrateInContext(
             // failure, fall through to recovery-action branches with
             // the new error.
             emitContextBudgetSnapshot(wireMessages, requestMaxOutputTokens);
-            effectiveSystemPrompt = withEffectivePermissionContext(requestPolicySystemPrompt, options.context);
+            effectiveSystemPrompt = withEffectivePermissionContext(policySystemPrompt, options.context);
             let fallbackCacheDiagnostic = emitPromptCacheDiagnosticRequest({
               events,
               enabled: options.context?.contextDiagnostics === true,
@@ -2456,16 +2281,15 @@ async function runSubstrateInContext(
           // recovery (drop thinking blocks once, retry once) gated by
           // its own latch inside the coordinator. Bypass the maxRetries
           // gate so it can fire even when normal retries are exhausted.
-          // Mirrors the runner-driven path at runner-driven.ts:2654.
+          // Mirrors the AMA Worker adapter in
+          // task-engine/_internal/managed-task/llm-adapter.ts.
           //
           // The mirror is intentional, not migration debt: this file is
-          // the SA-mode substrate body and runner-driven.ts is the AMA-mode
-          // path (V2 Worker single-loop after FEATURE_193 retired the V1
-          // Scout/Planner/Generator/Evaluator chain). They are two parallel
-          // execution modes dispatched by `task-engine.ts:dispatchManagedTask`,
-          // sharing the same provider stack and therefore seeing the same
-          // thinking-mode errors. Per CLAUDE.md "abstract only after 3+
-          // real cases", 2 call sites stay duplicated. v0.7.28.
+          // the direct-engine body (`runKodaX`) and llm-adapter.ts drives
+          // the AMA Worker (`runManagedTask`). The two entries share the
+          // same provider stack and therefore see the same thinking-mode
+          // errors. Per CLAUDE.md "abstract only after 3+ real cases",
+          // 2 call sites stay duplicated. v0.7.28.
           if (decision.action === 'sanitize_thinking_and_retry') {
             const recovery = recoveryCoordinator.executeRecovery(providerMessages, decision);
             telemetryRecovery(decision.action, recovery);
@@ -2501,7 +2325,7 @@ async function runSubstrateInContext(
             if (recovered) { attempt += 1; textRecoveryRetry = true; continue; }
             messages = providerMessages;
             const boundary = boundarySession.snapshot();
-            terminalExecutionFailure = buildTerminalProviderFailure({
+            terminalExecutionFailure = buildProviderExecutionFailure({
               error,
               errorClass: decision.reasonCode,
               requestPhase: decision.failureStage,
@@ -2659,7 +2483,7 @@ async function runSubstrateInContext(
         ...result, toolBlocks: signal === 'COMPLETE' ? [] : visibleToolBlocks,
       }));
       // GOAL 2: stamp when the LLM stream completed so the session entry carries
-      // a real per-message time (SA path; parallel to runner.ts). Additive.
+      // a real per-message time (direct-engine path; parallel to runner.ts). Additive.
       messages.push({
         role: 'assistant',
         content: assistantContent,
@@ -3361,22 +3185,9 @@ async function runSubstrateInContext(
   }
 }
 
-// `buildAutoRepoIntelligenceContext` body lives in
-// `agent-runtime/middleware/repo-intelligence.ts` since FEATURE_100 P2.
-// Imported above for the in-file call site at `buildReasoningExecutionState`,
-// and re-exported so `runner-driven.ts:64` keeps working unchanged.
-
 // CAP-052 (`buildReasoningExecutionState`) lives in
 // `agent-runtime/reasoning-plan-entry.ts` since FEATURE_100 P2.
-// Imported above for the 4 call sites: initial frame entry, every
-// reroute apply, and as the `buildExecutionState` callback to CAP-019
-// `maybeAdvanceAutoReroute` (DI cycle break — see auto-reroute.ts
-// docstring).
-
-// CAP-088 (`summarizeToolEvidence` + `looksLikeToolRuntimeEvidence`)
-// lives in `agent-runtime/middleware/judges.ts` since FEATURE_100 P2
-// (shared with CAP-017 / CAP-018). Imported above for the post-tool
-// judge call site.
+// Imported above for the frame-entry call site.
 
 // `getGitRoot` (CAP-011 helper) lives in
 // `agent-runtime/middleware/session-snapshot.ts` since FEATURE_100 P2.

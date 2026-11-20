@@ -53,14 +53,27 @@ describe('session ID generation', () => {
     vi.useRealTimers();
   });
 
-  it('generates unique synchronous IDs while wall-clock time is frozen', () => {
+  const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+  it('generates unique UUIDv7 IDs while wall-clock time is frozen', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-31T12:34:56.789Z'));
 
     const ids = Array.from({ length: 1_000 }, () => generateSessionIdSync());
 
     expect(new Set(ids).size).toBe(ids.length);
-    expect(ids.every((id) => /^\d{8}_\d{6}_lx[0-9a-f]{12}$/.test(id))).toBe(true);
+    expect(ids.every((id) => UUID_V7.test(id))).toBe(true);
+  });
+
+  it('leads with the creation time in milliseconds so ids sort by creation', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-31T12:34:56.789Z'));
+    const earlier = generateSessionIdSync();
+    vi.setSystemTime(new Date('2026-07-31T12:34:56.790Z'));
+    const later = generateSessionIdSync();
+
+    expect(parseInt(earlier.replace(/-/g, '').slice(0, 12), 16)).toBe(Date.parse('2026-07-31T12:34:56.789Z'));
+    expect(earlier < later).toBe(true);
   });
 
   it('preserves the public async wrapper over the shared generator', async () => {
@@ -72,6 +85,6 @@ describe('session ID generation', () => {
     );
 
     expect(new Set(ids).size).toBe(ids.length);
-    expect(ids.every((id) => /^\d{8}_\d{6}_lx[0-9a-f]{12}$/.test(id))).toBe(true);
+    expect(ids.every((id) => UUID_V7.test(id))).toBe(true);
   });
 });

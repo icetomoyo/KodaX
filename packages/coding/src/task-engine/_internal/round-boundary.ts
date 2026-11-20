@@ -41,7 +41,7 @@ import { extractMessageText } from './text-utils.js';
  *   - 'blocked'   → converged  (blocked reason IS a valid user answer,
  *                   e.g. "需要 OAuth 授权")
  *   - 'failed'    → converged  (error message IS a valid user answer)
- *   - undefined   → converged  (SA fast-path has no managedTask field;
+ *   - undefined   → converged  (direct-engine result has no managedTask field;
  *                   treat as "the agent produced whatever it produced,
  *                   no unconverged signal")
  */

@@ -1,8 +1,9 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setAgentConfigHome } from '@kodax-ai/agent';
 import {
+  awaitLatestCodingMemoryReviewDrain,
   createDefaultCodingAgent,
   runManagedTask,
   toolBash,
@@ -42,8 +43,13 @@ class ShellCommandProvider extends KodaXBaseProvider {
   constructor(private readonly commands: Readonly<Record<string, string>>) { super(); }
 
   async stream(messages: KodaXMessage[]): Promise<KodaXStreamResult> {
-    const prompt = messages.find((message) => message.role === 'user')?.content;
-    const command = typeof prompt === 'string' ? this.commands[prompt] : undefined;
+    // The managed Worker may wrap the user prompt, so match the scripted prompt inside it.
+    const userText = messages.filter((message) => message.role === 'user').map((message) => (
+      typeof message.content === 'string' ? message.content
+        : message.content.map((block) => (block.type === 'text' ? block.text : '')).join('')
+    )).join('\n');
+    const prompt = Object.keys(this.commands).find((candidate) => userText.includes(candidate));
+    const command = prompt === undefined ? undefined : this.commands[prompt];
     if (command === undefined) throw new Error('No shell command scripted for the current user prompt.');
     const completed = messages.some((message) => (
       Array.isArray(message.content) && message.content.some((block) => block.type === 'tool_result')
@@ -122,7 +128,7 @@ describe('standalone REPL shell permission boundary', () => {
     try {
       await runManagedTask({
         provider: 'standalone-shell-test',
-        agentMode: 'sa', reasoningMode: 'off', lsp: false, maxIter: 2,
+        agentMode: 'ama', reasoningMode: 'off', lsp: false, maxIter: 2,
         abortSignal: controller.signal,
         guardrails: [boundary.autoGuardrail],
         context: {
@@ -147,10 +153,12 @@ describe('standalone REPL shell permission boundary', () => {
       expect(context.abortSignal).toBe(controller.signal);
       expect(context.permissionIntent).toEqual({ rootUserIntent: prompt });
     } finally {
+      // Managed runs finish their memory review in the background; drain it before deleting the workspace.
+      await awaitLatestCodingMemoryReviewDrain(5_000);
       clearRuntimeModelProviders();
       setAgentConfigHome(undefined);
       vi.unstubAllEnvs();
-      await rm(workDir, { recursive: true, force: true });
+      await rm(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 
@@ -183,7 +191,7 @@ describe('standalone REPL shell permission boundary', () => {
       }
     } finally {
       setAgentConfigHome(undefined);
-      await rm(workDir, { recursive: true, force: true });
+      await rm(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 
@@ -214,7 +222,7 @@ describe('standalone REPL shell permission boundary', () => {
     try {
       await Promise.all(runs.map((run) => runManagedTask({
         provider: 'standalone-shell-test',
-        agentMode: 'sa', reasoningMode: 'off', lsp: false, maxIter: 2,
+        agentMode: 'ama', reasoningMode: 'off', lsp: false, maxIter: 2,
         abortSignal: run.controller.signal,
         guardrails: [boundary.autoGuardrail],
         context: {
@@ -236,10 +244,12 @@ describe('standalone REPL shell permission boundary', () => {
         expect(context.abortSignal).toBe(run.controller.signal);
       }
     } finally {
+      // Managed runs finish their memory review in the background; drain it before deleting the workspace.
+      await awaitLatestCodingMemoryReviewDrain(5_000);
       clearRuntimeModelProviders();
       setAgentConfigHome(undefined);
       vi.unstubAllEnvs();
-      await rm(workDir, { recursive: true, force: true });
+      await rm(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 
@@ -561,5 +571,46 @@ describe('standalone REPL shell permission boundary', () => {
       createParentDirectories: false,
     })).rejects.toMatchObject({ code: 'text_mutation_policy_denied' });
     expect(host.snapshot).not.toHaveBeenCalled();
+  });
+
+  it('matches trust and protection through a directory alias of the project root', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'kodax-repl-policy-alias-'));
+    const realParent = join(base, 'real');
+    const aliasParent = join(base, 'alias');
+    const realRoot = join(realParent, 'project');
+    const aliasRoot = join(aliasParent, 'project');
+    await mkdir(join(realRoot, '.kodax'), { recursive: true });
+    await writeFile(join(realRoot, '.kodax', 'exec-policy.jsonc'), JSON.stringify({ rules: [] }));
+    await symlink(realParent, aliasParent, process.platform === 'win32' ? 'junction' : 'dir');
+    const host = { snapshot: vi.fn(), commit: vi.fn() };
+    const prepare = vi.fn(async () => undefined);
+    const boundary = createStandaloneShellPermissionBoundary({
+      getPermissionMode: () => 'auto',
+      getAutoGuardrail: () => { throw new Error('unused'); },
+      requestUserPermission: vi.fn(async () => false),
+      userConfigDir: await mkdtemp(join(tmpdir(), 'kodax-repl-shell-')),
+      projectRoot: aliasRoot,
+      execPolicy: { trustedProjectRoots: [realRoot] },
+      shellSandbox: { prepare },
+      trustedTextMutationHost: host as never,
+    });
+    await boundary.shellSandbox.prepare({
+      toolCallId: 'aliased-project-policy',
+      toolInput: request.toolInput,
+      command: request.command,
+      cwd: aliasRoot,
+      env: process.env,
+    });
+
+    expect(prepare).toHaveBeenCalledWith(expect.objectContaining({
+      trustedProjectExecPolicyPath: join(aliasRoot, '.kodax', 'exec-policy.jsonc'),
+    }));
+    await expect(boundary.trustedTextMutationHost?.commit({
+      path: join(realRoot, '.kodax', 'exec-policy.jsonc'),
+      expectedRevision: 'absent',
+      content: '{}',
+      createParentDirectories: false,
+    })).rejects.toMatchObject({ code: 'text_mutation_policy_denied' });
+    expect(host.commit).not.toHaveBeenCalled();
   });
 });

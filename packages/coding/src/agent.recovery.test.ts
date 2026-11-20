@@ -13,7 +13,7 @@ import {
   KodaXNetworkError,
   registerModelProvider,
 } from '@kodax-ai/llm';
-import { runKodaX } from './agent.js';
+import { runTestLeaf as runLeafAgent } from './agent-runtime/test-leaf.js';
 import type { KodaXPromptCacheDiagnosticEvent } from './types.js';
 
 const TEST_PROVIDER_NAME = 'feature-045-recovery-provider';
@@ -91,7 +91,7 @@ class Feature045RecoveryProvider extends KodaXBaseProvider {
   }
 }
 
-describe('runKodaX provider recovery integration', () => {
+describe('runLeafAgent provider recovery integration', () => {
   beforeEach(() => {
     Feature045RecoveryProvider.streamCalls = 0;
     Feature045RecoveryProvider.completeCalls = 0;
@@ -121,7 +121,7 @@ describe('runKodaX provider recovery integration', () => {
     }> = [];
     const deltas: Array<{ readonly text: string; readonly providerRequestId?: string }> = [];
 
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: TEST_PROVIDER_NAME,
         reasoningMode: 'off',

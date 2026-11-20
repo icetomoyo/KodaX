@@ -5,9 +5,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { Runner, SkillRegistry } from '@kodax-ai/agent';
 import { KodaXBaseProvider, registerModelProvider, type KodaXMessage,
   type KodaXToolDefinition, type KodaXStreamResult } from '@kodax-ai/llm';
-import { runKodaX } from '../packages/coding/src/agent.js';
 import { runManagedTask } from '../packages/coding/src/task-engine.js';
-import { createDefaultCodingAgent } from '../packages/coding/src/coding-preset.js';
+import { createDefaultCodingAgent } from '../packages/coding/src/default-coding-agent.js';
 import type { KodaXOptions } from '../packages/coding/src/types.js';
 import { createRuntimeAgentBindingService } from '../src/runtime-agent-binding.js';
 
@@ -18,7 +17,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true, maxRetries: 5 })));
 });
 
-it.each(['sa', 'managed-sa', 'ama', 'runner'] as const)('keeps an admitted Skill discoverable under Markdown/profile instructions in %s', async mode => {
+it.each(['ama', 'runner'] as const)('keeps an admitted Skill discoverable under Markdown/profile instructions in %s', async mode => {
   const root = await mkdtemp(path.join(tmpdir(), 'kodax-profile-catalog-'));
   roots.push(root);
   const configHome = path.join(root, '.kodax');
@@ -52,8 +51,7 @@ it.each(['sa', 'managed-sa', 'ama', 'runner'] as const)('keeps an admitted Skill
     const scoped: KodaXOptions = { ...options, provider: name, reasoningMode: 'off', maxIter: 3,
       context: { ...options.context, configHome, gitRoot: root, executionCwd: root, repoIntelligenceMode: 'off' } };
     if (mode === 'runner') return (await Runner.run(createDefaultCodingAgent(), 'Inspect evidence.', { presetOptions: scoped })).data;
-    return mode === 'sa' ? runKodaX(scoped, 'Inspect evidence.')
-      : runManagedTask({ ...scoped, agentMode: mode === 'managed-sa' ? 'sa' : 'ama' }, 'Inspect evidence.');
+    return runManagedTask({ ...scoped, agentMode: 'ama' }, 'Inspect evidence.');
   };
   for (const entry of ['binding', 'sdk-profile'] as const) {
     requests.length = 0;
@@ -80,7 +78,7 @@ it.each(['sa', 'managed-sa', 'ama', 'runner'] as const)('keeps an admitted Skill
       taskVerification: { summary: 'TASK_VERIFY', requiredChecks: ['TASK_CHECK'] } } });
     expect(requests[0]!.system, entry).toContain('PROFILE_INSTRUCTIONS');
     expect(requests[0]!.tools).toContain('skill');
-    // AMA carries capability catalogs in request messages, while SA uses system.
+    // The managed Worker carries capability catalogs in request messages.
     const modelContext = `${requests[0]!.system}\n${JSON.stringify(requests[0]!.messages)}`;
     expect(modelContext, entry).toContain('- audit-evidence:');
     expect(modelContext).not.toContain('- private-skill:');
@@ -89,7 +87,9 @@ it.each(['sa', 'managed-sa', 'ama', 'runner'] as const)('keeps an admitted Skill
       expect(modelContext).toContain('TASK_VERIFY');
       expect(modelContext).toContain('PROFILE_EVIDENCE');
       expect(modelContext).toContain('TASK_CHECK');
-      expect(modelContext).toContain('EXECUTION GUIDANCE (match your approach');
+      // Both entries run the managed Worker. Its full sections need the AMA delegation tools;
+      // a root without them gets the limited sections, which carry the shared execution guidance.
+      expect(modelContext).toContain(mode === 'ama' ? 'EXECUTION, RECOVERY AND DELIVERY' : 'EXECUTION GUIDANCE (match your approach');
     }
     expect(JSON.stringify(requests[1]?.messages), entry).toContain('BODY_audit-evidence');
     expect(requests[0]!.system.split('PROFILE_INSTRUCTIONS')).toHaveLength(2);
@@ -101,9 +101,11 @@ it.each(['sa', 'managed-sa', 'ama', 'runner'] as const)('keeps an admitted Skill
   expect(requests[0]!.tools).not.toContain('skill');
   expect(`${requests[0]!.system}\n${JSON.stringify(requests[0]!.messages)}`).not.toContain('- audit-evidence:');
   expect(requests[0]!.system).toContain('PROFILE_INSTRUCTIONS');
-  if (mode !== 'ama') {
-    requests.length = 0;
-    await execute({ provider: name, context: { ...profileContext, systemPromptOverride: 'COMPLETE_CALLER_OVERRIDE' } });
-    expect(requests[0]!.system).toBe('COMPLETE_CALLER_OVERRIDE');
-  }
+  requests.length = 0;
+  await execute({ provider: name, context: { ...profileContext, systemPromptOverride: 'COMPLETE_CALLER_OVERRIDE' } });
+  // On the managed Worker an override replaces identity and guidance; KodaX still appends its runtime blocks.
+  expect(requests[0]!.system.startsWith('COMPLETE_CALLER_OVERRIDE')).toBe(true);
+  expect(requests[0]!.system).toContain('## Environment');
+  expect(requests[0]!.system).not.toContain('PROFILE_INSTRUCTIONS');
+  expect(requests[0]!.system).not.toContain('EXECUTION GUIDANCE (match your approach');
 });

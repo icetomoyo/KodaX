@@ -33,35 +33,24 @@ export function createSessionHistoryLoader(input: {
   return () => loadFullLineage.call(storage, sessionId);
 }
 
-export const SESSION_HISTORY_SEARCH_DESCRIPTION = [
-  'Search exact persisted entries that are no longer present in the compacted model context.',
-  'Use this only when a user request depends on an omitted historical detail; do not guess from the checkpoint.',
-  'Results are bounded snippets with stable entry citations. Read the needed hit using its entryRevision as read.revision.',
-].join(' ');
+export const SESSION_HISTORY_SEARCH_DESCRIPTION = 'Find omitted persisted history only when missing detail is needed; do not guess from checkpoint. '
+  + 'Bounded snippets/stable citations; read needed hit with hit.entryRevision as read.revision.';
 
 export const SESSION_HISTORY_ENTRY_REVISION_RULE = 'Use selected hit.entryRevision as revision; reuse returned entryRevision for nextOffset or stale recovery. '
   + 'It checks this entry across normal message appends. Top-level search revision remains a strict whole-history snapshot.';
 
-export const SESSION_HISTORY_READ_DESCRIPTION = [
-  'Read one exact persisted session-history entry cited by session_history_search.',
-  'Content is returned in bounded character chunks.',
-  SESSION_HISTORY_ENTRY_REVISION_RULE,
-].join(' ');
+export const SESSION_HISTORY_READ_DESCRIPTION = 'Read cited persisted entry in bounded character chunks. ' + SESSION_HISTORY_ENTRY_REVISION_RULE;
 
 export const SESSION_HISTORY_SEARCH_SCHEMA = {
   type: 'object' as const,
   properties: {
-    query: { type: 'string' as const, description: 'Specific phrase, identifier, command, or historical fact to find.' },
-    limit: { type: 'number' as const, description: 'Maximum snippets to return (1-20, default 8).' },
-    role: {
-      type: 'string' as const,
-      enum: ['user', 'assistant'],
-      description: 'Optional message-role filter.',
-    },
+    query: { type: 'string' as const, description: 'Specific phrase/ID/command/historical fact.' },
+    limit: { type: 'number' as const, description: '1–20; default 8.' },
+    role: { type: 'string' as const, enum: ['user', 'assistant'] },
     scope: {
       type: 'string' as const,
       enum: ['compacted', 'all'],
-      description: 'Defaults to compacted history; use all only when active-tail search is required.',
+      description: 'Default compacted; all only if active-tail search needed.',
     },
   },
   required: ['query'],
@@ -70,9 +59,9 @@ export const SESSION_HISTORY_SEARCH_SCHEMA = {
 export const SESSION_HISTORY_READ_SCHEMA = {
   type: 'object' as const,
   properties: {
-    entry_id: { type: 'string' as const, description: 'Exact selected hit.entryId returned by session_history_search.' },
+    entry_id: { type: 'string' as const, description: 'Exact hit.entryId.' },
     revision: { type: 'string' as const, description: 'Selected hit.entryRevision or read.entryRevision; legacy whole-history revision remains strict.' },
-    offset: { type: 'number' as const, description: 'Zero-based character offset (default 0).' },
+    offset: { type: 'number' as const, description: '0-based characters; default 0.' },
   },
   required: ['entry_id'],
 };

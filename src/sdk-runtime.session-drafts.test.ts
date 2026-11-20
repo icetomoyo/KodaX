@@ -28,7 +28,8 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-it.each(['sa', 'ama'] as const)('does not dispatch a low-level %s Run when draft settings promotion fails', async agentMode => {
+// A coding Run is the direct engine; a managed_task Run is the AMA Worker.
+it.each(['coding', 'managed_task'] as const)('does not dispatch a low-level %s Run when draft settings promotion fails', async mode => {
   const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-draft-run-failure-'));
   vi.stubEnv('KODAX_SESSION_DRAFT_TEST_KEY', 'test-only');
   let requests = 0;
@@ -39,12 +40,11 @@ it.each(['sa', 'ama'] as const)('does not dispatch a low-level %s Run when draft
   try {
     const draft = await runtime.sessions.create({ draft: true, projectPath: homeDir });
     await runtime.sessions.updateSettings(draft.id, { provider: 'session-draft-test',
-      permissionMode: 'full-access', agentMode });
+      permissionMode: 'full-access', ...(mode === 'managed_task' ? { agentMode: 'ama' as const } : {}) });
     await fs.mkdir(path.dirname(settingsDir), { recursive: true });
     await fs.writeFile(settingsDir, 'Block the first settings write.');
     blockedSettings = true;
-    const result = await runtime.runs.start({ sessionId: draft.id, prompt: 'Save before execution.',
-      mode: agentMode === 'sa' ? 'coding' : 'managed_task' })
+    const result = await runtime.runs.start({ sessionId: draft.id, prompt: 'Save before execution.', mode })
       .then(run => run.result).catch((error: unknown) => ({ phase: 'failed' as const, error }));
     expect(result.phase).toBe('failed');
     expect(requests).toBe(0);
@@ -54,7 +54,7 @@ it.each(['sa', 'ama'] as const)('does not dispatch a low-level %s Run when draft
   }
 });
 
-it.each(['sa', 'ama'] as const)('retains draft settings after a low-level %s Run promotes the Session and the Host restarts', async agentMode => {
+it.each(['coding', 'managed_task'] as const)('retains draft settings after a low-level %s Run promotes the Session and the Host restarts', async mode => {
   const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-draft-run-settings-'));
   vi.stubEnv('KODAX_SESSION_DRAFT_TEST_KEY', 'test-only');
   registerModelProvider('session-draft-test', () => new DraftTestProvider());
@@ -63,10 +63,10 @@ it.each(['sa', 'ama'] as const)('retains draft settings after a low-level %s Run
     configHome: path.join(homeDir, '.kodax') });
   try {
     const draft = await runtime.sessions.create({ draft: true, projectPath: homeDir });
-    const settings = { provider: 'session-draft-test', permissionMode: 'full-access' as const, agentMode };
+    const settings = { provider: 'session-draft-test', permissionMode: 'full-access' as const,
+      ...(mode === 'managed_task' ? { agentMode: 'ama' as const } : {}) };
     await runtime.sessions.updateSettings(draft.id, settings);
-    const run = await runtime.runs.start({ sessionId: draft.id, prompt: 'Save this draft.',
-      mode: agentMode === 'sa' ? 'coding' : 'managed_task' });
+    const run = await runtime.runs.start({ sessionId: draft.id, prompt: 'Save this draft.', mode });
     expect((await run.result).phase).toBe('completed');
     expect((await runtime.sessions.list()).map(session => session.id)).toContain(draft.id);
     expect((await sessions.loadSession(draft.id))?.messages.filter(message =>
@@ -99,7 +99,7 @@ it('keeps a new REPL session and its settings as a draft until input is accepted
   try {
     const draft = await runtime.sessions.create({ draft: true, surface: 'repl', projectPath: homeDir });
     expect(await runtime.sessions.load(draft.id)).toMatchObject({ id: draft.id });
-    await runtime.sessions.updateSettings(draft.id, { permissionMode: 'plan', agentMode: 'sa' });
+    await runtime.sessions.updateSettings(draft.id, { permissionMode: 'plan' });
     expect(await runtime.sessions.getSettings(draft.id)).toMatchObject({ permissionMode: 'plan' });
     expect(await sessions.listSessions()).toEqual([]);
     await runtime.close();

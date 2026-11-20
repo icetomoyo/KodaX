@@ -1375,11 +1375,6 @@ describe("shouldShowStatusBarBusyStatus", () => {
 describe("buildAmaWorkStripFromStatus", () => {
   it("hides the strip outside AMA loading", () => {
     expect(buildAmaWorkStripFromStatus({
-      agentMode: "sa",
-      childFanoutClass: "finding-validation",
-      childFanoutCount: 2,
-    }, true)).toBeUndefined();
-    expect(buildAmaWorkStripFromStatus({
       agentMode: "ama",
       childFanoutClass: "finding-validation",
       childFanoutCount: 2,

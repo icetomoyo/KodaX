@@ -86,7 +86,7 @@ export function buildScopedReviewPrimaryPrompt(
     'Begin with the required JSON result. No preamble or process narration.',
     'The findings array contains only actionable defects, never approval evidence or positive observations.',
     'When the scope is compliant and approved with no actionable defect, findings must be empty.',
-    staticText("t12.workflows/builtin/scoped-review.0"),
+    staticText("scoped-review.unprovable-requirement"),
     'If requirements are absent, specVerdict must be not-verifiable.',
   ].filter(Boolean).join('\n');
 }

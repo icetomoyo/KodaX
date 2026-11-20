@@ -135,7 +135,8 @@ export async function resumeWorkflowGenerationTurn(execution: AgentExecutionInpu
   const backend = createCodingWorkflowBackend({ ctx, recovery: { execution, snapshot }, runId: snapshot.runId,
     childOptions: { ...snapshot.childOptions, historyStorage: options.session?.storage,
       guardrails: ctx.guardrails, planModeBlockCheck: ctx.planModeBlockCheck,
-      parentOptions: { ...options, extensionRuntime: ctx.extensionRuntime, events: ctx.parentEvents } } });
+      parentOptions: { ...options, extensionRuntime: ctx.extensionRuntime, events: ctx.parentEvents,
+        applicationRules: ctx.parentAgentConfig?.applicationRules } } });
   const handle = await backend.spawn(snapshot.input);
   const result = await backend.wait(handle.taskId);
   if (result.status !== 'completed' && result.status !== 'completed_unverified') throw new Error(result.finalText);

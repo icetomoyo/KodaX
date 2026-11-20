@@ -156,7 +156,8 @@ assert.match(helpers['generate-review'].renderHtml(payload, true), /packed-examp
 const triggersPath = path.join(process.cwd(), 'description-cases.json');
 await writeFile(triggersPath, JSON.stringify({ evals: [{ query: 'Draft release notes.', should_trigger: true }] }));
 const semantic = await helpers['run-trigger-eval'].runTriggerEval({ skillPath, evalsPath: triggersPath },
-  async () => '{"trigger":true,"reason":"Fixture only; not actual tool selection."}');
+  async () => [{ tool: 'skill', input: { skill: 'packed-example' } }]);
+assert.equal(semantic.results[0].predicted_trigger, true);
 const semanticPath = path.join(process.cwd(), 'description-results.json');
 await writeFile(semanticPath, JSON.stringify(semantic));
 await helpers['improve-description'].improveDescription({ skillPath, evalResultsPath: semanticPath },

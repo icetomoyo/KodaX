@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   extractTaggedText,
-  loadKodaXSDK,
+  completeOnce,
   loadSkill,
   pathExists,
   writeSkill,
@@ -40,20 +40,8 @@ export function extractDescriptionCandidate(text) {
   return (tagged ?? text).trim().replace(/^"|"$/g, '');
 }
 
-async function defaultGenerate(prompt, options) {
-  const { runKodaX } = await loadKodaXSDK();
-  const result = await runKodaX(
-    {
-      provider: options.provider,
-      model: options.model,
-      maxIter: options.maxIter ?? 18,
-      reasoningMode: options.reasoningMode ?? 'off',
-      thinking: options.reasoningMode ? options.reasoningMode !== 'off' : false,
-    },
-    prompt
-  );
-
-  return result.lastText;
+function defaultGenerate(prompt, options) {
+  return completeOnce(prompt, { ...options, reasoningMode: options.reasoningMode ?? 'off' });
 }
 
 export async function improveDescription(options, generator = defaultGenerate) {
@@ -96,7 +84,6 @@ function parseArgs(argv) {
     output: undefined,
     write: false,
     historyPath: undefined,
-    maxIter: 18,
     reasoningMode: 'off',
   };
 
@@ -116,8 +103,6 @@ function parseArgs(argv) {
       args.write = true;
     } else if (token === '--history' && argv[index + 1]) {
       args.historyPath = argv[++index];
-    } else if (token === '--max-iter' && argv[index + 1]) {
-      args.maxIter = Number(argv[++index]);
     } else if (token === '--reasoning' && argv[index + 1]) {
       args.reasoningMode = argv[++index];
     }

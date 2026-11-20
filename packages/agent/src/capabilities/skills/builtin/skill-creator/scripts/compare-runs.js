@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   extractJsonObject,
-  loadKodaXSDK,
+  completeOnce,
   loadRelativeText,
   readJsonFile,
   truncateText,
@@ -117,22 +117,11 @@ ${truncateText(pair.B.output, 12000)}
 `;
 }
 
-async function defaultRunComparator(prompt, options) {
-  const { runKodaX } = await loadKodaXSDK();
-  const result = await runKodaX(
-    {
-      provider: options.provider ?? 'anthropic',
-      model: options.model,
-      maxIter: options.maxIter ?? 20,
-      effort: options.effort ?? (options.reasoningMode ? undefined : 'medium'),
-      reasoningMode: options.reasoningMode,
-      context: {
-        gitRoot: path.resolve(options.cwd ?? options.workspaceDir ?? process.cwd()),
-      },
-    },
-    prompt
-  );
-  return result.lastText;
+function defaultRunComparator(prompt, options) {
+  return completeOnce(prompt, {
+    ...options,
+    effort: options.effort ?? (options.reasoningMode ? undefined : 'medium'),
+  });
 }
 
 function mapWinnerToConfig(winner, presentPrimaryFirst, configA, configB) {
@@ -275,9 +264,7 @@ function parseArgs(argv) {
     model: undefined,
     effort: undefined,
     reasoningMode: undefined,
-    maxIter: 20,
     maxPairs: undefined,
-    cwd: process.cwd(),
   };
 
   for (let index = 3; index < argv.length; index += 1) {
@@ -298,12 +285,8 @@ function parseArgs(argv) {
       args.effort = argv[++index];
     } else if (token === '--reasoning' && argv[index + 1]) {
       args.reasoningMode = argv[++index];
-    } else if (token === '--max-iter' && argv[index + 1]) {
-      args.maxIter = Number(argv[++index]);
     } else if (token === '--max-pairs' && argv[index + 1]) {
       args.maxPairs = Number(argv[++index]);
-    } else if (token === '--cwd' && argv[index + 1]) {
-      args.cwd = argv[++index];
     }
   }
 

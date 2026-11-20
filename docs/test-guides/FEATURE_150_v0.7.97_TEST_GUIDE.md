@@ -350,13 +350,15 @@ Baseline `38629a1f`; source/build verification, not an npm publication.
   surfaces rather than requiring one exact transport slot. These simulations
   establish wiring, not natural-language selection accuracy of a real model.
 
-Solo is live production behavior, not dead compatibility code:
-`agentMode: 'sa'` dispatches through `runKodaX -> Runner -> runSubstrate`;
-Runtime coding Runs use this substrate too. Retired V1 multi-role orchestration,
+At v0.7.97 the direct engine was live production behavior: `runKodaX` and Runtime
+`coding` Runs dispatched through `runKodaX -> Runner -> runSubstrate`. FEATURE_311
+later routed every root Run through the managed Worker; the substrate remains only
+as the internal leaf executor for child Agents. FEATURE_310
+later retired the `'sa'` label; managed entries now run AMA for it. Retired V1 multi-role orchestration,
 Sidecar Verifier, and the normalized `amaw` spelling are separate concepts.
 ADR-020 also retired the separate SA execution body and Option Y facade while
-retaining the Solo product mode and thin SDK entry; the current `sa` dispatch
-does not reinstate that retired engine.
+retaining the Solo product mode and thin SDK entry; FEATURE_310 then removed
+the Solo product mode itself.
 No execution mode is removed or reinstated by this fix. No watcher, semantic
 search, automatic Skill fork, new configuration or paid-model eval is added.
 

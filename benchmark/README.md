@@ -16,7 +16,7 @@ text the model sees.
 Triggers:
 
 - Editing `packages/coding/src/prompts/capability-sections.ts` (FEATURE_142 v0.7.35.1 — single source of truth for the 13 capability sections; supersedes pre-v0.7.35.1 `agent-runtime/system-prompt-*.ts`)
-- Editing `packages/coding/src/prompts/builder.ts` / `packages/coding/src/prompts/system.ts`
+- Editing `packages/coding/src/agents/worker-role-prompt.ts` (the Worker contract every root Run sends)
 - Editing `packages/coding/src/task-engine/_internal/managed-task/role-prompt.ts`
 - Editing tool `description` fields in `packages/coding/src/tools/`
 - Editing `coding-preset.ts:DEFAULT_CODING_INSTRUCTIONS`

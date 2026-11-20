@@ -12,7 +12,7 @@ import {
   KodaXBaseProvider, clearRuntimeModelProviders, registerModelProvider,
   type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult,
 } from '@kodax-ai/llm';
-import { runKodaX } from './agent.js';
+import { runTestLeaf as runLeafAgent } from './agent-runtime/test-leaf.js';
 import { runManagedTaskViaRunner } from './task-engine/runner-driven.js';
 import type { KodaXOptions } from './types.js';
 
@@ -38,7 +38,7 @@ async function run(mode: Mode, context: KodaXOptions['context'] = {}, overrides:
     },
   };
   return mode === 'coding'
-    ? runKodaX(options, 'Create the requested report.')
+    ? runLeafAgent(options, 'Create the requested report.')
     : runManagedTaskViaRunner(options, 'Create the requested report.', async () => new WrittenFilesProvider().stream([]));
 }
 

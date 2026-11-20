@@ -76,8 +76,8 @@
  *
  * ## Variants
  *
- *   V_baseline: agentic system (SYSTEM_PROMPT + buildWorkerInstructions +
- *               SKILLS_SECTION) + KODAX_TOOLS, NO image-perception block.
+ *   V_baseline: agentic system (buildWorkerInstructions + SKILLS_SECTION)
+ *               + KODAX_TOOLS, NO image-perception block.
  *
  *   V_fix:      V_baseline + the exact `Image perception:` text shipped in
  *               `sharedWorkerDiscipline`.
@@ -165,7 +165,7 @@ import {
   type KodaXTaskRoutingDecision,
   type KodaXToolDefinition,
 } from '@kodax-ai/llm';
-import { KODAX_TOOLS, SYSTEM_PROMPT } from '@kodax-ai/coding';
+import { KODAX_TOOLS } from '@kodax-ai/coding';
 
 import {
   availableAliases,
@@ -330,7 +330,7 @@ const PROBE_DECISION: KodaXTaskRoutingDecision = {
 
 function workerLikeSystemPrompt(includeFixB: boolean): string {
   const workerInstructions = buildWorkerInstructions(PROBE_DECISION, undefined, false);
-  const parts = [SYSTEM_PROMPT, workerInstructions, SKILLS_SECTION];
+  const parts = [workerInstructions, SKILLS_SECTION];
   if (includeFixB) parts.push(SHIPPED_IMAGE_PERCEPTION_BLOCK);
   return parts.join('\n\n');
 }

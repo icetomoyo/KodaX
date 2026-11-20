@@ -86,7 +86,7 @@ describe('public SDK trusted text permissions', () => {
       const guardrails: ToolGuardrail[] = [{ kind: 'tool', name: 'auto-mode',
           beforeTool: async () => ({ action: 'allow' }),
       }];
-      const result = await run({ provider: 'text-permission-test', agentMode: 'sa', reasoningMode: 'off', lsp: false,
+      const result = await run({ provider: 'text-permission-test', reasoningMode: 'off', lsp: false,
         guardrails: mode === 'auto' ? guardrails : undefined,
         context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt: '', repoIntelligenceMode: 'off',
           systemPromptOverride: 'Perform the requested text tools.', resolveShellPermissionMode: () => mode },
@@ -125,7 +125,9 @@ describe('public SDK trusted text permissions', () => {
       context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt: '', repoIntelligenceMode: 'off',
         systemPromptOverride: 'Only the SDK supplied instructions.' },
     }, 'Inspect.');
-    expect(TextPermissionProvider.systems[0]).toBe('Only the SDK supplied instructions.');
+    expect(TextPermissionProvider.systems[0]?.startsWith('Only the SDK supplied instructions.')).toBe(true);
+    expect(TextPermissionProvider.systems[0]).not.toContain('Current permission mode');
+    expect(TextPermissionProvider.systems[0]).not.toContain('Effective permissions (host authority)');
   });
 
   it('reflects Runtime Session changes in real model requests instead of the caller default', async () => {
@@ -198,7 +200,10 @@ describe('public SDK trusted text permissions', () => {
         ] },
         { textBlocks: [{ type: 'text', text: 'Stopped.' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' },
       ];
-      await client.send('Attempt the write.');
+      // A throwing start observer fails the managed Run; the write must still never run.
+      await client.send('Attempt the write.').catch((error: unknown) => {
+        if (!allowed || !(error instanceof Error) || error.message !== 'Host veto after admission') throw error;
+      });
     }
     await expect(fs.access(target)).rejects.toMatchObject({ code: 'ENOENT' });
   });
@@ -287,7 +292,7 @@ describe('public SDK trusted text permissions', () => {
         { textBlocks: [{ type: 'text', text: 'Done.' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' },
       ];
       const guardrails: ToolGuardrail[] = [{ kind: 'tool', name: 'auto-mode', beforeTool: async () => ({ action: 'allow' }) }];
-      await run({ provider: 'text-permission-test', reasoningMode: 'off', agentMode: 'sa', lsp: false, guardrails,
+      await run({ provider: 'text-permission-test', reasoningMode: 'off', lsp: false, guardrails,
         context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt: '', repoIntelligenceMode: 'off',
           systemPromptOverride: 'Use tools.', resolveShellPermissionMode: () => 'auto' },
       }, 'Write through tool_call.');

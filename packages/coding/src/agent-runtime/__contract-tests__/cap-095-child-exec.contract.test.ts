@@ -1,10 +1,10 @@
 /**
- * Contract test for CAP-095: child-executor SA invocation contract
+ * Contract test for CAP-095: child-executor direct-engine invocation contract
  *
  * Inventory entry: docs/features/v0.7.29-capability-inventory.md#cap-095-child-executor-sa-invocation-contract
  *
  * Test obligations:
- * - CAP-CHILD-EXEC-001: read child uses agentMode:'sa' + READONLY excludeTools
+ * - CAP-CHILD-EXEC-001: read child carries no agentMode label + READONLY excludeTools
  * - CAP-CHILD-EXEC-002: write child inherits parent executionCwd / gitRoot
  *   + a fresh backups Map (FEATURE_188 v0.7.42 dropped forced worktree —
  *   ADR-034; per-file `backups` Map remains the per-child rollback
@@ -17,13 +17,13 @@
  *   wired (which the smoke test in `agent.ts` would crash without).
  *
  * Risk: HIGH (subagent fan-out is the second consumer of substrate
- * after main SA path; must enter Runner frame after FEATURE_100)
+ * after the main direct-engine path; must enter Runner frame after FEATURE_100)
  *
  * Class: 1
  *
  * Verified location: child-executor.ts:196-241 (executeReadChild);
  * :243-317 (executeWriteChild). The lazy-loader bridge
- * `getRunKodaX()` (child-executor.ts:33-67) imports `runKodaX` from
+ * `getRunLeaf()` (child-executor.ts:33-67) imports `runKodaX` from
  * `./agent.js`, which is the FEATURE_100 P3.6s thin Runner.run shim.
  *
  * Time-ordering constraint: triggered mid-turn during parent's tool
@@ -39,7 +39,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // in child-executor (`getRunKodaX`) resolves through `./agent.js`, so
 // we mock that module surface.
 vi.mock('../../agent.js', () => ({
-  runKodaX: vi.fn(),
+  runLeafAgent: vi.fn(),
 }));
 
 // FEATURE_188 v0.7.42 — write children no longer use worktree; remove the
@@ -51,7 +51,7 @@ import {
   CHILD_EXCLUDE_TOOLS_BASE,
   executeChildAgents,
 } from '../../child-executor.js';
-import { runKodaX } from '../../agent.js';
+import { runLeafAgent } from '../../agent.js';
 import {
   _resetAgentResolverForTesting,
   registerConstructedAgent,
@@ -62,7 +62,7 @@ import type {
   KodaXChildFanoutClass,
 } from '../../types.js';
 
-const mockRunKodaX = runKodaX as ReturnType<typeof vi.fn>;
+const mockRunKodaX = runLeafAgent as ReturnType<typeof vi.fn>;
 
 function createBundle(overrides: Partial<KodaXChildContextBundle> = {}): KodaXChildContextBundle {
   return {
@@ -84,7 +84,7 @@ function createCtx() {
   };
 }
 
-describe('CAP-095: child-executor SA invocation contract', () => {
+describe('CAP-095: child-executor direct-engine invocation contract', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // FEATURE_191 — keep the specialist registry empty by default so
@@ -93,7 +93,7 @@ describe('CAP-095: child-executor SA invocation contract', () => {
     _resetAgentResolverForTesting();
   });
 
-  it('CAP-CHILD-EXEC-001: executeReadChild invokes SA with agentMode:"sa", CHILD_AGENT_SYSTEM_PROMPT override, and READONLY excludeTools', async () => {
+  it('CAP-CHILD-EXEC-001: executeReadChild invokes runKodaX without an agentMode label, CHILD_AGENT_SYSTEM_PROMPT override, and READONLY excludeTools', async () => {
     mockRunKodaX.mockResolvedValueOnce({
       success: true,
       lastText: 'read finding',
@@ -115,7 +115,7 @@ describe('CAP-095: child-executor SA invocation contract', () => {
 
     expect(mockRunKodaX).toHaveBeenCalledTimes(1);
     const [opts] = mockRunKodaX.mock.calls[0]!;
-    expect(opts.agentMode).toBe('sa');
+    expect(opts.agentMode).toBeUndefined();
     // FEATURE_191 default-path guard: identity check against the canonical
     // CHILD_AGENT_SYSTEM_PROMPT. Pre-F191 read-only children use this
     // prompt verbatim; if a specialist branch ever leaks into this no-

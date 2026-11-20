@@ -11,14 +11,14 @@ import {
   type KodaXStreamResult,
   type KodaXToolDefinition,
 } from '@kodax-ai/llm';
-import { runKodaX } from './agent.js';
+import { runTestLeaf as runLeafAgent } from './agent-runtime/test-leaf.js';
 import { LEARNING_REVIEW_TOOL } from './learning-reviewer.js';
 import { awaitLatestCodingMemoryReviewDrain } from './memory-runtime.js';
 
 const PROVIDER = 'queue-input-limit-test';
 const API_KEY_ENV = 'KODAX_QUEUE_INPUT_LIMIT_TEST_KEY';
 
-describe('SA Host queue consumption at the iteration limit', () => {
+describe('Direct-engine Host queue consumption at the iteration limit', () => {
   let cwd: string;
 
   beforeEach(async () => {
@@ -69,8 +69,8 @@ describe('SA Host queue consumption at the iteration limit', () => {
     }
 
     registerModelProvider(PROVIDER, () => new QueueLimitProvider());
-    const result = await runKodaX({
-      provider: PROVIDER, model: 'queue-limit-test', agentMode: 'sa', maxIter: 1, lsp: false,
+    const result = await runLeafAgent({
+      provider: PROVIDER, model: 'queue-limit-test', maxIter: 1, lsp: false,
       session: {
         id: 'queue-limit-session', persistedByHost: false,
         storage: {

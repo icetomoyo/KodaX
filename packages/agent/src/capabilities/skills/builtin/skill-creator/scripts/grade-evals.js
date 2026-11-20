@@ -7,7 +7,7 @@ import {
   computePassSummary,
   ensureDirectory,
   extractJsonObject,
-  loadKodaXSDK,
+  completeOnce,
   loadRelativeText,
   readJsonFile,
   truncateText,
@@ -209,22 +209,11 @@ ${truncateText(input.transcript, 5000)}
 `;
 }
 
-async function defaultRunJudge(prompt, options) {
-  const { runKodaX } = await loadKodaXSDK();
-  const result = await runKodaX(
-    {
-      provider: options.provider ?? 'anthropic',
-      model: options.model,
-      maxIter: options.maxIter ?? 20,
-      effort: options.effort ?? (options.reasoningMode ? undefined : 'medium'),
-      reasoningMode: options.reasoningMode,
-      context: {
-        gitRoot: path.resolve(options.cwd ?? options.workspaceDir ?? process.cwd()),
-      },
-    },
-    prompt
-  );
-  return result.lastText;
+function defaultRunJudge(prompt, options) {
+  return completeOnce(prompt, {
+    ...options,
+    effort: options.effort ?? (options.reasoningMode ? undefined : 'medium'),
+  });
 }
 
 export async function gradeRun(runDir, options, runner = defaultRunJudge) {
@@ -353,8 +342,6 @@ function parseArgs(argv) {
     model: undefined,
     effort: undefined,
     reasoningMode: undefined,
-    maxIter: 20,
-    cwd: process.cwd(),
     overwrite: false,
     configs: [],
   };
@@ -369,10 +356,6 @@ function parseArgs(argv) {
       args.effort = argv[++index];
     } else if (token === '--reasoning' && argv[index + 1]) {
       args.reasoningMode = argv[++index];
-    } else if (token === '--max-iter' && argv[index + 1]) {
-      args.maxIter = Number(argv[++index]);
-    } else if (token === '--cwd' && argv[index + 1]) {
-      args.cwd = argv[++index];
     } else if (token === '--overwrite') {
       args.overwrite = true;
     } else if (token === '--configs' && argv[index + 1]) {

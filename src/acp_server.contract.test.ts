@@ -54,7 +54,7 @@ it('delivers complete plan approval and preserves Host mode and effort across AC
   const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
   const product = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
   const other = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
-  await other.config.patch({ agentMode: 'sa' });
+  await other.config.patch({});
   launcher.ensure.mockResolvedValue(product);
   const server = new KodaXAcpServer({ homeDir, provider: 'acp-contract', permissionMode: 'plan', planModeEffort: 'medium', logLevel: 'off' });
   const requests = new TransformStream<Uint8Array, Uint8Array>();

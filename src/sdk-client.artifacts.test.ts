@@ -76,7 +76,7 @@ it('binds artifact references to their actual file state at run admission', asyn
 
     const session = await client.sessions.create({ projectPath: homeDir });
     await client.sessions.updateSettings(session.id, {
-      provider: 'artifact-mock', permissionMode: 'full-access', agentMode: 'sa',
+      provider: 'artifact-mock', permissionMode: 'full-access',
     });
 
     // Intact reference: the registered file's bytes reach the provider wire

@@ -1,0 +1,5 @@
+<!-- @key tool.memory.description -->
+Save, change or remove a durable memory note. operation write creates a note, edit changes one, delete removes one. id is a short lowercase slug naming the note. scope is project for facts about this repository, or user for preferences that apply everywhere. description is the one-line summary shown in the index, so make it specific enough to decide relevance without opening the note. body holds the details. why states the reason or incident behind the note. check says how to confirm the note is still true. userQuote is an exact quote from the current user message when the user asked for this change. Without userQuote, a write becomes a candidate that stays out of the index until confirmed. Without userQuote, edit and delete are refused.
+
+<!-- @key tool.memory.note-type -->
+Optional, and it only decides where the note sits in the index. Use user for who the user is, feedback for how the user wants you to work, project for a fact about this codebase, reference for where to find something outside it, and procedure for steps that worked.

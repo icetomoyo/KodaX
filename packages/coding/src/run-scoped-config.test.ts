@@ -84,6 +84,21 @@ describe('deriveRunScopedConfig (KodaXOptions → run-scoped config)', () => {
     // every reader on process.env — the single-session CLI / config.json path.
     expect(deriveRunScopedConfig({} as KodaXOptions)).toEqual({});
   });
+
+  it('scopes the root conversation id, preferring the logical id children inherit', () => {
+    expect(deriveRunScopedConfig({ session: { id: 'root-1' } } as KodaXOptions)).toEqual({ sessionId: 'root-1' });
+    expect(deriveRunScopedConfig({
+      session: { id: 'worker-child' },
+      context: { contextIdentitySessionId: 'root-1' },
+    } as KodaXOptions)).toEqual({ sessionId: 'root-1' });
+  });
+
+  it('keeps the enclosing conversation id when a nested run names none', () => {
+    runWithScopedConfig({ sessionId: 'outer-1' }, () => {
+      expect(deriveRunScopedConfig({} as KodaXOptions)).toEqual({ sessionId: 'outer-1' });
+      expect(deriveRunScopedConfig({ session: { id: 'inner-1' } } as KodaXOptions)).toEqual({ sessionId: 'inner-1' });
+    });
+  });
 });
 
 describe('resolvePromptCacheDisabled (SDK > run scope > env)', () => {

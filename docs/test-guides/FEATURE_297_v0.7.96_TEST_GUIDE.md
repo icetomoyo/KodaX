@@ -53,6 +53,10 @@ Verify the four permission profiles, sandbox-first execution, host-boundary Auto
    fallback, while stricter prompt/forbidden matches still win.
 5. Confirm every statement and pipeline stage of a compound command is evaluated.
 6. Confirm project policy is ignored until that exact canonical project root is trusted by the host.
+   Reach the same project through a parent-directory alias (a junction, a
+   symlink, or macOS `/var`). Confirm the trust still matches. Confirm that
+   Full Access text writes to `.kodax/exec-policy.jsonc` are denied through
+   both spellings (Issue 422).
 7. Add an administrator `forbidden ["git", "push"]` rule and confirm it also
    blocks `cmd /K`, `cmd /S /K`, PowerShell command abbreviations, and valid
    UTF-16LE `EncodedCommand` forms that invoke `git push`.

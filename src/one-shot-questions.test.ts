@@ -120,7 +120,7 @@ it.each(cases)('skips only its own $name as non-interactive without inventing an
   try {
     const session = await client.sessions.create({ projectPath: homeDir });
     const foreign = await client.sessions.create({ projectPath: homeDir });
-    for (const id of [session.id, foreign.id]) await client.sessions.updateSettings(id, { agentMode: 'sa', permissionMode: 'full-access' });
+    for (const id of [session.id, foreign.id]) await client.sessions.updateSettings(id, { permissionMode: 'full-access' });
     foreignRunId = (await client.inputs.submit({ sessionId: foreign.id, inputId: 'foreign', text: 'Foreign question.' })).runId;
     const scopedClient = { ...client, interactions: { ...client.interactions, respond: responded },
       sessions: { ...client.sessions, observe: async (...args: Parameters<typeof client.sessions.observe>) => {
@@ -140,7 +140,7 @@ it.each(cases)('skips only its own $name as non-interactive without inventing an
       } },
     };
     pending = runOneShotClientTask({ client: scopedClient, runtime, abortSignal: controller.signal,
-      options: { provider: 'one-shot-question-test', agentMode: 'sa', session: { id: session.id } }, prompt: 'Own question.' });
+      options: { provider: 'one-shot-question-test', session: { id: session.id } }, prompt: 'Own question.' });
     let finished = false;
     let failure: unknown;
     void pending.then(() => { finished = true; }, error => { failure = error; finished = true; });

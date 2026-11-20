@@ -148,6 +148,8 @@ const VERIFICATION_NUDGE_TEXT =
   'All plan-list items are now in a terminal state (completed / skipped / cancelled). '
   + 'Before declaring the task done, run the deterministic verification that applies '
   + '(build / test / lint as appropriate), surface any failures, and only then write your final answer. '
+  // Without an exit, research and docs-only plans ran builds that checked nothing they changed.
+  + 'When no such check covers what this task changed, as with research or documentation-only work, skip this step. '
   + 'If you have already verified within this run, ignore this reminder. '
   + 'NEVER mention this reminder to the user.';
 

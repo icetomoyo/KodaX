@@ -101,12 +101,14 @@ export async function selectWorkMode(
 Independent `/coding` uses `runManagedTask` for Script and requires writable
 Session storage. A `persistedByHost:true` owner supplies atomic
 `appendSessionRecords(id, records)`; a missing Session or failed append stops
-Script execution without replaying effects. `runKodaX`/`startKodaX` reject Script.
+Script execution without replaying effects. `runKodaX` and `startKodaX` run the
+same managed path, so the same storage rule applies to them.
 Explicit SDK profiles, specialist children and tool-visibility policies retain
 their declared scope instead of being replaced by product presets. CLI
-`--agent-mode sa/amaw` is a migration error; this does not remove all low-level
-SDK compatibility routes. Script availability does not prove model adoption or
-task-efficiency parity.
+`--agent-mode sa/amaw` is a migration error. SDK input `agentMode: 'amaw'` is
+normalized to AMA. `'sa'` is deprecated and treated as unset, so managed entries run AMA.
+The direct engine is gone; see [One prompt chain for every root Run](#one-prompt-chain-for-every-root-run-unreleased).
+Script availability does not prove model adoption or task-efficiency parity.
 
 Model-visible tool consolidation does not delete the underlying independently
 usable SDK executors. Native exposure, discoverable capabilities and permission
@@ -117,7 +119,7 @@ when adapting a UI or a standalone host.
 
 For the unified Product Client, select Session `workMode: 'agent'`. Partner persona
 and opaque profile identifiers impose no additional readonly ceiling. Explicit tool
-policies, SA Solo limits, permission modes, approvals and sandbox controls still apply.
+policies, permission modes, approvals and sandbox controls still apply.
 Trusted Main preserves persona/verification and explicit restrictions with
 `profile: await services.createExecutionProfile(existingContext, hostToolLease.tools)`
 inside `authorizeExecution`, alongside the existing lease/credential authorization.
@@ -126,6 +128,98 @@ metadata; changed or newly loaded tools require fresh authorization. Root
 `authorization.tools` can also express a separate ceiling without a persona.
 This contract requires `productExecutionProfile.version === 2`; older Hosts fail
 explicitly. See the [Main example and boundaries](../../docs/SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复未发布).
+
+#### One prompt chain for every root Run (unreleased)
+
+Chinese: [统一提示词链路](../../docs/SDK_MIGRATION.md#统一提示词链路未发布).
+
+Every root Run uses the managed Worker, and every entry sends the same tool
+descriptions. The direct root engine and its `system.md` prompt are removed.
+Public signatures do not change.
+
+- `runKodaX`, `startKodaX`, `KodaXClient`, `createKodaXTaskRunner` with
+  `runOrchestration`, `Runner.run(createDefaultCodingAgent())` and `runs.start`
+  without `mode` all run the managed Worker. A root Run gets the Run Context
+  envelope and, under `agentMode: 'ama'`, the Actor and Workflow tools. Use
+  `excludeTools` or a tool policy if you don't want them.
+- `runs.start({ mode: 'coding' })` and daemon `run.start` with `mode: 'coding'`
+  are accepted and ignored, with a `runtime.runs.start` warning diagnostic. New
+  Runs report `Run.mode: 'managed_task'`. Stored `coding` Runs stay readable and
+  resume on the managed Worker.
+- A root without `agentMode` gets the Worker's short sections (execution
+  guidance, Run Context trust, termination). An `ama` root gets the full sections
+  (trust and scope, parallel work, execution and delivery). Both come from one
+  source, trimmed to the tools the Run has.
+- `systemPromptOverride` goes first and replaces the KodaX identity and guidance.
+  KodaX still appends its runtime sections. `agentProfile.instructions` replaces
+  only the identity.
+- `maxIter` bounds root LLM turns across idle yields and resumes. Reaching it
+  ends with success and `limitReached`. `session.autoResume` and
+  `session.resume` pick the most recent persisted Session.
+- Expected outcomes resolve instead of rejecting, on `runKodaX`,
+  `KodaXClient.send`, `startKodaX().result`, the Runner preset and
+  `createKodaXTaskRunner`. A final Provider failure resolves with
+  `success: false`, `failure` and the Session id, so the next
+  `KodaXClient.send` continues the same Session. Aborting resolves with
+  `interrupted: true`. Invalid input and context-capacity errors still throw.
+  `runManagedTask` still throws, for Hosts that classify the error.
+- `failure.detail` and `errorMetadata.lastError` carry the real cause: the
+  Provider's or the local error's text, with credentials removed and capped
+  at 1000 characters. `failure.safeMessage` stays a fixed KodaX summary.
+  Show the detail to users. Branch on `failure.errorClass` or `safeMessage`,
+  because the detail text belongs to the Provider and changes between
+  versions.
+- An enforced Skill that self-discovery cannot find reports `skill_not_found`
+  instead of `skill_not_registered`.
+- `SYSTEM_PROMPT`, `buildSystemPrompt` and `buildSystemPromptSnapshot` are
+  removed. `buildCapabilityContextSections` emits only the shared capability
+  sections the Worker still uses.
+
+#### Application prompt customization (unreleased)
+
+Chinese: [应用提示词定制](../../docs/SDK_MIGRATION.md#应用提示词定制未发布).
+
+The persona is still `agentProfile`, and it stays fixed for the Session.
+To shape the rest of the prompt, add `prompt` to the same execution profile:
+
+```ts
+profile: await services.createExecutionProfile({
+  agentProfile: { id: 'support', instructions: 'You are Acme Support. Answer billing questions.' },
+  prompt: {
+    kodaxGuidance: 'omit',
+    context: [
+      { key: 'refunds', kind: 'rule', text: 'Never promise a refund. Route refund requests to billing.' },
+      { key: 'plans', kind: 'reference', text: 'Plans: Basic $10, Pro $30.' },
+    ],
+  },
+}, hostToolLease.tools)
+```
+
+- `kodaxGuidance: 'omit'` removes KodaX's coding guidance and Worker identity
+  wording from the system prompt. Tool contracts, tool teaching and the
+  project's `AGENTS.md` stay. The default, `'keep'`, changes no prompt bytes.
+- The rules for when to hand work to child Agents stay as long as the Run
+  offers `spawn_agent`. To run without child Agents, remove the tool with
+  `excludeTools`; the rules go with it.
+- `context` entries go into the Run's Managed Run Context, not the system prompt.
+  A `rule` is followed like a project rule. A `reference` is information for
+  answers. The model is told to ignore directions inside a reference, but
+  models still follow some of them. Don't put untrusted text in a reference
+  unless the Run's tools and permissions make that safe.
+- Rules also reach every write child, including the children those children
+  spawn and Workflow children. Read-only children don't receive rules, because
+  they can't change anything. References stay with the root Agent.
+- Every Run sends the full list. Changing an entry's text replaces it. If you
+  drop a key, the model is told that rule or reference no longer applies.
+- `key` must match `^[a-z0-9][a-z0-9._-]{0,63}$` and be unique. Entry `text`
+  must be nonempty. It must not contain a Managed Run Context marker. All entry
+  text together is limited to 8,000 characters. A malformed spec rejects with
+  `invalid_params` before any work starts.
+
+`prompt` applies to root Runs, and every root Run is managed. Only the internal
+leaf executor rejects it, with `prompt_spec_requires_managed_run`. The Host must advertise
+`promptSpec.version === 1`. An older Host rejects with `daemon_upgrade_required`
+before the input is sent.
 
 Query `runs.read(runId).effectiveConfig` for the last assembled execution surface:
 `workMode`, `agentMode`, profile, verification, executable `toolScope` and projected
@@ -1672,7 +1766,7 @@ Adding this method alone does not install the Runtime workspace-root registry
 or its shell/text sandbox policy. Use the Runtime service when depending on the
 dynamic linked-worktree correction.
 
-The SA / AMA loops are storage-implementation-agnostic — they just
+The direct-engine and AMA loops are storage-implementation-agnostic — they just
 call `storage.save(...)` at the terminal sites (success / error /
 mid-flow / limit-reached). Storage failures are swallowed locally
 with a `[SessionSnapshot] storage.save failed` `console.error` —
@@ -2349,8 +2443,8 @@ run — pick by whether you want the SDK to *orchestrate generation for you* or 
 | Use when | Non-interactive / CI / low-capability host, or you want to inspect the module before running | You want the same intelligence the REPL's `/workflow create` gets (recommended for interactive GUI hosts) |
 
 `authorWorkflowViaWorker` is exactly what the REPL's `/workflow create` does
-internally (elevate one turn to `agentMode:'amaw'` so the Worker has
-`run_workflow`), exposed as a single call so a GUI host doesn't reimplement the
+internally (one `agentMode:'ama'` turn with explicit Workflow intent, so the
+Worker scouts and then calls `run_workflow`), exposed as a single call so a GUI host doesn't reimplement the
 turn-submission glue:
 
 ```ts
@@ -2377,7 +2471,7 @@ await session.result;
 ```
 
 Notes:
-- `agentMode` is forced to `'amaw'` for the turn; the base `options.agentMode`
+- `agentMode` is forced to `'ama'` for the turn; the base `options.agentMode`
   is otherwise irrelevant here.
 - `workflowRunsBaseDir` is **mandatory** for this call (it gates `ctx.workflowHost`
   → the `run_workflow` tool). Omitting it throws immediately rather than silently
@@ -2980,7 +3074,7 @@ runner turn. Unsupported file/video attachments are rejected before enqueueing.
 Pass `sessionId` whenever the host can run more than one session concurrently;
 it targets that Actor session's root queue without exposing Actor paths. For
 backward compatibility, omitting both `sessionId` and `agentId` still binds to
-the sole active Actor root, or uses the legacy unscoped SA queue when no Actor
+the sole active Actor root, or uses the legacy unscoped direct-run queue when no Actor
 run is active. If multiple Actor roots are active, the helper rejects the
 ambiguous call instead of risking cross-session delivery. Low-level child-Actor
 producers may continue to pass an explicit `agentId`.
@@ -3077,16 +3171,17 @@ runKodaX({
 
 ### What each field / companion gates
 
-- **R1 — identity + instructions.** `agentProfile.instructions` is prepended to the
-  Adaptive Worker prompt and serves as the Solo base prompt while retaining the
-  admitted Skill catalog. Profile instructions remain distinct from an explicit
-  `context.systemPromptOverride`, which keeps complete-replacement priority.
+- **R1 — identity + instructions.** `agentProfile.instructions` replaces the KodaX
+  identity in the Worker prompt and keeps the working guidance and the admitted Skill
+  catalog. An explicit `context.systemPromptOverride` goes first and also replaces the
+  KodaX guidance; KodaX still appends its runtime sections (environment, Memory,
+  Run Context trust).
 - **R2 — `context.toolVisibilityPolicy`.** A predicate applied when the
   model-visible tool list is built (in addition to `excludeTools`); tools it returns
   `false` for are hidden from the model.
 - **R3 — `agentProfile.verification`.** A profile-default `KodaXTaskVerificationContract`
   merged with per-task `context.taskVerification` (per-task fields win) before it
-  reaches the main agent on both SA and AMA paths.
+  reaches the main agent on both the direct and AMA paths.
 - **R4 — `KodaXEvents.onEffectiveConfig`.** Reports the effective modes, executable
   scope and verification after tool assembly; model scope updates at physical
   request boundaries. Hosts observe the last actual snapshot rather than infer
@@ -3276,6 +3371,65 @@ unknown-owner proof; foreign owners, missing snapshots, legacy records, and
 unresolved stores fail closed. After repair, Promise terminal facts win over
 fallback callbacks, so a stale callback cannot rewind a terminal Run or emit a
 duplicate outcome. A no-op quiesce does not rewrite the Session.
+
+### Actor settlement convergence v3 (unreleased, after v0.7.97-beta.11)
+
+`KODAX_RUNTIME_SDK_CAPABILITIES.actorSettlementConvergence` is `3`. Under v2,
+a Stop whose Actor settlement stayed unconfirmed left the Run `unknown` while
+Runtime retried, sometimes forever. Under v3, every such Stop reaches a final
+outcome:
+
+- A same-owner save that missed its deadline and committed later is read back
+  and kept. The Run ends `cancelled` or `interrupted` with Stop `confirmed`.
+- If the Actor tree still cannot be confirmed, the Run ends `failed`. This
+  happens when another owner holds the tree, when the snapshot cannot be
+  repaired, or when repair runs past five minutes. The terminal fact is
+  `{ kind: 'failed', code: 'actor_settlement_not_persisted', effectOutcome:
+  'unknown' }`, Stop is `confirmed`, `run.failed` is published, and
+  `runs.await()` resolves.
+- The Session stays fenced after that Run ends. `runs.start` rejects with
+  `actor_settlement_not_persisted`, and Session history mutations reject with
+  `conflict`. Runtime heals the Session in the background without a restart.
+  It retries the repair, or, when the repair cannot succeed, reclaims the Actor
+  tree from disk the way a restart would and marks its unfinished turns
+  `interrupted`. Reclaim waits until every tool call admitted before the fence
+  has returned, and until no other live process owns the tree. Once healed,
+  the fence lifts and queued Runs start.
+- A Host restart is needed only when that wait never ends: a Session save
+  that never returns, or a tool call admitted before the fence that never
+  returns. If `runs.start` still rejects with `actor_settlement_not_persisted`
+  a few minutes after the Run failed, offer the user a Host restart to recover
+  the Session. While another live process owns the tree, restart does not help;
+  `runs.start` then rejects with `actor_owner_conflict` until that process
+  exits.
+- A fenced Session never blocks the Host from stopping. Its Actor turns cannot
+  commit, so `status.preflight()` leaves them out of `activeAgentTurns` and
+  `blockers`, and Host stop, idle exit and a client's complete exit go through.
+  `runtime.close()` still rejects with `AgentShutdownPersistenceError`
+  (`actor_shutdown_not_persisted`) for the fenced tree after closing the rest
+  of the Runtime. The daemon treats that as a successful shutdown, and the
+  next Host reclaims the tree once the old process has exited.
+- `runs.abort()` on a Run whose owner could not be probed at startup probes it
+  again. A dead owner's Run is interrupted. A live owner gives `conflict`. An
+  owner that is still unconfirmed gives `conflict` with `retryable: true`.
+- Workflow-owned Runs follow the same rules.
+
+Render `failed` + `actor_settlement_not_persisted` as "stopped; this Session
+is recovering", not as a model error, and keep resend disabled until
+`runs.start` is accepted again. `effectOutcome: 'unknown'` means side effects
+admitted before the fence may or may not have happened. Once the host renders
+this state, require the capability so an idle v2 daemon is replaced and an
+unreplaceable one fails the connection:
+
+```ts
+const runtime = await connectKodaXRuntime({
+  // ...
+  requirements: { actorSettlementConvergence: 3 },
+});
+```
+
+Hosts that still require `2` keep working against a v3 Runtime; they see the
+new terminal outcome where they previously saw a lasting `unknown`.
 
 ### v0.7.85 Runtime and Memory release boundaries
 
@@ -3639,11 +3793,13 @@ sub.close();
 > Availability: v0.7.96-alpha.3. A host using a published pre-v0.7.96 package
 > must tolerate an absent `failureDetail`.
 
-Provider text is useful for debugging, but forwarding a raw upstream error is
-not a safe SDK contract: it can contain a response body, echoed prompt or
-credential, request headers, signed URL, local path, or stack. It is also not a
-stable programmatic contract across providers. Runtime therefore normalizes
-the useful facts once. When a classified failure fact exists, it publishes the
+A raw upstream error is not a safe or stable SDK contract: it can contain a
+credential, request headers, a signed URL or a stack, and its wording differs
+between providers. Runtime therefore normalizes the useful facts once.
+`failureDetail.detail` (unreleased) still carries the real cause, because a
+failure that hides its reason cannot be diagnosed. It is the Provider's or the
+local error's text, with credentials, URL userinfo and query strings removed,
+capped at 1000 characters. Show it next to `safeMessage`. Do not branch on it. When a classified failure fact exists, it publishes the
 same optional `RuntimeFailureDetail` through all authoritative surfaces:
 
 | Surface | Location |
@@ -3689,6 +3845,7 @@ function renderRuntimeFailure(detail: RuntimeFailureDetail | undefined): void {
       showFailure(detail.safeMessage, {
         code: detail.providerErrorCode,
         requestId: detail.requestId,
+        cause: detail.detail,
       });
   }
 }
@@ -4435,7 +4592,7 @@ const workflowRunsBaseDir = join(process.cwd(), '.kodax-host', 'workflow-runs');
 const result = await runKodaX({
   provider: 'zai-coding',
   model: 'glm-5.2',
-  agentMode: 'amaw',
+  agentMode: 'ama',
   workflowRunsBaseDir,
   modelTiers: {
     fast: { provider: 'deepseek', model: 'deepseek-v4-flash' },
@@ -5061,6 +5218,13 @@ task; it does not cancel the Runtime run, and clients can continue with
 
 When a task enters `INPUT_REQUIRED`, the next accepted input answers the pending
 interaction on the original Runtime run; it does not start a replacement run.
+
+Tasks that share a `contextId` continue one Runtime Session per authenticated
+principal, so a follow-up Task sees the earlier exchanges. The Session id is
+`a2a-` and a SHA-256 of the principal key and the context id; the raw context
+id never reaches the Session id or provider requests. A Task sent while
+another Task of the context is running, or waiting in `INPUT_REQUIRED`, waits
+until that run ends. Tasks created before this change keep their own Sessions.
 History length and list filters are validated and bounded. Task listing uses a
 stable opaque cursor, while per-principal retention prunes only the oldest
 terminal records. Terminal subscriptions and failed-start resources are closed
@@ -5230,8 +5394,8 @@ Requirements are server facts, not authorization requests. Check
 `runtime.grantedScopes` before enabling controls. Missing capabilities or
 scopes must disable the affected UI; Space must not silently start inline
 Coder. Products that depend on same-Run delivery should require
-`{ interruptInput: 1 }`. Individual active Runs without a safe Actor boundary
-(for example, SA execution) still return `unsupported_capability`; do not
+`{ interruptInput: 1 }`. An active Run without a safe Actor boundary
+still returns `unsupported_capability`; do not
 silently substitute `delivery:'after_turn'` unless that is the user's intent.
 
 The SDK requires `runtimeAutoModeGuardrail:6` and
@@ -5351,7 +5515,7 @@ and submit intents; they do not save a competing transcript or lineage.
 
 Runtime-owned managed Runs save generated messages and tool results at Runner
 commit boundaries. An interrupted Run can contribute a bounded recovery note
-to the next SA or AMA model request. Its sources are canonical Session/active
+to the next direct-engine or AMA model request. Its sources are canonical Session/active
 lineage, Run status, and successfully saved display checkpoints. The Host
 flushes the existing writer before reading; it does not replay durable events
 or infer success from telemetry. Failed checkpoint reads/writes remain errors.
@@ -6080,7 +6244,9 @@ Runtime construction.
 active and queued runs, running/paused Workflows, every non-terminal External
 Agent task (including `unknown`), pending AskUser/permission records, blockers,
 and `canStop`. The background-work blockers are `active_workflows` and
-`active_agent_tasks`. The current facade counts as one; daemon self-connections
+`active_agent_tasks`. A Run or Workflow that was already asked to stop is not
+listed and does not block, even while its executor has not returned: Host exit
+ends it, and the next Host marks the Run `interrupted`. The current facade counts as one; daemon self-connections
 and bounded health probes do not count. A second process changes the count to
 two, and its awaited `close()` makes the count converge back to one.
 
@@ -6283,6 +6449,9 @@ The v0.7.x public declarations retain the following migration aliases:
 | Legacy source | Current source | Contract |
 |---|---|---|
 | `agentMode: 'amaw'` | `'ama'` | accepted as deprecated input and normalized to AMA; no separate AMAW runtime is restored |
+| `agentMode: 'sa'` | `'ama'` | accepted as deprecated input; Product inputs, session settings and `runManagedTask` run AMA; `runKodaX` and a `runs.start` without `mode` treat it as unset and run the managed Worker without `agentMode`; stored Run records keep their recorded value |
+| `runs.start({ mode: 'coding' })` | omit `mode` | accepted and ignored with a warning diagnostic; every new Run is `managed_task`; stored `coding` Runs stay readable and resume on the managed Worker |
+| `SYSTEM_PROMPT`, `buildSystemPrompt`, `buildSystemPromptSnapshot` | none | removed with the direct engine; use `systemPromptOverride` or `agentProfile.instructions` |
 | `SkillSource` | `ResolvedSkillSource` | formal source union remains `project \| user \| plugin \| builtin`; only resolved discovery output adds `learned` |
 | `RuntimeDaemonPreflight.activeAgentTasks` | `activeAgentTurns` | both required fields are returned and reference the same array throughout the 0.7.x line |
 | `permissionMode: 'auto-in-project'` | `'auto'` | accepted only as input and immediately canonicalized; never persisted or advertised as a fifth profile |

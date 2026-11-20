@@ -57,6 +57,8 @@ export interface SessionStorage {
     msgCount: number;
     tag?: string;
     runtimeInfo?: KodaXSessionRuntimeInfo;
+    createdAt?: string;
+    lastMessageAt?: string;
   }>>;
   delete?(id: string): Promise<void>;
   deleteAll?(gitRoot?: string): Promise<void>;

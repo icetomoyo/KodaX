@@ -253,9 +253,9 @@ await client.config.patch({ workflow: { maxConcurrency: 8 } });
 
 策略为准入时复制的 Run 作用域数据，不修改 Session 或全局配置。队列捕获该策略；不同策略或 principal 不合并到同一 Run，steer 不能替换活动 Run 的策略。同一 inputId 的重试仍校验原始意图和策略身份。断连后已接受的执行保留其捕获值；Host 重启不会恢复策略闭包、排队工作或自动续跑。Space 的策略持久化和 Main 重新授权仍由 Space 管理。SDK 的输入类型不含此字段，运行时丢弃 Product payload 中伪造的授权/策略字段。
 
-`maxAgents` 是每个 Workflow 的正整数生命周期上限，异步 spawn 前预留名额，已确认创建后才记录实际数量，拒绝的启动释放预留；并发请求不能一起越过上限。`tokenBudget` 是非负整数输出 token 预算；`0` 保留现有无预算限制语义，Manifest 的更小预算仍有效。已知 output=0 仍保留为 0；SA 各响应轮及 verification repair 各次执行均有完整用量时才发布聚合 output。缺失用量或没有 output 分量的旧 backend 保持原有 totalTokens 保守兜底。预算耗尽后拒绝新增工作，不保证在途 Provider 响应能被截断到精确 token 数。Manifest、Main 上限、现有并发配置和系统上限取约束交集。并发继续使用 `config.workflow.maxConcurrency`，在 Product Run 启动时捕获，不增加另一个可调并发字段。
+`maxAgents` 是每个 Workflow 的正整数生命周期上限，异步 spawn 前预留名额，已确认创建后才记录实际数量，拒绝的启动释放预留；并发请求不能一起越过上限。`tokenBudget` 是非负整数输出 token 预算；`0` 保留现有无预算限制语义，Manifest 的更小预算仍有效。已知 output=0 仍保留为 0；直连引擎各响应轮及 verification repair 各次执行均有完整用量时才发布聚合 output。缺失用量或没有 output 分量的旧 backend 保持原有 totalTokens 保守兜底。预算耗尽后拒绝新增工作，不保证在途 Provider 响应能被截断到精确 token 数。Manifest、Main 上限、现有并发配置和系统上限取约束交集。并发继续使用 `config.workflow.maxConcurrency`，在 Product Run 启动时捕获，不增加另一个可调并发字段。
 
-Product AMA 仅在已有显式 Workflow 意图门控下提供 `run_workflow`；普通输入不自动启动 Workflow，SA 继续使用显式 `workflows.start`。运行目录采用 Host 现有 profile/project 路径，Space 消费公开的 `workflows.list().runDir` 等结果，不传旧的 `workflowRunsBaseDir`。本轮不开放 `selfManual`、`promptOverlay` 或任意 Run options。
+Product AMA 仅在已有显式 Workflow 意图门控下提供 `run_workflow`；普通输入不自动启动 Workflow，直连 `coding` Run 继续使用显式 `workflows.start`。运行目录采用 Host 现有 profile/project 路径，Space 消费公开的 `workflows.list().runDir` 等结果，不传旧的 `workflowRunsBaseDir`。本轮不开放 `selfManual`、`promptOverlay` 或任意 Run options。
 
 ## 客户端退出与恢复
 
@@ -368,7 +368,7 @@ Retry 包括第一条查询之前的空历史；`before` 需要 canonical bounda
 
 | Space 能力 | 当前公开接入与限制 |
 | --- | --- |
-| 手册/可信系统指令 | Host 安装的 extension `provider:before` hook 用 `replaceSystemPrompt` 合并可信手册，随 Host integrations 生命周期加载。低层显式 Run 保留 `context.systemPromptOverride`（SA）/`agentProfile.instructions`（AMA）；产品输入不开放任意 prompt/context。共享 Host hook 的适用范围由可信宿主策略选择。 |
+| 手册/可信系统指令 | Host 安装的 extension `provider:before` hook 用 `replaceSystemPrompt` 合并可信手册，随 Host integrations 生命周期加载。低层显式 Run 保留 `context.systemPromptOverride`（直连引擎）/`agentProfile.instructions`（AMA）；产品输入不开放任意 prompt/context。共享 Host hook 的适用范围由可信宿主策略选择。 |
 | Shell | 可信 `/runtime` 的 Session `shellExecution` 设置，采用现有规范化 Shell contract 与 revision CAS；Product settings 只暴露已列出的业务选择。 |
 | 工具/执行策略 | permissionMode、Plan 与审批经 `/client`；Host `execPolicy.adminRules/trustedProjectRoots`、`autoReview` 在 owner 启动时注入，附着已有 Host不覆盖它。Skill/command 的 allowedTools、hooks 来自可信注册来源（allowedTools 只参与策略身份，不限制工具）；Host Tool 描述符仅在绑定 Run 中提供。 |
 | 结构化图片附件 | `view.items` / `readHistory().items[].attachments` 暴露用户/工具图片的 path、mediaType，用户观测可附 observationId、width、height、sha256。`readItem(sessionId, itemId, {part:'attachment', attachmentIndex, attachmentOffset, expectedImageSha256})` 从该 Host 项读取 PNG/JPEG/WebP/GIF，返回 `image` 实际 mediaType、字节 chunk（base64）、SHA256、宽高、总字节数与 nextOffset；每块最多512KiB、整图最多10MiB。只接受项身份/附件索引，不接受客户端路径；旧文本 offset 仍按 UTF-16。原始 picker source/name、file/video/native Office 对象不在此接口中。 |
@@ -393,7 +393,7 @@ node --test tests/bundled-product-exit.test.mjs
 
 2026-10-09 本轮本地验收：关联回归 97 文件、977 测试通过；最终增量专项 7 文件、31 测试，以及工具分发合同 12 测试通过。bundle 的 2 项真实 daemon 测试验证立即断连后的空闲 peer 保护、精确进程退出及替代 Host 保护。packages、SDK bundle、声明构建、源码/测试类型检查，以及不加载 Node ambient types 的 Product Client 类型消费者均通过。Standards / Spec 最终复核无明确残余。未全量复跑仓库全部测试，未发布 npm，Space 安装包尚未更新。
 
-2026-10-10 Workflow 补齐本地验收：关联回归 110 文件、1,349 测试通过；最终 scoped coverage 6 文件、171 测试通过，覆盖 Workflow runtime 与 Coding backend 两个模块，语句 88.39%、分支 74.56%、函数 89.24%、行 90.04%（不是全仓覆盖率）。真实 Host 专项包括 Product AMA Workflow 可用性、Main 上限、并发名额竞态、零输出预算、临时 Session、非法策略、现有并发配置、队列捕获/去重/steer 隔离、伪造 payload、跨客户端隔离和 Skill/command/review 准备。repair 混合已知/未知输出与 SA 多轮缺失用量另有 RED→GREEN 回归。bundle 的 2 项真实 daemon 退出测试、packages/bundle/14 个 SDK 声明入口构建、源码/测试类型检查及无 Node ambient types 的 Product Client 消费者检查均通过。Standards：0 项明确残余；Spec：0 项明确残余。未全量复跑仓库全部测试，未发布 npm，Space 安装包尚未更新。
+2026-10-10 Workflow 补齐本地验收：关联回归 110 文件、1,349 测试通过；最终 scoped coverage 6 文件、171 测试通过，覆盖 Workflow runtime 与 Coding backend 两个模块，语句 88.39%、分支 74.56%、函数 89.24%、行 90.04%（不是全仓覆盖率）。真实 Host 专项包括 Product AMA Workflow 可用性、Main 上限、并发名额竞态、零输出预算、临时 Session、非法策略、现有并发配置、队列捕获/去重/steer 隔离、伪造 payload、跨客户端隔离和 Skill/command/review 准备。repair 混合已知/未知输出与直连引擎多轮缺失用量另有 RED→GREEN 回归。bundle 的 2 项真实 daemon 退出测试、packages/bundle/14 个 SDK 声明入口构建、源码/测试类型检查及无 Node ambient types 的 Product Client 消费者检查均通过。Standards：0 项明确残余；Spec：0 项明确残余。未全量复跑仓库全部测试，未发布 npm，Space 安装包尚未更新。
 
 ## 结果评审接缝（2026-10-11）
 

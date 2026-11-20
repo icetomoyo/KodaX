@@ -97,3 +97,15 @@ describe('probeProviderReasoningEfforts', () => {
     expect(results).toEqual([]);
   });
 });
+
+describe('probe session identity', () => {
+  it('sends every probe request of one command under one session id, because some gateways reject requests without one', async () => {
+    const { getRunScopedConfig } = await import('@kodax-ai/llm');
+    const seen: (string | undefined)[] = [];
+    const provider = fakeProvider([]);
+    vi.mocked(provider.stream).mockImplementation(async () => { seen.push(getRunScopedConfig()?.sessionId); return {} as never; });
+    await probeProviderReasoningEfforts({ provider: 'p', model: 'm', efforts: ['low', 'high'], resolve: () => provider, now: () => 'T0' });
+    expect(seen[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7/);
+    expect(seen[1]).toBe(seen[0]);
+  });
+});

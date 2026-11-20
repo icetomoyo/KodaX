@@ -39,7 +39,7 @@ describe('v0.7.72 agent-mode config migration', () => {
     });
   });
 
-  it.each(['amaw', 'ama-workflow'])('migrates persisted %s to AMA exactly once', async (legacyMode) => {
+  it.each(['amaw', 'ama-workflow', 'sa'])('migrates persisted %s to AMA exactly once', async (legacyMode) => {
     const warning = vi.spyOn(process, 'emitWarning').mockImplementation(() => undefined);
     const { home, utils } = await loadWithConfig({ agentMode: legacyMode, provider: 'openai' });
 
@@ -56,7 +56,19 @@ describe('v0.7.72 agent-mode config migration', () => {
 
   it('rejects unknown persisted modes instead of silently entering a different mode', async () => {
     const { utils } = await loadWithConfig({ agentMode: 'mystery-mode' });
-    expect(() => utils.loadConfig()).toThrow(/Invalid agentMode.*Expected "ama" or "sa"/);
+    expect(() => utils.loadConfig()).toThrow(/Invalid agentMode.*Expected "ama"\./);
+  });
+
+  it('names the retired SA selection when migrating persisted sa', async () => {
+    const warning = vi.spyOn(process, 'emitWarning').mockImplementation(() => undefined);
+    const { utils } = await loadWithConfig({ agentMode: 'sa', provider: 'openai' });
+
+    utils.loadConfig();
+
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining('SA selection was retired'),
+      { code: 'KODAX_AGENT_MODE_MIGRATED' },
+    );
   });
 
   it('does not persist self-healing migrations while another KodaX writer holds the core lock', async () => {

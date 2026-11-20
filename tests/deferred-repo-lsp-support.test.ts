@@ -26,7 +26,7 @@ it('omits only the builtin local-search schema after policy assembly, without di
   expect(candidate.system).toBe(input.system);
   expect(candidate.messages).toBe(input.messages);
   for (const tool of candidate.tools) expect(tool).toBe(input.tools.find(original => original.name === tool.name));
-  for (const obligation of ['todo_create', 'spawn_agent', 'wait_agent', 'agent_output']) expect(candidate.system).toContain(obligation);
+  for (const obligation of ['TASK AND PLAN', 'PARALLEL WORK', 'Wait sparingly', 'agent_output']) expect(candidate.system).toContain(obligation);
   expect(JSON.stringify(input)).toBe(before);
   expect(projectLocalSearchInput(input, false)).toBe(input);
   const noGrep = { ...input, tools: input.tools.filter(tool => tool.name !== 'grep') };
@@ -163,7 +163,7 @@ it('experiments with only the manual schema after AMA policy assembly', () => {
   const fullPolicy = { ...input, system: buildWorkerStableInstructions() };
   const projectedFullPolicy = projectDeferredRepoLspInput(fullPolicy, true, 'manual');
   expect(projectedFullPolicy.system).toBe(fullPolicy.system);
-  for (const obligation of ['todo_create', 'spawn_agent', 'wait_agent', 'agent_output']) expect(projectedFullPolicy.system).toContain(obligation);
+  for (const obligation of ['TASK AND PLAN', 'PARALLEL WORK', 'Wait sparingly', 'agent_output']) expect(projectedFullPolicy.system).toContain(obligation);
   expect(projected.tools.find(tool => tool.name === 'tool_search')!.description).toContain('kodax_manual');
   expect(JSON.stringify(input)).toBe(before);
   expect(projectDeferredRepoLspInput(input, false, 'manual')).toBe(input);

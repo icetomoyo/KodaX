@@ -9,9 +9,8 @@ import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 
-it.each((['sa', 'ama'] as const).flatMap(agentMode =>
-  (['current', 'other'] as const).map(queueScope => ({ agentMode, queueScope }))))
-('$agentMode recovery respects $queueScope Session Product input arriving during diagnosis', async ({ agentMode, queueScope }) => {
+it.each(['current', 'other'] as const)
+('recovery respects %s Session Product input arriving during diagnosis', async queueScope => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-client-text-recovery-'));
   registerCustomProviders([]);
   vi.stubEnv('KODAX_TEXT_RECOVERY_TEST_KEY', 'test-only');
@@ -40,10 +39,10 @@ it.each((['sa', 'ama'] as const).flatMap(agentMode =>
     const imagePath = path.join(homeDir, 'input.png');
     await writeFile(imagePath, await readFile('tests/fixtures/images/valid-png.png'));
     const session = await client.sessions.create({ projectPath: homeDir });
-    await client.sessions.updateSettings(session.id, { agentMode, permissionMode: 'full-access', reasoningMode: 'quick' });
+    await client.sessions.updateSettings(session.id, { agentMode: 'ama', permissionMode: 'full-access', reasoningMode: 'quick' });
     const queueSession = queueScope === 'current' ? session : await client.sessions.create({ projectPath: homeDir });
     if (queueScope === 'other') {
-      await client.sessions.updateSettings(queueSession.id, { agentMode: 'sa', permissionMode: 'full-access' });
+      await client.sessions.updateSettings(queueSession.id, { permissionMode: 'full-access' });
     }
     let diagnostics = 0;
     let streams = 0;

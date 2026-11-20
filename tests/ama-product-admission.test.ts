@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
@@ -13,8 +13,16 @@ import { createKodaXRuntime } from "./runtime-fixture.js";
 import { startRuntimeDaemonHost } from '../src/runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from '../src/runtime-daemon/state.js';
 
-it('defaults Product turns to AMA while preserving SDK-selected and captured direct Runs', async () => {
-  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-ama-admission-'));
+interface AdmissionHost {
+  readonly runtime: Awaited<ReturnType<typeof createKodaXRuntime>>;
+  readonly client: Awaited<ReturnType<typeof connectKodaXClient>>;
+  readonly mainRequests: string[];
+  holdNextRequest(): void;
+  release(): void;
+  close(): Promise<void>;
+}
+
+async function startAdmissionHost(homeDir: string): Promise<AdmissionHost> {
   const mainRequests: string[] = [];
   let holdNext = false;
   let release = () => {};
@@ -48,6 +56,46 @@ it('defaults Product turns to AMA while preserving SDK-selected and captured dir
   const endpointPath = process.platform === 'win32' ? `\\\\.\\pipe\\kodax-ama-admission-${randomUUID()}` : path.join(homeDir, 'host.sock');
   const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint: { kind: process.platform === 'win32' ? 'pipe' : 'unix', path: endpointPath } });
   const client = await connectKodaXClient({ homeDir, endpoint: endpointPath });
+  return {
+    runtime, client, mainRequests,
+    holdNextRequest: () => { holdNext = true; },
+    release: () => release(),
+    close: async () => {
+      release();
+      await client.disconnect();
+      await host.close();
+      await runtime.close();
+      await awaitLatestCodingMemoryReviewDrain(5_000);
+      unregister();
+      vi.unstubAllEnvs();
+      await rm(homeDir, { recursive: true, force: true, maxRetries: 3 });
+    },
+  };
+}
+
+it('runs Product turns as AMA when a legacy config.json still selects sa', async () => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-ama-admission-'));
+  await mkdir(path.join(homeDir, '.kodax'), { recursive: true });
+  await writeFile(path.join(homeDir, '.kodax', 'config.json'), JSON.stringify({ agentMode: 'sa' }), 'utf8');
+  const { runtime, client, close } = await startAdmissionHost(homeDir);
+  try {
+    const session = await client.sessions.create({ projectPath: homeDir });
+    await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
+    const turn = await client.inputs.submit({ sessionId: session.id, inputId: 'legacy-config', text: 'Reply briefly.' });
+    expect((await runtime.runs.get(turn.runId!)).mode).toBe('managed_task');
+    expect((await runtime.runs.await(turn.runId!)).phase).toBe('completed');
+    let displayedMode: string | undefined;
+    const observation = await client.sessions.observe(session.id, view => { displayedMode = view.settings.agentMode; });
+    expect(displayedMode).toBe('ama');
+    observation.close();
+  } finally {
+    await close();
+  }
+});
+
+it('defaults Product turns to AMA, ignores a retired sa setting and routes a deprecated coding mode to the managed Worker', async () => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-ama-admission-'));
+  const { runtime, client, mainRequests, holdNextRequest, release, close } = await startAdmissionHost(homeDir);
   try {
     const session = await client.sessions.create({ projectPath: homeDir });
     await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
@@ -65,37 +113,20 @@ it('defaults Product turns to AMA while preserving SDK-selected and captured dir
     expect(await runtime.config.read()).not.toHaveProperty('agentMode');
 
     await runtime.sessions.updateSettings(session.id, { agentMode: 'sa' });
-    holdNext = true;
+    holdNextRequest();
     const legacyInput = await client.inputs.submit({ sessionId: session.id, inputId: 'sdk-legacy', text: 'Legacy held turn.' });
-    const legacy = { runId: legacyInput.runId! };
     await expect.poll(() => mainRequests.length).toBe(2);
-    expect((await runtime.runs.get(legacy.runId)).mode).toBe('coding');
+    expect((await runtime.runs.get(legacyInput.runId!)).mode).toBe('managed_task');
     const runningObservation = await client.sessions.observe(session.id, view => { displayedMode = view.settings.agentMode; });
-    expect(displayedMode).toBe('sa');
-    const queued = await client.inputs.submit({ sessionId: session.id, inputId: 'after-legacy', text: 'Reply briefly again.', delivery: 'after_turn' });
-    expect(queued.state).toBe('queued');
-    await client.sessions.updateSettings(session.id, { agentMode: 'ama' });
-    expect((await runtime.runs.get(legacy.runId)).mode).toBe('coding');
-    expect(displayedMode).toBe('sa');
+    expect(displayedMode).toBe('ama');
     release();
-    expect((await runtime.runs.await(legacy.runId)).phase).toBe('completed');
-    await expect.poll(async () => (await client.inputs.read(session.id, 'after-legacy'))?.runId).toBeDefined();
-    const next = await client.inputs.read(session.id, 'after-legacy');
-    expect((await runtime.runs.get(next!.runId!)).mode).toBe('coding');
-    expect((await runtime.runs.await(next!.runId!)).phase).toBe('completed');
-    const fresh = await client.inputs.submit({ sessionId: session.id, inputId: 'fresh-ama', text: 'New independent turn.' });
-    expect((await runtime.runs.get(fresh.runId!)).mode).toBe('managed_task');
-    expect((await runtime.runs.await(fresh.runId!)).phase).toBe('completed');
-    await expect.poll(() => displayedMode).toBe('ama');
+    expect((await runtime.runs.await(legacyInput.runId!)).phase).toBe('completed');
     runningObservation.close();
+
+    const legacyMode = await runtime.runs.start({ sessionId: session.id, prompt: 'Deprecated coding mode turn.', mode: 'coding' });
+    expect((await runtime.runs.get(legacyMode.runId)).mode).toBe('managed_task');
+    expect((await legacyMode.result).phase).toBe('completed');
   } finally {
-    release();
-    await client.disconnect();
-    await host.close();
-    await runtime.close();
-    await awaitLatestCodingMemoryReviewDrain(5_000);
-    unregister();
-    vi.unstubAllEnvs();
-    await rm(homeDir, { recursive: true, force: true, maxRetries: 3 });
+    await close();
   }
 });

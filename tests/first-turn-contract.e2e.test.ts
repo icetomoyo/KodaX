@@ -58,7 +58,7 @@ function sendResponse(response: ServerResponse, protocol: 'openai' | 'anthropic'
 
 describe('first-turn contracts through public SDK and HTTP providers', () => {
   for (const protocol of ['openai', 'anthropic'] as const) {
-    for (const mode of ['sa', 'ama'] as const) {
+    for (const mode of ['direct', 'ama'] as const) {
       it(`${protocol}/${mode}: projects contracts and executes read, edit and batch input`, async () => {
         const root = await mkdtemp(path.join(tmpdir(), 'kodax-first-turn-e2e-'));
         const workspace = path.join(root, 'workspace');
@@ -111,14 +111,14 @@ describe('first-turn contracts through public SDK and HTTP providers', () => {
         const askUserMulti = vi.fn(async () => ({ '选择验收方式': 'test' }));
         try {
           const options: KodaXOptions = {
-            provider: providerName, agentMode: mode, reasoningMode: 'off', maxIter: 12,
+            provider: providerName, ...(mode === 'ama' ? { agentMode: 'ama' as const } : {}), reasoningMode: 'off', maxIter: 12,
             lsp: false, disablePromptCache: true,
             context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt: '',
               repoIntelligenceMode: 'off', resolveShellPermissionMode: () => 'full-access',
               toolVisibilityPolicy: tool => !(REPO_INTELLIGENCE_WORKING_TOOL_NAMES as readonly string[]).includes(tool.name) },
             events: { askUserMulti },
           };
-          const result = await (mode === 'sa' ? runKodaX : runManagedTask)(options,
+          const result = await (mode === 'direct' ? runKodaX : runManagedTask)(options,
             '读取 app.txt，将 before 精确改为 after、keep 改为 kept，再询问验收方式。');
           expect(errors).toEqual([]);
           expect(result.success).toBe(true);

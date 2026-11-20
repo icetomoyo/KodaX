@@ -18,9 +18,7 @@ import type { KodaXToolExecutionContext } from '../types.js';
 
 export const MEMORY_INTENT_TOOL_NAME = 'memory_intent';
 
-export const MEMORY_INTENT_TOOL_DESCRIPTION = [
-  staticText("t12i.tools/memory-intent.block.0"),
-].join(' ');
+export const MEMORY_INTENT_TOOL_DESCRIPTION = staticText("memory-intent.description");
 
 export const MEMORY_INTENT_TOOL_SCHEMA = {
   type: 'object' as const,
@@ -28,33 +26,16 @@ export const MEMORY_INTENT_TOOL_SCHEMA = {
     operation: {
       type: 'string' as const,
       enum: ['list', 'remember', 'correct', 'forget', 'decisions', 'show', 'approve', 'reject'],
-      description: 'The Memory operation requested by the user.',
     },
-    statement: {
-      type: 'string' as const,
-      description: 'A concise durable claim for remember or correct.',
-    },
-    targetRefId: {
-      type: 'string' as const,
-      description: 'One exact ref returned by list/recall; required for correct and forget.',
-    },
+    statement: { type: 'string' as const },
+    targetRefId: { type: 'string' as const, description: 'Exact list/recall claim ref, or exact decision ref.' },
     claimKind: {
       type: 'string' as const,
       enum: ['fact', 'policy', 'preference', 'procedure'],
-      description: 'The durable claim category for remember or correct.',
     },
-    claimKey: {
-      type: 'string' as const,
-      description: 'Stable semantic identity such as project.package_manager or user.preference.editor; required for every new claim.',
-    },
-    userQuote: {
-      type: 'string' as const,
-      description: 'An exact quote from the current user message authorizing a mutation.',
-    },
-    reason: {
-      type: 'string' as const,
-      description: 'Optional user-supplied rejection reason.',
-    },
+    claimKey: { type: 'string' as const, description: 'Stable identity, e.g. project.package_manager.' },
+    userQuote: { type: 'string' as const },
+    reason: { type: 'string' as const, description: 'User-supplied rejection reason.' },
   },
   required: ['operation'],
 };
@@ -957,7 +938,7 @@ function statementCoversAuthorizedClaim(
   const marker = operation === 'remember'
     ? '(?:remember|memorize|记住|记下)'
     : '(?:correct|update|replace|change|修正|更正|修改|改成)';
-  const englishLead = staticText("t12.tools/memory-intent.0");
+  const englishLead = "(?:(?:from\\s+now\\s+on|going\\s+forward),?\\s*)?(?:one\\s+more\\s+thing:\\s*)?(?:please\\s+)?(?:(?:can|could|would|will)\\s+you\\s+(?:please\\s+)?|i\\s+(?:want|need)\\s+you\\s+to\\s+(?:please\\s+)?|i(?:'d|\\s+would)\\s+like\\s+you\\s+to\\s+(?:please\\s+)?|go\\s+ahead\\s+and\\s+)?";
   const cjkLead = '(?:请|请你|麻烦|麻烦你|劳烦|帮我|请帮我|我要你|我想让你|我希望你)?';
   const rememberPrefix = new RegExp(`^(?:${englishLead}${marker}(?:\\s+(?:that|to))?\\s*[,，:：]?|${cjkLead}${marker}\\s*[,，:：]?)$`, 'iu');
   const correctionPrefix = new RegExp(
@@ -1215,7 +1196,7 @@ function hasContradictoryMutationContext(
 function isAffirmativeCommand(text: string, marker: string): boolean {
   const escapedMarker = marker.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
   if (/^[\x00-\x7f]+$/u.test(marker)) {
-    const lead = staticText("t12.tools/memory-intent.1");
+    const lead = "(?:(?:from\\s+now\\s+on|going\\s+forward),?\\s*)?(?:one\\s+more\\s+thing:\\s*)?(?:please\\s+)?(?:(?:can|could|would|will)\\s+you\\s+(?:please\\s+)?|i\\s+(?:want|need)\\s+you\\s+to\\s+(?:please\\s+)?|i(?:'d|\\s+would)\\s+like\\s+you\\s+to\\s+(?:please\\s+)?|go\\s+ahead\\s+and\\s+)?";
     return new RegExp(`^${lead}${escapedMarker}\\b`, 'iu').test(text);
   }
   const lead = '(?:请|请你|麻烦|麻烦你|劳烦|帮我|请帮我|我要你|我想让你|我希望你)?';

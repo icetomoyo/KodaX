@@ -10,7 +10,7 @@ import type { KodaXToolExecutionContext } from '../types.js';
 
 export const MEMORY_TOOL_NAME = 'memory';
 
-export const MEMORY_TOOL_DESCRIPTION = staticText('t13.tools/memory.0');
+export const MEMORY_TOOL_DESCRIPTION = staticText('tool.memory.description');
 
 export const MEMORY_TOOL_SCHEMA = {
   type: 'object' as const,
@@ -18,7 +18,7 @@ export const MEMORY_TOOL_SCHEMA = {
     operation: { type: 'string' as const, enum: ['write', 'edit', 'delete'], description: 'Create, change or remove a note.' },
     id: { type: 'string' as const, description: 'Short slug naming the note, e.g. test-command.' },
     scope: { type: 'string' as const, enum: [...NOTE_SCOPES], description: 'project (default) or user.' },
-    type: { type: 'string' as const, enum: [...NOTE_TYPES], description: staticText('t13.tools/note-type.0') },
+    type: { type: 'string' as const, enum: [...NOTE_TYPES], description: staticText('tool.memory.note-type') },
     description: { type: 'string' as const, description: 'One-line index summary.' },
     body: { type: 'string' as const, description: 'The note details.' },
     why: { type: 'string' as const, description: 'The reason or incident behind the note.' },

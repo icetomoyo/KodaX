@@ -1,37 +1,28 @@
 import { staticText } from '../../prompts/static-text.js';
 /**
- * Mutation scope reflection middleware — CAP-016 (SA-only).
+ * Mutation scope reflection middleware — CAP-016.
  *
  * Capability inventory: docs/features/v0.7.29-capability-inventory.md#cap-016-mutation-scope-reflection
  *
- * Class 3 (declarable opt-in middleware). When `mutationTracker` is wired
- * into the tool execution context AND the active Agent declaration enables
- * `middleware.mutationScopeReflection`, this appends a self-review prompt
- * to the tool result so the model perceives the size of the change it
- * just made:
+ * When the tool execution context carries a `mutationTracker` and the caller
+ * does not pass `mutationScopeReflection: false` to `applyPostToolProcessing`,
+ * this appends a self-review prompt to the first significant mutation result
+ * so the model perceives the size of the change it just made:
  *
  *   `[Scope: 5 files modified, ~412 lines]` followed by per-file lines
  *   and a senior-engineer rhetorical prompt.
  *
  * "Significant" is defined as ≥ `SCOPE_REFLECTION_FILE_THRESHOLD` files
  * OR ≥ `SCOPE_REFLECTION_LINES_THRESHOLD` total lines. The thresholds are
- * encoded as constants here (not Agent-declaration knobs) because they
- * came from product judgement, not configuration. Only the on/off
- * decision is declaration-controlled.
+ * constants because they came from product judgement, not configuration.
  *
- * **Default for**: `defaultCodingAgent` (SA mode only).
- * **NOT for** AMA agents — Generator's mutation tracking is handled by the
- * Evaluator's verdict pass instead, so reflection here would double-fire.
- * AMA's equivalent (FEATURE_106) lives in `scope-aware-harness-guardrail.ts`
- * and emits the harness-commitment hint via `emit_scout_verdict`.
+ * Reached by the direct engine and host Script invocations when the caller
+ * supplies a tracker. The AMA Worker's Script cells pass `false`: the parent
+ * owns review policy there.
  *
- * v0.7.31.2 — text rewrite: removed the dead AMA-escalation hint
- * (`emit_managed_protocol` references for H1/H2 confirmation) per
- * ADR-003 / FEATURE_106. SA mode is direct execution — there is no
- * mid-run harness escalation path, so prompting the LLM toward an
- * unavailable tool produced hallucinated tool calls. The replacement
- * text is SA-self-review oriented: SA has no Evaluator role, so the
- * reflection asks the model to verify its own change.
+ * The text never names escalation tools (`emit_managed_protocol`, harness
+ * ids) or another mode: the legacy wording produced hallucinated tool calls,
+ * and no re-run adds an independent reviewer.
  *
  * Migration history: extracted from `agent.ts:781-809` — the `MUTATION_TOOL_NAMES`
  * + `SCOPE_REFLECTION_*` constants, the `isMutationTool` /
@@ -89,6 +80,6 @@ export function buildMutationScopeReflectionHeader(tracker: MutationTracker): st
 export function buildMutationScopeReflection(tracker: MutationTracker): string {
   return [
     buildMutationScopeReflectionHeader(tracker),
-    staticText("t12i.agent-runtime/middleware/mutation-reflection.block.0"),
+    staticText("mutation-reflection.pause"),
   ].join('\n');
 }

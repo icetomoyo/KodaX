@@ -14,7 +14,7 @@ export function withEffectivePermissionContext(system: string, context: KodaXCon
   const readOnly = context?.permissionIntent?.readOnly === true;
   if (mode === undefined && !readOnly) return system;
   const scope = readOnly
-    ? staticText("t12.prompts/effective-permissions.0")
+    ? staticText("permissions.read-only-scope")
     : MODE_GUIDANCE[mode!];
   return `${system}\n\n## Effective permissions (host authority)\n${mode === undefined ? '' : `Current permission mode: ${mode}\n`}${scope}\n`
     + 'This live host context is authoritative for this request. config.json contains defaults, not the current Session mode. '

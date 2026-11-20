@@ -1,4 +1,4 @@
-// Zero-network production builder + managed adapter capture, before provider serialization.
+// Zero-network managed Worker adapter capture, before provider serialization.
 // node node_modules/vite-node/vite-node.mjs --config vitest.config.ts tests/first-turn-inputs.capture.ts
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -8,9 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { FIRST_TURN_CASES } from '../benchmark/datasets/first-turn-tokens/cases.js';
 import { setAgentConfigHome } from '../packages/agent/src/runtime/agent-home.js';
 import { countTokens } from '../packages/agent/src/tokenizer.js';
-import { buildSystemPromptSnapshot } from '../packages/coding/src/prompts/builder.js';
-import { getActiveToolDefinitions } from '../packages/coding/src/agent-runtime/tool-resolution.js';
-import { listToolDefinitions } from '../packages/coding/src/tools/registry.js';
+import { buildCapabilityContextSections } from '../packages/coding/src/prompts/capability-sections.js';
 import { buildRunnerAgentChain } from '../packages/coding/src/task-engine/_internal/managed-task/agent-chain.js';
 import { buildRunnerLlmAdapter } from '../packages/coding/src/task-engine/_internal/managed-task/llm-adapter.js';
 import { createRolePrompt } from '../packages/coding/src/task-engine/_internal/managed-task/role-prompt.js';
@@ -36,12 +34,8 @@ const metric = (value: unknown) => {
 };
 interface CapturedInput { readonly system: string; readonly messages: readonly KodaXMessage[]; readonly tools: readonly KodaXToolDefinition[] }
 try {
-  const snapshot = await buildSystemPromptSnapshot({ provider: 'zhipu-coding', context: { executionCwd: workspace, gitRoot: workspace } }, true);
-  const excluded = new Set(['memory_recall', 'memory_intent', 'session_history_search', 'session_history_read', 'run_skill_script']);
-  const saTools = getActiveToolDefinitions(listToolDefinitions().map(t => t.name).filter(n => !excluded.has(n)), 'full', false, false, false).filter(t => t.name !== 'run_workflow');
-  const managedOwned = new Set(['base-system', 'base-system-suffix', 'environment-context', 'runtime-fact', 'working-directory', 'session-scratch-directory', 'repo-intelligence-context', 'execution-guidance', 'active-skill-invocation']);
+  const shared = await buildCapabilityContextSections({ provider: 'zhipu-coding', context: { executionCwd: workspace, gitRoot: workspace } }, true);
   const stableIds = new Set(['project-agents', 'self-knowledge-routing', 'memory-rules', 'tool-construction']);
-  const shared = snapshot.sections.filter(s => !managedOwned.has(s.id));
   const chain = buildRunnerAgentChain({ backups: new Map(), executionCwd: workspace, gitRoot: workspace });
   const cases = [];
   for (const testCase of FIRST_TURN_CASES) {
@@ -78,10 +72,9 @@ try {
       'packages/coding/src/task-engine/_internal/managed-task/llm-adapter.ts',
       'packages/coding/src/agent-runtime/tool-resolution.ts',
       'packages/coding/src/tools/tool-definitions.ts',
-      'packages/coding/src/prompts/builder.ts',
+      'packages/coding/src/prompts/capability-sections.ts',
     ].map(async file => [file, createHash('sha256').update(await fs.readFile(new URL(`../${file}`, import.meta.url))).digest('hex')]))),
-    methodology: 'Zero network; actual production SA component builders and managed Worker adapter overrideStream boundary. Empty deterministic isolated home/non-Git workspace. All production tool descriptions and schema, no stubs. No optional hosts/AGENTS/skills/MCP/history/permission suffix/preturn. Synthetic controlled histories, not real compaction. Provider HTTP serialization is a separate capture. No tool execution.',
-    sa: { system: snapshot.rendered, tools: saTools, hash: hash({ system: snapshot.rendered, tools: saTools }) },
+    methodology: 'Zero network; actual production capability sections and managed Worker adapter overrideStream boundary. Empty deterministic isolated home/non-Git workspace. All production tool descriptions and schema, no stubs. No optional hosts/AGENTS/skills/MCP/history/permission suffix/preturn. Synthetic controlled histories, not real compaction. Provider HTTP serialization is a separate capture. No tool execution.',
     cases,
   };
   const directory = path.join(os.tmpdir(), 'kodax-eval-dumps', 'first-turn-tokens-v1');

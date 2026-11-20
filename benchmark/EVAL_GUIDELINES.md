@@ -242,6 +242,7 @@ OK = process exit 0 是个**极其弱的信号**：
 1. 测试 worker-role-prompt 章节改动时，eval driver 必须包含 production 实际 `KodaXToolDefinition.description` 字节（不是简化版）。harness 的 `tools: readonly KodaXToolDefinition[]` 参数把它们走 LLM API tools 通道下发，与 production 一致
 2. 测试 tool description 本身改动时，**v_baseline 用 pre-change description bytes**、**v_proposed 用 post-change description bytes**，二者必须 byte-aligned，schema (`input_schema`) 不变只动 description
 3. 测试 prompt 章节 X 改动时，driver 必须包含**所有与 X 交互的章节 Y/Z**（PLAN-FIRST 改动测试要带 SCOPE COMMITMENT + PLAN-LIST HYGIENE + DISPATCH，不能只 mock PLAN-FIRST）
+4. 改动依赖工作区状态的 prompt（路由标签、REVIEW BREADTH、仓库智能块、风险提示、Script 模式）时，capture 必须走真实 managed Runtime。工作区必须是带 Git 历史、并且有未提交改动的仓库，仓库智能开启，work mode 与被测模式一致。原因：`tests/skill-trigger.capture.ts` 关闭仓库智能，用空工作区，并且走 fallback 路由。这些 prompt 在那份 capture 里根本不会出现。用它评审这类改动，A/B 两臂是逐字节相同的。参考实现：`tests/managed-first-turn.capture.ts`。仓库智能和路由信号有 2s 预算，冷启动时可能丢块，所以每个 case 取多次 capture 中最完整的一次，并在发送前对比两臂的差异，确认差异只来自被测改动
 
 **参考实现**：`tests/feature-189-todo-desc-refactor-pilot.eval.ts`（4 个 todo_* desc 通过 tools param 下发 baseline vs proposed）。
 
@@ -440,6 +441,7 @@ Behavioral-neutral hygiene refactor 通常 2 alias × 2 case × 3 runs 已足以
 9. **共享截断即不可判定**：所有臂都撞上同一预算截断时比较无结论。修正题目范围只能开新修订，并只重跑受影响用例。
 10. **传输失败先取证**：先收集 HTTP status、request id 和响应进度时序，再归因 provider 或网络。`codex-cli` 适配器会忽略本地 system/tools，不能用于隔离 harness 收益。
 11. **夹具来自真实 Runtime**：checkpoint 输入由真实 Runtime 生成，不手工拼接路由；冒烟前确认 source 与 dist 是同一模块；工具定义快照不对可执行元数据做 `structuredClone`。
+12. **首轮夹具要覆盖默认用户面**：包括真实 Skill 目录、AMA root 的 Actor 客户端、`filterModelToolAliases` 后的工具名，以及 `createManagedRunContextMessage` 生成的运行上下文消息。运行上下文要带 `resolveRoleRunContext` 加的 `=== Managed Run Context ===` 信封：system prompt 只授权信封内文本，上下文投影也以结束标记为边界，缺信封的夹具和生产不是同一个请求。冒烟前确认实际请求里出现了生产 Worker 文本（`benchmark/harness/worker-system-prompt.ts` 渲染同一份源头）。此前的首轮夹具用空 agent home 且未接 Actor，模型从未见过 Skill 目录和压缩后的 BLOCKING 文本，强制调用 Skill 的退化因此在 beta.5 到 beta.10 间漏检。参考 `tests/skill-trigger.capture.ts`。
 
 ---
 

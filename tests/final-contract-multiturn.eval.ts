@@ -40,7 +40,7 @@ const critical = ['tests/final-contract-multiturn.eval.ts', 'tests/final-contrac
   'tests/first-turn-complex-guard.ts', 'tests/first-turn-complex-budget.ts', 'tests/first-turn-eval-support.ts',
   'benchmark/datasets/product-multiturn/fixture.ts', 'benchmark/harness/natural-execution-environment.ts',
   'benchmark/harness/isolated-output-binding.mjs', 'packages/coding/src/child-executor.ts', 'packages/coding/src/agent-runtime/run-substrate.ts',
-  'packages/coding/src/tools/session-history.ts', 'packages/coding/src/tools/managed-tool-text.ts',
+  'packages/coding/src/tools/session-history.ts', 'packages/coding/src/tools/tool-definitions.ts',
   'packages/coding/src/task-engine/_internal/managed-task/llm-adapter.ts', 'packages/agent/src/session-lineage/history-retrieval.ts',
   'packages/llm/src/providers/anthropic.ts', 'packages/llm/src/providers/registry.ts', 'src/sdk-runtime.ts'];
 const fileHash = async (file: string) => createHash('sha256').update(await fs.readFile(file)).digest('hex');

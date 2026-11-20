@@ -42,7 +42,7 @@ import {
   type KodaXDiagnostic,
 } from '@kodax-ai/agent';
 
-import { runKodaX } from '../../agent.js';
+import { runTestLeaf as runLeafAgent } from '../test-leaf.js';
 
 const PROVIDER_NAME = 'cap-005-test-provider';
 const API_KEY_ENV = 'CAP_005_TEST_PROVIDER_API_KEY';
@@ -91,7 +91,7 @@ class CompleteEventProvider extends KodaXBaseProvider {
   }
 }
 
-// Issue 128: contract tests drive runKodaX end-to-end and flake at 5000ms
+// Issue 128: contract tests drive runLeafAgent end-to-end and flake at 5000ms
 // default under heavy parallel vitest load. Match the root 30s ceiling.
 describe('CAP-005: onComplete event contract', { timeout: 30_000 }, () => {
   beforeEach(() => {
@@ -106,7 +106,7 @@ describe('CAP-005: onComplete event contract', { timeout: 30_000 }, () => {
   it('CAP-EVENTS-COMPLETE-001a: fires on success terminal (text-only run completes)', async () => {
     registerModelProvider(PROVIDER_NAME, () => new CompleteEventProvider('success'));
     const onComplete = vi.fn();
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       { provider: PROVIDER_NAME, model: 'baseline-model', events: { onComplete } },
       'do thing',
     );
@@ -119,7 +119,7 @@ describe('CAP-005: onComplete event contract', { timeout: 30_000 }, () => {
     const controller = new AbortController();
     controller.abort();
     const onComplete = vi.fn();
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: PROVIDER_NAME,
         model: 'baseline-model',
@@ -145,7 +145,7 @@ describe('CAP-005: onComplete event contract', { timeout: 30_000 }, () => {
     });
     const completedStatuses: string[] = [];
 
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: PROVIDER_NAME,
         model: 'baseline-model',
@@ -175,7 +175,7 @@ describe('CAP-005: onComplete event contract', { timeout: 30_000 }, () => {
     });
 
     try {
-      const result = await runKodaX(
+      const result = await runLeafAgent(
         {
           provider: PROVIDER_NAME,
           model: 'baseline-model',
@@ -213,7 +213,7 @@ describe('CAP-005: onComplete event contract', { timeout: 30_000 }, () => {
     const result = await runWithProviderCredential(
       PROVIDER_NAME,
       'scoped-test-key',
-      () => runKodaX(
+      () => runLeafAgent(
         {
           provider: PROVIDER_NAME,
           model: 'baseline-model',
@@ -235,7 +235,7 @@ describe('CAP-005: onComplete event contract', { timeout: 30_000 }, () => {
     registerModelProvider(PROVIDER_NAME, () => new CompleteEventProvider('tool-loop'));
     const onComplete = vi.fn();
 
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: PROVIDER_NAME,
         model: 'baseline-model',
@@ -255,7 +255,7 @@ describe('CAP-005: onComplete event contract', { timeout: 30_000 }, () => {
     const order: string[] = [];
     const onComplete = vi.fn(() => order.push('complete'));
 
-    const resultPromise = runKodaX(
+    const resultPromise = runLeafAgent(
       {
         provider: PROVIDER_NAME,
         model: 'baseline-model',
@@ -286,7 +286,7 @@ describe('CAP-005: onComplete event contract', { timeout: 30_000 }, () => {
     registerModelProvider(PROVIDER_NAME, () => new CompleteEventProvider('throw'));
     const onComplete = vi.fn();
     const onError = vi.fn();
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       {
         provider: PROVIDER_NAME,
         model: 'baseline-model',

@@ -56,9 +56,8 @@ describe('FEATURE_270 frozen behavioral cases', () => {
     expect(baseline).toContain('DISPATCH RULES (`dispatch_child_task` idle-yield model)');
     expect(treatment).toContain('Use sub-agents when parallel work would materially improve speed or quality.');
     expect(treatment).toContain('Use `run_workflow` only when the user explicitly requests a Workflow');
-    expect(treatment).toContain('0 non-root turns are active and 3 child start slots are available.');
-    expect(treatment).toContain('HARD RUNTIME LIMIT FOR THIS ASSISTANT RESPONSE');
-    expect(treatment).toContain('emit at most 3 `spawn_agent` calls');
+    expect(treatment).toContain('This session runs at most 3 child Agents at a time.');
+    expect(treatment).not.toContain('emit at most');
     expect(treatment).not.toContain('DISPATCH_RUN_WORKFLOW_NUDGE');
   });
 

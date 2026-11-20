@@ -6,7 +6,7 @@ export function renderWorkflowHelp(): string {
     '',
     `${chalk.bold('Subcommands:')}`,
     `  ${chalk.cyan('/workflow list')}                         List built-in, pattern, and saved workflows. Alias: /workflow`,
-    `  ${chalk.cyan('/workflow create <request>')}             Build & run a workflow for a request. The Worker investigates first, then authors it (scout-then-author). Requires AMA — Solo (SA) mode runs no workflows.`,
+    `  ${chalk.cyan('/workflow create <request>')}             Build & run a workflow for a request. The Worker investigates first, then authors it (scout-then-author).`,
     `  ${chalk.cyan('/workflow <request>')}                    Shorthand for create when the first word isn't a known workflow name or subcommand.`,
     `  ${chalk.cyan('/workflow <name> [args]')}                Run a built-in or saved workflow by name. Args may be JSON or bare text.`,
     `  ${chalk.cyan('/workflow runs [--all|--limit N]')}       List active and recent workflow runs for this project.`,

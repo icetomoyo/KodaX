@@ -7,7 +7,6 @@ import type { KodaXToolExecutionContext } from '../packages/coding/src/types.js'
 import { toolListAgents, toolSpawnAgent } from '../packages/coding/src/tools/agent-collaboration.js';
 import { buildRunnerAgentChain } from '../packages/coding/src/task-engine/_internal/managed-task/agent-chain.js';
 import { buildRunnerLlmAdapter } from '../packages/coding/src/task-engine/_internal/managed-task/llm-adapter.js';
-import { markOrdinaryRootToolContract } from '../packages/coding/src/tools/managed-tool-contract.js';
 import { markRegistryManagedAgent } from '../packages/coding/src/tools/model-tool-definition.js';
 import { createManagedRunContextMessage } from '../packages/coding/src/task-engine/_internal/managed-task/managed-run-context.js';
 import { buildWorkerActorCapacityContract, buildWorkerRoutingContext } from '../packages/coding/src/agents/worker-role-prompt.js';
@@ -62,7 +61,6 @@ export async function prepareActivationCapacityPair(directory: string, baseline:
       { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'capacity-denied-spawn', content: denial, is_error: true }] }];
     const saved = structuredClone(messages);
     const agent = markRegistryManagedAgent({ ...buildRunnerAgentChain(context).worker, tools: [...candidate.tools] }, context);
-    markOrdinaryRootToolContract(agent);
     let projected: readonly KodaXMessage[] | undefined, requests = 0, adapterToolNames: string[] = [];
     await buildRunnerLlmAdapter({ provider: 'anthropic', reasoningMode: 'off' }, async (wire, tools) => {
       requests++; projected = structuredClone(wire);
@@ -70,8 +68,7 @@ export async function prepareActivationCapacityPair(directory: string, baseline:
       return { textBlocks: [{ text: 'Offline request projection only; original task not executed.' }], toolBlocks: [] };
     })([{ role: 'system', content: alignedCandidate.system }, ...messages], agent);
     if (requests !== 1 || !projected || inputHash(messages) !== inputHash(saved)) throw new Error('Adapter must project exactly once without changing canonical state');
-    if (!String(projected[0]?.content).includes('Snapshot: 3 active non-root turns; 0 child start slots available')
-      || String(projected[0]?.content).includes('At this prompt snapshot')) throw new Error('Actual adapter did not apply candidate capacity contract');
+    if (!String(projected[0]?.content).includes('No child slot is free right now')) throw new Error('Actual adapter did not carry the canonical capacity contract');
     if (inputHash(projected.slice(1)) !== inputHash(messages.slice(1))) throw new Error('Capacity projection changed task or original refusal');
     const facts = { snapshot, inspectChild, admissions, listed, denial, workspace, adapterToolNames,
       environmentProjection: { baselineBefore: inputHash(baseline.system), baselineAfter: inputHash(alignedBaseline.system),

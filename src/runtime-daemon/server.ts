@@ -2650,7 +2650,8 @@ async function bindTrustedRunInput(input: {
           ...transportOptions,
           context: Object.fromEntries(
             Object.entries(transportContext).filter(
-              ([key]) => key !== "configHome" && key !== "memoryIdentity"
+              // contextIdentitySessionId names the conversation sent to gateways; only in-process child runs may set it.
+              ([key]) => key !== "configHome" && key !== "memoryIdentity" && key !== "contextIdentitySessionId"
                 && (key !== "commandInvocation" || input.trustedProductPreparation === true),
             ),
           ),
@@ -2696,6 +2697,7 @@ async function bindTrustedRunInput(input: {
               context: {
               ...optionalRecord(safeTransportOptions.context),
               ...(input.profile.agentProfile === undefined ? {} : { agentProfile: structuredClone(input.profile.agentProfile) }),
+              ...(input.profile.prompt === undefined ? {} : { prompt: structuredClone(input.profile.prompt) }),
               ...(input.profile.taskVerification === undefined ? {} : { taskVerification: structuredClone(input.profile.taskVerification) }),
               workModePolicy: 'intersect',
               toolVisibilityPolicy: createExecutionToolPolicy(executionToolCeiling!,
@@ -2797,6 +2799,7 @@ function runtimeDaemonCapabilities(
   delete safeOverrides.productInputRecovery;
   delete safeOverrides.productExecutionModeConstraint;
   delete safeOverrides.sideChat;
+  delete safeOverrides.promptSpec;
   delete safeOverrides.productHistoryBoundaries;
   delete safeOverrides.productHistoryTurnResolution;
   delete safeOverrides.productHistoryLocation;
@@ -2859,6 +2862,8 @@ function runtimeDaemonCapabilities(
       ? { productInputRecovery: { version: 1 } } : {}),
     ...(isRecord(ownerCapabilities.productExecutionModeConstraint) && ownerCapabilities.productExecutionModeConstraint.version === 1
       ? { productExecutionModeConstraint: { version: 1 } } : {}),
+    ...(isRecord(ownerCapabilities.promptSpec) && ownerCapabilities.promptSpec.version === 1
+      ? { promptSpec: { version: 1 } } : {}),
     ...(isRecord(ownerCapabilities.productExecutionFacts) && ownerCapabilities.productExecutionFacts.version === 1
       ? { productExecutionFacts: { version: 1 } } : {}),
     ...(isRecord(ownerCapabilities.providerProbeAuthorization) && ownerCapabilities.providerProbeAuthorization.version === 1
@@ -2881,7 +2886,7 @@ function runtimeDaemonCapabilities(
       persistenceFailure: "fail_closed",
     },
     actorSettlementConvergence: {
-      version: 2,
+      version: 3,
       rootFence: "fail_closed",
       sameOwnerRepair: "automatic",
       unknownAfterTurnQueue: true,

@@ -6,8 +6,8 @@
  * - docs/features/v0.7.29-capability-inventory.md#cap-018-post-tool-judge
  * - docs/features/v0.7.29-capability-inventory.md#cap-088-tool-evidence-summarizer-for-auto-reroute-input
  *
- * Class 3 (declarable opt-in middleware). Two judges fire from the SA
- * loop in `auto` reasoning mode:
+ * Class 3 (declarable opt-in middleware). Two judges fired from the
+ * direct-engine loop in `auto` reasoning mode (retired; see Default for):
  *
  *   - **Pre-answer judge** (CAP-017): right before the model emits a
  *     final answer, when the response has the *shape* of a real review
@@ -19,10 +19,9 @@
  *     the tool evidence contains failure signals, invoke auto-reroute
  *     to potentially switch task family (e.g., review → bugfix).
  *
- * The gating IF that wraps each `maybeAdvanceAutoReroute` call lives at
- * the call site in `agent.ts` (and will move to the substrate executor's
- * judge hook chain in P3). What lives here are the **predicates** that
- * decide whether the call site should fire:
+ * Auto-reroute (CAP-019) and its call sites are gone, so nothing in the
+ * engine calls these predicates; their contract tests keep them pinned.
+ * The **predicates** decided whether a judge should fire:
  *
  *   - `isReviewFinalAnswerCandidate(prompt, plan, lastText)` — gates the
  *     pre-answer judge.
@@ -30,7 +29,7 @@
  *     judge.
  *   - `summarizeToolEvidence(toolBlocks, toolResults)` (CAP-088) —
  *     constructs the `toolEvidence` string that feeds into the
- *     `hasStrongToolFailureEvidence` gate. Three invariants are
+ *     `hasStrongToolFailureEvidence` gate. Four invariants are
  *     load-bearing:
  *       (a) only includes results whose content passes
  *           `looksLikeToolRuntimeEvidence` (delegates to
@@ -43,9 +42,9 @@
  * and contain regex / string-shape heuristics that have been tuned over
  * multiple releases.
  *
- * **Default for**: `defaultCodingAgent` (preserves SA current behavior);
- * post-tool judge ALSO enabled on `generatorAgent` per FEATURE_100 design
- * — give Generator mid-iteration adaptive recovery.
+ * **Default for**: none. The V1 judges are retired: `DEFAULT_CODING_MIDDLEWARE`
+ * in `coding-preset.ts` declares both disabled, no engine call site invokes
+ * these predicates, and the V1 `generatorAgent` no longer exists.
  *
  * Migration history: extracted from `agent.ts:1106-1154`
  * (`looksLikeReviewProgressUpdate` 1106-1124 +

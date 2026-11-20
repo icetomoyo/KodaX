@@ -9,7 +9,7 @@ export class UserInputMemoryBudgetError extends Error {
   constructor() { super('Goal token budget exhausted during user context preparation.'); this.name = 'UserInputMemoryBudgetError'; }
 }
 
-export const USER_INPUT_MEMORY_SYSTEM = staticText("t12.user-input-memory.0");
+export const USER_INPUT_MEMORY_SYSTEM = staticText("user-input-memory.system");
 
 /** Append-only, verbatim memory. A small window cannot justify silently dropping an obligation. */
 export async function retainUserInput(

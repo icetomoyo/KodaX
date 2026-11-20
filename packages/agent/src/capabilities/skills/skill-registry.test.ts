@@ -56,7 +56,7 @@ describe("SkillRegistry", () => {
     expect(typeof SKILL_CATALOG_INSTRUCTIONS).toBe('string');
     expect(publicCatalogInstructions).toBe(SKILL_CATALOG_INSTRUCTIONS);
     expect(formatted.startsWith(SKILL_CATALOG_INSTRUCTIONS)).toBe(true);
-    expect(createHash('sha256').update(formatted).digest('hex')).toBe('428b950a19f66c07f820b6cc0f1e739f65b15ab7e2a237c676d630f20582e598');
+    expect(createHash('sha256').update(formatted).digest('hex')).toBe('11c37a886d2c196776befdfcaa3798c744dae6f981e4b2d7923e0f61fbde643d');
     expect(formatted).toContain('- fixture: [target] Match fixture tasks.');
     expect(formatted).not.toContain('explicit-only');
     expect(formatSkillsSystemPrompt([])).toBe('');
@@ -126,7 +126,9 @@ describe("SkillRegistry", () => {
     finally { restore(); }
     expect(snippet.length).toBeLessThanOrEqual(8_000);
     expect(snippet).toContain('- skill-00: Inspect case 0:');
-    expect(snippet).toMatch(/\d+ Skills omitted/);
+    expect(snippet).toMatch(/\d+ Skills not listed/);
+    expect(snippet).toContain('do not guess unlisted names');
+    expect(snippet).not.toContain('remains available');
     expect(snippet).not.toContain('explicit-only');
     expect(snippet).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/u);
     const included = snippet.split('\n').filter(line => line.startsWith('- skill-')).length;
@@ -377,11 +379,18 @@ Updated project skill
 
     // Tool-of-record is the `skill` tool, not `read SKILL.md`.
     expect(snippet).toContain("`skill` tool");
-    expect(snippet).toContain("invoke it via the `skill` tool");
-    expect(snippet).toContain("BLOCKING REQUIREMENT");
-    expect(snippet).toContain("MUST invoke it via the `skill` tool");
+    expect(snippet).toContain("invoke it with the `skill` tool");
     expect(snippet).toContain('Active skill invocation');
-    expect(snippet).toContain('do NOT call the `skill` tool for that Skill again');
+    expect(snippet).toContain('without calling `skill` for it again');
+    // Conditional, with an explicit no-match path: an unconditional "invoke first"
+    // mandate made models hunt for or force a Skill on ordinary requests.
+    expect(snippet).toContain('When no description clearly covers the request');
+    expect(snippet).toContain('clearly covers what the user asks for, you must invoke it');
+    expect(snippet).not.toContain('BLOCKING REQUIREMENT');
+    expect(snippet).not.toMatch(/\bMUST invoke\b|FIRST action/);
+    // A matched Skill outranks tool-level "first step" rules; raw slash text carries its args.
+    expect(snippet).toContain('comes before any other "first step" or "first tool" rule');
+    expect(snippet).toContain('Pass the text after the name as `args`');
 
     // The legacy "Use the read tool" wording is gone — checking
     // negative direction so a future refactor that re-introduces it

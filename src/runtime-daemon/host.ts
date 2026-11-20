@@ -259,7 +259,20 @@ export async function startRuntimeDaemonHost(
           await options.runtime.close();
           runtimeClosed = true;
         } catch (error: unknown) {
-          failures.push(`Runtime close: ${normalizeHostError(error).message}`);
+          if (leavesOnlyActorTreesForRecovery(error)) {
+            // The rest of the Runtime closed. Once this process exits its Actor
+            // owner stops answering liveness and the next claim reclaims the tree.
+            runtimeClosed = true;
+            try {
+              appendRuntimeDaemonLog(options.paths, 'warn',
+                'Runtime daemon left unconfirmed Actor trees to restart recovery.',
+                { error: normalizeHostError(error).message });
+            } catch (logError: unknown) {
+              failures.push(`recovery log: ${normalizeHostError(logError).message}`);
+            }
+          } else {
+            failures.push(`Runtime close: ${normalizeHostError(error).message}`);
+          }
         }
       }
       try {
@@ -411,6 +424,13 @@ function normalizeDiagnosticDetail(detail: unknown, seen = new Set<unknown>()): 
   if (Array.isArray(detail)) return detail.map((entry) => normalizeDiagnosticDetail(entry, seen));
   return detail;
 }
+/** True when Runtime close failed only on Actor trees it could not release, which restart recovery reclaims. */
+function leavesOnlyActorTreesForRecovery(error: unknown): boolean {
+  const errors = error instanceof AggregateError ? error.errors : [error];
+  return errors.length > 0 && errors.every(item =>
+    item instanceof Error && 'code' in item && item.code === 'actor_shutdown_not_persisted');
+}
+
 /** @internal Also used before host publication for the existing owner identity probes. */
 export function appendRuntimeDiagnostic(paths: RuntimeDaemonPaths, diagnostic: KodaXDiagnostic): void {
   // Debug traces (e.g. every cached Job probe) dominated the persisted log;

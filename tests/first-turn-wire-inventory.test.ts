@@ -106,17 +106,14 @@ it('inventories first serialized requests for isolated content and real Runtime 
     'packages/coding/src/tools/managed-tool-contract.ts',
     'packages/coding/src/tools/managed-tool-activation.ts',
     'packages/coding/src/tools/skill.ts',
-    'packages/coding/src/tools/managed-tool-text.ts',
-    'packages/coding/src/prompts/managed-system-contract.ts',
-    'packages/coding/src/prompts/managed-context-contract.ts',
-    'packages/coding/src/prompts/compact-worker-contract.ts',
+    'packages/coding/src/prompts/static-text.json',
     'packages/agent/src/capabilities/skills/skill-registry.ts',
     'packages/coding/src/agent-runtime/middleware/auto-resume.ts',
     'packages/coding/src/media/visual-owner.ts',
     'packages/coding/src/task-engine/_internal/managed-task/role-prompt.ts',
     'packages/coding/src/agents/worker-role-prompt.ts',
     'packages/coding/src/task-engine/runner-driven.ts',
-    'packages/coding/src/prompts/builder.ts',
+    'packages/coding/src/prompts/capability-sections.ts',
     'packages/coding/src/agent-runtime/script/model.ts',
     'packages/coding/src/agent-runtime/script/pilot.ts',
     'packages/coding/src/work-mode.ts',
@@ -138,12 +135,16 @@ it('inventories first serialized requests for isolated content and real Runtime 
     sourceHashes: Record<string, string>;
     rows: Array<{ cell: string; fixturePaths: { workspace: string }; wire: ReturnType<typeof metric> }>;
   } : undefined;
-  if (previous) expect(sourceHashes).toEqual(previous.sourceHashes);
+  // Same-source runs prove determinism. A refactor changes these sources by
+  // design, so KODAX_WIRE_COMPARE_REFACTOR=1 compares only the request bodies.
+  if (previous && process.env.KODAX_WIRE_COMPARE_REFACTOR !== '1') expect(sourceHashes).toEqual(previous.sourceHashes);
   vi.stubEnv('KODAX_WIRE_FIXTURE_KEY', 'synthetic-key');
   try {
     for (const protocol of ['openai', 'anthropic'] as const) {
-      for (const mode of ['sa', 'ama', 'agent', 'script'] as const) {
+      for (const mode of ['direct', 'ama', 'agent', 'script'] as const) {
         for (const scenario of scenarios) {
+          // The Runtime Host always runs the AMA Worker; a root without agentMode has no Host cell.
+          if (mode === 'direct' && scenario === 'runtime-host') continue;
           const cell = `${protocol}-${mode}-${scenario}`;
           const directory = path.join(root, cell);
           const workspace = path.join(directory, 'workspace');
@@ -201,7 +202,7 @@ it('inventories first serialized requests for isolated content and real Runtime 
               instance.stream = (messages, tools, system, reasoning, options, signal) => {
                 const script = wrappers.map(agent => scriptModel.getScriptModelContracts(agent, tools)).find(Boolean);
                 const projected = process.env.KODAX_COMPACT_CONTRACT_CAPTURE === 'restructured'
-                  ? restructuredContractInput({ messages, tools, system }, mode !== 'sa', script)
+                  ? restructuredContractInput({ messages, tools, system }, mode !== 'direct', script)
                   : compactContractInput({ messages, tools, system }, mode === 'ama' || mode === 'agent');
                 return stream([...projected.messages], [...projected.tools], projected.system, reasoning, options, signal);
               };
@@ -215,13 +216,13 @@ it('inventories first serialized requests for isolated content and real Runtime 
                 const plane = createCliClientPlane(toKodaXProductClient(runtime));
                 const session = await runtime.sessions.create({ title: 'Wire inventory', surface: 'repl', projectPath: workspace });
                 runtimeSessionId = session.id;
-                await runtime.sessions.updateSettings(session.id, { agentMode: mode === 'sa' ? 'sa' : 'ama',
+                await runtime.sessions.updateSettings(session.id, { agentMode: 'ama',
                   ...(mode === 'script' || mode === 'agent' ? { workMode: mode } : {}), executionCwd: workspace, permissionMode: 'full-access' });
                 const result = await runClientPlaneRound({ plane, sessionId: session.id, prompt: TASK });
                 expect(result.success).toBe(true);
               } finally { await runtime.close(); }
             } else {
-              const options: KodaXOptions = { provider, agentMode: mode === 'sa' ? 'sa' : 'ama', maxIter: 1, reasoningMode: 'off', lsp: false,
+              const options: KodaXOptions = { provider, ...(mode === 'direct' ? {} : { agentMode: 'ama' as const }), maxIter: 1, reasoningMode: 'off', lsp: false,
                 abortSignal: captureController.signal,
                 ...(mode === 'agent' ? { workMode: 'agent' as const } : {}),
                 ...(mode === 'script' ? { workMode: 'script' as const, session: {
@@ -230,7 +231,7 @@ it('inventories first serialized requests for isolated content and real Runtime 
                 ...(scenario === 'catalogs' ? { extensionRuntime: extension } : {}),
                 context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt,
                   skillRegistry: new SkillRegistry(workspace), repoIntelligenceMode: 'off' } };
-              const result = await (mode === 'sa' ? runKodaX : runManagedTask)(options, TASK);
+              const result = await (mode === 'direct' ? runKodaX : runManagedTask)(options, TASK);
               expect(result.success).toBe(true);
             }
             captureController.abort();
@@ -241,7 +242,7 @@ it('inventories first serialized requests for isolated content and real Runtime 
             const { messages = [], tools = [], system, ...controls } = body;
             const systemMessages = messages.filter(message => message.role === 'system' || message.role === 'developer');
             const conversation = messages.filter(message => message.role !== 'system' && message.role !== 'developer');
-            if (!process.env.KODAX_COMPACT_CONTRACT_CAPTURE && mode !== 'sa') {
+            if (!process.env.KODAX_COMPACT_CONTRACT_CAPTURE && mode !== 'direct') {
               expect(JSON.stringify(system ?? systemMessages), `${cell}: default assembled contract`).toContain('TRUST AND SCOPE');
             }
             if (scenario === 'agents' || scenario === 'catalogs') expect(raw).toContain('WIRE_AGENTS_FIXTURE');
@@ -297,7 +298,7 @@ it('inventories first serialized requests for isolated content and real Runtime 
         }
       }
     }
-    expect(rows).toHaveLength(32);
+    expect(rows).toHaveLength(30);
     process.stdout.write(`Wire inventory saved: ${path.join(root, 'inventory.json')}\n`);
   } finally {
     scriptSpy.mockRestore();

@@ -1136,6 +1136,7 @@ export interface ClientSessionSettings {
   readonly thinking?: boolean;
   readonly reasoningMode?: 'off' | 'auto' | 'quick' | 'balanced' | 'deep';
   readonly permissionMode?: 'plan' | 'accept-edits' | 'auto' | 'full-access';
+  /** `sa` and `amaw` are deprecated inputs; the Host runs AMA for both. */
   readonly agentMode?: 'ama' | 'sa' | 'amaw';
   readonly workMode?: 'agent' | 'coding' | 'script';
   readonly autoModeClassifierModel?: string;

@@ -24,15 +24,13 @@ import type { RuntimeSessionState } from '../../../agent-runtime/runtime-session
 import { markRuntimeSelectionChanged } from '../../../agent-runtime/runtime-session-state.js';
 import { withEffectivePermissionContext } from '../../../prompts/effective-permissions.js';
 import { getRegistryManagedAgentContext } from '../../../tools/model-tool-definition.js';
-import { canProjectManagedToolContracts, projectManagedToolContracts } from '../../../tools/managed-tool-contract.js';
+import { usesManagedToolView } from '../../../tools/managed-tool-contract.js';
 import { projectToolSearchResultParameters } from '../../../tools/tool-search-model-result.js';
 import { projectManagedToolActivation, type ManagedToolActivationFacts } from '../../../tools/managed-tool-activation.js';
-import { projectManagedSystemContract } from '../../../prompts/managed-system-contract.js';
-import { projectManagedContextContract } from '../../../prompts/managed-context-contract.js';
 import { getRegisteredToolDefinition } from '../../../tools/registry.js';
 import { filterModelToolAliases } from '../../../agent-runtime/tool-resolution.js';
 
-import { canReadWithModelTools, getScriptModelContracts, projectScriptModelTools } from '../../../agent-runtime/script/model.js';
+import { canReadWithModelTools, getScriptModelContracts, projectScriptModelTools, withScriptModeGuidance } from '../../../agent-runtime/script/model.js';
 import type {
   KodaXContentBlock,
   KodaXEphemeralSuffix,
@@ -93,6 +91,7 @@ import {
   telemetryRecovery,
 } from '../../../resilience/index.js';
 import { providerResilienceConfigFromTimeouts } from '../../../timeouts.js';
+import { attachProviderFailure, buildProviderExecutionFailure } from '../../../execution-failure.js';
 import { waitForRetryDelay } from '../../../retry-handler.js';
 import {
   createCostTracker,
@@ -117,6 +116,7 @@ import {
 import { mapLegacyReasoningModeToEffortIntent, reconcileAssistantContent, type KodaXAssistantBlock, type KodaXAnthropicHistory } from '@kodax-ai/llm';
 import type {
   KodaXEvents,
+  KodaXExecutionFailure,
   KodaXOptions,
   KodaXPromptCacheDiagnosticEvent,
   KodaXReasoningMode,
@@ -210,6 +210,42 @@ function throwIfManagedProviderAborted(
   const error = managedProviderAbortError();
   attachRunnerRecoveryTranscript(error, recoveryTranscript);
   throw error;
+}
+
+/**
+ * A Stop ends the provider call even when the provider never observes its
+ * abort signal; a lost body cancellation would otherwise hold the Run until
+ * the HTTP body timeout and report a network failure. The abandoned call is
+ * asked to cancel again and its late outcome is recorded, never raised.
+ */
+async function raceManagedProviderStop<T>(
+  operation: Promise<T>,
+  signal: AbortSignal | undefined,
+  abandon: () => void,
+): Promise<T> {
+  if (!signal) return operation;
+  let onAbort: (() => void) | undefined;
+  let grace: ReturnType<typeof setTimeout> | undefined;
+  const stopped = new Promise<never>((_resolve, reject) => {
+    // A provider that honours the signal settles first and keeps its own cause.
+    onAbort = () => { grace = setTimeout(() => reject(managedProviderAbortError()), 0); };
+    if (signal.aborted) onAbort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([operation, stopped]);
+  } catch (error: unknown) {
+    if (signal.aborted) {
+      abandon();
+      operation.catch((late: unknown) => emitResilienceDebug('[resilience:abandoned-after-stop]', {
+        error: late instanceof Error ? late.name : typeof late,
+      }));
+    }
+    throw error;
+  } finally {
+    clearTimeout(grace);
+    if (onAbort) signal.removeEventListener('abort', onAbort);
+  }
 }
 
 function rethrowObservedManagedProviderAbort(
@@ -426,7 +462,7 @@ export function buildRunnerLlmAdapter(
     // post-compact-file-content, ...] after compaction+inject, and after a
     // handoff `replaceSystemMessage` only swaps [0] — the rest stay leading
     // system entries. Keeping only the first one would strand agent role
-    // instructions (Scout/Planner/Generator/Evaluator) behind the summary and
+    // instructions (the Worker role prompt) behind the summary and
     // still leak secondary system messages into the transcript, which the
     // provider layer now merges but which would otherwise confuse strict
     // proxies that reject any non-leading system message.
@@ -532,14 +568,13 @@ export function buildRunnerLlmAdapter(
 
     const managedContext = getRegistryManagedAgentContext(agent);
     const registryManaged = managedContext !== undefined;
+    const managedToolView = usesManagedToolView(agent, options.context);
     let wireTools = (registryManaged ? filterModelToolAliases(agent.tools ?? []) : agent.tools ?? [])
       .map(t => ({ name: t.name, description: t.description, input_schema: t.input_schema, ...(t.strict ? { strict: t.strict } : {}), ...(t.grammar ? { grammar: structuredClone(t.grammar) } : {}) }));
 
     // Presentation only: keep the execution inventory and AMA capability teaching intact.
-    // Unknown extension inventories and explicit SDK/child contracts retain native search.
-    if (managedContext
-      && ![managedContext, options.context].some(context =>
-        context?.currentAgentId || context?.agentProfile || context?.toolVisibilityPolicy)
+    // Unknown extension inventories and child contracts retain native search.
+    if (managedContext && managedToolView
       && [managedContext.extensionRuntime, options.extensionRuntime].every(runtime =>
         !runtime || runtime.listCapabilityProviders?.().every(provider => typeof provider.search !== 'function') === true)
       && ['code_search', 'grep', 'glob', 'read', 'tool_search', 'tool_call'].every(name =>
@@ -548,21 +583,20 @@ export function buildRunnerLlmAdapter(
       wireTools = wireTools.filter(tool => tool.name !== 'code_search');
     }
 
-    wireTools = [...projectScriptModelTools(agent, projectManagedToolContracts(agent, wireTools, options.context))];
+    wireTools = [...projectScriptModelTools(agent, wireTools)];
     const assembledTools = wireTools;
     const activateTools = (source: readonly KodaXMessage[]) =>
       [...projectManagedToolActivation(agent, assembledTools, options.context, source, getToolActivationFacts?.())];
     wireTools = activateTools(transcript);
     const projectSearchResults = (source: readonly KodaXMessage[], tools: readonly KodaXToolDefinition[] = wireTools): KodaXMessage[] => {
-      const projected = projectManagedContextContract(agent, source, options.context);
-      if (!canProjectManagedToolContracts(agent, options.context)
-        || getRegisteredToolDefinition('tool_search')?.source.kind !== 'builtin') return projected;
+      if (!managedToolView
+        || getRegisteredToolDefinition('tool_search')?.source.kind !== 'builtin') return [...source];
       const native = new Set(tools.map(tool => tool.name));
       const leaves = getScriptModelContracts(agent, tools)?.leaves.filter(tool => !native.has(tool.name)) ?? [];
-      return projectToolSearchResultParameters(projected, [...tools, ...leaves]);
+      return projectToolSearchResultParameters(source, [...tools, ...leaves]);
     };
     const buildWireSystem = (source: string, tools: readonly KodaXToolDefinition[]) =>
-      withEffectivePermissionContext(projectManagedSystemContract(agent, tools, source, options.context), options.context);
+      withEffectivePermissionContext(withScriptModeGuidance(agent, tools, source), options.context);
 
     // Built-in Worker/Script roots inherit the current Session effort.
     // Only an explicitly declared specialist profile adds a role constraint.
@@ -631,7 +665,7 @@ export function buildRunnerLlmAdapter(
       usage?: KodaXTokenUsage;
     };
     if (overrideStream) {
-      emitEffectiveTaskConfig(options, { agentMode: options.agentMode ?? 'ama',
+      emitEffectiveTaskConfig(options, { agentMode: 'ama',
         toolScope: (agent.tools ?? []).map(tool => tool.name), modelToolScope: wireTools.map(tool => tool.name) });
       system = buildWireSystem(baseSystem, wireTools);
       streamResult = await overrideStream(
@@ -659,7 +693,7 @@ export function buildRunnerLlmAdapter(
       // Fit conservatively against the existing full instructions, then project
       // using the actual disclosed contracts. No iterative fitting or tool loss.
       const providerName = options.provider ?? provider.name ?? 'anthropic';
-      emitEffectiveTaskConfig(options, { agentMode: options.agentMode ?? 'ama',
+      emitEffectiveTaskConfig(options, { agentMode: 'ama',
         toolScope: (agent.tools ?? []).map(tool => tool.name), modelToolScope: wireTools.map(tool => tool.name) });
       const reasoningCache = getProviderReasoningCacheOptions(provider, activeModel ?? provider.getModel(), options.context?.configHome);
       const rejectedEfforts = reasoningCache.rejectedReasoningEfforts ?? [];
@@ -815,7 +849,7 @@ export function buildRunnerLlmAdapter(
       // Clean incomplete tool calls and validate tool history before
       // every provider call (CAP-002). Both helpers come from
       // `agent-runtime/history-cleanup.ts` and are shared with the
-      // SA-mode substrate (see catch-terminals.ts:runCatchCleanup).
+      // direct-engine substrate (see catch-terminals.ts:runCatchCleanup).
       providerMessages = cleanupIncompleteToolCalls(providerMessages);
       providerMessages = validateAndFixToolHistory(providerMessages);
       providerMessages = options.context?.toolResultRecovery?.project(providerMessages) ?? providerMessages;
@@ -891,6 +925,13 @@ export function buildRunnerLlmAdapter(
       }
       let attempt = 0;
       let textRecoveryRetry = false;
+      const requestStartedAt = Date.now();
+      const markFinalProviderFailure = (error: Error, errorClass: KodaXExecutionFailure['errorClass'],
+        requestPhase: KodaXExecutionFailure['requestPhase'], serverRetryAfterMs?: number): void => {
+        attachProviderFailure(error, buildProviderExecutionFailure({ error, errorClass, requestPhase,
+          provider: providerName, model: activeModel ?? provider.getModel(), startedAt: requestStartedAt,
+          ...(serverRetryAfterMs === undefined ? {} : { serverRetryAfterMs }) }));
+      };
       let raw!: Awaited<ReturnType<typeof provider.stream>>;
       // FEATURE_085 parity for the Scout/Runner path: mirror the main
       // agent loop's max_tokens escalation (cd213e4). When a capped-budget
@@ -1017,7 +1058,7 @@ export function buildRunnerLlmAdapter(
         try {
           emitContextBudgetSnapshot(providerMessages, requestMaxOutputTokens);
           let cacheDiagnostic = beginPromptCacheDiagnostic(providerMessages, attempt);
-          raw = await withProviderRequestCredential(
+          raw = await raceManagedProviderStop(withProviderRequestCredential(
             provider,
             'primary',
             retrySignal,
@@ -1033,7 +1074,7 @@ export function buildRunnerLlmAdapter(
                 ...(textRecoveryRetry ? { singleAttempt: true } : {}), signal: credentialSignal },
               credentialSignal,
             ),
-          );
+          ), options.abortSignal, () => retryTimeoutController.abort(new Error('Run stopped')));
           completePromptCacheDiagnostic(cacheDiagnostic, raw.usage);
           // max_tokens escalation: if the capped budget hit the cap and
           // we haven't yet escalated this adapter call, stage
@@ -1122,7 +1163,12 @@ export function buildRunnerLlmAdapter(
           break;
         } catch (rawError) {
           let error = rawError instanceof Error ? rawError : new Error(String(rawError));
-          if (textRecoveryRetry) { attachRunnerRecoveryTranscript(error, recoveryTranscript); throw error; }
+          if (textRecoveryRetry) {
+            const classified = classifyResilienceError(error, boundaryTracker.inferFailureStage());
+            markFinalProviderFailure(error, classified.errorClass, classified.failureStage);
+            attachRunnerRecoveryTranscript(error, recoveryTranscript);
+            throw error;
+          }
           // Runner owns canonical history and bounded recovery retries.
           if (error instanceof KodaXContextOverflowError) {
             error.requestInputReliefTokens = Math.max(0, canonicalInputEstimate - estimateTokens(providerMessages));
@@ -1315,6 +1361,7 @@ export function buildRunnerLlmAdapter(
             // instead of `[]`. Non-enumerable so JSON-serializing telemetry
             // does not dump conversation history into logs. The outer catch
             // uses Array.isArray as a guard.
+            markFinalProviderFailure(error, decision.reasonCode, decision.failureStage, decision.serverRetryAfterMs);
             attachRunnerRecoveryTranscript(error, recoveryTranscript);
             throw error;
           }
@@ -1348,6 +1395,7 @@ export function buildRunnerLlmAdapter(
           'Provider returned no user-visible text or tool calls after recovery attempts; refusing to commit an empty assistant turn.',
           providerName,
         );
+        markFinalProviderFailure(error, 'incomplete_stream', 'before_first_delta');
         attachRunnerRecoveryTranscript(error, recoveryTranscript);
         throw error;
       }
@@ -1439,7 +1487,7 @@ export function buildRunnerLlmAdapter(
             providerMessages,
             attempt + l5Retries,
           );
-          raw = await withProviderRequestCredential(
+          raw = await raceManagedProviderStop(withProviderRequestCredential(
             provider,
             'primary',
             l5Signal,
@@ -1489,7 +1537,7 @@ export function buildRunnerLlmAdapter(
               },
               credentialSignal,
             ),
-          );
+          ), l5Signal, () => undefined);
           completePromptCacheDiagnostic(cacheDiagnostic, raw.usage);
         } catch (error: unknown) {
           rethrowObservedManagedProviderAbort(

@@ -246,7 +246,7 @@ it('retains interrupted same-Run steer output after the delivered canonical inpu
 
 it('redirect accepts the new input first, cancels the old Run, and keeps the requested follow-up', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
   await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(1);
   await second.inputs.submit({ sessionId: session.id, inputId: 'plain-queued', text: 'Plain queued note.', delivery: 'after_turn' });
@@ -273,7 +273,7 @@ it('redirect accepts the new input first, cancels the old Run, and keeps the req
 
 it('continues the redirect follow-up when cancellation actually interrupts the old Run', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
   await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(1);
   const accepted = await second.inputs.submit({

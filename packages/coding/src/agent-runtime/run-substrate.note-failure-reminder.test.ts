@@ -29,7 +29,7 @@ import { runSubstrate } from './run-substrate.js';
 
 const PROVIDER_NAME = 'note-failure-reminder-test';
 const API_KEY_ENV = 'NOTE_FAILURE_REMINDER_TEST_API_KEY';
-const REMINDER = staticText('t13.prompts/note-failure-reminder.0');
+const REMINDER = staticText('note-memory.failure-reminder');
 
 /** First turn reads `readPath`; every later turn answers without tools. */
 class ReadThenAnswerProvider extends KodaXBaseProvider {

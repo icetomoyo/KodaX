@@ -10,7 +10,6 @@ import { KodaXBaseProvider, registerModelProvider, getProvider, getCostRate, cal
 import { observeProviderOperation, runWithAdditionalProviderRequestObserver, type ProviderRequestObservation } from '../packages/llm/src/provider-request-observation.js';
 import { executeChildAgents } from '../packages/coding/src/child-executor.js';
 import { getBuiltinToolDefinition } from '../packages/coding/src/tools/index.js';
-import { projectManagedToolContract } from '../packages/coding/src/tools/managed-tool-contract.js';
 import { FirstTurnBudget, inputHash } from './first-turn-eval-support.js';
 import { settleComplexAttempt } from './first-turn-complex-budget.js';
 import { NEXT_STAGE_ROUTES, type NextStageRoute } from './token-efficiency-next-stage-fixtures.js';
@@ -34,8 +33,8 @@ it('runs a bounded builtin readonly child through actual production assembly', a
   }, text);
   const save = (name: string, value: unknown) => fs.writeFile(path.join(root, name), redact(JSON.stringify(value, null, 2)), { flag: 'wx' });
   const sources = ['tests/token-efficiency-child-smoke.eval.ts', 'packages/coding/src/child-executor.ts',
-    'packages/coding/src/agent-runtime/run-substrate.ts', 'packages/coding/src/prompts/compact-child-contract.ts',
-    'packages/coding/src/prompts/child-contract-scope.ts', 'packages/coding/src/prompts/child-system-contract.ts'];
+    'packages/coding/src/agent-runtime/run-substrate.ts', 'packages/coding/src/tools/tool-definitions.ts',
+    'packages/coding/src/prompts/child-system-contract.ts'];
   const hashes = async () => Object.fromEntries(await Promise.all(sources.map(async file => [file, inputHash(await fs.readFile(file, 'utf8'))])));
   const sourceHashes = await hashes(), rate = getCostRate(route, config.model)!;
   const objective = '请只读审查配置解析器的行为是否符合项目约定，找出会影响用户配置生效的问题，并向父 Agent 报告具体依据和验证范围。';
@@ -65,7 +64,7 @@ it('runs a bounded builtin readonly child through actual production assembly', a
     async stream(messages: KodaXMessage[], tools: KodaXToolDefinition[], system: string, reasoning?: boolean | KodaXReasoningRequest, options?: KodaXProviderStreamOptions, signal?: AbortSignal): Promise<KodaXStreamResult> {
       const index = calls++;
       if (index >= limits.calls || abort.signal.aborted || inputHash(sourceHashes) !== inputHash(await hashes())) { abort.abort(); throw new Error('Child smoke stopped before dispatch'); }
-      expect(tools.find(tool => tool.name === 'glob')?.description).toBe(projectManagedToolContract(getBuiltinToolDefinition('glob')!).description);
+      expect(tools.find(tool => tool.name === 'glob')?.description).toBe(getBuiltinToolDefinition('glob')!.description);
       expect(system).toContain('Current task scope: read-only');
       const input = { system, tools: tools.map(({ name, description, input_schema }) => ({ name, description, input_schema })), messages };
       await save(`call-${index}.input.json`, { ...input, inputHash: inputHash(input), reasoning, options });

@@ -125,6 +125,21 @@ describe('repo overview baseline cache', () => {
     expect(withoutAnalysisTime(combinedScope)).toBe(withoutAnalysisTime(sharedIdentityRemoved));
   }, 15000);
 
+  it('flags workspace-root risk only for root source or config, not root docs', async () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'kodax-repo-root-risk-'));
+    initGitRepo(tempDir);
+    createWorkspaceFixture(tempDir);
+    writeFileSync(join(tempDir, 'CHANGELOG.md'), '# Changelog\n');
+    commitAll(tempDir, 'initial');
+    const context = { executionCwd: tempDir, gitRoot: tempDir };
+    writeFileSync(join(tempDir, 'CHANGELOG.md'), '# Changelog\n- entry\n');
+    const docsOnly = await analyzeChangedScope(context);
+    expect(docsOnly.riskHints.some(hint => hint.startsWith('Workspace-root'))).toBe(false);
+    writeFileSync(join(tempDir, 'package.json'), JSON.stringify({ name: 'workspace-root', private: true }));
+    const withConfig = await analyzeChangedScope(context);
+    expect(withConfig.riskHints).toContain('Workspace-root source or config changed; its effects can reach every package.');
+  }, 15000);
+
   it('keeps the overview self-contained when a non-Git workspace has no change scope', async () => {
     tempDir = mkdtempSync(join(tmpdir(), 'kodax-repo-context-non-git-'));
     createWorkspaceFixture(tempDir);

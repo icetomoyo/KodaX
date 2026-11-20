@@ -274,7 +274,7 @@ it('reopens after deleting the child and removes its private history when the pa
 
 it('waits for the completed run display checkpoint before opening a transcript boundary', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   let release = () => {};
   const blocked = new Promise<void>(resolve => { release = resolve; });
   const original = FileSessionStorage.prototype.mutateUiHistory;
@@ -310,7 +310,7 @@ it('continues a legacy pathless session without claiming its shared unknown buck
   const neighborPath = path.join(homeDir, '.kodax', 'sessions', '_unknown', 'legacy-neighbor.jsonl');
   const neighbor = await readFile(neighborPath, 'utf8');
   await runtime.sessions.updateSettings(sessionId, {
-    agentMode: 'sa', permissionMode: 'full-access', executionCwd: homeDir,
+    permissionMode: 'full-access', executionCwd: homeDir,
   });
   const accepted = await first.inputs.submit({ sessionId, inputId: 'legacy-round', text: 'Ask round 1' });
   const result = await runtime.runs.await(accepted.runId!);
@@ -331,7 +331,7 @@ it('continues a legacy pathless session without claiming its shared unknown buck
 
 it('labels branches and moves the head with both clients seeing the same lineage', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   await runRound(session.id, 1);
   await runRound(session.id, 2);
 
@@ -385,7 +385,7 @@ it('labels branches and moves the head with both clients seeing the same lineage
 
 it('rewinds the head through the Host without dropping entries', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
-  await runtime.sessions.updateSettings(session.id, { agentMode: 'sa', permissionMode: 'full-access' });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   await runRound(session.id, 1);
   await runRound(session.id, 2);
 

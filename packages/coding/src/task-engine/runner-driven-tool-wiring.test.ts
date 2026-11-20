@@ -267,6 +267,20 @@ describe('FEATURE_168 — repo-intel pull tools (FEATURE_161 v0.7.41 wiring fix)
       expect(names, `worker missing ${pullTool}`).toContain(pullTool);
     }
   });
+
+  it('worker drops repo-intel tools and their bridge access when repository intelligence is off', async () => {
+    const ctx = { ...makeCtx(), parentAgentConfig: { provider: 'test', repoIntelligenceMode: 'off' as const } };
+    const tools = buildRunnerAgentChain(ctx).worker.tools ?? [];
+    const names = tools.map((tool) => tool.name);
+    for (const pullTool of [...PULL_TOOLS, 'semantic_lookup']) {
+      expect(names, `worker should hide ${pullTool}`).not.toContain(pullTool);
+    }
+    expect(names).toContain('read');
+    const search = tools.find((tool) => tool.name === 'tool_search');
+    const describeTool = tools.find((tool) => tool.name === 'tool_describe');
+    expect((await search?.execute({ query: 'select:relationship_scan' }))?.content).not.toContain('<function>');
+    expect((await describeTool?.execute({ name: 'relationship_scan' }))?.content).not.toContain('<function>');
+  });
 });
 
 describe('FEATURE_168 — web/search tools (FEATURE_168 Tier D wiring fix)', () => {

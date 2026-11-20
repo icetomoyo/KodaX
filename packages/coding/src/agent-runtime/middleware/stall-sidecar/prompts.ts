@@ -32,15 +32,16 @@ import { staticText } from '../../../prompts/static-text.js';
 
 import type { KodaXMessage, KodaXToolDefinition } from '@kodax-ai/llm';
 
+/** Main-agent-facing frame for a blocked repeat; the nudge text follows it. */
+export const STALL_NUDGE_FRAME = '[Stall check] This call did not run, because it repeats earlier calls without new progress. Suggested next step:';
+
 /**
  * Sidecar SYSTEM_PROMPT — pinned by the FEATURE_178 eval. Establishes
  * (a) role separation (sidecar is reading, not authoring), (b) the
  * decision criteria (isStuck=true / isStuck=false), and (c) the output
  * format (single forced tool call, no narration).
  */
-export const SIDECAR_SYSTEM_PROMPT: string = [
-  staticText("t12i.agent-runtime/middleware/stall-sidecar/prompts.block.0"),
-].join('\n');
+export const SIDECAR_SYSTEM_PROMPT: string = staticText("stall-sidecar.system");
 
 /**
  * `report_stall_judgment` tool definition — pinned by the FEATURE_178
@@ -67,7 +68,7 @@ export const REPORT_TOOL: KodaXToolDefinition = {
       suggestedTool: {
         type: 'string',
         description:
-          staticText("t12.agent-runtime/middleware/stall-sidecar/prompts.3"),
+          staticText("stall-sidecar.schema.next-tool"),
       },
       nudge: {
         type: 'string',

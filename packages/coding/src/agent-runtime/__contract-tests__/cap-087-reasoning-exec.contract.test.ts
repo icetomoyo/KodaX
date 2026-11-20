@@ -7,8 +7,8 @@
  * - CAP-REASONING-EXEC-001: effectiveOptions carries repo intel context
  *   + policy hints (FUNCTION-LEVEL but requires the env-skipping
  *   `repoIntelligenceMode: 'off'` shortcut to avoid filesystem touches.)
- * - CAP-REASONING-EXEC-002: systemPromptOverride bypasses
- *   buildSystemPrompt (FUNCTION-LEVEL — fully active here).
+ * - CAP-REASONING-EXEC-002: systemPromptOverride is the leaf's exact
+ *   system prompt (FUNCTION-LEVEL — fully active here).
  * - CAP-REASONING-EXEC-003: promptOverlay joins caller + plan overlays
  *   in order, separated by `\n\n` (FUNCTION-LEVEL — fully active here).
  *
@@ -48,7 +48,7 @@ function makeMinimalPlan(overrides?: Partial<ReasoningPlan>): ReasoningPlan {
 }
 
 describe('CAP-087: per-turn reasoning execution state builder contract', () => {
-  it('CAP-REASONING-EXEC-002: when options.context.systemPromptOverride is set, that exact string is used as systemPrompt — buildSystemPrompt is NOT invoked', async () => {
+  it('CAP-REASONING-EXEC-002: when options.context.systemPromptOverride is set, that exact string is used as systemPrompt', async () => {
     const override = '__test_system_prompt_override__';
     const options = {
       provider: 'anthropic',

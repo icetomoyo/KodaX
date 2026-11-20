@@ -4,18 +4,14 @@ import { KodaXBaseProvider, registerModelProvider, type KodaXMessage, type KodaX
 import type { KodaXToolExecutionContext } from '../../../types.js';
 import { buildRunnerAgentChain } from './agent-chain.js';
 import { buildRunnerLlmAdapter } from './llm-adapter.js';
-import { markOrdinaryRootToolContract } from '../../../tools/managed-tool-contract.js';
 import type { VisualObservationOwner } from '@kodax-ai/agent/media';
 import type { ManagedToolActivationFacts } from '../../../tools/managed-tool-activation.js';
 import { getRegisteredToolDefinition, registerTool } from '../../../tools/registry.js';
 import type { ContextTokenSnapshotRef } from './compaction.js';
 import { createUserInputDegradationCache, cleanupUserInputDegradationCache } from '../../../capacity-recovery.js';
 
-const makeWorker = (context: Partial<KodaXToolExecutionContext> = {}) => {
-  const agent = buildRunnerAgentChain({ backups: new Map(), ...context }).worker;
-  markOrdinaryRootToolContract(agent);
-  return agent;
-};
+const makeWorker = (context: Partial<KodaXToolExecutionContext> = {}) =>
+  buildRunnerAgentChain({ backups: new Map(), ...context }).worker;
 async function request(agent: Agent, messages: KodaXMessage[] = [], facts?: ManagedToolActivationFacts) {
   let sent: readonly KodaXToolDefinition[] = [];
   await buildRunnerLlmAdapter({ provider: 'anthropic' }, async (_messages, tools) => {
@@ -100,10 +96,8 @@ it('does not advertise Plan exit in a known execution mode and restores it when 
   expect((await request(worker)).some(tool => tool.name === 'exit_plan_mode')).toBe(true);
 });
 
-it.each(['sdk', 'child', 'profile'] as const)('preserves native contracts for %s callers', async kind => {
-  const context = { backups: new Map<string, string>(), ...(kind === 'child' ? { currentAgentId: '/root/child' }
-    : kind === 'profile' ? { agentProfile: { id: 'specialist' } } : {}) };
-  const worker = kind === 'sdk' ? buildRunnerAgentChain(context).worker : makeWorker(context);
+it('preserves native contracts for a child', async () => {
+  const worker = makeWorker({ currentAgentId: '/root/child' });
   const native = worker.tools!.find(tool => tool.name === 'worktree_create')!;
   expect(native).toBeDefined();
   const sent = await request(worker, [], { visualSnapshotEmpty: true });

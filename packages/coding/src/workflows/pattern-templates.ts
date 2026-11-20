@@ -24,17 +24,17 @@ export interface WorkflowPatternTemplate {
   readonly source: string;
 }
 
-const FAN_OUT_AND_SYNTHESIZE_SOURCE = staticText("t11.workflows/pattern-templates.0").trim();
+const FAN_OUT_AND_SYNTHESIZE_SOURCE = staticText("workflow-template.fan-out-and-synthesize");
 
-const ADVERSARIAL_VERIFICATION_SOURCE = staticText("t11.workflows/pattern-templates.1").trim();
+const ADVERSARIAL_VERIFICATION_SOURCE = staticText("workflow-template.adversarial-verification");
 
-const TOURNAMENT_SOURCE = staticText("t11.workflows/pattern-templates.2").trim();
+const TOURNAMENT_SOURCE = staticText("workflow-template.tournament");
 
-const LOOP_UNTIL_DONE_SOURCE = staticText("t11.workflows/pattern-templates.3").trim();
+const LOOP_UNTIL_DONE_SOURCE = staticText("workflow-template.loop-until-done");
 
-const GENERATE_AND_FILTER_SOURCE = staticText("t11.workflows/pattern-templates.4").trim();
+const GENERATE_AND_FILTER_SOURCE = staticText("workflow-template.generate-and-filter");
 
-const CLASSIFY_AND_ACT_SOURCE = staticText("t11.workflows/pattern-templates.5").trim();
+const CLASSIFY_AND_ACT_SOURCE = staticText("workflow-template.classify-and-act");
 
 function manifest(
   name: string,

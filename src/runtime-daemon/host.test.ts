@@ -603,6 +603,40 @@ describe("runtime daemon host", () => {
     }
   });
 
+  it("stops and releases ownership when Runtime close leaves only fenced Actor trees for restart recovery", async () => {
+    const paths = resolveRuntimeDaemonPaths(tempHome(), "fenced-actor-stop");
+    const runtime = makeRuntime();
+    // Shape of an Actor controller that stays fenced: it cannot release its
+    // durable owner, while the rest of the Runtime has closed.
+    const fenced = () => Object.assign(new Error("Actor shutdown could not be durably confirmed before its deadline."), {
+      name: "AgentShutdownPersistenceError", code: "actor_shutdown_not_persisted",
+    });
+    runtime.close = async () => {
+      runtime.closed = true;
+      throw new AggregateError([fenced(), fenced()], "Runtime cleanup failed.");
+    };
+    const lock = tryAcquireRuntimeDaemonLock(paths, {
+      runtimeId: runtime.identity.runtimeId,
+      pid: process.pid,
+      createdAt: runtime.identity.startedAt,
+    });
+    if (!lock) throw new Error("Expected daemon lock for fenced stop test.");
+    const host = await startRuntimeDaemonHost({ runtime, paths, endpoint: await makeTestEndpoint(), lock });
+    cleanupTasks.push(() => host.close());
+    const client = await createRuntimeDaemonSocketClientTransport(host.endpoint);
+    cleanupTasks.push(async () => {
+      await client.close?.();
+    });
+    await client.request("initialize", { profile: "default", token: readRuntimeDaemonToken(paths) });
+
+    await expect(client.request("daemon.stop")).resolves.toEqual({ ok: true });
+    await host.closed;
+    await waitForHostStateRemoval(paths);
+
+    expect(readRuntimeDaemonLockOwner(paths.lockFile)).toBeUndefined();
+    expect(fs.readFileSync(paths.logFile, "utf8")).toContain("restart recovery");
+  });
+
   it("counts initialized logical clients instead of internal sockets and stops on the real idle shutdown", async () => {
     const paths = resolveRuntimeDaemonPaths(tempHome(), "default");
     const runtime = makeRuntime();

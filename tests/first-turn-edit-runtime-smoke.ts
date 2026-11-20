@@ -95,7 +95,7 @@ export async function runEditRuntimeSmoke(route: EditRoute,
       prompt: scenario === 'fixture-check'
         ? `请检验已准备的本地网页回归夹具。严格两轮：第一轮只执行 ${testCommand}；第二轮根据真实测试输出用简短中文报告。该测试会读取临时回环服务器并校验内容；不要改文件、创建计划、子agent 或重试；失败须如实报告，未验证不能称测试通过。`
         : '请修复 sum.js：add 用加法，multiply 用乘法，保留注释和格式。严格按四个依赖轮完成：第一轮 read sum.js；第二轮用一次 edit 批量精确替换两个实现；第三轮只执行 node --test sum.test.js；第四轮根据实际测试结果用简短中文报告。每轮只调用一个工具，等结果返回再下一步。不要创建计划、子agent、重试或修改测试；失败时如实报告，未验证不能称测试通过。',
-      options: { provider: providerName, agentMode: executionMode === 'managed_task' ? 'ama' : 'sa', maxIter: maxCalls, reasoningMode: 'off', maxOutputTokens: EDIT_LIMITS.maxOutputTokens,
+      options: { provider: providerName, ...(executionMode === 'managed_task' ? { agentMode: 'ama' as const } : {}), maxIter: maxCalls, reasoningMode: 'off', maxOutputTokens: EDIT_LIMITS.maxOutputTokens,
         lsp: false, disablePromptCache: true, abortSignal: controller.signal,
         context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt: '', skillRegistry: new SkillRegistry(workspace), repoIntelligenceMode: 'off', resolveShellPermissionMode: () => 'full-access',
           ...(toolExposure === 'core' ? { toolVisibilityPolicy: (tool: { readonly name: string }) => (scenario === 'fixture-check' ? ['bash'] : ['read', 'edit', 'bash']).includes(tool.name) } : {}) },

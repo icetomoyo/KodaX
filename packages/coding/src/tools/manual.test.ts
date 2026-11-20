@@ -17,7 +17,9 @@ describe('FEATURE_218 kodax_manual tool', () => {
   it('description disambiguates KodaX from Claude Code / Codex', () => {
     const def = getBuiltinToolDefinition('kodax_manual');
     expect(def?.description).toContain('~/.kodax/config.json');
-    expect(def?.description?.toLowerCase()).toContain('codex');
+    expect(def?.description).toContain('.claude/settings.json');
+    expect(def?.description).toContain('config.toml');
+    expect(def?.description).toContain('not other-product pretraining');
   });
 
   it('returns a topic answer with title + content + related topics', async () => {

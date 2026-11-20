@@ -69,11 +69,6 @@ coverage/
 # Temp
 .tmp/
 
-# SA refactor goldens — recordings contain user prompts, file paths, and
-# model responses captured from real KodaX sessions. Treat as PII-adjacent;
-# regenerate locally with `tsx tests/sa-refactor-goldens/record-goldens.ts`.
-tests/sa-refactor-goldens/recordings/
-
 # Benchmark prompt-eval runs (FEATURE_104 v2). Run outputs are local-only,
 # never committed under any circumstance — including "baseline" snapshots.
 # The placeholder benchmark/results/.gitignore is the only tracked file

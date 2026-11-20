@@ -13,8 +13,10 @@ describe('session scratch directory', () => {
     expect(sanitizeScratchSessionId('..')).toBe('session');
   });
 
-  it('truncates long session ids', () => {
-    expect(sanitizeScratchSessionId('a'.repeat(120))).toHaveLength(80);
+  it('keeps every valid Host id distinct and truncates only longer ones', () => {
+    const sharedPrefix = 'a'.repeat(100);
+    expect(sanitizeScratchSessionId(`${sharedPrefix}-one`)).not.toBe(sanitizeScratchSessionId(`${sharedPrefix}-two`));
+    expect(sanitizeScratchSessionId('a'.repeat(200))).toHaveLength(128);
   });
 
   it('returns undefined without a concrete session id', () => {

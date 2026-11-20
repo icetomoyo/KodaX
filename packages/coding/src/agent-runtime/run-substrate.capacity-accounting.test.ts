@@ -16,7 +16,7 @@ import type {
 import { estimateTokens, countTokens } from '../tokenizer.js';
 import { createRuntimeContextBudgetSnapshot } from './context-budget.js';
 import type { RuntimeContextBudgetSnapshot } from './context-budget.js';
-import { runSubstrate } from './run-substrate.js';
+import { runTestSubstrate as runSubstrate } from './test-leaf.js';
 import type { ToolGuardrail } from '@kodax-ai/agent';
 import fs from 'node:fs/promises';
 import os from 'node:os';

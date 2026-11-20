@@ -6,8 +6,33 @@
  * This is a core workflow command for managing conversation context.
  */
 
-import type { Command } from './types.js';
+import type { Command, CommandCallbacks } from './types.js';
+import type { InteractiveContext } from '../interactive/context.js';
 import chalk from 'chalk';
+
+/** Host-backed clients keep their local message cache empty, so the Host count wins. */
+export async function currentMessageCount(
+  context: InteractiveContext,
+  callbacks: CommandCallbacks,
+): Promise<number | undefined> {
+  return callbacks.getSessionStatus
+    ? (await callbacks.getSessionStatus()).messageCount
+    : context.messages.length;
+}
+
+/** Saves the current conversation, then continues under a fresh session id. */
+export async function moveToNewSession(context: InteractiveContext, callbacks: CommandCallbacks): Promise<void> {
+  try {
+    await callbacks.saveSession();
+    console.log(chalk.dim('\n[Previous session saved]'));
+  } catch (error) {
+    // The new session can still start; the user learns the old one may be incomplete.
+    console.log(chalk.yellow(`\n[Warning: Failed to save previous session: ${error instanceof Error ? error.message : String(error)}]`));
+  }
+  await callbacks.startNewSession?.();
+  context.messages = [];
+  callbacks.clearHistory();
+}
 
 /**
  * /new command definition
@@ -18,11 +43,7 @@ export const newCommand: Command = {
   description: 'Start a new conversation session',
   usage: '/new',
   handler: async (_args, context, callbacks) => {
-    // Host-backed clients keep their local message cache empty after /load.
-    const messageCount = callbacks.getSessionStatus
-      ? (await callbacks.getSessionStatus()).messageCount
-      : context.messages.length;
-    if (messageCount === 0) {
+    if (await currentMessageCount(context, callbacks) === 0) {
       console.log(chalk.yellow('\nCurrent session is already empty.'));
       console.log(chalk.dim('You can start a new conversation directly.'));
       return;
@@ -39,19 +60,7 @@ export const newCommand: Command = {
       }
     }
 
-    // Save current session before clearing (auto-save)
-    try {
-      await callbacks.saveSession();
-      console.log(chalk.dim('\n[Previous session saved]'));
-    } catch (error) {
-      // Session save failed, but we can still proceed with clearing
-      console.log(chalk.yellow('\n[Warning: Failed to save previous session]'));
-    }
-
-    // Clear the history
-    await callbacks.startNewSession?.();
-    context.messages = [];
-    callbacks.clearHistory();
+    await moveToNewSession(context, callbacks);
 
     console.log(chalk.green('\n✓ Started new session'));
     console.log(chalk.dim('Conversation history cleared. Ready for a fresh start!'));

@@ -109,7 +109,7 @@ it('binds Main-owned credentials and tools to Product inputs, queued Runs and ex
   try {
     const session = await client.sessions.create({ projectPath: homeDir,
       mcpServers: { private: mcp.servers[mcp.serverId]! } });
-    await client.sessions.updateSettings(session.id, { provider: 'product-authorized', agentMode: 'sa', permissionMode: 'full-access' });
+    await client.sessions.updateSettings(session.id, { provider: 'product-authorized', permissionMode: 'full-access' });
     const first = await client.inputs.submit({ sessionId: session.id, inputId: 'first', text: 'Wait.' });
     await Promise.race([entering, client.runs.await(first.runId!).then(outcome => {
       if (outcome.phase !== 'completed') throw new Error(`Authorized input failed: ${outcome.phase}: ${outcome.error}`);
@@ -211,7 +211,9 @@ it('binds Main-owned credentials and tools to Product inputs, queued Runs and ex
       .toBe(2);
     const retry = await client.inputs.submit({ sessionId: session.id, inputId: 'retry-wire', text: 'RETRY-WIRE-PROBE: Inspect again.' });
     expect((await client.runs.await(retry.runId!)).phase).toBe('completed');
-    const attempts = (await client.statistics.readRequests(session.id)).items.filter(row => row.target.kind === 'run' && row.target.runId === retry.runId);
+    const retryRows = (await client.statistics.readRequests(session.id)).items.filter(row => row.target.kind === 'run' && row.target.runId === retry.runId);
+    // The root Agent may take one more request in this Run to read the earlier Workflow's delivered result.
+    const attempts = retryRows.filter(row => row.logicalRequestId === retryRows[0]?.logicalRequestId);
     expect(attempts).toHaveLength(2);
     expect(attempts.map(row => [row.state, row.attempt, row.dispatch])).toEqual([['failed', 1, 'dispatched'], ['succeeded', 2, 'dispatched']]);
     expect(attempts[1]).toMatchObject({ previousRequestId: attempts[0]!.requestId, logicalRequestId: attempts[0]!.logicalRequestId });

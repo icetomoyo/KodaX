@@ -28,7 +28,7 @@ import type {
   KodaXToolDefinition,
 } from '@kodax-ai/llm';
 
-import { runKodaX } from '../../agent.js';
+import { runTestLeaf as runLeafAgent } from '../test-leaf.js';
 
 const PROVIDER_NAME = 'cap-003-test-provider';
 const API_KEY_ENV = 'CAP_003_TEST_PROVIDER_API_KEY';
@@ -59,7 +59,7 @@ class StaticProvider extends KodaXBaseProvider {
   }
 }
 
-// Issue 128: contract tests drive runKodaX end-to-end and flake at 5000ms
+// Issue 128: contract tests drive runLeafAgent end-to-end and flake at 5000ms
 // default under heavy parallel vitest load. Bump per-suite to 15s.
 describe('CAP-003: onSessionStart event contract', { timeout: 15_000 }, () => {
   beforeEach(() => {
@@ -72,9 +72,9 @@ describe('CAP-003: onSessionStart event contract', { timeout: 15_000 }, () => {
     clearRuntimeModelProviders();
   });
 
-  it('CAP-EVENTS-SESSION-START-001: fires exactly once per runKodaX invocation', async () => {
+  it('CAP-EVENTS-SESSION-START-001: fires exactly once per runLeafAgent invocation', async () => {
     const onSessionStart = vi.fn();
-    await runKodaX(
+    await runLeafAgent(
       {
         provider: PROVIDER_NAME,
         model: 'baseline-model',

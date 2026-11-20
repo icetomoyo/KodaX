@@ -20,6 +20,18 @@ describe('one-shot runtime option shaping and auto-mode settings', () => {
       .toThrow('tool.sandbox');
     expect(onToolSandboxObservation).toHaveBeenCalledTimes(1);
   });
+  it('forwards a resolved reasoning setting without reporting provider recovery', () => {
+    const onProviderRecovery = vi.fn();
+    const onReasoningResolved = vi.fn();
+    const resolution = { provider: 'zhipu-coding', model: 'glm-5.3-flash', requestedEffort: 'auto', sentEffort: 'medium',
+      verified: false, fallbacks: [] };
+    const payload = { kind: 'reasoning_resolved', event: resolution };
+    const event: RuntimeEvent = { id: 'event-1', seq: 1, time: '2026-11-19T00:00:00Z',
+      sessionId: 'session-1', runId: 'run-1', type: 'provider.recovery', payload };
+    forwardRunProgressEvent({ onProviderRecovery, onReasoningResolved }, event, payload, new Map());
+    expect(onReasoningResolved).toHaveBeenCalledWith(resolution);
+    expect(onProviderRecovery).not.toHaveBeenCalled();
+  });
   it('projects only committed daemon compactions as legacy successes', () => {
     const onCompact = vi.fn();
     const onCompactEnd = vi.fn();

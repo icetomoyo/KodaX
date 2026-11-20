@@ -34,7 +34,8 @@ the original validation record was removed (see git history).
 | Media and Artifact creation, editing, evidence, rendering and distribution | artifact/media tests, real Chromium rendering, built Host worker and installed tarball; LibreOffice conversion remains mocked |
 | Tracing, telemetry, team/multi-instance and persistence | respective agent/coding suites; deliberate error-path warnings are not silently treated as successful operations |
 
-The new combined adapter case in `managed-system-contract.test.ts` binds a real
+The combined adapter case in `managed-system-contract.test.ts` (deleted by
+FEATURE_311 with the canonical Worker) bound a real
 Actor controller, extension runtime and cached MCP provider together with the
 Coding Repo tools. Canonical versus compact requests retain every tool name,
 the complete MCP/Repo contracts, original Repo policy and dynamic evidence. Each
@@ -144,10 +145,12 @@ entire cross-platform matrix.
 
 ## Rule-retention matrix
 
-This is the formal acceptance basis for the compact Worker contract. Each
-obligation of the canonical Worker, Memory and manual rules must keep an owner
-in the compact form. `managed-system-contract.test.ts` pins the canonical rule
-hashes; when they change, redo this audit before updating the snapshots. Tool
+This matrix records where each obligation of the former canonical Worker,
+Memory and manual rules went in the compact form. Since FEATURE_311 the compact
+Worker is the only source and the canonical text is deleted, so the matrix is the
+audit record of that source. A change to the Worker, Memory or manual text
+re-checks the rows it touches before the `prompts/expected/` snapshots are
+updated. Tool
 parameters, return values and error semantics are carried by the complete
 schemas and tool descriptions in the same request. The matrix is not proof of
 model-behavior non-inferiority.

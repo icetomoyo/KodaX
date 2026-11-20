@@ -40,9 +40,7 @@ import {
 } from '../../../agents/worker-role-prompt.js';
 import {
   formatFullSkillSection,
-  formatRoleRoundSummarySection,
   formatSkillInvocationSummary,
-  formatSkillMapSection,
   formatTaskMetadata,
   formatToolPolicy,
   formatVerificationContract,
@@ -59,17 +57,17 @@ import {
 // directly in parse-helpers.ts. The worker role terminates text-only under
 // F184/F190 architecture with no emit tool.
 
-// Canonical fragments remain unchanged for SDK and specialized roles.
-export const WORKER_CLOSING_RULE = [
+// Without a workspace block the Worker does not know the host shell, so these spell out both platforms.
+const WORKER_CLOSING_RULE = [
     'Preserve any exact machine-readable closing contract requested by the original task.',
-    staticText("t12.task-engine/_internal/managed-task/role-prompt.0"),
+    staticText("managed-worker.closing.completion-authority"),
     'Language continuity also applies to Actor-event resume summaries: match the primary natural language of the original user request.',
-    'When proposing shell commands or command examples, match the current host OS and shell. Do not assume Unix-only tools such as head on Windows.',
+    'When running shell commands, or giving command examples for this machine, match the current host OS and shell, because Unix-only tools such as head fail on Windows.',
+    // Unscoped, this rule pulled answers about Linux servers and containers toward the Windows host.
+    'When the user asks about another system, such as a Linux server, a container or a remote host, write commands for that system.',
   ].join('\n');
 
-export const WORKER_WORKSPACE_DISCIPLINE = [
-    staticText("t12i.task-engine/_internal/managed-task/role-prompt.block.0"),
-  ].join('\n');
+const WORKER_WORKSPACE_DISCIPLINE = staticText("managed-worker.workspace-discipline");
 
 /**
  * Build the system prompt for a single managed-task role.
@@ -112,18 +110,16 @@ export function createRolePrompt(
   // ceiling:` (V1 vestige) lines were dropped — they were the ADR-033
   // classification-table residue and an eval confirmed removing them is
   // behaviour-neutral (the harness tier collapsed; see ADR-043 Phase 2).
-  const decisionSummary = buildWorkerRoutingContext(decision);
+  // An application persona replaces KodaX's identity wording and default working style.
+  const omitGuidance = rolePromptContext?.omitKodaxGuidance === true;
+  const neutralIdentity = omitGuidance || rolePromptContext?.neutralIdentity === true;
+  const decisionSummary = buildWorkerRoutingContext(decision, neutralIdentity);
 
-  const sharedClosingRule = WORKER_CLOSING_RULE;
 
   // v0.7.26 NEW-1 — inject the workspace environment at prompt head.
-  // Legacy SA path gets this via `buildSystemPrompt` (Working Directory
-  // + environment-context); the Runner-driven path bypasses that
-  // builder entirely. Without this block, managed workers guess paths
-  // (e.g. `cd /d/user/kodax/workspace` when
-  // the real cwd is `C:\Works\GitWorks\...`). Name the block after the
-  // SA surface so the LLM can correlate with anything it already
-  // learned from `buildSystemPrompt`.
+  // Without this block, managed workers guess paths (e.g.
+  // `cd /d/user/kodax/workspace` when the real cwd is
+  // `C:\Works\GitWorks\...`).
   const workspace = rolePromptContext?.workspace;
   const workspaceSection = workspace
     ? [
@@ -139,9 +135,8 @@ export function createRolePrompt(
             ? 'macOS'
             : workspace.platform
       }${workspace.osRelease ? ` (${workspace.osRelease})` : ''}`,
-      // Runtime fact — managed workers (Scout/Planner/Generator/Evaluator)
-      // bypass `buildSystemPrompt` and would otherwise have no provider /
-      // model context, causing the LLM to fall back on pretraining
+      // Runtime fact — without it the Worker and its children have no
+      // provider / model context, causing the LLM to fall back on pretraining
       // identity (e.g. GLM-5.1 self-reporting as Claude). Preflight
       // (2026-04, ark-coding/glm-5.1) confirmed two lines here flip the
       // answer from "I'm Claude" to "I'm GLM-5.1".
@@ -160,9 +155,8 @@ export function createRolePrompt(
     ].join('\n')
     : undefined;
 
-  // v0.7.35.1 FEATURE_144 — capability-context sections the AMA worker
-  // bypasses by going through `runner-driven.ts` instead of
-  // `buildSystemPrompt`. Pre-computed parent-side so each per-role
+  // v0.7.35.1 FEATURE_144 — capability-context sections (MCP, project
+  // rules, git, snapshot, skills, tool construction). Pre-computed parent-side so each per-role
   // invocation reuses the same MCP / AGENTS.md / git / project-snapshot
   // / tool-construction / skills truth. See
   // `ManagedRolePromptContext.capabilityContextBlock` JSDoc for the
@@ -171,6 +165,9 @@ export function createRolePrompt(
   const capabilityContextSection = rolePromptContext?.capabilityContextBlock?.trim()
     ? rolePromptContext.capabilityContextBlock
     : undefined;
+  // Rules sit with the task contract so the hard cap never sheds them; references sit with the evidence.
+  const applicationRulesSection = rolePromptContext?.applicationRules?.trim() || undefined;
+  const applicationReferencesSection = rolePromptContext?.applicationReferences?.trim() || undefined;
   const stableCapabilityContextSection =
     rolePromptContext?.stableCapabilityContextBlock?.trim()
       ? rolePromptContext.stableCapabilityContextBlock
@@ -192,13 +189,14 @@ export function createRolePrompt(
     ? rolePromptContext.teamModeSection
     : undefined;
 
-  // v0.7.26 fix — managed workers bypass `buildSystemPrompt` (legacy SA
-  // path), so the base `SYSTEM_PROMPT` discipline sections (tmp-directory
-  // rule, mkdir warning, cross-platform notes) never reached the LLM. The
-  // result: workers wrote scratch files to project root / system tmp
-  // instead of `.agent/tmp/`. Re-inject the essential discipline as a
-  // shared block prepended to every role's prompt.
-  const sharedWorkerDiscipline = WORKER_WORKSPACE_DISCIPLINE;
+  // v0.7.26 fix — without the scratch-file discipline (tmp-directory rule,
+  // mkdir warning, cross-platform notes), workers wrote scratch files to the
+  // project root / system tmp instead of `.agent/tmp/`. This shared block is
+  // prepended to every role's prompt.
+  // The workspace block states the host shell, so the dense rules drop the per-platform command table.
+  const sharedWorkerDiscipline = workspace
+    ? staticText("managed-worker.workspace-discipline.known-host") : WORKER_WORKSPACE_DISCIPLINE;
+  const sharedClosingRule = workspace ? staticText("managed-worker.closing.known-host") : WORKER_CLOSING_RULE;
   const originalTaskSection = `Original user request:\n${originalTask}`;
   const roundInstructionSection = prompt !== originalTask
     ? `Current round instructions:\n${prompt}`
@@ -210,36 +208,21 @@ export function createRolePrompt(
   const metadataSection = formatTaskMetadata(metadata);
   const verificationSection = formatVerificationContract(verification);
   const toolPolicySection = formatToolPolicy(toolPolicy);
-  const agentSection = `Assigned native agent identity: ${agent}`;
+  const agentSection = neutralIdentity ? undefined : `Assigned native agent identity: ${agent}`;
   const skillInvocation = rolePromptContext?.skillInvocation;
-  const skillMap = rolePromptContext?.skillMap;
-  // FEATURE_193 (v0.7.43): removed `role === 'generator' ? undefined : ...`
-  // guard — generator role deleted. Worker always reads previousRoleSummaries.
-  const previousRoleSummary = rolePromptContext?.previousRoleSummaries?.[role];
-  // FEATURE_193 (v0.7.43): scoutSkillSection and plannerSkillSection deleted
-  // with scout/planner roles.
+  // The skill map and same-role summaries came from the retired Scout chain and
+  // are never populated now; their sections and the Scout/Evaluator wording went with them.
   const generatorSkillSection = skillInvocation
     ? [
-      skillMap ? formatSkillMapSection(skillMap, rolePromptContext?.skillMapArtifactPath) : undefined,
       formatSkillInvocationSummary(skillInvocation, rolePromptContext?.skillExecutionArtifactPath),
-      // Harness collapsed to H0_DIRECT in V2 (ADR-043) — the H2/Planner variant
-      // never fired, so the emitted text is unchanged.
-      'You own execution. Treat the raw skill as the authoritative execution reference and the skill map as the lightweight coordination surface shared with Scout/Evaluator.',
+      'You own execution. Treat the expanded skill below as the authoritative execution reference.',
       formatFullSkillSection(skillInvocation),
-    ].filter((section): section is string => Boolean(section)).join('\n\n')
-    : skillMap
-      ? [
-        formatSkillMapSection(skillMap, rolePromptContext?.skillMapArtifactPath),
-        'Treat the skill map as the coordination surface shared with Scout/Evaluator. If any obligation conflicts with the contract, surface it in your handoff.',
-      ].join('\n\n')
-      : undefined;
-  const previousRoleSummarySection = previousRoleSummary
-    ? formatRoleRoundSummarySection(previousRoleSummary)
+    ].join('\n\n')
     : undefined;
   // FEATURE_193 (v0.7.43): reviewLikeTask, reviewPresentationRule,
   // repoWorkingToolsEnabled, diffPagingToolsEnabled deleted — only used by
   // V1 scout/planner/generator cases.
-  const parallelBatchGuidance = [
+  const parallelBatchGuidance = omitGuidance ? undefined : [
     'When multiple read-only tool calls are independent, emit them in the same response so parallel mode can run them together.',
     'Only serialize tool calls when a later call depends on an earlier result.',
     'Keep parallel batches focused: prefer a few narrow grep/read/diff calls over many tiny sequential probes.',
@@ -272,10 +255,10 @@ export function createRolePrompt(
       );
       const reviewFanoutContract = buildWorkerReviewFanoutContract(
         decision,
-        rolePromptContext?.actorCapacity,
         rolePromptContext?.availableToolNames,
       );
-      const workerInstructions = buildWorkerStableInstructions(rolePromptContext?.availableToolNames);
+      const workerInstructions = buildWorkerStableInstructions(rolePromptContext?.availableToolNames, omitGuidance);
+      // Follows spawn_agent like the PARALLEL WORK block, so an application persona keeps it too.
       const collaborationPolicy = rolePromptContext?.availableToolNames === undefined
         || rolePromptContext.availableToolNames.includes('spawn_agent') ? ULTRA_AGENT_POLICY : undefined;
       const workflowPolicy = rolePromptContext?.availableToolNames === undefined
@@ -306,10 +289,11 @@ export function createRolePrompt(
           verificationSection,
           toolPolicySection,
           workerSkillSection,
+          applicationRulesSection,
           roundInstructionSection,
           metadataSection,
-          previousRoleSummarySection,
           runtimeState ? teamModeSection : undefined,
+          applicationReferencesSection,
           capabilityContextSection,
         ].filter((section): section is string => Boolean(section)).join('\n\n');
       }
@@ -322,10 +306,12 @@ export function createRolePrompt(
         // the legacy roles get.
         workspaceSection,
         workspaceRunContextSection,
+        applicationReferencesSection,
         capabilityContextSection,
         teamModeSection,
         decisionSummary,
         originalTaskSection,
+        applicationRulesSection,
         roundInstructionSection,
         agentSection,
         metadataSection,
@@ -333,7 +319,6 @@ export function createRolePrompt(
         toolPolicySection,
         parallelBatchGuidance,
         workerSkillSection,
-        previousRoleSummarySection,
         collaborationPolicy,
         workflowPolicy,
         // The standalone Worker fragment (plan-first contract + scope

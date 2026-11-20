@@ -6,7 +6,7 @@
  * Two dispatch paths:
  *   1. **Preset dispatch** (the "default coding agent" registers via
  *      `registerPresetDispatcher`): delegates to the existing `runKodaX`
- *      implementation so SA users see zero behavior change. This is the
+ *      implementation so direct-engine users saw zero behavior change. This is the
  *      "Option Y" dog-food wiring negotiated during FEATURE_080+081 design.
  *   2. **Generic dispatch**: for user-defined agents. Performs a single
  *      system+user → assistant turn using an injected LLM callback. No tool
@@ -185,7 +185,7 @@ export interface RunOptions {
    * without firing the hook, so idle-yield + text-only end-of-turn
    * sessions grew unbounded between checks. claudecode (`query.ts:307-454`),
    * pi-mono (`agent-session.ts:949`), opencode (`processor.ts:609-613`),
-   * and KodaX SA (`run-substrate.ts:621-627`) all check at the per-LLM-
+   * and the KodaX direct engine (`runCompactionLifecycle` in `run-substrate.ts`) all check at the per-LLM-
    * call boundary. FEATURE_179 (v0.7.42) brought the AMA Runner path
    * into line — the failure scenario was a Worker session that grew
    * 165K → 180K through text-only end-of-turn + idle-yield, then
@@ -951,7 +951,7 @@ async function genericRun<TData>(
     }
     // FEATURE_179 (v0.7.42): compaction hook fires at the TOP of every
     // iteration, BEFORE the LLM call. Mirrors claudecode `query.ts` and
-    // KodaX SA `run-substrate.ts:621-627`. The legacy post-tool-result
+    // the KodaX direct engine (`runCompactionLifecycle` in `run-substrate.ts`). The legacy post-tool-result
     // firing point (later in this function) was deleted because it
     // skipped text-only iterations — see the `compactionHook` doc-comment
     // for the full motivation and failure mode.

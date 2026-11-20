@@ -67,7 +67,7 @@ export function inferReviewTarget(prompt: string): ReviewTarget {
     return 'compare-range';
   }
   if (
-    /\b(staged|unstaged|uncommitted|local changes?|current changes?|change[ -]?set|changed files?|current code changes?|current workspace changes?|dirty\s+(?:worktree|workspace|working tree)|(?:worktree|workspace|working tree)\s+changes?|changes?\s+in\s+(?:the\s+)?(?:worktree|workspace|working tree)|(?:the|current|git|workspace)\s+diff|(?:review|audit)\s+diff|diff review)\b/.test(normalized)
+    /\b(staged|unstaged|uncommitted|local changes?|current changes?|(?:latest|recent|my) changes?|change[ -]?set|changed files?|current code changes?|current workspace changes?|dirty\s+(?:worktree|workspace|working tree)|(?:worktree|workspace|working tree)\s+changes?|changes?\s+in\s+(?:the\s+)?(?:worktree|workspace|working tree)|(?:the|current|git|workspace)\s+diff|(?:review|audit)\s+diff|diff review)\b/.test(normalized)
     || /当前(?:工作区|代码)?(?:的)?(?:改动|变更|差异)|(?:工作区|未提交|本地|代码)(?:的)?(?:改动|变更|差异)|(?:改动|变更|差异)集|变更文件|已改文件/.test(prompt)
   ) {
     return 'current-worktree';

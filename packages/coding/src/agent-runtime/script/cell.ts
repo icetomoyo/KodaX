@@ -1,4 +1,3 @@
-import { staticText } from '../../prompts/static-text.js';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { basename, dirname, join } from 'node:path';
@@ -82,7 +81,14 @@ export async function runScriptCell(input: ScriptCellInput): Promise<ScriptCellR
   const require = createRequire(import.meta.url);
   const sourceMode = import.meta.url.endsWith('.ts');
   // Load a real module: transpilers may add closure helpers, making function.toString unsafe to relocate.
-  const worker = new Worker(staticText("t12.agent-runtime/script/cell.0"), {
+  const worker = new Worker(`
+    const { workerData } = require('node:worker_threads');
+    (async () => {
+      const entry = workerData.loaderUrl
+        ? await (await import(workerData.loaderUrl)).tsImport(workerData.workerUrl, workerData.workerUrl)
+        : await import(workerData.workerUrl);
+      await entry.scriptWorkerMain();
+    })().catch(error => { throw error; });`, {
     eval: true, env: { TSX_DISABLE_CACHE: '1' }, execArgv: [], resourceLimits: { maxOldGenerationSizeMb: 64 },
     workerData: { ...input.limits, code: input.code, toolNames: input.toolNames, storedValues: [...input.storedValues ?? []],
       workerUrl: resolveScriptWorkerUrl().href,
@@ -159,7 +165,7 @@ export async function runScriptCell(input: ScriptCellInput): Promise<ScriptCellR
       if (message.kind === 'done') { finish({ status: 'completed', value: message.value }); return; }
       if (message.kind === 'failed') { finish({ status: 'failed', error: message.error }); return; }
       if (message.kind !== 'call') { finish({ status: 'failed', error: 'Invalid Script worker message.' }); return; }
-      if (++calls > input.limits.maxCalls) { finish({ status: 'failed', error: 'Script tool-call limit exceeded.' }); return; }
+      if (++calls > input.limits.maxCalls) { finish({ status: 'failed', error: `Script tool-call limit (${input.limits.maxCalls}) exceeded. Calls before the limit kept their effects; continue the remaining calls in a new cell.` }); return; }
       const earlier = tail;
       const earlierAdmission = admissionTail;
       let releaseAdmission!: () => void;

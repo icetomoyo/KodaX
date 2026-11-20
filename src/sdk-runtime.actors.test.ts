@@ -403,7 +403,7 @@ describe('F270 Runtime Actor facade', () => {
     const owner = await createKodaXRuntime({ homeDir });
     const contender = await createKodaXRuntime({ homeDir });
     const session = await owner.sessions.create({
-      sessionId: 'archived-owner-fence',
+      sessionId: 'owner-fence-archive',
       title: 'Archived Owner Fence',
     });
     await owner.agents.tree(session.id);
@@ -417,7 +417,7 @@ describe('F270 Runtime Actor facade', () => {
   it('keeps archived Sessions read-only until they are unarchived', async () => {
     const runtime = await createKodaXRuntime({ homeDir: await makeHome() });
     const session = await runtime.sessions.create({
-      sessionId: 'archived-read-only',
+      sessionId: 'read-only-archive',
       title: 'Archived Read Only',
     });
     await runtime.sessions.archive(session.id);

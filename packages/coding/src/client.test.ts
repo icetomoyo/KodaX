@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   runKodaX: vi.fn(),
 }));
 
-vi.mock('./agent.js', () => ({
+vi.mock('./task-engine.js', () => ({
   runKodaX: mocks.runKodaX,
 }));
 

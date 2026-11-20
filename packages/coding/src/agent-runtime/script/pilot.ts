@@ -6,8 +6,7 @@ import type { KodaXManagedWorkBudget, ToolResultProjection } from '../../types.j
 import { getRegisteredToolDefinition, getToolDefinition, getBuiltinToolDefinition, isToolMutation } from '../../tools/index.js';
 import { isToolDiscoverable } from '../../tools/tool-search.js';
 import { projectModelToolDefinition } from '../../tools/model-tool-definition.js';
-import { canProjectManagedToolContracts, projectManagedToolContract } from '../../tools/managed-tool-contract.js';
-import { managedShellDescription } from '../../tools/managed-tool-text.js';
+import { shellToolDescription } from '../../tools/tool-definitions.js';
 import { emitActiveExtensionEvent } from '../../extensions/runtime.js';
 import { incrementManagedBudgetUsage } from '../../task-engine/_internal/managed-task/budget.js';
 import { recordMutationForTool } from '../../task-engine/_internal/managed-task/tool-wrappers.js';
@@ -53,14 +52,10 @@ export function createScriptPilot(dispatch: PilotDispatch, budget: KodaXManagedW
   }
   const scoped = runScopedToolMap(listRunScopedTools(dispatch.ctx.extensionRuntime).filter(tool =>
     !getRegisteredToolDefinition(tool.name) && dispatch.activeToolNames?.includes(tool.name) && isToolDiscoverable(tool.name, dispatch.ctx)));
-  const shareContracts = ordinaryRoot !== undefined && canProjectManagedToolContracts(ordinaryRoot, dispatch.ctx);
   const tools = [...registrations].map(([name, registration]) => {
-    const original = projectModelToolDefinition(getToolDefinition(name)!, registration.source);
-    const rootTool = ordinaryRoot?.tools?.find(tool => tool.name === name);
-    const tool = shareContracts && rootTool?.description === original.description
-      && isDeepStrictEqual(rootTool.input_schema, original.input_schema) ? projectManagedToolContract(original) : original;
+    const tool = projectModelToolDefinition(getToolDefinition(name)!, registration.source);
     if (name !== 'bash') return tool;
-    return { ...tool, description: tool !== original ? managedShellDescription('foreground')
+    return { ...tool, description: tool.description === shellToolDescription('native') ? shellToolDescription('foreground')
       : `${tool.description} This Script pilot supports foreground commands only.`,
       input_schema: { ...tool.input_schema, properties: { ...tool.input_schema.properties,
         run_in_background: { type: 'boolean', const: false, description: 'Must be false in this Script pilot.' } } } };

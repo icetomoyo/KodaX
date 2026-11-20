@@ -4,7 +4,10 @@ import { fileURLToPath } from 'node:url';
 import type textData from './static-text.json';
 
 let data: typeof textData | undefined;
-/** Versioned package data, with the same dev/package/bundle layout as the manual. */
+/**
+ * Versioned package data, with the same dev/package/bundle layout as the manual.
+ * static-text.json is generated: edit the sources in ./text/ and run `npm run prompts:text`.
+ */
 export function staticText(key: keyof typeof textData): string {
   if (!data) {
     const here = path.dirname(fileURLToPath(import.meta.url));

@@ -33,7 +33,7 @@ import type { WorkflowProcessEvent } from '@kodax-ai/agent';
  */
 export const SCOUT_THEN_AUTHOR_PROMPT_LINES: readonly string[] = [
   'Set up and run a multi-agent workflow for this task.',
-  staticText("t12.workflows/author-via-worker.0"),
+  staticText("workflow-author.scout-then-author"),
 ];
 
 /** Build the full scout-then-author turn prompt for a free-text request. */

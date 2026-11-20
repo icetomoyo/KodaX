@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
-import type { KodaXEvents, KodaXOptions, KodaXResult, RunningSession } from '@kodax-ai/coding';
+import type { KodaXEvents, KodaXOptions, KodaXResult, KodaXSessionMutators } from '@kodax-ai/coding';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import type { ClientSessionView } from '@kodax-ai/coding/client-contract';
 import { createKodaXRuntime } from "../tests/runtime-fixture.js";
@@ -12,30 +12,34 @@ import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtim
 
 const executor = vi.hoisted(() => ({ start: vi.fn() }));
 vi.mock('@kodax-ai/coding', async (original) => ({
-  ...await original<typeof import('@kodax-ai/coding')>(), startKodaX: executor.start,
+  ...await original<typeof import('@kodax-ai/coding')>(), runManagedTask: executor.start,
 }));
 
 it.each([true, false])('clears active Session overrides to the same Host settings as the next Run (profile=%s)', async hasProfile => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-effective-settings-'));
   await mkdir(path.join(homeDir, '.kodax'), { recursive: true });
-  const profileSettings = hasProfile ? { permissionMode: 'plan', thinking: true, reasoningMode: 'deep', agentMode: 'sa' } : {};
+  const profileSettings = hasProfile ? { permissionMode: 'plan', thinking: true, reasoningMode: 'deep' } : {};
   await writeFile(path.join(homeDir, '.kodax', 'config.json'), JSON.stringify(profileSettings));
   const runtime = await createKodaXRuntime({ homeDir, defaultProvider: 'mock-provider' });
   let captured: KodaXOptions | undefined;
   let finish: ((result: KodaXResult) => void) | undefined;
   const reasoningUpdates = vi.fn();
-  executor.start.mockImplementation((options: KodaXOptions): RunningSession => {
+  executor.start.mockImplementation((options: KodaXOptions): Promise<KodaXResult> => {
     captured = options;
-    const result = new Promise<KodaXResult>(resolve => { finish = resolve; });
-    return { id: options.session!.id!, currentProvider: options.provider, currentModel: options.model,
-      currentReasoning: options.reasoningMode, aborted: false, attached: true,
-      setProvider() {}, setModel() {}, setReasoning: reasoningUpdates, abort() {}, result };
+    // The Runtime passes its own mutable control; observe the live reasoning updates it receives.
+    const control = options.sessionControl as unknown as KodaXSessionMutators;
+    const setReasoning = control.setReasoning.bind(control);
+    control.setReasoning = (...args: Parameters<KodaXSessionMutators['setReasoning']>) => {
+      reasoningUpdates(...args);
+      setReasoning(...args);
+    };
+    return new Promise<KodaXResult>(resolve => { finish = resolve; });
   });
   const session = await runtime.sessions.create({ projectPath: process.cwd() });
   const views: ClientSessionView[] = [];
   const observation = await runtime.sessions.observeView(session.id, view => views.push(view));
   try {
-    await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', thinking: false, reasoningMode: 'off', agentMode: 'sa' });
+    await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', thinking: false, reasoningMode: 'off' });
     const start = () => runtime.runs.start({ sessionId: session.id, prompt: 'wait',
       options: { events: { beforeToolExecute: async () => 'original-policy' } } });
     const active = await start();
@@ -43,7 +47,7 @@ it.each([true, false])('clears active Session overrides to the same Host setting
     expect(await runtime.sessions.getSettings(session.id)).toEqual({});
     // Product views resolve their built-in default without granting a low-level
     // Run an undeclared policy; its original approval hook still owns this call.
-    await expect.poll(() => views.at(-1)?.settings).toEqual({ provider: 'mock-provider', permissionMode: 'accept-edits', agentMode: 'sa', ...profileSettings });
+    await expect.poll(() => views.at(-1)?.settings).toEqual({ provider: 'mock-provider', permissionMode: 'accept-edits', agentMode: 'ama', ...profileSettings });
     const decide = () => captured!.events!.beforeToolExecute!(hasProfile ? 'edit' : 'bash',
       hasProfile ? { path: path.join(process.cwd(), 'file.ts'), old_string: 'old', new_string: 'new' } : { command: 'echo test' });
     const activeDecision = await decide();
@@ -166,12 +170,9 @@ it('keeps continuous long output bounded on actual IPC and reads its complete co
   const client = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
   let events: KodaXEvents | undefined;
   let finish: ((result: KodaXResult) => void) | undefined;
-  executor.start.mockImplementation((options: KodaXOptions): RunningSession => {
+  executor.start.mockImplementation((options: KodaXOptions): Promise<KodaXResult> => {
     events = options.events;
-    const result = new Promise<KodaXResult>((resolve) => { finish = resolve; });
-    return { id: options.session!.id!, currentProvider: options.provider, currentModel: options.model,
-      currentReasoning: options.reasoningMode, aborted: false, attached: true,
-      setProvider() {}, setModel() {}, setReasoning() {}, abort() {}, result };
+    return new Promise<KodaXResult>((resolve) => { finish = resolve; });
   });
   const frames: Array<{ atMs: number; bytes: number; serializeMs: number }> = [];
   const rpcMs: number[] = [];
@@ -241,14 +242,9 @@ it('keeps earlier output and retry history when replacing exactly one failed out
   const client = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
   let events: KodaXEvents | undefined;
   let finish: ((result: KodaXResult) => void) | undefined;
-  executor.start.mockImplementation((options: KodaXOptions): RunningSession => {
+  executor.start.mockImplementation((options: KodaXOptions): Promise<KodaXResult> => {
     events = options.events;
-    const result = new Promise<KodaXResult>((resolve) => { finish = resolve; });
-    return {
-      id: options.session!.id!, currentProvider: options.provider, currentModel: options.model,
-      currentReasoning: options.reasoningMode, aborted: false, attached: true,
-      setProvider() {}, setModel() {}, setReasoning() {}, abort() {}, result,
-    };
+    return new Promise<KodaXResult>((resolve) => { finish = resolve; });
   });
   try {
     const session = await runtime.sessions.create({ title: 'Segments' });

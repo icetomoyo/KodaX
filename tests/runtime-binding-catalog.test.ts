@@ -6,8 +6,9 @@ import { KodaXBaseProvider, registerModelProvider, type KodaXMessage,
   type KodaXToolDefinition, type KodaXStreamResult } from '@kodax-ai/llm';
 import { createKodaXHostRuntime } from '../src/sdk-runtime.js';
 
-for (const agentMode of ['sa', 'ama'] as const) for (const kind of ['default', 'markdown'] as const) {
-  it(`keeps the actual Host binding catalog bounded and loadable: ${agentMode}/${kind}`, async () => {
+// The binding starts a low-level Run, so both legs run the direct engine; only the ama label differs.
+for (const agentMode of [undefined, 'ama'] as const) for (const kind of ['default', 'markdown'] as const) {
+  it(`keeps the actual Host binding catalog bounded and loadable: ${agentMode ?? 'unlabeled'}/${kind}`, async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'kodax-host-binding-catalog-'));
     const workspace = path.join(root, 'workspace');
     const configHome = path.join(root, '.kodax');
@@ -21,7 +22,7 @@ for (const agentMode of ['sa', 'ama'] as const) for (const kind of ['default', '
     await mkdir(path.join(configHome, 'agents'));
     await writeFile(path.join(configHome, 'agents', 'evidence-agent.md'),
       `---\nname: evidence-agent\ndescription: Inspect evidence\ntools: [read, skill]\nskills: [${names.join(', ')}]\n---\nPROFILE_BOUND\n`);
-    const providerName = `host-binding-${agentMode}-${kind}`;
+    const providerName = `host-binding-${agentMode ?? 'unlabeled'}-${kind}`;
     const requests: { context: string; messages: KodaXMessage[] }[] = [];
     let loaded = false;
     vi.stubEnv('KODAX_HOST_CATALOG_KEY', 'offline-fixture');
@@ -52,7 +53,7 @@ for (const agentMode of ['sa', 'ama'] as const) for (const kind of ['default', '
     const owner = await execution.openOwnerSession();
     try {
       const session = await runtime.sessions.create({ projectPath: workspace });
-      await runtime.sessions.updateSettings(session.id, { provider: providerName, model: 'fixture', agentMode, permissionMode: 'full-access' });
+      await runtime.sessions.updateSettings(session.id, { provider: providerName, model: 'fixture', ...(agentMode ? { agentMode } : {}), permissionMode: 'full-access' });
       const base = { ownerSessionId: owner.ownerSessionId, workspace: { mode: 'fixed' as const, root: workspace },
         toolPolicy: { workspace: 'write' as const, process: 'deny' as const, network: { mode: 'deny' as const },
           tools: [], mcp: {}, skillScripts: {}, subagents: 'deny' as const } };

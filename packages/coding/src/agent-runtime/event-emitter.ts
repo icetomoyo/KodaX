@@ -7,7 +7,7 @@
  *   - docs/features/v0.7.29-capability-inventory.md#cap-053-emititerationend-helper-eventsoniterationend--token-snapshot-rebase
  *   - docs/features/v0.7.29-capability-inventory.md#cap-058-eventsoniterationstart-event
  *
- * Predicates and event-fan-out helpers used by the SA loop:
+ * Predicates and event-fan-out helpers used by the direct-engine loop:
  *
  *   - `isVisibleToolName` (CAP-035): predicate for whether a given tool
  *     call should be surfaced to the host (REPL, IDE extension, AMA
@@ -475,7 +475,7 @@ export function hasQueuedFollowUp(
 }
 
 /**
- * Fire `onSessionStart` — CAP-003. Single shared site so SA (substrate
+ * Fire `onSessionStart` — CAP-003. Single shared site so the direct engine (substrate
  * frame entry) and AMA (`runManagedTaskViaRunner`) emit through the
  * same surface. Future contract changes (richer payload, ordering
  * invariants) only need updating here.
@@ -488,7 +488,7 @@ export function emitSessionStart(
 }
 
 /**
- * Fire `onStreamEnd` — CAP-004. Shared between SA's per-turn stream
+ * Fire `onStreamEnd` — CAP-004. Shared between the direct engine's per-turn stream
  * finalization and AMA's per-worker-turn stream finalization.
  */
 export function emitStreamEnd(events: KodaXEvents, meta?: KodaXActivityEventMeta): void {
@@ -516,7 +516,7 @@ export function emitError(events: KodaXEvents, error: Error): void {
 /**
  * Fire `onProviderRateLimit` — CAP-007. Distinct from generic
  * `onRetry`: only fires when the resilience classifier returns
- * `reasonCode === 'rate_limit'`. SA dispatches via the provider stream
+ * `reasonCode === 'rate_limit'`. The direct engine dispatches via the provider stream
  * handler bridge (`stream-handler-wiring.ts`); AMA dispatches inline
  * during its own retry decision pipeline. Both now emit through this
  * helper so the (attempt, maxRetries, delayMs) tuple shape is locked.

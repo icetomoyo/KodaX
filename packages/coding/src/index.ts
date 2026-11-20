@@ -219,6 +219,8 @@ export type {
   KodaXAgentMode,
   KodaXCanonicalAgentMode,
   KodaXAgentProfile,
+  KodaXPromptSpec,
+  KodaXPromptContextEntry,
   KodaXEffectiveTaskConfig,
   KodaXToolVisibilityMeta,
   KodaXToolVisibilityPolicy,
@@ -282,7 +284,9 @@ export type {
 
 export {
   assertTrustedTextMutationPolicy,
+  isSameFilesystemPath,
   KodaXTrustedTextMutationError,
+  targetsProtectedPath,
 } from './trusted-text-mutation.js';
 export type {
   KodaXTrustedTextCommitUncertainReceipt,
@@ -586,9 +590,6 @@ export {
 // ============== Prompts ==============
 
 export {
-  SYSTEM_PROMPT,
-  buildSystemPrompt,
-  buildSystemPromptSnapshot,
   buildCapabilityContextSections,
   PROMPT_SECTION_REGISTRY,
   buildPromptSnapshot,
@@ -596,6 +597,8 @@ export {
   orderPromptSections,
   renderPromptSections,
 } from './prompts/index.js';
+
+export { PROMPT_SPEC_TEXT_LIMIT, assertKodaXPromptSpec, assertPromptSpecOnManagedRun } from './prompts/prompt-spec.js';
 export type {
   KodaXPromptSectionSlot,
   KodaXPromptSectionStability,
@@ -607,6 +610,7 @@ export type {
 
 // ============== Session ==============
 
+export { runInSessionScope } from './run-scoped-config.js';
 export {
   generateSessionId,
   extractTitleFromMessages,
@@ -703,10 +707,9 @@ export type {
 
 // ============== Agent ==============
 
-export {
-  runKodaX,
-  checkPromiseSignal,
-} from './agent.js';
+export { runKodaX } from './task-engine.js';
+export { describeFailureCause } from './execution-failure.js';
+export { checkPromiseSignal } from './agent.js';
 
 // v0.7.42 — non-blocking SDK entry (closes gap 6 reported by KodaX Space).
 // `startKodaX` returns a `RunningSession` handle so embedders can flip
@@ -1072,13 +1075,11 @@ export {
   workerAgent,
 } from './agents/task-engine-agents.js';
 
-export {
-  DEFAULT_CODING_AGENT_NAME,
-  createDefaultCodingAgent,
-} from './coding-preset.js';
+export { DEFAULT_CODING_AGENT_NAME } from './coding-preset.js';
+export { createDefaultCodingAgent } from './default-coding-agent.js';
 
 // FEATURE_085 (v0.7.26): adapter wrapping the legacy per-tool truncation
-// policy as a Layer A ToolGuardrail.afterTool. Opt-in — the SA preset path
+// policy as a Layer A ToolGuardrail.afterTool. Opt-in — the direct-engine (coding preset) path
 // continues to call applyToolResultGuardrail directly.
 export {
   TOOL_RESULT_TRUNCATION_GUARDRAIL_NAME,

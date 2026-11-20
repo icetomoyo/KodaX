@@ -12,9 +12,9 @@
  * explicit, user-invoked command, never automatic.
  */
 
-import type { KodaXBaseProvider } from '@kodax-ai/coding';
-import { withProviderRequestCredential } from '@kodax-ai/llm';
-import { recordRejectedEffort } from '@kodax-ai/agent';
+import { runInSessionScope, type KodaXBaseProvider } from '@kodax-ai/coding';
+import { getRunScopedConfig, withProviderRequestCredential } from '@kodax-ai/llm';
+import { generateSessionIdSync, recordRejectedEffort } from '@kodax-ai/agent';
 
 export type ProbeStatus = 'accepted' | 'rejected' | 'error';
 
@@ -24,12 +24,7 @@ export interface ProbeResult {
   readonly error?: string;
 }
 
-/**
- * Probe one provider/model across the given efforts. `resolve` returns the
- * provider instance (injected so the orchestration is unit-testable without a
- * live provider). Rejections are persisted via `recordRejectedEffort`.
- */
-export async function probeProviderReasoningEfforts(input: {
+interface ProbeInput {
   provider: string;
   model?: string;
   efforts: readonly string[];
@@ -37,7 +32,21 @@ export async function probeProviderReasoningEfforts(input: {
   now: () => string;
   signal?: AbortSignal;
   configHome?: string;
-}): Promise<ProbeResult[]> {
+}
+
+/**
+ * Probe one provider/model across the given efforts. `resolve` returns the
+ * provider instance (injected so the orchestration is unit-testable without a
+ * live provider). Rejections are persisted via `recordRejectedEffort`.
+ *
+ * A probe runs outside any conversation, so it names its own short one:
+ * some gateways (opencode Go) reject requests that carry no session id.
+ */
+export function probeProviderReasoningEfforts(input: ProbeInput): Promise<ProbeResult[]> {
+  return runInSessionScope(getRunScopedConfig()?.sessionId ?? generateSessionIdSync(), () => probeEfforts(input));
+}
+
+async function probeEfforts(input: ProbeInput): Promise<ProbeResult[]> {
   const provider = input.resolve(input.provider);
   const model = input.model ?? provider.getModel();
   const results: ProbeResult[] = [];

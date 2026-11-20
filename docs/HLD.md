@@ -367,8 +367,18 @@ same phased boundary, so its queue, lock, and post-commit waits are not charged
 to the five-second canonical deadline. On unknown durability, Runtime
 fail-closes root and child work, suppresses later effects, and automatically
 reloads only an exact same-owner snapshot before durably quiescing remaining
-turns. Owner conflicts and unresolved storage remain unknown rather than being
-treated as successful cancellation. Same-owner repair and abort close effect
+turns. A turn already terminal in that snapshot keeps its durable fact over a
+pending executor intent; a non-`interrupted` mismatch is reported, not fenced.
+A write whose result is unknown is read back by revision and owner before it
+is adopted, rolled back, or fenced. Owner conflicts, unrepairable snapshots,
+and repair past its five-minute budget are never treated as successful
+cancellation: the Run ends `failed` with `effectOutcome: unknown`, while the
+Session stays fenced until background repair succeeds or the Runtime reclaims
+the tree in-process the way restart recovery does, once pre-fence effects have
+settled and no live foreign owner holds it (`actorSettlementConvergence:3`). A fenced
+Session never blocks Host stop: preflight skips the turns of a fenced controller, and
+the daemon treats a close that failed only on such trees as a completed shutdown,
+leaving the trees to the next Host. Same-owner repair and abort close effect
 admission; the logical convergence boundary also waits for each exact tool
 execution admitted before the fence. The Session route then releases without
 waiting for the old executor Promise. An abort-ignoring provider remains unable
@@ -650,19 +660,19 @@ user input
   -> KodaXResult + session updates + UI/events
 ```
 
-Current main-agent modes use a single Provider/tool loop. Solo (`sa`) remains
-an active mode: `runKodaX` enters the shared Runner frame and coding substrate,
-with collaboration tools excluded by managed Solo dispatch. Adaptive (`ama`)
-uses the Runner-driven Worker and can dispatch child Actors. The retired V1
-Scout/Planner/Generator/Evaluator pipeline is not a current execution mode;
-`amaw` is only an input alias for `ama`. Optional reviewers are ordinary child
-Actors, using existing evidence and artifact channels. The main agent checks
-actual results and owns the final answer.
-
-ADR-020 retired the separate SA execution body and Option Y dispatcher facade;
-it retained the Solo product mode and the thin `runKodaX` SDK entry. A remaining
-`sa` dispatch branch therefore does not imply that the old independent engine
-was restored.
+The main agent uses a single Provider/tool loop. `ama` is the only agent mode:
+the Runner-driven Worker can dispatch child Actors. `sa` and `amaw` are
+deprecated inputs. Managed entries run AMA for them, and `runKodaX` treats `sa`
+as unlabeled. Every root Run, from any SDK entry or Runtime `runs.start`, runs
+the managed Worker; the direct root engine and `system.md` are retired, and an
+explicit Runtime `mode: 'coding'` is ignored with a warning. A root without
+`agentMode` gets the Worker trimmed to its tools. The internal leaf executor
+runs child Agents, specialists and one-shot calls with their own prompts. Each
+builtin tool has one description on every entry. The retired V1
+Scout/Planner/Generator/Evaluator pipeline is not a current execution mode.
+Optional reviewers are ordinary child Actors, using existing evidence and
+artifact channels. The main agent checks actual results and owns the final
+answer.
 
 Artifact evidence uses one `ArtifactExecutionPort`: independent Node hosts use
 the optional runtime; shared CLI/Space consumers use the existing Host's tool
@@ -742,6 +752,12 @@ or Agent names or changing ACP conversation mapping. Kimi Code lowers it to
 Anthropic-compatible `metadata.user_id`; public Kimi and official OpenAI lower
 it to `prompt_cache_key`. Unverified compatible endpoints remain unchanged.
 
+Separately, every provider HTTP request carries `X-Session-Id` with the raw root
+logical session id, so gateways can reconcile a conversation across child
+agents, workflows and compaction (ADR-077). The id travels in run-scoped
+configuration rather than in provider options. A header that is already
+configured wins. New session ids are UUIDv7.
+
 ## 5. Coding Runtime
 
 `packages/coding` owns KodaX-specific agent behavior:
@@ -777,6 +793,15 @@ verification. Capability-aware guidance follows the executable tool set and
 does not replace execution permissions. Work modes and the shared compact
 contract are decided in
 [ADR-072](ADR.md#adr-072-work-modes-and-the-model-facing-tool-contract).
+
+Applications customize a managed Run's prompt through `context.prompt`; Product
+clients set it as `prompt` in the trusted execution profile. `kodaxGuidance: 'omit'`
+drops the Worker sections tagged as guidance and keeps contract text, tool
+teaching and `AGENTS.md`. Context entries are application rules and references.
+They travel as keyed Managed Run Context sections, not system prompt text, so the
+system prompt stays cacheable and a removed key is retired by name. Rules also
+reach every write descendant, including Workflow children. Only the internal
+leaf executor rejects a spec. See the 2026-11-19 ADR entry on application prompt specs.
 
 Generated constructed handlers are a narrower coding-layer isolation case.
 Each active handler runs in a persistent Worker, while `ctx.tools.*` calls
@@ -979,7 +1004,7 @@ the model writes into a child objective is not provenance: a new reference
 there remains a model invocation and must pass the model-tool gate.
 Queued explicit Skill text is host-owned: runtime mid-turn and idle-resume
 drains cannot expose it to the model before trusted expansion. The expanded
-active Skill is then present exactly once in either the SA or AMA system
+active Skill is then present exactly once in either the direct or AMA system
 context. Daemon transports rehydrate tool and hook policy from their
 local trusted registry and wait for PostToolUse completion rather than trusting
 serialized client policy.

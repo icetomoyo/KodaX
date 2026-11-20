@@ -488,6 +488,7 @@ export async function runWorkflowFromOptions(
       compaction: workflowOptions.compaction,
       contextDiagnostics: workflowOptions.context?.contextDiagnostics,
       permissionIntent: workflowOptions.context?.permissionIntent,
+      applicationRules: ctx.parentAgentConfig?.applicationRules,
       disablePromptCache: workflowOptions.disablePromptCache,
       sandbox: workflowOptions.sandbox,
       extensionRuntime: workflowOptions.extensionRuntime,

@@ -24,6 +24,17 @@ export interface KodaXRunScopedConfig {
     /** Ceiling on concurrent workflow child agents (a run_workflow spawns). */
     readonly maxConcurrency?: number;
   };
+  /**
+   * The conversation this run belongs to. Provider HTTP requests carry it as
+   * `X-Session-Id` so gateways can group a conversation across compaction.
+   * Child agents share the root conversation's id.
+   */
+  readonly sessionId?: string;
+}
+
+/** Ids that are safe to place in an HTTP header: visible ASCII, no spaces, bounded. */
+export function isWireSessionId(value: string): boolean {
+  return /^[\x21-\x7E]{1,128}$/.test(value);
 }
 
 const store = new AsyncLocalStorage<KodaXRunScopedConfig>();

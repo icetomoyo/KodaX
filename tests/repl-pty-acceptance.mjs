@@ -465,8 +465,8 @@ async function displayedSessionId(state, previousId) {
   if (state.mode === 'classic') await state.terminal.submit('/status');
   return waitFor('displayed Session identity', () => {
     const id = state.mode === 'ink'
-      ? [...state.terminal.rawText().matchAll(/\bsession\s+(\d{8}_\d{6}_[a-z0-9]+)/gi)].at(-1)?.[1]
-      : [...state.terminal.screen().matchAll(/Session ID:\s+([a-z0-9_]+)/gi)].at(-1)?.[1];
+      ? [...state.terminal.rawText().matchAll(/\bsession\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d{8}_\d{6}_[a-z0-9]+)/gi)].at(-1)?.[1]
+      : [...state.terminal.screen().matchAll(/Session ID:\s+([a-z0-9_-]+)/gi)].at(-1)?.[1];
     return id && id !== previousId ? id : undefined;
   });
 }
@@ -497,6 +497,16 @@ async function assertSelectedSettings(state) {
   assert.ok(['none', 'off'].includes(settings.effort), 'Explicit effort off reaches Host');
   assert.equal(settings.permissionMode ?? 'accept-edits', 'accept-edits');
   assert.equal(settings.maxIter, 7);
+}
+
+// Work mode can change only before the session's first Run.
+async function checkWorkModeBeforeFirstRun(state) {
+  for (const mode of ['agent', 'script', 'coding']) {
+    await state.terminal.submit(`/work-mode ${mode}`);
+    await waitFor(`/work-mode ${mode} updates Host`, async () =>
+      ((await state.client.sessions.getSettings(state.sessionId)).workMode ?? 'coding') === mode);
+    await delay(400);
+  }
 }
 
 async function checkProviderCapabilities(state) {
@@ -696,6 +706,11 @@ async function checkSettings(state) {
   assert.equal((await state.client.sessions.getSettings(state.sessionId)).workMode, 'coding');
   // Read complete labels here; narrow/resize rendering is exercised separately.
   if (state.mode === 'ink') await state.terminal.resize(220, 32);
+  // Runs have settled in this session, so work mode is locked; switching is tested in checkHostSettingCommands.
+  const lockedMode = (await state.client.sessions.getSettings(state.sessionId)).workMode ?? 'coding';
+  await state.terminal.submit(`/work-mode ${lockedMode === 'agent' ? 'coding' : 'agent'}`);
+  await waitFor('locked work mode notice', () => state.terminal.screen().includes('Work mode is fixed after the first run'));
+  assert.equal((await state.client.sessions.getSettings(state.sessionId)).workMode ?? 'coding', lockedMode);
   for (const [command, field, expected] of [
     ['/mode plan', 'permissionMode', 'plan'], ['/mode accept-edits', 'permissionMode', 'accept-edits'],
   ]) {
@@ -1589,6 +1604,7 @@ async function run(mode) {
       await check(state, 'exit', checkExit);
       return;
     }
+    await check(state, 'work-mode-before-first-run', checkWorkModeBeforeFirstRun);
     await check(state, 'host-provider-capabilities', checkProviderCapabilities);
     await check(state, 'host-setting-commands', checkHostSettingCommands);
     if (mode === 'ink') await check(state, 'model-command-visible-feedback', checkModelNotices);

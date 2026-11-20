@@ -18,7 +18,7 @@ const okResult = (lastText = 'done'): KodaXResult => ({
 });
 
 const baseOptions = (overrides: Partial<KodaXOptions> = {}): KodaXOptions =>
-  ({ provider: 'zhipu-coding', model: 'glm-4.6', agentMode: 'sa', ...overrides }) as KodaXOptions;
+  ({ provider: 'zhipu-coding', model: 'glm-4.6', ...overrides }) as KodaXOptions;
 
 describe('resolveFallbackChain', () => {
   afterEach(() => vi.unstubAllEnvs());

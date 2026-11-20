@@ -172,6 +172,35 @@ commits at canonical replacement while the storage queue continues to serialize
 cache, watermark, topology, hint, and lock maintenance. Same-owner repair uses
 the same phased save contract, and terminal settlement observes an active
 predecessor's canonical phase rather than waiting forever behind a hung rename.
+Repair keeps a terminal turn already in the same-owner snapshot and verifies
+only that it stays terminal; other intents must still match exactly
+(`performUnknownSettlementReconciliation`, Issue 412).
+A failed mutation goes through `settleFailedMutation`, which classifies a
+started write as `committed`, `not_committed`, or `unknown` by reading back
+revision and owner. An owner-takeover reload is bounded by the settlement
+deadline. In the Runtime, `recoverActorDurability` gives the Run its failed
+outcome through `finishUnrepairedActorRun` after a deterministic repair error
+or the `RUNTIME_ACTOR_REPAIR_BUDGET_MS` budget, then keeps retrying until the
+Runtime closes. After a deterministic error each retry is
+`rebuildActorController`: once `activeEffectCount` is zero and the Run is no
+longer Workflow-owned, it calls the Actor registry's `rebuild`. That opens a
+fresh `CodingActorSession` whose `isOwnerAlive` reports the fenced
+controller's owner as dead, and registers it only after `initialize`
+succeeds; the fenced controller is then disposed without a write, only the
+registered controller forwards health, and Runs queued on the old controller
+are rebound to the new one. Workflow-owned Runs are handed over
+by `releaseFencedWorkflow` (Issue 413).
+The registry's `activeTurns` skips a claimed controller whose health is
+`unknown`, so Host preflight does not count fenced turns. `closeRuntime` records
+an Actor registry close failure, closes the remaining components, keeps the
+owner liveness endpoint open, and rethrows. The daemon host's
+`leavesOnlyActorTreesForRecovery` accepts a Runtime close that failed only with
+`actor_shutdown_not_persisted`: it logs a warning, releases the profile lock, and
+the shutdown outcome is `succeeded`.
+Host preflight also skips a Run with a Stop request and a Workflow whose
+snapshot carries `stop`. The agent loop awaits a tool or child agent that
+ignores abort, so such work may never settle; `closeAll` does not await it, and
+restart recovery interrupts the Run.
 Same-owner repair and root abort close effect admission; the logical convergence
 boundary also requires every exact tool execution admitted before the fence to
 settle. The Session route then releases without waiting for the old root executor Promise.
@@ -215,8 +244,15 @@ The existing terminal `failureKind` remains the coarse compatibility field;
 from a bounded KodaX-owned template rather than provider response text;
 provider-controlled identifiers are allowlisted and dropped if they contain a
 run credential, a nontrivial prompt, or a registered/sensitive-name environment
-secret. Raw header collections/bodies, URLs, local
-paths, stacks, causes, and raw errors never cross the Runtime boundary.
+secret. Header collections, response objects and stacks never cross the
+Runtime boundary. The cause does, as `detail` (ADR-078): the error message and
+its `cause` chain, built by `describeFailureCause` in `@kodax-ai/coding`. It
+removes the run credential, the scoped Provider credential, registered and
+sensitive-name environment values, Bearer/`sk-` tokens, `key=value` secrets,
+URL userinfo and URL query strings. It reduces HTML to text, strips control
+characters and caps the text at 1000 characters. The managed engine builds the
+same text into `KodaXExecutionFailure.detail` and `message` when it ends a Run
+on a final Provider failure.
 
 Reconnect recovery belongs to the SDK host adapter, not the transport. After
 admission returns `runId`, an adapter may create a replacement Runtime, verify
@@ -230,7 +266,7 @@ hide replaceable managed context from ordinary topology while retaining the
 physical audit track and fail-closed ambiguity. `web-search.ts` owns the
 DuckDuckGo HTML → Bing RSS → Bing HTML bounded fallback and custom-endpoint
 isolation. The coding runtime owns `RunScopedToolDefinition` materialization,
-registry-first dispatch, permission predicates, and AMA/SA tool wiring; the
+registry-first dispatch, permission predicates, and AMA/direct-engine tool wiring; the
 Runtime daemon reverse bridge owns lease binding, revocation, catalog context,
 and `host:` authorization. These are additive to MCP and do not modify Shell
 or sandbox implementations.
@@ -493,6 +529,59 @@ checked against `WINDOWS_PROGRAM_HASHES`. A missing or modified file throws
 before any process starts, and non-Windows entry points never read it. The pack
 test checks the resource whitelist, that the root and standalone Agent copies
 are identical, and both hashes.
+
+Prompt text is packaged the same way, in
+`packages/coding/src/prompts/static-text.json`, but that file is generated.
+Authors edit `.md` sources under `packages/coding/src/prompts/text/`: the text
+for a consumer `X.ts` lives in `text/X.md` as `<!-- @key name -->` entries,
+and tool input schemas live in `text/tools/tool-definitions.schemas.json`.
+`npm run prompts:text` regenerates the store, and `tests/prompt-text.test.ts` and
+`npm run build` fail when the two drift. Keys name the surface and section
+(`worker.plan-hygiene`, `tool.read.description`). Bodies are byte-exact and never
+start or end with whitespace: separators between pieces live in the consumer's
+join, so an editor cannot change them unseen. `packages/coding/src/prompts/rendered-prompts.test.ts`
+snapshots the assembled Worker, child and tool text in `prompts/expected/`.
+
+Each role has one prompt source. Every root entry (`runKodaX`, `startKodaX`,
+`KodaXClient`, `createKodaXTaskRunner`, the Runner preset in
+`default-coding-agent.ts`, Runtime `runs.start`) reaches `runManagedTask`, and
+`task-engine/runner-driven.ts` renders the Worker from
+`agents/worker-role-prompt.ts`. With the full Todo and collaboration tools (an
+`ama` root) the Worker emits its full sections; otherwise it emits the trimmed
+sections. No regex rewrite or second Worker exists. Each builtin tool has one
+description, in `text/tools/tool-definitions.md`. `projectManagedToolActivation`
+only appends to `tool_call` the direct contracts of deferred tools the Run
+actually has, and to `tool_search` a note when no visual tool is loaded. The leaf
+executor (`runLeafAgent` in `agent.ts`) runs child Agents, specialists and
+one-shot digest or repair calls. It has no Worker and throws without
+`systemPromptOverride` or `agentProfile.instructions`. `tests/f311-entry-matrix.test.ts`
+pins every entry and both child kinds to one Worker and one tool text.
+
+Application prompt specs (`context.prompt`, `KodaXPromptSpec` in
+`execution-profile-contract.ts`) are admitted by `assertKodaXPromptSpec` in
+`prompts/prompt-spec.ts` at `runManagedTask` (which `runKodaX` delegates to) and
+Runtime `startRun`. Only the internal leaf executor rejects a spec, through
+`assertPromptSpecOnManagedRun`. Under `omit`, `createRolePrompt` filters the
+Worker section table by its guidance tag and uses the neutral routing line.
+`parallel-work` is tagged capability in both section tables, and the ULTRA policy
+line is gated on `spawn_agent` alone, so both survive `omit` while the tool is offered.
+`renderApplicationContextSections` emits one
+`app-rule:KEY` or `app-reference:KEY` section per entry.
+`managed-run-context-retention.ts` diffs those sections like any other and labels a
+retired one "application rule KEY". The write-child system prompt appends
+`renderApplicationRules` after project rules (`child-executor.ts`). The rendered rules
+ride `parentAgentConfig.applicationRules` on the root tool context. Every Actor
+turn runs against that context, so a child's own children inherit them.
+`workflow-runner.ts` and `resumeWorkflowGenerationTurn` copy the same value into
+Workflow child options. The profile reaches
+the Run through `RuntimeExecutionProfile.prompt` and the daemon server's
+`bindTrustedRunInput`. Generation recovery keeps `prompt` as declarative
+context (`runtime-generation-recovery.ts`). Capability `promptSpec` v1 is checked
+in `client-runtime-adapter.ts`, `execution-services.ts` and
+`runtime-daemon/client.ts`. Tests: `prompts/prompt-spec.test.ts`, the
+`worker.omit.*` snapshots, `runner-driven.compaction-context.test.ts`,
+`workflows/workflow-runner.test.ts`, `tests/prompt-spec-descendants.test.ts`
+and `src/sdk-prompt-spec.test.ts`.
 
 To change the ceiling:
 
@@ -946,7 +1035,7 @@ text-only, and cost tracking keeps their base/cache rates separate.
 `KodaXProviderStreamOptions.promptCacheKey` is separate from the transport
 `sessionId`. Coding derives a domain-separated SHA-256 value from the stable
 logical context ID: the root uses its resumable Session identity and a child
-uses `${root}/agent/${encodeURIComponent(canonicalAgentId)}`. AMA, SA, retry,
+uses `${root}/agent/${encodeURIComponent(canonicalAgentId)}`. The managed Worker, the leaf executor, retry,
 max-token continuation, non-streaming fallback, and compaction reuse the same
 value. `disablePromptCache` omits it. Anthropic- and OpenAI-compatible
 serializers emit the protocol field only when `promptCacheAffinity` is enabled;
@@ -955,6 +1044,28 @@ custom gateways default off. `provider.cache.diagnostics` reports a separate
 `promptCacheAffinityHash` only when the configured Provider applies the key;
 the hash does not enter `requestEnvelopeHash` because routing metadata does not
 change prompt bytes.
+
+`KodaXRunScopedConfig.sessionId` names the conversation; it is not a provider
+option. Coding's `deriveRunScopedConfig` sets it from
+`contextIdentitySessionId ?? session.id ?? enclosing scope`, so a child agent
+uses its root's id and a nested run without a session keeps the enclosing one.
+`runInSessionScope(id, fn)` covers paths outside `runKodaX`: Host workflows,
+REPL `/compact`, the runner-driven managed task (its id is generated before the
+first request), memory review of a queued episode (the episode's own session)
+and the provider capability probe. `requestHeaders()` in the LLM
+package adds `X-Session-Id` when the id passes `isWireSessionId` (visible
+ASCII, 1-128 characters) and no `x-session-id` header is already set. Every
+HTTP provider sends requests through `requestExtensionFetch` or calls
+`requestHeaders` directly. The Host removes a caller's
+`contextIdentitySessionId` from run options.
+
+`generateSessionIdSync()` returns UUIDv7: a 48-bit Unix millisecond timestamp,
+then version and variant bits, with the remaining bits from `randomBytes`.
+Host `create` and `fork` accept a caller id only if it is 1-128 characters
+from `[A-Za-z0-9_-]`, is not a Windows device name, and does not start with
+`archived-`. Session scratch directories truncate ids at 128 characters. REPL
+`/clear` with messages calls the same save-then-`startNewSession` helper as
+`/new`.
 
 Codex CLI `turn.completed` usage maps `cached_input_tokens` and
 `cache_write_input_tokens`; Gemini CLI `result.stats.cached` maps cache reads.
@@ -1132,6 +1243,16 @@ Child Agents are controlled through one Runtime-owned Actor/Turn tree:
 - `interrupt_agent` requests active-turn cancellation;
 - one scheduler, mailbox, event stream, and root-owned work budget cover native,
   constructed, Workflow-owned, and external turns.
+
+The model sees child capacity as a fact, not as arithmetic. The ACTOR CAPACITY
+block in the first request states how many child Agents the session runs at
+once, and either how many are free now or that none is. The runtime refresh
+resends that line when the free count changes. A single-slot session gets one
+line saying `spawn_agent` is rejected. `AgentTurnScheduler.reserve` remains the
+backstop. It counts active turns only, so idle Actors hold no slot. When none is
+free it throws `AgentLimitReachedError`, and `spawn_agent` returns a structured
+`agent_limit_reached` result with the limit, the active count and a next-step
+hint. Workflows wait on `waitForAgentCapacity` and retry instead.
 
 The model-visible `wait_agent` schema contains only `timeout_ms` (10 seconds to
 1 hour, default 2 minutes). The handler subscribes to the caller's MessageQueue
@@ -1361,12 +1482,12 @@ Invocation has two distinct trust paths:
   after the token as `$ARGUMENTS`, then inject the expanded Skill for that turn.
 
 Busy Ink follow-ups that resolve to a known Skill remain raw, user-authored
-queue entries with `delivery: host`. AMA mid-turn drain, SA interrupt drain,
+queue entries with `delivery: host`. Worker mid-turn drain, leaf-executor interrupt drain,
 and idle-yield resume never splice those entries directly into model context;
 the next host round performs the same resolve, expand, policy, hook, and
 finalize pipeline as an immediate invocation. Built-in and extension slash
-commands keep their existing mid-task guard. Both SA and AMA inject the active
-Skill's full expanded content exactly once, including SA workflow children
+commands keep their existing mid-task guard. Both the managed Worker and the leaf executor inject the active
+Skill's full expanded content exactly once, including Workflow children
 that use a specialist `systemPromptOverride`.
 
 Child delegation trusts only the structured `skillInvocation` supplied by the
@@ -1402,21 +1523,30 @@ Skill tool results include only the Skill expansion and newly supplied Skill
 guidance; existing Host prompt overlays remain in system context.
 
 Formal discovery uses `gitRoot` when supplied, independently of execution cwd
-and Learned Area identity. SA/AMA omit the model catalog when the Skill loader
+and Learned Area identity. Root and leaf Runs omit the model catalog when the Skill loader
 is unavailable; an already expanded explicit invocation remains usable.
 Rediscovery invalidates full-body caches, including loads still in flight.
 
 Markdown Agent bindings pass their behavior instructions through `agentProfile`
-instead of converting them into a complete prompt override. Solo composes that
-profile base with the admitted model catalog and any explicit active Skill;
-Adaptive retains the profile instructions in its Worker prompt. Direct SDK,
-managed Solo and public Runner entries share the same final Solo composition.
-A caller's explicit `systemPromptOverride` keeps its complete-replacement
-semantics and priority; it does not acquire an automatic catalog. Both prompt
-paths use the same loader-visibility check before disclosing a catalog.
+instead of converting them into a complete prompt override. The managed Worker
+replaces only its identity with the profile instructions and keeps its working
+guidance, the admitted model catalog and any explicit active Skill. SDK entries
+and the public Runner preset share that composition, because every root Run is
+managed. A caller's explicit `systemPromptOverride` goes first and replaces the
+KodaX identity and guidance; KodaX still appends its runtime sections
+(environment, Memory, Run Context trust). Root and leaf prompts use the same
+loader-visibility check before disclosing a catalog.
 Profile verification defaults, per-task verification overrides and execution
-guidance still reach Solo requests through their request-only Run context;
+guidance reach root requests through the Run Context envelope;
 retaining the Skill catalog does not drop those existing obligations.
+
+The Skill trigger has one owner: the model catalog section. It asks for a Skill
+only when a description clearly covers the request. It also gives the no-match
+path and the slash/args handling, and says that guessed names fail. Worker
+texts do not restate it. Routing labels are
+marked as a keyword guess the request overrides, so they cannot imply a Skill
+either. `tests/skill-trigger-surface.test.ts` pins these conditions on the
+assembled first-turn request.
 
 Runtime default and Markdown bindings use the common bounded formatter over
 their admitted Registry entries. Catalog omission never changes the binding's
@@ -1701,7 +1831,11 @@ A2A lives under `src/a2a` and is published through `@kodax-ai/kodax/a2a`:
   admitted handlers on close, and enforces fixed per-task/per-server/per-stream
   SSE limits. Its loopback listener rejects explicit Fetch-blocked ports and
   retries ephemeral allocation until the returned URL is Fetch-compatible.
-- Each Task owns one Runtime Session. High-frequency Runtime progress updates a
+- Tasks in one principal's context continue one Runtime Session,
+  `a2a-<sha256(principal key, contextId)>` (ADR-077). The first Task creates
+  it. Later Tasks get `conflict` from `create` and reuse the id, so no ledger
+  is kept. The Host queues a run behind the Session's active run. Each Task
+  stores its own cursor. High-frequency Runtime progress updates a
   small per-Task cursor checkpoint under `runtime-cursors/`; semantic Task
   transitions still atomically rewrite `tasks.json`. Restart overlays the
   checkpoint before replay, avoiding full-store writes for every token/tool

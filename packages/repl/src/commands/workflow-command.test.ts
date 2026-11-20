@@ -3216,28 +3216,6 @@ describe('workflowCommand create redirect (FEATURE_246 / ADR-047)', () => {
       }
   });
 
-  for (const [kind, args] of [
-    ['create', ['create', 'compare', 'three', 'repos']],
-    ['run-by-name', ['some-builtin-workflow']],
-    ['rerun', ['rerun', 'run-xyz']],
-  ] as const) {
-    it(`refuses the execution-class ${kind} subcommand in Solo (SA) mode`, async () => {
-      const result = await workflowCommand.handler(
-        [...args],
-        {} as Parameters<typeof workflowCommand.handler>[1],
-        // A confirm channel is offered so a failure to reject can't be masked
-        // by the start path's "no approval channel" early return.
-        { confirm: async () => true } as Parameters<typeof workflowCommand.handler>[2],
-        { agentMode: 'sa' } as Parameters<typeof workflowCommand.handler>[3],
-      );
-      // No agent-turn invocation is handed back — SA runs no workflows.
-      expect(result === undefined || (typeof result === 'object' && !('invocation' in result))).toBe(true);
-      const output = logSpy.mock.calls.map((c) => c.join(' ')).join('\n');
-      expect(output).toContain('Solo (SA) mode does not support');
-      expect(output).toContain('/agent-mode ama');
-    });
-  }
-
   it('bare /workflow <free-text> (unknown workflow name) is treated as create', async () => {
     const result = await workflowCommand.handler(
       ['compare', 'streaming', 'recovery', 'across', 'repos'],

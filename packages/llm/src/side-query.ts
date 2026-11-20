@@ -3,7 +3,7 @@
  *
  * Used by features that need a clean LLM call outside the main agent loop.
  * The auto mode classifier (FEATURE_092) is the first consumer; future
- * users include compaction, title generation, and SA mutation reflection.
+ * users include compaction and title generation.
  *
  * Constraints (deliberate):
  *   - tools=[] hardcoded — sideQuery is single-turn, no tool loop

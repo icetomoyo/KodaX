@@ -21,6 +21,7 @@ export function createExecutionProfile(
     ...(context.requiredWorkMode === undefined ? {} : { requiredWorkMode: context.requiredWorkMode }),
     ...(context.defaultSkill === undefined ? {} : { defaultSkill: context.defaultSkill }),
     ...(context.agentProfile === undefined ? {} : { agentProfile: context.agentProfile }),
+    ...(context.prompt === undefined ? {} : { prompt: context.prompt }),
     ...(context.taskVerification === undefined ? {} : { taskVerification: context.taskVerification }),
     ...(restricted ? { tools: metadata!.map(tool => tool.name), toolMetadata: metadata } : {}),
   });

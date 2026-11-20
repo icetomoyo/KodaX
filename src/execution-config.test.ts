@@ -39,7 +39,7 @@ it('captures execution defaults per Run while a global patch waits for the next 
     const client = toKodaXProductClient(runtime);
     await client.config.patch({ maxOutputTokens: 1234 });
     const session = await client.sessions.create({ projectPath: homeDir });
-    await client.sessions.updateSettings(session.id, { agentMode: 'sa', reasoningMode: 'off', permissionMode: 'full-access' });
+    await client.sessions.updateSettings(session.id, { reasoningMode: 'off', permissionMode: 'full-access' });
     const first = await client.inputs.submit({ sessionId: session.id, inputId: 'held', text: 'Read the evidence.' });
     await entered;
     await client.config.patch({ maxOutputTokens: 2345 });

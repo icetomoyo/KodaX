@@ -113,9 +113,9 @@ npm run dev
 预期结果：
 
 - [ ] `/agent-mode` 能显示当前模式
-- [ ] `/agent-mode sa` 后状态栏第一列显示 `KodaX - SA`
+- [ ] `/agent-mode sa` 报错说明 SA 已退役，状态栏仍显示 `KodaX - AMA`
 - [ ] `/agent-mode ama` 后状态栏第一列显示 `KodaX - AMA`
-- [ ] `Alt+M` 可在 `SA` 与 `AMA` 之间切换
+- [ ] `Alt+M` 不再切换 Agent 模式（快捷键已退役）
 - [ ] 模式切换后不会报错，也不会导致 REPL 卡死
 
 ---

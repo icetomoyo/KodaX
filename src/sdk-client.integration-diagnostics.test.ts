@@ -17,7 +17,7 @@ let runtime: Awaited<ReturnType<typeof createKodaXRuntime>>;
 let host: Awaited<ReturnType<typeof startRuntimeDaemonHost>>;
 let client: Awaited<ReturnType<typeof connectKodaXClient>>;
 const currentConfig: Parameters<typeof executeCommand>[3] = {
-  provider: 'unused', thinking: false, reasoningMode: 'off', agentMode: 'sa', permissionMode: 'auto',
+  provider: 'unused', agentMode: 'ama', thinking: false, reasoningMode: 'off', permissionMode: 'auto',
 };
 const callbacks: Parameters<typeof executeCommand>[2] = {
   exit: () => undefined, saveSession: async () => undefined, loadSession: async () => 'missing',

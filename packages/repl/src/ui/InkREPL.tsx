@@ -384,6 +384,7 @@ import {
   trimPersistedUiHistorySnapshot,
 } from "./utils/restore-history.js";
 import { findMostRecentResumableSession } from "../session/resumable-session.js";
+import { formatSessionTimestamp } from "../session/session-recency.js";
 export { restoreHistoryItemsFromSession, trimPersistedUiHistorySnapshot };
 import { withCapture, ConsoleCapturer } from "./utils/console-capturer.js";
 import { createRecoveryHistoryItem, createRetryHistoryItem } from "./utils/retry-history.js";
@@ -10625,7 +10626,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
               ? await options.sessionCommands.list({ projectRoot: context.gitRoot ?? context.runtimeInfo?.executionCwd ?? process.cwd(), scope: 'user', limit: 10 })
               : await storage.list(context.gitRoot ?? undefined);
             if (options.sessionCommands?.list) return { success: true, message: sessions.length
-              ? 'Recent Sessions:\n' + sessions.map(item => `${item.id} (${item.msgCount} messages) ${item.title.slice(0, 40)}`).join('\n')
+              ? 'Recent Sessions:\n' + sessions.map(item => `${formatSessionTimestamp(item.lastMessageAt ?? item.createdAt)}  ${item.id} (${item.msgCount} messages) ${item.title.slice(0, 40)}`).join('\n')
               : '[No saved sessions]' };
             if (sessions.length === 0) {
               console.log(chalk.dim("\n[No saved sessions]"));
@@ -10634,7 +10635,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             console.log(chalk.bold("\nRecent Sessions:\n"));
             for (const s of sessions.slice(0, 10)) {
               console.log(
-                `  ${chalk.cyan(s.id)} ${chalk.dim(`(${s.msgCount} messages)`)} ${s.title.slice(0, 40)}`
+                `  ${chalk.dim(formatSessionTimestamp(s.lastMessageAt ?? s.createdAt))}  ${chalk.cyan(s.id)} ${chalk.dim(`(${s.msgCount} messages)`)} ${s.title.slice(0, 40)}`
               );
             }
             console.log();
@@ -12263,15 +12264,19 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
   try {
     const { bootstrapConstructionRuntime } = await import('../common/construction-bootstrap.js');
     const construction = await bootstrapConstructionRuntime(gitRoot ?? process.cwd());
-    if (construction.loaded > 0 || construction.failed > 0 || construction.tampered > 0) {
+    const constructionSkipped = construction.failed + construction.tampered + construction.unapproved;
+    if (construction.loaded > 0 || constructionSkipped > 0) {
       const failedSuffix = construction.failed > 0 ? `; ${construction.failed} failed` : '';
       const tamperedSuffix = construction.tampered > 0
         ? `; ${construction.tampered} skipped due to manifest contentHash mismatch — re-stage and re-activate to re-approve`
         : '';
+      const unapprovedSuffix = construction.unapproved > 0
+        ? `; ${construction.unapproved} not loaded because they were not approved on this machine — activate them again to approve`
+        : '';
       emitKodaXDiagnostic({
         source: 'repl:construction',
-        level: construction.failed > 0 || construction.tampered > 0 ? 'warn' : 'info',
-        message: `Rehydrated ${construction.loaded} active tool(s)${failedSuffix}${tamperedSuffix}.`,
+        level: constructionSkipped > 0 ? 'warn' : 'info',
+        message: `Rehydrated ${construction.loaded} active tool(s)${failedSuffix}${tamperedSuffix}${unapprovedSuffix}.`,
       });
     }
     // FEATURE_191 — surface markdown-defined agent count + per-file failures

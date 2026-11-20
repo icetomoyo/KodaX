@@ -52,7 +52,7 @@ it('applies Session settings to the next actual request without changing another
         const second = await client.sessions.create({ title: 'Second', projectPath: homeDir });
         const initial = {
           provider: 'product-settings-test', model: 'initial-model',
-          agentMode: 'sa' as const, permissionMode: 'full-access' as const,
+          permissionMode: 'full-access' as const,
         };
         await client.sessions.updateSettings(first.id, initial);
         await client.sessions.updateSettings(second.id, initial);

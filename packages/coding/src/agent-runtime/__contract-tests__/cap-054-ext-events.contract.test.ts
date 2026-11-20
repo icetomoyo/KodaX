@@ -37,7 +37,7 @@ import type {
   KodaXToolDefinition,
 } from '@kodax-ai/llm';
 
-import { runKodaX } from '../../agent.js';
+import { runTestLeaf as runLeafAgent } from '../test-leaf.js';
 import { createExtensionRuntime } from '../../extensions/index.js';
 import { setActiveExtensionRuntime } from '../../extensions/runtime.js';
 
@@ -74,7 +74,7 @@ class CaptureProvider extends KodaXBaseProvider {
   }
 }
 
-// Issue 128: contract tests drive runKodaX end-to-end and flake at 5000ms
+// Issue 128: contract tests drive runLeafAgent end-to-end and flake at 5000ms
 // default under heavy parallel vitest load. Match the root 30s ceiling.
 describe('CAP-054: extension event lifecycle contract', { timeout: 30_000 }, () => {
   let runtime: ReturnType<typeof createExtensionRuntime>;
@@ -102,8 +102,8 @@ describe('CAP-054: extension event lifecycle contract', { timeout: 30_000 }, () 
     return emitSpy.mock.calls.map((call: any[]) => String(call[0]));
   }
 
-  it('CAP-EXT-EVENTS-001: session:start fires exactly once per runKodaX call (before any turn:start)', async () => {
-    await runKodaX(
+  it('CAP-EXT-EVENTS-001: session:start fires exactly once per runLeafAgent call (before any turn:start)', async () => {
+    await runLeafAgent(
       { provider: PROVIDER_NAME, model: 'capture-model' },
       'do thing',
     );
@@ -119,7 +119,7 @@ describe('CAP-054: extension event lifecycle contract', { timeout: 30_000 }, () 
   });
 
   it('CAP-EXT-EVENTS-002: turn:start and turn:end are paired (N turns → N start + N end)', async () => {
-    await runKodaX(
+    await runLeafAgent(
       { provider: PROVIDER_NAME, model: 'capture-model' },
       'do thing',
     );
@@ -134,7 +134,7 @@ describe('CAP-054: extension event lifecycle contract', { timeout: 30_000 }, () 
   });
 
   it('CAP-EXT-EVENTS-003: text:delta is bridged from the provider stream callback to the extension runtime', async () => {
-    await runKodaX(
+    await runLeafAgent(
       { provider: PROVIDER_NAME, model: 'capture-model' },
       'do thing',
     );
@@ -143,7 +143,7 @@ describe('CAP-054: extension event lifecycle contract', { timeout: 30_000 }, () 
   });
 
   it('CAP-EXT-EVENTS-004: complete fires on the success terminal path', async () => {
-    const result = await runKodaX(
+    const result = await runLeafAgent(
       { provider: PROVIDER_NAME, model: 'capture-model' },
       'do thing',
     );

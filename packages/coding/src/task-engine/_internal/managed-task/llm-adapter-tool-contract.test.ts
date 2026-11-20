@@ -24,33 +24,34 @@ it.each([false, true])('omits only local search from the default root wire menu,
     return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
   };
   const message = [{ role: 'user' as const, content: 'Locate the implementation.' }];
-  // An explicit profile opts out of the default menu projection, not AMA instructions.
+  // An explicit profile is a root Worker and gets the same menu.
   await buildRunnerLlmAdapter({ provider: 'anthropic', context: { agentProfile: { id: 'explicit' } } }, capture)(message, agent);
   const adapter = buildRunnerLlmAdapter({ provider: 'anthropic' }, capture);
   await adapter(message, agent);
   await adapter([{ role: 'user', content: 'Resume after compaction.' }], agent);
   const [baseline, first, resumed] = requests;
-  expect(first!.tools).toEqual(baseline!.tools.filter(tool => tool.name !== 'code_search'));
+  expect(first!.tools).toEqual(baseline!.tools);
+  expect(first!.tools.some(tool => tool.name === 'code_search')).toBe(false);
   expect(first!.system).toBe(baseline!.system);
   expect(resumed).toEqual(first);
   expect(first!.tools.find(tool => tool.name === 'grep')?.input_schema.properties.literal).toBeDefined();
   expect(agent.tools?.some(tool => tool.name === 'code_search')).toBe(true);
 });
 
-it('preserves factory-supplied SDK and child contexts, and missing or overridden builtin substitutes', async () => {
+it('preserves child contexts, and missing or overridden builtin substitutes', async () => {
   let sent: readonly KodaXToolDefinition[] = [];
   const adapter = buildRunnerLlmAdapter({ provider: 'anthropic' }, async (_messages, tools) => {
     sent = tools;
     return { textBlocks: [{ text: 'done' }], toolBlocks: [] };
   });
-  const contexts: Partial<KodaXToolExecutionContext>[] = [
-    { currentAgentId: '/root/explorer' }, { agentProfile: { id: 'explicit' } },
-    { toolVisibilityPolicy: () => true },
-    ...['grep', 'glob', 'read', 'tool_search', 'tool_call'].map(name => ({ excludeTools: [name] })),
+  const contexts: [Partial<KodaXToolExecutionContext>, boolean][] = [
+    [{ currentAgentId: '/root/explorer' }, true], [{ agentProfile: { id: 'explicit' } }, false],
+    [{ toolVisibilityPolicy: () => true }, false],
+    ...['grep', 'glob', 'read', 'tool_search', 'tool_call'].map(name => [{ excludeTools: [name] }, true] as [Partial<KodaXToolExecutionContext>, boolean]),
   ];
-  for (const context of contexts) {
+  for (const [context, keepsCodeSearch] of contexts) {
     await adapter([], buildRunnerAgentChain({ backups: new Map(), ...context }).worker);
-    expect(sent.some(tool => tool.name === 'code_search')).toBe(true);
+    expect(sent.some(tool => tool.name === 'code_search'), JSON.stringify(context)).toBe(keepsCodeSearch);
   }
   for (const name of ['grep', 'glob', 'read', 'tool_search', 'tool_call']) {
     const builtin = getRegisteredToolDefinition(name);
@@ -119,7 +120,7 @@ it.each([false, true])('keeps literal search executable through discovery and pr
   }
 });
 
-it('preserves explicit profiles, child menus, missing replacements and extension search contracts', async () => {
+it('gives explicit profiles the root menu and preserves child menus, missing replacements and extension search contracts', async () => {
   let sent: readonly KodaXToolDefinition[] = [];
   const capture = async (_messages: readonly KodaXMessage[], tools: readonly KodaXToolDefinition[]) => {
     sent = tools;
@@ -127,13 +128,13 @@ it('preserves explicit profiles, child menus, missing replacements and extension
   };
   const context = { backups: new Map<string, string>() };
   const worker = buildRunnerAgentChain(context).worker;
-  for (const options of [
-    { context: { currentAgentId: '/root/explorer' } },
-    { context: { agentProfile: { id: 'explicit-sdk-profile' } } },
-    { context: { toolVisibilityPolicy: () => true } },
-  ]) {
+  for (const [options, keepsCodeSearch] of [
+    [{ context: { currentAgentId: '/root/explorer' } }, true],
+    [{ context: { agentProfile: { id: 'explicit-sdk-profile' } } }, false],
+    [{ context: { toolVisibilityPolicy: () => true } }, false],
+  ] as const) {
     await buildRunnerLlmAdapter({ provider: 'anthropic', ...options }, capture)([{ role: 'user', content: 'Inspect.' }], worker);
-    expect(sent.map(tool => tool.name)).toContain('code_search');
+    expect(sent.some(tool => tool.name === 'code_search'), JSON.stringify(options)).toBe(keepsCodeSearch);
   }
   for (const agent of [
     { ...worker, name: 'repo-explorer' },

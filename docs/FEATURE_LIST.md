@@ -22,19 +22,19 @@
 | Visual harness implementation | P3/P4/P5/P6 implemented within declared scope and released in `v0.7.97-beta.5` through the next-dev integration; [final ID/receipt contract delivery](designs/visual-harness-id-contract-delivery-2026-10-30.md). P7 task-value evaluation concluded **mixed; net task-quality/token value unproven**, against optimized pre-visual 1826cc22; [final review and limits](designs/visual-harness-current-version-closure-2026-10-30.md). The 2026-10-29 plan's "not executed" state and old r3 single-response results are historical, not the current outcome. Historical default suite 18,094 passed / 0 failed; earlier failures and unlocated causes remain recorded; [mainline integration acceptance](designs/next-dev-integration-execution-2026-11-09.md). No new feature ID/version assigned |
 | Roadmap updated | `2026-11-16` — beta.11 prepared on top of the npm-published beta.10 with readable history during a busy Run and tool-neutral Skills, merged into `KodaX-next-dev` on 2026-11-17; FEATURE_300 remains Planned. `2026-11-15` — FEATURE_308 note memory Completed on `KodaX-next-dev` (unreleased, on by default); FEATURE_309 legacy memory code deletion Planned for `v0.8.11`, blocked by Issue 411; beta.10 published (GitHub prerelease and npm `beta`) with merged-input acknowledgement (`ClientViewItem.inputIds`) and the merged-input restore fix, merged into `KodaX-next-dev` on 2026-11-15. `2026-11-13` — beta.9 prepared on top of the published beta.8 with FEATURE_306 data root resolver and copy (Completed, shipped in `v0.7.97-beta.9`); FEATURE_305 Completed; FEATURE_300 remains Planned; `KodaX-next-dev` merged beta.9 on 2026-11-14 and carries the unreleased FEATURE_307 side chat and FEATURE_308 memory redesign |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
-| Total tracked features | `93` |
+| Total tracked features | `95` |
 | InProgress | `3` |
 | Planned | `18` |
-| Completed | `66` |
+| Completed | `68` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
-| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309` |
+| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311` |
 | Archive cutoff | Shipped / canceled / absorbed / shelved items through `v0.7.49` are archived. |
 
 ### 一览表
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 66 | `308, 306, 305, 304, 303, 302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| Completed | 68 | `311, 310, 308, 306, 305, 304, 303, 302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 3 | `307, 298, 225` | `307`: R1–R6 hardening and verification per [side-chat plan](designs/side-chat-plan.md). `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
 | Planned, 0.8.x | 11 | `278, 279, 282, 283, 285, 280, 309, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
@@ -2426,6 +2426,36 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 ---
 
+## 2026-11-19 FEATURE_311 Addition
+
+- Status: Completed 2026-11-20, unreleased. Planned under `v0.7.98`, a planning identifier. ID 311 is unused on
+  both `KodaX` and `KodaX-next-dev`.
+- Source: the 2026-10-26/27 first-turn token work replaced canonical text with compact text at request
+  time and silently kept canonical text whenever an exact match failed. Two tool text sets and two Worker
+  texts are maintained, persona/override/policy/specialist and direct root Runs never got the optimization,
+  and `runs.start()` without `mode` still runs the pre-ADR-033 `system.md`.
+- Owner decisions (2026-11-19): one source per role and one tool text set on every entry; every root Run
+  moves to the managed Worker; `systemPromptOverride` replaces identity and style only; SDK customers no
+  longer call `runKodaX`, so there is no deprecation window; eval budget authorized.
+- Design block: [v0.7.98](features/v0.7.98.md#feature_311-unified-prompt-chain).
+
+---
+
+## 2026-11-18 FEATURE_310 Addition
+
+- Status: Completed 2026-11-19, unreleased. Planned under `v0.7.98`, a planning identifier.
+  ID 310 skips 307–309, which `KodaX-next-dev` already uses.
+- Source: the SA selection was retired in 4c4c3774e (2026-10-16), but explicit SDK `'sa'`,
+  config.json `'sa'`, the SA dispatch branch, `'sa'` labels and SA test fixtures remain.
+  A config.json carrying `agentMode: "sa"` silently runs non-REPL Product sessions without
+  Actor tools.
+- Owner decisions (2026-11-18): normalize config.json `'sa'` to AMA; retire public `'sa'` the
+  amaw way and remove every SA call path in this pass, not in a later release window; delete
+  the FEATURE_100 golden recorder; keep the `sa-mutation-reflection` eval id.
+- Design block: [v0.7.98](features/v0.7.98.md#feature_310-sa-mode-residue-removal).
+
+---
+
 ## 2026-11-13 FEATURE_306 Addition
 
 - Status: Completed 2026-11-13; shipped in `v0.7.97-beta.9`. Planned under `v0.7.98`, a
@@ -2540,6 +2570,8 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Version | Design | Notes |
 |---|---|---|---|---|
+| `311` | Unified Prompt Chain | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_311-unified-prompt-chain) | Every root Run uses the managed Worker and every entry sends one tool text: the request-time projection, the canonical Worker and tool texts, the direct root engine and `system.md` are deleted. `runs.start({ mode: 'coding' })` is ignored with a warning; the leaf executor stays internal for child Agents. `tests/f311-entry-matrix.test.ts` pins every entry; ADR "Every root Run uses one Worker and one tool text" records it. |
+| `310` | SA Mode Residue Removal | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_310-sa-mode-residue-removal) | Public and config.json `agentMode: 'sa'` normalize the way `amaw` did: managed entries run AMA, `runKodaX` and `runs.start` without a mode treat it as unset, and persisted `'sa'` records stay readable. The SA dispatch branch, Direct Path overlay, `'sa'` labels and the FEATURE_100 golden recorder are gone; ADR "SA mode is retired from every caller" records it. The `sa-mutation-reflection` eval id keeps its name. |
 | `308` | Memory and Skill-Learning Redesign | `v0.8.10` (on `KodaX-next-dev`, unreleased) | [v0.8.10](features/v0.8.10.md#feature_308-memory-and-skill-learning-redesign) | Note memory replaces the governed memory plane and is on by default (ADR-076): one markdown file per note, a `MEMORY.md` index read by the model, the `memory` tool with exact-quote authorization, inferred notes kept as candidates, reflection after each root run (10 calls a day) that also proposes `ready` skills, and a reminder after a failed tool batch. `KODAX_MEMORY_NOTES=0` restores the legacy plane until FEATURE_309. [Test guide](test-guides/FEATURE_308_v0.8.10_TEST_GUIDE.md). |
 | `306` | Data Root Resolver and Copy | `v0.7.98` (shipped in `v0.7.97-beta.9`) | [v0.7.98](features/v0.7.98.md#feature_306-data-root-resolver-and-copy) | `resolveKodaXHome` resolves the data root without touching `process.env` and ignores a relative `KODAX_HOME` with a warning; `copyKodaXDataRoot` copies a data root into an empty target under an incomplete marker, skips per-Host state, refuses a running Host and rebases absolute paths in `.json` / `.jsonl`. Source: Space F148 / ADR-011; the Space dependency bump follows the release. |
 | `305` | One Host per KODAX_HOME | `v0.7.98` (shipped in `v0.7.97-beta.6`) | [v0.7.98](features/v0.7.98.md#feature_305-one-host-per-kodax_home) | One Host serves each `KODAX_HOME`; the Host-location `profile` SDK option and `--profile` CLI flag are removed with `runtime_host_migration_required` errors (ADR-075). Legacy-slot Hosts are found through the storage-owner redirect and profile-split Session state merges once (Issue 407); the Space dependency bump follows the release. |

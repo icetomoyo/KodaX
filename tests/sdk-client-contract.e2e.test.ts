@@ -181,18 +181,18 @@ it('preserves Partner ceilings and Coder work modes across an independent Host p
     expect(await client.config.readEffective()).toMatchObject({ maxOutputTokens: { value: 1234, applied: true }, application: { maxOutputTokens: 'next_run', extensions: 'extension_reload' } });
     expect(requests[0]!.max_tokens ?? requests[0]!.max_completion_tokens).toBe(1234);
     partner = false;
-    for (const agentMode of ['sa', 'ama'] as const) for (const workMode of ['agent', 'coding', 'script'] as const) {
+    for (const workMode of ['agent', 'coding', 'script'] as const) {
       const coder = await client.sessions.create({ surface: 'code', projectPath: homeDir });
-      await client.sessions.updateSettings(coder.id, { agentMode, workMode, permissionMode: 'full-access', reasoningMode: 'off' });
+      await client.sessions.updateSettings(coder.id, { agentMode: 'ama', workMode, permissionMode: 'full-access', reasoningMode: 'off' });
       const before = requests.length;
-      const input = await client.inputs.submit({ sessionId: coder.id, inputId: `coder-${agentMode}-${workMode}`, text: 'Reply briefly.' });
+      const input = await client.inputs.submit({ sessionId: coder.id, inputId: `coder-${workMode}`, text: 'Reply briefly.' });
       expect((await client.runs.await(input.runId!)).phase).toBe('completed');
       expect((await client.runs.read(input.runId!)).workMode).toBe(workMode);
       const names = requests[before]!.tools!.map(tool => tool.function.name);
       expect((await client.runs.read(input.runId!)).effectiveConfig).toMatchObject({ workMode, modelToolScope: names });
-      expect(names.includes('script_exec'), JSON.stringify({ agentMode, workMode, names })).toBe(workMode === 'script');
+      expect(names.includes('script_exec'), JSON.stringify({ workMode, names })).toBe(workMode === 'script');
       expect(names.includes('repo_overview')).toBe(workMode === 'coding');
-      expect(names.includes('spawn_agent')).toBe(agentMode === 'ama');
+      expect(names).toContain('spawn_agent');
       if (workMode === 'script') {
         const cellResult = requests.slice(before).flatMap(value => value.messages)
           .find(message => message.role === 'tool' && message.tool_call_id === 'coder-script-read');

@@ -259,6 +259,7 @@ export {
   type PreparedSessionTailDelta,
 } from "./interactive/storage.js";
 export { findMostRecentResumableSession } from "./session/resumable-session.js";
+export { formatSessionTimestamp } from "./session/session-recency.js";
 export {
   dedupeSessions,
   type SessionDedupeMatch,

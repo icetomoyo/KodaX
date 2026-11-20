@@ -114,7 +114,7 @@ export interface CancellationTerminalInput {
   readonly toolResults: KodaXToolResultBlock[];
   readonly completedTurnTokenSnapshot: KodaXContextTokenSnapshot;
   readonly sessionId: string;
-  /** Queue route owned by the current execution; undefined keeps legacy SA scope. */
+  /** Queue route owned by the current execution; undefined uses the unscoped queue (no Actor route). */
   readonly queueAgentId?: string;
   readonly iter: number;
   /**

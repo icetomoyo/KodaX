@@ -27,8 +27,8 @@ export async function closeScriptModelSession(agent: Agent): Promise<void> {
 
 /** Structured contracts are serialized once, never recovered by parsing generated teaching. */
 export function buildScriptModelDescription(leaves: readonly KodaXToolDefinition[], nativeBridge = false): string {
-  return staticText("t12.agent-runtime/script/model.0")
-    + (nativeBridge ? 'Native tool_call({name,input}) can call these same tools without a Script cell; use whichever fits the task. ' : '')
+  return staticText("script.description") + ' '
+    + (nativeBridge ? 'Native tool_call({name,input}) can call these same tools one at a time without a Script cell. ' : '')
     + `Use native bash for background commands. Limits: ${SCRIPT_MODEL_LIMITS.timeoutMs / 1000}s cell deadline (admitted host calls drain before return), ${SCRIPT_MODEL_LIMITS.maxCalls} attempted calls, ${SCRIPT_MODEL_LIMITS.memoryBytes / 1024 / 1024}MiB VM memory, ${SCRIPT_MODEL_LIMITS.maxTransferBytes / 1024 / 1024}MiB per transfer.\nCallable contracts (JSON Schema):\n`
     + leaves.map(tool => `tools[${JSON.stringify(tool.name)}](input): ${JSON.stringify(tool)}`).join('\n');
 }
@@ -108,7 +108,7 @@ function serializeModelReceipt(cell: ScriptCellResult | ScriptObservation, selec
       value_fields_from_receipts: Object.fromEntries(references) };
   } else return full;
   const compact = JSON.stringify({ ...projected,
-    value_reference_note: staticText("t12.agent-runtime/script/model.1") });
+    value_reference_note: staticText("script.value-reference-note") });
   return compact.length < full.length ? compact : full;
 }
 
@@ -142,7 +142,7 @@ export function withScriptModelTool(agent: Agent, context: KodaXToolExecutionCon
       selected_output: { type: 'boolean', description: 'Return your selected value and mandatory notes; unclassified tool output remains complete.' } }, required: ['code'] },
     requiresSerialExecution: () => true,
     execute: async (input, caller) => {
-      if (closed) return { content: '[Tool Error] Script closed after a host failure. Inspect durable receipts before starting a new Run; do not replay effects.', isError: true };
+      if (closed) return { content: '[Tool Error] Script cells are closed for this session after a host failure. Calls that already ran keep their effects, so confirm what changed before repeating one. Continue with the native tools.', isError: true };
       if (session.active) return { content: '[Tool Error] A Script cell is still running; use script_wait before starting another.', isError: true };
       if (typeof input.code !== 'string') return { content: '[Tool Error] code must be a string.', isError: true };
       try { validateScriptCell(input.code, SCRIPT_MODEL_LIMITS); }
@@ -192,6 +192,18 @@ export function projectScriptModelTools<T extends KodaXToolDefinition>(agent: Ag
   const leaves = bound && new Set(bound.leaves.map(tool => tool.name));
   // Script only qualifies foreground shell; keep the full native path directly callable.
   return leaves ? tools.filter(tool => tool.name === 'bash' || !leaves.has(tool.name)) : tools;
+}
+
+/**
+ * The Worker system prompt is shared with coding mode and names `read`/`edit`/`grep` as if native.
+ * Script mode serves them from cells, so models called the missing native tools and failed.
+ */
+export function withScriptModeGuidance(agent: Agent, tools: readonly KodaXToolDefinition[], system: string): string {
+  if (!getScriptModelContracts(agent, tools)) return system;
+  const bridge = tools.some(tool => tool.name === 'tool_call');
+  const section = ['SCRIPT MODE', staticText("script.mode-guidance.cells"),
+    ...(bridge ? [staticText("script.mode-guidance.bridge")] : [])].join('\n');
+  return `${system}\n\n${section}`;
 }
 
 /** Recovery needs a callable read path, not necessarily a native read schema. */

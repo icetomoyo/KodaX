@@ -136,6 +136,13 @@ function toolInputSchema(key: Parameters<typeof staticText>[0]): KodaXToolDefini
   return JSON.parse(staticText(key)) as KodaXToolDefinition['input_schema'];
 }
 
+/** One shell contract; the Script pilot states its foreground-only boundary in the same place. */
+export function shellToolDescription(execution: 'native' | 'foreground'): string {
+  return staticText("tool.bash.description") + ' '
+    + (execution === 'native' ? 'Long commands: run_in_background. ' : 'Foreground commands only; use native bash for background commands. ')
+    + 'Full output captured; only next-request capacity overflow yields recoverable artifact preview.';
+}
+
 /**
  * Classifier projection helper for `stage_*` construction tools whose input
  * is the artifact serialized as a JSON string. Parses opportunistically and
@@ -210,13 +217,10 @@ function objectKeysPreview(value: unknown): string {
 
 const RUN_WORKFLOW_DESCRIPTION = [
   EXPLICIT_WORKFLOW_POLICY,
-  staticText("tool.RUN_WORKFLOW_DESCRIPTION.text"),
-  staticText("tool.RUN_WORKFLOW_DESCRIPTION.text.1"),
-  staticText("tool.RUN_WORKFLOW_DESCRIPTION.text.2"),
-  staticText("tool.RUN_WORKFLOW_DESCRIPTION.text.3"),
+  staticText("tool.run_workflow.intro"),
   `Available single-phase shapes:\n${renderWorkflowPatternGuidance().slice(0, -1).join('\n')}`,
   `${WORKFLOW_REVIEW_COMPOSITION_GUIDANCE} Chain more than one pattern when the protocol has more than one shape, match the effort to the request, and disclose every bounded or silent cap.`,
-  staticText("tool.RUN_WORKFLOW_DESCRIPTION.text.4"),
+  staticText("tool.run_workflow.closing"),
 ].join('\n\n');
 
 const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
@@ -244,7 +248,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     sideEffect: 'mutates-state',
     planModeAllowed: false,
     classifierExemptReason:
-      staticText("tool.BUILTIN_TOOL_DEFINITION_SOURCE.classifierExemptReason"),
+      staticText("tool.memory_intent.classifier-exempt-reason"),
     toClassifierInput: () => '',
   },
   {
@@ -255,7 +259,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     sideEffect: 'mutates-state',
     planModeAllowed: false,
     classifierExemptReason:
-      staticText("tool.BUILTIN_TOOL_DEFINITION_SOURCE.classifierExemptReason"),
+      staticText("tool.memory_intent.classifier-exempt-reason"),
     toClassifierInput: () => '',
   },
   {
@@ -287,12 +291,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'skill',
-    description: [
-      staticText("tool.skill.text"),
-      staticText("tool.skill.text.1"),
-      staticText("tool.skill.text.2"),
-      staticText("tool.skill.text.3"),
-    ].join('\n'),
+    description: staticText("tool.skill.description"),
     input_schema: toolInputSchema('tool.skill.input_schema'),
     handler: toolSkill,
     sideEffect: 'mutates-state',
@@ -302,12 +301,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'run_skill_script',
-    description: [
-      'Run one exact script from an admitted Skill inside the remote OS sandbox.',
-      'The script sees only its pinned Skill snapshot and a fresh staging directory.',
-      staticText("tool.run_skill_script.text"),
-      staticText("tool.run_skill_script.text.1"),
-    ].join('\n'),
+    description: staticText("tool.run_skill_script.description"),
     input_schema: toolInputSchema('tool.run_skill_script.input_schema'),
     handler: toolRunSkillScript,
     sideEffect: 'mutates-shell',
@@ -333,8 +327,8 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     input_schema: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'The absolute path to the file' },
-        content: { type: 'string', description: 'The content to write' },
+        path: { type: 'string', description: 'Absolute file path.' },
+        content: { type: 'string' },
       },
       required: ['path', 'content'],
     },
@@ -348,16 +342,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'edit',
-    description:
-      staticText("tool.edit.text")
-      + '## When to Use This Tool\n\n'
-      + '- Modifying an existing file with one targeted text change.\n'
-      + staticText("tool.edit.text.1")
-      + '- Filling in one placeholder produced by a prior `write(path, skeleton)`.\n\n'
-      + '## When NOT to Use This Tool\n\n'
-      + staticText("tool.edit.text.2")
-      + staticText("tool.edit.text.3")
-      + staticText("tool.edit.text.4"),
+    description: staticText("tool.edit.description"),
     input_schema: toolInputSchema('tool.edit.input_schema'),
     handler: toolEdit,
     sideEffect: 'mutates-fs',
@@ -368,22 +353,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'multi_edit',
-    description:
-      'Apply multiple exact-text replacements to a single file in ONE atomic tool call.\n\n'
-      + '## When to Use This Tool\n\n'
-      + staticText("tool.multi_edit.text")
-      + '- Bulk renames within one file (use `replace_all: true` per edit).\n'
-      + '- Refactors that touch multiple spots in one file and should land all-or-nothing.\n\n'
-      + '## When NOT to Use This Tool\n\n'
-      + '- For a single change — call `edit` directly; the extra wrapping is unnecessary overhead.\n'
-      + staticText("tool.multi_edit.text.1")
-      + staticText("tool.multi_edit.text.2")
-      + '## Atomicity\n\n'
-      + staticText("tool.multi_edit.text.3")
-      + '## Uniqueness\n\n'
-      + staticText("tool.multi_edit.text.4")
-      + '## Typical Pattern\n\n'
-      + staticText("tool.multi_edit.text.5"),
+    description: staticText("tool.multi_edit.description"),
     input_schema: toolInputSchema('tool.multi_edit.input_schema'),
     handler: toolMultiEdit,
     sideEffect: 'mutates-fs',
@@ -406,7 +376,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'bash',
-    description: staticText("tool.bash.description"),
+    description: shellToolDescription('native'),
     input_schema: toolInputSchema('tool.bash.input_schema'),
     handler: toolBash,
     sideEffect: 'mutates-shell',
@@ -427,12 +397,12 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'glob',
-    description: 'Find files matching a pattern.',
+    description: 'Find file paths by glob.',
     input_schema: {
       type: 'object',
       properties: {
-        pattern: { type: 'string', description: 'The glob pattern' },
-        path: { type: 'string', description: 'Directory to search' },
+        pattern: { type: 'string' },
+        path: { type: 'string', description: 'Search directory.' },
       },
       required: ['pattern'],
     },
@@ -539,7 +509,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     input_schema: {
       type: 'object',
       properties: {
-        timeout_ms: { type: 'number', minimum: 10000, maximum: 3600000, description: staticText("tool.wait_agent.description.1") },
+        timeout_ms: { type: 'number', minimum: 10000, maximum: 3600000, description: staticText("tool.wait_agent.timeout_ms") },
       },
     },
     handler: toolWaitAgent,
@@ -576,12 +546,8 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     input_schema: {
       type: 'object',
       properties: {
-        target: {
-          type: 'string',
-          description:
-            'Canonical controlled actor path or direct-child task name.',
-        },
-        turn_id: { type: 'string', description: 'Optional exact turn id. Defaults to the actor\'s latest turn.' },
+        target: { type: 'string', description: 'Canonical controlled path or direct-child name.' },
+        turn_id: { type: 'string', description: 'Exact turn; default latest.' },
       },
       required: ['target'],
     },
@@ -763,12 +729,12 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'worktree_create',
-    description: 'Create a new git worktree with an isolated branch for safe agent work.',
+    description: 'Create isolated Git worktree/branch for Agent work.',
     input_schema: {
       type: 'object',
       properties: {
-        branch_name: { type: 'string', description: 'Optional explicit branch name' },
-        description: { type: 'string', description: 'Optional description to auto-generate branch name from' },
+        branch_name: { type: 'string', description: 'Explicit branch; optional.' },
+        description: { type: 'string', description: 'Input used to generate a branch name.' },
       },
     },
     handler: toolWorktreeCreate,
@@ -783,7 +749,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'worktree_remove',
-    description: 'Remove a git worktree and optionally its branch.',
+    description: 'Keep/remove a Git worktree directory and optionally its branch.',
     input_schema: toolInputSchema('tool.worktree_remove.input_schema'),
     handler: toolWorktreeRemove,
     sideEffect: 'mutates-fs',
@@ -836,12 +802,12 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
         objective: {
           type: 'string',
           description:
-            staticText("tool.create_goal.description.1"),
+            staticText("tool.create_goal.objective"),
         },
         token_budget: {
           type: 'number',
           description:
-            staticText("tool.create_goal.description.2"),
+            staticText("tool.create_goal.token_budget"),
         },
       },
       required: ['objective'],
@@ -899,7 +865,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
     input_schema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'Optional stable todo id for full item detail; omit to list the plan.' },
+        id: { type: 'string', description: 'Stable item ID; omitted lists plan.' },
       },
     },
     handler: toolTodoList,
@@ -1111,9 +1077,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   // ====================================================================
   {
     name: 'scaffold_tool',
-    description:
-      staticText("tool.scaffold_tool.text")
-      + staticText("tool.scaffold_tool.text.1"),
+    description: staticText("tool.scaffold_tool.description"),
     input_schema: toolInputSchema('tool.scaffold_tool.input_schema'),
     handler: toolScaffoldTool,
     // Returns a fillable ConstructionArtifact JSON skeleton (you edit it, then
@@ -1126,9 +1090,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'validate_tool',
-    description:
-      staticText("tool.validate_tool.text")
-      + 'Does NOT touch disk. Use this BEFORE stage_construction to fail fast on malformed handlers.',
+    description: staticText("tool.validate_tool.description"),
     input_schema: toolInputSchema('tool.validate_tool.input_schema'),
     handler: toolValidateTool,
     sideEffect: 'readonly',
@@ -1136,9 +1098,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'stage_construction',
-    description:
-      staticText("tool.stage_construction.text")
-      + 'Run validate_tool first; this tool itself does not re-validate the AST or schema.',
+    description: staticText("tool.stage_construction.description"),
     input_schema: {
       type: 'object',
       properties: {
@@ -1155,9 +1115,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'test_tool',
-    description:
-      staticText("tool.test_tool.text")
-      + staticText("tool.test_tool.text.1"),
+    description: staticText("tool.test_tool.description"),
     input_schema: toolInputSchema('tool.test_tool.input_schema'),
     handler: toolTestTool,
     sideEffect: 'mutates-state',
@@ -1166,10 +1124,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'activate_tool',
-    description:
-      staticText("tool.activate_tool.text")
-      + 'Policy: in the Ink REPL, the user sees an approve/reject dialog before activation. '
-      + staticText("tool.activate_tool.text.1"),
+    description: staticText("tool.activate_tool.description"),
     input_schema: {
       type: 'object',
       properties: {
@@ -1196,9 +1151,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   // ====================================================================
   {
     name: 'scaffold_agent',
-    description:
-      staticText("tool.scaffold_agent.text")
-      + staticText("tool.scaffold_agent.text.1"),
+    description: staticText("tool.scaffold_agent.description"),
     input_schema: toolInputSchema('tool.scaffold_agent.input_schema'),
     handler: toolScaffoldAgent,
     // Returns a fillable agent skeleton (no disk write) — readonly, not
@@ -1209,9 +1162,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'validate_agent',
-    description:
-      staticText("tool.validate_agent.text")
-      + 'Does NOT touch disk. Use this BEFORE stage_agent_construction to fail fast on rejected manifests.',
+    description: staticText("tool.validate_agent.description"),
     input_schema: {
       type: 'object',
       properties: {
@@ -1225,9 +1176,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'stage_agent_construction',
-    description:
-      staticText("tool.stage_agent_construction.text")
-      + 'Run validate_agent first; this tool itself does not re-run admission.',
+    description: staticText("tool.stage_agent_construction.description"),
     input_schema: {
       type: 'object',
       properties: {
@@ -1244,9 +1193,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'test_agent',
-    description:
-      staticText("tool.test_agent.text")
-      + 'Returns ok=true/false with errors / warnings. On ok=true the agent is ready for activate_agent.',
+    description: staticText("tool.test_agent.description"),
     input_schema: {
       type: 'object',
       properties: {
@@ -1262,11 +1209,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   },
   {
     name: 'activate_agent',
-    description:
-      staticText("tool.activate_agent.text")
-      + 'and registers the agent in the resolver so Runner.run can find it by name. '
-      + 'Policy: in the Ink REPL, the user sees an approve/reject dialog before activation. '
-      + staticText("tool.activate_agent.text.1"),
+    description: staticText("tool.activate_agent.description"),
     input_schema: {
       type: 'object',
       properties: {
@@ -1293,11 +1236,7 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
   // ====================================================================
   {
     name: SELF_MODIFY_TOOL_NAME,
-    description:
-      'Stage a new version of YOURSELF — the active constructed agent calling this tool. '
-      + staticText("tool.BUILTIN_TOOL_DEFINITION_SOURCE.text")
-      + staticText("tool.BUILTIN_TOOL_DEFINITION_SOURCE.text.1")
-      + staticText("tool.BUILTIN_TOOL_DEFINITION_SOURCE.text.2"),
+    description: staticText("tool.stage_self_modify.description"),
     input_schema: {
       type: 'object',
       properties: {

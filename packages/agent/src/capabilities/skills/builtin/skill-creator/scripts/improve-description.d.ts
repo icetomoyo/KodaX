@@ -6,7 +6,6 @@ export interface ImproveDescriptionOptions {
   output?: string;
   write?: boolean;
   historyPath?: string;
-  maxIter?: number;
   reasoningMode?: string;
 }
 

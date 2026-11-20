@@ -120,8 +120,7 @@
     "packages/coding/src/tools/tool-search-model-result.test.ts",
     "packages/coding/src/agent-runtime/work-mode.test.ts",
     "packages/coding/src/tools/managed-tool-contract.test.ts",
-    "packages/coding/src/prompts/managed-system-contract.test.ts",
-    "packages/coding/src/prompts/managed-context-contract.test.ts",
+    "packages/coding/src/prompts/worker-system-contract.test.ts",
     "packages/coding/src/media/visual-owner.test.ts",
     "packages/coding/src/agent-runtime/middleware/auto-resume.test.ts",
     "packages/agent/src/capabilities/skills/skill-registry.test.ts",
@@ -148,7 +147,13 @@
     "packages/llm/src/providers/model-modality-wire.test.ts",
     "packages/llm/src/providers/provider-capabilities.test.ts",
     "packages/repl/src/interactive/invocation-runtime.test.ts",
-    "tests/issue-376-plan-exit.eval.ts"
+    "tests/issue-376-plan-exit.eval.ts",
+    "tests/f311-entry-matrix.test.ts",
+    "tests/f311-worker-root.eval.ts",
+    "tests/f311-sdk-default-root.eval.ts",
+    "tests/f311-runkodax-root.eval.ts",
+    "tests/f311-omit-parallel.eval.ts",
+    "tests/skill-creator-trigger.test.ts"
   ],
   "exclude": ["node_modules", "dist"]
 }

@@ -1,49 +1,16 @@
 /**
- * v0.7.35.1 FEATURE_142 Batch E — Capability Context Sections.
+ * Capability Context Sections for the managed Worker.
  *
- * Single source of truth for the 14 capability-context prompt sections
- * the SA path (`buildSystemPromptSnapshot` in `builder.ts`) assembles.
- * Extracted to dedupe with a future AMA worker integration (Batch F /
- * v0.7.36 FEATURE_143). Each section's id, order, content shape, and
- * inclusion condition is preserved byte-equivalently from
- * builder.ts:32-181 (pre-Batch E).
+ * Emits the ordered capability-context sections the Worker places in its
+ * request context: repository orientation (git context, project snapshot),
+ * MCP and specialist catalogs, product self-knowledge routing, caller prompt
+ * overlay, project rules, memory, the Skill catalog and tool-construction
+ * guidance. Identity, environment, working directory and execution guidance
+ * belong to the Worker instructions, so they are not emitted here.
  *
- * The 14 sections, in order:
- *   1.  base-system               (always)
- *   2.  base-system-suffix        (when SYSTEM_PROMPT has `{context}` marker)
- *   3.  environment-context       (always)
- *   4.  runtime-fact              (when provider or model is set)
- *   5.  working-directory         (always)
- *   6.  session-scratch-directory (when session id is set)
- *   7.  git-context               (when isNewSession AND repo has git output)
- *   8.  project-snapshot          (when isNewSession)
- *   9.  repo-intelligence-context (when context.repoIntelligenceContext)
- *   10. mcp-capability-context    (when extensionRuntime returns mcp ctx)
- *   11. prompt-overlay            (when context.promptOverlay)
- *   12. project-agents            (when AGENTS.md / CLAUDE.md found)
- *   13. skills-addendum           (when context.skillsPrompt)
- *   14. tool-construction         (when toolConstructionMode includes it)
- *
- * Why this lives in `@kodax-ai/coding/src/prompts/` and NOT
- * `@kodax-ai/agent/`:
- *   - All callers (builder.ts SA path + future AMA role-prompt) are
- *     coding-internal. A future `@kodax-ai/data-analysis-agent` would
- *     have its own builder + role-prompt with its own section set
- *     (e.g. `prompt-overlay` is coding-routing-specific). Cross-agent
- *     reuse is at the **pattern** level (each agent has its own
- *     `capability-sections.ts`), not the **content** level.
- *   - Hoisting to `@kodax-ai/agent/` would force `@kodax-ai/agent` →
- *     `@kodax-ai/agent` / `@kodax-ai/agent` cross-package dependencies,
- *     breaking the "agent doesn't depend on application-layer
- *     packages" promise.
- *   - The drift problem this batch solves is "SA / AMA assemble the
- *     same content twice" — a coding-internal duplication, not a
- *     cross-package boundary issue.
- *
- * Behavior contract: the SA path's emitted sections array (and thus
- * `KodaXPromptSnapshot.rendered`) MUST stay byte-equivalent to the
- * pre-Batch E `buildSystemPromptSnapshot` output. `builder.test.ts` is
- * the integration-level guard for this contract.
+ * This stays in `@kodax-ai/coding/src/prompts/` rather than `@kodax-ai/agent/`
+ * because its content is coding-specific; another agent would own its own
+ * section set.
  */
 
 import path from 'node:path';
@@ -56,25 +23,20 @@ import { emitResilienceDebug } from '../agent-runtime/resilience-debug.js';
 import { loadInstructionFiles, formatAgentsForPrompt } from '../context/agents-loader.js';
 import { listConstructedAgents, type KodaXAgentScope } from '../construction/agent-resolver.js';
 import { resolveExecutionCwd } from '../runtime-paths.js';
-import { getSessionScratchDir } from '../session-scratch.js';
 import type { KodaXOptions } from '../types.js';
-import { formatFullSkillSection } from '../skill-invocation-format.js';
 import { isToolDiscoverable } from '../tools/tool-search.js';
 import { getModelSkillCatalog } from '../agent-runtime/tool-resolution.js';
 
-import { buildMemoryRulesSection } from './memory-rules.js';
+import { buildMemoryRulesSection, buildWorkerMemoryRules } from './memory-rules.js';
 import { convertLegacyMemory, isNoteMemoryEnabled, renderNoteMemorySection, resolveNotePlace } from '../memory/note-memory.js';
 import { createPromptSection, type KodaXPromptSection } from './sections.js';
-import { buildSelfKnowledgeRoutingRule } from '../self-knowledge/routing-rule.js';
-import { EXECUTION_GUIDANCE } from './execution-guidance.js';
-import { SYSTEM_PROMPT } from './system.js';
+import { buildSelfKnowledgeRoutingRule, buildWorkerSelfKnowledgeRoutingRule } from '../self-knowledge/routing-rule.js';
 import {
   TOOL_CONSTRUCTION_PROMPT,
   shouldIncludeToolConstructionSection,
 } from './tool-construction.js';
 
 const execAsync = promisify(exec);
-const SYSTEM_CONTEXT_MARKER = '{context}';
 
 /**
  * Build the full ordered set of capability-context prompt sections for
@@ -83,15 +45,9 @@ const SYSTEM_CONTEXT_MARKER = '{context}';
  * the agent uses); this helper only emits the section list.
  *
  * `executionCwd` is OPTIONAL — when omitted, this helper calls
- * `resolveExecutionCwd(options.context)` internally. Passing it
- * explicitly is supported as a perf shortcut for callers that have
- * already resolved cwd for other purposes (e.g. `builder.ts` uses the
- * same value to populate the snapshot's `executionCwd` field), but
- * **the explicit value MUST equal `resolveExecutionCwd(options.context)`
- * or the `working-directory` section will diverge from the snapshot
- * metadata** — a subtle source of drift if a future caller resolves
- * cwd differently. Prefer the no-arg form unless you have a documented
- * reason to override.
+ * `resolveExecutionCwd(options.context)` internally. The managed Worker
+ * passes its resolved workspace directory so git context, project snapshot,
+ * project rules and memory all read the directory the Worker runs in.
  */
 export async function buildCapabilityContextSections(
   options: KodaXOptions,
@@ -100,60 +56,6 @@ export async function buildCapabilityContextSections(
 ): Promise<KodaXPromptSection[]> {
   const executionCwd = executionCwdOverride ?? resolveExecutionCwd(options.context);
   const sections: KodaXPromptSection[] = [];
-  const { prefix: systemPromptPrefix, suffix: systemPromptSuffix } =
-    splitSystemPromptTemplate(SYSTEM_PROMPT);
-
-  sections.push(
-    createPromptSection(
-      'base-system',
-      systemPromptPrefix,
-      'Always include the stable base identity and safety baseline.',
-    ),
-  );
-  if (systemPromptSuffix) {
-    sections.push(
-      createPromptSection(
-        'base-system-suffix',
-        systemPromptSuffix,
-        'Preserve any trailing stable base prompt instructions that follow the context placeholder.',
-      ),
-    );
-  }
-  sections.push(
-    createPromptSection(
-      'environment-context',
-      getEnvContext(),
-      'Always disclose runtime platform details so shell guidance stays accurate.',
-    ),
-  );
-  const runtimeFact = getRuntimeFact(options);
-  if (runtimeFact) {
-    sections.push(
-      createPromptSection(
-        'runtime-fact',
-        runtimeFact,
-        'Always disclose the active provider and model so identity questions can be answered truthfully instead of guessed from pretraining.',
-      ),
-    );
-  }
-  sections.push(
-    createPromptSection(
-      'working-directory',
-      `Working Directory: ${executionCwd}`,
-      'Always disclose the resolved execution directory for deterministic file operations.',
-    ),
-  );
-  const scratchDir = getSessionScratchDir(options);
-  if (scratchDir) {
-    sections.push(
-      createPromptSection(
-        'session-scratch-directory',
-        `Session Scratch Directory: ${scratchDir}`,
-        'Disclose the per-session scratch directory so temporary helper files never collide across same-directory sessions.',
-      ),
-    );
-  }
-
   if (isNewSession) {
     const gitContext = await getGitContext(executionCwd);
     if (gitContext) {
@@ -176,16 +78,6 @@ export async function buildCapabilityContextSections(
         ),
       );
     }
-  }
-
-  if (options.context?.repoIntelligenceContext?.trim()) {
-    sections.push(
-      createPromptSection(
-        'repo-intelligence-context',
-        options.context.repoIntelligenceContext,
-        'Include repository-intelligence capability truth only when it is active for this runtime.',
-      ),
-    );
   }
 
   const mcpCapabilityContext = await options.extensionRuntime?.getCapabilityPromptContext('mcp');
@@ -233,33 +125,17 @@ export async function buildCapabilityContextSections(
     ),
   );
 
-  // Static EXECUTION GUIDANCE replaces the old router `prompt-overlay` section
-  // (EXECUTION_MODE / HARNESS_PROFILE overlays + [Task Routing] classification
-  // dump) — the SA agent self-judges the kind of work, matching the AMA Worker
-  // (ADR-043 P1.7). Shared verbatim via `execution-guidance.ts`. The AMA path
-  // excludes this section (it carries EXECUTION_GUIDANCE inside
-  // `buildWorkerInstructions`); see `AMA_OWNED_SECTION_IDS` in runner-driven.
-  sections.push(
-    createPromptSection(
-      'execution-guidance',
-      EXECUTION_GUIDANCE,
-      'Match your approach to the kind of work (review / audit / investigation / planning / ambiguity) by self-judgment, not router assignment.',
-    ),
-  );
-
-  // `context.promptOverlay` now carries ONLY the SA task-family Direct Path Rule
-  // (output-shaping, e.g. "lookup → concise answer with file paths", which the
-  // generic EXECUTION GUIDANCE does not cover) and any caller-supplied overlay —
-  // NOT the retired router overlay (that lived in `reasoningPlan.promptOverlay`,
-  // now always ''). Dropping it with the router overlay in P1.7 was an
-  // unintended regression (ADR-043 Phase 3 follow-up); re-emit it so the Direct
-  // Path Rule + SDK caller overlay reach the SA prompt again.
+  // `context.promptOverlay` carries only caller-supplied overlay (SDK, Skill or
+  // command invocation), NOT the retired router overlay (that lived in
+  // `reasoningPlan.promptOverlay`, now always ''). Dropping it with the router
+  // overlay in P1.7 was an unintended regression (ADR-043 Phase 3 follow-up);
+  // re-emit it so the caller overlay reaches the Worker request context.
   if (options.context?.promptOverlay?.trim()) {
     sections.push(
       createPromptSection(
         'prompt-overlay',
         options.context.promptOverlay,
-        'Task-shaping rule for this request plus any caller-supplied context.',
+        'Caller-supplied overlay for this request (SDK, Skill or command invocation).',
       ),
     );
   }
@@ -338,16 +214,6 @@ export async function buildCapabilityContextSections(
         'skills-addendum',
         skillsCatalog,
         'Append skill-specific guidance after project rules as a bounded dynamic addendum.',
-      ),
-    );
-  }
-
-  if (options.context?.skillInvocation) {
-    sections.push(
-      createPromptSection(
-        'active-skill-invocation',
-        formatFullSkillSection(options.context.skillInvocation),
-        'Inject the full content of a trusted explicit user Skill exactly once.',
       ),
     );
   }
@@ -451,47 +317,6 @@ function buildSpecialistAgentsBlock(agentScope: KodaXAgentScope | undefined): st
     '',
     'Start one with spawn_agent(agent_id="<name>"); list_dispatchable_agents returns the equivalent canonical id.',
   ].join('\n');
-}
-
-function splitSystemPromptTemplate(template: string): {
-  prefix: string;
-  suffix: string;
-} {
-  if (!template.includes(SYSTEM_CONTEXT_MARKER)) {
-    return {
-      prefix: template.trim(),
-      suffix: '',
-    };
-  }
-
-  const [prefix, ...rest] = template.split(SYSTEM_CONTEXT_MARKER);
-  return {
-    prefix: prefix.trim(),
-    suffix: rest.join(SYSTEM_CONTEXT_MARKER).trim(),
-  };
-}
-
-function getEnvContext(): string {
-  const platform = process.platform;
-  const isWindows = platform === 'win32';
-  const commandHint = isWindows
-    ? 'Use: dir, move, copy, del'
-    : 'Use: ls, mv, cp, rm';
-  return `Platform: ${
-    isWindows ? 'Windows' : platform === 'darwin' ? 'macOS' : 'Linux'
-  }\n${commandHint}\nNode: ${process.version}`;
-}
-
-function getRuntimeFact(options: KodaXOptions): string | null {
-  const provider = options.provider?.trim();
-  const model = (options.modelOverride ?? options.model)?.trim();
-  if (!provider && !model) {
-    return null;
-  }
-  const parts: string[] = [];
-  if (provider) parts.push(`provider=${provider}`);
-  if (model) parts.push(`model=${model}`);
-  return `[Runtime] ${parts.join('; ')}.`;
 }
 
 async function getGitContext(cwd: string): Promise<string> {
@@ -615,4 +440,22 @@ async function getProjectSnapshot(
 
   await walk(cwd, 0);
   return lines.join('\n');
+}
+
+/**
+ * The Worker states the memory and manual rules densely once their tools are on its menu:
+ * the tool descriptions carry the call details, so the section keeps only the decisions.
+ */
+export function workerStableCapabilityContent(
+  section: Pick<KodaXPromptSection, 'id' | 'content'>,
+  toolNames: readonly string[],
+  productName?: string,
+): string {
+  if (section.id === 'memory-rules' && toolNames.includes('memory_intent') && toolNames.includes('memory_recall')) {
+    return buildWorkerMemoryRules();
+  }
+  if (section.id === 'self-knowledge-routing' && toolNames.includes('kodax_manual')) {
+    return buildWorkerSelfKnowledgeRoutingRule(productName);
+  }
+  return section.content;
 }

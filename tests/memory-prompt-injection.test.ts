@@ -1,8 +1,8 @@
 /**
  * FEATURE_260 integration contract for governed system-prompt memory.
  *
- * The Action Agent receives bounded MemoryPack hooks. Raw MEMORY.md bytes and
- * topic bodies are never copied into the system prompt.
+ * The managed Worker's capability context receives bounded MemoryPack hooks.
+ * Raw MEMORY.md bytes and topic bodies are never copied into the prompt.
  */
 
 import * as fs from 'node:fs';
@@ -12,7 +12,12 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { resolveMemoryRoot, setAgentConfigHome, type MemoryPack } from '@kodax-ai/agent';
-import { buildSystemPromptSnapshot } from '@kodax-ai/coding';
+import { buildCapabilityContextSections, type KodaXOptions } from '@kodax-ai/coding';
+
+async function renderCapabilityContext(options: KodaXOptions, isNewSession: boolean) {
+  const sections = await buildCapabilityContextSections(options, isNewSession);
+  return { sections, rendered: sections.map((section) => section.content).join('\n\n') };
+}
 
 describe('FEATURE_260 governed system-prompt memory', () => {
   let tempHome: string;
@@ -31,7 +36,7 @@ describe('FEATURE_260 governed system-prompt memory', () => {
   });
 
   it('emits an empty governed memory section without exposing a storage path', async () => {
-    const snapshot = await buildSystemPromptSnapshot(options(), false);
+    const snapshot = await renderCapabilityContext(options(), false);
     const memorySection = snapshot.sections.find((section) => section.id === 'project-memory');
 
     expect(memorySection?.content).toBe('Task-relevant memory hints: currently empty.');
@@ -42,7 +47,7 @@ describe('FEATURE_260 governed system-prompt memory', () => {
 
   it('renders bounded hooks from a runtime-owned MemoryPack, not raw topic bodies', async () => {
     plantRawMemory('RAW-INDEX-MARKER', 'RAW-TOPIC-BODY-MARKER');
-    const snapshot = await buildSystemPromptSnapshot(options(memoryPack('Project uses npm workspaces')), false);
+    const snapshot = await renderCapabilityContext(options(memoryPack('Project uses npm workspaces')), false);
 
     expect(snapshot.rendered).toContain('Task-relevant memory hints (bounded):');
     expect(snapshot.rendered).toContain('Project uses npm workspaces');
@@ -53,7 +58,7 @@ describe('FEATURE_260 governed system-prompt memory', () => {
 
   it('keeps each model-visible hint line bounded', async () => {
     const longHook = `Use the verified project procedure ${'X'.repeat(600)}`;
-    const snapshot = await buildSystemPromptSnapshot(options(memoryPack(longHook)), false);
+    const snapshot = await renderCapabilityContext(options(memoryPack(longHook)), false);
     const memorySection = snapshot.sections.find((section) => section.id === 'project-memory');
     const hint = memorySection?.content.split('\n').find((line) => line.startsWith('- '));
 
@@ -69,7 +74,7 @@ describe('FEATURE_260 governed system-prompt memory', () => {
       'PROJECT RULE: prefer project-scoped constraints.',
       'utf8',
     );
-    const snapshot = await buildSystemPromptSnapshot({
+    const snapshot = await renderCapabilityContext({
       ...options(memoryPack('Memory-Entry-Marker-XYZ')),
       context: {
         ...options(memoryPack('Memory-Entry-Marker-XYZ')).context,
@@ -90,8 +95,8 @@ describe('FEATURE_260 governed system-prompt memory', () => {
   });
 
   it('uses only the pack bound to the current prompt build', async () => {
-    const snapshotA = await buildSystemPromptSnapshot(options(memoryPack('PROJECT-A-HOOK')), false);
-    const snapshotB = await buildSystemPromptSnapshot(options(memoryPack('PROJECT-B-HOOK')), false);
+    const snapshotA = await renderCapabilityContext(options(memoryPack('PROJECT-A-HOOK')), false);
+    const snapshotB = await renderCapabilityContext(options(memoryPack('PROJECT-B-HOOK')), false);
 
     expect(snapshotA.rendered).toContain('PROJECT-A-HOOK');
     expect(snapshotA.rendered).not.toContain('PROJECT-B-HOOK');
@@ -100,7 +105,7 @@ describe('FEATURE_260 governed system-prompt memory', () => {
   });
 
   it('keeps the governed memory section under a small fixed prompt budget', async () => {
-    const snapshot = await buildSystemPromptSnapshot(options(memoryPack('X'.repeat(20_000))), false);
+    const snapshot = await renderCapabilityContext(options(memoryPack('X'.repeat(20_000))), false);
     const memorySection = snapshot.sections.find((section) => section.id === 'project-memory');
 
     expect(Buffer.byteLength(memorySection?.content ?? '', 'utf8')).toBeLessThan(1_024);
