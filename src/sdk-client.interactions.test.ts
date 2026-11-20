@@ -24,6 +24,12 @@ class InteractionProvider extends KodaXBaseProvider {
   };
   constructor(private readonly script: () => KodaXToolUseBlock[]) { super(); }
   async stream(messages: KodaXMessage[], tools: KodaXToolDefinition[]): Promise<KodaXStreamResult> {
+    // A Run start drains the previous Run's background learning review, a single JSON user message.
+    // Counting it would let it take the first-turn slot of the Run that races it.
+    const [only] = messages;
+    if (messages.length === 1 && only!.role === 'user' && typeof only!.content === 'string' && only!.content.startsWith('{')) {
+      return { textBlocks: [{ type: 'text', text: '{}' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
+    }
     exposedTools.push(tools.map(tool => tool.name));
     requests.push(structuredClone(messages));
     return requests.length === 1
