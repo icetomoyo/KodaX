@@ -50,9 +50,15 @@ on one commit.
 
 ## v0.7.97-beta.12 release preparation
 
-Release state: `v0.7.97-beta.12` is a candidate awaiting the publishing
-dispatch. The release is the twelfth beta of the v0.7.97 line: one
-prompt chain for every root Run and a final outcome for every Stop.
+Release state: `v0.7.97-beta.12` was published on 2026-11-20 as a GitHub
+prerelease from run 44786158959 at `99e2e0178` (all 21 jobs green on
+that dispatch's first attempt: Full CI including the packaged Electron
+daemon job, all five archive builds and the npm package gates; 13
+assets). npm publication has not occurred. The universal npm tarball
+asset is `kodax-ai-kodax-0.7.97-beta.12.tgz`, sha256
+`a610657c…b248a`, matching `SHA256SUMS`. The release is the twelfth
+beta of the v0.7.97 line: one prompt chain for every root Run and a
+final outcome for every Stop.
 Every root Run — `runKodaX`, `startKodaX`, `KodaXClient`, the Runner
 preset and `runs.start` without `mode` — now routes through the managed
 Worker and sends the same tool descriptions as Space and the REPL
