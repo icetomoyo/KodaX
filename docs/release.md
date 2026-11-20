@@ -113,11 +113,20 @@ builds and the npm package gates, then creates the tag at the
 dispatched commit and the GitHub pre-release from that run's
 artifacts. Ordinary branch pushes do not run CI; the fifty-nine
 commits between the beta.11 dispatch and this candidate first ran
-through a candidate-only CI dispatch on the release commit. The
-universal npm tarball asset is `kodax-ai-kodax-0.7.97-beta.12.tgz`
-with its `SHA256SUMS` checksum. Cross-platform manual acceptance,
-installed Space/SDK acceptance, the Space dependency bump and npm
-publication remain separate maintainer steps.
+through a candidate-only CI dispatch on the release commit
+(44775672229). Every Linux row passed; the two Windows portable
+shards first lost three tests to runner-class stalls (a 332 ms local
+PowerShell cache test and two daemon tests at 3.7 s / 7.4 s local all
+timed out at their 30–60 s budgets), and one re-run cleared shard 2
+while `extensions/helpers.test.ts` kept timing out at 30 s on the
+same runner. Its stubbed `LOCALAPPDATA` deliberately cold-starts
+PowerShell's module analysis (~22 s per Issue 386), so runner image
+drift had outgrown the default budget: the test now allows 120 s for
+the command and 150 s for the test. The universal npm tarball asset
+is `kodax-ai-kodax-0.7.97-beta.12.tgz` with its `SHA256SUMS`
+checksum. Cross-platform manual acceptance, installed Space/SDK
+acceptance, the Space dependency bump and npm publication remain
+separate maintainer steps.
 
 ## v0.7.97-beta.11 release preparation
 

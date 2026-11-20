@@ -39,12 +39,15 @@ describe('exec', () => {
 
   // Without its module analysis cache, PowerShell rescans every installed
   // module before resolving a command: ~22 s per start on GitHub Windows runners.
+  // The stubbed locations are deliberately cold, so the rescan cost is part of
+  // this test on a runner: allow 120 s for the command and 150 s for the test
+  // instead of the 30 s defaults, which runner image drift has outgrown.
   it.runIf(process.platform === 'win32')('keeps the PowerShell module analysis cache locations', async () => {
     vi.stubEnv('PSModuleAnalysisCachePath', 'C:/analysis-cache/ModuleAnalysisCache');
     vi.stubEnv('LOCALAPPDATA', 'C:/local-app-data');
-    const result = await exec('Write-Output "$env:PSModuleAnalysisCachePath|$env:LOCALAPPDATA"');
+    const result = await exec('Write-Output "$env:PSModuleAnalysisCachePath|$env:LOCALAPPDATA"', { timeout: 120_000 });
     expect(result.stdout).toBe('C:/analysis-cache/ModuleAnalysisCache|C:/local-app-data');
-  });
+  }, 150_000);
 
   it('injects custom env variables', async () => {
     const result = await exec(
