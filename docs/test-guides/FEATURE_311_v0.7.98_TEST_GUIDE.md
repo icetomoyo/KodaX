@@ -12,16 +12,18 @@ from the outside. Run all commands from the repository root after `npm run build
 
 | Check | Command | Expected |
 |---|---|---|
-| Entry matrix | `npx vitest run tests/f311-entry-matrix.test.ts` | 2 passed. Every root entry sends the Worker closing line and no `system.md` text; both child kinds are captured; the retired sources do not exist |
+| Entry matrix | `npx vitest run tests/f311-entry-matrix.test.ts` | 2 passed. Every root entry sends the Worker closing line and no `system.md` text; the write, read-only, specialist and Workflow-step children are captured, and the specialist sends its own instructions instead of the Worker; the retired sources do not exist |
 | Prompt snapshots | `npx vitest run packages/coding/src/prompts/rendered-prompts.test.ts tests/prompt-text.test.ts` | Pass; `static-text.json` matches the `.md` sources |
 | Skill catalog on both modes | `npx vitest run tests/runtime-skill-catalog.test.ts` | Pass; the override root starts with the caller text and still carries `## Environment` |
+| Stored `coding` Run | `npx vitest run src/sdk-runtime.legacy-coding-run-recovery.test.ts` | 1 passed. A `mode: 'coding'` Run left `recovering` by a dead owner still reads as `coding`, recovers to `completed` on the Worker, and its saved tool result reaches the provider |
 | First-turn wire inventory | `npx vitest run tests/first-turn-wire-inventory.test.ts` | Pass |
 | Type checks | `npx tsc -p tsconfig.check.json`, `npx tsc -p tsconfig.test.json`, `npx tsc -p packages/coding --noEmit` | No errors |
 
 The entry matrix covers `runManagedTask` (default and `ama`), `runKodaX`, `startKodaX` (default and
 `ama`), `KodaXClient`, `createKodaXTaskRunner` with `runOrchestration`, the Runner preset,
 `authorWorkflowViaWorker`, persona, override and tool-visibility roots, Runtime `runs.start` with no
-mode, `'coding'` and `'managed_task'`, and a write and a read-only child. If it fails, the message
+mode, `'coding'` and `'managed_task'`, and four children: write, read-only, a registered specialist
+and a Workflow step started by `run_workflow`. If it fails, the message
 names the entry; check whether that entry still calls the leaf executor (`runLeafAgent`).
 
 ## 2. Manual SDK check

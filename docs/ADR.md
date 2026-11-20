@@ -54,8 +54,11 @@ decision.
   the Worker would stack two prompts.
 
 **Consequences.** A change to the Worker or to a tool description reaches every
-entry. `tests/f311-entry-matrix.test.ts` pins each entry and both child kinds to
-one Worker and one tool text, and checks that the retired sources stay deleted.
+entry. `tests/f311-entry-matrix.test.ts` pins each entry to one Worker and one
+tool text, and checks that the retired sources stay deleted. It also captures
+the write, read-only, specialist and Workflow-step children.
+`src/sdk-runtime.legacy-coding-run-recovery.test.ts` recovers a stored `coding`
+Run on the Worker with its saved history.
 A root Run now carries the Run Context envelope, and under `ama` it also has the
 Actor and Workflow tools. Callers that do not want them use `excludeTools` or a
 tool policy. This entry supersedes three earlier statements: "The direct engine
