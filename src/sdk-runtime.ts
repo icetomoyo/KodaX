@@ -4225,7 +4225,7 @@ export async function createKodaXRuntime(
       sharedSessionSettings: 2 as const,
       ...(autoStart
         ? {
-          actorSettlementConvergence: 3 as const,
+          actorSettlementConvergence: autoStartActorSettlement(options.requirements),
           crashOutcomeModel: 2 as const,
           managedRunDurability: 1 as const,
           ...(process.platform === "win32"
@@ -6200,7 +6200,7 @@ function daemonCapabilityRequirements(
     ...(process.platform === "win32" ? { sandboxRuntime: 11 } : {}),
     ...(options.autoStart === true
       ? {
-          actorSettlementConvergence: 3,
+          actorSettlementConvergence: autoStartActorSettlement(options.requirements),
           crashOutcomeModel: 2,
           managedRunDurability: 1,
           ...(process.platform === "win32" ? { daemonShutdownVerification: 1 } : {}),
@@ -6211,6 +6211,14 @@ function daemonCapabilityRequirements(
         }
       : {}),
   };
+}
+
+// A busy published beta advertises v2 and must stay attachable (Issue 405).
+// Clients that render the v3 settlement outcome opt in through requirements.
+function autoStartActorSettlement(
+  requirements: RuntimeCapabilityRequirements | undefined,
+): 2 | 3 {
+  return requirements?.actorSettlementConvergence === 3 ? 3 : 2;
 }
 
 function firstUpgradeableCapability(

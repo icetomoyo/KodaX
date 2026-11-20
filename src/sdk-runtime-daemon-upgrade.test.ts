@@ -923,7 +923,10 @@ describe('product Host startup and passive connection', () => {
       build: { origin: '/other/kodax_cli.js', fingerprint: '0'.repeat(64) }, blockers: ['connected_clients'] as RuntimeDaemonPreflight['blockers'], reason: 'runtimeVersion' },
     { name: 'changed build of this installation with active runs', runtimeVersion: KODAX_VERSION,
       build: { ...LOCAL_RUNTIME_BUILD, fingerprint: '0'.repeat(64) }, blockers: ['active_runs'] as RuntimeDaemonPreflight['blockers'], reason: 'runtimeBuild' },
-  ])('attaches a compatible $name instead of waiting for the startup deadline', async ({ runtimeVersion, build, blockers, reason }) => {
+    // Published 0.7.97 betas advertise Actor settlement v2; v3 is an opt-in client requirement.
+    { name: 'published beta with active runs', runtimeVersion: OLDER_RUNTIME_VERSION, actorSettlementVersion: 2,
+      build: { origin: '/other/kodax_cli.js', fingerprint: '0'.repeat(64) }, blockers: ['active_runs'] as RuntimeDaemonPreflight['blockers'], reason: 'runtimeVersion' },
+  ])('attaches a compatible $name instead of waiting for the startup deadline', async ({ runtimeVersion, build, blockers, reason, actorSettlementVersion }) => {
     const calls: string[] = [];
     const clients: unknown[] = [];
     const diagnostics: KodaXDiagnostic[] = [];
@@ -931,7 +934,9 @@ describe('product Host startup and passive connection', () => {
     const current = await createCurrentTransport([], async () => undefined).request('initialize') as { capabilities: Record<string, unknown> };
     const busyHost = () => createLease(createLegacyTransport({
       preflight: createPreflight({ canStop: false, blockers }), calls, close: async () => undefined,
-      runtimeVersion, capabilities: current.capabilities, build,
+      runtimeVersion, build,
+      capabilities: actorSettlementVersion === undefined ? current.capabilities
+        : { ...current.capabilities, actorSettlementConvergence: { version: actorSettlementVersion } },
       onInitialize: params => { clients.push((params as { clientInfo?: unknown }).clientInfo); },
     }));
     upgradeMocks.acquireProcessLease.mockResolvedValueOnce(busyHost()).mockResolvedValueOnce(busyHost())
@@ -949,6 +954,20 @@ describe('product Host startup and passive connection', () => {
         detail: expect.objectContaining({ reason, blockers }),
       }));
     } finally { restore(); await runtime.close(); }
+  });
+
+  it('keeps a client opt-in to Actor settlement v3 when the launcher auto-starts', async () => {
+    const calls: string[] = [];
+    const current = await createCurrentTransport([], async () => undefined).request('initialize') as { capabilities: Record<string, unknown> };
+    upgradeMocks.acquireProcessLease.mockResolvedValueOnce(createLease(createLegacyTransport({
+      preflight: createPreflight({ canStop: false, blockers: ['active_runs'] }), calls, close: async () => undefined,
+      runtimeVersion: OLDER_RUNTIME_VERSION, build: { origin: '/other/kodax_cli.js', fingerprint: '0'.repeat(64) },
+      capabilities: { ...current.capabilities, actorSettlementConvergence: { version: 2 } },
+    })));
+    upgradeMocks.readLockOwner.mockReturnValue(createManagementState(createPreflight()).owner);
+    await expect(ensureKodaXRuntime({ requirements: { actorSettlementConvergence: 3 } }))
+      .rejects.toThrow(/busy: active_runs/);
+    expect(calls).not.toContain('old:runtime.shutdown');
   });
 
   it('keeps passive clients compatible with a different build without replacing it', async () => {
