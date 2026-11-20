@@ -8046,3 +8046,69 @@ file name without checking it.
   and survives restarts and Task pruning without any of them.
 - **Use the raw `contextId` as the A2A Session id.** The caller chooses it, so
   it would need escaping to pass the Host id rule, and gateways would see it.
+
+## ADR-078: Failed Runs Carry Their Real Cause, and Public Entries Settle Expected Outcomes
+
+**Status**: Accepted (2026-11-20). Unreleased. Amends the Runtime failure
+contract recorded in DD "Classified failures", which kept causes and raw
+errors inside the Runtime boundary.
+
+**Context**: Runtime `failureDetail` and `KodaXResult.failure` gave a fixed
+summary such as "Provider request failed." and dropped the Provider's own
+message. Users and support could not tell a missing model from an exhausted
+quota, a proxy rewrite or a malformed request, and Hosts that filtered
+further showed even less. Separately, FEATURE_311 moved `runKodaX` and every
+entry built on it onto the managed engine, which throws on a final Provider
+failure and on a stop. The direct engine had resolved both. A `KodaXClient`
+therefore lost its Session on the first failed turn, `startKodaX().result`
+rejected when the user pressed Stop, and the Runner preset and task runner
+failed instead of reporting a failed task.
+
+**Decision**:
+
+1. A failure keeps its cause. `KodaXExecutionFailure.detail`,
+   `errorMetadata.lastError` and Runtime `failureDetail.detail` carry the
+   error message and its `cause` chain. One function, `describeFailureCause`,
+   builds the text. It removes credentials: the run credential, the scoped
+   Provider credential, registered and sensitive-name environment values,
+   Bearer and `sk-` tokens, `key=value` secrets, URL userinfo and URL query
+   strings. It reduces HTML to text, strips control characters and caps the
+   text at 1000 characters. `safeMessage` stays a fixed KodaX summary, and
+   classification fields are unchanged.
+2. `runKodaX`, `KodaXClient.send`, `startKodaX().result`, the default coding
+   Runner preset and `createKodaXTaskRunner` settle expected outcomes as a
+   result. A final Provider failure resolves with `success: false`, `failure`,
+   the Session id and the recovered transcript. A stop resolves with
+   `interrupted: true`. Invalid input and context-capacity errors still throw,
+   because the caller must change something before retrying.
+3. `runManagedTask` keeps throwing. Runtime, the REPL and Space classify
+   failures from the thrown error, and changing that path would change their
+   terminal states. The managed engine attaches the settled result to the
+   error; the public entries return it.
+
+**Consequences**:
+
+- Provider-controlled text now reaches Run results, events, status,
+  diagnostics and the Runtime store. The text can include what the Provider
+  echoed back, such as a model name, a file path or part of the request. We
+  accept this. A Host serves one user, the text goes back to that user, and
+  the session already stores the conversation it came from.
+- Redaction is pattern-based. A secret in an unusual shape, not passed as the
+  run credential and not in a sensitive-name environment variable, can pass
+  through.
+- Hosts should show `detail` and branch on `providerErrorCode`, `errorClass`
+  or `safeMessage`, because the detail wording belongs to the Provider.
+- The daemon schema accepts `failureDetail.detail` up to 1024 characters.
+  Older clients drop the unknown field when they parse it.
+
+**Rejected alternatives**:
+
+- **Keep the fixed summary only.** It is what made failures undiagnosable.
+- **Pass the raw message through.** Provider errors and proxies echo
+  credentials and signed URLs.
+- **Make `runManagedTask` resolve as well.** Runtime, the REPL and Space would
+  each need a new classification path for the same outcome, for no gain to
+  the user.
+- **Keep the throwing contract on the public entries and document it.** It
+  breaks every embedder that relied on the direct engine, and the first
+  failure ends a `KodaXClient` conversation.

@@ -12913,6 +12913,7 @@ describe("createKodaXRuntime", () => {
       requestId: "req_safe_123",
       retryAfterMs: 2_000,
       safeMessage: "The requested model was not found.",
+      detail: expect.any(String),
     };
 
     expect(result).toMatchObject({
@@ -12930,15 +12931,16 @@ describe("createKodaXRuntime", () => {
     expect(result.error?.stack).toBeUndefined();
     expect(result.failureDetail?.safeMessage.length).toBeLessThanOrEqual(1_024);
 
+    // The real cause stays readable next to the fixed summary; credentials do not.
+    expect(result.failureDetail?.detail).toContain("Model missing-model rejected private prompt fragment");
+    expect(result.failureDetail?.detail).toContain("https://[REDACTED]@api.example.test/v1/models?[REDACTED]");
+    expect(result.failureDetail?.detail).toContain("file=C:\\private\\workspace\\config.json");
     const serialized = JSON.stringify({ result, status, failedEvent, diagnostics });
     expect(serialized).not.toContain(secret);
     expect(serialized).not.toContain(prompt);
-    expect(serialized).not.toContain("private prompt fragment");
     expect(serialized).not.toContain("raw body");
     expect(serialized).not.toContain("api_key=");
     expect(serialized).not.toContain("user:");
-    expect(serialized).not.toContain("Authorization");
-    expect(serialized).not.toContain("C:\\private\\workspace");
     await runtime.close();
     expect(await readDirectoryText(tempRoot)).not.toContain(secret);
   });
@@ -12998,6 +13000,7 @@ describe("createKodaXRuntime", () => {
         failureKind: "local_execution", stage: "local_execution",
         providerErrorCode: "local_execution_error", requestPhase: "local_execution",
         upstreamErrorCode: code, safeMessage: "Local SDK execution failed.",
+        detail: "result.startsWith is not a function",
       };
       expect(result.failureDetail).toEqual(expected);
       expect(result.terminal?.failureKind).toBe("local_execution");
@@ -13005,7 +13008,6 @@ describe("createKodaXRuntime", () => {
       expect((await captureRuntimeSessionDiagnostics(runtime, {
         sessionId: session.id, runId: handle.runId,
       })).run.failureDetail).toEqual(expected);
-      expect(JSON.stringify(result)).not.toContain("startsWith");
       await runtime.close();
       const restarted = await createKodaXRuntime({ homeDir: tempRoot,
         sessionsDir: path.join(tempRoot, "local-failure-audit"), defaultProvider: "mock-provider" });
@@ -13180,7 +13182,8 @@ describe("createKodaXRuntime", () => {
     });
     const jsonResult = await jsonHandle.result;
     expect(jsonResult.failureDetail?.safeMessage).toBe("Provider request failed.");
-    expect(JSON.stringify(jsonResult)).not.toContain(bodySecret);
+    // Provider response text is the cause the user needs; only credentials are removed.
+    expect(jsonResult.failureDetail?.detail).toContain("Quota exhausted for project safe-project.");
 
     codingMock.runManagedTask.mockImplementationOnce((options: KodaXOptions) =>
       Promise.reject(new Error("x".repeat(5_000))));
@@ -13190,6 +13193,7 @@ describe("createKodaXRuntime", () => {
     });
     const longResult = await longHandle.result;
     expect(longResult.failureDetail?.safeMessage).toBe("Provider request failed.");
+    expect(longResult.failureDetail?.detail?.length).toBeLessThanOrEqual(1_000);
 
     const identifierSecret = "Z9";
     codingMock.runManagedTask.mockImplementationOnce((options: KodaXOptions) =>

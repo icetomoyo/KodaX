@@ -47,7 +47,8 @@ const API_KEY_ENV = 'CAP_006_TEST_PROVIDER_API_KEY';
 const SENTINEL_ERROR = new Error('cap-006 sentinel error');
 const TOOL_FAILURE_PROVIDER_NAME = 'cap-006-tool-failure-provider';
 const TOOL_FAILURE_API_KEY_ENV = 'CAP_006_TOOL_FAILURE_PROVIDER_API_KEY';
-const RAW_PROVIDER_SECRET = 'RAW_PROVIDER_BODY_MUST_NOT_PERSIST';
+const PROVIDER_CREDENTIAL = 'cap006-provider-credential-value';
+const PROVIDER_REASON = 'unknown field "tool_choice_mode"';
 
 class ThrowingProvider extends KodaXBaseProvider {
   readonly name = PROVIDER_NAME;
@@ -97,7 +98,7 @@ class ToolThenFailProvider extends KodaXBaseProvider {
       };
     }
     throw new KodaXProviderError(
-      `400 upstream rejected payload ${RAW_PROVIDER_SECRET}`,
+      `400 upstream rejected payload: ${PROVIDER_REASON} (auth ${PROVIDER_CREDENTIAL})`,
       TOOL_FAILURE_PROVIDER_NAME,
       {
         stage: 'transport',
@@ -115,7 +116,7 @@ class ToolThenFailProvider extends KodaXBaseProvider {
 describe('CAP-006: onError event contract', { timeout: 30_000 }, () => {
   beforeEach(() => {
     process.env[API_KEY_ENV] = 'test-key';
-    process.env[TOOL_FAILURE_API_KEY_ENV] = 'test-key';
+    process.env[TOOL_FAILURE_API_KEY_ENV] = PROVIDER_CREDENTIAL;
     ToolThenFailProvider.calls = 0;
     registerModelProvider(PROVIDER_NAME, () => new ThrowingProvider());
     registerModelProvider(TOOL_FAILURE_PROVIDER_NAME, () => new ToolThenFailProvider());
@@ -150,7 +151,7 @@ describe('CAP-006: onError event contract', { timeout: 30_000 }, () => {
     expect(onError.mock.calls[0]![0]).toBe(SENTINEL_ERROR);
   });
 
-  it('keeps a safe structured failure when the request after a tool result fails', async () => {
+  it('keeps the real cause with credentials redacted when the request after a tool result fails', async () => {
     const onTurnFailed = vi.fn();
     const result = await runLeafAgent(
       {
@@ -174,7 +175,8 @@ describe('CAP-006: onError event contract', { timeout: 30_000 }, () => {
     expect(result.success).toBe(false);
     expect(result.lastText).toBe('');
     expect(result.failure).toMatchObject({
-      message: 'Provider rejected the request. (KodaXProviderError; HTTP 400; invalid_request_error)',
+      message: 'Provider rejected the request. (KodaXProviderError; HTTP 400; invalid_request_error): 400 upstream rejected payload: unknown field "tool_choice_mode" (auth [REDACTED])',
+      detail: '400 upstream rejected payload: unknown field "tool_choice_mode" (auth [REDACTED])',
       safeMessage: 'Provider rejected the request.',
       errorName: 'KodaXProviderError',
       errorClass: 'non_retryable_provider_error',
@@ -190,15 +192,16 @@ describe('CAP-006: onError event contract', { timeout: 30_000 }, () => {
     });
     expect(result.failure?.elapsedMs).toEqual(expect.any(Number));
     expect(result.errorMetadata?.lastError).toBe(
-      'Provider rejected the request. (KodaXProviderError; HTTP 400; invalid_request_error)',
+      'Provider rejected the request. (KodaXProviderError; HTTP 400; invalid_request_error): 400 upstream rejected payload: unknown field "tool_choice_mode" (auth [REDACTED])',
     );
     expect(onTurnFailed).toHaveBeenCalledWith(expect.objectContaining({
       error: {
         name: 'KodaXProviderError',
-        message: 'Provider rejected the request. (KodaXProviderError; HTTP 400; invalid_request_error)',
+        message: 'Provider rejected the request. (KodaXProviderError; HTTP 400; invalid_request_error): 400 upstream rejected payload: unknown field "tool_choice_mode" (auth [REDACTED])',
       },
     }));
-    expect(JSON.stringify(onTurnFailed.mock.calls)).not.toContain(RAW_PROVIDER_SECRET);
+    expect(JSON.stringify(onTurnFailed.mock.calls)).toContain(PROVIDER_REASON.replace(/"/g, '\\"'));
+    expect(JSON.stringify(onTurnFailed.mock.calls)).not.toContain(PROVIDER_CREDENTIAL);
     expect(ToolThenFailProvider.calls).toBe(2);
     const toolResults = result.messages.flatMap((message) => (
       Array.isArray(message.content)
@@ -206,6 +209,6 @@ describe('CAP-006: onError event contract', { timeout: 30_000 }, () => {
         : []
     ));
     expect(toolResults).toHaveLength(1);
-    expect(JSON.stringify(result)).not.toContain(RAW_PROVIDER_SECRET);
+    expect(JSON.stringify(result)).not.toContain(PROVIDER_CREDENTIAL);
   });
 });

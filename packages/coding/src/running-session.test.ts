@@ -2,7 +2,7 @@
  * v0.7.42 — RunningSession tests (closes gap 6 reported by KodaX Space).
  *
  * Strategy: these tests exercise the `RunningSession` surface in
- * isolation from the substrate by mocking `runManagedTask` to:
+ * isolation from the substrate by mocking `runKodaX` to:
  *   1. Capture the `sessionControl` passed in via options.
  *   2. Synthesize `_attach` calls + observe whether setters apply
  *      directly vs queue + replay.
@@ -19,14 +19,14 @@ import type { KodaXMessage, KodaXOptions, KodaXReasoningMode, KodaXResult } from
 // Hoisted mock — must be defined before any import that pulls in task-engine.ts.
 vi.mock('./task-engine.js', () => {
   return {
-    runManagedTask: vi.fn(),
+    runKodaX: vi.fn(),
   };
 });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let runKodaXMock: any;
 
-import { runManagedTask } from './task-engine.js';
+import { runKodaX } from './task-engine.js';
 import {
   startKodaX,
   createSessionControl,
@@ -35,7 +35,7 @@ import {
 
 beforeEach(() => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  runKodaXMock = runManagedTask as unknown as any;
+  runKodaXMock = runKodaX as unknown as any;
   runKodaXMock.mockReset();
 });
 

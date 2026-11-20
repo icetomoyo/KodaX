@@ -36,6 +36,7 @@ import {
 } from './reasoning.js';
 import { resolveProvider } from './providers/index.js';
 import { reshapeToUserConversation } from './task-engine/_internal/round-boundary.js';
+import { readFailureResult } from './execution-failure.js';
 import { runManagedTaskViaRunner } from './task-engine/runner-driven.js';
 import {
   getRepoRoutingSignals,
@@ -133,9 +134,21 @@ export async function ensureManagedSkillCatalog(
   };
 }
 
-/** Public root entry. Every root Run goes through the managed Worker. */
-export function runKodaX(options: KodaXOptions, prompt: string): Promise<KodaXResult> {
-  return runManagedTask(options, prompt);
+/**
+ * Public root entry. Every root Run goes through the managed Worker.
+ * Expected outcomes settle as a result, so callers keep the session and history:
+ * a final Provider failure resolves `success: false` with `failure`, and a stop
+ * resolves `interrupted: true`. Invalid input and context-capacity errors throw.
+ * Hosts that classify failures themselves call `runManagedTask`, which throws.
+ */
+export async function runKodaX(options: KodaXOptions, prompt: string): Promise<KodaXResult> {
+  try {
+    return await runManagedTask(options, prompt);
+  } catch (error: unknown) {
+    const settled = readFailureResult(error);
+    if (settled === undefined) throw error;
+    return options.context?.agentProfile ? { ...settled, agentProfile: options.context.agentProfile } : settled;
+  }
 }
 
 export async function runManagedTask(

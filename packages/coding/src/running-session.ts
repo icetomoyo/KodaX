@@ -29,7 +29,7 @@
  */
 
 import { generateSessionIdSync } from '@kodax-ai/agent';
-import { runManagedTask } from './task-engine.js';
+import { runKodaX } from './task-engine.js';
 import { markStartKodaXGeneratedSessionId } from './agent-runtime/middleware/session-snapshot.js';
 import type {
   KodaXOptions,
@@ -138,7 +138,7 @@ export function startKodaX(
   // Kick off the run. It returns the Promise immediately — by the time
   // control returns to the caller, the Run's `_attach` has not yet fired,
   // so any sync setter calls land in the pre-attach queue and replay on attach.
-  const result = runManagedTask(effectiveOptions, prompt);
+  const result = runKodaX(effectiveOptions, prompt);
 
   return {
     id: sessionId,

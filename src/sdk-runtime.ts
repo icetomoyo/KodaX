@@ -270,6 +270,7 @@ import type {
   KodaXVideoInputArtifact,
 } from "@kodax-ai/coding";
 import {
+  describeFailureCause,
   isValidTokenBudget,
   normalizeKodaXAgentMode,
   buildSessionGoalRuntimeBinding,
@@ -2449,8 +2450,14 @@ export interface RuntimeFailureDetail {
   readonly stage: RuntimeFailureStage;
   /** Stable KodaX code suitable for programmatic handling. */
   readonly providerErrorCode: RuntimeProviderErrorCode;
-  /** Bounded KodaX-owned display text; never derived from provider response bodies. */
+  /** Bounded KodaX-owned summary; never derived from provider response bodies. */
   readonly safeMessage: string;
+  /**
+   * Underlying reason (Provider response text or exception message), shown
+   * alongside `safeMessage` so users can act on it. Credentials are redacted
+   * and the text is bounded; it is provider-controlled and not a stable code.
+   */
+  readonly detail?: string;
   /** Safe Skill identifier for local loading/policy failures; never a filesystem path. */
   readonly skillName?: string;
   readonly httpStatus?: number;
@@ -19535,6 +19542,8 @@ function parseRuntimeFailureDetail(
     stage: value.stage,
     providerErrorCode: value.providerErrorCode,
     safeMessage: value.safeMessage,
+    ...(typeof value.detail === "string" && value.detail.length > 0
+      && value.detail.length <= RUNTIME_FAILURE_DETAIL_LIMIT ? { detail: value.detail } : {}),
     ...(typeof value.skillName === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value.skillName)
       ? { skillName: value.skillName } : {}),
     ...(isHttpStatus(value.httpStatus) ? { httpStatus: value.httpStatus } : {}),
@@ -25068,6 +25077,7 @@ function classifyRuntimeRunFailure(error: unknown): {
 }
 
 const RUNTIME_SAFE_FAILURE_MESSAGE_LIMIT = 1_024;
+const RUNTIME_FAILURE_DETAIL_LIMIT = 1_024;
 const RUNTIME_MAX_RETRY_AFTER_MS = 86_400_000;
 const RUNTIME_PROVIDER_ERROR_CODES: ReadonlySet<string> = new Set<RuntimeProviderErrorCode>([
   "skill_not_found", "skill_not_registered", "skill_registry_unavailable", "skill_policy_restore_failed",
@@ -25167,9 +25177,11 @@ function buildRuntimeFailureDetail(
     : undefined;
   const contextOverflow = source instanceof KodaXContextOverflowError
     ? readRuntimeContextOverflow(source.capacity) : undefined;
+  const detail = runtimeFailureCause(error, run);
   return {
     ...classification,
     safeMessage: runtimeFailurePublicMessage(classification),
+    ...(detail !== undefined ? { detail } : {}),
     ...(httpStatus !== undefined ? { httpStatus } : {}),
     ...(upstreamErrorCode !== undefined ? { upstreamErrorCode } : {}),
     ...(requestId !== undefined ? { requestId } : {}),
@@ -25580,7 +25592,27 @@ function filterRuntimeDiagnosticIdentifier(
   }
 }
 
+function runtimeFailureCause(error: unknown, run: RuntimeRunRecord): string | undefined {
+  try {
+    const carried = readRuntimeExecutionFailure(error);
+    const carriedDetail = isRecord(carried) && typeof carried.detail === "string" ? carried.detail : undefined;
+    return describeFailureCause(carriedDetail ?? error, runtimeCredentialValues(run));
+  } catch {
+    // The cause is diagnostic. If credentials cannot be enumerated, omit it
+    // rather than risk exposing one; the classified summary still applies.
+    return undefined;
+  }
+}
+
 function runtimeSensitiveValues(run: RuntimeRunRecord): readonly string[] {
+  const prompt = run.start?.prompt;
+  return [...new Set([
+    ...runtimeCredentialValues(run),
+    ...(typeof prompt === "string" && prompt.length >= 4 ? [prompt] : []),
+  ])].sort((left, right) => right.length - left.length);
+}
+
+function runtimeCredentialValues(run: RuntimeRunRecord): readonly string[] {
   const credentialValues = [run.providerCredential];
   const registeredCredentialNames = new Set(
     typeof getProviderCredentialEnvironmentNames === "function"
@@ -25595,13 +25627,9 @@ function runtimeSensitiveValues(run: RuntimeRunRecord): readonly string[] {
       credentialValues.push(value);
     }
   }
-  const prompt = run.start?.prompt;
-  return [...new Set([
-    ...credentialValues.filter(
-      (value): value is string => typeof value === "string" && value.length > 0,
-    ),
-    ...(typeof prompt === "string" && prompt.length >= 4 ? [prompt] : []),
-  ])].sort((left, right) => right.length - left.length);
+  return credentialValues.filter(
+    (value): value is string => typeof value === "string" && value.length > 0,
+  );
 }
 
 function runtimeCancellationFailureDetail(): RuntimeFailureDetail {

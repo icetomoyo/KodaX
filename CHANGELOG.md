@@ -79,6 +79,27 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- A failed Run now reports why it failed (ADR-078). Before, a Provider
+  failure said only "Provider request failed." and dropped the Provider's
+  own message, so users and support could not tell a missing model from a
+  quota or a proxy error. Now:
+  - `KodaXResult.failure.detail`, `errorMetadata.lastError` and Runtime
+    `failureDetail.detail` carry the Provider or local error text, with its
+    `cause` chain;
+  - credentials are removed from that text: the Run's credential, sensitive
+    environment values, Bearer/`sk-` tokens, `key=value` secrets, URL
+    userinfo and URL query strings; HTML is reduced to text and the detail
+    is capped at 1000 characters;
+  - `safeMessage` stays a fixed KodaX summary, so code that branches on it
+    or on `providerErrorCode` is unaffected.
+- On the managed Worker, `runKodaX`, `KodaXClient.send`, `startKodaX().result`,
+  `Runner.run(createDefaultCodingAgent())` and `createKodaXTaskRunner` no
+  longer reject on expected outcomes. During this unreleased cycle they
+  rejected; the direct engine never did. A final Provider failure resolves
+  with `success: false`, `failure` and the Session id, so `KodaXClient` keeps
+  its Session and the next `send` continues it. A stop resolves with
+  `interrupted: true`. Invalid input and context-capacity errors still
+  throw. `runManagedTask` still throws, for Hosts that classify the error.
 - Every root Run uses the managed Worker, and every entry sends the same tool
   descriptions (FEATURE_311). `runKodaX`, `startKodaX`, `KodaXClient`,
   `createKodaXTaskRunner`, the Runner preset and `runs.start` without `mode`
@@ -96,7 +117,9 @@ All notable changes to this project will be documented in this file.
     when to hand work to child Agents stay while `spawn_agent` is offered;
     `excludeTools` removes them with the tool;
   - `maxIter` bounds the root Run and ends with `limitReached`;
-  - aborting rejects with `AbortError` instead of resolving as interrupted;
+  - a final Provider failure resolves with `success: false` and a stop
+    resolves with `interrupted: true`, as before; see the failure entry
+    below;
   - an enforced Skill that cannot be found reports `skill_not_found`;
   - `SYSTEM_PROMPT`, `buildSystemPrompt` and `buildSystemPromptSnapshot` are
     removed.

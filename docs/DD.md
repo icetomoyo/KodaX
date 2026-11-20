@@ -244,8 +244,15 @@ The existing terminal `failureKind` remains the coarse compatibility field;
 from a bounded KodaX-owned template rather than provider response text;
 provider-controlled identifiers are allowlisted and dropped if they contain a
 run credential, a nontrivial prompt, or a registered/sensitive-name environment
-secret. Raw header collections/bodies, URLs, local
-paths, stacks, causes, and raw errors never cross the Runtime boundary.
+secret. Header collections, response objects and stacks never cross the
+Runtime boundary. The cause does, as `detail` (ADR-078): the error message and
+its `cause` chain, built by `describeFailureCause` in `@kodax-ai/coding`. It
+removes the run credential, the scoped Provider credential, registered and
+sensitive-name environment values, Bearer/`sk-` tokens, `key=value` secrets,
+URL userinfo and URL query strings. It reduces HTML to text, strips control
+characters and caps the text at 1000 characters. The managed engine builds the
+same text into `KodaXExecutionFailure.detail` and `message` when it ends a Run
+on a final Provider failure.
 
 Reconnect recovery belongs to the SDK host adapter, not the transport. After
 admission returns `runId`, an adapter may create a replacement Runtime, verify

@@ -156,8 +156,19 @@ Public signatures do not change.
 - `maxIter` bounds root LLM turns across idle yields and resumes. Reaching it
   ends with success and `limitReached`. `session.autoResume` and
   `session.resume` pick the most recent persisted Session.
-- Aborting a root Run rejects `runKodaX` with an `AbortError`. It no longer
-  resolves with `interrupted: true`.
+- Expected outcomes resolve instead of rejecting, on `runKodaX`,
+  `KodaXClient.send`, `startKodaX().result`, the Runner preset and
+  `createKodaXTaskRunner`. A final Provider failure resolves with
+  `success: false`, `failure` and the Session id, so the next
+  `KodaXClient.send` continues the same Session. Aborting resolves with
+  `interrupted: true`. Invalid input and context-capacity errors still throw.
+  `runManagedTask` still throws, for Hosts that classify the error.
+- `failure.detail` and `errorMetadata.lastError` carry the real cause: the
+  Provider's or the local error's text, with credentials removed and capped
+  at 1000 characters. `failure.safeMessage` stays a fixed KodaX summary.
+  Show the detail to users. Branch on `failure.errorClass` or `safeMessage`,
+  because the detail text belongs to the Provider and changes between
+  versions.
 - An enforced Skill that self-discovery cannot find reports `skill_not_found`
   instead of `skill_not_registered`.
 - `SYSTEM_PROMPT`, `buildSystemPrompt` and `buildSystemPromptSnapshot` are
@@ -3782,11 +3793,13 @@ sub.close();
 > Availability: v0.7.96-alpha.3. A host using a published pre-v0.7.96 package
 > must tolerate an absent `failureDetail`.
 
-Provider text is useful for debugging, but forwarding a raw upstream error is
-not a safe SDK contract: it can contain a response body, echoed prompt or
-credential, request headers, signed URL, local path, or stack. It is also not a
-stable programmatic contract across providers. Runtime therefore normalizes
-the useful facts once. When a classified failure fact exists, it publishes the
+A raw upstream error is not a safe or stable SDK contract: it can contain a
+credential, request headers, a signed URL or a stack, and its wording differs
+between providers. Runtime therefore normalizes the useful facts once.
+`failureDetail.detail` (unreleased) still carries the real cause, because a
+failure that hides its reason cannot be diagnosed. It is the Provider's or the
+local error's text, with credentials, URL userinfo and query strings removed,
+capped at 1000 characters. Show it next to `safeMessage`. Do not branch on it. When a classified failure fact exists, it publishes the
 same optional `RuntimeFailureDetail` through all authoritative surfaces:
 
 | Surface | Location |
@@ -3832,6 +3845,7 @@ function renderRuntimeFailure(detail: RuntimeFailureDetail | undefined): void {
       showFailure(detail.safeMessage, {
         code: detail.providerErrorCode,
         requestId: detail.requestId,
+        cause: detail.detail,
       });
   }
 }

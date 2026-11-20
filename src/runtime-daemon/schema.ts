@@ -1762,6 +1762,7 @@ function runtimeFailureDetailSchema(): RuntimeDaemonJsonSchema {
       ],
     },
     safeMessage: { type: 'string', maxLength: 1_024 },
+    detail: { type: 'string', maxLength: 1_024 },
       skillName: { type: 'string', maxLength: 128 },
     httpStatus: { type: 'integer', minimum: 100, maximum: 599 },
     upstreamErrorCode: { type: 'string', maxLength: 200 },

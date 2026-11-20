@@ -40,7 +40,14 @@ Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` �
 - `maxIter` 限制根运行的 LLM 轮数，跨空闲让出与恢复累计；到达上限时以成功结束并带
   `limitReached`。不设 `maxIter` 时只有每个 Runner 的保险上限。
 - `session.autoResume` / `session.resume` 选最近一次持久化的会话，与原直连引擎一致。
-- 中止根运行时，`runKodaX` 以 `AbortError` 拒绝，不再返回 `interrupted: true` 的成功结果。
+- 预期结果不再以异常抛出：`runKodaX`、`KodaXClient.send`、`startKodaX().result`、Runner 预设和
+  `createKodaXTaskRunner` 上，Provider 最终失败返回 `success: false`，带 `failure` 和 Session id，
+  下一次 `KodaXClient.send` 继续同一个 Session；中止返回 `interrupted: true`。无效输入和上下文容量错误
+  仍然抛出。`runManagedTask` 仍然抛出，供需要按异常分类的 Host 使用。
+- `failure.detail` 和 `errorMetadata.lastError` 带真实原因：Provider 或本地错误的原文，去掉凭据，
+  上限 1000 字符。`failure.safeMessage` 仍是 KodaX 的固定摘要。原因文本给用户看；分支判断用
+  `failure.errorClass` 或 `safeMessage`，因为原因文本属于 Provider，随版本变化。Runtime 的
+  `failureDetail.detail` 同理（ADR-078）。
 - 强制 Skill 在自发现来源里找不到时，报 `skill_not_found`，不再报 `skill_not_registered`。
 - 删除的导出：`SYSTEM_PROMPT`、`buildSystemPrompt`、`buildSystemPromptSnapshot`，以及只服务于
   直连提示词的 registry 槽位 `base`、`runtime-context`、`base-suffix`。

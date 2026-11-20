@@ -10,7 +10,7 @@ import type {
   KodaXTaskResultMetadata,
   KodaXToolResultContentItem,
 } from '@kodax-ai/llm';
-import { mapLegacyReasoningModeToEffortIntent, withPreparedImageHistory } from '@kodax-ai/llm';
+import { KodaXContextOverflowError, mapLegacyReasoningModeToEffortIntent, withPreparedImageHistory } from '@kodax-ai/llm';
 import { createVisualOutputReservations } from './visual-output-reservations.js';
 import { bindVisualObservationAdmission, isSessionVisualObservationOwner } from '../media/visual-owner.js';
 import type {
@@ -28,6 +28,7 @@ import { withScriptCells, createScriptReceiptReader } from '../agent-runtime/scr
 import { SCRIPT_MODEL_LIMITS, SCRIPT_TOOL_NAME, withScriptModelTool, projectScriptModelTools, canReadWithModelTools, closeScriptModelSession } from '../agent-runtime/script/model.js';
 import {
   Runner,
+  ContextCapacityError,
   collectGuardrails,
   buildSystemPrompt,
   captureEpisodeReviewBranchEpoch,
@@ -86,6 +87,11 @@ import {
 import { collectVerifiedCheckFacts, resolveLearnedSkillCanaryOutcome } from '../memory/verified-checks.js';
 import { prepareCodingLearnedSkillBinding } from '../learned-skill-runtime.js';
 import type { KodaXWrittenFile } from '../types.js';
+import {
+  attachFailureResult,
+  buildLocalExecutionFailure,
+  readProviderFailure,
+} from '../execution-failure.js';
 import {
   createMemoryRecallBinding,
 } from '../tools/memory-recall.js';
@@ -644,6 +650,25 @@ function scheduleManagedTaskMaintenance(
   queueMicrotask(() => { void maintenance(); });
 }
 
+/**
+ * Same persistence projection as the Turn boundary: internal managed context is
+ * rebuilt per call and never belongs in session history. Undefined means the
+ * failure carried no transcript, so the caller keeps the last known history.
+ */
+function projectFailedRunTranscript(error: unknown): KodaXMessage[] | undefined {
+  const recovered = readRunnerRecoveryTranscript(error);
+  if (recovered === undefined) return undefined;
+  try {
+    return validateAndFixToolHistory(cleanupIncompleteToolCalls(
+      buildPersistableManagedTranscript(recovered as readonly KodaXMessage[])));
+  } catch (projectionError) {
+    emitResilienceDebug('[session:error-snapshot:prepare-error]', {
+      error: projectionError instanceof Error ? projectionError.message : String(projectionError),
+    });
+    return undefined;
+  }
+}
+
 interface ManagedRunRecoveryState {
   initial?: ResolvedInitialMessages;
   runtimeSessionState?: RuntimeSessionState;
@@ -1200,6 +1225,14 @@ async function runManagedTaskViaRunnerInContext(
     // Surface onError so top-level consumers can flush telemetry /
     // show UI toast before the rejection propagates.
     const error = err instanceof Error ? err : new Error(String(err));
+    const aborted = optionsWithSessionId.abortSignal?.aborted === true || error.name === 'AbortError';
+    const failure = aborted ? undefined : readProviderFailure(error) ?? buildLocalExecutionFailure(error);
+    const errorMetadata = {
+      lastError: failure?.message ?? error.message,
+      lastErrorTime: Date.now(),
+      consecutiveErrors: (recovery.initial?.errorMetadata?.consecutiveErrors ?? 0) + 1,
+    };
+    const settledMessages = projectFailedRunTranscript(err);
     emitLiveTurnFailed(error);
     emitError(liveEvents, error);
     // v0.7.26 parity (C3): persist an error snapshot so /resume can
@@ -1215,19 +1248,13 @@ async function runManagedTaskViaRunnerInContext(
     if (optionsWithSessionId.session?.storage) {
       try {
         const resolvedInitial = recovery.initial;
-        const recoveredMessages = readRunnerRecoveryTranscript(err);
-        // Same persistence projection as the Turn boundary: internal managed
-        // context is rebuilt per call and never belongs in session history.
         // If loading itself failed, do not replace an unknown saved history.
-        if (recoveredMessages !== undefined || resolvedInitial !== undefined) {
+        if (settledMessages !== undefined || resolvedInitial !== undefined) {
           // Without a current recovery carrier, the latest canonical snapshot
           // may contain completed answers or queued inputs absent from the seed.
           // An empty fragment asks the existing snapshot policy to retain it.
-          const messagesToPersist = recoveredMessages === undefined ? []
-            : validateAndFixToolHistory(cleanupIncompleteToolCalls(
-              buildPersistableManagedTranscript(recoveredMessages as readonly KodaXMessage[])));
           await saveSessionSnapshot(optionsWithSessionId, initialSessionId, {
-            messages: messagesToPersist,
+            messages: settledMessages ?? [],
             title: resolvedInitial?.title || prompt.slice(0, 80),
             gitRoot: optionsWithSessionId.context?.gitRoot ?? undefined,
             runtimeSessionState: recovery.runtimeSessionState ?? (resolvedInitial && buildRuntimeSessionState({
@@ -1235,11 +1262,7 @@ async function runManagedTaskViaRunnerInContext(
               loadedExtensionRecords: resolvedInitial.loadedExtensionRecords,
               activeTools: [], modelSelection: {},
             })),
-            errorMetadata: {
-              lastError: error.message,
-              lastErrorTime: Date.now(),
-              consecutiveErrors: (resolvedInitial?.errorMetadata?.consecutiveErrors ?? 0) + 1,
-            },
+            errorMetadata,
           });
         }
       } catch (snapshotError) {
@@ -1260,7 +1283,13 @@ async function runManagedTaskViaRunnerInContext(
       },
     );
     await completeLearnedSkills();
-    throw err;
+    if (!(error instanceof ContextCapacityError || error instanceof KodaXContextOverflowError)) {
+      const messages = settledMessages ?? recovery.initial?.messages ?? [];
+      attachFailureResult(error, aborted
+        ? { success: true, interrupted: true, lastText: '', messages, sessionId: initialSessionId, errorMetadata }
+        : { success: false, lastText: '', messages, sessionId: initialSessionId, errorMetadata, ...(failure ? { failure } : {}) });
+    }
+    throw error;
   } finally {
     // onComplete fires on every terminal — success, block, or error —
     // so REPL can re-render its status bar. NOTE: AMA path's

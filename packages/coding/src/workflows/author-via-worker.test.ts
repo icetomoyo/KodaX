@@ -6,7 +6,7 @@ import type { WorkflowProcessEvent, WorkflowProcessSnapshot } from '@kodax-ai/ag
 // runs but no agent loop executes. Capture the effective options the Run sees.
 const runKodaXMock = vi.fn<[KodaXOptions, string], Promise<KodaXResult>>();
 vi.mock('../task-engine.js', () => ({
-  runManagedTask: (options: KodaXOptions, prompt: string) => runKodaXMock(options, prompt),
+  runKodaX: (options: KodaXOptions, prompt: string) => runKodaXMock(options, prompt),
 }));
 
 const { authorWorkflowViaWorker, buildScoutThenAuthorPrompt, SCOUT_THEN_AUTHOR_PROMPT_LINES } =

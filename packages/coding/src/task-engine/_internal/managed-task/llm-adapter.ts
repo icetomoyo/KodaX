@@ -91,6 +91,7 @@ import {
   telemetryRecovery,
 } from '../../../resilience/index.js';
 import { providerResilienceConfigFromTimeouts } from '../../../timeouts.js';
+import { attachProviderFailure, buildProviderExecutionFailure } from '../../../execution-failure.js';
 import { waitForRetryDelay } from '../../../retry-handler.js';
 import {
   createCostTracker,
@@ -115,6 +116,7 @@ import {
 import { mapLegacyReasoningModeToEffortIntent, reconcileAssistantContent, type KodaXAssistantBlock, type KodaXAnthropicHistory } from '@kodax-ai/llm';
 import type {
   KodaXEvents,
+  KodaXExecutionFailure,
   KodaXOptions,
   KodaXPromptCacheDiagnosticEvent,
   KodaXReasoningMode,
@@ -887,6 +889,13 @@ export function buildRunnerLlmAdapter(
       }
       let attempt = 0;
       let textRecoveryRetry = false;
+      const requestStartedAt = Date.now();
+      const markFinalProviderFailure = (error: Error, errorClass: KodaXExecutionFailure['errorClass'],
+        requestPhase: KodaXExecutionFailure['requestPhase'], serverRetryAfterMs?: number): void => {
+        attachProviderFailure(error, buildProviderExecutionFailure({ error, errorClass, requestPhase,
+          provider: providerName, model: activeModel ?? provider.getModel(), startedAt: requestStartedAt,
+          ...(serverRetryAfterMs === undefined ? {} : { serverRetryAfterMs }) }));
+      };
       let raw!: Awaited<ReturnType<typeof provider.stream>>;
       // FEATURE_085 parity for the Scout/Runner path: mirror the main
       // agent loop's max_tokens escalation (cd213e4). When a capped-budget
@@ -1118,7 +1127,12 @@ export function buildRunnerLlmAdapter(
           break;
         } catch (rawError) {
           let error = rawError instanceof Error ? rawError : new Error(String(rawError));
-          if (textRecoveryRetry) { attachRunnerRecoveryTranscript(error, recoveryTranscript); throw error; }
+          if (textRecoveryRetry) {
+            const classified = classifyResilienceError(error, boundaryTracker.inferFailureStage());
+            markFinalProviderFailure(error, classified.errorClass, classified.failureStage);
+            attachRunnerRecoveryTranscript(error, recoveryTranscript);
+            throw error;
+          }
           // Runner owns canonical history and bounded recovery retries.
           if (error instanceof KodaXContextOverflowError) {
             error.requestInputReliefTokens = Math.max(0, canonicalInputEstimate - estimateTokens(providerMessages));
@@ -1311,6 +1325,7 @@ export function buildRunnerLlmAdapter(
             // instead of `[]`. Non-enumerable so JSON-serializing telemetry
             // does not dump conversation history into logs. The outer catch
             // uses Array.isArray as a guard.
+            markFinalProviderFailure(error, decision.reasonCode, decision.failureStage, decision.serverRetryAfterMs);
             attachRunnerRecoveryTranscript(error, recoveryTranscript);
             throw error;
           }
@@ -1344,6 +1359,7 @@ export function buildRunnerLlmAdapter(
           'Provider returned no user-visible text or tool calls after recovery attempts; refusing to commit an empty assistant turn.',
           providerName,
         );
+        markFinalProviderFailure(error, 'incomplete_stream', 'before_first_delta');
         attachRunnerRecoveryTranscript(error, recoveryTranscript);
         throw error;
       }

@@ -1217,9 +1217,12 @@ export interface KodaXChildRouteFacts {
  */
 export interface KodaXExecutionFailure {
   readonly source?: 'provider' | 'local';
-  /** Bounded diagnostic, independent of any assistant reply. */
+  /** Summary, safe facts and the underlying reason, independent of any assistant reply. */
   readonly message: string;
+  /** Fixed KodaX summary of the failure category; never contains upstream text. */
   readonly safeMessage: string;
+  /** Underlying reason (Provider response text or exception message): credential-redacted and bounded. */
+  readonly detail?: string;
   readonly errorName?: string;
   readonly errorClass: ResilienceErrorClass | 'local_execution_error';
   /** Most specific safe upstream or KodaX failure code available. */

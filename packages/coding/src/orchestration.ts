@@ -1037,12 +1037,17 @@ export function createKodaXTaskRunner<TTask extends KodaXAgentWorkerSpec = KodaX
     // FEATURE_121 (v0.7.40): pass full lastText as summary. Downstream
     // dispatch-child-tasks enqueue path runs it through guardrail. See
     // normalizeWorkerResult above for the rationale.
+    const failureMessage = transformedResult.success
+      ? undefined
+      : transformedResult.failure?.message ?? transformedResult.errorMetadata?.lastError;
     return {
       success: transformedResult.success,
       output: transformedResult.lastText,
+      ...(failureMessage === undefined ? {} : { error: failureMessage }),
       summary:
         transformedResult.lastText
           || transformedResult.signalReason
+          || failureMessage
           || (transformedResult.interrupted ? 'Worker interrupted before producing a textual result.' : 'No textual output produced.'),
       metadata: {
         sessionId: transformedResult.sessionId,
