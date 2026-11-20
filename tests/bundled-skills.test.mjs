@@ -111,6 +111,9 @@ for (const agentMode of [undefined, 'ama']) for (const kind of ['default', 'prof
     assert.equal(omitted.kind, 'prepared', 'Catalog omission must retain explicit access to an admitted Skill');
   });
 }
+// The managed Worker carries the Skill catalog and activated bodies in context messages, not only in system.
+const visibleText = request => [request.system, ...request.messages.map(message =>
+  typeof message.content === 'string' ? message.content : '')].join('\n');
 test('built SDK preserves Skill discovery, activation, permissions and refresh across public entry points', async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-bundled-skill-'));
   t.after(() => rm(root, { recursive: true, force: true, maxRetries: 5 }));
@@ -165,12 +168,12 @@ test('built SDK preserves Skill discovery, activation, permissions and refresh a
     assert.equal(result.success, true);
     if (activation === 'hidden') {
       assert.ok(!requests[0].tools.includes('skill'));
-      assert.ok(!requests[0].system.includes('- bundle-audit:'));
+      assert.ok(!visibleText(requests[0]).includes('- bundle-audit:'));
     } else {
       // allowed-tools no longer narrows the Run; the Host decides, so glob runs.
       assert.equal(results.at(-1), 'No files found');
       if (activation === 'model') {
-        assert.match(requests[0].system, /- bundle-audit:/);
+        assert.match(visibleText(requests[0]), /- bundle-audit:/);
         assert.match(results[0], /BUNDLED_SKILL_BODY/);
       }
     }
@@ -224,8 +227,8 @@ test('built SDK preserves Skill discovery, activation, permissions and refresh a
       ...(activation === 'explicit' ? { skillInvocation: { name, path: skill.skillFilePath,
         expandedContent: skill.content, runtimePolicy: { enforceAtRuntime: true } } } : {}),
     }, events: { onToolResult: event => outputs.push(event.content) } }, 'Inspect source code.');
-    assert.ok(requests[0].system.includes(catalog.trim()), 'The actual Provider must receive the bounded catalog');
+    assert.ok(visibleText(requests[0]).includes(catalog.trim()), 'The actual Provider must receive the bounded catalog');
     if (activation === 'model') assert.match(outputs[0], /CATALOG_BODY_0/);
-    else assert.match(requests[0].system, /CATALOG_BODY_39/);
+    else assert.match(visibleText(requests[0]), /CATALOG_BODY_39/);
   }
 });
