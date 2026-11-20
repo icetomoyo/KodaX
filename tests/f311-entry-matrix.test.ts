@@ -1,6 +1,7 @@
 // FEATURE_311 acceptance: every entry sends one tool text and one Worker.
 // A loopback provider records the first primary request of each root entry and
-// of the children an AMA root spawns; no model or network is involved.
+// of the builtin, specialist and Workflow-step children an AMA root starts; no
+// model or network is involved.
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -13,6 +14,7 @@ import { KodaXClient, createKodaXTaskRunner, runKodaX, runManagedTask, runOrches
   type KodaXOptions } from '../packages/coding/src/index.js';
 import { createDefaultCodingAgent } from '../packages/coding/src/default-coding-agent.js';
 import { authorWorkflowViaWorker } from '../packages/coding/src/workflows/author-via-worker.js';
+import { registerConstructedAgent } from '../packages/coding/src/construction/agent-resolver.js';
 import { createKodaXRuntime } from './runtime-fixture.js';
 
 const PROVIDER = 'f311-entry-matrix';
@@ -31,9 +33,37 @@ const calls = (...blocks: Array<[string, Record<string, unknown>]>): Reply => ({
 let directory = '';
 let workspace = '';
 let entry = '';
-let spawnChildren = false;
+type Script = 'builtin' | 'specialist' | 'workflow';
+let script: Script | undefined;
 let rootTurns = 0;
 const captured = new Map<string, Captured>();
+
+const CHILD_MARKS = [['CHILD_WRITE_MARK', 'write-child'], ['CHILD_READ_MARK', 'read-child'],
+  ['CHILD_SPECIALIST_MARK', 'specialist-child'], ['CHILD_WORKFLOW_MARK', 'workflow-child']] as const;
+const WORKFLOW_SOURCE = 'async function run(wf) { const step = await wf.runAgent({ name: "step", '
+  + 'prompt: "CHILD_WORKFLOW_MARK: report the README title.", readOnly: true }); return { synthesis: step.finalText }; }';
+
+/** The first call a root makes for each script; the root then waits once and finishes. */
+function startChildren(kind: Script): Reply {
+  if (kind === 'builtin') return calls(
+    ['spawn_agent', { task_name: 'writer', objective: 'CHILD_WRITE_MARK: append a line to README.md.', read_only: false }],
+    ['spawn_agent', { task_name: 'reader', objective: 'CHILD_READ_MARK: report the README title.', read_only: true }]);
+  if (kind === 'specialist') return calls(['spawn_agent', { task_name: 'specialist', agent_id: 'f311-specialist',
+    objective: 'CHILD_SPECIALIST_MARK: report the README title.', read_only: true }]);
+  return calls(['run_workflow', { source: WORKFLOW_SOURCE, manifest: { name: 'f311-entry', description: 'Read the README',
+    readOnly: true, maxAgents: 1, maxConcurrency: 1, tokenBudget: 1000, phases: ['inspect'], patterns: ['fan-out-and-synthesize'] } }]);
+}
+
+/** User-authored text only: a root's later turns echo child objectives inside tool calls and results. */
+function userText(messages: readonly KodaXMessage[]): string {
+  const parts: string[] = [];
+  for (const message of messages) {
+    if (message.role !== 'user') continue;
+    if (typeof message.content === 'string') { parts.push(message.content); continue; }
+    for (const block of message.content) if (block.type === 'text') parts.push(block.text);
+  }
+  return parts.join('\n');
+}
 
 class LoopbackProvider extends KodaXBaseProvider {
   readonly name = PROVIDER;
@@ -43,15 +73,13 @@ class LoopbackProvider extends KodaXBaseProvider {
   async stream(messages: KodaXMessage[], tools: KodaXToolDefinition[], system: string): Promise<Reply> {
     // Auxiliary judges and summaries carry at most one tool.
     if (tools.length <= 1) return text('done');
-    const opening = JSON.stringify(messages);
-    const role = opening.includes('CHILD_WRITE_MARK') ? 'write-child' : opening.includes('CHILD_READ_MARK') ? 'read-child' : 'root';
+    const opening = userText(messages);
+    const role = CHILD_MARKS.find(([mark]) => opening.includes(mark))?.[1] ?? 'root';
     const key = role === 'root' ? entry : `${entry}/${role}`;
     if (!captured.has(key)) captured.set(key, { system, tools: new Map(tools.map(tool => [tool.name, tool.description ?? ''])) });
-    if (role !== 'root' || !spawnChildren) return text('done');
+    if (role !== 'root' || !script) return text('done');
     rootTurns += 1;
-    if (rootTurns === 1) return calls(
-      ['spawn_agent', { task_name: 'writer', objective: 'CHILD_WRITE_MARK: append a line to README.md.', read_only: false }],
-      ['spawn_agent', { task_name: 'reader', objective: 'CHILD_READ_MARK: report the README title.', read_only: true }]);
+    if (rootTurns === 1) return startChildren(script);
     if (rootTurns === 2) return calls(['wait_agent', { timeout_ms: 10_000 }]);
     return text('done');
   }
@@ -112,18 +140,33 @@ it('sends the managed Worker and one tool text from every entry', async () => {
     }
   } finally { await runtime.close(); }
 
-  spawnChildren = true;
-  await capture('children', () => runManagedTask(options({ agentMode: 'ama', maxIter: 6 },
-    { resolveShellPermissionMode: () => 'full-access' }), TASK));
-  spawnChildren = false;
+  const unregisterSpecialist = registerConstructedAgent({ kind: 'agent', name: 'f311-specialist', version: '1.0.0',
+    status: 'active', createdAt: Date.UTC(2026, 10, 20), testedAt: Date.UTC(2026, 10, 20),
+    content: { instructions: 'SPECIALIST_MARK: report what you read.', description: 'Fixture specialist',
+      tools: [{ ref: 'builtin:read' }, { ref: 'builtin:grep' }] } }, { source: 'built-in' });
+  try {
+    for (const kind of ['builtin', 'specialist', 'workflow'] as const) {
+      script = kind;
+      await capture(`children/${kind}`, () => runManagedTask(options({ agentMode: 'ama', maxIter: 6,
+        workflowRunsBaseDir: path.join(directory, 'workflow-runs') },
+        { resolveShellPermissionMode: () => 'full-access', ...(kind === 'workflow' ? { workflowIntent: 'explicit' as const } : {}) }), TASK));
+    }
+  } finally {
+    script = undefined;
+    unregisterSpecialist();
+  }
 
-  const roots = [...captured].filter(([name]) => !name.startsWith('children/'));
+  const roots = [...captured].filter(([name]) => !/^children\/[^/]+\//.test(name));
   for (const [name, request] of roots) {
     expect(request.system, name).toContain(WORKER_MARK);
     expect(request.system, name).not.toContain(RETIRED_SYSTEM_MD);
   }
-  expect(captured.has('children/write-child')).toBe(true);
-  expect(captured.has('children/read-child')).toBe(true);
+  for (const child of ['builtin/write-child', 'builtin/read-child', 'specialist/specialist-child', 'workflow/workflow-child']) {
+    expect(captured.has(`children/${child}`), child).toBe(true);
+  }
+  // A specialist keeps its own instructions; it does not inherit the Worker.
+  expect(captured.get('children/specialist/specialist-child')!.system).toContain('SPECIALIST_MARK');
+  expect(captured.get('children/specialist/specialist-child')!.system).not.toContain(WORKER_MARK);
   for (const [name, request] of captured) expect(request.system, name).not.toContain(RETIRED_SYSTEM_MD);
 
   // Ordinary roots of one agent mode send the same Worker, whatever the entry.
