@@ -6,6 +6,31 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-beta.12] - 2026-11-20
+
+Twelfth beta of the v0.7.97 line: one prompt chain for every root Run
+and a final outcome for every Stop. Every root Run — `runKodaX`,
+`startKodaX`, `KodaXClient`, the Runner preset and `runs.start` — now
+uses the managed Worker and the same tool text as Space and the REPL,
+which also retires SA mode, lets applications shape the managed prompt
+through `context.prompt`, and cuts first-request input by about
+28-34% (FEATURE_311, FEATURE_310). SDK capability
+`actorSettlementConvergence` is now `3`: every Stop settles, a fenced
+Session heals in the background without a Host restart, and a Run asked
+to stop no longer keeps the Host from stopping (Issues 412-414); a
+failed Run reports its real cause in `failure.detail` (ADR-078).
+Provider requests carry `X-Session-Id`, new session ids are UUIDv7,
+Host `create` and `fork` reject unsafe session ids, and A2A Tasks
+continue one Runtime Session per context without reading or writing
+the Host owner's memory (Issues 416-418, 423, ADR-077). Constructed
+artifacts load only with a machine-local approval, and a directory
+alias no longer exposes the trusted project Exec Policy (Issues 419,
+422). Every v0.7.96 stable and v0.7.97-alpha.1 through beta.11 client
+contract is retained. npm publication remains a manual maintainer
+action.
+
 ### Added
 
 - Provider HTTP requests send `X-Session-Id` with the root session id, so a
@@ -34,6 +59,16 @@ All notable changes to this project will be documented in this file.
   path goes through a directory alias (a junction or symlink, or macOS
   `/var`), text tools can no longer rewrite that policy. A trusted root now
   also matches its project through such an alias (Issue 422).
+
+- A cloned repository can no longer run its constructed tool code just by
+  shipping an active manifest. Activation — the policy dialog or the
+  self-modify dialog — now records a machine-local approval in
+  `<config home>/runtime/construction-approvals.json`, and rehydrate loads
+  an artifact only when its project root, kind, name, version and content
+  hash all match an entry. Everything else is skipped with a warning and
+  counted as `unapproved` in the REPL banner; activate it again to use it.
+  Artifacts activated before this fix need one more activation after
+  upgrading (Issue 419).
 
 - One-shot CLI Runs no longer print
   `[KodaX] recovering undefined/undefined (undefined, undefined)`. The

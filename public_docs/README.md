@@ -3,8 +3,13 @@
 Documentation for KodaX users, product-client integrators and trusted Host developers.
 
 This development tree implements the unified Product Client contract under
-FEATURE_298/299/301/303/304/305/306. The package version is `0.7.97-beta.11`;
-`v0.7.96` remains the last stable release. `v0.7.97-beta.11` keeps Session
+FEATURE_298/299/301/303/304/305/306. The package version is `0.7.97-beta.12`;
+`v0.7.96` remains the last stable release. `v0.7.97-beta.12` gives every root
+Run the managed Worker and the same tool text as Space and the REPL
+(FEATURE_311, SA mode retired), settles every Stop under
+`actorSettlementConvergence:3`, reports a failure's real cause in
+`failure.detail`, sends `X-Session-Id` with UUIDv7 session ids, and isolates
+A2A Tasks from the Host owner's memory; `v0.7.97-beta.11` keeps Session
 history readable during a busy Run (older cache pages, entry chunks and cursors
 stay valid while a Run writes; a blocked read reports `writer_active`) and makes
 Skills tool-neutral (`allowed-tools` no longer restricts tools, hooks or dynamic
@@ -81,7 +86,7 @@ Actor settlement and saved-history location/turn resolution shipped in
 support and durable visual observations shipped in `v0.7.97-beta.5`; one
 Host per `KODAX_HOME` with the Host-location `profile` removed shipped in
 `v0.7.97-beta.6`; the Space SDK image projection, attachment and
-approval-attribution corrections shipped in `v0.7.97-beta.7`; the Windows daemon native Job startup repairs shipped in `v0.7.97-beta.8`; data root relocation and steer withdrawal shipped in `v0.7.97-beta.9`; merged-input acknowledgement shipped in `v0.7.97-beta.10`; readable history during a busy Run and tool-neutral Skills shipped in `v0.7.97-beta.11`. Read the
+approval-attribution corrections shipped in `v0.7.97-beta.7`; the Windows daemon native Job startup repairs shipped in `v0.7.97-beta.8`; data root relocation and steer withdrawal shipped in `v0.7.97-beta.9`; merged-input acknowledgement shipped in `v0.7.97-beta.10`; readable history during a busy Run and tool-neutral Skills shipped in `v0.7.97-beta.11`; one prompt chain for every root Run and final Stop outcomes shipped in `v0.7.97-beta.12`. Read the
 [current SDK alignment](sdk/embedder-guide.md#post-alpha10-sdk-alignment),
 [unified Host cutover](sdk/embedder-guide.md#unified-host-sdk-cutover-shipped-in-v0797-alpha12)
 and [one Host per KODAX_HOME](../docs/SDK_MIGRATION.md#one-host-per-kodax_home-profile-removed)

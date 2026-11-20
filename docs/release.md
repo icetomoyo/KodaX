@@ -48,6 +48,77 @@ on one commit.
   The step limit is ten minutes because the passing Windows suite alone takes
   about 4.6 minutes.
 
+## v0.7.97-beta.12 release preparation
+
+Release state: `v0.7.97-beta.12` is a candidate awaiting the publishing
+dispatch. The release is the twelfth beta of the v0.7.97 line: one
+prompt chain for every root Run and a final outcome for every Stop.
+Every root Run — `runKodaX`, `startKodaX`, `KodaXClient`, the Runner
+preset and `runs.start` without `mode` — now routes through the managed
+Worker and sends the same tool descriptions as Space and the REPL
+(FEATURE_311, about 28-34% smaller first-request input), SA mode is
+retired (FEATURE_310), and applications shape the managed prompt
+through `context.prompt` (`KodaXPromptSpec`) while `maxIter` bounds a
+root Run. SDK capability `actorSettlementConvergence` is `3`: every
+Stop settles (Issues 412-414) — a late save reconciles, an
+unconfirmable Actor tree ends `failed` with
+`actor_settlement_not_persisted`, and a fenced Session heals in the
+background without a Host restart — a Run asked to stop no longer
+blocks Host exit, and a failed Run reports its real cause in
+`failure.detail` with credentials removed (ADR-078). Provider requests
+send `X-Session-Id`, new session ids are UUIDv7, Host `create`/`fork`
+reject unsafe session ids, A2A Tasks continue one Runtime Session per
+principal context, and their Runs neither read nor write the Host
+owner's memory (Issues 416-418, 423, ADR-077). Constructed artifacts
+load only with a machine-local approval, and a directory alias no
+longer exposes the trusted project Exec Policy (Issues 419, 422).
+Every v0.7.96 stable and v0.7.97-alpha.1 through beta.11 client
+contract is retained.
+
+The CI/Release in-place upgrade gates now pin the published
+`0.7.97-beta.11` tarball (published 2026-11-16T13:38:37Z; registry
+dist.integrity sha512-RDI+PRx3…oVow== packs to the same bytes as the
+kodax-ai-kodax-0.7.97-beta.11.tgz asset of the v0.7.97-beta.11 GitHub
+Release, sha256 93ee716f…8b53c6). Run that fixture locally with Windows
+`tar.exe` ahead of Git's GNU `tar` on `PATH`: GNU `tar` reads the `C:`
+drive in the archive path as a remote host. The upgrade also exercises
+the auto-start fix that keeps attaching a busy v2 Host
+(`actorSettlementConvergence` defaults to 2 in auto-start; an explicit
+requirement of 3 still replaces an idle v2 daemon).
+
+Local candidate validation on Windows with Node 24.22.2: full build
+(after the version bump, so `dist` carries 0.7.97-beta.12), source and
+test typechecks, the self-knowledge/`kodax_manual` registry suite
+(98 passed), `tests/release-workflow.test.ts` (28 passed),
+`tests/tracker-consistency.test.ts` (4 passed), `test:host-cutover`
+(3 passed; npm 11.19.1 emits the array `npm pack --json` manifest the
+unified-release fixture parses), the real published beta.11 Host
+in-place upgrade (1 passed) against the integrity-pinned public
+tarball, and `test:bundle` (107 passed; one first full-suite run
+failed `bundled-daemon-compaction` on a `protocol_closed` transport
+close under parallel load — it passed on the re-run and three
+isolated runs). The fast vitest tier was also run locally with Node
+22.23.1, the CI baseline (3782 passed); do not judge it under Node 24,
+whose `node --test` spec reporter (`ℹ pass 1`) breaks the four
+scripted first-turn/contract suites that assert the Node 20/22 TAP
+output (`# pass 1`) — no CI row runs Node 24. The unit tier ran on
+Node 20 (14109 passed; one `oauth-connect` `bad port` flake under
+parallel load passed twice in isolation) and the contract tier passed.
+The packaged Electron daemon gate runs in Release CI.
+
+This release follows the single publishing dispatch described under
+[Current release execution](#current-release-execution): `target=all`
+with `release_tag=v0.7.97-beta.12` runs Full CI, all five archive
+builds and the npm package gates, then creates the tag at the
+dispatched commit and the GitHub pre-release from that run's
+artifacts. Ordinary branch pushes do not run CI; the fifty-nine
+commits between the beta.11 dispatch and this candidate first ran
+through a candidate-only CI dispatch on the release commit. The
+universal npm tarball asset is `kodax-ai-kodax-0.7.97-beta.12.tgz`
+with its `SHA256SUMS` checksum. Cross-platform manual acceptance,
+installed Space/SDK acceptance, the Space dependency bump and npm
+publication remain separate maintainer steps.
+
 ## v0.7.97-beta.11 release preparation
 
 Release state: `v0.7.97-beta.11` was published on 2026-11-16 as a GitHub

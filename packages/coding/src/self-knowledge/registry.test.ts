@@ -251,6 +251,15 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('reason. Every v0.7.96 stable and v0.7.97-alpha.1 through beta.6 contract is retained.');
   });
 
+  it('documents the v0.7.97-beta.12 unified prompt chain and final Stop outcomes', () => {
+    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
+
+    expect(sdk).toContain('The v0.7.97-beta.12 release gives every root Run one prompt chain and every Stop a final');
+    expect(sdk).toContain('advertise `promptSpec` v1. SDK capability `actorSettlementConvergence` is `3`: every Stop');
+    expect(sdk).toContain('memory. Constructed artifacts load only with a machine-local approval recorded at activation.');
+    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through beta.11 contract is retained.');
+  });
+
   it('documents the v0.7.97-beta.11 readable history and tool-neutral Skills release', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
 
