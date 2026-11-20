@@ -150,7 +150,8 @@
     "tests/issue-376-plan-exit.eval.ts",
     "tests/f311-entry-matrix.test.ts",
     "tests/f311-worker-root.eval.ts",
-    "tests/f311-sdk-default-root.eval.ts"
+    "tests/f311-sdk-default-root.eval.ts",
+    "tests/skill-creator-trigger.test.ts"
   ],
   "exclude": ["node_modules", "dist"]
 }

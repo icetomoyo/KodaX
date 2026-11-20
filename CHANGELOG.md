@@ -73,6 +73,20 @@ All notable changes to this project will be documented in this file.
   and tool text, which cut first-request input by about 28-34% in evals. See
   [SDK_MIGRATION.md](docs/SDK_MIGRATION.md#统一提示词链路未发布).
 
+- The skill-creator helper scripts now call the model in the way each job
+  needs:
+  - `run-trigger-eval.js` measures real triggering. It used to ask a model
+    whether one description should trigger. Now it stages the candidate in the
+    full product Skill catalog and records whether the first response of the
+    AMA root calls that Skill. Tool calls are recorded but not run. Reports say
+    `observed_skill_call` and list each attempt's `tool_calls`. Each query now
+    costs about one full first request instead of a short judge request.
+  - `grade-evals.js`, `analyze-benchmark.js`, `compare-runs.js` and
+    `improve-description.js` send one provider request with no tools, instead
+    of running an agent loop. Their `--max-iter` flags are gone; the judges'
+    `--cwd` is gone too.
+  - `run-eval.js` runs on the AMA root, like the product default.
+
 - SA mode is retired from every caller (FEATURE_310). `agentMode: 'sa'` is
   still accepted and selects no behavior, like `amaw`:
   - Product inputs, session settings and `runManagedTask` run AMA;

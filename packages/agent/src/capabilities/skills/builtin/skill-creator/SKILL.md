@@ -46,9 +46,9 @@ helper 时给脚本路径和目标路径，不假定当前目录就是 Skill 目
 
 先读 [评测方法与命令](references/evaluation.md)，只执行需要的分支。
 
-- quick-validate 是结构检查；run-trigger-eval 是单条描述的**语义筛查**，不是实际触发率。
-- 真实触发需使用实际注册、可见的完整 catalog 和真实 skill 工具定义，记录是否真的
-  调用了 skill；包含自然语言正例和相邻任务反例，不能以判断题分数代替调用证据。
+- quick-validate 是结构检查，不涉及触发。
+- run-trigger-eval 观察真实触发：候选描述进入产品的完整 catalog，记录第一轮回复是否
+  调用了该 skill。用例要有自然语言正例和相邻任务反例，否则分数说明不了边界。
 - run-eval 是独立 SDK 执行，必须明确 Provider、model、cwd、输入/输出路径与预算；
   不自动继承 Space 当前会话凭据或工具。没有已授权模型能力时仍可完成静态工作。
 

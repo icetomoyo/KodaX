@@ -5,8 +5,6 @@ export interface GradeWorkspaceOptions {
   effort?: string;
   /** @deprecated Use effort. */
   reasoningMode?: string;
-  maxIter?: number;
-  cwd?: string;
   overwrite?: boolean;
   configs?: string[];
 }

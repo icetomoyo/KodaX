@@ -173,7 +173,6 @@ function parseArgs(argv) {
     triggerThreshold: 0.5,
     holdout: 0.25,
     seed: 42,
-    maxIter: 18,
     reasoningMode: 'off',
     output: undefined,
     writeBest: false,
@@ -201,8 +200,6 @@ function parseArgs(argv) {
       args.holdout = Number(argv[++index]);
     } else if (token === '--seed' && argv[index + 1]) {
       args.seed = Number(argv[++index]);
-    } else if (token === '--max-iter' && argv[index + 1]) {
-      args.maxIter = Number(argv[++index]);
     } else if (token === '--reasoning' && argv[index + 1]) {
       args.reasoningMode = argv[++index];
     } else if (token === '--output' && argv[index + 1]) {

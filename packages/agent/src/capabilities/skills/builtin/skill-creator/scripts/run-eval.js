@@ -103,6 +103,7 @@ async function defaultRunAgent(prompt, options) {
     {
       provider: options.provider ?? 'anthropic',
       model: options.model,
+      agentMode: 'ama',
       maxIter: options.maxIter ?? 30,
       reasoningMode: options.reasoningMode ?? 'off',
       thinking: options.reasoningMode ? options.reasoningMode !== 'off' : false,

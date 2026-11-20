@@ -45,7 +45,6 @@ import {
   splitEvalSet,
 } from './builtin/skill-creator/scripts/run-loop.js';
 import {
-  parseTriggerDecision,
   runTriggerEval,
 } from './builtin/skill-creator/scripts/run-trigger-eval.js';
 
@@ -236,7 +235,7 @@ Follow the workflow.
     expect(html).toContain('Review prompt');
   });
 
-  it('parses trigger decisions and evaluates trigger samples', async () => {
+  it('scores observed Skill calls into trigger samples', async () => {
     const skillDir = await createTempDir('kodax-trigger-skill-');
     const evalDir = await createTempDir('kodax-trigger-evals-');
     await createExampleSkill(skillDir);
@@ -251,11 +250,6 @@ Follow the workflow.
       'utf8'
     );
 
-    expect(parseTriggerDecision('preface {"trigger": true, "reason": "matched"} suffix')).toEqual({
-      trigger: true,
-      reason: 'matched',
-    });
-
     const report = await runTriggerEval(
       {
         skillPath: skillDir,
@@ -263,19 +257,16 @@ Follow the workflow.
         runsPerQuery: 2,
         triggerThreshold: 0.5,
       },
-      async (prompt) => {
-        if (prompt.includes('User query: 帮我写 release notes')) {
-          return '{"trigger": true, "reason": "matches release notes"}';
-        }
-        return '{"trigger": false, "reason": "not relevant"}';
-      }
+      async (query) => query === '帮我写 release notes'
+        ? [{ tool: 'skill', input: { skill: 'example-skill' } }]
+        : [{ tool: 'grep', input: { pattern: 'rebase' } }]
     );
 
     expect(report.summary.passed).toBe(2);
     expect(report.summary.pass_rate).toBe(1);
     expect(report.summary.precision).toBe(1);
     expect(report.summary.recall).toBe(1);
-    expect(report.meta).toMatchObject({ evaluation_kind: 'description_semantic_screening', model_catalog_visible: true });
+    expect(report.meta).toMatchObject({ evaluation_kind: 'observed_skill_call', runs_per_query: 2 });
   });
 
   it('improves descriptions without requiring a pre-existing history file', async () => {
@@ -365,8 +356,7 @@ Follow the workflow.
             meta: {
               runs_per_query: 1,
               trigger_threshold: 0.5,
-              evaluation_kind: 'description_semantic_screening',
-              model_catalog_visible: true,
+              evaluation_kind: 'observed_skill_call',
               note: 'test',
             },
           };

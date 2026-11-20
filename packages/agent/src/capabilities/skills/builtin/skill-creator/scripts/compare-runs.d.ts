@@ -9,9 +9,7 @@ export interface CompareWorkspaceOptions {
   effort?: string;
   /** @deprecated Use effort. */
   reasoningMode?: string;
-  maxIter?: number;
   maxPairs?: number;
-  cwd?: string;
 }
 
 export function buildComparisonPrompt(input: Record<string, unknown>): string;

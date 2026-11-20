@@ -9,8 +9,6 @@ export interface AnalyzeBenchmarkOptions {
   effort?: string;
   /** @deprecated Use effort. */
   reasoningMode?: string;
-  maxIter?: number;
-  cwd?: string;
 }
 
 export interface BenchmarkAnalysis {
