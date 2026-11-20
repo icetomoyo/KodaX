@@ -47,6 +47,77 @@ not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
 
+## Issue 422: A directory alias lets text tools rewrite the trusted project Exec Policy
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: `v0.7.96-alpha.5` (fbbe3ca8c added the protected project
+  policy path)
+- Created / Resolved: 2026-11-20 / 2026-11-20
+- Fixed: unreleased (after `v0.7.97-beta.11`)
+
+### Original Problem
+
+A trusted project's `.kodax/exec-policy.jsonc` can grant shell commands
+unsandboxed authority, so the Runtime forbids text tools from writing it. The
+check compared paths as text. The text mutation host hands the policy a target
+resolved through `realpath` of the write root, while the protected path was
+`path.join(workspaceRoot, ...)` without resolution. When a parent directory
+of the workspace was an alias, the two spellings differed and the write went
+through. Aliases include a junction or symlink, macOS `/var` → `/private/var`,
+and Windows short names.
+
+Preconditions: an SDK Host sets `execPolicy.trustedProjectRoots`, and the
+Session's `gitRoot` is the aliased spelling. The embedder guide example passes
+the same `projectDirectory` for both, and the Session root is
+`path.resolve` of the Host input, so this is the natural setup.
+Space and the CLI do not set trusted roots today.
+
+Impact: an Agent (for example after prompt injection) could widen the policy
+with an ordinary write or edit. The next Run loads the widened rules.
+
+A junction probe confirmed it. With the workspace registered through an
+ancestor alias, writes to the policy through either spelling succeeded.
+Registered by its real path, both were denied. A workspace root that is
+itself a link was already refused by the host.
+
+The same text comparison had two more effects:
+
+- The standalone REPL boundary could be bypassed by spelling the policy path
+  through the other form.
+- Trust matching (`trustedProjectRoots` against the Session root) ignored
+  the policy when one side was the alias. That direction fails safe, but the
+  configured policy silently did not apply.
+
+The shell sandbox was not affected: its deny-write paths are resolved through
+`realpath` on every platform.
+
+### Resolution
+
+- `isSameFilesystemPath` treats two paths as the same location when any of
+  their lexical or resolved spellings match. Resolution walks up to the
+  nearest existing ancestor, so a policy file that does not exist yet is
+  covered.
+- `targetsProtectedPath` uses that comparison, and fails closed when the
+  protected path cannot be resolved (for example a broken junction).
+- `assertTrustedTextMutationPolicy` and the standalone REPL boundary use
+  `targetsProtectedPath`. Both Runtime trust checks and the standalone
+  boundary trust check use `isSameFilesystemPath`.
+
+Files changed: `packages/coding/src/trusted-text-mutation.ts`,
+`packages/repl/src/permission/standalone-shell-boundary.ts`,
+`src/sdk-runtime.ts`.
+
+Tests added:
+
+- `src/windows-text-transaction.test.ts`: with the workspace under an
+  ancestor alias, Full Access writes to the policy through both spellings
+  are denied and nothing is created; an unresolvable protected path denies
+  writes.
+- `packages/repl/src/permission/standalone-shell-boundary.test.ts`: a real
+  trusted root matches an aliased project root, and a commit through the real
+  spelling is denied before reaching the host.
+
 ## Issue 421: A Stop can wait five minutes and end as a network failure
 
 - Priority: High
@@ -3513,6 +3584,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 422 | Medium | Resolved | A directory alias lets text tools rewrite the trusted project Exec Policy | `v0.7.96-alpha.5` | unreleased (after `v0.7.97-beta.11`) | 2026-11-20 | 2026-11-20 |
 | 421 | High | Resolved | A Stop can wait five minutes and end as a network failure | v0.7.97-alpha.12 | unreleased (after `v0.7.97-beta.11`) | 2026-11-20 | 2026-11-20 |
 | 420 | High | ready | A repository can pre-approve shell commands through its project config | `v0.4.6` | - | 2026-11-19 | - |
 | 419 | High | Resolved | Opening a repository runs its constructed tool code without approval | `v0.7.28` | unreleased (after `v0.7.97-beta.11`) | 2026-11-19 | 2026-11-19 |
@@ -19276,12 +19348,18 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 298 (47 Open including 1 needs-info, 250 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 299 (47 Open including 1 needs-info, 251 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 1 (420)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-20: Issue 422
+
+- Text tools can no longer rewrite a trusted project's Exec Policy when the
+  workspace is reached through a directory alias, and a trusted root now
+  matches its project through an alias. Unreleased.
 
 ### 2026-11-20: Issue 421
 

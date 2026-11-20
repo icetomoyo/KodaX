@@ -296,6 +296,36 @@ describe('Windows trusted text transaction integration', () => {
     await expect(toolWrite({ path: protectedPath, content: '{}' }, ctx)).rejects.toMatchObject({ code: 'text_mutation_policy_denied' });
   });
 
+  portableIt('keeps a protected path protected when the workspace is reached through a directory alias', async () => {
+    const realParent = path.join(root, 'real-parent');
+    const aliasParent = path.join(root, 'alias-parent');
+    await fs.mkdir(path.join(realParent, 'workspace'), { recursive: true });
+    await fs.symlink(realParent, aliasParent, process.platform === 'win32' ? 'junction' : 'dir');
+    const workspace = path.join(aliasParent, 'workspace');
+    const protectedPath = path.join(workspace, '.kodax', 'exec-policy.jsonc');
+    const host = createWindowsTrustedTextMutationHost(() => [workspace],
+      (target) => assertTrustedTextMutationPolicy(target, workspace, [protectedPath], true), () => true);
+    const ctx: KodaXToolExecutionContext = { backups: new Map(), executionCwd: workspace,
+      gitRoot: workspace, trustedTextMutationHost: host, resolveShellPermissionMode: () => 'full-access' };
+
+    for (const target of [protectedPath, path.join(realParent, 'workspace', '.kodax', 'exec-policy.jsonc')]) {
+      await expect(toolWrite({ path: target, content: '{}' }, ctx)).rejects.toMatchObject({ code: 'text_mutation_policy_denied' });
+    }
+    await expect(fs.stat(path.join(realParent, 'workspace', '.kodax'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(toolWrite({ path: path.join(workspace, 'ordinary.txt'), content: 'ok' }, ctx)).resolves.toContain('File created');
+  });
+
+  portableIt('fails closed when a protected path cannot be resolved', async () => {
+    const workspace = path.join(root, 'workspace');
+    const brokenAlias = path.join(root, 'broken-alias');
+    await fs.mkdir(workspace);
+    await fs.symlink(path.join(root, 'missing'), brokenAlias, process.platform === 'win32' ? 'junction' : 'dir');
+
+    expect(() => assertTrustedTextMutationPolicy(path.join(workspace, 'ordinary.txt'), workspace, [
+      path.join(brokenAlias, '.kodax', 'exec-policy.jsonc'),
+    ])).toThrow(/protected KodaX state/);
+  });
+
   portableIt('keeps every controlled text tool usable without consulting a failed shell provider', async () => {
     const failedShellPreparation = vi.fn(async () => {
       throw new Error('injected shell setup failure');

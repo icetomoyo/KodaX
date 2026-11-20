@@ -278,7 +278,9 @@ export type {
 
 export {
   assertTrustedTextMutationPolicy,
+  isSameFilesystemPath,
   KodaXTrustedTextMutationError,
+  targetsProtectedPath,
 } from './trusted-text-mutation.js';
 export type {
   KodaXTrustedTextCommitUncertainReceipt,

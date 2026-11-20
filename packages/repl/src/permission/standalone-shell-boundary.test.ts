@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setAgentConfigHome } from '@kodax-ai/agent';
@@ -571,5 +571,46 @@ describe('standalone REPL shell permission boundary', () => {
       createParentDirectories: false,
     })).rejects.toMatchObject({ code: 'text_mutation_policy_denied' });
     expect(host.snapshot).not.toHaveBeenCalled();
+  });
+
+  it('matches trust and protection through a directory alias of the project root', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'kodax-repl-policy-alias-'));
+    const realParent = join(base, 'real');
+    const aliasParent = join(base, 'alias');
+    const realRoot = join(realParent, 'project');
+    const aliasRoot = join(aliasParent, 'project');
+    await mkdir(join(realRoot, '.kodax'), { recursive: true });
+    await writeFile(join(realRoot, '.kodax', 'exec-policy.jsonc'), JSON.stringify({ rules: [] }));
+    await symlink(realParent, aliasParent, process.platform === 'win32' ? 'junction' : 'dir');
+    const host = { snapshot: vi.fn(), commit: vi.fn() };
+    const prepare = vi.fn(async () => undefined);
+    const boundary = createStandaloneShellPermissionBoundary({
+      getPermissionMode: () => 'auto',
+      getAutoGuardrail: () => { throw new Error('unused'); },
+      requestUserPermission: vi.fn(async () => false),
+      userConfigDir: await mkdtemp(join(tmpdir(), 'kodax-repl-shell-')),
+      projectRoot: aliasRoot,
+      execPolicy: { trustedProjectRoots: [realRoot] },
+      shellSandbox: { prepare },
+      trustedTextMutationHost: host as never,
+    });
+    await boundary.shellSandbox.prepare({
+      toolCallId: 'aliased-project-policy',
+      toolInput: request.toolInput,
+      command: request.command,
+      cwd: aliasRoot,
+      env: process.env,
+    });
+
+    expect(prepare).toHaveBeenCalledWith(expect.objectContaining({
+      trustedProjectExecPolicyPath: join(aliasRoot, '.kodax', 'exec-policy.jsonc'),
+    }));
+    await expect(boundary.trustedTextMutationHost?.commit({
+      path: join(realRoot, '.kodax', 'exec-policy.jsonc'),
+      expectedRevision: 'absent',
+      content: '{}',
+      createParentDirectories: false,
+    })).rejects.toMatchObject({ code: 'text_mutation_policy_denied' });
+    expect(host.commit).not.toHaveBeenCalled();
   });
 });

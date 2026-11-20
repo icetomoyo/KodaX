@@ -16,6 +16,11 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- When a Host trusts a project's `.kodax/exec-policy.jsonc` and the workspace
+  path goes through a directory alias (a junction or symlink, or macOS
+  `/var`), text tools can no longer rewrite that policy. A trusted root now
+  also matches its project through such an alias (Issue 422).
+
 - On Node 20 and 22, stopping a Run cancels the model request again. After a
   garbage collection, Node's built-in fetch could lose the cancellation, so
   the Run sat in an unconfirmed Stop for five minutes and then reported a

@@ -1,6 +1,9 @@
 import path from 'node:path';
 
-import { isAgentHomeHostLoadedTarget } from './permissions/agent-home-policy.js';
+import {
+  canonicalizeAgentHomePolicyPath,
+  isAgentHomeHostLoadedTarget,
+} from './permissions/agent-home-policy.js';
 import type { KodaXTrustedTextFileSnapshot } from './types.js';
 
 export type KodaXTrustedTextMutationErrorCode =
@@ -59,6 +62,33 @@ export class KodaXTrustedTextMutationError extends Error {
   }
 }
 
+const foldPathCase = (value: string): string => (
+  process.platform === 'win32' ? value.toLowerCase() : value
+);
+
+/**
+ * The lexical and resolved spellings of one location. Directory aliases
+ * (junctions, symlinked ancestors, macOS `/var`, Windows short names) give a
+ * location several spellings. Undefined when an existing ancestor cannot be resolved.
+ */
+function pathSpellings(candidate: string): string[] | undefined {
+  const lexical = path.resolve(candidate);
+  const resolved = canonicalizeAgentHomePolicyPath(lexical);
+  return resolved === undefined ? undefined : [...new Set([lexical, resolved].map(foldPathCase))];
+}
+
+/** True when both paths name the same location, including through directory aliases. */
+export function isSameFilesystemPath(left: string, right: string): boolean {
+  const leftSpellings = pathSpellings(left) ?? [foldPathCase(path.resolve(left))];
+  const rightSpellings = pathSpellings(right) ?? [foldPathCase(path.resolve(right))];
+  return leftSpellings.some((spelling) => rightSpellings.includes(spelling));
+}
+
+/** A protected path that cannot be resolved protects everything, so an alias cannot slip past it. */
+export function targetsProtectedPath(target: string, protectedPath: string): boolean {
+  return pathSpellings(protectedPath) === undefined || isSameFilesystemPath(target, protectedPath);
+}
+
 /** Shared lexical/canonical policy for trusted main-process text mutations. */
 export function assertTrustedTextMutationPolicy(
   filePath: string,
@@ -93,12 +123,7 @@ export function assertTrustedTextMutationPolicy(
     });
   }
   const components = path.resolve(filePath).split(/[\\/]+/);
-  const canonicalTarget = path.resolve(filePath);
-  const caseFold = (value: string): string => (
-    process.platform === 'win32' ? value.toLowerCase() : value
-  );
-  const protectedControl = protectedPaths.some((candidate) =>
-    caseFold(path.resolve(candidate)) === caseFold(canonicalTarget));
+  const protectedControl = protectedPaths.some((candidate) => targetsProtectedPath(filePath, candidate));
   if (
     (!allowGitMetadata && components.some((component) => component.toLowerCase() === '.git'))
     || protectedControl

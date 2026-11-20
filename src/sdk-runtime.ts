@@ -130,6 +130,7 @@ import {
   breakerShouldFallback,
   analyzeAutoModeCall,
   assertTrustedTextMutationPolicy,
+  isSameFilesystemPath,
   assertWorkModeAvailable,
   resolveWorkMode,
   bashSignalCollector,
@@ -5754,7 +5755,7 @@ async function createKodaXRuntimeInternal(
         let resolveResult!: (result: RuntimeRunResult | PromiseLike<RuntimeRunResult>) => void;
         Object.assign(record, { result: new Promise<RuntimeRunResult>(resolve => { resolveResult = resolve; }) });
         const execPolicy = await loadExecPolicy({ userConfigDir: configHome, projectRoot: session.gitRoot,
-          trustProjectPolicy: options.execPolicy?.trustedProjectRoots?.some(root => sameHostPath(root, session.gitRoot)) === true,
+          trustProjectPolicy: options.execPolicy?.trustedProjectRoots?.some(root => isSameFilesystemPath(root, session.gitRoot)) === true,
           adminRules: options.execPolicy?.adminRules });
         record.execPolicyRules = execPolicy.rules;
         record.execPolicyErrors = execPolicy.errors;
@@ -12505,7 +12506,7 @@ async function createRuntimeRunService(deps: {
       options.context?.gitRoot ?? admittedSessionContext.gitRoot,
     );
     const trustProjectExecPolicy = deps.execPolicy?.trustedProjectRoots?.some((root) =>
-      sameHostPath(root, execPolicyProjectRoot)
+      isSameFilesystemPath(root, execPolicyProjectRoot)
     ) === true;
     const projectExecPolicyPath = path.join(
       execPolicyProjectRoot,
