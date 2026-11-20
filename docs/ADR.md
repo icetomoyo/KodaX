@@ -78,6 +78,15 @@ lookup (48 calls, $0.067). Blind verdicts: 18 tie, 4 baseline, 1 candidate,
 the Todo-continuation edit 0 of 4 times, the candidate 1 of 4. So the
 attribution is provider noise. Input per call fell 5.8%.
 
+A separate eval covered an in-process `runKodaX` call without `agentMode`. The
+direct engine with `system.md` was compared against the managed Worker, which
+runs without Actors here and so works locally. The checkpoints were Todo
+continuation, one question round, edit recovery, Memory, Skill trigger and
+plain lookup (36 calls, $0.042). Blind verdicts: 14 tie, 2 baseline,
+2 candidate. The decided pairs pointed opposite ways on different models, so
+the attribution is provider noise. Input per call rose 1.2%, because the Run
+Context envelope outweighs the shorter system prompt.
+
 ## Applications shape managed-Run prompts through one spec — 2026-11-19 (unreleased)
 
 Customers need KodaX to answer as their product, not as a coding agent. The

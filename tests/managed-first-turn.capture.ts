@@ -16,6 +16,7 @@ import { setAgentConfigHome } from '../packages/agent/src/runtime/agent-home.js'
 import { initializeSkillRegistry, resetSkillRegistry } from '../packages/agent/src/capabilities/skills/skill-registry.js';
 import type { KodaXContextOptions, KodaXWorkMode } from '../packages/coding/src/types.js';
 import { createKodaXRuntime } from './runtime-fixture.js';
+import { runKodaX } from '../packages/coding/src/index.js';
 import { CACHE_GOLDEN, writeCacheFixture } from '../benchmark/datasets/search-entry-complex/fixture.js';
 import { inputHash, type FrozenInput } from './first-turn-eval-support.js';
 import { sourceHashes } from './skill-trigger.capture.js';
@@ -51,6 +52,9 @@ if (childLane !== undefined && childLane !== 'read' && childLane !== 'write') th
 // KODAX_MANAGED_CAPTURE_ENTRY=sdk-default starts the Run the way an SDK caller does by default:
 // runs.start without mode, agentMode or workMode.
 const sdkDefault = process.env.KODAX_MANAGED_CAPTURE_ENTRY === 'sdk-default';
+// KODAX_MANAGED_CAPTURE_ENTRY=run-kodax calls runKodaX in process without agentMode or workMode,
+// the way a direct SDK caller did before Runtime existed.
+const runKodaXEntry = process.env.KODAX_MANAGED_CAPTURE_ENTRY === 'run-kodax';
 const CHILD_OBJECTIVE = 'Fix the TTL boundary in packages/cache-client so an entry expires exactly at its TTL, and report the change.';
 
 /** The REPL hands the run its project registry and that registry's catalog snippet. */
@@ -94,14 +98,27 @@ async function captureCase(root: string, testCase: ManagedCaptureCase, catalog: 
     }
   }
   const unregister = registerModelProvider(PROVIDER, () => new CaptureProvider());
+  const shared = {
+    provider: PROVIDER, model: MODEL, reasoningMode: 'off' as const, lsp: false, maxIter: childLane ? 4 : 2, disablePromptCache: true,
+    learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' as const, reasonCodes: ['eval-isolated'] } }),
+  };
+  if (runKodaXEntry) {
+    try {
+      await runKodaX({ ...shared, context: { executionCwd: workspace, gitRoot: workspace, ...await skillContext(workspace, catalog),
+        repoIntelligenceMode: repoMode, ...testCase.context } }, testCase.task);
+    } finally {
+      unregister();
+    }
+    if (!captured) throw new Error(`${testCase.id}: no root request captured`);
+    if (catalog === 'builtin' && !JSON.stringify(captured).includes('## Available Skills')) throw new Error(`${testCase.id}: Skill catalog missing from the request`);
+    return { root: captured };
+  }
   const runtime = await createKodaXRuntime({ mode: 'embedded', homeDir: path.join(directory, 'home'), defaultProvider: PROVIDER, defaultModel: MODEL });
   try {
     const session = await runtime.sessions.create({ projectPath: workspace });
     await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', executionCwd: workspace });
     const handle = await runtime.runs.start({ sessionId: session.id, ...(sdkDefault ? {} : { mode: 'managed_task' as const }), prompt: testCase.task, options: {
-      provider: PROVIDER, model: MODEL, ...(sdkDefault ? {} : { agentMode: 'ama' as const, workMode: testCase.workMode }),
-      reasoningMode: 'off', lsp: false, maxIter: childLane ? 4 : 2, disablePromptCache: true,
-      learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['eval-isolated'] } }),
+      ...shared, ...(sdkDefault ? {} : { agentMode: 'ama' as const, workMode: testCase.workMode }),
       context: { executionCwd: workspace, gitRoot: workspace, ...await skillContext(workspace, catalog), repoIntelligenceMode: repoMode, resolveShellPermissionMode: () => 'full-access',
         ...testCase.context },
     } });

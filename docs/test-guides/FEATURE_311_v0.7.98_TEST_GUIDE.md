@@ -51,6 +51,7 @@ console.log(result.success, result.limitReached);
 | 1 — one tool text | `tests/f311-unified-tool-text.eval.ts` | 48 | $0.062 | persona 2 candidate / 2 baseline / 1 mixed / 13 tie; ordinary root 2 / 0 / 0 / 4 |
 | 2 — one Worker on persona and override roots | `tests/f311-worker-root.eval.ts` | 72 | $0.088 | persona 3 / 2 / 1 / 12; override 2 / 2 / 0 / 14; input per call −28% and −34% |
 | 3 — SDK default root, direct engine vs managed Worker | `tests/f311-sdk-default-root.eval.ts` | 48 | $0.067 | 4 baseline / 1 candidate / 1 mixed / 18 tie; losing cells did not reproduce on re-sampling (provider noise); input per call −5.8% |
+| 3 gap — `runKodaX` without `agentMode`, direct engine vs actorless managed Worker | `tests/f311-runkodax-root.eval.ts` | 36 | $0.042 | 2 baseline / 2 candidate / 14 tie; the decided pairs point opposite ways (glm and kimi swap on A1 and T1), provider noise; input per call +1.2% |
 | Follow-up — override root keeps PARALLEL WORK while `spawn_agent` is offered | `tests/f311-omit-parallel.eval.ts` | 12 + 24 re-samples | $0.018 | D1: 1 candidate / 1 mixed / 1 tie; deepseek dispatches 2 of 4 vs 0 of 4. O1: 2 baseline / 1 tie; nobody touches the child's file; glm reads the test file before its edit 3 of 4 vs 0 of 4 |
 
 All are L2 single-turn blind pairs on `glm-5.3-flash`, `kimi-for-coding` and `deepseek-flash`
@@ -58,4 +59,5 @@ with production request bytes from the real Runtime, reviewed blind in the main 
 the next action at a checkpoint, not whole-task quality. To repeat step 3, capture both trees with
 `KODAX_MANAGED_CAPTURE_ENTRY=sdk-default KODAX_MANAGED_CAPTURE_CATALOG=builtin` through
 `tests/managed-first-turn.capture.ts`, then run the harness `prepare`, `run --phase pilot`,
-`review`, `run --phase remaining`, `review --phase final` and `reveal`.
+`review`, `run --phase remaining`, `review --phase final` and `reveal`. The `runKodaX` gap eval
+captures with `KODAX_MANAGED_CAPTURE_ENTRY=run-kodax` instead and reads `capture-{base,cand}.json`.
