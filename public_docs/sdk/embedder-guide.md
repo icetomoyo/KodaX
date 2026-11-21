@@ -355,7 +355,12 @@ Client exit recovery reads (`lifecycle.readExit` and offline
 `cleanup.state`: `ready`, `pending`, or `blocked`, with `reason`, `nextAction`
 and `checkedAt`. An exact old Host/process/Windows Job shutdown plus matching
 successful cleanup evidence can permit `ready` while old memory/execution work
-remains `unknown`. No retry count promotes unknown work to success, and original
+remains `unknown`. Once the original Host process is gone, recovery waits only
+for processes that still run (`daemon_active`, `containment_active`). Every other
+gap (`cleanup_failed`, `outcome_missing`, `containment_unavailable`,
+`owner_identity_unverified`, `owner_identity_mismatch`) is returned as the
+`reason` of a `ready` result, so a stale record never blocks a start. Only
+`host_shutdown_verified` proves the old exit. No retry count promotes unknown work to success, and original
 receipts are not rewritten or deleted by recovery reads. Space should gate on
 `recovery.state === 'ready'`; missing recovery is not readiness. The next action
 is `start_or_connect`, `retry_exit`, `retry_verification`, or `inspect_failure`.

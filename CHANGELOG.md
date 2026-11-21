@@ -6,6 +6,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- A client exit whose cleanup failed no longer blocks every later start after
+  the Host has stopped. Once the exact Host exit is verified,
+  `readKodaXClientExits`, `readExit` and `listPendingExits` return `ready`, and
+  the cleanup failure stays in the receipt as evidence. After the Host process
+  is gone, recovery waits only for processes that still run. A failed Host
+  resource cleanup, a missing or failed shutdown outcome, a missing process
+  identity or an inconsistent receipt now reads `ready` with that gap as the
+  `reason`; only `host_shutdown_verified` proves the old exit. A cleanup
+  failure while the original Host runs still blocks. A cleanup exception is now recorded as
+  `cleanup.state: 'unknown'` rather than `failed`, and an exit with
+  `shutdownHost: true` still asks the Host to stop (Issue 424).
+- A Session with malformed records logs its warning once per process. Each
+  read used to log it again, so a client polling Session views could grow
+  `daemon.log` without limit on Hosts older than v0.7.97-beta.5, which added
+  rotation (Issue 425).
+
 ---
 
 ## [0.7.97-beta.12] - 2026-11-20

@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-20_
+_Last Updated: 2026-11-21_
 
 ---
 
@@ -46,6 +46,148 @@ This predates the child contract projection; the eval uses raw per-call usage,
 not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
+
+## Issue 425: The same malformed-record warning fills daemon.log
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: every version that reads Sessions through `FileSessionStorage`
+- Created / Resolved: 2026-11-21 / 2026-11-21
+- Fixed: unreleased (after `v0.7.97-beta.12`)
+- Related: Issue 424
+- Context: Space customer report (macOS) with a 702,603,735-byte `daemon.log`
+
+### Original Problem
+
+Every Session read re-parses the whole `.jsonl` file and warns
+`Skipped N malformed session record(s) from <file>.` again. The customer's
+log held 3,037,281 of these lines, all from 2026-07-30 to 2026-09-12. Eight
+Session files account for 234,833 to 528,445 lines each. Each file was
+re-read every ~2.3 seconds, around the clock, so a client was polling the
+Session views. The polling stopped after 2026-09-12. The count per file stayed
+constant (3 to 8), so the warning carried no new information after the first
+read.
+
+`daemon.log` rotation already exists since `v0.7.97-beta.5`. The file rotates
+to `daemon.log.1` at 2 MiB, so the log stays under about 4 MiB in total. The
+customer's file had no `.1`, and the Host that wrote to it on 2026-11-16
+appended without rotating. That Host therefore ran a build older than
+`v0.7.97-beta.5`. With rotation, the same flood would only push useful lines
+out of the 4 MiB window.
+
+### Resolution
+
+A process reports a file's malformed records only when their count differs
+from the count it last reported for that file. Repeated reads stay silent. A
+new bad record is reported again.
+
+Not changed: each read still parses the whole file. A cache was measured and
+rejected. Callers edit what they read, so a cache hit still needs a deep
+copy, and that copy costs about as much as the read (32.7 MB file: 125 ms
+load, 114 ms copy; 1.4 MB file: 6.1 ms load, 3.4 ms copy). Each cached
+Session would also keep about 1.5 times its file size in memory, and on
+filesystems with coarse mtimes a same-size rewrite could serve a stale
+Session. If polling cost matters later, the poller should read less rather
+than read the whole Session faster. Why these files hold bad records
+is still unknown. A record counts as malformed when its line is not valid JSON
+(for example a torn write) or when it has a record type this version does not
+read (version skew). Telling the two apart needs the customer's
+`sessions/**/s_*.jsonl` files.
+
+**Files Changed.** `packages/repl/src/interactive/storage.ts`.
+
+**Tests Added.** `packages/repl/src/interactive/storage-sdk-consumer.test.ts`
+loads a Session with one bad record three times through fresh storages and
+expects one warning. After a second bad record is written, it expects one
+more warning with the new count.
+
+## Issue 424: A failed client cleanup blocks every later start after the Host has exited
+
+- Priority: High
+- Status: Resolved
+- Introduced: `v0.7.97-alpha.2` (client exit receipts); recovery reads kept
+  the check in `v0.7.97-beta.3`
+- Created / Resolved: 2026-11-21 / 2026-11-21
+- Fixed: unreleased (after `v0.7.97-beta.12`)
+- Related: Issue 410, Issue 425
+- Context: Space customer report (macOS). Space now logs the blocked receipt
+  and starts anyway, but the SDK verdict was still wrong.
+
+### Original Problem
+
+Every Space start stopped at "waiting for the previous assistant exit to be
+verified" until the user deleted `~/.kodax/runtime/daemon/coder/client-exits/`.
+Timeline from the customer's runtime directory:
+
+- 2026-11-19 08:54:09: Space called `lifecycle.requestExit` with
+  `shutdownHost: true` while a Run was active. Client cleanup threw
+  `Input is bound to its target Run and cannot be withdrawn from the queue.`,
+  and the receipt was written with `cleanup.state: "failed"`.
+- Because cleanup failed, the exit never asked the Host to stop. The Host
+  stopped by itself 38 minutes later, through orphan exit, once the Run went
+  idle. `shutdown-outcome.rt_f6dc24b5c75a.6893.json` records `succeeded`.
+- From then on, `readKodaXClientExits` returned `blocked` /
+  `cleanup_failed` / `inspect_failure` on every start.
+
+Two causes:
+
+1. `verifyExitReceipt` checked `cleanup.state === 'failed'` before it looked
+   at the shutdown outcome. Client work (Runs, queued input, actor turns) lives
+   inside the Host process, so a proven exit of that exact process ends all of
+   it. The persisted receipt never changes, so this check gave the same
+   terminal verdict on every restart.
+2. `drive` wrote any cleanup exception as terminal `failed` and then skipped
+   the Host stop request.
+
+The specific exception was fixed in `v0.7.97-beta.9`: client cleanup now
+leaves a pending `steer` input to settle with its Run. The customer's Host
+started at 2026-11-16 03:47 UTC, before `v0.7.97-beta.11` was published at
+13:38 UTC that day. Its `daemon.log` was also never rotated (see Issue 425).
+It therefore ran a build older than `v0.7.97-beta.5`.
+
+### Resolution
+
+- Once the original owner process is gone, recovery waits only for
+  processes that still run: a live daemon PID or supervisor
+  (`daemon_active`, `containment_active`), or a Windows Job that still has
+  members. Every other gap can no longer change, so it is returned as the
+  `reason` of a `ready` / `start_or_connect` result and kept on the receipt as
+  evidence: a client or Host resource cleanup failure and a failed shutdown
+  outcome (`cleanup_failed`), a missing outcome (`outcome_missing`), a Host
+  without Job containment on Windows (`containment_unavailable`), a missing
+  process-start identity (`owner_identity_unverified`), and a receipt whose
+  runtime ID disagrees with its owner (`owner_identity_mismatch`). Only
+  `host_shutdown_verified` proves the old exit. The profile lock still fences
+  a new Host. While the owner is still alive, a cleanup failure still
+  blocks.
+- A cleanup exception is recorded as `cleanup.state: 'unknown'` with its
+  message in `issues`, and the requested Host stop still goes ahead. The
+  stop keeps its own guards: a peer or remaining work returns `protected`.
+  An unknown cleanup settles to `ready` once the Host exit is verified.
+- `drive` no longer writes `failed` when a receipt write fails. The error
+  reaches the lifecycle diagnostic, and the receipt keeps its last durable
+  state.
+
+**Files Changed.** `src/runtime-daemon/client-lifecycle.ts`,
+`packages/coding/src/client-contract.ts` (doc comment),
+`docs/SPACE_SDK_SEAMS.md`, `docs/CLIENT_CONTRACT.md`,
+`public_docs/sdk/embedder-guide.md`.
+
+**Tests Added.**
+- `src/sdk-client.exit-recovery.test.ts`: the customer receipt and its shutdown
+  outcome in the legacy `coder` slot read `ready` / `host_shutdown_verified`
+  on three restarts, without rewriting the receipt. A client cleanup failure
+  under a live owner stays `cleanup_failed`. The Windows reboot case now
+  returns `host_generation_terminated` with the failure kept as evidence.
+  A failed shutdown outcome, a missing outcome, an untrusted outcome and a
+  missing process-start identity read `ready` with that gap as the reason. A
+  same-boot Windows crash waits only while its Job still has members.
+- `src/runtime-daemon/client-lifecycle.test.ts`: a throwing client cleanup
+  persists `unknown`, still calls the Host stop, and then reads `ready` after
+  a verified shutdown. A late Host resource-cleanup failure and an
+  inconsistent receipt with a gone owner read `ready` with their reason.
+- `src/sdk-client.steer.test.ts`: a client with a queued `steer` input exits
+  during its Run. The receipt is not `failed` and lists the aborted Run.
 
 ## Issue 423: A2A callers read and write the Host owner's memory
 
@@ -3648,6 +3790,8 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 425 | Medium | Resolved | The same malformed-record warning fills daemon.log | every version | unreleased (after `v0.7.97-beta.12`) | 2026-11-21 | 2026-11-21 |
+| 424 | High | Resolved | A failed client cleanup blocks every later start after the Host has exited | `v0.7.97-alpha.2` | unreleased (after `v0.7.97-beta.12`) | 2026-11-21 | 2026-11-21 |
 | 423 | High | Resolved | A2A callers read and write the Host owner's memory | `v0.7.69` | unreleased (after `v0.7.97-beta.11`) | 2026-11-20 | 2026-11-20 |
 | 422 | Medium | Resolved | A directory alias lets text tools rewrite the trusted project Exec Policy | `v0.7.96-alpha.5` | unreleased (after `v0.7.97-beta.11`) | 2026-11-20 | 2026-11-20 |
 | 421 | High | Resolved | A Stop can wait five minutes and end as a network failure | v0.7.97-alpha.12 | unreleased (after `v0.7.97-beta.11`) | 2026-11-20 | 2026-11-20 |
@@ -19414,12 +19558,19 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 300 (47 Open including 1 needs-info, 252 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 302 (47 Open including 1 needs-info, 254 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 1 (420)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-21: Issues 424 and 425
+
+- A client exit whose cleanup failed no longer blocks every later start once
+  the Host exit is verified. A cleanup exception is recorded as `unknown`, and
+  the requested Host stop still runs. A Session's malformed-record warning is
+  logged once per process instead of on every read. Unreleased.
 
 ### 2026-11-20: Issue 423
 
