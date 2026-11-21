@@ -207,7 +207,8 @@ export function reshapeToUserConversation(
 
   const preservedMessages = preserveTranscriptForRoundExit(
     result.messages,
-    prompt,
+    // The Worker records the user's exact words when the caller prepared the prompt.
+    options.context?.rawUserInput?.trim() || prompt,
     finalText,
     inputArtifacts,
   );
