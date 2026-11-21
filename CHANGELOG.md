@@ -31,6 +31,11 @@ All notable changes to this project will be documented in this file.
   scan is skipped (Issue 430).
 - `readActorMetadata()` returns a deeply frozen object that may be shared
   between calls. Copy it before changing it (Issue 430).
+- While a Run is active, display-history checkpoints append a small delta to
+  the Session file instead of rewriting the whole Session every 500ms. The
+  checkpoint after the Run ends rewrites the file, so Sessions at rest look as
+  before. A version older than this one that opens a Session mid-Run shows the
+  display history from the last full save.
 - A managed Run started with a prepared prompt and `context.rawUserInput`
   sends and saves the user's exact words, as the direct engine did. It used
   to save the prepared prompt, so expanded Skill or context text appeared as

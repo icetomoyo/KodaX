@@ -77,6 +77,20 @@ durable fence. Unclaimed Actors use the strict metadata projection. The Actor
 section is replaced by its existing CAS writer and cannot be
 changed by append-only `meta_update` records.
 
+Display-history checkpoints taken while a Session has an active Run append
+one `meta_update` with `uiHistorySkip`, `uiHistoryKeep` and `uiHistoryTail`.
+A reader keeps `uiHistoryKeep` items of the history folded so far, starting at
+`uiHistorySkip`, then adds the normalized tail. Item IDs and `outputId`s pass
+through unchanged, so restore and draft marking behave as after a full save.
+The record also repeats the effective title, `activeMessageCount`,
+`lastMessageAt` and scope, because discovery reads only the last line. The
+append happens only while the main file still has the identity this process
+last wrote and fewer than 1MB of deltas are pending; otherwise the Session is
+rewritten. The checkpoint after the last Run ends, and every full save,
+rewrites the file with the folded history, so Sessions at rest carry no
+deltas. Older readers ignore the new fields and see the history of the last
+full save. The 150-item cap is unchanged.
+
 Full Session saves and prepared tail appends maintain `lastMessageAt`; tail
 metadata and source-verified resume index v8 carry the same fact. Message
 provenance preserves time across compaction copies and forks. The shared

@@ -4689,6 +4689,9 @@ async function createKodaXRuntimeInternal(
       runs: currentRuns.filter((run) => !isTerminalRunPhase(run.phase) || run.runId === latest?.runId)
         .map(({ runId, phase, provider, model, error }) => ({ runId, phase, provider, model, error })) };
   }, async (sessionId, runIds, items) => {
+    // Mid-Run checkpoints append a delta; the checkpoint after the last Run
+    // ends rewrites the file so Sessions at rest stay compact.
+    const append = [...runs.values()].some(run => run.sessionId === sessionId && !run.terminalEmitted);
     const found = await sessionManager.storage.mutateUiHistory(sessionId, (history, data) => {
       const committed = committedSessionOutputIds(data);
       const currentIds = new Set(items.map(item => item.id));
@@ -4696,7 +4699,7 @@ async function createKodaXRuntimeInternal(
         && !runIds.some((runId) => item.id?.startsWith(`${runId}:`)));
       return [...older, ...persistSessionViewItems(items)].filter(item =>
         item.type === 'tool_group' || !item.outputId || !committed.has(item.outputId)).slice(-150);
-    });
+    }, { append });
     if (!found) throw new Error(`Session ${sessionId} was removed before display history could be saved.`);
   }, async (sessionId, itemId) => {
     const prefix = `${sessionId}:output:`;

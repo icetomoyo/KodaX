@@ -201,6 +201,13 @@ interface PersistedMetaUpdateLine {
   activeEntryId?: string | null;
   activeMessageCount?: number;
   uiHistory?: unknown[];
+  /**
+   * Display-history delta written during a Run: keep `uiHistoryKeep` items
+   * of the current history starting at `uiHistorySkip`, then add the tail.
+   */
+  uiHistorySkip?: number;
+  uiHistoryKeep?: number;
+  uiHistoryTail?: unknown[];
   scope?: string;
   lineageIdentityFilterHash?: string;
   lastMessageAt?: string;
@@ -567,11 +574,47 @@ function isPersistedMetaUpdateLine(value: unknown): value is PersistedMetaUpdate
     && (value.activeEntryId === undefined || typeof value.activeEntryId === 'string' || value.activeEntryId === null)
     && (value.activeMessageCount === undefined || typeof value.activeMessageCount === 'number')
     && (value.uiHistory === undefined || Array.isArray(value.uiHistory))
+    && hasValidUiHistoryDelta(value)
     && (value.scope === undefined || typeof value.scope === 'string')
     && (value.lastMessageAt === undefined || validSessionTimestamp(value.lastMessageAt) !== undefined)
     && (value.lineageIdentityFilterHash === undefined
       || (typeof value.lineageIdentityFilterHash === 'string'
         && /^[a-f0-9]{64}$/.test(value.lineageIdentityFilterHash)));
+}
+
+function hasValidUiHistoryDelta(value: Record<string, unknown>): boolean {
+  const isCount = (count: unknown): boolean => Number.isSafeInteger(count) && (count as number) >= 0;
+  return value.uiHistoryTail === undefined
+    ? value.uiHistorySkip === undefined && value.uiHistoryKeep === undefined
+    : Array.isArray(value.uiHistoryTail) && isCount(value.uiHistorySkip) && isCount(value.uiHistoryKeep);
+}
+
+/** Apply one appended display-history delta to the history folded so far. */
+function foldUiHistoryDelta(
+  previous: readonly KodaXSessionUiHistoryItem[] | undefined,
+  line: PersistedMetaUpdateLine,
+): KodaXSessionUiHistoryItem[] | undefined {
+  const skip = line.uiHistorySkip ?? 0;
+  const kept = (previous ?? []).slice(skip, skip + (line.uiHistoryKeep ?? 0));
+  const folded = [...kept, ...(normalizeKodaXSessionUiHistory(line.uiHistoryTail) ?? [])];
+  return folded.length > 0 ? folded : undefined;
+}
+
+/**
+ * Describe `next` as a run of `previous` items followed by new items. Items
+ * match by their serialized form, so any match is safe to reuse.
+ */
+function uiHistoryDelta(
+  previous: readonly KodaXSessionUiHistoryItem[],
+  next: readonly KodaXSessionUiHistoryItem[],
+): { skip: number; keep: number; tail: KodaXSessionUiHistoryItem[] } {
+  const before = previous.map(item => JSON.stringify(item));
+  const after = next.map(item => JSON.stringify(item));
+  const skip = after.length === 0 ? -1 : before.indexOf(after[0]!);
+  if (skip < 0) return { skip: 0, keep: 0, tail: [...next] };
+  let keep = 0;
+  while (keep < after.length && skip + keep < before.length && before[skip + keep] === after[keep]) keep += 1;
+  return { skip, keep, tail: next.slice(keep) };
 }
 
 function normalizeKodaXSessionUiHistory(value: unknown): KodaXSessionUiHistoryItem[] | undefined {
@@ -993,6 +1036,8 @@ function sameStableFileIdentity(
  * identity unchanged, so a just-touched entry is never trusted as a witness.
  */
 const RACY_WITNESS_WINDOW_NS = 2_000_000_000n;
+/** Past this much appended display history, one rewrite is cheaper than every reader folding it. */
+const UI_HISTORY_APPEND_LIMIT_BYTES = 1024 * 1024;
 
 function isRacyStableFileIdentity(identity: StableFileIdentity, observedAtMs: number): boolean {
   const horizon = BigInt(observedAtMs) * 1_000_000n - RACY_WITNESS_WINDOW_NS;
@@ -2465,6 +2510,9 @@ async function readPersistedSessionFile(
           if (parsed.uiHistory !== undefined) {
             snapshot.meta.uiHistory = normalizeKodaXSessionUiHistory(parsed.uiHistory);
           }
+          if (parsed.uiHistoryTail !== undefined) {
+            snapshot.meta.uiHistory = foldUiHistoryDelta(snapshot.meta.uiHistory, parsed);
+          }
           if (parsed.scope !== undefined) snapshot.meta.scope = parsed.scope as KodaXSessionScope;
           if (parsed.lineageIdentityFilterHash !== undefined) {
             snapshot.meta.lineageIdentityFilterHash = parsed.lineageIdentityFilterHash;
@@ -3160,6 +3208,8 @@ export class FileSessionStorage implements KodaXSessionStorage {
     projectCanonicalRoot?: string;
     filePath?: string;
     mainIdentity?: StableFileIdentity;
+    /** Display-history bytes appended since the last full write. */
+    uiHistoryAppendBytes?: number;
   }>();
   private lineageIdentityFilterHashes = new Map<string, string>();
 
@@ -4677,10 +4727,16 @@ export class FileSessionStorage implements KodaXSessionStorage {
     });
   }
 
-  /** Update display metadata under the same writer lock as canonical Session saves. */
+  /**
+   * Update display metadata under the same writer lock as canonical Session
+   * saves. With `append`, the change is appended as a delta when the file is
+   * still exactly what this process last wrote; otherwise the Session is
+   * rewritten in full.
+   */
   async mutateUiHistory(
     id: string,
     mutation: (history: readonly KodaXSessionUiHistoryItem[], session: Readonly<SessionData>) => KodaXSessionUiHistoryItem[],
+    options: { readonly append?: boolean } = {},
   ): Promise<boolean> {
     let found = false;
     await this.serializedWrite(id, async () => {
@@ -4688,9 +4744,67 @@ export class FileSessionStorage implements KodaXSessionStorage {
       if (existing === null) return;
       found = true;
       const uiHistory = mutation(existing.data.uiHistory ?? [], existing.data);
+      if (options.append === true && await this.appendUiHistoryDelta(id, existing, uiHistory)) return;
       await this.mergeAndWriteInternal(id, { ...existing.data, uiHistory });
     });
     return found;
+  }
+
+  /**
+   * Append the display-history change as one `meta_update`. Returns false
+   * before writing anything when a full rewrite is needed instead.
+   */
+  private async appendUiHistoryDelta(
+    id: string,
+    existing: ResolvedSessionSnapshot,
+    next: readonly KodaXSessionUiHistoryItem[],
+  ): Promise<boolean> {
+    const cached = this.appendState.get(id);
+    const filePath = cached?.filePath;
+    if (cached === undefined || filePath === undefined || cached.mainIdentity === undefined
+      || existing.filePath !== filePath || this.isDraft(id)) return false;
+    const current = await statStableFileIdentity(filePath);
+    if (current === null || !sameStableFileIdentity(current, cached.mainIdentity)) return false;
+    const { skip, keep, tail } = uiHistoryDelta(existing.data.uiHistory ?? [], next);
+    if (tail.length === 0 && skip === 0 && keep === (existing.data.uiHistory ?? []).length) return true;
+    // Discovery reads only the last line, so it repeats the effective metadata.
+    const record: PersistedMetaUpdateLine = {
+      _type: 'meta_update',
+      title: existing.data.title,
+      activeMessageCount: cached.activeMessageCount,
+      ...(cached.lastMessageAt !== undefined ? { lastMessageAt: cached.lastMessageAt } : {}),
+      ...(cached.scope !== undefined ? { scope: cached.scope } : {}),
+      uiHistorySkip: skip,
+      uiHistoryKeep: keep,
+      uiHistoryTail: tail,
+    };
+    const appended = `\n${JSON.stringify(record)}`;
+    const appendBytes = (cached.uiHistoryAppendBytes ?? 0) + Buffer.byteLength(appended, 'utf8');
+    if (appendBytes > UI_HISTORY_APPEND_LIMIT_BYTES) return false;
+    const priorBoundary = await readStableSessionBundleBoundarySnapshotAtPath(this.sessionsDir, id, filePath, true);
+    if (cached.bundleBoundaryRevision !== undefined && priorBoundary.revision !== cached.bundleBoundaryRevision) {
+      return false;
+    }
+    await fs.appendFile(filePath, appended, 'utf-8');
+    try {
+      await this.updateConversationCacheAfterAppend(
+        id, filePath, priorBoundary, cached.activeEntryId, [], cached.activeEntryId ?? null, appended);
+      const nextBoundary = cached.bundleBoundaryRevision === undefined
+        ? undefined
+        : await readStableSessionBundleBoundarySnapshotAtPath(this.sessionsDir, id, filePath, true);
+      // The canonical tail is unchanged, so prepared append baselines stay valid.
+      this.appendState.set(id, {
+        ...cached,
+        presentationOnlyHistoryCount: countResumableSessionItems(0, next),
+        bundleBoundaryRevision: nextBoundary?.revision,
+        mainIdentity: await statStableFileIdentity(filePath) ?? undefined,
+        uiHistoryAppendBytes: appendBytes,
+      });
+    } catch (error: unknown) {
+      this.appendState.delete(id);
+      reportStorageDiagnostic('warn', `Display history for ${id} was appended, but its successor boundary could not be witnessed; the next write rewrites the Session.`, error);
+    }
+    return true;
   }
 
   async appendSessionRecords(id: string, records: readonly KodaXExtensionSessionRecord[]): Promise<boolean> {

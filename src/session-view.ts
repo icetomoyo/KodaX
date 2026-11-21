@@ -26,7 +26,7 @@ import { readItemImage } from './session-view-image.js';
 import { readSavedToolOutput } from './tool-output-reader.js';
 
 const SESSION_VIEW_ITEM_LIMIT = 150;
-/** Each checkpoint rewrites the whole display history, so a busy Run saves at most this often. */
+/** Each checkpoint reads the whole Session before saving its display history, so a busy Run saves at most this often. */
 const CHECKPOINT_SPACING_MS = 500;
 
 const STREAMING_RUN_PHASES = new Set(['queued', 'running', 'recovering', 'waiting_agent', 'waiting_permission', 'waiting_user_input']);
