@@ -2472,6 +2472,13 @@ fixed GitHub binary archive sidecar omission before tagging.
   state and the event follow the SDK v2 contract on `KodaX-next-dev`, which
   already defines a quarantined Session state and `invalid_state` with a
   `reason`; mainline must not ship a second v1 shape for them.
+- Owner decisions (2026-11-21):
+  - The stall limit lands on mainline in the version after the coming
+    release. Background repair keeps retrying after the limit, and a repaired
+    store still lifts the Session fence. Only the reported code changes, to
+    `recovery_stalled` in the Issue 428 `conflict` shape.
+  - The state and the event wait for the next mainline sync into
+    `KodaX-next-dev`. Spec them in the v2 plan before implementing.
 
 ## 2026-11-21 FEATURE_312 Addition
 
@@ -2483,6 +2490,14 @@ fixed GitHub binary archive sidecar omission before tagging.
 - Scope: history ids that stay the same for the life of a message, a persisted
   sequence number, explicit gap markers when items are missing, and removal of
   the client-side matching heuristics.
+- Owner decisions (2026-11-21):
+  - `history.read` item ids become the same stable ids the session view uses.
+    Cursors stay bound to the conversation of the first page.
+  - No persisted sequence number, no `since` resumption, no gap markers. A
+    client that misses updates resubscribes, gets a full snapshot and
+    deduplicates by stable id. Persisted numbering would have to be rewritten
+    on every compaction, rewind and branch switch.
+  - Mainline v1 is unchanged.
 - Placement: this is the same layer as the SDK v2 history work on
   `KodaX-next-dev`, which has already decided parts of it differently. There
   `seq` is per subscription, a window slide is an item removal, `since`
