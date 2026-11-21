@@ -4,6 +4,7 @@ import type {
   RuntimeDaemonManagementState,
   RuntimeDaemonPreflight,
   RuntimeIntegrationDomainStatus,
+  RuntimeIntegrationHealth,
 } from '../sdk-runtime.js';
 import type { RuntimeDaemonMethod } from './protocol.js';
 import {
@@ -22,6 +23,8 @@ export interface RuntimeDaemonManagementController {
   runMutation<T>(method: RuntimeDaemonMethod, effect: () => Promise<T>): Promise<T>;
   preflight(signal?: AbortSignal): Promise<RuntimeDaemonPreflight>;
   inspect(): Promise<RuntimeDaemonManagementState>;
+  /** Optional integration health only, without the daemon preflight. */
+  integrations(): RuntimeIntegrationHealth;
   stop(input?: { readonly principalId?: string; readonly preserveBackgroundWork?: true }): Promise<{ readonly ok: true }>;
   close(): void;
 }
@@ -156,6 +159,10 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
       }
     }
     throw managementError('conflict', 'Runtime state changed while daemon preflight was being read.');
+  }
+
+  integrations(): RuntimeIntegrationHealth {
+    return integrationHealth(this.input.integrationStatuses?.() ?? []);
   }
 
   async inspect(): Promise<RuntimeDaemonManagementState> {
@@ -383,7 +390,7 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
 
 function integrationHealth(
   domains: readonly RuntimeIntegrationDomainStatus[],
-): NonNullable<RuntimeDaemonManagementState['integrations']> {
+): RuntimeIntegrationHealth {
   const snapshot = structuredClone(domains);
   return {
     state: snapshot.some((domain) => domain.diagnostic !== undefined)

@@ -519,6 +519,17 @@ describe('runtime daemon client proxy', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it('returns the Host warnings for retired Run inputs', async () => {
+    const calls: Array<{ readonly method: string; readonly params: unknown }> = [];
+    const client = createRuntimeDaemonClient({
+      identity: { runtimeId: 'runtime-client', mode: 'daemon', profile: 'default', startedAt: '2026-11-21T00:00:00.000Z', version: '0.7.97' },
+      transport: fakeTransport(calls, { runStartResult: { runId: 'run-1', sessionId: 'session-1', warnings: ['retired mode'] } }),
+    });
+    const handle = await client.runs.start({ sessionId: 'session-1', prompt: 'old caller', mode: 'coding' });
+    expect(handle.warnings).toEqual(['retired mode']);
+    await client.close();
+  });
+
   it('transports serializable Workflow host ceilings to the daemon', async () => {
     const calls: Array<{ readonly method: string; readonly params: unknown }> = [];
     const client = createRuntimeDaemonClient({
@@ -628,6 +639,20 @@ describe('runtime daemon client proxy', () => {
       { method: 'runtime.shutdown', params: undefined },
     ]);
     await client.close();
+  });
+
+  it('reads integration health without the daemon preflight', async () => {
+    const calls: Array<{ readonly method: string; readonly params: unknown }> = [];
+    const identity = { runtimeId: 'runtime-integrations', mode: 'daemon', profile: 'default', startedAt: '2026-11-21T00:00:00.000Z', version: '0.7.97' } as const;
+    const current = createRuntimeDaemonClient({ identity, transport: fakeTransport(calls),
+      capabilities: { integrationConfigResilience: { version: 1, healthQuery: true } } });
+    await current.daemon.integrations();
+    expect(calls).toEqual([{ method: 'daemon.integrations.get', params: undefined }]);
+    const older = createRuntimeDaemonClient({ identity, transport: fakeTransport(calls),
+      capabilities: { integrationConfigResilience: { version: 1 } } });
+    await expect(older.daemon.integrations()).rejects.toMatchObject({ code: 'daemon_upgrade_required', capability: 'integrationConfigResilience' });
+    expect(calls).toHaveLength(1);
+    await current.close(); await older.close();
   });
 
   it('maps sessions and run handles onto daemon requests', async () => {
@@ -2040,6 +2065,7 @@ function fakeTransport(
     readonly workflowSubscribeResult?: Promise<unknown>;
     readonly notificationBeforeEventSubscribeResult?: RuntimeDaemonNotification;
     readonly runAwaitResult?: unknown;
+    readonly runStartResult?: unknown;
     readonly runAbortResult?: unknown;
     readonly reverseRequestError?: Error;
     readonly sessionObserveResult?: Promise<unknown>;
@@ -2076,7 +2102,7 @@ function fakeTransport(
         return { id: 'session-1', title };
       }
       if (method === 'run.start') {
-        return { runId: 'run-1', sessionId: 'session-1' };
+        return options.runStartResult ?? { runId: 'run-1', sessionId: 'session-1' };
       }
       if (method === 'daemon.management.get') {
         const activeAgentTasks = [{

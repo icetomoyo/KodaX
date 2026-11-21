@@ -1,4 +1,4 @@
-import type { MemoryRefFilter, MemoryRememberInput } from '@kodax-ai/agent';
+import type { AgentControlErrorCode, MemoryRefFilter, MemoryRememberInput } from '@kodax-ai/agent';
 import { RUNTIME_AUTO_MODE_GUARDRAIL_CAPABILITY } from '../runtime-capability-facts.js';
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from 'node:util';
@@ -49,6 +49,7 @@ import type {
   RuntimeRewindSessionInput,
   RuntimeConfirmIdentityAliasInput,
   RuntimeRunFilter,
+  RuntimeRunLifecycleError,
   RuntimeRunResult,
   RuntimeRunStatus,
   RuntimeSetActiveEntryInput,
@@ -396,6 +397,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "daemon.stop",
     "daemon.preflight",
     "daemon.management.get",
+    "daemon.integrations.get",
   ]),
 ]);
 
@@ -1105,6 +1107,14 @@ async function dispatchRuntimeDaemonRequest(
         );
       }
       return options.management.inspect();
+    case "daemon.integrations.get":
+      if (!options.management) {
+        throw daemonError(
+          "client_upgrade_required",
+          "Runtime daemon management is unavailable.",
+        );
+      }
+      return options.management.integrations();
     case "runtime.capabilities":
       return runtimeDaemonCapabilities(
         options.capabilities,
@@ -2014,6 +2024,7 @@ async function dispatchRuntimeDaemonRequest(
         runId: handle.runId,
         sessionId: handle.sessionId,
         ...(handle.turnId !== undefined ? { turnId: handle.turnId } : {}),
+        ...(handle.warnings !== undefined ? { warnings: handle.warnings } : {}),
       };
     }
     case "run.input.submit": {
@@ -2960,6 +2971,7 @@ function runtimeDaemonCapabilities(
       legacySourceWatching: true,
       lastKnownGood: true,
       healthProjection: true,
+      healthQuery: true,
     },
     ...(daemonManagement
       ? {
@@ -3988,6 +4000,36 @@ function serializeRuntimeDaemonMethodResult(
   };
 }
 
+/**
+ * Failures the Runtime names with codes of its own, as the code a client can act on.
+ * The Runtime's code travels on in the data: under `conflict` for a conflict, under `reason` for the rest.
+ */
+const RUNTIME_FAILURE_CODES: Readonly<Record<
+  | Exclude<AgentControlErrorCode, 'permission_denied'> | 'actor_owner_conflict' | 'actor_owner_unknown' | 'session_archived'
+  | RuntimeRunLifecycleError['code'],
+  RuntimeDaemonErrorCode
+>> = {
+  actor_not_found: 'not_found',
+  actor_closed: 'conflict',
+  actor_owner_conflict: 'conflict',
+  actor_owner_unknown: 'conflict',
+  name_collision: 'conflict',
+  no_active_turn: 'conflict',
+  session_archived: 'conflict',
+  unsupported_operation: 'conflict',
+  // The Session heals a settlement fence in the background; a retry after recovery is accepted.
+  actor_settlement_retrying: 'conflict',
+  actor_settlement_not_persisted: 'conflict',
+  run_settlement_not_persisted: 'conflict',
+  invalid_actor_path: 'invalid_params',
+  invalid_capabilities: 'invalid_params',
+  invalid_fork_turns: 'invalid_params',
+  invalid_forward_reference: 'invalid_params',
+  invalid_message: 'invalid_params',
+  invalid_task_name: 'invalid_params',
+  message_cycle_detected: 'invalid_params',
+};
+
 function normalizeRuntimeDaemonError(error: unknown): {
   readonly code: RuntimeDaemonErrorCode;
   readonly message: string;
@@ -4024,6 +4066,14 @@ function normalizeRuntimeDaemonError(error: unknown): {
       readonly code?: unknown;
       readonly data?: unknown;
     };
+    if (typeof maybe.code === "string" && Object.hasOwn(RUNTIME_FAILURE_CODES, maybe.code)) {
+      const named = RUNTIME_FAILURE_CODES[maybe.code as keyof typeof RUNTIME_FAILURE_CODES];
+      return {
+        code: named,
+        message: error.message,
+        data: named === "conflict" ? { conflict: maybe.code } : { reason: maybe.code },
+      };
+    }
     const code =
       typeof maybe.code === "string" && isRuntimeDaemonErrorCode(maybe.code)
         ? maybe.code

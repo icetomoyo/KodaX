@@ -2495,11 +2495,38 @@ async function readPersistedSessionFile(
 // `fs.readFile`'d the WHOLE file (a 24MB archive or 6MB transcript) just to read
 // line 1 + count lines. On a large sessions dir (hundreds of files / hundreds of
 // MB) that turned `kodax -c` + the session picker into a multi-second blocking
-// read. We now read only the first chunk via a single fd. The whole-file read is
-// kept ONLY as a fallback for the rare cases that genuinely need it (a first line
-// longer than the buffer, or a legacy non-`meta` session whose msgCount is the
-// total line count).
+// read. We now read only the first line via a single fd. The whole-file read is
+// kept ONLY for a legacy non-`meta` session, whose msgCount is the total line
+// count.
+// Most meta lines are about 1KB, so the first read is small. Legacy actor
+// snapshots can reach megabytes; the read size doubles up to the cap for those.
+const SESSION_HEAD_FIRST_READ_BYTES = 4096;
 const SESSION_HEAD_READ_BYTES = 65536;
+
+/** Bytes of the first line without its newline; undefined for an empty file. */
+async function readFirstLineBytes(
+  handle: fs.FileHandle,
+  signal?: AbortSignal,
+): Promise<Buffer | undefined> {
+  const chunks: Buffer[] = [];
+  let offset = 0;
+  let readBytes = SESSION_HEAD_FIRST_READ_BYTES;
+  while (true) {
+    throwIfSessionReadAborted(signal);
+    const buffer = Buffer.allocUnsafe(readBytes);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, offset);
+    if (bytesRead === 0) break;
+    const chunk = buffer.subarray(0, bytesRead);
+    const newline = chunk.indexOf(0x0a);
+    chunks.push(newline < 0 ? chunk : chunk.subarray(0, newline));
+    if (newline >= 0) break;
+    offset += bytesRead;
+    readBytes = Math.min(readBytes * 2, SESSION_HEAD_READ_BYTES);
+  }
+  // A line can span chunks; join before decoding so a UTF-8 character split
+  // at a read boundary stays intact.
+  return chunks.length === 0 ? undefined : Buffer.concat(chunks);
+}
 
 async function readSessionMetadata(
   filePath: string,
@@ -2507,27 +2534,13 @@ async function readSessionMetadata(
 ): Promise<Record<string, unknown>> {
   const handle = await fs.open(filePath, 'r');
   try {
-    const chunks: Buffer[] = [];
-    let offset = 0;
-    while (true) {
-      throwIfSessionReadAborted(signal);
-      const buffer = Buffer.allocUnsafe(SESSION_HEAD_READ_BYTES);
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, offset);
-      if (bytesRead === 0) break;
-      const chunk = buffer.subarray(0, bytesRead);
-      const newline = chunk.indexOf(0x0a);
-      chunks.push(newline < 0 ? chunk : chunk.subarray(0, newline));
-      if (newline >= 0) break;
-      offset += bytesRead;
-    }
-    if (chunks.length === 0) {
+    const line = await readFirstLineBytes(handle, signal);
+    if (line === undefined) {
       throw new SessionReadError('data_corrupt', 'Session metadata is empty');
     }
     let value: unknown;
     try {
-      // Legacy actor snapshots can span chunks; decode only after joining so
-      // a UTF-8 character split at a read boundary stays intact.
-      value = JSON.parse(Buffer.concat(chunks).toString('utf8').trim());
+      value = JSON.parse(line.toString('utf8').trim());
     } catch (error: unknown) {
       throw new SessionReadError(
         'data_corrupt',
@@ -2556,22 +2569,8 @@ export async function readSessionFirstLine(filePath: string): Promise<string | n
   let fh: fs.FileHandle | undefined;
   try {
     fh = await fs.open(filePath, 'r');
-    const buf = Buffer.allocUnsafe(SESSION_HEAD_READ_BYTES);
-    const { bytesRead } = await fh.read(buf, 0, SESSION_HEAD_READ_BYTES, 0);
-    if (bytesRead === 0) {
-      return null;
-    }
-    const head = buf.toString('utf8', 0, bytesRead);
-    const newlineIdx = head.indexOf('\n');
-    if (newlineIdx >= 0) {
-      return head.slice(0, newlineIdx).trim();
-    }
-    // First line longer than the read buffer (pathological — meta lines are
-    // normally < a few KB). Fall back to a full read so we never silently drop
-    // an otherwise-valid session from the list.
-    const full = await fs.readFile(filePath, 'utf-8');
-    const fullNewline = full.indexOf('\n');
-    return (fullNewline >= 0 ? full.slice(0, fullNewline) : full).trim();
+    const line = await readFirstLineBytes(fh);
+    return line === undefined ? null : line.toString('utf8').trim();
   } catch {
     return null;
   } finally {

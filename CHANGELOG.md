@@ -6,7 +6,37 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `runs.start` returns `warnings` on the Run handle when it accepted an input
+  that no longer does anything: `mode: 'coding'` and `options.agentMode: 'sa'`.
+  The field is absent otherwise, and works over the daemon client too
+  (Issue 427).
+- `runtime.daemon.integrations()` returns integration health
+  (`{ state, domains }`) without running the daemon preflight, so a status
+  panel can poll it cheaply. Wire method `daemon.integrations.get`; the Host
+  advertises it as `integrationConfigResilience.healthQuery`, and an older
+  Host makes the client throw `daemon_upgrade_required` (Issue 429).
+
 ### Fixed
+
+- Reading a Session's first line starts with 4KB instead of 64KB and grows
+  only for long lines, and a conversation page reads each inline record with
+  one read instead of two (Issue 429). The preflight's scan of every Session
+  is still open as Issue 430.
+- A managed Run started with a prepared prompt and `context.rawUserInput`
+  sends and saves the user's exact words, as the direct engine did. It used
+  to save the prepared prompt, so expanded Skill or context text appeared as
+  the user's message, and `runManagedTask` appended a second copy to
+  `result.messages`. Since beta.12 this affected every root Run, including
+  `startKodaX` (Issue 426).
+- Over the daemon client, a Session that is healing an Actor settlement
+  rejects `runs.start` and `acceptInput` with `conflict` and
+  `data.conflict: 'actor_settlement_not_persisted'` (or `_retrying`). It used
+  to report `internal_error` with the Host's English message, so a client
+  could not tell the Session was recovering. Actor, owner and archived-Session
+  failures are mapped the same way, with `not_found` and `invalid_params`
+  where they fit (Issue 428).
 
 - A client exit whose cleanup failed no longer blocks every later start after
   the Host has stopped. Once the exact Host exit is verified,
@@ -48,6 +78,35 @@ alias no longer exposes the trusted project Exec Policy (Issues 419,
 422). Every v0.7.96 stable and v0.7.97-alpha.1 through beta.11 client
 contract is retained. npm publication remains a manual maintainer
 action.
+
+### Breaking
+
+This section was added after release; the entries below under Changed hold
+the details. The client protocol is unchanged, but these library exports and
+inputs changed:
+
+- `SYSTEM_PROMPT`, `buildSystemPrompt` and `buildSystemPromptSnapshot` are
+  removed from `@kodax-ai/coding`, together with the prompt registry slots
+  `base`, `runtime-context` and `base-suffix`. They built the retired direct
+  engine's prompt, which no Run uses any more. Replacements:
+  - to read the shared runtime sections a Run gets (git context, project
+    rules, memory, caller overlay), call
+    `buildCapabilityContextSections(options, isNewSession)` and render them
+    with `renderPromptSections(sections)`, or with
+    `buildPromptSnapshot(sections, metadata)` for a hashed snapshot;
+  - to shape the prompt, use `context.prompt` (`kodaxGuidance`, `context`
+    entries) or `agentProfile` for the persona; `systemPromptOverride`
+    replaces only the KodaX identity and guidance.
+- Every root Run uses the managed Worker. `runs.start({ mode: 'coding' })`
+  and `agentMode: 'sa'` are accepted and ignored. Starting with the next
+  release the Run handle lists them in `warnings`.
+- Under `runManagedTask`, `context.systemPromptOverride` no longer replaces
+  the whole prompt; KodaX still appends its runtime sections.
+- A root Run carries the Run Context envelope and, under `agentMode: 'ama'`,
+  the Actor and Workflow tools. Use `excludeTools` or a tool policy to drop
+  them.
+- An enforced Skill that cannot be found reports `skill_not_found` instead
+  of `skill_not_registered`.
 
 ### Added
 

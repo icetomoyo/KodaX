@@ -173,6 +173,9 @@ extensions 还遵循已有配置来源优先级：integrations/extensions.json �
 `catalog.reloadExtensions()` 只重载已加载扩展的代码，不等于重读新增路径配置。
 Main 的可信 Runtime 连接可用 `(await runtime.daemon.inspect()).integrations?.domains`
 读取实际来源和诊断，再配合 Product 的 `catalog.extensions()` 确认已加载能力。
+只读集成健康时用 `runtime.daemon.integrations()`（`daemon.integrations.get`），它不跑
+daemon preflight，适合状态面板轮询；Host 以 `integrationConfigResilience.healthQuery`
+声明支持，旧 Host 上客户端抛 `daemon_upgrade_required`。
 `restart` 表示 SDK 承诺的重新装配边界；单个读取路径更早看到保存值，不证明整个
 执行进程已完成重配。locale 等消费端选项还需相应 UI/客户端重新读取或重启。
 
@@ -536,7 +539,7 @@ Space 的注册和调用前检查由 Space 单独接入。
 
 以 `failed` 结束且带 `failureDetail` 的 Run，会在会话视图追加并保存一条 `type: 'error'` 项：`sourceRunId` 为该 Run，`text` 等于 `failureDetail.safeMessage`，`afterInputId` 为该 Run 最后交付的输入，因此重开会话后失败仍位于对应输入之后。`cancelled`/`interrupted` 不追加。Provider 用尽恢复后，视图不再写入命令行版“输入 continue/stop”提示；SDK 不处理这两个指令，失败由上述错误项说明。客户端按 `sourceRunId` 是否为当前 Run 决定是否补充 `failureDetail` 详情。
 
-常见边界包括 conflict（意图或 revision 冲突）、not_found、permission_denied、unauthorized、version_incompatible/client_upgrade_required、resync_required/data_changed、runtime_changed、observation_invalidated 和读取超时/取消。不要将这些错误统一吞为“没有数据”或“已完成”。具体码以 [daemon protocol](../src/runtime-daemon/protocol.ts) 及执行域为准，当前协议码表不是纯产品 SDK 的穷尽错误类型。
+常见边界包括 conflict（意图或 revision 冲突）、not_found、permission_denied、unauthorized、version_incompatible/client_upgrade_required、resync_required/data_changed、runtime_changed、observation_invalidated 和读取超时/取消。不要将这些错误统一吞为“没有数据”或“已完成”。具体码以 [daemon protocol](../src/runtime-daemon/protocol.ts) 及执行域为准，当前协议码表不是纯产品 SDK 的穷尽错误类型。Runtime 自己命名的失败码经 daemon 转成客户端可处理的协议码，原码放在 data 里：冲突类在 `data.conflict`，其余在 `data.reason`。例如 Session 在后台修复 Actor 结算期间，`runs.start` 和 `inputs.submit` 报告 `conflict`，`data.conflict` 为 `actor_settlement_not_persisted` 或 `actor_settlement_retrying`，修复完成后重试即可；以前 daemon 报告的是 `internal_error`。
 
 普通产品消费者将错误视为 unknown，收窄后展示错误消息；不需要导入底层诊断错误类。低层 Node 宿主可从 `/runtime` 导入既有 `RuntimeDaemonCapabilityUpgradeError`：其 code 为 `daemon_capability_upgrade_required`，包含 capability、recoverable、restartRequired 和可选 preflight。例如构建或旧启动器问题可标为 runtimeBuild/launcherBuild；应展示具体原因，不据这些字符串构建 UI 业务能力矩阵。recoverable/restartRequired 不授权强停忙碌 Host，也不意味着可以自动重试所有操作。该类不从 `/client` 导出，不属于纯数据契约，也不覆盖全部连接/执行错误。
 

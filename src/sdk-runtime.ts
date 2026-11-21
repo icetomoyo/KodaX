@@ -2003,7 +2003,10 @@ export interface RuntimeSessionStatus {
   readonly runId?: string;
 }
 
-export type RuntimeRunMode = "coding" | "managed_task";
+export type RuntimeRunMode =
+  /** @deprecated Retired and ignored; the Run handle reports it in `warnings`. */
+  | "coding"
+  | "managed_task";
 
 export interface RuntimeTextInput {
   readonly type: "text";
@@ -2506,6 +2509,8 @@ export interface RuntimeRunHandle {
   readonly runId: string;
   readonly sessionId: string;
   readonly turnId?: string;
+  /** Retired inputs the Host accepted but ignored, e.g. `mode: 'coding'`. Absent when there are none. */
+  readonly warnings?: readonly string[];
   readonly result: Promise<RuntimeRunResult>;
 }
 
@@ -3505,6 +3510,11 @@ export interface RuntimeDaemonManagementState {
 export interface RuntimeDaemonManagementService {
   shutdown(): Promise<{ readonly accepted: true }>;
   inspect(): Promise<RuntimeDaemonManagementState>;
+  /**
+   * Optional integration health without the daemon preflight, so a status
+   * panel can poll it cheaply. Requires `integrationConfigResilience.healthQuery`.
+   */
+  integrations(): Promise<RuntimeIntegrationHealth>;
 }
 
 export interface RuntimeStatusService {
@@ -12450,10 +12460,8 @@ async function createRuntimeRunService(deps: {
       requiredAfterRun?.phase === "unknown"
       && requiredAfterRun.actorDurabilityFailure !== undefined
       && !requiredAfterRun.terminalEmitted;
-    if (input.mode === "coding" && !recovery) {
-      emitKodaXDiagnostic({ source: "runtime.runs.start", level: "warn",
-        message: "runs.start mode 'coding' is deprecated and ignored; every root Run uses the managed Worker." });
-    }
+    const warnings = recovery ? [] : retiredRunInputWarnings(input);
+    for (const message of warnings) emitKodaXDiagnostic({ source: "runtime.runs.start", level: "warn", message });
     if (actorSession !== undefined) {
       const observedHealth = actorSession.health();
       const health = observedHealth.state === "recovering"
@@ -12823,6 +12831,7 @@ async function createRuntimeRunService(deps: {
       get turnId() {
         return record.turnId;
       },
+      ...(warnings.length > 0 ? { warnings } : {}),
       result,
     };
   };
@@ -23621,6 +23630,18 @@ function setStringIfPresent<K extends keyof RuntimeSessionSettings>(
   if (typeof value === "string" && value.length > 0) {
     setMutableSetting(target, key, value as RuntimeSessionSettings[K]);
   }
+}
+
+/** Retired Run inputs are still accepted, so the caller learns here that they changed nothing. */
+function retiredRunInputWarnings(input: RuntimeStartRunInput): string[] {
+  const warnings: string[] = [];
+  if (input.mode === "coding") {
+    warnings.push("runs.start mode 'coding' is retired and ignored; every root Run uses the managed Worker.");
+  }
+  if (input.options?.agentMode === "sa") {
+    warnings.push("options.agentMode 'sa' is retired and ignored; every root Run uses the managed Worker.");
+  }
+  return warnings;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

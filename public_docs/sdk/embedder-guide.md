@@ -146,7 +146,9 @@ Public signatures do not change.
   envelope and, under `agentMode: 'ama'`, the Actor and Workflow tools. Use
   `excludeTools` or a tool policy if you don't want them.
 - `runs.start({ mode: 'coding' })` and daemon `run.start` with `mode: 'coding'`
-  are accepted and ignored, with a `runtime.runs.start` warning diagnostic. New
+  are accepted and ignored, with a `runtime.runs.start` warning diagnostic; so is
+  `agentMode: 'sa'`. The Run handle also lists each ignored
+  input in `warnings` (unreleased), including over the daemon client. New
   Runs report `Run.mode: 'managed_task'`. Stored `coding` Runs stay readable and
   resume on the managed Worker.
 - A root without `agentMode` gets the Worker's short sections (execution
@@ -6270,6 +6272,12 @@ credentials. Consume it additively: when `clients` is absent, continue using
 `clientCount`. Do not require `daemonClientInventory:1` during a compatibility
 rollout unless the product cannot operate without it.
 
+To poll only integration health (MCP and extensions), call
+`runtime.daemon.integrations()`. It returns `{ state, domains }` without running
+the preflight. The Host advertises it as
+`integrationConfigResilience.healthQuery`; an older Host makes the client throw
+`daemon_upgrade_required`.
+
 Preflight is useful for UI, but it is not a stop authorization token. Use
 `runtime.daemon.inspect()` to obtain one consistent management revision,
 verified owner fence, owner-policy revision, and preflight projection, then
@@ -6458,7 +6466,7 @@ The v0.7.x public declarations retain the following migration aliases:
 |---|---|---|
 | `agentMode: 'amaw'` | `'ama'` | accepted as deprecated input and normalized to AMA; no separate AMAW runtime is restored |
 | `agentMode: 'sa'` | `'ama'` | accepted as deprecated input; Product inputs, session settings and `runManagedTask` run AMA; `runKodaX` and a `runs.start` without `mode` treat it as unset and run the managed Worker without `agentMode`; stored Run records keep their recorded value |
-| `runs.start({ mode: 'coding' })` | omit `mode` | accepted and ignored with a warning diagnostic; every new Run is `managed_task`; stored `coding` Runs stay readable and resume on the managed Worker |
+| `runs.start({ mode: 'coding' })` | omit `mode` | accepted and ignored; the Run handle lists it in `warnings`; every new Run is `managed_task`; stored `coding` Runs stay readable and resume on the managed Worker |
 | `SYSTEM_PROMPT`, `buildSystemPrompt`, `buildSystemPromptSnapshot` | none | removed with the direct engine; use `systemPromptOverride` or `agentProfile.instructions` |
 | `SkillSource` | `ResolvedSkillSource` | formal source union remains `project \| user \| plugin \| builtin`; only resolved discovery output adds `learned` |
 | `RuntimeDaemonPreflight.activeAgentTasks` | `activeAgentTurns` | both required fields are returned and reference the same array throughout the 0.7.x line |

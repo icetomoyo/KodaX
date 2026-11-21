@@ -27,7 +27,7 @@
 | Planned | `17` |
 | Completed | `66` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
-| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 310, 311` |
+| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 310, 311, 312, 313` |
 | Archive cutoff | Shipped / canceled / absorbed / shelved items through `v0.7.49` are archived. |
 
 ### 一览表
@@ -36,6 +36,7 @@
 |---|---:|---|---|
 | Completed | 67 | `311, 310, 306, 305, 304, 303, 302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 2 | `298, 225` | `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
+| Planned, SDK v2 | 2 | `312, 313` | Specify in the SDK v2 contract on `KodaX-next-dev`; only the stall cap of `313` can land on mainline first. |
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
@@ -2431,6 +2432,8 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
+| `312` | Stable Product History Identity | SDK / Session History | High | SDK v2 | [Addition](#2026-11-21-feature_312-addition) — Planned; design pending in the SDK v2 contract |
+| `313` | Queryable Session Recovery State | SDK / Runtime Recovery | High | SDK v2; stall cap on mainline | [Addition](#2026-11-21-feature_313-addition) — Planned; design pending in the SDK v2 contract |
 | `300` | Git Execution Consolidation with Shared macOS Preflight | Refactor | Medium | `v0.7.99` | [v0.7.99](features/v0.7.99.md#feature_300-git-execution-consolidation-with-shared-macos-preflight) — Planned; design only |
 | `287` | Advisor Mode Virtual Provider | Enhancement / LLM Provider + Session Quality | High | `v0.8.13` | [v0.8.13](features/v0.8.13.md#feature_287-advisor-mode-virtual-provider) |
 | `288` | CLI-Space Daemon Profile Alignment | Enhancement / Runtime + Multi-Client UX | High | `v0.8.14` | [v0.8.14](features/v0.8.14.md#feature_288-cli-space-daemon-profile-alignment) |
@@ -2448,6 +2451,46 @@ fixed GitHub binary archive sidecar omission before tagging.
 | `113` | TodoList JSON / CLI Surface | Enhancement | Medium | `v0.9.7` | [v0.9.7](features/v0.9.7.md#feature_113-todolist-json--cli-surface) |
 | `139` | NotebookEdit Tool | Enhancement / Tool | Low | `v0.9.25` | [v0.9.25](features/v0.9.25.md#feature_139-notebookedit-tool--jupyter-cell-level-crud) |
 | `262` | npm 12 Install-Time Security + Trusted Publishing Migration | Internal / Supply Chain Security | High | `v0.9.0` | [v0.9.0](features/v0.9.0.md#feature_262-npm-12-install-time-security--trusted-publishing-migration) |
+
+---
+
+## 2026-11-21 FEATURE_313 Addition
+
+- Status: Planned. IDs 312 and 313 are unused on both `KodaX` and `KodaX-next-dev`.
+- Source: Space report item II (2026-11-21). After `actor_settlement_not_persisted`
+  the Session heals in the background, but a client can only find out by
+  retrying `runs.start` and reading the error. There is no Session state to read
+  or subscribe to, no event when healing ends, and no limit after which healing
+  counts as stuck. Issue 428 fixed the error code on the wire; this feature
+  covers the rest.
+- Scope:
+  - A Session-level recovering state that a client can read and subscribe to,
+    and an event when recovery completes or stalls.
+  - A time limit in `recoverActorDurability`, after which the Session reports
+    `recovery_stalled` instead of retrying silently.
+- Placement: the limit and `recovery_stalled` can land on mainline now. The
+  state and the event follow the SDK v2 contract on `KodaX-next-dev`, which
+  already defines a quarantined Session state and `invalid_state` with a
+  `reason`; mainline must not ship a second v1 shape for them.
+
+## 2026-11-21 FEATURE_312 Addition
+
+- Status: Planned.
+- Source: Space report item I, G1-G6 (2026-11-21). Product history items have
+  ids scoped to a revision, so the same message gets a new id after a save, a
+  compaction or a window slide. Space matches items by heuristics, cannot tell a
+  gap from a deletion, and cannot resume a history stream from a position.
+- Scope: history ids that stay the same for the life of a message, a persisted
+  sequence number, explicit gap markers when items are missing, and removal of
+  the client-side matching heuristics.
+- Placement: this is the same layer as the SDK v2 history work on
+  `KodaX-next-dev`, which has already decided parts of it differently. There
+  `seq` is per subscription, a window slide is an item removal, `since`
+  resumption is rejected, and history ids stay revision-scoped
+  (`${sessionId}:history:${revision}:${entryIndex}` plus
+  `transcriptEntryItemId`). Specify the change in the v2 contract first and
+  implement it on `KodaX-next-dev`; a mainline v1 change would conflict with
+  that branch and be replaced at merge.
 
 ---
 

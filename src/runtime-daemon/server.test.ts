@@ -114,6 +114,7 @@ describe('runtime daemon dispatcher', () => {
       async runMutation(_method, effect) { return effect(); },
       preflight,
       async inspect() { throw new Error('not used'); },
+      integrations() { throw new Error('not used'); },
       async stop() { throw new Error('not used'); },
     };
     vi.spyOn(runtime.status, 'preflight').mockImplementation(options => preflight(options?.signal));
@@ -529,6 +530,7 @@ describe('runtime daemon dispatcher', () => {
       },
       async preflight() { throw new Error('not used'); },
       async inspect() { throw new Error('not used'); },
+      integrations() { throw new Error('not used'); },
       async stop() { throw new Error('not used'); },
       close() {},
     };
@@ -1673,7 +1675,7 @@ describe('runtime daemon dispatcher', () => {
       const implemented = isRuntimeDaemonSuccessResponse(response) || (
         method === 'run.recover' && response.error.code === 'permission_denied'
       ) || (
-        ['daemon.management.get', 'client.exit.request', 'client.exit.read', 'client.exit.pending',
+        ['daemon.management.get', 'daemon.integrations.get', 'client.exit.request', 'client.exit.read', 'client.exit.pending',
           'session.facts.read', 'session.facts.requests', 'session.facts.tools'].includes(method)
         && response.error.code === 'client_upgrade_required'
       );
@@ -1925,6 +1927,7 @@ describe('runtime daemon dispatcher', () => {
       async runMutation<T>(_method: RuntimeDaemonMethod, effect: () => Promise<T>): Promise<T> { return effect(); },
       async preflight() { throw new Error('not used'); },
       async inspect() { throw new Error('not used'); },
+      integrations() { throw new Error('not used'); },
       async stop() { throw new Error('not used'); }, close() {},
     };
     const runtime = makeRuntime();
@@ -2645,6 +2648,30 @@ describe('runtime daemon dispatcher', () => {
     dispatcher.close();
   });
 
+  it.each([
+    ['actor_settlement_not_persisted', 'conflict', { conflict: 'actor_settlement_not_persisted' }],
+    ['actor_settlement_retrying', 'conflict', { conflict: 'actor_settlement_retrying' }],
+    ['actor_not_found', 'not_found', { reason: 'actor_not_found' }],
+  ] as const)('keeps the Runtime failure code %s on the wire', async (runtimeCode, code, data) => {
+    const runtime = makeRuntime();
+    vi.spyOn(runtime.runs, 'start').mockRejectedValue(Object.assign(new Error('Session is recovering.'), { code: runtimeCode }));
+    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    await initializeDispatcher(dispatcher);
+    const response = await dispatcher.handle(createRuntimeDaemonRequest('req-1', 'run.start', { sessionId: 'session-1', prompt: 'hello' }));
+    expect(!isRuntimeDaemonSuccessResponse(response) && response.error).toMatchObject({ code, message: 'Session is recovering.', data });
+    dispatcher.close();
+  });
+
+  it('passes the Host warnings for retired Run inputs to the client', async () => {
+    const dispatcher = createRuntimeDaemonDispatcher({ runtime: makeRuntime() });
+    await initializeDispatcher(dispatcher);
+    const started = await dispatcher.handle(createRuntimeDaemonRequest('req-1', 'run.start', {
+      sessionId: 'session-1', prompt: 'old caller', mode: 'coding',
+    }));
+    expect(isRuntimeDaemonSuccessResponse(started) && started.result).toMatchObject({ warnings: ['retired mode'] });
+    dispatcher.close();
+  });
+
   it('routes run.start and run.await through the hosted runtime', async () => {
     const runtime = makeRuntime();
     const dispatcher = createRuntimeDaemonDispatcher({ runtime });
@@ -3347,6 +3374,7 @@ const METHOD_SMOKE_PARAMS = {
   'daemon.logs': undefined,
   'daemon.preflight': undefined,
   'daemon.management.get': undefined,
+  'daemon.integrations.get': undefined,
   'session.create': { sessionId: 'session-smoke', title: 'Smoke Session' },
   'session.promote': { sessionId: 'session-1', requestId: 'promote-smoke', expectedRevision: '0'.repeat(64), tag: 'coder' },
   'session.promotion.read': { sessionId: 'session-1', requestId: 'promote-smoke' },
@@ -3870,6 +3898,7 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
         return {
           runId: result.runId,
           sessionId: result.sessionId,
+          ...(input.mode === 'coding' ? { warnings: ['retired mode'] } : {}),
           result: Promise.resolve(result),
         };
       },

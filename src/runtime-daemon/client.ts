@@ -83,6 +83,7 @@ import type {
   RuntimeWorkflowSummary,
   RuntimeWorkflowStartInput,
   RuntimeWorkflowStartResult,
+  RuntimeIntegrationHealth,
 } from '../sdk-runtime.js';
 import type {
   RuntimePreparedCommand,
@@ -792,11 +793,14 @@ export function createRuntimeDaemonClient(
         const runId = requireStringField(started, 'runId');
         const sessionId = requireStringField(started, 'sessionId');
         const turnId = optionalStringField(started, 'turnId');
+        const warnings = Array.isArray(started.warnings)
+          ? started.warnings.filter((warning): warning is string => typeof warning === 'string') : undefined;
         let result: RuntimeRunHandle['result'] | undefined;
         return {
           runId,
           sessionId,
           ...(turnId !== undefined ? { turnId } : {}),
+          ...(warnings !== undefined ? { warnings } : {}),
           get result() { return result ??= requestRuntimeRunResult(request, runId); },
         };
       },
@@ -1502,6 +1506,17 @@ export function createRuntimeDaemonClient(
             preflight: normalizeRuntimeDaemonPreflight(state.preflight),
           };
         });
+      },
+      async integrations() {
+        const capability = options.capabilities?.integrationConfigResilience;
+        if (typeof capability !== 'object' || capability === null
+          || !('healthQuery' in capability) || capability.healthQuery !== true) {
+          throw Object.assign(
+            new Error('Upgrade KodaX and restart the daemon to read integration health without a preflight.'),
+            { code: 'daemon_upgrade_required' as const, capability: 'integrationConfigResilience', restartRequired: true },
+          );
+        }
+        return await request('daemon.integrations.get') as RuntimeIntegrationHealth;
       },
     },
     connection: {
