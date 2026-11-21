@@ -1418,10 +1418,16 @@ function reportStorageDiagnostic(level: 'info' | 'warn' | 'error', message: stri
   });
 }
 
+// Clients may poll a Session every few seconds, and each read re-counts the same
+// bad records. Report a file again only when its count changes, so a long-lived
+// Host does not fill its log with one repeated line.
+const reportedMalformedCounts = new Map<string, number>();
+
 function warnMalformedSessionData(filePath: string, count: number): void {
-  if (count === 0) {
+  if (count === 0 || reportedMalformedCounts.get(filePath) === count) {
     return;
   }
+  reportedMalformedCounts.set(filePath, count);
 
   reportStorageDiagnostic(
     'warn',
