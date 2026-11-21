@@ -3,8 +3,16 @@
 Documentation for KodaX users, product-client integrators and trusted Host developers.
 
 This development tree implements the unified Product Client contract under
-FEATURE_298/299/301/303/304/305/306. The package version is `0.7.97-beta.12`;
-`v0.7.96` remains the last stable release. `v0.7.97-beta.12` gives every root
+FEATURE_298/299/301/303/304/305/306. The package version is `0.7.97-beta.13`;
+`v0.7.96` remains the last stable release. `v0.7.97-beta.13` repairs the
+Space integration and Session-read costs (Issues 424-430): a client exit
+whose cleanup failed no longer blocks later starts once the old Host has
+exited, a managed Run saves the user's exact words even with a prepared
+prompt, `runs.start` warns about retired inputs, the daemon maps Runtime
+failure codes onto protocol codes, integration health reads without the
+preflight, the preflight reuses cached Session metadata, and display-history
+checkpoints append a bounded delta during a Run;
+`v0.7.97-beta.12` gives every root
 Run the managed Worker and the same tool text as Space and the REPL
 (FEATURE_311, SA mode retired), settles every Stop under
 `actorSettlementConvergence:3`, reports a failure's real cause in
@@ -86,7 +94,7 @@ Actor settlement and saved-history location/turn resolution shipped in
 support and durable visual observations shipped in `v0.7.97-beta.5`; one
 Host per `KODAX_HOME` with the Host-location `profile` removed shipped in
 `v0.7.97-beta.6`; the Space SDK image projection, attachment and
-approval-attribution corrections shipped in `v0.7.97-beta.7`; the Windows daemon native Job startup repairs shipped in `v0.7.97-beta.8`; data root relocation and steer withdrawal shipped in `v0.7.97-beta.9`; merged-input acknowledgement shipped in `v0.7.97-beta.10`; readable history during a busy Run and tool-neutral Skills shipped in `v0.7.97-beta.11`; one prompt chain for every root Run and final Stop outcomes shipped in `v0.7.97-beta.12`. Read the
+approval-attribution corrections shipped in `v0.7.97-beta.7`; the Windows daemon native Job startup repairs shipped in `v0.7.97-beta.8`; data root relocation and steer withdrawal shipped in `v0.7.97-beta.9`; merged-input acknowledgement shipped in `v0.7.97-beta.10`; readable history during a busy Run and tool-neutral Skills shipped in `v0.7.97-beta.11`; one prompt chain for every root Run and final Stop outcomes shipped in `v0.7.97-beta.12`; the Space integration repairs and Session-read cost fixes shipped in `v0.7.97-beta.13`. Read the
 [current SDK alignment](sdk/embedder-guide.md#post-alpha10-sdk-alignment),
 [unified Host cutover](sdk/embedder-guide.md#unified-host-sdk-cutover-shipped-in-v0797-alpha12)
 and [one Host per KODAX_HOME](../docs/SDK_MIGRATION.md#one-host-per-kodax_home-profile-removed)

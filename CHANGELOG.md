@@ -6,6 +6,37 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-beta.13] - 2026-11-21
+
+Thirteenth beta of the v0.7.97 line: the Space integration repairs
+and Session-read cost fixes (Issues 424-430). A client exit whose
+cleanup failed no longer blocks every later start once the old Host
+has exited; recovery returns the surviving gap as the reason of a
+`ready`/`start_or_connect` result and only `host_shutdown_verified`
+proves the old exit (Issue 424). A managed Run started with a prepared
+prompt saves and sends the user's exact words instead of the prepared
+text, without the duplicated copy in `runManagedTask` results
+(Issue 426). `runs.start` reports retired inputs (`mode: 'coding'`,
+`agentMode: 'sa'`) as `warnings` on the Run handle (Issue 427), the
+daemon maps Runtime failure codes to protocol codes with the original
+code in `data.conflict`/`data.reason` instead of `internal_error`
+(Issue 428), and integration health reads without the preflight
+through `runtime.daemon.integrations()` / `daemon.integrations.get`
+(`integrationConfigResilience.healthQuery`, Issue 429). The daemon
+preflight reuses cached Session-list and Actor metadata while their
+files are unchanged and retries busy Sessions, so its cost no longer
+grows with every Session ever kept (Issue 430, about 4.5s to about
+40ms on 3230 Sessions). Session first-line reads start at 4KB,
+conversation pages read each inline record once (Issue 429), a
+Session's malformed-record warning logs once per count per process
+(Issue 425), and display-history checkpoints append a bounded delta
+during a Run instead of rewriting the whole Session every 500ms.
+FEATURE_312/313 register the SDK v2 contract decisions. Every
+v0.7.96 stable and v0.7.97-alpha.1 through beta.12 client contract
+is retained. npm publication remains a manual maintainer action.
+
 ### Added
 
 - `runs.start` returns `warnings` on the Run handle when it accepted an input

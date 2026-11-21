@@ -48,6 +48,80 @@ on one commit.
   The step limit is ten minutes because the passing Windows suite alone takes
   about 4.6 minutes.
 
+## v0.7.97-beta.13 release preparation
+
+Release state: `v0.7.97-beta.13` is a candidate awaiting the publishing
+dispatch. npm publication has not occurred. The candidate is the
+thirteenth beta of the v0.7.97 line: the Space integration repairs
+and Session-read cost fixes (Issues 424-430). A client exit whose
+cleanup failed no longer blocks every later start once the old Host
+process has exited (Issue 424): recovery waits only for processes
+that still run, returns the surviving gap (cleanup_failed,
+outcome_missing, containment_unavailable, owner_identity_unverified,
+owner_identity_mismatch) as the reason of a ready/start_or_connect
+result, and only `host_shutdown_verified` proves the old exit, while
+a cleanup exception is recorded as `cleanup.state: 'unknown'` and
+the requested Host stop still goes ahead. A managed Run started with
+a prepared prompt and `context.rawUserInput` sends and saves the
+user's exact words, and `runManagedTask` no longer appends a second
+copy (Issue 426). `runs.start` returns `warnings` for retired inputs
+(`mode: 'coding'`, `agentMode: 'sa'`) on the Run handle (Issue 427),
+the daemon maps Runtime failure codes (Actor settlement, Actor,
+owner, archived Session) to protocol codes with the original code in
+`data.conflict`/`data.reason` instead of `internal_error` (Issue
+428), and `runtime.daemon.integrations()` reads integration health
+without the preflight (`daemon.integrations.get`,
+`integrationConfigResilience.healthQuery`, Issue 429). The daemon
+preflight reuses cached Session-list and Actor metadata with the
+stat identity of their files, retries `data_changed` reads briefly
+and skips a Session removed after the inventory — on 3230 Sessions,
+preflight with no Run went from about 4.5s to about 39ms once warm
+(Issue 430). Session first-line reads start at 4KB and grow only for
+long lines, a conversation page reads each inline record with one
+read (Issue 429), a Session's malformed-record warning logs once per
+count per process (Issue 425), and display-history checkpoints
+append one bounded `meta_update` delta while a Run is active instead
+of rewriting the whole Session every 500ms, with the folded history
+rewritten after the Run ends. FEATURE_312/313 register the SDK v2
+contract decisions (stable history identity; queryable recovery
+state with the stall cap landing on mainline first). Every v0.7.96
+stable and v0.7.97-alpha.1 through beta.12 client contract is
+retained.
+
+The CI/Release in-place upgrade gates now pin the published
+`0.7.97-beta.12` tarball (published 2026-11-21T01:22:25.391Z; registry
+dist.integrity sha512-0sUrPqnK…v44pg== packs to the same bytes as the
+kodax-ai-kodax-0.7.97-beta.12.tgz asset of the v0.7.97-beta.12 GitHub
+Release, sha256 a610657c…b248a). Run that fixture locally with Windows
+`tar.exe` ahead of Git's GNU `tar` on `PATH`: GNU `tar` reads the `C:`
+drive in the archive path as a remote host.
+
+Local candidate validation on Windows with Node 20.20.2: full build
+(after the version bump, so `dist` carries 0.7.97-beta.13), source and
+test typechecks, the self-knowledge/`kodax_manual` registry suite,
+`tests/release-workflow.test.ts` and `tests/tracker-consistency.test.ts`
+(131 passed across the three groups), `test:host-cutover` (3 passed),
+the real published beta.12 Host in-place upgrade (1 passed) against
+the integrity-pinned public tarball, `test:bundle` (110 passed) and
+the fast tier (3,786 passed, 58 skipped). Two tracker
+breaks from the pre-release commits were fixed before dispatch: the
+FEATURE_312/313 planned rows use anchor-only `[Addition](#…)` links to
+their in-file record sections, so `extractLinkPathOrSentinel` now
+treats an anchor-only design link as `__pending__`, and their
+registration had left the curated counters stale (Planned 17→19,
+Total 92→94); the KNOWN_ISSUES summary's new `, 1 ready` bucket beside
+the Open count is now parsed and checked against the `ready` rows.
+The packaged Electron daemon gate runs in Release CI.
+
+This release follows the single publishing dispatch described under
+[Current release execution](#current-release-execution): `target=all`
+with `release_tag=v0.7.97-beta.13` runs Full CI, all five archive
+builds and the npm package gates, then creates the tag at the
+dispatched commit and the GitHub pre-release from that run's
+artifacts. Ordinary branch pushes do not run CI. Cross-platform
+manual acceptance, installed Space/SDK acceptance, the Space
+dependency bump and npm publication remain separate maintainer steps.
+
 ## v0.7.97-beta.12 release preparation
 
 Release state: `v0.7.97-beta.12` was published on 2026-11-20 as a GitHub

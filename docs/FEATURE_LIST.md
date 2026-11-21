@@ -11,16 +11,16 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.97-beta.12` (Git tag); `v0.7.96` remains the last stable release |
-| Current package version | `@kodax-ai/kodax@0.7.97-beta.12`; npm `beta` is `0.7.97-beta.11` (published 2026-11-16T13:38:37Z); beta.12 npm publication remains a manual maintainer step |
+| Current released version | `v0.7.97-beta.13` (Git tag); `v0.7.96` remains the last stable release |
+| Current package version | `@kodax-ai/kodax@0.7.97-beta.13`; npm `beta` is `0.7.97-beta.12` (published 2026-11-21T01:22:25Z); beta.13 npm publication remains a manual maintainer step |
 | Workspace baseline | `llm / agent / coding / repl` 4 core packages + private optional `artifacts` source workspace; one public npm package |
 | Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4` and extended with the unified Artifact SDK in `v0.7.97-alpha.5`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3` and extended with startup streamlining, Session recency ordering, draft admission, concurrent-launch recovery and shared-Session Host ownership resolution through `v0.7.97-alpha.7`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
 | Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement released in alpha.4; missing visual capabilities remain unverified; [design](ADR.md#verification-responsibility-and-tradeoffs) |
 | Artifact distribution revision | `2026-10-18` — one `@kodax-ai/kodax` npm package; four `/artifacts` subpaths and resources staged in the main tarball; local implementation, not yet published |
 | Current Artifact SDK additions | Unified visual evidence SDK and format backends released in `v0.7.97-alpha.5`: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
-| Current development | `v0.7.97-beta.12` one prompt chain for every root Run and a final outcome for every Stop — every root Run (`runKodaX`, `startKodaX`, `KodaXClient`, the Runner preset, `runs.start`) uses the managed Worker and the same tool text as Space and the REPL with about 28-34% smaller first-request input (FEATURE_311), SA mode is retired (FEATURE_310), applications shape managed prompts through `context.prompt`, SDK capability `actorSettlementConvergence` is `3` (every Stop settles, a fenced Session heals without a Host restart, a Run asked to stop never blocks Host exit), failures carry their real cause in `failure.detail` (ADR-078), provider requests send `X-Session-Id` with UUIDv7 session ids and validated Host session ids, A2A Tasks continue one Runtime Session per context without the owner's memory (ADR-077), and constructed artifacts need a machine-local approval; [release preparation](release.md#v0797-beta12-release-preparation). On top of the beta.11 readable history and tool-neutral Skills. Cross-platform manual acceptance, installed Space/SDK acceptance, the Space dependency bump and the original slow first resume after rebuild remain open; Issue 395's intermittent failure cause and Issue 394's whole-task non-inferiority remain unproven. |
+| Current development | `v0.7.97-beta.13` Space integration repairs and Session-read cost fixes (Issues 424-430) — a client exit whose cleanup failed no longer blocks later starts once the old Host has exited (only `host_shutdown_verified` proves the old exit; the surviving gap becomes the reason of a ready/start_or_connect result), a managed Run with a prepared prompt saves and sends the user's exact words without the duplicated `runManagedTask` copy, `runs.start` reports retired inputs (`mode: 'coding'`, `agentMode: 'sa'`) as `warnings`, the daemon maps Runtime failure codes to protocol codes with the original code in `data.conflict`/`data.reason`, integration health reads without the preflight (`integrationConfigResilience.healthQuery`), the daemon preflight reuses cached Session-list/Actor metadata and retries busy Sessions (about 4.5s to about 40ms on 3230 Sessions), Session first-line reads start at 4KB, malformed-record warnings log once per count per process, and display-history checkpoints append a bounded delta during a Run instead of rewriting the whole Session every 500ms; [release preparation](release.md#v0797-beta13-release-preparation). On top of the beta.12 one prompt chain and final Stop outcomes. Cross-platform manual acceptance, installed Space/SDK acceptance, the Space dependency bump and the original slow first resume after rebuild remain open; Issue 395's intermittent failure cause and Issue 394's whole-task non-inferiority remain unproven. |
 | Visual harness implementation | P3/P4/P5/P6 implemented within declared scope and released in `v0.7.97-beta.5` through the next-dev integration; [final ID/receipt contract delivery](designs/visual-harness-id-contract-delivery-2026-10-30.md). P7 task-value evaluation concluded **mixed; net task-quality/token value unproven**, against optimized pre-visual 1826cc22; [final review and limits](designs/visual-harness-current-version-closure-2026-10-30.md). The 2026-10-29 plan's "not executed" state and old r3 single-response results are historical, not the current outcome. Historical default suite 18,094 passed / 0 failed; earlier failures and unlocated causes remain recorded; [mainline integration acceptance](designs/next-dev-integration-execution-2026-11-09.md). No new feature ID/version assigned |
-| Roadmap updated | `2026-11-20` — beta.12 prepared on top of the npm-published beta.11 with one prompt chain for every root Run (FEATURE_311/310) and final Stop outcomes (`actorSettlementConvergence:3`); beta.11 published with readable history and tool-neutral Skills; FEATURE_300 remains Planned |
+| Roadmap updated | `2026-11-21` — beta.13 prepared on top of the npm-published beta.12 with the Space integration repairs and Session-read cost fixes (Issues 424-430) and the display-history checkpoint append; beta.12 published with one prompt chain and final Stop outcomes; FEATURE_312/313 registered for the SDK v2 contract; FEATURE_300 remains Planned |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
 | Total tracked features | `94` |
 | InProgress | `3` |
@@ -555,6 +555,42 @@ Final frozen package **80** and historical/real-alpha.11 Host gates **4** passed
 and build fingerprints remained unchanged throughout. See the J guide for exact checkpoints.
 Space stays independently at `da531f0a`; its historical I counts do not certify a newly paired
 Space build. No push/publication.
+
+## v0.7.97-beta.13 Release Record
+
+`v0.7.97-beta.13` is the thirteenth beta of the v0.7.97 line: the Space
+integration repairs and Session-read cost fixes (Issues 424-430). A
+client exit whose cleanup failed no longer blocks every later start
+once the old Host has exited: recovery waits only for processes that
+still run, returns the surviving gap (cleanup_failed, outcome_missing,
+containment_unavailable, owner_identity_unverified,
+owner_identity_mismatch) as the reason of a ready/start_or_connect
+result, and only `host_shutdown_verified` proves the old exit; a
+cleanup exception is recorded as `cleanup.state: 'unknown'` and the
+requested Host stop still goes ahead (Issue 424). A managed Run started
+with a prepared prompt and `context.rawUserInput` sends and saves the
+user's exact words instead of the prepared prompt, and
+`runManagedTask` no longer appends a second copy (Issue 426).
+`runs.start` returns `warnings` for retired inputs (`mode: 'coding'`,
+`agentMode: 'sa'`) on the Run handle (Issue 427), the daemon maps
+Runtime failure codes to protocol codes with the original code in
+`data.conflict`/`data.reason` instead of `internal_error` (Issue 428),
+and `runtime.daemon.integrations()` reads integration health without
+the preflight (`integrationConfigResilience.healthQuery`, Issue 429).
+The daemon preflight reuses cached Session-list and Actor metadata
+while their files are unchanged and retries busy Sessions, so its cost
+no longer grows with every Session ever kept (Issue 430). Session
+first-line reads start at 4KB, conversation pages read each inline
+record once, a Session's malformed-record warning logs once per count
+per process (Issue 425), and display-history checkpoints append a
+bounded delta during a Run instead of rewriting the whole Session
+every 500ms. FEATURE_312/313 register the SDK v2 contract decisions.
+The CI/Release in-place upgrade gate now pins the published beta.12
+tarball. Every v0.7.96 stable and v0.7.97-alpha.1 through beta.12
+client contract is retained. The changes are listed in the
+[CHANGELOG](../CHANGELOG.md). Cross-platform manual acceptance,
+installed Space/SDK acceptance, the Space dependency bump and npm
+publication remain manual maintainer steps.
 
 ## v0.7.97-beta.12 Release Record
 
