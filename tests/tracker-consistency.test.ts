@@ -34,6 +34,7 @@ type IssueSummary = {
   total: number;
   open: number;
   needsInfo: number;
+  ready: number;
   resolved: number;
   partiallyResolved: number;
   wontFix: number;
@@ -130,13 +131,16 @@ function extractLinkPathOrSentinel(markdownLink: string): string {
   const trimmed = (markdownLink ?? '').trim();
   // Empty / dash placeholders correspond to (a) far-future RFC-pending
   // stubs ("TBD ...") and (b) cancelled rows (`~~...~~ | — | —`) — both
-  // are intentionally without a design doc. The downstream fs.access
-  // assertion skips the sentinel.
+  // are intentionally without a design doc. Anchor-only links
+  // (`[Addition](#...)`) reference an in-file record such as the
+  // FEATURE_312/313 Addition sections instead of a design-doc path. The
+  // downstream fs.access assertion skips the sentinel for all of these.
   if (
     trimmed.startsWith('TBD') ||
     trimmed === '-' ||
     trimmed === '—' ||
-    trimmed === ''
+    trimmed === '' ||
+    /^\[[^\]]*\]\(#[^)]*\)/.test(trimmed)
   ) {
     return '__pending__';
   }
@@ -285,7 +289,7 @@ function parseIssueIndex(markdown: string): IssueIndexRow[] {
 function parseIssueSummary(markdown: string): IssueSummary {
   const section = getSection(markdown, 'Summary');
   const totalMatch = section.match(
-    /- Total: (\d+) \((\d+) Open(?: including \d+ needs-info)?, (\d+) Resolved, (\d+) Partially Resolved, (\d+) Won't Fix\)/
+    /- Total: (\d+) \((\d+) Open(?: including \d+ needs-info)?(?:, (\d+) ready)?, (\d+) Resolved, (\d+) Partially Resolved, (\d+) Won't Fix\)/
   );
   const highestPriorityMatch = section.match(
     /- Highest Priority Open: (\d+) - (.+) \((High|Medium|Low)\)/
@@ -299,9 +303,12 @@ function parseIssueSummary(markdown: string): IssueSummary {
     total: Number(totalMatch[1]),
     open: Number(totalMatch[2]),
     needsInfo: Number(totalMatch[0].match(/including (\d+) needs-info/)?.[1] ?? 0),
-    resolved: Number(totalMatch[3]),
-    partiallyResolved: Number(totalMatch[4]),
-    wontFix: Number(totalMatch[5]),
+    // `ready` is a separate open-work bucket (a prepared fix awaiting its
+    // release); it is annotated beside the Open count, not inside it.
+    ready: Number(totalMatch[3]),
+    resolved: Number(totalMatch[4]),
+    partiallyResolved: Number(totalMatch[5]),
+    wontFix: Number(totalMatch[6]),
     highestPriorityOpen: {
       id: highestPriorityMatch[1],
       title: highestPriorityMatch[2],
@@ -463,6 +470,7 @@ describe('tracker consistency', () => {
     expect(issueSummary.total).toBe(issueRows.length);
     expect(issueSummary.open).toBe(issueRows.filter((row) => row.status === 'Open' || row.status === 'needs-info').length);
     expect(issueSummary.needsInfo).toBe(issueRows.filter((row) => row.status === 'needs-info').length);
+    expect(issueSummary.ready).toBe(issueRows.filter((row) => row.status === 'ready').length);
     expect(issueSummary.resolved).toBe(issueRows.filter((row) => row.status === 'Resolved').length);
     expect(issueSummary.partiallyResolved).toBe(
       issueRows.filter((row) => row.status === 'Partially Resolved').length
