@@ -121,7 +121,7 @@ it.each(cells)('admits MCP typed bytes with exact call ordinals, permission and 
         expect((await store.loadSession(failingSession.id))!.extensionRecords?.filter(record => record.extensionId === 'kodax.visual') ?? []).toEqual([]);
       } finally { failure.mockRestore(); }
     }
-  } finally { await runtime.close(); clearRuntimeModelProviders(); vi.unstubAllEnvs(); await rm(homeDir, { recursive: true, force: true }); }
+  } finally { await runtime.close(); clearRuntimeModelProviders(); vi.unstubAllEnvs(); await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 }, 45_000);
 
 it('uses final read arguments once for MCP fallback and never calls it after an extension block or ask denial', async () => {
@@ -188,5 +188,5 @@ it('uses final read arguments once for MCP fallback and never calls it after an 
       expect(observations).toHaveLength(1);
       expect(observations[0]!.data).toMatchObject({ sourceKey: 'mcp:visual:tool:read' });
     }
-  } finally { removeHook(); await runtime.close(); clearRuntimeModelProviders(); vi.unstubAllEnvs(); await rm(homeDir, { recursive: true, force: true }); }
+  } finally { removeHook(); await runtime.close(); clearRuntimeModelProviders(); vi.unstubAllEnvs(); await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 }, 30_000);

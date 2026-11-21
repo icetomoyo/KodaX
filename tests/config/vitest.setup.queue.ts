@@ -19,7 +19,7 @@
 import { mkdtempSync, realpathSync, rmdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterAll, beforeEach } from 'vitest';
+import { afterAll, beforeEach, vi } from 'vitest';
 // IMPORTANT: import from the `@kodax-ai/agent/messaging/queue` subpath,
 // NOT the `@kodax-ai/agent` root barrel.
 //
@@ -63,3 +63,13 @@ process.env.KODAX_INTERNAL_DAEMON_TEST_PARENT_PID = String(process.pid);
 beforeEach(() => {
   _resetMessageQueueForTests();
 });
+
+// vi.waitFor has the same 1s default that `expect.poll` had (see
+// vitest.config.ts). Under full-suite load a Run can take longer than that to
+// reach a pending permission, so unbounded waits flaked. A wait returns as soon
+// as it passes, so passing tests don't get slower; explicit timeouts still win.
+const waitFor = vi.waitFor;
+vi.waitFor = ((callback, options) => waitFor(
+  callback,
+  typeof options === 'number' ? options : { timeout: 10_000, ...options },
+)) as typeof vi.waitFor;

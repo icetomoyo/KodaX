@@ -556,7 +556,12 @@ export interface ClientStatisticsService {
   readRequests(sessionId: string, options?: { readonly cursor?: string; readonly limit?: number }): Promise<ClientExecutionFactsPage<ClientProviderRequestFact>>;
   readTools(sessionId: string, options?: { readonly cursor?: string; readonly limit?: number }): Promise<ClientExecutionFactsPage<ClientToolExecutionFact>>;
 }
-/** Fresh recovery assessment; historical cleanup results remain separate. */
+/**
+ * Fresh recovery assessment; historical cleanup results remain separate.
+ * After the original Host process is gone, only still-running processes block.
+ * A `ready` result may carry a gap reason (for example `outcome_missing`);
+ * only `host_shutdown_verified` proves the old exit.
+ */
 export interface ClientExitRecovery {
   readonly state: 'ready' | 'pending' | 'blocked';
   readonly checkedAt: string;

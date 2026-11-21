@@ -136,6 +136,35 @@ describe('Conversation page cache durability', () => {
     })).rejects.toBeInstanceOf(ConversationPageCacheStaleError);
   });
 
+  it('reads each inline page record with one data read', async () => {
+    const value = await fixture('first');
+    let parentId = 'entry-1';
+    for (let index = 2; index <= 6; index += 1) {
+      const id = `entry-${index}`;
+      value.lineage.entries.push(messageEntry(id, parentId, index % 2 === 0 ? 'assistant' : 'user', `turn ${index}`));
+      parentId = id;
+    }
+    value.lineage.activeEntryId = parentId;
+    const history = buildSessionConversationHistory(value.lineage, createSessionSourceRevision(value.sourceRevisionState));
+    await writeConversationPageCache(value.mainPath, 'boundary:page', value.sourceRevisionState,
+      history, value.lineage, undefined, 64 * 1024);
+    const open = fs.open;
+    const dataHandles: Awaited<ReturnType<typeof fs.open>>[] = [];
+    vi.spyOn(fs, 'open').mockImplementation(async (...args) => {
+      const handle = await open(...args);
+      if (String(args[0]).endsWith('.data')) { vi.spyOn(handle, 'read'); dataHandles.push(handle); }
+      return handle;
+    });
+    const page = await readConversationPageCache(value.mainPath, 'boundary:page', {
+      limit: 80, maxPageBytes: 512 * 1024, maxInlineEntryBytes: 64 * 1024, reservedBytes: 0,
+    });
+    expect(page?.entries.map(entry => entry.entry?.message?.content)).toEqual(
+      ['first', 'turn 2', 'turn 3', 'turn 4', 'turn 5', 'turn 6'],
+    );
+    const reads = dataHandles.flatMap(handle => vi.mocked(handle.read).mock.calls).length;
+    expect(reads).toBe(page?.entries.length);
+  });
+
   it('reuses immutable entry files when a full save keeps canonical history unchanged', async () => {
     const value = await fixture('unchanged-entry');
     await writeConversationPageCache(

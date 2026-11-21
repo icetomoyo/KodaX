@@ -126,6 +126,32 @@ it('retains a Host cleanup acknowledgement that arrives while the exit stop requ
   } finally { await rm(homeDir, { recursive: true, force: true }); }
 });
 
+it('records a throwing client cleanup as unknown, still asks the Host to stop, and is ready after that stop (Issue 424)', async () => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-exit-cleanup-throws-'));
+  try {
+    const receipt = oldReceipt();
+    const file = await receiptFile(homeDir, { ...receipt, cleanup: { ...receipt.cleanup, state: 'pending', issues: [] } });
+    const paths = resolveRuntimeDaemonPaths(homeDir);
+    expect(tryAcquireRuntimeDaemonLock(paths, { ...receipt.host.owner, createdAt: receipt.requestedAt })).toBeTruthy();
+    const runtime = { identity: { runtimeId: receipt.runtimeId } } as KodaXRuntime;
+    registerClientWorkCleanup(runtime, async () => { throw new Error('Queued input cannot be withdrawn.'); });
+    const stop = vi.fn(async () => ({ ok: true as const }));
+    const controller = createRuntimeClientLifecycleController({ runtime, paths, retireClientLeases: vi.fn(),
+      management: { stop } as unknown as RuntimeDaemonManagementController });
+    vi.useFakeTimers();
+    await controller.request(receipt.clientId, { requestId: receipt.requestId, shutdownHost: true });
+    await vi.runOnlyPendingTimersAsync();
+    vi.useRealTimers();
+    const persisted = JSON.parse(await readFile(file, 'utf8')) as ClientExitReceipt;
+    expect(persisted).toMatchObject({ cleanup: { state: 'unknown' }, host: { state: 'accepted' } });
+    expect(persisted.cleanup.issues).toContain('Queued input cannot be withdrawn.');
+    expect(stop).toHaveBeenCalledOnce();
+    verifiedShutdown();
+    expect(await verifyExitReceipt(paths, persisted)).toMatchObject({ cleanup: { state: 'unknown' },
+      recovery: { state: 'ready', reason: 'host_shutdown_verified', nextAction: 'start_or_connect' } });
+  } finally { await rm(homeDir, { recursive: true, force: true }); }
+});
+
 it('allows a verified old Host to be replaced while preserving unknown client memory work', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-exit-convergence-'));
   try {
@@ -187,7 +213,7 @@ it('does not apply verified evidence to a different process generation written d
   } finally { await rm(homeDir, { recursive: true, force: true }); }
 });
 
-it('keeps a late Host resource-cleanup failure blocked instead of hiding it with earlier shutdown evidence', async () => {
+it('reports a late Host resource-cleanup failure instead of hiding it with earlier shutdown evidence', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-exit-late-failure-'));
   try {
     const receipt = oldReceipt();
@@ -199,7 +225,19 @@ it('keeps a late Host resource-cleanup failure blocked instead of hiding it with
         status: 'succeeded', completedAt: '2026-10-26T00:01:00.000Z' } };
     });
     expect(await verifyExitReceipt(resolveRuntimeDaemonPaths(homeDir), receipt)).toMatchObject({
-      host: { cleanup: 'failed' }, recovery: { state: 'blocked', reason: 'cleanup_failed', nextAction: 'inspect_failure' },
+      host: { cleanup: 'failed' }, recovery: { state: 'ready', reason: 'cleanup_failed', nextAction: 'start_or_connect' },
+    });
+  } finally { await rm(homeDir, { recursive: true, force: true }); }
+});
+
+it('does not let an inconsistent receipt block once its owner process is gone', async () => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-exit-inconsistent-'));
+  try {
+    const receipt = { ...oldReceipt(), runtimeId: 'other-host' };
+    await receiptFile(homeDir, receipt);
+    expect(await verifyExitReceipt(resolveRuntimeDaemonPaths(homeDir), receipt)).toMatchObject({
+      cleanup: { state: 'unknown' },
+      recovery: { state: 'ready', reason: 'owner_identity_mismatch', nextAction: 'start_or_connect' },
     });
   } finally { await rm(homeDir, { recursive: true, force: true }); }
 });

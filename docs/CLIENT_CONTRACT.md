@@ -108,7 +108,7 @@ Host owner 实际销毁视图服务时，先停止新的读取、刷新和监听
 
 筛选和排序先于 `limit`。`before` 仍按 `createdAt` 过滤。新不透明游标保存返回时的排序边界，锚点删除或活动更新后仍可继续；分页是实时列表，不提供跨页快照，新活动可能使记录移到已浏览边界之前，刷新第一页获取最新结果。SDK、Host 和裸 `kodax -r` 采用相同时间与排序语义；裸恢复列表保持只读，不启动 Host 来显示列表。
 
-完整客户端退出使用 `lifecycle.requestExit/readExit/listPendingExits`，断连后使用 `/client` 的 `readKodaXClientExits` 查询持久化回执。它结算本客户端工作，保护其他客户端，并分别报告请求接受、本客户端清理、精确 Host 退出与 unknown。恢复读提供独立 `recovery.state: ready/pending/blocked`、`reason`、`nextAction` 与 `checkedAt`；ready 只证明可以启动/连接，不把原 cleanup/执行 unknown 改成成功。Space 用 recovery 判断启动门禁；字段缺失时不能推断 ready。`listPendingExits` 排除已 ready 的历史，`readExit` 和离线查询继续保留它们。旧退出请求不能清理或停止替换 Host。累计用量、请求/工具执行事实及根/子上下文快照使用 `statistics.read/readRequests/readTools`；不由最新 activity 或 permissionMode 推断。独立 `agents.spawn/followup` 使用可信 Main authorizer 的 `agent_spawn/agent_followup` 接缝，新的 native turn 单独授权。持久化、断连、Host 重启和 adapter 可观察性边界详见 [Space 接缝](SPACE_SDK_SEAMS.md)。
+完整客户端退出使用 `lifecycle.requestExit/readExit/listPendingExits`，断连后使用 `/client` 的 `readKodaXClientExits` 查询持久化回执。它结算本客户端工作，保护其他客户端，并分别报告请求接受、本客户端清理、精确 Host 退出与 unknown。恢复读提供独立 `recovery.state: ready/pending/blocked`、`reason`、`nextAction` 与 `checkedAt`；ready 只证明可以启动/连接，不把原 cleanup/执行 unknown 改成成功；原 Host 进程退出后只等待仍存活的进程，其余缺口作为 ready 的 `reason` 保留。Space 用 recovery 判断启动门禁；字段缺失时不能推断 ready。`listPendingExits` 排除已 ready 的历史，`readExit` 和离线查询继续保留它们。旧退出请求不能清理或停止替换 Host。累计用量、请求/工具执行事实及根/子上下文快照使用 `statistics.read/readRequests/readTools`；不由最新 activity 或 permissionMode 推断。独立 `agents.spawn/followup` 使用可信 Main authorizer 的 `agent_spawn/agent_followup` 接缝，新的 native turn 单独授权。持久化、断连、Host 重启和 adapter 可观察性边界详见 [Space 接缝](SPACE_SDK_SEAMS.md)。
 
 ## 公开域与全部方法
 
@@ -173,6 +173,9 @@ extensions 还遵循已有配置来源优先级：integrations/extensions.json �
 `catalog.reloadExtensions()` 只重载已加载扩展的代码，不等于重读新增路径配置。
 Main 的可信 Runtime 连接可用 `(await runtime.daemon.inspect()).integrations?.domains`
 读取实际来源和诊断，再配合 Product 的 `catalog.extensions()` 确认已加载能力。
+只读集成健康时用 `runtime.daemon.integrations()`（`daemon.integrations.get`），它不跑
+daemon preflight，适合状态面板轮询；Host 以 `integrationConfigResilience.healthQuery`
+声明支持，旧 Host 上客户端抛 `daemon_upgrade_required`。
 `restart` 表示 SDK 承诺的重新装配边界；单个读取路径更早看到保存值，不证明整个
 执行进程已完成重配。locale 等消费端选项还需相应 UI/客户端重新读取或重启。
 
@@ -542,7 +545,7 @@ Space 的注册和调用前检查由 Space 单独接入。
 
 以 `failed` 结束且带 `failureDetail` 的 Run，会在会话视图追加并保存一条 `type: 'error'` 项：`sourceRunId` 为该 Run，`text` 等于 `failureDetail.safeMessage`，`afterInputId` 为该 Run 最后交付的输入，因此重开会话后失败仍位于对应输入之后。`cancelled`/`interrupted` 不追加。Provider 用尽恢复后，视图不再写入命令行版“输入 continue/stop”提示；SDK 不处理这两个指令，失败由上述错误项说明。客户端按 `sourceRunId` 是否为当前 Run 决定是否补充 `failureDetail` 详情。
 
-常见边界包括 conflict（意图或 revision 冲突）、not_found、permission_denied、unauthorized、version_incompatible/client_upgrade_required、resync_required/data_changed、runtime_changed、observation_invalidated 和读取超时/取消。不要将这些错误统一吞为“没有数据”或“已完成”。具体码以 [daemon protocol](../src/runtime-daemon/protocol.ts) 及执行域为准，当前协议码表不是纯产品 SDK 的穷尽错误类型。
+常见边界包括 conflict（意图或 revision 冲突）、not_found、permission_denied、unauthorized、version_incompatible/client_upgrade_required、resync_required/data_changed、runtime_changed、observation_invalidated 和读取超时/取消。不要将这些错误统一吞为“没有数据”或“已完成”。具体码以 [daemon protocol](../src/runtime-daemon/protocol.ts) 及执行域为准，当前协议码表不是纯产品 SDK 的穷尽错误类型。Runtime 自己命名的失败码经 daemon 转成客户端可处理的协议码，原码放在 data 里：冲突类在 `data.conflict`，其余在 `data.reason`。例如 Session 在后台修复 Actor 结算期间，`runs.start` 和 `inputs.submit` 报告 `conflict`，`data.conflict` 为 `actor_settlement_not_persisted` 或 `actor_settlement_retrying`，修复完成后重试即可；以前 daemon 报告的是 `internal_error`。
 
 普通产品消费者将错误视为 unknown，收窄后展示错误消息；不需要导入底层诊断错误类。低层 Node 宿主可从 `/runtime` 导入既有 `RuntimeDaemonCapabilityUpgradeError`：其 code 为 `daemon_capability_upgrade_required`，包含 capability、recoverable、restartRequired 和可选 preflight。例如构建或旧启动器问题可标为 runtimeBuild/launcherBuild；应展示具体原因，不据这些字符串构建 UI 业务能力矩阵。recoverable/restartRequired 不授权强停忙碌 Host，也不意味着可以自动重试所有操作。该类不从 `/client` 导出，不属于纯数据契约，也不覆盖全部连接/执行错误。
 

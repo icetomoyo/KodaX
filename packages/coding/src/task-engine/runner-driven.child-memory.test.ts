@@ -9,8 +9,8 @@ vi.mock('@kodax-ai/agent', async importOriginal => ({
 }));
 import { runManagedTaskViaRunner } from './runner-driven.js';
 
-it.each([{ currentAgentId: '/root/child' }, { parentAgentId: '/root' }])(
-  'does not probe a new root Memory identity for child context %j', async child => {
+it.each([{ currentAgentId: '/root/child' }, { parentAgentId: '/root' }, { hostMemory: 'off' as const }])(
+  'does not probe a new root Memory identity for context %j', async child => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-child-memory-'));
     remote.mockClear();
     try {

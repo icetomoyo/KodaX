@@ -25,6 +25,7 @@ import {
   type SkillResult,
 } from '@kodax-ai/agent';
 
+import { usesHostMemory } from './host-memory.js';
 import { resolveExecutionCwd } from './runtime-paths.js';
 import type { KodaXContextOptions, KodaXOptions } from './types.js';
 import { formatSkillsSystemPrompt } from '@kodax-ai/agent/capabilities/skills';
@@ -54,8 +55,7 @@ export async function prepareCodingLearnedSkillBinding(
   rootSessionId: string,
 ): Promise<CodingLearnedSkillBinding | undefined> {
   const pinnedRegistry = options.context?.skillRegistry;
-  if (options.context?.currentAgentId !== undefined
-    || options.context?.parentAgentId !== undefined
+  if (!usesHostMemory(options)
     || identity.configHome === undefined
     || identity.projectId === undefined) return undefined;
   if (pinnedRegistry?.list().some((skill) => skill.source === 'learned')) return undefined;

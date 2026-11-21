@@ -50,7 +50,10 @@ export async function verifyExitReceipt(paths: RuntimeDaemonPaths, receipt: Clie
   const current = readRuntimeDaemonLockOwner(paths.lockFile);
   const ownerActive = isRuntimeDaemonOwnerPidAlive(owner.pid, owner.processStartIdentity);
   const recovered = ownerActive ? receipt : afterOwnerLoss(receipt);
-  if (receipt.runtimeId !== owner.runtimeId) return withRecovery(recovered, 'blocked', 'owner_identity_mismatch', 'inspect_failure');
+  if (receipt.runtimeId !== owner.runtimeId) {
+    return ownerActive ? withRecovery(recovered, 'blocked', 'owner_identity_mismatch', 'inspect_failure')
+      : withRecovery(recovered, 'ready', 'owner_identity_mismatch', 'start_or_connect');
+  }
   if (ownerActive) {
     if (receipt.cleanup.state === 'failed' || receipt.host.cleanup === 'failed') {
       return withRecovery(recovered, 'blocked', 'cleanup_failed', 'inspect_failure');
@@ -77,11 +80,21 @@ export async function verifyExitReceipt(paths: RuntimeDaemonPaths, receipt: Clie
     return withRecovery(recovered, 'blocked', 'owner_identity_mismatch', 'inspect_failure');
   }
   const result = latest ? afterOwnerLoss(latest) : recovered;
-  if (result.cleanup.state === 'failed' || result.host.cleanup === 'failed') return withRecovery(result, 'blocked', 'cleanup_failed', 'inspect_failure');
+  // The original Host process is gone, so the evidence it left can no longer change.
+  // Only processes that still run are worth waiting for. Any other gap stays on the
+  // receipt as the reason and recovery is ready: the profile lock is what fences a new
+  // Host, and a permanent block here would only force the user to delete records.
+  if (verification.status === 'unverified'
+    && (verification.reason === 'daemon_active' || verification.reason === 'containment_active')) {
+    return withRecovery(result, 'blocked', verification.reason, 'retry_verification');
+  }
+  // Client work (Runs, queued input, actor turns) lived inside the Host process,
+  // so its cleanup failure is history, not a reason to wait.
+  if (result.host.cleanup === 'failed') return withRecovery(result, 'ready', 'cleanup_failed', 'start_or_connect');
   if (verification.status === 'succeeded' || verification.status === 'replacement_running') {
     if (!owner.processStartIdentity || (owner.processContainment === 'windows-job'
       && !owner.supervisorProcessStartIdentity)) {
-      return withRecovery(result, 'blocked', 'owner_identity_unverified', 'inspect_failure');
+      return withRecovery(result, 'ready', 'owner_identity_unverified', 'start_or_connect');
     }
     return withRecovery({ ...result, host: { ...result.host, state: 'succeeded', cleanup: 'succeeded',
       ...(verification.status === 'replacement_running' ? { replacementRunning: true } : {}) },
@@ -89,31 +102,33 @@ export async function verifyExitReceipt(paths: RuntimeDaemonPaths, receipt: Clie
   }
   if (verification.status === 'failed') return withRecovery({ ...result,
     host: { ...result.host, state: 'failed', cleanup: 'failed', message: verification.outcome.error } },
-    'blocked', 'cleanup_failed', 'inspect_failure');
+    'ready', 'cleanup_failed', 'start_or_connect');
   const reason = verification.status === 'unverified' ? verification.reason : 'outcome_missing';
   const crashed = { ...result, host: { ...result.host,
     state: receipt.host.requested ? 'unknown' as const : 'not_requested' as const, message: reason } };
-  if (reason === 'outcome_missing' && await canRecoverTerminatedWindowsHost(owner)) {
-    // This authorizes fenced Host recovery. It never certifies the original exit,
-    // its resource cleanup, or the outcome of an interrupted tool/Provider request.
-    return withRecovery(crashed, 'ready', 'host_generation_terminated', 'start_or_connect');
-  }
-  return withRecovery({ ...result, host: { ...result.host,
-    state: receipt.host.requested ? 'unknown' : 'not_requested',
-    message: reason } }, 'blocked', reason,
-    reason === 'containment_unavailable' || reason === 'outcome_missing' ? 'inspect_failure' : 'retry_verification');
+  const windowsHost = reason === 'outcome_missing' ? await terminatedWindowsHostState(owner) : 'unknown';
+  // A Job that still has members is a crash whose processes are still running; wait for them.
+  if (windowsHost === 'running') return withRecovery(crashed, 'blocked', 'containment_active', 'retry_verification');
+  // This never certifies the original exit, its resource cleanup, or the outcome of an
+  // interrupted tool/Provider request; it only names how much the crash left unproven.
+  return withRecovery(crashed, 'ready', windowsHost === 'terminated' ? 'host_generation_terminated' : reason,
+    'start_or_connect');
 }
 
-async function canRecoverTerminatedWindowsHost(owner: ClientExitReceipt['host']['owner']): Promise<boolean> {
+async function terminatedWindowsHostState(
+  owner: ClientExitReceipt['host']['owner'],
+): Promise<'terminated' | 'running' | 'unknown'> {
   if (process.platform !== 'win32' || owner.kind !== 'daemon' || !owner.processStartIdentity
     || owner.processContainment !== 'windows-job' || !owner.supervisorProcessStartIdentity
     || !Number.isSafeInteger(owner.supervisorPid) || owner.supervisorPid! <= 0
     || runtimeOwnerProcessState(owner) !== 'gone'
-    || runtimeOwnerProcessState({ pid: owner.supervisorPid!, processStartIdentity: owner.supervisorProcessStartIdentity }) !== 'gone') return false;
+    || runtimeOwnerProcessState({ pid: owner.supervisorPid!, processStartIdentity: owner.supervisorProcessStartIdentity }) !== 'gone') return 'unknown';
   const currentBoot = owner.windowsBootIdentity === undefined ? undefined : readWindowsSandboxBootIdentity();
   if (currentBoot !== undefined && /^windows-boot-\d+$/.test(currentBoot)
-    && /^windows-boot-\d+$/.test(owner.windowsBootIdentity!) && currentBoot !== owner.windowsBootIdentity) return true;
-  return owner.windowsJobName !== undefined && await readWindowsJobActiveProcessCount(owner.windowsJobName) === 0;
+    && /^windows-boot-\d+$/.test(owner.windowsBootIdentity!) && currentBoot !== owner.windowsBootIdentity) return 'terminated';
+  if (owner.windowsJobName === undefined) return 'unknown';
+  const active = await readWindowsJobActiveProcessCount(owner.windowsJobName);
+  return active === undefined ? 'unknown' : active === 0 ? 'terminated' : 'running';
 }
 
 function withRecovery(receipt: ClientExitReceipt, state: ClientExitRecovery['state'],
@@ -155,25 +170,35 @@ export function createRuntimeClientLifecycleController(input: {
     const owner = readRuntimeDaemonLockOwner(input.paths.lockFile);
     return receipt.runtimeId === runtimeId && owner !== undefined && sameExitOwner(owner, receipt.host.owner);
   };
+  const settleCleanup = async (current: ClientExitReceipt): Promise<ClientExitReceipt> => {
+    const cleanup = await cleanupClientWork(input.runtime, current.clientId);
+    await settleClientWork([...(admissions.get(current.clientId) ?? [])]);
+    const finalCleanup = await cleanupClientWork(input.runtime, current.clientId);
+    input.retireClientLeases(current.clientId);
+    const admissionUnsettled = (admissions.get(current.clientId)?.size ?? 0) > 0;
+    return { ...current, updatedAt: new Date().toISOString(), cleanup: {
+      ...finalCleanup, operationIds: [...new Set([...current.cleanup.operationIds, ...cleanup.operationIds, ...finalCleanup.operationIds])],
+      ...(admissionUnsettled ? { state: 'unknown', issues: [...finalCleanup.issues, 'Accepted client operations remain unconfirmed.'] } : {}),
+      actorTurns: [...new Map([...current.cleanup.actorTurns, ...cleanup.actorTurns, ...finalCleanup.actorTurns].map(turn => [turn.turnId, turn])).values()],
+      runIds: [...new Set([...current.cleanup.runIds, ...cleanup.runIds, ...finalCleanup.runIds])],
+      withdrawnInputs: [...current.cleanup.withdrawnInputs, ...cleanup.withdrawnInputs, ...finalCleanup.withdrawnInputs],
+    } };
+  };
   const drive = async (receipt: ClientExitReceipt): Promise<void> => {
     let current = receipt;
     try {
       // Recovery never applies an old owner's quit request to replacement work.
       if (!ownsReceipt(current)) return;
-      const cleanup = await cleanupClientWork(input.runtime, current.clientId);
-      await settleClientWork([...(admissions.get(current.clientId) ?? [])]);
-      const finalCleanup = await cleanupClientWork(input.runtime, current.clientId);
-      input.retireClientLeases(current.clientId);
-      const admissionUnsettled = (admissions.get(current.clientId)?.size ?? 0) > 0;
-      current = { ...current, updatedAt: new Date().toISOString(), cleanup: {
-        ...finalCleanup, operationIds: [...new Set([...current.cleanup.operationIds, ...cleanup.operationIds, ...finalCleanup.operationIds])],
-        ...(admissionUnsettled ? { state: 'unknown', issues: [...finalCleanup.issues, 'Accepted client operations remain unconfirmed.'] } : {}),
-        actorTurns: [...new Map([...current.cleanup.actorTurns, ...cleanup.actorTurns, ...finalCleanup.actorTurns].map(turn => [turn.turnId, turn])).values()],
-        runIds: [...new Set([...current.cleanup.runIds, ...cleanup.runIds, ...finalCleanup.runIds])],
-        withdrawnInputs: [...current.cleanup.withdrawnInputs, ...cleanup.withdrawnInputs, ...finalCleanup.withdrawnInputs],
-      } };
+      try { current = await settleCleanup(current); }
+      catch (error: unknown) {
+        // Unknown, not failed: the client work still ends with this Host, and a
+        // verified Host exit settles the receipt. A terminal failure would block
+        // every later start on a conclusion that can no longer change.
+        current = { ...current, updatedAt: new Date().toISOString(), cleanup: { ...current.cleanup, state: 'unknown',
+          issues: [...current.cleanup.issues, error instanceof Error ? error.message : String(error)] } };
+      }
       writeReceipt(input.paths, current);
-      if (current.host.requested && current.cleanup.state !== 'failed' && ownsReceipt(current)) {
+      if (current.host.requested && ownsReceipt(current)) {
         try {
           await input.management.stop({ principalId: current.clientId });
           current = { ...current, host: { ...current.host, state: 'accepted' } };
@@ -184,10 +209,8 @@ export function createRuntimeClientLifecycleController(input: {
         }
         writeReceipt(input.paths, current);
       }
-    } catch (error: unknown) {
-      writeReceipt(input.paths, { ...current, updatedAt: new Date().toISOString(), cleanup: {
-        ...current.cleanup, state: 'failed', issues: [...current.cleanup.issues, error instanceof Error ? error.message : String(error)],
-      } });
+    // A receipt write or owner read that fails here reaches emitLifecycleFailure;
+    // the receipt keeps its last durable state, which settles after Host exit.
     } finally { running.delete(JSON.stringify([receipt.clientId, receipt.requestId])); }
   };
   return {

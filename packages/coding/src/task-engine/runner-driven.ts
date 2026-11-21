@@ -82,6 +82,7 @@ import {
   runOwnedMemoryWork,
 } from '../memory-runtime.js';
 import { hostOwnsLearning, installProductionLearningReviewer } from '../learning-reviewer.js';
+import { usesHostMemory } from '../host-memory.js';
 import {
   buildToolMemoryObservations,
   codingMemorySourcePolicy,
@@ -766,9 +767,7 @@ async function startRunnerMemoryRuntime(
   sessionId: string,
   episodeId: string,
 ): Promise<StartedRunnerMemoryRuntime> {
-  if (options.context?.currentAgentId !== undefined
-    || options.context?.parentAgentId !== undefined
-    || isNoteMemoryEnabled()) {
+  if (!usesHostMemory(options) || isNoteMemoryEnabled()) {
     return { options: withoutMemoryIntentTool(options) };
   }
   const identity = options.context?.memoryIdentity
@@ -1142,7 +1141,7 @@ async function runManagedTaskViaRunnerInContext(
     },
     events: liveEvents,
   };
-  if (currentAgentId === undefined && parentAgentId === undefined) {
+  if (usesHostMemory(optionsWithLiveEvents)) {
     const memoryIdentity = optionsWithLiveEvents.context?.memoryIdentity
       ?? deriveCodingMemoryIdentity(optionsWithLiveEvents, resolveExecutionCwd(optionsWithLiveEvents.context), initialSessionId);
     await runOwnedMemoryWork(optionsWithLiveEvents, async () => {
@@ -1415,11 +1414,15 @@ async function runManagedTaskViaRunnerInner(
   //     with scout/contract payloads and Runner.run can enter at
   //     planner/generator instead of scout when prior roles are complete.
   let structuralResumeSeed: StructuralResumeSeed | undefined;
+  // The transcript keeps the user's exact words; a caller-prepared execution
+  // prompt reaches the model only through promptOverlay and Skill sections.
+  let transcriptPrompt = options.context?.rawUserInput?.trim() || prompt;
   if (options.events?.askUser) {
     const checkpoint = await handlePreRunCheckpoint(options);
     if (checkpoint) {
       const preamble = buildResumePreamble(checkpoint.resumeFrom);
       prompt = `${preamble}\n${prompt}`;
+      transcriptPrompt = `${preamble}\n${transcriptPrompt}`;
       structuralResumeSeed = buildStructuralResumeSeed(checkpoint.resumeFrom);
     }
   }
@@ -2189,7 +2192,7 @@ async function runManagedTaskViaRunnerInner(
   // stitching put this onto the user prompt head, which made the
   // routing notes look like user input to the LLM instead of platform
   // truth. The user prompt now carries only the actual user request.
-  const promptWithOverlay = prompt;
+  const promptWithOverlay = transcriptPrompt;
 
   // Session continuity: when the caller passes `options.session.initialMessages`
   // (REPL multi-turn, session resume, plan-mode replay), prepend them as the

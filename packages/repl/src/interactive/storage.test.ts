@@ -57,6 +57,42 @@ function actorStorageSnapshot(revision: number): AgentActorSnapshot {
   };
 }
 
+describe('readSessionFirstLine', () => {
+  it('starts with a small read and grows it only for a long first line', async () => {
+    const { readSessionFirstLine } = await import('./storage.js');
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'kodax-first-line-'));
+    try {
+      const shortPath = path.join(dir, 'short.jsonl');
+      const longPath = path.join(dir, 'long.jsonl');
+      // A 3-byte UTF-8 character lands on read boundaries in the long line.
+      const longLine = JSON.stringify({ _type: 'meta', title: '界'.repeat(40_000) });
+      await writeFile(shortPath, '{"_type":"meta","title":"short"}\n{"x":1}\n');
+      await writeFile(longPath, `${longLine}\n{"x":1}\n`);
+      const open = fsPromises.open;
+      const readSizes: number[] = [];
+      vi.spyOn(fsPromises, 'open').mockImplementation(async (...args: Parameters<typeof fsPromises.open>) => {
+        const handle = await open(...args);
+        const read = handle.read.bind(handle);
+        vi.spyOn(handle, 'read').mockImplementation(((buffer: Buffer, offset: number, length: number, position: number) => {
+          readSizes.push(length);
+          return read(buffer, offset, length, position);
+        }) as typeof handle.read);
+        return handle;
+      });
+
+      await expect(readSessionFirstLine(shortPath)).resolves.toBe('{"_type":"meta","title":"short"}');
+      expect(readSizes).toEqual([4096]);
+      readSizes.length = 0;
+      await expect(readSessionFirstLine(longPath)).resolves.toBe(longLine);
+      expect(readSizes.slice(0, 5)).toEqual([4096, 8192, 16384, 32768, 65536]);
+      expect(Math.max(...readSizes)).toBe(65536);
+    } finally {
+      vi.restoreAllMocks();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('FileSessionStorage', () => {
   let tempHome: string;
   let previousHome: string | undefined;

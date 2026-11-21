@@ -13649,6 +13649,22 @@ describe("createKodaXRuntime", () => {
     } finally { await first.close(); await stale.close(); }
   });
 
+  it('tells the caller which retired Run inputs it ignored', async () => {
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir: path.join(tempRoot, 'retired-inputs'), defaultProvider: 'mock-provider' });
+    try {
+      const session = await runtime.sessions.create({ title: 'Retired inputs' });
+      const done = () => Promise.resolve({ success: true, lastText: 'done', messages: [], sessionId: session.id });
+      codingMock.runManagedTask.mockImplementationOnce(done).mockImplementationOnce(done);
+      const retired = await runtime.runs.start({ sessionId: session.id, prompt: 'old caller', mode: 'coding', options: { agentMode: 'sa' } });
+      expect(retired.warnings).toEqual([expect.stringContaining("mode 'coding'"), expect.stringContaining("agentMode 'sa'")]);
+      await retired.result;
+      const current = await runtime.runs.start({ sessionId: session.id, prompt: 'new caller', options: { agentMode: 'ama' } });
+      expect(current.warnings).toBeUndefined();
+      await current.result;
+    } finally { await runtime.close(); }
+  });
+
   it('preserves a verified generation checkpoint when the Host closes normally', async () => {
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir: path.join(tempRoot, 'generation-close'), defaultProvider: 'mock-provider' });

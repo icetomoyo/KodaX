@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
-import { FileSessionStorage } from '../packages/repl/src/interactive/storage.js';
+import { FileSessionStorage, SessionReadError } from '../packages/repl/src/interactive/storage.js';
 import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 
 it('passes preflight cancellation into canonical Actor metadata reads', async () => {
@@ -67,6 +67,37 @@ it('checks an old active Actor beyond the first list page and outside the curren
     peek.mockRestore();
     await runtime.close();
     await fs.rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+it('waits out another process writing one Session instead of failing the preflight', async () => {
+  const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-preflight-busy-'));
+  const sessionsDir = path.join(homeDir, '.kodax', 'sessions');
+  await fs.mkdir(sessionsDir, { recursive: true });
+  for (const id of ['busy', 'gone']) {
+    await fs.writeFile(path.join(sessionsDir, `${id}.jsonl`), JSON.stringify({
+      _type: 'meta', id, title: id, gitRoot: homeDir, createdAt: '2026-11-21T00:00:00.000Z', activeMessageCount: 0,
+      actorSnapshot: { schemaVersion: 1, revision: 1, maxConcurrentThreads: 4,
+        actors: [{ path: '/root/worker', currentTurnId: `${id}-turn`, kind: 'native' }], turns: [], mailboxes: {}, events: [] },
+    }) + '\n');
+  }
+  const runtime = await createKodaXRuntime({ homeDir });
+  const original = FileSessionStorage.prototype.readActorMetadata;
+  let busyReads = 0;
+  const metadata = vi.spyOn(FileSessionStorage.prototype, 'readActorMetadata').mockImplementation(async function (this: FileSessionStorage, id, options) {
+    if (id === 'gone') return undefined;
+    if (id === 'busy' && (busyReads += 1) <= 2) throw new SessionReadError('data_changed', 'writer active', 'writer_active');
+    return original.call(this, id, options);
+  });
+  try {
+    await expect(runtime.status.preflight()).resolves.toMatchObject({
+      canStop: false, activeAgentTurns: [{ sessionId: 'busy', actorPath: '/root/worker', turnId: 'busy-turn' }],
+    });
+    expect(busyReads).toBe(3);
+  } finally {
+    metadata.mockRestore();
+    await runtime.close();
+    await fs.rm(homeDir, { recursive: true, force: true });
   }
 });
 

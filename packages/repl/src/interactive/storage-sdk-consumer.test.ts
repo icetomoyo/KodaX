@@ -17,8 +17,10 @@
 
 import os from 'node:os';
 import path from 'node:path';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { setKodaXDiagnosticSink } from '@kodax-ai/agent';
 import { FileSessionStorage } from './storage.js';
 
 let tempRoot: string;
@@ -600,6 +602,33 @@ describe('v0.7.46 SDK-consumer footgun regression', () => {
         } else {
           process.env.KODAX_DIAGNOSTICS_STDERR = originalDiagnosticsStderr;
         }
+      }
+    });
+
+    it('reports the same malformed records of a session once per process (Issue 425)', async () => {
+      const messages: string[] = [];
+      const restore = setKodaXDiagnosticSink((diagnostic) => {
+        if (diagnostic.source === 'repl:session-storage') messages.push(diagnostic.message);
+      });
+      try {
+        const file = path.join(sessionsDir, 'polled-malformed.jsonl');
+        const session = (badLines: string): string => JSON.stringify({ _type: 'meta', title: 'polled', gitRoot: tempRoot,
+          createdAt: '2026-07-09T00:00:00.000Z' }) + '\n' + badLines + JSON.stringify({ role: 'user', content: 'hi' }) + '\n';
+        await writeFile(file, session('{not-json}\n'), 'utf-8');
+        for (let read = 0; read < 3; read += 1) {
+          await new FileSessionStorage({ sessionsDir, cwd: tempRoot }).load('polled-malformed');
+        }
+        expect(messages).toEqual(['Skipped 1 malformed session record(s) from polled-malformed.jsonl.']);
+        // The first load moved the flat file into its project directory.
+        const projects = (await readdir(sessionsDir, { withFileTypes: true })).filter((entry) => entry.isDirectory());
+        const moved = projects.map((entry) => path.join(sessionsDir, entry.name, 'polled-malformed.jsonl')).find(existsSync);
+        expect(moved).toBeDefined();
+        await writeFile(moved!, session('{not-json}\n{also-not-json}\n'), 'utf-8');
+        await new FileSessionStorage({ sessionsDir, cwd: tempRoot }).load('polled-malformed');
+        expect(messages).toHaveLength(2);
+        expect(messages[1]).toBe('Skipped 2 malformed session record(s) from polled-malformed.jsonl.');
+      } finally {
+        restore();
       }
     });
   });

@@ -20,6 +20,7 @@ export type RuntimeDaemonMethod =
   | 'daemon.logs'
   | 'daemon.preflight'
   | 'daemon.management.get'
+  | 'daemon.integrations.get'
   | 'session.create'
   | 'session.promote'
   | 'session.load'
@@ -397,6 +398,7 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'daemon.logs',
   'daemon.preflight',
   'daemon.management.get',
+  'daemon.integrations.get',
   'session.create',
   'session.promote',
   'session.load',

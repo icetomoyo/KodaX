@@ -5,8 +5,8 @@
 > daemons are retired. Internal Runtime and independent libraries remain. See
 > [migration and ownership limits](SDK_MIGRATION.md#统一-host-sdk-收口未发布).
 
-Last updated: 2026-11-16. Current development tree: FEATURE_298/299/301/302/303/304/305/306 on package
-`0.7.97-beta.11`; `v0.7.96` is the last stable release.
+Last updated: 2026-11-21. Current development tree: FEATURE_298/299/301/302/303/304/305/306 on package
+`0.7.97-beta.13`; `v0.7.96` is the last stable release.
 
 The [Client contract](CLIENT_CONTRACT.md) and [SDK migration guide](SDK_MIGRATION.md)
 define current product integration. Version-labelled release context below does
@@ -77,6 +77,20 @@ durable fence. Unclaimed Actors use the strict metadata projection. The Actor
 section is replaced by its existing CAS writer and cannot be
 changed by append-only `meta_update` records.
 
+Display-history checkpoints taken while a Session has an active Run append
+one `meta_update` with `uiHistorySkip`, `uiHistoryKeep` and `uiHistoryTail`.
+A reader keeps `uiHistoryKeep` items of the history folded so far, starting at
+`uiHistorySkip`, then adds the normalized tail. Item IDs and `outputId`s pass
+through unchanged, so restore and draft marking behave as after a full save.
+The record also repeats the effective title, `activeMessageCount`,
+`lastMessageAt` and scope, because discovery reads only the last line. The
+append happens only while the main file still has the identity this process
+last wrote and fewer than 1MB of deltas are pending; otherwise the Session is
+rewritten. The checkpoint after the last Run ends, and every full save,
+rewrites the file with the folded history, so Sessions at rest carry no
+deltas. Older readers ignore the new fields and see the history of the last
+full save. The 150-item cap is unchanged.
+
 Full Session saves and prepared tail appends maintain `lastMessageAt`; tail
 metadata and source-verified resume index v8 carry the same fact. Message
 provenance preserves time across compaction copies and forks. The shared
@@ -118,7 +132,7 @@ reference and does not duplicate every type. It should answer three questions:
 
 ## 2. Published Package And Build Entries
 
-The development package version is `@kodax-ai/kodax@0.7.97-beta.11`, which includes the v2
+The development package version is `@kodax-ai/kodax@0.7.97-beta.13`, which includes the v2
 scoped Provider credential broker (ADR-068) and bounded daemon client
 inventory on top of the v0.7.96-alpha.1 feature set and the v0.7.96-alpha.2
 Windows boot-identity hotfix. The v0.7.96-alpha.1

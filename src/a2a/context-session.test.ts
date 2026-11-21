@@ -20,6 +20,7 @@ class RecordingProvider extends KodaXBaseProvider {
   protected readonly config: KodaXProviderConfig = {
     apiKeyEnv: 'KODAX_A2A_CONTEXT_TEST_KEY', model: 'test', supportsThinking: false,
   };
+  // A2A Runs queue no Host learning review (Issue 423), so every call is a conversation turn.
   async stream(messages: KodaXMessage[]): Promise<KodaXStreamResult> {
     seen.push(messages.map((message) => JSON.stringify(message.content)));
     if (seen.length === 1) await firstCallGate;

@@ -6,6 +6,151 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-beta.13] - 2026-11-21
+
+Thirteenth beta of the v0.7.97 line: the Space integration repairs
+and Session-read cost fixes (Issues 424-430). A client exit whose
+cleanup failed no longer blocks every later start once the old Host
+has exited; recovery returns the surviving gap as the reason of a
+`ready`/`start_or_connect` result and only `host_shutdown_verified`
+proves the old exit (Issue 424). A managed Run started with a prepared
+prompt saves and sends the user's exact words instead of the prepared
+text, without the duplicated copy in `runManagedTask` results
+(Issue 426). `runs.start` reports retired inputs (`mode: 'coding'`,
+`agentMode: 'sa'`) as `warnings` on the Run handle (Issue 427), the
+daemon maps Runtime failure codes to protocol codes with the original
+code in `data.conflict`/`data.reason` instead of `internal_error`
+(Issue 428), and integration health reads without the preflight
+through `runtime.daemon.integrations()` / `daemon.integrations.get`
+(`integrationConfigResilience.healthQuery`, Issue 429). The daemon
+preflight reuses cached Session-list and Actor metadata while their
+files are unchanged and retries busy Sessions, so its cost no longer
+grows with every Session ever kept (Issue 430, about 4.5s to about
+40ms on 3230 Sessions). Session first-line reads start at 4KB,
+conversation pages read each inline record once (Issue 429), a
+Session's malformed-record warning logs once per count per process
+(Issue 425), and display-history checkpoints append a bounded delta
+during a Run instead of rewriting the whole Session every 500ms.
+FEATURE_312/313 register the SDK v2 contract decisions. Every
+v0.7.96 stable and v0.7.97-alpha.1 through beta.12 client contract
+is retained. npm publication remains a manual maintainer action.
+
+### Added
+
+- `runs.start` returns `warnings` on the Run handle when it accepted an input
+  that no longer does anything: `mode: 'coding'` and `options.agentMode: 'sa'`.
+  The field is absent otherwise, and works over the daemon client too
+  (Issue 427).
+- `runtime.daemon.integrations()` returns integration health
+  (`{ state, domains }`) without running the daemon preflight, so a status
+  panel can poll it cheaply. Wire method `daemon.integrations.get`; the Host
+  advertises it as `integrationConfigResilience.healthQuery`, and an older
+  Host makes the client throw `daemon_upgrade_required` (Issue 429).
+
+### Fixed
+
+- Reading a Session's first line starts with 4KB instead of 64KB and grows
+  only for long lines, and a conversation page reads each inline record with
+  one read instead of two (Issue 429).
+- The daemon preflight reuses each Session's Actor metadata and the Session
+  list while their files and directories are unchanged. On about 3000
+  Sessions, preflight with no Run dropped from about 4.5s to about 40ms after
+  the first call. A Session busy with another process's write is retried
+  briefly instead of failing the preflight, and a Session removed during the
+  scan is skipped (Issue 430).
+- `readActorMetadata()` returns a deeply frozen object that may be shared
+  between calls. Copy it before changing it (Issue 430).
+- While a Run is active, display-history checkpoints append a small delta to
+  the Session file instead of rewriting the whole Session every 500ms. The
+  checkpoint after the Run ends rewrites the file, so Sessions at rest look as
+  before. A version older than this one that opens a Session mid-Run shows the
+  display history from the last full save.
+- A managed Run started with a prepared prompt and `context.rawUserInput`
+  sends and saves the user's exact words, as the direct engine did. It used
+  to save the prepared prompt, so expanded Skill or context text appeared as
+  the user's message, and `runManagedTask` appended a second copy to
+  `result.messages`. Since beta.12 this affected every root Run, including
+  `startKodaX` (Issue 426).
+- Over the daemon client, a Session that is healing an Actor settlement
+  rejects `runs.start` and `acceptInput` with `conflict` and
+  `data.conflict: 'actor_settlement_not_persisted'` (or `_retrying`). It used
+  to report `internal_error` with the Host's English message, so a client
+  could not tell the Session was recovering. Actor, owner and archived-Session
+  failures are mapped the same way, with `not_found` and `invalid_params`
+  where they fit (Issue 428).
+
+- A client exit whose cleanup failed no longer blocks every later start after
+  the Host has stopped. Once the exact Host exit is verified,
+  `readKodaXClientExits`, `readExit` and `listPendingExits` return `ready`, and
+  the cleanup failure stays in the receipt as evidence. After the Host process
+  is gone, recovery waits only for processes that still run. A failed Host
+  resource cleanup, a missing or failed shutdown outcome, a missing process
+  identity or an inconsistent receipt now reads `ready` with that gap as the
+  `reason`; only `host_shutdown_verified` proves the old exit. A cleanup
+  failure while the original Host runs still blocks. A cleanup exception is now recorded as
+  `cleanup.state: 'unknown'` rather than `failed`, and an exit with
+  `shutdownHost: true` still asks the Host to stop (Issue 424).
+- A Session with malformed records logs its warning once per process. Each
+  read used to log it again, so a client polling Session views could grow
+  `daemon.log` without limit on Hosts older than v0.7.97-beta.5, which added
+  rotation (Issue 425).
+
+---
+
+## [0.7.97-beta.12] - 2026-11-20
+
+Twelfth beta of the v0.7.97 line: one prompt chain for every root Run
+and a final outcome for every Stop. Every root Run — `runKodaX`,
+`startKodaX`, `KodaXClient`, the Runner preset and `runs.start` — now
+uses the managed Worker and the same tool text as Space and the REPL,
+which also retires SA mode, lets applications shape the managed prompt
+through `context.prompt`, and cuts first-request input by about
+28-34% (FEATURE_311, FEATURE_310). SDK capability
+`actorSettlementConvergence` is now `3`: every Stop settles, a fenced
+Session heals in the background without a Host restart, and a Run asked
+to stop no longer keeps the Host from stopping (Issues 412-414); a
+failed Run reports its real cause in `failure.detail` (ADR-078).
+Provider requests carry `X-Session-Id`, new session ids are UUIDv7,
+Host `create` and `fork` reject unsafe session ids, and A2A Tasks
+continue one Runtime Session per context without reading or writing
+the Host owner's memory (Issues 416-418, 423, ADR-077). Constructed
+artifacts load only with a machine-local approval, and a directory
+alias no longer exposes the trusted project Exec Policy (Issues 419,
+422). Every v0.7.96 stable and v0.7.97-alpha.1 through beta.11 client
+contract is retained. npm publication remains a manual maintainer
+action.
+
+### Breaking
+
+This section was added after release; the entries below under Changed hold
+the details. The client protocol is unchanged, but these library exports and
+inputs changed:
+
+- `SYSTEM_PROMPT`, `buildSystemPrompt` and `buildSystemPromptSnapshot` are
+  removed from `@kodax-ai/coding`, together with the prompt registry slots
+  `base`, `runtime-context` and `base-suffix`. They built the retired direct
+  engine's prompt, which no Run uses any more. Replacements:
+  - to read the shared runtime sections a Run gets (git context, project
+    rules, memory, caller overlay), call
+    `buildCapabilityContextSections(options, isNewSession)` and render them
+    with `renderPromptSections(sections)`, or with
+    `buildPromptSnapshot(sections, metadata)` for a hashed snapshot;
+  - to shape the prompt, use `context.prompt` (`kodaxGuidance`, `context`
+    entries) or `agentProfile` for the persona; `systemPromptOverride`
+    replaces only the KodaX identity and guidance.
+- Every root Run uses the managed Worker. `runs.start({ mode: 'coding' })`
+  and `agentMode: 'sa'` are accepted and ignored. Starting with the next
+  release the Run handle lists them in `warnings`.
+- Under `runManagedTask`, `context.systemPromptOverride` no longer replaces
+  the whole prompt; KodaX still appends its runtime sections.
+- A root Run carries the Run Context envelope and, under `agentMode: 'ama'`,
+  the Actor and Workflow tools. Use `excludeTools` or a tool policy to drop
+  them.
+- An enforced Skill that cannot be found reports `skill_not_found` instead
+  of `skill_not_registered`.
+
 ### Added
 
 - Provider HTTP requests send `X-Session-Id` with the root session id, so a
@@ -25,10 +170,25 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- A2A tasks no longer use the Host owner's memory. Their Runs get no memory
+  hints, cannot record memory, and queue no learning review, so a remote
+  caller can neither read the owner's memory nor plant claims in it. SDK Runs
+  can opt out the same way with `context.hostMemory: 'off'` (Issue 423).
+
 - When a Host trusts a project's `.kodax/exec-policy.jsonc` and the workspace
   path goes through a directory alias (a junction or symlink, or macOS
   `/var`), text tools can no longer rewrite that policy. A trusted root now
   also matches its project through such an alias (Issue 422).
+
+- A cloned repository can no longer run its constructed tool code just by
+  shipping an active manifest. Activation — the policy dialog or the
+  self-modify dialog — now records a machine-local approval in
+  `<config home>/runtime/construction-approvals.json`, and rehydrate loads
+  an artifact only when its project root, kind, name, version and content
+  hash all match an entry. Everything else is skipped with a warning and
+  counted as `unapproved` in the REPL banner; activate it again to use it.
+  Artifacts activated before this fix need one more activation after
+  upgrading (Issue 419).
 
 - One-shot CLI Runs no longer print
   `[KodaX] recovering undefined/undefined (undefined, undefined)`. The

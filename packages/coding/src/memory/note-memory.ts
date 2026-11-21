@@ -28,6 +28,7 @@ import {
 } from '@kodax-ai/agent';
 import type { KodaXEphemeralSuffix, KodaXToolResultBlock } from '@kodax-ai/llm';
 
+import { usesHostMemory } from '../host-memory.js';
 import { resolveExecutionCwd } from '../runtime-paths.js';
 import { deriveCodingMemoryIdentity, isLocalMemoryIdentity } from '../memory-runtime.js';
 import { staticText } from '../prompts/static-text.js';
@@ -44,12 +45,11 @@ export function isNoteMemoryEnabled(env: NodeJS.ProcessEnv = process.env): boole
 /**
  * The note memory belongs to the top-level run: it reads the index, holds the
  * `memory` tool and gets the follow-up. A child agent's notes would duplicate
- * its parent's, and its messages are the parent's work anyway.
+ * its parent's, and its messages are the parent's work anyway. A Run marked
+ * `hostMemory: 'off'` (an A2A Run) neither reads nor writes the owner's notes.
  */
 export function noteMemoryAppliesTo(options: KodaXOptions): boolean {
-  return isNoteMemoryEnabled()
-    && options.context?.currentAgentId === undefined
-    && options.context?.parentAgentId === undefined;
+  return isNoteMemoryEnabled() && usesHostMemory(options);
 }
 
 interface LegacySource {

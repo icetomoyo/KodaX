@@ -48,6 +48,7 @@ let runtime: Awaited<ReturnType<typeof createKodaXRuntime>>;
 let host: Awaited<ReturnType<typeof startRuntimeDaemonHost>>;
 let first: Awaited<ReturnType<typeof connectKodaXClient>>;
 let second: Awaited<ReturnType<typeof connectKodaXClient>>;
+let endpointPath: string;
 
 beforeEach(async () => {
   homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-steer-'));
@@ -74,6 +75,7 @@ beforeEach(async () => {
     ? { kind: 'pipe' as const, path: `\\\\.\\pipe\\kodax-steer-${randomUUID()}` }
     : { kind: 'unix' as const, path: path.join(homeDir, 'host.sock') };
   host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
+  endpointPath = endpoint.path;
   first = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
   second = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
   // Declare the fixture's media route; execution still uses the offline runtime provider.
@@ -292,4 +294,24 @@ it('continues the redirect follow-up when cancellation actually interrupts the o
   const consumed = await first.inputs.read(session.id, 'redirect-honored');
   expect(consumed).toMatchObject({ state: 'submitted' });
   await runtime.runs.await(consumed!.runId!);
+});
+
+it('exits a client whose steer input is still queued without a failed cleanup (Issue 424)', async () => {
+  const leaving = await connectKodaXClient({ homeDir, endpoint: endpointPath,
+    clientInfo: { name: 'Space', instanceId: 'space-steer-exit', instanceSecret: 's'.repeat(32) } });
+  try {
+    const session = await leaving.sessions.create({ projectPath: homeDir });
+    await runtime.sessions.updateSettings(session.id, { agentMode: 'ama', permissionMode: 'full-access' });
+    const active = await leaving.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
+    await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(1);
+    await leaving.inputs.submit({ sessionId: session.id, inputId: 'queued-steer', text: 'Guidance sent before quitting.',
+      delivery: 'steer', targetRunId: active.runId! });
+    await leaving.lifecycle.requestExit({ requestId: 'quit-while-steering', shutdownHost: true });
+    interruptFirstRequest();
+    await expect.poll(async () => (await leaving.lifecycle.readExit('quit-while-steering'))?.cleanup.state,
+      { timeout: 15_000 }).not.toBe('pending');
+    const receipt = await leaving.lifecycle.readExit('quit-while-steering');
+    expect(receipt?.cleanup.state).not.toBe('failed');
+    expect(receipt?.cleanup.runIds).toContain(active.runId);
+  } finally { await leaving.disconnect(); }
 });

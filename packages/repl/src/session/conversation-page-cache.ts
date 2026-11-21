@@ -627,7 +627,34 @@ async function readDescriptor(
   data: Awaited<ReturnType<typeof fs.open>>,
   record: ConversationCacheIndexRecord,
 ): Promise<ConversationCacheDescriptor> {
-  const encoded = await readFully(data, record.descriptorOffset, record.descriptorLength);
+  return decodeDescriptor(await readFully(data, record.descriptorOffset, record.descriptorLength));
+}
+
+/**
+ * Reads a record's descriptor, plus its entry when `withEntry` is set. The
+ * writer places each descriptor right after its entry, so both usually come
+ * back from one read.
+ */
+async function readRecord(
+  data: Awaited<ReturnType<typeof fs.open>>,
+  record: ConversationCacheIndexRecord,
+  withEntry: boolean,
+): Promise<{ readonly descriptor: ConversationCacheDescriptor; readonly entry?: Buffer }> {
+  if (!withEntry) return { descriptor: await readDescriptor(data, record) };
+  if (record.descriptorOffset !== record.entryOffset + record.entryLength) {
+    return {
+      descriptor: await readDescriptor(data, record),
+      entry: await readFully(data, record.entryOffset, record.entryLength),
+    };
+  }
+  const bytes = await readFully(data, record.entryOffset, record.entryLength + record.descriptorLength);
+  return {
+    descriptor: decodeDescriptor(bytes.subarray(record.entryLength)),
+    entry: bytes.subarray(0, record.entryLength),
+  };
+}
+
+function decodeDescriptor(encoded: Buffer): ConversationCacheDescriptor {
   try {
     return parseDescriptor(JSON.parse(encoded.toString('utf8')));
   } catch (error: unknown) {
@@ -807,10 +834,11 @@ async function readConversationPageCacheInternal(
       const indexValue = start + relative;
       const record = decodeIndexRecord(encodedIndex, relative * INDEX_RECORD_BYTES);
       assertIndexRecordBounds(record, manifest.dataBytes, manifest.chunkBytes);
-      const descriptor = await readDescriptor(data, record);
-      const entry = record.entryLength <= input.maxInlineEntryBytes
-        ? await readFully(data, record.entryOffset, record.entryLength)
-        : undefined;
+      const { descriptor, entry } = await readRecord(
+        data,
+        record,
+        record.entryLength <= input.maxInlineEntryBytes,
+      );
       if (entry !== undefined) assertEntryIntegrity(entry, descriptor, manifest.chunkBytes);
       const item: ConversationPageCacheEntry = {
         index: indexValue,

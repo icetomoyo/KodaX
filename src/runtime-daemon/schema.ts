@@ -138,6 +138,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
       integrations: integrationHealthSchema(),
     }, ['runtimeId', 'revision', 'ownerPolicy', 'owner', 'preflight']),
   },
+  'daemon.integrations.get': { params: noParamsSchema, result: integrationHealthSchema() },
 
   'session.create': { params: createSessionParamsSchema(), result: sessionSchema() },
   'session.promote': {
@@ -1058,6 +1059,7 @@ function runStartedSchema(): RuntimeDaemonJsonSchema {
     runId: stringSchema,
     sessionId: stringSchema,
     turnId: stringSchema,
+    warnings: arraySchema(stringSchema),
   }, ['runId', 'sessionId'], true);
 }
 

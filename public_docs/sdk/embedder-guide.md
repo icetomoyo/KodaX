@@ -1,10 +1,18 @@
 # KodaX SDK — Product Client and Host Integration
 
 This page describes the current FEATURE_298/299/301/303/304/305/306 development tree, checked against
-package version `0.7.97-beta.11`. The version alone does not claim that all current
+package version `0.7.97-beta.13`. The version alone does not claim that all current
 working-tree changes are already published to npm. Check the installed
 package exports and the connected Host's capabilities when migrating.
-The beta.11 readable-history-during-a-Run changes and the beta.10 merged-input
+The beta.13 Space integration repairs — retired-input `warnings` on
+`runs.start`, Runtime error codes on the daemon wire, preflight-free
+integration health and the client-exit recovery reasons — are covered in the
+[client contract view-item table](../../docs/CLIENT_CONTRACT.md) and
+[Space SDK seams](../../docs/SPACE_SDK_SEAMS.md);
+the beta.12 unified prompt chain, final Stop outcomes and prompt-spec changes
+are covered in [One prompt chain for every root Run](#one-prompt-chain-for-every-root-run-unreleased)
+and [Actor settlement convergence v3](#actor-settlement-convergence-v3-unreleased-after-v0797-beta11);
+the beta.11 readable-history-during-a-Run changes and the beta.10 merged-input
 acknowledgement (`ClientViewItem.inputIds`) are covered in the
 [client contract view-item table](../../docs/CLIENT_CONTRACT.md); the
 beta.9 data root resolver and copy (`resolveKodaXHome`, `copyKodaXDataRoot`) are described in
@@ -143,7 +151,9 @@ Public signatures do not change.
   envelope and, under `agentMode: 'ama'`, the Actor and Workflow tools. Use
   `excludeTools` or a tool policy if you don't want them.
 - `runs.start({ mode: 'coding' })` and daemon `run.start` with `mode: 'coding'`
-  are accepted and ignored, with a `runtime.runs.start` warning diagnostic. New
+  are accepted and ignored, with a `runtime.runs.start` warning diagnostic; so is
+  `agentMode: 'sa'`. The Run handle also lists each ignored
+  input in `warnings` (unreleased), including over the daemon client. New
   Runs report `Run.mode: 'managed_task'`. Stored `coding` Runs stay readable and
   resume on the managed Worker.
 - A root without `agentMode` gets the Worker's short sections (execution
@@ -352,7 +362,12 @@ Client exit recovery reads (`lifecycle.readExit` and offline
 `cleanup.state`: `ready`, `pending`, or `blocked`, with `reason`, `nextAction`
 and `checkedAt`. An exact old Host/process/Windows Job shutdown plus matching
 successful cleanup evidence can permit `ready` while old memory/execution work
-remains `unknown`. No retry count promotes unknown work to success, and original
+remains `unknown`. Once the original Host process is gone, recovery waits only
+for processes that still run (`daemon_active`, `containment_active`). Every other
+gap (`cleanup_failed`, `outcome_missing`, `containment_unavailable`,
+`owner_identity_unverified`, `owner_identity_mismatch`) is returned as the
+`reason` of a `ready` result, so a stale record never blocks a start. Only
+`host_shutdown_verified` proves the old exit. No retry count promotes unknown work to success, and original
 receipts are not rewritten or deleted by recovery reads. Space should gate on
 `recovery.state === 'ready'`; missing recovery is not readiness. The next action
 is `start_or_connect`, `retry_exit`, `retry_verification`, or `inspect_failure`.
@@ -6262,6 +6277,12 @@ credentials. Consume it additively: when `clients` is absent, continue using
 `clientCount`. Do not require `daemonClientInventory:1` during a compatibility
 rollout unless the product cannot operate without it.
 
+To poll only integration health (MCP and extensions), call
+`runtime.daemon.integrations()`. It returns `{ state, domains }` without running
+the preflight. The Host advertises it as
+`integrationConfigResilience.healthQuery`; an older Host makes the client throw
+`daemon_upgrade_required`.
+
 Preflight is useful for UI, but it is not a stop authorization token. Use
 `runtime.daemon.inspect()` to obtain one consistent management revision,
 verified owner fence, owner-policy revision, and preflight projection, then
@@ -6450,7 +6471,7 @@ The v0.7.x public declarations retain the following migration aliases:
 |---|---|---|
 | `agentMode: 'amaw'` | `'ama'` | accepted as deprecated input and normalized to AMA; no separate AMAW runtime is restored |
 | `agentMode: 'sa'` | `'ama'` | accepted as deprecated input; Product inputs, session settings and `runManagedTask` run AMA; `runKodaX` and a `runs.start` without `mode` treat it as unset and run the managed Worker without `agentMode`; stored Run records keep their recorded value |
-| `runs.start({ mode: 'coding' })` | omit `mode` | accepted and ignored with a warning diagnostic; every new Run is `managed_task`; stored `coding` Runs stay readable and resume on the managed Worker |
+| `runs.start({ mode: 'coding' })` | omit `mode` | accepted and ignored; the Run handle lists it in `warnings`; every new Run is `managed_task`; stored `coding` Runs stay readable and resume on the managed Worker |
 | `SYSTEM_PROMPT`, `buildSystemPrompt`, `buildSystemPromptSnapshot` | none | removed with the direct engine; use `systemPromptOverride` or `agentProfile.instructions` |
 | `SkillSource` | `ResolvedSkillSource` | formal source union remains `project \| user \| plugin \| builtin`; only resolved discovery output adds `learned` |
 | `RuntimeDaemonPreflight.activeAgentTasks` | `activeAgentTurns` | both required fields are returned and reference the same array throughout the 0.7.x line |

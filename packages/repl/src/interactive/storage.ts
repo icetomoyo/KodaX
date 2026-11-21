@@ -201,6 +201,13 @@ interface PersistedMetaUpdateLine {
   activeEntryId?: string | null;
   activeMessageCount?: number;
   uiHistory?: unknown[];
+  /**
+   * Display-history delta written during a Run: keep `uiHistoryKeep` items
+   * of the current history starting at `uiHistorySkip`, then add the tail.
+   */
+  uiHistorySkip?: number;
+  uiHistoryKeep?: number;
+  uiHistoryTail?: unknown[];
   scope?: string;
   lineageIdentityFilterHash?: string;
   lastMessageAt?: string;
@@ -567,11 +574,47 @@ function isPersistedMetaUpdateLine(value: unknown): value is PersistedMetaUpdate
     && (value.activeEntryId === undefined || typeof value.activeEntryId === 'string' || value.activeEntryId === null)
     && (value.activeMessageCount === undefined || typeof value.activeMessageCount === 'number')
     && (value.uiHistory === undefined || Array.isArray(value.uiHistory))
+    && hasValidUiHistoryDelta(value)
     && (value.scope === undefined || typeof value.scope === 'string')
     && (value.lastMessageAt === undefined || validSessionTimestamp(value.lastMessageAt) !== undefined)
     && (value.lineageIdentityFilterHash === undefined
       || (typeof value.lineageIdentityFilterHash === 'string'
         && /^[a-f0-9]{64}$/.test(value.lineageIdentityFilterHash)));
+}
+
+function hasValidUiHistoryDelta(value: Record<string, unknown>): boolean {
+  const isCount = (count: unknown): boolean => Number.isSafeInteger(count) && (count as number) >= 0;
+  return value.uiHistoryTail === undefined
+    ? value.uiHistorySkip === undefined && value.uiHistoryKeep === undefined
+    : Array.isArray(value.uiHistoryTail) && isCount(value.uiHistorySkip) && isCount(value.uiHistoryKeep);
+}
+
+/** Apply one appended display-history delta to the history folded so far. */
+function foldUiHistoryDelta(
+  previous: readonly KodaXSessionUiHistoryItem[] | undefined,
+  line: PersistedMetaUpdateLine,
+): KodaXSessionUiHistoryItem[] | undefined {
+  const skip = line.uiHistorySkip ?? 0;
+  const kept = (previous ?? []).slice(skip, skip + (line.uiHistoryKeep ?? 0));
+  const folded = [...kept, ...(normalizeKodaXSessionUiHistory(line.uiHistoryTail) ?? [])];
+  return folded.length > 0 ? folded : undefined;
+}
+
+/**
+ * Describe `next` as a run of `previous` items followed by new items. Items
+ * match by their serialized form, so any match is safe to reuse.
+ */
+function uiHistoryDelta(
+  previous: readonly KodaXSessionUiHistoryItem[],
+  next: readonly KodaXSessionUiHistoryItem[],
+): { skip: number; keep: number; tail: KodaXSessionUiHistoryItem[] } {
+  const before = previous.map(item => JSON.stringify(item));
+  const after = next.map(item => JSON.stringify(item));
+  const skip = after.length === 0 ? -1 : before.indexOf(after[0]!);
+  if (skip < 0) return { skip: 0, keep: 0, tail: [...next] };
+  let keep = 0;
+  while (keep < after.length && skip + keep < before.length && before[skip + keep] === after[keep]) keep += 1;
+  return { skip, keep, tail: next.slice(keep) };
 }
 
 function normalizeKodaXSessionUiHistory(value: unknown): KodaXSessionUiHistoryItem[] | undefined {
@@ -987,6 +1030,41 @@ function sameStableFileIdentity(
     && left.mtimeNs === right.mtimeNs
     && left.ctimeNs === right.ctimeNs;
 }
+
+/**
+ * A change inside the same timestamp tick as the observation can leave the
+ * identity unchanged, so a just-touched entry is never trusted as a witness.
+ */
+const RACY_WITNESS_WINDOW_NS = 2_000_000_000n;
+/** Past this much appended display history, one rewrite is cheaper than every reader folding it. */
+const UI_HISTORY_APPEND_LIMIT_BYTES = 1024 * 1024;
+
+function isRacyStableFileIdentity(identity: StableFileIdentity, observedAtMs: number): boolean {
+  const horizon = BigInt(observedAtMs) * 1_000_000n - RACY_WITNESS_WINDOW_NS;
+  return identity.mtimeNs >= horizon || identity.ctimeNs >= horizon;
+}
+
+/** Directory identities that bound which active Session files exist. */
+type SessionInventoryCache = {
+  readonly directories: ReadonlyMap<string, StableFileIdentity>;
+  readonly ids: readonly string[];
+};
+
+/** Persisted Actor metadata is shared read-only, so a cache hit needs no copy. */
+function deepFreezeActorMetadata<T>(value: T): T {
+  if (typeof value === 'object' && value !== null && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const child of Object.values(value)) deepFreezeActorMetadata(child);
+  }
+  return value;
+}
+
+/** Actor metadata keyed by the exact main file it was read from. */
+type ActorMetadataCacheEntry = {
+  readonly filePath: string;
+  readonly identity: StableFileIdentity;
+  readonly metadata: SessionActorMetadata;
+};
 
 function sameOptionalStableFileIdentity(
   left: StableFileIdentity | null,
@@ -1418,10 +1496,16 @@ function reportStorageDiagnostic(level: 'info' | 'warn' | 'error', message: stri
   });
 }
 
+// Clients may poll a Session every few seconds, and each read re-counts the same
+// bad records. Report a file again only when its count changes, so a long-lived
+// Host does not fill its log with one repeated line.
+const reportedMalformedCounts = new Map<string, number>();
+
 function warnMalformedSessionData(filePath: string, count: number): void {
-  if (count === 0) {
+  if (count === 0 || reportedMalformedCounts.get(filePath) === count) {
     return;
   }
+  reportedMalformedCounts.set(filePath, count);
 
   reportStorageDiagnostic(
     'warn',
@@ -2426,6 +2510,9 @@ async function readPersistedSessionFile(
           if (parsed.uiHistory !== undefined) {
             snapshot.meta.uiHistory = normalizeKodaXSessionUiHistory(parsed.uiHistory);
           }
+          if (parsed.uiHistoryTail !== undefined) {
+            snapshot.meta.uiHistory = foldUiHistoryDelta(snapshot.meta.uiHistory, parsed);
+          }
           if (parsed.scope !== undefined) snapshot.meta.scope = parsed.scope as KodaXSessionScope;
           if (parsed.lineageIdentityFilterHash !== undefined) {
             snapshot.meta.lineageIdentityFilterHash = parsed.lineageIdentityFilterHash;
@@ -2489,11 +2576,38 @@ async function readPersistedSessionFile(
 // `fs.readFile`'d the WHOLE file (a 24MB archive or 6MB transcript) just to read
 // line 1 + count lines. On a large sessions dir (hundreds of files / hundreds of
 // MB) that turned `kodax -c` + the session picker into a multi-second blocking
-// read. We now read only the first chunk via a single fd. The whole-file read is
-// kept ONLY as a fallback for the rare cases that genuinely need it (a first line
-// longer than the buffer, or a legacy non-`meta` session whose msgCount is the
-// total line count).
+// read. We now read only the first line via a single fd. The whole-file read is
+// kept ONLY for a legacy non-`meta` session, whose msgCount is the total line
+// count.
+// Most meta lines are about 1KB, so the first read is small. Legacy actor
+// snapshots can reach megabytes; the read size doubles up to the cap for those.
+const SESSION_HEAD_FIRST_READ_BYTES = 4096;
 const SESSION_HEAD_READ_BYTES = 65536;
+
+/** Bytes of the first line without its newline; undefined for an empty file. */
+async function readFirstLineBytes(
+  handle: fs.FileHandle,
+  signal?: AbortSignal,
+): Promise<Buffer | undefined> {
+  const chunks: Buffer[] = [];
+  let offset = 0;
+  let readBytes = SESSION_HEAD_FIRST_READ_BYTES;
+  while (true) {
+    throwIfSessionReadAborted(signal);
+    const buffer = Buffer.allocUnsafe(readBytes);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, offset);
+    if (bytesRead === 0) break;
+    const chunk = buffer.subarray(0, bytesRead);
+    const newline = chunk.indexOf(0x0a);
+    chunks.push(newline < 0 ? chunk : chunk.subarray(0, newline));
+    if (newline >= 0) break;
+    offset += bytesRead;
+    readBytes = Math.min(readBytes * 2, SESSION_HEAD_READ_BYTES);
+  }
+  // A line can span chunks; join before decoding so a UTF-8 character split
+  // at a read boundary stays intact.
+  return chunks.length === 0 ? undefined : Buffer.concat(chunks);
+}
 
 async function readSessionMetadata(
   filePath: string,
@@ -2501,27 +2615,13 @@ async function readSessionMetadata(
 ): Promise<Record<string, unknown>> {
   const handle = await fs.open(filePath, 'r');
   try {
-    const chunks: Buffer[] = [];
-    let offset = 0;
-    while (true) {
-      throwIfSessionReadAborted(signal);
-      const buffer = Buffer.allocUnsafe(SESSION_HEAD_READ_BYTES);
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, offset);
-      if (bytesRead === 0) break;
-      const chunk = buffer.subarray(0, bytesRead);
-      const newline = chunk.indexOf(0x0a);
-      chunks.push(newline < 0 ? chunk : chunk.subarray(0, newline));
-      if (newline >= 0) break;
-      offset += bytesRead;
-    }
-    if (chunks.length === 0) {
+    const line = await readFirstLineBytes(handle, signal);
+    if (line === undefined) {
       throw new SessionReadError('data_corrupt', 'Session metadata is empty');
     }
     let value: unknown;
     try {
-      // Legacy actor snapshots can span chunks; decode only after joining so
-      // a UTF-8 character split at a read boundary stays intact.
-      value = JSON.parse(Buffer.concat(chunks).toString('utf8').trim());
+      value = JSON.parse(line.toString('utf8').trim());
     } catch (error: unknown) {
       throw new SessionReadError(
         'data_corrupt',
@@ -2550,22 +2650,8 @@ export async function readSessionFirstLine(filePath: string): Promise<string | n
   let fh: fs.FileHandle | undefined;
   try {
     fh = await fs.open(filePath, 'r');
-    const buf = Buffer.allocUnsafe(SESSION_HEAD_READ_BYTES);
-    const { bytesRead } = await fh.read(buf, 0, SESSION_HEAD_READ_BYTES, 0);
-    if (bytesRead === 0) {
-      return null;
-    }
-    const head = buf.toString('utf8', 0, bytesRead);
-    const newlineIdx = head.indexOf('\n');
-    if (newlineIdx >= 0) {
-      return head.slice(0, newlineIdx).trim();
-    }
-    // First line longer than the read buffer (pathological — meta lines are
-    // normally < a few KB). Fall back to a full read so we never silently drop
-    // an otherwise-valid session from the list.
-    const full = await fs.readFile(filePath, 'utf-8');
-    const fullNewline = full.indexOf('\n');
-    return (fullNewline >= 0 ? full.slice(0, fullNewline) : full).trim();
+    const line = await readFirstLineBytes(fh);
+    return line === undefined ? null : line.toString('utf8').trim();
   } catch {
     return null;
   } finally {
@@ -2635,6 +2721,8 @@ export class FileSessionStorage implements KodaXSessionStorage {
   private readonly sessionLocations: Map<string, SessionLocationState>;
   private readonly verifiedLocationMisses = new Map<string, SessionTopologyIdentity>();
   private readonly drafts = new Map<string, SessionData>();
+  private inventoryCache: SessionInventoryCache | undefined;
+  private readonly actorMetadataCache = new Map<string, ActorMetadataCacheEntry>();
 
   /**
    * v0.7.46 — optional explicit project cwd for in-process embedders
@@ -3123,6 +3211,8 @@ export class FileSessionStorage implements KodaXSessionStorage {
     projectCanonicalRoot?: string;
     filePath?: string;
     mainIdentity?: StableFileIdentity;
+    /** Display-history bytes appended since the last full write. */
+    uiHistoryAppendBytes?: number;
   }>();
   private lineageIdentityFilterHashes = new Map<string, string>();
 
@@ -4640,10 +4730,16 @@ export class FileSessionStorage implements KodaXSessionStorage {
     });
   }
 
-  /** Update display metadata under the same writer lock as canonical Session saves. */
+  /**
+   * Update display metadata under the same writer lock as canonical Session
+   * saves. With `append`, the change is appended as a delta when the file is
+   * still exactly what this process last wrote; otherwise the Session is
+   * rewritten in full.
+   */
   async mutateUiHistory(
     id: string,
     mutation: (history: readonly KodaXSessionUiHistoryItem[], session: Readonly<SessionData>) => KodaXSessionUiHistoryItem[],
+    options: { readonly append?: boolean } = {},
   ): Promise<boolean> {
     let found = false;
     await this.serializedWrite(id, async () => {
@@ -4651,9 +4747,67 @@ export class FileSessionStorage implements KodaXSessionStorage {
       if (existing === null) return;
       found = true;
       const uiHistory = mutation(existing.data.uiHistory ?? [], existing.data);
+      if (options.append === true && await this.appendUiHistoryDelta(id, existing, uiHistory)) return;
       await this.mergeAndWriteInternal(id, { ...existing.data, uiHistory });
     });
     return found;
+  }
+
+  /**
+   * Append the display-history change as one `meta_update`. Returns false
+   * before writing anything when a full rewrite is needed instead.
+   */
+  private async appendUiHistoryDelta(
+    id: string,
+    existing: ResolvedSessionSnapshot,
+    next: readonly KodaXSessionUiHistoryItem[],
+  ): Promise<boolean> {
+    const cached = this.appendState.get(id);
+    const filePath = cached?.filePath;
+    if (cached === undefined || filePath === undefined || cached.mainIdentity === undefined
+      || existing.filePath !== filePath || this.isDraft(id)) return false;
+    const current = await statStableFileIdentity(filePath);
+    if (current === null || !sameStableFileIdentity(current, cached.mainIdentity)) return false;
+    const { skip, keep, tail } = uiHistoryDelta(existing.data.uiHistory ?? [], next);
+    if (tail.length === 0 && skip === 0 && keep === (existing.data.uiHistory ?? []).length) return true;
+    // Discovery reads only the last line, so it repeats the effective metadata.
+    const record: PersistedMetaUpdateLine = {
+      _type: 'meta_update',
+      title: existing.data.title,
+      activeMessageCount: cached.activeMessageCount,
+      ...(cached.lastMessageAt !== undefined ? { lastMessageAt: cached.lastMessageAt } : {}),
+      ...(cached.scope !== undefined ? { scope: cached.scope } : {}),
+      uiHistorySkip: skip,
+      uiHistoryKeep: keep,
+      uiHistoryTail: tail,
+    };
+    const appended = `\n${JSON.stringify(record)}`;
+    const appendBytes = (cached.uiHistoryAppendBytes ?? 0) + Buffer.byteLength(appended, 'utf8');
+    if (appendBytes > UI_HISTORY_APPEND_LIMIT_BYTES) return false;
+    const priorBoundary = await readStableSessionBundleBoundarySnapshotAtPath(this.sessionsDir, id, filePath, true);
+    if (cached.bundleBoundaryRevision !== undefined && priorBoundary.revision !== cached.bundleBoundaryRevision) {
+      return false;
+    }
+    await fs.appendFile(filePath, appended, 'utf-8');
+    try {
+      await this.updateConversationCacheAfterAppend(
+        id, filePath, priorBoundary, cached.activeEntryId, [], cached.activeEntryId ?? null, appended);
+      const nextBoundary = cached.bundleBoundaryRevision === undefined
+        ? undefined
+        : await readStableSessionBundleBoundarySnapshotAtPath(this.sessionsDir, id, filePath, true);
+      // The canonical tail is unchanged, so prepared append baselines stay valid.
+      this.appendState.set(id, {
+        ...cached,
+        presentationOnlyHistoryCount: countResumableSessionItems(0, next),
+        bundleBoundaryRevision: nextBoundary?.revision,
+        mainIdentity: await statStableFileIdentity(filePath) ?? undefined,
+        uiHistoryAppendBytes: appendBytes,
+      });
+    } catch (error: unknown) {
+      this.appendState.delete(id);
+      reportStorageDiagnostic('warn', `Display history for ${id} was appended, but its successor boundary could not be witnessed; the next write rewrites the Session.`, error);
+    }
+    return true;
   }
 
   async appendSessionRecords(id: string, records: readonly KodaXExtensionSessionRecord[]): Promise<boolean> {
@@ -4850,6 +5004,36 @@ export class FileSessionStorage implements KodaXSessionStorage {
   /** Strict inventory for control decisions, independent of presentation filtering and pagination. */
   async listActiveSessionIds(): Promise<readonly string[]> {
     assertSessionMigrationInactive(this.sessionsDir);
+    const cached = this.inventoryCache;
+    if (cached !== undefined && await this.inventoryCacheIsCurrent(cached)) {
+      return [...new Set([...this.drafts.keys(), ...cached.ids])];
+    }
+    this.inventoryCache = undefined;
+    return this.scanActiveSessionIds();
+  }
+
+  /**
+   * Adding, removing or renaming a Session file changes its directory's
+   * identity, so unchanged directories prove the cached membership. Content
+   * writes do not matter here: membership is all the inventory reports.
+   */
+  private async inventoryCacheIsCurrent(cached: SessionInventoryCache): Promise<boolean> {
+    if (fsSync.existsSync(sessionLocationTopologyLockPath(this.sessionsDir))) return false;
+    const current = await Promise.all([...cached.directories].map(async ([directory, expected]) => {
+      const identity = await statStableFileIdentity(directory);
+      return identity !== null && sameStableFileIdentity(identity, expected);
+    }));
+    assertSessionMigrationInactive(this.sessionsDir);
+    return current.every(Boolean)
+      && !fsSync.existsSync(sessionLocationTopologyLockPath(this.sessionsDir));
+  }
+
+  private async scanActiveSessionIds(): Promise<readonly string[]> {
+    const observedAt = Date.now();
+    const directories = new Map<string, StableFileIdentity | null>();
+    const witness = async (directory: string): Promise<void> => {
+      directories.set(directory, await statStableFileIdentity(directory));
+    };
     const boundary = {
       topologyBefore: this.readSessionTopologyIdentitySync('', 'global'),
       writerTopologyDigestBefore: sessionWriterTopologyDigestSync(this.sessionsDir),
@@ -4857,7 +5041,10 @@ export class FileSessionStorage implements KodaXSessionStorage {
     };
     // Do not create/migrate the directory merely to inspect an empty Runtime.
     let rootEntries: fsSync.Dirent[];
-    try { rootEntries = await fs.readdir(this.sessionsDir, { withFileTypes: true }); }
+    try {
+      await witness(this.sessionsDir);
+      rootEntries = await fs.readdir(this.sessionsDir, { withFileTypes: true });
+    }
     catch (error: unknown) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [...this.drafts.keys()];
       throw error;
@@ -4875,6 +5062,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
     await Promise.all(rootEntries.filter(entry => entry.isDirectory() && !entry.name.startsWith('.')).map(async entry => {
       const directory = path.join(this.sessionsDir, entry.name);
       const legacyArchive = entry.name === 'archived';
+      if (!legacyArchive) await witness(directory);
       collect(directory, await fs.readdir(directory), legacyArchive);
       if (legacyArchive) return;
       const archived = path.join(directory, 'archived');
@@ -4894,10 +5082,32 @@ export class FileSessionStorage implements KodaXSessionStorage {
       || boundary.topologyBefore.epoch !== after.epoch) {
       throw new SessionReadError('data_changed', 'Session inventory changed during preflight');
     }
-    return [...new Set(active)];
+    const ids = [...new Set(active)];
+    this.rememberInventory(directories, ids.filter(id => !this.drafts.has(id)), observedAt);
+    return ids;
   }
 
-  /** Canonical Actor state plus the Runtime-owned admission identity, never a resume cache. */
+  private rememberInventory(
+    directories: ReadonlyMap<string, StableFileIdentity | null>,
+    ids: readonly string[],
+    observedAt: number,
+  ): void {
+    const known = new Set(ids);
+    for (const id of this.actorMetadataCache.keys()) {
+      if (!known.has(id)) this.actorMetadataCache.delete(id);
+    }
+    const stable = new Map<string, StableFileIdentity>();
+    for (const [directory, identity] of directories) {
+      if (identity === null || isRacyStableFileIdentity(identity, observedAt)) return;
+      stable.set(directory, identity);
+    }
+    this.inventoryCache = { directories: stable, ids };
+  }
+
+  /**
+   * Canonical Actor state plus the Runtime-owned admission identity, never a
+   * resume cache. Persisted results are deeply frozen and may be shared.
+   */
   async readActorMetadata(id: string, options: SessionReadOptions = {}): Promise<SessionActorMetadata | undefined> {
     throwIfSessionReadAborted(options.signal);
     normalizeSessionReadTimeout(options.timeoutMs);
@@ -4906,44 +5116,81 @@ export class FileSessionStorage implements KodaXSessionStorage {
       throwIfSessionReadAborted(options.signal);
       const draft = this.drafts.get(id);
       if (draft) return { id, runtimeInfo: structuredClone(draft.runtimeInfo), actorSnapshot: structuredClone(draft.actorSnapshot) };
+      const cached = await this.cachedActorMetadata(id);
+      throwIfSessionReadAborted(options.signal);
+      if (cached !== undefined) return cached;
       const mainPath = await this.resolveSessionLocation(id, true);
       throwIfSessionReadAborted(options.signal);
       if (mainPath === null) return undefined;
-      const topology = this.verifiedLocationTopology(id);
-      // Capture and verify the bundle around the metadata read itself. Taking
-      // two complete snapshots doubles the stats without strengthening this fence.
-      const meta = await withStableSessionBundleBoundaryAtPath(
-        this.sessionsDir, id, mainPath, false, () => readSessionMetadata(mainPath, options.signal),
-      );
-      throwIfSessionReadAborted(options.signal);
-      this.assertLocationTopologyUnchanged(id, topology);
-      if (meta._type !== 'meta') {
-        throw new SessionReadError('data_corrupt', 'Session metadata is missing');
+      const observedAt = Date.now();
+      const before = await statStableFileIdentity(mainPath);
+      const metadata = deepFreezeActorMetadata(await this.readActorMetadataAtPath(id, mainPath, options));
+      const after = await statStableFileIdentity(mainPath);
+      if (before !== null && after !== null && sameStableFileIdentity(before, after)
+        && !isRacyStableFileIdentity(after, observedAt)) {
+        this.actorMetadataCache.set(id, { filePath: mainPath, identity: after, metadata });
       }
-      if (meta.lineageVersion !== undefined && meta.lineageVersion !== 2) {
-        throw new SessionReadError('version_incompatible', 'Unsupported Session lineage version');
-      }
-      const snapshot = meta.actorSnapshot;
-      const runtimeInfo = isKodaXSessionRuntimeInfo(meta.runtimeInfo) ? meta.runtimeInfo : undefined;
-      if (snapshot === undefined) return { id, runtimeInfo };
-      if (!isRecord(snapshot) || (snapshot.schemaVersion !== 1 && snapshot.schemaVersion !== 2)) {
-        throw new SessionReadError('version_incompatible', 'Unsupported Actor snapshot schema');
-      }
-      if (!Array.isArray(snapshot.actors) || !snapshot.actors.every((actor: unknown) => (
-        isRecord(actor) && typeof actor.path === 'string'
-        && (actor.currentTurnId === undefined || typeof actor.currentTurnId === 'string')
-      ))) {
-        throw new SessionReadError('data_corrupt', 'Invalid Actor metadata');
-      }
-      if (snapshot.schemaVersion === 2 && snapshot.owner !== undefined) {
-        const owner = snapshot.owner;
-        if (!isRecord(owner) || typeof owner.ownerId !== 'string' || typeof owner.runtimeId !== 'string'
-          || !Number.isSafeInteger(owner.pid) || (owner.pid as number) <= 0 || typeof owner.startedAt !== 'string') {
-          throw new SessionReadError('data_corrupt', 'Invalid Actor owner metadata');
-        }
-      }
-      return { id, runtimeInfo, actorSnapshot: structuredClone(snapshot) as unknown as AgentActorSnapshot };
+      return metadata;
     }), options);
+  }
+
+  /**
+   * An unchanged main file holds the same metadata line, so the strict read
+   * and its writer fences only run again after the file is replaced or grows.
+   */
+  private async cachedActorMetadata(id: string): Promise<SessionActorMetadata | undefined> {
+    const cached = this.actorMetadataCache.get(id);
+    if (cached === undefined) return undefined;
+    const location = this.sessionLocations.get(id);
+    const identity = location?.kind === 'located' && location.filePath === cached.filePath
+      ? await statStableFileIdentity(cached.filePath)
+      : null;
+    if (identity !== null && sameStableFileIdentity(identity, cached.identity)) {
+      return cached.metadata;
+    }
+    this.actorMetadataCache.delete(id);
+    return undefined;
+  }
+
+  private async readActorMetadataAtPath(
+    id: string,
+    mainPath: string,
+    options: SessionReadOptions,
+  ): Promise<SessionActorMetadata> {
+    const topology = this.verifiedLocationTopology(id);
+    // Capture and verify the bundle around the metadata read itself. Taking
+    // two complete snapshots doubles the stats without strengthening this fence.
+    const meta = await withStableSessionBundleBoundaryAtPath(
+      this.sessionsDir, id, mainPath, false, () => readSessionMetadata(mainPath, options.signal),
+    );
+    throwIfSessionReadAborted(options.signal);
+    this.assertLocationTopologyUnchanged(id, topology);
+    if (meta._type !== 'meta') {
+      throw new SessionReadError('data_corrupt', 'Session metadata is missing');
+    }
+    if (meta.lineageVersion !== undefined && meta.lineageVersion !== 2) {
+      throw new SessionReadError('version_incompatible', 'Unsupported Session lineage version');
+    }
+    const snapshot = meta.actorSnapshot;
+    const runtimeInfo = isKodaXSessionRuntimeInfo(meta.runtimeInfo) ? meta.runtimeInfo : undefined;
+    if (snapshot === undefined) return { id, runtimeInfo };
+    if (!isRecord(snapshot) || (snapshot.schemaVersion !== 1 && snapshot.schemaVersion !== 2)) {
+      throw new SessionReadError('version_incompatible', 'Unsupported Actor snapshot schema');
+    }
+    if (!Array.isArray(snapshot.actors) || !snapshot.actors.every((actor: unknown) => (
+      isRecord(actor) && typeof actor.path === 'string'
+      && (actor.currentTurnId === undefined || typeof actor.currentTurnId === 'string')
+    ))) {
+      throw new SessionReadError('data_corrupt', 'Invalid Actor metadata');
+    }
+    if (snapshot.schemaVersion === 2 && snapshot.owner !== undefined) {
+      const owner = snapshot.owner;
+      if (!isRecord(owner) || typeof owner.ownerId !== 'string' || typeof owner.runtimeId !== 'string'
+        || !Number.isSafeInteger(owner.pid) || (owner.pid as number) <= 0 || typeof owner.startedAt !== 'string') {
+        throw new SessionReadError('data_corrupt', 'Invalid Actor owner metadata');
+      }
+    }
+    return { id, runtimeInfo, actorSnapshot: structuredClone(snapshot) as unknown as AgentActorSnapshot };
   }
 
   /** Strict read-only Session load. It never migrates or repairs persisted data. */

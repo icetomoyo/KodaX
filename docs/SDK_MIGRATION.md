@@ -27,7 +27,8 @@ Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` �
   managed Worker。公开签名不变。根运行因此带 Run Context 信封，并按 `agentMode` 提供
   Actor 与 Workflow 工具。不需要这些工具时，用 `excludeTools` 或工具策略去掉。
 - `runs.start({ mode: 'coding' })` 和 daemon `run.start` 的 `mode: 'coding'` 仍被接受，但会被
-  忽略并给出 `runtime.runs.start` 警告诊断。新 Run 的 `Run.mode` 一律是 `managed_task`。
+  忽略并给出 `runtime.runs.start` 警告诊断；`agentMode: 'sa'` 同理。Run handle 的
+  `warnings` 会列出被忽略的输入（未发布），daemon 客户端同样可见。新 Run 的 `Run.mode` 一律是 `managed_task`。
   已持久化的 `coding` Run 记录照常可读，恢复时在 managed Worker 上继续。
 - 不带 `agentMode` 的根运行用 Worker 的精简段落（执行指导、Run Context 信任、收尾）。
   `agentMode: 'ama'` 的根运行用完整段落（信任与范围、并行工作、执行与交付）。两者来自同一个源头，

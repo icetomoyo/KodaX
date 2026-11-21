@@ -295,8 +295,15 @@ Space 启动应检查 `recovery.state`，不再单凭 `cleanup.state !== 'succee
 持续返回 `cleanup_unverified`。即使客户端清理回执仍为 unknown，只要原 Host
 的精确 process-start identity、Windows Job supervisor identity、进程退出及
 匹配的成功 shutdown outcome 均通过核验，就可返回 ready；原回执、issues 和
-执行引用继续保留。仍存活的原 Host/Job、资源清理失败、缺失 outcome/精确身份
-继续阻塞。没有 shutdown 请求、同一原 Host 仍运行且本客户端清理已确认时，
+执行引用继续保留。原 Host 进程已退出后，只有仍存活的进程（`daemon_active`、
+`containment_active`，含 Windows Job 中仍在运行的成员）继续阻塞并 `retry_verification`。
+其余无法再改变的缺口——Host 资源清理失败或失败的 shutdown outcome（`cleanup_failed`）、
+缺失 outcome（`outcome_missing`）、无 Job 托管（`containment_unavailable`）、缺少精确身份
+（`owner_identity_unverified`）、回执自相矛盾（`owner_identity_mismatch`）——都返回
+`ready` + `start_or_connect`，缺口写在 `reason` 与 `host.message` 中作为证据；只有
+`host_shutdown_verified` 证明原退出成功。永久阻塞只会迫使用户手动删除记录，而新 Host
+本来就由 profile 锁隔离。本客户端清理 `failed` 只在原 Host 仍存活时阻塞；原 Host 退出后，
+Run、排队输入与 actor turn 已随进程结束，该失败只作为证据保留（Issue 424）。清理抛错记为 `unknown`，不写终态 `failed`，`shutdownHost` 请求照常发出。没有 shutdown 请求、同一原 Host 仍运行且本客户端清理已确认时，
 也可返回 ready 供新客户端实例连接；这不是关闭其他客户端工作。
 
 | `recovery.nextAction` | Space 下一步 |

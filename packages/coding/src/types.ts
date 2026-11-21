@@ -1883,6 +1883,12 @@ export interface KodaXContextOptions {
   goalUsageSink?: import('./goal/lifecycle.js').GoalUsageSink;
   /** FEATURE_260 runtime-owned identity used for scoped memory reads. */
   memoryIdentity?: MemoryContextIdentity;
+  /**
+   * `'off'` runs without the Host owner's memory: no memory hints, recall,
+   * intent, learned-skill binding or learning review. The Runtime sets it for
+   * Runs driven by a remote principal (A2A), whose input is not the owner's.
+   */
+  hostMemory?: 'off';
   /** Runtime-built F228 pack reused by prompt rendering and MemorySession. */
   memoryPack?: MemoryPack;
   /** Runtime-minted collaboration principal for this actor execution. */

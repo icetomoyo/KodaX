@@ -11,23 +11,23 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.97-beta.11` (Git tag); `v0.7.96` remains the last stable release |
-| Current package version | `@kodax-ai/kodax@0.7.97-beta.11`; npm `beta` is `0.7.97-beta.10` (published 2026-11-14T23:49:40Z); beta.11 npm publication remains a manual maintainer step |
+| Current released version | `v0.7.97-beta.13` (Git tag); `v0.7.96` remains the last stable release |
+| Current package version | `@kodax-ai/kodax@0.7.97-beta.13`; npm `beta` is `0.7.97-beta.12` (published 2026-11-21T01:22:25Z); beta.13 npm publication remains a manual maintainer step |
 | Workspace baseline | `llm / agent / coding / repl` 4 core packages + private optional `artifacts` source workspace; one public npm package |
 | Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4` and extended with the unified Artifact SDK in `v0.7.97-alpha.5`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3` and extended with startup streamlining, Session recency ordering, draft admission, concurrent-launch recovery and shared-Session Host ownership resolution through `v0.7.97-alpha.7`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
 | Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement released in alpha.4; missing visual capabilities remain unverified; [design](ADR.md#verification-responsibility-and-tradeoffs) |
 | Artifact distribution revision | `2026-10-18` — one `@kodax-ai/kodax` npm package; four `/artifacts` subpaths and resources staged in the main tarball; local implementation, not yet published |
 | Current Artifact SDK additions | Unified visual evidence SDK and format backends released in `v0.7.97-alpha.5`: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
-| Current development | `v0.7.97-beta.11` readable history during a busy Run and tool-neutral Skills — older Conversation cache pages, entry chunks and cursors stay readable and valid while a Run writes (append-only revision log, cache format v11, prefix-preserving full-save rebuilds, 500 ms checkpoint throttle, `writer_active` resync reason), `allowed-tools` in a Skill or command no longer restricts tools/hooks/dynamic context (the Host permission mode and sandbox decide every call) with the builtin Skills dropping the field and packaged Electron resolving them to `app.asar.unpacked`, session views retain a failed Run's error item, and `ask_user_question` names skipped question texts as `unanswered` in partial results; [release preparation](release.md#v0797-beta11-release-preparation). On top of the beta.10 merged-input acknowledgement. Cross-platform manual acceptance, installed Space/SDK acceptance, the Space dependency bump and the original slow first resume after rebuild remain open; Issue 395's intermittent failure cause and Issue 394's whole-task non-inferiority remain unproven. |
+| Current development | `v0.7.97-beta.13` Space integration repairs and Session-read cost fixes (Issues 424-430) — a client exit whose cleanup failed no longer blocks later starts once the old Host has exited (only `host_shutdown_verified` proves the old exit; the surviving gap becomes the reason of a ready/start_or_connect result), a managed Run with a prepared prompt saves and sends the user's exact words without the duplicated `runManagedTask` copy, `runs.start` reports retired inputs (`mode: 'coding'`, `agentMode: 'sa'`) as `warnings`, the daemon maps Runtime failure codes to protocol codes with the original code in `data.conflict`/`data.reason`, integration health reads without the preflight (`integrationConfigResilience.healthQuery`), the daemon preflight reuses cached Session-list/Actor metadata and retries busy Sessions (about 4.5s to about 40ms on 3230 Sessions), Session first-line reads start at 4KB, malformed-record warnings log once per count per process, and display-history checkpoints append a bounded delta during a Run instead of rewriting the whole Session every 500ms; [release preparation](release.md#v0797-beta13-release-preparation). On top of the beta.12 one prompt chain and final Stop outcomes. Cross-platform manual acceptance, installed Space/SDK acceptance, the Space dependency bump and the original slow first resume after rebuild remain open; Issue 395's intermittent failure cause and Issue 394's whole-task non-inferiority remain unproven. |
 | Visual harness implementation | P3/P4/P5/P6 implemented within declared scope and released in `v0.7.97-beta.5` through the next-dev integration; [final ID/receipt contract delivery](designs/visual-harness-id-contract-delivery-2026-10-30.md). P7 task-value evaluation concluded **mixed; net task-quality/token value unproven**, against optimized pre-visual 1826cc22; [final review and limits](designs/visual-harness-current-version-closure-2026-10-30.md). The 2026-10-29 plan's "not executed" state and old r3 single-response results are historical, not the current outcome. Historical default suite 18,094 passed / 0 failed; earlier failures and unlocated causes remain recorded; [mainline integration acceptance](designs/next-dev-integration-execution-2026-11-09.md). No new feature ID/version assigned |
-| Roadmap updated | `2026-11-16` — beta.11 prepared on top of the npm-published beta.10 with readable history during a busy Run and tool-neutral Skills, merged into `KodaX-next-dev` on 2026-11-17; FEATURE_300 remains Planned. `2026-11-15` — FEATURE_308 note memory Completed on `KodaX-next-dev` (unreleased, on by default); FEATURE_309 legacy memory code deletion Planned for `v0.8.11`, blocked by Issue 411; beta.10 published (GitHub prerelease and npm `beta`) with merged-input acknowledgement (`ClientViewItem.inputIds`) and the merged-input restore fix, merged into `KodaX-next-dev` on 2026-11-15. `2026-11-13` — beta.9 prepared on top of the published beta.8 with FEATURE_306 data root resolver and copy (Completed, shipped in `v0.7.97-beta.9`); FEATURE_305 Completed; FEATURE_300 remains Planned; `KodaX-next-dev` merged beta.9 on 2026-11-14 and carries the unreleased FEATURE_307 side chat and FEATURE_308 memory redesign |
+| Roadmap updated | `2026-11-21` — beta.13 prepared on top of the npm-published beta.12 with the Space integration repairs and Session-read cost fixes (Issues 424-430) and the display-history checkpoint append; beta.12 published with one prompt chain and final Stop outcomes; FEATURE_312/313 registered for the SDK v2 contract; FEATURE_300 remains Planned; merged into `KodaX-next-dev` on 2026-11-21. `2026-11-16` — beta.11 prepared on top of the npm-published beta.10 with readable history during a busy Run and tool-neutral Skills, merged into `KodaX-next-dev` on 2026-11-17; FEATURE_300 remains Planned. `2026-11-15` — FEATURE_308 note memory Completed on `KodaX-next-dev` (unreleased, on by default); FEATURE_309 legacy memory code deletion Planned for `v0.8.11`, blocked by Issue 411; beta.10 published (GitHub prerelease and npm `beta`) with merged-input acknowledgement (`ClientViewItem.inputIds`) and the merged-input restore fix, merged into `KodaX-next-dev` on 2026-11-15. `2026-11-13` — beta.9 prepared on top of the published beta.8 with FEATURE_306 data root resolver and copy (Completed, shipped in `v0.7.97-beta.9`); FEATURE_305 Completed; FEATURE_300 remains Planned; `KodaX-next-dev` merged beta.9 on 2026-11-14 and carries the unreleased FEATURE_307 side chat and FEATURE_308 memory redesign |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
-| Total tracked features | `95` |
+| Total tracked features | `97` |
 | InProgress | `3` |
-| Planned | `18` |
+| Planned | `20` |
 | Completed | `68` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
-| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311` |
+| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313` |
 | Archive cutoff | Shipped / canceled / absorbed / shelved items through `v0.7.49` are archived. |
 
 ### 一览表
@@ -36,6 +36,7 @@
 |---|---:|---|---|
 | Completed | 68 | `311, 310, 308, 306, 305, 304, 303, 302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 3 | `307, 298, 225` | `307`: R1–R6 hardening and verification per [side-chat plan](designs/side-chat-plan.md). `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
+| Planned, SDK v2 | 2 | `312, 313` | Specify in the SDK v2 contract on `KodaX-next-dev`; only the stall cap of `313` can land on mainline first. |
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
 | Planned, 0.8.x | 11 | `278, 279, 282, 283, 285, 280, 309, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
@@ -555,6 +556,69 @@ Final frozen package **80** and historical/real-alpha.11 Host gates **4** passed
 and build fingerprints remained unchanged throughout. See the J guide for exact checkpoints.
 Space stays independently at `da531f0a`; its historical I counts do not certify a newly paired
 Space build. No push/publication.
+
+## v0.7.97-beta.13 Release Record
+
+`v0.7.97-beta.13` is the thirteenth beta of the v0.7.97 line: the Space
+integration repairs and Session-read cost fixes (Issues 424-430). A
+client exit whose cleanup failed no longer blocks every later start
+once the old Host has exited: recovery waits only for processes that
+still run, returns the surviving gap (cleanup_failed, outcome_missing,
+containment_unavailable, owner_identity_unverified,
+owner_identity_mismatch) as the reason of a ready/start_or_connect
+result, and only `host_shutdown_verified` proves the old exit; a
+cleanup exception is recorded as `cleanup.state: 'unknown'` and the
+requested Host stop still goes ahead (Issue 424). A managed Run started
+with a prepared prompt and `context.rawUserInput` sends and saves the
+user's exact words instead of the prepared prompt, and
+`runManagedTask` no longer appends a second copy (Issue 426).
+`runs.start` returns `warnings` for retired inputs (`mode: 'coding'`,
+`agentMode: 'sa'`) on the Run handle (Issue 427), the daemon maps
+Runtime failure codes to protocol codes with the original code in
+`data.conflict`/`data.reason` instead of `internal_error` (Issue 428),
+and `runtime.daemon.integrations()` reads integration health without
+the preflight (`integrationConfigResilience.healthQuery`, Issue 429).
+The daemon preflight reuses cached Session-list and Actor metadata
+while their files are unchanged and retries busy Sessions, so its cost
+no longer grows with every Session ever kept (Issue 430). Session
+first-line reads start at 4KB, conversation pages read each inline
+record once, a Session's malformed-record warning logs once per count
+per process (Issue 425), and display-history checkpoints append a
+bounded delta during a Run instead of rewriting the whole Session
+every 500ms. FEATURE_312/313 register the SDK v2 contract decisions.
+The CI/Release in-place upgrade gate now pins the published beta.12
+tarball. Every v0.7.96 stable and v0.7.97-alpha.1 through beta.12
+client contract is retained. The changes are listed in the
+[CHANGELOG](../CHANGELOG.md). Cross-platform manual acceptance,
+installed Space/SDK acceptance, the Space dependency bump and npm
+publication remain manual maintainer steps.
+
+## v0.7.97-beta.12 Release Record
+
+`v0.7.97-beta.12` is the twelfth beta of the v0.7.97 line: one prompt
+chain for every root Run and a final outcome for every Stop. Every root
+Run — `runKodaX`, `startKodaX`, `KodaXClient`, the Runner preset and
+`runs.start` without `mode` — now uses the managed Worker with the same
+tool text as Space and the REPL (FEATURE_311), which also retires SA
+mode (FEATURE_310), lets applications shape the managed prompt through
+`context.prompt`, honors `maxIter` on root Runs and cuts first-request
+input by about 28-34%. SDK capability `actorSettlementConvergence` is
+now `3`: every Stop settles (Issues 412-414), a fenced Session heals in
+the background without a Host restart, a Run asked to stop no longer
+keeps the Host from stopping, and a failed Run reports its real cause
+in `failure.detail` with credentials removed (ADR-078). Provider
+requests carry `X-Session-Id`, new session ids are UUIDv7, Host
+`create` and `fork` reject unsafe session ids, and A2A Tasks continue
+one Runtime Session per principal context without reading or writing
+the Host owner's memory (Issues 416-418, 423, ADR-077). Constructed
+artifacts load only with a machine-local approval, and a directory
+alias no longer exposes the trusted project Exec Policy (Issues 419,
+422). The CI/Release in-place upgrade gate now pins the published
+beta.11 tarball. Every v0.7.96 stable and v0.7.97-alpha.1 through
+beta.11 client contract is retained. The changes are listed in the
+[CHANGELOG](../CHANGELOG.md). Cross-platform manual acceptance,
+installed Space/SDK acceptance, the Space dependency bump and npm
+publication remain manual maintainer steps.
 
 ## v0.7.97-beta.11 Release Record
 
@@ -2405,6 +2469,8 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
+| `312` | Stable Product History Identity | SDK / Session History | High | SDK v2 | [Addition](#2026-11-21-feature_312-addition) — Planned; design pending in the SDK v2 contract |
+| `313` | Queryable Session Recovery State | SDK / Runtime Recovery | High | SDK v2; stall cap on mainline | [Addition](#2026-11-21-feature_313-addition) — Planned; design pending in the SDK v2 contract |
 | `300` | Git Execution Consolidation with Shared macOS Preflight | Refactor | Medium | `v0.7.99` | [v0.7.99](features/v0.7.99.md#feature_300-git-execution-consolidation-with-shared-macos-preflight) — Planned; design only |
 | `287` | Advisor Mode Virtual Provider | Enhancement / LLM Provider + Session Quality | High | `v0.8.13` | [v0.8.13](features/v0.8.13.md#feature_287-advisor-mode-virtual-provider) |
 | `288` | CLI-Space Daemon Profile Alignment | Enhancement / Runtime + Multi-Client UX | High | `v0.8.14` | [v0.8.14](features/v0.8.14.md#feature_288-cli-space-daemon-profile-alignment) |
@@ -2423,6 +2489,61 @@ fixed GitHub binary archive sidecar omission before tagging.
 | `113` | TodoList JSON / CLI Surface | Enhancement | Medium | `v0.9.7` | [v0.9.7](features/v0.9.7.md#feature_113-todolist-json--cli-surface) |
 | `139` | NotebookEdit Tool | Enhancement / Tool | Low | `v0.9.25` | [v0.9.25](features/v0.9.25.md#feature_139-notebookedit-tool--jupyter-cell-level-crud) |
 | `262` | npm 12 Install-Time Security + Trusted Publishing Migration | Internal / Supply Chain Security | High | `v0.9.0` | [v0.9.0](features/v0.9.0.md#feature_262-npm-12-install-time-security--trusted-publishing-migration) |
+
+---
+
+## 2026-11-21 FEATURE_313 Addition
+
+- Status: Planned. IDs 312 and 313 are unused on both `KodaX` and `KodaX-next-dev`.
+- Source: Space report item II (2026-11-21). After `actor_settlement_not_persisted`
+  the Session heals in the background, but a client can only find out by
+  retrying `runs.start` and reading the error. There is no Session state to read
+  or subscribe to, no event when healing ends, and no limit after which healing
+  counts as stuck. Issue 428 fixed the error code on the wire; this feature
+  covers the rest.
+- Scope:
+  - A Session-level recovering state that a client can read and subscribe to,
+    and an event when recovery completes or stalls.
+  - A time limit in `recoverActorDurability`, after which the Session reports
+    `recovery_stalled` instead of retrying silently.
+- Placement: the limit and `recovery_stalled` can land on mainline now. The
+  state and the event follow the SDK v2 contract on `KodaX-next-dev`, which
+  already defines a quarantined Session state and `invalid_state` with a
+  `reason`; mainline must not ship a second v1 shape for them.
+- Owner decisions (2026-11-21):
+  - The stall limit lands on mainline in the version after the coming
+    release. Background repair keeps retrying after the limit, and a repaired
+    store still lifts the Session fence. Only the reported code changes, to
+    `recovery_stalled` in the Issue 428 `conflict` shape.
+  - The state and the event wait for the next mainline sync into
+    `KodaX-next-dev`. Spec them in the v2 plan before implementing.
+
+## 2026-11-21 FEATURE_312 Addition
+
+- Status: Planned.
+- Source: Space report item I, G1-G6 (2026-11-21). Product history items have
+  ids scoped to a revision, so the same message gets a new id after a save, a
+  compaction or a window slide. Space matches items by heuristics, cannot tell a
+  gap from a deletion, and cannot resume a history stream from a position.
+- Scope: history ids that stay the same for the life of a message, a persisted
+  sequence number, explicit gap markers when items are missing, and removal of
+  the client-side matching heuristics.
+- Owner decisions (2026-11-21):
+  - `history.read` item ids become the same stable ids the session view uses.
+    Cursors stay bound to the conversation of the first page.
+  - No persisted sequence number, no `since` resumption, no gap markers. A
+    client that misses updates resubscribes, gets a full snapshot and
+    deduplicates by stable id. Persisted numbering would have to be rewritten
+    on every compaction, rewind and branch switch.
+  - Mainline v1 is unchanged.
+- Placement: this is the same layer as the SDK v2 history work on
+  `KodaX-next-dev`, which has already decided parts of it differently. There
+  `seq` is per subscription, a window slide is an item removal, `since`
+  resumption is rejected, and history ids stay revision-scoped
+  (`${sessionId}:history:${revision}:${entryIndex}` plus
+  `transcriptEntryItemId`). Specify the change in the v2 contract first and
+  implement it on `KodaX-next-dev`; a mainline v1 change would conflict with
+  that branch and be replaced at merge.
 
 ---
 

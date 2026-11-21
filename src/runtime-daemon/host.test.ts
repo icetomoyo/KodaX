@@ -858,6 +858,15 @@ describe("runtime daemon host", () => {
       },
     });
     expect(readRuntimeDaemonState(paths)).toMatchObject({ status: "ready" });
+    const preflight = vi.spyOn(runtime.status, "preflight");
+    await expect(client.request("daemon.integrations.get")).resolves.toMatchObject({
+      state: "degraded",
+      domains: [{ domain: "mcp", diagnostic: { code: "invalid-config" } }, { domain: "extensions" }],
+    });
+    expect(preflight).not.toHaveBeenCalled();
+    await expect(client.request("runtime.capabilities")).resolves.toMatchObject({
+      integrationConfigResilience: { healthQuery: true },
+    });
   });
 
   it("advances management revision for daemon-owned background lifecycle changes", async () => {

@@ -56,3 +56,41 @@ it.each(['direct', 'ama'] as const)('%s resumes an accepted input after tool out
     await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 60_000);
+
+it.each(['direct', 'ama'] as const)('%s keeps the exact user request when the caller prepared the execution prompt', async (engine) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'kodax-raw-input-'));
+  const requests: KodaXMessage[][] = [];
+  class RawInputProvider extends KodaXBaseProvider {
+    readonly name = 'raw-input-test';
+    readonly supportsThinking = false;
+    protected readonly config: KodaXProviderConfig = {
+      apiKeyEnv: 'KODAX_RAW_INPUT_TEST_KEY', model: 'raw-input-test', supportsThinking: false,
+    };
+    async stream(messages: KodaXMessage[]): Promise<KodaXStreamResult> {
+      requests.push(structuredClone(messages));
+      return { textBlocks: [{ type: 'text', text: 'Reviewed.' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
+    }
+  }
+  registerModelProvider('raw-input-test', () => new RawInputProvider());
+  setAgentConfigHome(directory);
+  vi.stubEnv('KODAX_HOME', directory);
+  vi.stubEnv('KODAX_RAW_INPUT_TEST_KEY', 'test-only');
+  const rawUserInput = '/review-skill check the new Skill';
+  const preparedPrompt = 'PREPARED_CONTEXT_BLOCK\nUser request: check the new Skill';
+  try {
+    const options: KodaXOptions = {
+      provider: 'raw-input-test', ...(engine === 'ama' ? { agentMode: 'ama' as const } : {}), reasoningMode: 'off', maxIter: 1, lsp: false,
+      context: { configHome: directory, executionCwd: directory, gitRoot: directory, skillsPrompt: '', repoIntelligenceMode: 'off', rawUserInput },
+      session: { id: `raw-input-${engine}` },
+    };
+    const result = engine === 'direct' ? await startKodaX(options, preparedPrompt).result : await runManagedTask(options, preparedPrompt);
+    expect(requests.length).toBeGreaterThan(0);
+    expect(JSON.stringify(requests[0])).toContain(rawUserInput);
+    expect(JSON.stringify(requests[0])).not.toContain('PREPARED_CONTEXT_BLOCK');
+    expect(JSON.stringify(result.messages)).toContain(rawUserInput);
+    expect(JSON.stringify(result.messages)).not.toContain('PREPARED_CONTEXT_BLOCK');
+  } finally {
+    clearRuntimeModelProviders(); setAgentConfigHome(undefined); vi.unstubAllEnvs();
+    await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+}, 60_000);

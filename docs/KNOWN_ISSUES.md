@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-20_
+_Last Updated: 2026-11-21_
 
 ---
 
@@ -46,6 +46,443 @@ This predates the child contract projection; the eval uses raw per-call usage,
 not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
+
+## Issue 430: The daemon preflight reads every Session and fails on one busy write
+
+- Priority: High
+- Status: Resolved
+- Introduced: every version with the daemon preflight
+- Created / Resolved: 2026-11-21 / 2026-11-21
+- Fixed: unreleased (after `v0.7.97-beta.12`)
+- Related: Issue 429 (the cheaper parts of the same report)
+- Context: Space report on slow preflight, items 1 and 3; plan is stage 1
+
+### Original Problem
+
+`daemon.preflight` and `daemon.management.get` call
+`actors.activeTurns` (`src/sdk-runtime.ts`), which lists every active Session
+id and reads each Session's Actor metadata from disk, 48 at a time. Its cost
+grows with the number of Sessions ever kept, not with the number of live
+turns, so a Host with thousands of Sessions spends most of each preflight
+reading files that have no running Actor. Space profiled this as the main
+cost of a status check.
+
+The same loop throws "Session disappeared during Actor preflight; retry the
+read." when one Session file is being replaced while it reads, and that one
+error fails the whole preflight. During a Run, the Run's own saves cause it, so
+inspect often fails on the first try exactly when Space needs it.
+
+### Plan
+
+Measure a baseline on about 3000 Sessions first. Keep the set of Sessions
+with live Actor turns in the Host instead of scanning all of them, and treat a
+Session replaced mid-read as a retry of that Session, not a failure of the
+preflight. Acceptance: preflight under 50ms with no Run, and inspect succeeds
+on the first try during a Run.
+
+### Resolution
+
+The Host does not keep a live-turn set. Turns are written by other processes
+too, so a Host-side set would need its own recovery after a crash. Instead,
+storage caches the two reads the scan makes and checks a cheap file witness
+before each reuse.
+
+- `listActiveSessionIds()` keeps the id list with the stat identity of the
+  sessions root and of each project directory, taken before each readdir. It
+  is reused only while all of them are unchanged and no topology lock is held.
+- `readActorMetadata()` keeps each result with the stat identity of the main
+  file it was read from. It is reused only while that identity and the
+  located path are unchanged. Results are deeply frozen and shared, so a hit
+  costs no copy. Entries for Sessions no longer listed are dropped.
+- Neither cache stores a witness whose mtime or ctime is within 2 seconds of
+  the read, because a second write in the same timestamp tick would not change
+  the witness.
+- `activeTurns` retries a `data_changed` read of the inventory or of one
+  Session after 10, 25, 50 and 100ms, then fails as before. Corrupt or
+  incompatible data still fails at once. A Session removed after the
+  inventory was taken has no turns and is skipped.
+
+On 3230 copied Sessions, preflight with no Run went from about 4.5s to about
+39ms once warm (`[5893, 40, 38, 39, 39]` ms for five calls). The first call
+after a Host starts still reads every Session. During a Run, each full
+Session save renames a file in its project directory, so that directory is
+rescanned (about 400ms here). Stage 2 makes mid-Run display checkpoints append
+instead of rewriting, which removes most of those renames.
+
+**Files Changed.** `packages/repl/src/interactive/storage.ts`,
+`src/sdk-runtime.ts`.
+
+**Tests Added.** `packages/repl/src/interactive/storage.actor-read.test.ts`
+reuses unchanged metadata without opening the file, sees a new snapshot
+revision after a write, reuses the inventory until a Session is added, and
+rejects mutation of a returned result. `src/sdk-runtime.preflight-projection.test.ts`
+waits out two `data_changed` reads of one Session and skips a Session that was
+removed.
+
+## Issue 429: A status check pays for the full daemon preflight and oversized reads
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: every version with `daemon.management.get`
+- Created / Resolved: 2026-11-21 / 2026-11-21
+- Fixed: unreleased (after `v0.7.97-beta.12`)
+- Related: Issue 430 (the preflight scan itself)
+- Context: Space report on slow preflight, items 2, 4 and 5
+
+### Original Problem
+
+Space polls integration health (MCP, extensions) for a status panel. The only
+way to read it was `runtime.daemon.inspect()`, which always runs the full
+daemon preflight, including the scan of every Session in Issue 430. Two reads
+also used more I/O than they needed. Reading a Session's first line allocated
+and read 64KB, although most meta lines are about 1KB. Reading a conversation
+page made two reads per record, one for the entry and one for its descriptor,
+although the writer stores them next to each other.
+
+### Resolution
+
+- `runtime.daemon.integrations()` returns `RuntimeIntegrationHealth`
+  (`{ state: 'healthy' | 'degraded', domains }`) without running the
+  preflight. The wire method is `daemon.integrations.get`, and the Host
+  advertises it as `integrationConfigResilience.healthQuery: true`. An older
+  Host makes the client throw `daemon_upgrade_required` with
+  `capability: 'integrationConfigResilience'`.
+- The first-line reader starts with 4KB and doubles the read size up to 64KB
+  only when the line is longer. On 3000 local Sessions the meta line was
+  1.06KB at p50 and 1.2KB at p90; legacy Actor snapshots reach 2MB. The
+  whole-file fallback for a line longer than 64KB is gone.
+- A conversation page reads an inline record's entry and descriptor with one
+  read. A record whose descriptor is not adjacent, or whose entry is too large
+  to inline, reads as before.
+
+**Files Changed.** `src/runtime-daemon/{protocol,schema,server,management,client}.ts`,
+`src/sdk-runtime.ts`, `packages/repl/src/interactive/storage.ts`,
+`packages/repl/src/session/conversation-page-cache.ts`.
+
+**Tests Added.** `src/runtime-daemon/host.test.ts` reads degraded integration
+health without calling the preflight. `src/runtime-daemon/client.test.ts`
+checks the method and the `daemon_upgrade_required` error on an older Host.
+`packages/repl/src/interactive/storage.test.ts` checks the 4KB first read and
+the growth for a long line with multibyte characters.
+`packages/repl/src/session/conversation-page-cache.test.ts` checks one data
+read per inline record.
+
+## Issue 428: The daemon reports a recovering Session as an internal error
+
+- Priority: High
+- Status: Resolved
+- Introduced: the daemon wire since Actor settlement fences existed; visible since `v0.7.97-beta.12` lets a fenced Session heal without a restart
+- Created / Resolved: 2026-11-21 / 2026-11-21
+- Fixed: unreleased (after `v0.7.97-beta.12`)
+- Related: Issues 412-414; Session-level recovery state is tracked as a feature (FEATURE_LIST)
+- Context: Space report, item II
+
+### Original Problem
+
+After `actor_settlement_not_persisted`, the Session heals in the background,
+and `runs.start` and `acceptInput` reject until it does. The Host throws an
+error with that code, but the daemon passed only codes from its own protocol
+list and turned every other code into `internal_error`. Space therefore saw
+an internal error with the Host's English message, and could only tell the
+user to wait or restart the Host. Actor errors (`actor_not_found`,
+`name_collision`, ...), owner conflicts and archived Sessions lost their
+codes the same way.
+
+### Resolution
+
+The daemon maps Runtime failure codes through one table, ported from the
+`KodaX-next-dev` branch, where SDK v2 also needs it. The three settlement codes
+were added to the table. Each maps to a protocol code the client can act on,
+and the original code travels in `data.conflict` for conflicts or
+`data.reason` otherwise. A recovering Session now reads as `conflict` with
+`data.conflict: 'actor_settlement_not_persisted'` or
+`'actor_settlement_retrying'`. Not changed: there is still no Session-level
+`recovering` state to query or subscribe to, and no completion event. That
+work belongs with SDK v2 and is registered as a feature.
+
+**Files Changed.** `src/runtime-daemon/server.ts`, `docs/CLIENT_CONTRACT.md`.
+
+**Tests Added.** `src/runtime-daemon/server.test.ts` checks the wire code
+and data for both settlement codes and for `actor_not_found`.
+`src/sdk-runtime.actor-exceptions.test.ts` now also expects
+`acceptInput` during repair to reject with `actor_settlement_not_persisted`.
+
+## Issue 427: Retired Run inputs are ignored without telling the caller
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: `v0.7.97-beta.12` (SA retirement, FEATURE_310/311)
+- Created / Resolved: 2026-11-21 / 2026-11-21
+- Fixed: unreleased (after `v0.7.97-beta.12`)
+- Context: Space report; beta.12 also had no Breaking section for removed exports
+
+### Original Problem
+
+`runs.start({ mode: 'coding' })` and `options.agentMode: 'sa'` used to
+select the direct engine. Since beta.12 both are accepted and ignored, and
+the Run uses the managed Worker. The only signal was a Host log line, so a
+client could not tell that its request now behaved differently. The beta.12
+CHANGELOG also listed the removed `SYSTEM_PROMPT`, `buildSystemPrompt` and
+`buildSystemPromptSnapshot` exports only inside a Changed entry, with no
+replacement, so Space found them by a failed build.
+
+### Resolution
+
+The inputs stay accepted, because rejecting them would break existing
+callers and saved settings that still say `'sa'`. The Run handle now lists
+each ignored input in `warnings`, over the daemon client too; the Host log
+line stays. `RuntimeRunMode` marks `'coding'` deprecated. The beta.12
+CHANGELOG gained a Breaking section that lists the removed exports and
+their replacements.
+
+**Files Changed.** `src/sdk-runtime.ts`, `src/runtime-daemon/server.ts`,
+`src/runtime-daemon/client.ts`, `src/runtime-daemon/schema.ts`,
+`CHANGELOG.md`.
+
+**Tests Added.** `src/sdk-runtime.test.ts` starts one Run with both retired
+inputs and one without, and expects two warnings and none.
+`src/runtime-daemon/server.test.ts` and `src/runtime-daemon/client.test.ts`
+check that `warnings` crosses the daemon wire.
+
+## Issue 426: The managed Worker saves the prepared prompt instead of the user's words
+
+- Priority: High
+- Status: Resolved
+- Introduced: the managed Worker since it gained a transcript; every root Run since `v0.7.97-beta.12` removed the direct engine
+- Created / Resolved: 2026-11-21 / 2026-11-21
+- Fixed: unreleased (after `v0.7.97-beta.12`)
+- Context: Space report, embedded mode calls `runManagedTask(options, executionPrompt)` with `context.rawUserInput`
+
+### Original Problem
+
+A caller may pass a prepared execution prompt (expanded Skill text, context
+blocks, `User request: ...`) together with `context.rawUserInput`. The direct
+engine sent and saved `rawUserInput` as the user message. The managed Worker
+ignored it: it sent the prepared prompt to the model and saved it as the
+user message, so private Skill or context text showed up in the visible
+conversation. The round-exit reshape in `runManagedTask` also searched for the
+prepared prompt, so it appended a second user/assistant pair to
+`result.messages`. Since beta.12 every root Run uses the managed Worker, so
+`startKodaX` and the classic REPL had the same problem. Host Skill inputs were
+not affected because the Host passes the raw text as `prompt`.
+
+### Resolution
+
+The managed Worker uses the direct engine's rule: the user message is
+`context.rawUserInput` when it is set, and `prompt` otherwise. The prepared
+content reaches the model only through `promptOverlay` and the Skill system
+sections, the same as before beta.12. A structural-resume preamble is still
+prepended to the saved text. The round-exit reshape looks for the same text.
+
+**Files Changed.** `packages/coding/src/task-engine/runner-driven.ts`,
+`packages/coding/src/task-engine/_internal/round-boundary.ts`.
+
+**Tests Added.** `packages/coding/src/agent-runtime/input-identity.test.ts`
+runs `startKodaX` and `runManagedTask` with a prepared prompt and a raw input.
+It expects the raw input, and not the prepared text, in both the provider
+request and `result.messages`.
+
+## Issue 425: The same malformed-record warning fills daemon.log
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: every version that reads Sessions through `FileSessionStorage`
+- Created / Resolved: 2026-11-21 / 2026-11-21
+- Fixed: unreleased (after `v0.7.97-beta.12`)
+- Related: Issue 424
+- Context: Space customer report (macOS) with a 702,603,735-byte `daemon.log`
+
+### Original Problem
+
+Every Session read re-parses the whole `.jsonl` file and warns
+`Skipped N malformed session record(s) from <file>.` again. The customer's
+log held 3,037,281 of these lines, all from 2026-07-30 to 2026-09-12. Eight
+Session files account for 234,833 to 528,445 lines each. Each file was
+re-read every ~2.3 seconds, around the clock, so a client was polling the
+Session views. The polling stopped after 2026-09-12. The count per file stayed
+constant (3 to 8), so the warning carried no new information after the first
+read.
+
+`daemon.log` rotation already exists since `v0.7.97-beta.5`. The file rotates
+to `daemon.log.1` at 2 MiB, so the log stays under about 4 MiB in total. The
+customer's file had no `.1`, and the Host that wrote to it on 2026-11-16
+appended without rotating. That Host therefore ran a build older than
+`v0.7.97-beta.5`. With rotation, the same flood would only push useful lines
+out of the 4 MiB window.
+
+### Resolution
+
+A process reports a file's malformed records only when their count differs
+from the count it last reported for that file. Repeated reads stay silent. A
+new bad record is reported again.
+
+Not changed: each read still parses the whole file. A cache was measured and
+rejected. Callers edit what they read, so a cache hit still needs a deep
+copy, and that copy costs about as much as the read (32.7 MB file: 125 ms
+load, 114 ms copy; 1.4 MB file: 6.1 ms load, 3.4 ms copy). Each cached
+Session would also keep about 1.5 times its file size in memory, and on
+filesystems with coarse mtimes a same-size rewrite could serve a stale
+Session. If polling cost matters later, the poller should read less rather
+than read the whole Session faster. Why these files hold bad records
+is still unknown. A record counts as malformed when its line is not valid JSON
+(for example a torn write) or when it has a record type this version does not
+read (version skew). Telling the two apart needs the customer's
+`sessions/**/s_*.jsonl` files.
+
+**Files Changed.** `packages/repl/src/interactive/storage.ts`.
+
+**Tests Added.** `packages/repl/src/interactive/storage-sdk-consumer.test.ts`
+loads a Session with one bad record three times through fresh storages and
+expects one warning. After a second bad record is written, it expects one
+more warning with the new count.
+
+## Issue 424: A failed client cleanup blocks every later start after the Host has exited
+
+- Priority: High
+- Status: Resolved
+- Introduced: `v0.7.97-alpha.2` (client exit receipts); recovery reads kept
+  the check in `v0.7.97-beta.3`
+- Created / Resolved: 2026-11-21 / 2026-11-21
+- Fixed: unreleased (after `v0.7.97-beta.12`)
+- Related: Issue 410, Issue 425
+- Context: Space customer report (macOS). Space now logs the blocked receipt
+  and starts anyway, but the SDK verdict was still wrong.
+
+### Original Problem
+
+Every Space start stopped at "waiting for the previous assistant exit to be
+verified" until the user deleted `~/.kodax/runtime/daemon/coder/client-exits/`.
+Timeline from the customer's runtime directory:
+
+- 2026-11-19 08:54:09: Space called `lifecycle.requestExit` with
+  `shutdownHost: true` while a Run was active. Client cleanup threw
+  `Input is bound to its target Run and cannot be withdrawn from the queue.`,
+  and the receipt was written with `cleanup.state: "failed"`.
+- Because cleanup failed, the exit never asked the Host to stop. The Host
+  stopped by itself 38 minutes later, through orphan exit, once the Run went
+  idle. `shutdown-outcome.rt_f6dc24b5c75a.6893.json` records `succeeded`.
+- From then on, `readKodaXClientExits` returned `blocked` /
+  `cleanup_failed` / `inspect_failure` on every start.
+
+Two causes:
+
+1. `verifyExitReceipt` checked `cleanup.state === 'failed'` before it looked
+   at the shutdown outcome. Client work (Runs, queued input, actor turns) lives
+   inside the Host process, so a proven exit of that exact process ends all of
+   it. The persisted receipt never changes, so this check gave the same
+   terminal verdict on every restart.
+2. `drive` wrote any cleanup exception as terminal `failed` and then skipped
+   the Host stop request.
+
+The specific exception was fixed in `v0.7.97-beta.9`: client cleanup now
+leaves a pending `steer` input to settle with its Run. The customer's Host
+started at 2026-11-16 03:47 UTC, before `v0.7.97-beta.11` was published at
+13:38 UTC that day. Its `daemon.log` was also never rotated (see Issue 425).
+It therefore ran a build older than `v0.7.97-beta.5`.
+
+### Resolution
+
+- Once the original owner process is gone, recovery waits only for
+  processes that still run: a live daemon PID or supervisor
+  (`daemon_active`, `containment_active`), or a Windows Job that still has
+  members. Every other gap can no longer change, so it is returned as the
+  `reason` of a `ready` / `start_or_connect` result and kept on the receipt as
+  evidence: a client or Host resource cleanup failure and a failed shutdown
+  outcome (`cleanup_failed`), a missing outcome (`outcome_missing`), a Host
+  without Job containment on Windows (`containment_unavailable`), a missing
+  process-start identity (`owner_identity_unverified`), and a receipt whose
+  runtime ID disagrees with its owner (`owner_identity_mismatch`). Only
+  `host_shutdown_verified` proves the old exit. The profile lock still fences
+  a new Host. While the owner is still alive, a cleanup failure still
+  blocks.
+- A cleanup exception is recorded as `cleanup.state: 'unknown'` with its
+  message in `issues`, and the requested Host stop still goes ahead. The
+  stop keeps its own guards: a peer or remaining work returns `protected`.
+  An unknown cleanup settles to `ready` once the Host exit is verified.
+- `drive` no longer writes `failed` when a receipt write fails. The error
+  reaches the lifecycle diagnostic, and the receipt keeps its last durable
+  state.
+
+**Files Changed.** `src/runtime-daemon/client-lifecycle.ts`,
+`packages/coding/src/client-contract.ts` (doc comment),
+`docs/SPACE_SDK_SEAMS.md`, `docs/CLIENT_CONTRACT.md`,
+`public_docs/sdk/embedder-guide.md`.
+
+**Tests Added.**
+- `src/sdk-client.exit-recovery.test.ts`: the customer receipt and its shutdown
+  outcome in the legacy `coder` slot read `ready` / `host_shutdown_verified`
+  on three restarts, without rewriting the receipt. A client cleanup failure
+  under a live owner stays `cleanup_failed`. The Windows reboot case now
+  returns `host_generation_terminated` with the failure kept as evidence.
+  A failed shutdown outcome, a missing outcome, an untrusted outcome and a
+  missing process-start identity read `ready` with that gap as the reason. A
+  same-boot Windows crash waits only while its Job still has members.
+- `src/runtime-daemon/client-lifecycle.test.ts`: a throwing client cleanup
+  persists `unknown`, still calls the Host stop, and then reads `ready` after
+  a verified shutdown. A late Host resource-cleanup failure and an
+  inconsistent receipt with a gone owner read `ready` with their reason.
+- `src/sdk-client.steer.test.ts`: a client with a queued `steer` input exits
+  during its Run. The receipt is not `failed` and lists the aborted Run.
+
+## Issue 423: A2A callers read and write the Host owner's memory
+
+- Priority: High
+- Status: Resolved
+- Introduced: `v0.7.69` (A2A serving), widened when memory hints, recall and
+  background learning review became default-on
+- Created / Resolved: 2026-11-20 / 2026-11-20
+- Fixed: unreleased (after `v0.7.97-beta.11`)
+
+### Original Problem
+
+A Run started by an A2A task gets the same memory identity as the Host
+owner's own Runs. The identity comes from `deriveCodingMemoryIdentity`
+(config home, workspace, agent id). It has no principal, and the A2A
+`agentContext.actorId` does not reach it. So a top-level A2A Run:
+
+- receives memory hints built from the owner's memory in its prompt;
+- can call `memory_recall` over the owner's governed claims;
+- can record `memory_intent`;
+- queues a background learning review that writes outcomes into the owner's
+  memory and learned skills.
+
+Only Runs with `currentAgentId` or `parentAgentId` (child Agents) skip this.
+Both execution engines (`runner-driven.ts` and `run-substrate.ts`) use that
+check alone.
+
+Impact: a remote principal can see what the owner's memory says about the
+project. It can also plant claims that later steer the owner's own Runs.
+Principals also share one memory, so they can read each other's traces.
+
+Evidence: `src/a2a/server.ts` starts Runs through `runs.start` or a prepared
+Agent binding, in a Session created with `surface: 'a2a'`. The A2A
+context-session test flaked because the learning review of one task called the
+provider while the next task ran.
+
+### Resolution
+
+A2A Runs do not use Host memory. Per-principal memory is not needed now.
+
+- `context.hostMemory: 'off'` (coding) means a Run neither reads nor writes
+  Host memory. `usesHostMemory` (`packages/coding/src/host-memory.ts`) replaces
+  the child-Agent check wherever memory is set up. That covers memory hints,
+  the recall binding, `memory_intent`, the learned-skill binding, maintenance
+  and the learning review inbox, in both engines.
+- The Runtime sets it for every Run in a Session whose surface is `a2a`, after
+  the caller's context, so a caller cannot clear it.
+- As for child Agents, `memory_recall` stays listed but has no binding, so it
+  only answers that no claim applies. The tool list of other Runs is unchanged.
+- Learned skills that an operator binds explicitly for A2A serving are
+  unchanged.
+
+Files: `packages/coding/src/host-memory.ts`, `memory-runtime.ts`,
+`learned-skill-runtime.ts`, `task-engine/runner-driven.ts`,
+`agent-runtime/run-substrate.ts`, `types.ts`, `src/sdk-runtime.ts`.
+
+Tests: `src/sdk-runtime.a2a-memory.test.ts` (an ordinary Session keeps
+`memory_intent` and queues a review; an A2A Session does neither),
+`runner-driven.child-memory.test.ts` (`hostMemory: 'off'`), and
+`src/a2a/context-session.test.ts` no longer filters review calls.
 
 ## Issue 422: A directory alias lets text tools rewrite the trusted project Exec Policy
 
@@ -3613,6 +4050,14 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 430 | High | Resolved | The daemon preflight reads every Session and fails on one busy write | every version with the daemon preflight | unreleased (after `v0.7.97-beta.12`) | 2026-11-21 | 2026-11-21 |
+| 429 | Medium | Resolved | A status check pays for the full daemon preflight and oversized reads | every version with `daemon.management.get` | unreleased (after `v0.7.97-beta.12`) | 2026-11-21 | 2026-11-21 |
+| 428 | High | Resolved | The daemon reports a recovering Session as an internal error | daemon wire since Actor settlement fences | unreleased (after `v0.7.97-beta.12`) | 2026-11-21 | 2026-11-21 |
+| 427 | Medium | Resolved | Retired Run inputs are ignored without telling the caller | `v0.7.97-beta.12` | unreleased (after `v0.7.97-beta.12`) | 2026-11-21 | 2026-11-21 |
+| 426 | High | Resolved | The managed Worker saves the prepared prompt instead of the user's words | `v0.7.97-beta.12` | unreleased (after `v0.7.97-beta.12`) | 2026-11-21 | 2026-11-21 |
+| 425 | Medium | Resolved | The same malformed-record warning fills daemon.log | every version | unreleased (after `v0.7.97-beta.12`) | 2026-11-21 | 2026-11-21 |
+| 424 | High | Resolved | A failed client cleanup blocks every later start after the Host has exited | `v0.7.97-alpha.2` | unreleased (after `v0.7.97-beta.12`) | 2026-11-21 | 2026-11-21 |
+| 423 | High | Resolved | A2A callers read and write the Host owner's memory | `v0.7.69` | unreleased (after `v0.7.97-beta.11`) | 2026-11-20 | 2026-11-20 |
 | 422 | Medium | Resolved | A directory alias lets text tools rewrite the trusted project Exec Policy | `v0.7.96-alpha.5` | unreleased (after `v0.7.97-beta.11`) | 2026-11-20 | 2026-11-20 |
 | 421 | High | Resolved | A Stop can wait five minutes and end as a network failure | v0.7.97-alpha.12 | unreleased (after `v0.7.97-beta.11`) | 2026-11-20 | 2026-11-20 |
 | 420 | High | ready | A repository can pre-approve shell commands through its project config | `v0.4.6` | - | 2026-11-19 | - |
@@ -19379,12 +19824,30 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 300 (48 Open including 1 needs-info, 251 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 308 (47 Open including 1 needs-info, 1 ready, 259 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 1 (420)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-21: Issue 430
+
+- The daemon preflight reuses unchanged Session metadata and the Session list,
+  so a check with no Run takes about 40ms instead of seconds on a large Host.
+  A Session busy with another write is retried instead of failing the
+  preflight. Unreleased.
+
+### 2026-11-21: Issues 424 and 425
+
+- A client exit whose cleanup failed no longer blocks every later start once
+  the Host exit is verified. A cleanup exception is recorded as `unknown`, and
+  the requested Host stop still runs. A Session's malformed-record warning is
+  logged once per process instead of on every read. Unreleased.
+
+### 2026-11-20: Issue 423
+
+- A2A Runs no longer read or write the Host owner's memory. Unreleased.
 
 ### 2026-11-20: Issue 422
 

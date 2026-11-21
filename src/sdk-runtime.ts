@@ -2005,7 +2005,10 @@ export interface RuntimeSessionStatus {
   readonly runId?: string;
 }
 
-export type RuntimeRunMode = "coding" | "managed_task";
+export type RuntimeRunMode =
+  /** @deprecated Retired and ignored; the Run handle reports it in `warnings`. */
+  | "coding"
+  | "managed_task";
 
 export interface RuntimeTextInput {
   readonly type: "text";
@@ -2510,6 +2513,8 @@ export interface RuntimeRunHandle {
   readonly runId: string;
   readonly sessionId: string;
   readonly turnId?: string;
+  /** Retired inputs the Host accepted but ignored, e.g. `mode: 'coding'`. Absent when there are none. */
+  readonly warnings?: readonly string[];
   readonly result: Promise<RuntimeRunResult>;
 }
 
@@ -3509,6 +3514,11 @@ export interface RuntimeDaemonManagementState {
 export interface RuntimeDaemonManagementService {
   shutdown(): Promise<{ readonly accepted: true }>;
   inspect(): Promise<RuntimeDaemonManagementState>;
+  /**
+   * Optional integration health without the daemon preflight, so a status
+   * panel can poll it cheaply. Requires `integrationConfigResilience.healthQuery`.
+   */
+  integrations(): Promise<RuntimeIntegrationHealth>;
 }
 
 export interface RuntimeStatusService {
@@ -4124,6 +4134,7 @@ const RUNTIME_ACTOR_REPAIR_MAX_RETRY_MS = 30_000;
 const RUNTIME_ACTOR_REPAIR_BUDGET_MS = 5 * 60_000;
 const RUNTIME_SESSION_CAPTURE_RETRY_DELAYS_MS = [5, 15] as const;
 const RUNTIME_SESSION_LOAD_RETRY_DELAYS_MS = [10, 25, 50, 100, 200, 400] as const;
+const RUNTIME_PREFLIGHT_READ_RETRY_DELAYS_MS = [10, 25, 50, 100] as const;
 const RUNTIME_LEGACY_LINEAGE_FALLBACK_TIMESTAMP = "1970-01-01T00:00:00.000Z";
 
 function createDeterministicRuntimeLegacyLineage(
@@ -4231,7 +4242,7 @@ export async function createKodaXRuntime(
       sharedSessionSettings: 2 as const,
       ...(autoStart
         ? {
-          actorSettlementConvergence: 3 as const,
+          actorSettlementConvergence: autoStartActorSettlement(options.requirements),
           crashOutcomeModel: 2 as const,
           managedRunDurability: 1 as const,
           ...(process.platform === "win32"
@@ -4696,6 +4707,9 @@ async function createKodaXRuntimeInternal(
       runs: currentRuns.filter((run) => !isTerminalRunPhase(run.phase) || run.runId === latest?.runId)
         .map(({ runId, phase, provider, model, error }) => ({ runId, phase, provider, model, error })) };
   }, async (sessionId, runIds, items) => {
+    // Mid-Run checkpoints append a delta; the checkpoint after the last Run
+    // ends rewrites the file so Sessions at rest stay compact.
+    const append = [...runs.values()].some(run => run.sessionId === sessionId && !run.terminalEmitted);
     const found = await sessionManager.storage.mutateUiHistory(sessionId, (history, data) => {
       const committed = committedSessionOutputIds(data);
       const currentIds = new Set(items.map(item => item.id));
@@ -4703,7 +4717,7 @@ async function createKodaXRuntimeInternal(
         && !runIds.some((runId) => item.id?.startsWith(`${runId}:`)));
       return [...older, ...persistSessionViewItems(items)].filter(item =>
         item.type === 'tool_group' || !item.outputId || !committed.has(item.outputId)).slice(-150);
-    });
+    }, { append });
     if (!found) throw new Error(`Session ${sessionId} was removed before display history could be saved.`);
   }, async (sessionId, itemId) => {
     const prefix = `${sessionId}:output:`;
@@ -6224,7 +6238,7 @@ function daemonCapabilityRequirements(
     ...(process.platform === "win32" ? { sandboxRuntime: 11 } : {}),
     ...(options.autoStart === true
       ? {
-          actorSettlementConvergence: 3,
+          actorSettlementConvergence: autoStartActorSettlement(options.requirements),
           crashOutcomeModel: 2,
           managedRunDurability: 1,
           ...(process.platform === "win32" ? { daemonShutdownVerification: 1 } : {}),
@@ -6235,6 +6249,14 @@ function daemonCapabilityRequirements(
         }
       : {}),
   };
+}
+
+// A busy published beta advertises v2 and must stay attachable (Issue 405).
+// Clients that render the v3 settlement outcome opt in through requirements.
+function autoStartActorSettlement(
+  requirements: RuntimeCapabilityRequirements | undefined,
+): 2 | 3 {
+  return requirements?.actorSettlementConvergence === 3 ? 3 : 2;
 }
 
 function firstUpgradeableCapability(
@@ -12646,10 +12668,8 @@ async function createRuntimeRunService(deps: {
       requiredAfterRun?.phase === "unknown"
       && requiredAfterRun.actorDurabilityFailure !== undefined
       && !requiredAfterRun.terminalEmitted;
-    if (input.mode === "coding" && !recovery) {
-      emitKodaXDiagnostic({ source: "runtime.runs.start", level: "warn",
-        message: "runs.start mode 'coding' is deprecated and ignored; every root Run uses the managed Worker." });
-    }
+    const warnings = recovery ? [] : retiredRunInputWarnings(input);
+    for (const message of warnings) emitKodaXDiagnostic({ source: "runtime.runs.start", level: "warn", message });
     if (actorSession !== undefined) {
       const observedHealth = actorSession.health();
       const health = observedHealth.state === "recovering"
@@ -13020,6 +13040,7 @@ async function createRuntimeRunService(deps: {
       get turnId() {
         return record.turnId;
       },
+      ...(warnings.length > 0 ? { warnings } : {}),
       result,
     };
   };
@@ -16072,7 +16093,8 @@ function createRuntimeAgentActorRegistry(
     },
     async activeTurns(admits, signal) {
       signal?.throwIfAborted();
-      const sessionIds = await sessionManager.storage.listActiveSessionIds();
+      const storage = sessionManager.storage;
+      const sessionIds = await retryChangedPreflightRead(() => storage.listActiveSessionIds(), signal);
       const snapshots: Array<{ sessionId: string; snapshot: Pick<AgentTreeSnapshot, 'actors'> } | undefined> = [];
       for (let index = 0; index < sessionIds.length; index += 48) {
         signal?.throwIfAborted();
@@ -16089,9 +16111,13 @@ function createRuntimeAgentActorRegistry(
             if (session.health().state === 'unknown') return undefined;
             return { sessionId, snapshot: session.rootControl().list() };
           }
-          const metadata = await sessionManager.storage.readActorMetadata(sessionId, { signal });
+          const metadata = await retryChangedPreflightRead(
+            () => storage.readActorMetadata(sessionId, { signal }),
+            signal,
+          );
           signal?.throwIfAborted();
-          if (metadata === undefined) throw new Error('Session disappeared during Actor preflight; retry the read.');
+          // Removed after the inventory was taken: no turns remain to count.
+          if (metadata === undefined) return undefined;
           if (!admits(metadata)) return undefined;
           const actorSnapshot = metadata.actorSnapshot;
           if (!actorSnapshot) return undefined;
@@ -22482,6 +22508,8 @@ function buildEffectiveRuntimeOptions(
     ...(combinedArtifacts.length > 0
       ? { inputArtifacts: combinedArtifacts }
       : {}),
+    // A remote principal drives an A2A Session; its Runs never use the owner's memory (Issue 423).
+    ...(session.runtimeInfo?.surface === "a2a" ? { hostMemory: "off" as const } : {}),
   };
   const provider = options.provider ?? settings.provider;
   const model = options.model ?? settings.model;
@@ -22556,6 +22584,32 @@ async function loadRequiredSession(
     }
   }
   throw new Error("unreachable Session load retry state");
+}
+
+/**
+ * Preflight reads every Session, and another process may be writing one of
+ * them. A strict read fails while that write is in flight, so wait for the
+ * write to land instead of failing the whole preflight. Corrupt or
+ * incompatible data still fails at once.
+ */
+async function retryChangedPreflightRead<T>(
+  read: () => Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await read();
+    } catch (error: unknown) {
+      const delayMs = RUNTIME_PREFLIGHT_READ_RETRY_DELAYS_MS[attempt];
+      if (
+        !(error instanceof replApi.SessionReadError)
+        || error.code !== "data_changed"
+        || delayMs === undefined
+      ) throw error;
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      signal?.throwIfAborted();
+    }
+  }
 }
 
 function createRuntimeReadBudget(
@@ -23848,6 +23902,18 @@ function setStringIfPresent<K extends keyof RuntimeSessionSettings>(
   if (typeof value === "string" && value.length > 0) {
     setMutableSetting(target, key, value as RuntimeSessionSettings[K]);
   }
+}
+
+/** Retired Run inputs are still accepted, so the caller learns here that they changed nothing. */
+function retiredRunInputWarnings(input: RuntimeStartRunInput): string[] {
+  const warnings: string[] = [];
+  if (input.mode === "coding") {
+    warnings.push("runs.start mode 'coding' is retired and ignored; every root Run uses the managed Worker.");
+  }
+  if (input.options?.agentMode === "sa") {
+    warnings.push("options.agentMode 'sa' is retired and ignored; every root Run uses the managed Worker.");
+  }
+  return warnings;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

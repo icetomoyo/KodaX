@@ -320,6 +320,8 @@ for (const notificationFailure of [false, true]) {
       await expect(runtime.agents.output(session.id, turn.actorPath, turn.turnId)).resolves.toMatchObject({ state: 'running' });
       await expect(runtime.runs.start({ sessionId: session.id, prompt: 'Must remain behind the unknown Actor fence.' }))
         .rejects.toMatchObject({ code: 'actor_settlement_not_persisted' });
+      await expect(runtime.runs.acceptInput({ sessionId: session.id, inputId: 'during-repair', text: 'Wait for the Actor repair.' }))
+        .rejects.toMatchObject({ code: 'actor_settlement_not_persisted' });
 
       terminalCommit.release();
       stage = 'awaiting canonical repair';

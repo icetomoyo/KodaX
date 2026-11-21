@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -31,12 +31,14 @@ class LineageProvider extends KodaXBaseProvider {
     const lastUser = [...messages].reverse().find((message) => message.role === 'user');
     const userText = typeof lastUser?.content === 'string' ? lastUser.content : '';
     args[4]?.onTextDelta?.(`REPLY ${userText.slice(-1)}`);
+    await holdStream;
     return { textBlocks: [{ type: 'text', text: `REPLY ${userText.slice(-1)}` }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
   }
 }
 
 let sideScript: KodaXBaseProvider['stream'] | undefined;
 let requests: KodaXMessage[][] = [];
+let holdStream: Promise<void> | undefined;
 let homeDir: string;
 let runtime: Awaited<ReturnType<typeof createKodaXRuntime>>;
 let host: Awaited<ReturnType<typeof startRuntimeDaemonHost>>;
@@ -47,6 +49,7 @@ beforeEach(async () => {
   homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-product-lineage-'));
   requests = [];
   sideScript = undefined;
+  holdStream = undefined;
   registerModelProvider('product-lineage-test', () => new LineageProvider());
   vi.stubEnv('KODAX_PRODUCT_LINEAGE_TEST_KEY', 'test-only');
   await openHost();
@@ -294,6 +297,37 @@ it('waits for the completed run display checkpoint before opening a transcript b
   } finally {
     release();
     await runtime.close();
+    checkpoint.mockRestore();
+  }
+}, 60_000);
+
+it('asks to append display checkpoints during a Run and rewrites once it ends', async () => {
+  const session = await first.sessions.create({ projectPath: homeDir });
+  await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
+  let release = () => {};
+  holdStream = new Promise<void>(resolve => { release = resolve; });
+  const modes: boolean[] = [];
+  const original = FileSessionStorage.prototype.mutateUiHistory;
+  const checkpoint = vi.spyOn(FileSessionStorage.prototype, 'mutateUiHistory').mockImplementation(async function (this: FileSessionStorage, id, mutation, options) {
+    modes.push(options?.append === true);
+    return original.call(this, id, mutation, options);
+  });
+  try {
+    const accepted = await first.inputs.submit({ sessionId: session.id, inputId: 'held', text: 'Ask round 1' });
+    await expect.poll(() => modes.length, { timeout: 10_000 }).toBeGreaterThan(0);
+    expect(modes).not.toContain(false);
+    release();
+    await runtime.runs.await(accepted.runId!);
+    await runtime.sessions.transcript(session.id);
+    expect(modes.at(-1)).toBe(false);
+    const sessionsDir = path.join(homeDir, '.kodax', 'sessions');
+    const file = (await readdir(sessionsDir, { recursive: true })).find(name => name.endsWith(`${session.id}.jsonl`));
+    if (file === undefined) throw new Error('Session file not found.');
+    const content = await readFile(path.join(sessionsDir, file), 'utf8');
+    expect(content).not.toContain('uiHistoryTail');
+    expect(content).toContain('REPLY 1');
+  } finally {
+    release();
     checkpoint.mockRestore();
   }
 }, 60_000);
