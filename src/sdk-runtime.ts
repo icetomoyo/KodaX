@@ -4128,6 +4128,7 @@ const RUNTIME_ACTOR_REPAIR_MAX_RETRY_MS = 30_000;
 const RUNTIME_ACTOR_REPAIR_BUDGET_MS = 5 * 60_000;
 const RUNTIME_SESSION_CAPTURE_RETRY_DELAYS_MS = [5, 15] as const;
 const RUNTIME_SESSION_LOAD_RETRY_DELAYS_MS = [10, 25, 50, 100, 200, 400] as const;
+const RUNTIME_PREFLIGHT_READ_RETRY_DELAYS_MS = [10, 25, 50, 100] as const;
 const RUNTIME_LEGACY_LINEAGE_FALLBACK_TIMESTAMP = "1970-01-01T00:00:00.000Z";
 
 function createDeterministicRuntimeLegacyLineage(
@@ -15878,7 +15879,8 @@ function createRuntimeAgentActorRegistry(
     },
     async activeTurns(admits, signal) {
       signal?.throwIfAborted();
-      const sessionIds = await sessionManager.storage.listActiveSessionIds();
+      const storage = sessionManager.storage;
+      const sessionIds = await retryChangedPreflightRead(() => storage.listActiveSessionIds(), signal);
       const snapshots: Array<{ sessionId: string; snapshot: Pick<AgentTreeSnapshot, 'actors'> } | undefined> = [];
       for (let index = 0; index < sessionIds.length; index += 48) {
         signal?.throwIfAborted();
@@ -15895,9 +15897,13 @@ function createRuntimeAgentActorRegistry(
             if (session.health().state === 'unknown') return undefined;
             return { sessionId, snapshot: session.rootControl().list() };
           }
-          const metadata = await sessionManager.storage.readActorMetadata(sessionId, { signal });
+          const metadata = await retryChangedPreflightRead(
+            () => storage.readActorMetadata(sessionId, { signal }),
+            signal,
+          );
           signal?.throwIfAborted();
-          if (metadata === undefined) throw new Error('Session disappeared during Actor preflight; retry the read.');
+          // Removed after the inventory was taken: no turns remain to count.
+          if (metadata === undefined) return undefined;
           if (!admits(metadata)) return undefined;
           const actorSnapshot = metadata.actorSnapshot;
           if (!actorSnapshot) return undefined;
@@ -22352,6 +22358,32 @@ async function loadRequiredSession(
     }
   }
   throw new Error("unreachable Session load retry state");
+}
+
+/**
+ * Preflight reads every Session, and another process may be writing one of
+ * them. A strict read fails while that write is in flight, so wait for the
+ * write to land instead of failing the whole preflight. Corrupt or
+ * incompatible data still fails at once.
+ */
+async function retryChangedPreflightRead<T>(
+  read: () => Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await read();
+    } catch (error: unknown) {
+      const delayMs = RUNTIME_PREFLIGHT_READ_RETRY_DELAYS_MS[attempt];
+      if (
+        !(error instanceof replApi.SessionReadError)
+        || error.code !== "data_changed"
+        || delayMs === undefined
+      ) throw error;
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      signal?.throwIfAborted();
+    }
+  }
 }
 
 function createRuntimeReadBudget(

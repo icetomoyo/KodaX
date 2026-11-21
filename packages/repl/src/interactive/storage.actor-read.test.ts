@@ -60,8 +60,50 @@ it('reads an isolated Actor projection across a large header without loading the
   expect(result).toEqual(snapshot);
   expect(fullRead.mock.calls.some(([file]) => String(file).endsWith('projection.jsonl'))).toBe(false);
   if (!result) throw new Error('Expected an Actor snapshot');
-  (result as { revision: number }).revision = 99;
+  expect(() => { (result as { revision: number }).revision = 99; }).toThrow(TypeError);
   expect(await storage.readActorSnapshot('projection')).toEqual(snapshot);
+});
+
+/** Fixtures written just now sit inside the same-tick window that is never cached. */
+function observeAfterSameTickWindow(): void {
+  const later = Date.now() + 10_000;
+  vi.spyOn(Date, 'now').mockReturnValue(later);
+}
+
+it('reuses unchanged Actor metadata without reopening the Session file', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-actor-cache-'));
+  roots.push(root);
+  const storage = new FileSessionStorage({ sessionsDir: path.join(root, 'sessions') });
+  const snapshot: AgentActorSnapshot = {
+    schemaVersion: 1, revision: 3, maxConcurrentThreads: 4,
+    actors: [], turns: [], mailboxes: {}, events: [],
+  };
+  await storage.save('cached', { gitRoot: root, messages: [], actorSnapshot: snapshot });
+  observeAfterSameTickWindow();
+  const first = await storage.readActorMetadata('cached');
+  const open = vi.spyOn(fs, 'open');
+  expect(await storage.readActorMetadata('cached')).toBe(first);
+  expect(open.mock.calls.some(([file]) => String(file).endsWith('cached.jsonl'))).toBe(false);
+  vi.restoreAllMocks();
+
+  await storage.saveActorSnapshot('cached', { ...snapshot, revision: 4 }, 3);
+  expect((await storage.readActorSnapshot('cached'))?.revision).toBe(4);
+});
+
+it('reuses the inventory until a Session file is added', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-actor-inventory-'));
+  roots.push(root);
+  const storage = new FileSessionStorage({ sessionsDir: path.join(root, 'sessions') });
+  await storage.save('first', { gitRoot: root, messages: [] });
+  observeAfterSameTickWindow();
+  await expect(storage.listActiveSessionIds()).resolves.toEqual(['first']);
+  const readdir = vi.spyOn(fs, 'readdir');
+  await expect(storage.listActiveSessionIds()).resolves.toEqual(['first']);
+  expect(readdir).not.toHaveBeenCalled();
+  vi.restoreAllMocks();
+
+  await storage.save('second', { gitRoot: root, messages: [] });
+  expect([...await storage.listActiveSessionIds()].sort()).toEqual(['first', 'second']);
 });
 
 it.each([

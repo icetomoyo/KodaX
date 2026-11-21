@@ -22,8 +22,15 @@ All notable changes to this project will be documented in this file.
 
 - Reading a Session's first line starts with 4KB instead of 64KB and grows
   only for long lines, and a conversation page reads each inline record with
-  one read instead of two (Issue 429). The preflight's scan of every Session
-  is still open as Issue 430.
+  one read instead of two (Issue 429).
+- The daemon preflight reuses each Session's Actor metadata and the Session
+  list while their files and directories are unchanged. On about 3000
+  Sessions, preflight with no Run dropped from about 4.5s to about 40ms after
+  the first call. A Session busy with another process's write is retried
+  briefly instead of failing the preflight, and a Session removed during the
+  scan is skipped (Issue 430).
+- `readActorMetadata()` returns a deeply frozen object that may be shared
+  between calls. Copy it before changing it (Issue 430).
 - A managed Run started with a prepared prompt and `context.rawUserInput`
   sends and saves the user's exact words, as the direct engine did. It used
   to save the prepared prompt, so expanded Skill or context text appeared as

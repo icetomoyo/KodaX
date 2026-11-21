@@ -988,6 +988,39 @@ function sameStableFileIdentity(
     && left.ctimeNs === right.ctimeNs;
 }
 
+/**
+ * A change inside the same timestamp tick as the observation can leave the
+ * identity unchanged, so a just-touched entry is never trusted as a witness.
+ */
+const RACY_WITNESS_WINDOW_NS = 2_000_000_000n;
+
+function isRacyStableFileIdentity(identity: StableFileIdentity, observedAtMs: number): boolean {
+  const horizon = BigInt(observedAtMs) * 1_000_000n - RACY_WITNESS_WINDOW_NS;
+  return identity.mtimeNs >= horizon || identity.ctimeNs >= horizon;
+}
+
+/** Directory identities that bound which active Session files exist. */
+type SessionInventoryCache = {
+  readonly directories: ReadonlyMap<string, StableFileIdentity>;
+  readonly ids: readonly string[];
+};
+
+/** Persisted Actor metadata is shared read-only, so a cache hit needs no copy. */
+function deepFreezeActorMetadata<T>(value: T): T {
+  if (typeof value === 'object' && value !== null && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const child of Object.values(value)) deepFreezeActorMetadata(child);
+  }
+  return value;
+}
+
+/** Actor metadata keyed by the exact main file it was read from. */
+type ActorMetadataCacheEntry = {
+  readonly filePath: string;
+  readonly identity: StableFileIdentity;
+  readonly metadata: SessionActorMetadata;
+};
+
 function sameOptionalStableFileIdentity(
   left: StableFileIdentity | null,
   right: StableFileIdentity | null,
@@ -2637,6 +2670,8 @@ export class FileSessionStorage implements KodaXSessionStorage {
   private readonly sessionLocations: Map<string, SessionLocationState>;
   private readonly verifiedLocationMisses = new Map<string, SessionTopologyIdentity>();
   private readonly drafts = new Map<string, SessionData>();
+  private inventoryCache: SessionInventoryCache | undefined;
+  private readonly actorMetadataCache = new Map<string, ActorMetadataCacheEntry>();
 
   /**
    * v0.7.46 — optional explicit project cwd for in-process embedders
@@ -4852,6 +4887,36 @@ export class FileSessionStorage implements KodaXSessionStorage {
   /** Strict inventory for control decisions, independent of presentation filtering and pagination. */
   async listActiveSessionIds(): Promise<readonly string[]> {
     assertSessionMigrationInactive(this.sessionsDir);
+    const cached = this.inventoryCache;
+    if (cached !== undefined && await this.inventoryCacheIsCurrent(cached)) {
+      return [...new Set([...this.drafts.keys(), ...cached.ids])];
+    }
+    this.inventoryCache = undefined;
+    return this.scanActiveSessionIds();
+  }
+
+  /**
+   * Adding, removing or renaming a Session file changes its directory's
+   * identity, so unchanged directories prove the cached membership. Content
+   * writes do not matter here: membership is all the inventory reports.
+   */
+  private async inventoryCacheIsCurrent(cached: SessionInventoryCache): Promise<boolean> {
+    if (fsSync.existsSync(sessionLocationTopologyLockPath(this.sessionsDir))) return false;
+    const current = await Promise.all([...cached.directories].map(async ([directory, expected]) => {
+      const identity = await statStableFileIdentity(directory);
+      return identity !== null && sameStableFileIdentity(identity, expected);
+    }));
+    assertSessionMigrationInactive(this.sessionsDir);
+    return current.every(Boolean)
+      && !fsSync.existsSync(sessionLocationTopologyLockPath(this.sessionsDir));
+  }
+
+  private async scanActiveSessionIds(): Promise<readonly string[]> {
+    const observedAt = Date.now();
+    const directories = new Map<string, StableFileIdentity | null>();
+    const witness = async (directory: string): Promise<void> => {
+      directories.set(directory, await statStableFileIdentity(directory));
+    };
     const boundary = {
       topologyBefore: this.readSessionTopologyIdentitySync('', 'global'),
       writerTopologyDigestBefore: sessionWriterTopologyDigestSync(this.sessionsDir),
@@ -4859,7 +4924,10 @@ export class FileSessionStorage implements KodaXSessionStorage {
     };
     // Do not create/migrate the directory merely to inspect an empty Runtime.
     let rootEntries: fsSync.Dirent[];
-    try { rootEntries = await fs.readdir(this.sessionsDir, { withFileTypes: true }); }
+    try {
+      await witness(this.sessionsDir);
+      rootEntries = await fs.readdir(this.sessionsDir, { withFileTypes: true });
+    }
     catch (error: unknown) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [...this.drafts.keys()];
       throw error;
@@ -4877,6 +4945,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
     await Promise.all(rootEntries.filter(entry => entry.isDirectory() && !entry.name.startsWith('.')).map(async entry => {
       const directory = path.join(this.sessionsDir, entry.name);
       const legacyArchive = entry.name === 'archived';
+      if (!legacyArchive) await witness(directory);
       collect(directory, await fs.readdir(directory), legacyArchive);
       if (legacyArchive) return;
       const archived = path.join(directory, 'archived');
@@ -4896,10 +4965,32 @@ export class FileSessionStorage implements KodaXSessionStorage {
       || boundary.topologyBefore.epoch !== after.epoch) {
       throw new SessionReadError('data_changed', 'Session inventory changed during preflight');
     }
-    return [...new Set(active)];
+    const ids = [...new Set(active)];
+    this.rememberInventory(directories, ids.filter(id => !this.drafts.has(id)), observedAt);
+    return ids;
   }
 
-  /** Canonical Actor state plus the Runtime-owned admission identity, never a resume cache. */
+  private rememberInventory(
+    directories: ReadonlyMap<string, StableFileIdentity | null>,
+    ids: readonly string[],
+    observedAt: number,
+  ): void {
+    const known = new Set(ids);
+    for (const id of this.actorMetadataCache.keys()) {
+      if (!known.has(id)) this.actorMetadataCache.delete(id);
+    }
+    const stable = new Map<string, StableFileIdentity>();
+    for (const [directory, identity] of directories) {
+      if (identity === null || isRacyStableFileIdentity(identity, observedAt)) return;
+      stable.set(directory, identity);
+    }
+    this.inventoryCache = { directories: stable, ids };
+  }
+
+  /**
+   * Canonical Actor state plus the Runtime-owned admission identity, never a
+   * resume cache. Persisted results are deeply frozen and may be shared.
+   */
   async readActorMetadata(id: string, options: SessionReadOptions = {}): Promise<SessionActorMetadata | undefined> {
     throwIfSessionReadAborted(options.signal);
     normalizeSessionReadTimeout(options.timeoutMs);
@@ -4908,44 +4999,81 @@ export class FileSessionStorage implements KodaXSessionStorage {
       throwIfSessionReadAborted(options.signal);
       const draft = this.drafts.get(id);
       if (draft) return { id, runtimeInfo: structuredClone(draft.runtimeInfo), actorSnapshot: structuredClone(draft.actorSnapshot) };
+      const cached = await this.cachedActorMetadata(id);
+      throwIfSessionReadAborted(options.signal);
+      if (cached !== undefined) return cached;
       const mainPath = await this.resolveSessionLocation(id, true);
       throwIfSessionReadAborted(options.signal);
       if (mainPath === null) return undefined;
-      const topology = this.verifiedLocationTopology(id);
-      // Capture and verify the bundle around the metadata read itself. Taking
-      // two complete snapshots doubles the stats without strengthening this fence.
-      const meta = await withStableSessionBundleBoundaryAtPath(
-        this.sessionsDir, id, mainPath, false, () => readSessionMetadata(mainPath, options.signal),
-      );
-      throwIfSessionReadAborted(options.signal);
-      this.assertLocationTopologyUnchanged(id, topology);
-      if (meta._type !== 'meta') {
-        throw new SessionReadError('data_corrupt', 'Session metadata is missing');
+      const observedAt = Date.now();
+      const before = await statStableFileIdentity(mainPath);
+      const metadata = deepFreezeActorMetadata(await this.readActorMetadataAtPath(id, mainPath, options));
+      const after = await statStableFileIdentity(mainPath);
+      if (before !== null && after !== null && sameStableFileIdentity(before, after)
+        && !isRacyStableFileIdentity(after, observedAt)) {
+        this.actorMetadataCache.set(id, { filePath: mainPath, identity: after, metadata });
       }
-      if (meta.lineageVersion !== undefined && meta.lineageVersion !== 2) {
-        throw new SessionReadError('version_incompatible', 'Unsupported Session lineage version');
-      }
-      const snapshot = meta.actorSnapshot;
-      const runtimeInfo = isKodaXSessionRuntimeInfo(meta.runtimeInfo) ? meta.runtimeInfo : undefined;
-      if (snapshot === undefined) return { id, runtimeInfo };
-      if (!isRecord(snapshot) || (snapshot.schemaVersion !== 1 && snapshot.schemaVersion !== 2)) {
-        throw new SessionReadError('version_incompatible', 'Unsupported Actor snapshot schema');
-      }
-      if (!Array.isArray(snapshot.actors) || !snapshot.actors.every((actor: unknown) => (
-        isRecord(actor) && typeof actor.path === 'string'
-        && (actor.currentTurnId === undefined || typeof actor.currentTurnId === 'string')
-      ))) {
-        throw new SessionReadError('data_corrupt', 'Invalid Actor metadata');
-      }
-      if (snapshot.schemaVersion === 2 && snapshot.owner !== undefined) {
-        const owner = snapshot.owner;
-        if (!isRecord(owner) || typeof owner.ownerId !== 'string' || typeof owner.runtimeId !== 'string'
-          || !Number.isSafeInteger(owner.pid) || (owner.pid as number) <= 0 || typeof owner.startedAt !== 'string') {
-          throw new SessionReadError('data_corrupt', 'Invalid Actor owner metadata');
-        }
-      }
-      return { id, runtimeInfo, actorSnapshot: structuredClone(snapshot) as unknown as AgentActorSnapshot };
+      return metadata;
     }), options);
+  }
+
+  /**
+   * An unchanged main file holds the same metadata line, so the strict read
+   * and its writer fences only run again after the file is replaced or grows.
+   */
+  private async cachedActorMetadata(id: string): Promise<SessionActorMetadata | undefined> {
+    const cached = this.actorMetadataCache.get(id);
+    if (cached === undefined) return undefined;
+    const location = this.sessionLocations.get(id);
+    const identity = location?.kind === 'located' && location.filePath === cached.filePath
+      ? await statStableFileIdentity(cached.filePath)
+      : null;
+    if (identity !== null && sameStableFileIdentity(identity, cached.identity)) {
+      return cached.metadata;
+    }
+    this.actorMetadataCache.delete(id);
+    return undefined;
+  }
+
+  private async readActorMetadataAtPath(
+    id: string,
+    mainPath: string,
+    options: SessionReadOptions,
+  ): Promise<SessionActorMetadata> {
+    const topology = this.verifiedLocationTopology(id);
+    // Capture and verify the bundle around the metadata read itself. Taking
+    // two complete snapshots doubles the stats without strengthening this fence.
+    const meta = await withStableSessionBundleBoundaryAtPath(
+      this.sessionsDir, id, mainPath, false, () => readSessionMetadata(mainPath, options.signal),
+    );
+    throwIfSessionReadAborted(options.signal);
+    this.assertLocationTopologyUnchanged(id, topology);
+    if (meta._type !== 'meta') {
+      throw new SessionReadError('data_corrupt', 'Session metadata is missing');
+    }
+    if (meta.lineageVersion !== undefined && meta.lineageVersion !== 2) {
+      throw new SessionReadError('version_incompatible', 'Unsupported Session lineage version');
+    }
+    const snapshot = meta.actorSnapshot;
+    const runtimeInfo = isKodaXSessionRuntimeInfo(meta.runtimeInfo) ? meta.runtimeInfo : undefined;
+    if (snapshot === undefined) return { id, runtimeInfo };
+    if (!isRecord(snapshot) || (snapshot.schemaVersion !== 1 && snapshot.schemaVersion !== 2)) {
+      throw new SessionReadError('version_incompatible', 'Unsupported Actor snapshot schema');
+    }
+    if (!Array.isArray(snapshot.actors) || !snapshot.actors.every((actor: unknown) => (
+      isRecord(actor) && typeof actor.path === 'string'
+      && (actor.currentTurnId === undefined || typeof actor.currentTurnId === 'string')
+    ))) {
+      throw new SessionReadError('data_corrupt', 'Invalid Actor metadata');
+    }
+    if (snapshot.schemaVersion === 2 && snapshot.owner !== undefined) {
+      const owner = snapshot.owner;
+      if (!isRecord(owner) || typeof owner.ownerId !== 'string' || typeof owner.runtimeId !== 'string'
+        || !Number.isSafeInteger(owner.pid) || (owner.pid as number) <= 0 || typeof owner.startedAt !== 'string') {
+        throw new SessionReadError('data_corrupt', 'Invalid Actor owner metadata');
+      }
+    }
+    return { id, runtimeInfo, actorSnapshot: structuredClone(snapshot) as unknown as AgentActorSnapshot };
   }
 
   /** Strict read-only Session load. It never migrates or repairs persisted data. */

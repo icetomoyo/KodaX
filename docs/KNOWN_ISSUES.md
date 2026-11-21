@@ -50,10 +50,10 @@ No production accounting change is claimed here. See the
 ## Issue 430: The daemon preflight reads every Session and fails on one busy write
 
 - Priority: High
-- Status: ready
+- Status: Resolved
 - Introduced: every version with the daemon preflight
-- Created: 2026-11-21
-- Fixed: -
+- Created / Resolved: 2026-11-21 / 2026-11-21
+- Fixed: unreleased (after `v0.7.97-beta.12`)
 - Related: Issue 429 (the cheaper parts of the same report)
 - Context: Space report on slow preflight, items 1 and 3; plan is stage 1
 
@@ -79,6 +79,45 @@ with live Actor turns in the Host instead of scanning all of them, and treat a
 Session replaced mid-read as a retry of that Session, not a failure of the
 preflight. Acceptance: preflight under 50ms with no Run, and inspect succeeds
 on the first try during a Run.
+
+### Resolution
+
+The Host does not keep a live-turn set. Turns are written by other processes
+too, so a Host-side set would need its own recovery after a crash. Instead,
+storage caches the two reads the scan makes and checks a cheap file witness
+before each reuse.
+
+- `listActiveSessionIds()` keeps the id list with the stat identity of the
+  sessions root and of each project directory, taken before each readdir. It
+  is reused only while all of them are unchanged and no topology lock is held.
+- `readActorMetadata()` keeps each result with the stat identity of the main
+  file it was read from. It is reused only while that identity and the
+  located path are unchanged. Results are deeply frozen and shared, so a hit
+  costs no copy. Entries for Sessions no longer listed are dropped.
+- Neither cache stores a witness whose mtime or ctime is within 2 seconds of
+  the read, because a second write in the same timestamp tick would not change
+  the witness.
+- `activeTurns` retries a `data_changed` read of the inventory or of one
+  Session after 10, 25, 50 and 100ms, then fails as before. Corrupt or
+  incompatible data still fails at once. A Session removed after the
+  inventory was taken has no turns and is skipped.
+
+On 3230 copied Sessions, preflight with no Run went from about 4.5s to about
+39ms once warm (`[5893, 40, 38, 39, 39]` ms for five calls). The first call
+after a Host starts still reads every Session. During a Run, each full
+Session save renames a file in its project directory, so that directory is
+rescanned (about 400ms here). Stage 2 makes mid-Run display checkpoints append
+instead of rewriting, which removes most of those renames.
+
+**Files Changed.** `packages/repl/src/interactive/storage.ts`,
+`src/sdk-runtime.ts`.
+
+**Tests Added.** `packages/repl/src/interactive/storage.actor-read.test.ts`
+reuses unchanged metadata without opening the file, sees a new snapshot
+revision after a write, reuses the inventory until a Session is added, and
+rejects mutation of a returned result. `src/sdk-runtime.preflight-projection.test.ts`
+waits out two `data_changed` reads of one Session and skips a Session that was
+removed.
 
 ## Issue 429: A status check pays for the full daemon preflight and oversized reads
 
@@ -3986,7 +4025,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
-| 430 | High | ready | The daemon preflight reads every Session and fails on one busy write | every version with the daemon preflight | - | 2026-11-21 | - |
+| 430 | High | Resolved | The daemon preflight reads every Session and fails on one busy write | every version with the daemon preflight | unreleased (after `v0.7.97-beta.12`) | 2026-11-21 | 2026-11-21 |
 | 429 | Medium | Resolved | A status check pays for the full daemon preflight and oversized reads | every version with `daemon.management.get` | unreleased (after `v0.7.97-beta.12`) | 2026-11-21 | 2026-11-21 |
 | 428 | High | Resolved | The daemon reports a recovering Session as an internal error | daemon wire since Actor settlement fences | unreleased (after `v0.7.97-beta.12`) | 2026-11-21 | 2026-11-21 |
 | 427 | Medium | Resolved | Retired Run inputs are ignored without telling the caller | `v0.7.97-beta.12` | unreleased (after `v0.7.97-beta.12`) | 2026-11-21 | 2026-11-21 |
@@ -19759,12 +19798,19 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 302 (47 Open including 1 needs-info, 254 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 307 (47 Open including 1 needs-info, 1 ready, 259 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 1 (420)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-21: Issue 430
+
+- The daemon preflight reuses unchanged Session metadata and the Session list,
+  so a check with no Run takes about 40ms instead of seconds on a large Host.
+  A Session busy with another write is retried instead of failing the
+  preflight. Unreleased.
 
 ### 2026-11-21: Issues 424 and 425
 
