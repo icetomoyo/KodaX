@@ -182,6 +182,37 @@ function resolveScrollWindow(snapshot: ScrollSnapshot): ScrollBoxWindow {
   };
 }
 
+interface ScrollBoxGeometryProps {
+  scrollTop: number;
+  scrollHeight: number;
+  viewportHeight: number;
+  stickyScroll: boolean;
+  overscanRows?: number;
+}
+
+function sameGeometryProps(left: ScrollBoxGeometryProps, right: ScrollBoxGeometryProps): boolean {
+  return left.scrollTop === right.scrollTop
+    && left.scrollHeight === right.scrollHeight
+    && left.viewportHeight === right.viewportHeight
+    && left.stickyScroll === right.stickyScroll
+    && left.overscanRows === right.overscanRows;
+}
+
+// The snapshot a geometry prop change commits. Imperative clamp bounds survive;
+// a prop-driven move resets the pending delta.
+function snapshotFromProps(previous: ScrollSnapshot, props: ScrollBoxGeometryProps): ScrollSnapshot {
+  return {
+    scrollTop: props.scrollTop,
+    scrollHeight: props.scrollHeight,
+    viewportHeight: props.viewportHeight,
+    pendingDelta: 0,
+    clampMin: previous.clampMin,
+    clampMax: previous.clampMax,
+    sticky: props.stickyScroll,
+    overscanRows: props.overscanRows,
+  };
+}
+
 function resolveNativeScrollTop(snapshot: ScrollSnapshot): number {
   const clampedOffset = clampScrollTop(snapshot, snapshot.scrollTop);
   return Math.max(0, snapshot.scrollHeight - snapshot.viewportHeight - clampedOffset);
@@ -217,6 +248,10 @@ export const ScrollBox: React.FC<ScrollBoxProps> = ({
   const [windowState, setWindowState] = useState<ScrollBoxWindow>(
     () => resolveScrollWindow(snapshotRef.current),
   );
+  const geometryProps: ScrollBoxGeometryProps = { scrollTop, scrollHeight, viewportHeight, stickyScroll, overscanRows };
+  // Geometry props reach the snapshot in an effect after this render commits.
+  // Track what was committed so the render can use the incoming geometry now.
+  const committedPropsRef = useRef<ScrollBoxGeometryProps>(geometryProps);
   // FEATURE_214 (v0.7.46) — live, un-committed offset during a React-bypass scroll
   // burst (null = no active bypass; the committed snapshot is authoritative). The
   // render reads it via `effectiveSnapshot` so a stray React re-render can't revert
@@ -327,17 +362,10 @@ export const ScrollBox: React.FC<ScrollBoxProps> = ({
   }, []);
 
   useEffect(() => {
-    const previous = snapshotRef.current;
-    const next: ScrollSnapshot = {
-      scrollTop,
-      scrollHeight,
-      viewportHeight,
-      pendingDelta: 0,
-      clampMin: previous.clampMin,
-      clampMax: previous.clampMax,
-      sticky: stickyScroll,
-      overscanRows,
-    };
+    const next = snapshotFromProps(snapshotRef.current, {
+      scrollTop, scrollHeight, viewportHeight, stickyScroll, overscanRows,
+    });
+    committedPropsRef.current = { scrollTop, scrollHeight, viewportHeight, stickyScroll, overscanRows };
 
     const result = commitSnapshot(next);
     if (result.previous.sticky !== stickyScroll) {
@@ -530,10 +558,17 @@ export const ScrollBox: React.FC<ScrollBoxProps> = ({
   // Safe in Ink's synchronous renderer (no concurrent tearing). null = no burst →
   // the committed snapshot/window is authoritative (pre-FEATURE_214 behaviour).
   const bypassActive = bypassOffsetRef.current !== null;
-  const effectiveSnapshot = bypassActive
-    ? { ...snapshotRef.current, scrollTop: bypassOffsetRef.current as number }
+  // A render with new geometry must paint the window that geometry implies.
+  // The committed window still describes the previous content: when sticky
+  // content grows, it would hide the newest rows for one frame and then jump.
+  const geometryPending = !sameGeometryProps(committedPropsRef.current, geometryProps);
+  const baseSnapshot = geometryPending
+    ? normalizeScrollSnapshot(snapshotFromProps(snapshotRef.current, geometryProps))
     : snapshotRef.current;
-  const renderedWindow = bypassActive ? resolveScrollWindow(effectiveSnapshot) : windowState;
+  const effectiveSnapshot = bypassActive
+    ? { ...baseSnapshot, scrollTop: bypassOffsetRef.current as number }
+    : baseSnapshot;
+  const renderedWindow = bypassActive || geometryPending ? resolveScrollWindow(effectiveSnapshot) : windowState;
   const content = renderWindow ? renderWindow(renderedWindow) : children;
 
   const totalViewportHeight = Math.max(0, viewportHeight + paddingTop);
@@ -554,18 +589,18 @@ export const ScrollBox: React.FC<ScrollBoxProps> = ({
         overflowY: "scroll",
       },
       scrollTop: nativeScrollTop,
-      scrollHeight: snapshotRef.current.scrollHeight,
-      scrollViewportHeight: snapshotRef.current.viewportHeight,
+      scrollHeight: baseSnapshot.scrollHeight,
+      scrollViewportHeight: baseSnapshot.viewportHeight,
       scrollViewportTop: renderedWindow.viewportTop,
-      pendingScrollDelta: snapshotRef.current.pendingDelta,
+      pendingScrollDelta: baseSnapshot.pendingDelta,
       virtualScrollWindowed: Boolean(renderWindow),
       // FEATURE_214: only emit inWindowScrollTop in overscan mode. Setting it
       // (even 0) flips the renderer onto the overscan path, so gating on
       // `overscanRows` keeps the pre-FEATURE_214 windowed path (incl. the
       // FEATURE_212 streaming-shift DECSTBM) byte-identical when overscan is off.
-      ...(snapshotRef.current.overscanRows ? { inWindowScrollTop: renderedWindow.inWindowScrollTop } : {}),
-      ...(snapshotRef.current.clampMin !== undefined ? { scrollClampMin: snapshotRef.current.clampMin } : {}),
-      ...(snapshotRef.current.clampMax !== undefined ? { scrollClampMax: snapshotRef.current.clampMax } : {}),
+      ...(baseSnapshot.overscanRows ? { inWindowScrollTop: renderedWindow.inWindowScrollTop } : {}),
+      ...(baseSnapshot.clampMin !== undefined ? { scrollClampMin: baseSnapshot.clampMin } : {}),
+      ...(baseSnapshot.clampMax !== undefined ? { scrollClampMax: baseSnapshot.clampMax } : {}),
       ...(stickyScroll ? { stickyScroll: true } : {}),
     },
     <Box
