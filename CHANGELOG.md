@@ -67,6 +67,29 @@ All notable changes to this project will be documented in this file.
   events, `finish_reason: "error"`, replies cut off after they began,
   gateway "temporarily unavailable" messages and Cloudflare 520/524/525
   (Issue 432).
+- Tool calls an extension handler makes through `scope.invokeTool` or
+  `executeProcess` are dispatched as nested calls: they keep their
+  permission, sandbox and guardrail checks but emit no view-level
+  `onToolUseStart` or extension `tool:start`, so Hosts no longer see a
+  start with no end. Each execution records the model-issued call that
+  owns its item, and the Session view settles a terminal Run's running
+  and `awaiting_approval` items as `cancelled`; restore and
+  interrupted-Run recovery drop old records with no result and no
+  matching `tool_use` (Issue 433).
+- Windows process snapshots, start identities and exact termination run
+  through new native `__process-snapshot`,
+  `__process-start-identities` and `__process-terminate-exact` exports
+  of `kodax-windows-sandbox` instead of spawning PowerShell with an
+  inline C# helper, which blocked the Host event loop for about a second
+  per bash call. Every call falls back to PowerShell when the helper is
+  missing or fails. Under concurrent bash load a submitted message shows
+  after 1.5-2.1 s instead of 5.3-7.3 s, and Stop is confirmed in
+  0.02-1.3 s (Issue 434).
+- The memory review inbox scan no longer takes the session-authority and
+  branch locks on every session directory: it checks `processing/`
+  without a lock first and only a session with a stale claim is locked,
+  so one scan on a large inbox takes about 2 s instead of 18 s and a
+  session held by another writer no longer stalls it (Issue 435).
 
 ---
 
