@@ -965,12 +965,14 @@ async function scanPendingEpisodeReviews(
   const records: PendingEpisodeReviewRecord[] = [];
   for (const sessionDir of sessionDirs) {
     try {
-      await recoverStaleClaimsWithAuthority(
-        filter.configHome,
-        tenantRoot,
-        sessionDir,
-        ownerMatches,
-      );
+      if (await hasStaleClaim(path.join(tenantRoot, sessionDir))) {
+        await recoverStaleClaimsWithAuthority(
+          filter.configHome,
+          tenantRoot,
+          sessionDir,
+          ownerMatches,
+        );
+      }
     } catch (error) {
       if (!tolerateInvalidState) throw error;
       emitKodaXDiagnostic({
@@ -2132,6 +2134,21 @@ async function removeCompletedPendingBestEffort(
       },
     });
   }
+}
+
+// A scan visits every Session ever run, so it takes a Session's locks only when
+// a claim there has gone stale; otherwise one busy Session would stall the scan.
+async function hasStaleClaim(sessionRoot: string): Promise<boolean> {
+  const processingDir = path.join(sessionRoot, 'processing');
+  for (const filename of await readJsonFiles(processingDir)) {
+    try {
+      const { mtimeMs } = await stat(path.join(processingDir, filename));
+      if (Date.now() - mtimeMs > REVIEW_CLAIM_STALE_MS) return true;
+    } catch (error) {
+      if (!isMissing(error)) throw error;
+    }
+  }
+  return false;
 }
 
 async function recoverStaleClaimsWithAuthority(
