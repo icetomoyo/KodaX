@@ -1,10 +1,14 @@
 # KodaX SDK — Product Client and Host Integration
 
 This page describes the current FEATURE_298/299/301/303/304/305/306 development tree, checked against
-package version `0.7.97-beta.13`. The version alone does not claim that all current
+package version `0.7.97-rc.1`. The version alone does not claim that all current
 working-tree changes are already published to npm. Check the installed
 package exports and the connected Host's capabilities when migrating.
-The beta.13 Space integration repairs — retired-input `warnings` on
+The rc.1 catalog refresh (Fable 5.2, GPT-6.x lineup, new defaults), the
+provider hardening (strict-tool fallback, retry classification) and the
+nested extension tool-call view rules are covered in the
+[client contract](../../docs/CLIENT_CONTRACT.md); the beta.13 Space integration
+repairs — retired-input `warnings` on
 `runs.start`, Runtime error codes on the daemon wire, preflight-free
 integration health and the client-exit recovery reasons — are covered in the
 [client contract view-item table](../../docs/CLIENT_CONTRACT.md) and

@@ -251,6 +251,17 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('reason. Every v0.7.96 stable and v0.7.97-alpha.1 through beta.6 contract is retained.');
   });
 
+  it('documents the v0.7.97-rc.1 catalog refresh and late provider/Host repairs', () => {
+    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
+
+    expect(sdk).toContain('The v0.7.97-rc.1 release refreshes the model catalogs and repairs the late provider, Host');
+    expect(sdk).toContain('the Codex CLI bridge falls back to `gpt-6.2-sol`. Native Claude models accept forced-tool and');
+    expect(sdk).toContain('through native `kodax-windows-sandbox` exports so bash no longer blocks the Host event loop');
+    expect(sdk).toContain('and CLI stop blocking on repeated Git and PowerShell probes (Issue 439); the review receipt');
+    expect(sdk).toContain('streams (Issue 438); and it echoes a submitted input before the Host view shows it.');
+    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through beta.13 contract is retained.');
+  });
+
   it('documents the v0.7.97-beta.13 Space integration repairs and Session-read cost fixes', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
 

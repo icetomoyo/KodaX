@@ -6,6 +6,41 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-rc.1] - 2026-11-23
+
+First release candidate of the v0.7.97 line: the model catalog refresh
+and the late provider/Host/REPL repairs (Issues 431-440). The
+`anthropic` provider lists Claude Fable 5.2 and the `openai` provider
+lists the GPT-6.x lineup with per-model effort declarations, defaults
+move to `claude-sonnet-5-5` and `gpt-6.2-sol`, and the Codex CLI
+bridge falls back to `gpt-6.2-sol`. Native Claude models no longer
+fail a forced-tool or legacy `reasoning: false` request, OpenAI strict
+tool schemas fall back to non-strict and remember the strict-limit
+rejection (Issue 431), and retry classification stops treating any
+message that merely contains `limit`, `rate` or `503` as a rate limit
+while retrying the real transient shapes (Issue 432). Tool calls an
+extension handler makes internally stay out of the Session view and no
+longer leave running items behind (Issue 433). Windows process
+snapshots and exact termination read through new native exports of
+`kodax-windows-sandbox`, so a bash call no longer blocks the Host event
+loop for about a second and a submitted message under concurrent bash
+load shows after 1.5-2.1 s instead of 5.3-7.3 s (Issue 434). The
+memory review scan locks only a session with a stale claim, taking
+about 2 s instead of 18 s on a large inbox (Issue 435). The Host and
+CLI stop blocking on repeated Git and PowerShell probes — `git config
+--get remote.origin.url` is remembered per directory and refreshed
+asynchronously, and the CLI and its providers use the installed native
+Windows process helper, so a scripted first turn on a fresh Host
+replies in 3.9-4.2 s instead of 5.1-5.7 s and an ordinary turn starts
+no synchronous process (Issue 439). The memory review receipt is
+announced only after its job is durably completed (Issue 440), and the
+REPL neither jumps while a reply streams under "Thinking…" (Issue 438)
+nor loses a submitted input before the Host view shows it. Every
+v0.7.96 stable and v0.7.97-alpha.1 through beta.13 client contract is
+retained. npm publication remains a manual maintainer action.
+
 ### Added
 
 - The REPL shows a submitted input at once instead of waiting for the
@@ -90,6 +125,29 @@ All notable changes to this project will be documented in this file.
   without a lock first and only a session with a stale claim is locked,
   so one scan on a large inbox takes about 2 s instead of 18 s and a
   session held by another writer no longer stalls it (Issue 435).
+- While a reply streamed under "Thinking…", the spinner row and the
+  history above it jumped one render before snapping back: ScrollBox
+  moved its window in an effect after the content grew, so that render
+  drew the grown content through the previous window. A render whose
+  geometry props differ from the committed ones now computes the window
+  from the incoming props (Issue 438).
+- The Host and the CLI stop blocking on repeated Git and PowerShell
+  probes. `tryGitRemote` ran `git config --get remote.origin.url`
+  through `execSync` about five times per Run (up to 827 ms cold); it
+  now remembers the answer per directory and refreshes it
+  asynchronously after ten seconds. `runCliMain` installs the native
+  Windows process helper for daemon discovery, and `@kodax-ai/llm`
+  exposes `installCliWindowsProcessHelper` so CLI providers no longer
+  take a PowerShell snapshot on every child start and exit. A scripted
+  first turn on a fresh Host replies in 3.9-4.2 s instead of 5.1-5.7 s
+  (Issue 439).
+- The memory review receipt is announced through
+  `onMemoryReviewReceipt` only after its job is durably completed and
+  `pending/<job>.json` removed. The v2 drain accepts a notifier from
+  `onV2Completed` and calls it at that point; a throwing notifier is
+  reported and cannot reopen the job. The receipt is still written
+  before completion so recovery cannot replay applied effects
+  (Issue 440).
 
 ---
 

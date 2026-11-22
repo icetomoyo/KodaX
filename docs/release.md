@@ -48,6 +48,80 @@ on one commit.
   The step limit is ten minutes because the passing Windows suite alone takes
   about 4.6 minutes.
 
+## v0.7.97-rc.1 release preparation
+
+Release state: `v0.7.97-rc.1` is a candidate awaiting the publishing
+dispatch. npm publication has not occurred. The candidate is the first
+release candidate of the v0.7.97 line: the model catalog refresh and
+the late provider/Host/REPL repairs (Issues 431-440). The `anthropic`
+provider lists Claude Fable 5.2 (1M context, 128K output, always-on
+adaptive thinking) and the `openai` provider lists the GPT-6.x lineup
+with per-model effort declarations; defaults move to
+`claude-sonnet-5-5` and `gpt-6.2-sol`, and the Codex CLI bridge falls
+back to `gpt-6.2-sol` while dropping GPT-5.3 Codex Spark. Native
+Claude models no longer fail a forced-tool or legacy
+`reasoning: false` request; OpenAI strict tool schemas fall back to
+non-strict for untyped nodes and remember a strict-limit rejection for
+the session (Issue 431); retry classification no longer treats any
+message containing `limit`, `rate` or `503` as a rate limit and
+retries mid-stream `api_error` events, `finish_reason: "error"`,
+cut-off replies, gateway "temporarily unavailable" messages and
+Cloudflare 520/524/525 (Issue 432). Tool calls an extension handler
+makes through `scope.invokeTool`/`executeProcess` dispatch as nested
+calls that keep their permission/sandbox checks but emit no view-level
+start, each execution records the model-issued call that owns its
+item, and the Session view settles a terminal Run's running and
+`awaiting_approval` items as `cancelled` (Issue 433). Windows process
+snapshots, start identities and exact termination read through new
+native `__process-snapshot`/`__process-start-identities`/`__process-terminate-exact`
+exports of `kodax-windows-sandbox` with PowerShell fallback, so a bash
+call no longer blocks the Host event loop for about a second (Issue
+434). The memory review inbox scan checks `processing/` without a
+lock and locks only a stale-claimed session (Issue 435; reclamation
+stays with open Issue 437). The Host and the CLI stop blocking on
+repeated Git and PowerShell probes: `tryGitRemote` remembers
+`git config --get remote.origin.url` per directory and refreshes it
+asynchronously after ten seconds, `runCliMain` installs the native
+Windows process helper for daemon discovery, and `@kodax-ai/llm`
+exposes `installCliWindowsProcessHelper` so CLI providers no longer
+take a PowerShell snapshot on every child start and exit — a scripted
+first turn on a fresh Host replies in 3.9-4.2 s instead of 5.1-5.7 s
+and an ordinary turn starts no synchronous process (Issue 439). The
+memory review receipt fires `onMemoryReviewReceipt` only after its job
+is durably completed and `pending/<job>.json` removed, with a notifier
+a throwing one cannot reopen (Issue 440). The REPL no longer jumps
+while a reply streams under "Thinking…" (ScrollBox computes its window
+from the incoming geometry props, Issue 438) and echoes a submitted
+input at once before the Host view shows it. Every v0.7.96 stable and
+v0.7.97-alpha.1 through beta.13 client contract is retained.
+
+The CI/Release in-place upgrade gates now pin the published
+`0.7.97-beta.13` tarball (published 2026-11-21T07:59:13.884Z; registry
+dist.integrity sha512-4/dwRjmM…THnFwfA== packs to the same bytes as the
+kodax-ai-kodax-0.7.97-beta.13.tgz asset of the v0.7.97-beta.13 GitHub
+Release, sha256 fd748c85…186bc). Run that fixture locally with Windows
+`tar.exe` ahead of Git's GNU `tar` on `PATH`: GNU `tar` reads the `C:`
+drive in the archive path as a remote host.
+
+Local candidate validation on Windows with Node 20.20.2: full build
+(after the version bump, so `dist` carries 0.7.97-rc.1), source and
+test typechecks, the self-knowledge/`kodax_manual` registry suite,
+`tests/release-workflow.test.ts`, `tests/tracker-consistency.test.ts`
+and the Issue 433-440 regression suites (299 passed across the
+groups), `test:host-cutover` (3 passed), the real published beta.13
+Host in-place upgrade (1 passed) against the integrity-pinned public
+tarball, `test:bundle` (110 passed) and the fast tier (3,795 passed,
+58 skipped). The packaged Electron daemon gate runs in Release CI.
+
+This release follows the single publishing dispatch described under
+[Current release execution](#current-release-execution): `target=all`
+with `release_tag=v0.7.97-rc.1` runs Full CI, all five archive builds
+and the npm package gates, then creates the tag at the dispatched
+commit and the GitHub pre-release from that run's artifacts. Ordinary
+branch pushes do not run CI. Cross-platform manual acceptance,
+installed Space/SDK acceptance, the Space dependency bump and npm
+publication remain separate maintainer steps.
+
 ## v0.7.97-beta.13 release preparation
 
 Release state: `v0.7.97-beta.13` is a candidate awaiting the publishing
