@@ -47,6 +47,208 @@ not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
 
+## Issue 434: Windows process snapshots block the Host event loop for about a second per bash call
+
+- Priority: High
+- Status: Resolved
+- Introduced: `v0.7.69` (synchronous PowerShell process snapshots in `process-tree.ts`)
+- Created / Resolved: 2026-11-22 / 2026-11-22
+- Fixed: unreleased (after `v0.7.97-beta.13`)
+- Related: Issue 435; REPL report on `v0.7.97-beta.13` with KodaX Space 0.1.47-beta.3 sharing the Host
+
+### Original Problem
+
+On Windows, `packages/agent/src/runtime/process-tree.ts` reads process
+snapshots, start identities and exact terminations through
+`spawnSync('powershell.exe', …)` with an `Add-Type` C# helper. Each call blocks
+the Host event loop for about one second. `rememberChildProcessTree` runs on
+every bash spawn, and cleanup runs again when the command ends.
+
+The REPL and Space share one Host daemon. While one client runs bash calls,
+every other client's requests wait behind these blocks:
+
+- A submitted user message shows in the REPL transcript after a visible delay.
+- Esc / Ctrl+C reports "Stop confirmed" late, and the Run keeps streaming
+  for a while (one report took about 26 seconds).
+- Short commands end before the snapshot is read, so cleanup reports status
+  `unknown` and the bash tool warns that cleanup could not be confirmed.
+
+Reproduction in a fresh Host with concurrent bash load: the user item appears
+after 5.3–7.3 s instead of 0.6–1.1 s, and Stop takes about 1 s instead of
+0.15–0.55 s.
+
+Expected: process snapshots do not block the event loop for more than a few
+tens of milliseconds, and Stop and message display do not depend on another
+client's bash load.
+
+### Resolution
+
+- The native Windows sandbox helper gained three internal subcommands:
+  `__process-snapshot`, `__process-start-identities` and
+  `__process-terminate-exact`. They use Toolhelp and `GetProcessTimes` and
+  print the same rows as the PowerShell script, so the parsers are unchanged.
+  A call takes 56–82 ms instead of about one second.
+- `installWindowsProcessHelper` lets the Host hand the agent package the
+  hash-verified helper path, so `@kodax-ai/agent` stays independent of the
+  native artifact. `createKodaXHostRuntime` installs it on Windows.
+- When the helper is missing, cannot start or fails, each call falls back to
+  PowerShell. A helper that cannot start is dropped for the rest of the
+  process, so the fallback does not pay for both. Termination falls back only
+  when the helper attempted nothing, because it validates every target first.
+- Managed child registration read the owner's start identity through a CIM
+  query on every bash call. It now reads it once per process through the same
+  helper path.
+
+Measured with the same concurrent bash load as above: the user item appears
+after 1.5–2.1 s (5.3–7.3 s before; 0.6–0.75 s with no load), and Stop is
+confirmed in 0.02–1.3 s.
+
+Files changed: `native/windows-sandbox-v2/src/process_tree.rs`,
+`native/windows-sandbox-v2/src/main.rs`,
+`packages/agent/src/runtime/process-tree.ts`,
+`packages/agent/src/runtime/managed-child-processes.ts`,
+`packages/agent/src/index.ts`, `src/sdk-runtime.ts`.
+
+Tests added: `packages/agent/src/runtime/process-tree.windows-helper.test.ts`
+(helper use, fallback, once-only resolution, dropping a helper that cannot
+start) and an owner-identity case in
+`managed-child-processes.cache.test.ts`. Rust unit tests cover the
+snapshot row, the identity mismatch guard and target parsing.
+
+The remaining per-call cost is one helper spawn, run synchronously twice per
+bash call. The CLI-provider copy in
+`packages/llm/src/cli-events/process-tree.ts` still uses PowerShell; CLI
+providers spawn rarely.
+
+## Issue 435: The memory review inbox scan locks every session ever run, and nothing reclaims its directories
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: `v0.7.85` (memory review inbox)
+- Created / Resolved: 2026-11-22 / 2026-11-22
+- Fixed: unreleased (after `v0.7.97-beta.13`)
+- Related: Issues 434, 436 and 437, FEATURE_308
+
+### Original Problem
+
+`scanPendingEpisodeReviews` takes two file locks on every session directory
+under the tenant before it checks whether the pending entries belong to the
+caller. A drain runs this scan several times at the start and end of each Run.
+Nothing deletes session directories, completed job directories or lock queue
+directories, so the scan cost grows with every session the machine has run.
+
+One user config home had 601 session directories, 4462 job directories with
+no pending entry, 606 + 2894 empty lock queue directories and 106 MB of data.
+One sweep took 20.3 s cold and 2.5 s warm. The scan is asynchronous and did
+not cause the delays in Issue 434, but it adds file system load to every Run
+and keeps conversation summaries after their sessions are deleted.
+
+Expected: the scan only locks directories that hold the caller's work. A
+session directory with no pending or processing work and only finished jobs
+is removed after an idle period. Lock queue directories are removed once
+they are empty.
+
+### Resolution
+
+`scanPendingEpisodeReviews` now checks `processing/` without a lock and takes
+the session locks only when a claim there is older than the stale-claim
+limit. Stale-claim recovery acts on nothing else, so the result is the same.
+A session held by another writer no longer stalls the scan either.
+
+On a copy of the affected inbox, one scan took 1.8–2.2 s instead of
+17.8–19.1 s and returned the same 3603 entries. Most of the remaining time
+reads the entries leaked by Issue 436.
+
+Reclaiming directories was not done here, because both reclaim ideas break
+an existing guarantee. Issue 437 tracks the design:
+
+- A completed job's `state.json` is the idempotency record:
+  `persistPendingEpisodeReview` skips a digest whose job is completed.
+  Deleting it lets the same digest be reviewed again.
+- `branch-authority.json` holds the session's fence epoch.
+- Session storage uses the identity of `.write-locks/<id>.lock.queue` to
+  detect a write during a lock-free read. Removing the queue after each
+  write would hide a write that happens between two reads.
+
+Files changed: `packages/agent/src/memory-control/review-inbox.ts`.
+
+Tests added: "lists a busy session without waiting for its lock when it has
+no stale claim" in `review-inbox.test.ts`. It held the session lock and failed
+before the change.
+
+## Issue 437: Per-session lock and review directories are never reclaimed
+
+- Priority: Low
+- Status: Open
+- Introduced: `v0.7.85` (memory review inbox); session write locks earlier
+- Created: 2026-11-22
+- Fixed: -
+- Related: Issue 435
+
+### Original Problem
+
+Each session that ever ran keeps directories that nothing deletes:
+
+- `memory-review-inbox/<tenant>/<session>/`, with one `jobs/<job>/` per
+  reviewed digest, and `.session-authority/<session>.lock.queue`.
+- `sessions/.write-locks/<id>.lock.queue`, which stays after its session is
+  deleted. One home had 2893 of these for 31 session files.
+
+Since Issue 435 the review scan no longer locks them. The scan still reads
+`pending/` and `processing/` of every session directory. Session location
+traversal still stats every write-lock queue twice; with 2893 entries, each
+pass blocks for about 32 ms.
+
+Deleting them is not a plain cleanup. Completed job state is the idempotency
+record for a digest, `branch-authority.json` holds the fence epoch, and the
+write-lock queue identity is a read fence (see Issue 435). A fix needs a
+record that keeps those guarantees, for example a compact tombstone per
+session, before the directories can go.
+
+Expected: directory count follows live sessions, not every session ever run,
+without weakening idempotency or the read fences.
+
+## Issue 436: Test runs left about 3600 review entries in the real config home
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: before `v0.7.97` (entries date from 2026-09-08 to 2026-10-31)
+- Created / Resolved: 2026-11-22 / 2026-11-22
+- Fixed: `fee13b700` (2026-10-31, test setup); local data cleanup is separate
+- Related: Issue 435
+
+### Original Problem
+
+The user's real `~/.kodax/memory-review-inbox` holds 3603 pending entries,
+mostly test fixtures written in October 2026. Some tests wrote into the real
+config home instead of a temporary one. The leaked entries add to the scan
+cost in Issue 435.
+
+Expected: tests never write into the real config home. The leaked entries
+are listed and removed with the user's confirmation. Which tests leaked, and
+whether they still do, is not yet known.
+
+### Resolution
+
+The entries came from 194 test sessions in
+`packages/coding/src/task-engine/runner-driven.test.ts` (for example
+`managed-idle-yield-window` and `runner-<timestamp>` sessions),
+`agent.queue-input-limit.test.ts` (`queue-limit-session`) and
+`agent.extension-runtime.test.ts` (`feature-034-persisted-session`,
+`kodax-034-*`). They ran reviews against the developer's home because the
+test worker inherited it.
+
+`fee13b700` gave every Vitest worker a private `KODAX_HOME` in
+`tests/config/vitest.setup.queue.ts`. The newest leaked entry is from
+2026-10-31, and running the three test files again (117 tests) added
+nothing to the real inbox.
+
+None of the leaked reviews changed real memory. Their decisions hold no
+memory proposals, and their 65 memory actions have empty results. The
+194 directories hold 3374 pending entries and 7138 jobs. Deleting them is
+a local action that needs the owner's confirmation; it does not change
+code.
+
 ## Issue 433: An extension's internal tool calls stay running in the Session view
 
 - Priority: High
@@ -4189,6 +4391,10 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 437 | Low | Open | Per-session lock and review directories are never reclaimed | `v0.7.85` | - | 2026-11-22 | - |
+| 436 | Medium | Resolved | Test runs left about 3600 review entries in the real config home | before `v0.7.97` | `fee13b700` (test setup) | 2026-11-22 | 2026-11-22 |
+| 435 | Medium | Resolved | The memory review inbox scan locks every session ever run, and nothing reclaims its directories | `v0.7.85` | unreleased (after `v0.7.97-beta.13`) | 2026-11-22 | 2026-11-22 |
+| 434 | High | Resolved | Windows process snapshots block the Host event loop for about a second per bash call | `v0.7.69` | unreleased (after `v0.7.97-beta.13`) | 2026-11-22 | 2026-11-22 |
 | 433 | High | Resolved | An extension's internal tool calls stay running in the Session view | every version with extension `invokeTool` / `executeProcess` | unreleased (after `v0.7.97-beta.13`) | 2026-11-22 | 2026-11-22 |
 | 432 | Medium | Resolved | LLM retry classification misses transient errors and misreads permanent ones | every version with `KodaXBaseProvider.isRateLimitError` | unreleased (after `v0.7.97-beta.13`) | 2026-11-22 | 2026-11-22 |
 | 431 | Medium | Resolved | Preferred strict tools send untyped schema nodes and repeat the same rejection | every version with `strict: 'prefer'` tool constraints | unreleased (after `v0.7.97-beta.13`) | 2026-11-22 | 2026-11-22 |
@@ -19965,12 +20171,25 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 310 (48 Open including 1 needs-info, 1 ready, 262 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 314 (48 Open including 1 needs-info, 1 ready, 265 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 1 (420)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-22: Issues 434, 435, 436 and 437
+
+- Windows process snapshots, start identities and exact termination run
+  through the native helper instead of PowerShell, and the managed-child
+  owner identity is read once. With concurrent bash load a submitted message
+  shows in 1.5–2.1 s instead of 5.3–7.3 s. Unreleased.
+- The memory review scan takes a session's locks only when that session has
+  a stale claim. One scan of a large inbox dropped from about 18 s to about
+  2 s. Unreleased.
+- Issue 436 is traced to tests that ran before the per-worker test home
+  (`fee13b700`); leaked local data is cleaned with the owner's confirmation.
+- Issue 437 records that per-session directories are never reclaimed.
 
 ### 2026-11-22: Issue 433
 
