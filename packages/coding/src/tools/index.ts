@@ -62,6 +62,7 @@ export {
   type EditToolErrorCode,
 } from './edit.js';
 export { toolInsertAfterAnchor } from './insert-after-anchor.js';
+export { proposeFileChange, type ProposedFileChange } from './proposed-change.js';
 export { toolBash } from './bash.js';
 export { toolRunSkillScript } from './skill-script.js';
 export { toolGlob } from './glob.js';

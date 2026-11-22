@@ -159,7 +159,8 @@ export async function executeEditBatch(
   return result + (await appendLspDiagnostics(filePath, ctx));
 }
 
-function applyOneEdit(
+/** One edit applied to `content` in memory, as the tools apply it. `originalContent` is the file before the batch. */
+export function applyOneEdit(
   content: string,
   edit: MultiEditOperation,
   index: number,

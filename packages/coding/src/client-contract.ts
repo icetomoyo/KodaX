@@ -24,6 +24,7 @@ import type {
   KodaXTaskResultReport,
 } from '@kodax-ai/agent';
 import type { KodaXResult } from './types.js';
+import type { ProposedFileChange } from './tools/proposed-change.js';
 import type { KodaXShellSandboxObservation } from './types.js';
 import type { RuntimeContextBudgetSnapshot } from './agent-runtime/context-budget.js';
 import type { ProviderRequestObservation } from '@kodax-ai/llm';
@@ -1135,6 +1136,8 @@ export interface ClientPermissionInteractionOptions {
   readonly extensionAsks?: readonly { readonly extension: string; readonly reason: string }[];
   readonly risk?: 'low' | 'medium' | 'high';
   readonly inputPreview?: string;
+  /** What a file tool would change, worked out before asking. Absent when it changes no file or would refuse. */
+  readonly diff?: ProposedFileChange;
   readonly executionCwd?: string;
   /** Opaque pending-request-local ids; return one unchanged to widen a decision. */
   readonly grantSuggestions?: readonly {

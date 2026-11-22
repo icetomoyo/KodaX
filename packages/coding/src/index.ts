@@ -492,12 +492,14 @@ export {
   clampToolResultPolicyToBudget,
   inspectEditFailure,
   parseEditToolError,
+  proposeFileChange,
 } from './tools/index.js';
 
 export type {
   EditRecoveryDiagnostic,
   EditToolErrorCode,
   GuardedToolResultBatch,
+  ProposedFileChange,
   ToolResultBatchDebt,
   ToolResultBatchEntry,
   ToolResultBudget,

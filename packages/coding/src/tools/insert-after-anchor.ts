@@ -76,7 +76,8 @@ export async function toolInsertAfterAnchor(
   );
 }
 
-function resolveAnchorInsertion(
+/** Where content inserted after `anchor` goes, by the tool's matching rules. */
+export function resolveAnchorInsertion(
   content: string,
   anchor: string,
 ): { status: 'unique'; index: number } | { status: 'ambiguous'; count: number } | { status: 'missing' } {
@@ -111,7 +112,8 @@ function resolveAnchorInsertion(
   return { status: 'missing' };
 }
 
-function prepareInsertionContent(existingContent: string, insertionIndex: number, contentToInsert: string): string {
+/** The inserted text with the file's line endings and the line breaks it needs at `insertionIndex`. */
+export function prepareInsertionContent(existingContent: string, insertionIndex: number, contentToInsert: string): string {
   const eol = detectPreferredLineEnding(existingContent);
   let prepared = contentToInsert.replace(/\r\n|\n|\r/g, eol);
   const before = existingContent.slice(0, insertionIndex);
