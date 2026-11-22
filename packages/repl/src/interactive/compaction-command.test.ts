@@ -112,10 +112,7 @@ describe('/compact command', () => {
   });
 
   it('surfaces a Host compact failure instead of reporting a successful no-op', async () => {
-    callbacks.compactSession = { compact: async () => ({
-      compacted: false, messages: [], tokensBefore: 50_000, tokensAfter: 50_000,
-      reason: 'Summary provider unavailable',
-    }) };
+    callbacks.compactSession = { compact: async () => { throw new Error('Summary provider unavailable'); } };
     const command = BUILTIN_COMMANDS.find((candidate) => candidate.name === 'compact');
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
@@ -307,15 +304,8 @@ describe('/compact Host binding (T34)', () => {
   it('compacts through the binding without a provider or a local save', async () => {
     const compactCommand = BUILTIN_COMMANDS.find(command => command.name === 'compact');
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const compact = vi.fn(async () => ({
-      compacted: true,
-      tokensBefore: 50000,
-      tokensAfter: 12000,
-      messages: [
-        { role: 'system' as const, content: 'compacted checkpoint' },
-        { role: 'user' as const, content: 'recent' },
-      ],
-    }));
+    const compact = vi.fn(async () => ({ compacted: true, tokensBefore: 50000, tokensAfter: 12000 }));
+    const cachedMessages = context.messages;
 
     try {
       await compactCommand!.handler(
@@ -333,8 +323,8 @@ describe('/compact Host binding (T34)', () => {
       // result; the local writer is never invoked.
       expect(mocks.compact).not.toHaveBeenCalled();
       expect(callbacks.saveSession).not.toHaveBeenCalled();
-      expect(context.messages).toHaveLength(2);
-      expect(context.messages[0]?.content).toBe('compacted checkpoint');
+      // The Host keeps the conversation; the client keeps no copy of it.
+      expect(context.messages).toBe(cachedMessages);
       expect(context.contextTokenSnapshot?.currentTokens).toBe(12000);
       expect(callbacks.startCompacting).toHaveBeenCalled();
       expect(callbacks.stopCompacting).toHaveBeenCalled();
@@ -347,13 +337,7 @@ describe('/compact Host binding (T34)', () => {
   it('reports a no-op through the binding result', async () => {
     const compactCommand = BUILTIN_COMMANDS.find(command => command.name === 'compact');
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const compact = vi.fn(async () => ({
-      compacted: false,
-      tokensBefore: 40000,
-      tokensAfter: 40000,
-      messages: context.messages,
-      reason: 'no compaction needed',
-    }));
+    const compact = vi.fn(async () => ({ compacted: false, tokensBefore: 40000, tokensAfter: 40000 }));
 
     try {
       await compactCommand!.handler(

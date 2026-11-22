@@ -127,6 +127,7 @@ import {
   type CommandInvocationRequest,
   type CommandWorkflowInvocationRequest,
   type CurrentConfig,
+  type HostExtensionsReport,
   type RuntimeSurfaceStatus,
 } from '../commands/types.js';
 import { registerAllCommands } from '../commands/index.js';
@@ -611,14 +612,10 @@ export const BUILTIN_COMMANDS: Command[] = [
               ...(customInstructions !== undefined ? { customInstructions } : {}),
             });
             if (!bound.compacted) {
-              if (bound.reason && bound.reason !== 'no compaction needed') {
-                throw new Error(bound.reason);
-              }
               console.log(chalk.green('\n[No compaction needed]'));
               console.log(chalk.dim(`Current token usage: ${bound.tokensBefore.toLocaleString()}\n`));
               return;
             }
-            context.messages = [...bound.messages];
             context.contextTokenSnapshot = {
               currentTokens: bound.tokensAfter,
               baselineEstimatedTokens: estimateTokens(context.messages),
@@ -878,10 +875,12 @@ export const BUILTIN_COMMANDS: Command[] = [
     description: 'Show active extension runtime diagnostics',
     usage: '/extensions',
     handler: async (_args, _context, callbacks) => {
-      const runtime = callbacks.inspectExtensions ? undefined : getActiveExtensionRuntime();
-      const diagnostics = callbacks.inspectExtensions
-        ? (await callbacks.inspectExtensions()).diagnostics
-        : runtime ? getExtensionRuntimeDiagnostics(runtime) : undefined;
+      if (callbacks.inspectExtensions) {
+        printHostExtensions(await callbacks.inspectExtensions());
+        return;
+      }
+      const runtime = getActiveExtensionRuntime();
+      const diagnostics = runtime ? getExtensionRuntimeDiagnostics(runtime) : undefined;
       if (!diagnostics) {
         console.log(chalk.yellow('\n[No active extension runtime]\n'));
         return;
@@ -1348,44 +1347,6 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log();
       console.log(chalk.bold('Notes:'));
       console.log(chalk.dim('  - Mode is saved to ~/.kodax/config.json (user-level)'));
-      console.log();
-    },
-  },
-  {
-    // FEATURE_092 phase 2b.8: dump tracker + breaker stats. Useful for the
-    // pilot to verify fallback paths manually + for debugging classifier health.
-    name: 'auto-denials',
-    description: 'Show Auto reviewer denial tracker + circuit breaker stats',
-    usage: '/auto-denials',
-    handler: async (_args, _context, callbacks) => {
-      const stats = await callbacks.getAutoModeStats?.();
-      if (!stats) {
-        console.log(chalk.yellow('\n[auto-denials] not in auto mode — switch via /mode auto first'));
-        return;
-      }
-      console.log(chalk.cyan('\n[auto-mode reviewer stats]'));
-      console.log(chalk.dim(`  reviewer health:      ${stats.classifierHealth}`));
-      console.log(chalk.dim('  Denial tracker:'));
-      console.log(chalk.dim(`    consecutive blocks: ${stats.denials.consecutive} / 3`));
-      console.log(chalk.dim(`    cumulative blocks:  ${stats.denials.cumulative} / 20`));
-      console.log(chalk.dim('  Circuit breaker:'));
-      console.log(chalk.dim(`    errors in window:   ${stats.breaker.timestamps.filter((t) => t >= Date.now() - 10 * 60 * 1000).length} / 5 (10 min)`));
-      console.log();
-      if (stats.classifierHealth === 'degraded') {
-        console.log(chalk.yellow(
-          '  ↪ reviewer calls are temporarily skipped; host-boundary operations fail closed with safer-route guidance.',
-        ));
-      }
-      console.log();
-    },
-    detailedHelp: () => {
-      console.log(chalk.cyan('\n/auto-denials - Auto Reviewer Diagnostic Dump\n'));
-      console.log(chalk.bold('Usage:'));
-      console.log(chalk.dim('  /auto-denials                ') + 'Print reviewer tracker + breaker counters');
-      console.log();
-      console.log(chalk.bold('Diagnostics and fail-closed behavior:'));
-      console.log(chalk.dim('  - Block counters are diagnostic only.'));
-      console.log(chalk.dim('  - 5 errors in 10 min → skip the reviewer temporarily and block host-boundary operations.'));
       console.log();
     },
   },
@@ -2036,7 +1997,7 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.dim('  Auto runs sandboxed calls first, then uses the LLM reviewer at the host boundary;'));
       console.log(chalk.dim('  ordinary actions continue silently; reviewer concerns block the exact attempt with recovery guidance.'));
       console.log();
-      console.log(chalk.dim('  See also: /help mode, /auto-denials'));
+      console.log(chalk.dim('  See also: /help mode'));
       console.log();
     },
   },
@@ -2959,6 +2920,32 @@ function formatExtensionDiagnosticValue(value: unknown): string {
     return JSON.stringify(value);
   }
   return String(value);
+}
+
+function printHostExtensions(report: HostExtensionsReport): void {
+  if (!report.active) {
+    console.log(chalk.yellow('\n[No active extension runtime]\n'));
+    return;
+  }
+  console.log(chalk.bold('\nExtension Runtime:\n'));
+  console.log(chalk.dim(`  Loaded:          ${report.extensions.length}`));
+  console.log(chalk.dim(`  Failures:        ${report.failures.length}`));
+  console.log();
+  if (report.extensions.length > 0) {
+    console.log(chalk.bold('Loaded Extensions:'));
+    for (const loaded of report.extensions) {
+      console.log(chalk.dim(`  - ${loaded.label} [${loaded.loadSource}] (${loaded.path})`));
+    }
+    console.log();
+  }
+  if (report.failures.length > 0) {
+    console.log(chalk.bold('Recent Failures:'));
+    for (const failure of report.failures.slice(-10)) {
+      console.log(chalk.dim(`  - [${failure.stage}] ${failure.target} -> ${failure.message}`));
+    }
+    console.log();
+  }
+  console.log(chalk.dim('  Commands the extensions add are in /help.\n'));
 }
 
 function formatExtensionDiagnosticMetadata(

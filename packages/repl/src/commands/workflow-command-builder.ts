@@ -282,6 +282,7 @@ export async function startGeneratedWorkflowFromRequest(
   const live = createWorkflowLiveUpdateEmitter(input.callbacks, runId, prepared.module.meta, locale);
   live.running(`Use /workflow show ${runId} for status or /workflow stop ${runId} to stop.`);
   observeHostWorkflowDone(hostControl, input.callbacks, runId, live, {
+    ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
     canRerun: true,
     presentation,
     locale,

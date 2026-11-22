@@ -41,7 +41,7 @@ import {
   printLearningPendingForFilter,
   resolveLearningCommandCwd,
 } from './learning-inbox.js';
-import type { Command, CommandResultData } from './types.js';
+import type { Command, CommandResultData, WorkflowSessionScope } from './types.js';
 import {
   buildWorkflowProcessMetadata,
 } from './workflow-command-builder.js';
@@ -158,14 +158,15 @@ const HOST_START_UNAVAILABLE = '\n[workflow] cannot start — the workflow Host 
 
 async function hostControlActiveRuns(
   hostControl: NonNullable<Parameters<Command['handler']>[2]['workflows']>,
+  scope: WorkflowSessionScope,
 ): Promise<[
   ReadonlyMap<string, WorkflowProcessSnapshot>,
   readonly import('@kodax-ai/coding').ManagedWorkflowSnapshot[],
 ]> {
-  const snapshots = await hostControl.list();
+  const snapshots = await hostControl.list(scope);
   const processSnapshots = new Map<string, WorkflowProcessSnapshot>();
   for (const snapshot of snapshots) {
-    const process = await hostControl.get(snapshot.runId);
+    const process = await hostControl.get(snapshot.runId, scope);
     if (process !== undefined) processSnapshots.set(snapshot.runId, process);
   }
   return [processSnapshots, snapshots.filter(isActiveManagedWorkflowRun)];
@@ -244,6 +245,7 @@ async function startWorkflowViaHost(
   const live = createWorkflowLiveUpdateEmitter(callbacks, runId, meta, options.locale);
   live.running(`Use /workflow show ${runId} for status or /workflow stop ${runId} to stop.`);
   observeHostWorkflowDone(hostControl, callbacks, runId, live, {
+    ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
     canRerun: options.canRerun,
     presentation: options.presentation,
     ...(options.locale !== undefined ? { locale: options.locale } : {}),
@@ -321,6 +323,7 @@ export const workflowCommand: Command = {
     // file-domain operations (save/rename/revise/delete/prune) over the
     // persisted run records the Host writes.
     const hostControl = callbacks.workflows;
+    const scope: WorkflowSessionScope = { sessionId: context.sessionId };
 
     const dirs = savedWorkflowDirs(process.cwd());
     const lifecycle = createWorkflowLifecycleController({
@@ -380,7 +383,7 @@ export const workflowCommand: Command = {
       // binding only the persisted run records are listed.
       const [processSnapshots, active] = hostControl === undefined
         ? [processSnapshotsByRunId(lifecycle.listWorkflowProcessSnapshots({ activeOnly: false })), []]
-        : await hostControlActiveRuns(hostControl);
+        : await hostControlActiveRuns(hostControl, scope);
       if (active.length > 0) {
         console.log(chalk.bold('\nActive workflow runs:'));
         console.log(formatManagedRunsList(active, { processSnapshots }));
@@ -397,7 +400,7 @@ export const workflowCommand: Command = {
 
     if (invocation.kind === 'show') {
       const persistedRuns = readWorkflowRuns(baseDir);
-      const activeRuns = hostControl === undefined ? [] : await hostControl.list();
+      const activeRuns = hostControl === undefined ? [] : await hostControl.list(scope);
       const runId = invocation.runId
         || selectDefaultWorkflowRunId(activeRuns, persistedRuns);
       if (!runId) {
@@ -407,11 +410,11 @@ export const workflowCommand: Command = {
       if (!ensureSafeRunId(runId)) return;
       const managed = hostControl === undefined
         ? undefined
-        : toManagedSnapshot(await hostControl.get(runId));
+        : toManagedSnapshot(await hostControl.get(runId, scope));
       const detail = readWorkflowRunDetail(baseDir, runId);
       const processSnapshot = hostControl === undefined
         ? lifecycle.getWorkflowProcessSnapshot(runId)
-        : await hostControl.get(runId);
+        : await hostControl.get(runId, scope);
       console.log(chalk.bold('\nWorkflow run:'));
       console.log(formatWorkflowRunSnapshot(managed, detail, {
         full: invocation.full === true,
@@ -427,7 +430,7 @@ export const workflowCommand: Command = {
         console.log(chalk.red(HOST_CONTROLS_UNAVAILABLE));
         return;
       }
-      const ok = await hostControl.pause(invocation.runId);
+      const ok = await hostControl.pause(invocation.runId, scope);
       console.log(ok ? chalk.dim(`Paused workflow ${invocation.runId}.\n`) : chalk.yellow(`No running workflow ${invocation.runId}.\n`));
       return;
     }
@@ -438,7 +441,7 @@ export const workflowCommand: Command = {
         console.log(chalk.red(HOST_CONTROLS_UNAVAILABLE));
         return;
       }
-      const ok = await hostControl.resume(invocation.runId);
+      const ok = await hostControl.resume(invocation.runId, scope);
       console.log(ok ? chalk.dim(`Resumed workflow ${invocation.runId}.\n`) : chalk.yellow(`No paused workflow ${invocation.runId}.\n`));
       return;
     }
@@ -448,9 +451,9 @@ export const workflowCommand: Command = {
         console.log(chalk.red(HOST_CONTROLS_UNAVAILABLE));
         return;
       }
-      const activeRuns = (await hostControl.list()).filter(isActiveManagedWorkflowRun);
+      const activeRuns = (await hostControl.list(scope)).filter(isActiveManagedWorkflowRun);
       const ownedRuns = (await Promise.all(activeRuns.map(async (run) => (
-        context.sessionId && (await hostControl.get(run.runId))?.hostMetadata?.ownerSessionId === context.sessionId ? run : undefined
+        context.sessionId && (await hostControl.get(run.runId, scope))?.hostMetadata?.ownerSessionId === context.sessionId ? run : undefined
       )))).filter((run): run is NonNullable<typeof run> => run !== undefined);
       const runId = invocation.runId || selectDefaultActiveWorkflowRunId(ownedRuns);
       if (!runId) {
@@ -458,16 +461,16 @@ export const workflowCommand: Command = {
         return;
       }
       if (!ensureSafeRunId(runId)) return;
-      const before = await hostControl.get(runId);
+      const before = await hostControl.get(runId, scope);
       if (before && isActiveManagedWorkflowRun(toManagedSnapshot(before)!)
         && (!context.sessionId || before.hostMetadata?.ownerSessionId !== context.sessionId)) {
         process.stdout.write(`${chalk.red('Stop the workflow from the Session that owns it.')}\n`);
         return;
       }
-      const ok = await hostControl.stop(runId, context.sessionId ? { sessionId: context.sessionId } : undefined);
-      const snapshot = toManagedSnapshot(await hostControl.get(runId));
+      const ok = await hostControl.stop(runId, context.sessionId ? scope : undefined);
+      const snapshot = toManagedSnapshot(await hostControl.get(runId, scope));
       const detail = readWorkflowRunDetail(baseDir, runId);
-      const processSnapshot = await hostControl.get(runId);
+      const processSnapshot = await hostControl.get(runId, scope);
       const status = snapshot?.status ?? detail?.status ?? processSnapshot?.status;
       const alreadyTerminal = snapshot
         ? !isActiveManagedWorkflowRun(snapshot)
@@ -519,7 +522,7 @@ export const workflowCommand: Command = {
       // sessions degrade to the persisted-run checks below.
       const activeSnapshot = hostControl === undefined
         ? undefined
-        : await hostControl.get(invocation.target);
+        : await hostControl.get(invocation.target, scope);
       const resolution = activeSnapshot
         ? undefined
         : await lifecycle.resolveWorkflowIdentity(invocation.target);
@@ -561,7 +564,7 @@ export const workflowCommand: Command = {
         return;
       }
       const currentActiveSnapshot = activeSnapshot
-        ?? (hostControl === undefined ? undefined : await hostControl.get(runId));
+        ?? (hostControl === undefined ? undefined : await hostControl.get(runId, scope));
       const processSnapshot = lifecycle.getWorkflowProcessSnapshot(runId);
       if (!processSnapshot && !existsSync(join(baseDir, runId, 'run.json'))) {
         console.log(chalk.yellow(`\nNo persisted workflow run or generated saved workflow ${invocation.target}.\n`));

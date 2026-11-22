@@ -371,7 +371,7 @@ export interface AutoModeGuardrailConfig {
 
 /**
  * Snapshot of the auto-mode guardrail's session-scoped state. Returned by
- * `getStats()` for diagnostic surfaces (`/auto-denials`). The DenialTracker /
+ * `getStats()` for diagnostic surfaces (the v1 auto-mode stats method). The DenialTracker /
  * CircuitBreaker types are immutable
  * value objects, so this is a copy of the references — caller cannot mutate
  * guardrail state through it.

@@ -92,11 +92,6 @@ describe('one-shot runtime option shaping and auto-mode settings', () => {
         read: vi.fn(async () => ({ id: 'session-1' })),
         getSettings: vi.fn(async () => ({ permissionMode: 'auto' })),
         updateSettings,
-        getAutoModeStats: vi.fn(async () => ({
-          classifierHealth: 'healthy' as const,
-          denials: {},
-          breaker: {},
-        })),
       },
     } as unknown as KodaXProductClient;
     const control = createReplRuntimeAutoModeControl(runtime);
@@ -126,11 +121,6 @@ describe('one-shot runtime option shaping and auto-mode settings', () => {
           autoModeEngine: 'rules' as const,
         })),
         updateSettings,
-        getAutoModeStats: vi.fn(async () => ({
-          classifierHealth: 'healthy' as const,
-          denials: {},
-          breaker: {},
-        })),
       },
     } as unknown as KodaXProductClient;
 
@@ -156,18 +146,12 @@ describe('one-shot runtime option shaping and auto-mode settings', () => {
         create,
         getSettings,
         updateSettings,
-        getAutoModeStats: vi.fn(async () => ({
-          classifierHealth: 'healthy' as const,
-          denials: {},
-          breaker: {},
-        })),
       },
     } as unknown as KodaXProductClient;
 
     const control = createReplRuntimeAutoModeControl(runtime);
-    const stats = await control.syncSettings?.('new-session', 'auto', {});
+    await control.syncSettings?.('new-session', 'auto', {});
 
-    expect(stats).toBeUndefined();
     expect(create).not.toHaveBeenCalled();
     expect(getSettings).not.toHaveBeenCalled();
     expect(updateSettings).not.toHaveBeenCalled();
@@ -191,11 +175,6 @@ describe('one-shot runtime option shaping and auto-mode settings', () => {
         read: vi.fn(async () => ({ id: 'session-1' })),
         getSettings: vi.fn(async () => ({ permissionMode: persistedMode })),
         updateSettings,
-        getAutoModeStats: vi.fn(async () => ({
-          classifierHealth: 'healthy' as const,
-          denials: {},
-          breaker: {},
-        })),
       },
     } as unknown as KodaXProductClient;
     const control = createReplRuntimeAutoModeControl(runtime);

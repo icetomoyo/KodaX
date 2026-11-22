@@ -68,6 +68,24 @@ describe("copyCommand", () => {
     expect(copyTextToClipboard).not.toHaveBeenCalled();
   });
 
+  it("copies the Host's newest reply when the client keeps no transcript", async () => {
+    const readLastAssistantReply = vi.fn(async () => "reply from the Host");
+
+    await copyCommand.handler([], { messages: [] } as never, { readLastAssistantReply } as never, {} as never);
+
+    expect(copyTextToClipboard).toHaveBeenCalledWith("reply from the Host");
+  });
+
+  it("reports a failed Host read instead of copying nothing silently", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const readLastAssistantReply = vi.fn(async () => { throw new Error("Host unreachable"); });
+
+    await copyCommand.handler([], { messages: [] } as never, { readLastAssistantReply } as never, {} as never);
+
+    expect(copyTextToClipboard).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Host unreachable"));
+  });
+
   it("logs a friendly error when clipboard write fails", async () => {
     vi.mocked(copyTextToClipboard).mockRejectedValueOnce(new Error("permission denied"));
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});

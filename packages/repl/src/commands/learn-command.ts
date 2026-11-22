@@ -199,7 +199,7 @@ async function resolveLearningCapabilityId(
   } catch (error: unknown) {
     const page = await learning.list({ limit: 200 });
     const legacyMatch = page.items.find((item) => (
-      item.source.kind === 'f224_proposal'
+      item.source?.kind === 'f224_proposal'
       && item.source.proposalId === nameOrSlugOrLegacyId
     ));
     if (legacyMatch) return legacyMatch.capabilityId;

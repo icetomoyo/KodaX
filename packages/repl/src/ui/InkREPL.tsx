@@ -120,6 +120,7 @@ import {
   type ToolCall,
   type PromptSubmitPayload,
   type LearningBinding,
+  type LearningCapabilityView,
   type LearningSurfaceSnapshot,
   KeypressHandlerPriority,
 } from "./types.js";
@@ -210,7 +211,6 @@ import {
   type AskUserSelectionAnswer,
   type TeamModeHandle,
   type WorkflowProcessEvent,
-  type LearnedCapabilityRecord,
   type LearningEvent,
 } from "@kodax-ai/agent";
 import { deriveProjectKeyFromRoot } from "../interactive/project-key.js";
@@ -586,6 +586,7 @@ import {
   readFrozenClientPlaneItems,
   hasBoundedItemText,
   readClientPlaneHistory,
+  readLastAssistantReply,
   mintInkInputId,
   runClientPlaneRound,
   followClientPlaneRun,
@@ -613,7 +614,7 @@ function reportBackgroundSessionPersistenceError(error: unknown): void {
   });
 }
 
-function learningCenterActions(record: LearnedCapabilityRecord): SelectOption[] {
+function learningCenterActions(record: LearningCapabilityView): SelectOption[] {
   const actions: SelectOption[] = [{ label: "Acknowledge notification", value: "acknowledge" }];
   if (record.lifecycle === "ready") {
     actions.push(
@@ -637,7 +638,7 @@ function learningCenterActions(record: LearnedCapabilityRecord): SelectOption[] 
 }
 
 export function buildLearningCenterOptions(
-  records: readonly LearnedCapabilityRecord[],
+  records: readonly LearningCapabilityView[],
 ): SelectOption[] {
   const slugCounts = new Map<string, number>();
   for (const record of records) {
@@ -872,7 +873,6 @@ interface InkREPLProps {
    * Built once per session in `runInkInteractiveMode` (async, requires
    * filesystem reads) and threaded into the component so:
    *   - `createKodaXOptions` can inject `guardrails` when in auto mode
-   *   - `/auto-denials` can read reviewer diagnostics
    * Without this prop, the Ink REPL silently ignored auto-mode (regression
    * fixed pre-v0.7.33 release after the readline REPL had already wired it).
    */
@@ -6292,7 +6292,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     const controls = options.workflows;
     if (!current || !controls) return false;
     void (async () => {
-      const snapshot = await controls.get(current.runId);
+      const snapshot = await controls.get(current.runId, { sessionId: context.sessionId });
       if (!context.sessionId || snapshot?.hostMetadata?.ownerSessionId !== context.sessionId) {
         throw new Error('Stop the workflow from the Session that owns it.');
       }
@@ -10443,6 +10443,8 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             messageCount: (await options.sessionCommands!.read!(context.sessionId)).msgCount,
             tokens: clientViewRef.current?.session.id === context.sessionId ? clientViewRef.current.parentContextTokens : undefined,
           }) : undefined,
+          readLastAssistantReply: options.clientPlane ? async () => clientViewRef.current?.session.id === context.sessionId
+            ? readLastAssistantReply(options.clientPlane!, clientViewRef.current) : undefined : undefined,
           validateSetupA2AConfig: options.validateSetupA2AConfig,
           prepareSetupSandbox: options.prepareSetupSandbox,
           inspectSandbox: options.inspectSandbox,
@@ -10507,10 +10509,9 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             }
           },
           startNewSession: async () => {
-            const nextSessionId = generateSessionId();
+            let nextSessionId = generateSessionId();
             if (options.sessionCommands) {
-              await options.sessionCommands.create({
-                sessionId: nextSessionId,
+              nextSessionId = await options.sessionCommands.create({
                 title: 'REPL Session',
                 gitRoot: startupRuntimeInfo.workspaceRoot ?? undefined,
                 projectPath: startupRuntimeInfo.executionCwd ?? startupRuntimeInfo.workspaceRoot ?? process.cwd(),
@@ -11019,16 +11020,6 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           getCostReport: () => options.clientPlane
             ? (clientViewRef.current?.session.id === context.sessionId ? clientViewRef.current.activity?.costReport ?? null : null)
             : inkCostReportRef.current?.() ?? null,
-          // Read-only auto-mode diagnostics. Returning undefined outside Auto lets the slash
-          // command print "not in auto mode" instead of leaking guardrail
-          // internals to non-auto sessions.
-          getAutoModeStats: async () => {
-            if (!isAutoMode(permissionModeRef.current)) return undefined;
-            if (options.runtimeAutoModeControl) {
-              return options.runtimeAutoModeControl.getStats(context.sessionId);
-            }
-            return autoModeBootstrap.getGuardrail().getStats();
-          },
           createKodaXOptions: () => ({
             ...currentOptionsRef.current,
             provider: currentConfig.provider,
@@ -11457,9 +11448,16 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             }]);
           }
 
-          const shouldOfferRecovery = shouldOfferSessionRecovery({
+          // A bound client keeps no copy of the conversation; the Host knows its size.
+          const shouldOfferRecovery = await shouldOfferSessionRecovery({
             error,
-            messageCount: context.messages.length,
+            countMessages: async () => options.sessionCommands?.read
+              ? (await options.sessionCommands.read(context.sessionId)).msgCount
+              : context.messages.length,
+          }).catch((readError: unknown) => {
+            appendHistoryItemsWithPersistence([{ type: "info", text:
+              `Could not check whether /recover applies: ${readError instanceof Error ? readError.message : String(readError)}` }]);
+            return false;
           });
           if (shouldOfferRecovery) {
             const recoveryHintItem = {
@@ -12416,10 +12414,10 @@ export async function runInkInteractiveMode(options: InkREPLOptions): Promise<vo
     existingExtensionRecords,
   });
   context.title = sessionTitle;
-  // The first view and input both require a Session already owned by the Host.
+  // The first view and input both require a Session already owned by the Host,
+  // which names it.
   if (sessionId === undefined && options.sessionCommands) {
-    await options.sessionCommands.create({
-      sessionId: context.sessionId,
+    context.sessionId = await options.sessionCommands.create({
       title: context.title,
       gitRoot: context.gitRoot,
       projectPath: context.runtimeInfo?.executionCwd ?? context.gitRoot ?? process.cwd(),

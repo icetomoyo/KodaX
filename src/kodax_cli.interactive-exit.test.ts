@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -25,6 +25,7 @@ interface InteractiveMainHarness {
   readonly runtimeDispose: ReturnType<typeof vi.fn>;
   readonly createKodaXHostRuntime: ReturnType<typeof vi.fn>;
   readonly ensureKodaXRuntime: ReturnType<typeof vi.fn>;
+  readonly connectReplHost: ReturnType<typeof vi.fn>;
   readonly runtimeOptions: unknown[];
   readonly runtimeStarts: unknown[];
   readonly runtimeDeletes: string[];
@@ -65,9 +66,12 @@ afterEach(async () => {
   vi.doUnmock('@kodax-ai/coding');
   vi.doUnmock('@kodax-ai/repl');
   vi.doUnmock('./sdk-runtime.js');
+  vi.doUnmock('./repl-host/connect.js');
   vi.doUnmock('./sandbox-runtime.js');
   vi.doUnmock('./a2a/runtime-config.js');
   vi.doUnmock('./runtime-daemon/manager.js');
+  vi.doUnmock('./runtime-daemon/lifecycle.js');
+  vi.doUnmock('./runtime-daemon/process.js');
   vi.doUnmock('./provider-credential-manager.js');
   vi.doUnmock('./cli-provider-credentials.js');
   process.argv = originalArgv;
@@ -116,6 +120,8 @@ async function importMainWithMocks(options: {
   readonly config?: RuntimeConfig;
   readonly lspShutdown?: () => Promise<void>;
   readonly runtimeClose?: () => Promise<void>;
+  /** Runs when the REPL's v2 connection to the Host is closed. */
+  readonly hostClose?: () => void;
   readonly memoryReviewDrain?: (timeoutMs: number) => Promise<void>;
   readonly mockSdkRuntime?: boolean;
   readonly prepareRuntimeConfig?: () => RuntimeConfig;
@@ -127,6 +133,8 @@ async function importMainWithMocks(options: {
     readonly files: readonly Readonly<Record<string, unknown>>[];
   };
   readonly mockDaemonLease?: boolean;
+  /** Another Host with this PID already serves the home, so `daemon serve` only attaches. */
+  readonly attachedDaemonLeaseOwnerPid?: number;
 } = {}): Promise<{
   readonly main: () => Promise<void>;
   readonly harness: InteractiveMainHarness;
@@ -439,6 +447,23 @@ async function importMainWithMocks(options: {
     };
   });
 
+  // The REPL's v2 connection to the Host.
+  const connectReplHost = vi.fn(async (_input: unknown) => ({
+    client: {
+      call: vi.fn(async (method: string) => (method === 'host.get'
+        ? {
+          host: { id: 'rt_mock_interactive', version: '0.7.66-test', mode: 'daemon', profile: 'default', startedAt: Date.parse('2026-07-09T00:00:00.000Z') },
+          counts: { sessions: 0, runs: 0, activeRuns: 0, queuedRuns: 0, workflows: 0 },
+        }
+        : { items: [] })),
+      close: () => {
+        calls.push('host-close');
+        options.hostClose?.();
+      },
+    },
+    leases: async () => undefined,
+  }));
+  vi.doMock('./repl-host/connect.js', () => ({ connectReplHost, createReplHostBindings: vi.fn(() => ({})) }));
   if (options.mockSdkRuntime !== false) {
     vi.doMock('./sdk-runtime.js', () => ({
       createKodaXHostRuntime,
@@ -493,6 +518,33 @@ async function importMainWithMocks(options: {
       }),
     }));
   }
+  if (options.attachedDaemonLeaseOwnerPid !== undefined) {
+    const ownerPid = options.attachedDaemonLeaseOwnerPid;
+    vi.doMock('./runtime-daemon/manager.js', () => ({
+      acquireRuntimeDaemonLease: vi.fn(async () => ({
+        transport: {},
+        endpoint: { path: 'mock-daemon-endpoint' },
+        paths: {},
+        ownsHost: false,
+        close: vi.fn(async () => undefined),
+        shutdown: daemonShutdown,
+      })),
+    }));
+    vi.doMock('./runtime-daemon/lifecycle.js', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('./runtime-daemon/lifecycle.js')>()),
+      observeRuntimeDaemonHealth: vi.fn(async () => ({
+        state: { pid: ownerPid },
+        pidAlive: true,
+        endpointReachable: true,
+        identityMatches: true,
+      })),
+    }));
+    // The real one redirects this worker's stdout and stderr into the bootstrap log.
+    vi.doMock('./runtime-daemon/process.js', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('./runtime-daemon/process.js')>()),
+      detachRuntimeDaemonBootstrapOutput: vi.fn(),
+    }));
+  }
 
   const module = await import('./kodax_cli.js');
   return {
@@ -508,6 +560,7 @@ async function importMainWithMocks(options: {
       runtimeDispose,
       createKodaXHostRuntime,
       ensureKodaXRuntime,
+      connectReplHost,
       runtimeOptions,
       runtimeStarts,
       runtimeDeletes,
@@ -671,6 +724,83 @@ describe('CLI interactive exit lifecycle', () => {
       expect.stringMatching(/Runtime host close failed/i),
       expect.stringMatching(/Daemon LSP cleanup failed/i),
     ]));
+  });
+
+  it('ends a daemon serve whose Host never finishes closing with final cleanup, a failed outcome and exit 1', async () => {
+    const daemonHome = await mkdtemp(join(tmpdir(), 'kodax-daemon-cleanup-'));
+    daemonTempHomes.push(daemonHome);
+    process.argv = ['node', 'kodax', 'daemon', 'serve', '--home', daemonHome, '--provider', 'mock-provider'];
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined as never) as typeof process.exit);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { main, harness } = await importMainWithMocks({
+      mockDaemonLease: true,
+      runtimeClose: () => new Promise<void>(() => undefined),
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      let settled = false;
+      const outcome = main().then(() => undefined, (error: unknown) => error).finally(() => { settled = true; });
+      await vi.waitFor(() => expect(harness.daemonShutdown).toHaveBeenCalled());
+      // The Host keeps the whole 90-second close slice of the shutdown deadline.
+      await vi.advanceTimersByTimeAsync(85_000);
+      expect(settled).toBe(false);
+      expect(harness.calls).not.toContain('shutdown-lsp');
+      await vi.advanceTimersByTimeAsync(5_000);
+      // Final cleanup then runs in real time; its own phase bounds stay far away.
+      for (let turn = 0; !settled && turn < 2_000; turn += 1) {
+        await vi.advanceTimersByTimeAsync(1);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+
+      const failure = await outcome;
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toMatch(/Host did not finish closing within 90 seconds/);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(harness.calls).toEqual(expect.arrayContaining(['shutdown-lsp', 'cleanup-children-final', 'shutdown-tracing']));
+    expect(errorSpy.mock.calls.map((call) => String(call[0])).join('\n')).toMatch(/\[Error\].*did not finish closing/s);
+    expect(exitSpy).toHaveBeenCalledExactlyOnceWith(1);
+    const written = (await readdir(daemonHome, { recursive: true })).filter((entry) => entry.includes('shutdown-outcome.'));
+    expect(written).toHaveLength(1);
+    expect(JSON.parse(await readFile(join(daemonHome, written[0]!), 'utf8'))).toMatchObject({ status: 'failed' });
+  });
+
+  it('fails an operator-run daemon serve when another Host already serves the home', async () => {
+    const daemonHome = await mkdtemp(join(tmpdir(), 'kodax-daemon-owned-'));
+    daemonTempHomes.push(daemonHome);
+    process.argv = ['node', 'kodax', 'daemon', 'serve', '--home', daemonHome];
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined as never) as typeof process.exit);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { main, harness } = await importMainWithMocks({ attachedDaemonLeaseOwnerPid: 4242 });
+
+    await expect(main()).rejects.toThrow(/PID 4242/);
+
+    const reported = errorSpy.mock.calls.map((call) => String(call[0])).join('\n');
+    expect(reported).toMatch(/\[Error\].*PID 4242.*only one Host/s);
+    expect(exitSpy).toHaveBeenCalledExactlyOnceWith(1);
+    expect(harness.daemonShutdown).not.toHaveBeenCalled();
+    expect(harness.runtimeDispose).toHaveBeenCalledTimes(1);
+    const written = await readdir(daemonHome, { recursive: true });
+    expect(written.filter((entry) => entry.includes('shutdown-outcome.'))).toEqual([]);
+  });
+
+  it('keeps a clean exit for an SDK auto-start child that lost the startup race', async () => {
+    const daemonHome = await mkdtemp(join(tmpdir(), 'kodax-daemon-owned-'));
+    daemonTempHomes.push(daemonHome);
+    process.env.KODAX_DAEMON_SERVE = '1';
+    process.argv = ['node', 'kodax', 'daemon', 'serve', '--home', daemonHome];
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined as never) as typeof process.exit);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const { main, harness } = await importMainWithMocks({ attachedDaemonLeaseOwnerPid: 4242 });
+
+    await expect(main()).resolves.toBeUndefined();
+
+    expect(exitSpy.mock.calls.filter(([code]) => code !== undefined && code !== 0)).toEqual([]);
+    expect(process.exitCode ?? 0).toBe(0);
+    expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining('[Error]'));
+    expect(harness.daemonShutdown).not.toHaveBeenCalled();
   });
 
   it('hydrates Runtime configuration before deciding whether first-run setup is needed', async () => {
@@ -915,7 +1045,7 @@ describe('CLI interactive exit lifecycle', () => {
       'bootstrap-tracing',
       'session-retention',
       'run-ink',
-      'runtime-close',
+      'host-close',
       'shutdown-lsp',
       'cleanup-children-final',
       'shutdown-tracing',
@@ -943,7 +1073,7 @@ describe('CLI interactive exit lifecycle', () => {
     expect(exitSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('does not close Runtime or exit before a claimed memory review settles', async () => {
+  it('does not close the Host connection or exit before a claimed memory review settles', async () => {
     process.env.KODAX_INTERNAL_INTERACTIVE_FINAL_CLEANUP_TIMEOUT_MS = '200';
     const reviewDeferred = createDeferred();
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined as never) as typeof process.exit);
@@ -954,11 +1084,11 @@ describe('CLI interactive exit lifecycle', () => {
     const mainPromise = main();
     await vi.waitFor(() => expect(harness.awaitLatestCodingMemoryReviewDrain).toHaveBeenCalledWith(15_000));
 
-    expect(harness.calls).not.toContain('runtime-close');
+    expect(harness.calls).not.toContain('host-close');
     expect(exitSpy).not.toHaveBeenCalled();
     reviewDeferred.resolve();
     await mainPromise;
-    expect(harness.calls).toContain('runtime-close');
+    expect(harness.calls).toContain('host-close');
     expect(exitSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -983,35 +1113,16 @@ describe('CLI interactive exit lifecycle', () => {
     expect(exitSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('reserves time for managed-child cleanup when Runtime shutdown hangs', async () => {
-    process.env.KODAX_INTERNAL_INTERACTIVE_FINAL_CLEANUP_TIMEOUT_MS = '60';
-    const never = new Promise<void>(() => undefined);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined as never) as typeof process.exit);
-    const warningSpy = vi.spyOn(process, 'emitWarning').mockImplementation(() => undefined);
-    const { main, harness } = await importMainWithMocks({ runtimeClose: () => never });
-
-    await main();
-
-    expect(harness.calls).toContain('runtime-close');
-    expect(harness.calls).toContain('cleanup-children-final');
-    expect(harness.calls).toContain('shutdown-tracing');
-    expect(warningSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Runtime cleanup timed out'),
-      expect.objectContaining({ code: 'KODAX_INTERACTIVE_CLEANUP' }),
-    );
-    expect(exitSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it('continues host cleanup when runtime close fails', async () => {
-    const closeError = new Error('runtime close failed');
+  it('continues host cleanup when closing the Host connection fails', async () => {
+    const closeError = new Error('host close failed');
     const { main, harness } = await importMainWithMocks({
-      runtimeClose: async () => { throw closeError; },
+      hostClose: () => { throw closeError; },
     });
 
     await expect(main()).rejects.toBe(closeError);
 
     expect(harness.calls).toEqual(expect.arrayContaining([
-      'runtime-close',
+      'host-close',
       'shutdown-lsp',
       'cleanup-children-final',
       'shutdown-tracing',
@@ -1045,18 +1156,13 @@ describe('CLI interactive exit lifecycle', () => {
       await main();
 
       expect(harness.runInkInteractiveMode).toHaveBeenCalledTimes(1);
-      expect(harness.ensureKodaXRuntime).toHaveBeenCalledTimes(1);
+      // The REPL runs on the Host over v2; nothing opens a v1 connection.
+      expect(harness.connectReplHost).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        version: expect.any(String),
+        authorize: expect.any(Function),
+      }));
+      expect(harness.ensureKodaXRuntime).not.toHaveBeenCalled();
       expect(harness.createKodaXHostRuntime).not.toHaveBeenCalled();
-      expect(harness.runtimeOptions[0]).not.toHaveProperty('profile');
-      expect(harness.runtimeOptions[0]).toMatchObject({
-        clientInfo: {
-          name: 'kodax-cli',
-          title: 'KodaX CLI',
-          version: expect.any(String),
-          clientType: 'cli',
-        },
-      });
-      expect(harness.runtimeOptions[0]).not.toHaveProperty('homeDir');
       const replOptions = harness.runInkInteractiveMode.mock.calls[0]?.[0] as {
         getRuntimeStatus?: () => Promise<unknown>;
       };
@@ -1067,8 +1173,10 @@ describe('CLI interactive exit lifecycle', () => {
         mode: 'daemon',
         profile: 'default',
         runtimeId: 'rt_mock_interactive',
+        startedAt: '2026-07-09T00:00:00.000Z',
         sessions: 0,
         runs: 0,
+        pendingPermissions: 0,
       });
       expect(exitSpy).toHaveBeenCalledTimes(1);
     } finally {

@@ -461,12 +461,14 @@ export function observeHostWorkflowDone(
   runId: string,
   live?: WorkflowLiveUpdateEmitter,
   options: {
+    readonly sessionId?: string;
     readonly canRerun?: boolean;
     readonly presentation?: WorkflowRunPresentation;
     readonly locale?: WorkflowRunLocale;
   } = {},
 ): void {
   const locale = options.locale ?? 'en';
+  const scope = options.sessionId !== undefined ? { sessionId: options.sessionId } : undefined;
   let done = false;
   let subscriptionRef: { close(): void } | undefined;
   const finish = (snapshot: WorkflowProcessSnapshot): void => {
@@ -535,7 +537,7 @@ export function observeHostWorkflowDone(
     await ready;
     while (!done && current === generation) {
       const beforeRead = observedEvents;
-      const snapshot = await hostControl.get(runId);
+      const snapshot = await hostControl.get(runId, scope);
       if (done || current !== generation) return;
       // A concurrent event may be newer than this reply. Read again after it.
       if (beforeRead !== observedEvents) continue;
@@ -567,7 +569,7 @@ export function observeHostWorkflowDone(
       retry.unref?.();
       retryDelay = Math.min(retryDelay * 2, 10_000);
     };
-    const subscription = hostControl.subscribe({ runId }, (event) => {
+    const subscription = hostControl.subscribe({ runId, ...scope }, (event) => {
       if (done || current !== generation || event.snapshot.runId !== runId) return;
       observedEvents += 1;
       live?.onProcessEvent(event);

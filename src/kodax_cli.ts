@@ -69,6 +69,7 @@ import {
   type KodaXRuntime,
 } from './sdk-runtime.js';
 import {
+  isRuntimeDaemonOwnerPidAlive,
   isRuntimeDaemonPidAlive,
   observeRuntimeDaemonHealth,
   runtimeDaemonEndpointFromState,
@@ -186,7 +187,8 @@ import {
   installProductionLearningReviewer,
   resolveProvider,
 } from '@kodax-ai/coding';
-import { createCliClientPlane, createCliSessionCommands, createCliWorkflowControl } from './cli-client-plane.js';
+import type { KodaXHostClient } from './host-protocol/host-client.js';
+import { connectReplHost, createReplHostBindings } from './repl-host/connect.js';
 import { KodaXClient, runKodaX, runManagedTask } from './trusted-coding-entry.js';
 import {
   cleanupRegisteredManagedChildren,
@@ -253,7 +255,6 @@ import {
   createA2AServerOptionsFromConfig,
 } from './a2a/product.js';
 import type { prepareKodaXA2AServer } from './a2a/server.js';
-import { createReplLearningBinding } from './repl-learning-binding.js';
 import {
   renderMissingProviderCredentialGuide,
   shouldAutoLaunchProviderSetup,
@@ -552,36 +553,31 @@ function summarizeDaemonRuntimeStatus(
   };
 }
 
-async function getInteractiveRuntimeStatus(input: {
-  readonly runtime: KodaXRuntime;
-  readonly configHome: string;
-}): Promise<CliRuntimeSurfaceStatus> {
-  const snapshot = await input.runtime.status.snapshot();
-  let endpoint: string | undefined;
-  let health: string | undefined;
-  if (input.runtime.identity.mode === 'daemon') {
-    const paths = resolveRuntimeDaemonPathsFromConfigHome(
-      input.configHome,
-      input.runtime.identity.profile,
-    );
-    const observation = await observeRuntimeDaemonHealth(paths);
-    health = classifyRuntimeDaemonHealth(observation);
-    endpoint = observation.state?.endpoint;
-  }
-  const runs = snapshot.runs as readonly unknown[];
+async function getReplHostStatus(
+  client: KodaXHostClient<'local'>,
+  configHome: string,
+): Promise<CliRuntimeSurfaceStatus> {
+  const [{ host, counts }, interactions] = await Promise.all([
+    client.call('host.get'),
+    client.call('interaction.list', {}),
+  ]);
+  const observation = await observeRuntimeDaemonHealth(
+    resolveRuntimeDaemonPathsFromConfigHome(configHome, host.profile),
+  );
+  const endpoint = observation.state?.endpoint;
   return {
-    mode: input.runtime.identity.mode,
-    runtimeId: input.runtime.identity.runtimeId,
-    profile: input.runtime.identity.profile,
-    startedAt: input.runtime.identity.startedAt,
+    mode: host.mode === 'embedded' ? 'embedded' : 'daemon',
+    runtimeId: host.id,
+    profile: host.profile,
+    startedAt: new Date(host.startedAt).toISOString(),
     ...(endpoint !== undefined ? { endpoint } : {}),
-    ...(health !== undefined ? { health } : {}),
-    sessions: snapshot.sessions.length,
-    runs: snapshot.runs.length,
-    activeRuns: runs.filter(isActiveDaemonRunStatus).length,
-    queuedRuns: runs.filter(isQueuedDaemonRunStatus).length,
-    pendingPermissions: snapshot.pendingPermissions.length,
-    workflows: snapshot.workflows.length,
+    health: classifyRuntimeDaemonHealth(observation),
+    sessions: counts.sessions,
+    runs: counts.runs,
+    activeRuns: counts.activeRuns,
+    queuedRuns: counts.queuedRuns,
+    pendingPermissions: interactions.items.filter((item) => item.kind === 'permission').length,
+    workflows: counts.workflows,
   };
 }
 
@@ -604,23 +600,7 @@ export function createReplRuntimeAutoModeControl(
     pendingSettingsUpdates.set(sessionId, tracked);
     return tracked;
   };
-  const readStats = async (sessionId: string) => {
-    try {
-      return await client.sessions.getAutoModeStats(sessionId);
-    } catch (error: unknown) {
-      emitKodaXDiagnostic({
-        source: 'cli:runtime-auto-mode',
-        level: 'warn',
-        message: 'Runtime auto-mode status is temporarily unavailable.',
-        detail: error instanceof Error ? error.message : String(error),
-      });
-      return undefined;
-    }
-  };
   return {
-    getStats(sessionId) {
-      return readStats(sessionId);
-    },
     async syncSettings(sessionId, permissionMode, settings) {
       return enqueueSettingsUpdate(sessionId, async () => {
         try {
@@ -630,7 +610,7 @@ export function createReplRuntimeAutoModeControl(
             error instanceof Error &&
             error.message.startsWith('Session not found:')
           ) {
-            return undefined;
+            return;
           }
           throw error;
         }
@@ -638,7 +618,6 @@ export function createReplRuntimeAutoModeControl(
           permissionMode,
           autoModeClassifierModel: settings.classifierModel ?? null,
         });
-        return readStats(sessionId);
       });
     },
   };
@@ -1002,9 +981,20 @@ async function serveDaemonCommand(input: {
     if (!lease.ownsHost) {
       await lease.close();
       const observation = await observeRuntimeDaemonHealth(lease.paths);
+      const ownerPid = observation.state?.pid ?? 'unknown';
+      if (process.env.KODAX_DAEMON_SERVE !== '1') {
+        // Run by an operator (a shell, systemd, Kubernetes), a second Host on
+        // one home is a misconfiguration; exit 0 would read as a finished service.
+        throw new Error(
+          `This home is already served by a Host (PID ${ownerPid}). `
+          + 'One home can have only one Host, so this one did not start.',
+        );
+      }
+      // An SDK auto-start child that lost the startup race must exit cleanly:
+      // its spawner gives only a clean exit the grace to see the winner.
       console.log(
         chalk.yellow(
-          `KodaX runtime daemon already owned by PID ${observation.state?.pid ?? 'unknown'}.`,
+          `KodaX runtime daemon already owned by PID ${ownerPid}.`,
         ),
       );
       completedNormally = true;
@@ -1022,9 +1012,12 @@ async function serveDaemonCommand(input: {
     const testParentWatch = watchRuntimeDaemonTestParent(
       process.env.KODAX_INTERNAL_DAEMON_TEST_PARENT_PID,
     );
+    // Taken when the stop signal arrives: past it the Host is abandoned to the
+    // bounded process cleanup below, so a stuck close cannot hold the process.
+    const withinHostClose = createDaemonHostCloseDeadline();
     let shutdownPromise: Promise<void> | undefined;
     const shutdown = (): Promise<void> => {
-      shutdownPromise ??= lease.shutdown();
+      shutdownPromise ??= withinHostClose(lease.shutdown());
       return shutdownPromise;
     };
     const externallyClosed =
@@ -1035,8 +1028,11 @@ async function serveDaemonCommand(input: {
       await waitForShutdownSignal(shutdown, externallyClosed);
     } finally {
       testParentWatch?.close();
-      await closeHostedA2AServing();
-      await shutdown();
+      try {
+        await withinHostClose(closeHostedA2AServing());
+      } finally {
+        await shutdown();
+      }
     }
     completedNormally = true;
   } catch (error: unknown) {
@@ -1143,6 +1139,34 @@ function combineDaemonShutdownErrors(
     [primary, cleanup],
     `Runtime daemon shutdown and process cleanup both failed: ${primary.message}; ${cleanup.message}`,
   );
+}
+
+// The Host-close slice of a daemon stop; process cleanup keeps its own window
+// after it. A healthy close needs far less: its longest bounded steps are the
+// 10-second Run quiesce and the 30-second Agent executor drain.
+const DAEMON_HOST_CLOSE_TIMEOUT_MS = 90_000;
+
+/** Bounds every Host-close step by one deadline, taken when the first step starts. */
+function createDaemonHostCloseDeadline(): <T>(step: Promise<T>) => Promise<T> {
+  let deadline: number | undefined;
+  return async <T>(step: Promise<T>): Promise<T> => {
+    deadline ??= Date.now() + DAEMON_HOST_CLOSE_TIMEOUT_MS;
+    const remainingMs = Math.max(0, deadline - Date.now());
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        step,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error(
+            `Runtime daemon Host did not finish closing within ${DAEMON_HOST_CLOSE_TIMEOUT_MS / 1_000} seconds. `
+            + 'Process cleanup continued without it.',
+          )), remainingMs);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
 }
 
 // A daemon may legitimately spend up to 130 seconds draining the shared ASRT
@@ -1484,7 +1508,8 @@ async function getDaemonStopResult(input: {
   }
   const currentLockOwner = readRuntimeDaemonLockOwner(paths.lockFile);
   const replacementRunning = currentLockOwner !== undefined
-    && isRuntimeDaemonPidAlive(currentLockOwner.pid)
+    && isRuntimeDaemonOwnerPidAlive(
+      currentLockOwner.pid, currentLockOwner.processStartIdentity, currentLockOwner.pidNamespace)
     && (currentLockOwner.runtimeId !== stoppedState.runtimeId
       || currentLockOwner.pid !== stoppedState.pid);
   if (replacementRunning && afterHealth === 'missing') afterHealth = 'unhealthy';
@@ -1581,7 +1606,7 @@ function forceStopDaemonOwnership(
 ): DaemonStopResult {
   if (health === 'missing') {
     const lockOwner = readRuntimeDaemonLockOwner(paths.lockFile);
-    if (lockOwner && isRuntimeDaemonPidAlive(lockOwner.pid)) {
+    if (lockOwner && isRuntimeDaemonOwnerPidAlive(lockOwner.pid, lockOwner.processStartIdentity, lockOwner.pidNamespace)) {
       return {
         stopped: false,
         forced: true,
@@ -4402,6 +4427,7 @@ complete -c kodax -l version -d 'Show version'`);
   // FEATURE_298 T27 — fixed Host: the CLI client owns no extension
   // runtime, integration hot reload, or A2A handle; the Host does.
   let cliRuntime: KodaXRuntime | undefined;
+  let replHostClient: KodaXHostClient<'local'> | undefined;
   const cliCredentials = (await import('./cli-provider-credentials.js')).createCliProviderCredentialAccess(config);
   const authorizeCli: KodaXClientHostAuthorization = cliCredentials.authorizeExecution;
   let shouldHardExitAfterInteractiveCleanup = false;
@@ -4684,31 +4710,26 @@ complete -c kodax -l version -d 'Show version'`);
           );
         }
 
-        const interactiveRuntime = await getCliRuntime();
-        const interactiveClient = toKodaXProductClient(interactiveRuntime, authorizeCli);
-        // FEATURE_298 T18 — resume selection reads the Host sessions face
-        // (newest-first); the resolved id keeps the same-file local load.
-        let interactiveKodaXOptions = kodaXOptions;
-        if (!kodaXOptions.session?.id && (kodaXOptions.session?.resume === true || kodaXOptions.session?.autoResume === true)) {
-          // Project-scoped like the storage scan it replaces (FEATURE_219
-          // per-project layout): without projectRoot, -c in project B could
-          // resume project A's newest session.
-          const projectRoot = (await getGitRoot()) ?? process.cwd();
-          const candidates = await interactiveClient.sessions.list({
-            ...(projectRoot !== undefined ? { projectRoot } : {}),
-            scope: 'user',
-            limit: Number.MAX_SAFE_INTEGER,
-          });
-          const recent = candidates.find((session) => session.msgCount > 0);
-          if (recent !== undefined) {
-            interactiveKodaXOptions = {
-              ...kodaXOptions,
-              session: { ...kodaXOptions.session, id: recent.id, resume: undefined, autoResume: undefined },
-            };
-          }
-        }
-        const runtimeAutoModeControl =
-          createReplRuntimeAutoModeControl(interactiveClient);
+        // The REPL runs on the Host over v2. A v1 connection the -r lookup
+        // above opened is left only once v2 holds the Host, so the Host
+        // never sees its last client leave in between.
+        const { client: hostClient, leases } = await connectReplHost({
+          version,
+          authorize: authorizeCli,
+          ...(startupProgress !== undefined
+            ? { onStartupProgress: (progress: Parameters<typeof cliStartupProgressMessage>[0]) => { startupProgress.update(cliStartupProgressMessage(progress)); } }
+            : {}),
+          onError: (error: unknown) => emitKodaXDiagnostic({
+            source: 'repl:host',
+            level: 'warn',
+            message: 'The Host connection reported an error.',
+            detail: error instanceof Error ? error.message : String(error),
+          }),
+        });
+        replHostClient = hostClient;
+        const lookupRuntime = cliRuntime;
+        cliRuntime = undefined;
+        await lookupRuntime?.close();
 
         const initialClientSettings = {
           ...(program.getOptionValueSource('provider') === 'cli' ? { provider: options.provider, model: options.model ?? null } : {}),
@@ -4723,74 +4744,27 @@ complete -c kodax -l version -d 'Show version'`);
             ? { repoIntelligenceMode: parseRepoIntelligenceModeOption(opts.repoIntelligence) } : {}),
           ...(program.getOptionValueSource('repoIntelligenceTrace') === 'cli' ? { repoIntelligenceTrace: opts.repoIntelligenceTrace === true } : {}),
         };
+        // -c and autoResume are resolved by the REPL from the Host's Session
+        // list. The Host owns the Sessions, so no local storage is passed.
         const interactiveOptions = {
           onBeforeRender: () => startupProgress?.stop(),
           initialClientSettings,
-          provider: interactiveKodaXOptions.provider,
-          model: interactiveKodaXOptions.model,
-          effort: interactiveKodaXOptions.effort,
-          thinking: interactiveKodaXOptions.thinking,
-          reasoningMode: interactiveKodaXOptions.reasoningMode,
-          agentMode: interactiveKodaXOptions.agentMode,
-          workMode: interactiveKodaXOptions.workMode,
-          maxIter: interactiveKodaXOptions.maxIter,
-          sandbox: interactiveKodaXOptions.sandbox,
-          extensionRuntime: interactiveKodaXOptions.extensionRuntime,
-          session: interactiveKodaXOptions.session,
-          storage: new FileSessionStorage({ cwd: process.cwd() }),
-          runtimeAutoModeControl,
-          getRuntimeStatus: () =>
-            getInteractiveRuntimeStatus({
-              runtime: interactiveRuntime,
-              configHome: KODAX_DIR,
-            }),
+          provider: kodaXOptions.provider,
+          model: kodaXOptions.model,
+          effort: kodaXOptions.effort,
+          thinking: kodaXOptions.thinking,
+          reasoningMode: kodaXOptions.reasoningMode,
+          agentMode: kodaXOptions.agentMode,
+          workMode: kodaXOptions.workMode,
+          maxIter: kodaXOptions.maxIter,
+          sandbox: kodaXOptions.sandbox,
+          extensionRuntime: kodaXOptions.extensionRuntime,
+          session: kodaXOptions.session,
+          getRuntimeStatus: () => getReplHostStatus(hostClient, KODAX_DIR),
           validateSetupA2AConfig: parseA2AIntegrationDocument,
           prepareSetupSandbox: prepareSetupSandboxReport,
           inspectSandbox: inspectSandboxReport,
-          learning: createReplLearningBinding(interactiveClient),
-          // FEATURE_298 T36 — the Host owns the Memory plane; the UI names
-          // the project root and presents/launches only.
-          memory: (projectRoot: string) => interactiveClient.memory.forProject(projectRoot),
-          // FEATURE_298 T22 — workflow run/control routes to the Host
-          // manager (daemon client or in-process service alike).
-          workflows: createCliWorkflowControl(interactiveClient),
-          commandClient: interactiveClient.commands,
-          listHostCommands: (workspaceRoot: string) => interactiveClient.catalog.commands(workspaceRoot),
-          inspectExtensions: () => interactiveClient.catalog.extensions(),
-          mcp: interactiveClient.mcp,
-          providerCapabilities: interactiveClient.catalog,
-          config: interactiveClient.config,
-          catalog: interactiveClient.catalog,
-          startReview: (input: Parameters<typeof interactiveClient.review.start>[0]) => interactiveClient.review.start(input),
-          reviewAgentsLean: (input: Parameters<typeof interactiveClient.agents.reviewLean>[0]) => interactiveClient.agents.reviewLean(input),
-          // FEATURE_298 T34 — goal persistence is Host-owned; the command
-          // plane sends the session id and objective only.
-          goal: {
-            read: (sessionId: string) => interactiveClient.sessions.readGoal(sessionId),
-            create: (input: { sessionId: string; objective: string; tokenBudget?: number }) =>
-              interactiveClient.sessions.createGoal(input.sessionId, { objective: input.objective, ...(input.tokenBudget !== undefined ? { tokenBudget: input.tokenBudget } : {}) }),
-            pause: (sessionId: string) => interactiveClient.sessions.pauseGoal(sessionId),
-            resume: (sessionId: string) => interactiveClient.sessions.resumeGoal(sessionId),
-            clear: (sessionId: string) => interactiveClient.sessions.clearGoal(sessionId),
-          },
-          // FEATURE_298 T34 — session-command mutations are Host-owned; the
-          // REPL sends ids/selectors and re-reads the session file the Host
-          // wrote. deleteAll composes existing Host list + delete (no bulk RPC).
-          sessionCommands: createCliSessionCommands(interactiveClient),
-          // FEATURE_298 T17 — the client plane: Ink submits through the
-          // Host input face, renders from the live session view, and stops
-          // via run receipts. Works in-process and over the daemon face.
-          clientPlane: createCliClientPlane(interactiveClient),
-          // FEATURE_298 T34 — manual /compact replays the Host journal
-          // through the compaction domain and persists there.
-          compactSession: {
-            compact: (input: { sessionId: string; customInstructions?: string }) =>
-              interactiveClient.sessions.compact(input.sessionId, {
-                ...(input.customInstructions !== undefined
-                  ? { customInstructions: input.customInstructions }
-                  : {}),
-              }),
-          },
+          ...createReplHostBindings(hostClient, leases),
           subscribeTransientNotices: integrationEvents.subscribe,
           hardExitOnClose: false,
         };
@@ -4851,8 +4825,7 @@ complete -c kodax -l version -d 'Show version'`);
         taskSurface: 'cli',
       },
     };
-    const cliRuntime = await getCliRuntime();
-    const result = await runCliTaskViaClient(cliRuntime, cliOptions, userPrompt, authorizeCli);
+    const result = await runCliTaskViaClient(await getCliRuntime(), cliOptions, userPrompt, authorizeCli);
     emitJsonRunResultIfNeeded(options.outputMode, result);
   } finally {
     let credentialCloseError: unknown;
@@ -4862,15 +4835,22 @@ complete -c kodax -l version -d 'Show version'`);
     };
     if (shouldHardExitAfterInteractiveCleanup) {
       const runtime = cliRuntime;
+      const hostClient = replHostClient;
       cliRuntime = undefined;
+      replHostClient = undefined;
       await closeCredentials();
       await cleanupInteractiveProcessResources({
-        closeRuntime: async () => runtime?.close(),
+        closeRuntime: async () => {
+          hostClient?.close();
+          await runtime?.close();
+        },
       });
     } else {
       // Non-interactive callers own their process and receive cleanup errors.
       await awaitLatestCodingMemoryReviewDrain(15_000);
       await closeCredentials();
+      replHostClient?.close();
+      replHostClient = undefined;
       let runtimeCloseError: unknown;
       try {
         await cliRuntime?.close();

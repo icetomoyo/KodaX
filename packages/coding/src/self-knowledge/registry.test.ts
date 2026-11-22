@@ -783,7 +783,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(commands).toContain('same native reasoning-effort control');
     expect(commands).toContain('none');
     expect(commands).toContain('quick/balanced/deep');
-    expect(commands).toContain('/auto-denials');
+    expect(commands).not.toContain('/auto-denials');
     expect(permissions).toContain('Legacy grants without a Runtime-issued matcher');
     expect(permissions).toContain('remain visible and revocable');
     expect(permissions).toMatch(/never\s+authorize a concrete call/);

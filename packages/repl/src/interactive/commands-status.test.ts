@@ -109,28 +109,10 @@ describe('status workspace output', () => {
     expect(output).toContain('workflows=3');
   });
 
-  it('does not expose the removed auto-engine command', () => {
-    expect(BUILTIN_COMMANDS.some((candidate) => candidate.name === 'auto-engine')).toBe(false);
-  });
-
-  it('shows circuit-breaker fail-closed behavior without exposing legacy engine state', async () => {
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const command = BUILTIN_COMMANDS.find((candidate) => candidate.name === 'auto-denials');
-    const now = Date.now();
-
-    await command!.handler([], context, {
-      getAutoModeStats: async () => ({
-        classifierHealth: 'degraded',
-        classifierModel: 'deepseek:deepseek-v4-flash',
-        denials: { consecutive: 0, cumulative: 0 },
-        breaker: { timestamps: [now, now, now, now, now] },
-      }),
-    } as unknown as CommandCallbacks, currentConfig);
-
-    const output = logSpy.mock.calls.flat().join('\n');
-    expect(output).toContain('degraded');
-    expect(output).toContain('fail closed');
-    expect(output).not.toMatch(/\bengine\b/i);
+  it('does not expose the removed auto-mode diagnostic commands', () => {
+    // auto-denials printed reviewer counters nobody acted on; an Auto refusal
+    // already says why and what to do instead.
+    expect(BUILTIN_COMMANDS.some((candidate) => candidate.name === 'auto-engine' || candidate.name === 'auto-denials')).toBe(false);
   });
 
   it('does not publish a mode change before Runtime settings synchronize', async () => {

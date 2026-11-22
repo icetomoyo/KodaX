@@ -18,8 +18,16 @@ export const copyCommand: Command = {
   name: 'copy',
   description: 'Copy last assistant message to clipboard',
   usage: '/copy',
-  handler: async (_args, context) => {
-    const lastMessage = extractLastAssistantText(context.messages as never);
+  handler: async (_args, context, callbacks) => {
+    let lastMessage: string | undefined;
+    try {
+      lastMessage = callbacks.readLastAssistantReply
+        ? await callbacks.readLastAssistantReply()
+        : extractLastAssistantText(context.messages as never);
+    } catch (error) {
+      console.log(chalk.red(`\nCould not read the last reply: ${error instanceof Error ? error.message : String(error)}`));
+      return;
+    }
 
     if (!lastMessage) {
       console.log(chalk.yellow('\nNo assistant message found to copy.'));

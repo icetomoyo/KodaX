@@ -215,10 +215,23 @@ export interface InputPromptProps {
 
 export type LearningSurfaceSnapshot = AgentLearningSurfaceSnapshot;
 
+/**
+ * What the REPL reads of a learned capability. A Host sends more, which
+ * `/learn show` prints as it came. `source` is absent where the Host does not
+ * say where a capability came from.
+ */
+export type LearningCapabilityView =
+  & Pick<LearnedCapabilityRecord, 'capabilityId' | 'displayName' | 'slug' | 'carrier' | 'lifecycle'>
+  & { readonly source?: LearnedCapabilityRecord['source'] };
+
+export interface LearningCapabilityPage extends Omit<LearningPage, 'items'> {
+  readonly items: readonly LearningCapabilityView[];
+}
+
 export interface LearningBinding {
   getSnapshot(): Promise<LearningSurfaceSnapshot>;
-  list(query?: LearningQuery): Promise<LearningPage>;
-  get(nameOrSlug: string): Promise<LearnedCapabilityRecord>;
+  list(query?: LearningQuery): Promise<LearningCapabilityPage>;
+  get(nameOrSlug: string): Promise<LearningCapabilityView>;
   subscribe(
     listener: (event: LearningEvent) => void,
     options?: LearningSubscribeOptions,

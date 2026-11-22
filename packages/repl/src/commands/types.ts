@@ -15,7 +15,7 @@ import type {
   KodaXReasoningMode,
   KodaXSkillInvocationContext,
 } from '@kodax-ai/coding';
-import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
+import type { ClientLoadedExtension, KodaXProductClient } from '@kodax-ai/coding/client-contract';
 import type * as readline from 'readline';
 import type { InteractiveContext } from '../interactive/context.js';
 import type { PermissionMode } from '../permission/types.js';
@@ -153,19 +153,20 @@ export interface SessionCommandBinding {
     readonly sessionId: string;
     readonly reason?: string;
   }): Promise<string | undefined>;
+  /** Creates a draft Session the Host names; returns its id. */
   create(input: {
-    readonly sessionId: string;
     readonly title: string;
     readonly gitRoot?: string;
     readonly projectPath?: string;
     readonly surface: string;
-  }): Promise<void>;
+  }): Promise<string>;
 }
 
 /**
  * FEATURE_298 T34 — manual compaction is a Host session command: the Host
  * replays its journal through the compaction domain and persists the
- * result; the REPL only refreshes its display context.
+ * result; the REPL only refreshes its display context. A compaction that
+ * fails rejects; `compacted: false` means there was nothing to compact.
  */
 export interface SessionCompactBinding {
   compact(input: {
@@ -175,9 +176,18 @@ export interface SessionCompactBinding {
     readonly compacted: boolean;
     readonly tokensBefore: number;
     readonly tokensAfter: number;
-    readonly messages: readonly import('@kodax-ai/agent').KodaXMessage[];
-    readonly reason?: string;
   }>;
+}
+
+/**
+ * What the Host reports about its extensions: the modules it loaded and the
+ * failures they met. The commands and tools they add are listed with the
+ * Host's other commands and tools.
+ */
+export interface HostExtensionsReport {
+  readonly active: boolean;
+  readonly extensions: readonly ClientLoadedExtension[];
+  readonly failures: readonly { readonly stage: string; readonly target: string; readonly message: string }[];
 }
 
 export interface CommandCallbacks {
@@ -185,7 +195,7 @@ export interface CommandCallbacks {
   catalog?: Pick<KodaXProductClient['catalog'], 'providers' | 'models' | 'reasoningEfforts'>;
   commandClient?: KodaXProductClient['commands'];
   listHostCommands?: KodaXProductClient['catalog']['commands'];
-  inspectExtensions?: KodaXProductClient['catalog']['extensions'];
+  inspectExtensions?: () => Promise<HostExtensionsReport>;
   mcp?: Pick<KodaXProductClient['mcp'], 'status' | 'listTools'>;
   /** Host-owned reasoning-effort probing; unbound keeps the local provider path. */
   providerCapabilities?: Pick<KodaXProductClient['catalog'], 'reasoningEfforts' | 'probeReasoningEfforts' | 'forgetCapabilities'>;
@@ -278,6 +288,8 @@ export interface CommandCallbacks {
   getCostReport?: () => string | null;
   getRuntimeStatus?: () => Promise<RuntimeSurfaceStatus | undefined>;
   getSessionStatus?: () => Promise<{ messageCount?: number; tokens?: number }>;
+  /** The newest assistant reply in full, from the Host; a bound client keeps no transcript of its own. */
+  readLastAssistantReply?: () => Promise<string | undefined>;
   /** Canonical host parser used by `/setup` for the root-owned A2A schema. */
   validateSetupA2AConfig?: (value: unknown) => unknown;
   /** Root-owned sandbox activation because ASRT is distributed by the host package. */
@@ -309,17 +321,6 @@ export interface CommandCallbacks {
   workflows?: WorkflowHostControl;
   getLearningSummary?: () => Promise<LearningSurfaceSnapshot>;
   openLearningCenter?: (nameOrSlug?: string) => Promise<void>;
-  /**
-   * FEATURE_092 phase 2b.8: read-only stats accessor for the auto-mode
-   * classifier guardrail. Returns undefined when the guardrail hasn't been
-   * constructed yet (REPL never entered auto mode this session). The
-   * returned snapshot is a copy of references — caller cannot mutate
-   * guardrail state through it. Used by `/auto-denials` diagnostics.
-   */
-  getAutoModeStats?: () =>
-    | import('@kodax-ai/coding').AutoModeStats
-    | undefined
-    | Promise<import('@kodax-ai/coding').AutoModeStats | undefined>;
   ui: UIContext;
 }
 
@@ -504,15 +505,21 @@ export interface WorkflowHostControl {
     /** FEATURE_298 T22 — serializable run lineage the Host attaches verbatim. */
     readonly metadata?: import('@kodax-ai/coding').WorkflowRunProcessMetadata;
   }): Promise<{ readonly kind: 'declined'; readonly reason: string } | { readonly kind: 'started'; readonly runId: string }>;
-  list(): Promise<readonly import('@kodax-ai/coding').ManagedWorkflowSnapshot[]>;
-  get(runId: string): Promise<import('@kodax-ai/agent').WorkflowProcessSnapshot | undefined>;
+  /**
+   * `scope.sessionId` names the conversation the workflows belong to. A Host
+   * that keeps workflows per conversation needs it; a REPL always sends it.
+   */
+  list(scope?: WorkflowSessionScope): Promise<readonly import('@kodax-ai/coding').ManagedWorkflowSnapshot[]>;
+  get(runId: string, scope?: WorkflowSessionScope): Promise<import('@kodax-ai/agent').WorkflowProcessSnapshot | undefined>;
   /** FEATURE_298 T22 — live process events for a Host-minted run. */
   subscribe(
-    filter: { readonly runId?: string },
+    filter: { readonly runId?: string; readonly sessionId?: string },
     listener: (event: import('@kodax-ai/agent').WorkflowProcessEvent) => void,
     onError?: (error: unknown) => void,
   ): { readonly ready?: Promise<void>; close(): void };
-  pause(runId: string): Promise<boolean>;
-  resume(runId: string): Promise<boolean>;
-  stop(runId: string, options?: { readonly sessionId: string }): Promise<boolean>;
+  pause(runId: string, scope?: WorkflowSessionScope): Promise<boolean>;
+  resume(runId: string, scope?: WorkflowSessionScope): Promise<boolean>;
+  stop(runId: string, scope?: WorkflowSessionScope): Promise<boolean>;
 }
+
+export interface WorkflowSessionScope { readonly sessionId: string }

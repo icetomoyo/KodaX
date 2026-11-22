@@ -15,6 +15,7 @@ import {
   clientViewToHistoryItems,
   readClientPlaneItemText,
   readClientPlaneHistory,
+  readLastAssistantReply,
   readFrozenClientPlaneItems,
   runClientPlaneRound,
   followClientPlaneRun,
@@ -222,6 +223,25 @@ describe('clientViewToHistoryItems (T17)', () => {
     const [item] = await readClientPlaneHistory(plane, 's');
     expect(buildTranscriptToolInputCopyText(item)).toBe('Tool: read\n{"path":"full.txt"}');
     expect(item?.totalInputLength).toBeUndefined();
+  });
+  it('reads the newest assistant reply in full, from the Host when the view holds its tail', async () => {
+    const view = (items: ClientViewItem[]) => ({ session: { id: 's' }, items }) as unknown as ClientSessionView;
+    const readItem = async (_sessionId: string, itemId: string) =>
+      ({ id: itemId, text: 'the whole reply', offset: 0, totalLength: 15 });
+    expect(await readLastAssistantReply({ readItem }, view([
+      viewItem({ id: 'u', type: 'user', text: 'q' }),
+      viewItem({ id: 'a1', type: 'assistant', text: 'first' }),
+      viewItem({ id: 'a2', type: 'assistant', text: 'reply', textOffset: 10, totalTextLength: 15 }),
+      viewItem({ id: 'i', type: 'info', text: 'a notice after the reply' }),
+    ]))).toBe('the whole reply');
+    expect(await readLastAssistantReply({ readItem }, view([
+      viewItem({ id: 'a', type: 'assistant', text: 'short' }),
+    ]))).toBe('short');
+    // The newest turn has no reply yet: an older reply is not the one to copy.
+    expect(await readLastAssistantReply({ readItem }, view([
+      viewItem({ id: 'a', type: 'assistant', text: 'old' }),
+      viewItem({ id: 'u', type: 'user', text: 'next question' }),
+    ]))).toBeUndefined();
   });
   it('rejects incomplete content instead of returning a successfully copied preview', async () => {
     const readItem = async (_sessionId: string, itemId: string, options?: { offset?: number }) =>

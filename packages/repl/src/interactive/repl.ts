@@ -161,6 +161,7 @@ import {
   startGeneratedWorkflowFromRequest,
 } from '../commands/workflow-command.js';
 import { formatWorkflowAgentDigest, inferWorkflowLocaleFromParts } from '../commands/workflow-command-results.js';
+import { currentMessageCount } from '../commands/new-command.js';
 import {
   enforceSessionTransitionGuard,
 } from './session-guardrails.js';
@@ -728,9 +729,9 @@ export async function runInteractiveMode(options: RepLOptions): Promise<void> {
   });
   context.title = startupSession?.client?.session.title ?? startupSession?.data?.title ?? '';
   // Register a fresh Session before starting its Host view or accepting input.
+  // The Host names it, so the context adopts the Host's id.
   if (startupSession === null && options.session?.id === undefined && options.sessionCommands) {
-    await options.sessionCommands.create({
-      sessionId: context.sessionId,
+    context.sessionId = await options.sessionCommands.create({
       title: context.title,
       gitRoot: context.gitRoot,
       projectPath: context.runtimeInfo?.executionCwd ?? context.gitRoot ?? process.cwd(),
@@ -1355,6 +1356,8 @@ Keyboard Shortcuts:
       messageCount: (await options.sessionCommands!.read!(context.sessionId)).msgCount,
       tokens: displayedPlaneView?.session.id === context.sessionId ? displayedPlaneView.parentContextTokens : undefined,
     }) : undefined,
+    readLastAssistantReply: options.clientPlane ? async () => displayedPlaneView?.session.id === context.sessionId
+      ? readLastAssistantReply(options.clientPlane!, displayedPlaneView) : undefined : undefined,
     validateSetupA2AConfig: options.validateSetupA2AConfig,
     prepareSetupSandbox: options.prepareSetupSandbox,
     inspectSandbox: options.inspectSandbox,
@@ -1405,10 +1408,9 @@ Keyboard Shortcuts:
       await saveClassicSession(context, storage, currentOptions.session?.tag, compactionLineage);
     },
     startNewSession: async () => {
-      const nextSessionId = generateInteractiveSessionId();
+      let nextSessionId = generateInteractiveSessionId();
       if (options.sessionCommands) {
-        await options.sessionCommands.create({
-          sessionId: nextSessionId,
+        nextSessionId = await options.sessionCommands.create({
           title: 'REPL Session',
           gitRoot: startupRuntime.workspaceRoot ?? undefined,
           projectPath: startupRuntime.executionCwd ?? startupRuntime.workspaceRoot ?? process.cwd(),
@@ -1824,16 +1826,6 @@ Keyboard Shortcuts:
     getCostReport: () => options.clientPlane
       ? (displayedPlaneView?.session.id === context.sessionId ? displayedPlaneView.activity?.costReport ?? null : null)
       : costReportRef.current?.() ?? null,
-    // Auto-mode read-only diagnostics for /auto-denials. The accessor
-    // delegate to the lazy guardrail factory — when REPL never enters auto
-    // mode, the guardrail is never constructed and the stats are undefined.
-    getAutoModeStats: async () => {
-      if (!isAutoMode(currentPermissionMode)) return undefined;
-      if (options.runtimeAutoModeControl) {
-        return options.runtimeAutoModeControl.getStats(context.sessionId);
-      }
-      return autoModeBootstrap.getGuardrail().getStats();
-    },
     createKodaXOptions: () => {
       // FEATURE_074: live plan-mode check for child agents. The closure reads
       // currentPermissionMode lazily, so mid-run parent-mode toggles propagate
@@ -2129,7 +2121,13 @@ Keyboard Shortcuts:
   };
 
   const maybeRecoverAfterProviderError = async (error: Error, prompt: string): Promise<boolean> => {
-    if (!shouldOfferSessionRecovery({ error, messageCount: context.messages.length })) {
+    try {
+      if (!await shouldOfferSessionRecovery({ error, countMessages: () => currentMessageCount(context, callbacks) })) {
+        return false;
+      }
+    } catch (readError: unknown) {
+      const message = readError instanceof Error ? readError.message : String(readError);
+      console.log(chalk.dim(`Could not check whether /recover applies: ${message}`));
       return false;
     }
     console.log(chalk.dim(`\n${SESSION_RECOVERY_HINT_MESSAGE}`));
@@ -2914,6 +2912,7 @@ import {
   followClientPlaneRun,
   runClientPlaneRound,
   mintInkInputId,
+  readLastAssistantReply,
   viewRunsActive,
   type InkClientPlane,
 } from '../ui/client-plane.js';

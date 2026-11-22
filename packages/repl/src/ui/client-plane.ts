@@ -129,6 +129,26 @@ export async function readClientPlaneItemText(
   } : undefined);
 }
 
+/**
+ * The newest assistant reply in a view, in full; undefined when the newest
+ * turn has no reply yet. A view may hold only the tail of a long reply, so the
+ * rest is read from the Host.
+ */
+export async function readLastAssistantReply(
+  plane: Pick<InkClientPlane, 'readItem'>,
+  view: ClientSessionView,
+): Promise<string | undefined> {
+  for (let index = view.items.length - 1; index >= 0; index -= 1) {
+    const item = view.items[index]!;
+    if (item.type === 'user') return undefined;
+    if (item.type !== 'assistant') continue;
+    const complete = item.totalTextLength === undefined
+      || ((item.textOffset ?? 0) === 0 && item.text.length === item.totalTextLength);
+    return complete ? item.text : readClientPlaneItemText(plane, view.session.id, item.id);
+  }
+  return undefined;
+}
+
 type ViewToolStatus = NonNullable<ClientViewItem['tool']>['status'];
 
 /** Read the omitted prefix without admitting characters produced after the browse snapshot. */

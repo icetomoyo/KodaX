@@ -52,11 +52,14 @@ it('renders Host extension diagnostics through /ext when the client has no local
   await withExtensionRuntimeContext(async () => {
     expect(getActiveExtensionRuntime()).toBeNull();
     await executeCommand({ command: 'ext', args: [] }, await createInteractiveContext({ sessionId: 'unused' }),
-      { ...callbacks, inspectExtensions: () => client.catalog.extensions() }, currentConfig);
+      { ...callbacks, inspectExtensions: async () => {
+        const { active, extensions, diagnostics } = await client.catalog.extensions();
+        return { active, extensions, failures: diagnostics?.failures ?? [] };
+      } }, currentConfig);
   }, null);
   const text = output.mock.calls.map(parts => parts.join(' ')).join('\n');
   expect(text).toContain('host-diagnostic-extension');
-  expect(text).toContain('/host-diagnostic-command');
+  expect(text).toContain('Loaded:          1');
   expect(text).not.toContain('No active extension runtime');
 });
 

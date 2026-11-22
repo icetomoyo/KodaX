@@ -749,7 +749,7 @@
       "All built-in REPL slash commands, grouped by purpose:",
       "- basics: /help, /status, /cost, /clear, /new, /exit, /copy, /paste.",
       "- model/runtime: /model, /provider, /thinking, /reasoning, /effort, /agent-mode, /work-mode,",
-      "  /mode, /auto, /auto-denials, /fallback, /setup, /sandbox.",
+      "  /mode, /auto, /fallback, /setup, /sandbox.",
       "`/thinking`, `/reasoning`, and `/effort` are the same native reasoning-effort control.",
       "Use `none` to disable reasoning only where the active model supports it; `auto` clears",
       "an explicit effort override. Legacy shortcuts remain accepted: `on/off` map to",

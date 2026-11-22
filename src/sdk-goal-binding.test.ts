@@ -92,7 +92,7 @@ it('routes /goal mutations through the Host goal plane without a local canonical
     clearHistory: () => undefined,
     printHistory: () => undefined,
     ui: {} as Parameters<typeof executeCommand>[2]['ui'],
-    // Wired exactly like src/kodax_cli.ts wires the interactive runtime.
+    // Wired the way a v1 client binds the goal commands.
     goal: {
       read: (id: string) => runtime.sessions.readGoal(id),
       create: (input: { sessionId: string; objective: string; tokenBudget?: number }) =>
