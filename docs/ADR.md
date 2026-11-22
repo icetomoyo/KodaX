@@ -8296,7 +8296,14 @@ quota and billing. The full specification is the design record
 7. **D7 No Host paths on the network.** Folded into D11.
 8. **D8 Safe defaults for embedding.** Without an approval callback the
    in-process library refuses dangerous tools. Allowing everything requires an
-   explicit `allowAll`.
+   explicit `allowAll`. The refusal (`approvalMissingToolResult`) tells the
+   model that every tool that changes something gets the same answer, to keep
+   working with tools that read, and to tell the user what it would have
+   changed. A Layer 2 eval (`benchmark/approval-missing.eval.ts`, 2026-11-22,
+   3 models × 5 cases × 2 samples) compared it with the approval-unavailable
+   text: better in 10 pairs, worse in 1, the same in 19. Calls the host would
+   refuse again fell from 8 of 30 to 2 of 30, and no response in either arm
+   claimed a change it had not made.
 9. **D9 Negotiation and evolution.** `kodax/2` with one increasing `revision`
    and a short feature list. Both sides use the highest revision they share.
    Enumerations shown to people are open with a stated fallback; enumerations
