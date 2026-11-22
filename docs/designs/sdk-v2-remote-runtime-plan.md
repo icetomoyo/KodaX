@@ -694,10 +694,23 @@ SDK 导出一个统一的错误类型。客户端不解析错误文本。
 
 1. 用户在 Space 里点"添加设备"，得到一个一次性配对链接和对应的二维码：`https://<隧道地址>/#pair=<配对码>`。配对码 10 分钟内有效，只能用一次，并且对尝试次数限速。
 2. 手机或浏览器打开链接，网页从 URL 的 `#` 部分取出配对码。这部分不会发给服务器和代理，也不会进入访问日志。
-3. 网页用配对码换取一个长期有效的设备令牌，存进浏览器的 localStorage，再把配对码从地址栏清掉。之后访问同一个地址会自动登录。
+3. 网页用配对码调 `POST /pair`，Host 回一个 HttpOnly cookie，里面是长期有效的设备令牌；网页再把配对码从地址栏清掉。之后访问同一个地址，浏览器连接时自动带上 cookie。
 4. 用户清空了浏览器数据就重新配对。在 Space 的设备列表里吊销某台设备后，Host 立即断开这台设备的连接。
 
-令牌是 256 位随机数，home 里只保存它的 SHA-256。命令行等价操作：
+令牌是 256 位随机数，home 里只保存它的 SHA-256。
+
+凭证只放在 HttpOnly cookie 里（2026-11-22 确认，§11 第 12 条）：
+
+- 为什么不用 localStorage：Safari 在 7 天使用中没有访问某个站点，就删除它的 localStorage 和 JS 写的 cookie，只有加到主屏幕的网页应用例外；服务器下发的 cookie 不在其中。(b) 没有账号，令牌丢了要回到电脑前重新扫码，而人往往正是不在电脑前才远程访问。另外脚本读不到 HttpOnly cookie，页面被注入脚本时令牌不会被带走。
+- XSS 不因此变得无害：Host 能执行命令，注入的脚本可以借打开的页面提交 Run、回答审批。防线是 CSP 和输出净化（M1b 第 10 项的文档），两种存储都一样。
+- 只有一种机制：不在 `initialize` 里另收配对令牌。远程的非浏览器客户端很少见，有的话按 HTTP 的方式拿 cookie、带 cookie。形态 (a)(c)(d) 的客户端用 JWT，不受影响。
+- cookie 带 `HttpOnly`、`SameSite=Strict`、`Path=/`。配对页的 Origin 是 https 时才带 `Secure`，所以同一 Wi-Fi 下用 http 直连也能配对。
+- Chrome 把 cookie 的有效期限制在 400 天以内，设备每次连上都重新下发一次。
+- 每台设备记下配对时的 Origin。以后带这台设备 cookie 的连接，Origin 必须相同，否则拒绝。这样防住了跨站 WebSocket 劫持，也不用用户把隧道地址写进 `allowedOrigins`；不靠 Host 头判断同源，因为各家隧道转发时对 Host 头的处理不一样。
+- cookie 和地址绑定：隧道地址变了，就要重新配对。设备列表显示每台设备的 Origin 和最后连接时间，方便清理。
+- 协议：连接已经凭 cookie 认证时，`initialize` 的 `auth` 不再要求 token。配对设备的角色是 `user`，主体是 `person`。
+
+命令行等价操作：
 
 - `kodax daemon pair --name <设备>`：配对；
 - `kodax daemon devices`：列出设备；
@@ -705,9 +718,20 @@ SDK 导出一个统一的错误类型。客户端不解析错误文本。
 
 远程网页由 Host 在同一端口上提供：Space 打包出静态的 Web UI，通过配置 `server.webRoot` 指向它。网页和 Host 同源，不涉及跨域。
 
+**怎么连到 Host**：只用免费、不需要我们提供资源的方案，文档按用途推荐，不排先后（2026-11-22 确认）：
+
+| 用途 | 方案 | 说明 |
+|---|---|---|
+| 长期随时能连 | Tailscale serve | 地址固定（`<机器>.<tailnet>.ts.net`），自动 HTTPS，只有自己的设备能访问；手机要装 Tailscale。免费的 Personal 计划限非商业使用 |
+| 长期，手机不装 App | Tailscale funnel，或 Cloudflare 命名隧道 | funnel 是 beta，有不公开的带宽限制，只能用 443、8443、10000 端口；命名隧道要自己的域名 |
+| 临时用 | Cloudflare 快速隧道 | 不用账号、不用装 App；地址跟 cloudflared 进程走，重启就变，人在外面时没法知道新地址 |
+| 兜底 | 同一 Wi-Fi 直连 | 只有 http |
+
+ngrok 免费版不推荐：它在网页前插入警告页，页面里的脚本请求也可能拿到警告页。funnel 和 Cloudflare 隧道把配对端点放到公网上，配对码的限速要按公网设计。国内网络下各方案能否稳定访问，写指南前实测。
+
 #### 浏览器来源
 
-带 Origin 头的连接，其来源必须在 `allowedOrigins` 里。
+带 Origin 头的 JWT 连接，其来源必须在 `allowedOrigins` 里。配对设备的连接，Origin 必须是这台设备配对时的 Origin。
 
 #### 否决
 
@@ -1965,11 +1989,12 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
    - 配了监听就进入 persistent 模式。
 2. `/healthz`，复用现有的停止前置检查。
 3. Host 级的 `tools` 上限。
-4. 设备配对。
+4. 设备配对，以及 Host 在同一端口上提供 `server.webRoot` 的静态网页。
 5. JSON 日志。
 6. 浏览器 SDK：
    - 新入口，零 `node:` 依赖，不打包 zod；
    - 不改造 `sdk-client.ts`，因为它依赖 `node:path`、sdk-runtime、state、client-lifecycle 和 repl。
+   - 同一个 WebSocket 拨号也给 Node SDK 用：`KodaXHostClient` 现在只能连本机 IPC，(a)(c)(d) 的后端要连远程 Host 需要它。用全局 `WebSocket`，所以 Node 下限提到 22.4（ADR-080）。
 7. 分块的 blob 读写；显示项的附件改为 blob 引用；网络客户端只能用 blob 引用和工作区相对路径。
 8. 权限请求带上拟变更的 diff。
 9. 在 v2 上承载 service 的反向调用（`lease.*`）；租约的 Session 级绑定（D12）。凭证这一种已经提前做了（见"凭证租约的落地细节"），这里剩 Host Tool 和授权方两种，以及 Session 级绑定。
@@ -1978,7 +2003,7 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
     - Dockerfile（带 tini）和 StatefulSet 样例；
     - systemd 和 Windows 任务计划程序样例；
     - JWT 最小样例；
-    - 隧道加配对指南；
+    - 隧道加配对指南（方案按"设备配对"里的表）；
     - UI 的 CSP 和输出净化须知。
 
 **出口标准**：
@@ -2164,7 +2189,7 @@ KodaX 在实例契约里给出检查清单，但不实现：
    - 握手失败或超时，就自动切到 HTTP 承载：下行用 SSE，上行用 POST；
    - 上层 API 不变，并在同一网络环境下记住这次选择；
    - M1b 先让 Host 的连接层与传输方式解耦，M2 再完成回退。
-6. (b) 先做隧道，不做中继。网络监听必须鉴权：用一次性配对链接换取设备令牌（D4）。
+6. (b) 先做隧道，不做中继。网络监听必须鉴权：用一次性配对链接换取设备令牌（D4）。2026-11-22 补充：中继要有我们运营的服务和账号体系，现在没有，所以不考虑；只用免费、不需要我们提供资源的连接方案。
 7. 平台控制面不通过网络开放。用户设置对 user 角色开放，平台可以逐项锁定（D4）。
 8. 进程内库没有审批回调时，直接默认拒绝危险工具，不先出一个只告警的版本（D8）。
 9. v2.0 的 workspace 接口只读。UI 直接写文件另立 feature（§13）。
@@ -2181,6 +2206,12 @@ KodaX 在实例契约里给出检查清单，但不实现：
     - 显示项逐项定界，接受 Space 的截断行为随之变化（D3）。
     - 增加只允许同一主体续期的 `auth.renew`。这一条推翻了第 3 版 D4 里"不做 `auth.refresh`"的决定（D13）。
 
+2026-11-22 确认：
+
+12. 配对设备的凭证只放在 HttpOnly cookie 里，绑定配对时的 Origin，不在 `initialize` 里另收配对令牌（"设备配对"一节）。
+13. 连接方案按用途推荐：长期用 Tailscale，临时用 Cloudflare 快速隧道（"设备配对"一节）。
+14. Node 下限提到 22.4（ADR-080）。
+
 ## 12. 风险与待核实
 
 1. 方法表里原先标"核实"的 7 个条目已在 M0 对照本仓库确认。还没有核对的是 Space 的调用点（Space 仓库不在这里）：Space 是否直接调用 `runs.setModel` 一类的方法、是否分页读原始 transcript、是否发原始的 `run.start`、是否调用 `prepareSkill`。M1c 切 Space 之前要对照 Space 的代码确认；任何一项有调用方，对应的 v2 方法要补回来。
@@ -2188,7 +2219,7 @@ KodaX 在实例契约里给出检查清单，但不实现：
 3. `epoch` 在会话内的重写（rewind、压缩）时是否变化，取决于显示项的 id 是否保持稳定，M1a 对照代码确定。
 4. 逐项定界之后，快照的最坏大小是"窗口项数 × 单项上限"。单项上限要用真实会话测量后定，移动网络下反复重拉快照的成本上线后观察，必要时再评估做事件日志。
 5. 跨重启的输入判重怎么落：现在立即启动的输入用启动内的地址判重，代码里明确说它不是输入账本（`sdk-runtime.ts:12427-12431`）。M1a 设计时要避免重建已被删除的通用 operation envelope。
-6. 配对令牌存在 localStorage 里，会被 XSS 读走。网页和 Host 同源，备选做法是配对时由 Host 下发 HttpOnly cookie。非浏览器的远程客户端用不了 cookie，所以两种方式可能要并存。M1b 前确定。
+6. ~~配对令牌放 localStorage 还是 HttpOnly cookie~~：已定，只用 HttpOnly cookie（2026-11-22，§11 第 12 条）。
 7. 容器里能不能用 bwrap。如果不能，需要一个"容器本身就是边界"的 sandbox 模式，并写进实例契约。
 8. 托管时用到的 provider 是否都支持自定义 baseUrl 加占位 key。
 9. 身份拆分对 Space 重连的影响：靠双读，加上"升级后再降级"的回归测试兜底。
@@ -2206,6 +2237,7 @@ KodaX 在实例契约里给出检查清单，但不实现：
   - 要让 agent 知道文件被用户改过。
 - **记忆和技能学习对网络角色开放**：等 FEATURE_309 之后按新模型设计。
 - **单独的 HTTP blob 端点**：等有了大文件的真实需求再做。
+- **一键远程**：由 Host 或 Space 启动 cloudflared 快速隧道，从它的本地 metrics 接口（`/quicktunnel`）读到地址，直接显示配对二维码。地址变了仍要重新扫码。可选，不在 M1b。
 - 定稿 ADR 时，把 v2 的 feature 一起登记到 FEATURE_LIST。一起登记是为了避免分支之间撞 ID。登记前查一遍 KodaX、KodaX-next-dev 和在途 worktree 的最大编号。截至 2026-11-20 已占用：
   - FEATURE_307 到 FEATURE_311；
   - ADR-076 到 ADR-078；
