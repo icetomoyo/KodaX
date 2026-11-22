@@ -358,8 +358,11 @@ export async function runClientPlaneRound(input: {
   /** Read the Run already displayed to the user synchronously at interruption. */
   readonly getDisplayedRunId?: () => string | undefined;
   readonly inputArtifacts?: readonly KodaXInputArtifact[];
+  /** Called just before the submission leaves, so the caller can echo the input at once. */
+  readonly onSubmitting?: (input: PendingClientEchoInput) => void;
 } & RuntimeStopCallbacks): Promise<KodaXResult> {
   const inputId = mintInkInputId();
+  input.onSubmitting?.({ inputId, text: input.prompt });
   const aborted = (): boolean => input.abortSignal?.aborted === true;
   let stopping: Promise<unknown> | undefined;
   let withdrawalError: Error | undefined;
@@ -612,6 +615,50 @@ export function clientViewToHistoryItems(
     options.memo?.entries.set(item.id, { fingerprint, item: mapped });
     return mapped;
   });
+}
+
+export interface PendingClientEchoInput {
+  readonly inputId: string;
+  readonly text: string;
+}
+
+/** A submitted input the Host view has not shown yet. */
+export interface PendingClientEcho extends PendingClientEchoInput {
+  readonly sessionId: string;
+}
+
+/** True once the view shows the input as a user item, inside a merged one, or in the queue. */
+export function viewCarriesInput(
+  view: Pick<ClientSessionView, 'items' | 'queue'>,
+  inputId: string,
+): boolean {
+  return view.queue.some(entry => entry.inputId === inputId)
+    || view.items.some(item => item.type === 'user'
+      && (item.inputId === inputId || item.inputIds?.includes(inputId) === true));
+}
+
+/**
+ * Append the submitted input while the Host view does not show it yet. The
+ * Host adds the user item only after the Run starts (about a second on a cold
+ * Host), so without this row the query looks lost. The id matches the Host
+ * user item id, so the Host row takes its place without a remount.
+ */
+export function withPendingClientEcho(
+  history: HistoryItem[],
+  view: Pick<ClientSessionView, 'session' | 'items' | 'queue'>,
+  echo: PendingClientEcho | undefined,
+): HistoryItem[] {
+  if (echo === undefined || view.session.id !== echo.sessionId || viewCarriesInput(view, echo.inputId)) {
+    return history;
+  }
+  return [...history, {
+    id: `${echo.sessionId}:input:${echo.inputId}`,
+    type: 'user',
+    text: echo.text,
+    inputId: echo.inputId,
+    timestamp: Date.now(),
+    isSessionUiOnly: true,
+  }];
 }
 
 function findLastIndex(

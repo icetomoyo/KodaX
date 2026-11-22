@@ -18,7 +18,9 @@ import {
   readFrozenClientPlaneItems,
   runClientPlaneRound,
   followClientPlaneRun,
+  viewCarriesInput,
   viewRunsActive,
+  withPendingClientEcho,
   type ClientPlaneDialogSurface,
   type ClientRoundOutcome,
   type InkClientPlane,
@@ -325,6 +327,40 @@ describe('clientViewToHistoryItems (T17)', () => {
       }),
     ]);
     expect(group?.type === 'tool_group' && group.tools[0]?.status).toBe(ToolCallStatus.AwaitingApproval);
+  });
+
+  describe('pending input echo', () => {
+    const echo = { sessionId: 's1', inputId: 'in-1', text: 'show me now' };
+    const sessionView = (overrides: Partial<ClientSessionView> = {}): ClientSessionView => ({
+      session: { id: 's1', title: 't' },
+      items: [viewItem({ id: 'a1', type: 'assistant', text: 'earlier answer' })],
+      settings: {}, queue: [], interactions: [], runs: [], ...overrides,
+    }) as unknown as ClientSessionView;
+
+    it('shows the submitted text under the Host row identity until the Host view carries the input', () => {
+      const view = sessionView();
+      const items = withPendingClientEcho(clientViewToHistoryItems(view.items), view, echo);
+      expect(items.at(-1)).toMatchObject({ id: 's1:input:in-1', type: 'user', text: 'show me now', inputId: 'in-1' });
+      expect(viewCarriesInput(view, 'in-1')).toBe(false);
+    });
+
+    it.each([
+      ['as its own user item', { items: [viewItem({ id: 's1:input:in-1', type: 'user', text: 'show me now', inputId: 'in-1' })] }],
+      ['merged into another user item', { items: [viewItem({ id: 's1:input:in-0', type: 'user', text: 'a\nb', inputId: 'in-0', inputIds: ['in-0', 'in-1'] })] }],
+      ['as a queued input', { queue: [{ inputId: 'in-1', text: 'show me now', enqueuedAt: 1 }] }],
+    ])('steps aside once the Host view carries the input %s', (_label, overrides) => {
+      const view = sessionView(overrides as Partial<ClientSessionView>);
+      const history = clientViewToHistoryItems(view.items);
+      expect(viewCarriesInput(view, 'in-1')).toBe(true);
+      expect(withPendingClientEcho(history, view, echo)).toBe(history);
+    });
+
+    it('never shows an echo in another session view', () => {
+      const view = sessionView({ session: { id: 's2', title: 't' } } as Partial<ClientSessionView>);
+      const history = clientViewToHistoryItems(view.items);
+      expect(withPendingClientEcho(history, view, echo)).toBe(history);
+      expect(withPendingClientEcho(history, view, undefined)).toBe(history);
+    });
   });
 
   it('marks streaming only on the trailing assistant item while a run is active', () => {
@@ -721,6 +757,15 @@ describe('runClientPlaneRound queue chain (T17)', () => {
     const result = await runClientPlaneRound({ plane, sessionId: 's1', prompt: 'Later.' });
     expect(plane.submissions[0]).toMatchObject({ inputId: expect.stringMatching(/^ink-/) });
     expect(result.lastText).toBe('queued answer');
+  });
+
+  it('announces the input identity and text before the submission reaches the Host', async () => {
+    const plane = scriptedPlane({ firstAcceptance: { runId: 'r1' }, activeRun: [undefined],
+      outcomes: { r1: { phase: 'completed', result: { success: true, lastText: 'ok', messages: [], sessionId: 's1' } } } });
+    const announced: { inputId: string; text: string; submittedBefore: number }[] = [];
+    await runClientPlaneRound({ plane, sessionId: 's1', prompt: 'Echo me.',
+      onSubmitting: (input) => announced.push({ ...input, submittedBefore: plane.submissions.length }) });
+    expect(announced).toEqual([{ inputId: plane.submissions[0]!.inputId, text: 'Echo me.', submittedBefore: 0 }]);
   });
 
   it('follows a command Run without another submission and stops that same Run on Escape', async () => {

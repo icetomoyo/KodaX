@@ -8,6 +8,12 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- The REPL shows a submitted input at once instead of waiting for the
+  Host view, which adds the user item only after its Run starts. The
+  echo row carries the input id, so the Host's own item takes its place
+  without a remount once it appears (also inside a merged message or the
+  queue), and a rejected, withdrawn or never-started input is dropped
+  again.
 - The `anthropic` provider lists Claude Fable 5.2 (1M context, 128K output,
   always-on adaptive thinking, effort `low` to `max`, default `high`). It
   uses the same native request path as the Claude 5.5 models. It has not been
