@@ -3710,6 +3710,136 @@ describe('v2 credential leases served by the v1 reverse bridge', () => {
   });
 });
 
+describe('v2 Host Tool leases served by the v1 reverse bridge', () => {
+  type ToolCall = { readonly callId: string; readonly kind: string; readonly input: Record<string, unknown>; readonly [field: string]: unknown };
+  const LOOKUP = {
+    name: 'lookup_order', description: 'Finds an order by its id.', sideEffect: 'none',
+    inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+  };
+
+  /** A model that calls `lookup_order` once, then answers with what it read. */
+  function orderModel() {
+    return makeModelHost((messages) => (JSON.stringify(messages).includes('tool_result')
+      ? { textBlocks: [{ type: 'text', text: 'done' }], toolBlocks: [], thinkingBlocks: [] }
+      : { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use',
+        toolBlocks: [{ type: 'tool_use', id: 'call-1', name: 'lookup_order', input: { id: 'A1' } }] }));
+  }
+
+  /** Keeps every tool call the Host sends, and answers it with `answer` when one is given. */
+  function serve(client: HostRpcClient, answer?: (call: ToolCall) => Record<string, unknown>): ToolCall[] {
+    const calls: ToolCall[] = [];
+    client.onNotification((method, params) => {
+      const call = params as ToolCall;
+      if (method !== 'lease.request' || call.kind !== 'host_tool') return;
+      calls.push(call);
+      if (answer !== undefined) {
+        void client.request('lease.complete', { requestId: `complete-${call.callId}`, kind: 'host_tool', callId: call.callId, ...answer(call) });
+      }
+    });
+    return calls;
+  }
+
+  it('lets a Run call the tools the client lends, and gives the model what the client answered', async () => {
+    const host = await orderModel();
+    const owner = await connect('owner', await host.start(), host.workspace);
+    const register = { requestId: 'tools-1', kind: 'host_tool', tools: [LOOKUP] };
+    const lease = { id: 'tools-1', kind: 'host_tool', tools: [LOOKUP] };
+    expect(await owner.request('lease.register', register)).toEqual({ lease });
+    // Sent again, the same lease answers; other tools under the id are refused.
+    expect(await owner.request('lease.register', register)).toEqual({ lease });
+    await expect(owner.request('lease.register', { ...register, tools: [{ ...LOOKUP, description: 'Another.' }] }))
+      .rejects.toMatchObject({ kodaxCode: 'conflict', reason: 'request_id_reused' });
+    expect(await owner.request('lease.resume', { kind: 'host_tool', leaseId: 'tools-1' })).toEqual({ lease });
+    const calls = serve(owner, () => ({ result: { content: 'Order A1 ships on Friday.', structuredContent: { ships: 'Friday' } } }));
+
+    const { session } = await owner.request('session.create', { requestId: 'create-1', project: 'app' }) as SessionAnswer;
+    const { input } = await owner.request('input.submit', {
+      requestId: 'input-1', sessionId: session.id, text: 'When does A1 ship?', leases: { hostTools: 'tools-1' },
+    }) as InputAnswer;
+    const { run } = await owner.request('run.wait', { runId: input.runId }) as RunAnswer;
+    expect(run.outcome).toMatchObject({ status: 'completed' });
+    expect(calls).toEqual([{
+      callId: expect.any(String), kind: 'host_tool', leaseId: 'tools-1', sessionId: session.id, runId: input.runId,
+      tool: 'lookup_order', input: { id: 'A1' }, sideEffect: 'none',
+    }]);
+    expect(host.lastRunRequest().text).toContain('Order A1 ships on Friday.');
+    expect(await owner.request('lease.call.get', { callId: calls[0]!.callId })).toEqual({ call: {
+      callId: calls[0]!.callId, leaseId: 'tools-1', tool: 'lookup_order', sessionId: session.id, runId: input.runId,
+      state: 'completed', updatedAt: expect.any(Number),
+    } });
+    // The call was answered once; a late answer learns that.
+    expect(await owner.request('lease.complete', {
+      requestId: 'late-1', kind: 'host_tool', callId: calls[0]!.callId, result: { content: 'again' },
+    })).toEqual({ status: 'already_settled' });
+    await expect(owner.request('lease.complete', { requestId: 'complete-2', kind: 'host_tool', callId: calls[0]!.callId }))
+      .rejects.toMatchObject({ kodaxCode: 'invalid_params' });
+
+    // A Run without the lease is not offered the tool.
+    const { input: plain } = await owner.request('input.submit', { requestId: 'input-2', sessionId: session.id, text: 'Again.' }) as InputAnswer;
+    await owner.request('run.wait', { runId: plain.runId });
+    expect(host.lastRunRequest().tools).not.toContain('lookup_order');
+  });
+
+  it('tells the model and the client that a call the client was handling when it went away has an unknown outcome', async () => {
+    const host = await orderModel();
+    const runtime = await host.start();
+    const reverseBridgeHub = createRuntimeDaemonReverseBridgeHub();
+    cleanup.push(() => reverseBridgeHub.close());
+    const secret = 's'.repeat(32);
+    const first = await connect('service', runtime, host.workspace, { reverseBridgeHub }, secret);
+    await first.request('lease.register', { requestId: 'tools-1', kind: 'host_tool', tools: [LOOKUP] });
+    const calls = serve(first);
+    const { session } = await first.request('session.create', { requestId: 'create-1', project: 'app' }) as SessionAnswer;
+    const { input } = await first.request('input.submit', {
+      requestId: 'input-1', sessionId: session.id, text: 'When does A1 ship?', leases: { hostTools: 'tools-1' },
+    }) as InputAnswer;
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+
+    // The same instance comes back on a new connection, and the call it was handling is gone with the old one.
+    const second = await connect('service', runtime, host.workspace, { reverseBridgeHub }, secret);
+    await first.closed;
+    const { run } = await second.request('run.wait', { runId: input.runId }) as RunAnswer;
+    expect(run.outcome).toMatchObject({ status: 'completed' });
+    expect(host.lastRunRequest().text).toContain('outcome is unknown');
+    expect(await second.request('lease.call.get', { callId: calls[0]!.callId }))
+      .toMatchObject({ call: { state: 'unknown', tool: 'lookup_order' } });
+    expect(await second.request('lease.complete', {
+      requestId: 'late-1', kind: 'host_tool', callId: calls[0]!.callId, result: { content: 'Order A1 ships on Friday.' },
+    })).toEqual({ status: 'already_settled' });
+    await expect(second.request('lease.call.get', { callId: 'never-made' }))
+      .rejects.toMatchObject({ kodaxCode: 'not_found', reason: 'call_not_found' });
+  });
+
+  it('refuses a lease it does not hold, a revoked one, and tools where only a key fits', async () => {
+    const host = await orderModel();
+    const runtime = await host.start();
+    const owner = await connect('owner', runtime, host.workspace);
+    const { session } = await owner.request('session.create', { requestId: 'create-1', project: 'app' }) as SessionAnswer;
+    await expect(owner.request('input.submit', {
+      requestId: 'input-1', sessionId: session.id, text: 'Hi.', leases: { hostTools: 'missing' },
+    })).rejects.toMatchObject({ kodaxCode: 'not_found', reason: 'lease_not_found' });
+    await expect(owner.request('lease.resume', { kind: 'host_tool', leaseId: 'missing' }))
+      .rejects.toMatchObject({ kodaxCode: 'not_found', reason: 'lease_not_found' });
+    // A compaction starts no Run, so it has no tools to borrow.
+    await expect(owner.request('session.compact', { requestId: 'compact-1', sessionId: session.id, leases: { hostTools: 'tools-1' } }))
+      .rejects.toMatchObject({ kodaxCode: 'invalid_params' });
+
+    await owner.request('lease.register', { requestId: 'tools-1', kind: 'host_tool', tools: [LOOKUP] });
+    // A credential lease and a tool lease are kept apart.
+    await expect(owner.request('lease.resume', { kind: 'credential', leaseId: 'tools-1' }))
+      .rejects.toMatchObject({ kodaxCode: 'not_found' });
+    expect(await owner.request('lease.revoke', { requestId: 'revoke-1', kind: 'host_tool', leaseId: 'tools-1' })).toEqual({});
+    expect(await owner.request('lease.revoke', { requestId: 'revoke-1', kind: 'host_tool', leaseId: 'tools-1' })).toEqual({});
+    await expect(owner.request('input.submit', {
+      requestId: 'input-2', sessionId: session.id, text: 'Hi.', leases: { hostTools: 'tools-1' },
+    })).rejects.toMatchObject({ kodaxCode: 'not_found', reason: 'lease_not_found' });
+    expect(host.calls()).toBe(0);
+
+    const user = await connect('user', runtime, host.workspace);
+    await expect(user.request('lease.call.get', { callId: 'any' })).rejects.toMatchObject({ kodaxCode: 'method_not_found' });
+  });
+});
+
 describe('the CLI credential binding over a v2 Host client', () => {
   it('lends the key an authorizer acquires to a Run, and revokes the lease when the binding closes', async () => {
     const host = await makeModelHost();

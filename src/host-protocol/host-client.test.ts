@@ -488,3 +488,43 @@ describe('answering the Host for a leased key', () => {
     expect(onError).toHaveBeenCalledWith(failure);
   });
 });
+
+describe('answering the Host for a call of a leased tool', () => {
+  const call = {
+    callId: 'call_1', kind: 'host_tool', leaseId: 'tools_1', sessionId: 's1', runId: 'r1',
+    tool: 'lookup_order', input: { id: 'A1' }, sideEffect: 'none',
+  } as const;
+  const answers = (connection: FakeHost) => connection.sent.filter(sent => sent.method === 'lease.complete').map(sent => sent.params);
+
+  it('answers with what the handler returns, and leaves key requests to their own handler', async () => {
+    const sequence = hostSequence(() => ({ status: 'accepted' }));
+    const host = await client(sequence.open);
+    const handler = vi.fn(async () => ({ content: 'Ships on Friday.', structuredContent: { ships: 'Friday' } }));
+    const keys = vi.fn(async () => 'key-1');
+    host.answerToolCalls(handler);
+    host.answerLeaseRequests(keys);
+    sequence.latest().notify('lease.request', call);
+    await vi.waitFor(() => expect(answers(sequence.latest())).toHaveLength(1));
+    expect(handler).toHaveBeenCalledWith(call);
+    expect(keys).not.toHaveBeenCalled();
+    expect(answers(sequence.latest())[0]).toEqual({
+      requestId: expect.any(String), kind: 'host_tool', callId: 'call_1',
+      result: { content: 'Ships on Friday.', structuredContent: { ships: 'Friday' } },
+    });
+  });
+
+  it('refuses at once without a handler, and keeps what the handler threw off the wire', async () => {
+    const onError = vi.fn();
+    const sequence = hostSequence(() => ({ status: 'accepted' }));
+    const host = await client(sequence.open, onError);
+    sequence.latest().notify('lease.request', call);
+    await vi.waitFor(() => expect(answers(sequence.latest())).toHaveLength(1));
+    const failure = new Error('database password hunter2 rejected');
+    host.answerToolCalls(async () => { throw failure; });
+    sequence.latest().notify('lease.request', { ...call, callId: 'call_2' });
+    await vi.waitFor(() => expect(answers(sequence.latest())).toHaveLength(2));
+    expect(answers(sequence.latest()).map(answer => answer.error)).toEqual(['host_tool_unavailable', 'host_tool_failed']);
+    expect(JSON.stringify(sequence.latest().sent)).not.toContain('hunter2');
+    expect(onError).toHaveBeenCalledWith(failure);
+  });
+});

@@ -9,7 +9,7 @@
 import { z } from 'zod/v4';
 
 import { hostCommandParams, hostList, hostParams, hostResult, type HostMethodRegistry } from './schema.js';
-import { RunLeases } from './lease.js';
+import { CredentialLeases } from './lease.js';
 
 /** A saved document as the Host keeps it, with its secrets redacted. */
 const Document = z.record(z.string(), z.unknown());
@@ -124,7 +124,7 @@ export const CONFIG_METHODS = {
   'provider.reasoning.probe': {
     primitive: 'command',
     plane: 'settings',
-    params: hostCommandParams({ provider: Name, model: Name.optional(), efforts: z.array(Name).min(1).max(16), leases: RunLeases.optional() }),
+    params: hostCommandParams({ provider: Name, model: Name.optional(), efforts: z.array(Name).min(1).max(16), leases: CredentialLeases.optional() }),
     restricted: { leases: 'trusted' },
     result: hostList(z.object({
       effort: z.string(),

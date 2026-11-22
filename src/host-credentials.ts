@@ -9,13 +9,12 @@ import type {
   RuntimeScopedCredentialBroker,
   RuntimeScopedCredentialRequest,
 } from './client-host-authorization.js';
-import { createRequestId, type HostAnswerScope, type HostLeaseRequest, type KodaXHostClient } from './host-protocol/host-client.js';
+import {
+  createRequestId, type HostAnswerScope, type HostCallResult, type HostCredentialRequest, type KodaXHostClient,
+} from './host-protocol/host-client.js';
 
-interface HostLease {
-  readonly id: string;
-  readonly providers: readonly string[];
-  readonly expiresAt?: number;
-}
+type HostLease = HostCallResult<'lease.register', 'shared'>['lease'];
+type HostCredentialLease = Extract<HostLease, { readonly kind: 'credential' }>;
 
 /** Takes over the client's lease requests: each goes to the broker of the lease it names. */
 export function createHostCredentialService<Scope extends HostAnswerScope>(client: KodaXHostClient<Scope>): RuntimeCredentialService {
@@ -25,6 +24,8 @@ export function createHostCredentialService<Scope extends HostAnswerScope>(clien
     return broker === undefined ? undefined : await broker(toScopedRequest(request));
   });
   const lend = (lease: HostLease, broker: RuntimeScopedCredentialBroker): RuntimeCredentialLease => {
+    // Asked for a credential lease, a Host that keeps the contract answers with one.
+    if (lease.kind !== 'credential') throw new Error(`The Host answered with a ${lease.kind} lease where a credential lease was asked for.`);
     brokers.set(lease.id, broker);
     return toRuntimeLease(lease);
   };
@@ -55,11 +56,11 @@ export function createHostCredentialService<Scope extends HostAnswerScope>(clien
   };
 }
 
-function toRuntimeLease({ id, providers, expiresAt }: HostLease): RuntimeCredentialLease {
+function toRuntimeLease({ id, providers, expiresAt }: HostCredentialLease): RuntimeCredentialLease {
   return { id, providers, brokerVersion: 2, ...(expiresAt !== undefined ? { expiresAt: new Date(expiresAt).toISOString() } : {}) };
 }
 
 /** The Host builds the request from the same v1 fields, so only the names of the call differ. */
-function toScopedRequest({ callId, kind: _kind, _meta, ...request }: HostLeaseRequest): RuntimeScopedCredentialRequest {
+function toScopedRequest({ callId, kind: _kind, _meta, ...request }: HostCredentialRequest): RuntimeScopedCredentialRequest {
   return { ...request, requestId: callId } as RuntimeScopedCredentialRequest;
 }

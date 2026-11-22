@@ -9589,6 +9589,11 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 256
+            },
+            "hostTools": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
             }
           },
           "additionalProperties": false
@@ -10536,6 +10541,11 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 256
+            },
+            "hostTools": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
             }
           },
           "additionalProperties": false
@@ -10737,6 +10747,11 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 256
+            },
+            "hostTools": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
             }
           },
           "additionalProperties": false
@@ -10934,6 +10949,11 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 256
+            },
+            "hostTools": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
             }
           },
           "additionalProperties": false
@@ -11124,6 +11144,11 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 256
+            },
+            "hostTools": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
             }
           },
           "additionalProperties": false
@@ -11311,6 +11336,11 @@
           "type": "object",
           "properties": {
             "credential": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "hostTools": {
               "type": "string",
               "minLength": 1,
               "maxLength": 256
@@ -16513,6 +16543,11 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 256
+            },
+            "hostTools": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
             }
           },
           "additionalProperties": false
@@ -21189,78 +21224,221 @@
     "plane": "trusted",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {
-        "requestId": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9_-]{1,128}$"
-        },
-        "kind": {
-          "type": "string",
-          "const": "credential"
-        },
-        "providers": {
-          "minItems": 1,
-          "maxItems": 64,
-          "type": "array",
-          "items": {
-            "type": "string",
-            "maxLength": 128,
-            "pattern": "\\S"
-          }
-        },
-        "expiresAt": {
-          "type": "integer",
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991
-        },
-        "_meta": {
-          "type": "object",
-          "propertyNames": {
-            "type": "string"
-          },
-          "additionalProperties": {}
-        }
-      },
-      "required": [
-        "requestId",
-        "kind",
-        "providers"
-      ],
-      "additionalProperties": false
-    },
-    "result": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {
-        "lease": {
+      "anyOf": [
+        {
           "type": "object",
           "properties": {
-            "id": {
-              "type": "string"
+            "requestId": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
             },
             "kind": {
               "type": "string",
               "const": "credential"
             },
             "providers": {
+              "minItems": 1,
+              "maxItems": 64,
               "type": "array",
               "items": {
-                "type": "string"
+                "type": "string",
+                "maxLength": 128,
+                "pattern": "\\S"
               }
             },
             "expiresAt": {
               "type": "integer",
-              "minimum": -9007199254740991,
+              "exclusiveMinimum": 0,
               "maximum": 9007199254740991
+            },
+            "_meta": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
             }
           },
           "required": [
-            "id",
+            "requestId",
             "kind",
             "providers"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "requestId": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            },
+            "kind": {
+              "type": "string",
+              "const": "host_tool"
+            },
+            "tools": {
+              "minItems": 1,
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 4096,
+                    "pattern": "\\S"
+                  },
+                  "inputSchema": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "outputSchema": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "sideEffect": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "idempotent",
+                      "non_idempotent"
+                    ]
+                  }
+                },
+                "required": [
+                  "name",
+                  "description",
+                  "inputSchema",
+                  "sideEffect"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "_meta": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            }
+          },
+          "required": [
+            "requestId",
+            "kind",
+            "tools"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "lease": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "const": "credential"
+                },
+                "providers": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "expiresAt": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "providers"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "const": "host_tool"
+                },
+                "tools": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "description": {
+                        "type": "string"
+                      },
+                      "inputSchema": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {}
+                      },
+                      "outputSchema": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {}
+                      },
+                      "sideEffect": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "idempotent",
+                          "non_idempotent"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "description",
+                      "inputSchema",
+                      "sideEffect"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "tools"
+              ],
+              "additionalProperties": false
+            }
+          ]
         },
         "_meta": {
           "type": "object",
@@ -21285,7 +21463,10 @@
       "properties": {
         "kind": {
           "type": "string",
-          "const": "credential"
+          "enum": [
+            "credential",
+            "host_tool"
+          ]
         },
         "leaseId": {
           "type": "string",
@@ -21311,33 +21492,98 @@
       "type": "object",
       "properties": {
         "lease": {
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string"
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "const": "credential"
+                },
+                "providers": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "expiresAt": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "providers"
+              ],
+              "additionalProperties": false
             },
-            "kind": {
-              "type": "string",
-              "const": "credential"
-            },
-            "providers": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "expiresAt": {
-              "type": "integer",
-              "minimum": -9007199254740991,
-              "maximum": 9007199254740991
+            {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "const": "host_tool"
+                },
+                "tools": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "description": {
+                        "type": "string"
+                      },
+                      "inputSchema": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {}
+                      },
+                      "outputSchema": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {}
+                      },
+                      "sideEffect": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "idempotent",
+                          "non_idempotent"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "description",
+                      "inputSchema",
+                      "sideEffect"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "tools"
+              ],
+              "additionalProperties": false
             }
-          },
-          "required": [
-            "id",
-            "kind",
-            "providers"
-          ],
-          "additionalProperties": false
+          ]
         },
         "_meta": {
           "type": "object",
@@ -21366,7 +21612,10 @@
         },
         "kind": {
           "type": "string",
-          "const": "credential"
+          "enum": [
+            "credential",
+            "host_tool"
+          ]
         },
         "leaseId": {
           "type": "string",
@@ -21408,44 +21657,96 @@
     "plane": "trusted",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {
-        "requestId": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9_-]{1,128}$"
-        },
-        "kind": {
-          "type": "string",
-          "const": "credential"
-        },
-        "callId": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9_-]{1,128}$"
-        },
-        "credential": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 65536
-        },
-        "error": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 512
-        },
-        "_meta": {
+      "anyOf": [
+        {
           "type": "object",
-          "propertyNames": {
-            "type": "string"
+          "properties": {
+            "requestId": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            },
+            "kind": {
+              "type": "string",
+              "const": "credential"
+            },
+            "callId": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            },
+            "credential": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 65536
+            },
+            "error": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "_meta": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            }
           },
-          "additionalProperties": {}
+          "required": [
+            "requestId",
+            "kind",
+            "callId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "requestId": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            },
+            "kind": {
+              "type": "string",
+              "const": "host_tool"
+            },
+            "callId": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            },
+            "result": {
+              "type": "object",
+              "properties": {
+                "content": {
+                  "type": "string"
+                },
+                "structuredContent": {}
+              },
+              "required": [
+                "content"
+              ],
+              "additionalProperties": false
+            },
+            "error": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "_meta": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            }
+          },
+          "required": [
+            "requestId",
+            "kind",
+            "callId"
+          ],
+          "additionalProperties": false
         }
-      },
-      "required": [
-        "requestId",
-        "kind",
-        "callId"
-      ],
-      "additionalProperties": false
+      ]
     },
     "result": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -21468,6 +21769,93 @@
       },
       "required": [
         "status"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "lease.call.get": {
+    "primitive": "query",
+    "plane": "trusted",
+    "params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "callId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "callId"
+      ],
+      "additionalProperties": false
+    },
+    "result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "call": {
+          "type": "object",
+          "properties": {
+            "callId": {
+              "type": "string"
+            },
+            "leaseId": {
+              "type": "string"
+            },
+            "tool": {
+              "type": "string"
+            },
+            "sessionId": {
+              "type": "string"
+            },
+            "runId": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "waiting",
+                "sent",
+                "completed",
+                "unknown",
+                "not_sent"
+              ]
+            },
+            "updatedAt": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "callId",
+            "leaseId",
+            "tool",
+            "sessionId",
+            "runId",
+            "state",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "call"
       ],
       "additionalProperties": false
     }

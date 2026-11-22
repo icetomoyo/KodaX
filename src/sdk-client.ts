@@ -27,6 +27,7 @@ export { connectKodaXHost, type ConnectKodaXHostOptions } from './host-protocol/
 export type {
   KodaXHostClient, KodaXHostClientOptions, HostAnswerScope, HostCallableMethod, HostCallParams, HostCallResult,
   HostCallOptions, HostConnectionState, HostSessionObserver, HostSessionObservation, HostSessionView,
+  HostLeaseHandler, HostCredentialRequest, HostToolHandler, HostToolCall,
 } from './host-protocol/host-client.js';
 export { HostProtocolError } from './host-protocol/codec.js';
 

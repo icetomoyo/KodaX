@@ -32,6 +32,12 @@ function fieldPaths(schema: unknown, path = '', found: string[] = []): string[] 
   return found;
 }
 
+/** The object shapes a params schema accepts: each branch of a union by `kind`, or the one object. */
+function paramShapes(schema: z.ZodType, io?: 'input'): Array<{ properties?: JsonSchema; required?: string[] }> {
+  const json = z.toJSONSchema(schema, io === undefined ? {} : { io }) as { oneOf?: JsonSchema[]; anyOf?: JsonSchema[] };
+  return (json.oneOf ?? json.anyOf ?? [json]) as Array<{ properties?: JsonSchema; required?: string[] }>;
+}
+
 describe('host method definitions', () => {
   const entries: Array<[string, HostMethodSpec]> = Object.entries(HOST_METHODS);
 
@@ -48,8 +54,7 @@ describe('host method definitions', () => {
   });
 
   it.each(entries)('%s reserves _meta in its params and result', (_name, spec) => {
-    const params = z.toJSONSchema(spec.params) as { properties?: JsonSchema };
-    expect(params.properties).toHaveProperty('_meta');
+    for (const params of paramShapes(spec.params)) expect(params.properties).toHaveProperty('_meta');
     for (const schema of [spec.result, spec.localResult]) {
       if (schema === undefined) continue;
       expect((z.toJSONSchema(schema) as { properties?: JsonSchema }).properties).toHaveProperty('_meta');
@@ -61,13 +66,15 @@ describe('host method definitions', () => {
   });
 
   it.each(entries)('%s takes a requestId exactly when it is a command', (_name, spec) => {
-    const params = z.toJSONSchema(spec.params, { io: 'input' }) as { required?: string[] };
-    expect(params.required?.includes('requestId') === true).toBe(spec.primitive === 'command');
+    for (const params of paramShapes(spec.params, 'input')) {
+      expect(params.required?.includes('requestId') === true).toBe(spec.primitive === 'command');
+    }
   });
 
   it.each(entries)('%s restricts only params it defines', (_name, spec) => {
-    const params = z.toJSONSchema(spec.params) as { properties?: JsonSchema };
-    for (const name of Object.keys(spec.restricted ?? {})) expect(params.properties).toHaveProperty(name);
+    for (const params of paramShapes(spec.params)) {
+      for (const name of Object.keys(spec.restricted ?? {})) expect(params.properties).toHaveProperty(name);
+    }
   });
 
   it.each(entries)('%s answers the owner with everything other roles get', (_name, spec) => {

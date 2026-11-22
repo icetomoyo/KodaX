@@ -9,7 +9,7 @@ import type { z } from 'zod/v4';
 
 import type { HostRpcClient } from './client.js';
 import { HostProtocolError } from './codec.js';
-import type { HostLeaseRequest } from './lease.js';
+import type { HostCredentialRequest, HostLeaseRequest, HostToolCall } from './lease.js';
 import type {
   HOST_METHODS,
   HostInitializeResult,
@@ -75,10 +75,13 @@ export interface HostSessionObservation {
   close(): void;
 }
 
-export type { HostLeaseRequest };
+export type { HostCredentialRequest, HostLeaseRequest, HostToolCall };
 
 /** Gives the key a Run asked for under one of this client's leases, or `undefined` when there is none to give. */
-export type HostLeaseHandler = (request: HostLeaseRequest) => Promise<string | undefined>;
+export type HostLeaseHandler = (request: HostCredentialRequest) => Promise<string | undefined>;
+
+/** Runs one call of a tool this client lends. `content` is what the model reads. */
+export type HostToolHandler = (call: HostToolCall) => Promise<{ readonly content: string; readonly structuredContent?: unknown }>;
 
 export interface KodaXHostClient<Scope extends HostAnswerScope = 'shared'> {
   /** What the Host granted the current connection. A reconnect may change it. */
@@ -100,6 +103,13 @@ export interface KodaXHostClient<Scope extends HostAnswerScope = 'shared'> {
    * the handler throws goes to `onError`; the Host is told only that it failed.
    */
   answerLeaseRequests(handler: HostLeaseHandler | undefined): void;
+  /**
+   * Runs the calls of the tools this client lends. Replaces the handler set
+   * before. Without one, each call is refused at once. What the handler throws
+   * goes to `onError`; the Host is told only that the call failed, and the
+   * model that its outcome is unknown.
+   */
+  answerToolCalls(handler: HostToolHandler | undefined): void;
   /** Settles when the client is closed for good. */
   readonly closed: Promise<void>;
   close(): void;
@@ -145,6 +155,7 @@ export async function createKodaXHostClient<Scope extends HostAnswerScope = 'sha
     observeSession: (sessionId, observer) => host.observe(sessionId, observer as HostSessionObserver<HostAnswerScope>),
     onConnectionChange: host.onConnectionChange,
     answerLeaseRequests: host.answerLeaseRequests,
+    answerToolCalls: host.answerToolCalls,
     closed: host.closed,
     close: () => host.close(),
   };
@@ -173,6 +184,7 @@ function createHostLink(options: KodaXHostClientOptions, lifetime: AbortControll
   /** Runs already asked to go on under the current Host, which are not asked again however often they wait. */
   const recovered = new Set<string>();
   let leaseHandler: HostLeaseHandler | undefined;
+  let toolHandler: HostToolHandler | undefined;
   let resolveClosed: () => void = () => undefined;
   const closed = new Promise<void>((resolve) => { resolveClosed = resolve; });
 
@@ -216,7 +228,8 @@ function createHostLink(options: KodaXHostClientOptions, lifetime: AbortControll
     latest = connection.handshake;
     connection.onNotification((method, params) => {
       if (method === 'lease.request') {
-        void answerLease(params as HostLeaseRequest);
+        const request = params as HostLeaseRequest;
+        void (request.kind === 'host_tool' ? answerToolCall(request) : answerLease(request));
         return;
       }
       for (const observation of [...observations]) observation.receive(connection, method, params);
@@ -327,7 +340,7 @@ function createHostLink(options: KodaXHostClientOptions, lifetime: AbortControll
   };
 
   /** The Host is sent fixed words only, so nothing the handler knows, such as a key in an error message, leaves the client. */
-  const answerLease = async (request: HostLeaseRequest): Promise<void> => {
+  const answerLease = async (request: HostCredentialRequest): Promise<void> => {
     let answer: { readonly credential: string } | { readonly error: string };
     try {
       const credential = leaseHandler === undefined ? undefined : await leaseHandler(request);
@@ -337,6 +350,19 @@ function createHostLink(options: KodaXHostClientOptions, lifetime: AbortControll
       answer = { error: 'credential_broker_failed' };
     }
     await call('lease.complete', { requestId: createRequestId(), kind: 'credential', callId: request.callId, ...answer })
+      .catch((error: unknown) => report(error));
+  };
+
+  /** Fixed words only on failure, for the reason `answerLease` gives. */
+  const answerToolCall = async (request: HostToolCall): Promise<void> => {
+    let answer: { readonly result: Awaited<ReturnType<HostToolHandler>> } | { readonly error: string };
+    try {
+      answer = toolHandler === undefined ? { error: 'host_tool_unavailable' } : { result: await toolHandler(request) };
+    } catch (error: unknown) {
+      report(error);
+      answer = { error: 'host_tool_failed' };
+    }
+    await call('lease.complete', { requestId: createRequestId(), kind: 'host_tool', callId: request.callId, ...answer })
       .catch((error: unknown) => report(error));
   };
 
@@ -377,6 +403,7 @@ function createHostLink(options: KodaXHostClientOptions, lifetime: AbortControll
       return () => { stateListeners.delete(listener); };
     },
     answerLeaseRequests: (handler: HostLeaseHandler | undefined): void => { leaseHandler = handler; },
+    answerToolCalls: (handler: HostToolHandler | undefined): void => { toolHandler = handler; },
     closed,
     close: () => finish(),
   };

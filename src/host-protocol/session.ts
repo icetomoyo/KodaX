@@ -7,7 +7,7 @@ import { z } from 'zod/v4';
 import {
   HostId, HostPath, WorkspacePath, hostCommandParams, hostList, hostParams, hostResult, type HostMethodRegistry,
 } from './schema.js';
-import { RunLeases } from './lease.js';
+import { CredentialLeases } from './lease.js';
 
 /**
  * Names a Session that already exists. Looser than a new id: a Host still holds
@@ -302,7 +302,7 @@ export const SESSION_METHODS = {
       /** What the summary should take care to keep. */
       instructions: z.string().regex(/\S/).max(8_000).optional(),
       /** The summary is a model call, which gets its provider key from `leases.credential`. */
-      leases: RunLeases.optional(),
+      leases: CredentialLeases.optional(),
     }),
     restricted: { leases: 'trusted' },
     result: hostResult({

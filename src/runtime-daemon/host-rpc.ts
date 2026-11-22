@@ -4,6 +4,8 @@
  * so both protocols share one set of access, admission and lifecycle rules
  * while methods move over.
  */
+import { isDeepStrictEqual } from 'node:util';
+
 import {
   emitKodaXDiagnostic, type AgentActor, type AgentDetail, type AgentEvent, type AgentMailboxMessage, type AgentOutput,
   type AgentProgressItem, type AgentTreeSnapshot, type AgentTurn, type LearnedCapabilityRecord, type LearningEvent,
@@ -27,7 +29,9 @@ import type {
   RuntimeSession, RuntimeSessionPromotionResult, RuntimeSessionSettings, RuntimeSessionStatus, RuntimeSessionSummary, RuntimeTranscriptSearchResult,
   RuntimeMcpValidateResult, RuntimeVersionedValue, RuntimeWorkflowSnapshot, RuntimeWorkflowStartResult, RuntimeWorkflowSummary,
 } from '../sdk-runtime.js';
-import type { RuntimeCredentialLease } from '../client-host-authorization.js';
+import type {
+  RuntimeCredentialLease, RuntimeHostToolInvocationStatus, RuntimeHostToolLease,
+} from '../client-host-authorization.js';
 import type { HostDeviceRegistry } from '../host-server/devices.js';
 import type { HostBlobStore } from './host-blobs.js';
 import { boundViewItem } from '../session-view.js';
@@ -141,35 +145,40 @@ type V1Handler<Method extends ForwardedMethod> = (
  * the credential it admitted.
  */
 const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } = {
-  'lease.register': async ({ requestId, providers, expiresAt }, v1) => {
-    const wanted = { leaseId: requestId, providers, brokerVersion: 2, ...(expiresAt !== undefined ? { expiresAt: new Date(expiresAt).toISOString() } : {}) };
-    try {
-      return { lease: toLease(await v1('credential.register', wanted) as RuntimeCredentialLease) };
-    } catch (error: unknown) {
-      if (!(error instanceof HostProtocolError) || error.kodaxCode !== 'conflict') throw error;
-      // Sent again, the lease the first one registered answers. Another intent under the same id does not.
-      const held = await heldLease(v1, requestId);
-      if (held === undefined || !sameLease(held, wanted)) {
-        throw new HostProtocolError('conflict', 'Another lease is registered under this requestId.', { reason: 'request_id_reused' });
-      }
-      return { lease: toLease(held) };
-    }
-  },
-  'lease.resume': async ({ leaseId }, v1) => {
-    const held = await heldLease(v1, leaseId);
+  'lease.register': async (params, v1) => (
+    { lease: params.kind === 'credential' ? await registerCredential(params, v1) : await registerHostTools(params, v1) }
+  ),
+  'lease.resume': async ({ kind, leaseId }, v1) => {
+    const held = kind === 'credential' ? await heldLease(v1, leaseId) : await heldHostTools(v1, leaseId);
     if (held === undefined) throw leaseNotFound();
-    return { lease: toLease(held) };
+    return { lease: 'providers' in held ? toLease(held) : toToolLease(held) };
   },
-  'lease.revoke': async ({ leaseId }, v1) => {
-    await v1('credential.revoke', { leaseId });
+  'lease.revoke': async ({ kind, leaseId }, v1) => {
+    await v1(kind === 'credential' ? 'credential.revoke' : 'host_tool.revoke', { leaseId });
     return {};
   },
-  'lease.complete': async ({ callId, credential, error }, v1) => {
-    if ((credential === undefined) === (error === undefined)) {
-      throw new HostProtocolError('invalid_params', 'An answer carries either the credential or the error.', { reason: 'answer_required' });
+  'lease.complete': async (params, v1) => {
+    const answer = params.kind === 'credential' ? params.credential : params.result;
+    if ((answer === undefined) === (params.error === undefined)) {
+      throw new HostProtocolError('invalid_params', 'An answer carries the error or what was asked for, and not both.', {
+        reason: 'answer_required',
+      });
     }
-    const { ok } = await v1('credential.supply', defined({ requestId: callId, credential, error })) as { readonly ok: boolean };
+    const { ok } = await (params.kind === 'credential'
+      ? v1('credential.supply', defined({ requestId: params.callId, credential: params.credential, error: params.error }))
+      : v1('host_tool.complete', defined({ invocationId: params.callId, result: params.result, error: params.error }))) as
+      { readonly ok: boolean };
     return { status: ok ? 'accepted' : 'already_settled' };
+  },
+  'lease.call.get': async ({ callId }, v1) => {
+    const call = await v1('host_tool.invocation.get', { invocationId: callId }) as RuntimeHostToolInvocationStatus | null | undefined;
+    if (call == null) {
+      throw new HostProtocolError('not_found', 'This client instance has no such tool call.', { reason: 'call_not_found' });
+    }
+    return { call: {
+      callId: call.invocationId, leaseId: call.leaseId, tool: call.toolName, sessionId: call.sessionId, runId: call.runId,
+      state: CALL_STATES[call.state], updatedAt: utcMilliseconds(call.updatedAt),
+    } };
   },
 
   'provider.list': async (_params, v1) => ({ items: await v1('provider.list') }),
@@ -1426,14 +1435,68 @@ async function credentialBinding(
   return { leaseId, mode: 'scoped', providers: held.providers };
 }
 
-/** The same, for the v1 methods that take it as part of an execution authorization. */
+/** The leases a Run uses, as v1 takes them in an execution authorization. Fails when this client holds one of them not. */
 async function leaseAuthorization(
   v1: V1Call,
-  leases: { readonly credential?: string } | undefined,
+  leases: { readonly credential?: string; readonly hostTools?: string } | undefined,
 ): Promise<Readonly<Record<string, unknown>> | undefined> {
   const credential = await credentialBinding(v1, leases);
-  return credential === undefined ? undefined : { credential };
+  const leaseId = leases?.hostTools;
+  if (leaseId !== undefined && await heldHostTools(v1, leaseId) === undefined) throw leaseNotFound();
+  const hostTools = leaseId === undefined ? undefined : { leaseId };
+  return credential === undefined && hostTools === undefined ? undefined : defined({ credential, hostTools });
 }
+
+async function registerCredential(
+  { requestId, providers, expiresAt }: { readonly requestId: string; readonly providers: readonly string[]; readonly expiresAt?: number },
+  v1: V1Call,
+): Promise<Readonly<Record<string, unknown>>> {
+  const wanted = { leaseId: requestId, providers, brokerVersion: 2, ...(expiresAt !== undefined ? { expiresAt: new Date(expiresAt).toISOString() } : {}) };
+  try {
+    return toLease(await v1('credential.register', wanted) as RuntimeCredentialLease);
+  } catch (error: unknown) {
+    if (!(error instanceof HostProtocolError) || error.kodaxCode !== 'conflict') throw error;
+    // Sent again, the lease the first one registered answers. Another intent under the same id does not.
+    const held = await heldLease(v1, requestId);
+    if (held === undefined || !sameLease(held, wanted)) throw requestIdReused();
+    return toLease(held);
+  }
+}
+
+async function registerHostTools(
+  { requestId, tools }: { readonly requestId: string; readonly tools: RuntimeHostToolLease['tools'] },
+  v1: V1Call,
+): Promise<Readonly<Record<string, unknown>>> {
+  try {
+    return toToolLease(await v1('host_tool.register', { leaseId: requestId, tools }) as RuntimeHostToolLease);
+  } catch (error: unknown) {
+    if (!(error instanceof HostProtocolError) || error.kodaxCode !== 'conflict') throw error;
+    const held = await heldHostTools(v1, requestId);
+    if (held === undefined || !isDeepStrictEqual(held.tools, tools)) throw requestIdReused();
+    return toToolLease(held);
+  }
+}
+
+function requestIdReused(): HostProtocolError {
+  return new HostProtocolError('conflict', 'Another lease is registered under this requestId.', { reason: 'request_id_reused' });
+}
+
+/**
+ * A tool lease of this client instance. Asking v1 also sends the calls that
+ * waited for the client, which is what a client that asks is back for.
+ */
+async function heldHostTools(v1: V1Call, leaseId: string): Promise<RuntimeHostToolLease | undefined> {
+  return await v1('host_tool.get', { leaseId }) as RuntimeHostToolLease | null ?? undefined;
+}
+
+function toToolLease({ id, tools }: RuntimeHostToolLease): Readonly<Record<string, unknown>> {
+  return { id, kind: 'host_tool', tools };
+}
+
+/** v1 names the states of a tool call by its own steps; v2 by what the client can do about them. */
+const CALL_STATES = {
+  prepared: 'waiting', dispatched: 'sent', completed: 'completed', unknown: 'unknown', not_dispatched: 'not_sent',
+} as const satisfies Record<RuntimeHostToolInvocationStatus['state'], string>;
 
 /** A lease of this client instance that v2 can use. A lease registered over v1 does not count. */
 async function heldLease(v1: V1Call, leaseId: string): Promise<RuntimeCredentialLease | undefined> {
@@ -1462,6 +1525,16 @@ function askForCredential(
   const { requestId, brokerVersion: _brokerVersion, ...request } = notification.params as Readonly<Record<string, unknown>>;
   const params = protocol.LEASE_NOTIFICATIONS['lease.request'].params.parse({ ...request, callId: requestId, kind: 'credential' });
   // A frame that cannot go out throws, and v1 then fails the model call at once instead of at its time limit.
+  send(JSON.stringify(hostRpcNotification('lease.request', params)));
+}
+
+/** Passes the Host's call of a client tool on as `lease.request`, cut to the contract. */
+function askToRunTool(
+  notification: RuntimeDaemonNotification, send: (frame: string) => void, protocol: HostRpcProtocol,
+): void {
+  const { invocationId, toolName, ...call } = notification.params as Readonly<Record<string, unknown>>;
+  const params = protocol.LEASE_NOTIFICATIONS['lease.request'].params.parse({ ...call, callId: invocationId, tool: toolName, kind: 'host_tool' });
+  // A frame that cannot go out throws, and v1 then records the call's outcome as unknown.
   send(JSON.stringify(hostRpcNotification('lease.request', params)));
 }
 
@@ -1587,6 +1660,7 @@ export function createRuntimeDaemonHostRpcPeer(
         // The Host's calls to this client go out on this connection. A reconnect of the same instance takes its leases over.
         notify: (notification) => {
           if (notification.method === 'credential.request') askForCredential(notification, options.send, options.protocol);
+          else if (notification.method === 'host_tool.invoke') askToRunTool(notification, options.send, options.protocol);
           else streams.receive(notification);
         },
       });
