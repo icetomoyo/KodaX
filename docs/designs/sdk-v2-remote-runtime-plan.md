@@ -434,7 +434,7 @@ v1 里的各种做法都能归进来：
   - `taskResult`：结构化的任务卡片。
   - `sidecar`：验证结论和投递方式。
 - **显示项 ID 不符合通用 ID 规则**：它由 Session、输出和 provider 的调用 ID 拼成，带冒号，长度上限放到 512。老数据里可能有重复的 ID，桥接层给重复的加后缀。
-- **`item.read`**：参数 `{sessionId, itemId, part?, cursor?}`，`part` 是 `text`、`input` 或 `output`；结果 `{text, total, nextCursor?}`。游标里带着文本的修订号，分页途中文本被替换就报 `resync_required`。项不存在报 `not_found`（v1 返回 null），游标不是 `item.read` 给出的报 `invalid_params`。每页最多 64K 个单元。被加了后缀的重复 ID 读不到全文，报 `not_found`。附件字节在 M1b 的 `blob.read` 之前，非 owner 的客户端读不到。
+- **`item.read`**：参数 `{sessionId, itemId, part?, cursor?}`，`part` 是 `text`、`input` 或 `output`；结果 `{text, total, nextCursor?}`。游标里带着文本的修订号，分页途中文本被替换就报 `resync_required`。项不存在报 `not_found`（v1 返回 null），游标不是 `item.read` 给出的报 `invalid_params`。每页最多 64K 个单元。被加了后缀的重复 ID 读不到全文，报 `not_found`。附件字节用 `blob.read` 读，见 M1b "第 7 项的落地细节"。
 - **diff 目前按订阅各算一次**，没有做到"每个 Session 每个 tick 只算一次、编码一次"。一个 Session 的订阅者通常只有一到三个，一次 diff 是对最多 150 项的比较，先不做共享。订阅者多了再把 diff 移到 Session 一侧。
 - **ID 稳定性**：有输出 ID 的文本、工具调用、用户输入、Run 范围的提示，从第一个增量到提交到重启，ID 都不变。没有输出 ID 的流式文本在提交时会换 ID，表现为一次移除加一次放入。
 
@@ -868,10 +868,11 @@ session.create({requestId, project? /* 工作区相对 */, title?, agent? /* 已
 //   M1a 实际的行为见"Run 的限制与选项的落地细节"
 
 // blob：上下行同一套分块方法
-blob.begin({requestId, sessionId, mediaType, byteLength, sha256}) -> {blobId}
-blob.write({blobId, offset, data /* base64，不超过 blobChunkBytes */})
-blob.commit({blobId}) -> BlobRef   // {blobId, mediaType, byteLength, sha256}，只在本 home 内有效
-blob.read({blobId, cursor?}) -> {data, nextCursor?}
+// M1b 实际的形状见"第 7 项的落地细节"：每个方法都带 sessionId，begin 返回 received，read 每块带整个 blob 的事实
+blob.begin({requestId, sessionId, mediaType, byteLength, sha256}) -> {blobId, received}
+blob.write({requestId, sessionId, blobId, offset, data /* base64，不超过 blobChunkBytes */}) -> {received}
+blob.commit({requestId, sessionId, blobId}) -> {blob: BlobRef}   // {blobId, mediaType, byteLength, sha256}，只在本 home 内有效
+blob.read({sessionId, blobId, cursor?}) -> {data, mediaType, byteLength, sha256, nextCursor?}
 
 // 权限 Interaction 带上拟变更：{kind, locations?: 工作区相对路径[], diff?: {path, added, removed, unified?, truncated?}}
 ```
@@ -1234,7 +1235,7 @@ Run 的限制与选项的落地细节（2026-11-21，未经用户确认）。这
 - **`input.submit`**：`{requestId, sessionId, text, delivery?, targetRunId?, localAttachments?}`。
   - `text` 必须有非空白字符，否则报 `invalid_params`（v1 报的是 `conflict`）。
   - `delivery` 是 `immediate`、`after_turn`、`steer`、`redirect`。后两个作用在一个进行中的 Run 上，不带 `targetRunId` 报 `invalid_params`（`target_run_required`）。
-  - 附件和项目一样分两种叫法。`localAttachments` 是 Host 本机的文件路径，只有 owner 能发，其他角色发了报 `forbidden`。`attachments`（blob 引用）随 M1b 的 `blob.*` 加入。v1 的 `mimeType` 别名没有带过来，只留 `mediaType`。
+  - 附件和项目一样分两种叫法。`localAttachments` 是 Host 本机的文件路径，只有 owner 能发，其他角色发了报 `forbidden`。`attachments`（blob 引用）随 M1b 的 `blob.*` 加入，第一版只收图片，见 M1b "第 7 项的落地细节"。v1 的 `mimeType` 别名没有带过来，只留 `mediaType`。
   - Run 选项 `budget` 和 `prompt` 见"Run 的限制与选项的落地细节"。`tokenBudget` 没有带，理由和 Session 策略里一样。
 - **`input.get`**：查不到报 `not_found`（`input_not_found`）；v1 返回 `null`。
 - **`input.withdraw`**：返回原来提交的内容 `{id, text, delivery?, targetRunId?}`（v2 现在不返回它的 Run 选项），方便改了之后用新 ID 重发；owner 另外拿回 `localAttachments`。重复调用返回同样的内容。
@@ -2118,6 +2119,35 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
   - D2 说浏览器 SDK 把没确认的 `requestId` 存进 storage。实际和 Node 版一样，`requestId` 由调用方生成和保存，`instanceId` 也由调用方保存（浏览器放 `localStorage`）。
   - WS 被拦截时自动回退到 HTTP 是 M2 的事。
 - 已验证：真实 Host（`host.test.ts` 的网络用例）上，SDK 用全局 `WebSocket` 加 JWT 连上并能 `ping`；被拒的浏览器 Origin 得到 `unauthorized` + `origin_not_allowed`。真机浏览器要等 Space 的 Web UI（M1c）。
+
+**第 7 项的落地细节**（2026-11-22，未经用户确认的取舍）：
+
+- 上传的 blob 存在这个 Session 的媒体目录里：`<sessionsDir>/.media/<sha256(sessionId)>/blobs/`（`src/runtime-daemon/host-blobs.ts`）。session store 删 Session 时本来就删这个目录，所以 blob 随 Session 删除，不需要另写清理。
+  - 每个 blob 有三个文件：提交后的字节叫 `<sha256>`，上传中的叫 `<sha256>.part`，旁边的 `<sha256>.json` 记着声明的 `mediaType` 和 `byteLength`。
+- 上传的 `blobId` 是 `b_<sha256>`，同一个 Session 里相同的字节只有一个 blob。
+  - `blob.begin` 返回 `{blobId, received}`。`received` 是 Host 已经有的字节数，客户端从那里接着写。所以断点续传和重复上传都不需要另加方法：已提交的字节，`received` 等于 `byteLength`，客户端只需要再调一次 `commit`。另一个 Session 有自己的一份。
+  - `begin` 先用 v1 的 `session.load` 确认 Session 存在，不存在报 `not_found` + `session_not_found`。
+- 写入：同一个 blob 的写入排队执行，只追加。
+  - 重复或重叠的块照收，只追加 Host 还没有的尾部。
+  - `offset` 超过 `received` 报 `conflict` + `blob_offset_mismatch`。
+  - 超出声明的长度报 `invalid_params` + `blob_too_long`。
+  - 块超过 `blobChunkBytes` 报 `limit_exceeded` + `blob_chunk_too_large`。
+- 提交：没写完报 `invalid_state` + `blob_incomplete`。哈希对不上，删掉这次上传，报 `invalid_params` + `blob_hash_mismatch`。
+- 上限是常量，不是配置（`HOST_BLOB_LIMITS`）：每块 512 KiB，和 v1 读附件的块一样大；单个 blob 32 MiB；整个 Host 1 GiB。三项都在 `initialize` 的 `limits` 里告诉客户端。
+  - 超过单个上限报 `limit_exceeded` + `blob_too_large`。
+  - 配额在 `begin` 时检查：已提交的 blob 按实际大小算，上传中的按声明的长度算，超了报 `limit_exceeded` + `blob_quota_exceeded`。这个检查不加锁，同时开始的两次上传可能一起超出一点。它只是自我保护，不是计费。
+  - 没有 sessionsDir 的 Host（只有测试会这样）不收 blob，`blob.*` 报 `invalid_state` + `blobs_unavailable`。
+- 24 小时没人写的上传，由现有的 maintenance scheduler 在清理临时文件时一起删掉，没有另建 GC。
+- 偏离 §4 的地方：
+  - 所有 `blob.*` 方法都带 `sessionId`。原因有两个：blob 归属一个 Session；Host 按 Session 定位文件，不用另建索引。这和 `item.read` 的做法一致。`begin`、`write`、`commit` 是带 `requestId` 的命令，`read` 是查询。
+  - `blob.read` 的结果除了 `data` 和 `nextCursor`，每一块都带整个 blob 的 `mediaType`、`byteLength` 和 `sha256`。游标是 `<offset>.<sha256>`，中途字节变了报 `resync_required` + `blob_changed`，客户端从头再读。
+- 显示项的附件：v2 的 `Attachment` 加了 `blobId`。owner 照旧能拿到路径，其他角色只能拿到 `blobId`。
+  - 它的形式是 `a_` + base64url(`[itemId, index]`)，里面是 v1 认识的项 ID 和附件的位置（`host-view.ts` 的 `attachmentBlobId`）。`blob.read` 读它时转给 v1 的 `session.view.item`（`part: 'attachment'`），所以和 v1 读附件是同一条路径，同样受 v1 的 10 MiB 上限和图片格式检查约束。
+  - 附件上的字段还是 `kind`、`mediaType`、`width`、`height`、`sha256` 加 `blobId`，没有补成完整的 blob 引用。`byteLength` 在 `blob.read` 的结果里拿得到；要提前知道大小，得先把每个附件的文件读一遍，这一步省掉了。
+- 输入：`input.submit` 加了 `attachments: [{blobId, name?}]`（1 到 32 个），所有角色都能传。Host 把每个 blob 换成它在 Host 上的路径，和 `localAttachments` 一起作为 `inputArtifacts` 交给 v1。agent 的媒体输入和规范消息不用改。
+  - 第一版只收图片：`mediaType` 不是 `image/*` 的报 `invalid_params` + `attachment_not_image`。文件和视频等有了真实的客户端需求再放开。
+  - `input.withdraw` 不把上传的附件换回 blob 引用。非本机的连接撤回时拿不到 `localAttachments`，因为里面是 Host 路径，上传的图片也在其中。客户端要重新提交，自己还留着 `blobId`。
+- 已验证：存储的单元测试（续传、去重、写入规则、上限、配额、按 Session 隔离、路径穿越、清理）；host-rpc 的集成测试（上传图片 → 带 `attachments` 提交 → 模型请求里有 `"type":"image"` → 视图里的附件只有 `blobId`、没有 Host 路径 → `blob.read` 读回同样的字节和哈希 → 删除 Session 后读上传的 blob 报 `not_found`；分块读、游标失效、非图片和不存在的 blob 被拒）；`host.test.ts` 的网络用例确认握手的 `limits` 带三项 blob 上限。真机浏览器上传要等 Space 的 Web UI（M1c）。
 
 ### M1c Space 整体迁移到 v2
 
