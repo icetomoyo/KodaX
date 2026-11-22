@@ -291,7 +291,7 @@ M0 之前的关闭顺序是先关传输层，再关 Runtime，所以客户端在
 - **平台自有的 key 不能放进 Host 容器**：放在环境变量里会被 bash 继承；放在同一个 uid 的文件里，bash 能直接 `cat`；Host 自己的环境变量，同 uid 的进程可以从 `/proc/<pid>/environ` 读到。平台有两种做法：
   - **出口代理**：provider 的 baseUrl 指向代理，Host 里只放占位 key。按租户计量和限额也在这里做。Provider 请求带根会话的 `X-Session-Id`（主线 Issue 416），代理可以按会话对账。
   - **凭证租约**：service 角色通过现有的 `credential: scoped` 绑定，在内存中下发凭证（`client-host-authorization.ts:240`）。
-- 凭证租约有一个限制：它只对"由可信角色提交的 Run"生效，因为租约按 Run 绑定，反向调用只发回提交者自己的连接（D12 的"现状"）。(a)(c) 里 Run 由浏览器用户提交，在 Session 级租约绑定（M1b）落地之前，只能用出口代理。
+- 凭证租约有一个限制：它只对"由可信角色提交的 Run"生效，因为租约按 Run 绑定，反向调用只发回提交者自己的连接（D12 的"现状"）。(a)(c) 里 Run 由浏览器用户提交，在 Session 级租约绑定（M1b）落地之前，只能用出口代理。绑定已在第 9 项落地：可信客户端把租约绑到 Session 上，浏览器用户提交的 Run 也用它（见"第 9 项的落地细节"）。
 - 待核实：托管时用到的 provider 是否都支持自定义 baseUrl 加占位 key。
 
 ### 版本兼容
@@ -463,7 +463,7 @@ v1 里的各种做法都能归进来：
 
 - 请求有自己的 ID，结算是一条带这个 ID 的命令。这样连接断开重连之后仍然可以结算，不依赖某一条连接上的请求响应配对。
 - service 不能回答人的审批（M0 已落地，`src/runtime-daemon/access.ts`；v2 上同样报 `forbidden`）。
-- 重连后，持有 Host Tool 租约的一方用 `lease.pending` 取回还没结算的请求。凭证请求在断线时已经失败，不需要取回（见"凭证租约的落地细节"）。
+- 重连后，持有 Host Tool 租约的一方发 `lease.resume`，断线期间等着的调用这时发出；断线时已经发出的调用，用 `lease.call.get` 查它的结局（第 9 项落地时把 `lease.pending` 换成了它）。凭证请求在断线时已经失败，不需要取回（见"凭证租约的落地细节"）。
 
 ### 错误模型
 
@@ -1037,7 +1037,7 @@ Session 策略的落地细节（2026-11-21，未经用户确认）。这是 D12 
 - **谁能给**：owner 和 service。user 发了报 `forbidden`（`param_not_allowed`）。v1 的 `session.create` 也收 `policy`，`policy` 进了 v1 的可信参数名单，所以 v1 上的 user 同样发不了。
 - **存在哪**：Session 的 `runtimeInfo.policy`。`packages/agent` 这一层把它当不透明数据，只有 Host 解析。
   - 之后的保存不会丢掉或改写它：存储层合并快照时保留已有的策略，和创建回执的做法一样。
-  - 以后做 `session.policy.update` 时要走单独的写入路径，因为现有的 `mutateRuntimeInfo` 也经过这个合并。
+  - `session.policy.update` 走 `mutateRuntimeInfo`：它的结果是权威的，可以替换或清掉策略（第 9 项把存储层的参数改名成 `authoritativeRuntimeInfo`）。普通快照照旧保留已有的策略。
 - **怎么生效**：每个 Run 在 `startRun` 里、算出执行选项之后套上策略。立即启动的、排队的、点名工具的、命令、工作流、恢复的 Run 都走这里。
   - 工具：和 Run 自带的上限求交集。限制写成声明式的，所以 Host 重启后恢复的 Run 仍然受它约束。子 Agent 继承同一份限制。
   - `maxIter`：取策略和 Run（或 Session 设置）里较小的那个。
@@ -1049,7 +1049,7 @@ Session 策略的落地细节（2026-11-21，未经用户确认）。这是 D12 
 - **重试**：`policy` 算进 `session.create` 的请求指纹。同一个 `requestId` 配同样的策略返回同一个 Session，配不同的策略报 `conflict`。
 - **fork 和侧聊**：fork 出来的 Session 带着同一份策略。侧聊继承父 Session 的策略，它自己的只读工具集再和策略求交集，所以策略里没有 `send_to_parent` 的 Session，侧聊不能向父会话汇报。
 - **没有测到的**：工作流和侧聊这两条路径只读了代码（它们用的是同一份工具可见性策略），没有专门的测试。MCP 工具同理。
-- **还没做**：`session.policy.update`、租约绑定。
+- **后来补上的**：`session.policy.update` 和租约绑定在第 9 项落地，见"第 9 项的落地细节"。
 
 按名字选 Agent 的落地细节（2026-11-21，未经用户确认）。代码在 `src/session-agent.ts`：
 
@@ -1603,8 +1603,8 @@ MCP 这 8 个的落地细节（M1a 已落地，2026-11-21，未经用户确认�
 | `lease.resume` | 查 | `credential.get`、`host_tool.get` | 重连后恢复。只读，所以是查询 |
 | `lease.revoke` | 命 | `execution.revoke`、`credential.revoke`、`host_tool.revoke` | |
 | `lease.complete` | 命 | `execution.complete`、`credential.supply`、`host_tool.complete` | 结算一个宿主请求 |
-| `lease.pending` | 查 | `host_tool.invocation.get` | 取回还没结算的请求 |
-| `session.policy.update` | 命 | 新增 | D12 |
+| `lease.call.get` | 查 | `host_tool.invocation.get` | 查一次 Host Tool 调用的结局（原计划叫 `lease.pending`） |
+| `session.policy.update` | 命 | 新增 | D12，已落地 |
 | `session.promote` | 命 | `session.promote` | |
 | `session.promotion.get` | 查 | `session.promotion.read` | |
 
@@ -1612,7 +1612,7 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
 
 **凭证租约的落地细节**（2026-11-22 已落地，未经用户确认）：
 
-- **为什么提前**：REPL 跑在 v2 上需要用客户端的凭证（OAuth、云厂商凭据），所以凭证这一种租约先于 M1b 第 9 项做。Host Tool 和授权方两种仍在 M1b，`kind` 目前只收 `credential`。
+- **为什么提前**：REPL 跑在 v2 上需要用客户端的凭证（OAuth、云厂商凭据），所以凭证这一种租约先于 M1b 第 9 项做。Host Tool 这一种后来在第 9 项落地，`kind` 现在收 `credential` 和 `host_tool`；授权方挪到 M1c。
 - **四个方法**都带 `kind`，只有 owner 和 service 看得到；`user` 调用报 `method_not_found`。
   - `lease.register {requestId, kind, providers, expiresAt?}`：租约 id 就是 `requestId`。重发得到同一份租约；同一个 id 换了 providers 或期限，报 `conflict`（`request_id_reused`）。
   - `lease.resume {kind, leaseId}`：查询。这个客户端实例没有这份租约，报 `not_found`（`lease_not_found`）。v1 上登记的租约在 v2 上看不到。
@@ -2004,7 +2004,7 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
    - 同一个 WebSocket 拨号也给 Node SDK 用：`KodaXHostClient` 现在只能连本机 IPC，(a)(c)(d) 的后端要连远程 Host 需要它。用全局 `WebSocket`，所以 Node 下限提到 22.4（ADR-080）。
 7. 分块的 blob 读写；显示项的附件改为 blob 引用；网络客户端只能用 blob 引用和工作区相对路径。
 8. 权限请求带上拟变更的 diff。
-9. 在 v2 上承载 service 的反向调用（`lease.*`）；租约的 Session 级绑定（D12）。凭证这一种已经提前做了（见"凭证租约的落地细节"），这里剩 Host Tool 和授权方两种，以及 Session 级绑定。
+9. 在 v2 上承载 service 的反向调用（`lease.*`）；租约的 Session 级绑定（D12）。凭证这一种已经提前做了（见"凭证租约的落地细节"），这里剩 Host Tool 和授权方两种，以及 Session 级绑定。**状态**：Host Tool 和 Session 级绑定已落地，授权方挪到 M1c（见"第 9 项的落地细节"）。
 10. 文档：
     - 实例契约（§2）；
     - Dockerfile（带 tini）和 StatefulSet 样例；
@@ -2164,6 +2164,40 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
   - 工作区外的文件，网络客户端照样看到 diff 的内容，只是没有路径。批准的人需要看到要改什么；能连上的都是同一个人（D8 之后的单用户 Host）。
 - 偏离 §4 的地方：没有做 `locations`。文件工具的位置就是 `diff.path`；其他工具（比如 bash）没有可靠的位置，等有了具体需求再加。
 - 已验证：`proposed-change.test.ts`（四种工具、批量按顺序应用、新文件和替换、锚点插入、截断、工具会拒绝的情况）；`host-view.test.ts`（工作区内外的路径，网络合约去掉 `hostPath`）；host-rpc 的集成测试里，模型调用 `write` 后，user 角色看到的待审批请求带 `diff`，路径是 `app/.kodax/note.txt`，owner 还能看到 `hostPath`。浏览器上的 diff 显示要等 Space 的 Web UI（M1c）。
+
+**第 9 项的落地细节**（2026-11-22，未经用户确认的取舍）：
+
+- **Host Tool 租约**（19a59ac75）：
+  - `lease.*` 四个方法都按 `kind` 分成 `credential` 和 `host_tool` 两支。`lease.register {kind: 'host_tool', tools}` 登记客户端自己执行的工具（名字、描述、输入 schema、可选的输出 schema、`sideEffect`）。
+  - Run 用 `leases: {hostTools}` 点名一份工具租约，模型就能调用这些工具。调用以 `lease.request {kind: 'host_tool'}` 发给持有者，客户端用 `lease.complete {kind: 'host_tool', callId, result | error}` 回答。
+  - 客户端不在时调用等着，同一个实例回来发 `lease.resume` 后发出。断线时已经发出的调用，模型被告知结局未知。
+  - `lease.call.get {callId}` 查一次调用的状态：`waiting`、`sent`、`completed`、`unknown`、`not_sent`。Host 保留最近一千次。它代替了原计划的 `lease.pending`：等着的调用由 `lease.resume` 发出，客户端需要的只是查结局。
+  - 不开 Run 的两个命令（`session.compact`、`provider.reasoning.probe`）只收 `CredentialLeases`，因为它们没有工具可以调用。
+  - Node SDK 用 `answerToolCalls(handler)` 回答工具调用。没设 handler 时答 `host_tool_unavailable`；handler 抛错时交给 `onError`，答 `host_tool_failed`。浏览器 SDK 不变，租约在可信面上。
+- **授权方这一种挪到 M1c**：
+  - 它带的是整份 v1 的 `RuntimeExecutionBindingRequest`/`RuntimeExecutionAuthorization`，里面有 Space 的 businessBinding。
+  - 它在断线时被清掉，不能恢复，现在的调用方只有 Space SDK 的路径。
+  - 所以等 M1c 对照 Space 真实的调用点再定形状，现在做只能照搬 v1。
+- **Session 级租约绑定（D12）**：
+  - `SessionPolicy.leases` 是 `{credential?, hostTools?}`，在 `session.create` 或 `session.policy.update` 里给。
+  - 只有稳定的客户端实例能绑：连接时带了 `instanceSecret`。否则报 `invalid_params`（`instance_identity_required`），因为临时连接一断，绑定就没人能接上。
+  - 绑定的一方必须持有这些租约，否则报 `not_found`（`lease_not_found`）。
+  - Host 在存下的策略里记一个 `holder`：稳定实例身份的 sha256。客户端发了 `holder` 报 `invalid_params`。v2 的 `session.policy.get`/`update` 返回时去掉它；v1 的 `session.load` 仍然带着，它是不可逆的哈希。
+- **绑定之后的 Run**：谁提交都用绑定方的租约，请求发到绑定方的连接（Host 按 `holder` 找到它）。
+  - 这个 Session 的 Run 不能再带自己的租约（`leases`、或者授权里的 `credential`/`hostTools`/`binding`），报 `invalid_params`（`lease_bound_by_session`）。两份租约同时生效时，没有一个说得清的规则决定用哪份。
+  - 绑了凭证而绑定方不在（没有连接、租约没了）：Run 在提交时就报 `unavailable`（`lease_holder_away`）。凭证请求断线即失败，让 Run 开起来只会在第一次模型调用时失败。
+  - 只绑了工具而绑定方不在：Run 照常开始，工具调用等绑定方回来发 `lease.resume`，或者到时限。Host 重启后租约不在了，Run 报 `unavailable`（`lease_holder_away`）；绑定方用同一个 `requestId` 重新登记，绑定就恢复了。
+  - 这条路径查工具名冲突时用 `peekHostTools`，不会顺带发出绑定方等着的调用。Run 自带租约的路径保持 v1 的行为。
+- **`session.policy.update {sessionId, policy}`**：
+  - 只对可信角色开放，整份替换，对之后开始的 Run 生效，正在跑的 Run 保留它开始时的策略。所以有活动的 Run 时也能改。
+  - service 调用和创建时一样，默认 `interactions: 'reject'`。
+  - v1 上返回 Session，v2 上返回 `{policy}`。
+  - 写入走 `mutateRuntimeInfo`，它的结果现在是权威的，可以替换或清掉策略。普通快照照旧保留已有的策略。
+- **已知的缺口**：
+  - 绑定只管客户端提交的产品执行。手动的 `session.compact`、`provider.reasoning.probe`、`workflow.start` 内部的 `bindTrustedRunInput` 仍然用提交者的连接和它自己带的凭证。
+  - fork 和侧聊继承父 Session 的策略，租约绑定也一起继承。
+  - 临时连接不能绑。
+- **已验证**：host-rpc 的三方集成测试（service 绑定、user 提交、owner 持有）：user 的 Run 能调用绑定的工具，工具集只有策略里的；自带租约的 Run 被拒；清掉策略后工具没了；user 调 `update` 报 `method_not_found`。绑定方离线时，凭证 Session 报 `unavailable`，工具 Session 的调用等到重连并 `lease.resume` 后完成，凭证 Session 随后用上了借出的 key。错误路径：租约不存在、没有 `instanceSecret`、Session 不存在。存储层测试覆盖了权威写入能替换和清掉策略、之后的快照保留它。
 
 ### M1c Space 整体迁移到 v2
 
@@ -2326,7 +2360,7 @@ KodaX 在实例契约里给出检查清单，但不实现：
 ## 12. 风险与待核实
 
 1. 方法表里原先标"核实"的 7 个条目已在 M0 对照本仓库确认。还没有核对的是 Space 的调用点（Space 仓库不在这里）：Space 是否直接调用 `runs.setModel` 一类的方法、是否分页读原始 transcript、是否发原始的 `run.start`、是否调用 `prepareSkill`。M1c 切 Space 之前要对照 Space 的代码确认；任何一项有调用方，对应的 v2 方法要补回来。
-2. 三种租约合成一组 `lease.*` 方法是否成立，M1b 对照现有实现核实。凭证这一种已经按这组方法落地。已知的差别是重连：凭证请求断线即失败，不需要 `lease.pending`；Host Tool 调用断线后结局不确定，需要取回。
+2. ~~三种租约合成一组 `lease.*` 方法是否成立~~：已解决。凭证和 Host Tool 两种共用一组方法，按 `kind` 区分，差别写在 `lease.ts` 的说明里：凭证请求断线即失败；Host Tool 调用在客户端离开时等着，`lease.resume` 后发出，断线时已经发出的调用结局未知，用 `lease.call.get` 查。授权方挪到 M1c 时再按 Space 的调用点设计。
 3. `epoch` 在会话内的重写（rewind、压缩）时是否变化，取决于显示项的 id 是否保持稳定，M1a 对照代码确定。
 4. 逐项定界之后，快照的最坏大小是"窗口项数 × 单项上限"。单项上限要用真实会话测量后定，移动网络下反复重拉快照的成本上线后观察，必要时再评估做事件日志。
 5. 跨重启的输入判重怎么落：现在立即启动的输入用启动内的地址判重，代码里明确说它不是输入账本（`sdk-runtime.ts:12427-12431`）。M1a 设计时要避免重建已被删除的通用 operation envelope。
