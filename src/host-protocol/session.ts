@@ -7,7 +7,7 @@ import { z } from 'zod/v4';
 import {
   HostId, HostPath, WorkspacePath, hostCommandParams, hostList, hostParams, hostResult, type HostMethodRegistry,
 } from './schema.js';
-import { CredentialLeases } from './lease.js';
+import { CredentialLeases, RunLeases } from './lease.js';
 
 /**
  * Names a Session that already exists. Looser than a new id: a Host still holds
@@ -119,6 +119,15 @@ const SessionPolicy = z.strictObject({
    * service creates without saying is `reject`; one a person creates is `wait`.
    */
   interactions: z.enum(['wait', 'reject']).optional(),
+  /**
+   * Leases of the creator that every Run of the Session uses, whoever submits
+   * it. Their requests go to the client instance that bound them, which must
+   * hold them and connect with an `instanceSecret`. A Run there brings no
+   * leases of its own. While that instance is away, a Run that needs the key
+   * is refused with `unavailable`, and a tool call waits for it to come back.
+   * After a Host restart it registers again under the same `requestId`.
+   */
+  leases: RunLeases.optional(),
 });
 
 /**
@@ -249,6 +258,17 @@ export const SESSION_METHODS = {
     primitive: 'query',
     plane: 'data',
     params: hostParams({ sessionId: SessionRef }),
+    result: hostResult({ policy: SessionPolicy }),
+  },
+  /**
+   * Replaces the whole policy, for the Runs that start from then on. A Run
+   * already working keeps the policy it started with. Leases in it are bound
+   * as `session.create` binds them, to the client instance that sends this.
+   */
+  'session.policy.update': {
+    primitive: 'command',
+    plane: 'trusted',
+    params: hostCommandParams({ sessionId: SessionRef, policy: SessionPolicy }),
     result: hostResult({ policy: SessionPolicy }),
   },
   // Each of these names a state, so sending one again changes nothing.

@@ -87,6 +87,8 @@ export interface RuntimeDaemonReverseBridge {
   attachTransport(
     notify: (notification: RuntimeDaemonNotification) => void,
   ): RuntimeSubscription;
+  /** Whether a connection of the client is attached to send requests to. */
+  isConnected(): boolean;
   registerCredential(input: {
     readonly leaseId: string;
     readonly providers: readonly string[];
@@ -123,7 +125,10 @@ export interface RuntimeDaemonReverseBridge {
     readonly leaseId: string;
     readonly tools: readonly RuntimeHostToolDescriptor[];
   }): RuntimeHostToolLease;
+  /** The lease, and the calls that waited for its client go out: the client asking is back for them. */
   getHostTools(leaseId: string): RuntimeHostToolLease | undefined;
+  /** The lease, leaving its waiting calls where they are. */
+  peekHostTools(leaseId: string): RuntimeHostToolLease | undefined;
   revokeHostTools(leaseId: string): boolean;
   retireLeases(): void;
   completeHostTool(input: {
@@ -144,6 +149,11 @@ export interface RuntimeDaemonReverseBridge {
 
 export interface RuntimeDaemonReverseBridgeHubAttachment {
   readonly bridge: RuntimeDaemonReverseBridge;
+  /**
+   * Names the client instance, for a client that can come back as the same
+   * instance. A Session that binds leases records it, never the secret.
+   */
+  readonly holder?: string;
   close(): void;
 }
 
@@ -158,6 +168,8 @@ export interface RuntimeDaemonReverseBridgeHub {
     readonly onReplaced?: () => void;
   }): RuntimeDaemonReverseBridgeHubAttachment;
   getRunRequirements(runId: string): RuntimeRunRequirements | undefined;
+  /** The bridge of the instance a holder names, connected or not. Gone after a Host restart until it attaches again. */
+  heldBy(holder: string): RuntimeDaemonReverseBridge | undefined;
   close(): void;
 }
 
@@ -514,6 +526,7 @@ export function createRuntimeDaemonReverseBridge(
 
   return {
     executionBindings,
+    isConnected: () => !closed && activeTransport !== undefined,
     attachTransport(notify) {
       requireOpen();
       executionBindings.detach();
@@ -675,6 +688,10 @@ export function createRuntimeDaemonReverseBridge(
           if (pending.leaseId === leaseId) dispatchPendingHostCall(invocationId, pending);
         }
       }
+      return lease === undefined ? undefined : { id: lease.id, tools: lease.tools };
+    },
+    peekHostTools(leaseId) {
+      const lease = hostTools.get(leaseId);
       return lease === undefined ? undefined : { id: lease.id, tools: lease.tools };
     },
     revokeHostTools(leaseId) {
@@ -853,6 +870,8 @@ export function createRuntimeDaemonReverseBridgeHub(
 ): RuntimeDaemonReverseBridgeHub {
   const bridges = new Map<string, RuntimeDaemonReverseBridge>();
   const owners = new Map<string, string>();
+  /** Holder → bridge key, for the instances that can come back. */
+  const holders = new Map<string, string>();
   const attachments = new Map<string, {
     readonly attachment: RuntimeDaemonReverseBridgeHubAttachment;
     readonly onReplaced?: () => void;
@@ -898,10 +917,13 @@ export function createRuntimeDaemonReverseBridgeHub(
       }
       bridges.set(key, bridge);
       owners.set(key, input.principalId);
+      const holder = stable ? createHash('sha256').update(key).digest('hex') : undefined;
+      if (holder !== undefined) holders.set(holder, key);
       const previous = attachments.get(key);
       const transport = bridge.attachTransport(input.notify);
       const attachment: RuntimeDaemonReverseBridgeHubAttachment = {
         bridge,
+        ...(holder !== undefined ? { holder } : {}),
         close() {
           transport.close();
           if (attachments.get(key)?.attachment === attachment) attachments.delete(key);
@@ -923,12 +945,17 @@ export function createRuntimeDaemonReverseBridgeHub(
       }
       return undefined;
     },
+    heldBy(holder) {
+      const key = holders.get(holder);
+      return key === undefined ? undefined : bridges.get(key);
+    },
     close() {
       if (closed) return;
       closed = true;
       for (const bridge of bridges.values()) bridge.close();
       bridges.clear();
       owners.clear();
+      holders.clear();
       attachments.clear();
     },
   };

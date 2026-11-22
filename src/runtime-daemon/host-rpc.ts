@@ -229,8 +229,14 @@ const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } =
     return { session: await toSession(session, caller) };
   },
   'session.policy.get': async ({ sessionId }, v1) => (
-    { policy: (await v1('session.load', { sessionId }) as RuntimeSession).policy ?? {} }
+    { policy: toPolicy((await v1('session.load', { sessionId }) as RuntimeSession).policy) }
   ),
+  'session.policy.update': async ({ sessionId, policy }, v1, caller) => {
+    const session = await v1('session.policy.update', {
+      sessionId, policy: caller.service ? { interactions: 'reject', ...policy } : policy,
+    }) as RuntimeSession;
+    return { policy: toPolicy(session.policy) };
+  },
   'session.archive': async ({ sessionId }, v1) => {
     await v1('session.archive', { sessionId });
     return {};
@@ -1433,6 +1439,13 @@ async function credentialBinding(
   const held = await heldLease(v1, leaseId);
   if (held === undefined) throw leaseNotFound();
   return { leaseId, mode: 'scoped', providers: held.providers };
+}
+
+/** A Session policy as clients read it: which client instance holds its leases is the Host's to know. */
+function toPolicy(policy: RuntimeSession['policy']): Readonly<Record<string, unknown>> {
+  if (policy?.leases === undefined) return { ...policy };
+  const { holder: _holder, ...leases } = policy.leases;
+  return { ...policy, leases };
 }
 
 /** The leases a Run uses, as v1 takes them in an execution authorization. Fails when this client holds one of them not. */

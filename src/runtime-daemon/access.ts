@@ -198,6 +198,7 @@ export const RUNTIME_METHOD_PLANES = {
   'host_tool.revoke': 'trusted',
   'host_tool.complete': 'trusted',
   'session.promote': 'trusted',
+  'session.policy.update': 'trusted',
   'session.promotion.read': 'trusted',
 
   // Local management

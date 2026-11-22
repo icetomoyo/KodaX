@@ -939,6 +939,17 @@ export interface ClientSessionPolicy {
    * that needs approval is not run. Absent is `wait`.
    */
   readonly interactions?: 'wait' | 'reject';
+  /** Leases every Run of the Session uses, held by the client instance that bound them. */
+  readonly leases?: ClientSessionLeases;
+}
+
+export interface ClientSessionLeases {
+  /** The model calls get their provider keys from this lease. */
+  readonly credential?: string;
+  /** Runs may call the tools of this lease. */
+  readonly hostTools?: string;
+  /** Which client instance holds the leases. Only the Host sets it, from the connection that bound them. */
+  readonly holder?: string;
 }
 
 /**

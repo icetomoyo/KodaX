@@ -1856,6 +1856,7 @@ function makeRuntime(
     },
     sessions: {
       async promote(input) { return { requestId: input.requestId, session: { id: input.sessionId, title: 'Promoted', tag: input.tag } }; },
+      async updatePolicy(input) { return { id: input.sessionId, title: 'Policy', policy: input.policy }; },
       async readPromotion() { return null; },
       async cancel(input) { return { ...input, frontier: 0, receipts: [] }; },
       async status(sessionId) {

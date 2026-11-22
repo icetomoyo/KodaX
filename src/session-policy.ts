@@ -6,13 +6,16 @@
 import { isDeepStrictEqual } from 'node:util';
 
 import { assertKodaXPromptSpec, resolveWorkMode } from '@kodax-ai/coding';
-import type { ClientRunOptions, ClientSessionPolicy, KodaXAgentProfile, KodaXPromptSpec } from '@kodax-ai/coding/client-contract';
+import type {
+  ClientRunOptions, ClientSessionLeases, ClientSessionPolicy, KodaXAgentProfile, KodaXPromptSpec,
+} from '@kodax-ai/coding/client-contract';
 
 import { createExecutionToolPolicy, intersectExecutionToolCeilings } from './execution-profile.js';
 import type { RuntimeKodaXOptions } from './sdk-runtime.js';
 
 const PROFILE_FIELDS = ['surface', 'id', 'version', 'name', 'instructions'] as const;
 const BUDGET_FIELDS = ['maxIter', 'maxDurationMs'] as const;
+const LEASE_FIELDS = ['credential', 'hostTools', 'holder'] as const;
 /** The longest wait a timer of the platform holds. */
 const LONGEST_DURATION_MS = 2 ** 31 - 1;
 
@@ -68,6 +71,20 @@ function parseAgentProfile(value: unknown): KodaXAgentProfile {
   return profile;
 }
 
+/** The Host routes a Run's requests by these; `applySessionPolicy` leaves them alone. Bound to nothing reads as none. */
+function parseLeases(value: unknown): ClientSessionLeases | undefined {
+  if (!isRecord(value)) throw invalid('leases must be an object');
+  assertKnownFields(value, LEASE_FIELDS, 'leases.');
+  const leases: { -readonly [Field in typeof LEASE_FIELDS[number]]?: string } = {};
+  for (const name of LEASE_FIELDS) {
+    const id = value[name];
+    if (id === undefined) continue;
+    if (typeof id !== 'string' || id.trim().length === 0) throw invalid(`leases.${name} must be an id`);
+    leases[name] = id;
+  }
+  return leases.credential === undefined && leases.hostTools === undefined ? undefined : leases;
+}
+
 /**
  * Reads the policy a client sent or a Session stored. A field this Host does
  * not enforce is refused, so no limit is accepted and then ignored. A policy
@@ -76,9 +93,10 @@ function parseAgentProfile(value: unknown): KodaXAgentProfile {
 export function parseSessionPolicy(value: unknown): ClientSessionPolicy | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) throw invalid('must be an object');
-  assertKnownFields(value, ['tools', 'budget', 'agentProfile', 'prompt', 'interactions'], '');
+  assertKnownFields(value, ['tools', 'budget', 'agentProfile', 'prompt', 'interactions', 'leases'], '');
   const budget = value.budget === undefined ? undefined : parseBudget(value.budget);
   if (value.prompt !== undefined) assertKodaXPromptSpec(value.prompt);
+  const leases = value.leases === undefined ? undefined : parseLeases(value.leases);
   const { interactions } = value;
   if (interactions !== undefined && interactions !== 'wait' && interactions !== 'reject') {
     throw invalid('interactions must be wait or reject');
@@ -89,6 +107,7 @@ export function parseSessionPolicy(value: unknown): ClientSessionPolicy | undefi
     ...(value.agentProfile === undefined ? {} : { agentProfile: parseAgentProfile(value.agentProfile) }),
     ...(value.prompt === undefined ? {} : { prompt: structuredClone(value.prompt) }),
     ...(interactions === undefined ? {} : { interactions }),
+    ...(leases === undefined ? {} : { leases }),
   };
   return Object.keys(policy).length > 0 ? policy : undefined;
 }

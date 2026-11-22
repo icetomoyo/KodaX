@@ -3838,6 +3838,110 @@ describe('v2 Host Tool leases served by the v1 reverse bridge', () => {
     const user = await connect('user', runtime, host.workspace);
     await expect(user.request('lease.call.get', { callId: 'any' })).rejects.toMatchObject({ kodaxCode: 'method_not_found' });
   });
+
+  describe('bound to a Session', () => {
+    /** A service, and a person on the same Host. The service is one client instance that can come back. */
+    async function threeParties(model = orderModel()) {
+      const host = await model;
+      const runtime = await host.start();
+      const reverseBridgeHub = createRuntimeDaemonReverseBridgeHub();
+      cleanup.push(() => reverseBridgeHub.close());
+      const service = () => connect('service', runtime, host.workspace, { reverseBridgeHub }, 's'.repeat(32));
+      const backend = await service();
+      const user = await connect('user', runtime, host.workspace, { reverseBridgeHub });
+      return { host, runtime, reverseBridgeHub, service, backend, user };
+    }
+
+    /** Answers the key requests of a client with `key`. */
+    function lendKey(client: HostRpcClient, key: string): void {
+      client.onNotification((method, params) => {
+        const request = params as { readonly kind: string; readonly callId: string };
+        if (method !== 'lease.request' || request.kind !== 'credential') return;
+        void client.request('lease.complete', { requestId: `complete-${request.callId}`, kind: 'credential', callId: request.callId, credential: key });
+      });
+    }
+
+    it('serves the tools a service bound to a Session to a Run a person submits there, within the policy', async () => {
+      const { host, backend, user } = await threeParties();
+      await backend.request('lease.register', { requestId: 'tools-1', kind: 'host_tool', tools: [LOOKUP] });
+      const calls = serve(backend, () => ({ result: { content: 'Order A1 ships on Friday.' } }));
+      const policy = { tools: ['lookup_order'], leases: { hostTools: 'tools-1' } };
+      const { session } = await backend.request('session.create', { requestId: 'create-1', project: 'app', policy }) as SessionAnswer;
+      // Everyone reads which leases are bound; nobody reads which client instance holds them.
+      expect(await user.request('session.policy.get', { sessionId: session.id })).toEqual({ policy: { ...policy, interactions: 'reject' } });
+
+      const { input } = await user.request('input.submit', { requestId: 'input-1', sessionId: session.id, text: 'When does A1 ship?' }) as InputAnswer;
+      const { run } = await user.request('run.wait', { runId: input.runId }) as RunAnswer;
+      expect(run.outcome).toMatchObject({ status: 'completed' });
+      expect(calls).toEqual([expect.objectContaining({ leaseId: 'tools-1', sessionId: session.id, runId: input.runId, tool: 'lookup_order' })]);
+      expect(host.lastRunRequest().text).toContain('Order A1 ships on Friday.');
+      expect(host.lastRunRequest().tools).toEqual(['lookup_order']);
+
+      // A Run there brings no leases of its own: the Session decides where its calls go.
+      await backend.request('lease.register', { requestId: 'tools-2', kind: 'host_tool', tools: [{ ...LOOKUP, name: 'other_tool' }] });
+      await expect(backend.request('input.submit', {
+        requestId: 'input-2', sessionId: session.id, text: 'Hi.', leases: { hostTools: 'tools-2' },
+      })).rejects.toMatchObject({ kodaxCode: 'invalid_params', reason: 'lease_bound_by_session' });
+
+      // An update replaces the policy for later Runs; without the lease the tool is gone.
+      expect(await backend.request('session.policy.update', { requestId: 'update-1', sessionId: session.id, policy: {} }))
+        .toEqual({ policy: { interactions: 'reject' } });
+      const { input: later } = await user.request('input.submit', { requestId: 'input-3', sessionId: session.id, text: 'Again.' }) as InputAnswer;
+      await user.request('run.wait', { runId: later.runId });
+      expect(host.lastRunRequest().tools).toContain('read');
+      expect(host.lastRunRequest().tools).not.toContain('lookup_order');
+      await expect(user.request('session.policy.update', { requestId: 'update-2', sessionId: session.id, policy: {} }))
+        .rejects.toMatchObject({ kodaxCode: 'method_not_found' });
+    });
+
+    it('holds a tool call while the service is away, and refuses a Run that needs its key', async () => {
+      const { host, service, backend, user } = await threeParties();
+      await backend.request('lease.register', { requestId: 'tools-1', kind: 'host_tool', tools: [LOOKUP] });
+      await backend.request('lease.register', { requestId: 'key-1', kind: 'credential', providers: [MODEL] });
+      const { session: tools } = await backend.request('session.create', {
+        requestId: 'create-1', project: 'app', policy: { leases: { hostTools: 'tools-1' } },
+      }) as SessionAnswer;
+      const { session: keyed } = await backend.request('session.create', {
+        requestId: 'create-2', project: 'app', policy: { leases: { credential: 'key-1' } },
+      }) as SessionAnswer;
+      backend.close();
+      await backend.closed;
+
+      await expect(user.request('input.submit', { requestId: 'input-1', sessionId: keyed.id, text: 'Hi.' }))
+        .rejects.toMatchObject({ kodaxCode: 'unavailable', reason: 'lease_holder_away' });
+      const { input } = await user.request('input.submit', { requestId: 'input-2', sessionId: tools.id, text: 'When does A1 ship?' }) as InputAnswer;
+
+      // The service comes back, asks for its lease, and the call that waited goes out.
+      const back = await service();
+      const calls = serve(back, () => ({ result: { content: 'Order A1 ships on Friday.' } }));
+      lendKey(back, 'leased-key');
+      await back.request('lease.resume', { kind: 'host_tool', leaseId: 'tools-1' });
+      const { run } = await user.request('run.wait', { runId: input.runId }) as RunAnswer;
+      expect(run.outcome).toMatchObject({ status: 'completed' });
+      expect(calls).toHaveLength(1);
+      expect(host.lastRunRequest().text).toContain('Order A1 ships on Friday.');
+
+      // Back online, the Session's key serves a Run a person submits.
+      const { input: keyedInput } = await user.request('input.submit', { requestId: 'input-3', sessionId: keyed.id, text: 'Hi.' }) as InputAnswer;
+      expect((await user.request('run.wait', { runId: keyedInput.runId }) as RunAnswer).run.outcome).toMatchObject({ status: 'completed' });
+      expect(host.lastRunRequest().apiKey).toBe('leased-key');
+    });
+
+    it('binds only leases the creator holds, as a client instance that can come back', async () => {
+      const { runtime, host, reverseBridgeHub, backend } = await threeParties();
+      await expect(backend.request('session.create', {
+        requestId: 'create-1', project: 'app', policy: { leases: { hostTools: 'missing' } },
+      })).rejects.toMatchObject({ kodaxCode: 'not_found', reason: 'lease_not_found' });
+      // A connection without an instance secret is gone for good once closed, and so would be the binding.
+      const owner = await connect('owner', runtime, host.workspace, { reverseBridgeHub });
+      await owner.request('lease.register', { requestId: 'tools-1', kind: 'host_tool', tools: [LOOKUP] });
+      await expect(owner.request('session.create', {
+        requestId: 'create-2', project: 'app', policy: { leases: { hostTools: 'tools-1' } },
+      })).rejects.toMatchObject({ kodaxCode: 'invalid_params', reason: 'instance_identity_required' });
+      await expect(backend.request('session.policy.update', { requestId: 'update-1', sessionId: 'no-such-session', policy: {} }))
+        .rejects.toMatchObject({ kodaxCode: 'not_found' });
+    });
+  });
 });
 
 describe('the CLI credential binding over a v2 Host client', () => {

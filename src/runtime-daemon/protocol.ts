@@ -22,6 +22,7 @@ export type RuntimeDaemonMethod =
   | 'daemon.management.get'
   | 'daemon.integrations.get'
   | 'session.create'
+  | 'session.policy.update'
   | 'session.promote'
   | 'session.load'
   | 'session.promotion.read'
@@ -232,6 +233,7 @@ export type RuntimeDaemonMutationMethod =
   | 'session.goal.resume'
   | 'session.goal.clear'
   | 'session.create'
+  | 'session.policy.update'
   | 'session.promote'
   | 'session.side.open'
   | 'session.fork'
@@ -401,6 +403,7 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'daemon.management.get',
   'daemon.integrations.get',
   'session.create',
+  'session.policy.update',
   'session.promote',
   'session.load',
   'session.promotion.read',
@@ -593,6 +596,7 @@ export const RUNTIME_DAEMON_MUTATION_METHODS: readonly RuntimeDaemonMutationMeth
   'session.goal.resume',
   'session.goal.clear',
   'session.create',
+  'session.policy.update',
   'session.promote',
   'session.side.open',
   'session.fork',

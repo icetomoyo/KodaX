@@ -639,7 +639,11 @@ export interface KodaXSessionStorage {
   load(id: string): Promise<KodaXSessionData | null>;
   /** Append durable protocol receipts without replacing the host's transcript or metadata. False means missing Session. */
   appendSessionRecords?(id: string, records: readonly KodaXExtensionSessionRecord[]): Promise<boolean>;
-  /** Atomically updates Runtime-owned Session metadata without replacing transcript state. */
+  /**
+   * Atomically updates Runtime-owned Session metadata without replacing
+   * transcript state. The mutation gets the latest stored metadata, and what it
+   * returns replaces it, the Session policy included.
+   */
   mutateRuntimeInfo?(
     id: string,
     mutation: (

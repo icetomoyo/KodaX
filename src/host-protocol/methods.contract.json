@@ -2102,6 +2102,22 @@
                 "wait",
                 "reject"
               ]
+            },
+            "leases": {
+              "type": "object",
+              "properties": {
+                "credential": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "hostTools": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false
@@ -2509,6 +2525,329 @@
                 "wait",
                 "reject"
               ]
+            },
+            "leases": {
+              "type": "object",
+              "properties": {
+                "credential": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "hostTools": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "policy"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "session.policy.update": {
+    "primitive": "command",
+    "plane": "trusted",
+    "params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "policy": {
+          "type": "object",
+          "properties": {
+            "tools": {
+              "maxItems": 512,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 256,
+                "pattern": "\\S"
+              }
+            },
+            "budget": {
+              "type": "object",
+              "properties": {
+                "maxIter": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "maxDurationMs": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 2147483647
+                }
+              },
+              "additionalProperties": false
+            },
+            "agentProfile": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "version": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "surface": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "instructions": {
+                  "type": "string",
+                  "maxLength": 32000,
+                  "pattern": "\\S"
+                }
+              },
+              "additionalProperties": false
+            },
+            "prompt": {
+              "type": "object",
+              "properties": {
+                "kodaxGuidance": {
+                  "type": "string",
+                  "enum": [
+                    "keep",
+                    "omit"
+                  ]
+                },
+                "context": {
+                  "maxItems": 64,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "rule",
+                          "reference"
+                        ]
+                      },
+                      "text": {
+                        "type": "string",
+                        "maxLength": 8000,
+                        "pattern": "\\S"
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "kind",
+                      "text"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "interactions": {
+              "type": "string",
+              "enum": [
+                "wait",
+                "reject"
+              ]
+            },
+            "leases": {
+              "type": "object",
+              "properties": {
+                "credential": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "hostTools": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "requestId",
+        "sessionId",
+        "policy"
+      ],
+      "additionalProperties": false
+    },
+    "result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "policy": {
+          "type": "object",
+          "properties": {
+            "tools": {
+              "maxItems": 512,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 256,
+                "pattern": "\\S"
+              }
+            },
+            "budget": {
+              "type": "object",
+              "properties": {
+                "maxIter": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "maxDurationMs": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 2147483647
+                }
+              },
+              "additionalProperties": false
+            },
+            "agentProfile": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "version": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "surface": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "instructions": {
+                  "type": "string",
+                  "maxLength": 32000,
+                  "pattern": "\\S"
+                }
+              },
+              "additionalProperties": false
+            },
+            "prompt": {
+              "type": "object",
+              "properties": {
+                "kodaxGuidance": {
+                  "type": "string",
+                  "enum": [
+                    "keep",
+                    "omit"
+                  ]
+                },
+                "context": {
+                  "maxItems": 64,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "rule",
+                          "reference"
+                        ]
+                      },
+                      "text": {
+                        "type": "string",
+                        "maxLength": 8000,
+                        "pattern": "\\S"
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "kind",
+                      "text"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "interactions": {
+              "type": "string",
+              "enum": [
+                "wait",
+                "reject"
+              ]
+            },
+            "leases": {
+              "type": "object",
+              "properties": {
+                "credential": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "hostTools": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false

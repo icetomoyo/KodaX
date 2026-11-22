@@ -527,6 +527,7 @@ export function createRuntimeDaemonClient(
     ...(options.grantedScopes !== undefined ? { grantedScopes: options.grantedScopes } : {}),
     sessions: {
       promote: async input => { requirePromotionContract(); return request('session.promote', input) as ReturnType<KodaXRuntime['sessions']['promote']>; },
+      updatePolicy: input => request('session.policy.update', input) as Promise<RuntimeSession>,
       readPromotion: async (sessionId, requestId) => { requirePromotionContract(); return request('session.promotion.read', { sessionId, requestId }) as ReturnType<KodaXRuntime['sessions']['readPromotion']>; },
       create(input = {}) {
         const transportInput = input;

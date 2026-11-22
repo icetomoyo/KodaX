@@ -1918,6 +1918,8 @@ export interface RuntimeSessionService {
   cancel(input: RuntimeSessionCancelInput): Promise<RuntimeSessionCancelReceipt>;
   create(input?: RuntimeCreateSessionInput): Promise<RuntimeSession>;
   promote(input: RuntimePromoteSessionInput): Promise<RuntimeSessionPromotionResult>;
+  /** Replaces the whole policy, for the Runs that start from then on. Absent fields are gone afterwards. */
+  updatePolicy(input: { readonly sessionId: string; readonly policy: ClientSessionPolicy }): Promise<RuntimeSession>;
   readPromotion(sessionId: string, requestId: string): Promise<RuntimeSessionPromotionResult | null>;
   load(
     sessionId: string,
@@ -9195,6 +9197,23 @@ function createRuntimeSessionService(
       });
       sessionViews.changed(request.sessionId, true);
       return { requestId: request.requestId, session: await service.load(request.sessionId) };
+    },
+
+    async updatePolicy(input) {
+      const policy = parseSessionPolicy(input.policy);
+      const mutate = manager.storage.mutateRuntimeInfo;
+      if (mutate === undefined) throw new Error('Session storage cannot replace the Session policy.');
+      await sessionOperations.run(input.sessionId, async () => {
+        ensureOpen();
+        await admission.loadRequired(input.sessionId);
+        // A Run already working keeps the policy it was admitted with; the next one reads this.
+        const found = await mutate.call(manager.storage, input.sessionId, ({ policy: _replaced, ...rest } = {}) => (
+          policy === undefined ? rest : { ...rest, policy: { ...policy } }
+        ));
+        if (!found) throw new Error(`Session not found while replacing its policy: ${input.sessionId}`);
+      });
+      sessionViews.changed(input.sessionId, true);
+      return service.load(input.sessionId);
     },
 
     async readPromotion(sessionId, requestId) {

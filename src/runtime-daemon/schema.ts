@@ -141,6 +141,10 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
   'daemon.integrations.get': { params: noParamsSchema, result: integrationHealthSchema() },
 
   'session.create': { params: createSessionParamsSchema(), result: sessionSchema() },
+  'session.policy.update': {
+    params: objectSchema({ sessionId: stringSchema, policy: objectAnySchema }, ['sessionId', 'policy']),
+    result: sessionSchema(),
+  },
   'session.promote': {
     params: objectSchema({ sessionId: stringSchema, requestId: { type: 'string', maxLength: 128 },
       expectedRevision: stringSchema, tag: { type: 'string', maxLength: 256 } }, ['sessionId', 'requestId', 'expectedRevision', 'tag']),

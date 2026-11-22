@@ -3603,6 +3603,7 @@ const METHOD_SMOKE_PARAMS = {
   'daemon.integrations.get': undefined,
   'session.create': { sessionId: 'session-smoke', title: 'Smoke Session' },
   'session.promote': { sessionId: 'session-1', requestId: 'promote-smoke', expectedRevision: '0'.repeat(64), tag: 'coder' },
+  'session.policy.update': { sessionId: 'session-1', policy: { tools: ['read'] } },
   'session.promotion.read': { sessionId: 'session-1', requestId: 'promote-smoke' },
   'session.load': { sessionId: 'session-1' },
   'session.list': { limit: 5 },
@@ -3910,6 +3911,7 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
     },
     sessions: {
       async promote(input) { return { requestId: input.requestId, session: { id: input.sessionId, title: 'Promoted', tag: input.tag } }; },
+      async updatePolicy(input) { return { id: input.sessionId, title: 'Policy', policy: input.policy }; },
       async readPromotion() { return null; },
       async cancel(input) { return { ...input, frontier: 0, receipts: [] }; },
       async create(input) {

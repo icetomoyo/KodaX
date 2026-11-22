@@ -2408,6 +2408,20 @@ describe('FileSessionStorage', () => {
     }
   });
 
+  it('lets a deliberate metadata change replace or clear the policy, which later snapshots then keep', async () => {
+    const { FileSessionStorage } = await import('./storage.js');
+    const storage = new FileSessionStorage({ sessionsDir: testSessionsDir() });
+    const id = 'session-policy-replaced';
+    const created = { messages: [], title: 'New', gitRoot: KODAX_REPO_ROOT, runtimeInfo: { surface: 'code', policy: { tools: ['read'] } } };
+    await storage.save(id, created);
+    await storage.mutateRuntimeInfo(id, current => ({ ...current, policy: { tools: ['bash'] } }));
+    await storage.save(id, created);
+    await expect(storage.load(id)).resolves.toMatchObject({ runtimeInfo: { policy: { tools: ['bash'] } } });
+    await storage.mutateRuntimeInfo(id, ({ policy: _policy, ...rest } = {}) => rest);
+    await storage.save(id, { ...created, runtimeInfo: { surface: 'code' } });
+    expect((await storage.load(id))?.runtimeInfo?.policy).toBeUndefined();
+  });
+
   it('atomically preserves sandbox worktree roots across a stale Session snapshot', async () => {
     const { FileSessionStorage } = await import('./storage.js');
     const storage = new FileSessionStorage({ sessionsDir: testSessionsDir() });

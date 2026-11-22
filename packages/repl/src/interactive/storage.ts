@@ -4263,7 +4263,8 @@ export class FileSessionStorage implements KodaXSessionStorage {
   private async mergeAndWriteInternal(
     id: string,
     data: SessionData,
-    acceptSandboxWorktreeRoots = false,
+    /** The runtimeInfo was read under the write lock and changed on purpose, so it may replace the Host-owned fields it names. */
+    authoritativeRuntimeInfo = false,
   ): Promise<void> {
     const existing = await this.readSession(id);
     const verifiedTopology = existing === null
@@ -4292,13 +4293,13 @@ export class FileSessionStorage implements KodaXSessionStorage {
             ...(existing?.data.runtimeInfo?.creationRequest !== undefined
               ? { creationRequest: existing.data.runtimeInfo.creationRequest } : {}),
             // The policy binds every later Run; a snapshot written by one of them cannot drop or replace it.
-            ...(existing?.data.runtimeInfo?.policy !== undefined
+            ...(!authoritativeRuntimeInfo && existing?.data.runtimeInfo?.policy !== undefined
               ? { policy: existing.data.runtimeInfo.policy } : {}),
             // Execution snapshots cannot change the Host-owned Session lifetime.
             ...(existing?.data.runtimeInfo?.temporary === true ? { temporary: true } : {}),
             // First admission is permanent, including stale execution snapshots.
             ...(existing?.data.runtimeInfo?.workModeLocked === true ? { workModeLocked: true } : {}),
-            ...(!acceptSandboxWorktreeRoots
+            ...(!authoritativeRuntimeInfo
               && existing?.data.runtimeInfo?.sandboxWorktreeRoots !== undefined
               ? {
                   sandboxWorktreeRoots:

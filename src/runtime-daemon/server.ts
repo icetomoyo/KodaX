@@ -20,7 +20,7 @@ import type {
   CodingActorCredentialAccessFactory,
   ExtensionRuntimeContract,
 } from "@kodax-ai/coding";
-import type { ClientInteractionResponse, ClientSessionView } from "@kodax-ai/coding/client-contract";
+import type { ClientInteractionResponse, ClientSessionPolicy, ClientSessionView } from "@kodax-ai/coding/client-contract";
 import {
   emitKodaXDiagnostic,
   ExternalAgentRegistrationConflictError,
@@ -297,6 +297,7 @@ const RUNTIME_METHOD_SCOPES: ReadonlyMap<
     "memory.ensureOpenTarget",
     "invocations.prepareReview",
     "session.create",
+    "session.policy.update",
     "session.promote",
     "session.side.open",
     "session.fork",
@@ -766,6 +767,7 @@ export function createRuntimeDaemonDispatcher(
           clientName,
           clientVersion,
           reverseBridge,
+          reverseBridgeAttachment?.holder,
           requestController.signal,
           noticeIdentity,
         );
@@ -1053,6 +1055,8 @@ async function dispatchRuntimeDaemonRequest(
   clientName: string | undefined,
   clientVersion: string | undefined,
   reverseBridge: RuntimeDaemonReverseBridge,
+  /** Names this connection's client instance when it can come back as the same one. */
+  leaseHolder: string | undefined,
   requestSignal: AbortSignal,
   noticeIdentity: string,
 ): Promise<unknown> {
@@ -1628,10 +1632,16 @@ async function dispatchRuntimeDaemonRequest(
         { signal: requestSignal },
       );
     }
-    case "session.create":
-      return runtime.sessions.create(
-        optionalRecord(request.params) as RuntimeCreateSessionInput | undefined,
-      );
+    case "session.create": {
+      const params = optionalRecord(request.params);
+      return runtime.sessions.create((params?.policy === undefined ? params
+        : { ...params, policy: bindSessionLeases(params.policy, reverseBridge, leaseHolder) }) as RuntimeCreateSessionInput | undefined);
+    }
+    case 'session.policy.update': {
+      const params = requireRecord(request.params);
+      return runtime.sessions.updatePolicy({ sessionId: requireStringField(params, 'sessionId'),
+        policy: bindSessionLeases(params.policy, reverseBridge, leaseHolder) as ClientSessionPolicy });
+    }
     case 'session.promote': {
       const params = requireRecord(request.params);
       return runtime.sessions.promote({ sessionId: requireStringField(params, 'sessionId'),
@@ -2568,6 +2578,11 @@ async function dispatchRuntimeDaemonRequest(
   const requestSessionId = request.method === 'run.recover' ? (await runtime.runs.get(requireStringField(params, 'runId'))).sessionId
     : optionalStringField(params, 'sessionId');
   const assertAdmission = () => options.clientLifecycle?.assertAdmission(principalId);
+  const ownLeases = params.credential !== undefined || params.hostTools !== undefined
+    || authorization?.credential !== undefined || authorization?.hostTools !== undefined || authorization?.binding !== undefined;
+  const sessionLeases = request.method === 'input.withdraw' || !requestSessionId ? undefined
+    : await sessionLeaseAuthorization(runtime, requestSessionId, options.reverseBridgeHub, ownLeases);
+  const leaseBridge = sessionLeases?.bridge ?? reverseBridge;
   const createContext = (approved: Record<string, unknown> | undefined, intentKey?: string, sessionId = requestSessionId): ProductExecutionContext => {
     const deferred = optionalRecord(approved?.binding);
     if (deferred !== undefined) {
@@ -2618,13 +2633,14 @@ async function dispatchRuntimeDaemonRequest(
         const bound = await bindTrustedRunInput({ params: { ...runInput,
           ...(credential !== undefined ? { credential } : {}), ...(hostTools !== undefined ? { hostTools } : {}),
           ...(workflowHostPolicy !== undefined ? { options: { ...runInput.options, workflowHostPolicy } } : {}),
-        }, profile, sessionId: runInput.sessionId, trustedRunId: runId, principalId, subject, clientName, clientVersion, reverseBridge,
+        }, profile, sessionId: runInput.sessionId, trustedRunId: runId, principalId, subject, clientName, clientVersion,
+          reverseBridge: leaseBridge, ...(sessionLeases !== undefined ? { leasesBoundBySession: true as const } : {}),
           baseExtensionRuntime, trustedProductPreparation: true }) as unknown as RuntimeStartRunInput;
         return bindingSnapshot === undefined ? bound : { ...bound, options: { ...bound.options, executionBinding: bindingSnapshot } };
       },
     };
   };
-  let context = createContext(authorization);
+  let context = createContext(sessionLeases === undefined ? authorization : { ...authorization, ...sessionLeases.approved });
   if (request.method === 'run.recover' && context.resolve !== undefined) {
     const status = await runtime.runs.get(requireStringField(params, 'runId'));
     const original = status.executionBinding;
@@ -2640,6 +2656,56 @@ async function dispatchRuntimeDaemonRequest(
     }
   }
   return withProductExecution(context, dispatch);
+}
+
+/**
+ * Checks that this connection holds the leases a policy binds, and records
+ * which client instance that is. Only an instance that can come back may bind,
+ * since the binding outlives the connection.
+ */
+function bindSessionLeases(policy: unknown, bridge: RuntimeDaemonReverseBridge, holder: string | undefined): unknown {
+  const leases = isRecord(policy) ? optionalRecord(policy.leases) : undefined;
+  if (leases === undefined) return policy;
+  if (leases.holder !== undefined) throw daemonError('invalid_params', 'The Host records who holds the leases of a Session.');
+  const credential = optionalStringField(leases, 'credential');
+  const hostTools = optionalStringField(leases, 'hostTools');
+  if (credential === undefined && hostTools === undefined) return policy;
+  if (holder === undefined) {
+    throw daemonError('invalid_params', 'Binding leases to a Session needs a client that connects with an instanceSecret.',
+      { reason: 'instance_identity_required' });
+  }
+  if ((credential !== undefined && bridge.getCredential(credential) === undefined)
+    || (hostTools !== undefined && bridge.peekHostTools(hostTools) === undefined)) {
+    throw daemonError('not_found', 'This client instance holds no such lease.', { reason: 'lease_not_found' });
+  }
+  return { ...policy as Record<string, unknown>, leases: { ...leases, holder } };
+}
+
+/**
+ * The leases a Session binds, as the execution authorization of a Run there,
+ * and the bridge of the instance that holds them. A Run there brings none of
+ * its own. One that needs the key is refused while the holder is away; a tool
+ * call waits for it instead.
+ */
+async function sessionLeaseAuthorization(
+  runtime: KodaXRuntime, sessionId: string, hub: RuntimeDaemonReverseBridgeHub | undefined, ownLeases: boolean,
+): Promise<{ readonly approved: Record<string, unknown>; readonly bridge: RuntimeDaemonReverseBridge } | undefined> {
+  const leases = (await runtime.sessions.load(sessionId)).policy?.leases;
+  if (leases?.holder === undefined || (leases.credential === undefined && leases.hostTools === undefined)) return undefined;
+  if (ownLeases) throw daemonError('invalid_params', 'This Session binds the leases its Runs use.', { reason: 'lease_bound_by_session' });
+  const bridge = hub?.heldBy(leases.holder);
+  const credential = leases.credential === undefined ? undefined : bridge?.getCredential(leases.credential);
+  if (leases.credential !== undefined && (credential === undefined || !bridge!.isConnected())) {
+    throw daemonError('execution_binding_unavailable', 'The client that lends this Session its key is away.', { reason: 'lease_holder_away' });
+  }
+  if (bridge === undefined || (leases.hostTools !== undefined && bridge.peekHostTools(leases.hostTools) === undefined)) {
+    throw daemonError('host_tool_unavailable', 'The client that lends this Session its tools has not registered them since the Host started.',
+      { reason: 'lease_holder_away' });
+  }
+  return { bridge, approved: {
+    ...(credential !== undefined ? { credential: { leaseId: credential.id, mode: 'scoped', providers: [...credential.providers] } } : {}),
+    ...(leases.hostTools !== undefined ? { hostTools: { leaseId: leases.hostTools } } : {}),
+  } };
 }
 
 function actorToolRuntimeFactory(authorization: Record<string, unknown> | undefined, sessionId: string,
@@ -2668,6 +2734,8 @@ async function bindTrustedRunInput(input: {
   readonly reverseBridge: RuntimeDaemonReverseBridge;
   readonly baseExtensionRuntime?: ExtensionRuntimeContract;
   readonly trustedProductPreparation?: true;
+  /** The bridge is the Session lease holder's, so looking at its leases must not resume them for it. */
+  readonly leasesBoundBySession?: true;
 }): Promise<Record<string, unknown>> {
   const credentialBinding = optionalRecord(input.params.credential);
   const hostToolBinding = optionalRecord(input.params.hostTools);
@@ -2695,7 +2763,7 @@ async function bindTrustedRunInput(input: {
       ? undefined
       : requireStringField(hostToolBinding, "leaseId");
   if (hostToolLeaseId !== undefined) {
-    rejectHostToolNameCollisions(input.reverseBridge, hostToolLeaseId);
+    rejectHostToolNameCollisions(input.reverseBridge, hostToolLeaseId, input.leasesBoundBySession === true);
   }
   const hostToolRuntime =
     hostToolLeaseId === undefined
@@ -2788,8 +2856,10 @@ async function bindTrustedRunInput(input: {
 function rejectHostToolNameCollisions(
   reverseBridge: RuntimeDaemonReverseBridge,
   leaseId: string,
+  peek = false,
 ): void {
-  const lease = reverseBridge.getHostTools(leaseId);
+  // Looking up a lease of the submitter's own client also resumes it, as v1 always did.
+  const lease = peek ? reverseBridge.peekHostTools(leaseId) : reverseBridge.getHostTools(leaseId);
   if (lease === undefined) return; // createHostToolRuntime reports the missing lease.
   const registered = new Set(listTools());
   const collisions = lease.tools
