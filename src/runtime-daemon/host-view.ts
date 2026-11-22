@@ -10,7 +10,7 @@
 import type { ClientInteraction, ClientSession, ClientSessionView, ClientViewItem } from '@kodax-ai/coding/client-contract';
 
 import { HostProtocolError, hostRpcNotification } from '../host-protocol/codec.js';
-import { LocalSessionView, SessionView } from '../host-protocol/view.js';
+import type { LocalSessionView, SessionView } from '../host-protocol/view.js';
 import { diffSessionView, type SyncItem, type SyncView } from '../host-protocol/view-sync.js';
 import type { RuntimeWorkflowSummary } from '../sdk-runtime.js';
 import { STREAMING_RUN_PHASES, type ItemBoundedSessionView } from '../session-view.js';
@@ -59,8 +59,8 @@ const VIEW_WORKFLOWS = 50;
 type V1Call = (method: RuntimeDaemonMethod, params?: Readonly<Record<string, unknown>>) => Promise<unknown>;
 
 export interface HostViewStreamsOptions {
-  /** Whether the connection is on the Host's own machine, so its views carry Host paths. */
-  readonly local: boolean;
+  /** The view contract of the connection: the local one, for the Host's own machine, carries Host paths. */
+  readonly contract: typeof SessionView | typeof LocalSessionView;
   /** Where the Sessions in a view name their project. Without it they name none. */
   readonly workspace?: HostWorkspace;
   readonly send: (frame: string) => void;
@@ -94,7 +94,7 @@ export function createHostViewStreams(options: HostViewStreamsOptions): HostView
   const streams = new Map<string, Stream>();
   /** Streams by the v1 subscription that follows their workflows. */
   const workflowStreams = new Map<string, Stream>();
-  const contract = options.local ? LocalSessionView : SessionView;
+  const { contract } = options;
   const notify = (method: string, params: Readonly<Record<string, unknown>>): void => {
     options.send(JSON.stringify(hostRpcNotification(method, params)));
   };

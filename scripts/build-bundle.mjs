@@ -146,6 +146,8 @@ const STARTUP_HEAVY_IMPORTS = [
   'pdfjs-dist',
   'playwright-core',
   'pptxgenjs',
+  // The v2 protocol schemas; only a process that serves v2 loads them (host-rpc-protocol.ts).
+  'zod',
 ];
 const RESUME_HEAVY_IMPORTS = [
   ...STARTUP_HEAVY_IMPORTS,
@@ -425,7 +427,7 @@ const cliResult = await build({
   ...commonOptions,
   metafile: true,
   entryPoints: [path.join(repoRoot, 'src/kodax_cli.ts')],
-  external: [...external, './provider-auth-cli.js', './storage-repair-cli.js', './kodax_doctor.js', './one-shot-task.js', './history-turn.js', './client-history.js', './maintenance-scheduler.js', './acp_server.js', './integration-cli.js'],
+  external: [...external, './provider-auth-cli.js', './storage-repair-cli.js', './kodax_doctor.js', './one-shot-task.js', './history-turn.js', './client-history.js', './maintenance-scheduler.js', './acp_server.js', './integration-cli.js', './host-rpc-protocol.js'],
   plugins: [...commonOptions.plugins, {
     name: 'lazy-cli-history-reader',
     setup(builder) {
@@ -442,11 +444,11 @@ assertSingleProviderCredentialModule('CLI', cliResult);
 
 const cliBytes = statSync(path.join(distDir, 'kodax_cli.js')).size;
 if (writeMetafile) writeFileSync(path.join(distDir, 'cli-meta.json'), JSON.stringify(cliResult.metafile));
-// Match the published-artifact fence: preserve 49 KiB of CLI headroom.
-// Audited program data stays in packaged resources, without trimming behavior.
-// Audited Windows programs are packaged intact instead of carried as JS literals.
-// See docs/designs/beta3-cli-reserve-audit-2026-11-07.md.
-assertBundleSize('CLI', cliBytes, 5 * 1024 * 1024 - 49 * 1024);
+// A tripwire on growth, not a startup measure: startup is guarded by the eager
+// import boundary above. The outer limit is 5.25 MiB; 49 KiB stays free for
+// the native manifests the universal release artifact adds. Raising it needs a
+// cut analysis first (docs/DD.md "CLI bundle budget").
+assertBundleSize('CLI', cliBytes, 5376 * 1024 - 49 * 1024);
 log(`  ✓ dist/kodax_cli.js (${(cliBytes / 1024).toFixed(0)} kB)`);
 
 // Bare `-r` must show the picker without evaluating the full CLI graph.
@@ -516,6 +518,7 @@ sdkEntryPoints['one-shot-task'] = path.join(repoRoot, 'src/one-shot-task.ts');
 sdkEntryPoints['history-turn'] = path.join(repoRoot, 'src/history-turn.ts');
 sdkEntryPoints['client-history'] = path.join(repoRoot, 'src/client-history.ts');
 sdkEntryPoints['maintenance-scheduler'] = path.join(repoRoot, 'src/runtime-daemon/maintenance-scheduler.ts');
+sdkEntryPoints['host-rpc-protocol'] = path.join(repoRoot, 'src/runtime-daemon/host-rpc-protocol.ts');
 sdkEntryPoints.acp_server = path.join(repoRoot, 'src/acp_server.ts');
 sdkEntryPoints['integration-cli'] = path.join(repoRoot, 'src/integration-cli.ts');
 

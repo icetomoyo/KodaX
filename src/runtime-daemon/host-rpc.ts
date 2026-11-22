@@ -10,9 +10,7 @@ import {
 } from '@kodax-ai/agent';
 
 import { HostProtocolError, hostRpcNotification, type HostErrorCode } from '../host-protocol/codec.js';
-import { createHostConnection } from '../host-protocol/connection.js';
-import { LEASE_NOTIFICATIONS } from '../host-protocol/lease.js';
-import { HOST_METHODS, type HostLimits, type HostMethodName, type HostParams } from '../host-protocol/methods.js';
+import type { HostLimits, HostMethodName, HostParams } from '../host-protocol/methods.js';
 import type {
   ClientCommandResult, ClientExecutionFactsPage, ClientExitReceipt, ClientHistoryTurnResolution, ClientHistoryTurnSelector,
   ClientHistoryTurnTarget, ClientInputAcceptance, ClientInteraction, ClientInteractionResult, ClientItemContent,
@@ -1339,9 +1337,11 @@ function leaseNotFound(): HostProtocolError {
 }
 
 /** Passes the Host's request for a provider key on as `lease.request`, cut to the contract. */
-function askForCredential(notification: RuntimeDaemonNotification, send: (frame: string) => void): void {
+function askForCredential(
+  notification: RuntimeDaemonNotification, send: (frame: string) => void, protocol: HostRpcProtocol,
+): void {
   const { requestId, brokerVersion: _brokerVersion, ...request } = notification.params as Readonly<Record<string, unknown>>;
-  const params = LEASE_NOTIFICATIONS['lease.request'].params.parse({ ...request, callId: requestId, kind: 'credential' });
+  const params = protocol.LEASE_NOTIFICATIONS['lease.request'].params.parse({ ...request, callId: requestId, kind: 'credential' });
   // A frame that cannot go out throws, and v1 then fails the model call at once instead of at its time limit.
   send(JSON.stringify(hostRpcNotification('lease.request', params)));
 }
@@ -1357,7 +1357,11 @@ function defined(params: Readonly<Record<string, unknown>>): Readonly<Record<str
   return Object.fromEntries(Object.entries(params).filter(([, value]) => value !== undefined));
 }
 
+/** The protocol definitions a v2 peer checks frames against. Load them with {@link loadHostRpcProtocol}. */
+export type HostRpcProtocol = typeof import('./host-rpc-protocol.js');
+
 export interface RuntimeDaemonHostRpcPeerOptions {
+  readonly protocol: HostRpcProtocol;
   /** The options a v1 connection on the same endpoint gets, minus its per-connection sinks. */
   readonly dispatcher: Omit<RuntimeDaemonDispatcherOptions, 'notify' | 'disconnect'>;
   readonly limits: HostLimits;
@@ -1378,8 +1382,8 @@ export function createRuntimeDaemonHostRpcPeer(options: RuntimeDaemonHostRpcPeer
   });
   /** The subscriptions of this connection, once it is admitted. */
   let views: HostViewStreams | undefined;
-  const connection = createHostConnection({
-    methods: HOST_METHODS,
+  const connection = options.protocol.createHostConnection({
+    methods: options.protocol.HOST_METHODS,
     send: options.send,
     disconnect: options.disconnect,
     onInternalError,
@@ -1391,7 +1395,9 @@ export function createRuntimeDaemonHostRpcPeer(options: RuntimeDaemonHostRpcPeer
         });
       }
       const streams = createHostViewStreams({
-        local: runtimeRoleHasPlane(options.dispatcher.role, 'local'),
+        contract: runtimeRoleHasPlane(options.dispatcher.role, 'local')
+          ? options.protocol.LocalSessionView
+          : options.protocol.SessionView,
         ...(options.workspace !== undefined ? { workspace: options.workspace } : {}),
         send: options.send,
         congested: options.congested,
@@ -1403,7 +1409,7 @@ export function createRuntimeDaemonHostRpcPeer(options: RuntimeDaemonHostRpcPeer
         disconnect: options.disconnect,
         // The Host's calls to this client go out on this connection. A reconnect of the same instance takes its leases over.
         notify: (notification) => {
-          if (notification.method === 'credential.request') askForCredential(notification, options.send);
+          if (notification.method === 'credential.request') askForCredential(notification, options.send, options.protocol);
           else streams.receive(notification);
         },
       });

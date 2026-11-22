@@ -22,6 +22,7 @@ import type { KodaXRuntime } from '../sdk-runtime.js';
 import type { RuntimeConnectionRole } from './access.js';
 import type { RuntimeClientLifecycleController } from './client-lifecycle.js';
 import { createRuntimeDaemonHostRpcPeer, hostErrorFromV1, type RuntimeDaemonHostRpcPeerOptions } from './host-rpc.js';
+import * as hostRpcProtocol from './host-rpc-protocol.js';
 import type { RuntimeDaemonManagementController } from './management.js';
 import { createRuntimeDaemonReverseBridgeHub } from './reverse-bridge.js';
 import { createHostWorkspace, type HostWorkspace } from './workspace.js';
@@ -102,6 +103,7 @@ async function connect(
       events.end();
     };
     const peer = createRuntimeDaemonHostRpcPeer({
+      protocol: hostRpcProtocol,
       dispatcher: { ...host, role, runtime, authToken: 'secret', ...(role === 'service' ? { tokenSubject: 'backend' } : {}) },
       limits: { maxFrameBytes: 1024 * 1024 },
       ...(workspace !== undefined ? { workspace } : {}),

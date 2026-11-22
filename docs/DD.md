@@ -525,15 +525,41 @@ Only `llm`, `agent`, `coding`, and `repl` are workspace package build roots.
 ### CLI bundle budget
 
 `scripts/build-bundle.mjs` fails the build when `dist/kodax_cli.js` exceeds
-`5 * 1024 * 1024 - 49 * 1024` bytes (5,071 KiB = 5,192,704 bytes). The builder
+`5376 * 1024 - 49 * 1024` bytes (5,327 KiB = 5,454,848 bytes). The builder
 and `tests/bundled-manual-budget.test.mjs` use the same expression. There is no
-environment override and no automatic growth; the outer limit stays 5 MiB. The
+environment override and no automatic growth. The outer limit is 5.25 MiB; the
+49 KiB below it is kept for the native manifests that the universal release
+artifact adds over a local build. The
 bare-resume entry (`dist/kodax_resume.js`) is limited to 160 KiB and has its own
 heavy-import and input boundaries.
 
 Checks that run before the size check: the eager heavy-import boundary
 (`STARTUP_HEAVY_IMPORTS`), exactly one provider-credential module, and lazy CLI
 externals.
+
+The size limit is a tripwire on growth, not a startup measure. Startup cost
+comes from what the CLI evaluates when it loads, and the import boundary guards
+that. Measured on 2026-11-22 (Windows, Node 22.23.1, median of 21 runs of
+`kodax --version`): 69 KiB of bundled code added about 0 to 5 ms, while one
+eager `zod/v4` import with the v2 method schemas added about 80 ms at 51 KiB.
+`zod` is therefore in `STARTUP_HEAVY_IMPORTS`. The v2 protocol definitions load
+through `src/runtime-daemon/host-rpc-protocol.ts`, a lazy CLI component that a
+Host process imports once before it accepts connections, the same way it loads
+`maintenance-scheduler.js`.
+
+2026-11-22 raise, on `KodaX-next-dev`, from an outer limit of 5 MiB to 5.25 MiB.
+Measured CLI sizes: mainline `790eb3eb9` 5,170,933 bytes; `KodaX-next-dev` at
+`e41739c03` 5,241,918 bytes (+69 KiB, mostly the FEATURE_308 memory store and
+FEATURE_307 side chat); the protocol v2 work 5,411,581 bytes (+166 KiB:
+the Host's v2 server about 125 KiB, the REPL's v2 client about 25 KiB). Cuts
+made: the v2 protocol definitions became the lazy component above (-51 KiB),
+and the v1 auto-mode settings helper moved from `kodax_cli.ts` into a test
+helper. Result 5,358,395 bytes, with 94 KiB of reserve under the new limit.
+Cuts rejected: loading `host-rpc.ts` and `host-view.ts` lazily as well (about
+45 KiB) would put a second copy of `runtime-daemon/server.ts` and its module
+state in the lazy component. Cuts still to come: removing the legacy memory
+plane (FEATURE_309, about 115 KiB) and removing protocol v1 after its
+deprecation window.
 
 Complete static data stays in packaged, hash-verified resources rather than JS
 literals. The Windows Effect Job and Sandbox SID probe programs live in

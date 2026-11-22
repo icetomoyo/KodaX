@@ -8,7 +8,7 @@ import {
   setKodaXDiagnosticSink,
   type KodaXDiagnostic,
 } from '@kodax-ai/agent';
-import { createRuntimeDaemonHostRpcPeer } from './host-rpc.js';
+import { createRuntimeDaemonHostRpcPeer, type HostRpcProtocol } from './host-rpc.js';
 import {
   createRuntimeDaemonDispatcher,
   createRuntimeDaemonRunResultStore,
@@ -56,6 +56,16 @@ function loadHostMaintenance(): Promise<typeof import('./maintenance-scheduler.j
     return import(new URL(component, directory).href) as Promise<typeof import('./maintenance-scheduler.js')>;
   }
   return import('./maintenance-scheduler.js');
+}
+/** The v2 protocol definitions. Loaded on demand like the maintenance scheduler, so a CLI that only connects never imports zod. */
+function loadHostRpcProtocol(): Promise<HostRpcProtocol> {
+  if (typeof KODAX_CLI_LAZY_COMPONENTS !== 'undefined' && KODAX_CLI_LAZY_COMPONENTS && !('Bun' in globalThis)) {
+    const directory = new URL('.', import.meta.url);
+    const component = directory.pathname.endsWith('/chunks/')
+      ? '../host-rpc-protocol.js' : './host-rpc-protocol.js';
+    return import(new URL(component, directory).href) as Promise<HostRpcProtocol>;
+  }
+  return import('./host-rpc-protocol.js');
 }
 
 export interface RuntimeDaemonHostOptions {
@@ -150,10 +160,12 @@ export async function startRuntimeDaemonHost(
   let ready: RuntimeDaemonState;
   try {
     options.commitStartup?.();
+    const protocol = await loadHostRpcProtocol();
     server = await createRuntimeDaemonSocketServer({
       endpoint: options.endpoint,
       createDispatcher: (notify, disconnect) => createRuntimeDaemonDispatcher({ ...dispatcherOptions, notify, disconnect }),
       createHostRpcPeer: (send, disconnect, congested) => createRuntimeDaemonHostRpcPeer({
+        protocol,
         dispatcher: dispatcherOptions,
         limits: { maxFrameBytes: RUNTIME_DAEMON_MAX_FRAME_BYTES },
         send,

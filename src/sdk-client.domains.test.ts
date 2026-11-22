@@ -19,7 +19,7 @@ import { createInteractiveContext, executeCommand, type CommandCallbacks } from 
 import { applyClientSessionMetadata } from '../packages/repl/src/session/client-session.js';
 import { createCliSessionCommands } from './cli-client-plane.js';
 import { createKodaXRuntime } from "../tests/runtime-fixture.js";
-import { createReplRuntimeAutoModeControl } from './kodax_cli.js';
+import { createReplRuntimeAutoModeControl } from '../tests/repl-v1-auto-mode-control.js';
 import { createRuntimeDaemonDispatcher } from './runtime-daemon/server.js';
 import { createRuntimeDaemonRequest } from './runtime-daemon/protocol.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';

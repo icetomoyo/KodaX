@@ -76,7 +76,7 @@ function rig(local = false): Rig {
     congested: false,
     observe: async () => ({ view: undefined }),
     streams: createHostViewStreams({
-      local,
+      contract: local ? LocalSessionView : SessionView,
       send: frame => self.frames.push(JSON.parse(frame) as Frame),
       congested: () => self.congested,
       closeObservation: async (subscriptionId) => { self.calls.push(`close ${subscriptionId}`); },

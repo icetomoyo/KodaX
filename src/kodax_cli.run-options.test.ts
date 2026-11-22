@@ -2,9 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
 import type { KodaXRuntime, RuntimeEvent } from './sdk-runtime.js';
-import {
-  createReplRuntimeAutoModeControl,
-} from './kodax_cli.js';
+import { createReplRuntimeAutoModeControl } from '../tests/repl-v1-auto-mode-control.js';
 import { forwardDaemonCompactionEvent, forwardRunProgressEvent } from './run-progress-events.js';
 
 describe('one-shot runtime option shaping and auto-mode settings', () => {
