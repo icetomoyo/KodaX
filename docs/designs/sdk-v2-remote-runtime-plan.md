@@ -2026,6 +2026,24 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
 - 以 service 身份跑通一个只带业务工具的 Run。
 - 三方场景：service 创建带策略和 Host Tool 租约的 Session，user 在这个 Session 上提交的 Run 能调用到这个工具，并且受策略里的工具上限约束。
 
+**出口核对**（2026-11-23）：除了真浏览器，六条都有测试。
+
+- 端到端验收在 `src/runtime-daemon/host-network-acceptance.test.ts`：
+  - 真实的 `startRuntimeDaemonHost` 读 `host.json`，前面放一个最小反向代理，客户端只连代理；
+  - 用 SDK 自己的 `connectKodaXHost` 连接，JWT 由 loopback JWKS 签发，模型是脚本化的假模型。
+- 这个测试覆盖的标准：
+  - **第一条**：一条经代理的连接上，依次完成提交；带 diff 的审批（允许后文件写入）；回答提问；Stop 一个在等模型的 Run；上传图片并让模型看到；用 `blob.read` 下载 `read` 工具读出的图片（不带 Host 路径）。
+  - **第二条**：两秒 token、续期失败的连接以 `unauthorized`/`credential` 断开，它提交的 Run 照常跑完。三秒 token 的 service 在同一条连接上续期，过了第一次到期仍然在线，它的 Host Tool 租约照样服务后来的 Run。
+  - **第五条**：service 在只放 `lookup_order` 的 Session 里自己提交 Run，模型只看到这个工具，调用由 service 回答。
+- 其余三条已有测试：
+  - 第二条的拒绝陌生 `sub`：`host.test.ts` 和 `serve.test.ts`；
+  - 第三条：`host-rpc.test.ts` 里 user 调可信方法或传特权参数被拒；
+  - 第四条：`host-rpc.test.ts` 的 Host 工具上限（含 `run.startTool`）；
+  - 第六条：`host-rpc.test.ts` 的三方场景。
+- **没覆盖的**：
+  - 真浏览器引擎。Node 的 WebSocket 不发 `Origin`，所以 CORS、cookie 和 CSP 都没跑到。这一条等 M1c 的 Web UI。
+  - 真实的反向代理：测试里只有字节管道，没有 nginx 或 Cloudflare。
+
 **第 1 项的落地细节**（2026-11-22，未经用户确认的取舍）：
 
 - 分三次提交：① 配置块和 JWT 校验；② WS 监听、握手鉴权、心跳、关闭码、`exp` 断开、`auth.renew`；③ 配置热生效、排空通知、`/healthz`。
