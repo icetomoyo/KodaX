@@ -3625,15 +3625,16 @@ describe('the CLI credential binding over a v2 Host client', () => {
 describe('v2 connections from the network, admitted by their credential', () => {
   /** Tokens the test issuer knows, and the credential each stands for. */
   const issued = new Map<string, HostCredential>();
-  const authenticate = async ({ token }: { readonly token: string }): Promise<HostCredential> => {
-    const credential = issued.get(token);
+  /** Without `auth`, the transport already proved who the client is, as a paired browser's cookie does. */
+  const authenticate = async (auth: { readonly token: string } | undefined): Promise<HostCredential> => {
+    const credential = issued.get(auth?.token ?? 'by-transport');
     if (credential === undefined) throw new HostProtocolError('unauthorized', 'The token is not good.', { reason: 'invalid_credential' });
     return credential;
   };
   afterEach(() => issued.clear());
 
   /** A client reaching the bridge as a network transport would carry it, with the reasons the Host gave for hanging up. */
-  async function connectOverNetwork(token: string, scheme: 'jwt' | 'ipc' = 'jwt') {
+  async function connectOverNetwork(token: string | undefined, scheme: 'jwt' | 'ipc' = 'jwt') {
     const reasons: HostCloseReason[] = [];
     let created: ReturnType<typeof createRuntimeDaemonHostRpcPeer> | undefined;
     const client = await connectHostRpc(async (events) => {
@@ -3656,10 +3657,23 @@ describe('v2 connections from the network, admitted by their credential', () => 
       });
       created = peer;
       return { send: frame => queueMicrotask(() => { if (open) peer.receive(frame); }), close: end };
-    }, { client: { name: 'web', version: '1.0.0', instanceId: 'browser-1' }, auth: { scheme, token } });
+    }, { client: { name: 'web', version: '1.0.0', instanceId: 'browser-1' }, ...(token !== undefined ? { auth: { scheme, token } } : {}) });
     cleanup.push(() => client.close());
     return { client, reasons, peer: created! };
   }
+
+  it('admits a client its transport already proved, such as a paired browser, without auth, and has nothing for it to renew', async () => {
+    issued.set('by-transport', { role: 'user', subject: 'dev_0123456789ab' });
+    const { client } = await connectOverNetwork(undefined);
+    expect(client.handshake).toMatchObject({ role: 'user', subject: 'person' });
+    expect(client.handshake.expiresAt).toBeUndefined();
+    await expect(client.request('auth.renew', { token: 'anything' }))
+      .rejects.toMatchObject({ kodaxCode: 'invalid_state', reason: 'credential_does_not_expire' });
+  });
+
+  it('refuses a client with no credential at all', async () => {
+    await expect(connectOverNetwork(undefined)).rejects.toMatchObject({ kodaxCode: 'unauthorized' });
+  });
 
   it('tells an admitted client that the Host is draining, and keeps the connection', async () => {
     issued.set('owner-token', { role: 'user', subject: 'user-42' });

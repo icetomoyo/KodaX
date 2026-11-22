@@ -46,10 +46,11 @@ const InitializeParams = hostParams({
      */
     instanceSecret: z.string().min(32).max(256).optional(),
   }),
+  /** Absent when the transport already proved who the client is, as a paired browser's cookie does. */
   auth: z.strictObject({
-    scheme: z.enum(['ipc', 'jwt', 'pairing']),
+    scheme: z.enum(['ipc', 'jwt']),
     token: z.string().min(1).max(8192),
-  }),
+  }).optional(),
 });
 
 const InitializeResult = hostResult({

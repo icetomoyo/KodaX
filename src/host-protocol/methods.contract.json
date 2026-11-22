@@ -52,8 +52,7 @@
               "type": "string",
               "enum": [
                 "ipc",
-                "jwt",
-                "pairing"
+                "jwt"
               ]
             },
             "token": {
@@ -79,8 +78,7 @@
       "required": [
         "protocol",
         "revision",
-        "client",
-        "auth"
+        "client"
       ],
       "additionalProperties": false
     },

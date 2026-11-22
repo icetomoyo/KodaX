@@ -38,7 +38,8 @@ export type HostRpcDial = (events: HostRpcLinkEvents) => Promise<HostRpcLink>;
 
 export interface HostRpcClientOptions {
   readonly client: HostInitializeParams['client'];
-  readonly auth: HostInitializeParams['auth'];
+  /** Leave it out when the transport carries the credential, such as a browser's device cookie. */
+  readonly auth?: HostInitializeParams['auth'];
   /** Receives what no caller is otherwise told: a listener that threw, a frame that could not be read or sent. */
   readonly onError?: (error: unknown) => void;
 }
@@ -205,7 +206,7 @@ export async function connectHostRpc(dial: HostRpcDial, options: HostRpcClientOp
         protocol: HOST_PROTOCOL,
         revision: HOST_PROTOCOL_REVISION,
         client: options.client,
-        auth: options.auth,
+        ...(options.auth !== undefined ? { auth: options.auth } : {}),
       }),
       new Promise<never>((_resolve, reject) => {
         refuseHandshake = reject;

@@ -60,7 +60,10 @@ export interface HostNetworkServerOptions {
 export interface HostNetworkServer extends HostNetworkListener {
   /** The `host` integration domain: the revision of `host.json` in force, and why the last edit did not apply. */
   status(): IntegrationConfigStatus;
-  /** The browsers paired with this Host, kept in `<configHome>/runtime/devices.json`. */
+  /**
+   * The browsers paired with this Host, kept in `<configHome>/runtime/devices.json`. `pair` throws
+   * `invalid_state` while pairing is off; revoking a device closes its connections as `revoked`.
+   */
   readonly devices: HostDeviceRegistry;
 }
 
@@ -95,6 +98,9 @@ export async function startHostNetworkServer(options: HostNetworkServerOptions):
   let admission = admit((await controller.initialize()).document.server, undefined);
   const connections = new Set<TrackedConnection>();
   const devices = openHostDeviceRegistry({ file: path.join(options.configHome, 'runtime', 'devices.json') });
+  devices.onRevoke((id) => {
+    for (const connection of connections) if (connection.device === id) connection.transport.disconnect('revoked');
+  });
   /** Bumped by every applied edit, so a check that started under the previous one runs again. */
   let generation = 0;
 
@@ -176,7 +182,15 @@ export async function startHostNetworkServer(options: HostNetworkServerOptions):
     ...(listener.port !== undefined ? { port: listener.port } : {}),
     drain: () => listener.drain(),
     status: () => controller.status(),
-    devices,
+    devices: {
+      ...devices,
+      pair(request) {
+        if (pairing() === undefined) {
+          throw new HostProtocolError('invalid_state', 'Pairing is off on this Host: set server.pairing in host.json.', { reason: 'pairing_off' });
+        }
+        return devices.pair(request);
+      },
+    },
     async close() {
       controller.close();
       await listener.close();
@@ -190,8 +204,8 @@ export function createHostAuthenticator(
   verifier: HostJwtVerifier,
 ): HostNetworkConnection['authenticate'] {
   return async (auth) => {
-    if (auth.scheme !== 'jwt') {
-      throw new HostProtocolError('unauthorized', 'This Host accepts a JWT only.', { reason: 'unsupported_auth_scheme' });
+    if (auth?.scheme !== 'jwt') {
+      throw new HostProtocolError('unauthorized', 'This Host accepts a JWT or a paired device only.', { reason: 'unsupported_auth_scheme' });
     }
     const jwt = await verifier.verify(auth.token).catch((error: unknown) => {
       if (!(error instanceof HostJwtError)) throw error;

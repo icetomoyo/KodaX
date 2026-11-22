@@ -31,10 +31,10 @@ describe('createHostAuthenticator', () => {
       .rejects.toMatchObject({ kodaxCode: 'unauthorized', reason: 'subject_not_admitted' });
   });
 
-  it('refuses a credential that is not a JWT before checking anything', async () => {
+  it('refuses a connection that brings no JWT before checking anything', async () => {
     let checked = false;
     const authenticate = createHostAuthenticator(server, verifier(async () => { checked = true; return { subject: 'person-1', expiresAt: 1 }; }));
-    await expect(authenticate({ scheme: 'pairing', token: 't' })).rejects.toMatchObject({ kodaxCode: 'unauthorized', reason: 'unsupported_auth_scheme' });
+    await expect(authenticate(undefined)).rejects.toMatchObject({ kodaxCode: 'unauthorized', reason: 'unsupported_auth_scheme' });
     expect(checked).toBe(false);
   });
 
@@ -192,7 +192,7 @@ describe('a listening Host that reads host.json again when it changes', () => {
   }
 
   it('keeps the devices paired with it in the home', async () => {
-    writeConfig({ owner: 'person-1' });
+    writeConfig({ owner: 'person-1', pairing: true });
     const { devices } = await start();
     devices.redeem(devices.pair({ requestId: 'r1', name: 'Phone' }).code, 'https://laptop.example.test');
     expect(existsSync(path.join(configHome, 'runtime', 'devices.json'))).toBe(true);
@@ -223,6 +223,28 @@ describe('a listening Host that reads host.json again when it changes', () => {
       method: 'POST', headers: { origin: 'https://laptop.example.test' }, body: JSON.stringify({ code: 'any' }),
     });
     expect(refused.status).toBe(404);
+  });
+
+  it('hangs up with revoked on a paired browser the moment its owner revokes it, and refuses its cookie from then on', async () => {
+    writeConfig({ owner: 'person-1', pairing: true });
+    await start();
+    const cookie = await pairBrowser('https://laptop.example.test');
+    const phone = await connect('ignored', 'https://laptop.example.test', undefined, cookie);
+    const [device] = network!.devices.list();
+
+    expect(network!.devices.revoke(device!.id)).toBe(true);
+    await vi.waitFor(() => expect(phone.closedWith()).toBe(4403), { timeout: 5_000 });
+    await expect(connect('ignored', 'https://laptop.example.test', undefined, cookie)).rejects.toThrow();
+  });
+
+  it('issues no pairing code while pairing is off, but still lists and revokes devices', async () => {
+    writeConfig({ owner: 'person-1' });
+    const { devices } = await start();
+    expect(() => devices.pair({ requestId: 'r1', name: 'Phone' })).toThrow(expect.objectContaining({
+      kodaxCode: 'invalid_state', reason: 'pairing_off',
+    }));
+    expect(devices.list()).toEqual([]);
+    expect(devices.revoke('dev_000000000000')).toBe(false);
   });
 
   it('serves the web pages in its web root on the same port', async () => {

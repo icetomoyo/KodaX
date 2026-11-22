@@ -43,7 +43,7 @@ function loopback(call: HostAdmission['call'] = async (_method, params) => ({ te
     disconnect: () => queueMicrotask(end),
     onInternalError: () => undefined,
     admit: async ({ auth }) => {
-      if (auth.token !== 'secret') throw new HostProtocolError('unauthorized', 'The credential is not valid.');
+      if (auth?.token !== 'secret') throw new HostProtocolError('unauthorized', 'The credential is not valid.');
       return {
         role: 'owner', subject: 'person', host: { id: 'runtime_1', version: '0.0.0-test' },
         features: [], locks: [], limits: { maxFrameBytes: 1024 }, call, close: () => undefined,

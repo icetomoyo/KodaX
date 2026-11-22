@@ -1447,7 +1447,7 @@ export function createRuntimeDaemonHostRpcPeer(
         }, Math.min(Math.max(expiresAt - Date.now(), 0), MAX_TIMER_MS));
       };
       const renew = async (token: string, afterAnswer: (run: () => void) => void): Promise<{ expiresAt?: number }> => {
-        if (credential === undefined || options.authenticate === undefined) {
+        if (credential?.expiresAt === undefined || options.authenticate === undefined || auth === undefined) {
           throw new HostProtocolError('invalid_state', "This connection's credential does not expire, so it has nothing to renew.", {
             reason: 'credential_does_not_expire',
           });
@@ -1510,7 +1510,7 @@ export function createRuntimeDaemonHostRpcPeer(
       try {
         // A network credential was checked above; only the local one is the shared secret v1 compares.
         await v1('initialize', {
-          ...(credential === undefined ? { token: auth.token } : {}), clientInfo: client, connectionPurpose: 'client',
+          ...(credential === undefined && auth !== undefined ? { token: auth.token } : {}), clientInfo: client, connectionPurpose: 'client',
         });
       } catch (error: unknown) {
         dispatcher.close();
@@ -1573,10 +1573,10 @@ export function createRuntimeDaemonHostRpcPeer(
     const unsupported = (message: string): HostProtocolError =>
       new HostProtocolError('unauthorized', message, { reason: 'unsupported_auth_scheme' });
     if (options.authenticate === undefined) {
-      if (auth.scheme !== 'ipc') throw unsupported('This endpoint accepts the local IPC credential only.');
+      if (auth?.scheme !== 'ipc') throw unsupported('This endpoint accepts the local IPC credential only.');
       return { role: options.dispatcher.role, tokenSubject: options.dispatcher.tokenSubject };
     }
-    if (auth.scheme === 'ipc') throw unsupported('A network connection cannot use the local IPC credential.');
+    if (auth?.scheme === 'ipc') throw unsupported('A network connection cannot use the local IPC credential.');
     const credential = await options.authenticate(auth);
     return { role: credential.role, tokenSubject: credential.role === 'service' ? credential.subject : undefined, credential };
   }

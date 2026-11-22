@@ -164,7 +164,8 @@ describe('host connection handshake', () => {
     ['another protocol', { ...INITIALIZE, protocol: 'kodax/3' }],
     ['an unknown field', { ...INITIALIZE, extra: true }],
     ['a revision below one', { ...INITIALIZE, revision: 0 }],
-    ['a missing credential', { protocol: INITIALIZE.protocol, revision: 1, client: INITIALIZE.client }],
+    // A paired browser's cookie travels in the transport, so a missing credential is for the admitter to judge.
+    ['a credential scheme it does not know', { ...INITIALIZE, auth: { scheme: 'pairing', token: 't' } }],
   ])('rejects a handshake with %s and lets the client try again', async (_name, params) => {
     const h = harness();
     const reply = await h.request('i', 'initialize', params);
