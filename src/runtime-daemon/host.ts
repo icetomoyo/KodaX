@@ -8,6 +8,7 @@ import {
   setKodaXDiagnosticSink,
   type KodaXDiagnostic,
 } from '@kodax-ai/agent';
+import type { HostBlobStore } from './host-blobs.js';
 import { createRuntimeDaemonHostRpcPeer, type HostRpcProtocol } from './host-rpc.js';
 import type { HostHealth } from '../host-server/listener.js';
 import type { HostNetworkServer } from '../host-server/serve.js';
@@ -86,6 +87,8 @@ export interface RuntimeDaemonHostOptions {
    * over the network as well. A Host that listens stays up without clients.
    */
   readonly networkConfigHome?: string;
+  /** Where the runtime keeps its Sessions. The blobs clients upload live with them; without it the Host takes none. */
+  readonly sessionsDir?: string;
   /** @internal Commit shared ownership before this endpoint admits clients. */
   readonly commitStartup?: () => void;
   /** @internal Tests shorten the Run quiesce bound of a closing Host. */
@@ -120,6 +123,7 @@ export async function startRuntimeDaemonHost(
 
   let server: RuntimeDaemonSocketServer | undefined;
   let network: HostNetworkServer | undefined;
+  let blobs: HostBlobStore | undefined;
   let hostState: HostHealth['state'] = 'starting';
   let scheduleStop: (() => void) | undefined;
   let stopPending = false;
@@ -171,13 +175,16 @@ export async function startRuntimeDaemonHost(
   try {
     options.commitStartup?.();
     const protocol = await loadHostRpcProtocol();
+    blobs = options.sessionsDir === undefined ? undefined : protocol.createHostBlobStore({ sessionsDir: options.sessionsDir });
+    const blobService = blobs === undefined ? {} : { blobs, limits: blobs.limits };
     server = await createRuntimeDaemonSocketServer({
       endpoint: options.endpoint,
       createDispatcher: (notify, disconnect) => createRuntimeDaemonDispatcher({ ...dispatcherOptions, notify, disconnect }),
       createHostRpcPeer: (send, disconnect, congested) => createRuntimeDaemonHostRpcPeer({
         protocol,
         dispatcher: dispatcherOptions,
-        limits: { maxFrameBytes: RUNTIME_DAEMON_MAX_FRAME_BYTES },
+        ...blobService,
+        limits: { maxFrameBytes: RUNTIME_DAEMON_MAX_FRAME_BYTES, ...blobService.limits },
         devices: () => network?.devices,
         send,
         disconnect,
@@ -195,6 +202,8 @@ export async function startRuntimeDaemonHost(
           protocol,
           dispatcher: networkDispatcherOptions,
           ...connection,
+          ...blobService,
+          limits: { ...connection.limits, ...blobService.limits },
           send: transport.send,
           disconnect: transport.disconnect,
           congested: transport.congested,
@@ -258,7 +267,7 @@ export async function startRuntimeDaemonHost(
   // Load only after successful readiness; maintenance must not delay client attach.
   const maintenanceReady = loadHostMaintenance().then(({ startRuntimeDaemonHostMaintenance }) => {
     if (maintenanceStopping || stopPending) return undefined;
-    return startRuntimeDaemonHostMaintenance(options.paths, options.lock.owner, management, reportMaintenanceError);
+    return startRuntimeDaemonHostMaintenance(options.paths, options.lock.owner, management, reportMaintenanceError, blobs);
   }).catch((error: unknown) => { reportMaintenanceError(error); return undefined; });
   let closed = false;
   let closeAttempt: Promise<void> | undefined;

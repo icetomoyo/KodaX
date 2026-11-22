@@ -7,6 +7,7 @@
 import { z } from 'zod/v4';
 
 import { ACTOR_METHODS } from './actor.js';
+import { BLOB_METHODS } from './blob.js';
 import { CATALOG_METHODS } from './catalog.js';
 import { CONFIG_METHODS } from './config.js';
 import { DEVICE_METHODS } from './device.js';
@@ -75,6 +76,12 @@ const InitializeResult = hostResult({
      * the Host as a lost connection. Absent on a local connection.
      */
     idleTimeoutMs: z.int().positive().optional(),
+    /** The most bytes one `blob.write` carries and one `blob.read` returns. */
+    blobChunkBytes: z.int().positive().optional(),
+    /** The most bytes one blob may hold. */
+    maxBlobBytes: z.int().positive().optional(),
+    /** The most bytes all the blobs on the Host may hold together. An upload that would pass it is refused. */
+    blobQuotaBytes: z.int().positive().optional(),
   }),
 });
 
@@ -104,6 +111,7 @@ export const HOST_METHODS = {
   ...VIEW_METHODS,
   ...HISTORY_METHODS,
   ...RUN_METHODS,
+  ...BLOB_METHODS,
   ...INTERACTION_METHODS,
   ...STATS_METHODS,
   ...ACTOR_METHODS,

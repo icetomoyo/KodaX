@@ -38,6 +38,7 @@ import {
   type ClientInteractionRegistries,
 } from "../client-interactions.js";
 import { registerHostCloseQuiesce } from "../runtime-host-close.js";
+import { HOST_BLOB_LIMITS } from "./host-blobs.js";
 import { appendRuntimeDiagnostic, startRuntimeDaemonHost } from "./host.js";
 import * as daemonMaintenance from './maintenance.js';
 import { createRuntimeDaemonClient, type RuntimeDaemonClientTransport } from "./client.js";
@@ -509,6 +510,7 @@ describe("runtime daemon host", () => {
     // An orphan timer would stop a Host without clients; the listener must keep it up.
     const host = await startRuntimeDaemonHost({
       runtime, paths, endpoint: await makeTestEndpoint(), lock, networkConfigHome: home, orphanExitMs: 60_000,
+      sessionsDir: path.join(home, "sessions"),
     });
     cleanupTasks.push(() => host.close());
     const port = readRuntimeDaemonLog(paths).find(entry => entry.message === "Runtime daemon listening on the network.")?.data?.port;
@@ -521,7 +523,8 @@ describe("runtime daemon host", () => {
     expect(person.handshake).toMatchObject({
       role: "user",
       subject: "person",
-      limits: { maxFrameBytes: RUNTIME_DAEMON_MAX_FRAME_BYTES, idleTimeoutMs: 60_000 },
+      // A Host that keeps its Sessions takes blobs, and says how big they may be.
+      limits: { maxFrameBytes: RUNTIME_DAEMON_MAX_FRAME_BYTES, idleTimeoutMs: 60_000, ...HOST_BLOB_LIMITS },
       expiresAt: expect.any(Number),
     });
     await expect(person.request("ping")).resolves.toEqual({});

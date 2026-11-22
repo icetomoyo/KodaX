@@ -396,7 +396,7 @@ export function toViewItem(
     at: wholeNumber(item.timestamp),
     runId: item.sourceRunId,
     inputIds: item.inputIds ?? (item.inputId !== undefined ? [item.inputId] : undefined),
-    attachments: item.attachments,
+    attachments: item.attachments?.map((attachment, index) => ({ ...attachment, blobId: attachmentBlobId(item.id, index) })),
     tool: tool === undefined ? undefined : {
       callId: tool.callId,
       name: tool.name,
@@ -410,6 +410,30 @@ export function toViewItem(
     },
     notice: notice === undefined ? undefined : { kind: notice },
   };
+}
+
+/**
+ * Names an item's attachment for `blob.read`. It holds the item v1 knows and the
+ * attachment's place in it, so reading it goes through v1 like any item read.
+ */
+export function attachmentBlobId(itemId: string, index: number): string {
+  return `a_${Buffer.from(JSON.stringify([itemId, index])).toString('base64url')}`;
+}
+
+/** The item and place an attachment's blobId names. Undefined for any other blobId. */
+export function parseAttachmentBlobId(blobId: string): { readonly itemId: string; readonly index: number } | undefined {
+  if (!blobId.startsWith('a_')) return undefined;
+  let named: unknown;
+  try {
+    named = JSON.parse(Buffer.from(blobId.slice(2), 'base64url').toString('utf8'));
+  } catch {
+    // Not one this Host made; the caller reports it as no such blob.
+    return undefined;
+  }
+  if (!Array.isArray(named) || named.length !== 2) return undefined;
+  const [itemId, index] = named as [unknown, unknown];
+  return typeof itemId === 'string' && Number.isSafeInteger(index) && (index as number) >= 0
+    ? { itemId, index: index as number } : undefined;
 }
 
 /** Times reach the view from several clocks; one that is not a number is left out. */

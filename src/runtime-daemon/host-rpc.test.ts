@@ -29,6 +29,7 @@ import {
 import * as hostRpcProtocol from './host-rpc-protocol.js';
 import { openHostDeviceRegistry } from '../host-server/devices.js';
 import type { RuntimeDaemonManagementController } from './management.js';
+import { createHostBlobStore } from './host-blobs.js';
 import { createRuntimeDaemonReverseBridgeHub } from './reverse-bridge.js';
 import { createHostWorkspace, type HostWorkspace } from './workspace.js';
 
@@ -99,7 +100,7 @@ async function connect(
   /** Proves a reconnect is the same client instance, so it keeps that instance's leases. */
   instanceSecret?: string,
   /** What the Host's network listener adds, such as its paired devices. */
-  network: Pick<RuntimeDaemonHostRpcPeerOptions, 'devices'> = {},
+  network: Pick<RuntimeDaemonHostRpcPeerOptions, 'devices' | 'blobs'> = {},
 ): Promise<HostRpcClient> {
   const client = await connectHostRpc(async (events) => {
     let open = true;
@@ -773,6 +774,118 @@ describe('v2 inputs and Runs served by the v1 implementation', () => {
       localAttachments: [{ kind: 'file', path: path.join(host.homeDir, 'notes.txt') }],
     })).rejects.toMatchObject({ kodaxCode: 'forbidden' });
     expect(host.calls()).toBe(0);
+  });
+});
+
+const ONE_PIXEL_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+type BlobAnswer = { readonly blobId: string; readonly received: number };
+type BlobRead = { readonly data: string; readonly mediaType: string; readonly byteLength: number; readonly sha256: string; readonly nextCursor?: string };
+type BlobFacts = { readonly blobId: string; readonly mediaType: string; readonly byteLength: number; readonly sha256: string };
+type ViewItemFacts = { readonly type: string; readonly attachments?: readonly { readonly blobId: string; readonly path?: string }[] };
+
+/** Uploads bytes to a Session the way a client does: begin, write in one chunk, commit. */
+async function uploadBlob(client: HostRpcClient, sessionId: string, bytes: Buffer, mediaType = 'image/png'): Promise<BlobFacts> {
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  const { blobId } = await client.request('blob.begin', {
+    requestId: `begin-${sha256.slice(0, 8)}`, sessionId, mediaType, byteLength: bytes.length, sha256,
+  }) as BlobAnswer;
+  await client.request('blob.write', { requestId: `write-${sha256.slice(0, 8)}`, sessionId, blobId, offset: 0, data: bytes.toString('base64') });
+  return (await client.request('blob.commit', { requestId: `commit-${sha256.slice(0, 8)}`, sessionId, blobId }) as { blob: BlobFacts }).blob;
+}
+
+describe('v2 blobs', () => {
+  it('takes an image as a blob, hands it to the Run, and gives it back as the attachment of the item', async () => {
+    const host = await makeModelHost();
+    const blobs = createHostBlobStore({ sessionsDir: path.join(host.homeDir, '.kodax', 'sessions') });
+    const user = await connect('user', await host.start(), host.workspace, {}, undefined, { blobs });
+    const { session } = await user.request('session.create', { requestId: 'create-1', project: 'app' }) as SessionAnswer;
+
+    const blob = await uploadBlob(user, session.id, ONE_PIXEL_PNG);
+    expect(blob).toEqual({
+      blobId: expect.any(String), mediaType: 'image/png', byteLength: ONE_PIXEL_PNG.length,
+      sha256: createHash('sha256').update(ONE_PIXEL_PNG).digest('hex'),
+    });
+    const { input } = await user.request('input.submit', {
+      requestId: 'input-1', sessionId: session.id, text: 'What is in this picture?', attachments: [{ blobId: blob.blobId }],
+    }) as InputAnswer;
+    await user.request('run.wait', { runId: input.runId });
+    expect(host.lastRunRequest().text).toContain('"type":"image"');
+
+    const view = await user.request('view.subscribe', {
+      subscriptionId: 'main', target: { kind: 'session', sessionId: session.id },
+    }) as unknown as { readonly snapshot: { readonly items: readonly ViewItemFacts[] } };
+    const attachment = view.snapshot.items.find(item => item.attachments !== undefined)!.attachments![0]!;
+    expect(attachment.path).toBeUndefined();
+    expect(JSON.stringify(view)).not.toContain(host.homeDir.replaceAll('\\', '\\\\'));
+    const read = await user.request('blob.read', { sessionId: session.id, blobId: attachment.blobId }) as BlobRead;
+    expect(read).toEqual({ data: ONE_PIXEL_PNG.toString('base64'), mediaType: 'image/png', byteLength: blob.byteLength, sha256: blob.sha256 });
+    expect(await user.request('blob.read', { sessionId: session.id, blobId: blob.blobId })).toEqual(read);
+
+    // The blobs go with their Session.
+    await user.request('session.delete', { requestId: 'delete-1', sessionId: session.id });
+    await expect(user.request('blob.read', { sessionId: session.id, blobId: blob.blobId }))
+      .rejects.toMatchObject({ kodaxCode: 'not_found', reason: 'blob_not_found' });
+  }, 30_000);
+
+  it('reads a blob in chunks, and asks for a fresh read when the bytes behind a cursor changed', async () => {
+    const host = await makeHost();
+    const blobs = createHostBlobStore({
+      sessionsDir: path.join(host.homeDir, '.kodax', 'sessions'), limits: { blobChunkBytes: 32, maxBlobBytes: 1024, blobQuotaBytes: 4096 },
+    });
+    const user = await connect('user', await host.start(), host.workspace, {}, undefined, { blobs });
+    const { session } = await user.request('session.create', { requestId: 'create-1', project: 'app' }) as SessionAnswer;
+    const { blobId } = await user.request('blob.begin', {
+      requestId: 'begin-1', sessionId: session.id, mediaType: 'image/png', byteLength: ONE_PIXEL_PNG.length,
+      sha256: createHash('sha256').update(ONE_PIXEL_PNG).digest('hex'),
+    }) as BlobAnswer;
+    for (let offset = 0; offset < ONE_PIXEL_PNG.length; offset += 32) {
+      await user.request('blob.write', {
+        requestId: `write-${offset}`, sessionId: session.id, blobId, offset, data: ONE_PIXEL_PNG.subarray(offset, offset + 32).toString('base64'),
+      });
+    }
+    await user.request('blob.commit', { requestId: 'commit-1', sessionId: session.id, blobId });
+
+    const chunks: Buffer[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await user.request('blob.read', { sessionId: session.id, blobId, ...(cursor !== undefined ? { cursor } : {}) }) as BlobRead;
+      chunks.push(Buffer.from(page.data, 'base64'));
+      cursor = page.nextCursor;
+    } while (cursor !== undefined);
+    expect(Buffer.concat(chunks)).toEqual(ONE_PIXEL_PNG);
+    const first = await user.request('blob.read', { sessionId: session.id, blobId }) as BlobRead;
+    await expect(user.request('blob.read', { sessionId: session.id, blobId, cursor: first.nextCursor!.replace(/\.[a-f0-9]+$/, `.${'0'.repeat(64)}`) }))
+      .rejects.toMatchObject({ kodaxCode: 'resync_required', reason: 'blob_changed' });
+    await expect(user.request('blob.read', { sessionId: session.id, blobId, cursor: 'nonsense' }))
+      .rejects.toMatchObject({ kodaxCode: 'invalid_params', reason: 'invalid_cursor' });
+  });
+
+  it('refuses an attachment that is not an image, one never uploaded, and a blob for a Session that does not exist', async () => {
+    const host = await makeModelHost();
+    const blobs = createHostBlobStore({ sessionsDir: path.join(host.homeDir, '.kodax', 'sessions') });
+    const user = await connect('user', await host.start(), host.workspace, {}, undefined, { blobs });
+    const { session } = await user.request('session.create', { requestId: 'create-1', project: 'app' }) as SessionAnswer;
+    const notes = await uploadBlob(user, session.id, Buffer.from('plain words'), 'text/plain');
+
+    await expect(user.request('input.submit', {
+      requestId: 'input-1', sessionId: session.id, text: 'Read this.', attachments: [{ blobId: notes.blobId }],
+    })).rejects.toMatchObject({ kodaxCode: 'invalid_params', reason: 'attachment_not_image' });
+    await expect(user.request('input.submit', {
+      requestId: 'input-2', sessionId: session.id, text: 'Look.', attachments: [{ blobId: `b_${'0'.repeat(64)}` }],
+    })).rejects.toMatchObject({ kodaxCode: 'not_found', reason: 'blob_not_found' });
+    await expect(user.request('blob.begin', {
+      requestId: 'begin-x', sessionId: 'no-such-session', mediaType: 'image/png', byteLength: 4, sha256: '0'.repeat(64),
+    })).rejects.toMatchObject({ kodaxCode: 'not_found' });
+    expect(host.calls()).toBe(0);
+  });
+
+  it('says blobs are not kept when the Host has no store for them', async () => {
+    const host = await makeHost();
+    const user = await connect('user', await host.start(), host.workspace);
+    const { session } = await user.request('session.create', { requestId: 'create-1', project: 'app' }) as SessionAnswer;
+    await expect(user.request('blob.begin', {
+      requestId: 'begin-1', sessionId: session.id, mediaType: 'image/png', byteLength: 4, sha256: '0'.repeat(64),
+    })).rejects.toMatchObject({ kodaxCode: 'invalid_state', reason: 'blobs_unavailable' });
   });
 });
 

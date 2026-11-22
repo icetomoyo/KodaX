@@ -29,10 +29,12 @@ import type {
 } from '../sdk-runtime.js';
 import type { RuntimeCredentialLease } from '../client-host-authorization.js';
 import type { HostDeviceRegistry } from '../host-server/devices.js';
+import type { HostBlobStore } from './host-blobs.js';
 import { boundViewItem } from '../session-view.js';
 import { runtimeAuthorizationSubject, runtimeRoleHasPlane, type RuntimeConnectionRole } from './access.js';
 import {
-  createHostViewStreams, toInteraction, toSessionResource, toViewItem, toWorkflow, utcMilliseconds, type HostViewStreams,
+  createHostViewStreams, parseAttachmentBlobId, toInteraction, toSessionResource, toViewItem, toWorkflow, utcMilliseconds,
+  type HostViewStreams,
 } from './host-view.js';
 import {
   createRuntimeDaemonRequest,
@@ -117,6 +119,7 @@ interface HostCaller {
   /** Whether the connection is an application's backend and not a person at a client. */
   readonly service: boolean;
   readonly workspace?: HostWorkspace;
+  readonly blobs?: HostBlobStore;
   readonly views: HostViewStreams;
   /** Aborted when the client cancels this call or the connection ends. */
   readonly signal: AbortSignal;
@@ -567,7 +570,9 @@ const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } =
     };
   },
 
-  'input.submit': async ({ requestId, sessionId, text, delivery, targetRunId, localAttachments, budget, prompt, leases }, v1) => {
+  'input.submit': async ({
+    requestId, sessionId, text, delivery, targetRunId, localAttachments, attachments, budget, prompt, leases,
+  }, v1, caller) => {
     if ((delivery === 'steer' || delivery === 'redirect') && targetRunId === undefined) {
       throw new HostProtocolError('invalid_params', 'A steer or redirect input names the Run it acts on.', {
         reason: 'target_run_required',
@@ -579,9 +584,13 @@ const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } =
         reason: 'run_options_not_allowed',
       });
     }
+    const uploaded = attachments === undefined ? []
+      : await Promise.all(attachments.map(attachment => uploadedImage(requireBlobs(caller), sessionId, attachment)));
+    const inputArtifacts = [...localAttachments ?? [], ...uploaded];
     // The input's id is the requestId: v1 already starts one Run per input id and refuses another intent under it.
     const accepted = await v1('input.submit', defined({
-      sessionId, inputId: requestId, text, delivery, targetRunId, inputArtifacts: localAttachments, runOptions,
+      sessionId, inputId: requestId, text, delivery, targetRunId, runOptions,
+      inputArtifacts: inputArtifacts.length > 0 ? inputArtifacts : undefined,
       authorization: await leaseAuthorization(v1, leases),
     })) as ClientInputAcceptance;
     return { input: toInput(accepted) };
@@ -593,9 +602,37 @@ const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } =
     }
     return { input: toInput(accepted) };
   },
-  'input.withdraw': async ({ sessionId, inputId }, v1) => {
+  'input.withdraw': async ({ sessionId, inputId }, v1, caller) => {
     const { inputArtifacts, ...input } = await v1('input.withdraw', { sessionId, inputId }) as ClientSubmitInput;
-    return { input: { ...input, id: input.inputId, localAttachments: inputArtifacts } };
+    // Attachments are Host paths, uploaded images among them; a client elsewhere gets none.
+    return { input: { ...input, id: input.inputId, localAttachments: caller.local ? inputArtifacts : undefined } };
+  },
+
+  'blob.begin': async ({ sessionId, mediaType, byteLength, sha256 }, v1, caller) => {
+    const blobs = requireBlobs(caller);
+    if (await v1('session.load', { sessionId }) === null) {
+      throw new HostProtocolError('not_found', 'The Host has no such Session.', { reason: 'session_not_found' });
+    }
+    return blobs.begin(sessionId, { mediaType, byteLength, sha256 });
+  },
+  'blob.write': async ({ sessionId, blobId, offset, data }, _v1, caller) =>
+    requireBlobs(caller).write(sessionId, blobId, offset, Buffer.from(data, 'base64')),
+  'blob.commit': async ({ sessionId, blobId }, _v1, caller) => ({ blob: await requireBlobs(caller).commit(sessionId, blobId) }),
+  'blob.read': async ({ sessionId, blobId, cursor }, v1, caller) => {
+    const from = cursor === undefined ? undefined : readBlobCursor(cursor);
+    const offset = from?.offset ?? 0;
+    const attachment = parseAttachmentBlobId(blobId);
+    const chunk = attachment === undefined
+      ? await readUploadedBlob(requireBlobs(caller), sessionId, blobId, offset)
+      : await readAttachment(v1, sessionId, attachment, offset);
+    if (from !== undefined && from.sha256 !== chunk.sha256) {
+      throw new HostProtocolError('resync_required', 'The blob changed; read it again from the start.', { reason: 'blob_changed' });
+    }
+    const next = offset + chunk.length;
+    return {
+      data: chunk.data, mediaType: chunk.mediaType, byteLength: chunk.byteLength, sha256: chunk.sha256,
+      nextCursor: next < chunk.byteLength ? `${next}.${chunk.sha256}` : undefined,
+    };
   },
 
   'run.get': async ({ runId }, v1) => ({ run: toRun(await v1('run.get', { runId }) as RuntimeRunStatus) }),
@@ -1265,6 +1302,67 @@ function runOutcome(status: RuntimeRunStatus): Readonly<Record<string, unknown>>
   };
 }
 
+/** A chunk of a blob as `blob.read` answers it, with how many bytes it holds. */
+interface BlobChunk {
+  readonly data: string;
+  readonly length: number;
+  readonly mediaType: string;
+  readonly byteLength: number;
+  readonly sha256: string;
+}
+
+function requireBlobs(caller: HostCaller): HostBlobStore {
+  if (caller.blobs === undefined) {
+    throw new HostProtocolError('invalid_state', 'This Host keeps no blobs.', { reason: 'blobs_unavailable' });
+  }
+  return caller.blobs;
+}
+
+async function readUploadedBlob(blobs: HostBlobStore, sessionId: string, blobId: string, offset: number): Promise<BlobChunk> {
+  const { data, ref } = await blobs.read(sessionId, blobId, offset);
+  return { data: data.toString('base64'), length: data.length, mediaType: ref.mediaType, byteLength: ref.byteLength, sha256: ref.sha256 };
+}
+
+/** Reads an item's attachment the way v1 does, in its 512 KiB chunks. */
+async function readAttachment(
+  v1: V1Call,
+  sessionId: string,
+  attachment: { readonly itemId: string; readonly index: number },
+  offset: number,
+): Promise<BlobChunk> {
+  const content = await v1('session.view.item', {
+    sessionId, itemId: attachment.itemId, part: 'attachment', attachmentIndex: attachment.index, attachmentOffset: offset,
+  }) as ClientItemContent | null;
+  if (content?.image === undefined) throw new HostProtocolError('not_found', 'The Session holds no such blob.', { reason: 'blob_not_found' });
+  const { image } = content;
+  return {
+    data: image.dataBase64, length: Buffer.byteLength(image.dataBase64, 'base64'),
+    mediaType: image.mediaType, byteLength: image.totalLength, sha256: image.sha256,
+  };
+}
+
+/** An uploaded image as v1 takes an input artifact. Only images go to a model as they are. */
+async function uploadedImage(
+  blobs: HostBlobStore,
+  sessionId: string,
+  attachment: { readonly blobId: string; readonly name?: string },
+): Promise<Readonly<Record<string, unknown>>> {
+  const { path, mediaType } = await blobs.file(sessionId, attachment.blobId);
+  if (!mediaType.startsWith('image/')) {
+    throw new HostProtocolError('invalid_params', `The blob ${attachment.blobId} is ${mediaType}; an input takes images only.`, {
+      reason: 'attachment_not_image',
+    });
+  }
+  return defined({ kind: 'image', path, mediaType, name: attachment.name });
+}
+
+/** Where the next chunk of a blob starts, and which bytes the chunks belong to. */
+function readBlobCursor(cursor: string): { readonly offset: number; readonly sha256: string } {
+  const match = /^(0|[1-9][0-9]{0,14})\.([a-f0-9]{64})$/.exec(cursor);
+  if (match === null) throw new HostProtocolError('invalid_params', 'cursor did not come from blob.read.', { reason: 'invalid_cursor' });
+  return { offset: Number(match[1]), sha256: match[2]! };
+}
+
 /** Where the next page of an item starts, and which writing of its text the pages belong to. */
 function readItemCursor(cursor: string): { readonly offset: number; readonly revision: number } {
   const [offset, revision, ...rest] = cursor.split('.')
@@ -1403,6 +1501,8 @@ export interface RuntimeDaemonHostRpcPeerOptions {
   readonly workspace?: HostWorkspace;
   /** The paired devices, while the Host listens on the network. */
   readonly devices?: () => HostDeviceAdmin | undefined;
+  /** Where the Host keeps the blobs clients upload. Without it the Host takes none. */
+  readonly blobs?: HostBlobStore;
   readonly send: (frame: string) => void;
   readonly disconnect: (reason: HostCloseReason) => void;
   /** Whether the client is behind on reading what was already sent. */
@@ -1524,6 +1624,7 @@ export function createRuntimeDaemonHostRpcPeer(
         local: runtimeRoleHasPlane(role, 'local'),
         service: role === 'service',
         ...(options.workspace !== undefined ? { workspace: options.workspace } : {}),
+        ...(options.blobs !== undefined ? { blobs: options.blobs } : {}),
         views: streams,
       };
       views = streams;

@@ -13,4 +13,5 @@ export { HOST_NOTIFICATIONS } from '../host-protocol/host.js';
 export { HOST_METHODS } from '../host-protocol/methods.js';
 export { LocalSessionView, SessionView } from '../host-protocol/view.js';
 export { createHostToolCeiling } from '../host-server/config.js';
+export { createHostBlobStore } from './host-blobs.js';
 export { startHostNetworkServer } from '../host-server/serve.js';

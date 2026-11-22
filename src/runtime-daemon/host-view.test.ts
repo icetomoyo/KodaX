@@ -8,7 +8,9 @@ import { applyViewOps, type SyncItem, type SyncView, type ViewOp } from '../host
 import type { RuntimeWorkflowSummary } from '../sdk-runtime.js';
 import type { ItemBoundedSessionView } from '../session-view.js';
 import { createSessionNoticeEvents } from '../session-view-notices.js';
-import { createHostViewStreams, toSessionView, type HostViewStreams } from './host-view.js';
+import {
+  attachmentBlobId, createHostViewStreams, parseAttachmentBlobId, toSessionView, type HostViewStreams,
+} from './host-view.js';
 import { createRuntimeDaemonNotification } from './protocol.js';
 
 const HOME = '/home/someone/.kodax';
@@ -292,6 +294,16 @@ describe('a view subscription', () => {
     const other = await rig().subscribe(withPaths);
     expect(JSON.stringify(other)).not.toContain(HOME);
     expect(other.snapshot!.items[0]).toMatchObject({ attachments: [{ kind: 'image', mediaType: 'image/png' }], tool: { outputSaved: true } });
+    // Everyone reads the bytes by blobId, which names the item and the attachment's place in it.
+    const { blobId } = (other.snapshot!.items[0] as unknown as { attachments: [{ blobId: string }] }).attachments[0];
+    expect(parseAttachmentBlobId(blobId)).toEqual({ itemId: 'shot', index: 0 });
+  });
+
+  it('knows only the attachment blobIds it makes', () => {
+    expect(parseAttachmentBlobId(attachmentBlobId('item~1', 3))).toEqual({ itemId: 'item~1', index: 3 });
+    for (const blobId of ['b_abc', 'a_', 'a_!!', `a_${Buffer.from('[1,2]').toString('base64url')}`, `a_${Buffer.from('["x",-1]').toString('base64url')}`]) {
+      expect(parseAttachmentBlobId(blobId)).toBeUndefined();
+    }
   });
 });
 

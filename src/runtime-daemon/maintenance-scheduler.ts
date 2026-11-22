@@ -1,4 +1,5 @@
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
+import type { HostBlobStore } from './host-blobs.js';
 import type { RuntimeDaemonManagementController } from './management.js';
 import type { RuntimeDaemonLockOwner, RuntimeDaemonPaths } from './state.js';
 import { createRuntimeDaemonMaintenance } from './maintenance.js';
@@ -10,6 +11,8 @@ export function startRuntimeDaemonHostMaintenance(
   owner: RuntimeDaemonLockOwner,
   management: Pick<RuntimeDaemonManagementController, 'preflight'>,
   onError: (error: unknown) => void,
+  /** The Host's blobs, whose abandoned uploads go with the other temporary files. */
+  blobs?: Pick<HostBlobStore, 'sweep'>,
 ): { close(): Promise<void> } {
   const collector = createRuntimeDaemonMaintenance(paths, owner);
   const retention = createHomeRetention(paths.configHome);
@@ -35,6 +38,11 @@ export function startRuntimeDaemonHostMaintenance(
       if (retained.removed > 0 || retained.retained > 0) emitKodaXDiagnostic({
         source: 'runtime.daemon.maintenance', level: 'info',
         message: 'Unused agent-home state past its retention period was removed.', detail: retained,
+      });
+      const abandoned = await blobs?.sweep(signal) ?? 0;
+      if (abandoned > 0) emitKodaXDiagnostic({
+        source: 'runtime.daemon.maintenance', level: 'info',
+        message: 'Blob uploads nobody finished were removed.', detail: { removed: abandoned },
       });
     },
     onError,

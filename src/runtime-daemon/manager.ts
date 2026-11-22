@@ -227,6 +227,7 @@ async function createClaimedDaemonLease(
         ? { integrationStatuses: options.integrationStatuses }
         : {}),
       ...(options.networkConfigHome !== undefined ? { networkConfigHome: options.networkConfigHome } : {}),
+      sessionsDir: options.sessionsDir ?? path.join(paths.configHome, 'sessions'),
     });
     try {
       const transport = await createRuntimeDaemonSocketClientTransport(endpoint, {

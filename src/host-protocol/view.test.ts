@@ -16,7 +16,7 @@ const localView: LocalSessionView = {
     type: 'tool',
     state: 'settled',
     text: 'saved a screenshot',
-    attachments: [{ kind: 'image', mediaType: 'image/png', path: `${HOME}/media/shot.png` }],
+    attachments: [{ kind: 'image', mediaType: 'image/png', path: `${HOME}/media/shot.png`, blobId: 'a_shot' }],
     tool: { callId: 'call-1', name: 'screenshot', status: 'success', inputText: '{}' },
   }],
   runs: [{ id: 'run-1', phase: 'running', provider: 'anthropic' }],

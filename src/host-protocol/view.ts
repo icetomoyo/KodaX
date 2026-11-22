@@ -29,6 +29,8 @@ export const ItemId = z.string().min(1).max(512);
 
 const Attachment = z.object({
   kind: z.string(),
+  /** Reads the bytes with `blob.read`. */
+  blobId: z.string(),
   mediaType: z.string().optional(),
   width: z.int().optional(),
   height: z.int().optional(),
@@ -74,7 +76,7 @@ export const ViewItem = z.object({
   notice: z.object({ kind: z.string() }).optional(),
 });
 
-/** Until attachments travel as blobs, only a client on the Host's machine can open one, by its path. */
+/** The owner on the Host's machine also gets where each attachment is. */
 export const LocalViewItem = ViewItem.extend({
   attachments: z.array(Attachment.extend({ path: z.string() })).optional(),
 });

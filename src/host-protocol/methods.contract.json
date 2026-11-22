@@ -157,6 +157,21 @@
               "type": "integer",
               "exclusiveMinimum": 0,
               "maximum": 9007199254740991
+            },
+            "blobChunkBytes": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "maxBlobBytes": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "blobQuotaBytes": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
             }
           },
           "required": [
@@ -5946,6 +5961,9 @@
                         "kind": {
                           "type": "string"
                         },
+                        "blobId": {
+                          "type": "string"
+                        },
                         "mediaType": {
                           "type": "string"
                         },
@@ -5964,7 +5982,8 @@
                         }
                       },
                       "required": [
-                        "kind"
+                        "kind",
+                        "blobId"
                       ],
                       "additionalProperties": false
                     }
@@ -7261,6 +7280,9 @@
                         "kind": {
                           "type": "string"
                         },
+                        "blobId": {
+                          "type": "string"
+                        },
                         "mediaType": {
                           "type": "string"
                         },
@@ -7283,6 +7305,7 @@
                       },
                       "required": [
                         "kind",
+                        "blobId",
                         "path"
                       ],
                       "additionalProperties": false
@@ -8745,6 +8768,9 @@
                     "kind": {
                       "type": "string"
                     },
+                    "blobId": {
+                      "type": "string"
+                    },
                     "mediaType": {
                       "type": "string"
                     },
@@ -8763,7 +8789,8 @@
                     }
                   },
                   "required": [
-                    "kind"
+                    "kind",
+                    "blobId"
                   ],
                   "additionalProperties": false
                 }
@@ -8938,6 +8965,9 @@
                     "kind": {
                       "type": "string"
                     },
+                    "blobId": {
+                      "type": "string"
+                    },
                     "mediaType": {
                       "type": "string"
                     },
@@ -8960,6 +8990,7 @@
                   },
                   "required": [
                     "kind",
+                    "blobId",
                     "path"
                   ],
                   "additionalProperties": false
@@ -9397,6 +9428,30 @@
             "required": [
               "kind",
               "path"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "attachments": {
+          "minItems": 1,
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "blobId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "blobId"
             ],
             "additionalProperties": false
           }
@@ -11405,6 +11460,306 @@
           "additionalProperties": {}
         }
       },
+      "additionalProperties": false
+    }
+  },
+  "blob.begin": {
+    "primitive": "command",
+    "plane": "data",
+    "params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "mediaType": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[\\w.+-]+\\/[\\w.+-]+$"
+        },
+        "byteLength": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "requestId",
+        "sessionId",
+        "mediaType",
+        "byteLength",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "blobId": {
+          "type": "string"
+        },
+        "received": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "blobId",
+        "received"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "blob.write": {
+    "primitive": "command",
+    "plane": "data",
+    "params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "blobId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "data": {
+          "type": "string",
+          "format": "base64",
+          "contentEncoding": "base64",
+          "pattern": "^$|^(?:[0-9a-zA-Z+/]{4})*(?:(?:[0-9a-zA-Z+/]{2}==)|(?:[0-9a-zA-Z+/]{3}=))?$"
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "requestId",
+        "sessionId",
+        "blobId",
+        "offset",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "received": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "received"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "blob.commit": {
+    "primitive": "command",
+    "plane": "data",
+    "params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "blobId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "requestId",
+        "sessionId",
+        "blobId"
+      ],
+      "additionalProperties": false
+    },
+    "result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "blob": {
+          "type": "object",
+          "properties": {
+            "blobId": {
+              "type": "string"
+            },
+            "mediaType": {
+              "type": "string"
+            },
+            "byteLength": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "sha256": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "blobId",
+            "mediaType",
+            "byteLength",
+            "sha256"
+          ],
+          "additionalProperties": false
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "blob"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "blob.read": {
+    "primitive": "query",
+    "plane": "data",
+    "params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "blobId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "cursor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "sessionId",
+        "blobId"
+      ],
+      "additionalProperties": false
+    },
+    "result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "string"
+        },
+        "mediaType": {
+          "type": "string"
+        },
+        "byteLength": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "nextCursor": {
+          "type": "string"
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "data",
+        "mediaType",
+        "byteLength",
+        "sha256"
+      ],
       "additionalProperties": false
     }
   },

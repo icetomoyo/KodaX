@@ -9,6 +9,7 @@ import { z } from 'zod/v4';
 import {
   HostPath, hostCommandParams, hostList, hostParams, hostResult, type HostMethodRegistry,
 } from './schema.js';
+import { BlobAttachment } from './blob.js';
 import { RunLeases } from './lease.js';
 import { PromptSpec, RunBudget, SessionRef } from './session.js';
 
@@ -132,6 +133,8 @@ export const RUN_METHODS = {
       delivery: Delivery.optional(),
       targetRunId: RunRef.optional(),
       localAttachments: z.array(LocalAttachment).min(1).max(32).optional(),
+      /** Images the Session holds, uploaded with `blob.*`. */
+      attachments: z.array(BlobAttachment).min(1).max(32).optional(),
       budget: RunBudget.optional(),
       /**
        * Read by the model after the entries of the Session. An entry may not
