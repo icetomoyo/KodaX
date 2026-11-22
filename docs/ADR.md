@@ -4717,11 +4717,14 @@ modes differ only in who may pull the trigger.**
   guard breaks. Pinned by CAP-TOOL-CTX-010 (ama / sa / unset → no `workflowHost`).
   One-level nesting for `wf.workflow(...)` is likewise enforced in the runtime (the
   sub-api's `workflow` throws).
-- **Untrusted-input quarantine is a known non-goal.** KodaX is a single-user CLI;
-  the workflow sandbox protects against an errant *script*, not a malicious
+- **Untrusted-input quarantine is a known non-goal.** A KodaX Host serves one
+  person; the workflow sandbox protects against an errant *script*, not a malicious
   *operator*. We deliberately do not add a capability-quarantine tier for
-  untrusted inputs — there is no multi-tenant consumer (YAGNI; revisit only if a
-  hosted/multi-user surface appears).
+  untrusted inputs. Hosted and multi-user deployments now exist, and ADR-079
+  serves them with one Host per person inside a container or uid the platform
+  provides, so the operator and the person the Host works for remain one trust
+  domain. (Revised 2026-11-21; the earlier text gave "no multi-tenant consumer"
+  as the reason.)
 - **Ceremony on the inline path stays minimal but the hard sandbox stays.** The
   Worker's `run_workflow` runs the model-authored script through the same
   restricted `node:vm` sandbox + manifest validation as everything else (the
@@ -8233,3 +8236,139 @@ failed instead of reporting a failed task.
 - **Keep the throwing contract on the public entries and document it.** It
   breaks every embedder that relied on the direct engine, and the first
   failure ends a `KodaXClient` conversation.
+
+## ADR-079: KodaX Ships a Single-User Host That a Platform Orchestrates; Protocol v2
+
+**Status**: Accepted (2026-11-20). In progress on `KodaX-next-dev`; unreleased.
+The boundary was confirmed on 2026-11-14. Session-level execution policy (D12),
+per-item display bounds (D3) and `auth.renew` (D13) were confirmed on
+2026-11-20. The four primitives (D10), the reference model (D11), the method
+table, the closed Run outcome, the error table and the connection lifecycle
+details were written for revision 4 of the design record and are the working
+design; they have not been confirmed item by item. Extends ADR-075.
+
+**Context**: Existing customers need four deployments: a cloud workspace, a
+local Host with a remote UI, an enterprise private deployment, and a customer
+backend that embeds KodaX with or without a UI. They connect from Node and
+from the browser. The v1 contract assumes three things it never states. The
+client and the Host share a machine, so about 25 fields carry Host paths. They
+share a trust domain, so every connection receives every scope and the server
+accepts `authorization` from anyone. Space is the only consumer, so each need
+added its own method: 189 methods, 55 capability keys, two observation models,
+six idempotency conventions, five revision kinds and 30 error codes without a
+common shape.
+
+**Decision**: KodaX delivers three things: a single-user Host that a platform
+can orchestrate, a language-neutral protocol v2, and Node and browser client
+SDKs. The platform owns tenants, accounts, login, routing, provisioning, TLS,
+quota and billing. The full specification is the design record
+`docs/designs/sdk-v2-remote-runtime-plan.md` while the work is in flight.
+
+1. **D1 Transport.** IPC carries v1 and v2, told apart by the first frame. The
+   network carries v2 over WebSocket only. One port serves the WebSocket,
+   `/healthz` and the A2A mount. `daemon.token` and v1 stay on IPC.
+2. **D2 Protocol style.** JSON-RPC 2.0 without batch or aliases. One `zod/v4`
+   definition per method is the source for the method table, the role and
+   parameter allowlist, JSON Schema, types and reference docs. Every object is
+   strict: an unknown field is `invalid_params`.
+3. **D3 Subscription.** One mechanism, `view.subscribe`: a snapshot, then
+   ordered patches. A patch may be dropped and is repaired by a new snapshot.
+   Each display item has its own size bound.
+4. **D4 Identity and roles.** A connection has a role: `owner` (local IPC),
+   `user` (the owner's token or a paired device) or `service` (a listed
+   backend). Methods belong to one of four planes: data, user settings, trusted
+   and local management. The role decides which planes and which parameters a
+   connection may use, and the default is to refuse. Two identities replace the
+   single principal. The authorization subject says who a request acts for:
+   every human connection is the one person the Host belongs to, and a backend
+   is `service:<sub>`. The client instance identity says which client sent it
+   and keeps its existing formula. Recovery, steer, input withdrawal and side
+   conversations compare the subject. Cleanup on client exit, lease ownership
+   and reverse-call routing follow the instance. Persisted records only gain
+   fields, and a record without a subject is checked against its instance.
+5. **D5 Isolation.** The unit is the home: one home, one Host, one person, in a
+   container or uid the platform provides. The in-process library serves one
+   trust domain per process.
+6. **D6 Tools for server embedding.** Business tools that need idempotency and
+   outcome reconciliation use Host Tool leases. Stateless tools use
+   streamable-http MCP. A Host-level tool ceiling removes file and shell tools
+   for non-coding use.
+7. **D7 No Host paths on the network.** Folded into D11.
+8. **D8 Safe defaults for embedding.** Without an approval callback the
+   in-process library refuses dangerous tools. Allowing everything requires an
+   explicit `allowAll`.
+9. **D9 Negotiation and evolution.** `kodax/2` with one increasing `revision`
+   and a short feature list. Both sides use the highest revision they share.
+   Enumerations shown to people are open with a stated fallback; enumerations
+   used for decisions are closed.
+10. **D10 Four primitives.** Every method is a query, a command, a subscription
+    or a Host request, and each kind has fixed guarantees. A command carries a
+    `requestId` and returns a receipt; a repeat returns the same receipt.
+11. **D11 Reference model.** Only three references cross the network: an opaque
+    id, a path relative to the workspace root, and a blob reference.
+12. **D12 Permission chain.** Host ⊇ Session ⊇ Run. Each layer can only narrow
+    the one above it. Execution policy binds to the Session.
+13. **D13 Connection lifecycle.** Limits before authentication, a heartbeat,
+    named close reasons, and `auth.renew` for the same subject and role.
+
+The first milestone (M0) changes the v1 Host without changing the v1 wire:
+
+- The dispatcher requires a role and refuses every method without one. Only
+  roles with the trusted plane may send `authorization`, `credential` or
+  `hostTools`. A service cannot answer an approval or question addressed to the
+  person. The owner keeps everything it had. The per-role parameter allowlist
+  beyond these three arrives with the strict v2 schemas.
+- Authorization compares the subject, as in D4.
+- A connection whose client stops reading is closed with `overloaded` once its
+  outbound queue passes the limit. The IPC token is compared in constant time.
+- The Host lock records its Linux PID namespace. An owner recorded in another
+  namespace is gone, which lets a restarted container reclaim its home.
+- `daemon serve` exits non-zero when another live Host owns the home. The
+  SDK's own auto-start child keeps exit 0, because its spawner reads that as
+  "another Host won the race".
+- A closing Host stops or suspends its Runs first, for up to 10 seconds, while
+  clients are still connected. It then flushes each connection before hanging
+  up, and closes the Runtime last. Runs stop the way `close()` always stopped
+  them: a checkpointed Run is suspended for recovery and no user Stop is
+  written. On the `daemon serve` stop-signal path the Host close has a
+  90-second deadline, after which the existing process cleanup (up to 160
+  seconds) takes over and the process exits non-zero.
+
+**Consequences**:
+
+- Two local clients of the same Host now act for the same person. A second
+  client can withdraw the first client's queued input, reach its side
+  conversation, steer its plain Run and recover its Run. v1 kept these apart
+  per client instance. A Run that carries an execution binding still accepts
+  steer only from the instance that holds the binding.
+- A process in another PID namespace that shares a home treats a live Host's
+  lock as abandoned. One home must have one Host; the platform guarantees it
+  with a single-writer volume.
+- The Host does not promise to exit inside the Kubernetes default grace period
+  of 30 seconds. Its worst case from SIGTERM to exit is about 250 seconds. A
+  platform that wants no SIGKILL sets its grace period above that. A shorter
+  one is safe: clients normally have their Runs' state within 10 to 12
+  seconds, and a Host killed earlier recovers from its home on the next start.
+- v1 stays for a transition period on IPC only and is then removed.
+
+**Rejected alternatives**:
+
+- **Multi-tenancy inside one process.** The sandbox wraps only the shell tool.
+  MCP stdio servers, extensions, LSP and git run as the Host. The home is read
+  at 132 call sites and by several global registries. It also contradicts
+  ADR-075.
+- **Several people sharing one Host.** Users in one tenant would run shell
+  commands against each other and could poison each other's memory. Preventing
+  that needs access control lists, which is a platform capability.
+- **Built-in OIDC login, gateway, relay, launcher, cross-tenant quota or audit
+  delivery.** Each belongs to the platform and would conflict with the
+  infrastructure customers already run.
+- **One merged network principal.** Closing a browser tab on a phone would
+  clean up Runs started on a laptop, and a remote UI could not recover a Run or
+  see a side conversation started locally.
+- **Loopback-only listening.** In Kubernetes the gateway and the Host are in
+  different Pods, so it would force a sidecar.
+- **Server-sent events as the main channel.** WebSocket is the default; SSE
+  with POST is only a fallback where WebSocket is blocked.
+- **A general operation ledger for idempotency.** Each domain already keeps
+  durable receipts, and the mainline removed the generic envelope once.

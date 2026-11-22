@@ -14,7 +14,7 @@
 可信 Main 的 `authorizeExecution`、canonical `historyBoundary` / Retry `before`、历史完整性与图片引用，以及宿主配置/统计/生命周期边界见 [Space SDK/Host 接缝](SPACE_SDK_SEAMS.md)。这些接缝补齐需要当前 SDK 与 Host，不能仅根据旧包版本假定支持。
 
 2026-11-02 alpha.12 之后的未发布补齐：`productExecutionBinding:1` 支持可信 Main
-默认 Skill 与实际消费时的业务解析，`sessionPromotion:1` 支持原 Session 的 CAS promotion。
+默认 Skill 与实际消费时的业务解析，`sessionPromotion:1` 支持原 Session 的 CAS promotion。promotion 被拒时错误码是 `conflict`，`data.conflict` 区分原因：`revision_conflict` 表示 Session 元数据已变，重新读取后再试；`already_promoted` 表示已被另一个请求提升，重试无效。
 Main 新类型包括 `KodaXClientHostServices`、`RuntimeDefaultSkill`、`RuntimeBusinessBinding`、
 `RuntimeExecutionBindingSnapshot/Request/Resolver/Service`，从 `/client` 与 `/runtime` 导出。
 Product 输入不能携带这些执行 authority；排队拒绝由 `ClientInputAdmissionError` 显式呈现，
@@ -127,7 +127,7 @@ Host owner 实际销毁视图服务时，先停止新的读取、刷新和监听
 | `learning` | `list`, `get`, `getSnapshot`, `events`, `subscribe`, `acknowledge`, `snooze`, `reject`, `disable`, `rollback`, `promote`, `review`, `trust` | 客户端通知状态保持原作用域；治理动作修改 Host 共享事实，沿用已有订阅流 |
 | `sessions` 基本管理 | `create`, `list`, `read`, `delete`, `archive`, `unarchive` | 创建、查询、删除和归档 Host 所有的 Session；`list` 接受项目、scope、归档、分页、tag、surface 过滤 |
 | `sessions` 设置 | `getSettings`, `updateSettings` | 返回原始 Session 覆盖；下一次物理请求采用新选择，patch 的 `null` 清除覆盖并恢复 Host profile 配置，缺失不制造新的执行默认值 |
-| `sessions` 条件设置 | `getSettingsVersioned`, `updateSettingsVersioned` | 读取 `{ revision, value }`；更新必须携带 `{ expectedRevision }`，过期时 `conflict` 且不写入。复用 Host 既有设置 CAS，普通编辑无需使用，不新增操作回执或恢复协议 |
+| `sessions` 条件设置 | `getSettingsVersioned`, `updateSettingsVersioned` | 读取 `{ revision, value }`；更新必须携带 `{ expectedRevision }`，过期时 `conflict` 且不写入，错误的 `data` 是 `{ conflict: 'revision_conflict', currentRevision }`，用来和其他 `conflict` 区分。复用 Host 既有设置 CAS，普通编辑无需使用，不新增操作回执或恢复协议 |
 | `sessions` Auto 诊断 | `getAutoModeStats` | 返回现有 Host Auto 拒绝、熔断和分类器健康事实；非 Auto 为 undefined，不创建第二套权限状态 |
 | `sessions` 显示 | `observe`, `readItem` | 当前显示视图及其替换；补读显示项的完整正文或工具输入 |
 | `sessions` 图片附件 | `readItem(..., {part:'attachment', attachmentIndex, attachmentOffset, expectedImageSha256})` | 读取该 Host 项已附带的 PNG、JPEG、WebP 或 GIF 字节块，返回实际 mediaType；不接受客户端文件路径 |
@@ -198,7 +198,7 @@ Partner persona 不额外禁止 write/bash/edit/子任务；显式工具策略�
 
 `workflows.list` 的 `displayName` 与 `updatedAt` 来自同一 Host process snapshot；更新时间不是开始时间、结束时间或客户端读取时间。旧 Host 的列表缺少更新时间时，SDK 通过已有 `get` 只读补齐，补读失败明确拒绝；未设置显示名称不触发补读。不同 RPC 之间可能有真实进度更新，字段一致性以稳定读取窗口为准，不承诺跨调用原子快照。
 
-`permissions.listGrants` 保留 Host 记录的可选 `sessionId`，用于区分不同 Session 的同标签授权。字段缺失只表示未提供 Session 归属，不能据此推断为全局授权；`persistence` 仍按原语义解释。撤销继续只使用 `grantId + expectedRevision`，显示字段不构成新的授权依据，不公开内部 matcher。
+`permissions.listGrants` 保留 Host 记录的可选 `sessionId`，用于区分不同 Session 的同标签授权。字段缺失只表示未提供 Session 归属，不能据此推断为全局授权；`persistence` 仍按原语义解释。撤销继续只使用 `grantId + expectedRevision`，revision 过期时的 `conflict` 同样带 `data: { conflict: 'revision_conflict', currentRevision }`，显示字段不构成新的授权依据，不公开内部 matcher。线上方法 `permission.grants.revoke` 可以不带 `expectedRevision`，这时按 `grantId` 直接撤销，不做 revision 比较。
 
 Learning/Workflow 订阅的 `ready` 只表示 Host 已完成注册，不表示快照同步。Workflow 可传可选 `onError`；Learning 的 `ready` 及 iterator `next` 保留早期失败，多个 `next` 按 FIFO 接收事件。故障拒绝所有等待并终止观察；显式 `return` 清空事件、令剩余等待 `done`，不会重写已经拒绝的 Promise。主动关闭发生在握手前时 `ready` 拒绝，迟到的成功握手只释放远端订阅。
 
@@ -243,7 +243,7 @@ Ink 的命令结果和设置快捷键反馈通过既有 `sessions.appendNotice` 
 
 命令或 review 的回复丢失时不能透明重放：extension 副作用可能已发生，即使没有 Run 或用户输入可查询。若收到 started 身份，直接跟随原 Run；没有收到身份时只能检查已知领域事实、显示结果不确定并由用户决定后续操作，不能自动重跑 handler。
 
-`memory.forProject` 返回的 controller 仅含已有用户操作。proposal 预览附带 `revision` 和 `expectedFingerprints`，批准/拒绝应回传所见版本，forget 应传已读正文指纹；Host 重新校验精确引用，过期预览不能批准新内容。`reviewerProviderConfigured()` 是取得 plane 时的状态；需要刷新时重新调用 `forProject`。doctor 使用这些查询事实，`ensureOpenTarget` 只验证路径和必要目录，本地编辑器由 UI 打开。Learning 的 acknowledge/snooze 只改变调用客户端的通知状态，disable/promote 等治理动作则对其他客户端可见。
+`memory.forProject` 返回的 controller 仅含已有用户操作。proposal 预览附带 `revision` 和 `expectedFingerprints`，批准/拒绝应回传所见版本，forget 应传已读正文指纹；Host 重新校验精确引用，过期预览不能批准新内容。`reviewerProviderConfigured()` 是取得 plane 时的状态；需要刷新时重新调用 `forProject`。doctor 使用这些查询事实，`ensureOpenTarget` 只验证路径和必要目录，本地编辑器由 UI 打开。Learning 的 acknowledge/snooze 只改变调用客户端的通知状态，disable/promote 等治理动作则对其他客户端可见。Learning 拒绝时的错误码：找不到是 `not_found`（`data.reason: capability_not_found`），名字或 slug 对应多个是 `invalid_params`（`ambiguous_name`），生命周期不允许或该 capability 不支持此动作是 `conflict`（`data.conflict: invalid_transition` / `unsupported_action`），执行期间 capability 已变是 `conflict`（`revision_conflict`），存储损坏是 `data_corrupt`；以前这些都报 `internal_error`。
 
 手动 compact 和领域修改丢失回复后不能自动重放。调用方应读当前历史、预览或领域状态；`compacted: false` 的 `reason` 需原样处理，不能把 Provider 失败显示为“无需压缩”。
 
@@ -304,11 +304,11 @@ Host 超时或 Stop 结算后才到达的回调异常不能改写结果。未回
 | History | `revision`、项 ID、分页 cursor；搜索 entryIndex 仅在该 revision 内稳定 | 不跨 revision 拼接页或按陈旧索引执行分支操作 |
 | 授权/注册/Actor | 各域自己的 ID、revision、路径等 | 遵守对应 CAS/归属约束，不用统一的猜测 revision 替代 |
 
-`inputs.submit` 的 delivery 包含 `immediate`、`after_turn`、`steer`、`redirect`；后两者必须指定 `targetRunId`。同一 inputId 的不同文本、附件或其他意图发生冲突；附件是意图的一部分。`read` 返回 `null` 仅表示该 Host 当前查不到接收记录，不保证跨 Host 重启的全局恰好一次。
+`inputs.submit` 的 delivery 包含 `immediate`、`after_turn`、`steer`、`redirect`；后两者必须指定 `targetRunId`。同一 inputId 的不同文本、附件或其他意图发生冲突；附件是意图的一部分。同一 inputId 再次提交返回原来的 Run，Host 重启之后也一样，期限是这个 Run 的记录还在的期间。`read` 返回 `null` 仅表示该 Host 查不到接收记录；Run 记录被清理之后，同一个 inputId 会被当成新输入。
 
 接收状态 `submitted` 表示进入对话上下文，不证明 Provider 已接收；`queued` 等待安全交付点；`withdrawn` 已撤回；`dropped` 表示目标 Run 在交付前结束，正文未进入上下文。重新提交被丢弃意图使用新 ID。队列 text 是有界预览，编辑撤回内容应使用 `withdraw` 返回的完整原文。
 
-`runs.stop` 的 `accepted` 仅表示本次创建了持久 Stop 请求；返回的 state/outcome/phase 与 Run 真实终态分别解释。`runs.await` 的 `phase: 'unknown'` 表示终态无法确认，例如终态持久化失败；连接可能仍然健康。Host 能力 `actorSettlementConvergence:3` 起，Actor 结算无法确认的 Run 不再停在 unknown，而是以 `failed` + `actor_settlement_not_persisted` + `effectOutcome: 'unknown'` 结束；此后该 Session 保持隔离，`runs.start` 被拒绝，直到 Host 在后台修复或重新接管 Actor 树（无需重启）；只有写盘或隔离前的工具调用永不返回时才需重启 Host；隔离中的 Session 不阻止 Host 停止，preflight 不把它的 Actor turn 计为阻塞项；已请求 Stop 的 Run 或 Workflow 即使执行体不返回也不计为阻塞项，Host 退出后由下一个 Host 标为 `interrupted`。客户端应显示为“已停止，会话恢复中”，不是模型错误，详见 [SDK 迁移指南](SDK_MIGRATION.md#beta11-之后actor-结算收敛-v3未发布)。它绝不是成功或取消，也不保证重新连接可以解决。传输失败通常使在途 Promise reject，应与 unknown 分开处理并保留 error 原因。phase 当前是字符串类型，UI 必须保留未知值的安全显示，不能把不认识的状态当成功。结果中的 error 是错误文本，不能通过是否存在 result 单独推断成功。
+`runs.stop` 的 `accepted` 仅表示本次创建了持久 Stop 请求；返回的 state/outcome/phase 与 Run 真实终态分别解释。`runs.await` 的 `phase: 'unknown'` 表示终态无法确认，例如终态持久化失败；连接可能仍然健康。Host 能力 `actorSettlementConvergence:3` 起，Actor 结算无法确认的 Run 不再停在 unknown，而是以 `failed` + `actor_settlement_not_persisted` + `effectOutcome: 'unknown'` 结束；此后该 Session 保持隔离，`runs.start` 被拒绝，直到 Host 在后台修复或重新接管 Actor 树（无需重启）；只有写盘或隔离前的工具调用永不返回时才需重启 Host；隔离中的 Session 不阻止 Host 停止，preflight 不把它的 Actor turn 计为阻塞项；已请求 Stop 的 Run 或 Workflow 即使执行体不返回也不计为阻塞项，Host 退出后由下一个 Host 标为 `interrupted`。隔离期间 `sessions.load`、`sessions.list` 和会话视图的 `session` 带 `recovery: { state, since, code }`，修复完成后整个字段消失，视图随之更新。`state` 是 `recovering`，进入隔离 10 分钟后变成 `stalled`：后台修复仍在重试，但可能需要人来看；不认识的值按 `recovering` 处理。`since` 是进入隔离的 ISO 时间，只记在内存里，Host 重启后重新计。客户端应显示为“已停止，会话恢复中”，不是模型错误，详见 [SDK 迁移指南](SDK_MIGRATION.md#beta11-之后actor-结算收敛-v3未发布)。它绝不是成功或取消，也不保证重新连接可以解决。传输失败通常使在途 Promise reject，应与 unknown 分开处理并保留 error 原因。phase 当前是字符串类型，UI 必须保留未知值的安全显示，不能把不认识的状态当成功。结果中的 error 是错误文本，不能通过是否存在 result 单独推断成功。
 
 delivery 的队列行为如下；空 queue 不能证明所有已知输入已经交付。
 
@@ -545,7 +545,7 @@ Space 的注册和调用前检查由 Space 单独接入。
 
 以 `failed` 结束且带 `failureDetail` 的 Run，会在会话视图追加并保存一条 `type: 'error'` 项：`sourceRunId` 为该 Run，`text` 等于 `failureDetail.safeMessage`，`afterInputId` 为该 Run 最后交付的输入，因此重开会话后失败仍位于对应输入之后。`cancelled`/`interrupted` 不追加。Provider 用尽恢复后，视图不再写入命令行版“输入 continue/stop”提示；SDK 不处理这两个指令，失败由上述错误项说明。客户端按 `sourceRunId` 是否为当前 Run 决定是否补充 `failureDetail` 详情。
 
-常见边界包括 conflict（意图或 revision 冲突）、not_found、permission_denied、unauthorized、version_incompatible/client_upgrade_required、resync_required/data_changed、runtime_changed、observation_invalidated 和读取超时/取消。不要将这些错误统一吞为“没有数据”或“已完成”。具体码以 [daemon protocol](../src/runtime-daemon/protocol.ts) 及执行域为准，当前协议码表不是纯产品 SDK 的穷尽错误类型。Runtime 自己命名的失败码经 daemon 转成客户端可处理的协议码，原码放在 data 里：冲突类在 `data.conflict`，其余在 `data.reason`。例如 Session 在后台修复 Actor 结算期间，`runs.start` 和 `inputs.submit` 报告 `conflict`，`data.conflict` 为 `actor_settlement_not_persisted` 或 `actor_settlement_retrying`，修复完成后重试即可；以前 daemon 报告的是 `internal_error`。
+常见边界包括 conflict（意图或 revision 冲突）、not_found、permission_denied、unauthorized、version_incompatible/client_upgrade_required、resync_required/data_changed、runtime_changed、observation_invalidated 和读取超时/取消。不要将这些错误统一吞为“没有数据”或“已完成”。具体码以 [daemon protocol](../src/runtime-daemon/protocol.ts) 及执行域为准，当前协议码表不是纯产品 SDK 的穷尽错误类型。Runtime 自己命名的失败码经 daemon 转成客户端可处理的协议码，原码放在 data 里：冲突类在 `data.conflict`，其余在 `data.reason`。例如 Session 在后台修复 Actor 结算期间，`runs.start` 和 `inputs.submit` 报告 `conflict`，`data.conflict` 为 `actor_settlement_not_persisted` 或 `actor_settlement_retrying`，修复完成后重试即可；隔离超过 10 分钟后，`runs.start` 的 `data.conflict` 改为 `recovery_stalled`，修复成功后同样可以重试；以前 daemon 报告的是 `internal_error`。读取或操作一个不存在的 Session 或 Run 报告 `not_found`；这两种情况以前有的路径报告的是 `internal_error`。
 
 普通产品消费者将错误视为 unknown，收窄后展示错误消息；不需要导入底层诊断错误类。低层 Node 宿主可从 `/runtime` 导入既有 `RuntimeDaemonCapabilityUpgradeError`：其 code 为 `daemon_capability_upgrade_required`，包含 capability、recoverable、restartRequired 和可选 preflight。例如构建或旧启动器问题可标为 runtimeBuild/launcherBuild；应展示具体原因，不据这些字符串构建 UI 业务能力矩阵。recoverable/restartRequired 不授权强停忙碌 Host，也不意味着可以自动重试所有操作。该类不从 `/client` 导出，不属于纯数据契约，也不覆盖全部连接/执行错误。
 
@@ -685,8 +685,9 @@ requestedEffort、可选 sentEffort、fallbacks 和 `verified:false`。旧请求
 Plan 模式下批准计划会把该 Session 切换为 accept-edits。
 
 **确定性 inputId。** 同一次计划执行使用由任务身份与计划时间构成的固定 inputId。
-接收不确定时用原 ID 调用 `inputs.read`，不要换新 ID 重发。`read` 返回 null
-只说明当前 Host 查不到记录，跨 Host 重启不保证恰好一次。
+接收不确定时用原 ID 调用 `inputs.read`，不要换新 ID 重发。用原 ID 重发是安全的：
+Run 的记录还在时返回原来的 Run，Host 重启之后也一样。`read` 返回 null
+只说明当前 Host 查不到记录。
 
 **工具上限。** 可信 Main 的 `authorizeExecution` 可通过
 `RuntimeExecutionAuthorization.tools` 或 `profile` 收窄本 Run 的工具集合，需要
@@ -731,6 +732,11 @@ selectors retain their existing low-level semantics.
 closed union: `unresolved_history`, `no_turns`, `no_previous_turn`,
 `turn_not_found`, `unproven_source`, `item_not_found`, `not_canonical`, and
 `incomplete_turn`. An incomplete tool exchange is not a ready turn-end target.
+A view item selector (`source:'view'`) is proved by the input or output identity
+its id carries. Since 2026-11-21 the item no longer has to be in a view at that
+moment: a committed message the view window dropped, or one in a Session nobody
+observes, resolves from the saved conversation. An id whose message was never
+saved still resolves to `unproven_source`.
 History reads, turn selection and derivation use `code:'resync_required'` when
 the saved target expires. `ClientHistoryResyncError.data.reason` is
 `revision_mismatch`, `source_changed`, `selection_expired`, `head_changed`, or

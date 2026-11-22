@@ -167,9 +167,10 @@ Session history is a DAG. Forks keep their parent intact; rewinds create a branc
 KodaX runs a Runtime-owned Actor tree. You can spawn, message, and interrupt child agents from within a task:
 
 ```typescript
-import { runKodaX } from '@kodax-ai/kodax';
+import { allowAll, runKodaX } from '@kodax-ai/kodax';
 
-await runKodaX({ provider: 'zhipu-coding' }, `
+// Without an approval callback only read-only tools run; allowAll runs every tool.
+await runKodaX({ provider: 'zhipu-coding', events: { beforeToolExecute: allowAll } }, `
   spawn_agent("reviewer", "Review packages/llm/src/ for type safety issues")
   spawn_agent("tester",   "Write unit tests for any gaps you find in packages/llm/src/")
   wait_agent("reviewer")

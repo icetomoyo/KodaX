@@ -137,6 +137,40 @@ metadata; changed or newly loaded tools require fresh authorization. Root
 This contract requires `productExecutionProfile.version === 2`; older Hosts fail
 explicitly. See the [Main example and boundaries](../../docs/SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复未发布).
 
+#### Tool calls need an approval callback (unreleased, breaking)
+
+Chinese: [工具调用默认只读](../../docs/SDK_MIGRATION.md#工具调用默认只读未发布).
+
+An in-process entry without `events.beforeToolExecute` now runs only tools
+that only read. Before, no callback meant every call ran.
+
+- Affected entries: `runKodaX`, `startKodaX`, `runManagedTask`,
+  `KodaXClient`, `createKodaXTaskRunner`, `createDefaultCodingAgent`,
+  `authorWorkflowViaWorker` and `runToolInvocation`, from `@kodax-ai/kodax` or `@kodax-ai/coding`.
+  Child agents, Skill invocations, Workflow agents and Script cells inherit
+  the same answer.
+- A tool runs without approval only when it declares `sideEffect: 'readonly'`,
+  such as `read`, `grep` and `glob`. Everything else is refused, including
+  network reads, MCP calls, tool construction and tools KodaX cannot classify.
+- The model receives a tool result that says the host sets no approval
+  callback, so it can stop or explain. The process gets one
+  `KODAX_TOOL_APPROVAL_MISSING` warning.
+- To keep the old behaviour, pass `allowAll`:
+
+  ```ts
+  import { allowAll, runKodaX } from '@kodax-ai/kodax';
+
+  await runKodaX({ provider: 'anthropic', events: { beforeToolExecute: allowAll } }, prompt);
+  ```
+
+- An `auto-mode` guardrail only restricts. Pair it with `allowAll` (or your
+  own callback) for calls it allows to run.
+- `context.resolveShellPermissionMode` describes the mode to the model and to
+  the native text host. It does not approve calls, so `'full-access'` without
+  a callback still runs only tools that read.
+- Unchanged: the Runtime (`runs.start`), the daemon, the CLI and the REPL
+  already approve every call.
+
 #### One prompt chain for every root Run (unreleased)
 
 Chinese: [统一提示词链路](../../docs/SDK_MIGRATION.md#统一提示词链路未发布).
@@ -1039,14 +1073,19 @@ before the first `getAppDataDir('space')` lands at
 `/custom/apps/space/`. Useful for:
 
 - **Tests**: per-test temp dir override.
-- **Multi-tenant**: route different tenants to different home dirs.
+- **A custom home for the whole process**: set it once at startup.
+
+`setAgentConfigHome` sets one value for the whole process. Do not switch it
+per request or per tenant: sessions, credentials, memory and the Runtime's
+registries all read the same home, so two tenants in one process would share
+state. Serve each tenant from its own process or its own Host.
 
 ```ts
 import { setAgentConfigHome, getAppDataDir } from '@kodax-ai/kodax/coding';
 
-setAgentConfigHome('/srv/tenant-42/.kodax');
+setAgentConfigHome('/srv/kodax-home');
 const dir = getAppDataDir('space');
-// dir === '/srv/tenant-42/.kodax/apps/space/'
+// dir === '/srv/kodax-home/apps/space/'
 ```
 
 ---
@@ -1063,7 +1102,7 @@ documenting from type signatures but are worth knowing:
 | `@kodax-ai/kodax/coding` | `startKodaX(opts, prompt): RunningSession` | Non-blocking handle. See [RunningSession docs](#running-session-quick-reference). |
 | `@kodax-ai/kodax/coding` | `createSessionControl()` | Bare `KodaXSessionControl` for advanced wiring. |
 | `@kodax-ai/kodax/coding` | `getAgentConfigPath(name)` | Resolves `<KODAX_HOME>/<name>` dynamically. |
-| `@kodax-ai/kodax/coding` | `setAgentConfigHome(path \| undefined)` | Override KODAX_HOME for tests / multi-tenant. |
+| `@kodax-ai/kodax/coding` | `setAgentConfigHome(path \| undefined)` | Override KODAX_HOME for tests, or once at process start. One home per process. |
 | `@kodax-ai/kodax/coding` | `validateCustomProviderConfig(config)` | Same validator the SDK uses internally — no parallel schemas. |
 | `@kodax-ai/kodax/coding` | `ToolSideEffect` + 4 helpers | Tool metadata (`readonly` / `mutates-fs` / `mutates-shell` / `mutates-network` / `mutates-state`) for plan-mode gates + custom permission UIs. |
 | `@kodax-ai/kodax/coding` | `loadAgentsFiles(opts?)` | Load `AGENTS.md` cascade (project + user + global) for prompt assembly. |
@@ -3410,11 +3449,18 @@ outcome:
   `interrupted`. Reclaim waits until every tool call admitted before the fence
   has returned, and until no other live process owns the tree. Once healed,
   the fence lifts and queued Runs start.
+- While the Session is fenced, `sessions.load()`, `sessions.list()` and the
+  `session` of a session view carry `recovery: { state, since, code }`.
+  `since` is when the fence went up, as an ISO time; it is kept in memory, so
+  it restarts with the Host. `state` is `recovering`. It turns `stalled`
+  ten minutes after the fence went up; repair still retries in the
+  background. From then on `runs.start` rejects with `recovery_stalled`.
+  Treat a `state` you do not know as `recovering`. The field goes away when
+  the Session heals, and an observed view updates with it.
 - A Host restart is needed only when that wait never ends: a Session save
   that never returns, or a tool call admitted before the fence that never
-  returns. If `runs.start` still rejects with `actor_settlement_not_persisted`
-  a few minutes after the Run failed, offer the user a Host restart to recover
-  the Session. While another live process owns the tree, restart does not help;
+  returns. When `recovery.state` turns `stalled`, offer the user a Host
+  restart to recover the Session. While another live process owns the tree, restart does not help;
   `runs.start` then rejects with `actor_owner_conflict` until that process
   exits.
 - A fenced Session never blocks the Host from stopping. Its Actor turns cannot
@@ -3430,8 +3476,8 @@ outcome:
 - Workflow-owned Runs follow the same rules.
 
 Render `failed` + `actor_settlement_not_persisted` as "stopped; this Session
-is recovering", not as a model error, and keep resend disabled until
-`runs.start` is accepted again. `effectOutcome: 'unknown'` means side effects
+is recovering", not as a model error, and keep resend disabled while the
+Session carries `recovery`. `effectOutcome: 'unknown'` means side effects
 admitted before the fence may or may not have happened. Once the host renders
 this state, require the capability so an idle v2 daemon is replaced and an
 unreplaceable one fails the connection:

@@ -16,6 +16,19 @@ Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` �
 目录共用 8,000 UTF-16 单元上限；省略目录项不会删除已绑定的授权。
 `systemPromptOverride` 在根运行上的语义见[统一提示词链路](#统一提示词链路未发布)。
 `sa` 和 `amaw` 都是已弃用的输入，见 [SA 模式退役](#sa-模式退役未发布)。
+进程内入口不传 `events.beforeToolExecute` 时只运行只读工具，见[工具调用默认只读](#工具调用默认只读未发布)。
+
+## 工具调用默认只读（未发布）
+
+破坏性变更。进程内入口不传 `events.beforeToolExecute` 时，只运行只读工具。之前不传回调等于所有调用都运行。
+
+- 涉及的入口：`@kodax-ai/kodax` 和 `@kodax-ai/coding` 的 `runKodaX`、`startKodaX`、`runManagedTask`、`KodaXClient`、`createKodaXTaskRunner`、`createDefaultCodingAgent`、`authorWorkflowViaWorker`、`runToolInvocation`。子 Agent、Skill 调用、Workflow Agent 和 Script 单元沿用同一个答案。
+- 只有声明 `sideEffect: 'readonly'` 的工具不需要批准就能运行，例如 `read`、`grep`、`glob`。其余都被拒绝，包括读网络、MCP 调用、构造工具，以及 KodaX 分辨不出类别的工具。
+- 模型收到的工具结果会说明宿主没有设置批准回调，模型可以停下或向用户说明。进程收到一次 `KODAX_TOOL_APPROVAL_MISSING` 警告。
+- 要保持原来的行为，传 `allowAll`：`events: { beforeToolExecute: allowAll }`（从 `@kodax-ai/kodax` 或 `@kodax-ai/coding` 导入）。
+- `auto-mode` 护栏只做限制。要让它放行的调用真正运行，同时传 `allowAll` 或自己的回调。
+- `context.resolveShellPermissionMode` 用来告诉模型和原生文本宿主当前模式，它不批准调用。所以没有回调时，`'full-access'` 也只运行只读工具。
+- 不变的：Runtime（`runs.start`）、daemon、CLI 和 REPL 本来就会批准每次调用。
 
 ## 统一提示词链路（未发布）
 
@@ -145,7 +158,8 @@ Run 一定会得到终态，不再停在 `unknown` 等待无限重试（GitHub #
 
 1. 把 `failed` + `actor_settlement_not_persisted` 显示为“已停止，此会话正在恢复”，不要当作模型错误。
 2. 在该 Session 上暂不提供立即重发；`runs.start` 恢复接受或排队的 Run 开始后再开放输入。
-   若 Run 失败几分钟后 `runs.start` 仍以 `actor_settlement_not_persisted` 拒绝，提示用户重启 Host 来恢复该会话。
+   隔离期间 Session 带 `recovery` 字段，修好后消失；它的 `state` 变成 `stalled`（隔离满 10 分钟，此后
+   `runs.start` 以 `recovery_stalled` 拒绝）时，提示用户重启 Host 来恢复该会话。
 3. `effectOutcome: 'unknown'` 表示隔离前已放行的副作用可能已经发生。
 4. 完成上述显示后，在 `connectKodaXRuntime` / 自动启动中加入
    `requirements: { actorSettlementConvergence: 3 }`：空闲的 v2 daemon 会被替换，

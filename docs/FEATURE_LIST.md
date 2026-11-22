@@ -36,7 +36,7 @@
 |---|---:|---|---|
 | Completed | 68 | `311, 310, 308, 306, 305, 304, 303, 302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 3 | `307, 298, 225` | `307`: R1–R6 hardening and verification per [side-chat plan](designs/side-chat-plan.md). `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
-| Planned, SDK v2 | 2 | `312, 313` | Specify in the SDK v2 contract on `KodaX-next-dev`; only the stall cap of `313` can land on mainline first. |
+| Planned, SDK v2 | 2 | `312, 313` | `312` and `313` are implemented on `KodaX-next-dev`, unreleased; they ship with the SDK v2 work. `313`, including its stall limit, is built wholly on `KodaX-next-dev`; mainline adds nothing. |
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
 | Planned, 0.8.x | 11 | `278, 279, 282, 283, 285, 280, 309, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
@@ -2469,8 +2469,8 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
-| `312` | Stable Product History Identity | SDK / Session History | High | SDK v2 | [Addition](#2026-11-21-feature_312-addition) — Planned; design pending in the SDK v2 contract |
-| `313` | Queryable Session Recovery State | SDK / Runtime Recovery | High | SDK v2; stall cap on mainline | [Addition](#2026-11-21-feature_313-addition) — Planned; design pending in the SDK v2 contract |
+| `312` | Stable Product History Identity | SDK / Session History | High | SDK v2 | [Addition](#2026-11-21-feature_312-addition) — Implemented on `KodaX-next-dev` 2026-11-21, unreleased |
+| `313` | Queryable Session Recovery State | SDK / Runtime Recovery | High | SDK v2 | [Addition](#2026-11-21-feature_313-addition) — Implemented on `KodaX-next-dev` 2026-11-21, unreleased; built wholly there |
 | `300` | Git Execution Consolidation with Shared macOS Preflight | Refactor | Medium | `v0.7.99` | [v0.7.99](features/v0.7.99.md#feature_300-git-execution-consolidation-with-shared-macos-preflight) — Planned; design only |
 | `287` | Advisor Mode Virtual Provider | Enhancement / LLM Provider + Session Quality | High | `v0.8.13` | [v0.8.13](features/v0.8.13.md#feature_287-advisor-mode-virtual-provider) |
 | `288` | CLI-Space Daemon Profile Alignment | Enhancement / Runtime + Multi-Client UX | High | `v0.8.14` | [v0.8.14](features/v0.8.14.md#feature_288-cli-space-daemon-profile-alignment) |
@@ -2494,7 +2494,8 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 ## 2026-11-21 FEATURE_313 Addition
 
-- Status: Planned. IDs 312 and 313 are unused on both `KodaX` and `KodaX-next-dev`.
+- Status: Implemented on `KodaX-next-dev` 2026-11-21, unreleased; it ships with the SDK v2 work.
+  Spec and landing details: "Session 的恢复状态" in `designs/sdk-v2-remote-runtime-plan.md`.
 - Source: Space report item II (2026-11-21). After `actor_settlement_not_persisted`
   the Session heals in the background, but a client can only find out by
   retrying `runs.start` and reading the error. There is no Session state to read
@@ -2517,10 +2518,29 @@ fixed GitHub binary archive sidecar omission before tagging.
     `recovery_stalled` in the Issue 428 `conflict` shape.
   - The state and the event wait for the next mainline sync into
     `KodaX-next-dev`. Spec them in the v2 plan before implementing.
+- Owner decision revised (2026-11-21, later the same day): mainline deferred
+  the stall limit, so the whole feature, the limit included, is built on
+  `KodaX-next-dev` in the SDK v2 work. Mainline adds nothing. The decisions
+  above still hold for the shape:
+  - The limit sits in `recoverActorDurability` in `src/sdk-runtime.ts`: 10
+    minutes from entering quarantine. Background repair keeps retrying after
+    it, and a repaired store still lifts the fence.
+  - The Session resource carries `recovery: { state, since, code }` only while
+    quarantined. `state` is `recovering` or, past the limit, `stalled`. The
+    session view gains a top-level `session` key, so entering quarantine,
+    stalling and recovering are all view changes. Health comes from the Actor
+    controller's existing `onHealthChanged`.
+  - `runs.start` on a quarantined Session fails in v2 with `invalid_state`
+    and reason `session_recovering` or `recovery_stalled`. v1 keeps the Issue
+    428 `conflict` shape and reports `recovery_stalled` past the limit.
+  - Spec: "Session 的恢复状态" in `designs/sdk-v2-remote-runtime-plan.md`.
 
 ## 2026-11-21 FEATURE_312 Addition
 
-- Status: Planned.
+- Status: Implemented on `KodaX-next-dev` 2026-11-21, unreleased; it ships with the SDK v2 work. v2 `history.read` returns the
+  session view's stable ids (`stableHistoryItemIds` in `session-view.ts`),
+  and cursors stay bound to the conversation of the first page. Spec:
+  "历史两项的落地细节" in `designs/sdk-v2-remote-runtime-plan.md`.
 - Source: Space report item I, G1-G6 (2026-11-21). Product history items have
   ids scoped to a revision, so the same message gets a new id after a save, a
   compaction or a window slide. Space matches items by heuristics, cannot tell a

@@ -6,6 +6,58 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Breaking
+
+- In-process SDK entries (`runKodaX`, `startKodaX`, `runManagedTask`,
+  `KodaXClient`, `createKodaXTaskRunner`, `createDefaultCodingAgent`,
+  `authorWorkflowViaWorker`, `runToolInvocation`) without `events.beforeToolExecute` now run only
+  tools that declare `sideEffect: 'readonly'`. Other calls return a tool
+  result that says how to allow them, and the process gets one
+  `KODAX_TOOL_APPROVAL_MISSING` warning. Pass the new `allowAll` export to
+  run every tool as before. The Runtime, daemon, CLI and REPL are unchanged.
+
+### Added
+
+- `@kodax-ai/kodax/client` now exports a v2 Host protocol client.
+  `ensureKodaXHostClient` starts the Host of a home when none runs, connects
+  over v2, and starts the Host again if it dies. `call` takes typed params and
+  returns typed results for every query and command. `observeSession` delivers
+  the whole Session view as it changes. Calls whose link drops are sent again
+  with the same `requestId`. Runs that a dead Host left in `recovering` are
+  continued once on the new Host. `createKodaXHostClient` takes any connection
+  opener; `createRequestId` makes command ids. The v1 product Client is
+  unchanged.
+- A trusted v2 client (owner or service) can lend a Run its provider key
+  without the Host storing it. Register a credential lease with
+  `lease.register`, pass `leases: {credential}` to the commands that call a
+  model, and answer the Host through `answerLeaseRequests`. A lease survives a
+  reconnect of the same `instanceId` and `instanceSecret` to the same Host.
+- `ensureKodaXHostClient` takes `exitWhenIdle`: a Host it starts stops about
+  30 seconds after its last client leaves, unless it still has work. It also
+  takes `recoveryLeases`, which gives the leases for a Run it continues on a
+  new Host, so a Run on a lent key does not fail for want of it.
+- v2 Session view items can carry `notice: {kind}` (`retry`, `compaction`)
+  so a client can pick how to show them. `session.create` takes `draft`.
+
+### Changed
+
+- Interactive `kodax` (Ink and classic) now runs on the Host over the v2
+  protocol. Print mode, `-r` lookup and the `daemon` commands still use v1.
+  - `/compact` reports the token counts the Host returns.
+  - `/copy` reads the last reply from the Host, in full when it was cut short.
+  - `/extensions` lists the loaded extensions and recent failures. The
+    commands they add are in `/help`.
+  - The status panel reads its counts from the Host.
+
+### Removed
+
+- The `/auto-denials` REPL command.
+
+### Fixed
+
+- A workflow's finished event now arrives after its run has settled, so a
+  client that reads the run on that event sees it ended.
+
 ---
 
 ## [0.7.97-beta.13] - 2026-11-21

@@ -167,9 +167,10 @@ kodax --session refactor --fork "其实保留旧名称，只加一个别名就�
 KodaX 运行一个 Runtime 管理的 Actor 树。你可以在任务内 spawn、发消息、中断子 Agent：
 
 ```typescript
-import { runKodaX } from '@kodax-ai/kodax';
+import { allowAll, runKodaX } from '@kodax-ai/kodax';
 
-await runKodaX({ provider: 'zhipu-coding' }, `
+// 不传审批回调时只运行只读工具；allowAll 放行所有工具。
+await runKodaX({ provider: 'zhipu-coding', events: { beforeToolExecute: allowAll } }, `
   spawn_agent("reviewer", "检查 packages/llm/src/ 的类型安全问题")
   spawn_agent("tester",   "为 packages/llm/src/ 中发现的不足编写单元测试")
   wait_agent("reviewer")
