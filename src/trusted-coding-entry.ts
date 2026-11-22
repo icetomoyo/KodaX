@@ -10,6 +10,7 @@ import {
   type Agent,
   type CreateKodaXTaskRunnerOptions,
   type KodaXAgentWorkerSpec,
+  type KodaXEvents,
   type KodaXOptions,
   type KodaXResult,
   type OrchestrationWorkerRunner,
@@ -27,7 +28,21 @@ function withDirectTextApprovals<TOptions extends KodaXOptions>(
   options: TOptions, approvals: ReturnType<typeof createTrustedTextApprovals>,
 ): TOptions {
   const events = options.events;
+  // Without a Host callback the gate runs only read-only tools, so there is
+  // nothing to grant; wrapping would install an allow-everything callback.
+  const hostApproves = events?.beforeToolExecute;
   const reviewedCalls = new Map<string, KodaXTrustedTextToolCall>();
+  const beforeToolExecute: KodaXEvents['beforeToolExecute'] = hostApproves && (async (name, input, meta) => {
+    const id = meta?.toolId;
+    const reviewed = id === undefined ? undefined : reviewedCalls.get(id);
+    if (id !== undefined) { approvals.revoke(id); reviewedCalls.delete(id); }
+    const decision = await hostApproves(name, input, meta);
+    if (id !== undefined) {
+      const call = { id, name, input };
+      if (decision === true || (decision === undefined && isDeepStrictEqual(call, reviewed))) approvals.grant(call);
+    }
+    return decision ?? true;
+  });
   return {
     ...options,
     guardrails: options.guardrails?.map((guardrail) => {
@@ -46,17 +61,7 @@ function withDirectTextApprovals<TOptions extends KodaXOptions>(
     }),
     events: {
       ...events,
-      async beforeToolExecute(name, input, meta) {
-        const id = meta?.toolId;
-        const reviewed = id === undefined ? undefined : reviewedCalls.get(id);
-        if (id !== undefined) { approvals.revoke(id); reviewedCalls.delete(id); }
-        const decision = await events?.beforeToolExecute?.(name, input, meta);
-        if (id !== undefined) {
-          const call = { id, name, input };
-          if (decision === true || (decision === undefined && isDeepStrictEqual(call, reviewed))) approvals.grant(call);
-        }
-        return decision ?? true;
-      },
+      ...(beforeToolExecute && { beforeToolExecute }),
       onToolExecutionEnd(tool, meta) {
         approvals.revoke(tool.id);
         events?.onToolExecutionEnd?.(tool, meta);

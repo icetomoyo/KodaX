@@ -13,6 +13,7 @@ import { executeTool, getToolDefinition } from '../packages/coding/src/tools/ind
 import { wrapCodingToolAsRunnable } from '../packages/coding/src/task-engine/_internal/managed-task/tool-wrappers.js';
 import { createExtensionRuntimeSessionController } from '../packages/coding/src/agent-runtime/middleware/extension-queue.js';
 import { createComplexReadBoundary } from './first-turn-complex-guard.js';
+import { allowAll } from '../packages/coding/src/agent-runtime/permission-gate.js';
 
 const limits = { timeoutMs: 5000, memoryBytes: 16 * 1024 * 1024, maxCalls: 8, maxTransferBytes: 128 * 1024 };
 const directories: string[] = [];
@@ -35,7 +36,8 @@ async function fixture(totalBudget = 4) {
   const options: KodaXOptions = { provider: 'unconfigured-provider', lsp: false,
     session: { id: 'parent-session', storage, resume: true },
     context: { runtimeRunId: 'parent-run', executionCwd: root, gitRoot: root,
-      managedWorkBudget: budget, trustedTextMutationHost: trustedHost } };
+      managedWorkBudget: budget, trustedTextMutationHost: trustedHost },
+    events: { beforeToolExecute: allowAll } };
   await writeFile(path.join(root, 'value.txt'), 'before');
   return { root, storage, trustedHost, budget, options };
 }

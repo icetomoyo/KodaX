@@ -30,6 +30,7 @@ import type {
 import { runTestLeaf as runLeafAgent } from './test-leaf.js';
 import { deriveCodingMemoryIdentity } from '../memory-runtime.js';
 import { CodingActorSession } from './actor-runtime.js';
+import { allowAll } from './permission-gate.js';
 
 const PROVIDER_NAME = 'terminal-interrupt-provider';
 const API_KEY_ENV = 'TERMINAL_INTERRUPT_PROVIDER_API_KEY';
@@ -574,6 +575,7 @@ describe('runLeafAgent Runtime terminal interrupt continuation', { timeout: 30_0
           },
         },
         events: {
+          beforeToolExecute: allowAll,
           onMemoryOutcomeDigest(digest) {
             outcome = digest;
           },
@@ -675,6 +677,7 @@ describe('runLeafAgent Runtime terminal interrupt continuation', { timeout: 30_0
           },
         },
         events: {
+          beforeToolExecute: allowAll,
           onMemoryOutcomeDigest(digest) {
             outcome = digest;
           },
@@ -736,6 +739,7 @@ describe('runLeafAgent Runtime terminal interrupt continuation', { timeout: 30_0
         repoIntelligenceMode: 'off',
       },
       events: {
+        beforeToolExecute: allowAll,
         onMemoryOutcomeDigest(digest) {
           outcome = digest;
         },

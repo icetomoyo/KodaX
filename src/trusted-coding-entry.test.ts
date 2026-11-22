@@ -85,6 +85,22 @@ describe('KodaX direct coding entries', () => {
     expect(mocks.run.mock.calls[0]?.[0].events?.requestToolApproval).toBe(requestToolApproval);
   });
 
+  it('leaves tool approval unset when the embedder set none, so only read-only tools run', async () => {
+    await runKodaX(options({ gitRoot: 'C:\repo' }), 'write');
+
+    expect(mocks.run.mock.calls[0]?.[0].events?.beforeToolExecute).toBeUndefined();
+  });
+
+  it('asks the embedder approval callback and passes its verdict through', async () => {
+    const beforeToolExecute = vi.fn(async () => 'No writes today.');
+    await runKodaX({ ...options({ gitRoot: 'C:\repo' }), events: { beforeToolExecute } }, 'write');
+
+    const wrapped = mocks.run.mock.calls[0]?.[0].events?.beforeToolExecute;
+    expect(wrapped).not.toBe(beforeToolExecute);
+    await expect(wrapped?.('write', { path: 'a.ts' }, { toolId: 't1' })).resolves.toBe('No writes today.');
+    expect(beforeToolExecute).toHaveBeenCalledWith('write', { path: 'a.ts' }, { toolId: 't1' });
+  });
+
   it('preserves an explicit embedder host without creating a competing authority', async () => {
     const explicit = { snapshot: vi.fn(), commit: vi.fn() } as KodaXTrustedTextMutationHost;
     const input = options({ trustedTextMutationHost: explicit });

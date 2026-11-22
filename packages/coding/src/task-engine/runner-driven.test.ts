@@ -7,6 +7,7 @@
  *   - Managed execution, resume, and result contracts via mocked provider stream
  */
 
+import { allowAll } from '../agent-runtime/permission-gate.js';
 import {
   afterAll,
   afterEach,
@@ -165,7 +166,7 @@ function makeOptions(): KodaXOptions {
       // seconds per test. Production callers keep the default auto mode.
       repoIntelligenceMode: 'off',
     },
-    events: {},
+    events: { beforeToolExecute: allowAll },
   } as KodaXOptions;
 }
 
@@ -3107,6 +3108,7 @@ describe('runManagedTaskViaRunner — end-to-end', () => {
           };
         },
         events: {
+          beforeToolExecute: allowAll,
           onMemoryOutcomeDigest: (digest, metadata) => {
             outcome = { digest, ...metadata };
           },
@@ -3226,7 +3228,7 @@ describe('runManagedTaskViaRunner — end-to-end', () => {
             reopenInputWindow() {},
           },
         },
-        events: {
+        events: { beforeToolExecute: allowAll,
           onMemoryOutcomeDigest(digest) {
             outcome = digest;
           },
@@ -3310,7 +3312,7 @@ describe('runManagedTaskViaRunner — end-to-end', () => {
           gitRoot: home,
           memoryIdentity: identity,
         },
-        events: {
+        events: { beforeToolExecute: allowAll,
           onMemoryOutcomeDigest(digest) {
             outcome = digest;
           },
@@ -3424,6 +3426,7 @@ describe('runManagedTaskViaRunner — end-to-end', () => {
           };
         },
         events: {
+          beforeToolExecute: allowAll,
           onMemoryOutcomeDigest: (digest, metadata) => {
             outcome = { digest, ...metadata };
           },
@@ -3726,7 +3729,7 @@ describe('runManagedTaskViaRunner — end-to-end', () => {
           reopenInputWindow() {},
         },
       },
-      events: {
+      events: { beforeToolExecute: allowAll,
         onTurnStarted: (event) => startedTurnIds.push(event.turnId),
       },
     };
@@ -3787,7 +3790,7 @@ describe('runManagedTaskViaRunner — end-to-end', () => {
           reopenInputWindow() {},
         },
       },
-      events: {
+      events: { beforeToolExecute: allowAll,
         onTurnStarted: (event) => startedTurnIds.push(event.turnId),
       },
     };
@@ -3918,7 +3921,7 @@ describe('runManagedTaskViaRunner — end-to-end', () => {
     let callCount = 0;
     const options: KodaXOptions = {
       ...makeOptions(),
-      events: {
+      events: { beforeToolExecute: allowAll,
         onTodoDriftWarning: (event) => {
           warnings.push(event);
         },

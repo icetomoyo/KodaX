@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setAgentConfigHome } from '@kodax-ai/agent';
 import {
+  allowAll,
   awaitLatestCodingMemoryReviewDrain,
   createDefaultCodingAgent,
   runManagedTask,
@@ -128,6 +129,7 @@ describe('standalone REPL shell permission boundary', () => {
     try {
       await runManagedTask({
         provider: 'standalone-shell-test',
+        events: { beforeToolExecute: allowAll },
         agentMode: 'ama', reasoningMode: 'off', lsp: false, maxIter: 2,
         abortSignal: controller.signal,
         guardrails: [boundary.autoGuardrail],
@@ -222,6 +224,7 @@ describe('standalone REPL shell permission boundary', () => {
     try {
       await Promise.all(runs.map((run) => runManagedTask({
         provider: 'standalone-shell-test',
+        events: { beforeToolExecute: allowAll },
         agentMode: 'ama', reasoningMode: 'off', lsp: false, maxIter: 2,
         abortSignal: run.controller.signal,
         guardrails: [boundary.autoGuardrail],

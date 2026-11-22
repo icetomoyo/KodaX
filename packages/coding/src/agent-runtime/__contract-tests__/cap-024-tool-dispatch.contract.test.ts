@@ -36,6 +36,7 @@
  * STATUS: ACTIVE since FEATURE_100 P2 for the dispatch sequence.
  */
 
+import { allowAll } from '../permission-gate.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -162,7 +163,7 @@ describe('FEATURE_247 (R7): executeToolCall stamps toolCallId onto the handler c
 describe('CAP-024: executeToolCall — active-tool gate', () => {
   it('CAP-TOOL-DISPATCH-ACTIVE-1: tool name not in `activeToolNames` → returns structured `[Tool Error] ... Tool is not active in the current runtime.` envelope (without invoking permission gate or registry)', async () => {
     const result = await executeToolCall(
-      {} as KodaXEvents,
+      { beforeToolExecute: allowAll },
       makeToolCall('forbidden_tool'),
       makeCtx(),
       freshState(),
@@ -302,7 +303,7 @@ describe('CAP-024: executeToolCall — write block (CAP-015) short-circuit', () 
     state.blockedEditWrites.add(realFile);
 
     const result = await executeToolCall(
-      {} as KodaXEvents,
+      { beforeToolExecute: allowAll },
       makeToolCall('write', { path: __filename, content: 'x' }),
       makeCtx(),
       state,

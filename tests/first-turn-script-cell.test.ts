@@ -12,6 +12,7 @@ import { createExtensionRuntime, withExtensionRuntimeContext } from '../packages
 import { createContentHashCache } from '../packages/coding/src/multi-instance/content-hash-cache.js';
 import { assertTrustedTextMutationPolicy } from '../packages/coding/src/trusted-text-mutation.js';
 import { createTrustedTextMutationHost } from '../src/windows-text-transaction.js';
+import { allowAll } from '../packages/coding/src/agent-runtime/permission-gate.js';
 
 const limits = { timeoutMs: 10_000, memoryBytes: 16 * 1024 * 1024, maxCalls: 12, maxTransferBytes: 128 * 1024 };
 const activeTools = ['read', 'grep', 'glob', 'edit', 'write', 'insert_after_anchor', 'bash', 'spawn_agent', 'tool_call'];
@@ -77,7 +78,7 @@ async function fixture(totalBudget = 4) {
   await writeFile(path.join(directory, 'value.mjs'), 'export const value = 1;\n');
   const ctx: KodaXToolExecutionContext = { backups: new Map(), executionCwd: directory };
   const budget: KodaXManagedWorkBudget = { totalBudget, spentBudget: 0, currentHarness: 'H0_DIRECT' };
-  const dispatch = { ctx, activeToolNames: [...activeTools], events: {},
+  const dispatch = { ctx, activeToolNames: [...activeTools], events: { beforeToolExecute: allowAll },
     runtimeSessionState: buildRuntimeSessionState({ activeTools, modelSelection: {} }) };
   return { directory, ctx, budget, dispatch };
 }
@@ -108,7 +109,7 @@ it.each([
   const controller = new AbortController();
   controller.abort();
   const cancelled = await runToolDispatch({ ...shared, toolBlocks: [call], abortSignal: controller.signal,
-    events: { onToolExecutionStart: admitted } });
+    events: { beforeToolExecute: allowAll, onToolExecutionStart: admitted } });
   expect(cancelled.get(call.id)).toContain('[Cancelled]');
   expect(admitted).not.toHaveBeenCalled();
   expect(commit).toHaveBeenCalledTimes(1);

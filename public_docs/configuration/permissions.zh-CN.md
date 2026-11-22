@@ -41,6 +41,8 @@ SDK 调用方通过共享 Runtime 会话设置控制权限。直接 `runKodaX`/C
 
 对于 `@kodax-ai/kodax` 直接 SDK 入口，实时 `context.resolveShellPermissionMode` 回调也管理默认原生文本宿主。Full Access 允许普通外部目标。Auto 模式下，来自 `auto-mode` 护栏或宿主 `beforeToolExecute` 的显式 allow 授权该具体的文本调用；后续宿主否决仍优先。审查或回调缺失不构成在工作根目录外写入的权限。
 
+直接 SDK 入口不传 `events.beforeToolExecute` 时，不论权限模式是什么，都只运行声明 `sideEffect: 'readonly'` 的工具。权限模式描述会话，回调负责批准调用。要运行所有工具，传 `allowAll`。
+
 Runtime 和直接/托管提供商请求包含实时宿主 getter 的有效权限模式，即使有自定义系统提示。此上下文在后续请求和重试时刷新，而非从 `config.json` 推断或作为陈旧对话消息持久化。Runtime 会话设置优先于调用方默认值。修正后的文本审批和实时上下文契约需要 Runtime 权限能力 6。
 
 ## Shell 执行契约

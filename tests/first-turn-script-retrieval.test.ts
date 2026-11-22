@@ -14,6 +14,7 @@ import { projectModelToolDefinition } from '../packages/coding/src/tools/model-t
 import { wrapCodingToolAsRunnable } from '../packages/coding/src/task-engine/_internal/managed-task/tool-wrappers.js';
 import type { KodaXToolExecutionContext } from '../packages/coding/src/types.js';
 import { createFetchHttpFixture } from './fetch-http-fixture.js';
+import { allowAll } from '../packages/coding/src/agent-runtime/permission-gate.js';
 
 const names = ['memory_recall', 'session_history_search', 'session_history_read', 'kodax_manual', 'web_search', 'web_fetch'];
 const limits = { timeoutMs: 5000, memoryBytes: 16 * 1024 * 1024, maxCalls: 12, maxTransferBytes: 128 * 1024 };
@@ -58,7 +59,7 @@ async function fixture(totalBudget = 12) {
   const ctx: KodaXToolExecutionContext = { backups: new Map(), executionCwd: process.cwd(), memoryRecall,
     loadSessionHistory: vi.fn(async () => lineage) };
   const budget = { totalBudget, spentBudget: 0, currentHarness: 'H0_DIRECT' as const };
-  const dispatch = { ctx, activeToolNames: [...names], events: {},
+  const dispatch = { ctx, activeToolNames: [...names], events: { beforeToolExecute: allowAll },
     runtimeSessionState: buildRuntimeSessionState({ activeTools: names, modelSelection: {} }) };
   const inputs: Record<string, Record<string, unknown>> = {
     memory_recall: { need: 'stale lock recovery' }, session_history_search: { query: 'TICKET-42' },
@@ -139,7 +140,7 @@ it.each(names)('%s drains admitted work after cancellation and does not start a 
   cancelling = controller;
   const ended = vi.fn();
   const pilot = createScriptPilot({ ...dispatch, abortSignal: controller.signal,
-    events: { onToolExecutionEnd: ended } }, budget);
+    events: { beforeToolExecute: allowAll, onToolExecutionEnd: ended } }, budget);
   const result = await pilot.run(`await tools.${name}(${JSON.stringify(input)}); await tools.${name}(${JSON.stringify(input)});`, limits);
   expect(result.status).toBe('cancelled');
   expect(result.receipts).toHaveLength(1);
@@ -157,7 +158,7 @@ it('rejects cancellation at the admission notification before the actual native 
   const controller = new AbortController();
   const ended = vi.fn();
   const result = await createScriptPilot({ ...dispatch, abortSignal: controller.signal,
-    events: { onToolExecutionStart: () => controller.abort(), onToolExecutionEnd: ended } }, budget)
+    events: { beforeToolExecute: allowAll, onToolExecutionStart: () => controller.abort(), onToolExecutionEnd: ended } }, budget)
     .run('await tools.memory_recall({need:"prior evidence"}); await tools.memory_recall({need:"next"});', limits);
   expect(result.status).toBe('cancelled');
   expect(result.receipts).toHaveLength(1);
@@ -289,7 +290,7 @@ it('pages a large retrieval result by reference under a small transfer limit wit
   setPage('x'.repeat(8000));
   const baseline = await executeTool('web_fetch', inputs.web_fetch!, ctx);
   const admitted = vi.fn();
-  const result = await createScriptPilot({ ...dispatch, events: { onToolExecutionStart: admitted } }, budget).run(`
+  const result = await createScriptPilot({ ...dispatch, events: { beforeToolExecute: allowAll, onToolExecutionStart: admitted } }, budget).run(`
     const r=await tools.web_fetch(${JSON.stringify(inputs.web_fetch)}),id=r.result_ref.callId;
     const p=await read_result(id),q=await read_result(id),t=await read_result(id,r.result_ref.totalLength-10);
     return {status:r.status,total:r.result_ref.totalLength,first:p.text,next:p.nextOffset,last:t.text,repeat:p.text===q.text};`,

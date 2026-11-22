@@ -77,6 +77,11 @@ authorizes the exact text call; a later host veto still wins. An absent review
 or callback is not permission to write outside the configured roots. An
 explicitly supplied `trustedTextMutationHost` remains the embedder's authority.
 
+A direct SDK entry without `events.beforeToolExecute` runs only tools that
+declare `sideEffect: 'readonly'`, whatever the permission mode says. The mode
+describes the session; the callback approves calls. Pass `allowAll` to run
+every tool.
+
 Runtime and direct/managed provider requests include the effective permission
 mode from the live host getter, even with a custom system prompt. This context
 is refreshed for subsequent requests and retries, rather than inferred from

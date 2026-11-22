@@ -9,6 +9,7 @@ import { runManagedTask } from '../packages/coding/src/task-engine.js';
 import { createDefaultCodingAgent } from '../packages/coding/src/default-coding-agent.js';
 import type { KodaXOptions } from '../packages/coding/src/types.js';
 import { createRuntimeAgentBindingService } from '../src/runtime-agent-binding.js';
+import { allowAll } from '../packages/coding/src/agent-runtime/permission-gate.js';
 
 const roots: string[] = [];
 let sequence = 0;
@@ -49,6 +50,7 @@ it.each(['ama', 'runner'] as const)('keeps an admitted Skill discoverable under 
   registerModelProvider(name, () => new Provider());
   const execute = async (options: KodaXOptions) => {
     const scoped: KodaXOptions = { ...options, provider: name, reasoningMode: 'off', maxIter: 3,
+      events: { beforeToolExecute: allowAll, ...options.events },
       context: { ...options.context, configHome, gitRoot: root, executionCwd: root, repoIntelligenceMode: 'off' } };
     if (mode === 'runner') return (await Runner.run(createDefaultCodingAgent(), 'Inspect evidence.', { presetOptions: scoped })).data;
     return runManagedTask({ ...scoped, agentMode: 'ama' }, 'Inspect evidence.');

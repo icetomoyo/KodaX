@@ -8,6 +8,7 @@ import { KodaXBaseProvider, KodaXProviderError, registerModelProvider, type Koda
   type KodaXStreamResult, type KodaXToolDefinition } from '@kodax-ai/llm';
 import { runManagedTask } from './task-engine.js';
 import { awaitLatestCodingMemoryReviewDrain } from './memory-runtime.js';
+import { allowAll } from './agent-runtime/permission-gate.js';
 
 const cases = [
   ...(['success', 'error', 'cancel'] as const).map(ending => ({ ending, catalog: 'HOST_CUSTOM_SKILL_CATALOG_MUST_SURVIVE', label: 'custom' })),
@@ -69,7 +70,7 @@ it.each(cases)(
   try {
     const running = runManagedTask({ provider: 'learned-entry-fixture', abortSignal: controller.signal,
       agentMode: 'ama', effort: 'none', lsp: false, maxIter: 3, session: { id: identity.sessionId },
-      events: { runMemoryWork: async work => {
+      events: { beforeToolExecute: allowAll, runMemoryWork: async work => {
         activeMemoryWork++;
         try { await work(controller.signal); } finally { activeMemoryWork--; }
       }, onComplete: () => { completedNotice = true; } },

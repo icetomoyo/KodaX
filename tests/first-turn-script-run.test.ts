@@ -12,6 +12,7 @@ import { runToolInvocation } from '../packages/coding/src/agent-runtime/tool-inv
 import type { KodaXOptions } from '../packages/coding/src/types.js';
 import { assertTrustedTextMutationPolicy } from '../packages/coding/src/trusted-text-mutation.js';
 import { createTrustedTextMutationHost } from '../src/windows-text-transaction.js';
+import { allowAll } from '../packages/coding/src/agent-runtime/permission-gate.js';
 
 const limits = { timeoutMs: 5000, memoryBytes: 16 * 1024 * 1024, maxCalls: 8, maxTransferBytes: 128 * 1024 };
 const directories: string[] = [];
@@ -30,7 +31,8 @@ async function fixture() {
   const storage = new FileSessionStorage({ sessionsDir: path.join(root, 'sessions'), configHome: root, cwd: root });
   const options: KodaXOptions = { provider: 'unconfigured-provider', lsp: false,
     session: { id: 'script-session', storage, resume: true },
-    context: { executionCwd: root, gitRoot: root, runtimeRunId: 'script-run-one' } };
+    context: { executionCwd: root, gitRoot: root, runtimeRunId: 'script-run-one' },
+    events: { beforeToolExecute: allowAll } };
   await writeFile(path.join(root, 'value.txt'), 'before');
   return { root, storage, options };
 }
@@ -335,7 +337,7 @@ it('uses the existing Run work budget instead of creating a second allowance', a
   const budget = { totalBudget: 2, spentBudget: 1, currentHarness: 'H0_DIRECT' as const };
   const started = vi.fn();
   const result = await runScriptInvocation({ ...options, context: { ...options.context, managedWorkBudget: budget },
-    events: { onToolExecutionStart: started } },
+    events: { beforeToolExecute: allowAll, onToolExecutionStart: started } },
   "await tools.read({path:'value.txt'}); return await tools.read({path:'value.txt'});", limits);
   expect(started).toHaveBeenCalledTimes(1);
   expect(budget.spentBudget).toBe(2);

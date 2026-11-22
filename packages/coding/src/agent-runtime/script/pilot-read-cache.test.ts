@@ -11,6 +11,7 @@ import { executeTool } from '../../tools/index.js';
 import { createReadFileStateCache } from '../../multi-instance/read-file-state-cache.js';
 import { createContentHashCache } from '../../multi-instance/content-hash-cache.js';
 import type { KodaXToolExecutionContext } from '../../types.js';
+import { allowAll } from '../permission-gate.js';
 
 const limits = { timeoutMs: 5000, memoryBytes: 16 * 1024 * 1024, maxCalls: 8, maxTransferBytes: 128 * 1024 };
 const directories: string[] = [];
@@ -31,7 +32,7 @@ async function fixture() {
     readFileStateCache: cache, contentHashCache: hashes };
   const budget = { totalBudget: 8, spentBudget: 0, currentHarness: 'H0_DIRECT' as const };
   const activeToolNames = ['read', 'write', 'edit'];
-  const dispatch = { ctx, activeToolNames, events: {},
+  const dispatch = { ctx, activeToolNames, events: { beforeToolExecute: allowAll },
     runtimeSessionState: buildRuntimeSessionState({ activeTools: activeToolNames, modelSelection: {} }) };
   return { file, ctx, cache, hashes, budget, dispatch, pilot: createScriptPilot(dispatch, budget) };
 }

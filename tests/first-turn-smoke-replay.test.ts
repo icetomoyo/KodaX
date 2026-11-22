@@ -4,7 +4,7 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { SkillRegistry } from '@kodax-ai/agent';
 import { setAgentConfigHome } from '../packages/agent/src/runtime/agent-home.js';
-import { runKodaX } from '@kodax-ai/coding';
+import { approvalMissingToolResult, runKodaX } from '@kodax-ai/coding';
 import { createKodaXRuntime } from "./runtime-fixture.js";
 import {
   KodaXBaseProvider, registerModelProvider, clearRuntimeModelProviders,
@@ -74,6 +74,10 @@ describe('zero-network replay of first-turn live smoke', () => {
       if (variant === 'test-fallback') {
         expect(content).toBe(original.replace('a - b', 'a + b'));
         expect(JSON.stringify(transcripts[2])).toContain('File edited:');
+      } else if (variant === 'no-hook') {
+        // Without an approval callback only read-only tools run, so the edit never reaches the text host.
+        expect(content).toBe(original);
+        expect(JSON.stringify(transcripts[2])).toContain(JSON.stringify(approvalMissingToolResult('edit')).slice(1, -1));
       } else {
         // Lower-level runKodaX requires the production host to provision text mutations.
         // This assertion records the smoke harness limitation, not a successful live E2E.

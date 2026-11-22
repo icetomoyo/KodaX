@@ -11,6 +11,7 @@ import { emitActiveExtensionEvent } from '../../extensions/runtime.js';
 import { incrementManagedBudgetUsage } from '../../task-engine/_internal/managed-task/budget.js';
 import { recordMutationForTool } from '../../task-engine/_internal/managed-task/tool-wrappers.js';
 import { applyPostToolProcessing, runToolDispatch, type RunToolDispatchInput } from '../tool-dispatch.js';
+import { readOnlyWithoutApproval } from '../permission-gate.js';
 import { runScriptCell, type ScriptCellLimits, type ScriptCellInput } from './cell.js';
 import { listRunScopedTools, lookupRunScopedTool, runScopedToolMap, toModelToolDefinition } from '../run-scoped-tools.js';
 import type { ReadFileStateCache } from '../../multi-instance/read-file-state-cache.js';
@@ -119,7 +120,7 @@ export function createScriptPilot(dispatch: PilotDispatch, budget: KodaXManagedW
           beforeToolExecute: async (...args) => {
             const verdict = await dispatch.toolObserver?.beforeTool?.(currentCall());
             if (verdict !== undefined && verdict !== true) return verdict;
-            return await dispatch.events.beforeToolExecute?.(...args) ?? true;
+            return await (dispatch.events.beforeToolExecute ?? readOnlyWithoutApproval)(...args);
           },
           onToolUseStart: (...args) => {
             dispatch.toolObserver?.onToolCall?.(currentCall());

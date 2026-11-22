@@ -6,6 +6,7 @@ import { expect, it, vi } from 'vitest';
 import { runToolInvocation } from './tool-invocation.js';
 import type { KodaXMessage } from '@kodax-ai/llm';
 import { withHostInvocation } from './host-invocation.js';
+import { allowAll } from './permission-gate.js';
 
 it('restores durable history before allowing invocation hooks to execute', async () => {
   const beforeToolExecute = vi.fn(async () => '[Blocked] test authorization');
@@ -87,7 +88,7 @@ it.each([0, 7])('preserves natural Shell exit %i when abort arrives after execut
       abortSignal: controller.signal,
       context: { executionCwd: root, resolveShellPermissionMode: () => 'full-access',
         authorizeShellHostExecution: async () => true },
-      events: { onToolExecutionEnd: () => controller.abort(new Error('late stop')) },
+      events: { beforeToolExecute: allowAll, onToolExecutionEnd: () => controller.abort(new Error('late stop')) },
     }, { name: 'bash', input: { command: `node -e "process.exit(${exitCode})"` } });
     expect(controller.signal.aborted).toBe(true);
     expect(result.lastText).toContain(`Exit: ${exitCode}`);

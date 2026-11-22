@@ -5,6 +5,7 @@ import { registerTool } from '../packages/coding/src/tools/index.js';
 import { buildRunnerAgentChain } from '../packages/coding/src/task-engine/runner-driven.js';
 import { runToolDispatch } from '../packages/coding/src/agent-runtime/tool-dispatch.js';
 import { buildRuntimeSessionState } from '../packages/coding/src/agent-runtime/runtime-session-state.js';
+import { allowAll } from '../packages/coding/src/agent-runtime/permission-gate.js';
 
 it.each(['direct', 'managed'] as const)('serializes native and bridged shell targets in request order on the %s executor', async executor => {
   const order: string[] = [];
@@ -28,13 +29,13 @@ it.each(['direct', 'managed'] as const)('serializes native and bridged shell tar
   const ctx = { backups: new Map<string, string>() };
   try {
     if (executor === 'direct') {
-      const result = await runToolDispatch({ toolBlocks: calls, ctx, events: {},
+      const result = await runToolDispatch({ toolBlocks: calls, ctx, events: { beforeToolExecute: allowAll },
         runtimeSessionState: buildRuntimeSessionState({ activeTools: ['bash', 'tool_call'], modelSelection: {} }),
         activeToolNames: ['bash', 'tool_call'] });
       expect([...result.keys()].sort()).toEqual(['b1', 'b2', 'b3']);
     } else {
       let round = 0;
-      const result = await Runner.run(buildRunnerAgentChain(ctx).worker, 'Run the three fixture operations.', {
+      const result = await Runner.run(buildRunnerAgentChain(ctx, undefined, undefined, undefined, undefined, { beforeToolExecute: allowAll }).worker, 'Run the three fixture operations.', {
         tracer: null,
         llm: async () => round++ === 0
           ? { text: '', toolCalls: calls }

@@ -1,3 +1,4 @@
+import { allowAll } from './permission-gate.js';
 import { describe, expect, it } from 'vitest';
 
 import type { RunScopedToolDefinition } from '../extensions/runtime-contract.js';
@@ -221,7 +222,7 @@ describe('run-scoped dispatch through executeToolCall', () => {
         ReturnType<ExtensionRuntimeContract['executeCapability']>
       >;
     }));
-    const events: KodaXEvents = {};
+    const events: KodaXEvents = { beforeToolExecute: allowAll };
     const result = await executeToolCall(
       events,
       { id: 'call-1', name: definition.name, input: { title: 'Report' } },
@@ -265,7 +266,7 @@ describe('run-scoped dispatch through executeToolCall', () => {
     // attribution instead of executing anything.
     const ctx = ctxWith(fakeRuntime([]));
     const result = await executeToolCall(
-      {},
+      { beforeToolExecute: allowAll },
       { id: 'call-4', name: 'space_artifact_create', input: {} },
       ctx,
       buildRuntimeSessionState({ activeTools: ['space_artifact_create'] }),
@@ -280,7 +281,7 @@ describe('run-scoped dispatch through executeToolCall', () => {
     const definition = hostDefinition();
     const ctx = ctxWith(fakeRuntime([definition]));
     const result = await executeToolCall(
-      {},
+      { beforeToolExecute: allowAll },
       { id: 'call-2', name: definition.name, input: {} },
       ctx,
       buildRuntimeSessionState({ activeTools: ['read'] }),

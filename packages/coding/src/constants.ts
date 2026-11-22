@@ -49,3 +49,18 @@ export const MANAGED_TASK_IDLE_YIELD_ITERATIONS = Number.POSITIVE_INFINITY;
 export const CANCELLED_TOOL_RESULT_PREFIX = '[Cancelled]';
 /** Standard cancellation message returned when a tool is cancelled by the user. */
 export const CANCELLED_TOOL_RESULT_MESSAGE = `${CANCELLED_TOOL_RESULT_PREFIX} Operation cancelled by user`;
+/** The result of a tool call that needs a person's approval where nobody can be asked. The model reads it and goes on. */
+export function approvalUnavailableToolResult(toolName: string): string {
+  return `[Tool Error] ${toolName}: This call needs a person's approval, but this host cannot ask for it.`;
+}
+/**
+ * The result of a call that changes something, where the host set no approval
+ * callback. The model may pass the fix on to the person, who can pass it on to
+ * whoever built the host.
+ */
+export function approvalMissingToolResult(toolName: string): string {
+  return `[Tool Error] ${toolName}: This host runs only tools that read, because it sets no approval callback. `
+    + 'Any other tool that changes something gets the same answer. '
+    + 'Keep working with tools that read, and tell the user what you would have changed. '
+    + 'To allow this tool, the program that embeds KodaX passes events.beforeToolExecute, or allowAll to run every tool.';
+}

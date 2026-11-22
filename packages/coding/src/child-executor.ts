@@ -80,6 +80,7 @@ import {
   resolveConstructedAgentEntry,
 } from './construction/agent-resolver.js';
 import { getAllRegisteredTools } from './tools/registry.js';
+import { readOnlyWithoutApproval } from './agent-runtime/permission-gate.js';
 import { listRunScopedTools } from './agent-runtime/run-scoped-tools.js';
 import {
   applyToolResultBatchGuardrail,
@@ -2554,8 +2555,7 @@ export function buildChildEvents(
           return `${reason} You are a child agent inheriting plan-mode constraints. Complete investigation and return findings as text — the parent agent will request user approval for any implementation.`;
         }
       }
-      if (!parentEvents?.beforeToolExecute) return true;
-      return parentEvents.beforeToolExecute(tool, input, toolEventMeta(meta));
+      return (parentEvents?.beforeToolExecute ?? readOnlyWithoutApproval)(tool, input, toolEventMeta(meta));
     },
     // Absent when the parent cannot ask a person, so an extension ask still blocks.
     ...(parentEvents?.requestToolApproval ? {

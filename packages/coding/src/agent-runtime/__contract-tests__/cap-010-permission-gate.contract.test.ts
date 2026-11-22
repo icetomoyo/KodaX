@@ -11,6 +11,8 @@
  * - CAP-PERMISSION-006: extension `tool:before` returning an ask runs the call
  *   only when `requestToolApproval` answers `true`; a Host without the member
  *   blocks (FEATURE_304, ADR-071)
+ * - CAP-PERMISSION-007: without `beforeToolExecute` only a read-only tool runs;
+ *   `allowAll` is the explicit way to run every tool (SDK v2 D8)
  *
  * Risk: HIGH_RISK_PARITY — `runner-driven.ts:4404-4410` parity-restore evidence:
  * "Legacy agent.ts:810 ran this pre-execute"
@@ -28,7 +30,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { CANCELLED_TOOL_RESULT_MESSAGE } from '../../constants.js';
 import { createExtensionRuntime, withExtensionRuntimeContext } from '../../extensions/runtime.js';
-import { getToolExecutionOverride } from '../permission-gate.js';
+import { allowAll, getToolExecutionOverride } from '../permission-gate.js';
 import type { KodaXEvents } from '../../types.js';
 
 describe('CAP-010: tri-state permission gate contract', () => {
@@ -44,18 +46,13 @@ describe('CAP-010: tri-state permission gate contract', () => {
     expect(beforeToolExecute).toHaveBeenCalledWith('edit', { path: 'a.ts' }, { toolId: 'tool_call_1' });
   });
 
-  it('CAP-PERMISSION-002: events.beforeToolExecute returning true (or undefined) yields undefined (allow)', async () => {
-    // `true` allow path
+  it('CAP-PERMISSION-002: events.beforeToolExecute returning true yields undefined (allow)', async () => {
     const allowResult = await getToolExecutionOverride(
       { beforeToolExecute: vi.fn().mockResolvedValue(true) },
       'edit',
       { path: 'a.ts' },
     );
     expect(allowResult).toBeUndefined();
-
-    // No hook wired at all → also allow
-    const noHookResult = await getToolExecutionOverride({}, 'edit', { path: 'a.ts' });
-    expect(noHookResult).toBeUndefined();
   });
 
   it('CAP-PERMISSION-003: events.beforeToolExecute returning a string yields that string verbatim (block-with-custom-message)', async () => {
@@ -108,7 +105,7 @@ describe('CAP-010: tri-state permission gate contract', () => {
     const hook = vi.fn(() => 'Blocked by extension policy.');
     runtime.registerHook('tool:before', hook);
     const hostVerdicts: Array<{ events: KodaXEvents; expected: string }> = [
-      { events: {}, expected: 'Blocked by extension policy.' },
+      { events: { beforeToolExecute: allowAll }, expected: 'Blocked by extension policy.' },
       { events: { beforeToolExecute: async () => true }, expected: 'Blocked by extension policy.' },
       { events: { beforeToolExecute: async () => false }, expected: CANCELLED_TOOL_RESULT_MESSAGE },
       { events: { beforeToolExecute: async () => '[Plan Mode] blocked' }, expected: '[Plan Mode] blocked' },
@@ -140,7 +137,7 @@ describe('CAP-010: tri-state permission gate contract', () => {
       for (const { answer, expected } of answers) {
         const requestToolApproval = vi.fn(async () => answer);
         const result = await withExtensionRuntimeContext(() => getToolExecutionOverride(
-          { requestToolApproval }, 'bash', { command: 'rm -rf build' }, 'call_1'), runtime);
+          { beforeToolExecute: allowAll, requestToolApproval }, 'bash', { command: 'rm -rf build' }, 'call_1'), runtime);
         expect(result).toBe(expected);
         expect(requestToolApproval).toHaveBeenCalledWith('bash', { command: 'rm -rf build' }, reason,
           { toolId: 'call_1', extensionAsks: [{ extension: 'sandbox', reason: 'Recursive delete.' }] });
@@ -154,5 +151,53 @@ describe('CAP-010: tri-state permission gate contract', () => {
     } finally {
       await runtime.dispose();
     }
+  });
+
+  describe('CAP-PERMISSION-007: a host that set no approval callback', () => {
+    it('runs a tool that only reads', async () => {
+      expect(await getToolExecutionOverride({}, 'read', { path: 'a.ts' })).toBeUndefined();
+      expect(await getToolExecutionOverride({}, 'grep', { pattern: 'x' })).toBeUndefined();
+    });
+
+    it.each(['write', 'bash', 'mcp_call', 'activate_tool', 'web_fetch', 'a_tool_nobody_registered'])(
+      'refuses %s, and says why and how to allow it',
+      async (tool) => {
+        const result = await getToolExecutionOverride({}, tool, {});
+        expect(result?.startsWith(`[Tool Error] ${tool}: `)).toBe(true);
+        expect(result).toContain('beforeToolExecute');
+        expect(result).toContain('allowAll');
+        expect(result).not.toBe(CANCELLED_TOOL_RESULT_MESSAGE);
+      },
+    );
+
+    it('does not ask an extension about a call it refuses', async () => {
+      const runtime = createExtensionRuntime();
+      const hook = vi.fn(() => undefined);
+      runtime.registerHook('tool:before', hook);
+      try {
+        await withExtensionRuntimeContext(() => getToolExecutionOverride({}, 'bash', { command: 'ls' }), runtime);
+        expect(hook).not.toHaveBeenCalled();
+      } finally {
+        await runtime.dispose();
+      }
+    });
+
+    it('runs every tool with allowAll', async () => {
+      expect(await getToolExecutionOverride({ beforeToolExecute: allowAll }, 'bash', { command: 'ls' })).toBeUndefined();
+    });
+
+    it('warns the program embedding KodaX once, not on every refusal', async () => {
+      vi.resetModules();
+      const fresh = await import('../permission-gate.js');
+      const warn = vi.spyOn(process, 'emitWarning').mockImplementation(() => undefined);
+      try {
+        await fresh.getToolExecutionOverride({}, 'write', { path: 'a.ts' });
+        await fresh.getToolExecutionOverride({}, 'bash', { command: 'ls' });
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(String(warn.mock.calls[0]?.[0])).toContain('allowAll');
+      } finally {
+        warn.mockRestore();
+      }
+    });
   });
 });

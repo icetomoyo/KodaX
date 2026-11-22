@@ -110,6 +110,8 @@ async function defaultRunAgent(prompt, options) {
       context: {
         gitRoot: path.resolve(options.cwd ?? process.cwd()),
       },
+      // The eval runs the skill's task for real, so it approves every tool call.
+      events: { beforeToolExecute: async () => true },
     },
     prompt
   );

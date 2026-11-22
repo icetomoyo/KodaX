@@ -16,6 +16,7 @@ import { createDefaultCodingAgent } from '../packages/coding/src/default-coding-
 import { authorWorkflowViaWorker } from '../packages/coding/src/workflows/author-via-worker.js';
 import { registerConstructedAgent } from '../packages/coding/src/construction/agent-resolver.js';
 import { createKodaXRuntime } from './runtime-fixture.js';
+import { allowAll } from '../packages/coding/src/agent-runtime/permission-gate.js';
 
 const PROVIDER = 'f311-entry-matrix';
 const MODEL = 'fixture-model';
@@ -86,7 +87,8 @@ class LoopbackProvider extends KodaXBaseProvider {
 }
 
 function options(extra: Partial<KodaXOptions> = {}, context: KodaXOptions['context'] = {}): KodaXOptions {
-  return { provider: PROVIDER, model: MODEL, reasoningMode: 'off', lsp: false, maxIter: 4, disablePromptCache: true, ...extra,
+  return { provider: PROVIDER, model: MODEL, reasoningMode: 'off', lsp: false, maxIter: 4, disablePromptCache: true,
+    events: { beforeToolExecute: allowAll }, ...extra,
     context: { executionCwd: workspace, gitRoot: workspace, repoIntelligenceMode: 'off', ...context } };
 }
 

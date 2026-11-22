@@ -36,6 +36,7 @@ import {
 } from './child-executor.js';
 import { clearAgentsLoaderCacheForTesting } from './context/agents-loader.js';
 import type { ChildExecutorOptions, WorkflowChildDigestUpdate } from './child-executor.js';
+import { allowAll } from './agent-runtime/permission-gate.js';
 import { runLeafAgent } from './agent.js';
 import {
   _resetAgentResolverForTesting,
@@ -2372,9 +2373,17 @@ describe('buildChildEvents plan-mode propagation (FEATURE_074)', () => {
   });
 
   it('skips the check entirely when planModeBlockCheck is undefined', async () => {
-    const events = buildChildEvents('cb-test', undefined, undefined);
+    const events = buildChildEvents('cb-test', undefined, undefined, undefined, { beforeToolExecute: allowAll });
     const decision = await events!.beforeToolExecute!('edit', { path: '/x.ts' });
     expect(decision).toBe(true);
+  });
+
+  it('runs only read-only tools when the parent set no approval callback', async () => {
+    const events = buildChildEvents('cb-test', undefined, undefined);
+    expect(await events!.beforeToolExecute!('read', { path: '/x.ts' })).toBe(true);
+    const decision = await events!.beforeToolExecute!('edit', { path: '/x.ts' });
+    expect(String(decision).startsWith('[Tool Error] edit: ')).toBe(true);
+    expect(decision).toContain('beforeToolExecute');
   });
 
   it('propagates live parent mode via closure — toggle reflected on next call', async () => {
@@ -2384,7 +2393,7 @@ describe('buildChildEvents plan-mode propagation (FEATURE_074)', () => {
       if (parentMode !== 'plan') return null;
       return tool === 'edit' ? '[Blocked] plan mode' : null;
     });
-    const events = buildChildEvents('cb-test', undefined, liveCheck);
+    const events = buildChildEvents('cb-test', undefined, liveCheck, undefined, { beforeToolExecute: allowAll });
     // First call in plan mode — blocked.
     expect(typeof await events!.beforeToolExecute!('edit', { path: '/x.ts' })).toBe('string');
     // User toggles to accept-edits mid-run. No respawn.

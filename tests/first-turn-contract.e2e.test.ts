@@ -5,7 +5,7 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { setAgentConfigHome } from '../packages/agent/src/runtime/agent-home.js';
 import { createCustomProvider, registerModelProvider, clearRuntimeModelProviders } from '@kodax-ai/llm';
-import { runKodaX, runManagedTask, type KodaXOptions } from '@kodax-ai/coding';
+import { allowAll, runKodaX, runManagedTask, type KodaXOptions } from '@kodax-ai/coding';
 import { REPO_INTELLIGENCE_WORKING_TOOL_NAMES } from '../packages/coding/src/tools/registry.js';
 
 interface WireTool {
@@ -116,7 +116,7 @@ describe('first-turn contracts through public SDK and HTTP providers', () => {
             context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt: '',
               repoIntelligenceMode: 'off', resolveShellPermissionMode: () => 'full-access',
               toolVisibilityPolicy: tool => !(REPO_INTELLIGENCE_WORKING_TOOL_NAMES as readonly string[]).includes(tool.name) },
-            events: { askUserMulti },
+            events: { beforeToolExecute: allowAll, askUserMulti },
           };
           const result = await (mode === 'direct' ? runKodaX : runManagedTask)(options,
             '读取 app.txt，将 before 精确改为 after、keep 改为 kept，再询问验收方式。');

@@ -347,7 +347,10 @@ export {
   PROMISE_PATTERN,
   CANCELLED_TOOL_RESULT_PREFIX,
   CANCELLED_TOOL_RESULT_MESSAGE,
+  approvalUnavailableToolResult,
+  approvalMissingToolResult,
 } from './constants.js';
+export { allowAll } from './agent-runtime/permission-gate.js';
 
 // ============== Provider (re-export from @kodax-ai/llm) ==============
 

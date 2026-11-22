@@ -17,6 +17,7 @@ import { runTestLeaf as runLeafAgent } from './agent-runtime/test-leaf.js';
 import { createExtensionRuntime, getActiveExtensionRuntime } from './extensions/index.js';
 import { LEARNING_REVIEW_TOOL } from './learning-reviewer.js';
 import { awaitLatestCodingMemoryReviewDrain } from './memory-runtime.js';
+import { allowAll } from './agent-runtime/permission-gate.js';
 
 const TEST_PROVIDER_NAME = 'feature-034-test-provider';
 const TEST_PROVIDER_API_KEY_ENV = 'FEATURE_034_TEST_PROVIDER_API_KEY';
@@ -559,6 +560,7 @@ describe('runLeafAgent extension runtime integration', () => {
       {
         provider: TEST_PROVIDER_NAME,
         extensionRuntime: runtime,
+        events: { beforeToolExecute: allowAll },
       },
       'start feature 034 parallel tools',
     );

@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, it } from 'vitest';
 import { Runner } from '@kodax-ai/agent';
-import { getToolExecutionOverride } from '../../../agent-runtime/permission-gate.js';
+import { allowAll, getToolExecutionOverride } from '../../../agent-runtime/permission-gate.js';
 import { registerTool } from '../../../tools/registry.js';
 import { createTodoStore } from '../../todo-store.js';
 import type { KodaXEvents, KodaXToolExecutionContext } from '../../../types.js';
@@ -15,7 +15,7 @@ it('preserves Todo failure provenance and legitimate recovery with equal native/
   for (const bridged of [false, true]) {
     const budget: ManagedTaskBudgetController = { totalBudget: 100, spentBudget: 0 };
     const store = createTodoStore();
-    const agent = buildRunnerAgentChain({ backups: new Map(), todoStore: store }, undefined, budget).worker;
+    const agent = buildRunnerAgentChain({ backups: new Map(), todoStore: store }, undefined, budget, undefined, undefined, { beforeToolExecute: allowAll }).worker;
     const observed = [];
     for (const [name, input] of [
       ['todo_create', { subject: 'Verify', status: 'completed' }],
@@ -81,7 +81,7 @@ it('charges Todo role overrides once and preserves their state transitions', asy
   for (const bridged of [false, true]) {
     const budget: ManagedTaskBudgetController = { totalBudget: 100, spentBudget: 0 };
     const store = createTodoStore();
-    const agent = buildRunnerAgentChain({ backups: new Map(), todoStore: store }, undefined, budget).worker;
+    const agent = buildRunnerAgentChain({ backups: new Map(), todoStore: store }, undefined, budget, undefined, undefined, { beforeToolExecute: allowAll }).worker;
     for (const [name, input] of [
       ['todo_create', { subject: 'Verify the implementation' }],
       ['todo_update', { id: 'todo_1', status: 'completed' }],
@@ -100,7 +100,7 @@ it.each([false, true])('starts Todo once and retains completion verification and
   const store = createTodoStore();
   let checks = 0;
   const agent = buildRunnerAgentChain({ backups: new Map(), todoStore: store }, undefined, budget,
-    undefined, undefined, undefined, store, undefined, process.cwd(), async () => {
+    undefined, undefined, { beforeToolExecute: allowAll }, store, undefined, process.cwd(), async () => {
       checks++;
       return { hint: 'test', command: 'npm test', status: 'fail', exitCode: 1, stderrTail: 'Verification failed', stdoutTail: '', durationMs: 1 };
     }).worker;
@@ -137,7 +137,7 @@ it('keeps one charge and one capability dispatch for run-scoped Host tools', asy
         },
       },
     };
-    const agent = buildRunnerAgentChain(context, undefined, budget).worker;
+    const agent = buildRunnerAgentChain(context, undefined, budget, undefined, undefined, { beforeToolExecute: allowAll }).worker;
     const tool = agent.tools!.find(t => t.name === (bridged ? 'tool_call' : 'host_budget_probe'))!;
     const result = await tool.execute(bridged ? { name: 'host_budget_probe', input: { value: 'evidence' } } : { value: 'evidence' },
       { agent, toolCallId: 'host-budget' });

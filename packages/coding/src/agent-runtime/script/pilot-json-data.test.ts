@@ -5,6 +5,7 @@ import { createScriptPilot } from './pilot.js';
 import { buildRuntimeSessionState } from '../runtime-session-state.js';
 import { executeRunScopedTool } from '../run-scoped-tools.js';
 import type { KodaXToolExecutionContext } from '../../types.js';
+import { allowAll } from '../permission-gate.js';
 
 const limits = { timeoutMs: 5000, memoryBytes: 16 * 1024 * 1024, maxCalls: 4, maxTransferBytes: 64 * 1024 };
 const name = 'geometry.sample-grid';
@@ -41,7 +42,7 @@ function fixture(result: CapabilityResult, route: 'host' | 'mcp' = 'host') {
   } } as unknown as KodaXToolExecutionContext;
   const budget = { totalBudget: 4, spentBudget: 0, currentHarness: 'H0_DIRECT' as const };
   const activeToolNames = route === 'host' ? [name] : ['mcp_call', name];
-  const dispatch = { ctx, activeToolNames, events: {},
+  const dispatch = { ctx, activeToolNames, events: { beforeToolExecute: allowAll },
     runtimeSessionState: buildRuntimeSessionState({ activeTools: activeToolNames, modelSelection: {} }) };
   const call = route === 'host' ? `tools['${name}']({})` : `tools.mcp_call({id:'${definition.capabilityId}'})`;
   return { executeCapability, budget, dispatch, definition, call, pilot: createScriptPilot(dispatch, budget) };
@@ -120,7 +121,7 @@ it('does not interpret provider metadata or JSON-looking content as trusted prog
 it('snapshots original structured values before later observers mutate the Host object', async () => {
   const value = { samples: [2, 3] };
   const { dispatch, budget } = fixture({ kind: 'tool', content: 'WARNING: original', structuredContent: value });
-  const pilot = createScriptPilot({ ...dispatch, events: { onToolResult: () => { value.samples[0] = 99; } } }, budget);
+  const pilot = createScriptPilot({ ...dispatch, events: { beforeToolExecute: allowAll, onToolResult: () => { value.samples[0] = 99; } } }, budget);
   const cell = await pilot.run(`return (await tools['${name}']({})).data.value.samples;`, limits);
   expect(cell.status, cell.error).toBe('completed');
   expect(cell.value).toEqual([2, 3]);
@@ -132,7 +133,7 @@ it.each(['replace', 'mutate-block', 'error'] as const)('withholds JSON data afte
   const image = { type: 'image' as const, path: '/source.png', mediaType: 'image/png' };
   const { dispatch, budget } = fixture({ kind: 'tool', content: [{ type: 'text', text: 'WARNING: initial' }, image],
     structuredContent: { samples: [2, 3] } });
-  const pilot = createScriptPilot({ ...dispatch, events: { onToolResult: event => {
+  const pilot = createScriptPilot({ ...dispatch, events: { beforeToolExecute: allowAll, onToolResult: event => {
     const result = event.toolResult;
     if (!result) throw new Error('Missing final result');
     if (change === 'error') result.is_error = true;

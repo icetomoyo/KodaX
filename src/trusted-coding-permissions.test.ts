@@ -9,7 +9,7 @@ import { runKodaX, runManagedTask, KodaXClient } from './trusted-coding-entry.js
 import { createAgent, type ToolGuardrail } from '@kodax-ai/agent';
 import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { buildRunnerLlmAdapter } from '../packages/coding/src/task-engine/_internal/managed-task/llm-adapter.js';
-import type { KodaXEvents } from '@kodax-ai/coding';
+import { allowAll, type KodaXEvents } from '@kodax-ai/coding';
 
 class TextPermissionProvider extends KodaXBaseProvider {
   static responses: KodaXStreamResult[] = [];
@@ -87,12 +87,33 @@ describe('public SDK trusted text permissions', () => {
           beforeTool: async () => ({ action: 'allow' }),
       }];
       const result = await run({ provider: 'text-permission-test', reasoningMode: 'off', lsp: false,
-        guardrails: mode === 'auto' ? guardrails : undefined,
+        guardrails: mode === 'auto' ? guardrails : undefined, events: { beforeToolExecute: allowAll },
         context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt: '', repoIntelligenceMode: 'off',
           systemPromptOverride: 'Perform the requested text tools.', resolveShellPermissionMode: () => mode },
       }, 'Write before to the provided file, then edit it to after.');
       expect(JSON.stringify(result.messages)).not.toContain('outside the Runtime write roots');
       await expect(fs.readFile(target, 'utf8')).resolves.toBe('after');
+    },
+  );
+
+  it.each([{ name: 'runKodaX', run: runKodaX }, { name: 'runManagedTask', run: runManagedTask }])(
+    '$name without an approval callback refuses a workspace write and tells the model why', async ({ run }) => {
+      const target = path.join(workspace, 'unapproved.txt');
+      TextPermissionProvider.responses = [
+        { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [
+          { type: 'tool_use', id: 'unapproved-write', name: 'write', input: { path: target, content: 'must not appear' } },
+        ] },
+        { textBlocks: [{ type: 'text', text: 'Stopped.' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' },
+      ];
+      const warn = vi.spyOn(process, 'emitWarning').mockImplementation(() => undefined);
+      try {
+        const result = await run({ provider: 'text-permission-test', reasoningMode: 'off', lsp: false,
+          context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt: '', repoIntelligenceMode: 'off',
+            systemPromptOverride: 'Use tools.', resolveShellPermissionMode: () => 'full-access' },
+        }, 'Write the file.');
+        expect(JSON.stringify(result.messages)).toContain('events.beforeToolExecute');
+      } finally { warn.mockRestore(); }
+      await expect(fs.access(target)).rejects.toMatchObject({ code: 'ENOENT' });
     },
   );
 
@@ -252,6 +273,7 @@ describe('public SDK trusted text permissions', () => {
         thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' })),
     ];
     const client = new KodaXClient({ provider: 'text-permission-test', reasoningMode: 'off', lsp: false, guardrails,
+      events: { beforeToolExecute: allowAll },
       context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt: '', repoIntelligenceMode: 'off',
         systemPromptOverride: 'Use tools.', resolveShellPermissionMode: () => 'auto' },
     });
@@ -293,6 +315,7 @@ describe('public SDK trusted text permissions', () => {
       ];
       const guardrails: ToolGuardrail[] = [{ kind: 'tool', name: 'auto-mode', beforeTool: async () => ({ action: 'allow' }) }];
       await run({ provider: 'text-permission-test', reasoningMode: 'off', lsp: false, guardrails,
+        events: { beforeToolExecute: allowAll },
         context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt: '', repoIntelligenceMode: 'off',
           systemPromptOverride: 'Use tools.', resolveShellPermissionMode: () => 'auto' },
       }, 'Write through tool_call.');

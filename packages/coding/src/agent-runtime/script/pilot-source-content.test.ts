@@ -9,6 +9,7 @@ import type { ExtensionRuntimeContract } from '../../extensions/runtime-contract
 import { renderCapabilityToolResult } from '../../tools/capability-result.js';
 import { toolWebFetch } from '../../tools/web-fetch.js';
 import { tryMcpFallback } from '../tool-dispatch.js';
+import { allowAll } from '../permission-gate.js';
 
 const name = 'sample.original-content';
 const limits = { timeoutMs: 5000, memoryBytes: 16 * 1024 * 1024, maxCalls: 4, maxTransferBytes: 64 * 1024 };
@@ -41,7 +42,7 @@ function fixture(result: CapabilityResult, route: 'host' | 'mcp' = 'host') {
   const ctx: KodaXToolExecutionContext = { backups: new Map(), extensionRuntime };
   const activeToolNames = route === 'host' ? [name] : ['mcp_call', name];
   const budget = { totalBudget: 4, spentBudget: 0, currentHarness: 'H0_DIRECT' as const };
-  const dispatch = { ctx, activeToolNames, events: {},
+  const dispatch = { ctx, activeToolNames, events: { beforeToolExecute: allowAll },
     runtimeSessionState: buildRuntimeSessionState({ activeTools: activeToolNames, modelSelection: {} }) };
   const call = route === 'host' ? `tools['${name}']({})` : `tools.mcp_call({id:'${definition.capabilityId}'})`;
   return { result, executeCapability, definition, dispatch, budget, call, pilot: createScriptPilot(dispatch, budget) };
@@ -107,7 +108,7 @@ it('does not grant a source view to an Array subclass while retaining its native
 it.each(['replace', 'mutate-block', 'error'] as const)('withdraws original content after a %s postprocessing change', async change => {
   const { dispatch, budget, call } = fixture({ kind: 'tool', content: [{ type: 'text', text: 'Sensitive original' }],
     structuredContent: { value: 7 } });
-  const pilot = createScriptPilot({ ...dispatch, events: { onToolResult: event => {
+  const pilot = createScriptPilot({ ...dispatch, events: { beforeToolExecute: allowAll, onToolResult: event => {
     if (!event.toolResult) throw new Error('Missing tool result');
     if (change === 'replace') event.toolResult.content = 'Reviewed output only';
     else if (change === 'error') event.toolResult.is_error = true;
@@ -127,7 +128,7 @@ it.each(['replace', 'mutate-block', 'error'] as const)('withdraws original conte
 it('snapshots a producer string before a later hook reassigns it', async () => {
   const result: CapabilityResult = { kind: 'tool', content: 'Original before observer' };
   const { dispatch, budget, call } = fixture(result);
-  const pilot = createScriptPilot({ ...dispatch, events: { onToolResult: () => { result.content = 'Changed producer object'; } } }, budget);
+  const pilot = createScriptPilot({ ...dispatch, events: { beforeToolExecute: allowAll, onToolResult: () => { result.content = 'Changed producer object'; } } }, budget);
   const cell = await pilot.run(`return (await ${call}).sourceContent;`, limits);
   expect(cell.status, cell.error).toBe('completed');
   expect(cell.value).toBe('Original before observer');

@@ -23,6 +23,7 @@ import type {
 } from '../types.js';
 import type { RuntimeContextBudgetSnapshot } from './context-budget.js';
 import { CodingActorSession } from './actor-runtime.js';
+import { allowAll } from './permission-gate.js';
 
 const PROVIDER_NAME = 'recursive-actor-integration-provider';
 const API_KEY_ENV = 'RECURSIVE_ACTOR_INTEGRATION_PROVIDER_API_KEY';
@@ -180,12 +181,14 @@ describe('recursive Runtime Actor integration', { timeout: 30_000 }, () => {
         contextDiagnostics: true,
       },
       parentEvents: {
+        beforeToolExecute: allowAll,
         onContextBudgetSnapshot: (event) => budgets.push(event),
       },
     };
     const options: KodaXOptions = {
       provider: PROVIDER_NAME,
       reasoningMode: 'off',
+      events: { beforeToolExecute: allowAll },
       context: {
         gitRoot: process.cwd(),
         executionCwd: process.cwd(),

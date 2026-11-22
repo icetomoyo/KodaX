@@ -10,6 +10,7 @@ import { runKodaX, runManagedTask } from '../packages/coding/src/task-engine.js'
 import { createDefaultCodingAgent } from '../packages/coding/src/default-coding-agent.js';
 import type { KodaXOptions } from '../packages/coding/src/types.js';
 import { FileSessionStorage } from '../packages/repl/src/interactive/storage.js';
+import { allowAll } from '../packages/coding/src/agent-runtime/permission-gate.js';
 
 const roots: string[] = [];
 let providerNumber = 0;
@@ -62,7 +63,7 @@ it('SDK discovers and loads a repository Skill from a subdirectory', async () =>
   const results: string[] = [];
   await runKodaX({ provider: provider.provider, maxIter: 3, reasoningMode: 'off',
     context: { ...f.context, executionCwd: f.child },
-    events: { onToolResult: result => { results.push(result.content); } } }, 'Inspect project code.');
+    events: { beforeToolExecute: allowAll, onToolResult: result => { results.push(result.content); } } }, 'Inspect project code.');
   expect(provider.requests[0]?.context).toContain('- audit-project:');
   expect(results.join('\n')).toContain('Inspect source before answering.');
 });
@@ -227,7 +228,7 @@ it('rediscovery updates model loads and refuses a newly disabled Skill', async (
   const results: string[] = [];
   await runKodaX({ provider: provider.provider, maxIter: 4, reasoningMode: 'off',
     context: { ...f.context, skillRegistry: registry, skillsPrompt: registry.getSystemPromptSnippet() },
-    events: { onToolResult: result => { results.push(result.content); } } }, 'Inspect project code.');
+    events: { beforeToolExecute: allowAll, onToolResult: result => { results.push(result.content); } } }, 'Inspect project code.');
   expect(results[0]).toContain('UPDATED_BODY');
   expect(results[0]).not.toContain('Inspect source before answering.');
   expect(results[1]).toContain('model invocation disabled');
@@ -311,7 +312,7 @@ it('refuses a model fork before expanding dynamic context', async () => {
   const provider = scriptedProvider([{ name: 'skill', input: { skill: 'audit-project' } }]);
   const results: string[] = [];
   await runKodaX({ provider: provider.provider, maxIter: 3, reasoningMode: 'off', context: f.context,
-    skillDynamicContext: { execute }, events: { onToolResult: result => { results.push(result.content); } } }, 'Inspect project code.');
+    skillDynamicContext: { execute }, events: { beforeToolExecute: allowAll, onToolResult: result => { results.push(result.content); } } }, 'Inspect project code.');
   expect(results[0]).toContain('context: fork requires explicit invocation');
   expect(execute).not.toHaveBeenCalled();
 });
@@ -351,7 +352,7 @@ it('leaves substituted dynamic commands to the Host executor instead of allowed-
   ]);
   const results: string[] = [];
   await runKodaX({ provider: provider.provider, maxIter: 4, reasoningMode: 'off', context: f.context,
-    skillDynamicContext: { execute }, events: { onToolResult: result => { results.push(result.content); } } }, 'Inspect project code.');
+    skillDynamicContext: { execute }, events: { beforeToolExecute: allowAll, onToolResult: result => { results.push(result.content); } } }, 'Inspect project code.');
   expect(results[0]).toContain('HOST_CONTEXT');
   expect(results[1]).toContain('HOST_CONTEXT');
   expect(execute.mock.calls).toEqual([['node --version', f.root], ['node --version && echo extra', f.root]]);
@@ -364,7 +365,7 @@ it('returns Skill-specific guidance without copying the Host prompt overlay into
   const results: string[] = [];
   await runKodaX({ provider: provider.provider, maxIter: 3, reasoningMode: 'off',
     context: { ...f.context, promptOverlay: 'PRIVATE_HOST_OVERLAY' },
-    events: { onToolResult: result => { results.push(result.content); } } }, 'Inspect project code.');
+    events: { beforeToolExecute: allowAll, onToolResult: result => { results.push(result.content); } } }, 'Inspect project code.');
   expect(provider.requests[0]?.context).toContain('PRIVATE_HOST_OVERLAY');
   expect(results[0]).toContain('Preferred agent: scoped-auditor');
   expect(results[0]).not.toContain('PRIVATE_HOST_OVERLAY');
@@ -387,7 +388,7 @@ it('refuses a changed policy for an already active Skill instead of loading it u
   const results: string[] = [];
   await runKodaX({ provider: provider.provider, maxIter: 4, reasoningMode: 'off',
     context: { ...f.context, skillRegistry: registry, skillsPrompt: registry.getSystemPromptSnippet() },
-    events: { onToolResult: result => { results.push(result.content); } } }, 'Inspect project code.');
+    events: { beforeToolExecute: allowAll, onToolResult: result => { results.push(result.content); } } }, 'Inspect project code.');
   expect(results[1]).toContain('changed after activation');
   expect(results[1]).not.toContain('NEW_POLICY_BODY');
 });

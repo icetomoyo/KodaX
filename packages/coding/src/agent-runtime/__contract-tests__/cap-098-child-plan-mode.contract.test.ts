@@ -24,6 +24,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildChildEvents } from '../../child-executor.js';
+import { allowAll } from '../permission-gate.js';
 import type { PlanModeBlockCheck } from '../../child-executor.js';
 
 describe('CAP-098: child-executor plan-mode block-check propagation contract', () => {
@@ -49,7 +50,7 @@ describe('CAP-098: child-executor plan-mode block-check propagation contract', (
     const predicate: PlanModeBlockCheck = (tool) =>
       mode === 'plan' && tool === 'write' ? 'Plan mode active' : null;
 
-    const events = buildChildEvents('toggle-child', undefined, predicate);
+    const events = buildChildEvents('toggle-child', undefined, predicate, undefined, { beforeToolExecute: allowAll });
 
     const beforeToggle = await events!.beforeToolExecute!('write', { path: '/tmp/a' });
     expect(typeof beforeToggle).toBe('string');

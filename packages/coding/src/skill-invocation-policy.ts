@@ -10,6 +10,7 @@ import type { KodaXOptions, KodaXShellExecutionContract, KodaXToolExecutionConte
 import { toolBash } from './tools/bash.js';
 import { KodaXSkillInvocationError } from './skill-invocation-error.js';
 import { createToolResultRecovery } from './tool-result-recovery.js';
+import { readOnlyWithoutApproval } from './agent-runtime/permission-gate.js';
 
 // Like Codex, KodaX ignores a Skill's `allowed-tools`: it never restricts or
 // preapproves a call. Every tool, hook and dynamic-context command follows the
@@ -283,7 +284,7 @@ export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions, p
       return activation;
     } },
     events: { ...activeEvents,
-      beforeToolExecute: async (...args) => activeEvents.beforeToolExecute?.(...args) ?? true,
+      beforeToolExecute: async (...args) => (activeEvents.beforeToolExecute ?? readOnlyWithoutApproval)(...args),
       onToolResult: (...args) => activeEvents.onToolResult?.(...args),
       onComplete: (...args) => activeEvents.onComplete?.(...args),
       onError: (...args) => activeEvents.onError?.(...args),
@@ -424,9 +425,7 @@ async function applyExplicitSkillInvocationPolicy(options: KodaXOptions, prompt?
         )).allow === false) {
           return `[Blocked] PreToolUse hook blocked '${tool}' for ${invocation.name}`;
         }
-        return baseEvents.beforeToolExecute
-          ? baseEvents.beforeToolExecute(tool, input, meta)
-          : true;
+        return (baseEvents.beforeToolExecute ?? readOnlyWithoutApproval)(tool, input, meta);
       },
       onToolResult: (result, meta) => {
         try {
