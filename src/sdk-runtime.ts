@@ -279,6 +279,7 @@ import type {
   RuntimeToolExposurePlan,
   ToolCallSignal,
   KodaXVideoInputArtifact,
+  ProposedFileChange,
 } from "@kodax-ai/coding";
 import {
   describeFailureCause,
@@ -287,6 +288,7 @@ import {
   buildSessionGoalRuntimeBinding,
   planGoalCreate,
   planGoalTransition,
+  proposeFileChange,
 } from "@kodax-ai/coding";
 import {
   createSessionManager,
@@ -3005,6 +3007,8 @@ export interface RuntimePermissionRequest {
   readonly extensionAsks?: readonly { readonly extension: string; readonly reason: string }[];
   readonly risk?: RuntimePermissionRisk;
   readonly inputPreview?: string;
+  /** What a file tool would change, worked out before asking. Absent when it changes no file or would refuse. */
+  readonly diff?: ProposedFileChange;
   /** Effective directory used to resolve relative tool paths for this run. */
   readonly executionCwd?: string;
   /** Structured Auto[LLM] decision metadata; never includes prompt or response text. */
@@ -21631,6 +21635,11 @@ function wrapKodaXEvents(input: {
     const stoppedBeforePermission = managedStopDecision();
     if (stoppedBeforePermission !== undefined) return stoppedBeforePermission;
     if (asksNobody()) return approvalUnavailableToolResult(tool);
+    const executionCwd = resolveRuntimeExecutionCwd(record);
+    const diff = await proposedChange(tool, toolInput, executionCwd);
+    // The Run may have been stopped while the file was read.
+    const stoppedWhilePlanning = managedStopDecision();
+    if (stoppedWhilePlanning !== undefined) return stoppedWhilePlanning;
     const previousPhase = record.phase;
     if (record.phase === "running") {
       onPhase("waiting_permission");
@@ -21647,7 +21656,8 @@ function wrapKodaXEvents(input: {
         ...(extensionReason !== undefined ? { reason: extensionReason } : {}),
         ...(extensionReason !== undefined && meta?.extensionAsks !== undefined ? { extensionAsks: meta.extensionAsks } : {}),
         inputPreview: previewInput(toolInput),
-        executionCwd: resolveRuntimeExecutionCwd(record),
+        ...(diff !== undefined ? { diff } : {}),
+        executionCwd,
       },
       undefined,
       // An extension asked about this one call, so the answer must not
@@ -27091,6 +27101,25 @@ function redactPermissionPreviewString(value: string): string {
       "$1$2[REDACTED]",
     )
     .replace(/(https?:\/\/)[^\s/:@]+:[^\s/@]+@/gi, "$1[REDACTED]@");
+}
+
+/** What a file tool would change, for the person asked to approve it. A file that cannot be read leaves the approval without one. */
+async function proposedChange(
+  tool: string,
+  input: Readonly<Record<string, unknown>>,
+  executionCwd: string,
+): Promise<ProposedFileChange | undefined> {
+  try {
+    return await proposeFileChange(tool, input, executionCwd);
+  } catch (error: unknown) {
+    emitKodaXDiagnostic({
+      source: "runtime.permission",
+      level: "warn",
+      message: `The ${tool} approval goes without a diff: the file could not be read.`,
+      detail: normalizeError(error),
+    });
+    return undefined;
+  }
 }
 
 function previewInput(input: Readonly<Record<string, unknown>>): string {

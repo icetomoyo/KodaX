@@ -1016,7 +1016,11 @@ describe('v2 interactions served by the v1 implementation', () => {
     const pending = await pendingInteraction(user, sessionId);
     expect(pending).toMatchObject({ sessionId, runId, kind: 'permission', request: { toolName: 'write' } });
     expect(pending.request).not.toHaveProperty('executionCwd');
-    expect((await pendingInteraction(owner, sessionId)).request.executionCwd).toBe(projectRoot);
+    // The person sees what the tool would write, with the file named by its place in the workspace.
+    expect(pending.request.diff).toEqual({ path: 'app/.kodax/note.txt', added: 1, removed: 0, unified: '@@ -0,0 +1,1 @@\n+note' });
+    const ownerView = await pendingInteraction(owner, sessionId);
+    expect(ownerView.request.executionCwd).toBe(projectRoot);
+    expect(ownerView.request.diff).toMatchObject({ path: 'app/.kodax/note.txt', hostPath: path.join(projectRoot, WRITE.path) });
     expect(written()).toBe(false);
 
     // Only a question can be left unanswered. A permission is allowed or refused.

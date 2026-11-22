@@ -50,6 +50,18 @@ const Questions = z.object({
 
 const TextQuestion = z.object({ question: z.string(), default: z.string().optional() });
 
+/** What a file tool would change, worked out before asking. */
+const FileChange = z.object({
+  /** The file inside the Host workspace. Absent when it lies outside, or the Host has no workspace. */
+  path: z.string().optional(),
+  added: z.int(),
+  removed: z.int(),
+  /** Standard unified-diff hunks, without the `---` and `+++` lines. */
+  unified: z.string(),
+  /** The hunks were cut at a line; `added` and `removed` count the whole change. */
+  truncated: z.literal(true).optional(),
+});
+
 /** What a tool is about to do and why the Host asks first. */
 const Permission = z.object({
   toolName: z.string(),
@@ -60,6 +72,8 @@ const Permission = z.object({
   /** `low`, `medium` or `high`, for display. */
   risk: z.string().optional(),
   inputPreview: z.string().optional(),
+  /** Present when the tool would change a file and the Host could work out how. */
+  diff: FileChange.optional(),
   /** The whole plan, when the approval is for leaving plan mode. */
   plan: z.string().optional(),
   /**
@@ -98,8 +112,11 @@ function interaction<Asked extends z.ZodType>(permission: Asked) {
 
 export const Interaction = interaction(Permission);
 
-/** The directory a command would run in is a path on the Host. */
-export const LocalInteraction = interaction(Permission.extend({ executionCwd: z.string().optional() }));
+/** The directory a command would run in, and the file a change is to, are paths on the Host. */
+export const LocalInteraction = interaction(Permission.extend({
+  executionCwd: z.string().optional(),
+  diff: FileChange.extend({ hostPath: z.string() }).optional(),
+}));
 
 /** A choice's `value`, or text the person typed instead of picking one. */
 const Selection = z.union([z.string(), z.strictObject({ kind: z.literal('customInput'), value: z.string() })]);

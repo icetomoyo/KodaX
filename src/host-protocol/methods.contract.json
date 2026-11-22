@@ -6550,6 +6550,37 @@
                           "inputPreview": {
                             "type": "string"
                           },
+                          "diff": {
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "type": "string"
+                              },
+                              "added": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "removed": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "unified": {
+                                "type": "string"
+                              },
+                              "truncated": {
+                                "type": "boolean",
+                                "const": true
+                              }
+                            },
+                            "required": [
+                              "added",
+                              "removed",
+                              "unified"
+                            ],
+                            "additionalProperties": false
+                          },
                           "plan": {
                             "type": "string"
                           },
@@ -7881,6 +7912,41 @@
                           },
                           "inputPreview": {
                             "type": "string"
+                          },
+                          "diff": {
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "type": "string"
+                              },
+                              "added": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "removed": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "unified": {
+                                "type": "string"
+                              },
+                              "truncated": {
+                                "type": "boolean",
+                                "const": true
+                              },
+                              "hostPath": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "added",
+                              "removed",
+                              "unified",
+                              "hostPath"
+                            ],
+                            "additionalProperties": false
                           },
                           "plan": {
                             "type": "string"
@@ -12117,6 +12183,37 @@
                       "inputPreview": {
                         "type": "string"
                       },
+                      "diff": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "added": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "removed": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "unified": {
+                            "type": "string"
+                          },
+                          "truncated": {
+                            "type": "boolean",
+                            "const": true
+                          }
+                        },
+                        "required": [
+                          "added",
+                          "removed",
+                          "unified"
+                        ],
+                        "additionalProperties": false
+                      },
                       "plan": {
                         "type": "string"
                       },
@@ -12514,6 +12611,41 @@
                       },
                       "inputPreview": {
                         "type": "string"
+                      },
+                      "diff": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "added": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "removed": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "unified": {
+                            "type": "string"
+                          },
+                          "truncated": {
+                            "type": "boolean",
+                            "const": true
+                          },
+                          "hostPath": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "added",
+                          "removed",
+                          "unified",
+                          "hostPath"
+                        ],
+                        "additionalProperties": false
                       },
                       "plan": {
                         "type": "string"

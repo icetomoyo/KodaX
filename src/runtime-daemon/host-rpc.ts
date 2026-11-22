@@ -713,9 +713,11 @@ const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } =
     return {};
   },
 
-  'interaction.list': async ({ sessionId }, v1) => ({
-    items: (await v1('interaction.list', defined({ sessionId })) as readonly ClientInteraction[]).map(toInteraction),
-  }),
+  'interaction.list': async ({ sessionId }, v1, caller) => {
+    const workspaceRoot = await caller.workspace?.root();
+    const items = await v1('interaction.list', defined({ sessionId })) as readonly ClientInteraction[];
+    return { items: items.map(interaction => toInteraction(interaction, workspaceRoot)) };
+  },
   'interaction.respond': async ({ interactionId, response }, v1) => {
     const { status } = await v1('interaction.respond', {
       requestId: interactionId,

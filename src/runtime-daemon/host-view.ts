@@ -331,7 +331,7 @@ export function toSessionView(
       ? within(workspaceRoot, view.session.workspaceRoot) : undefined),
     runs: view.runs.map(({ runId, ...run }) => ({ ...run, id: runId })),
     queue: view.queue.map(({ inputId, ...input }) => ({ ...input, id: inputId })),
-    interactions: view.interactions.map(toInteraction),
+    interactions: view.interactions.map(interaction => toInteraction(interaction, workspaceRoot)),
     settings: view.settings,
     activity: view.activity,
     contextBudget: view.contextBudget,
@@ -361,8 +361,12 @@ export function utcMilliseconds(time: string | undefined): number | undefined {
   return Number.isFinite(milliseconds) ? milliseconds : undefined;
 }
 
-/** A pending question or approval in v2 terms. */
-export function toInteraction(interaction: ClientInteraction): Readonly<Record<string, unknown>> {
+/**
+ * A pending question or approval in v2 terms. A change's file is named inside
+ * `workspaceRoot`; its Host path stays in for the contract to drop.
+ */
+export function toInteraction(interaction: ClientInteraction, workspaceRoot?: string): Readonly<Record<string, unknown>> {
+  const diff = interaction.kind === 'permission' ? interaction.options.diff : undefined;
   return {
     id: interaction.requestId,
     sessionId: interaction.sessionId,
@@ -370,7 +374,10 @@ export function toInteraction(interaction: ClientInteraction): Readonly<Record<s
     createdAt: Date.parse(interaction.createdAt),
     expiresAt: interaction.expiresAt === undefined ? undefined : Date.parse(interaction.expiresAt),
     kind: interaction.kind,
-    request: interaction.options,
+    request: diff === undefined ? interaction.options : {
+      ...interaction.options,
+      diff: { ...diff, path: workspaceRoot === undefined ? undefined : within(workspaceRoot, diff.path), hostPath: diff.path },
+    },
   };
 }
 

@@ -382,6 +382,22 @@ describe('a v1 view in v2 terms', () => {
     });
   });
 
+  it('names the file of a proposed change inside the workspace, and its Host path for the owner only', () => {
+    const workspace = path.resolve('host-workspace');
+    const change = { added: 1, removed: 0, unified: '@@ -0,0 +1,1 @@\n+note' };
+    const permission = (file: string) => ({
+      requestId: `perm-${file}`, sessionId: 'session-1', runId: 'run-1', createdAt: '2026-11-22T10:00:00.000Z',
+      kind: 'permission', options: { toolName: 'write', diff: { ...change, path: file } },
+    });
+    const inside = path.join(workspace, 'app', 'note.txt');
+    const outside = path.resolve('elsewhere', 'note.txt');
+    const source = v1View([], { interactions: [permission(inside), permission(outside)] } as unknown as Partial<ItemBoundedSessionView>);
+    const requests = (contract: typeof SessionView | typeof LocalSessionView) =>
+      contract.parse(toSessionView(source, workspace)).interactions.map(item => (item.request as { diff?: unknown }).diff);
+    expect(requests(SessionView)).toEqual([{ ...change, path: 'app/note.txt' }, change]);
+    expect(requests(LocalSessionView)).toEqual([{ ...change, path: 'app/note.txt', hostPath: inside }, { ...change, hostPath: outside }]);
+  });
+
   it('gives every item its own id and leaves out a time that is not a number', () => {
     const view = SessionView.parse(toSessionView(v1View([
       { id: 'old', type: 'info', text: 'one', timestamp: Number.NaN },
