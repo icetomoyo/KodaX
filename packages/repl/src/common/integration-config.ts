@@ -20,7 +20,7 @@ import type { McpServerConfig, McpServersConfig } from "@kodax-ai/agent";
 import { readCoreConfig as readCoreConfigFile, writeCoreConfigAtomically as publishCoreConfig,
   withConfigWriteLock, withCoreConfigWriteLock } from "./core-config-lock.js";
 
-export type IntegrationDomain = "mcp" | "a2a" | "extensions";
+export type IntegrationDomain = "mcp" | "a2a" | "extensions" | "host";
 export type IntegrationConfigSource = "user" | "legacy-user" | "default";
 
 export interface McpIntegrationDocument {
@@ -106,6 +106,7 @@ const DOMAIN_FILENAMES: Readonly<Record<IntegrationDomain, string>> = {
   mcp: "mcp.json",
   a2a: "a2a.json",
   extensions: "extensions.json",
+  host: "host.json",
 };
 
 const MCP_SERVER_KEYS = new Set([

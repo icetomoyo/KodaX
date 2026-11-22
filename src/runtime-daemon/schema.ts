@@ -1016,7 +1016,7 @@ function integrationHealthSchema(): RuntimeDaemonJsonSchema {
     time: stringSchema,
   }, ['code', 'message', 'time']);
   const domain = objectSchema({
-    domain: { type: 'string', enum: ['mcp', 'a2a', 'extensions'] },
+    domain: { type: 'string', enum: ['mcp', 'a2a', 'extensions', 'host'] },
     path: stringSchema,
     revision: stringSchema,
     source: { type: 'string', enum: ['user', 'legacy-user', 'default'] },

@@ -1787,7 +1787,7 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
   - 默认值只有一处：`readOnlyWithoutApproval`（`permission-gate.ts`）。门禁和包裹回调的四处代码（Skill 调用两处、子 Agent、Script 单元）都退回到它，不再退回 `true`。之前这些包裹会把"没有回调"变成"全部放行"，只改门禁不生效。根包 `trusted-coding-entry.ts` 只在宿主给了回调时才包一层。
   - 拒绝时给模型的工具结果是 `approvalMissingToolResult`（`constants.ts`），进程收到一次 `process.emitWarning`（code `KODAX_TOOL_APPROVAL_MISSING`）。用 `emitWarning` 是因为库没有日志出口时，诊断会被静默吞掉。
   - 权限模式（`resolveShellPermissionMode`）只描述会话，不批准调用；护栏只做限制。所以没有回调时 `full-access` 或 auto 护栏都只运行只读工具，要放行就加 `allowAll`。
-  - 拒绝文本是模型可见的工具结果。按 ADR-033 应补一个提示词 eval（模型收到这条结果后是否停下并向用户说明，而不是换工具绕过），还没跑，等用户决定。
+  - 拒绝文本是模型可见的工具结果，按 ADR-033 补了提示词 eval（`benchmark/approval-missing.*`，8ccea5254）：3 个模型 × 5 个用例 × 2 次，盲评对比旧的"审批不可用"文本，好 10、差 1、持平 19；Host 会再次拒绝的调用从 30 次里 8 次降到 2 次。结论记在 ADR-079 D8。
   - skill-creator 的 `run-eval.js` 显式放行所有调用，保持原行为；`run-trigger-eval.js` 本来就有回调。
   - 只改会话自身的工具也不需要回调（2026-11-22 用户确认）：`todo_create`、`todo_update`、`create_goal`、`update_goal`、`skill`。拒绝它们保护不了什么，只会让模型没法列计划（D8 eval 的 todo-plan 用例）。`skill` 能放行，是因为没有回调时 `applyRuntimeSkillInvocationPolicy` 把 Skill 的 `!`cmd`` 设为 `disable`（内置白名单允许 `find`、`awk`、`git branch` 等任意参数，参数还可以来自模型给的 `$ARGUMENTS`），hooks 本来就按 `bash` 走审批。`memory`/`memory_intent`（写以后的会话会读的笔记）、`exit_plan_mode`（等于自己批准计划）、`test_tool`（加载并运行构造出来的工具代码）不放行。
   - 宿主自己点名调用的 `runToolInvocation` 也走同一个门禁，没有回调时同样只运行只读工具。没有为它开例外，因为门禁分不出"宿主要的"和"模型要的"，例外会多一条绕过路径。
@@ -1989,6 +1989,19 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
 - 配了 `tools` 上限后，user 直接提交的 Run 和 `startTool` 都调用不到 bash。
 - 以 service 身份跑通一个只带业务工具的 Run。
 - 三方场景：service 创建带策略和 Host Tool 租约的 Session，user 在这个 Session 上提交的 Run 能调用到这个工具，并且受策略里的工具上限约束。
+
+**第 1 项的落地细节**（2026-11-22，未经用户确认的取舍）：
+
+- 分三次提交：① 配置块和 JWT 校验；② WS 监听、握手鉴权、心跳、关闭码、`exp` 断开、`auth.renew`；③ 配置热生效、排空通知、`/healthz`。
+- 配置放在新的集成域 `<configHome>/integrations/host.json`（`src/host-server/config.ts`），和 mcp/a2a/extensions 并列，热生效直接复用 `IntegrationConfigController`。平台在启动 Host 前写这个文件。不认识的字段让 Host 拒绝启动，所以回滚镜像时也要回滚这个文件。
+  - 这一步只有 `listen`、`jwt`、`owner`、`services`、`allowedOrigins`。`pairing`、`workspaceRoot`、`tools` 随各自的交付项加入。
+  - 配了 `listen` 没配 `jwt`、配了 `jwt` 却没有任何可接纳的 `sub`、同一个 `sub` 既是 owner 又是 service，都拒绝启动。`allowedOrigins` 只收不带路径的 origin，不收 `*`；留空就拒绝所有浏览器。
+  - 集成状态的 `domain` 加上 `host`（v1 `RuntimeIntegrationDomainStatus` 和 wire schema 一起放宽），第 ③ 步把它报上来。
+- JWT 校验单独写（`src/host-server/jwt.ts`），用 `node:crypto`，不复用 A2A 的 `oauth4webapi.validateJwtAccessToken`。后者强制 RFC 9068（`typ: at+jwt`、`jti`、`client_id`），Keycloak、Entra 默认签的 token 过不了。Host 只看 `iss`、`aud`（字符串或数组）、`sub`、`exp`，`nbf` 有就看，时钟容差 30 秒。
+  - 只收非对称算法（RS/PS/ES 256/384/512、EdDSA），RSA 至少 2048 位，ES 核对曲线；拒绝 `alg: none`、HS*、带 `crit` 的 token，以及和发布的 key `alg` 不符的 token。没有 `kid` 时必须恰好有一把合适的 key。
+  - JWKS 读取复用 A2A 的 `safeA2AFetch`（1 MiB、10 秒、不跟随重定向）和 `readJwksResponse`，允许私网地址（平台自己配的），HTTP 只允许精确的 loopback。
+  - key 集 10 分钟内有效；token 点名一把没见过的 key 时重读一次，30 秒内最多一次，这样轮换的 key 能用，乱填 `kid` 的连接又打不爆 IdP。重读失败时保留已有的 key，30 秒后再试；从没读到过 key 时报 `unavailable` 而不是 token 无效，握手据此回 `unavailable` 而不是 `unauthorized`。
+- 第 ② 步用 `ws`（已是根包运行时依赖）的 `noServer` 模式挂在 `node:http` 的 upgrade 上，`/healthz` 走同一个 HTTP server。
 
 ### M1c Space 整体迁移到 v2
 

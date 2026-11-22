@@ -10,7 +10,7 @@ import { hostCommandParams, hostList, hostParams, hostResult, type HostMethodReg
 import { SessionRef } from './session.js';
 
 const IntegrationDomain = z.object({
-  /** `mcp`, `a2a` or `extensions`. */
+  /** `mcp`, `a2a`, `extensions` or `host`. */
   domain: z.string(),
   /** The configuration file the Host reads for this domain. */
   path: z.string(),

@@ -3534,7 +3534,7 @@ export interface RuntimeIntegrationDiagnostic {
 }
 
 export interface RuntimeIntegrationDomainStatus {
-  readonly domain: "mcp" | "a2a" | "extensions";
+  readonly domain: "mcp" | "a2a" | "extensions" | "host";
   readonly path: string;
   readonly revision?: string;
   readonly source?: "user" | "legacy-user" | "default";

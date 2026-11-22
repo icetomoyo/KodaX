@@ -54,7 +54,8 @@ function assertPublicJwk(value: Readonly<Record<string, unknown>>): void {
   }
 }
 
-function assertJwksResponse(response: Response, body: Uint8Array): void {
+/** Checks a JWKS endpoint's answer and returns its keys. The v2 Host's token check reads keys through it too. */
+export function readJwksResponse(response: Response, body: Uint8Array): readonly Readonly<Record<string, unknown>>[] {
   if (response.status !== 200) {
     throw new OAuthJwksUnavailableError('OAuth JWKS endpoint returned an unexpected status.');
   }
@@ -72,6 +73,7 @@ function assertJwksResponse(response: Response, body: Uint8Array): void {
     throw new OAuthJwksUnavailableError('OAuth JWKS endpoint returned an invalid key set.');
   }
   for (const key of value.keys) assertPublicJwk(key);
+  return value.keys;
 }
 
 function isJwksUnavailable(error: unknown): boolean {
@@ -106,7 +108,7 @@ function boundedOAuthFetch(
         ...options,
         redirect: 'manual',
       }, policy, fetchImpl);
-      assertJwksResponse(result.response, result.body);
+      readJwksResponse(result.response, result.body);
       return new Response(result.body, {
         status: result.response.status,
         statusText: result.response.statusText,
