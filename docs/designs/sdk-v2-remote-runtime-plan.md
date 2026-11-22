@@ -874,7 +874,7 @@ blob.write({requestId, sessionId, blobId, offset, data /* base64，不超过 blo
 blob.commit({requestId, sessionId, blobId}) -> {blob: BlobRef}   // {blobId, mediaType, byteLength, sha256}，只在本 home 内有效
 blob.read({sessionId, blobId, cursor?}) -> {data, mediaType, byteLength, sha256, nextCursor?}
 
-// 权限 Interaction 带上拟变更：{kind, locations?: 工作区相对路径[], diff?: {path, added, removed, unified?, truncated?}}
+// 权限 Interaction 带上拟变更：diff?: {path? /* 工作区相对路径 */, added, removed, unified, truncated?}，见 M1b "第 8 项的落地细节"
 ```
 
 - `initialize`（M1a 已落地，`src/host-protocol/methods.ts`）：
@@ -2148,6 +2148,22 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
   - 第一版只收图片：`mediaType` 不是 `image/*` 的报 `invalid_params` + `attachment_not_image`。文件和视频等有了真实的客户端需求再放开。
   - `input.withdraw` 不把上传的附件换回 blob 引用。非本机的连接撤回时拿不到 `localAttachments`，因为里面是 Host 路径，上传的图片也在其中。客户端要重新提交，自己还留着 `blobId`。
 - 已验证：存储的单元测试（续传、去重、写入规则、上限、配额、按 Session 隔离、路径穿越、清理）；host-rpc 的集成测试（上传图片 → 带 `attachments` 提交 → 模型请求里有 `"type":"image"` → 视图里的附件只有 `blobId`、没有 Host 路径 → `blob.read` 读回同样的字节和哈希 → 删除 Session 后读上传的 blob 报 `not_found`；分块读、游标失效、非图片和不存在的 blob 被拒）；`host.test.ts` 的网络用例确认握手的 `limits` 带三项 blob 上限。真机浏览器上传要等 Space 的 Web UI（M1c）。
+
+**第 8 项的落地细节**（2026-11-22，未经用户确认的取舍）：
+
+- 什么时候算：工具要等人批准时，runtime 在发出审批请求之前算一次（`src/sdk-runtime.ts` 的 `authorizeTrackedPermission`）。被规则或已有授权直接放行的调用不算，也不读文件。
+- 怎么算：`packages/coding/src/tools/proposed-change.ts` 的 `proposeFileChange`，覆盖 `edit`（单个和 `edits[]`）、`multi_edit`、`write`、`insert_after_anchor`。
+  - 它直接调用工具自己的匹配函数：`multi-edit.ts` 的 `applyOneEdit`，`insert-after-anchor.ts` 的 `resolveAnchorInsertion` 和 `prepareInsertionContent`，这三个函数为此改成了导出。所以审批看到的改动，就是批准后工具对同一个文件做的改动；文件在等待期间被别人改了，工具照旧用它自己的检查拒绝。
+  - 工具会拒绝的调用（找不到、不唯一、空的 `old_string`、文件不存在而不是 `write`、改完没有变化）不带 diff，原因等工具执行时由它自己报。
+  - 不是普通文件或超过 4 MiB 的文件不读，审批不带 diff。读文件出错（比如没有权限）也不带 diff，runtime 发一条 `runtime.permission` 的 warn 诊断。
+- 形状：`{path, added, removed, unified, truncated?}`。
+  - `unified` 是标准的 unified diff 块，去掉了 `---`/`+++` 两行，文件只在 `path` 里出现一次。现有的 `generateDiff` 在每行的符号后面多一个空格，REPL 靠这个格式显示，所以没改它，由新模块转成标准格式。新文件是 `@@ -0,0 +1,N @@` 加全部行。两边都以换行结尾时，最后的换行不算一行。
+  - `unified` 最多 64 KiB，在行边界截断，截断时 `truncated: true`。`added` 和 `removed` 总是整个改动的行数。
+- 路径：v1 的审批请求里 `diff.path` 是 Host 上的绝对路径。v2 的 `toInteraction` 把它换成工作区相对路径（和 Session 的 `project` 一样用 `within`），文件在工作区外或者 Host 没配工作区时不给 `path`。
+  - 本机连接的合约（`LocalInteraction`）在 `diff` 里多一个 `hostPath`，和 `executionCwd` 一样只给本机。网络连接的合约把它去掉。
+  - 工作区外的文件，网络客户端照样看到 diff 的内容，只是没有路径。批准的人需要看到要改什么；能连上的都是同一个人（D8 之后的单用户 Host）。
+- 偏离 §4 的地方：没有做 `locations`。文件工具的位置就是 `diff.path`；其他工具（比如 bash）没有可靠的位置，等有了具体需求再加。
+- 已验证：`proposed-change.test.ts`（四种工具、批量按顺序应用、新文件和替换、锚点插入、截断、工具会拒绝的情况）；`host-view.test.ts`（工作区内外的路径，网络合约去掉 `hostPath`）；host-rpc 的集成测试里，模型调用 `write` 后，user 角色看到的待审批请求带 `diff`，路径是 `app/.kodax/note.txt`，owner 还能看到 `hostPath`。浏览器上的 diff 显示要等 Space 的 Web UI（M1c）。
 
 ### M1c Space 整体迁移到 v2
 
