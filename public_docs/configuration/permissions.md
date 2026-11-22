@@ -78,7 +78,9 @@ or callback is not permission to write outside the configured roots. An
 explicitly supplied `trustedTextMutationHost` remains the embedder's authority.
 
 A direct SDK entry without `events.beforeToolExecute` runs only tools that
-declare `sideEffect: 'readonly'`, whatever the permission mode says. The mode
+declare `sideEffect: 'readonly'`, plus the session-only `todo_create`,
+`todo_update`, `create_goal`, `update_goal` and `skill` (a Skill's `!`cmd``
+blocks and hooks are refused), whatever the permission mode says. The mode
 describes the session; the callback approves calls. Pass `allowAll` to run
 every tool.
 

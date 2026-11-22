@@ -11,7 +11,10 @@ All notable changes to this project will be documented in this file.
 - In-process SDK entries (`runKodaX`, `startKodaX`, `runManagedTask`,
   `KodaXClient`, `createKodaXTaskRunner`, `createDefaultCodingAgent`,
   `authorWorkflowViaWorker`, `runToolInvocation`) without `events.beforeToolExecute` now run only
-  tools that declare `sideEffect: 'readonly'`. Other calls return a tool
+  tools that declare `sideEffect: 'readonly'`, plus `todo_create`,
+  `todo_update`, `create_goal`, `update_goal` and `skill`, which change only
+  the session itself. A Skill loaded this way gets its `!`cmd`` blocks and
+  hooks refused. Other calls return a tool
   result that says how to allow them, and the process gets one
   `KODAX_TOOL_APPROVAL_MISSING` warning. Pass the new `allowAll` export to
   run every tool as before. The Runtime, daemon, CLI and REPL are unchanged.

@@ -247,6 +247,12 @@ export async function applyRuntimeSkillInvocationPolicy(options: KodaXOptions, p
   let activationTail: Promise<unknown> = Promise.resolve();
   const scoped: KodaXOptions = {
     ...explicit,
+    // A host that set no approval callback has nobody to approve the commands
+    // in a skill's !`cmd` blocks, so they are refused and the skill tool can run
+    // (readOnlyWithoutApproval). Read the host's own events: the wrappers below
+    // always set beforeToolExecute.
+    skillDynamicContext: explicit.skillDynamicContext
+      ?? (options.events?.beforeToolExecute === undefined ? { disable: true } : undefined),
     context: { ...explicit.context,
       toolResultRecovery: recovery,
       isPagedContentRecoveryAllowed: () => recovery.available()

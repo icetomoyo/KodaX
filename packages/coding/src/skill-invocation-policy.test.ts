@@ -512,3 +512,23 @@ describe('applyRuntimeSkillInvocationPolicy', () => {
     });
   });
 });
+
+describe('Skill !`cmd` blocks for a host that set no approval callback', () => {
+  const base = (): KodaXOptions => ({ provider: 'mock-provider', context: { gitRoot: os.tmpdir(), executionCwd: os.tmpdir() } });
+
+  it('are refused, because nobody approves the commands they would run', async () => {
+    const options = await applyRuntimeSkillInvocationPolicy(base());
+    expect(options.skillDynamicContext).toEqual({ disable: true });
+  });
+
+  it('follow the host when it sets an approval callback', async () => {
+    const options = await applyRuntimeSkillInvocationPolicy({ ...base(), events: { beforeToolExecute: async () => true } });
+    expect(options.skillDynamicContext).toBeUndefined();
+  });
+
+  it('follow a policy the host gave for them', async () => {
+    const execute = async () => 'ok';
+    const options = await applyRuntimeSkillInvocationPolicy({ ...base(), skillDynamicContext: { execute } });
+    expect(options.skillDynamicContext).toEqual({ execute });
+  });
+});

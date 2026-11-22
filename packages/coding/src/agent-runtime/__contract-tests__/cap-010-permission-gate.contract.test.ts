@@ -159,7 +159,15 @@ describe('CAP-010: tri-state permission gate contract', () => {
       expect(await getToolExecutionOverride({}, 'grep', { pattern: 'x' })).toBeUndefined();
     });
 
-    it.each(['write', 'bash', 'mcp_call', 'activate_tool', 'web_fetch', 'a_tool_nobody_registered'])(
+    it.each(['todo_create', 'todo_update', 'create_goal', 'update_goal', 'skill'])(
+      'runs %s, which changes only the session itself',
+      async (tool) => {
+        expect(await getToolExecutionOverride({}, tool, {})).toBeUndefined();
+      },
+    );
+
+    it.each(['write', 'bash', 'mcp_call', 'activate_tool', 'web_fetch', 'memory', 'memory_intent', 'exit_plan_mode',
+      'test_tool', 'a_tool_nobody_registered'])(
       'refuses %s, and says why and how to allow it',
       async (tool) => {
         const result = await getToolExecutionOverride({}, tool, {});

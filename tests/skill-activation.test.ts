@@ -469,3 +469,23 @@ it.each(['explicit', 'model'] as const)('leaves every tool to Host authority for
   expect(results.join('\n')).not.toContain('is not allowed by audit-project');
   expect(authorize.mock.calls.some(([name]) => name === 'glob')).toBe(true);
 });
+
+it.each(['runKodaX', 'runManagedTask'] as const)(
+  'loads a Skill through %s for a host without an approval callback, refusing its !`cmd` blocks', async entry => {
+    const f = await fixture();
+    await writeFile(path.join(f.skillDir, 'SKILL.md'), '---\nname: audit-project\ndescription: Inspect project code\n---\nSKILL_BODY\n!`node --version`\n');
+    const provider = scriptedProvider([{ name: 'skill', input: { skill: 'audit-project' } }]);
+    const results: string[] = [];
+    const options: KodaXOptions = { provider: provider.provider, maxIter: 3, reasoningMode: 'off', context: f.context,
+      events: { onToolResult: result => { results.push(result.content); } } };
+    if (entry === 'runKodaX') {
+      await runKodaX(options, 'Inspect project code.');
+    } else {
+      const storage = new FileSessionStorage({ sessionsDir: path.join(f.root, 'sessions'), configHome: f.context.configHome, cwd: f.root });
+      await runManagedTask({ ...options, agentMode: 'ama', session: { id: 'skill-d8-session', storage } }, 'Inspect project code.');
+    }
+    expect(results[0]).toContain('SKILL_BODY');
+    expect(results[0]).toContain('Dynamic context disabled by host');
+    expect(results[0]).not.toContain(process.versions.node);
+  },
+);

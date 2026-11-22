@@ -1789,6 +1789,7 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
   - 权限模式（`resolveShellPermissionMode`）只描述会话，不批准调用；护栏只做限制。所以没有回调时 `full-access` 或 auto 护栏都只运行只读工具，要放行就加 `allowAll`。
   - 拒绝文本是模型可见的工具结果。按 ADR-033 应补一个提示词 eval（模型收到这条结果后是否停下并向用户说明，而不是换工具绕过），还没跑，等用户决定。
   - skill-creator 的 `run-eval.js` 显式放行所有调用，保持原行为；`run-trigger-eval.js` 本来就有回调。
+  - 只改会话自身的工具也不需要回调（2026-11-22 用户确认）：`todo_create`、`todo_update`、`create_goal`、`update_goal`、`skill`。拒绝它们保护不了什么，只会让模型没法列计划（D8 eval 的 todo-plan 用例）。`skill` 能放行，是因为没有回调时 `applyRuntimeSkillInvocationPolicy` 把 Skill 的 `!`cmd`` 设为 `disable`（内置白名单允许 `find`、`awk`、`git branch` 等任意参数，参数还可以来自模型给的 `$ARGUMENTS`），hooks 本来就按 `bash` 走审批。`memory`/`memory_intent`（写以后的会话会读的笔记）、`exit_plan_mode`（等于自己批准计划）、`test_tool`（加载并运行构造出来的工具代码）不放行。
   - 宿主自己点名调用的 `runToolInvocation` 也走同一个门禁，没有回调时同样只运行只读工具。没有为它开例外，因为门禁分不出"宿主要的"和"模型要的"，例外会多一条绕过路径。
   - 测试里约 40 处依赖"没有回调就放行"的调用改成传 `allowAll`。生产路径（REPL、CLI、Runtime、A2A 远程运行）本来就带回调，Actor 子 Agent 的 `parentEvents` 就是这个 Run 的 events，回调能传下去。
 - 每个 Run 的预算复用现有字段：迭代上限用 `maxIter`（`packages/coding/src/types.ts:2246`），token 用 `tokenBudget`（`client-host-authorization.ts:230`）。r1 只新增 `maxDurationMs`。

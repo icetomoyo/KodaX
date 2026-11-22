@@ -169,7 +169,7 @@ KodaX runs a Runtime-owned Actor tree. You can spawn, message, and interrupt chi
 ```typescript
 import { allowAll, runKodaX } from '@kodax-ai/kodax';
 
-// Without an approval callback only read-only tools run; allowAll runs every tool.
+// Without an approval callback only read-only and session-only tools run; allowAll runs every tool.
 await runKodaX({ provider: 'zhipu-coding', events: { beforeToolExecute: allowAll } }, `
   spawn_agent("reviewer", "Review packages/llm/src/ for type safety issues")
   spawn_agent("tester",   "Write unit tests for any gaps you find in packages/llm/src/")

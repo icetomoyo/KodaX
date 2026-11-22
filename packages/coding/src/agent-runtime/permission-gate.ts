@@ -21,7 +21,7 @@
  * (tool dispatch loop) distinguish cancel-vs-block-with-message by exact
  * string equality with `CANCELLED_TOOL_RESULT_MESSAGE`.
  *
- * A host that sets no `beforeToolExecute` runs only read-only tools; every
+ * A host that sets no `beforeToolExecute` runs only read-only and session-only tools; every
  * other call is refused with a result that says how to allow it, and the
  * process is warned once. `allowAll` is the explicit way to run every tool
  * (SDK v2 D8; before it, no callback meant every call ran). Code that wraps
@@ -47,18 +47,28 @@ function warnApprovalMissing(name: string): void {
   if (warnedApprovalMissing) return;
   warnedApprovalMissing = true;
   process.emitWarning(
-    `KodaX refused the tool call "${name}": no events.beforeToolExecute is set, so only read-only tools run. `
+    `KodaX refused the tool call "${name}": no events.beforeToolExecute is set, so only read-only and session-only tools run. `
       + 'Pass events.beforeToolExecute to approve each call, or allowAll from @kodax-ai/coding to run every tool.',
     { code: 'KODAX_TOOL_APPROVAL_MISSING' },
   );
 }
 
 /**
- * The approval a host gets when it sets none: a read-only tool runs, any other
- * call is refused with a result that says how to allow it.
+ * Tools that are not read-only but run without a callback: they change only the
+ * session's own todo list, goal, or loaded instructions. Refusing them protects
+ * nothing and stops the model from planning. `skill` qualifies because a host
+ * without a callback also refuses the shell commands in a skill's !`cmd` blocks
+ * (`applyRuntimeSkillInvocationPolicy`) and its hooks (admitted as `bash`).
+ * `memory` stays out: it writes notes that later sessions read.
+ */
+const SESSION_ONLY_TOOLS: ReadonlySet<string> = new Set(['todo_create', 'todo_update', 'create_goal', 'update_goal', 'skill']);
+
+/**
+ * The approval a host gets when it sets none: a read-only or session-only tool
+ * runs, any other call is refused with a result that says how to allow it.
  */
 export const readOnlyWithoutApproval: NonNullable<KodaXEvents['beforeToolExecute']> = async (name) => {
-  if (!isToolMutation(name)) return true;
+  if (!isToolMutation(name) || SESSION_ONLY_TOOLS.has(name)) return true;
   warnApprovalMissing(name);
   return approvalMissingToolResult(name);
 };

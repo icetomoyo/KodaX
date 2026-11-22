@@ -23,7 +23,7 @@ Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` �
 破坏性变更。进程内入口不传 `events.beforeToolExecute` 时，只运行只读工具。之前不传回调等于所有调用都运行。
 
 - 涉及的入口：`@kodax-ai/kodax` 和 `@kodax-ai/coding` 的 `runKodaX`、`startKodaX`、`runManagedTask`、`KodaXClient`、`createKodaXTaskRunner`、`createDefaultCodingAgent`、`authorWorkflowViaWorker`、`runToolInvocation`。子 Agent、Skill 调用、Workflow Agent 和 Script 单元沿用同一个答案。
-- 只有声明 `sideEffect: 'readonly'` 的工具不需要批准就能运行，例如 `read`、`grep`、`glob`。其余都被拒绝，包括读网络、MCP 调用、构造工具，以及 KodaX 分辨不出类别的工具。
+- 只有声明 `sideEffect: 'readonly'` 的工具不需要批准就能运行，例如 `read`、`grep`、`glob`。另外放行只改会话自身的 `todo_create`、`todo_update`、`create_goal`、`update_goal` 和 `skill`；这样加载的 Skill，其中的 `!`cmd`` 命令和 hooks 被拒绝。其余都被拒绝，包括读网络、MCP 调用、构造工具，以及 KodaX 分辨不出类别的工具。
 - 模型收到的工具结果会说明宿主没有设置批准回调，模型可以停下或向用户说明。进程收到一次 `KODAX_TOOL_APPROVAL_MISSING` 警告。
 - 要保持原来的行为，传 `allowAll`：`events: { beforeToolExecute: allowAll }`（从 `@kodax-ai/kodax` 或 `@kodax-ai/coding` 导入）。
 - `auto-mode` 护栏只做限制。要让它放行的调用真正运行，同时传 `allowAll` 或自己的回调。

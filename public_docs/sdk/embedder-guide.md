@@ -150,7 +150,10 @@ that only read. Before, no callback meant every call ran.
   Child agents, Skill invocations, Workflow agents and Script cells inherit
   the same answer.
 - A tool runs without approval only when it declares `sideEffect: 'readonly'`,
-  such as `read`, `grep` and `glob`. Everything else is refused, including
+  such as `read`, `grep` and `glob`, or changes only the session itself:
+  `todo_create`, `todo_update`, `create_goal`, `update_goal` and `skill`.
+  A Skill loaded this way gets its `!`cmd`` blocks and hooks refused.
+  Everything else is refused, including
   network reads, MCP calls, tool construction and tools KodaX cannot classify.
 - The model receives a tool result that says the host sets no approval
   callback, so it can stop or explain. The process gets one

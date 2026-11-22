@@ -8296,7 +8296,12 @@ quota and billing. The full specification is the design record
 7. **D7 No Host paths on the network.** Folded into D11.
 8. **D8 Safe defaults for embedding.** Without an approval callback the
    in-process library refuses dangerous tools. Allowing everything requires an
-   explicit `allowAll`. The refusal (`approvalMissingToolResult`) tells the
+   explicit `allowAll`. Tools that change only the session itself (todo list,
+   goal, `skill`) run without a callback: refusing them protects nothing and
+   stops the model from planning. A Skill loaded that way gets its `!`cmd``
+   blocks refused, because nobody approves the commands they would run; its
+   hooks are already admitted as `bash`. `memory` stays refused because later
+   sessions read what it writes. The refusal (`approvalMissingToolResult`) tells the
    model that every tool that changes something gets the same answer, to keep
    working with tools that read, and to tell the user what it would have
    changed. A Layer 2 eval (`benchmark/approval-missing.eval.ts`, 2026-11-22,
