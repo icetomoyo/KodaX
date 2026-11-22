@@ -198,7 +198,7 @@ export async function executeToolCall(
   // `tool:result` cannot disagree. By the time a block reaches here its name
   // is already canonical.
 
-  const visibleTool = isVisibleToolName(toolCall.name);
+  const visibleTool = isVisibleToolName(toolCall.name) && !toolExecution(toolCall).nested;
   const toolMeta = createToolEventMeta(events, toolCall.id, toolExecution(toolCall).id);
   if (visibleTool) {
     await emitActiveExtensionEvent('tool:start', {
@@ -287,7 +287,7 @@ export async function executeToolCall(
   const ctxWithToolHooks = createContextForToolCall(events, toolCall, ctx);
   ctxWithToolHooks.discoveryToolNames = activeToolNames ?? ctx.discoveryToolNames;
   ctxWithToolHooks.invokeCheckedTool = ctx.invokeCheckedTool ?? ((name, input) => executeToolCall(
-    events, { id: randomUUID(), name, input }, ctx, runtimeSessionState, activeToolNames, abortSignal, allowMcpFallback,
+    events, nestedToolCall(toolCall, name, input), ctx, runtimeSessionState, activeToolNames, abortSignal, allowMcpFallback,
   ));
 
   events.onToolExecutionStart?.(
@@ -340,12 +340,13 @@ export function executeInExtensionScope(
   if (!ctx.sessionId || !ctx.runtimeRunId || !ctx.invokeCheckedTool) return admitted();
   const identity = { version: 1 as const, sessionId: ctx.sessionId, runId: ctx.runtimeRunId,
     invocationId: call.id, extensionId: getRegisteredToolDefinition(call.name)?.source.id ?? `tool:${call.name}` };
+  const progressId = displayToolCallId(call);
   return withExtensionExecutionScope({ ...identity, signal: signal ?? ctx.abortSignal ?? new AbortController().signal,
     actors: ctx.actorControl, invokeTool: ctx.invokeCheckedTool,
     reportProgress: (progress) => {
-      if (events.onToolProgress) events.onToolProgress({ id: call.id, message: progress.message,
+      if (events.onToolProgress) events.onToolProgress({ id: progressId, message: progress.message,
         extension: { ...identity, extensionId: getExtensionExecutionScope()?.extensionId ?? identity.extensionId,
-          data: progress.data } }, createToolEventMeta(events, call.id, toolExecution(call).id));
+          data: progress.data } }, createToolEventMeta(events, progressId, toolExecution(call).id));
       else ctx.reportToolProgress?.(progress.message);
     },
   }, (scope) => { ctx.extensionExecution = scope; return admitted(); });
@@ -369,6 +370,10 @@ export function createContextForToolCall(
   ctx: KodaXToolExecutionContext,
 ): KodaXToolExecutionContext {
   const toolMeta = createToolEventMeta(events, toolCall.id, toolExecution(toolCall).id);
+  // Progress belongs to the model-issued call's item. A nested call has no item
+  // of its own; its extension handler reports progress through its scope.
+  const progressId = displayToolCallId(toolCall);
+  const reportsProgress = events.onToolProgress !== undefined && !toolExecution(toolCall).nested;
   const visualSource = ctx.visualObservationOwner ? { visualSource: { ...ctx.visualSource, imageOrdinal: 0,
     toolCallId: toolCall.id, executionId: toolExecution(toolCall).id,
     callOrdinal: toolExecution(toolCall).ordinal ?? ctx.visualSource?.callOrdinal } } : {};
@@ -383,10 +388,11 @@ export function createContextForToolCall(
         toolCallId: toolCall.id,
         ...(ctx.recordToolResultArtifact ? { recordToolResultArtifact: (sourceId: string, outputPath: string) =>
           ctx.recordToolResultArtifact!(sourceId === toolCall.id ? toolExecution(toolCall).resultKey : sourceId, outputPath) } : {}),
-        ...(events.onToolProgress
+        ...(reportsProgress
           ? {
               reportToolProgress: (message: string) => {
-                events.onToolProgress?.({ id: toolCall.id, message }, toolMeta);
+                events.onToolProgress?.({ id: progressId, message },
+                  createToolEventMeta(events, progressId, toolExecution(toolCall).id));
               },
             }
           : {}),
@@ -485,6 +491,7 @@ async function executeBridgeToolCall(input: {
     return `[Tool Error] ${TOOL_CALL_NAME}: ${resolved?.error ?? 'invalid bridge call.'}`;
   }
   const targetCall = resolved.call;
+  bindBridgeTarget(targetCall, input.bridgeCall);
   const targetName = targetCall.name;
   const targetInput = targetCall.input;
   if (targetName === TOOL_CALL_NAME || targetName === TOOL_DESCRIBE_NAME) {
@@ -524,7 +531,7 @@ async function executeBridgeToolCall(input: {
   const ctxWithToolHooks = createContextForToolCall(input.events, targetCall, input.ctx);
   ctxWithToolHooks.discoveryToolNames = input.activeToolNames ?? input.ctx.discoveryToolNames;
   ctxWithToolHooks.invokeCheckedTool = input.ctx.invokeCheckedTool ?? ((name, parameters) => executeToolCall(
-    input.events, { id: randomUUID(), name, input: parameters }, input.ctx, input.runtimeSessionState,
+    input.events, nestedToolCall(targetCall, name, parameters), input.ctx, input.runtimeSessionState,
     input.activeToolNames ? [...input.activeToolNames] : undefined, input.abortSignal, input.allowMcpFallback,
   ));
   const recordTargetArtifact = ctxWithToolHooks.recordToolResultArtifact;
@@ -636,6 +643,12 @@ export interface RunToolDispatchInput {
   readonly finalToolBlocks?: Map<string, KodaXToolUseBlock>;
   /** Fires after every before-guardrail settles and before any tool executes. */
   readonly onToolCallsPrepared?: (blocks: readonly KodaXToolUseBlock[]) => void | Promise<void>;
+  /**
+   * Set for calls an extension handler makes through its execution scope. They
+   * are not model tool calls, so Hosts get no item for them; `displayId` names
+   * the model-issued call whose item shows the handler's progress.
+   */
+  readonly nested?: { readonly displayId?: string };
 }
 
 interface PreparedToolCall {
@@ -644,11 +657,37 @@ interface PreparedToolCall {
   readonly blockedContent?: ToolResult;
 }
 
-const toolExecutions = new WeakMap<object, { readonly id: string; readonly resultKey: string; readonly ordinal?: number }>();
-export function toolExecution(call: { readonly id: string }) {
+interface ToolExecution {
+  readonly id: string;
+  readonly resultKey: string;
+  readonly ordinal?: number;
+  /** Model-issued call whose Host item represents this execution. */
+  readonly displayId?: string;
+  /** An extension handler's internal call: it has no Host item of its own. */
+  readonly nested?: true;
+}
+const toolExecutions = new WeakMap<object, ToolExecution>();
+export function toolExecution(call: { readonly id: string }): ToolExecution {
   let execution = toolExecutions.get(call);
   if (!execution) { execution = { id: `execution_${randomUUID()}`, resultKey: call.id }; toolExecutions.set(call, execution); }
   return execution;
+}
+
+/** The model-issued call id a Host uses for this execution's item and progress. */
+export function displayToolCallId(call: { readonly id: string }): string {
+  return toolExecution(call).displayId ?? call.id;
+}
+
+/** A bridged target runs for its bridge call, which owns the Host item. */
+export function bindBridgeTarget(target: { readonly id: string }, bridge: { readonly id: string }): void {
+  toolExecutions.set(target, { ...toolExecution(target), displayId: displayToolCallId(bridge),
+    ...(toolExecution(bridge).nested ? { nested: true as const } : {}) });
+}
+
+function nestedToolCall(owner: { readonly id: string }, name: string, input: Record<string, unknown>): RunnableToolCall {
+  const call = { id: randomUUID(), name, input };
+  toolExecutions.set(call, { id: `execution_${randomUUID()}`, resultKey: call.id, displayId: displayToolCallId(owner), nested: true });
+  return call;
 }
 
 /**
@@ -779,7 +818,8 @@ async function prepareToolBlock(
       : { index, call: outcome.call };
   }
   const id = `execution_${randomUUID()}`;
-  const execution = { id, resultKey: input.toolBlocks.filter(candidate => candidate.id === block.id).length > 1 ? id : block.id, ordinal: index };
+  const execution: ToolExecution = { id, resultKey: input.toolBlocks.filter(candidate => candidate.id === block.id).length > 1 ? id : block.id, ordinal: index,
+    ...(input.nested ? { nested: true as const, ...(input.nested.displayId ? { displayId: input.nested.displayId } : {}) } : {}) };
   toolExecutions.set(prepared.call, execution);
   toolExecutions.set(block, execution);
   input.finalToolBlocks?.set(block.id, runnerCallToToolBlock(prepared.call));
@@ -804,7 +844,7 @@ async function executePreparedToolCall(
       const id = randomUUID();
       const results = await runToolDispatch({ ...input,
         toolBlocks: [{ type: 'tool_use', id, name, input: parameters }],
-        finalToolBlocks: undefined, onToolCallsPrepared: undefined,
+        finalToolBlocks: undefined, onToolCallsPrepared: undefined, nested: { displayId: displayToolCallId(call) },
       });
       return results.get(id) ?? '[Tool Error] Nested tool did not return a result.';
     },
@@ -853,7 +893,7 @@ async function emitToolCallStart(
   events: KodaXEvents,
   call: RunnerToolCall,
 ): Promise<void> {
-  if (!isVisibleToolName(call.name)) return;
+  if (!isVisibleToolName(call.name) || toolExecution(call).nested) return;
   await emitActiveExtensionEvent('tool:start', {
     name: call.name,
     id: call.id,

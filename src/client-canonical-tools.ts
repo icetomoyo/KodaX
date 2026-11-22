@@ -1,4 +1,4 @@
-import type { KodaXMessage, KodaXToolResultBlock } from '@kodax-ai/agent';
+import type { KodaXMessage, KodaXSessionUiHistoryItem, KodaXToolResultBlock } from '@kodax-ai/agent';
 import type { ClientViewItem } from '@kodax-ai/coding/client-contract';
 
 /** Textual tool content is never a display preview. Offsets use JS UTF-16 units. */
@@ -28,6 +28,33 @@ function resultStatus(result: KodaXToolResultBlock | undefined): NonNullable<Cli
   if (result.metadata?.cancelled === undefined && result.is_error !== false && /^\[(?:Cancelled|Blocked)\]/u.test(text)) return 'cancelled';
   if (result.is_error !== undefined) return result.is_error ? 'error' : 'success';
   return /^(?:Error:|\[Error\])/u.test(text) ? 'error' : 'success';
+}
+
+/**
+ * Older builds saved an extension handler's internal calls as tool records
+ * under the model-issued call's assistant output. Lineage proves such a record
+ * was never a model tool call: its saved assistant message has no tool_use
+ * with that id, and no result was ever recorded for it.
+ */
+export function withoutInternalToolRecords(
+  history: readonly KodaXSessionUiHistoryItem[], messages: readonly KodaXMessage[],
+): KodaXSessionUiHistoryItem[] {
+  const calls = new Map<string, Set<string>>();
+  for (const message of messages) {
+    if (message.role !== 'assistant' || message.outputId === undefined) continue;
+    const ids = calls.get(message.outputId) ?? new Set<string>();
+    for (const block of typeof message.content === 'string' ? [] : message.content) {
+      if (block.type === 'tool_use') ids.add(block.id);
+    }
+    calls.set(message.outputId, ids);
+  }
+  return history.flatMap((item): KodaXSessionUiHistoryItem[] => {
+    if (item.type !== 'tool_group') return [item];
+    const tools = item.tools.filter(tool => tool.resultRecorded || tool.assistantOutputId === undefined
+      || calls.get(tool.assistantOutputId)?.has(tool.id) !== false);
+    if (tools.length === item.tools.length) return [item];
+    return tools.length > 0 ? [{ ...item, tools }] : [];
+  });
 }
 
 /** Shared canonical facts for view, history, and full item reads. */

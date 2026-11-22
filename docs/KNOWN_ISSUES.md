@@ -47,6 +47,78 @@ not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
 
+## Issue 433: An extension's internal tool calls stay running in the Session view
+
+- Priority: High
+- Status: Resolved
+- Introduced: every version where extension handlers call `scope.invokeTool` or `executeProcess`
+- Created / Resolved: 2026-11-22 / 2026-11-22
+- Fixed: unreleased (after `v0.7.97-beta.13`)
+- Related: KodaX Space report (0.1.47-beta.3/4 on `v0.7.97-beta.13`), artifacts extension
+
+### Original Problem
+
+An extension handler that calls another tool through `scope.invokeTool` or
+`executeProcess` (for example `artifact_render`, which runs write, bash and
+one read per page) reaches `runToolDispatch` again. That path fires
+`onToolUseStart` and `onToolExecutionStart` for the inner call, but
+`onToolResult` is only fired by `applyPostToolProcessing`, which inner calls
+never reach. Every Host that renders tool events gets a start with no end:
+
+- The Session view keeps each inner call as a top-level `running` tool item
+  with a UUID id and no `resultRecorded` or `endedAt`, even after the Run ends.
+  `persistSessionViewItems` then saves them as `cancelled`, so after a restart
+  the calls look interrupted although they succeeded. One Space session had
+  40 such records across 4 Runs; lineage had 130/130 matched pairs.
+- After an interrupted Run, `runtime-interrupted-run-recovery.ts` reads these
+  records (`executionBegan` without `resultRecorded`) and tells the model that
+  the inner write/read/bash calls were interrupted.
+- ACP, the REPL and JSON events also see a start without an end.
+- Extension progress through `tool_call` is reported under
+  `<call id>:<tool name>`, which matches no Session view item, so it is dropped.
+
+Expected: Session view tool items match the model's tool_use blocks in
+lineage. Inner calls stay under permission and sandbox checks but have no
+items of their own. Their progress shows on the model-issued parent call.
+When a Run ends, none of its items stay `running` or `awaiting_approval`, in
+memory or on disk. Old sessions drop the orphan records instead of showing
+them as cancelled.
+
+### Resolution
+
+- Dispatch marks a call made through an extension handler's execution scope
+  as nested. A nested call emits no `onToolUseStart` and no extension
+  `tool:start`. `onToolExecutionStart/End` still fire, so effect accounting,
+  shell drain and approval revocation are unchanged. Permission, sandbox and
+  guardrail checks still apply.
+- Each execution records the model-issued call that owns its Host item.
+  Extension `reportProgress` and tool progress use that id. A `tool_call`
+  target reports under the bridge call id, so its progress is no longer
+  dropped. A nested call does not forward its own tool progress, such as
+  `executeProcess` bash output.
+- `SessionViewOwner.settleRun` turns the ending Run's `running` and
+  `awaiting_approval` items into `cancelled` with `endedAt`. Items of other
+  Runs keep their state. `persistSessionViewItems` saves `awaiting_approval`
+  as `cancelled`.
+- `withoutInternalToolRecords` drops a saved tool record that never recorded
+  a result and whose assistant message in lineage has no tool_use with its id.
+  Session view restore and interrupted-Run recovery both apply it. History
+  pages and the conversation cache read lineage only and need no change.
+- `docs/CLIENT_CONTRACT.md` states that tool items match the model's tool_use
+  blocks one to one.
+
+Files changed: `packages/coding/src/agent-runtime/tool-dispatch.ts`,
+`packages/coding/src/task-engine/runner-driven.ts`,
+`packages/coding/src/task-engine/_internal/managed-task/agent-chain.ts`,
+`packages/coding/src/task-engine/_internal/managed-task/tool-wrappers.ts`,
+`src/session-view.ts`, `src/client-canonical-tools.ts`,
+`src/runtime-interrupted-run-recovery.ts`, `docs/CLIENT_CONTRACT.md`.
+
+Tests added: `src/session-view.nested-tools.test.ts`. It runs an extension
+tool directly and through `tool_call` on the runner path, then checks Run
+settling, the `awaiting_approval` save, restoring a session with an orphan
+record, and interrupted-Run evidence for that session.
+
 ## Issue 432: LLM retry classification misses transient errors and misreads permanent ones
 
 - Priority: Medium
@@ -4117,6 +4189,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 433 | High | Resolved | An extension's internal tool calls stay running in the Session view | every version with extension `invokeTool` / `executeProcess` | unreleased (after `v0.7.97-beta.13`) | 2026-11-22 | 2026-11-22 |
 | 432 | Medium | Resolved | LLM retry classification misses transient errors and misreads permanent ones | every version with `KodaXBaseProvider.isRateLimitError` | unreleased (after `v0.7.97-beta.13`) | 2026-11-22 | 2026-11-22 |
 | 431 | Medium | Resolved | Preferred strict tools send untyped schema nodes and repeat the same rejection | every version with `strict: 'prefer'` tool constraints | unreleased (after `v0.7.97-beta.13`) | 2026-11-22 | 2026-11-22 |
 | 430 | High | Resolved | The daemon preflight reads every Session and fails on one busy write | every version with the daemon preflight | unreleased (after `v0.7.97-beta.12`) | 2026-11-21 | 2026-11-21 |
@@ -19892,12 +19965,20 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 309 (47 Open including 1 needs-info, 1 ready, 261 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 310 (48 Open including 1 needs-info, 1 ready, 262 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 1 (420)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-22: Issue 433
+
+- An extension handler's internal tool calls no longer appear as Session view
+  tool items. Their progress shows on the model-issued call, including calls
+  made through `tool_call`. A finished Run leaves no running or
+  awaiting-approval items, and old sessions drop the orphan records.
+  Unreleased.
 
 ### 2026-11-22: Issues 431 and 432
 

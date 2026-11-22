@@ -379,6 +379,17 @@ Interaction 的 kind 决定 options 和 response：单选问题、多问题、�
 | `tool.progress?` | 最近的工具进度消息 | 当前提示而非追加日志；完成时可被清除 |
 | `tool.startedAt?`, `tool.endedAt?` | 工具开始/结束的 Unix 毫秒时间 | 两者具备时才可计算执行耗时；不存在 endedAt 不等于当前一定还运行 |
 
+工具项与模型发出的工具调用一一对应：`tool.callId` 是模型 tool_use 的 id，经 `tool_call`
+转发的工具沿用这次 `tool_call` 的 id。扩展处理器经执行作用域 `invokeTool` /
+`executeProcess` 发起的内部调用不产生工具项，但仍经过同样的权限、沙箱与审批检查；
+这类审批交互的 `toolCallId` 不对应任何工具项，按工具名与输入呈现即可。处理器的
+`reportProgress` 与经 `tool_call` 运行的工具进度都更新模型发出的那次调用的项。
+
+Run 进入终态后，它的工具项不再保持 running 或 awaiting_approval：尚无结果的项以
+cancelled 收尾并带 `endedAt`。恢复会话时，Host 丢弃旧版本保存的内部调用记录，
+即从未记录结果、且所属助手消息中没有对应 tool_use 的工具项。
+
+
 任务报告复用 canonical 消息中的 `_taskResult/_taskResults`：`taskResult.source`
 为 `child_task/workflow`，`taskId?` 是任务/Actor Turn 标识，`runId?` 沿用原元数据的
 任务运行标识；`title?` 与 `artifactRefs?` 保留原元数据。字段缺失不补造标识，

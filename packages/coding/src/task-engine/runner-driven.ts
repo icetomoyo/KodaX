@@ -55,7 +55,7 @@ import {
 // the only remaining V2 chain agent is the Worker.
 import { WORKER_AGENT_NAME } from '../agents/task-engine-agents.js';
 import { filterModelToolAliases } from '../agent-runtime/tool-resolution.js';
-import { toolExecution } from '../agent-runtime/tool-dispatch.js';
+import { displayToolCallId, toolExecution } from '../agent-runtime/tool-dispatch.js';
 import { resolveProvider } from '../providers/index.js';
 import { estimateTokens } from '../tokenizer.js';
 import { rebaseContextTokenSnapshot } from '../token-accounting.js';
@@ -2251,6 +2251,7 @@ async function runManagedTaskViaRunnerInner(
       events: options.events ?? {}, ctx: { ...baseCtx, abortSignal: guardrailContext.abortSignal }, runtimeSessionState,
       activeToolNames: runtimeSessionState.activeTools, abortSignal: guardrailContext.abortSignal,
       ...(nestedToolGuardrails.length ? { toolGuardrails: nestedToolGuardrails, guardrailContext } : {}),
+      nested: { displayId: caller?.toolCall ? displayToolCallId(caller.toolCall) : caller?.toolCallId },
     });
     return results.get(id) ?? '[Tool Error] Nested tool did not return a result.';
   };

@@ -276,7 +276,8 @@ function buildManagedToolCallBridge(
         };
       }
 
-      const { toolExecution, createToolEventMeta, createContextForToolCall } = await import('../../../agent-runtime/tool-dispatch.js');
+      const { toolExecution, createToolEventMeta, createContextForToolCall, bindBridgeTarget } = await import('../../../agent-runtime/tool-dispatch.js');
+      bindBridgeTarget(targetCall, runnerCtx.toolCall ?? { id: runnerCtx.toolCallId ?? targetToolId });
       const targetMeta = createToolEventMeta(events ?? {}, targetToolId, toolExecution(targetCall).id);
       const liveCtx = { ...ctx, discoveryToolNames: [...active.keys()] };
       const targetCtx = createContextForToolCall(events ?? {}, targetCall, liveCtx);

@@ -21,7 +21,7 @@ import type {
   ClientItemContent,
 } from '@kodax-ai/coding/client-contract';
 import { createSessionNoticeEvents } from './session-view-notices.js';
-import { canonicalTools, canonicalToolKey, toolResultAttachments, toolResultOutputPath } from './client-canonical-tools.js';
+import { canonicalTools, canonicalToolKey, toolResultAttachments, toolResultOutputPath, withoutInternalToolRecords } from './client-canonical-tools.js';
 import { readItemImage } from './session-view-image.js';
 import { readSavedToolOutput } from './tool-output-reader.js';
 
@@ -365,12 +365,26 @@ export class SessionViewOwner {
     };
   }
 
-  /** Retains a failed Run's credential-safe failure after its input; any terminal Run releases its writer. */
+  /**
+   * Retains a failed Run's credential-safe failure after its input; any terminal
+   * Run releases its writer. No tool of the ended Run can still be running or
+   * waiting for approval, so its unfinished items become cancelled.
+   */
   settleRun(sessionId: string, runId: string, failure?: string): void {
     const state = this.sessions.get(sessionId);
     const write = state?.runFailures.get(runId);
     state?.runFailures.delete(runId);
     if (failure !== undefined) write?.(failure);
+    if (!state) return;
+    const endedAt = Date.now();
+    let settled = false;
+    state.items.forEach((item, index) => {
+      if (item.sourceRunId !== runId || (item.tool?.status !== 'running' && item.tool?.status !== 'awaiting_approval')) return;
+      const { progress: _progress, ...tool } = item.tool;
+      state.items[index] = { ...item, tool: { ...tool, status: 'cancelled', endedAt } };
+      settled = true;
+    });
+    if (settled) this.changed(sessionId);
   }
 
   checkpoint(sessionId: string): void {
@@ -942,8 +956,8 @@ export function restoreSessionContentItems(
   // display identities during reconciliation instead of showing both versions.
   const liveIds = new Set(liveItems.map(item => item.id));
   const noticeIds = new Set((data.lineage?.entries ?? []).flatMap(entry => entry.type === 'client_notice' ? [entry.id] : []));
-  const uiHistory = [...(data.uiHistory ?? []).filter(item => !item.id || !liveIds.has(item.id)),
-    ...persistSessionViewItems(savedLiveItems)].filter(item => !item.id || !noticeIds.has(item.id));
+  const uiHistory = withoutInternalToolRecords([...(data.uiHistory ?? []).filter(item => !item.id || !liveIds.has(item.id)),
+    ...persistSessionViewItems(savedLiveItems)].filter(item => !item.id || !noticeIds.has(item.id)), historyMessages);
   const persisted = restorePersistedViewItems(uiHistory);
   // Identified users derive their identity from inputId, including legacy
   // checkpoints. Other identified items join by inputId only. Legacy items
@@ -1048,7 +1062,7 @@ export function persistSessionViewItems(items: readonly ClientViewItem[]): KodaX
     }
     if (!item.tool) return [];
     return [{ sourceRunId: item.sourceRunId, sourceTurnId: item.sourceTurnId, id: item.id, type: 'tool_group', timestamp: item.timestamp, afterInputId: item.afterInputId, tools: [{
-      assistantOutputId: item.tool.assistantOutputId, executionBegan: item.tool.executionBegan, resultRecorded: item.tool.resultRecorded, id: item.tool.callId, name: item.tool.name, status: item.tool.status === 'running' ? 'cancelled' : item.tool.status,
+      assistantOutputId: item.tool.assistantOutputId, executionBegan: item.tool.executionBegan, resultRecorded: item.tool.resultRecorded, id: item.tool.callId, name: item.tool.name, status: item.tool.status === 'running' || item.tool.status === 'awaiting_approval' ? 'cancelled' : item.tool.status,
       output: item.text, preview: item.tool.inputText, startTime: item.tool.startedAt, endTime: item.tool.endedAt,
     }] }];
   });
