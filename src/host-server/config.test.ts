@@ -34,7 +34,14 @@ describe('parseHostIntegrationDocument', () => {
     expect(document.server?.listen).toEqual({ socketPath: '/run/kodax/host.sock' });
   });
 
+  it('reads the workspace network clients name projects in', () => {
+    const workspaceRoot = path.resolve('/srv/kodax/workspace');
+    expect(parseHostIntegrationDocument({ version: 1, server: { listen: LISTEN, jwt: JWT, owner: 'u', workspaceRoot } }).server)
+      .toMatchObject({ workspaceRoot });
+  });
+
   it.each([
+    ['a relative workspace', { listen: LISTEN, jwt: JWT, owner: 'u', workspaceRoot: 'workspace' }, /absolute/u],
     ['a field it does not know', { listen: LISTEN, jwt: JWT, owner: 'u', tls: true }, /tls/u],
     ['a listener without authentication', { listen: LISTEN }, /authentication/u],
     ['a JWT check that admits nobody', { listen: LISTEN, jwt: JWT }, /owner or server\.services/u],

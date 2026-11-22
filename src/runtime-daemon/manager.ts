@@ -47,6 +47,8 @@ export interface RuntimeDaemonLeaseOptions {
   /** True only when this host owns the live A2A config reconciler. */
   readonly ownsA2AConfigReconciler?: boolean;
   readonly integrationStatuses?: () => readonly RuntimeIntegrationDomainStatus[];
+  /** Where a Host started here reads `integrations/host.json` to serve v2 over the network. */
+  readonly networkConfigHome?: string;
   /** @internal Commit shared ownership before the first hosted A2A or daemon RPC publication. */
   readonly commitStartup?: () => void;
   createRuntime(runtimeId: string): Promise<KodaXRuntime>;
@@ -215,6 +217,7 @@ async function createClaimedDaemonLease(
       ...(options.integrationStatuses
         ? { integrationStatuses: options.integrationStatuses }
         : {}),
+      ...(options.networkConfigHome !== undefined ? { networkConfigHome: options.networkConfigHome } : {}),
     });
     try {
       const transport = await createRuntimeDaemonSocketClientTransport(endpoint, {

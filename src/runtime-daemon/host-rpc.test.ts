@@ -15,13 +15,17 @@ import { FileSessionStorage } from '@kodax-ai/repl';
 
 import { createKodaXRuntime } from '../../tests/runtime-fixture.js';
 import { connectHostRpc, type HostRpcClient } from '../host-protocol/client.js';
+import type { HostCloseReason } from '../host-protocol/close.js';
+import { HostProtocolError } from '../host-protocol/codec.js';
 import { createKodaXHostClient } from '../host-protocol/host-client.js';
 import { createHostCredentialService } from '../host-credentials.js';
 import { bindRequestCredentials } from '../request-credential-binding.js';
 import type { KodaXRuntime } from '../sdk-runtime.js';
 import type { RuntimeConnectionRole } from './access.js';
 import type { RuntimeClientLifecycleController } from './client-lifecycle.js';
-import { createRuntimeDaemonHostRpcPeer, hostErrorFromV1, type RuntimeDaemonHostRpcPeerOptions } from './host-rpc.js';
+import {
+  createRuntimeDaemonHostRpcPeer, hostErrorFromV1, type HostCredential, type RuntimeDaemonHostRpcPeerOptions,
+} from './host-rpc.js';
 import * as hostRpcProtocol from './host-rpc-protocol.js';
 import type { RuntimeDaemonManagementController } from './management.js';
 import { createRuntimeDaemonReverseBridgeHub } from './reverse-bridge.js';
@@ -3541,5 +3545,110 @@ describe('the CLI credential binding over a v2 Host client', () => {
     await expect(client.call('lease.resume', { kind: 'credential', leaseId: binding.credential.leaseId }))
       .rejects.toMatchObject({ kodaxCode: 'not_found' });
     expect(onError).not.toHaveBeenCalled();
+  });
+});
+
+describe('v2 connections from the network, admitted by their credential', () => {
+  /** Tokens the test issuer knows, and the credential each stands for. */
+  const issued = new Map<string, HostCredential>();
+  const authenticate = async ({ token }: { readonly token: string }): Promise<HostCredential> => {
+    const credential = issued.get(token);
+    if (credential === undefined) throw new HostProtocolError('unauthorized', 'The token is not good.', { reason: 'invalid_credential' });
+    return credential;
+  };
+  afterEach(() => issued.clear());
+
+  /** A client reaching the bridge as a network transport would carry it, with the reasons the Host gave for hanging up. */
+  async function connectOverNetwork(token: string, scheme: 'jwt' | 'ipc' = 'jwt') {
+    const reasons: HostCloseReason[] = [];
+    const client = await connectHostRpc(async (events) => {
+      let open = true;
+      const end = (): void => {
+        if (!open) return;
+        open = false;
+        peer.close();
+        events.end();
+      };
+      const peer = createRuntimeDaemonHostRpcPeer({
+        protocol: hostRpcProtocol,
+        // A network endpoint has no shared secret: the credential alone admits the client.
+        dispatcher: { role: 'owner', runtime: fakeRuntime() },
+        authenticate,
+        limits: { maxFrameBytes: 1024 * 1024 },
+        send: frame => queueMicrotask(() => { if (open) events.frame(frame); }),
+        disconnect: (reason) => { reasons.push(reason); queueMicrotask(end); },
+        congested: () => false,
+      });
+      return { send: frame => queueMicrotask(() => { if (open) peer.receive(frame); }), close: end };
+    }, { client: { name: 'web', version: '1.0.0', instanceId: 'browser-1' }, auth: { scheme, token } });
+    cleanup.push(() => client.close());
+    return { client, reasons };
+  }
+
+  it('admits the owner as user and a backend as that service, whatever role the endpoint was built with', async () => {
+    issued.set('owner-token', { role: 'user', subject: 'user-42', expiresAt: Date.now() + 60_000 });
+    issued.set('backend-token', { role: 'service', subject: 'backend' });
+
+    const { client: user } = await connectOverNetwork('owner-token');
+    expect(user.handshake).toMatchObject({ role: 'user', subject: 'person' });
+    expect(user.handshake.methods).not.toContain('host.stop');
+    await expect(user.request('ping')).resolves.toEqual({});
+
+    const { client: service } = await connectOverNetwork('backend-token');
+    expect(service.handshake).toMatchObject({ role: 'service', subject: 'service:backend' });
+    expect(service.handshake.expiresAt).toBeUndefined();
+  });
+
+  it('refuses a token the issuer did not sign and hangs up so the client fetches a new one', async () => {
+    await expect(connectOverNetwork('forged')).rejects.toMatchObject({ kodaxCode: 'unauthorized', reason: 'invalid_credential' });
+  });
+
+  it('refuses the local credential over the network', async () => {
+    issued.set('owner-token', { role: 'user', subject: 'user-42' });
+    await expect(connectOverNetwork('owner-token', 'ipc'))
+      .rejects.toMatchObject({ kodaxCode: 'unauthorized', reason: 'unsupported_auth_scheme' });
+  });
+
+  it('tells the client when its credential ends, and hangs up then', async () => {
+    const expiresAt = Date.now() + 150;
+    issued.set('owner-token', { role: 'user', subject: 'user-42', expiresAt });
+    const { client, reasons } = await connectOverNetwork('owner-token');
+    expect(client.handshake.expiresAt).toBe(expiresAt);
+    await vi.waitFor(() => expect(reasons).toEqual(['credential']), { timeout: 2_000 });
+  });
+
+  it('keeps a connection that renewed its credential past the first expiry', async () => {
+    issued.set('owner-token', { role: 'user', subject: 'user-42', expiresAt: Date.now() + 150 });
+    const later = Date.now() + 60_000;
+    issued.set('owner-token-2', { role: 'user', subject: 'user-42', expiresAt: later });
+    const { client, reasons } = await connectOverNetwork('owner-token');
+
+    await expect(client.request('auth.renew', { token: 'owner-token-2' })).resolves.toEqual({ expiresAt: later });
+    await new Promise(resolve => setTimeout(resolve, 300));
+    expect(reasons).toEqual([]);
+    await expect(client.request('ping')).resolves.toEqual({});
+  });
+
+  it('keeps the connection when a renewal token is not good, since the current one still is', async () => {
+    issued.set('owner-token', { role: 'user', subject: 'user-42', expiresAt: Date.now() + 60_000 });
+    const { client, reasons } = await connectOverNetwork('owner-token');
+    await expect(client.request('auth.renew', { token: 'forged' })).rejects.toMatchObject({ kodaxCode: 'unauthorized' });
+    await expect(client.request('ping')).resolves.toEqual({});
+    expect(reasons).toEqual([]);
+  });
+
+  it('refuses a renewal that would change who the connection speaks for, and hangs up', async () => {
+    issued.set('owner-token', { role: 'user', subject: 'user-42', expiresAt: Date.now() + 60_000 });
+    issued.set('backend-token', { role: 'service', subject: 'backend', expiresAt: Date.now() + 60_000 });
+    const { client, reasons } = await connectOverNetwork('owner-token');
+    await expect(client.request('auth.renew', { token: 'backend-token' }))
+      .rejects.toMatchObject({ kodaxCode: 'unauthorized', reason: 'subject_changed' });
+    await vi.waitFor(() => expect(reasons).toEqual(['credential']));
+  });
+
+  it('refuses a renewal on the local endpoint, whose credential does not expire', async () => {
+    const owner = await connect('owner');
+    await expect(owner.request('auth.renew', { token: 'secret' }))
+      .rejects.toMatchObject({ kodaxCode: 'invalid_state', reason: 'credential_does_not_expire' });
   });
 });

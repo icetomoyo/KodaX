@@ -9,6 +9,7 @@ import {
   type KodaXDiagnostic,
 } from '@kodax-ai/agent';
 import { createRuntimeDaemonHostRpcPeer, type HostRpcProtocol } from './host-rpc.js';
+import type { HostNetworkListener } from '../host-server/listener.js';
 import {
   createRuntimeDaemonDispatcher,
   createRuntimeDaemonRunResultStore,
@@ -79,6 +80,11 @@ export interface RuntimeDaemonHostOptions {
   /** Trusted owner fact; never derived from caller-advertised capabilities. */
   readonly ownsA2AConfigReconciler?: boolean;
   readonly integrationStatuses?: () => readonly RuntimeIntegrationDomainStatus[];
+  /**
+   * The config home whose `integrations/host.json` may ask the Host to serve v2
+   * over the network as well. A Host that listens stays up without clients.
+   */
+  readonly networkConfigHome?: string;
   /** @internal Commit shared ownership before this endpoint admits clients. */
   readonly commitStartup?: () => void;
   /** @internal Tests shorten the Run quiesce bound of a closing Host. */
@@ -112,6 +118,7 @@ export async function startRuntimeDaemonHost(
   if (proxyGap !== undefined) emitKodaXDiagnostic({ source: 'runtime:network', level: 'warn', message: proxyGap });
 
   let server: RuntimeDaemonSocketServer | undefined;
+  let network: HostNetworkListener | undefined;
   let scheduleStop: (() => void) | undefined;
   let stopPending = false;
   const requestStop = (): void => {
@@ -130,7 +137,8 @@ export async function startRuntimeDaemonHost(
     paths: options.paths,
     requestStop,
     ...(options.orphanExitMs !== undefined ? { orphanExitMs: options.orphanExitMs } : {}),
-    keepAlive: options.keepAlive,
+    // Network clients come and go, so a Host that listens stays up between them.
+    keepAlive: () => network !== undefined || options.keepAlive?.() === true,
     ...(options.integrationStatuses
       ? { integrationStatuses: options.integrationStatuses }
       : {}),
@@ -173,6 +181,27 @@ export async function startRuntimeDaemonHost(
         congested,
       }),
     });
+    if (options.networkConfigHome !== undefined) {
+      // A network client proves itself with its own credential, and agent registrations stay a local matter.
+      const { authToken: _authToken, allowAgentRegistrationAdmin: _admin, ...networkDispatcherOptions } = dispatcherOptions;
+      network = await protocol.startHostNetworkServer({
+        configHome: options.networkConfigHome,
+        maxFrameBytes: RUNTIME_DAEMON_MAX_FRAME_BYTES,
+        createPeer: (transport, connection) => createRuntimeDaemonHostRpcPeer({
+          protocol,
+          dispatcher: networkDispatcherOptions,
+          ...connection,
+          send: transport.send,
+          disconnect: transport.disconnect,
+          congested: transport.congested,
+        }),
+      });
+      if (network !== undefined) {
+        appendRuntimeDaemonLog(options.paths, 'info', 'Runtime daemon listening on the network.', {
+          ...(network.port !== undefined ? { port: network.port } : {}),
+        });
+      }
+    }
     const internalReadyDelayMs = process.env.KODAX_INTERNAL_DAEMON_TEST_READY_DELAY_MS;
     if (internalReadyDelayMs !== undefined) {
       await delayInternalDaemonReadyForTest(internalReadyDelayMs);
@@ -193,6 +222,7 @@ export async function startRuntimeDaemonHost(
     });
     let transportClosed = true;
     try {
+      await network?.close();
       await server?.close();
     } catch (closeError: unknown) {
       transportClosed = false;
@@ -268,6 +298,8 @@ export async function startRuntimeDaemonHost(
       }
       if (!transportClosed) {
         try {
+          await network?.close();
+          network = undefined;
           await server?.close();
           transportClosed = true;
         } catch (error: unknown) {

@@ -51,6 +51,8 @@ const Server = z.strictObject({
   services: z.array(Subject).default([]),
   /** Browser origins allowed to connect. Empty refuses every browser. */
   allowedOrigins: z.array(Origin).default([]),
+  /** The directory network clients may name projects in, by their path inside it. Without it they can name none. */
+  workspaceRoot: z.string().refine(path.isAbsolute, { message: 'must be an absolute path' }).optional(),
 }).superRefine((server, context) => {
   const admitsBySubject = server.owner !== undefined || server.services.length > 0;
   if (server.jwt !== undefined && !admitsBySubject) {

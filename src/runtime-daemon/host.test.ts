@@ -1,4 +1,7 @@
-import { randomUUID } from "node:crypto";
+import { createSign, generateKeyPairSync, randomUUID, type KeyObject } from "node:crypto";
+import { createServer as createHttpServer } from "node:http";
+import { createRequire } from "node:module";
+import type { AddressInfo } from "node:net";
 import fsDefault, * as fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
@@ -40,6 +43,7 @@ import * as daemonMaintenance from './maintenance.js';
 import { createRuntimeDaemonClient, type RuntimeDaemonClientTransport } from "./client.js";
 import {
   readRuntimeDaemonLockOwner,
+  readRuntimeDaemonLog,
   readRuntimeDaemonState,
   readRuntimeDaemonToken,
   readRuntimeOwnerPolicy,
@@ -55,6 +59,7 @@ import {
 } from "./transport.js";
 import { connectHostRpc } from "../host-protocol/client.js";
 import { HOST_PROTOCOL, HOST_PROTOCOL_REVISION } from "../host-protocol/codec.js";
+import type { HostRpcDial } from "../host-protocol/client.js";
 
 class BrokerSummaryProvider extends KodaXBaseProvider {
   readonly name = 'broker-summary';
@@ -476,6 +481,71 @@ describe("runtime daemon host", () => {
     await expect(connectHostRpc(dial, { client, auth: { scheme: "jwt", token } }))
       .rejects.toMatchObject({ kodaxCode: "unauthorized", reason: "unsupported_auth_scheme" });
     await waitForClientCount(v1, 1);
+  });
+
+  it("serves v2 over the network to the JWT subjects host.json admits, and stays up for them", async () => {
+    const home = tempHome();
+    const paths = resolveRuntimeDaemonPaths(home, "default");
+    const runtime = makeRuntime();
+    const lock = tryAcquireRuntimeDaemonLock(paths, {
+      runtimeId: runtime.identity.runtimeId,
+      pid: process.pid,
+      createdAt: runtime.identity.startedAt,
+    });
+    if (!lock) throw new Error("Expected daemon lock for the network test.");
+    const idp = await startTestIdentityProvider();
+    cleanupTasks.push(() => idp.close());
+    fs.mkdirSync(path.join(home, "integrations"), { recursive: true });
+    fs.writeFileSync(path.join(home, "integrations", "host.json"), JSON.stringify({
+      version: 1,
+      server: {
+        listen: { hostname: "127.0.0.1", port: 0 },
+        jwt: { issuer: idp.issuer, audience: "kodax-host-test", jwksUrl: idp.jwksUrl },
+        owner: "person-1",
+        services: ["backend-1"],
+      },
+    }));
+    // An orphan timer would stop a Host without clients; the listener must keep it up.
+    const host = await startRuntimeDaemonHost({
+      runtime, paths, endpoint: await makeTestEndpoint(), lock, networkConfigHome: home, orphanExitMs: 60_000,
+    });
+    cleanupTasks.push(() => host.close());
+    const port = readRuntimeDaemonLog(paths).find(entry => entry.message === "Runtime daemon listening on the network.")?.data?.port;
+    if (typeof port !== "number") throw new Error("Expected the Host to log the port it listens on.");
+    const url = `ws://127.0.0.1:${port}/v2`;
+    const client = { name: "network-test", version: "1.0.0", instanceId: "network-client-1" };
+
+    const person = await connectHostRpc(dialWebSocket(url), { client, auth: { scheme: "jwt", token: idp.token("person-1") } });
+    cleanupTasks.push(async () => person.close());
+    expect(person.handshake).toMatchObject({
+      role: "user",
+      subject: "person",
+      limits: { maxFrameBytes: RUNTIME_DAEMON_MAX_FRAME_BYTES, idleTimeoutMs: 60_000 },
+      expiresAt: expect.any(Number),
+    });
+    await expect(person.request("ping")).resolves.toEqual({});
+
+    const backend = await connectHostRpc(dialWebSocket(url), {
+      client: { ...client, instanceId: "network-client-2" }, auth: { scheme: "jwt", token: idp.token("backend-1") },
+    });
+    cleanupTasks.push(async () => backend.close());
+    expect(backend.handshake).toMatchObject({ role: "service", subject: "service:backend-1" });
+
+    await expect(connectHostRpc(dialWebSocket(url), { client, auth: { scheme: "jwt", token: idp.token("stranger") } }))
+      .rejects.toMatchObject({ kodaxCode: "unauthorized", reason: "subject_not_admitted" });
+    const token = readRuntimeDaemonToken(paths);
+    if (token === undefined) throw new Error("Expected a daemon token for the network test.");
+    await expect(connectHostRpc(dialWebSocket(url), { client, auth: { scheme: "ipc", token } }))
+      .rejects.toMatchObject({ kodaxCode: "unauthorized", reason: "unsupported_auth_scheme" });
+    await expect(connectHostRpc(dialWebSocket(url, "https://evil.example.test"), { client, auth: { scheme: "jwt", token: idp.token("person-1") } }))
+      .rejects.toThrow();
+
+    const local = await createRuntimeDaemonSocketClientTransport(host.endpoint);
+    cleanupTasks.push(async () => {
+      await local.close?.();
+    });
+    await expect(local.request("initialize", { profile: "default", token }))
+      .resolves.toMatchObject({ daemonLifecycle: "persistent", daemonRetention: "service" });
   });
 
   it("shares concurrent close attempts and retries a failed Runtime cleanup", async () => {
@@ -1574,6 +1644,55 @@ it("keeps Error diagnostic details diagnosable in the daemon log", async () => {
     expect(pending).toEqual([]);
   });
 });
+
+interface TestWebSocket {
+  send(data: string): void;
+  close(): void;
+  on(event: "open" | "close", listener: () => void): void;
+  on(event: "message", listener: (data: Buffer) => void): void;
+  on(event: "error", listener: (error: Error) => void): void;
+}
+
+/** A v2 link over the Host's network listener, the way a remote client opens one. */
+function dialWebSocket(url: string, origin?: string): HostRpcDial {
+  const { WebSocket } = createRequire(import.meta.url)("ws") as {
+    WebSocket: new (url: string, options: { headers?: Record<string, string> }) => TestWebSocket;
+  };
+  return async (events) => {
+    const socket = new WebSocket(url, origin !== undefined ? { headers: { origin } } : {});
+    await new Promise<void>((resolve, reject) => {
+      socket.on("open", resolve);
+      socket.on("error", reject);
+    });
+    socket.on("message", data => events.frame(data.toString("utf8")));
+    socket.on("close", () => events.end());
+    return { send: frame => socket.send(frame), close: () => socket.close() };
+  };
+}
+
+/** A key set on loopback, and tokens it signs for this Host's audience. */
+async function startTestIdentityProvider() {
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const jwk = { ...publicKey.export({ format: "jwk" }), kid: "k1", use: "sig" };
+  const server = createHttpServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ keys: [jwk] }));
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const issuer = "https://idp.example.test/realm";
+  return {
+    issuer,
+    jwksUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/jwks`,
+    token: (sub: string) => signTestJwt(privateKey, { iss: issuer, aud: "kodax-host-test", sub, exp: Math.floor(Date.now() / 1000) + 300 }),
+    close: () => new Promise<void>(resolve => server.close(() => resolve())),
+  };
+}
+
+function signTestJwt(key: KeyObject, claims: Record<string, unknown>): string {
+  const encode = (value: unknown): string => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const input = `${encode({ alg: "RS256", kid: "k1", typ: "JWT" })}.${encode(claims)}`;
+  return `${input}.${createSign("sha256").update(input).sign(key).toString("base64url")}`;
+}
 
 function tempHome(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kodax-daemon-host-"));

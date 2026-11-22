@@ -813,6 +813,8 @@ async function serveDaemonCommand(input: {
       // fact is never observable until reconcile and watcher startup succeed.
       ownsA2AConfigReconciler: true,
       keepAlive: () => hostedA2AServer !== undefined,
+      // `host.json` in the same config home may ask this Host to serve v2 over the network.
+      networkConfigHome: daemonConfigHome,
       commitStartup,
       integrationStatuses: () => [
         ...extensions.hotReload.statuses(),

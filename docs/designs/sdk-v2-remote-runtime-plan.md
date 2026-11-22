@@ -1994,7 +1994,7 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
 
 - 分三次提交：① 配置块和 JWT 校验；② WS 监听、握手鉴权、心跳、关闭码、`exp` 断开、`auth.renew`；③ 配置热生效、排空通知、`/healthz`。
 - 配置放在新的集成域 `<configHome>/integrations/host.json`（`src/host-server/config.ts`），和 mcp/a2a/extensions 并列，热生效直接复用 `IntegrationConfigController`。平台在启动 Host 前写这个文件。不认识的字段让 Host 拒绝启动，所以回滚镜像时也要回滚这个文件。
-  - 这一步只有 `listen`、`jwt`、`owner`、`services`、`allowedOrigins`。`pairing`、`workspaceRoot`、`tools` 随各自的交付项加入。
+  - 这一步只有 `listen`、`jwt`、`owner`、`services`、`allowedOrigins`。`workspaceRoot` 在第 ② 步加入，`pairing`、`tools` 随各自的交付项加入。
   - 配了 `listen` 没配 `jwt`、配了 `jwt` 却没有任何可接纳的 `sub`、同一个 `sub` 既是 owner 又是 service，都拒绝启动。`allowedOrigins` 只收不带路径的 origin，不收 `*`；留空就拒绝所有浏览器。
   - 集成状态的 `domain` 加上 `host`（v1 `RuntimeIntegrationDomainStatus` 和 wire schema 一起放宽），第 ③ 步把它报上来。
 - JWT 校验单独写（`src/host-server/jwt.ts`），用 `node:crypto`，不复用 A2A 的 `oauth4webapi.validateJwtAccessToken`。后者强制 RFC 9068（`typ: at+jwt`、`jti`、`client_id`），Keycloak、Entra 默认签的 token 过不了。Host 只看 `iss`、`aud`（字符串或数组）、`sub`、`exp`，`nbf` 有就看，时钟容差 30 秒。
@@ -2002,6 +2002,16 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
   - JWKS 读取复用 A2A 的 `safeA2AFetch`（1 MiB、10 秒、不跟随重定向）和 `readJwksResponse`，允许私网地址（平台自己配的），HTTP 只允许精确的 loopback。
   - key 集 10 分钟内有效；token 点名一把没见过的 key 时重读一次，30 秒内最多一次，这样轮换的 key 能用，乱填 `kid` 的连接又打不爆 IdP。重读失败时保留已有的 key，30 秒后再试；从没读到过 key 时报 `unavailable` 而不是 token 无效，握手据此回 `unavailable` 而不是 `unauthorized`。
 - 第 ② 步用 `ws`（已是根包运行时依赖）的 `noServer` 模式挂在 `node:http` 的 upgrade 上，`/healthz` 走同一个 HTTP server。
+- 第 ② 步的取舍：
+  - 只有 `kodax daemon serve` 读 `host.json`（`networkConfigHome`），进程内嵌入的 Host 不监听。配了 `listen` 就监听，Host 自动进入常驻模式（retention `service`），不再因为没有客户端而退出。
+  - WS 路径固定 `/v2`，其他路径回 404。带 Origin 头的请求必须精确命中 `allowedOrigins`，否则 403；不带 Origin 的不是浏览器，放行。
+  - 关闭码 = 4000 + 同义 HTTP 状态（`src/host-protocol/close.ts`）。每个码对应客户端的一个动作：4400 协议错误不重连；4401 凭据过期或无效，换 token 再连；4403 设备被撤销或鉴权配置变了，不重连；4408 空闲，重连；4409 被同一客户端实例的新连接取代，不重连；4429 过载，退避后重连；4503 Host 停止中或暂时没法校验凭据，退避后重连。
+  - 握手没完成的连接最多 32 个，超过的升级请求回 503。每个还可能带一帧 `maxFrameBytes`，所以最坏约 32 × 8 MiB。
+  - 空闲超时 60 秒，经 `limits.idleTimeoutMs` 告诉客户端，任何一帧（包括 `ping`）都会刷新它。二进制帧算协议错误。关闭压缩，避免小帧解压后超出限制。
+  - 读得慢的客户端：积压超过 64 KiB 时视图补丁开始合并；超过 64 MiB 直接断开 socket，不发关闭帧（它也读不到），记一条诊断，客户端按断线重连处理。这和 IPC 一致。其他断开在关闭帧后最多等 30 秒，客户端不回就强制断开。
+  - 角色由凭据决定：`sub` 等于 `owner` 的是 `user`，在 `services` 里的是 `service`（subject 为 `service:<sub>`），其他回 `unauthorized` + `subject_not_admitted`。JWKS 读不到时回 `unavailable`。网络连接不能用 `ipc` 凭据，也拿不到 agent 注册管理权。
+  - token 到 `exp` 时 Host 用 4401 断开。客户端在那之前调 `auth.renew` 换新 token：新 token 无效或暂时没法校验时报错，但连接保留；`sub` 或角色变了就回 `subject_changed` 并用 4401 断开；IPC 连接调它回 `invalid_state`。
+  - `workspaceRoot` 随这一步加入配置（绝对路径），给网络客户端按相对路径指定项目用；不配就不能指定项目。
 
 ### M1c Space 整体迁移到 v2
 

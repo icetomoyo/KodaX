@@ -67,6 +67,12 @@ const InitializeResult = hostResult({
   expiresAt: z.int().optional(),
   limits: z.object({
     maxFrameBytes: z.int().positive(),
+    /**
+     * The Host hangs up when it hears nothing from the client for this long, so
+     * the client pings more often. The client may treat the same silence from
+     * the Host as a lost connection. Absent on a local connection.
+     */
+    idleTimeoutMs: z.int().positive().optional(),
   }),
 });
 
@@ -77,6 +83,13 @@ export type HostLimits = HostInitializeResult['limits'];
 const CONNECTION_METHODS = {
   'initialize': { primitive: 'handshake', plane: 'data', params: InitializeParams, result: InitializeResult },
   'ping': { primitive: 'query', plane: 'data', params: hostParams({}), result: hostResult({}) },
+  // A new token for the same subject and role, sent before `expiresAt`. Any other subject or role ends the connection.
+  'auth.renew': {
+    primitive: 'handshake',
+    plane: 'data',
+    params: hostParams({ token: z.string().min(1).max(8192) }),
+    result: hostResult({ expiresAt: z.int().optional() }),
+  },
   // `id` is the JSON-RPC id of the request to give up. A command's `requestId` names its intent and is something else.
   'request.cancel': { primitive: 'notification', plane: 'data', params: hostParams({ id: RpcId }) },
 } as const satisfies HostMethodRegistry;

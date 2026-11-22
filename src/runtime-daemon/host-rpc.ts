@@ -1,7 +1,8 @@
 /**
- * Serves the v2 protocol on the local IPC endpoint. A v2 connection is admitted
- * through the same dispatcher a v1 connection uses, so both protocols share one
- * set of access, admission and lifecycle rules while methods move over.
+ * Serves the v2 protocol on the local IPC endpoint and on the network listener.
+ * A v2 connection is admitted through the same dispatcher a v1 connection uses,
+ * so both protocols share one set of access, admission and lifecycle rules
+ * while methods move over.
  */
 import {
   emitKodaXDiagnostic, type AgentActor, type AgentDetail, type AgentEvent, type AgentMailboxMessage, type AgentOutput,
@@ -9,8 +10,9 @@ import {
   type LearningPage,
 } from '@kodax-ai/agent';
 
+import type { HostCloseReason } from '../host-protocol/close.js';
 import { HostProtocolError, hostRpcNotification, type HostErrorCode } from '../host-protocol/codec.js';
-import type { HostLimits, HostMethodName, HostParams } from '../host-protocol/methods.js';
+import type { HostInitializeParams, HostLimits, HostMethodName, HostParams } from '../host-protocol/methods.js';
 import type {
   ClientCommandResult, ClientExecutionFactsPage, ClientExitReceipt, ClientHistoryTurnResolution, ClientHistoryTurnSelector,
   ClientHistoryTurnTarget, ClientInputAcceptance, ClientInteraction, ClientInteractionResult, ClientItemContent,
@@ -27,7 +29,7 @@ import type {
 } from '../sdk-runtime.js';
 import type { RuntimeCredentialLease } from '../client-host-authorization.js';
 import { boundViewItem } from '../session-view.js';
-import { runtimeAuthorizationSubject, runtimeRoleHasPlane } from './access.js';
+import { runtimeAuthorizationSubject, runtimeRoleHasPlane, type RuntimeConnectionRole } from './access.js';
 import {
   createHostViewStreams, toInteraction, toSessionResource, toViewItem, toWorkflow, utcMilliseconds, type HostViewStreams,
 } from './host-view.js';
@@ -88,7 +90,7 @@ type V1Call = (
   signal?: AbortSignal,
 ) => Promise<unknown>;
 
-type ForwardedMethod = Exclude<HostMethodName, 'initialize' | 'ping' | 'request.cancel'>;
+type ForwardedMethod = Exclude<HostMethodName, 'initialize' | 'ping' | 'request.cancel' | 'auth.renew'>;
 
 /** What a handler knows about the connection it serves. */
 interface HostCaller {
@@ -115,8 +117,9 @@ type V1Handler<Method extends ForwardedMethod> = (
 
 /**
  * How the v1 implementation serves each v2 method. The mapped type makes a new
- * method a compile error until it is served; the connection itself answers the
- * three excluded here.
+ * method a compile error until it is served. The connection itself answers
+ * `initialize`, `ping` and `request.cancel`; the peer answers `auth.renew` from
+ * the credential it admitted.
  */
 const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } = {
   'lease.register': async ({ requestId, providers, expiresAt }, v1) => {
@@ -1360,20 +1363,40 @@ function defined(params: Readonly<Record<string, unknown>>): Readonly<Record<str
 /** The protocol definitions a v2 peer checks frames against. Load them with {@link loadHostRpcProtocol}. */
 export type HostRpcProtocol = typeof import('./host-rpc-protocol.js');
 
+/** Whom a network credential speaks for, once the Host checked it. */
+export interface HostCredential {
+  readonly role: 'user' | 'service';
+  /** The credential's own subject, such as a JWT `sub`. A renewal must name the same one. */
+  readonly subject: string;
+  /** When the credential ends, in UTC milliseconds. The Host hangs up then unless the client renewed it. */
+  readonly expiresAt?: number;
+}
+
 export interface RuntimeDaemonHostRpcPeerOptions {
   readonly protocol: HostRpcProtocol;
   /** The options a v1 connection on the same endpoint gets, minus its per-connection sinks. */
   readonly dispatcher: Omit<RuntimeDaemonDispatcherOptions, 'notify' | 'disconnect'>;
+  /**
+   * Checks the credential of a client that is not on the Host's machine. Throws
+   * `HostProtocolError` to refuse. The credential then decides the role, not
+   * `dispatcher.role`. Without it the peer accepts the local IPC credential only.
+   */
+  readonly authenticate?: (auth: HostInitializeParams['auth']) => Promise<HostCredential>;
   readonly limits: HostLimits;
   /** Where clients that are not on the Host's machine may name projects. Without it they can name none. */
   readonly workspace?: HostWorkspace;
   readonly send: (frame: string) => void;
-  readonly disconnect: () => void;
+  readonly disconnect: (reason: HostCloseReason) => void;
   /** Whether the client is behind on reading what was already sent. */
   readonly congested: () => boolean;
 }
 
-export function createRuntimeDaemonHostRpcPeer(options: RuntimeDaemonHostRpcPeerOptions): RuntimeDaemonFramePeer {
+/** The longest delay `setTimeout` holds. A credential that lasts longer re-arms its timer. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
+export function createRuntimeDaemonHostRpcPeer(
+  options: RuntimeDaemonHostRpcPeerOptions,
+): RuntimeDaemonFramePeer & { admitted(): boolean } {
   const onInternalError = (method: string, error: unknown): void => emitKodaXDiagnostic({
     source: 'runtime.host-protocol',
     level: 'error',
@@ -1388,14 +1411,44 @@ export function createRuntimeDaemonHostRpcPeer(options: RuntimeDaemonHostRpcPeer
     disconnect: options.disconnect,
     onInternalError,
     admit: async ({ client, auth }) => {
-      const subject = runtimeAuthorizationSubject(options.dispatcher.role, options.dispatcher.tokenSubject);
-      if (auth.scheme !== 'ipc' || subject === undefined) {
-        throw new HostProtocolError('unauthorized', 'This endpoint accepts the local IPC credential only.', {
+      const access = await admitCredential(auth);
+      let credential = access.credential;
+      const { role } = access;
+      const subject = runtimeAuthorizationSubject(role, access.tokenSubject);
+      if (subject === undefined) {
+        throw new HostProtocolError('unauthorized', 'This credential does not name whom the connection speaks for.', {
           reason: 'unsupported_auth_scheme',
         });
       }
+      let expiry: ReturnType<typeof setTimeout> | undefined;
+      const expireAt = (expiresAt: number | undefined): void => {
+        clearTimeout(expiry);
+        if (expiresAt === undefined) return;
+        expiry = setTimeout(() => {
+          if (Date.now() >= expiresAt) options.disconnect('credential');
+          else expireAt(expiresAt);
+        }, Math.min(Math.max(expiresAt - Date.now(), 0), MAX_TIMER_MS));
+      };
+      const renew = async (token: string, afterAnswer: (run: () => void) => void): Promise<{ expiresAt?: number }> => {
+        if (credential === undefined || options.authenticate === undefined) {
+          throw new HostProtocolError('invalid_state', "This connection's credential does not expire, so it has nothing to renew.", {
+            reason: 'credential_does_not_expire',
+          });
+        }
+        // A token that is not good, or a check the Host cannot make now, leaves the current credential in force.
+        const next = await options.authenticate({ scheme: auth.scheme, token });
+        if (next.role !== credential.role || next.subject !== credential.subject) {
+          afterAnswer(() => options.disconnect('credential'));
+          throw new HostProtocolError('unauthorized', 'A renewal must name the subject and role the connection speaks for.', {
+            reason: 'subject_changed',
+          });
+        }
+        credential = next;
+        expireAt(next.expiresAt);
+        return next.expiresAt !== undefined ? { expiresAt: next.expiresAt } : {};
+      };
       const streams = createHostViewStreams({
-        contract: runtimeRoleHasPlane(options.dispatcher.role, 'local')
+        contract: runtimeRoleHasPlane(role, 'local')
           ? options.protocol.LocalSessionView
           : options.protocol.SessionView,
         ...(options.workspace !== undefined ? { workspace: options.workspace } : {}),
@@ -1406,7 +1459,10 @@ export function createRuntimeDaemonHostRpcPeer(options: RuntimeDaemonHostRpcPeer
       });
       const dispatcher = createRuntimeDaemonDispatcher({
         ...options.dispatcher,
-        disconnect: options.disconnect,
+        role,
+        tokenSubject: access.tokenSubject,
+        // v1 hangs up on a connection when a newer one of the same client instance takes over.
+        disconnect: () => options.disconnect('replaced'),
         // The Host's calls to this client go out on this connection. A reconnect of the same instance takes its leases over.
         notify: (notification) => {
           if (notification.method === 'credential.request') askForCredential(notification, options.send, options.protocol);
@@ -1435,7 +1491,10 @@ export function createRuntimeDaemonHostRpcPeer(options: RuntimeDaemonHostRpcPeer
         }
       };
       try {
-        await v1('initialize', { token: auth.token, clientInfo: client, connectionPurpose: 'client' });
+        // A network credential was checked above; only the local one is the shared secret v1 compares.
+        await v1('initialize', {
+          ...(credential === undefined ? { token: auth.token } : {}), clientInfo: client, connectionPurpose: 'client',
+        });
       } catch (error: unknown) {
         dispatcher.close();
         throw error;
@@ -1443,20 +1502,23 @@ export function createRuntimeDaemonHostRpcPeer(options: RuntimeDaemonHostRpcPeer
       const { identity } = options.dispatcher.runtime;
       const caller: Omit<HostCaller, 'afterAnswer' | 'signal'> = {
         subject,
-        local: runtimeRoleHasPlane(options.dispatcher.role, 'local'),
-        service: options.dispatcher.role === 'service',
+        local: runtimeRoleHasPlane(role, 'local'),
+        service: role === 'service',
         ...(options.workspace !== undefined ? { workspace: options.workspace } : {}),
         views: streams,
       };
       views = streams;
+      expireAt(credential?.expiresAt);
       return {
-        role: options.dispatcher.role,
+        role,
         subject,
         host: { id: identity.runtimeId, version: identity.version },
         features: [],
         locks: [],
         limits: options.limits,
+        ...(credential?.expiresAt !== undefined ? { expiresAt: credential.expiresAt } : {}),
         call: async (method, params, signal, afterAnswer) => {
+          if (method === 'auth.renew') return renew(String(params.token), afterAnswer);
           // The connection passes only methods of the table, with params that passed that method's schema.
           const handlers = V1_HANDLERS as Readonly<Record<string,
             (params: unknown, v1: V1Call, caller: HostCaller) => Promise<unknown>>>;
@@ -1465,13 +1527,37 @@ export function createRuntimeDaemonHostRpcPeer(options: RuntimeDaemonHostRpcPeer
             { ...caller, signal, afterAnswer });
         },
         close: () => {
+          clearTimeout(expiry);
           streams.close();
           dispatcher.close();
         },
       };
     },
   });
-  return { receive: connection.receive, close: connection.close, drained: () => views?.drained() };
+
+  /** Whom the connection speaks for: the network credential when there is an authenticator, else the endpoint's role. */
+  async function admitCredential(auth: HostInitializeParams['auth']): Promise<{
+    readonly role: RuntimeConnectionRole;
+    readonly tokenSubject?: string;
+    readonly credential?: HostCredential;
+  }> {
+    const unsupported = (message: string): HostProtocolError =>
+      new HostProtocolError('unauthorized', message, { reason: 'unsupported_auth_scheme' });
+    if (options.authenticate === undefined) {
+      if (auth.scheme !== 'ipc') throw unsupported('This endpoint accepts the local IPC credential only.');
+      return { role: options.dispatcher.role, tokenSubject: options.dispatcher.tokenSubject };
+    }
+    if (auth.scheme === 'ipc') throw unsupported('A network connection cannot use the local IPC credential.');
+    const credential = await options.authenticate(auth);
+    return { role: credential.role, tokenSubject: credential.role === 'service' ? credential.subject : undefined, credential };
+  }
+
+  return {
+    receive: connection.receive,
+    close: connection.close,
+    drained: () => views?.drained(),
+    admitted: () => views !== undefined,
+  };
 }
 
 /** v1 names the quarantine by its cause; v2 by the state `session.recovery` reports. */

@@ -17,6 +17,7 @@ import {
   type HostRpcRequest,
   type HostRpcSuccess,
 } from './codec.js';
+import type { HostCloseReason } from './close.js';
 import { HOST_METHODS, type HostInitializeParams, type HostLimits, type HostMethodRegistry } from './methods.js';
 
 /** A connection that has not finished the handshake by then is hung up on. */
@@ -60,8 +61,8 @@ export interface HostAdmission {
 export interface HostConnectionOptions {
   readonly methods: HostMethodRegistry;
   readonly send: (frame: string) => void;
-  /** Hangs up after delivering what was already sent. */
-  readonly disconnect: () => void;
+  /** Hangs up after delivering what was already sent. A network transport tells the client why. */
+  readonly disconnect: (reason: HostCloseReason) => void;
   /** Checks the credential. Throws `HostProtocolError` to refuse; the connection then hangs up. */
   readonly admit: (request: HostAdmissionRequest) => Promise<HostAdmission>;
   /** Receives what the client is not shown: an unexpected failure or a result that broke the contract. */
@@ -97,12 +98,12 @@ export function createHostConnection(options: HostConnectionOptions): HostConnec
     inFlight.clear();
     admission?.close();
   };
-  const hangUp = (): void => {
+  const hangUp = (reason: HostCloseReason): void => {
     close();
-    options.disconnect();
+    options.disconnect(reason);
   };
   const deadline = setTimeout(() => {
-    if (state === 'new' || state === 'admitting') hangUp();
+    if (state === 'new' || state === 'admitting') hangUp('protocol');
   }, options.initializeTimeoutMs ?? INITIALIZE_TIMEOUT_MS);
 
   const send = (message: HostRpcSuccess | HostRpcFailure): void => {
@@ -151,8 +152,10 @@ export function createHostConnection(options: HostConnectionOptions): HostConnec
     try {
       admitted = await options.admit({ client: params.data.client, auth: params.data.auth, revision });
     } catch (error: unknown) {
-      fail(request.id, clientError('initialize', error));
-      hangUp();
+      const refusal = clientError('initialize', error);
+      fail(request.id, refusal);
+      hangUp(refusal.kodaxCode === 'unavailable' || refusal.kodaxCode === 'overloaded' ? refusal.kodaxCode
+        : refusal.kodaxCode === 'internal' ? 'unavailable' : 'credential');
       return;
     }
     if (state !== 'admitting') {
@@ -255,7 +258,7 @@ export function createHostConnection(options: HostConnectionOptions): HostConnec
         fail(null, new HostProtocolError('limit_exceeded', 'Frame is too large to send before initialize.', {
           reason: 'frame_too_large_before_initialize',
         }));
-        hangUp();
+        hangUp('protocol');
         return;
       }
       const parsed = parseHostRpcFrame(frame);

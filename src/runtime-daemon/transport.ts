@@ -819,7 +819,8 @@ function waitForListen(server: net.Server, endpointPath: string): Promise<void> 
   });
 }
 
-async function prepareUnixSocketEndpoint(endpoint: RuntimeDaemonEndpoint): Promise<void> {
+/** Removes a socket file a stopped process left behind. A socket something still answers on is an error. */
+export async function prepareUnixSocketEndpoint(endpoint: RuntimeDaemonEndpoint): Promise<void> {
   if (endpoint.kind !== 'unix') return;
   let stat: Awaited<ReturnType<typeof fs.stat>>;
   try {

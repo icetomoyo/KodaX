@@ -182,6 +182,15 @@ describe('host connection handshake', () => {
     const reply = await h.request('i', 'initialize', INITIALIZE);
     expect(errorData(reply)).toMatchObject({ kodaxCode: 'unauthorized' });
     expect(h.disconnect).toHaveBeenCalledTimes(1);
+    expect(h.disconnect).toHaveBeenCalledWith('credential');
+  });
+
+  it('tells a client the Host cannot check credentials right now, so it retries later', async () => {
+    const h = harness({
+      admit: async () => { throw new HostProtocolError('unavailable', 'The issuer cannot be reached.'); },
+    });
+    expect(errorData(await h.request('i', 'initialize', INITIALIZE))).toMatchObject({ kodaxCode: 'unavailable' });
+    expect(h.disconnect).toHaveBeenCalledWith('unavailable');
   });
 
   it('hangs up on a connection that does not finish the handshake in time', async () => {
@@ -192,6 +201,7 @@ describe('host connection handshake', () => {
     expect(h.disconnect).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(2);
     expect(h.disconnect).toHaveBeenCalledTimes(1);
+    expect(h.disconnect).toHaveBeenCalledWith('protocol');
   });
 
   it('keeps a connection that finished the handshake past the deadline', async () => {
@@ -209,7 +219,7 @@ describe('host connection handshake', () => {
     h.receive(hostRpcRequest('i', 'initialize', { ...INITIALIZE, auth: { scheme: 'ipc', token: 'x'.repeat(64 * 1024) } }));
     expect(h.frames).toHaveLength(1);
     expect(h.frames[0]).toMatchObject({ id: null, error: { data: { kodaxCode: 'limit_exceeded' } } });
-    expect(h.disconnect).toHaveBeenCalledTimes(1);
+    expect(h.disconnect).toHaveBeenCalledWith('protocol');
   });
 
   it('releases an admission that arrives after the connection closed', async () => {

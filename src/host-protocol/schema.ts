@@ -10,7 +10,7 @@ import type { RuntimeMethodPlane } from '../runtime-daemon/access.js';
 
 /**
  * What kind of exchange a method is.
- *   handshake    — opens the connection
+ *   handshake    — opens the connection or renews its credential
  *   query        — reads; safe to repeat
  *   command      — changes state once per `requestId`
  *   subscription — starts or ends a stream of patches
