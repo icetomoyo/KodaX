@@ -37,6 +37,10 @@ export interface KodaXSessionHistoryHit {
 export interface KodaXSessionHistorySearchResult {
   revision: string;
   hits: KodaXSessionHistoryHit[];
+  /** Entries that match any query term, before the hit limit is applied. */
+  totalHits: number;
+  /** Entries that contain the whole query, before the hit limit is applied. */
+  exactHits: number;
 }
 
 /** @internal Cooperative control used by Runtime history reads. */
@@ -99,7 +103,20 @@ function visibleToolResult(block: Extract<KodaXContentBlock, { type: 'tool_resul
     .join('\n');
 }
 
-function visibleMessage(message: KodaXMessage): VisibleMessage {
+/** Ids of the calls made with the named tools, so those calls and their results can be left out of evidence. */
+function toolUseIdsNamed(lineage: KodaXSessionLineage, names: readonly string[]): Set<string> {
+  const ids = new Set<string>();
+  if (names.length === 0) return ids;
+  for (const entry of lineage.entries) {
+    if (entry.type !== 'message' || typeof entry.message.content === 'string') continue;
+    for (const block of entry.message.content) {
+      if (block.type === 'tool_use' && names.includes(block.name)) ids.add(block.id);
+    }
+  }
+  return ids;
+}
+
+function visibleMessage(message: KodaXMessage, skipToolUseIds?: ReadonlySet<string>): VisibleMessage {
   if (typeof message.content === 'string') {
     return {
       text: message.content,
@@ -122,10 +139,12 @@ function visibleMessage(message: KodaXMessage): VisibleMessage {
         parts.push(block.text);
         break;
       case 'tool_use':
+        if (skipToolUseIds?.has(block.id)) break;
         hasToolEvidence = true;
         parts.push(`[tool_use ${block.name}] ${JSON.stringify(block.input)}`);
         break;
       case 'tool_result':
+        if (skipToolUseIds?.has(block.tool_use_id)) break;
         hasToolEvidence = true;
         parts.push(`[tool_result ${block.tool_use_id}] ${visibleToolResult(block)}`);
         break;
@@ -240,6 +259,11 @@ async function scoreTextCooperatively(
   return score;
 }
 
+function containsWholeQuery(normalizedText: string, normalizedMetadata: string, needle: string): boolean {
+  return normalizedText.includes(needle)
+    || (needle.length >= MIN_METADATA_QUERY_LENGTH && normalizedMetadata.includes(needle));
+}
+
 function snippet(text: string, query: string): string {
   if (text.length <= SNIPPET_CHARS) return text;
   const index = normalized(text).indexOf(normalized(query).trim());
@@ -307,21 +331,27 @@ function isCompactedPlaceholder(message: KodaXMessage): boolean {
     && message.content[0].text.trim() === '[compacted]';
 }
 
-function historyEvidence(message: KodaXMessage): VisibleMessage | null {
+function historyEvidence(message: KodaXMessage, skipToolUseIds?: ReadonlySet<string>): VisibleMessage | null {
   if (message.role === 'system' || isSyntheticCheckpoint(message) || isCompactedPlaceholder(message)) {
     return null;
   }
-  const visible = visibleMessage(message);
+  const visible = visibleMessage(message, skipToolUseIds);
   return visible.text.trim().length > 0 ? visible : null;
 }
 
+/**
+ * Model-facing history search. `excludeToolNames` leaves calls to those tools, and their results, out of the
+ * searched text, so a repeat lookup does not match its own earlier output. Entry versions still cover the
+ * whole entry, so a hit reads back through `readSessionHistoryEntry` unchanged.
+ */
 export function searchSessionHistory(
   lineage: KodaXSessionLineage,
-  options: KodaXSessionHistorySearchOptions,
+  options: KodaXSessionHistorySearchOptions & { excludeToolNames?: readonly string[] },
 ): KodaXSessionHistorySearchResult {
   const revision = historyRevision(lineage);
   const query = options.query.trim();
-  if (!query) return { revision, hits: [] };
+  if (!query) return { revision, hits: [], totalHits: 0, exactHits: 0 };
+  const skipToolUseIds = toolUseIdsNamed(lineage, options.excludeToolNames ?? []);
 
   const activeIds = activeEntryIds(lineage);
   const entryOrder = new Map(lineage.entries.map((entry, index) => [entry.id, index]));
@@ -332,14 +362,15 @@ export function searchSessionHistory(
     // Historical recovery is an evidence plane for user, assistant, tool, and
     // child-task content. Host instructions and synthetic checkpoints are
     // intentionally excluded so they cannot crowd out or disclose evidence.
-    const visible = historyEvidence(entry.message);
-    if (!visible) return [];
+    const fullEvidence = historyEvidence(entry.message);
+    const visible = skipToolUseIds.size > 0 ? historyEvidence(entry.message, skipToolUseIds) : fullEvidence;
+    if (!fullEvidence || !visible) return [];
     const active = activeIds.has(entry.id);
     if (scope === 'compacted' && active) return [];
     if (options.role && entry.message.role !== options.role) return [];
     return [{
       entry,
-      entryRevision: entryEvidenceRevision(entry, visible),
+      entryRevision: entryEvidenceRevision(entry, fullEvidence),
       active,
       visible,
       metadata: [entry.id, entry.logicalId, entry.sourceEntryId].filter(Boolean).join(' '),
@@ -354,6 +385,8 @@ export function searchSessionHistory(
     documentFrequency.set(term, count);
   }
   const hits: KodaXSessionHistoryHit[] = [];
+  const needle = normalized(query).trim();
+  let exactHits = 0;
   for (const { entry, entryRevision, active, visible, metadata } of candidates) {
     const score = scoreText(
       visible.text,
@@ -364,6 +397,7 @@ export function searchSessionHistory(
       candidates.length,
     );
     if (score <= 0) continue;
+    if (containsWholeQuery(normalized(visible.text), normalized(metadata), needle)) exactHits += 1;
     hits.push({
       entryId: entry.id,
       entryRevision,
@@ -386,6 +420,8 @@ export function searchSessionHistory(
   return {
     revision,
     hits: hits.slice(0, boundedInteger(options.limit, DEFAULT_SEARCH_LIMIT, 1, MAX_SEARCH_LIMIT)),
+    totalHits: hits.length,
+    exactHits,
   };
 }
 
@@ -448,7 +484,7 @@ export async function searchSessionHistoryCooperatively(
   const rawQuery = options.query;
   validateSessionHistorySearchQuery(rawQuery);
   const query = rawQuery.trim();
-  if (!query) return { revision, hits: [] };
+  if (!query) return { revision, hits: [], totalHits: 0, exactHits: 0 };
   control.checkpoint();
   await control.yieldControl();
   const normalizedQuery = normalized(query).trim();
@@ -508,6 +544,8 @@ export async function searchSessionHistoryCooperatively(
 
   const limit = boundedInteger(options.limit, DEFAULT_SEARCH_LIMIT, 1, MAX_SEARCH_LIMIT);
   const hits: KodaXSessionHistoryHit[] = [];
+  let totalHits = 0;
+  let exactHits = 0;
   for (let index = 0; index < candidates.length; index += 1) {
     control.checkpoint();
     if (index > 0 && index % COOPERATIVE_SEARCH_BATCH_SIZE === 0) {
@@ -530,6 +568,8 @@ export async function searchSessionHistoryCooperatively(
       control,
     );
     if (score <= 0) continue;
+    totalHits += 1;
+    if (containsWholeQuery(normalizedText, normalizedMetadata, normalizedQuery)) exactHits += 1;
     hits.push({
       entryId: entry.id,
       entryRevision: candidates[index]!.entryRevision,
@@ -558,7 +598,7 @@ export async function searchSessionHistoryCooperatively(
     if (hits.length > limit) hits.pop();
   }
   control.checkpoint();
-  return { revision, hits };
+  return { revision, hits, totalHits, exactHits };
 }
 
 export function readSessionHistoryEntry(

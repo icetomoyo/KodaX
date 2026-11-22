@@ -430,4 +430,55 @@ describe('FEATURE_272 durable Session history retrieval', () => {
       hits: [{ entryId: largeEntry.entries[0]?.id }],
     });
   });
+
+  it('reports how many entries match beyond the returned hits', async () => {
+    const lineage = createSessionLineage([
+      { role: 'assistant', content: 'build failed on lint' },
+      { role: 'assistant', content: 'build failed on typecheck' },
+      { role: 'assistant', content: 'build failed on tests' },
+      { role: 'assistant', content: 'build started' },
+      { role: 'assistant', content: 'the build is green' },
+      { role: 'assistant', content: 'unrelated note' },
+    ]);
+    const options = { query: 'build failed', scope: 'all' as const, limit: 1 };
+    const result = searchSessionHistory(lineage, options);
+    expect(result.hits).toHaveLength(1);
+    expect(result).toMatchObject({ totalHits: 5, exactHits: 3 });
+    const cooperative = await searchSessionHistoryCooperatively(lineage, options, {
+      revision: result.revision,
+      checkpoint() {},
+      async yieldControl() {},
+    });
+    expect(cooperative).toMatchObject({ totalHits: 5, exactHits: 3 });
+  });
+
+  it('can leave earlier history-tool calls and results out of the searched evidence', () => {
+    const historyTools = ['session_history_search', 'session_history_read'];
+    const lineage = applySessionCompaction(
+      createSessionLineage([
+        { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'bash-1', content: 'Tests 17 passed' }] },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'Looking up Tests 17 passed again.' },
+            { type: 'tool_use', id: 'echo-search', name: 'session_history_search', input: { query: 'Tests 17 passed' } },
+          ],
+        },
+        { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'echo-search', content: '{"hits":[{"snippet":"Tests 17 passed"}]}' }] },
+        { role: 'assistant', content: [{ type: 'tool_use', id: 'echo-read', name: 'session_history_read', input: { entry_id: 'Tests 17 passed' } }] },
+      ]),
+      [{ role: 'user', content: 'active tail', _synthetic: true, _source: 'compaction-checkpoint' }],
+      { summary: 'checked tests' },
+    );
+
+    expect(searchSessionHistory(lineage, { query: 'Tests 17 passed' }).totalHits).toBe(4);
+    const filtered = searchSessionHistory(lineage, { query: 'Tests 17 passed', excludeToolNames: historyTools });
+    expect(filtered.totalHits).toBe(2);
+    expect(filtered.hits.map(hit => hit.snippet)).toEqual(
+      expect.arrayContaining(['[tool_result bash-1] Tests 17 passed', 'Looking up Tests 17 passed again.']),
+    );
+    const mixed = filtered.hits.find(hit => hit.snippet === 'Looking up Tests 17 passed again.')!;
+    expect(readSessionHistoryEntry(lineage, { entryId: mixed.entryId, revision: mixed.entryRevision }))
+      .toMatchObject({ status: 'ok', content: expect.stringContaining('[tool_use session_history_search]') });
+  });
 });

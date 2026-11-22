@@ -1915,7 +1915,7 @@ Message, no new turn: running receives at next safe boundary; idle retains until
 
 ## session_history_read
 
-Read cited persisted entry in bounded character chunks. Use selected hit.entryRevision as revision; reuse returned entryRevision for nextOffset or stale recovery. It checks this entry across normal message appends. Top-level search revision remains a strict whole-history snapshot.
+Read one exact session entry cited by session_history_search, in bounded character chunks. Pass the hit's entryRevision as revision. When the result has a nextOffset, call again with that offset and the entryRevision the result returned. A stale result means the entry changed; it returns the new entryRevision to read with.
 
 ```json
 {
@@ -1923,15 +1923,15 @@ Read cited persisted entry in bounded character chunks. Use selected hit.entryRe
   "properties": {
     "entry_id": {
       "type": "string",
-      "description": "Exact hit.entryId."
+      "description": "Exact entryId of a search hit."
     },
     "revision": {
       "type": "string",
-      "description": "Selected hit.entryRevision or read.entryRevision; legacy whole-history revision remains strict."
+      "description": "The hit's entryRevision, or the entryRevision returned by an earlier read. The top-level revision from a search also works, but it goes stale as soon as any new message is added."
     },
     "offset": {
       "type": "number",
-      "description": "0-based characters; default 0."
+      "description": "Zero-based character offset (default 0). Use the nextOffset from the previous read."
     }
   },
   "required": [
@@ -1942,7 +1942,7 @@ Read cited persisted entry in bounded character chunks. Use selected hit.entryRe
 
 ## session_history_search
 
-Find omitted persisted history only when missing detail is needed; do not guess from checkpoint. Bounded snippets/stable citations; read needed hit with hit.entryRevision as read.revision.
+Search the exact session entries that are no longer in your context because compaction replaced them with a summary. Use it when the current request depends on a detail the summary dropped, such as an exact value, ID, command, error text or user wording. Don't answer such details from the summary alone: it is a paraphrase and often loses them. Results are short snippets with stable entry citations. exactHits counts every entry that contains the whole query, including ones beyond the returned hits. totalHits also counts entries that match only some query terms. If exactHits is larger than the number of hits returned, some exact matches are hidden, so raise limit or narrow the query before you count or conclude. Read the hit you need with session_history_read, passing its entryRevision as revision.
 
 ```json
 {
@@ -1950,18 +1950,19 @@ Find omitted persisted history only when missing detail is needed; do not guess 
   "properties": {
     "query": {
       "type": "string",
-      "description": "Specific phrase/ID/command/historical fact."
+      "description": "Specific phrase, identifier, command, or historical fact to find."
     },
     "limit": {
       "type": "number",
-      "description": "1–20; default 8."
+      "description": "Maximum snippets to return (1-20, default 8)."
     },
     "role": {
       "type": "string",
       "enum": [
         "user",
         "assistant"
-      ]
+      ],
+      "description": "Optional message-role filter."
     },
     "scope": {
       "type": "string",
@@ -1969,7 +1970,7 @@ Find omitted persisted history only when missing detail is needed; do not guess 
         "compacted",
         "all"
       ],
-      "description": "Default compacted; all only if active-tail search needed."
+      "description": "Defaults to compacted history. Use all only when you also need to search the entries still in your context."
     }
   },
   "required": [

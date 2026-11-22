@@ -116,4 +116,21 @@ describe('session history tools', () => {
     const system = JSON.parse(await toolSessionHistorySearch({ query: 'SYS-991' }, ctx));
     expect(system.hits).toEqual([]);
   });
+
+  it('tells the model how many entries matched and skips its own earlier lookups', async () => {
+    const lineage = applySessionCompaction(
+      createSessionLineage([
+        { role: 'assistant', content: 'deploy DEP-7 failed: quota' },
+        { role: 'assistant', content: 'deploy DEP-7 failed: timeout' },
+        { role: 'assistant', content: [{ type: 'tool_use', id: 'old-lookup', name: 'session_history_search', input: { query: 'DEP-7 failed' } }] },
+        { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'old-lookup', content: 'DEP-7 failed x2' }] },
+      ]),
+      [{ role: 'user', content: 'active tail' }],
+      { summary: 'deploys failed' },
+    );
+    const ctx: KodaXToolExecutionContext = { backups: new Map(), loadSessionHistory: async () => lineage };
+    const search = JSON.parse(await toolSessionHistorySearch({ query: 'DEP-7 failed', limit: 1 }, ctx));
+    expect(search).toMatchObject({ status: 'ok', totalHits: 2, exactHits: 2 });
+    expect(search.hits).toHaveLength(1);
+  });
 });

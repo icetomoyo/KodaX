@@ -33,24 +33,30 @@ export function createSessionHistoryLoader(input: {
   return () => loadFullLineage.call(storage, sessionId);
 }
 
-export const SESSION_HISTORY_SEARCH_DESCRIPTION = 'Find omitted persisted history only when missing detail is needed; do not guess from checkpoint. '
-  + 'Bounded snippets/stable citations; read needed hit with hit.entryRevision as read.revision.';
+export const SESSION_HISTORY_SEARCH_DESCRIPTION = 'Search the exact session entries that are no longer in your context because compaction replaced them with a summary. '
+  + 'Use it when the current request depends on a detail the summary dropped, such as an exact value, ID, command, error text or user wording. '
+  + 'Don\'t answer such details from the summary alone: it is a paraphrase and often loses them. '
+  + 'Results are short snippets with stable entry citations. '
+  + 'exactHits counts every entry that contains the whole query, including ones beyond the returned hits. '
+  + 'totalHits also counts entries that match only some query terms. '
+  + 'If exactHits is larger than the number of hits returned, some exact matches are hidden, so raise limit or narrow the query before you count or conclude. '
+  + 'Read the hit you need with session_history_read, passing its entryRevision as revision.';
 
-export const SESSION_HISTORY_ENTRY_REVISION_RULE = 'Use selected hit.entryRevision as revision; reuse returned entryRevision for nextOffset or stale recovery. '
-  + 'It checks this entry across normal message appends. Top-level search revision remains a strict whole-history snapshot.';
-
-export const SESSION_HISTORY_READ_DESCRIPTION = 'Read cited persisted entry in bounded character chunks. ' + SESSION_HISTORY_ENTRY_REVISION_RULE;
+export const SESSION_HISTORY_READ_DESCRIPTION = 'Read one exact session entry cited by session_history_search, in bounded character chunks. '
+  + 'Pass the hit\'s entryRevision as revision. '
+  + 'When the result has a nextOffset, call again with that offset and the entryRevision the result returned. '
+  + 'A stale result means the entry changed; it returns the new entryRevision to read with.';
 
 export const SESSION_HISTORY_SEARCH_SCHEMA = {
   type: 'object' as const,
   properties: {
-    query: { type: 'string' as const, description: 'Specific phrase/ID/command/historical fact.' },
-    limit: { type: 'number' as const, description: '1–20; default 8.' },
-    role: { type: 'string' as const, enum: ['user', 'assistant'] },
+    query: { type: 'string' as const, description: 'Specific phrase, identifier, command, or historical fact to find.' },
+    limit: { type: 'number' as const, description: 'Maximum snippets to return (1-20, default 8).' },
+    role: { type: 'string' as const, enum: ['user', 'assistant'], description: 'Optional message-role filter.' },
     scope: {
       type: 'string' as const,
       enum: ['compacted', 'all'],
-      description: 'Default compacted; all only if active-tail search needed.',
+      description: 'Defaults to compacted history. Use all only when you also need to search the entries still in your context.',
     },
   },
   required: ['query'],
@@ -59,9 +65,13 @@ export const SESSION_HISTORY_SEARCH_SCHEMA = {
 export const SESSION_HISTORY_READ_SCHEMA = {
   type: 'object' as const,
   properties: {
-    entry_id: { type: 'string' as const, description: 'Exact hit.entryId.' },
-    revision: { type: 'string' as const, description: 'Selected hit.entryRevision or read.entryRevision; legacy whole-history revision remains strict.' },
-    offset: { type: 'number' as const, description: '0-based characters; default 0.' },
+    entry_id: { type: 'string' as const, description: 'Exact entryId of a search hit.' },
+    revision: {
+      type: 'string' as const,
+      description: 'The hit\'s entryRevision, or the entryRevision returned by an earlier read. '
+        + 'The top-level revision from a search also works, but it goes stale as soon as any new message is added.',
+    },
+    offset: { type: 'number' as const, description: 'Zero-based character offset (default 0). Use the nextOffset from the previous read.' },
   },
   required: ['entry_id'],
 };
@@ -103,12 +113,19 @@ export async function toolSessionHistorySearch(
     limit: 20,
     role,
     scope,
+    excludeToolNames: SESSION_HISTORY_TOOL_NAMES,
   });
   const limit = Math.min(20, Math.max(1, Math.trunc(requestedLimit)));
   const hits = result.hits
     .filter((hit) => hit.role !== 'system')
     .slice(0, limit);
-  return JSON.stringify({ status: 'ok', revision: result.revision, hits });
+  return JSON.stringify({
+    status: 'ok',
+    revision: result.revision,
+    totalHits: result.totalHits,
+    exactHits: result.exactHits,
+    hits,
+  });
 }
 
 export async function toolSessionHistoryRead(
