@@ -12,6 +12,7 @@ vi.mock('node:child_process', async (importOriginal) => ({
 }));
 
 const {
+  installCliWindowsProcessHelper,
   killChildProcessTree,
   rememberChildProcessTree,
 } = await import('./process-tree.js');
@@ -330,5 +331,36 @@ describe('LLM Windows process-tree identity fences', () => {
     expect(terminationScripts.join('\n')).toContain('TerminateExact(4343');
     expect(kill).toHaveBeenCalledTimes(2);
     expect(snapshots).toHaveLength(0);
+  });
+
+  it('reads snapshots through the installed native helper instead of PowerShell', () => {
+    setWindows();
+    spawnSyncMock.mockReset();
+    spawnSyncMock.mockReturnValue(snapshot('4242,1,111' + String.fromCharCode(10)));
+    installCliWindowsProcessHelper(() => 'C:/kodax/helper.exe');
+    try {
+      expect(rememberChildProcessTree(fakeChild(4_242) as never)).toBe('111');
+      expect(spawnSyncMock).toHaveBeenCalledTimes(1);
+      expect(spawnSyncMock.mock.calls[0]?.slice(0, 2)).toEqual(['C:/kodax/helper.exe', ['__process-snapshot']]);
+    } finally {
+      installCliWindowsProcessHelper(undefined);
+    }
+  });
+
+  it('falls back to PowerShell for good once the helper cannot start', () => {
+    setWindows();
+    spawnSyncMock.mockReset();
+    spawnSyncMock.mockImplementation((command) => command === 'C:/kodax/missing.exe'
+      ? { ...snapshot(''), status: null, error: Object.assign(new Error('missing'), { code: 'ENOENT' }) }
+      : snapshot('4242,1,111' + String.fromCharCode(10)));
+    installCliWindowsProcessHelper(() => 'C:/kodax/missing.exe');
+    try {
+      expect(rememberChildProcessTree(fakeChild(4_242) as never)).toBe('111');
+      expect(rememberChildProcessTree(fakeChild(4_242) as never)).toBe('111');
+      expect(spawnSyncMock.mock.calls.map(([command]) => command))
+        .toEqual(['C:/kodax/missing.exe', 'powershell.exe', 'powershell.exe']);
+    } finally {
+      installCliWindowsProcessHelper(undefined);
+    }
   });
 });

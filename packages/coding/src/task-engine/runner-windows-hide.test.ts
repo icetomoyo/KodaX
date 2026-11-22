@@ -34,7 +34,9 @@ describe('ordinary query background-process regression', () => {
     });
   });
 
-  it('hides every synchronous Git probe across 20 ordinary queries', async () => {
+  it('hides the Git probe and runs it once across 20 ordinary queries', async () => {
+    // Each synchronous probe blocks every session of a shared Host, so the
+    // remote is read once per workspace and remembered after that.
     for (let index = 0; index < 20; index += 1) {
       const callsBeforeQuery = execSyncMock.mock.calls.length;
       const options: KodaXOptions = {
@@ -53,7 +55,7 @@ describe('ordinary query background-process regression', () => {
       }));
 
       const queryCalls = execSyncMock.mock.calls.slice(callsBeforeQuery);
-      expect(queryCalls.length, `ordinary query ${index}`).toBeGreaterThanOrEqual(2);
+      expect(queryCalls.length, `ordinary query ${index}`).toBe(index === 0 ? 1 : 0);
       for (const [command, childOptions] of queryCalls) {
         expect(command).toBe('git config --get remote.origin.url');
         expect(childOptions?.windowsHide).toBe(true);

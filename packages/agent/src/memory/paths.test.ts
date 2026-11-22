@@ -14,8 +14,9 @@ import * as fs from 'node:fs';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { execSyncMock, gitPreflight } = vi.hoisted(() => ({
-  execSyncMock: vi.fn(() => ''),
+const { execSyncMock, execFileMock, gitPreflight } = vi.hoisted(() => ({
+  execSyncMock: vi.fn((): string => ''),
+  execFileMock: vi.fn(),
   gitPreflight: vi.fn(),
 }));
 
@@ -25,6 +26,7 @@ vi.mock('../runtime/macos-git.js', () => ({
 
 vi.mock('node:child_process', () => ({
   execSync: execSyncMock,
+  execFile: execFileMock,
 }));
 
 import { setAgentConfigHome } from '../runtime/agent-home.js';
@@ -38,6 +40,7 @@ import {
   resolveMemoryRoot,
   resolveScopedMemoryRoot,
   sanitizeProjectKey,
+  tryGitRemote,
 } from './paths.js';
 
 describe('sanitizeProjectKey', () => {
@@ -157,6 +160,44 @@ describe('resolveMemoryRoot / resolveMemoryEntrypoint', () => {
       expect(execSyncMock).toHaveBeenCalledTimes(1);
     } finally {
       execSyncMock.mockReturnValue('');
+    }
+  });
+
+  it('reads the remote once per cwd while the answer is fresh', () => {
+    execSyncMock.mockReturnValue('https://github.com/user/repo.git\n');
+    try {
+      expect(tryGitRemote(tempHome)).toBe('https://github.com/user/repo.git');
+      expect(tryGitRemote(tempHome)).toBe('https://github.com/user/repo.git');
+      expect(resolveMemoryRoot(tempHome)).toBe(
+        path.join(tempHome, 'projects', 'github.com-user-repo', 'memory'),
+      );
+      expect(execSyncMock).toHaveBeenCalledTimes(1);
+      expect(execFileMock).not.toHaveBeenCalled();
+    } finally {
+      execSyncMock.mockReturnValue('');
+    }
+  });
+
+  it('serves a stale remote immediately and refreshes it off the event loop', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    execFileMock.mockReset();
+    try {
+      expect(tryGitRemote(tempHome)).toBeUndefined();
+      now.mockReturnValue(1_000_000 + 60_000);
+      expect(tryGitRemote(tempHome)).toBeUndefined();
+      expect(tryGitRemote(tempHome)).toBeUndefined();
+      expect(execSyncMock).toHaveBeenCalledTimes(1);
+      expect(execFileMock).toHaveBeenCalledTimes(1);
+      const [file, args, options, callback] = execFileMock.mock.calls[0] as [
+        string, string[], Record<string, unknown>, (error: Error | null, stdout: string) => void,
+      ];
+      expect([file, ...args]).toEqual(['git', 'config', '--get', 'remote.origin.url']);
+      expect(options).toEqual(expect.objectContaining({ cwd: path.resolve(tempHome), windowsHide: true }));
+      callback(null, 'git@github.com:user/added.git\n');
+      expect(tryGitRemote(tempHome)).toBe('git@github.com:user/added.git');
+      expect(execFileMock).toHaveBeenCalledTimes(1);
+    } finally {
+      now.mockRestore();
     }
   });
 

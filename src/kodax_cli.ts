@@ -198,8 +198,10 @@ import {
   readProcessStartIdentity,
   shutdownTracing,
   applyProcessHardening,
+  installWindowsProcessHelper,
   prepareInternalNodeLaunch,
 } from '@kodax-ai/agent';
+import { resolveWindowsSandboxV2Executable } from './windows-sandbox-v2.js';
 import {
   getGitRoot,
   loadConfig,
@@ -3281,6 +3283,11 @@ async function runCliMain(startupProgress?: CliStartupProgress) {
   // addons. Opt-out: KODAX_DISABLE_HARDENING=1. Debug-preserving (no
   // PR_SET_DUMPABLE). No-op on Windows.
   applyProcessHardening();
+  // Daemon discovery checks process identities before the first frame; the
+  // native helper answers in tens of milliseconds instead of PowerShell.
+  if (process.platform === 'win32') {
+    installWindowsProcessHelper(() => resolveWindowsSandboxV2Executable().path);
+  }
   const kodaxHomeWarning = ignoredKodaXHomeWarning();
   if (kodaxHomeWarning !== undefined) process.stderr.write(`${kodaxHomeWarning}\n`);
   if (argv[0] === INTERNAL_SANDBOX_STARTUP_RECOVERY_ARG) {

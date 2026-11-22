@@ -198,6 +198,7 @@ import {
   redactScopedProviderCredential,
   runWithProviderCredentialLeaseScope,
   runWithProviderCredential,
+  installCliWindowsProcessHelper,
 } from "@kodax-ai/llm";
 import {
   appendGoalEntry,
@@ -4261,10 +4262,13 @@ export async function createKodaXRuntime(
 export async function createKodaXHostRuntime(
   options: CreateKodaXHostRuntimeOptions = {},
 ): Promise<KodaXRuntime> {
-  // Bash cleanup reads process snapshots on the Host loop; the native helper
-  // keeps each read to tens of milliseconds instead of a PowerShell second.
+  // Bash cleanup and CLI providers read process snapshots on the Host loop; the
+  // native helper keeps each read to tens of milliseconds instead of a PowerShell second.
   if (process.platform === "win32") {
-    installWindowsProcessHelper(() => resolveWindowsSandboxV2Executable().path);
+    let helperPath: string | undefined;
+    const resolveHelper = () => (helperPath ??= resolveWindowsSandboxV2Executable().path);
+    installWindowsProcessHelper(resolveHelper);
+    installCliWindowsProcessHelper(resolveHelper);
   }
   if (options.sharedDaemonHost !== true) {
     return createKodaXRuntimeInternal(options);
