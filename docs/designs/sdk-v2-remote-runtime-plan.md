@@ -2095,6 +2095,30 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
 - 不记的：IPC 令牌错误（本机同一个用户才读得到令牌文件）、配对码的签发（签发只有 owner 能做，兑换才是安全边界，兑换成功记 `device_paired`）。
 - 已验证：定向测试覆盖每类事件和"事件里没有令牌"；冒烟测试确认前台 `daemon serve` 的 stdout 全是 JSON 行。
 
+**第 6 项的落地细节**（2026-11-22，未经用户确认的取舍）：
+
+- 浏览器和 Node 共用一个入口函数 `connectKodaXHost({url, client, credential?, onError?, recoveryLeases?})`（`src/host-protocol/remote-host.ts`），用全局 `WebSocket`，不依赖 `node:`。Node 从 `./client` 导出，浏览器从新的 `./browser` 导出。
+  - `url` 收 http(s) 或 ws(s)，不带路径时补 `/v2`。Host 自己提供的页面传 `location.origin`。
+  - `credential()` 每条连接调一次，取一个 JWT。取不到算可以重试（`unavailable` + `credential_unavailable`），按退避重试，不关闭客户端。不给 `credential` 时 `initialize` 不带 `auth`，配对过的浏览器靠 cookie。
+- 续期：握手或上一次续期给了 `expiresAt` 时，剩余时间过去 80% 就用新取的 token 调 `auth.renew`。续期失败只报给 `onError`，不重试：Host 到期会用 4401 断开，下一条连接重新取 token。
+- 客户端按 Host 的关闭码行事（`src/host-protocol/close.ts` 的 `hostLinkEnd`）：
+  - `protocol`、`revoked`、`replaced` 不重连，客户端以 `invalid_state`、`unauthorized`、`conflict` 关闭，`reason` 取 Host 给的关闭原因；
+  - `credential`、`idle` 立即重连；
+  - `overloaded`、`unavailable` 先退避再重连；
+  - 没有 Host 关闭码的断开（比如 1006）按断线立即重连；
+  - 握手期间收到"不要重连"的关闭，这次连接失败，不可重试。
+- 心跳：握手给了 `idleTimeoutMs`（只有网络连接有）时，客户端在每三分之一个周期里没发过帧，就发一个 `ping`。浏览器会节流后台标签页的计时器，这时仍可能被 4408 断开，按 `idle` 立即重连。
+- Host 侧一处改动：浏览器的 Origin 被拒时，不再回 HTTP 403，而是完成升级后立即用 4403 + `origin_not_allowed` 关闭，不读它发来的任何帧。原因是浏览器读不到升级失败的状态码，分不清"没配对"和"Host 挂了"，只会一直重连。关闭完成前，这些连接计入握手中的连接上限。安全事件照旧记 `origin_not_allowed`。
+- `createRequestId()`：浏览器只在安全上下文里提供 `crypto.randomUUID`，经 http 打开局域网地址的页面没有它，这时改用 `getRandomValues` 生成 32 位十六进制。
+- 浏览器入口 `src/sdk-browser.ts`（`@kodax-ai/kodax/browser`）导出 `connectKodaXHost`、`createRequestId`、`HostProtocolError` 和类型。打包脚本把它单独构建成一个自包含文件（platform browser、es2022、没有 external），构建时检查输入只来自 `src/host-protocol/`；单元测试用 esbuild 做同样的检查。
+- 已知局限：
+  - 类型声明仍引用 `zod/v4` 的类型（参数和结果类型由 schema 推出）。zod 是本包的依赖，消费方的 tsc 能解析；运行时不含 zod。
+  - `call` 的类型里还有 trusted 面的方法和参数，Host 按角色拒绝。运行时没有 trusted 专用代码。按平面收窄类型留到有浏览器客户端实际用时再做。
+  - 浏览器入口仍随整个 `@kodax-ai/kodax` 包安装。
+  - D2 说浏览器 SDK 把没确认的 `requestId` 存进 storage。实际和 Node 版一样，`requestId` 由调用方生成和保存，`instanceId` 也由调用方保存（浏览器放 `localStorage`）。
+  - WS 被拦截时自动回退到 HTTP 是 M2 的事。
+- 已验证：真实 Host（`host.test.ts` 的网络用例）上，SDK 用全局 `WebSocket` 加 JWT 连上并能 `ping`；被拒的浏览器 Origin 得到 `unauthorized` + `origin_not_allowed`。真机浏览器要等 Space 的 Web UI（M1c）。
+
 ### M1c Space 整体迁移到 v2
 
 - Renderer 和 Main 一起迁，在同一个 Space 版本里切换。升级到这个 SDK 版本的 Space 就只用 v2，不保留 v1 回退开关。
