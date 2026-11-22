@@ -147,6 +147,7 @@ server: {
   services: [<sub>…],
   allowedOrigins: [],
   pairing: bool,
+  webRoot,       // Host 在同一端口上提供的静态网页
   workspaceRoot,
   tools: [...]   // Host 级工具上限
 }
@@ -161,7 +162,7 @@ server: {
 - `owner`、`services`、`allowedOrigins`：只有这些身份和来源能连进来。
 - `allowedOrigins` 默认为空，也就是拒绝所有浏览器来源。
 - `tools`：Host 级工具上限，是权限链的最外层（D12）。每个 Run 都会和它求交集，复用现有的 `intersectExecutionToolCeilings`（`execution-profile.ts:43`）。非编码的 (d) 场景用它去掉 fs 和 bash。
-- 只要配置了网络监听而没配鉴权，Host 就拒绝启动。
+- 只要配置了网络监听，却既没配 `jwt` 也没开 `pairing`，Host 就拒绝启动。
 
 ### 项目来源信任
 
@@ -177,7 +178,7 @@ server: {
 ### 配置变更
 
 - 鉴权字段（`owner`、`services`、`allowedOrigins`、`pairing`、`tools`）**热生效**：在下一次握手时应用，同时立即断开不再符合的现有连接。复用 A2A 的配置热加载分类（`kodax_cli.ts:957-984`）。
-- `listen` 和 `workspaceRoot` 改动后需要重启 Host。
+- `listen`、`workspaceRoot` 和 `webRoot` 改动后需要重启 Host。
 - 配置里出现不认识的字段时，Host 拒绝启动（失败即关闭）。所以平台回滚镜像时，必须连同配置一起回滚。
 
 ### 生命周期
@@ -692,7 +693,7 @@ SDK 导出一个统一的错误类型。客户端不解析错误文本。
 
 流程（类似 Jupyter 的 token 链接，用户无感）：
 
-1. 用户在 Space 里点"添加设备"，得到一个一次性配对链接和对应的二维码：`https://<隧道地址>/#pair=<配对码>`。配对码 10 分钟内有效，只能用一次，并且对尝试次数限速。
+1. 用户在 Space 里点"添加设备"，得到一个一次性配对链接和对应的二维码：`https://<隧道地址>/#pair=<配对码>`。配对码 10 分钟内有效，只能用一次。
 2. 手机或浏览器打开链接，网页从 URL 的 `#` 部分取出配对码。这部分不会发给服务器和代理，也不会进入访问日志。
 3. 网页用配对码调 `POST /pair`，Host 回一个 HttpOnly cookie，里面是长期有效的设备令牌；网页再把配对码从地址栏清掉。之后访问同一个地址，浏览器连接时自动带上 cookie。
 4. 用户清空了浏览器数据就重新配对。在 Space 的设备列表里吊销某台设备后，Host 立即断开这台设备的连接。
@@ -727,7 +728,12 @@ SDK 导出一个统一的错误类型。客户端不解析错误文本。
 | 临时用 | Cloudflare 快速隧道 | 不用账号、不用装 App；地址跟 cloudflared 进程走，重启就变，人在外面时没法知道新地址 |
 | 兜底 | 同一 Wi-Fi 直连 | 只有 http |
 
-ngrok 免费版不推荐：它在网页前插入警告页，页面里的脚本请求也可能拿到警告页。funnel 和 Cloudflare 隧道把配对端点放到公网上，配对码的限速要按公网设计。国内网络下各方案能否稳定访问，写指南前实测。
+ngrok 免费版不推荐：它在网页前插入警告页，页面里的脚本请求也可能拿到警告页。国内网络下各方案能否稳定访问，写指南前实测。
+
+funnel 和 Cloudflare 隧道把配对端点放到公网上。配对码**不限速**（2026-11-22，实现时改的，原计划要限速）：
+
+- 配对码是 128 位随机数，10 分钟内有效、只能用一次，在线猜不中。
+- 经过隧道的请求在 Host 看来都来自同一个地址，限速只能做成全局的。扫描器打满全局限额后，用户自己也配对不了。
 
 #### 浏览器来源
 
@@ -797,7 +803,7 @@ ngrok 免费版不推荐：它在网页前插入警告页，页面里的脚本�
 ```ts
 // 握手
 initialize({protocol:'kodax/2', revision, client:{name, version, instanceId},
-            auth:{scheme:'jwt'|'pairing'|'ipc', token}})
+            auth?:{scheme:'jwt'|'ipc', token}})   // 配对设备凭 cookie 认证，不带 auth
  -> {protocol, revision,            // 双方都支持的最高协议 revision
      features, role, subject,
      methods,                       // 这条连接可以调用的方法
@@ -2053,6 +2059,28 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
 - 每个 Run 准入时重读 `host.json`，改动对下一个 Run 生效，在途的 Run 不变。恢复的 Run 沿用准入时写下的上限，不按新文件重算。
 - 改坏的文件不生效，沿用上一次读到的上限，记一条 warn 诊断，同一个错误只记一次。启动时读不了就拒绝启动：读取放在创建 runtime 之前（`runtime-daemon/manager.ts`），经 `createRuntime` 的第二个参数交给 runtime。
 - 已知缺口：v1 的 `agents.spawn` 和 `agents.followup` 起的独立 Actor 回合不经过 Run 准入，不受这一层约束。只有本机可信的 v1 调用方能用这两个方法，v2 没有入口。v2 加 Actor 方法时，或者删除 v1 时（FEATURE_314）补上。`blockers` 来自停止前置检查；前置检查因为有正在进行的变更而报 `conflict` 时，`blockers` 是 `['active_mutations']`。每次探测看到 `blockers` 不为空，就把 `lastActivityAt` 更新为当前时间，所以它表示 Host 最后一次被看到忙碌的时间，不单独埋点。健康检查本身出错时回 503，并记一条诊断。
+
+**第 4 项的落地细节**（2026-11-22，按"设备配对"一节实现；下面是实现时定的细节）：
+
+- 分三次提交：① 设备存储、`device.*` 方法和 CLI；② `POST /pair`、`webRoot`、cookie 准入；③ `initialize` 的 `auth` 改为可选、吊销即断开。
+- 设备存在 `<configHome>/runtime/devices.json`，只有 Host 进程写，每次改动整个文件原子重写（`src/host-server/devices.ts`）。文件里只有令牌的 SHA-256、名称、Origin、配对和最后连接时间。读不了的文件不阻止启动：记一条 warn 诊断，所有设备重新配对。配对码只在内存里，Host 重启就失效。
+- 管理走 v2 的 `device.pair`、`device.list`、`device.revoke`：本机管理面，只有 owner 能调，由 host-rpc 直接处理，不经过 v1。CLI 用 v2 IPC 连正在运行的 Host（`src/device-cli.ts`），不会自己启动 Host；Space 用同样的方法。
+  - `device.pair` 用同一个 `requestId` 重发，在码有效期内拿到同一个码。没开配对时回 `invalid_state` + `pairing_off`；Host 没有网络监听时回 `invalid_state` + `not_listening`。没开配对时 `list` 和 `revoke` 照常可用，方便清理。
+  - `--url` 只收不带路径的 origin，CLI 用它拼出完整链接；不给就只打印 `/#pair=<码>`，让用户自己补隧道地址。
+- `POST /pair`（`src/host-server/web.ts`）：
+  - 没开配对回 404。
+  - 必须带真实的 http(s) Origin，不收 `null`；带 `Sec-Fetch-Site` 时必须是 `same-origin`，挡住别的站点替用户兑换配对码。都回 403。
+  - body 是 `{"code":"…"}`，超过 1 KiB 回 413，读不出码回 400，码无效、过期或已用过回 403。
+  - 成功回 `{"device":{"id","name"}}` 和 `Set-Cookie: kodax_device=…; Max-Age=34560000; Path=/; HttpOnly; SameSite=Strict`，https 的 Origin 再加 `Secure`。
+- WebSocket 准入：带 Origin 和 cookie 的升级请求先按设备认（令牌对上、Origin 和配对时相同、配对开着），认上了就不再查 `allowedOrigins`，并在 101 响应里重新下发 cookie。cookie 不对时按普通浏览器处理，Origin 不在 `allowedOrigins` 里就回 403。
+- 配对设备的连接角色是 `user`、授权身份是 `person`；内部凭据的 subject 是设备 id，所以续期比较 subject 时不会和 owner 的 JWT 混淆。它不会过期，调 `auth.renew` 回 `invalid_state` + `credential_does_not_expire`。
+- `initialize` 的 `auth` 改为可选，去掉了从没用过的 `pairing` scheme。不带 `auth` 的连接，只有传输层已经认出了设备才会被接纳，否则回 `unauthorized`。
+- 断开：吊销设备，立即用 4403 断开它的所有连接；`host.json` 关掉配对，所有配对设备的连接用 4403 断开，`/pair` 回 404。
+- 只开配对、不配 `jwt` 的 Host 可以监听；这时 `owner` 和 `services` 仍然要求 `jwt`。
+- `webRoot`：必须是绝对路径，改动要重启。只认 GET 和 HEAD，`/` 对应 `index.html`，其他目录不当页面，没有 SPA 回退。路径解析跟随链接后必须仍在 `webRoot` 里，否则回 404。按扩展名给 content-type，带 `X-Content-Type-Options: nosniff` 和 `X-Frame-Options: DENY`；不发缓存头，CSP 留给第 10 项的文档。
+- 已验证（2026-11-22，真实 `kodax daemon start`）：网页 200；配对后 cookie 属性正确；同一个码第二次 403；别的 Origin 带同一个 cookie 403；连接时重新下发 cookie；不带 `auth` 的 `initialize` 得到 `user`/`person`，看不到 `device.*`；CLI 吊销后连接以 4403 `revoked` 断开；`devices.json` 里没有令牌明文。
+- 还没验证、要等 Space 的 Web UI（M1c）：真机 iPhone Safari 配对后 8 天不访问再打开仍然免配对；经 Tailscale serve 和 Cloudflare 快速隧道配对和连接；隧道地址变了以后旧设备被拒、重新配对可用。这几条在 M1b 交付时写进测试指南。
+- 待定：`/healthz` 和配对端点在同一个端口上，经 funnel 或快速隧道暴露时，公网也能看到 Host 忙不忙（不含 Session 内容）。第 10 项写隧道指南时决定要不要收窄。
 
 ### M1c Space 整体迁移到 v2
 
