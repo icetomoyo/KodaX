@@ -11,6 +11,8 @@ function record(value: unknown): Record<string, unknown> {
 function strictSchema(value: unknown, depth = 0): Record<string, unknown> {
   const schema = record(value);
   if (depth > 32 || Object.keys(schema).some(key => !SCHEMA_KEYS.has(key))) throw new Error('Tool schema exceeds the supported strict subset.');
+  // OpenAI rejects strict nodes such as `items: {}` or a bare `const` with a 400.
+  if (['type', 'enum', 'anyOf', '$ref'].every(key => schema[key] === undefined)) throw new Error('Tool schema exceeds the supported strict subset: a node has no type.');
   if (schema.additionalProperties !== undefined && schema.additionalProperties !== false) throw new Error('Strict tools cannot retain additional properties.');
   const output = structuredClone(schema);
   if (schema.type === 'object' || schema.properties !== undefined) {
@@ -72,6 +74,21 @@ export function anthropicTools(tools: KodaXToolDefinition[], capabilities: KodaX
 export function withoutPreferredToolConstraints(tools: KodaXToolDefinition[], disabled?: boolean): KodaXToolDefinition[] {
   return disabled ? tools.map(tool => ({ ...tool, ...(tool.strict === 'prefer' ? { strict: undefined } : {}),
     ...(tool.grammar?.mode === 'prefer' ? { grammar: undefined } : {}) })) : tools;
+}
+
+// A provider that rejected preferred constraints keeps rejecting them for the same
+// session, so later turns skip straight to the relaxed tools instead of a 400.
+const MAX_REMEMBERED_REJECTIONS = 256;
+const rememberedRejections = new Set<string>();
+const rejectionKey = (provider: string, model: string, sessionId: string) => JSON.stringify([provider, model, sessionId]);
+export function hasRememberedToolConstraintRejection(provider: string, model: string, sessionId?: string): boolean {
+  return !!sessionId && rememberedRejections.has(rejectionKey(provider, model, sessionId));
+}
+export function rememberToolConstraintRejection(provider: string, model: string, sessionId?: string): void {
+  if (!sessionId) return;
+  const key = rejectionKey(provider, model, sessionId);
+  rememberedRejections.delete(key); rememberedRejections.add(key);
+  if (rememberedRejections.size > MAX_REMEMBERED_REJECTIONS) rememberedRejections.delete(rememberedRejections.values().next().value!);
 }
 export function toolGrammar(tool: KodaXToolDefinition, capabilities: KodaXToolCapabilities, provider: string) {
   if (!tool.grammar) return undefined;

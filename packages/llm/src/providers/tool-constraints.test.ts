@@ -69,6 +69,33 @@ it('rejects unknown/unsupported required constraints locally and preserves prefe
   expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body)).tools[0]).toMatchObject({ strict: false, parameters: schema });
 });
 
+it('keeps untyped schema nodes out of strict mode, while enum-only nodes stay strict', async () => {
+  vi.stubEnv('STRICT_KEY', 'fixture');
+  const fetcher = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => Response.json({ status: 'completed', output: [] })); vi.stubGlobal('fetch', fetcher);
+  const provider = createCustomProvider({ name: 'strict', protocol: 'openai', api: 'responses', model: 'fixture', baseUrl: 'https://strict.example/v1', apiKeyEnv: 'STRICT_KEY', toolCapabilities: { strict: true } });
+  const withProperty = (property: Record<string, unknown>): KodaXToolDefinition => ({ name: 'read', description: 'Read', strict: 'prefer',
+    input_schema: { type: 'object', properties: { value: property }, required: ['value'] } });
+  await provider.complete([], [withProperty({ type: 'array', items: {} }), withProperty({ const: 'fixed' }), withProperty({ enum: ['a', 'b'] })], '');
+  expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body)).tools.map((t: { strict: boolean }) => t.strict)).toEqual([false, false, true]);
+  await expect(provider.complete([], [{ ...withProperty({ type: 'array', items: {} }), strict: 'require' }], '')).rejects.toThrow(/strict subset/);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
+it('remembers a strict rejection for the rest of the session instead of paying for it every turn', async () => {
+  vi.stubEnv('STRICT_KEY', 'fixture');
+  const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => JSON.parse(String(init?.body)).tools.some((t: { strict: boolean }) => t.strict)
+    ? Response.json({ error: { message: 'strict tool schema limits exceeded' } }, { status: 400 }) : Response.json({ status: 'completed', output: [] }));
+  vi.stubGlobal('fetch', fetcher);
+  const provider = createCustomProvider({ name: 'strict-memory', protocol: 'openai', api: 'responses', model: 'fixture', baseUrl: 'https://strict.example/v1', apiKeyEnv: 'STRICT_KEY', toolCapabilities: { strict: true } });
+  const tool: KodaXToolDefinition = { name: 'read', strict: 'prefer', description: 'Read', input_schema: { type: 'object', properties: {}, required: [] } };
+  await provider.complete([], [tool], '', undefined, { sessionId: 'session-a' });
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  await provider.complete([], [tool], '', undefined, { sessionId: 'session-a' });
+  expect(fetcher).toHaveBeenCalledTimes(3);
+  await provider.complete([], [tool], '', undefined, { sessionId: 'session-b' });
+  expect(fetcher).toHaveBeenCalledTimes(5);
+});
+
 it('singleAttempt never multiplies a preferred-constraint hard rejection', async () => {
   vi.stubEnv('STRICT_KEY', 'fixture');
   const fetcher = vi.fn(async () => Response.json({ error: { message: 'strict tool limits exceeded' } }, { status: 400 })); vi.stubGlobal('fetch', fetcher);

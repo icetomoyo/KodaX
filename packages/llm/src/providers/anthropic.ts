@@ -1367,6 +1367,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       model: streamOptions?.modelOverride ?? this.config.model,
       onRejected: streamOptions?.onReasoningEffortRejected,
       tools,
+      sessionId: streamOptions?.sessionId,
     });
   }
 
@@ -1622,6 +1623,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       model: streamOptions?.modelOverride ?? this.config.model,
       onRejected: streamOptions?.onReasoningEffortRejected,
       tools,
+      sessionId: streamOptions?.sessionId,
     });
   }
 

@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-21_
+_Last Updated: 2026-11-22_
 
 ---
 
@@ -46,6 +46,98 @@ This predates the child contract projection; the eval uses raw per-call usage,
 not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
+
+## Issue 432: LLM retry classification misses transient errors and misreads permanent ones
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: every version with `KodaXBaseProvider.isRateLimitError`
+- Created / Resolved: 2026-11-22 / 2026-11-22
+- Fixed: unreleased (after `v0.7.97-beta.13`)
+- Related: Issue 431 (found in the same comparison)
+- Context: comparison of the LLM access layer with pi-ai 1.6.0
+
+### Original Problem
+
+`isRateLimitError` in `packages/llm/src/providers/base.ts` matched bare
+substrings such as `limit`, `rate` and `503`. A permanent request error like
+"output limit must be positive", "Failed to generate…" or a request id
+containing `503` was retried as a rate limit before failing.
+
+Several transient errors were not retried at all:
+
+- Gateway wording, including "temporarily unavailable", a stream `api_error`
+  event, "Provider returned error" and "retry your request".
+- Cloudflare 520, 524 and 525.
+- A reply cut off after it had begun, such as "cut short after the reply had
+  begun" or "stream disconnected before completion".
+- An OpenAI-compatible stream that ended with `finish_reason: "error"`. It was
+  returned as a finished answer with partial content.
+
+### Resolution
+
+- `isRateLimitError` matches one bounded expression: rate-limit, too-many,
+  overload and busy wording, the Chinese rate-limit words, and the codes 429,
+  503, 529 and 1302 only when they are not part of a longer id or number.
+- The OpenAI-compatible stream throws a `StreamIncompleteError` on
+  `finish_reason: "error"`, so the coding resilience layer retries it with its
+  partial-output handling.
+- The coding classifier treats gateway wording and 504/520/524/525 as
+  `provider_overloaded`. It treats mid-reply wording as `incomplete_stream`.
+  "The provider is unavailable for this model" stays non-retryable.
+- The llm layer still retries only failures before response headers. Mid-stream
+  retries stay in the coding classifier.
+
+Files changed: `packages/llm/src/providers/base.ts`,
+`packages/llm/src/providers/openai.ts`,
+`packages/coding/src/resilience/classifier.ts`.
+
+Tests added: permanent and transient cases in
+`packages/llm/src/providers/base.test.ts`, the `finish_reason: "error"` case in
+`packages/llm/src/providers/streaming-robustness.test.ts`, and the gateway,
+mid-stream and routing cases in
+`packages/coding/src/resilience/resilience.test.ts`.
+
+## Issue 431: Preferred strict tools send untyped schema nodes and repeat the same rejection
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: every version with `strict: 'prefer'` tool constraints
+- Created / Resolved: 2026-11-22 / 2026-11-22
+- Fixed: unreleased (after `v0.7.97-beta.13`)
+- Related: Issue 432 (found in the same comparison)
+- Context: comparison of the LLM access layer with pi-ai 1.6.0
+
+### Original Problem
+
+`strictSchema` in `packages/llm/src/providers/tool-constraints.ts` accepted
+nodes without a type, such as `items: {}` or a bare `const`. Under `prefer` it
+sent such a tool as strict, and OpenAI rejected the request with a 400.
+
+When a provider rejected preferred constraints, for example because of
+Claude's limit on strict tools, the retry dropped them for that request only.
+Every later turn in the same session sent them again and paid for the same
+400.
+
+### Resolution
+
+- A strict node needs `type`, `enum`, `anyOf` or `$ref`. Otherwise the tool
+  falls back to non-strict under `prefer` and fails the build under `require`.
+  An enum-only node stays strict.
+- A preferred-constraint rejection is remembered per provider, model and
+  session id, up to 256 entries. Later requests in that session start with
+  preferred constraints dropped. Requests without a session id keep the
+  per-request behavior.
+- All six `withRateLimit` call sites pass `sessionId` to the guard.
+
+Files changed: `packages/llm/src/providers/tool-constraints.ts`,
+`packages/llm/src/providers/base.ts`, `packages/llm/src/providers/anthropic.ts`,
+`packages/llm/src/providers/openai.ts`,
+`packages/llm/src/providers/openai-responses.ts`,
+`packages/llm/src/providers/native-provider.ts`.
+
+Tests added: the untyped-node and session-memory cases in
+`packages/llm/src/providers/tool-constraints.test.ts`.
 
 ## Issue 430: The daemon preflight reads every Session and fails on one busy write
 
@@ -4025,6 +4117,8 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 432 | Medium | Resolved | LLM retry classification misses transient errors and misreads permanent ones | every version with `KodaXBaseProvider.isRateLimitError` | unreleased (after `v0.7.97-beta.13`) | 2026-11-22 | 2026-11-22 |
+| 431 | Medium | Resolved | Preferred strict tools send untyped schema nodes and repeat the same rejection | every version with `strict: 'prefer'` tool constraints | unreleased (after `v0.7.97-beta.13`) | 2026-11-22 | 2026-11-22 |
 | 430 | High | Resolved | The daemon preflight reads every Session and fails on one busy write | every version with the daemon preflight | unreleased (after `v0.7.97-beta.12`) | 2026-11-21 | 2026-11-21 |
 | 429 | Medium | Resolved | A status check pays for the full daemon preflight and oversized reads | every version with `daemon.management.get` | unreleased (after `v0.7.97-beta.12`) | 2026-11-21 | 2026-11-21 |
 | 428 | High | Resolved | The daemon reports a recovering Session as an internal error | daemon wire since Actor settlement fences | unreleased (after `v0.7.97-beta.12`) | 2026-11-21 | 2026-11-21 |
@@ -19798,12 +19892,20 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 307 (47 Open including 1 needs-info, 1 ready, 259 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 309 (47 Open including 1 needs-info, 1 ready, 261 Resolved, 0 Partially Resolved, 0 Won't Fix)
 - Ready: 1 (420)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-22: Issues 431 and 432
+
+- Preferred strict tools fall back to non-strict when a schema node has no
+  type, and a session stops resending constraints its provider already
+  rejected. Rate-limit detection no longer matches bare words like "limit".
+  Gateway, Cloudflare 520/524/525 and mid-reply cut errors are retried, and
+  `finish_reason: "error"` is treated as an incomplete stream. Unreleased.
 
 ### 2026-11-21: Issue 430
 

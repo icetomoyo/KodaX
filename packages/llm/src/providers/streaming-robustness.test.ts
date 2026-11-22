@@ -229,6 +229,26 @@ describe('streaming robustness', () => {
     expect(console.error).not.toHaveBeenCalled();
   });
 
+  it('reports finish_reason "error" as an incomplete stream instead of a finished reply', async () => {
+    const provider = new TestOpenAIProvider({
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue(
+            createAsyncIterable([
+              { choices: [{ delta: { content: 'Hel' }, finish_reason: null }] },
+              { choices: [{ delta: {}, finish_reason: 'error' }] },
+            ]),
+          ),
+        },
+      },
+    });
+
+    const error = await captureError(() => provider.stream(MESSAGES, TOOLS, 'system'));
+
+    expect(error.name).toBe('KodaXProviderError');
+    expect(error.message).toContain('Stream incomplete: the provider ended the stream with finish_reason "error"');
+  });
+
   it('emits stream diagnostics only when KODAX_DEBUG_STREAM is enabled', async () => {
     process.env.KODAX_DEBUG_STREAM = '1';
     const controller = new AbortController();

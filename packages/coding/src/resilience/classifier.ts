@@ -41,12 +41,18 @@ const OVERLOADED_PATTERNS = [
   /\bserver (error|busy)\b/i,
   /\bprovider service error\b/i,
   /\btry (again )?(a )?moment later\b/i,
-  /\b(api|http|provider|status( code)?)\b[^\n]{0,40}\b5(00|02|03|29)\b/i,
-  /\b5(00|02|03|29)\b[^\n]{0,40}\b(api|http|provider|server|status( code)?)\b/i,
+  // 520/524/525 are Cloudflare gateway codes for an unreachable or slow origin.
+  /\b(api|http|provider|status( code)?)\b[^\n]{0,40}\b5(0[0234]|2[0459])\b/i,
+  /\b5(0[0234]|2[0459])\b[^\n]{0,40}\b(api|http|provider|server|status( code)?)\b/i,
   /\b503\b/,
   /\b502\b/,
   /\binternal server error\b/i,
   /\bservice unavailable\b/i,
+  /\b(provider|service) (is )?temporarily unavailable\b/i,
+  /"type"\s*:\s*"api_error"/i,
+  /\bprovider returned (an )?error\b/i,
+  /\brepeat the request later\b/i,
+  /\b(please )?retry your request\b/i,
   // Chinese (中文)
   /服务繁忙/,
   /服务不可用/,
@@ -108,6 +114,14 @@ const TIMEOUT_PATTERNS = [
 const STREAM_INCOMPLETE_PATTERNS = [
   /\bstream incomplete\b/i,
   /\bstream interrupted\b/i,
+  // Provider and gateway wording for a reply that stopped partway.
+  /\bended the response before it was complete\b/i,
+  /\bcut short after the reply had begun\b/i,
+  /\bstopped before completing the response\b/i,
+  /\breturned an empty response\b/i,
+  /\bstream disconnected before completion\b/i,
+  /\bconnection to the provider was reset\b/i,
+  /\breported a failure while generating the response\b/i,
 ];
 
 const IDLE_TIMEOUT_PATTERNS = [

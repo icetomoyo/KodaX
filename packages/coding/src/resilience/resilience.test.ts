@@ -178,6 +178,40 @@ describe('classifyResilienceError', () => {
     expect(result.retryable).toBe(false);
   });
 
+  it.each([
+    'The provider is temporarily unavailable. Retry shortly.',
+    '{"type":"error","error":{"type":"api_error","message":"Unable to complete this request right now."}}',
+    'Provider returned error',
+    'Unable to process request. Repeat the request later.',
+    'An error occurred while processing. Please retry your request.',
+    'custom API error: 520',
+    'custom API error: 524 A timeout occurred',
+    'custom API error: 525',
+  ])('retries gateway and server wording as provider_overloaded: %s', (message) => {
+    const result = classifyResilienceError(new KodaXProviderError(message, 'custom'));
+    expect(result.errorClass).toBe('provider_overloaded');
+    expect(result.retryable).toBe(true);
+  });
+
+  it.each([
+    'The provider ended the response before it was complete.',
+    "Claude Code's stream from Anthropic was cut short after the reply had begun",
+    'Upstream error: The model stopped before completing the response.',
+    'Provider returned an empty response',
+    'stream disconnected before completion: stream closed before response.completed',
+    'The connection to the provider was reset.',
+    'The provider reported a failure while generating the response.',
+  ])('retries a provider-side mid-stream cut as incomplete_stream: %s', (message) => {
+    const result = classifyResilienceError(new KodaXProviderError(message, 'custom'));
+    expect(result.errorClass).toBe('incomplete_stream');
+    expect(result.retryable).toBe(true);
+  });
+
+  it('keeps a lasting routing error non-retryable', () => {
+    const result = classifyResilienceError(new KodaXProviderError('The provider is unavailable for this model', 'custom'));
+    expect(result.retryable).toBe(false);
+  });
+
   it('identifies session recovery candidate errors with shared classifier rules', () => {
     expect(isSessionRecoveryCandidateError(
       new Error('Provider service Error, Try a moment later'),

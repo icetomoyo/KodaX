@@ -1178,6 +1178,13 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         });
         throw error;
       }
+      // Gateways such as OpenRouter end the stream this way when the upstream
+      // model fails mid-reply; the partial content is not a finished answer.
+      if (finishReason === 'error') {
+        const error = new Error('Stream incomplete: the provider ended the stream with finish_reason "error".');
+        error.name = 'StreamIncompleteError';
+        throw error;
+      }
 
       const textBlocks: KodaXTextBlock[] = textContent ? [{ type: 'text', text: textContent }] : [];
       const toolBlocks: KodaXToolUseBlock[] = [];
@@ -1227,7 +1234,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
       }
       streamOptions?.onReasoningResolved?.(reasoningResolution);
       return { textBlocks, toolBlocks, thinkingBlocks, usage, stopReason: finishReason ?? undefined, reasoningResolution };
-    }, signal, streamOptions?.singleAttempt ? 1 : 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter, { model, tools });
+    }, signal, streamOptions?.singleAttempt ? 1 : 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter, { model, tools, sessionId: streamOptions?.sessionId });
   }
 
   override supportsNonStreamingFallback(): boolean {
@@ -1399,7 +1406,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         usage: withCacheWritePartition(normalizeOpenAIUsage(response.usage as OpenAIUsageLike)),
         stopReason: choice?.finish_reason ?? undefined,
       };
-    }, signal, streamOptions?.singleAttempt ? 1 : 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter, { model, tools });
+    }, signal, streamOptions?.singleAttempt ? 1 : 3, streamOptions?.onRateLimit, streamOptions?.onRetryAfter, { model, tools, sessionId: streamOptions?.sessionId });
   }
 
   private serializeAssistantMessage(

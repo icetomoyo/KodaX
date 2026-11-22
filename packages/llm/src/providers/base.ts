@@ -1,6 +1,6 @@
 import { credentialConnectionFingerprint } from '../credential-connection.js';
 import { inheritRejectedImage } from './rejected-image.js';
-import { isToolConstraintRejection } from './tool-constraints.js';
+import { hasRememberedToolConstraintRejection, isToolConstraintRejection, rememberToolConstraintRejection } from './tool-constraints.js';
 import { withRequestExtensions, requestEnvironment } from './request-extensions.js';
 import { credentialFingerprint } from '../credential-fingerprint.js';
 import { requestIdentity } from './request-extensions.js';
@@ -54,6 +54,8 @@ export interface ReasoningRejectionGuard {
   readonly effort?: string;
   readonly onRejected?: (event: { provider: string; model: string; effort: string }) => void;
   readonly tools?: readonly KodaXToolDefinition[];
+  /** Conversation the request belongs to; scopes remembered tool-constraint rejections. */
+  readonly sessionId?: string;
 }
 
 /** Retry-only state owned by one provider request, never by the provider singleton. */
@@ -108,6 +110,13 @@ function shouldLowerAutoReasoningEffort(
   }
   return capability.effortStrategy === 'provider-budget';
 }
+
+const RATE_LIMIT_MESSAGE = new RegExp([
+  'rate.?limit', 'too many (?:requests|concurrent)', 'overload', 'overwhelmed', '(?<![a-z])busy(?![a-z])',
+  '速率', '频率', '限流', '并发',
+  // Status and provider codes must not be part of a longer id or number.
+  '(?<![a-z0-9])(?:429|503|529|1302)(?![a-z0-9])',
+].join('|'), 'i');
 
 function nonRetryableCause(error: unknown): KodaXProviderError | undefined {
   const seen = new Set<object>();
@@ -875,15 +884,11 @@ export abstract class KodaXBaseProvider {
   protected isRateLimitError(error: unknown): boolean {
     if (!(error instanceof Error)) return false;
     if (extractHttpStatus(error) === 429) return true;
-    const s = error.message.toLowerCase();
-    // FEATURE_130 (v0.7.36): include 'overload' / '503' / '529' keywords so
-    // server-overloaded responses also enter the retry path. Overload is
-    // labeled as `reason="overloaded"` by classifyRateLimitReason — both
-    // conditions flow through the same withRateLimit loop.
-    return [
-      'rate', 'limit', '速率', '频率', '1302', '429', 'too many',
-      'overload', 'overwhelmed', '503', '529', 'busy',
-    ].some(k => s.includes(k));
+    // FEATURE_130 (v0.7.36): overload wording and 503/529 also enter the retry
+    // path; classifyRateLimitReason labels them `reason="overloaded"`. Patterns
+    // are bounded so words like "generate", "output limit" or a request id that
+    // contains 503 do not turn a permanent error into a retried rate limit.
+    return RATE_LIMIT_MESSAGE.test(error.message);
   }
 
   /**
@@ -983,6 +988,8 @@ export abstract class KodaXBaseProvider {
         ? {}
         : { maxOutputTokensOverride: legacyMaxOutputTokensOverride }),
       suppressReasoningEffort: false,
+      ...(reasoningGuard && hasRememberedToolConstraintRejection(this.name, reasoningGuard.model, reasoningGuard.sessionId)
+        ? { disablePreferredToolConstraints: true } : {}),
     };
     for (let i = 0; i < retries; i++) {
       try {
@@ -1014,10 +1021,14 @@ export abstract class KodaXBaseProvider {
           });
         }
         const status = extractHttpStatus(e);
-        if (i < retries - 1 && !retryState.disablePreferredToolConstraints && reasoningGuard?.tools?.some(tool => tool.strict === 'prefer' || tool.grammar?.mode === 'prefer')
+        if (reasoningGuard && !retryState.disablePreferredToolConstraints
+          && reasoningGuard.tools?.some(tool => tool.strict === 'prefer' || tool.grammar?.mode === 'prefer')
           && isToolConstraintRejection(status, getErrorMessage(e))) {
-          retryState.disablePreferredToolConstraints = true;
-          continue;
+          rememberToolConstraintRejection(this.name, reasoningGuard.model, reasoningGuard.sessionId);
+          if (i < retries - 1) {
+            retryState.disablePreferredToolConstraints = true;
+            continue;
+          }
         }
         if (status === 408 || status === 409 || (status !== undefined && status >= 500)
           || (status !== 429 && shouldRetry === 'true' && !this.isContextOverflowError(e))) {

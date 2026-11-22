@@ -229,7 +229,7 @@ export abstract class KodaXOpenAIResponsesProvider extends KodaXOpenAICompatProv
       }
       throw this.protocolError('Responses exhausted reasoning negotiation without a completed response.');
     }, signal, options?.singleAttempt ? 1 : 3, options?.onRateLimit, options?.onRetryAfter,
-    { model, effort, tools });
+    { model, effort, tools, sessionId: options?.sessionId });
   }
 
   private emitDelta(event: ResponseStreamEvent, options: KodaXProviderStreamOptions | undefined,
