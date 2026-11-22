@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-22_
+_Last Updated: 2026-11-23_
 
 ---
 
@@ -46,6 +46,131 @@ This predates the child contract projection; the eval uses raw per-call usage,
 not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
+
+## Issue 440: A memory review receipt is announced before the job is completed
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: exposed by the Issue 435 fix (`49a256325`); the ordering predates it
+- Created / Resolved: 2026-11-23 / 2026-11-23
+- Fixed: unreleased (after `v0.7.97-beta.13`)
+- Related: Issue 435
+
+### Original Problem
+
+`src/sdk-runtime.memory-review.test.ts` ("recovers unfinished review at
+coding/managed_task startup without delaying Stop") failed after Issue 435:
+right after `onMemoryReviewReceipt`, `listPendingEpisodeReviews` still listed
+the job.
+
+The v2 drain calls `onV2Completed` under the Session's review locks. That hook
+wrote the receipt to the Session lineage and fired the client event at once,
+before `completeFencedEpisodeReviewWithSessionFence` marked the job completed
+and removed `pending/<job>.json`. The old scan took the same locks, so it
+waited for completion by accident. The Issue 435 scan reads without locks and
+sees the job still pending.
+
+Expected: a client that hears the receipt sees the job gone from the queue.
+
+### Resolution
+
+- `onV2Completed` may return a notifier. The drain calls it after the job is
+  durably completed. A notifier that throws is reported as a diagnostic and does
+  not reopen the completed job.
+- The coding runtime still writes the receipt to the lineage before completion,
+  so recovery cannot replay applied effects. It returns the client
+  notification as the notifier. `persistMemoryReviewReceiptToSession` keeps
+  its write-then-notify contract for other callers.
+
+Files changed: `packages/agent/src/memory-control/review-inbox.ts`,
+`packages/coding/src/memory-runtime.ts`.
+
+Tests: the two failing `sdk-runtime.memory-review` cases pass again (they
+failed with the Issue 435 scan and passed with the pre-435 scan).
+
+## Issue 439: The Host and the CLI block on synchronous Git and PowerShell probes
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: `v0.7.43` (`tryGitRemote`); CLI-side probes with Issue 434's scope limit
+- Created / Resolved: 2026-11-22 / 2026-11-23
+- Fixed: unreleased (after `v0.7.97-beta.13`)
+- Related: Issue 434; the late query display report
+
+### Original Problem
+
+- Each Run on the shared Host ran `git config --get remote.origin.url` through
+  `execSync` about five times. The memory root, the learning store, the memory
+  runtime and project Skills each asked for the remote. A cold call measured up
+  to 827 ms, and every session waited on the Host loop meanwhile.
+- The CLI process read its own and the daemon's start identity through
+  PowerShell at startup, about 165 ms each, because only the Host installed the
+  Issue 434 helper.
+- CLI providers (codex-cli, gemini-cli, ACP) took a PowerShell `Add-Type`
+  process snapshot on every child start and exit.
+
+### Resolution
+
+- `tryGitRemote` remembers the answer per directory. Only the first lookup is
+  synchronous. A lookup after 10 s returns the remembered value and refreshes it
+  with an asynchronous `execFile`. Exit 1 ("no remote") clears the value, but a
+  timeout or launch failure keeps it. A failed macOS developer-tools check is
+  not remembered.
+- `runCliMain` installs the native helper on Windows, so daemon discovery no
+  longer starts PowerShell.
+- `@kodax-ai/llm` exports `installCliWindowsProcessHelper`. The Host installs
+  it with the same lazily resolved helper path. When the helper cannot start,
+  the llm package falls back to PowerShell permanently.
+
+Measured with a scripted REPL turn on a fresh Host (3 runs each): ready
+2.70 → 2.07–2.26 s, and first reply 5.1–5.7 → 3.9–4.2 s. An ordinary turn no
+longer starts any synchronous process.
+
+Files changed: `packages/agent/src/memory/paths.ts`, `src/kodax_cli.ts`,
+`packages/llm/src/cli-events/process-tree.ts`, `packages/llm/src/index.ts`,
+`src/sdk-runtime.ts`.
+
+Tests added: memo and background refresh cases in
+`packages/agent/src/memory/paths.test.ts`, and helper and permanent-fallback
+cases in `packages/llm/src/cli-events/process-tree.windows.test.ts`.
+`runner-windows-hide.test.ts` now expects one hidden probe across 20 queries.
+
+Not changed: the daemon reads its boot identity through PowerShell once per
+start (about 0.5 s). Repo-intelligence `git rev-parse` calls and run-status
+fsyncs are asynchronous and do not block other sessions.
+
+## Issue 438: Streamed output makes the spinner row and the history above it jump
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: owned renderer bottom-anchored transcript (`ScrollBox`)
+- Created / Resolved: 2026-11-22 / 2026-11-23
+- Fixed: unreleased (after `v0.7.97-beta.13`)
+
+### Original Problem
+
+While "Thinking..." showed and output streamed in, the spinner's first line
+and the history above it jumped. The composer and status bar stayed still.
+
+`ScrollBox` moved its window to new geometry in an effect, one render after
+the content grew. That render drew the grown content with the previous
+window. The new line covered the spinner row and the history shifted by the
+added rows. The next render then moved everything back. A PTY replay showed 6+
+such frames per streamed reply.
+
+### Resolution
+
+When geometry props differ from the committed ones, `ScrollBox` now computes
+the window from the new props in the same render. Imperative clamp bounds are
+kept, and a prop-driven move resets the pending delta. The effect still
+commits the snapshot as before.
+
+Files changed: `packages/repl/src/tui/components/ScrollBox.tsx`.
+
+Tests added: "renders grown content with the bottom window in the same frame"
+in `ScrollBox.test.tsx` (red before the fix). PTY replay after the fix: 0
+displaced frames; history moves down only when the spinner block appears or
+disappears at round boundaries.
 
 ## Issue 434: Windows process snapshots block the Host event loop for about a second per bash call
 
@@ -117,8 +242,7 @@ snapshot row, the identity mismatch guard and target parsing.
 
 The remaining per-call cost is one helper spawn, run synchronously twice per
 bash call. The CLI-provider copy in
-`packages/llm/src/cli-events/process-tree.ts` still uses PowerShell; CLI
-providers spawn rarely.
+`packages/llm/src/cli-events/process-tree.ts` used PowerShell until Issue 439.
 
 ## Issue 435: The memory review inbox scan locks every session ever run, and nothing reclaims its directories
 
