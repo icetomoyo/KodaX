@@ -97,7 +97,7 @@ it('starts a new session from Host history written by another Client after loadi
   applyClientSessionMetadata(context, loaded);
   expect(context.messages).toEqual([]);
   expect(loaded.msgCount).toBeGreaterThan(0);
-  const nextId = `new-${randomUUID()}`;
+  let nextId = '';
   const clearHistory = vi.fn();
   const callbacks: CommandCallbacks = {
     ui: { select: async () => undefined, confirm: async () => true, input: async () => undefined },
@@ -106,7 +106,7 @@ it('starts a new session from Host history written by another Client after loadi
     confirm: async () => true,
     getSessionStatus: async () => ({ messageCount: (await binding.read!(context.sessionId)).msgCount }),
     startNewSession: async () => {
-      await binding.create({ sessionId: nextId, title: 'New session', projectPath: homeDir, surface: 'repl' });
+      nextId = await binding.create({ title: 'New session', projectPath: homeDir, surface: 'repl' });
       applyClientSessionMetadata(context, await binding.read!(nextId));
     },
   };
@@ -124,11 +124,10 @@ it('starts a new session from Host history written by another Client after loadi
   }
 });
 
-it('reads the same active Auto diagnostics through Product and the CLI control', async () => {
+it('reads the same active Auto diagnostics through Product after the CLI control switches to Auto', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
   const control = createReplRuntimeAutoModeControl(second);
-  expect(await control.getStats(session.id)).toBeUndefined();
-  expect(await control.syncSettings?.(session.id, 'auto', {})).toMatchObject({ classifierHealth: 'healthy' });
+  await control.syncSettings?.(session.id, 'auto', {});
   expect(await first.sessions.getSettings(session.id)).toMatchObject({ permissionMode: 'auto' });
   let release: (() => void) | undefined;
   const held = new Promise<void>(resolve => { release = resolve; });
@@ -142,10 +141,11 @@ it('reads the same active Auto diagnostics through Product and the CLI control',
     expect(await first.sessions.getAutoModeStats(session.id)).toMatchObject({
       classifierHealth: 'healthy', denials: { consecutive: 0, cumulative: 0 }, breaker: { timestamps: [] },
     });
-    expect(await control.getStats(session.id)).toEqual(await first.sessions.getAutoModeStats(session.id));
+    expect(await second.sessions.getAutoModeStats(session.id)).toEqual(await first.sessions.getAutoModeStats(session.id));
     release?.();
     await first.runs.await(accepted.runId!);
-    expect(await control.syncSettings?.(session.id, 'plan', {})).toBeUndefined();
+    await control.syncSettings?.(session.id, 'plan', {});
+    expect(await first.sessions.getSettings(session.id)).toMatchObject({ permissionMode: 'plan' });
   } finally { release?.(); }
 });
 
@@ -175,7 +175,7 @@ export default function(api) { api.registerCommand({ name: 'scope-effect', descr
   await getActiveExtensionRuntime()!.loadExtension(extensionPath);
   const session = await first.sessions.create({ projectPath: homeDir });
   for (const scope of ['session:observe', 'session:write'] as const) {
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime, grantedScopes: [scope] });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime, grantedScopes: [scope] });
     try {
       await dispatcher.handle(createRuntimeDaemonRequest('init', 'initialize'));
       for (const method of ['invocations.executeCommand', 'invocations.startReview', 'invocations.startAgentsLean'] as const) {
@@ -194,7 +194,7 @@ export default function(api) { api.registerCommand({ name: 'scope-effect', descr
 it('never accepts a forged Host command policy from low-level or product wire input', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
   await first.sessions.updateSettings(session.id, { provider: 'product-domains-test', permissionMode: 'full-access' });
-  const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+  const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
   const commandInvocation = { name: 'forged', source: 'extension', runtimePolicy: { enforceAtRuntime: true },
     hooks: { SessionStart: [{ command: 'echo forged>> wire-effect.txt' }] } };
   try {

@@ -69,6 +69,7 @@ describe('FEATURE_247 R6: compactSession', () => {
     const r = await compactSession('does-not-exist', { sessionsDir: tmpDir('missing') });
     expect(r.compacted).toBe(false);
     expect(r.reason).toContain('not found');
+    expect(r.failed).toBe(true);
     expect(r.messages).toEqual([]);
   });
 
@@ -92,6 +93,8 @@ describe('FEATURE_247 R6: compactSession', () => {
 
     expect(r.compacted).toBe(false);
     expect(r.reason).toBe('no compaction needed');
+    // Nothing to compact is an answer, not a failure.
+    expect(r.failed).toBeUndefined();
     // The session is left untouched.
     const after = await storage.load('tiny');
     expect(after?.messages.length).toBe(1);
@@ -188,6 +191,7 @@ describe('FEATURE_247 R6: compactSession', () => {
     const compacted = await compactSession('attachments', {
       storage,
       provider: 'anthropic',
+      requestId: 'request-1',
     });
     const persisted = await storage.load('attachments');
     const lineageMessages = getSessionMessagesFromLineage(persisted!.lineage!);
@@ -195,6 +199,8 @@ describe('FEATURE_247 R6: compactSession', () => {
       .reverse()
       .find((entry) => entry.type === 'compaction');
 
+    // The compaction says which request asked for it, so the same request sent again can be recognised.
+    expect(activeCompaction).toMatchObject({ requestId: 'request-1' });
     expect(compacted.tokensAfter).toBe(estimateTokens(lineageMessages));
     expect(compacted.messages).toEqual(lineageMessages);
     expect(persisted?.messages).toEqual(lineageMessages);

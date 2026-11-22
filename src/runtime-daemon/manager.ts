@@ -18,6 +18,7 @@ import {
 import { appendRuntimeDiagnostic, startRuntimeDaemonHost, type RuntimeDaemonHost } from './host.js';
 import {
   prepareRuntimeDaemonOwner,
+  readRuntimeOwnerPidNamespace,
   readRuntimeOwnerProcessStartIdentities,
   readRuntimeDaemonWindowsJobIdentity,
   releaseRuntimeDaemonLock,
@@ -98,12 +99,14 @@ export async function acquireRuntimeDaemonLease(
     && /^Global\\KodaXDaemonJob-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(configuredJobName)
     ? configuredJobName : undefined;
   const windowsBootIdentity = jobContained ? readWindowsSandboxBootIdentity() : undefined;
+  const pidNamespace = readRuntimeOwnerPidNamespace();
   const owner = {
     runtimeId: `rt_${randomUUID().replace(/-/g, '').slice(0, 12)}`,
     pid: process.pid,
     createdAt: new Date().toISOString(),
     kind: 'daemon' as const,
     ...(processStartIdentity === undefined ? {} : { processStartIdentity }),
+    ...(pidNamespace === undefined ? {} : { pidNamespace }),
     ...(windowsJobName === undefined ? {} : { windowsJobName }),
     ...(windowsBootIdentity === undefined ? {} : { windowsBootIdentity }),
     ...(jobContained ? {

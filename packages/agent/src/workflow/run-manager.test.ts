@@ -269,6 +269,28 @@ describe('createWorkflowRunManager (neutral)', () => {
     expect(m.getWorkflowProcessSnapshot('r7')).toBeDefined();
     unsubscribe();
   });
+
+  it('tells subscribers a workflow finished only once the run has settled, and only once', async () => {
+    const m = createWorkflowRunManager();
+    const heard: Array<{ type: string; status: string | undefined }> = [];
+    const unsubscribe = m.subscribeWorkflowProcess((event) => {
+      heard.push({ type: event.type, status: m.get(event.snapshot.runId)?.status });
+    });
+    const run = m.start<Outcome>({
+      runId: 'r8',
+      workflow: 'wf',
+      runFn: async (hooks) => {
+        hooks.onEvent(ev('workflow_completed', 1));
+        return { kind: 'completed' };
+      },
+      classify,
+      onError,
+    });
+    await run.done;
+    // Whoever reads the run on hearing it finished sees it ended, not still running.
+    expect(heard.filter(event => event.type === 'workflow_finished')).toEqual([{ type: 'workflow_finished', status: 'completed' }]);
+    unsubscribe();
+  });
 });
 
 describe('createWorkflowRunManager — lifecycle robustness (long-lived hosts)', () => {

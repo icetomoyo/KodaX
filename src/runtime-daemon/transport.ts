@@ -6,6 +6,8 @@ import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 
+import type { HostRpcDial } from '../host-protocol/client.js';
+import { HostProtocolError, hostRpcFailure, isHostRpcFrame } from '../host-protocol/codec.js';
 import type { RuntimeSubscription } from '../sdk-runtime.js';
 import type {
   RuntimeDaemonClientTransport,
@@ -44,10 +46,30 @@ export interface RuntimeDaemonFrameParserOptions {
 export interface RuntimeDaemonSocketServerOptions {
   readonly endpoint: RuntimeDaemonEndpoint;
   readonly maxFrameBytes?: number;
+  /** Bytes one connection may have queued for a client that is not reading. */
+  readonly maxOutboundBytes?: number;
   readonly createDispatcher: (
     notify: (notification: RuntimeDaemonNotification) => void,
     disconnect: () => void,
   ) => RuntimeDaemonDispatcher;
+  /**
+   * Serves connections that speak the v2 Host protocol. The endpoint tells the
+   * two protocols apart by a connection's first frame; without this it serves v1 only.
+   */
+  readonly createHostRpcPeer?: (
+    send: (frame: string) => void,
+    disconnect: () => void,
+    /** Whether the client is behind on reading what was already sent. */
+    congested: () => boolean,
+  ) => RuntimeDaemonFramePeer;
+}
+
+/** One end of a connection, fed whole frames as text. */
+export interface RuntimeDaemonFramePeer {
+  receive(frame: string): void;
+  /** The client caught up on reading after the connection was congested. */
+  drained?(): void;
+  close(): void;
 }
 
 export interface RuntimeDaemonSocketServer {
@@ -64,6 +86,13 @@ export interface RuntimeDaemonSocketClientTransportOptions {
 }
 
 export const RUNTIME_DAEMON_MAX_FRAME_BYTES = 8 * 1024 * 1024;
+/**
+ * A client that stops reading must not grow the Host without bound. Past this
+ * many queued bytes the Host closes the connection; the client reconnects and
+ * resyncs. The room is several maximum-size frames, so a client that reads
+ * never reaches it.
+ */
+export const RUNTIME_DAEMON_MAX_OUTBOUND_BYTES = 8 * RUNTIME_DAEMON_MAX_FRAME_BYTES;
 
 export class RuntimeDaemonTransportError extends Error {
   constructor(
@@ -133,6 +162,14 @@ export function createRuntimeDaemonFrameParser(
   onFrame: (frame: RuntimeDaemonFrame) => void,
   options: RuntimeDaemonFrameParserOptions = {},
 ): RuntimeDaemonFrameParser {
+  return createRuntimeDaemonLineParser((line) => onFrame(parseRuntimeDaemonFrame(line)), options);
+}
+
+/** Splits a byte stream into newline-delimited frames, whatever protocol the frames speak. */
+export function createRuntimeDaemonLineParser(
+  onLine: (line: string) => void,
+  options: RuntimeDaemonFrameParserOptions = {},
+): RuntimeDaemonFrameParser {
   let buffer = '';
   let bufferBytes = 0;
   let decoder = new StringDecoder('utf8');
@@ -143,7 +180,7 @@ export function createRuntimeDaemonFrameParser(
   const consumeLine = (line: string): void => {
     assertFrameSize(line, maxFrameBytes);
     if (!line.trim()) return;
-    onFrame(parseRuntimeDaemonFrame(line));
+    onLine(line);
   };
   const append = (text: string): void => {
     buffer += text;
@@ -441,6 +478,39 @@ export async function createRuntimeDaemonSocketClientTransport(
   };
 }
 
+/** Opens the link a v2 client speaks over the local endpoint. */
+export function dialRuntimeDaemonHostRpc(endpoint: RuntimeDaemonEndpoint): HostRpcDial {
+  return async (events) => {
+    const socket = net.createConnection(endpoint.path);
+    await waitForConnect(socket);
+    const parser = createRuntimeDaemonLineParser(events.frame);
+    const drop = (message: string, error: Error): void => {
+      emitKodaXDiagnostic({
+        source: 'runtime.daemon.transport',
+        level: 'warn',
+        message,
+        detail: { error: error.message },
+      });
+      socket.destroy();
+    };
+    socket.on('data', (chunk) => {
+      try {
+        parser.push(chunk);
+      } catch (error: unknown) {
+        drop('Host protocol link closed: the Host sent a frame this client cannot accept.', normalizeTransportError(error));
+      }
+    });
+    socket.on('error', error => drop('Host protocol link failed.', error));
+    socket.on('close', () => events.end());
+    return {
+      send(frame) {
+        if (!socket.destroyed) socket.write(`${frame}\n`);
+      },
+      close: () => socket.destroy(),
+    };
+  };
+}
+
 function withClientInstanceIdentity(
   value: unknown,
   instanceId: string,
@@ -482,11 +552,16 @@ function runtimeDaemonSupportsRequestLifecycle(value: unknown): boolean {
 export async function createRuntimeDaemonSocketServer(
   options: RuntimeDaemonSocketServerOptions,
 ): Promise<RuntimeDaemonSocketServer> {
+  const maxOutboundBytes = options.maxOutboundBytes ?? RUNTIME_DAEMON_MAX_OUTBOUND_BYTES;
+  if (!Number.isSafeInteger(maxOutboundBytes)
+    || maxOutboundBytes < (options.maxFrameBytes ?? RUNTIME_DAEMON_MAX_FRAME_BYTES)) {
+    throw new Error('Runtime daemon maxOutboundBytes must hold at least one maximum-size frame.');
+  }
   await prepareUnixSocketEndpoint(options.endpoint);
 
   const server = net.createServer();
   const sockets = new Set<net.Socket>();
-  const dispatchers = new Set<RuntimeDaemonDispatcher>();
+  const peers = new Set<RuntimeDaemonFramePeer>();
   let closed = false;
 
   server.on('connection', (socket) => {
@@ -518,7 +593,26 @@ export async function createRuntimeDaemonSocketServer(
         }, frame.kind === 'response' || frame.kind === 'error' ? frame.id : undefined);
         encoded = JSON.stringify(fallback);
       }
+      writeFrame(encoded);
+    };
+    const writeFrame = (encoded: string): void => {
+      if (socket.destroyed) return;
       if (!socket.write(`${encoded}\n`)) backpressured = true;
+      if (socket.writableLength > maxOutboundBytes) disconnectSlowClient();
+    };
+    const disconnectSlowClient = (): void => {
+      const detail = { code: 'overloaded', queuedBytes: socket.writableLength, maxOutboundBytes };
+      emitKodaXDiagnostic({
+        source: 'runtime.daemon.transport',
+        level: 'warn',
+        message: 'Runtime daemon closed a connection whose client stopped reading.',
+        detail,
+      });
+      socket.destroy(new RuntimeDaemonTransportError(
+        'Runtime daemon outbound queue is full; reconnect and resync.',
+        'overloaded',
+        detail,
+      ));
     };
     socket.on('drain', () => {
       backpressured = false;
@@ -527,47 +621,75 @@ export async function createRuntimeDaemonSocketServer(
         send(view);
         if (backpressured) break;
       }
+      peer?.drained?.();
     });
-    const dispatcher = options.createDispatcher(
-      (notification) => send(notification),
-      () => socket.destroy(),
-    );
-    dispatchers.add(dispatcher);
-    const parser = createRuntimeDaemonFrameParser((frame) => {
-      if (isRuntimeDaemonRequest(frame)) {
-        void dispatcher.handle(frame).then(send, (error: unknown) => {
+    const v1Peer = (): RuntimeDaemonFramePeer => {
+      const dispatcher = options.createDispatcher(
+        (notification) => send(notification),
+        () => socket.destroy(),
+      );
+      return {
+        receive(line) {
+          const frame = parseRuntimeDaemonFrame(line);
+          if (isRuntimeDaemonRequest(frame)) {
+            void dispatcher.handle(frame).then(send, (error: unknown) => {
+              send(createRuntimeDaemonErrorResponse({
+                code: 'internal_error',
+                message: normalizeTransportError(error).message,
+              }));
+            });
+            return;
+          }
+          if (isRuntimeDaemonErrorResponse(frame)) {
+            send(frame);
+            return;
+          }
           send(createRuntimeDaemonErrorResponse({
-            code: 'internal_error',
-            message: normalizeTransportError(error).message,
+            code: 'invalid_request',
+            message: 'Runtime daemon server expects request frames from clients.',
           }));
-        });
-        return;
+        },
+        close: () => dispatcher.close(),
+      };
+    };
+    // The first frame decides the protocol for the life of the connection, so
+    // a connection that has not spoken owns no dispatcher yet.
+    let peer: RuntimeDaemonFramePeer | undefined;
+    let speaksHostRpc = false;
+    const parser = createRuntimeDaemonLineParser((line) => {
+      if (peer === undefined) {
+        speaksHostRpc = options.createHostRpcPeer !== undefined && isHostRpcLine(line);
+        peer = speaksHostRpc
+          // A v2 peer hangs up right after its last answer, so that answer is flushed first.
+          ? options.createHostRpcPeer!(writeFrame, () => { void endSocketAfterFlush(socket); }, () => backpressured)
+          : v1Peer();
+        peers.add(peer);
       }
-      if (isRuntimeDaemonErrorResponse(frame)) {
-        send(frame);
-        return;
-      }
-      send(createRuntimeDaemonErrorResponse({
-        code: 'invalid_request',
-        message: 'Runtime daemon server expects request frames from clients.',
-      }));
+      peer.receive(line);
     }, { maxFrameBytes: options.maxFrameBytes });
 
     const rejectInvalidFrame = (error: unknown): void => {
       if (rejectedFrame) return;
       rejectedFrame = true;
       const normalized = normalizeTransportError(error);
-      send(createRuntimeDaemonErrorResponse({
-        code: 'invalid_frame',
-        message: normalized.message,
-        ...(isRuntimeDaemonTransportError(normalized) && normalized.data !== undefined
-          ? { data: normalized.data }
-          : {}),
-      }));
+      if (speaksHostRpc) {
+        writeFrame(JSON.stringify(hostRpcFailure(
+          null,
+          new HostProtocolError('limit_exceeded', normalized.message, { reason: 'invalid_frame' }),
+        )));
+      } else {
+        send(createRuntimeDaemonErrorResponse({
+          code: 'invalid_frame',
+          message: normalized.message,
+          ...(isRuntimeDaemonTransportError(normalized) && normalized.data !== undefined
+            ? { data: normalized.data }
+            : {}),
+        }));
+      }
       socket.end();
     };
     socket.on('data', (chunk) => {
-      if (rejectedFrame) return;
+      if (rejectedFrame || closed) return;
       try {
         parser.push(chunk);
       } catch (error: unknown) {
@@ -584,8 +706,10 @@ export async function createRuntimeDaemonSocketServer(
     socket.on('close', () => {
       pendingViews.clear();
       sockets.delete(socket);
-      dispatchers.delete(dispatcher);
-      dispatcher.close();
+      if (peer !== undefined) {
+        peers.delete(peer);
+        peer.close();
+      }
     });
     socket.on('error', () => {
       socket.destroy();
@@ -613,13 +737,13 @@ export async function createRuntimeDaemonSocketServer(
     async close() {
       if (closed) return;
       closed = true;
-      for (const dispatcher of dispatchers) {
-        dispatcher.close();
+      for (const peer of peers) {
+        peer.close();
       }
-      dispatchers.clear();
-      for (const socket of sockets) {
-        socket.destroy();
-      }
+      peers.clear();
+      // end() flushes what is already queued, so a client reads its last
+      // responses and notifications before the disconnect.
+      await Promise.all([...sockets].map(socket => endSocketAfterFlush(socket)));
       sockets.clear();
       await closeNetServer(server);
     },
@@ -749,6 +873,34 @@ function unixSocketAcceptsConnections(socketPath: string): Promise<boolean> {
     socket.once('connect', onConnect);
     socket.once('error', onError);
   });
+}
+
+/** How long a closing server waits for one client to read what is already queued for it. */
+const RUNTIME_DAEMON_CLOSE_FLUSH_MS = 2_000;
+
+/** Ends a connection once its queued frames are flushed, or at the bound for a client that stopped reading. */
+function endSocketAfterFlush(socket: net.Socket): Promise<void> {
+  return new Promise((resolve) => {
+    if (socket.destroyed) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(() => socket.destroy(), RUNTIME_DAEMON_CLOSE_FLUSH_MS);
+    socket.once('close', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    socket.end(() => socket.destroy());
+  });
+}
+
+function isHostRpcLine(line: string): boolean {
+  try {
+    return isHostRpcFrame(JSON.parse(line));
+  } catch {
+    // Not JSON: the v1 path answers it with its invalid_frame error, as before.
+    return false;
+  }
 }
 
 function closeNetServer(server: net.Server): Promise<void> {

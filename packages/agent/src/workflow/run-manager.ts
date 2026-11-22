@@ -132,6 +132,8 @@ interface MutableRun {
   controller: AbortController;
   pauseWaiters: Array<() => void>;
   process: WorkflowProcessTracker;
+  /** The process finished while the run had not yet settled; subscribers are told once it has. */
+  heldFinish?: WorkflowProcessEvent;
   /** Detach the abort forwarder from the caller-owned `input.signal`, if any.
    *  Called on terminal settle so a long-lived host that shares one session
    *  signal across many runs does not accumulate one dead listener per run. */
@@ -284,17 +286,20 @@ export function createWorkflowRunManager(
     if (classification.status === 'completed') {
       run.resultText = classification.resultText;
     }
+    let finished = run.heldFinish;
+    run.heldFinish = undefined;
     if (
       classification.status === 'failed' &&
       run.status !== 'stopped' &&
       !isFinalWorkflowProcessStatus(run.process.getSnapshot().status)
     ) {
-      notifyProcess(run.process.setStatus('failed', classification.error?.message));
+      finished = run.process.setStatus('failed', classification.error?.message);
     } else if (classification.status === 'denied') {
-      notifyProcess(run.process.setStatus('cancelled', 'workflow denied'));
+      finished = run.process.setStatus('cancelled', 'workflow denied');
     } else if (run.status === 'stopped' && run.process.getSnapshot().status !== 'cancelled') {
-      notifyProcess(run.process.setStatus('cancelled', 'workflow stopped'));
+      finished = run.process.setStatus('cancelled', 'workflow stopped');
     }
+    if (finished !== undefined) notifyProcess(finished);
     releasePauseWaiters(run);
     // Remove the abort forwarder from the caller-owned signal now the run is
     // terminal — {once:true} only self-removes when the signal fires, so a run
@@ -320,7 +325,10 @@ export function createWorkflowRunManager(
         onEvent: (event) => {
           run.eventCount += 1;
           if (event.type === 'agent_spawned') run.totalSpawned += 1;
-          notifyProcess(run.process.applyEvent(event));
+          const processEvent = run.process.applyEvent(event);
+          // Held until the run settles, so whoever reads the run on hearing it finished sees it ended.
+          if (processEvent.type === 'workflow_finished') run.heldFinish = processEvent;
+          else notifyProcess(processEvent);
         },
         signal: run.controller.signal,
         beforeSpawn: () => waitIfPaused(run),

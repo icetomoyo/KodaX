@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ClientExitReceipt } from '@kodax-ai/coding/client-contract';
-import { createRuntimeClientLifecycleController, verifyExitReceipt } from './client-lifecycle.js';
+import { createRuntimeClientLifecycleController, runtimeClientPrincipal, verifyExitReceipt } from './client-lifecycle.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './state.js';
 import * as shutdownVerifier from './shutdown-verifier.js';
 import type { KodaXRuntime } from '../sdk-runtime.js';
@@ -152,6 +152,26 @@ it('records a throwing client cleanup as unknown, still asks the Host to stop, a
   } finally { await rm(homeDir, { recursive: true, force: true }); }
 });
 
+it('keeps the Host lock PID namespace out of a new exit receipt', async () => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-exit-namespace-'));
+  try {
+    const paths = resolveRuntimeDaemonPaths(homeDir);
+    const owner = { runtimeId: 'namespaced-host', pid: 42, kind: 'daemon' as const, processStartIdentity: 'generation' };
+    expect(tryAcquireRuntimeDaemonLock(paths, { ...owner, createdAt: '2026-10-26T00:00:00.000Z',
+      pidNamespace: 'pid:[4026531836]' })).toBeTruthy();
+    const controller = createRuntimeClientLifecycleController({ paths, retireClientLeases: vi.fn(),
+      runtime: { identity: { runtimeId: owner.runtimeId } } as KodaXRuntime,
+      management: { stop: vi.fn() } as unknown as RuntimeDaemonManagementController });
+    vi.useFakeTimers();
+    const receipt = await controller.request('client', { requestId: 'quit' });
+    expect(receipt.host.owner).toMatchObject(owner);
+    expect(receipt.host.owner).not.toHaveProperty('pidNamespace');
+    const digest = (value: string): string => createHash('sha256').update(value).digest('hex');
+    const stored = path.join(paths.rootDir, 'client-exits', digest('client'), `${digest('quit')}.json`);
+    expect(JSON.parse(await readFile(stored, 'utf8')).host.owner).toEqual(receipt.host.owner);
+  } finally { await rm(homeDir, { recursive: true, force: true }); }
+});
+
 it('allows a verified old Host to be replaced while preserving unknown client memory work', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-exit-convergence-'));
   try {
@@ -257,4 +277,11 @@ it.each([true, false])('recovers an unconfirmed client cleanup after owner loss 
     expect(recovered.host.cleanup).toBeUndefined();
     expect(receipt.cleanup.state).toBe('pending');
   } finally { await rm(homeDir, { recursive: true, force: true }); }
+});
+
+it('derives the same client instance identity that earlier Hosts stored with Runs, inputs and leases', () => {
+  // Persisted records and reverse-call leases are keyed by this value, so a Host
+  // upgrade or downgrade must reproduce it for a reconnecting client to reach its own work.
+  expect(runtimeClientPrincipal('space-main', 'secret-1'))
+    .toBe('client_837be4b4beab7b6b091d6d8269f46e85c4b246c32b459caf9838a938e2c66618');
 });

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import * as fs from 'node:fs';
+import fsDefault, * as fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -18,9 +19,11 @@ import {
   readRuntimeDaemonState,
   readRuntimeDaemonToken,
   readRuntimeOwnerPolicy,
+  readRuntimeOwnerProcessStartIdentities,
   resolveRuntimeDaemonPaths,
   tryAcquireRuntimeDaemonLock,
   updateRuntimeOwnerPolicy,
+  writeRuntimeDaemonState,
 } from './state.js';
 import type { RuntimeDaemonEndpoint } from './transport.js';
 
@@ -408,6 +411,53 @@ describe('runtime daemon lease manager', () => {
     expect(runtime?.closed).toBe(true);
     expect(readRuntimeDaemonLockOwner(lease.paths.lockFile)).toBeUndefined();
   });
+
+  it('starts over a Host left by a previous container and keeps the PID namespace off the wire', async () => {
+    const homeDir = tempHome();
+    const paths = resolveRuntimeDaemonPaths(homeDir, 'default');
+    const endpoint = await makeTestEndpoint();
+    // The previous container's Host: its PID names a live process (this one) in the new namespace.
+    const previous = { runtimeId: 'previous-container', pid: process.pid, kind: 'daemon' as const,
+      createdAt: '2026-01-01T00:00:00.000Z', pidNamespace: 'pid:[4026531836]' };
+    expect(tryAcquireRuntimeDaemonLock(paths, previous)).toBeDefined();
+    writeRuntimeDaemonState(paths, { runtimeId: previous.runtimeId, profile: 'default', pid: previous.pid,
+      startedAt: previous.createdAt, endpoint: (await makeTestEndpoint()).path, version: 'test', status: 'ready' });
+    // This process's start identity is read once; read it on the real platform.
+    readRuntimeOwnerProcessStartIdentities([process.pid]);
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    const readlink = fsDefault.readlinkSync;
+    vi.spyOn(fsDefault, 'readlinkSync').mockImplementation(((target: string) =>
+      target === '/proc/self/ns/pid' ? 'pid:[4026532999]' : readlink(target)
+    ) as typeof fsDefault.readlinkSync);
+    syncBuiltinESMExports();
+    Object.defineProperty(process, 'platform', { ...platform, value: 'linux' });
+    try {
+      const lease = await acquireRuntimeDaemonLease({
+        homeDir, endpoint,
+        healthCheck: { createTransport: async () => { throw new Error('Endpoint unavailable'); } },
+        createRuntime: async runtimeId => {
+          // Ownership is decided; the Host itself runs on the real platform.
+          Object.defineProperty(process, 'platform', platform);
+          return makeRuntime(runtimeId);
+        },
+      });
+      cleanupTasks.push(() => lease.shutdown());
+      expect(lease.ownsHost).toBe(true);
+      const owner = readRuntimeDaemonLockOwner(paths.lockFile);
+      expect(owner).toMatchObject({ pid: process.pid, kind: 'daemon', pidNamespace: 'pid:[4026532999]' });
+      expect(owner?.runtimeId).not.toBe(previous.runtimeId);
+      await lease.transport.request('initialize', { profile: 'default', token: readRuntimeDaemonToken(paths) });
+      // The Host validates this result against the closed v1 owner schema before sending it.
+      const management = await lease.transport.request('daemon.management.get');
+      expect(management).toMatchObject({ owner: { runtimeId: owner?.runtimeId, pid: process.pid, kind: 'daemon' } });
+      expect(management).not.toHaveProperty('owner.pidNamespace');
+      await lease.shutdown();
+    } finally {
+      Object.defineProperty(process, 'platform', platform);
+      vi.restoreAllMocks();
+      syncBuiltinESMExports();
+    }
+  });
 });
 
 function tempHome(): string {
@@ -719,6 +769,9 @@ function makeRuntime(
         return null;
       },
       async skills() {
+        return [];
+      },
+      async agents() {
         return [];
       },
       async describeSkill() {

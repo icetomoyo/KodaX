@@ -42,10 +42,10 @@ export async function observeRuntimeDaemonHealth(
   }
 
   const lockOwner = readRuntimeDaemonLockOwner(paths.lockFile);
+  const stateOwner = runtimeDaemonLockMatchesState(lockOwner, state) ? lockOwner : undefined;
   const readPidAlive = (): boolean => options.isPidAlive
     ? options.isPidAlive(state.pid)
-    : isRuntimeDaemonOwnerPidAlive(state.pid,
-      runtimeDaemonLockMatchesState(lockOwner, state) ? lockOwner?.processStartIdentity : undefined);
+    : isRuntimeDaemonOwnerPidAlive(state.pid, stateOwner?.processStartIdentity, stateOwner?.pidNamespace);
   const endpoint = runtimeDaemonEndpointFromState(state);
   const token = readRuntimeDaemonToken(paths);
   let transport: RuntimeDaemonClientTransport | undefined;
@@ -126,7 +126,7 @@ export async function resolveRuntimeDaemonOwnership(
         observedLockOwner: lockOwner,
         lockOwnerPidAlive: options.isPidAlive
           ? options.isPidAlive(lockOwner.pid)
-          : isRuntimeDaemonOwnerPidAlive(lockOwner.pid, lockOwner.processStartIdentity),
+          : isRuntimeDaemonOwnerPidAlive(lockOwner.pid, lockOwner.processStartIdentity, lockOwner.pidNamespace),
       }
     : observation;
   return claimRuntimeDaemonOwnership(paths, owner, enriched);
@@ -151,8 +151,13 @@ export function isRuntimeDaemonPidAlive(pid: number): boolean {
 // can be SDK-owned (including an inline owner), so argv is not owner identity.
 // Missing identity evidence remains conservative; the authenticated endpoint
 // and owner fence still decide whether the caller can attach or replace it.
-export function isRuntimeDaemonOwnerPidAlive(pid: number, processStartIdentity?: string): boolean {
-  return runtimeOwnerProcessState({ pid, processStartIdentity }) !== 'gone';
+// Pass the PID namespace only from the lock record of this exact owner.
+export function isRuntimeDaemonOwnerPidAlive(
+  pid: number,
+  processStartIdentity?: string,
+  pidNamespace?: string,
+): boolean {
+  return runtimeOwnerProcessState({ pid, processStartIdentity, pidNamespace }) !== 'gone';
 }
 
 async function withTimeout<T>(

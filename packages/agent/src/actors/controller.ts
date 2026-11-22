@@ -360,7 +360,8 @@ export class AgentActorController {
         content: string,
         classification?: AgentDataClassification,
         forwardedMessageId?: string,
-      ) => this.send(callerPath, targetPath, content, classification, forwardedMessageId),
+        requestId?: string,
+      ) => this.send(callerPath, targetPath, content, classification, forwardedMessageId, requestId),
       followup: (
         targetPath: string,
         objective: string,
@@ -369,8 +370,8 @@ export class AgentActorController {
       ) => (
         this.followup(callerPath, targetPath, objective, metadata, options)
       ),
-      interrupt: (targetPath: string, reason?: string, scope?: AgentInterruptScope) => (
-        this.interrupt(callerPath, targetPath, reason, scope)
+      interrupt: (targetPath: string, reason?: string, scope?: AgentInterruptScope, turnId?: string) => (
+        this.interrupt(callerPath, targetPath, reason, scope, turnId)
       ),
       acknowledgeCompletions: (turnIds: readonly string[]) => (
         this.acknowledgeCompletions(callerPath, turnIds)
@@ -512,9 +513,14 @@ export class AgentActorController {
     content: string,
     classification: AgentDataClassification = 'internal',
     forwardedMessageId?: string,
+    requestId?: string,
   ): Promise<AgentMailboxMessage> {
-    return this.mutate(() => {
+    const delivery = await this.mutate(() => {
       this.assertMessagePermission(callerPath, targetPath);
+      // A sender that repeats a request it named gets the delivery it already made.
+      const repeated = requestId === undefined ? undefined : this.mailboxes.get(targetPath)
+        ?.find((message) => message.requestId === requestId && message.senderPath === callerPath);
+      if (repeated) return { message: repeated, repeated: true };
       const forwarding = this.resolveForwarding(callerPath, targetPath, forwardedMessageId);
       const message = this.appendMessage(
         callerPath,
@@ -527,10 +533,12 @@ export class AgentActorController {
         this.actors.get(callerPath)?.currentTurnId,
         forwarding.lineage,
         forwardedMessageId,
+        requestId,
       );
       this.appendEvent('message_delivered', targetPath, this.actors.get(targetPath)?.currentTurnId);
-      return message;
-    });
+      return { message, repeated: false };
+    }, (result) => !result.repeated);
+    return delivery.message;
   }
 
   async acknowledgeCompletions(
@@ -628,10 +636,18 @@ export class AgentActorController {
     targetPath: string,
     reason = 'interrupted',
     scope: AgentInterruptScope = 'turn',
+    onlyTurnId?: string,
   ): Promise<void> {
     try {
       const aborts = await this.mutate(() => {
         const target = this.requireControl(callerPath, targetPath);
+        if (onlyTurnId !== undefined && target.currentTurnId !== onlyTurnId) {
+          if (!target.turnIds.includes(onlyTurnId)) {
+            throw new AgentControlError('turn_not_found', `${targetPath} has no turn ${onlyTurnId}`);
+          }
+          // The named turn already ended, so nothing is left to interrupt.
+          return undefined;
+        }
         const actors = scope === 'subtree'
           ? this.descendantsInclusive(targetPath).reverse()
           : [target];
@@ -649,8 +665,8 @@ export class AgentActorController {
           this.finishTurn(turnId, 'interrupted', { error: reason });
           return abort ? [abort] : [];
         });
-      });
-      for (const abort of aborts) abort.abort(reason);
+      }, (active) => active !== undefined);
+      for (const abort of aborts ?? []) abort.abort(reason);
     } catch (error) {
       if (
         error instanceof AgentOwnerConflictError
@@ -915,10 +931,7 @@ export class AgentActorController {
     const selected = turnId ?? actor.turnIds.at(-1);
     if (!selected) throw new AgentControlError('no_active_turn', `${targetPath} has no turns`);
     if (!actor.turnIds.includes(selected)) {
-      throw new AgentControlError(
-        'permission_denied',
-        `turn ${selected} does not belong to ${targetPath}`,
-      );
+      throw new AgentControlError('turn_not_found', `${targetPath} has no turn ${selected}`);
     }
     const turn = this.requireCommittedTurn(selected);
     if (turn.actorPath !== actor.path) {
@@ -1720,6 +1733,7 @@ export class AgentActorController {
     turnId?: string,
     lineage: readonly string[] = [senderPath],
     forwardedMessageId?: string,
+    requestId?: string,
   ): AgentMailboxMessage {
     if (content.length === 0 || content.length > MAX_MESSAGE_LENGTH) {
       throw new AgentControlError('invalid_message', `message length must be 1-${MAX_MESSAGE_LENGTH}`);
@@ -1735,6 +1749,7 @@ export class AgentActorController {
       classification,
       lineage,
       ...(forwardedMessageId === undefined ? {} : { forwardedMessageId }),
+      ...(requestId === undefined ? {} : { requestId }),
       content,
       createdAt: this.now(),
     };

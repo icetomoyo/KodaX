@@ -59,7 +59,7 @@ import {
 import { mergeCommandOptionsWithGlobals, removedHostProfileOption } from "./cli_option_helpers.js";
 import { connectKodaXRuntime } from "./sdk-runtime.js";
 import {
-  isRuntimeDaemonPidAlive,
+  isRuntimeDaemonOwnerPidAlive,
   observeRuntimeDaemonHealth,
 } from "./runtime-daemon/lifecycle.js";
 import {
@@ -115,7 +115,7 @@ async function assertA2AConfigOwnerCompatible(
     const state = observation.state;
     if (state === undefined) {
       const lockOwner = readRuntimeDaemonLockOwner(paths.lockFile);
-      if (lockOwner && isRuntimeDaemonPidAlive(lockOwner.pid)) {
+      if (lockOwner && isRuntimeDaemonOwnerPidAlive(lockOwner.pid, lockOwner.processStartIdentity, lockOwner.pidNamespace)) {
         throw new Error(
           `Daemon profile "${profile}" is starting without verifiable A2A config ownership; wait for it or stop it before changing A2A configuration.`,
         );

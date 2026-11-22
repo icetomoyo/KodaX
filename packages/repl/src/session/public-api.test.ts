@@ -1254,6 +1254,35 @@ describe('Session Management Public SDK', () => {
     }));
   });
 
+  it('appendClientNotice keeps one notice for a request that is sent again', async () => {
+    const overrideDir = path.join(tempHome, 'client-notice-request-test');
+    await mkdir(overrideDir, { recursive: true });
+    const mgr = api.createSessionManager({ sessionsDir: overrideDir }) as {
+      storage: { save: (id: string, data: unknown) => Promise<void> };
+      appendClientNotice: (
+        id: string,
+        options: import('./public-api.js').AppendClientNoticeOptions,
+      ) => Promise<import('./public-api.js').SessionTranscriptEntry | null>;
+      loadFullTranscript: (id: string) => Promise<{ transcriptEntries: Array<{ type: string }> } | null>;
+    };
+    await mgr.storage.save('client-notice-002', {
+      messages: [{ role: 'user', content: 'real prompt' }],
+      title: 'Client notice request',
+      gitRoot: tempHome,
+      scope: 'user',
+    });
+
+    const first = await mgr.appendClientNotice('client-notice-002', { content: '/doctor ok', requestId: 'request-1' });
+    const again = await mgr.appendClientNotice('client-notice-002', { content: '/doctor ok', requestId: 'request-1' });
+    const other = await mgr.appendClientNotice('client-notice-002', { content: '/doctor ok', requestId: 'request-2' });
+    const unnamed = await mgr.appendClientNotice('client-notice-002', { content: '/doctor ok' });
+
+    expect(again?.entryId).toBe(first?.entryId);
+    expect(new Set([first?.entryId, other?.entryId, unnamed?.entryId]).size).toBe(3);
+    const full = await mgr.loadFullTranscript('client-notice-002');
+    expect(full?.transcriptEntries.filter((entry) => entry.type === 'client_notice')).toHaveLength(3);
+  });
+
   it('rewindSession skips tool_result users and exposes a rewind_marker transcript entry', async () => {
     const overrideDir = path.join(tempHome, 'rewind-marker-transcript-test');
     await mkdir(overrideDir, { recursive: true });

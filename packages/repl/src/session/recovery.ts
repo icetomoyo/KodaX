@@ -25,9 +25,12 @@ export const SESSION_RECOVERY_HINT_MESSAGE =
 
 export interface SessionRecoveryOfferInput {
   error: Error;
-  messageCount: number;
+  /** The conversation's size, from whoever keeps it: the Host for a bound client, else the local cache. */
+  countMessages: () => number | undefined | Promise<number | undefined>;
 }
 
-export function shouldOfferSessionRecovery(input: SessionRecoveryOfferInput): boolean {
-  return isSessionRecoveryCandidateError(input.error, input.messageCount);
+/** Only an error that could come from a rejected history asks for the count, so an ordinary failure costs no Host read. */
+export async function shouldOfferSessionRecovery(input: SessionRecoveryOfferInput): Promise<boolean> {
+  if (!isSessionRecoveryCandidateError(input.error, 1)) return false;
+  return isSessionRecoveryCandidateError(input.error, await input.countMessages() ?? 0);
 }

@@ -436,7 +436,11 @@ describe('FEATURE_263 learned Skill action driver', () => {
       authority: 'explicit_user',
       expectedRevision: created.revision + 1,
       expectedFingerprint: created.artifact.fingerprint,
-    })).rejects.toThrow(/expected revision or fingerprint changed/i);
+    })).rejects.toMatchObject({
+      // Its own code, so the daemon can report a capability that changed as a conflict to read again.
+      code: 'revision_conflict',
+      message: expect.stringMatching(/expected revision or fingerprint changed/i),
+    });
     await service.promote(created.slug, 'user');
     expect(await projectStore.readCapability(created.capabilityId)).toMatchObject({
       lifecycle: 'promoted_user',

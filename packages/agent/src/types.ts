@@ -110,6 +110,8 @@ export interface KodaXSessionCompactionEntry extends KodaXSessionEntryBase {
   tokensAfter?: number;
   artifactLedgerId?: string;
   reason?: string;
+  /** The request that asked for this compaction. The same request sent again is answered with it instead of compacting twice. */
+  requestId?: string;
   details?: KodaXJsonValue;
   memorySeed?: KodaXCompactMemorySeed;
   /**
@@ -160,6 +162,8 @@ export interface KodaXSessionClientNoticeEntry extends KodaXSessionEntryBase {
   type: 'client_notice';
   source: string;
   content: string;
+  /** The request that added the notice. The same request sent again adds nothing. */
+  requestId?: string;
   turnId?: string;
   payload?: KodaXJsonValue;
 }
@@ -472,10 +476,23 @@ export interface KodaXSessionPromotionRecord {
   readonly tag: string;
 }
 
+/** Durable receipt of a retry-safe Session creation. `digest` identifies what was asked for. */
+export interface KodaXSessionCreationRequest {
+  readonly requestId: string;
+  readonly digest: string;
+}
+
 export interface KodaXSessionRuntimeInfo {
   /** Permanent first-Run admission fact; independent of retained history. */
   workModeLocked?: boolean;
   readonly sessionPromotion?: KodaXSessionPromotionRecord;
+  /** The request that created this Session, so a retry of it finds the Session instead of making another. */
+  readonly creationRequest?: KodaXSessionCreationRequest;
+  /**
+   * What the creator of the Session fixed for every Run of it. Opaque to this
+   * layer: the Host that runs the Session reads it and refuses what it cannot.
+   */
+  readonly policy?: Readonly<Record<string, unknown>>;
   /** Host-owned task lifetime; delete this Session after its task settles. */
   temporary?: boolean;
   canonicalRepoRoot?: string;

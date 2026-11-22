@@ -309,6 +309,8 @@ export interface AppendClientNoticeOptions {
   readonly timestamp?: string;
   readonly turnId?: string;
   readonly payload?: KodaXJsonValue;
+  /** Names the request. Sent again, it is answered with the notice it added the first time. */
+  readonly requestId?: string;
 }
 
 export interface ListSessionsOptions {
@@ -1347,6 +1349,7 @@ function createClientNoticeEntry(
     logicalId: entryId,
     source: normalizeClientNoticeSource(options.source),
     content: options.content,
+    ...(options.requestId !== undefined ? { requestId: options.requestId } : {}),
     ...(options.turnId !== undefined ? { turnId: options.turnId } : {}),
     ...(options.payload !== undefined ? { payload: options.payload } : {}),
   };
@@ -1386,6 +1389,10 @@ async function appendClientNoticeWithStorage(
     }
 
     const lineage = loaded.lineage ?? createSessionLineage(loaded.messages);
+    const added = options.requestId === undefined ? undefined : lineage.entries.find(
+      (entry) => entry.type === 'client_notice' && entry.requestId === options.requestId,
+    );
+    if (added !== undefined) return toTranscriptEntry(added, collectActiveIds(lineage), lineage.activeEntryId);
     const notice = createClientNoticeEntry(lineage, options);
     const nextLineage: KodaXSessionLineage = {
       ...lineage,
@@ -1417,6 +1424,8 @@ export interface ForkSessionOptions {
   readonly sessionId?: string;
   readonly title?: string;
   readonly historyBoundary?: SessionConversationMutationBoundary;
+  /** The request that asked for the fork, kept on it so the request sent again can find it. */
+  readonly creationRequest?: NonNullable<KodaXSessionRuntimeInfo['creationRequest']>;
 }
 
 export interface RewindSessionOptions {
@@ -1451,6 +1460,7 @@ async function forkSessionImpl(
       {
         sessionId: opts?.sessionId,
         title: opts?.title,
+        creationRequest: opts?.creationRequest,
         ...(historyBoundary !== undefined
           ? { historyBoundary: { sourceRevision: historyBoundary.sourceRevision } }
           : {}),

@@ -1,4 +1,4 @@
-import type { ClientConfig, ClientSessionSettings } from '@kodax-ai/coding/client-contract';
+import type { ClientConfig, ClientEffectiveExecutionConfig, ClientSessionSettings } from '@kodax-ai/coding/client-contract';
 
 /** Expose product choices without leaking the Host's execution or sandbox contract. */
 export function toClientSessionSettings(settings: ClientSessionSettings): ClientSessionSettings {
@@ -40,4 +40,41 @@ export function toClientConfig(config: unknown): ClientConfig {
   return Object.fromEntries(CLIENT_CONFIG_KEYS
     .filter((key) => values[key] !== undefined)
     .map((key) => [key, structuredClone(values[key])])) as ClientConfig;
+}
+
+/** One setting in effect as the Host reports it: where it comes from and whether it applies yet. */
+interface EffectiveEntry {
+  readonly present?: boolean;
+  readonly applied?: boolean;
+  readonly source?: string;
+  readonly value?: unknown;
+}
+
+const asFlag = (value: unknown): boolean => value === true || value === '1';
+
+/** The execution controls a client shows, from the settings the Host reports in effect. */
+export function toClientEffectiveConfig({ entries, application }: {
+  readonly entries: Readonly<Record<string, EffectiveEntry>>;
+  readonly application?: Readonly<Record<string, string>>;
+}): ClientEffectiveExecutionConfig {
+  const project = <T>(key: string, value: T) => ({
+    value,
+    source: (entries[key]?.source ?? 'unset') as ClientEffectiveExecutionConfig['stallLog']['source'],
+    applied: entries[key]?.applied === true || entries[key]?.present !== true,
+  });
+  const optional = (key: string, read: (value: unknown) => unknown) =>
+    project(key, entries[key]?.value === undefined ? undefined : read(entries[key]!.value));
+  const chain = entries.fallbackProviders?.value;
+  return {
+    ...(application === undefined ? {} : {
+      application: application as NonNullable<ClientEffectiveExecutionConfig['application']>,
+      maxOutputTokens: optional('maxOutputTokens', Number) as ClientEffectiveExecutionConfig['maxOutputTokens'],
+      disablePromptCache: optional('disablePromptCache', asFlag) as ClientEffectiveExecutionConfig['disablePromptCache'],
+      lsp: optional('lsp', asFlag) as ClientEffectiveExecutionConfig['lsp'],
+    }),
+    stallLog: project('stallLog', asFlag(entries.stallLog?.value)),
+    fallbackProviders: project('fallbackProviders', typeof chain === 'string'
+      ? chain.split(',').map(item => item.trim()).filter(Boolean)
+      : Array.isArray(chain) ? chain.filter((item): item is string => typeof item === 'string') : []),
+  };
 }

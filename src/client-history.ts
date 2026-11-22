@@ -47,6 +47,8 @@ export async function projectConversationHistoryPage(
   readChunk: Parameters<typeof readConversationHistoryEntry>[2],
   // The CLI and the lazily loaded SDK can own distinct diagnostic and credential scopes.
   report?: KodaXDiagnosticSink,
+  /** How much of a long item the page carries. */
+  bound: (item: ClientViewItem) => ClientViewItem = boundHistoryItem,
 ): Promise<ClientHistoryPage> {
   const items: ClientViewItem[] = [];
   const oversized: { itemId: string; byteLength: number }[] = [];
@@ -74,7 +76,7 @@ export async function projectConversationHistoryPage(
         ? [owner.message, { role: 'user', content: results,
           ...(successor?.timestamp !== undefined ? { timestamp: successor.timestamp } : {}) }]
         : [owner.message],
-    ).map(item => boundHistoryItem({ ...item,
+    ).map(item => bound({ ...item,
       ...(entry.boundaryId !== undefined ? { historyBoundary: {
         entryId: entry.boundaryId, sourceRevision: page.sourceRevision,
       } } : {}),
@@ -170,12 +172,14 @@ export async function readConversationHistoryEntry(
  */
 export async function readHistoryPageWithBoundaryRetry(
   read: () => Promise<RuntimeConversationHistorySlice | null>,
-  options: { readonly cursor?: string; readonly around?: unknown },
+  options: { readonly cursor?: string | undefined; readonly around?: unknown },
+  /** Whether a failure is a boundary miss, for a caller whose `read` fails with errors of another kind. */
+  isBoundaryMiss: (error: unknown) => boolean = isTransientHistoryBoundaryError,
 ): Promise<RuntimeConversationHistorySlice | null> {
   try {
     return await read();
   } catch (error: unknown) {
-    if (options.cursor !== undefined || options.around !== undefined || !isTransientHistoryBoundaryError(error)) throw error;
+    if (options.cursor !== undefined || options.around !== undefined || !isBoundaryMiss(error)) throw error;
     await new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, 50);
       timer.unref?.();
@@ -192,6 +196,11 @@ function isTransientHistoryBoundaryError(error: unknown): boolean {
 
 function historyEntryItemId(sessionId: string, revision: string, entryIndex: number): string {
   return `${sessionId}:history:${revision}:${entryIndex}`;
+}
+
+/** The id of an entry a transcript search found, at the revision the search ran on. */
+export function transcriptEntryItemId(sessionId: string, revision: string, entryIndex: number): string {
+  return `${sessionId}:transcript:${revision}:${entryIndex}`;
 }
 
 export function parseHistoryEntryItemId(

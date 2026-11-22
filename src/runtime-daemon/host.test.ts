@@ -34,6 +34,7 @@ import {
   respondToClientInteraction,
   type ClientInteractionRegistries,
 } from "../client-interactions.js";
+import { registerHostCloseQuiesce } from "../runtime-host-close.js";
 import { appendRuntimeDiagnostic, startRuntimeDaemonHost } from "./host.js";
 import * as daemonMaintenance from './maintenance.js';
 import { createRuntimeDaemonClient, type RuntimeDaemonClientTransport } from "./client.js";
@@ -48,8 +49,12 @@ import {
 } from "./state.js";
 import {
   createRuntimeDaemonSocketClientTransport,
+  dialRuntimeDaemonHostRpc,
+  RUNTIME_DAEMON_MAX_FRAME_BYTES,
   type RuntimeDaemonEndpoint,
 } from "./transport.js";
+import { connectHostRpc } from "../host-protocol/client.js";
+import { HOST_PROTOCOL, HOST_PROTOCOL_REVISION } from "../host-protocol/codec.js";
 
 class BrokerSummaryProvider extends KodaXBaseProvider {
   readonly name = 'broker-summary';
@@ -422,6 +427,57 @@ describe("runtime daemon host", () => {
     expect(readRuntimeDaemonLockOwner(paths.lockFile)).toBeUndefined();
   });
 
+  it("serves the v2 Host protocol next to v1 on the same endpoint", async () => {
+    const paths = resolveRuntimeDaemonPaths(tempHome(), "default");
+    const runtime = makeRuntime();
+    const lock = tryAcquireRuntimeDaemonLock(paths, {
+      runtimeId: runtime.identity.runtimeId,
+      pid: process.pid,
+      createdAt: runtime.identity.startedAt,
+    });
+    if (!lock) throw new Error("Expected daemon lock for the v2 test.");
+    const host = await startRuntimeDaemonHost({ runtime, paths, endpoint: await makeTestEndpoint(), lock });
+    cleanupTasks.push(() => host.close());
+    const token = readRuntimeDaemonToken(paths);
+    if (token === undefined) throw new Error("Expected a daemon token for the v2 test.");
+
+    const v1 = await createRuntimeDaemonSocketClientTransport(host.endpoint);
+    cleanupTasks.push(async () => {
+      await v1.close?.();
+    });
+    await v1.request("initialize", { profile: "default", token });
+
+    const dial = dialRuntimeDaemonHostRpc(host.endpoint);
+    const client = { name: "v2-test", version: "1.0.0", instanceId: "v2-client-1" };
+    const v2 = await connectHostRpc(dial, { client, auth: { scheme: "ipc", token } });
+    cleanupTasks.push(async () => v2.close());
+
+    expect(v2.handshake).toMatchObject({
+      protocol: HOST_PROTOCOL,
+      revision: HOST_PROTOCOL_REVISION,
+      role: "owner",
+      subject: "person",
+      host: { id: runtime.identity.runtimeId, version: runtime.identity.version },
+      methods: expect.arrayContaining(["ping"]),
+      limits: { maxFrameBytes: RUNTIME_DAEMON_MAX_FRAME_BYTES },
+    });
+    await expect(v2.request("ping")).resolves.toEqual({});
+    await expect(v1.request("ping")).resolves.toMatchObject({ ok: true });
+    // A v1-only method is not reachable through v2 until the contract names it.
+    await expect(v2.request("daemon.logs")).rejects.toMatchObject({ kodaxCode: "method_not_found" });
+
+    // The Host counts a v2 connection as a client like any other, so it is not idle while one is attached.
+    await expect(v1.request("daemon.preflight")).resolves.toMatchObject({ clientCount: 2 });
+    v2.close();
+    await waitForClientCount(v1, 1);
+
+    await expect(connectHostRpc(dial, { client, auth: { scheme: "ipc", token: "dt_wrong" } }))
+      .rejects.toMatchObject({ kodaxCode: "unauthorized" });
+    await expect(connectHostRpc(dial, { client, auth: { scheme: "jwt", token } }))
+      .rejects.toMatchObject({ kodaxCode: "unauthorized", reason: "unsupported_auth_scheme" });
+    await waitForClientCount(v1, 1);
+  });
+
   it("shares concurrent close attempts and retries a failed Runtime cleanup", async () => {
     const paths = resolveRuntimeDaemonPaths(tempHome(), "close-retry");
     const runtime = makeRuntime();
@@ -460,6 +516,108 @@ describe("runtime daemon host", () => {
     await expect(host.closed).resolves.toBeUndefined();
     expect(closeCalls).toBe(2);
     expect(readRuntimeDaemonLockOwner(paths.lockFile)).toBeUndefined();
+  });
+
+  it("quiesces Runs and lets their state reach a connected client before the transport closes", async () => {
+    const order: string[] = [];
+    const deadlines: number[] = [];
+    const { runtime, host, client } = await startQuiesceHost("close-quiesce", async ({ deadlineMs }) => {
+      deadlines.push(deadlineMs);
+      order.push("quiesce");
+      // The fixture publishes a terminal Run event, as a Run settling under the quiesce does.
+      await runtime.runs.start({ sessionId: "session-1", prompt: "settle" });
+      return { unsettledRunIds: [] };
+    });
+    const closeRuntime = runtime.close.bind(runtime);
+    runtime.close = async () => {
+      order.push("runtime-close");
+      await closeRuntime();
+    };
+    client.subscribe((notification) => {
+      if (extractRuntimeEventNotification(notification.params)?.type === "run.completed") order.push("client-notified");
+    });
+    client.subscribeLifecycle?.((state) => {
+      if (state.state === "disconnected") order.push("client-disconnected");
+    });
+    await client.request("session.observe", { sessionId: "session-1" });
+
+    await host.close();
+    await waitFor(() => order.includes("client-disconnected"));
+
+    expect(order.indexOf("quiesce")).toBeLessThan(order.indexOf("runtime-close"));
+    expect(order.filter((step) => step.startsWith("client-"))).toEqual(["client-notified", "client-disconnected"]);
+    // The bound a platform adds to its grace period: Run state is out within it.
+    expect(deadlines).toEqual([10_000]);
+  });
+
+  it("closes at the quiesce bound and names the Runs that had not settled", async () => {
+    const { paths, host } = await startQuiesceHost("close-quiesce-bound", async ({ deadlineMs }) => {
+      await new Promise((resolve) => setTimeout(resolve, deadlineMs));
+      return { unsettledRunIds: ["run-stuck"] };
+    }, 40);
+
+    await expect(host.close()).resolves.toBeUndefined();
+
+    expect(readRuntimeDaemonLockOwner(paths.lockFile)).toBeUndefined();
+    const warning = fs.readFileSync(paths.logFile, "utf8").split("\n").find((line) => line.includes("run-stuck"));
+    expect(warning).toContain("had not settled");
+  });
+
+  it("does not quiesce again when a failed close is retried", async () => {
+    let quiesces = 0;
+    const { runtime, host } = await startQuiesceHost("close-quiesce-retry", async () => {
+      quiesces += 1;
+      return { unsettledRunIds: [] };
+    });
+    const closeRuntime = runtime.close.bind(runtime);
+    let closeCalls = 0;
+    runtime.close = async () => {
+      closeCalls += 1;
+      if (closeCalls === 1) throw new Error("transient Runtime close failure");
+      await closeRuntime();
+    };
+
+    await expect(host.close()).rejects.toThrow("transient Runtime close failure");
+    await expect(host.close()).resolves.toBeUndefined();
+
+    expect(closeCalls).toBe(2);
+    expect(quiesces).toBe(1);
+  });
+
+  it("reports a failed quiesce and still closes the transport and the Runtime", async () => {
+    const { paths, runtime, host } = await startQuiesceHost("close-quiesce-failure", async () => {
+      throw new Error("Run shutdown failed");
+    });
+
+    await expect(host.close()).rejects.toThrow("run quiesce: Run shutdown failed");
+
+    expect(runtime.closed).toBe(true);
+    expect(readRuntimeDaemonLockOwner(paths.lockFile)).toBeUndefined();
+    await expect(host.close()).resolves.toBeUndefined();
+  });
+
+  it("keeps answering during the quiesce, so a late request gets the Runtime's conflict", async () => {
+    let release!: () => void;
+    const settling = new Promise<void>((resolve) => { release = resolve; });
+    let entered!: () => void;
+    const quiescing = new Promise<void>((resolve) => { entered = resolve; });
+    const { runtime, host, client } = await startQuiesceHost("close-quiesce-request", async () => {
+      // What a quiesced Runtime answers; src/sdk-runtime.host-close.test.ts pins that half.
+      runtime.runs.start = async () => {
+        throw Object.assign(new Error("KodaX runtime is shutting down and admits no new work."), { code: "conflict" });
+      };
+      entered();
+      await settling;
+      return { unsettledRunIds: [] };
+    });
+
+    const closing = host.close();
+    await quiescing;
+    await expect(client.request("run.start", { sessionId: "session-1", prompt: "too late" }))
+      .rejects.toMatchObject({ code: "conflict", message: expect.stringMatching(/shutting down/) });
+    release();
+
+    await expect(closing).resolves.toBeUndefined();
   });
 
   it("retains daemon ownership while Runtime cleanup is pending", async () => {
@@ -1440,6 +1598,37 @@ async function makeTestEndpoint(): Promise<RuntimeDaemonEndpoint> {
   };
 }
 
+/** A Host whose fake Runtime registered `quiesce`, with one initialized client attached. */
+async function startQuiesceHost(
+  profile: string,
+  quiesce: Parameters<typeof registerHostCloseQuiesce>[1],
+  runQuiesceMs?: number,
+) {
+  const paths = resolveRuntimeDaemonPaths(tempHome(), profile);
+  const runtime = makeRuntime();
+  registerHostCloseQuiesce(runtime, quiesce);
+  const lock = tryAcquireRuntimeDaemonLock(paths, {
+    runtimeId: runtime.identity.runtimeId,
+    pid: process.pid,
+    createdAt: runtime.identity.startedAt,
+  });
+  if (!lock) throw new Error("Expected daemon lock for the quiesce test.");
+  const host = await startRuntimeDaemonHost({
+    runtime,
+    paths,
+    endpoint: await makeTestEndpoint(),
+    lock,
+    ...(runQuiesceMs !== undefined ? { runQuiesceMs } : {}),
+  });
+  cleanupTasks.push(() => host.close().catch(() => undefined));
+  const client = await createRuntimeDaemonSocketClientTransport(host.endpoint);
+  cleanupTasks.push(async () => {
+    await client.close?.();
+  });
+  await client.request("initialize", { profile: "default", token: readRuntimeDaemonToken(paths) });
+  return { paths, runtime, host, client };
+}
+
 async function waitForHostStateRemoval(
   paths: ReturnType<typeof resolveRuntimeDaemonPaths>,
 ): Promise<void> {
@@ -1814,6 +2003,9 @@ function makeRuntime(
         return null;
       },
       async skills() {
+        return [];
+      },
+      async agents() {
         return [];
       },
       async describeSkill() {

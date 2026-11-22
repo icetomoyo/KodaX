@@ -2395,6 +2395,19 @@ describe('FileSessionStorage', () => {
     }
   });
 
+  it('keeps the policy a Session was created with, whatever a later snapshot carries', async () => {
+    const { FileSessionStorage } = await import('./storage.js');
+    const storage = new FileSessionStorage({ sessionsDir: testSessionsDir() });
+    const id = 'session-policy-kept';
+    const policy = { tools: ['read'] };
+    const created = { messages: [], title: 'New', gitRoot: KODAX_REPO_ROOT, runtimeInfo: { surface: 'code', policy } };
+    await storage.save(id, created);
+    for (const runtimeInfo of [{ surface: 'code' }, { surface: 'code', policy: { tools: ['read', 'bash'] } }]) {
+      await storage.save(id, { ...created, runtimeInfo });
+      await expect(storage.load(id)).resolves.toMatchObject({ runtimeInfo: { policy } });
+    }
+  });
+
   it('atomically preserves sandbox worktree roots across a stale Session snapshot', async () => {
     const { FileSessionStorage } = await import('./storage.js');
     const storage = new FileSessionStorage({ sessionsDir: testSessionsDir() });

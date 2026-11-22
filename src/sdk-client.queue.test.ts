@@ -106,8 +106,8 @@ it('shares queued input, atomically withdraws exact input, and delivers the rema
     await second.inputs.submit({ ...removed, inputId: 'third', text: 'Third instruction.' });
     await expect.poll(() => views.at(-1)?.queue.map((item) => item.inputId))
       .toEqual(['withdraw-me', 'second', 'third']);
-    await expect(second.inputs.withdraw(session.id, removed.inputId)).rejects.toMatchObject({ code: 'permission_denied' });
-    const withdrawn = await first.inputs.withdraw(session.id, removed.inputId);
+    // Both local clients act for the person this Host belongs to, so either may take the input back.
+    const withdrawn = await second.inputs.withdraw(session.id, removed.inputId);
     expect(withdrawn).toMatchObject({ inputId: removed.inputId, text: removed.text });
     expect(await first.inputs.withdraw(session.id, removed.inputId)).toEqual(withdrawn);
     expect(await first.inputs.submit(removed)).toMatchObject({ state: 'withdrawn' });
@@ -215,7 +215,7 @@ it('keeps unknown slash tokens, paths and URLs in the ordinary text batch', asyn
   } finally { observation.close(); }
 });
 
-it('bounds queue previews and capacity while only the original principal can retrieve the complete withdrawal', async () => {
+it('bounds queue previews and capacity while each client of the same person retrieves the complete withdrawal', async () => {
   const session = await first.sessions.create({ projectPath: homeDir });
   await first.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const active = await first.inputs.submit({ sessionId: session.id, inputId: 'initial', text: 'Start.' });
@@ -232,10 +232,7 @@ it('bounds queue previews and capacity while only the original principal can ret
     expect(views[0]!.queue[0]!.text.length).toBeLessThan(100);
     await expect(second.inputs.submit({ ...input, delivery: 'immediate' })).rejects.toMatchObject({ code: 'conflict' });
     const attempts = await Promise.allSettled([first.inputs.withdraw(session.id, 'large'), second.inputs.withdraw(session.id, 'large')]);
-    expect(attempts.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
-    const success = attempts.find((result) => result.status === 'fulfilled');
-    expect(success?.status === 'fulfilled' ? success.value.text : undefined).toBe(fullText);
-    expect(attempts.find((result) => result.status === 'rejected')).toMatchObject({ reason: { code: 'permission_denied' } });
+    expect(attempts.map((result) => result.status === 'fulfilled' ? result.value.text : result.reason)).toEqual([fullText, fullText]);
     for (let i = 1; i < 5; i += 1) await first.inputs.withdraw(session.id, `queued-${i}`);
     release();
     await runtime.runs.await(active.runId!);

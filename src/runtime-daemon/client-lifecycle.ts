@@ -5,7 +5,7 @@ import type { ClientExitReceipt, ClientExitRecovery } from '@kodax-ai/coding/cli
 import type { KodaXRuntime } from '../sdk-runtime.js';
 import { cleanupClientWork, settleClientWork } from '../runtime-client-work.js';
 import type { RuntimeDaemonManagementController } from './management.js';
-import { readRuntimeDaemonLockOwner, runtimeOwnerProcessState, type RuntimeDaemonPaths } from './state.js';
+import { readRuntimeDaemonLockOwner, runtimeOwnerProcessState, type RuntimeDaemonLockOwner, type RuntimeDaemonPaths } from './state.js';
 import { isRuntimeDaemonOwnerPidAlive } from './lifecycle.js';
 import { waitForRuntimeDaemonShutdown } from './shutdown-verifier.js';
 import { emitKodaXDiagnostic, readWindowsJobActiveProcessCount } from '@kodax-ai/agent';
@@ -48,7 +48,9 @@ export function readExitReceipts(paths: RuntimeDaemonPaths, principal: string): 
 export async function verifyExitReceipt(paths: RuntimeDaemonPaths, receipt: ClientExitReceipt): Promise<ClientExitReceipt> {
   const owner = receipt.host.owner;
   const current = readRuntimeDaemonLockOwner(paths.lockFile);
-  const ownerActive = isRuntimeDaemonOwnerPidAlive(owner.pid, owner.processStartIdentity);
+  // A receipt carries no PID namespace; only this owner's own lock record supplies it.
+  const ownerActive = isRuntimeDaemonOwnerPidAlive(owner.pid, owner.processStartIdentity,
+    current !== undefined && sameExitOwner(current, owner) ? current.pidNamespace : undefined);
   const recovered = ownerActive ? receipt : afterOwnerLoss(receipt);
   if (receipt.runtimeId !== owner.runtimeId) {
     return ownerActive ? withRecovery(recovered, 'blocked', 'owner_identity_mismatch', 'inspect_failure')
@@ -143,6 +145,11 @@ function afterOwnerLoss(receipt: ClientExitReceipt): ClientExitReceipt {
     : receipt;
 }
 
+/** A receipt is read by clients; the PID namespace stays in the Host lock record. */
+function exitOwner({ pidNamespace: _pidNamespace, ...owner }: RuntimeDaemonLockOwner): ClientExitReceipt['host']['owner'] {
+  return owner;
+}
+
 function sameExitOwner(left: ClientExitReceipt['host']['owner'], right: ClientExitReceipt['host']['owner']): boolean {
   return left.runtimeId === right.runtimeId && left.pid === right.pid && left.kind === right.kind
     && left.processStartIdentity === right.processStartIdentity && left.processContainment === right.processContainment
@@ -233,7 +240,7 @@ export function createRuntimeClientLifecycleController(input: {
       const receipt: ClientExitReceipt = existing ?? { requestId: request.requestId, clientId: principal, runtimeId,
         accepted: true, requestedAt: now, updatedAt: now,
         cleanup: { state: 'pending', runIds: [], operationIds: [], actorTurns: [], withdrawnInputs: [], issues: [] },
-        host: { requested: request.shutdownHost === true, state: request.shutdownHost ? 'pending' : 'not_requested', owner: owner! } };
+        host: { requested: request.shutdownHost === true, state: request.shutdownHost ? 'pending' : 'not_requested', owner: exitOwner(owner!) } };
       writeReceipt(input.paths, receipt);
       if (receipt.runtimeId === runtimeId) exiting.add(principal);
       const key = JSON.stringify([principal, receipt.requestId]);

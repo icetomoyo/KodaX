@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ExternalAgentRegistrationConflictError,
+  LearningCapabilityError,
   setKodaXDiagnosticSink,
 } from '@kodax-ai/agent';
 import {
@@ -66,7 +67,7 @@ describe('runtime daemon dispatcher', () => {
   afterEach(() => setActiveExtensionRuntime(null));
 
   it('preserves optional Host output schemas at the public registration boundary', async () => {
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime: makeRuntime() });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime: makeRuntime() });
     try {
       await initializeDispatcher(dispatcher);
       const descriptor = { name: 'geometry.read-grid', description: 'Read a measured grid.',
@@ -118,7 +119,7 @@ describe('runtime daemon dispatcher', () => {
       async stop() { throw new Error('not used'); },
     };
     vi.spyOn(runtime.status, 'preflight').mockImplementation(options => preflight(options?.signal));
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime,
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime,
       ...(route === 'management' ? { management } : route === 'callback' ? { preflight } : {}),
     });
     await initializeDispatcher(dispatcher);
@@ -143,7 +144,7 @@ describe('runtime daemon dispatcher', () => {
       [Symbol.asyncIterator]() { return this; },
       next: async () => ({ done: true, value: undefined }), return: close,
     });
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     try {
       await initializeDispatcher(dispatcher);
       let acknowledged = false;
@@ -160,7 +161,7 @@ describe('runtime daemon dispatcher', () => {
   it('does not let an observe-only client execute dynamic Skill preparation', async () => {
     const runtime = makeRuntime();
     const prepare = vi.spyOn(runtime.invocations, 'prepareSkill');
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime, grantedScopes: ['session:observe'] });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime, grantedScopes: ['session:observe'] });
     try {
       await dispatcher.handle(createRuntimeDaemonRequest('init-skill-observer', 'initialize'));
       expect(await dispatcher.handle(createRuntimeDaemonRequest('read-skill', 'invocations.prepareSkill', {
@@ -179,7 +180,7 @@ describe('runtime daemon dispatcher', () => {
       signal?.throwIfAborted();
       return { kind: 'unknown' };
     });
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     try {
       await dispatcher.handle(createRuntimeDaemonRequest('init-preparation', 'initialize'));
       const preparing = dispatcher.handle(createRuntimeDaemonRequest('prepare-cancel', 'invocations.prepareSkill', {
@@ -201,7 +202,7 @@ describe('runtime daemon dispatcher', () => {
     } };
     vi.spyOn(runtime.runs, 'start').mockResolvedValue({ runId: result.runId, sessionId: result.sessionId, result: Promise.resolve(result) });
     vi.spyOn(runtime.runs, 'await').mockResolvedValue(result);
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     await initializeDispatcher(dispatcher);
     const transport: RuntimeDaemonClientTransport = {
       async request(method, params) {
@@ -224,8 +225,8 @@ describe('runtime daemon dispatcher', () => {
   it('retires the old RPC connection when the same stable identity takes over', async () => {
     const hub = createRuntimeDaemonReverseBridgeHub();
     const runtime = makeRuntime();
-    const first = createRuntimeDaemonDispatcher({ runtime, reverseBridgeHub: hub, notify: () => undefined });
-    const second = createRuntimeDaemonDispatcher({ runtime, reverseBridgeHub: hub, notify: () => undefined });
+    const first = createRuntimeDaemonDispatcher({ role: 'owner', runtime, reverseBridgeHub: hub, notify: () => undefined });
+    const second = createRuntimeDaemonDispatcher({ role: 'owner', runtime, reverseBridgeHub: hub, notify: () => undefined });
     const params = { clientInfo: { instanceId: 'space', instanceSecret: 's'.repeat(32) } };
     try {
       expect(isRuntimeDaemonSuccessResponse(await first.handle(
@@ -261,7 +262,7 @@ describe('runtime daemon dispatcher', () => {
       new Error('Actor revision 4 is stale; current revision is 5.'),
       { code: 'revision_conflict' as const, expectedRevision: 4, currentRevision: 5 },
     ));
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     await initializeDispatcher(dispatcher);
 
     const response = await dispatcher.handle(createRuntimeDaemonRequest(
@@ -304,6 +305,7 @@ describe('runtime daemon dispatcher', () => {
     vi.spyOn(runtime.admin.agentRegistrations, 'upsert')
       .mockRejectedValue(new ExternalAgentRegistrationConflictError('external:stale'));
     const dispatcher = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime,
       allowAgentRegistrationAdmin: true,
     });
@@ -342,7 +344,7 @@ describe('runtime daemon dispatcher', () => {
   });
 
   it('requires initialize before runtime methods and rejects double initialize', async () => {
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime: makeRuntime() });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime: makeRuntime() });
 
     const preInitialize = await dispatcher.handle(createRuntimeDaemonRequest('req-before-init', 'run.list'));
     expect(isRuntimeDaemonSuccessResponse(preInitialize)).toBe(false);
@@ -363,6 +365,7 @@ describe('runtime daemon dispatcher', () => {
 
   it('validates method params and dispatcher results against the protocol schema', async () => {
     const dispatcher = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime: makeRuntime(),
       providerList: () => ({ invalid: 'provider-list-result' }),
     });
@@ -408,7 +411,7 @@ describe('runtime daemon dispatcher', () => {
       if (sessionId === 'partner-session') notAdmitted();
       return createTestObservation(sessionId);
     });
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     await initializeDispatcher(dispatcher);
 
     const requests = [
@@ -432,6 +435,7 @@ describe('runtime daemon dispatcher', () => {
 
   it('requires the configured daemon token during initialize', async () => {
     const dispatcher = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime: makeRuntime(),
       authToken: 'token-1',
     });
@@ -451,10 +455,122 @@ describe('runtime daemon dispatcher', () => {
     expect(isRuntimeDaemonSuccessResponse(accepted)).toBe(true);
   });
 
+  it('rejects a token of the right length that differs, and one of another length', async () => {
+    for (const token of ['token-2', 'token-12', '']) {
+      const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime: makeRuntime(), authToken: 'token-1' });
+      const response = await dispatcher.handle(createRuntimeDaemonRequest('req-bad-token', 'initialize', {
+        profile: 'default',
+        token,
+      }));
+      expect(response).toMatchObject({ kind: 'error', error: { code: 'unauthorized' } });
+      dispatcher.close();
+    }
+  });
+
+  it('refuses every method, the handshake included, on a connection created without a role', async () => {
+    const runtime = makeRuntime();
+    const list = vi.spyOn(runtime.sessions, 'list');
+    const dispatcher = createRuntimeDaemonDispatcher(
+      { runtime } as unknown as Parameters<typeof createRuntimeDaemonDispatcher>[0],
+    );
+    const calls: ReadonlyArray<readonly [RuntimeDaemonMethod, Record<string, unknown>]> = [
+      ['initialize', { profile: 'default' }],
+      ['ping', {}],
+      ['session.list', {}],
+      ['daemon.stop', {}],
+    ];
+    for (const [method, params] of calls) {
+      const response = await dispatcher.handle(createRuntimeDaemonRequest(`req-${method}`, method, params));
+      expect(response, method).toMatchObject({ kind: 'error', error: { code: 'permission_denied' } });
+    }
+    expect(list).not.toHaveBeenCalled();
+    dispatcher.close();
+  });
+
+  it('keeps a user connection to the data plane and refuses its trusted parameters', async () => {
+    const runtime = makeRuntime();
+    const start = vi.spyOn(runtime.runs, 'start');
+    const stop = vi.fn();
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'user', runtime, stop });
+    await initializeDispatcher(dispatcher, {});
+
+    const denied: ReadonlyArray<readonly [RuntimeDaemonMethod, Record<string, unknown>]> = [
+      ['daemon.stop', {}],
+      ['config.read', {}],
+      ['credential.get', {}],
+      ['memory.describe', {}],
+      ['run.start', { sessionId: 'session-1', prompt: 'hello', authorization: {} }],
+      ['run.start', { sessionId: 'session-1', prompt: 'hello', credential: {} }],
+      ['run.start', { sessionId: 'session-1', prompt: 'hello', hostTools: [] }],
+    ];
+    for (const [method, params] of denied) {
+      const response = await dispatcher.handle(createRuntimeDaemonRequest(`req-denied-${method}`, method, params));
+      expect(response, method).toMatchObject({ kind: 'error', error: { code: 'permission_denied' } });
+    }
+    expect(stop).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+
+    const allowed = await dispatcher.handle(createRuntimeDaemonRequest('req-user-run', 'run.start', {
+      sessionId: 'session-1',
+      prompt: 'hello',
+    }));
+    expect(isRuntimeDaemonSuccessResponse(allowed)).toBe(true);
+    expect(start).toHaveBeenCalledTimes(1);
+    dispatcher.close();
+  });
+
+  it('does not let a service connection answer an interaction addressed to the person', async () => {
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'service', tokenSubject: 'billing', runtime: makeRuntime() });
+    await initializeDispatcher(dispatcher, {});
+
+    const answered = await dispatcher.handle(createRuntimeDaemonRequest('req-service-answer', 'interaction.respond', {
+      interactionId: 'interaction-1',
+      response: { kind: 'permission', decision: 'allow' },
+    }));
+    expect(answered).toMatchObject({ kind: 'error', error: { code: 'permission_denied' } });
+
+    const listed = await dispatcher.handle(createRuntimeDaemonRequest('req-service-list', 'interaction.list', {}));
+    expect(isRuntimeDaemonSuccessResponse(listed)).toBe(true);
+    dispatcher.close();
+  });
+
+  it('refuses a service connection that names no token subject', async () => {
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'service', runtime: makeRuntime() });
+    const response = await dispatcher.handle(createRuntimeDaemonRequest('req-anonymous-service', 'initialize', {
+      profile: 'default',
+      clientInfo: { name: 'vitest' },
+      capabilities: {},
+    }));
+    expect(response).toMatchObject({ kind: 'error', error: { code: 'permission_denied' } });
+    dispatcher.close();
+  });
+
+  it('records who a Run acts for separately from the client instance that started it', async () => {
+    const runtime = makeRuntime();
+    const start = vi.spyOn(runtime.runs, 'start');
+    const origins = async (options: { role: 'owner' | 'user' | 'service'; tokenSubject?: string }) => {
+      const dispatcher = createRuntimeDaemonDispatcher({ ...options, runtime });
+      await initializeDispatcher(dispatcher, {});
+      const response = await dispatcher.handle(createRuntimeDaemonRequest('req-run', 'run.start', {
+        sessionId: 'session-1',
+        prompt: 'hello',
+      }));
+      expect(isRuntimeDaemonSuccessResponse(response)).toBe(true);
+      dispatcher.close();
+      return (start.mock.calls.at(-1)![0] as { origin?: { principalId: string; subject?: string } }).origin!;
+    };
+
+    const laptop = await origins({ role: 'owner' });
+    const phone = await origins({ role: 'user' });
+    const backend = await origins({ role: 'service', tokenSubject: 'billing' });
+    expect([laptop.subject, phone.subject, backend.subject]).toEqual(['person', 'person', 'service:billing']);
+    expect(new Set([laptop.principalId, phone.principalId, backend.principalId]).size).toBe(3);
+  });
+
   it('dispatches mutations without an operation envelope and rejects the retired operations.get (T25)', async () => {
     const runtime = makeRuntime();
     const start = vi.spyOn(runtime.runs, 'start');
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     await initializeDispatcher(dispatcher, {});
 
     const mutation = await dispatcher.handle(createRuntimeDaemonRequest(
@@ -487,6 +603,7 @@ describe('runtime daemon dispatcher', () => {
     const interrupt = vi.spyOn(runtime.agents, 'interrupt');
     const setEnabled = vi.spyOn(runtime.admin.agentRegistrations, 'setEnabled');
     const dispatcher = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime,
       allowAgentRegistrationAdmin: true,
     });
@@ -504,8 +621,8 @@ describe('runtime daemon dispatcher', () => {
       ));
       expect(isRuntimeDaemonSuccessResponse(response)).toBe(true);
     }
-    expect(send).toHaveBeenCalledWith('session-1', '/root/smoke', 'continue', undefined);
-    expect(interrupt).toHaveBeenCalledWith('session-1', '/root/smoke', undefined);
+    expect(send).toHaveBeenCalledWith('session-1', '/root/smoke', 'continue', undefined, undefined);
+    expect(interrupt).toHaveBeenCalledWith('session-1', '/root/smoke', undefined, undefined);
     expect(setEnabled).toHaveBeenCalledWith('external:smoke', false, {
       expectedConfigurationRevision: undefined,
       expectedManagementOwner: undefined,
@@ -535,6 +652,7 @@ describe('runtime daemon dispatcher', () => {
       close() {},
     };
     const dispatcher = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime: makeRuntime(),
       management,
     });
@@ -597,7 +715,7 @@ describe('runtime daemon dispatcher', () => {
   it('accepts a Session settings patch without a revision on a shared Host', async () => {
     const runtime = makeRuntime();
     const update = vi.spyOn(runtime.sessions, 'updateSettings');
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     await initializeDispatcher(dispatcher, {});
 
     const response = await dispatcher.handle(createRuntimeDaemonRequest(
@@ -628,7 +746,7 @@ describe('runtime daemon dispatcher', () => {
       afterRunId: 'run-active',
       sessionOrder: 2,
     });
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     await initializeDispatcher(dispatcher, {});
     const params = {
       sessionId: 'session-1',
@@ -671,7 +789,7 @@ describe('runtime daemon dispatcher', () => {
       afterRunId: 'run-active',
       sessionOrder: 1,
     });
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     await initializeDispatcher(dispatcher, {});
     const params = {
       sessionId: 'session-1',
@@ -714,7 +832,7 @@ describe('runtime daemon dispatcher', () => {
       provider: 'mock',
     });
     const submit = vi.spyOn(runtime.runs, 'submitInput');
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     await initializeDispatcher(dispatcher);
     const params = {
       sessionId: 'session-1',
@@ -772,7 +890,7 @@ describe('runtime daemon dispatcher', () => {
         afterRunId: 'run-active',
         sessionOrder: 2,
       });
-      const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+      const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
       await initializeDispatcher(dispatcher);
 
       const response = await dispatcher.handle(createRuntimeDaemonRequest(
@@ -821,7 +939,7 @@ describe('runtime daemon dispatcher', () => {
       afterRunId: 'run-actor-unknown',
       sessionOrder: 2,
     });
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     await initializeDispatcher(dispatcher);
     const input = {
       sessionId: 'session-1',
@@ -904,6 +1022,7 @@ describe('runtime daemon dispatcher', () => {
     const reverseBridgeHub = createRuntimeDaemonReverseBridgeHub();
     let notificationListener: ((notification: RuntimeDaemonNotification) => void) | undefined;
     const dispatcher = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime,
       reverseBridgeHub,
       notify(notification) {
@@ -1133,7 +1252,7 @@ describe('runtime daemon dispatcher', () => {
       const runtime = makeRuntime();
       const hub = createRuntimeDaemonReverseBridgeHub();
       let notify: ((notification: RuntimeDaemonNotification) => void) | undefined;
-      const dispatcher = createRuntimeDaemonDispatcher({ runtime, reverseBridgeHub: hub, notify: event => notify?.(event) });
+      const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime, reverseBridgeHub: hub, notify: event => notify?.(event) });
       await initializeDispatcher(dispatcher, {});
       vi.spyOn(runtime.sessions, 'compact').mockImplementation(async input => {
         const trusted = input as RuntimeCompactSessionInput & { providerCredentialAccess?: {
@@ -1204,7 +1323,7 @@ describe('runtime daemon dispatcher', () => {
       const runtime = makeRuntime();
       const hub = createRuntimeDaemonReverseBridgeHub();
       let notify: ((event: RuntimeDaemonNotification) => void) | undefined;
-      const dispatcher = createRuntimeDaemonDispatcher({ runtime, reverseBridgeHub: hub, notify: event => notify?.(event) });
+      const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime, reverseBridgeHub: hub, notify: event => notify?.(event) });
       await initializeDispatcher(dispatcher, {});
       vi.spyOn(runtime.sessions, 'compact').mockImplementation(async input => {
         expect(JSON.stringify(input)).not.toContain('kodax-cloud-v1:');
@@ -1259,6 +1378,7 @@ describe('runtime daemon dispatcher', () => {
     const reverseBridgeHub = createRuntimeDaemonReverseBridgeHub();
     let notificationListener: ((notification: RuntimeDaemonNotification) => void) | undefined;
     const dispatcher = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime,
       reverseBridgeHub,
       notify(notification) {
@@ -1365,6 +1485,7 @@ describe('runtime daemon dispatcher', () => {
     const reverseBridgeHub = createRuntimeDaemonReverseBridgeHub();
     let notificationListener: ((notification: RuntimeDaemonNotification) => void) | undefined;
     const dispatcher = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime,
       reverseBridgeHub,
       notify(notification) {
@@ -1590,6 +1711,7 @@ describe('runtime daemon dispatcher', () => {
       const runtime = makeRuntime();
       const reverseBridgeHub = createRuntimeDaemonReverseBridgeHub();
       const dispatcher = createRuntimeDaemonDispatcher({
+        role: 'owner',
         runtime,
         reverseBridgeHub,
         notify() {},
@@ -1638,7 +1760,7 @@ describe('runtime daemon dispatcher', () => {
   });
 
   it('rejects initialize when the requested profile differs from the daemon identity', async () => {
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime: makeRuntime() });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime: makeRuntime() });
 
     const mismatch = await dispatcher.handle(createRuntimeDaemonRequest('req-profile-mismatch', 'initialize', {
       profile: 'space',
@@ -1658,6 +1780,7 @@ describe('runtime daemon dispatcher', () => {
   it('routes every declared daemon method to an implemented dispatcher branch', async () => {
     for (const method of RUNTIME_DAEMON_METHODS) {
       const dispatcher = createRuntimeDaemonDispatcher({
+        role: 'owner',
         runtime: makeRuntime(),
         allowAgentRegistrationAdmin: true,
       });
@@ -1692,6 +1815,7 @@ describe('runtime daemon dispatcher', () => {
     // with no envelope, no capability negotiation, and no journal option.
     for (const method of RUNTIME_DAEMON_MUTATION_METHODS) {
       const dispatcher = createRuntimeDaemonDispatcher({
+        role: 'owner',
         runtime: makeRuntime(),
         allowAgentRegistrationAdmin: true,
       });
@@ -1754,7 +1878,7 @@ describe('runtime daemon dispatcher', () => {
         },
       },
     };
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     await initializeDispatcher(dispatcher);
 
     const skill = await dispatcher.handle(createRuntimeDaemonRequest(
@@ -1815,6 +1939,7 @@ describe('runtime daemon dispatcher', () => {
 
   it('requires host authorization but never treats client capability claims as authorization', async () => {
     const hostDenied = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime: makeRuntime(),
       capabilities: {
         externalAgentAdmin: { version: 99 },
@@ -1837,6 +1962,7 @@ describe('runtime daemon dispatcher', () => {
     }
 
     const hostAccepted = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime: makeRuntime(),
       allowAgentRegistrationAdmin: true,
     });
@@ -1857,6 +1983,7 @@ describe('runtime daemon dispatcher', () => {
     const setEnabled = vi.spyOn(runtime.admin.agentRegistrations, 'setEnabled');
     const remove = vi.spyOn(runtime.admin.agentRegistrations, 'remove');
     const dispatcher = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime,
       allowAgentRegistrationAdmin: true,
     });
@@ -1932,7 +2059,7 @@ describe('runtime daemon dispatcher', () => {
     };
     const runtime = makeRuntime();
     const createSession = vi.spyOn(runtime.sessions, 'create');
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime, management });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime, management });
     try {
       expect(await dispatcher.handle(createRuntimeDaemonRequest('startup', 'initialize', {
         profile: 'default', connectionPurpose: 'startup',
@@ -1947,7 +2074,7 @@ describe('runtime daemon dispatcher', () => {
   });
 
   it.each(['observer', 'probe', 'startup'] as const)('rejects a %s attempt to retain an idle-exit Host', async (kind) => {
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime: makeRuntime(),
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime: makeRuntime(),
       ...(kind === 'observer' ? { grantedScopes: ['session:observe' as const] } : {}) });
     try {
       const response = await dispatcher.handle(createRuntimeDaemonRequest('retain', 'initialize', {
@@ -1961,6 +2088,7 @@ describe('runtime daemon dispatcher', () => {
 
   it('uses server-issued scopes instead of client capability claims for authorization', async () => {
     const dispatcher = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime: makeRuntime(),
       grantedScopes: ['session:observe'],
     });
@@ -1994,6 +2122,7 @@ describe('runtime daemon dispatcher', () => {
 
   it('authorizes paged transcript and conversation reads with the session observation scope', async () => {
     const dispatcher = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime: makeRuntime(),
       grantedScopes: ['session:observe'],
     });
@@ -2046,7 +2175,7 @@ describe('runtime daemon dispatcher', () => {
       title: 'Large transcript',
       messages: [{ role: 'user', content: 'x'.repeat(600_000) }],
     } as never);
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     await initializeDispatcher(dispatcher);
 
     const response = await dispatcher.handle(createRuntimeDaemonRequest(
@@ -2068,7 +2197,7 @@ describe('runtime daemon dispatcher', () => {
       sessionCancellation: { version: 1, durableFrontier: true, internalOnly: true },
       toolInvocation: { version: 1, internalOnly: true },
     } } satisfies KodaXRuntime;
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     try {
       const initialized = await initializeDispatcher(dispatcher);
       expect(initialized.capabilities).toMatchObject({
@@ -2083,6 +2212,7 @@ describe('runtime daemon dispatcher', () => {
   });
   it.each([[true, false], [true, true], [false, true], [false, false]])('forwards provider probe authorization only when its owner supports it (%s, override=%s)', async (supported, override) => {
     const dispatcher = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime: { ...makeRuntime(), capabilities: supported ? { providerProbeAuthorization: { version: 1 } } : {} },
       capabilities: override ? { providerProbeAuthorization: { version: 1 } } : undefined,
     });
@@ -2096,6 +2226,7 @@ describe('runtime daemon dispatcher', () => {
   });
   it.each([[true, false], [true, true], [false, true], [false, false]])('forwards the tool hook ask only when its owner supports it (%s, override=%s)', async (supported, override) => {
     const dispatcher = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime: { ...makeRuntime(), capabilities: supported ? { toolHookAsk: { version: 1 } } : {} },
       capabilities: override ? { toolHookAsk: { version: 1 } } : undefined,
     });
@@ -2115,6 +2246,7 @@ describe('runtime daemon dispatcher', () => {
     { sessionCancellation: { version: 1, durableFrontier: false }, toolInvocation: true },
   ])('does not let overrides invent unsupported owner execution capabilities: %j', async (capabilities) => {
     const dispatcher = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime: { ...makeRuntime(), capabilities },
       capabilities: {
         sessionCancellation: { version: 1, durableFrontier: true },
@@ -2140,6 +2272,7 @@ describe('runtime daemon dispatcher', () => {
       },
     } satisfies KodaXRuntime;
     const dispatcher = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime,
       allowAgentRegistrationAdmin: true,
     });
@@ -2297,7 +2430,7 @@ describe('runtime daemon dispatcher', () => {
         },
       },
     };
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     await initializeDispatcher(dispatcher);
     const pending = dispatcher.handle(createRuntimeDaemonRequest(
       'req-observe-slow',
@@ -2363,7 +2496,7 @@ describe('runtime daemon dispatcher', () => {
         });
       },
     );
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     await initializeDispatcher(dispatcher);
 
     const first = dispatcher.handle(createRuntimeDaemonRequest(
@@ -2428,7 +2561,7 @@ describe('runtime daemon dispatcher', () => {
         });
       },
     );
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     await initializeDispatcher(dispatcher);
 
     const pending = dispatcher.handle(createRuntimeDaemonRequest(
@@ -2479,7 +2612,7 @@ describe('runtime daemon dispatcher', () => {
         },
       },
     };
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     await initializeDispatcher(dispatcher);
 
     const observed = await dispatcher.handle(createRuntimeDaemonRequest(
@@ -2501,6 +2634,7 @@ describe('runtime daemon dispatcher', () => {
 
   it('advertises orphan exit only when the daemon host actually enabled that policy', async () => {
     const persistent = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime: {
         ...makeRuntime(),
         capabilities: {},
@@ -2518,6 +2652,7 @@ describe('runtime daemon dispatcher', () => {
     persistent.close();
 
     const spaceManaged = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime: makeRuntime(),
       orphanExitEnabled: true,
     });
@@ -2546,7 +2681,7 @@ describe('runtime daemon dispatcher', () => {
         process.env.KODAX_DAEMON_JOB_CONTAINED = '1';
         process.env.KODAX_DAEMON_JOB_NAME = `spoofed-${Date.now()}`;
         process.env.KODAX_DAEMON_JOB_SUPERVISOR_PID = String(process.pid);
-        const dispatcher = createRuntimeDaemonDispatcher({ runtime: makeRuntime() });
+        const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime: makeRuntime() });
         const initialized = await initializeDispatcher(dispatcher);
         expect(initialized.capabilities).not.toHaveProperty('daemonShutdownVerification');
         dispatcher.close();
@@ -2559,7 +2694,7 @@ describe('runtime daemon dispatcher', () => {
   );
 
   it('routes canonical protocol aliases for external clients', async () => {
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime: makeRuntime() });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime: makeRuntime() });
     const initialized = await dispatcher.handle(createRuntimeDaemonRequest('req-init', 'runtime.initialize', {
       profile: 'default',
       capabilities: { contextDiagnostics: true },
@@ -2629,7 +2764,7 @@ describe('runtime daemon dispatcher', () => {
   });
 
   it('returns an explicit upgrade path for the retired agentTasks namespace', async () => {
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime: makeRuntime() });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime: makeRuntime() });
     await initializeDispatcher(dispatcher);
 
     const response = await dispatcher.handle({
@@ -2655,7 +2790,7 @@ describe('runtime daemon dispatcher', () => {
   ] as const)('keeps the Runtime failure code %s on the wire', async (runtimeCode, code, data) => {
     const runtime = makeRuntime();
     vi.spyOn(runtime.runs, 'start').mockRejectedValue(Object.assign(new Error('Session is recovering.'), { code: runtimeCode }));
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     await initializeDispatcher(dispatcher);
     const response = await dispatcher.handle(createRuntimeDaemonRequest('req-1', 'run.start', { sessionId: 'session-1', prompt: 'hello' }));
     expect(!isRuntimeDaemonSuccessResponse(response) && response.error).toMatchObject({ code, message: 'Session is recovering.', data });
@@ -2663,7 +2798,7 @@ describe('runtime daemon dispatcher', () => {
   });
 
   it('passes the Host warnings for retired Run inputs to the client', async () => {
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime: makeRuntime() });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime: makeRuntime() });
     await initializeDispatcher(dispatcher);
     const started = await dispatcher.handle(createRuntimeDaemonRequest('req-1', 'run.start', {
       sessionId: 'session-1', prompt: 'old caller', mode: 'coding',
@@ -2674,7 +2809,7 @@ describe('runtime daemon dispatcher', () => {
 
   it('routes run.start and run.await through the hosted runtime', async () => {
     const runtime = makeRuntime();
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     await initializeDispatcher(dispatcher);
 
     const started = await dispatcher.handle(createRuntimeDaemonRequest('req-1', 'run.start', {
@@ -2698,7 +2833,7 @@ describe('runtime daemon dispatcher', () => {
   it('strips caller-controlled learning owner and conversation identity from raw run.start payloads', async () => {
     const runtime = makeRuntime();
     const start = vi.spyOn(runtime.runs, 'start');
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     await initializeDispatcher(dispatcher);
 
     const response = await dispatcher.handle(createRuntimeDaemonRequest(
@@ -2737,8 +2872,8 @@ describe('runtime daemon dispatcher', () => {
   it('shares retained run results across daemon dispatchers', async () => {
     const runtime = makeRuntime();
     const runResults = createRuntimeDaemonRunResultStore();
-    const firstConnection = createRuntimeDaemonDispatcher({ runtime, runResults });
-    const secondConnection = createRuntimeDaemonDispatcher({ runtime, runResults });
+    const firstConnection = createRuntimeDaemonDispatcher({ role: 'owner', runtime, runResults });
+    const secondConnection = createRuntimeDaemonDispatcher({ role: 'owner', runtime, runResults });
     await initializeDispatcher(firstConnection);
     await initializeDispatcher(secondConnection);
 
@@ -2776,6 +2911,7 @@ describe('runtime daemon dispatcher', () => {
       error: new TypeError('provider unavailable'),
     }));
     const dispatcher = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime: makeRuntime(),
       runResults,
     });
@@ -2817,7 +2953,7 @@ describe('runtime daemon dispatcher', () => {
       },
     }));
     const runtime = makeRuntime();
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime, runResults });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime, runResults });
     await initializeDispatcher(dispatcher);
     const transport: RuntimeDaemonClientTransport = {
       async request(method, params) {
@@ -2866,6 +3002,7 @@ describe('runtime daemon dispatcher', () => {
     });
     const notifications: RuntimeDaemonNotification[] = [];
     const dispatcher = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime,
       notify: (notification) => notifications.push(notification),
     });
@@ -2923,6 +3060,7 @@ describe('runtime daemon dispatcher', () => {
       diagnostics.push(diagnostic);
     });
     const dispatcher = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime,
       notify() {
         throw new Error('notification sink failed');
@@ -2960,7 +3098,7 @@ describe('runtime daemon dispatcher', () => {
   it('returns the same read-only Session diagnostic contract through the daemon', async () => {
     const runtime = makeRuntime();
     const diagnostics = vi.spyOn(runtime.sessions, 'diagnostics');
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     await initializeDispatcher(dispatcher);
 
     const response = await dispatcher.handle(createRuntimeDaemonRequest(
@@ -2999,6 +3137,7 @@ describe('runtime daemon dispatcher', () => {
     const runtime = makeRuntime();
     const promote = vi.spyOn(runtime.learning, 'promote');
     const dispatcher = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime,
       grantedScopes: ['learning:control'],
     });
@@ -3031,10 +3170,34 @@ describe('runtime daemon dispatcher', () => {
     dispatcher.close();
   });
 
+  it.each([
+    ['capability_not_found', 'not_found', { reason: 'capability_not_found' }],
+    ['ambiguous_name', 'invalid_params', { reason: 'ambiguous_name' }],
+    ['invalid_transition', 'conflict', { conflict: 'invalid_transition' }],
+    ['unsupported_action', 'conflict', { conflict: 'unsupported_action' }],
+    ['revision_conflict', 'conflict', { conflict: 'revision_conflict' }],
+    ['store_integrity_error', 'data_corrupt', { reason: 'store_integrity_error' }],
+    ['invalid_record', 'internal_error', { reason: 'invalid_record' }],
+  ] as const)('reports a learning %s as %s, not as the Host failing', async (learningCode, code, data) => {
+    const runtime = makeRuntime();
+    vi.spyOn(runtime.learning, 'trust').mockRejectedValue(new LearningCapabilityError(learningCode, 'refused'));
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime, grantedScopes: ['learning:control'] });
+    await initializeDispatcher(dispatcher);
+
+    const response = await dispatcher.handle(createRuntimeDaemonRequest(
+      'req-learning-trust', 'learning.trust', { nameOrSlug: 'runtime-test-skill' },
+    ));
+
+    expect(isRuntimeDaemonSuccessResponse(response)).toBe(false);
+    if (!isRuntimeDaemonSuccessResponse(response)) expect(response.error).toEqual({ code, message: 'refused', data });
+    dispatcher.close();
+  });
+
   it('gates context diagnostic events in live notifications by negotiated capability', async () => {
     const runtime = makeRuntime();
     const basicNotifications: RuntimeDaemonNotification[] = [];
     const basic = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime,
       notify: (notification) => basicNotifications.push(notification),
     });
@@ -3072,6 +3235,7 @@ describe('runtime daemon dispatcher', () => {
 
     const diagnosticNotifications: RuntimeDaemonNotification[] = [];
     const diagnostic = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime,
       notify: (notification) => diagnosticNotifications.push(notification),
     });
@@ -3109,6 +3273,7 @@ describe('runtime daemon dispatcher', () => {
   });
   it('serves redacted config and provider/model catalogs through admin methods', async () => {
     const dispatcher = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime: makeRuntime(),
       config: () => ({
         provider: 'openai',
@@ -3170,7 +3335,7 @@ describe('runtime daemon dispatcher', () => {
   });
 
   it('routes config, MCP, command, skill, and artifact methods through runtime services', async () => {
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime: makeRuntime() });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime: makeRuntime() });
     await initializeDispatcher(dispatcher);
 
     const patched = await dispatcher.handle(createRuntimeDaemonRequest('req-config', 'config.patch', {
@@ -3265,7 +3430,7 @@ describe('runtime daemon dispatcher', () => {
         },
       },
     };
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     await initializeDispatcher(dispatcher);
 
     const response = await dispatcher.handle(createRuntimeDaemonRequest('req-interaction', 'interaction.respond', {
@@ -3297,7 +3462,7 @@ describe('runtime daemon dispatcher', () => {
         request,
       },
     };
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     await initializeDispatcher(dispatcher);
 
     const response = await dispatcher.handle({
@@ -3547,6 +3712,7 @@ const METHOD_SMOKE_PARAMS = {
   'skill.list': { projectRoot: process.cwd(), userInvocableOnly: true },
   'skill.describe': { name: 'review', projectRoot: process.cwd() },
   'skill.read': { name: 'review', projectRoot: process.cwd() },
+  'agent.list': undefined,
   'memory.describe': { projectRoot: process.cwd() },
   'memory.listReviews': { projectRoot: process.cwd() },
   'memory.listInbox': { projectRoot: process.cwd() },
@@ -4121,6 +4287,9 @@ function makeRuntime(): KodaXRuntime & { emit(event: RuntimeEvent): void } {
             }
           : null;
       },
+      async agents() {
+        return [{ name: 'clerk', description: 'Keeps the release notes', tools: ['read'] }];
+      },
       async skills() {
         return [{
           name: 'review',
@@ -4457,7 +4626,7 @@ it('authorizes Product catalog probes through fresh Main v2 credentials and a Ho
   const { createCloudProviderConfig, serializeCloudCredential } = await import('@kodax-ai/llm');
   const runtime = makeRuntime(), hub = createRuntimeDaemonReverseBridgeHub();
   let notify: ((notification: RuntimeDaemonNotification) => void) | undefined;
-  const dispatcher = createRuntimeDaemonDispatcher({ runtime, reverseBridgeHub: hub, notify: event => notify?.(event) });
+  const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime, reverseBridgeHub: hub, notify: event => notify?.(event) });
   await initializeDispatcher(dispatcher, {});
   const config = createCloudProviderConfig({ name: 'probe-native', service: 'gemini', model: 'fixture' });
   const resolve = vi.fn(async (_request: import('../client-host-authorization.js').RuntimeScopedCredentialRequest) => ({ type: 'api-key' as const, key: 'probe-request-key' }));

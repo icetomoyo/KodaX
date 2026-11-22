@@ -1558,6 +1558,7 @@ describe('runtime daemon client proxy', () => {
     await client.catalog.models({ provider: 'openai' });
     await client.catalog.commands('C:/repo');
     await client.catalog.skills({ userInvocableOnly: true });
+    await client.catalog.agents();
     await client.mcp.listServers();
     await client.mcp.deleteServer('local');
     await client.mcp.reloadServers();
@@ -1612,6 +1613,7 @@ describe('runtime daemon client proxy', () => {
       'model.list',
       'command.list',
       'skill.list',
+      'agent.list',
       'mcp.server.list',
       'mcp.server.delete',
       'mcp.server.reload',

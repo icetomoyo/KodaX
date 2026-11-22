@@ -9,7 +9,11 @@ export function sessionMetadataRevision(id: string, data: Pick<KodaXSessionData,
 /** Evaluate under the Session's writer lock; promotion and its receipt commit together. */
 export function promoteSessionMetadata(id: string, data: KodaXSessionData,
   input: KodaXSessionPromotionRecord): KodaXSessionData {
-  const invalid = (message: string, code = 'invalid_params'): never => { throw Object.assign(new Error(message), { code }); };
+  const invalid = (message: string): never => { throw Object.assign(new Error(message), { code: 'invalid_params' }); };
+  // `data.conflict` tells a client whether to read the Session again or stop trying.
+  const conflict = (message: string, kind: 'already_promoted' | 'revision_conflict'): never => {
+    throw Object.assign(new Error(message), { code: 'conflict', data: { conflict: kind } });
+  };
   if (input.sessionId !== id || typeof input.requestId !== 'string' || !input.requestId.trim() || input.requestId.length > 128
     || /[\x00-\x1f]/.test(input.requestId) || typeof input.tag !== 'string' || !input.tag.trim()
     || input.tag.length > 256 || /[\x00-\x1f]/.test(input.tag)
@@ -19,8 +23,8 @@ export function promoteSessionMetadata(id: string, data: KodaXSessionData,
   const previous = data.runtimeInfo?.sessionPromotion;
   if (previous?.sessionId === id) {
     if (previous.requestId === input.requestId && previous.expectedRevision === input.expectedRevision && previous.tag === input.tag) return data;
-    invalid('Session was already promoted by a different request.', 'conflict');
+    conflict('Session was already promoted by a different request.', 'already_promoted');
   }
-  if (sessionMetadataRevision(id, data) !== input.expectedRevision) invalid('Session metadata changed; reload before promoting.', 'conflict');
+  if (sessionMetadataRevision(id, data) !== input.expectedRevision) conflict('Session metadata changed; reload before promoting.', 'revision_conflict');
   return { ...data, tag: input.tag, runtimeInfo: { ...data.runtimeInfo, sessionPromotion: structuredClone(input) } };
 }

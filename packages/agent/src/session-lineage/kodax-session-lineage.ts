@@ -797,6 +797,13 @@ export function setSessionLineageActiveEntry(
   const entries = lineage.entries.map(cloneEntry);
   let activeEntryId = target.id;
 
+  // The conversation already stands on the summary this switch hung under its
+  // target: the switch is being asked for again and has nothing left to leave.
+  const active = lineage.entries.find((entry) => entry.id === lineage.activeEntryId);
+  if (options.summarizeCurrentBranch && active?.type === 'branch_summary' && active.parentId === target.id) {
+    return { version: 2, activeEntryId: active.id, entries };
+  }
+
   if (
     options.summarizeCurrentBranch
     && lineage.activeEntryId
@@ -895,6 +902,7 @@ export function applySessionCompaction(
     tokensAfter?: number;
     artifactLedgerId?: string;
     reason?: string;
+    requestId?: string;
     details?: KodaXJsonValue | CompactionDetails;
     memorySeed?: KodaXCompactMemorySeed;
   },
@@ -918,6 +926,7 @@ export function applySessionCompaction(
     tokensAfter: anchor.tokensAfter,
     artifactLedgerId: anchor.artifactLedgerId,
     reason: anchor.reason,
+    ...(anchor.requestId !== undefined ? { requestId: anchor.requestId } : {}),
     details: normalizeCompactionDetails(anchor.details),
     memorySeed: cloneMemorySeed(anchor.memorySeed),
     postCompactAttachments: postCompactAttachments.length > 0

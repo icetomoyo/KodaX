@@ -93,8 +93,7 @@ it('routes session label/rewind/fork/recover mutations through the Host', async 
     homeDir, sharedDaemonHost: true, defaultProvider: 't34-session-probe',
   });
   const binding = createCliSessionCommands(toKodaXProductClient(runtime));
-  const sessionId = 't34-cmds-session';
-  await binding.create({ sessionId, title: 'T34 cmds', surface: 'repl', projectPath: homeDir });
+  const sessionId = await binding.create({ title: 'T34 cmds', surface: 'repl', projectPath: homeDir });
 
   // Two committed turns give the lineage two switchable branches.
   for (const [inputId, text] of [['t1', 'First turn.'], ['t2', 'Second turn.']] as const) {

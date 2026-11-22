@@ -255,7 +255,7 @@ export function createExecutionFactsStore(configHome: string, owner: AgentActorO
       : JSON.parse(Buffer.from(options.cursor, 'base64url').toString('utf8')) as typeof cursor; }
     catch { throw Object.assign(new Error('Invalid fact cursor.'), { code: 'invalid_params' }); }
     if (!cursor || typeof cursor !== 'object') throw Object.assign(new Error('Invalid fact cursor.'), { code: 'invalid_params' });
-    if (cursor.epoch !== epoch) throw Object.assign(new Error('Fact cursor expired after projection recovery. Restart pagination.'), { code: 'conflict' });
+    if (cursor.epoch !== epoch) throw Object.assign(new Error('Fact cursor expired after projection recovery. Restart pagination.'), { code: 'conflict', data: { conflict: 'cursor_expired' } });
     if (!Number.isSafeInteger(cursor.offset) || cursor.offset < 0 || !Number.isSafeInteger(cursor.size)
       || cursor.size < cursor.offset || cursor.size > rows.length || cursor.sessionId !== facts.sessionId || cursor.kind !== kind) {
       throw Object.assign(new Error('Invalid fact cursor.'), { code: 'invalid_params' });

@@ -195,9 +195,9 @@ it('opens one independent side conversation and retains its own follow-up histor
   ]);
   expect(reopened.id).toBe(side.id);
   expect(side.id).not.toBe(parent.id);
-  const foreign = await second.sessions.openSide(parent.id);
-  expect(foreign.id).not.toBe(side.id);
-  await expect(second.sessions.read(side.id)).rejects.toThrow();
+  // Both local clients act for the person this Host belongs to, so the second one reaches the same side conversation.
+  expect((await second.sessions.openSide(parent.id)).id).toBe(side.id);
+  await expect(second.sessions.read(side.id)).resolves.toBeDefined();
   await runRound(side.id, 2);
   await runRound(side.id, 3);
   const thirdFrame = requests.find(messages => messages.at(-1)?.content === 'Ask round 3');
@@ -569,7 +569,7 @@ it('discards a preparing binding left by a crashed open even when it belongs to 
   await host.close();
   await runtime.close();
   const store = new SideChats(path.dirname(file), () => undefined);
-  const ghost = sideRequester.run('ghost', () => store.allocate(parent.id, 'ghost-branch', null));
+  const ghost = sideRequester.run({ principalId: 'ghost' }, () => store.allocate(parent.id, 'ghost-branch', null));
   const bindings = JSON.parse(await fs.readFile(file, 'utf8')) as unknown[];
   await fs.writeFile(file, JSON.stringify([...bindings, { ...ghost, preparing: true }]));
   await openHost();

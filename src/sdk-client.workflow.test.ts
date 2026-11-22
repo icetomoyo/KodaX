@@ -86,6 +86,9 @@ it.each([false, true])('shares workflow facts and control with an older summary=
     expect(await runtime.workflows.list({ runId })).toEqual([
       expect.objectContaining({ runId, runDir: expect.stringContaining(path.join('workflow-runs')) }),
     ]);
+    // A Session lists only the workflows it started.
+    expect((await runtime.workflows.list({ sessionId: session.id })).map(run => run.runId)).toEqual([runId]);
+    expect(await runtime.workflows.list({ sessionId: foreignSession.id })).toEqual([]);
 
     // Client B sees the same work through its own connection.
     await expect.poll(async () =>
@@ -146,6 +149,7 @@ it.each([false, true])('shares workflow facts and control with an older summary=
     const runTerminal = await runtime.runs.await(runId);
     await expectSummaryFacts();
     expect(['completed', 'interrupted']).toContain(runTerminal.phase);
+    expect(await runtime.workflows.list({ runId, activeOnly: true })).toEqual([]);
     expect(await first.workflows.resume(runId)).toBe(false);
     expect((await runtime.runs.get(runId)).phase).toBe(runTerminal.phase);
     if (olderSummary) {
@@ -153,6 +157,11 @@ it.each([false, true])('shares workflow facts and control with an older summary=
       await expect(first.workflows.list({ runId })).rejects.toThrow('Workflow process is unavailable');
       get.mockRestore();
     }
+
+    // An input id names a start within a Session only.
+    await expect(runtime.workflows.start({
+      projectRoot: homeDir, inputId: 'start-1', source: { kind: 'name', name: 'definitely-not-a-workflow' },
+    })).rejects.toThrow('only within a Session');
 
     // Validation settles the admitted Run even when no Workflow manager starts.
     await expect(first.workflows.start({

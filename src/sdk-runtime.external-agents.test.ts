@@ -303,7 +303,7 @@ describe('FEATURE_258 Host core and connected agent services', () => {
     await expect(runtime.agents.output(session.id, '/root/missing', failed.turnId)).resolves.toMatchObject({
       state: 'failed', error: expect.stringMatching(/only supports external actors|not attached|not bound/i),
     });
-    const dispatcher = createRuntimeDaemonDispatcher({ runtime });
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime });
     const initialized = await dispatcher.handle(createRuntimeDaemonRequest(
       'disabled-init',
       'initialize',
@@ -332,6 +332,7 @@ describe('FEATURE_258 Host core and connected agent services', () => {
       externalAgents: externalAgentOptions(),
     });
     const dispatcher = createRuntimeDaemonDispatcher({
+      role: 'owner',
       runtime: host,
       allowAgentRegistrationAdmin: true,
     });

@@ -418,6 +418,22 @@ describe('session lineage helpers', () => {
     expect(rewound!.entries.filter((entry) => entry.type === 'branch_summary')).toHaveLength(0);
   });
 
+  it('summarizes the branch it leaves once when the same switch is asked for again', () => {
+    const initial = createSessionLineage([
+      createTextMessage('user', 'root request'),
+      createTextMessage('assistant', 'first implementation pass'),
+    ]);
+    const target = initial.entries[0]!.id;
+
+    const switched = setSessionLineageActiveEntry(initial, target, { summarizeCurrentBranch: true })!;
+    const again = setSessionLineageActiveEntry(switched, target, { summarizeCurrentBranch: true })!;
+
+    expect(again.activeEntryId).toBe(switched.activeEntryId);
+    expect(again.entries).toEqual(switched.entries);
+    // Without a summary the same target is a different place: the summary is left behind.
+    expect(setSessionLineageActiveEntry(switched, target)!.activeEntryId).toBe(target);
+  });
+
   it('returns null or undefined for missing selectors', () => {
     const lineage = createSessionLineage([
       createTextMessage('user', 'root request'),

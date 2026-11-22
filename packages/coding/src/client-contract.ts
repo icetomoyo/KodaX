@@ -38,6 +38,7 @@ import type {
 } from './client-domains.js';
 export type * from './client-domains.js';
 export type * from './execution-profile-contract.js';
+import type { KodaXAgentProfile, KodaXPromptSpec } from './execution-profile-contract.js';
 
 /** Actual execution Host cache facts; inspection never initializes a project. */
 export interface ClientRepoIntelligenceStatus {
@@ -114,6 +115,23 @@ export interface ClientSession {
   readonly createdAt?: string;
   /** Latest genuine conversation message time; falls back to createdAt for legacy lists. */
   readonly lastMessageAt?: string;
+  /** Present on a read of a Session whose creator set one. */
+  readonly policy?: ClientSessionPolicy;
+  /** Present only while the Session is quarantined and refuses new Runs. */
+  readonly recovery?: ClientSessionRecovery;
+}
+
+/**
+ * A quarantined Session heals in the background and leaves quarantine by
+ * itself. `stalled` means the repair has run past its time limit; it still
+ * retries, but a person may need to look at the Session's storage.
+ */
+export interface ClientSessionRecovery {
+  readonly state: 'recovering' | 'stalled';
+  /** When the Session entered quarantine. */
+  readonly since: string;
+  /** Why it entered quarantine. */
+  readonly code: 'actor_settlement_not_persisted';
 }
 
 export interface ClientSessionSummary extends ClientSession {
@@ -897,12 +915,59 @@ export interface ClientViewItem {
   };
 }
 
+/**
+ * What the creator of a Session fixes for every Run of it, whoever submits the
+ * Run. A Run can narrow each of these and widen none.
+ */
+export interface ClientSessionPolicy {
+  /** The only tools a Run may use, by name. Absent leaves the Host's own limit. */
+  readonly tools?: readonly string[];
+  readonly budget?: {
+    /** The most model turns one Run may take. */
+    readonly maxIter?: number;
+    /** The longest one Run may work, in milliseconds. The Host stops a Run that reaches it. */
+    readonly maxDurationMs?: number;
+  };
+  /** Who the model is in this Session. A persona carries no verification contract here. */
+  readonly agentProfile?: Omit<KodaXAgentProfile, 'verification'>;
+  /** Application rules and references every Run starts with. A Run adds its own after them. */
+  readonly prompt?: KodaXPromptSpec;
+  /**
+   * Whether a Run puts its questions and approval requests to a person.
+   * `reject` answers them at once: a question goes unanswered and a tool call
+   * that needs approval is not run. Absent is `wait`.
+   */
+  readonly interactions?: 'wait' | 'reject';
+}
+
+/**
+ * What a submitter asks for one Run: limits of its own, and application prompt
+ * entries added after those of the Session. It can only narrow what the
+ * Session policy allows.
+ */
+export type ClientRunOptions = Pick<ClientSessionPolicy, 'budget' | 'prompt'>;
+
 export interface ClientCreateSessionInput {
+  /** Fixed at creation and kept by a fork. Only a trusted creator may send it. */
+  readonly policy?: ClientSessionPolicy;
+  /**
+   * The name of an Agent installed in the Host home. The Session is created
+   * as that Agent: its instructions and tools are copied into the policy, and
+   * the Session starts on its model. Not to be sent with `policy.agentProfile`.
+   */
+  readonly agent?: string;
   /** Keep a new Session in memory until its first accepted user input is saved. */
   readonly draft?: boolean;
   readonly mcpServers?: Readonly<Record<string, ClientMcpServerConfig>>;
   /** Delete this Session when its task ends, including after the client detaches. */
   readonly temporary?: boolean;
+  /**
+   * Makes creation safe to retry: sending the same request again returns the
+   * Session the first one created, also after a Host restart. A different
+   * request under the same requestId is a conflict. The Host picks the Session
+   * id, so it cannot be combined with `sessionId`.
+   */
+  readonly requestId?: string;
   readonly sessionId?: string;
   readonly title?: string;
   readonly projectPath?: string;
@@ -926,6 +991,12 @@ export interface ClientSubmitInput {
    * inputId with a different artifact set is a conflict.
    */
   readonly inputArtifacts?: readonly KodaXInputArtifact[];
+  /**
+   * An input that carries these starts a Run of its own: it is not merged with
+   * other queued inputs, and it cannot steer a Run that already has its limits.
+   * Part of the input's intent, as its artifacts are.
+   */
+  readonly runOptions?: ClientRunOptions;
 }
 
 /** Identity of an accepted input in the current Host, not a completion receipt. */

@@ -160,13 +160,14 @@ it.each([false, true])('withdraws an undelivered steer with image=%s before the 
     ...(withImage ? { inputArtifacts: [{ kind: 'image' as const, path: imagePath, mediaType: 'image/png' as const }] } : {}),
   };
   expect(await first.inputs.submit(steer)).toMatchObject({ state: 'queued', runId: active.runId });
-  await expect(second.inputs.withdraw(session.id, steer.inputId)).rejects.toMatchObject({ code: 'permission_denied' });
-  expect(await first.inputs.withdraw(session.id, steer.inputId)).toEqual(steer);
+  // Both clients are the one person this Host belongs to, so either may take the steer back.
+  expect(await second.inputs.withdraw(session.id, steer.inputId)).toEqual(steer);
   expect(await first.inputs.withdraw(session.id, steer.inputId)).toEqual(steer);
   expect(await first.inputs.read(session.id, steer.inputId)).toMatchObject({ state: 'withdrawn' });
   expect((await runtime.runs.get(active.runId!)).interruptInputs).toMatchObject([{ inputId: steer.inputId, state: 'terminal' }]);
   const kept = { sessionId: session.id, inputId: 'steer-kept', text: 'Kept guidance.', delivery: 'steer' as const, targetRunId: active.runId! };
-  await first.inputs.submit(kept);
+  // The same person steers their Run from another client.
+  expect(await second.inputs.submit(kept)).toMatchObject({ state: 'queued', runId: active.runId });
   release();
   await runtime.runs.await(active.runId!);
   await expect.poll(async () => (await first.inputs.read(session.id, kept.inputId))?.state).toBe('submitted');

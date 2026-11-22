@@ -29,11 +29,41 @@ const SESSION_VIEW_ITEM_LIMIT = 150;
 /** Each checkpoint reads the whole Session before saving its display history, so a busy Run saves at most this often. */
 const CHECKPOINT_SPACING_MS = 500;
 
-const STREAMING_RUN_PHASES = new Set(['queued', 'running', 'recovering', 'waiting_agent', 'waiting_permission', 'waiting_user_input']);
+/**
+ * A text longer than this is shown as its end. With the input cap it keeps the
+ * fullest view inside one frame even when every unit of text is escaped in JSON.
+ */
+const ITEM_TEXT_UNITS = 6144;
+/**
+ * A cut text starts on a multiple of this. While the text grows its start
+ * moves seldom, so what it gains in between reaches a client as an append.
+ */
+const ITEM_TEXT_STEP = ITEM_TEXT_UNITS / 2;
+/** A tool input longer than this is shown as its start. */
+const ITEM_INPUT_UNITS = 2048;
+
+/** Run phases in which a Run may still add to what the view shows. */
+export const STREAMING_RUN_PHASES: ReadonlySet<string> = new Set(['queued', 'running', 'recovering', 'waiting_agent', 'waiting_permission', 'waiting_user_input']);
+
+/** `bounds: 'item'` asks for views of the `ItemBoundedSessionView` kind. */
+export interface SessionViewObserveOptions extends ClientObserveOptions {
+  readonly bounds?: 'item';
+}
+
+/**
+ * A view whose items are each bounded on their own: how an item reads depends
+ * on that item alone, so one that did not change is the same in the next view.
+ * `epoch` changes when the items were rebuilt, so that nothing kept from an
+ * earlier view is known to still be part of the conversation.
+ */
+export type ItemBoundedSessionView = ClientSessionView & { readonly epoch: string };
 
 interface ObservedSession {
   committedOutputIds: ReadonlySet<string>;
   view?: ClientSessionView;
+  /** Every item of `view` before bounding. */
+  viewItems?: readonly ClientViewItem[];
+  epoch: string;
   loading?: Promise<void>;
   timer?: ReturnType<typeof setTimeout>;
   dirty: boolean;
@@ -81,6 +111,27 @@ function outputItemId(sessionId: string, outputId: string, kind: string, ordinal
   return `${sessionId}:output:${outputId}:${kind}:${ordinal}`;
 }
 
+/**
+ * The ids the view gives saved messages, for items read from a history page,
+ * so a client can merge the two by id. A page holds whole entries, so counting
+ * kinds within the page counts them within each answer. Task results and
+ * entries saved without an input or output identity keep the id they came with:
+ * the view numbers those across the whole conversation, which a page cannot see.
+ */
+export function stableHistoryItemIds(sessionId: string, items: readonly ClientViewItem[]): string[] {
+  const ordinals = new Map<string, number>();
+  return items.map((item) => {
+    if (item.taskResult) return item.id;
+    if (item.type === 'user' && item.inputId !== undefined) return `${sessionId}:input:${item.inputId}`;
+    if (item.tool?.assistantOutputId) return outputItemId(sessionId, item.tool.assistantOutputId, `tool:${item.tool.callId}`);
+    if (!item.outputId || (item.type !== 'assistant' && item.type !== 'thinking')) return item.id;
+    const key = `${item.outputId}:${item.type}`;
+    const ordinal = ordinals.get(key) ?? 0;
+    ordinals.set(key, ordinal + 1);
+    return outputItemId(sessionId, item.outputId, item.type, ordinal);
+  });
+}
+
 function revisedTextVersion(previous: ClientViewItem | undefined, text: string): number {
   return (previous?.textRevision ?? 0) + (previous && !text.startsWith(previous.text) ? 1 : 0);
 }
@@ -103,6 +154,7 @@ export class SessionViewOwner {
   private readonly pendingReads = new Set<Promise<unknown>>();
   private closing = false;
   private closeAttempt?: Promise<void>;
+  private readonly itemBounded = new WeakSet<(view: ClientSessionView) => void>();
 
   constructor(
     private readonly read: (sessionId: string, includeHistory: boolean, previous: ClientSessionView | undefined,
@@ -119,7 +171,7 @@ export class SessionViewOwner {
     this.assertOpen();
     let state = this.sessions.get(sessionId);
     if (!state) {
-      state = { committedOutputIds: new Set(), dirty: true, historyDirty: true, generation: 0, listeners: new Map(), items: [], history: [], segments: new Map(), runIds: new Set(), runFailures: new Map(), checkpointsRequested: 0, checkpointsSaved: 0, flushWaiters: new Set(), hasPersistFailure: false };
+      state = { epoch: randomUUID(), committedOutputIds: new Set(), dirty: true, historyDirty: true, generation: 0, listeners: new Map(), items: [], history: [], segments: new Map(), runIds: new Set(), runFailures: new Map(), checkpointsRequested: 0, checkpointsSaved: 0, flushWaiters: new Set(), hasPersistFailure: false };
       this.sessions.set(sessionId, state);
     }
     return state;
@@ -420,16 +472,19 @@ export class SessionViewOwner {
     state.activityRunId = undefined;
     state.costReport = undefined;
     state.view = undefined;
+    state.viewItems = undefined;
+    state.epoch = randomUUID();
     this.changed(sessionId, true);
   }
 
-  async observe(sessionId: string, listener: (view: ClientSessionView) => void, options: ClientObserveOptions = {}): Promise<ClientObservation> {
+  async observe(sessionId: string, listener: (view: ClientSessionView) => void, options: SessionViewObserveOptions = {}): Promise<ClientObservation> {
     const state = this.state(sessionId);
     await this.refresh(sessionId, state);
     this.assertOpen();
     if (!state.view) throw new Error('Session view was not available.');
+    if (options.bounds === 'item') this.itemBounded.add(listener);
     // No await separates registering from capturing the latest state.
-    listener(structuredClone(state.view));
+    listener(structuredClone(this.itemBounded.has(listener) ? itemBoundedView(state) : state.view));
     this.assertOpen();
     let lastState: ClientObservationStatus['state'] | undefined;
     const report = (status: ClientObservationStatus): void => {
@@ -482,6 +537,17 @@ export class SessionViewOwner {
   historyItem(sessionId: string, itemId: string): ClientViewItem | undefined {
     this.assertOpen();
     return this.sessions.get(sessionId)?.view?.items.find(item => item.id === itemId);
+  }
+
+  /** A shown item, or a committed one no view holds right now, read back from the saved conversation. */
+  async committedItem(sessionId: string, itemId: string): Promise<ClientViewItem | undefined> {
+    const shown = this.historyItem(sessionId, itemId);
+    if (shown || !this.readCommittedItem) return shown;
+    const reading = this.readCommittedItem(sessionId, itemId);
+    this.pendingReads.add(reading);
+    const retire = () => { this.pendingReads.delete(reading); };
+    void reading.then(retire, retire);
+    return await reading ?? undefined;
   }
 
   close(): Promise<void> {
@@ -615,10 +681,13 @@ export class SessionViewOwner {
         }
       }
       const { committedOutputIds: _committed, sideReceipts, ...publicView } = view;
+      state.viewItems = [...items, ...(sideReceipts ?? []).slice(-8)];
       state.view = { ...publicView, ...(state.activity ? { activity: { ...state.activity, ...(costReport ? { costReport } : {}) } } : {}),
-        ...(state.sandbox ? { sandbox: state.sandbox } : {}), items: boundedViewItems([...items, ...(sideReceipts ?? []).slice(-8)]) };
+        ...(state.sandbox ? { sandbox: state.sandbox } : {}), items: boundedViewItems(state.viewItems) };
+      let itemBounded: ItemBoundedSessionView | undefined;
       for (const [listener, report] of state.listeners) {
-        try { listener(structuredClone(state.view)); report({ state: 'live' }); }
+        const view = this.itemBounded.has(listener) ? (itemBounded ??= itemBoundedView(state)) : state.view;
+        try { listener(structuredClone(view)); report({ state: 'live' }); }
         catch (error: unknown) {
           state.listeners.delete(listener);
           report({ state: 'closed', reason: 'unavailable' });
@@ -793,6 +862,30 @@ function boundedViewItems(items: readonly ClientViewItem[]): ClientViewItem[] {
         ...(input !== undefined && inputText?.length !== input.length ? { totalInputLength: input.length } : {}) } } : {}) });
   }
   return result.reverse();
+}
+
+function itemBoundedView(state: ObservedSession): ItemBoundedSessionView {
+  if (!state.view) throw new Error('Session view was not available.');
+  return { ...state.view, items: itemBoundedViewItems(state.viewItems ?? []), epoch: state.epoch };
+}
+
+function itemBoundedViewItems(items: readonly ClientViewItem[]): ClientViewItem[] {
+  return items.slice(-SESSION_VIEW_ITEM_LIMIT).map(boundViewItem);
+}
+
+/** One item cut to what a view sends of it: the end of a long text, the start of a long tool input. */
+export function boundViewItem(item: ClientViewItem): ClientViewItem {
+  const excess = item.text.length - ITEM_TEXT_UNITS;
+  let offset = excess > 0 ? Math.ceil(excess / ITEM_TEXT_STEP) * ITEM_TEXT_STEP : 0;
+  if (offset > 0 && /[\uDC00-\uDFFF]/u.test(item.text.charAt(offset))) offset += 1;
+  const input = item.tool?.inputText;
+  let inputEnd = input !== undefined && input.length > ITEM_INPUT_UNITS ? ITEM_INPUT_UNITS : undefined;
+  if (inputEnd !== undefined && /[\uD800-\uDBFF]/u.test(input!.charAt(inputEnd - 1))) inputEnd -= 1;
+  if (offset === 0 && inputEnd === undefined) return item;
+  return { ...item,
+    ...(offset > 0 ? { text: item.text.slice(offset), textOffset: offset, totalTextLength: item.text.length } : {}),
+    ...(item.tool && inputEnd !== undefined
+      ? { tool: { ...item.tool, inputText: input!.slice(0, inputEnd), totalInputLength: input!.length } } : {}) };
 }
 
 function restorePersistedViewItems(history: readonly KodaXSessionUiHistoryItem[] | undefined): ClientViewItem[] {

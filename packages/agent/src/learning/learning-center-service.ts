@@ -556,7 +556,7 @@ function assertExplicitAuthority(
       && (current.schemaVersion !== 2
         || current.artifact.fingerprint !== authority.expectedFingerprint))) {
     throw new LearningCapabilityError(
-      'invalid_record',
+      'revision_conflict',
       'explicit user action expected revision or fingerprint changed',
     );
   }

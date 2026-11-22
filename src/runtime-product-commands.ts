@@ -19,6 +19,12 @@ export interface RuntimeCommandContext {
   readonly workingDirectory: string;
 }
 
+/**
+ * How many answers a Host keeps to recognise a command that is sent again. A
+ * repeat follows its original within moments, so the oldest are let go.
+ */
+const KEPT_ANSWERS = 256;
+
 /** Host executes trusted handlers; the client receives only their concrete result. */
 export function createRuntimeProductCommandService(deps: {
   readonly extensionRuntime: KodaXExtensionRuntime;
@@ -29,9 +35,118 @@ export function createRuntimeProductCommandService(deps: {
   readonly startToolInvocation: (input: ClientCommandInput, invocation: {
     readonly name: string; readonly input: Record<string, unknown>;
   }) => Promise<{ readonly runId: string }>;
+  /** The Run the Session started for this input id, if any. Runs are saved, so this outlives the Host process. */
+  readonly startedRun: (sessionId: string, inputId: string) => Promise<string | undefined>;
+  /**
+   * The same, when what was typed for that input id is `text`; a conflict when it was something else.
+   * It reads the saved Run, so a Host that restarted still recognises the input.
+   */
+  readonly acceptedRun: (input: { readonly sessionId: string; readonly inputId: string; readonly text: string }) => Promise<string | undefined>;
   readonly withSession: <T>(sessionId: string, read: (context: RuntimeCommandContext) => Promise<T>) => Promise<T>;
   readonly withIdleSession: <T>(sessionId: string, execute: (context: RuntimeCommandContext) => Promise<T>) => Promise<T>;
 }): RuntimeProductCommandService {
+  // What each command answered, by Session and input id. A command the Host finishes itself leaves no Run to recognise
+  // a repeat by, so its answer is kept here, for as long as this Host runs.
+  const answers = new Map<string, { readonly intent: string; readonly answer: Promise<ClientCommandResult> }>();
+
+  /** Answers an input sent again with its first answer, and refuses another intent under its id. */
+  const once = (
+    input: { readonly sessionId: string; readonly inputId: string },
+    intent: string,
+    first: () => Promise<ClientCommandResult>,
+  ): Promise<ClientCommandResult> => {
+    const key = JSON.stringify([input.sessionId, input.inputId]);
+    const before = answers.get(key);
+    if (before !== undefined) {
+      if (before.intent !== intent) {
+        return Promise.reject(Object.assign(new Error('Input ID already belongs to a different intent.'), { code: 'conflict', currentRevision: 0 }));
+      }
+      return before.answer;
+    }
+    const answer = first();
+    answers.set(key, { intent, answer });
+    if (answers.size > KEPT_ANSWERS) answers.delete(answers.keys().next().value!);
+    // An input that failed answered nothing to keep: its id is free to be tried again.
+    answer.catch(() => { if (answers.get(key)?.answer === answer) answers.delete(key); });
+    return answer;
+  };
+
+  /**
+   * A review whose Run a Host started before it restarted is answered with that Run. Preparing it again would
+   * capture the changes as they are now, which may be none.
+   */
+  const startOnIdle = async (
+    input: { readonly sessionId: string; readonly inputId: string },
+    text: string,
+    start: (context: RuntimeCommandContext) => Promise<ClientCommandResult>,
+  ): Promise<ClientCommandResult> => {
+    const runId = await deps.acceptedRun({ sessionId: input.sessionId, inputId: input.inputId, text });
+    return runId !== undefined ? { kind: 'started', runId } : deps.withIdleSession(input.sessionId, start);
+  };
+
+  const execute = async (input: ClientCommandInput): Promise<ClientCommandResult> => {
+    const helpRequested = ['help', '--help', '-h'].includes(input.args?.[0]?.trim().toLowerCase() ?? '');
+    // A command whose Run exists is being sent again: it is answered with that Run, whatever the Session is doing now.
+    const startedRun = await deps.startedRun(input.sessionId, input.inputId);
+    const withSession = helpRequested || startedRun !== undefined ? deps.withSession : deps.withIdleSession;
+    return withSession(input.sessionId, async (context): Promise<ClientCommandResult> => {
+      const prompt = await deps.prepareCommand({ projectRoot: context.projectRoot, name: input.name });
+      if (prompt.kind === 'prepared') {
+        if (prompt.invocation.userInvocable === false) throw new Error(`Command is not user-invocable: ${input.name}`);
+        if (helpRequested) {
+          const description = prompt.invocation.frontmatter?.description;
+          return { kind: 'completed', success: true, message: [
+            `/${prompt.invocation.displayName}`,
+            typeof description === 'string' ? description : undefined,
+            `Usage: /${input.name}${prompt.invocation.argumentHint ? ` ${prompt.invocation.argumentHint}` : ''}`,
+          ].filter(Boolean).join('\n\n') };
+        }
+        const started = await deps.startInvocation(input, prompt.invocation);
+        return { kind: 'started', runId: started.runId };
+      }
+      const command = deps.extensionRuntime.getCommand(input.name);
+      if (!command || command.metadata?.userInvocable === false) {
+        throw Object.assign(new Error(`Registered command is unavailable: ${input.name}`), { code: 'not_found' });
+      }
+      if (helpRequested) return { kind: 'completed', success: true, message: [
+        `/${command.name}`,
+        command.aliases?.length ? `Aliases: ${command.aliases.join(', ')}` : undefined,
+        command.description,
+        `Usage: ${command.usage ?? `/${command.name}`}`,
+      ].filter(Boolean).join('\n\n') };
+      if (command.execution !== 'configuration') {
+        const started = await deps.startToolInvocation(input, {
+          name: `extension_command__${command.name}`, input: { args: [...(input.args ?? [])] },
+        });
+        return { kind: 'started', runId: started.runId };
+      }
+      // The handler ran when the command was first sent and its Run is the one found: it does not run twice.
+      if (startedRun !== undefined) return { kind: 'started', runId: startedRun };
+      const log = (level: 'debug' | 'info' | 'warn' | 'error', parts: unknown[]) => emitKodaXDiagnostic({
+        source: `host:command:${command.name}`, level,
+        message: parts.map((part) => typeof part === 'string' ? part : String(part)).join(' '),
+      });
+      const result = await command.handler([...(input.args ?? [])], {
+        sessionId: input.sessionId, gitRoot: context.projectRoot, workingDirectory: context.workingDirectory,
+        reloadExtensions: () => deps.extensionRuntime.reloadExtensions(),
+        getDiagnostics: () => deps.extensionRuntime.getDiagnostics(),
+        logger: {
+          debug: (...parts) => log('debug', parts), info: (...parts) => log('info', parts),
+          warn: (...parts) => log('warn', parts), error: (...parts) => log('error', parts),
+        },
+      });
+      if (result?.invocation) {
+        const started = await deps.startInvocation(input, {
+          ...result.invocation, source: 'extension', displayName: result.invocation.displayName ?? command.name,
+        });
+        return { kind: 'started', runId: started.runId,
+          ...(result.message !== undefined ? { message: result.message } : {}) };
+      }
+      return { kind: 'completed', success: result?.success !== false,
+        ...(result?.message !== undefined ? { message: result.message } : {}) };
+    });
+  };
+
   return {
     readCommandPrompt: (input) => deps.withSession(input.sessionId, async (context) => {
       const prepared = await deps.prepareCommand({ projectRoot: context.projectRoot, name: input.name });
@@ -39,77 +154,23 @@ export function createRuntimeProductCommandService(deps: {
       return { title: prepared.invocation.displayName,
         text: [prepared.invocation.prompt, input.args?.join(' ')].filter(Boolean).join('\n\n') };
     }),
-    startReview: (input) => deps.withIdleSession(input.sessionId, async (context): Promise<ClientCommandResult> => {
-      const prepared = await deps.reviewPreparation.prepareReview({ projectRoot: context.projectRoot, sessionId: input.sessionId, args: input.args ?? [] });
-      if (prepared.kind === 'empty') return { kind: 'completed', success: true, message: 'No changes to review.' };
-      if (prepared.kind === 'error') return { kind: 'completed', success: false, message: prepared.message };
-      if (prepared.kind === 'workflow') return deps.startReviewWorkflow(input, context.projectRoot, prepared.workflow);
-      const started = await deps.startInvocation({ ...input, name: 'review' }, prepared.invocation);
-      return { kind: 'started', runId: started.runId };
-    }),
-    startAgentsLean: (input) => deps.withIdleSession(input.sessionId, async (context): Promise<ClientCommandResult> => {
-      const prepared = await deps.reviewPreparation.prepareAgentsLean({ projectRoot: context.projectRoot });
-      if (prepared.kind === 'missing') return { kind: 'completed', success: false, message: 'AGENTS.md does not exist. Initialize it before running /agents lean.' };
-      const started = await deps.startInvocation({ ...input, name: 'agents', args: ['lean'] }, prepared.invocation);
-      return { kind: 'started', runId: started.runId };
-    }),
-    async executeCommand(input) {
-      const helpRequested = ['help', '--help', '-h'].includes(input.args?.[0]?.trim().toLowerCase() ?? '');
-      const withSession = helpRequested ? deps.withSession : deps.withIdleSession;
-      return withSession(input.sessionId, async (context): Promise<ClientCommandResult> => {
-        const prompt = await deps.prepareCommand({ projectRoot: context.projectRoot, name: input.name });
-        if (prompt.kind === 'prepared') {
-          if (prompt.invocation.userInvocable === false) throw new Error(`Command is not user-invocable: ${input.name}`);
-          if (helpRequested) {
-            const description = prompt.invocation.frontmatter?.description;
-            return { kind: 'completed', success: true, message: [
-              `/${prompt.invocation.displayName}`,
-              typeof description === 'string' ? description : undefined,
-              `Usage: /${input.name}${prompt.invocation.argumentHint ? ` ${prompt.invocation.argumentHint}` : ''}`,
-            ].filter(Boolean).join('\n\n') };
-          }
-          const started = await deps.startInvocation(input, prompt.invocation);
-          return { kind: 'started', runId: started.runId };
-        }
-        const command = deps.extensionRuntime.getCommand(input.name);
-        if (!command || command.metadata?.userInvocable === false) {
-          throw Object.assign(new Error(`Registered command is unavailable: ${input.name}`), { code: 'not_found' });
-        }
-        if (helpRequested) return { kind: 'completed', success: true, message: [
-          `/${command.name}`,
-          command.aliases?.length ? `Aliases: ${command.aliases.join(', ')}` : undefined,
-          command.description,
-          `Usage: ${command.usage ?? `/${command.name}`}`,
-        ].filter(Boolean).join('\n\n') };
-        if (command.execution !== 'configuration') {
-          const started = await deps.startToolInvocation(input, {
-            name: `extension_command__${command.name}`, input: { args: [...(input.args ?? [])] },
-          });
-          return { kind: 'started', runId: started.runId };
-        }
-        const log = (level: 'debug' | 'info' | 'warn' | 'error', parts: unknown[]) => emitKodaXDiagnostic({
-          source: `host:command:${command.name}`, level,
-          message: parts.map((part) => typeof part === 'string' ? part : String(part)).join(' '),
-        });
-        const result = await command.handler([...(input.args ?? [])], {
-          sessionId: input.sessionId, gitRoot: context.projectRoot, workingDirectory: context.workingDirectory,
-          reloadExtensions: () => deps.extensionRuntime.reloadExtensions(),
-          getDiagnostics: () => deps.extensionRuntime.getDiagnostics(),
-          logger: {
-            debug: (...parts) => log('debug', parts), info: (...parts) => log('info', parts),
-            warn: (...parts) => log('warn', parts), error: (...parts) => log('error', parts),
-          },
-        });
-        if (result?.invocation) {
-          const started = await deps.startInvocation(input, {
-            ...result.invocation, source: 'extension', displayName: result.invocation.displayName ?? command.name,
-          });
-          return { kind: 'started', runId: started.runId,
-            ...(result.message !== undefined ? { message: result.message } : {}) };
-        }
-        return { kind: 'completed', success: result?.success !== false,
-          ...(result?.message !== undefined ? { message: result.message } : {}) };
-      });
-    },
+    // A review's Run is named by what was typed, as the Session's history shows it.
+    startReview: (input) => once(input, JSON.stringify(['/review', input.args ?? []]), () => startOnIdle(
+      input, ['/review', ...(input.args ?? [])].join(' '), async (context): Promise<ClientCommandResult> => {
+        const prepared = await deps.reviewPreparation.prepareReview({ projectRoot: context.projectRoot, sessionId: input.sessionId, args: input.args ?? [] });
+        if (prepared.kind === 'empty') return { kind: 'completed', success: true, message: 'No changes to review.' };
+        if (prepared.kind === 'error') return { kind: 'completed', success: false, message: prepared.message };
+        if (prepared.kind === 'workflow') return deps.startReviewWorkflow(input, context.projectRoot, prepared.workflow);
+        const started = await deps.startInvocation({ ...input, name: 'review' }, prepared.invocation);
+        return { kind: 'started', runId: started.runId };
+      })),
+    startAgentsLean: (input) => once(input, JSON.stringify(['/agents lean']), () => startOnIdle(
+      input, '/agents lean', async (context): Promise<ClientCommandResult> => {
+        const prepared = await deps.reviewPreparation.prepareAgentsLean({ projectRoot: context.projectRoot });
+        if (prepared.kind === 'missing') return { kind: 'completed', success: false, message: 'AGENTS.md does not exist. Initialize it before running /agents lean.' };
+        const started = await deps.startInvocation({ ...input, name: 'agents', args: ['lean'] }, prepared.invocation);
+        return { kind: 'started', runId: started.runId };
+      })),
+    executeCommand: (input) => once(input, JSON.stringify([input.name, input.args ?? []]), () => execute(input)),
   };
 }

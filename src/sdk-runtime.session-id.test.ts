@@ -33,3 +33,25 @@ it.each(['../escape', 'a.b', 'CON'])('rejects forking into a session named %j', 
   const source = await runtime.sessions.create({ projectPath: homeDir });
   await expect(runtime.sessions.fork({ sessionId: source.id, newSessionId })).rejects.toMatchObject({ code: 'invalid_params' });
 });
+
+it('refuses to fork into a Session that already exists, and leaves it as it was', async () => {
+  const source = await runtime.sessions.create({ projectPath: homeDir });
+  const other = await runtime.sessions.create({ projectPath: homeDir, title: 'Kept' });
+  await expect(runtime.sessions.fork({ sessionId: source.id, newSessionId: other.id })).rejects.toMatchObject({ code: 'conflict' });
+  expect(await runtime.sessions.load(other.id)).toMatchObject({ title: 'Kept' });
+});
+
+it('forks once for a request that is sent again', async () => {
+  const source = await runtime.sessions.create({ projectPath: homeDir, requestId: 'create-1' });
+  const fork = await runtime.sessions.fork({ sessionId: source.id, requestId: 'fork-1' });
+  expect(fork!.id).not.toBe(source.id);
+  expect(await runtime.sessions.fork({ sessionId: source.id, requestId: 'fork-1' })).toMatchObject({ id: fork!.id });
+  await expect(runtime.sessions.fork({ sessionId: source.id, requestId: 'fork-1', title: 'Another' }))
+    .rejects.toMatchObject({ code: 'conflict' });
+  // The request chooses the id of the fork, so it cannot name one as well.
+  await expect(runtime.sessions.fork({ sessionId: source.id, requestId: 'fork-2', newSessionId: 'chosen' }))
+    .rejects.toMatchObject({ code: 'invalid_params' });
+  // A fork is not the Session its source's request created.
+  expect(await runtime.sessions.create({ projectPath: homeDir, requestId: 'create-1' })).toMatchObject({ id: source.id });
+  expect((await runtime.sessions.list()).map(session => session.id).sort()).toEqual([source.id, fork!.id].sort());
+});

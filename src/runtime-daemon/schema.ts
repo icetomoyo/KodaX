@@ -200,7 +200,8 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
     result: objectAnySchema,
   },
   'session.view.observe': {
-    params: objectSchema({ sessionId: stringSchema, subscriptionId: stringSchema }, ['sessionId', 'subscriptionId']),
+    params: objectSchema({ sessionId: stringSchema, subscriptionId: stringSchema, bounds: { type: 'string', enum: ['item'] } },
+      ['sessionId', 'subscriptionId']),
     result: objectAnySchema,
   },
   'session.view.close': {
@@ -270,7 +271,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
   'session.side.open': { params: objectSchema({ sessionId: stringSchema }, ['sessionId']), result: sessionSchema() },
   'session.fork': { params: forkSessionParamsSchema(), result: nullableSchema(sessionSchema()) },
   'session.recover': {
-    params: objectSchema({ sessionId: stringSchema, title: stringSchema, reason: stringSchema }, ['sessionId']),
+    params: objectSchema({ sessionId: stringSchema, title: stringSchema, reason: stringSchema, requestId: stringSchema }, ['sessionId']),
     result: sessionSchema(),
   },
   'session.goal.get': { params: objectSchema({ sessionId: stringSchema }, ['sessionId']), result: nullOrObjectSchema },
@@ -291,6 +292,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
       sessionId: stringSchema,
       content: stringSchema,
       source: stringSchema,
+      requestId: stringSchema,
     }, ['sessionId', 'content']),
     result: nullOrObjectSchema,
   },
@@ -356,7 +358,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
   },
 
   'input.submit': {
-    params: objectSchema({ authorization: executionAuthorizationSchema(), sessionId: stringSchema, inputId: stringSchema, text: stringSchema, targetRunId: stringSchema, delivery: { type: 'string', enum: ['immediate', 'after_turn', 'steer', 'redirect'] }, inputArtifacts: arraySchema(objectSchema({ kind: { type: 'string', enum: ['image', 'file', 'video'] }, path: stringSchema, mediaType: stringSchema, mimeType: stringSchema, name: stringSchema, source: { type: 'string', enum: ['user-inline', 'clipboard', 'drag-drop', 'file-picker'] }, description: stringSchema }, ['kind', 'path'])) }, ['sessionId', 'inputId', 'text']),
+    params: objectSchema({ authorization: executionAuthorizationSchema(), sessionId: stringSchema, inputId: stringSchema, text: stringSchema, targetRunId: stringSchema, delivery: { type: 'string', enum: ['immediate', 'after_turn', 'steer', 'redirect'] }, inputArtifacts: arraySchema(objectSchema({ kind: { type: 'string', enum: ['image', 'file', 'video'] }, path: stringSchema, mediaType: stringSchema, mimeType: stringSchema, name: stringSchema, source: { type: 'string', enum: ['user-inline', 'clipboard', 'drag-drop', 'file-picker'] }, description: stringSchema }, ['kind', 'path'])), runOptions: objectAnySchema }, ['sessionId', 'inputId', 'text']),
     result: objectSchema({ sessionId: stringSchema, inputId: stringSchema, runId: stringSchema, state: { type: 'string', enum: ['submitted', 'queued', 'withdrawn', 'dropped'] } }, ['sessionId', 'inputId', 'state']),
   },
   'input.withdraw': {
@@ -433,7 +435,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
 
   'permission.grants.list': { params: noParamsSchema, result: objectAnySchema },
   'permission.grants.revoke': {
-    params: objectSchema({ grantId: stringSchema, expectedRevision: integerSchema }, ['grantId', 'expectedRevision']),
+    params: objectSchema({ grantId: stringSchema, expectedRevision: integerSchema }, ['grantId']),
     result: booleanSchema,
   },
   'interaction.list': { params: objectSchema({ sessionId: stringSchema }), result: arraySchema(interactionSchema()) },
@@ -513,6 +515,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
       authorization: executionAuthorizationSchema(),
       settingsDefaults: { type: 'string', enum: ['product'] },
       sessionId: stringSchema,
+      inputId: stringSchema,
       credential: credentialBindingSchema(),
       projectRoot: stringSchema,
       source: {
@@ -613,7 +616,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
     params: noParamsSchema,
     result: effectiveConfigSnapshotSchema(),
   },
-  'config.patch': { params: objectSchema({ patch: objectAnySchema }, ['patch']), result: objectAnySchema },
+  'config.patch': { params: objectSchema({ patch: objectAnySchema, expectedRevision: stringSchema }, ['patch']), result: objectAnySchema },
   'config.reload': { params: noParamsSchema, result: objectSchema({ ok: booleanSchema, config: objectAnySchema }, ['ok', 'config']) },
   'model.list': {
     params: objectSchema({ provider: stringSchema }, [], true),
@@ -680,6 +683,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
   },
   'skill.describe': { params: objectSchema({ name: stringSchema, projectRoot: stringSchema }, ['name'], true), result: nullOrObjectSchema },
   'skill.read': { params: objectSchema({ name: stringSchema, projectRoot: stringSchema }, ['name'], true), result: nullOrObjectSchema },
+  'agent.list': { params: noParamsSchema, result: arrayAnySchema },
   'memory.describe': { params: objectSchema({ projectRoot: stringSchema }, ['projectRoot']), result: objectAnySchema },
   'memory.listReviews': { params: objectSchema({ projectRoot: stringSchema }, ['projectRoot']), result: arrayAnySchema },
   'memory.listInbox': { params: objectSchema({ projectRoot: stringSchema }, ['projectRoot']), result: arrayAnySchema },
@@ -820,6 +824,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
       actorPath: stringSchema,
       content: stringSchema,
       classification: { enum: ['public', 'internal', 'sensitive'] },
+      requestId: stringSchema,
     }, ['sessionId', 'actorPath', 'content'], true),
     result: okSchema,
   },
@@ -837,7 +842,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
   },
   'agents.interrupt': {
     params: objectSchema({
-      sessionId: stringSchema, actorPath: stringSchema, reason: stringSchema,
+      sessionId: stringSchema, actorPath: stringSchema, reason: stringSchema, turnId: stringSchema,
     }, ['sessionId', 'actorPath'], true),
     result: okSchema,
   },
@@ -1118,6 +1123,7 @@ function createSessionParamsSchema(): RuntimeDaemonJsonSchema {
     draft: booleanSchema,
     mcpServers: objectAnySchema,
     temporary: booleanSchema,
+    requestId: stringSchema,
     sessionId: stringSchema,
     title: stringSchema,
     projectPath: stringSchema,
@@ -1125,6 +1131,8 @@ function createSessionParamsSchema(): RuntimeDaemonJsonSchema {
     surface: stringSchema,
     profileId: stringSchema,
     tag: stringSchema,
+    policy: objectAnySchema,
+    agent: stringSchema,
   });
 }
 
@@ -1143,6 +1151,7 @@ function sessionSchema(): RuntimeDaemonJsonSchema {
     tag: stringSchema,
     projectKey: stringSchema,
     archived: booleanSchema,
+    policy: objectAnySchema,
   }, ['id', 'title'], true);
 }
 
@@ -1380,6 +1389,7 @@ function forkSessionParamsSchema(): RuntimeDaemonJsonSchema {
     sessionId: stringSchema,
     selector: stringSchema,
     newSessionId: stringSchema,
+    requestId: stringSchema,
     title: stringSchema,
     historyBoundary: conversationHistoryBoundarySchema(),
     turn: historyTurnTargetSchema(),
@@ -1419,6 +1429,7 @@ function compactSessionParamsSchema(): RuntimeDaemonJsonSchema {
     triggerPercent: { type: 'number' },
     triggerTokens: integerSchema,
     credential: credentialBindingSchema(),
+    requestId: stringSchema,
   }, ['sessionId']);
 }
 
@@ -1695,6 +1706,7 @@ function runtimeTerminalFactSchema(): RuntimeDaemonJsonSchema {
         'blocked',
         'cancelled',
         'interrupted',
+        'time_limit',
         'runtime_restarted',
         'daemon_crashed',
         'credential_unavailable',
@@ -2009,6 +2021,7 @@ function runtimePermissionMatcherSchema(): RuntimeDaemonJsonSchema {
 function workflowFilterSchema(): RuntimeDaemonJsonSchema {
   return objectSchema({
     runId: stringSchema,
+    sessionId: stringSchema,
     activeOnly: booleanSchema,
     limit: integerSchema,
   });

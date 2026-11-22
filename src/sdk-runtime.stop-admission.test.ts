@@ -193,9 +193,9 @@ it.each(['hydrated', 'persisted-only'] as const)('rejects another live owner for
 
 it('preserves shared daemon profile and run-control scope checks with a real locked Run', async () => {
   const f = await fixture(true);
-  const wrongProfile = createRuntimeDaemonDispatcher({ runtime: f.runtime });
-  const observer = createRuntimeDaemonDispatcher({ runtime: f.runtime, grantedScopes: ['session:observe'] });
-  const control = createRuntimeDaemonDispatcher({ runtime: f.runtime });
+  const wrongProfile = createRuntimeDaemonDispatcher({ role: 'owner', runtime: f.runtime });
+  const observer = createRuntimeDaemonDispatcher({ role: 'owner', runtime: f.runtime, grantedScopes: ['session:observe'] });
+  const control = createRuntimeDaemonDispatcher({ role: 'owner', runtime: f.runtime });
   try {
     await f.hold();
     await expect(wrongProfile.handle(createRuntimeDaemonRequest('wrong-profile', 'initialize', { profile: 'partner' })))
@@ -268,7 +268,7 @@ it('keeps a partially delivered Stop fenced when an older successful request is 
 
 it('transports Session Stop binding failures and receipts through the real shared dispatcher', async () => {
   const f = await fixture(true);
-  const dispatcher = createRuntimeDaemonDispatcher({ runtime: f.runtime });
+  const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime: f.runtime });
   try {
     await dispatcher.handle(createRuntimeDaemonRequest('init-session-stop', 'initialize', { profile: 'default' }));
     await f.hold();
@@ -287,7 +287,7 @@ it('accepts locked Session Stop over a real socket and replays its frontier afte
   const f = await fixture(true);
   const server = await createRuntimeDaemonSocketServer({
     endpoint: defaultRuntimeDaemonEndpoint('stop-integration', f.root),
-    createDispatcher: (notify, disconnect) => createRuntimeDaemonDispatcher({ runtime: f.runtime, notify, disconnect }),
+    createDispatcher: (notify, disconnect) => createRuntimeDaemonDispatcher({ role: 'owner', runtime: f.runtime, notify, disconnect }),
   });
   const transport = await createRuntimeDaemonSocketClientTransport(server.endpoint);
   const initialized = await transport.request('initialize', { profile: 'default' }) as {

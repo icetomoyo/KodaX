@@ -35,6 +35,12 @@ describe('generation recovery admission', () => {
     expect(rebindGenerationOptions(resume, {})).toEqual({});
   });
 
+  it('keeps what was asked for one Run as configuration, so a continued Run is still held to it', () => {
+    const resume = captureGenerationResume({ prompt: 'Continue', options: { maxIter: 4, maxDurationMs: 60_000, soleInput: true } });
+    expect(resume.options).toMatchObject({ maxIter: 4, maxDurationMs: 60_000, soleInput: true });
+    expect(resume.requiredBindings).toEqual([]);
+  });
+
   it('preserves Partner mode composition while requiring a fresh tool-policy binding', () => {
     const resume = captureGenerationResume({ prompt: 'Continue', options: { workMode: 'agent', context: {
       workModePolicy: 'intersect', agentProfile: { id: 'partner' }, excludeTools: ['bash'],

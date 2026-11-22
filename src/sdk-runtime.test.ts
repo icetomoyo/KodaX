@@ -30,6 +30,7 @@ import {
   withKodaXFileLock,
 } from "@kodax-ai/agent";
 import { KODAX_VERSION } from "@kodax-ai/repl";
+import { SESSION_RECOVERY_STALL_MS } from "./session-recovery.js";
 import type {
   AgentActorSaveAttempt,
   AgentActorSavePhase,
@@ -9955,6 +9956,106 @@ describe("createKodaXRuntime", () => {
     }
   });
 
+  it("shows a quarantined Session recovering, then stalled past the limit, and clears it once repaired", async () => {
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
+    const originalBeginSave = FileSessionStorage.prototype.beginActorSnapshotSave;
+    let releaseLateSettlement: (() => void) | undefined;
+    const lateSettlement = new Promise<void>((resolve) => {
+      releaseLateSettlement = resolve;
+    });
+    let terminalSaveStarted = false;
+    const save = vi.spyOn(
+      FileSessionStorage.prototype,
+      "beginActorSnapshotSave",
+    ).mockImplementation(function (
+      this: FileSessionStorage,
+      id: string,
+      snapshot: AgentActorSnapshot,
+      expectedRevision: number,
+    ) {
+      const delayedTerminal = !terminalSaveStarted && snapshot.turns.some((turn) => (
+        turn.actorPath === "/root/worker" && turn.state === "failed"
+      ));
+      if (!delayedTerminal) {
+        return originalBeginSave.call(this, id, snapshot, expectedRevision);
+      }
+      terminalSaveStarted = true;
+      const operation = (async (): Promise<void> => {
+        await lateSettlement;
+        await originalBeginSave.call(this, id, snapshot, expectedRevision).completion;
+      })();
+      return faultInjectedActorSaveAttempt(operation);
+    });
+    const runtime = await createKodaXRuntime({
+      homeDir: tempRoot,
+      sessionsDir: path.join(tempRoot, "actor-recovery-state-sessions"),
+      defaultProvider: "mock-provider",
+    });
+    let observation: { close(): void } | undefined;
+    try {
+      codingMock.runManagedTask.mockImplementation((options: KodaXOptions) => (
+        new Promise<KodaXResult>((_resolve, reject) => {
+          const rejectFromAbort = (): void => {
+            const error = new Error("Provider observed Actor durability fence");
+            error.name = "AbortError";
+            reject(error);
+          };
+          options.abortSignal?.addEventListener("abort", rejectFromAbort, { once: true });
+          if (options.abortSignal?.aborted) rejectFromAbort();
+        })
+      ));
+      const session = await runtime.sessions.create({ title: "Report the recovery state" });
+      const viewed: string[] = [];
+      observation = await runtime.sessions.observeView(session.id, (view) => {
+        const state = view.session.recovery?.state ?? "none";
+        if (viewed.at(-1) !== state) viewed.push(state);
+      });
+      // The view reads with real timers; the quarantine and its limit run on fake ones.
+      vi.useFakeTimers();
+      const run = await runtime.runs.start({
+        sessionId: session.id,
+        prompt: "enter quarantine",
+        mode: "managed_task",
+      });
+      await runtime.agents.spawn(session.id, {
+        taskName: "worker",
+        objective: "Lose the terminal save.",
+      });
+      await vi.advanceTimersByTimeAsync(6_000);
+      await expect(runtime.runs.get(run.runId)).resolves.toMatchObject({ phase: "unknown" });
+
+      const quarantined = await runtime.sessions.load(session.id);
+      expect(quarantined.recovery).toMatchObject({ state: "recovering", code: "actor_settlement_not_persisted" });
+      expect((await runtime.sessions.list()).find((item) => item.id === session.id)?.recovery)
+        .toEqual(quarantined.recovery);
+      await expect(runtime.runs.start({ sessionId: session.id, prompt: "while recovering", mode: "managed_task" }))
+        .rejects.toMatchObject({ code: "actor_settlement_not_persisted" });
+      await vi.waitFor(() => expect(viewed).toEqual(["none", "recovering"]));
+
+      // Past the limit the repair keeps retrying; only what the Session reports changes.
+      await vi.advanceTimersByTimeAsync(SESSION_RECOVERY_STALL_MS);
+      await expect(runtime.sessions.load(session.id)).resolves.toMatchObject({
+        recovery: { state: "stalled", since: quarantined.recovery?.since, code: "actor_settlement_not_persisted" },
+      });
+      await expect(runtime.runs.start({ sessionId: session.id, prompt: "while stalled", mode: "managed_task" }))
+        .rejects.toMatchObject({ code: "recovery_stalled" });
+      await vi.waitFor(() => expect(viewed).toEqual(["none", "recovering", "stalled"]));
+
+      // Fake timers stay on: a view refresh already waiting on one would never finish under real timers.
+      releaseLateSettlement?.();
+      await vi.waitFor(async () => {
+        expect((await runtime.sessions.load(session.id)).recovery).toBeUndefined();
+      }, { timeout: 15_000 });
+      await vi.waitFor(() => expect(viewed).toEqual(["none", "recovering", "stalled", "none"]), { timeout: 5_000 });
+    } finally {
+      observation?.close();
+      releaseLateSettlement?.();
+      save.mockRestore();
+      vi.useRealTimers();
+      await runtime.close().catch(() => undefined);
+    }
+  }, 30_000);
+
   it("never takes over a live foreign Actor owner while repair retries in the background", async () => {
     vi.useFakeTimers();
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
@@ -13433,7 +13534,7 @@ describe("createKodaXRuntime", () => {
         const { createRuntimeDaemonRequest, isRuntimeDaemonSuccessResponse } = await import('./runtime-daemon/protocol.js');
         const hub = createRuntimeDaemonReverseBridgeHub();
         let listener: ((notification: import('./runtime-daemon/protocol.js').RuntimeDaemonNotification) => void) | undefined;
-        const dispatcher = createRuntimeDaemonDispatcher({ runtime, reverseBridgeHub: hub, notify: notification => listener?.(notification) });
+        const dispatcher = createRuntimeDaemonDispatcher({ role: 'owner', runtime, reverseBridgeHub: hub, notify: notification => listener?.(notification) });
         const request: RuntimeDaemonClientTransport['request'] = async (method, params) => {
           const response = await dispatcher.handle(createRuntimeDaemonRequest(randomUUID(), method, params));
           if (!isRuntimeDaemonSuccessResponse(response)) throw Object.assign(new Error(response.error.message), { code: response.error.code });

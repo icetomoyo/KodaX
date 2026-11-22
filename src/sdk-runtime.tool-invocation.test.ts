@@ -116,7 +116,7 @@ it('owns explicit Shell effects and confirms process cleanup through real shared
   const session = await runtime.sessions.create({ projectPath: root });
   await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
   const server = await createRuntimeDaemonSocketServer({ endpoint: defaultRuntimeDaemonEndpoint('owned-shell', root),
-    createDispatcher: (notify, disconnect) => createRuntimeDaemonDispatcher({ runtime, notify, disconnect }) });
+    createDispatcher: (notify, disconnect) => createRuntimeDaemonDispatcher({ role: 'owner', runtime, notify, disconnect }) });
   const transport = await createRuntimeDaemonSocketClientTransport(server.endpoint);
   const initialized = await transport.request('initialize', { profile: 'default' }) as {
     identity: typeof runtime.identity; capabilities: Readonly<Record<string, unknown>>;

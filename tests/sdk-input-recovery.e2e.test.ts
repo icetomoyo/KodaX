@@ -194,7 +194,8 @@ it('returns the original owner a durable idempotent withdrawal with full text, a
     expect(await state.client.inputs.submit(original)).toMatchObject({ state: 'queued' });
     expect(await state.client.inputs.withdraw(original.sessionId, original.inputId)).toEqual(original);
     expect(await state.client.inputs.withdraw(original.sessionId, original.inputId)).toEqual(original);
-    await expect(state.peer.inputs.withdraw(original.sessionId, original.inputId)).rejects.toMatchObject({ code: 'permission_denied' });
+    // Another client of the same person acts for the same subject, so it gets the same withdrawal (ADR-079 D4).
+    expect(await state.peer.inputs.withdraw(original.sessionId, original.inputId)).toEqual(original);
     state.release();
     await state.client.runs.await(state.active.runId!);
     await state.restartHost();

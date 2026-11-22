@@ -57,6 +57,8 @@ export interface CompactSessionOptions {
   readonly storage?: FileSessionStorage;
   /** Trusted Runtime seam used to preserve broker/lease failures as RPC errors. */
   readonly propagateErrors?: boolean;
+  /** Recorded on the compaction this call commits, so its caller can recognise the same request sent again. */
+  readonly requestId?: string;
 }
 
 export interface CompactSessionResult {
@@ -70,6 +72,8 @@ export interface CompactSessionResult {
   readonly report?: CompactionReport;
   /** Populated when `compacted` is false to explain why (not-found / no-op / error). */
   readonly reason?: string;
+  /** True when compaction could not be done; `reason` says why. Absent when there was nothing to compact. */
+  readonly failed?: boolean;
 }
 
 function resolveStorage(options?: CompactSessionOptions): FileSessionStorage {
@@ -104,7 +108,7 @@ async function compactStoredSession(
     const storage = resolveStorage(options);
     const data = await storage.load(sessionId);
     if (!data) {
-      return { ...empty, reason: `session not found: ${sessionId}` };
+      return { ...empty, failed: true, reason: `session not found: ${sessionId}` };
     }
 
     const messages = data.messages;
@@ -113,7 +117,7 @@ async function compactStoredSession(
       ?? (providerName === data.runtimeInfo?.provider ? data.runtimeInfo.model : undefined);
     const provider = resolveProvider(providerName);
     if (!provider) {
-      return { ...empty, messages, reason: `provider not found: ${providerName}` };
+      return { ...empty, messages, failed: true, reason: `provider not found: ${providerName}` };
     }
 
     const contextWindow =
@@ -166,6 +170,7 @@ async function compactStoredSession(
       tokensAfter: result.tokensAfter,
       ...result.anchor,
       reason: 'manual',
+      ...(options?.requestId !== undefined ? { requestId: options.requestId } : {}),
     };
     const attached = await applyPostCompactAttachments({
       compacted: result.messages,
@@ -218,6 +223,7 @@ async function compactStoredSession(
     if (options?.propagateErrors === true) throw error;
     return {
       ...empty,
+      failed: true,
       reason: error instanceof Error ? error.message : String(error),
     };
   }

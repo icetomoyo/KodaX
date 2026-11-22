@@ -199,6 +199,8 @@ export type LearningCapabilityErrorCode =
   | 'capability_not_found'
   | 'invalid_record'
   | 'invalid_transition'
+  /** The capability changed after the person decided on it; read it again. */
+  | 'revision_conflict'
   | 'store_integrity_error'
   | 'unsupported_action';
 

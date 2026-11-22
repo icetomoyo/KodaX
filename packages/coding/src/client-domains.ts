@@ -107,6 +107,11 @@ export interface ClientReviewService {
 export interface ClientCommandService {
   /** Plain editable text only. Reading or cancelling a draft has no execution effects. */
   readPrompt(input: Omit<ClientCommandInput, 'inputId'>): Promise<{ readonly title: string; readonly text: string } | null>;
-  /** Execute an existing registered command. Never automatically replay a lost reply. */
+  /**
+   * Execute an existing registered command. Sent again under the same
+   * `inputId`, it is answered with the Run it started. A command the Host
+   * finished itself is answered again only while that Host process lives, so
+   * a lost reply is not replayed automatically.
+   */
   execute(input: ClientCommandInput): Promise<ClientCommandResult>;
 }

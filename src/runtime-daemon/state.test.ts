@@ -21,12 +21,15 @@ import {
   readRuntimeDaemonState,
   RUNTIME_DAEMON_LOG_MAX_BYTES,
   readRuntimeDaemonToken,
+  readRuntimeOwnerPidNamespace,
   releaseRuntimeDaemonLock,
   releaseRuntimeDaemonOwnership,
   removeRuntimeDaemonOwnershipIfUnchanged,
   resolveRuntimeDaemonEndpointScope,
   resolveRuntimeDaemonPaths,
   resolveRuntimeDaemonPathsFromConfigHome,
+  runtimeOwnerInOtherPidNamespace,
+  runtimeOwnerProcessState,
   tryAcquireRuntimeDaemonLock,
   tryAcquireRuntimeSessionStorageStartup,
   updateRuntimeOwnerPolicy,
@@ -710,6 +713,137 @@ describe('runtime daemon lock ownership', () => {
     fs.writeFileSync(paths.lockFile, '{not-json', 'utf8');
 
     expect(readRuntimeDaemonLockOwner(paths.lockFile)).toBeUndefined();
+  });
+});
+
+describe('runtime owner PID namespace', () => {
+  const unreadable = (): never => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); };
+
+  function onLinuxInPidNamespace(read: () => string): void {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    const readlink = fsDefault.readlinkSync;
+    vi.spyOn(fsDefault, 'readlinkSync').mockImplementation(((target: string) =>
+      target === '/proc/self/ns/pid' ? read() : readlink(target)
+    ) as typeof fsDefault.readlinkSync);
+    syncBuiltinESMExports();
+  }
+
+  /** The restarted-container case: the recorded PID now belongs to a process of another user. */
+  function denyPidProbe(): ReturnType<typeof vi.spyOn> {
+    return vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+    });
+  }
+
+  it('reads the namespace link on Linux and has no identity elsewhere or when it is unreadable', () => {
+    onLinuxInPidNamespace(() => 'pid:[4026531836]');
+    expect(readRuntimeOwnerPidNamespace()).toBe('pid:[4026531836]');
+
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    expect(readRuntimeOwnerPidNamespace()).toBeUndefined();
+
+    vi.restoreAllMocks();
+    onLinuxInPidNamespace(unreadable);
+    expect(readRuntimeOwnerPidNamespace()).toBeUndefined();
+  });
+
+  it.each([
+    { recorded: 'pid:[1]', current: 'pid:[2]', other: true },
+    { recorded: 'pid:[1]', current: 'pid:[1]', other: false },
+    { recorded: undefined, current: 'pid:[2]', other: false },
+    { recorded: 'pid:[1]', current: undefined, other: false },
+    { recorded: undefined, current: undefined, other: false },
+  ])('needs both namespaces to conclude another one: $recorded vs $current', ({ recorded, current, other }) => {
+    expect(runtimeOwnerInOtherPidNamespace(recorded, current)).toBe(other);
+  });
+
+  it('treats an owner recorded in another PID namespace as gone without probing its live PID', () => {
+    onLinuxInPidNamespace(() => 'pid:[2]');
+    const probe = vi.spyOn(process, 'kill');
+
+    expect(runtimeOwnerProcessState({ pid: process.pid, pidNamespace: 'pid:[1]' })).toBe('gone');
+    expect(probe).not.toHaveBeenCalled();
+  });
+
+  it('reclaims an owner of another PID namespace whose PID cannot be probed', () => {
+    onLinuxInPidNamespace(() => 'pid:[2]');
+    denyPidProbe();
+
+    expect(runtimeOwnerProcessState({ pid: process.pid, pidNamespace: 'pid:[1]' })).toBe('gone');
+  });
+
+  it.each([
+    { name: 'the same namespace', recorded: 'pid:[2]', read: () => 'pid:[2]' },
+    { name: 'a legacy record without a namespace', recorded: undefined, read: () => 'pid:[2]' },
+    { name: 'an unreadable current namespace', recorded: 'pid:[1]', read: unreadable },
+  ])('keeps the PID evidence for $name', ({ recorded, read }) => {
+    onLinuxInPidNamespace(read);
+    const probe = denyPidProbe();
+
+    expect(runtimeOwnerProcessState({ pid: process.pid, pidNamespace: recorded })).toBe('unknown');
+    expect(probe).toHaveBeenCalledWith(process.pid, 0);
+  });
+
+  it('does not read the namespace for a record that carries none', () => {
+    const read = vi.fn(() => 'pid:[2]');
+    onLinuxInPidNamespace(read);
+    denyPidProbe();
+
+    expect(runtimeOwnerProcessState({ pid: process.pid })).toBe('unknown');
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { recorded: 'pid:[1]', reclaimed: true },
+    { recorded: 'pid:[2]', reclaimed: false },
+  ])('reclaims a startup coordinator only from another PID namespace: $recorded', ({ recorded, reclaimed }) => {
+    const sessionsDir = path.join(tempHome(), 'sessions');
+    const directory = path.join(sessionsDir, '.product-host');
+    fs.mkdirSync(directory, { recursive: true });
+    const file = path.join(directory, 'startup.lock');
+    const raw = JSON.stringify({ runtimeId: 'owner-transition-fixture', nonce: 'fixture',
+      pid: process.pid, createdAt: new Date().toISOString(), pidNamespace: recorded });
+    fs.writeFileSync(file, raw);
+    onLinuxInPidNamespace(() => 'pid:[2]');
+
+    const release = tryAcquireRuntimeSessionStorageStartup(sessionsDir);
+    if (reclaimed) { expect(release).toBeTypeOf('function'); release?.(); }
+    else { expect(release).toBeUndefined(); expect(fs.readFileSync(file, 'utf8')).toBe(raw); }
+  });
+
+  it('records the PID namespace in a new owner record on Linux only', () => {
+    const sessionsDir = path.join(tempHome(), 'sessions');
+    const file = path.join(sessionsDir, '.product-host', 'startup.lock');
+    const publishedRecord = (): unknown => {
+      const release = tryAcquireRuntimeSessionStorageStartup(sessionsDir)!;
+      try { return JSON.parse(fs.readFileSync(file, 'utf8')); } finally { release(); }
+    };
+    // This process's start identity is read once; read it on the real platform.
+    publishedRecord();
+
+    onLinuxInPidNamespace(() => 'pid:[4026531836]');
+    expect(publishedRecord()).toMatchObject({ pid: process.pid, pidNamespace: 'pid:[4026531836]' });
+
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    expect(publishedRecord()).not.toHaveProperty('pidNamespace');
+
+    vi.restoreAllMocks();
+    onLinuxInPidNamespace(unreadable);
+    expect(publishedRecord()).not.toHaveProperty('pidNamespace');
+  });
+
+  it('preserves a recorded namespace and treats a malformed one as unreadable', () => {
+    const paths = resolveRuntimeDaemonPaths(tempHome(), 'default');
+    fs.mkdirSync(paths.rootDir, { recursive: true });
+    const owner = { runtimeId: 'runtime-namespaced', pid: 111, createdAt: '2026-07-14T00:00:00.000Z' };
+
+    fs.writeFileSync(paths.lockFile, JSON.stringify({ ...owner, pidNamespace: 'pid:[4026531836]' }), 'utf8');
+    expect(readRuntimeDaemonLockOwner(paths.lockFile)).toEqual({ ...owner, pidNamespace: 'pid:[4026531836]' });
+
+    for (const pidNamespace of [4026531836, '']) {
+      fs.writeFileSync(paths.lockFile, JSON.stringify({ ...owner, pidNamespace }), 'utf8');
+      expect(readRuntimeDaemonLockOwner(paths.lockFile)).toBeUndefined();
+    }
   });
 });
 

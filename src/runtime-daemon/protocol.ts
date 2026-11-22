@@ -153,6 +153,7 @@ export type RuntimeDaemonMethod =
   | 'skill.list'
   | 'skill.describe'
   | 'skill.read'
+  | 'agent.list'
   | 'memory.describe'
   | 'memory.listReviews'
   | 'memory.listInbox'
@@ -531,6 +532,7 @@ export const RUNTIME_DAEMON_METHODS: readonly RuntimeDaemonMethod[] = [
   'skill.list',
   'skill.describe',
   'skill.read',
+  'agent.list',
   'memory.describe',
   'memory.listReviews',
   'memory.listInbox',

@@ -104,7 +104,7 @@ export async function waitForRuntimeDaemonShutdown(
     const currentOwner = readRuntimeDaemonLockOwner(paths.lockFile);
     const replacement = (
       currentOwner?.kind === 'daemon'
-      && isRuntimeDaemonOwnerPidAlive(currentOwner.pid, currentOwner.processStartIdentity)
+      && isRuntimeDaemonOwnerPidAlive(currentOwner.pid, currentOwner.processStartIdentity, currentOwner.pidNamespace)
       && (currentOwner.runtimeId !== input.owner.runtimeId
         || currentOwner.pid !== input.owner.pid)
     ) ? currentOwner : undefined;
@@ -113,6 +113,9 @@ export async function waitForRuntimeDaemonShutdown(
     const daemonActive = isRuntimeDaemonOwnerPidAlive(
       input.owner.pid,
       input.owner.processStartIdentity,
+      // The verified owner carries no PID namespace; only its own lock record supplies it.
+      currentOwner?.runtimeId === input.owner.runtimeId && currentOwner.pid === input.owner.pid
+        ? currentOwner.pidNamespace : undefined,
     );
     const containmentActive = input.owner.processContainment === 'windows-job'
       && isRuntimeDaemonOwnerPidAlive(input.owner.supervisorPid!, input.owner.supervisorProcessStartIdentity);

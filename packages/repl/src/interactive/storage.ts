@@ -4288,6 +4288,12 @@ export class FileSessionStorage implements KodaXSessionStorage {
             ...(existing?.data.runtimeInfo?.sessionPromotion?.sessionId !== id ? {} : {
               sessionPromotion: existing.data.runtimeInfo.sessionPromotion,
             }),
+            // The creation receipt is written once; no later snapshot carries it.
+            ...(existing?.data.runtimeInfo?.creationRequest !== undefined
+              ? { creationRequest: existing.data.runtimeInfo.creationRequest } : {}),
+            // The policy binds every later Run; a snapshot written by one of them cannot drop or replace it.
+            ...(existing?.data.runtimeInfo?.policy !== undefined
+              ? { policy: existing.data.runtimeInfo.policy } : {}),
             // Execution snapshots cannot change the Host-owned Session lifetime.
             ...(existing?.data.runtimeInfo?.temporary === true ? { temporary: true } : {}),
             // First admission is permanent, including stale execution snapshots.
@@ -5932,6 +5938,8 @@ export class FileSessionStorage implements KodaXSessionStorage {
       sessionId?: string;
       title?: string;
       historyBoundary?: SessionHistoryBoundary;
+      /** The request that asked for the fork, kept on it so the request sent again can find it. */
+      creationRequest?: NonNullable<KodaXSessionRuntimeInfo['creationRequest']>;
     },
   ): Promise<{ sessionId: string; data: SessionData } | null> {
     let result: { sessionId: string; data: SessionData } | null = null;
@@ -5999,6 +6007,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
         const visual = hasVisualRecords ? await prepareVisualSessionFork({ sessionsDir: this.sessionsDir, parentId: id, childId: sessionId,
           records: resolved.data.extensionRecords ?? [], sourceLineage, lineage }) : undefined;
         const forkedLineage = visual?.lineage ?? lineage;
+        const { creationRequest: _sourceRequest, ...inheritedRuntimeInfo } = resolved.data.runtimeInfo ?? {};
         const forked: SessionData = {
           lastMessageAt: latestSessionMessageAt(forkedLineage.entries, undefined, sourceLineage.entries),
           messages: getSessionMessagesFromLineage(forkedLineage),
@@ -6008,8 +6017,10 @@ export class FileSessionStorage implements KodaXSessionStorage {
           // FEATURE_247 (R5) — inherit runtime identity (workspace + profile /
           // provider / model / permission mode) so a forked Partner session stays
           // a Partner. Previously runtimeInfo was dropped entirely on fork.
-          runtimeInfo: resolved.data.runtimeInfo
-            ? { ...resolved.data.runtimeInfo }
+          // The request that made the source stays with the source: the fork
+          // carries the one that asked for the fork, when one did.
+          runtimeInfo: resolved.data.runtimeInfo || options?.creationRequest
+            ? { ...inheritedRuntimeInfo, ...(options?.creationRequest ? { creationRequest: options.creationRequest } : {}) }
             : undefined,
           uiHistory: resolved.data.uiHistory
             ? resolved.data.uiHistory.map((item) => ({ ...item }))

@@ -8,9 +8,11 @@ import {
   setKodaXDiagnosticSink,
   type KodaXDiagnostic,
 } from '@kodax-ai/agent';
+import { createRuntimeDaemonHostRpcPeer } from './host-rpc.js';
 import {
   createRuntimeDaemonDispatcher,
   createRuntimeDaemonRunResultStore,
+  type RuntimeDaemonDispatcherOptions,
 } from './server.js';
 import { describeProxyEnvironmentGap } from '../proxy-environment.js';
 import {
@@ -27,6 +29,7 @@ import {
   type RuntimeDaemonState,
 } from './state.js';
 import {
+  RUNTIME_DAEMON_MAX_FRAME_BYTES,
   createRuntimeDaemonSocketServer,
   type RuntimeDaemonEndpoint,
   type RuntimeDaemonSocketServer,
@@ -34,6 +37,15 @@ import {
 import { createRuntimeDaemonReverseBridgeHub } from './reverse-bridge.js';
 import { createRuntimeDaemonManagementController } from './management.js';
 import { createRuntimeClientLifecycleController } from './client-lifecycle.js';
+import { quiesceRuntimeForHostClose } from '../runtime-host-close.js';
+
+/**
+ * How long a closing Host keeps its transport open so clients can see how their
+ * Runs ended. It adds the two bounds the Runtime already puts on that path: up
+ * to 5 seconds for a Run to reach its generation checkpoint, then up to 5
+ * seconds for a cancelled Run to confirm its Actors finished.
+ */
+const HOST_CLOSE_RUN_QUIESCE_MS = 10_000;
 
 declare const KODAX_CLI_LAZY_COMPONENTS: boolean | undefined;
 function loadHostMaintenance(): Promise<typeof import('./maintenance-scheduler.js')> {
@@ -59,6 +71,8 @@ export interface RuntimeDaemonHostOptions {
   readonly integrationStatuses?: () => readonly RuntimeIntegrationDomainStatus[];
   /** @internal Commit shared ownership before this endpoint admits clients. */
   readonly commitStartup?: () => void;
+  /** @internal Tests shorten the Run quiesce bound of a closing Host. */
+  readonly runQuiesceMs?: number;
 }
 
 export interface RuntimeDaemonHost {
@@ -113,30 +127,38 @@ export async function startRuntimeDaemonHost(
   });
   const clientLifecycle = createRuntimeClientLifecycleController({ runtime: options.runtime, paths: options.paths, management,
     retireClientLeases: principalId => reverseBridgeHub.retireClient(principalId) });
+  // Whoever reaches the local endpoint is the owner, in either protocol.
+  const dispatcherOptions = {
+    role: 'owner',
+    clientLifecycle,
+    runtime: options.runtime,
+    authToken: token,
+    ...(options.ownsA2AConfigReconciler === true
+      ? { ownsA2AConfigReconciler: true }
+      : {}),
+    ...(options.orphanExitMs !== undefined ? { orphanExitEnabled: true } : {}),
+    allowAgentRegistrationAdmin: true,
+    runResults,
+    reverseBridgeHub,
+    management,
+    durableHostToolInvocations: true,
+    logs: () => ({
+      logFile: options.paths.logFile,
+      entries: readRuntimeDaemonLog(options.paths),
+    }),
+  } satisfies RuntimeDaemonDispatcherOptions;
   let ready: RuntimeDaemonState;
   try {
     options.commitStartup?.();
     server = await createRuntimeDaemonSocketServer({
       endpoint: options.endpoint,
-      createDispatcher: (notify, disconnect) => createRuntimeDaemonDispatcher({
-        clientLifecycle,
-        runtime: options.runtime,
-        authToken: token,
-        ...(options.ownsA2AConfigReconciler === true
-          ? { ownsA2AConfigReconciler: true }
-          : {}),
-        ...(options.orphanExitMs !== undefined ? { orphanExitEnabled: true } : {}),
-        allowAgentRegistrationAdmin: true,
-        notify,
+      createDispatcher: (notify, disconnect) => createRuntimeDaemonDispatcher({ ...dispatcherOptions, notify, disconnect }),
+      createHostRpcPeer: (send, disconnect, congested) => createRuntimeDaemonHostRpcPeer({
+        dispatcher: dispatcherOptions,
+        limits: { maxFrameBytes: RUNTIME_DAEMON_MAX_FRAME_BYTES },
+        send,
         disconnect,
-        runResults,
-        reverseBridgeHub,
-        management,
-        durableHostToolInvocations: true,
-        logs: () => ({
-          logFile: options.paths.logFile,
-          entries: readRuntimeDaemonLog(options.paths),
-        }),
+        congested,
       }),
     });
     const internalReadyDelayMs = process.env.KODAX_INTERNAL_DAEMON_TEST_READY_DELAY_MS;
@@ -193,6 +215,7 @@ export async function startRuntimeDaemonHost(
   }).catch((error: unknown) => { reportMaintenanceError(error); return undefined; });
   let closed = false;
   let closeAttempt: Promise<void> | undefined;
+  let runsQuiesced = false;
   let transportClosed = false;
   let localServicesClosed = false;
   let runtimeClosed = false;
@@ -225,6 +248,11 @@ export async function startRuntimeDaemonHost(
         } catch (error: unknown) {
           failures.push(`state transition: ${normalizeHostError(error).message}`);
         }
+      }
+      // Once only: the first attempt stopped the Runs, so a retry has nothing left to deliver.
+      if (!runsQuiesced) {
+        runsQuiesced = true;
+        await quiesceRunsBeforeTransportClose(options, failures);
       }
       if (!transportClosed) {
         try {
@@ -424,6 +452,28 @@ function normalizeDiagnosticDetail(detail: unknown, seen = new Set<unknown>()): 
   if (Array.isArray(detail)) return detail.map((entry) => normalizeDiagnosticDetail(entry, seen));
   return detail;
 }
+/**
+ * Stops the Runs while clients are still connected, so each Run's outcome is
+ * delivered before the transport closes. Runs that outlive the bound are left
+ * to Runtime close and restart recovery, as every Run was before this stage.
+ */
+async function quiesceRunsBeforeTransportClose(
+  options: RuntimeDaemonHostOptions,
+  failures: string[],
+): Promise<void> {
+  try {
+    const quiesced = await quiesceRuntimeForHostClose(options.runtime, {
+      deadlineMs: options.runQuiesceMs ?? HOST_CLOSE_RUN_QUIESCE_MS,
+    });
+    if (quiesced === undefined || quiesced.unsettledRunIds.length === 0) return;
+    appendRuntimeDaemonLog(options.paths, 'warn',
+      'Runs had not settled when the Runtime daemon closed its transport.',
+      { runIds: quiesced.unsettledRunIds });
+  } catch (error: unknown) {
+    failures.push(`run quiesce: ${normalizeHostError(error).message}`);
+  }
+}
+
 /** True when Runtime close failed only on Actor trees it could not release, which restart recovery reclaims. */
 function leavesOnlyActorTreesForRecovery(error: unknown): boolean {
   const errors = error instanceof AggregateError ? error.errors : [error];

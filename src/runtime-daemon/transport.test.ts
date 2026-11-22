@@ -5,7 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { setKodaXDiagnosticSink, type KodaXDiagnostic } from '@kodax-ai/agent';
 
+import { hostRpcRequest, hostRpcSuccess } from '../host-protocol/codec.js';
 import {
   createRuntimeDaemonErrorResponse,
   createRuntimeDaemonNotification,
@@ -420,6 +422,275 @@ describe('runtime daemon transport', () => {
     await expect(transport.request('ping')).rejects.toMatchObject({
       code: 'internal_error',
     });
+  });
+
+  it('disconnects a client that stops reading once its outbound queue passes the limit', async () => {
+    const endpoint = await makeTestEndpoint();
+    const diagnostics: KodaXDiagnostic[] = [];
+    const restoreSink = setKodaXDiagnosticSink((diagnostic) => { diagnostics.push(diagnostic); });
+    cleanupTasks.push(async () => restoreSink());
+    let closedDispatchers = 0;
+    const server = await createRuntimeDaemonSocketServer({
+      endpoint,
+      maxFrameBytes: 128 * 1024,
+      maxOutboundBytes: 256 * 1024,
+      createDispatcher: (notify) => ({
+        async handle(request) {
+          for (let index = 0; index < 64; index += 1) {
+            notify(createRuntimeDaemonNotification('runtime.warning', { filler: 'x'.repeat(64 * 1024) }));
+          }
+          return createRuntimeDaemonSuccessResponse(request.id, { ok: true });
+        },
+        close() {
+          closedDispatchers += 1;
+        },
+      }),
+    });
+    cleanupTasks.push(() => server.close());
+    const socket = await connectSocket(endpoint);
+    cleanupTasks.push(async () => { socket.destroy(); });
+    socket.pause();
+
+    socket.write(`${JSON.stringify(createRuntimeDaemonRequest('req-flood', 'ping'))}\n`);
+
+    await waitFor(() => closedDispatchers === 1);
+    expect(server.connectionCount()).toBe(0);
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      source: 'runtime.daemon.transport',
+      level: 'warn',
+      detail: expect.objectContaining({ code: 'overloaded', maxOutboundBytes: 256 * 1024 }),
+    }));
+  });
+
+  it('keeps a reading client connected when its total traffic passes the outbound limit', async () => {
+    const endpoint = await makeTestEndpoint();
+    const server = await createRuntimeDaemonSocketServer({
+      endpoint,
+      maxFrameBytes: 128 * 1024,
+      maxOutboundBytes: 256 * 1024,
+      createDispatcher: () => ({
+        async handle(request) {
+          return createRuntimeDaemonSuccessResponse(request.id, { filler: 'x'.repeat(64 * 1024) });
+        },
+        close() {},
+      }),
+    });
+    cleanupTasks.push(() => server.close());
+    const client = await createRuntimeDaemonSocketClientTransport(endpoint);
+    cleanupTasks.push(async () => { await client.close?.(); });
+
+    for (let round = 0; round < 16; round += 1) {
+      await expect(client.request('ping')).resolves.toMatchObject({ filler: expect.any(String) });
+    }
+    expect(server.connectionCount()).toBe(1);
+  });
+
+  it('delivers every frame already queued for a client before a closing server hangs up', async () => {
+    const endpoint = await makeTestEndpoint();
+    const frames = 32;
+    const server = await createRuntimeDaemonSocketServer({
+      endpoint,
+      maxFrameBytes: 128 * 1024,
+      createDispatcher: (notify) => ({
+        async handle(request) {
+          for (let index = 0; index < frames; index += 1) {
+            notify(createRuntimeDaemonNotification('runtime.warning', { index, filler: 'x'.repeat(64 * 1024) }));
+          }
+          return createRuntimeDaemonSuccessResponse(request.id, { ok: true });
+        },
+        close() {},
+      }),
+    });
+    cleanupTasks.push(() => server.close());
+    const socket = await connectSocket(endpoint);
+    cleanupTasks.push(async () => { socket.destroy(); });
+    socket.pause();
+    const received = collectSocketText(socket);
+    socket.pause();
+    socket.write(`${JSON.stringify(createRuntimeDaemonRequest('req-last-words', 'ping'))}\n`);
+    await waitFor(() => socket.bytesWritten > 0);
+    await new Promise((resolve) => { setTimeout(resolve, 50); });
+
+    const closing = server.close();
+    socket.resume();
+    await closing;
+
+    const lines = (await received).split('\n').filter(line => line.length > 0);
+    expect(lines).toHaveLength(frames + 1);
+    expect(JSON.parse(lines[frames]!)).toMatchObject({ kind: 'response', id: 'req-last-words' });
+    expect(server.connectionCount()).toBe(0);
+  });
+
+  it('hangs up on a client that never reads once the close flush bound passes', async () => {
+    const endpoint = await makeTestEndpoint();
+    const server = await createRuntimeDaemonSocketServer({
+      endpoint,
+      maxFrameBytes: 128 * 1024,
+      createDispatcher: (notify) => ({
+        async handle(request) {
+          for (let index = 0; index < 32; index += 1) {
+            notify(createRuntimeDaemonNotification('runtime.warning', { filler: 'x'.repeat(64 * 1024) }));
+          }
+          return createRuntimeDaemonSuccessResponse(request.id, { ok: true });
+        },
+        close() {},
+      }),
+    });
+    cleanupTasks.push(() => server.close());
+    const socket = await connectSocket(endpoint);
+    cleanupTasks.push(async () => { socket.destroy(); });
+    socket.pause();
+    socket.write(`${JSON.stringify(createRuntimeDaemonRequest('req-deaf', 'ping'))}\n`);
+    await waitFor(() => socket.bytesWritten > 0);
+    await new Promise((resolve) => { setTimeout(resolve, 50); });
+
+    const startedAt = Date.now();
+    await server.close();
+
+    expect(Date.now() - startedAt).toBeLessThan(10_000);
+    expect(server.connectionCount()).toBe(0);
+  }, 20_000);
+
+  it('serves both protocols on one endpoint and picks by the first frame of each connection', async () => {
+    const endpoint = await makeTestEndpoint();
+    let v1Dispatchers = 0;
+    const hostRpcFrames: string[] = [];
+    const server = await createRuntimeDaemonSocketServer({
+      endpoint,
+      createDispatcher: () => {
+        v1Dispatchers += 1;
+        return {
+          async handle(request) { return createRuntimeDaemonSuccessResponse(request.id, { protocol: 'v1' }); },
+          close() {},
+        };
+      },
+      createHostRpcPeer: (send) => ({
+        receive(frame) {
+          hostRpcFrames.push(frame);
+          send(JSON.stringify(hostRpcSuccess((JSON.parse(frame) as { id: string }).id, { protocol: 'v2' })));
+        },
+        close() {},
+      }),
+    });
+    cleanupTasks.push(() => server.close());
+
+    const idle = await connectSocket(endpoint);
+    cleanupTasks.push(async () => { idle.destroy(); });
+    await waitFor(() => server.connectionCount() === 1);
+    expect(v1Dispatchers).toBe(0);
+
+    const v2 = await connectSocket(endpoint);
+    cleanupTasks.push(async () => { v2.destroy(); });
+    const v2Text = collectSocketText(v2);
+    v2.write(`${JSON.stringify(hostRpcRequest('a', 'initialize'))}\n`);
+    // Later frames stay on v2 even when they look like nothing in particular.
+    v2.write(`${JSON.stringify({ id: 'b' })}\n`);
+    await waitFor(() => hostRpcFrames.length === 2);
+    expect(v1Dispatchers).toBe(0);
+
+    const v1 = await createRuntimeDaemonSocketClientTransport(endpoint);
+    cleanupTasks.push(async () => { await v1.close?.(); });
+    await expect(v1.request('ping')).resolves.toEqual({ protocol: 'v1' });
+    expect(v1Dispatchers).toBe(1);
+
+    v2.end();
+    const replies = (await v2Text).split('\n').filter(line => line.length > 0).map(line => JSON.parse(line) as unknown);
+    expect(replies).toEqual([hostRpcSuccess('a', { protocol: 'v2' }), hostRpcSuccess('b', { protocol: 'v2' })]);
+  });
+
+  it('tells a v2 peer when its client falls behind on reading and when it caught up', async () => {
+    const endpoint = await makeTestEndpoint();
+    let congested: (() => boolean) | undefined;
+    let drained = 0;
+    let fill: (() => void) | undefined;
+    const server = await createRuntimeDaemonSocketServer({
+      endpoint,
+      createDispatcher: () => ({
+        async handle(request) { return createRuntimeDaemonSuccessResponse(request.id, {}); },
+        close() {},
+      }),
+      createHostRpcPeer: (send, _disconnect, isCongested) => {
+        congested = isCongested;
+        return {
+          receive() {
+            fill = () => {
+              for (let sent = 0; sent < 256 && !isCongested(); sent += 1) send(JSON.stringify({ filler: 'x'.repeat(64 * 1024) }));
+            };
+          },
+          drained() { drained += 1; },
+          close() {},
+        };
+      },
+    });
+    cleanupTasks.push(() => server.close());
+    // No reader yet, so what the Host sends piles up.
+    const socket = await connectSocket(endpoint);
+    cleanupTasks.push(async () => { socket.destroy(); });
+    socket.write(`${JSON.stringify(hostRpcRequest('a', 'initialize'))}\n`);
+    await waitFor(() => fill !== undefined);
+    expect(congested!()).toBe(false);
+
+    fill!();
+    expect(congested!()).toBe(true);
+    expect(drained).toBe(0);
+
+    socket.resume();
+    await waitFor(() => drained > 0);
+    expect(congested!()).toBe(false);
+  });
+
+  it('answers a JSON-RPC first frame as v1 when the endpoint serves v1 only', async () => {
+    const endpoint = await makeTestEndpoint();
+    const server = await createRuntimeDaemonSocketServer({
+      endpoint,
+      createDispatcher: () => ({
+        async handle(request) { return createRuntimeDaemonSuccessResponse(request.id, {}); },
+        close() {},
+      }),
+    });
+    cleanupTasks.push(() => server.close());
+    const socket = await connectSocket(endpoint);
+    cleanupTasks.push(async () => { socket.destroy(); });
+    const text = collectSocketText(socket);
+    socket.write(`${JSON.stringify(hostRpcRequest('a', 'initialize'))}\n`);
+    socket.end();
+
+    expect(JSON.parse((await text).trim())).toMatchObject({ kind: 'error', error: { code: 'invalid_frame' } });
+  });
+
+  it('answers an oversized frame on a v2 connection in the v2 error shape', async () => {
+    const endpoint = await makeTestEndpoint();
+    const server = await createRuntimeDaemonSocketServer({
+      endpoint,
+      maxFrameBytes: 1024,
+      createDispatcher: () => ({
+        async handle(request) { return createRuntimeDaemonSuccessResponse(request.id, {}); },
+        close() {},
+      }),
+      createHostRpcPeer: () => ({ receive() {}, close() {} }),
+    });
+    cleanupTasks.push(() => server.close());
+    const socket = await connectSocket(endpoint);
+    cleanupTasks.push(async () => { socket.destroy(); });
+    const text = collectSocketText(socket);
+    socket.write(`${JSON.stringify(hostRpcRequest('a', 'initialize'))}\n`);
+    socket.write(`${JSON.stringify(hostRpcRequest('b', 'ping', { filler: 'x'.repeat(2048) }))}\n`);
+
+    expect(JSON.parse((await text).trim())).toMatchObject({
+      jsonrpc: '2.0',
+      id: null,
+      error: { data: { kodaxCode: 'limit_exceeded', reason: 'invalid_frame', retryable: false } },
+    });
+  });
+
+  it('rejects an outbound limit that cannot hold one maximum-size frame', async () => {
+    const endpoint = await makeTestEndpoint();
+    await expect(createRuntimeDaemonSocketServer({
+      endpoint,
+      maxFrameBytes: 1024,
+      maxOutboundBytes: 512,
+      createDispatcher: () => ({ async handle(request) { return createRuntimeDaemonSuccessResponse(request.id, {}); }, close() {} }),
+    })).rejects.toThrow(/maxOutboundBytes/);
   });
 
   it('refuses to overwrite a non-socket Unix endpoint path', async () => {

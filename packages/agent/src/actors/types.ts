@@ -108,6 +108,8 @@ export interface AgentMailboxMessage {
   /** Canonical actors that handled this chain; absent only on pre-hardening schema-v1 snapshots. */
   readonly lineage?: readonly string[];
   readonly forwardedMessageId?: string;
+  /** The sender's name for this delivery. Sending it again delivers nothing more. */
+  readonly requestId?: string;
   readonly content: string;
   readonly createdAt: string;
 }
@@ -376,6 +378,7 @@ export interface AgentActorClient {
     content: string,
     classification?: AgentDataClassification,
     forwardedMessageId?: string,
+    requestId?: string,
   ): Promise<AgentMailboxMessage>;
   followup(
     targetPath: string,
@@ -383,7 +386,8 @@ export interface AgentActorClient {
     metadata?: Readonly<Record<string, AgentMetadataValue>>,
     options?: AgentMutationOptions,
   ): Promise<AgentFollowupResult>;
-  interrupt(targetPath: string, reason?: string, scope?: AgentInterruptScope): Promise<void>;
+  /** With `turnId`, interrupts only that turn; once it has ended, nothing happens. */
+  interrupt(targetPath: string, reason?: string, scope?: AgentInterruptScope, turnId?: string): Promise<void>;
   acknowledgeCompletions(turnIds: readonly string[]): Promise<number>;
   list(): AgentTreeSnapshot;
   get(targetPath: string): AgentDetail;

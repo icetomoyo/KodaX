@@ -1230,8 +1230,8 @@ export function createRuntimeDaemonClient(
           KodaXRuntime['config']['readEffective']
         >;
       },
-      patch(patch: RuntimeConfigPatch) {
-        return request('config.patch', { patch });
+      patch(patch: RuntimeConfigPatch, options?: { readonly expectedRevision?: string }) {
+        return request('config.patch', { patch, ...(options?.expectedRevision !== undefined ? { expectedRevision: options.expectedRevision } : {}) });
       },
       reload() {
         return request('config.reload') as Promise<RuntimeConfigReloadResult>;
@@ -1276,6 +1276,9 @@ export function createRuntimeDaemonClient(
       },
       describeSkill(input: RuntimeSkillDescribeInput) {
         return request('skill.describe', input) as Promise<RuntimeSkillDescription | null>;
+      },
+      agents() {
+        return request('agent.list') as ReturnType<KodaXRuntime['catalog']['agents']>;
       },
       customProviders() {
         return request('provider.custom.list') as ReturnType<KodaXRuntime['catalog']['customProviders']>;
@@ -1408,7 +1411,7 @@ export function createRuntimeDaemonClient(
           KodaXRuntime['agents']['spawn']
         >;
       },
-      async send(sessionId, actorPath, content, classification) {
+      async send(sessionId, actorPath, content, classification, requestId) {
         const unavailable = actorControlPlaneError();
         if (unavailable) throw unavailable;
         await request('agents.send', {
@@ -1416,6 +1419,7 @@ export function createRuntimeDaemonClient(
           actorPath,
           content,
           ...(classification !== undefined ? { classification } : {}),
+          ...(requestId !== undefined ? { requestId } : {}),
         });
       },
       followup(sessionId, actorPath, objective, options) {
@@ -1442,13 +1446,14 @@ export function createRuntimeDaemonClient(
           KodaXRuntime['agents']['followup']
         >;
       },
-      async interrupt(sessionId, actorPath, reason) {
+      async interrupt(sessionId, actorPath, reason, turnId) {
         const unavailable = actorControlPlaneError();
         if (unavailable) throw unavailable;
         await request('agents.interrupt', {
           sessionId,
           actorPath,
           ...(reason !== undefined ? { reason } : {}),
+          ...(turnId !== undefined ? { turnId } : {}),
         });
       },
       output(sessionId, actorPath, turnId) {

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { MessageQueue, type QueuedMessage } from '@kodax-ai/agent';
 import type { ClientInputAcceptance, ClientInputAdmissionError, ClientQueuedInput, ClientSubmitInput } from '@kodax-ai/coding/client-contract';
 import { currentProductExecution, productExecutionIntentKey, retainExecutionWorkMode, type ProductExecutionContext } from './product-execution-authorization.js';
+import { sameRequester, type RuntimeRequester } from './requester-identity.js';
 
 interface QueuedInputFact {
   requiredWorkMode?: 'agent';
@@ -9,7 +10,10 @@ interface QueuedInputFact {
   plainRunBoundary?: true;
   admissionError?: ClientInputAdmissionError;
   execution?: ProductExecutionContext;
+  /** The client instance that submitted it: rebinding and exit cleanup follow this. */
   readonly principalId?: string;
+  /** Who it was submitted for: withdrawal is authorized against this. */
+  readonly subject?: string;
   awaitingBinding?: boolean;
   readonly sessionId: string;
   readonly inputId: string;
@@ -17,6 +21,8 @@ interface QueuedInputFact {
   readonly messageId?: string;
   readonly delivery?: ClientSubmitInput['delivery'];
   readonly targetRunId?: string;
+  /** What the submitter asked for the Run of this input. Such an input starts a Run of its own. */
+  readonly runOptions?: ClientSubmitInput['runOptions'];
   /** Legacy persisted name: true requires a separate Run, for a Skill or changed authority/default method. */
   skill: boolean;
   state: ClientInputAcceptance['state'];
@@ -37,12 +43,14 @@ export interface PendingSessionInput {
   /** Keep this persisted name for old checkpoints; true is a Run boundary, not proof of a named Skill. */
   readonly skill: boolean;
   readonly principalId?: string;
+  readonly subject?: string;
 }
 
 /** Original input retained until its Session is released; never execution authority. */
 export interface WithdrawnSessionInput {
   readonly input: ClientSubmitInput;
   readonly principalId?: string;
+  readonly subject?: string;
 }
 
 export interface SessionInputState {
@@ -51,13 +59,14 @@ export interface SessionInputState {
 }
 
 export function inputIntentDigest(input: ClientSubmitInput, executionKey?: string): string {
-  // targetRunId and inputArtifacts are appended only when present so
-  // targetless artifact-free inputs keep the digest formula that earlier
-  // Host builds persisted in Run statuses.
+  // targetRunId, inputArtifacts and runOptions are appended only when present
+  // so inputs without them keep the digest formula that earlier Host builds
+  // persisted in Run statuses.
   return createHash('sha256').update(JSON.stringify([
     input.text, input.delivery ?? 'immediate',
     ...(input.targetRunId !== undefined ? [input.targetRunId] : []),
     ...(input.inputArtifacts !== undefined ? [input.inputArtifacts] : []),
+    ...(input.runOptions !== undefined ? [{ runOptions: input.runOptions }] : []),
     ...(executionKey !== undefined ? [executionKey] : []),
   ])).digest('hex');
 }
@@ -94,7 +103,7 @@ export class SessionInputQueue {
       if (this.facts.has(key)) throw conflict('Withdrawn input conflicts with pending input.');
       this.withdrawals.set(key, structuredClone(value));
       this.facts.set(key, { sessionId: value.input.sessionId, inputId: value.input.inputId,
-        digest: inputIntentDigest(value.input), principalId: value.principalId, skill: false, state: 'withdrawn' });
+        digest: inputIntentDigest(value.input), principalId: value.principalId, subject: value.subject, skill: false, state: 'withdrawn' });
     }
   }
 
@@ -107,7 +116,8 @@ export class SessionInputQueue {
         ...(explicitSkill === undefined ? {} : { explicitSkill }),
         ...(plainRunBoundary === undefined ? {} : { plainRunBoundary }),
         ...(error === undefined ? {} : { admissionError: structuredClone(error) }),
-        ...(principalId ? { principalId } : {}) };
+        ...(principalId ? { principalId } : {}),
+        ...(fact?.subject ? { subject: fact.subject } : {}) };
     });
   }
 
@@ -166,7 +176,7 @@ export class SessionInputQueue {
             continue;
           }
           const awaitingBinding = deferAuthorization || value.admissionError !== undefined || value.principalId !== execution?.principalId;
-          this.enqueueWithExecution(value.input, value.skill, awaitingBinding ? undefined : execution, value.principalId, awaitingBinding, value.explicitSkill, value.plainRunBoundary, value.requiredWorkMode);
+          this.enqueueWithExecution(value.input, value.skill, awaitingBinding ? undefined : execution, value, awaitingBinding, value.explicitSkill, value.plainRunBoundary, value.requiredWorkMode);
           if (value.admissionError !== undefined) this.facts.get(key)!.admissionError = structuredClone(value.admissionError);
         }
       } finally {
@@ -190,7 +200,7 @@ export class SessionInputQueue {
     const fact = this.facts.get(this.key(input.sessionId, input.inputId));
     if (!fact) return undefined;
     if (fact.state === 'withdrawn') {
-      this.assertWithdrawalOwner(fact.principalId, currentProductExecution()?.principalId);
+      this.assertWithdrawalOwner(fact, currentProductExecution());
       if (fact.digest !== inputIntentDigest(input)) throw conflict('Input ID already belongs to a different intent.');
       return this.read(input.sessionId, input.inputId);
     }
@@ -229,20 +239,23 @@ export class SessionInputQueue {
   enqueue(input: ClientSubmitInput, skill: boolean, explicitSkill?: string): ClientInputAcceptance {
     const duplicate = this.find(input);
     if (duplicate) return duplicate;
-    return this.enqueueWithExecution(input, skill, currentProductExecution(), currentProductExecution()?.principalId, false, skill ? explicitSkill ?? null : undefined);
+    return this.enqueueWithExecution(input, skill, currentProductExecution(), currentProductExecution(), false, skill ? explicitSkill ?? null : undefined);
   }
 
   private enqueueWithExecution(input: ClientSubmitInput, skill: boolean, execution: ProductExecutionContext | undefined,
-    principalId: string | undefined, awaitingBinding: boolean, explicitSkill?: string | null, plainRunBoundary?: true,
+    requester: RuntimeRequester | undefined, awaitingBinding: boolean, explicitSkill?: string | null, plainRunBoundary?: true,
     requiredWorkMode = execution?.profile?.requiredWorkMode): ClientInputAcceptance {
     if (this.queue.count({ agentId: input.sessionId, mode: 'prompt', maxPriority: 'user' }) >= MAX_QUEUED_INPUTS) {
       throw conflict(`Queued follow-up limit reached (${MAX_QUEUED_INPUTS}). Wait or withdraw an input.`);
     }
+    const principalId = requester?.principalId;
+    const subject = requester?.subject;
     this.persistPending(input.sessionId, [...this.snapshot(input.sessionId), { input: structuredClone(input), skill,
       ...(requiredWorkMode === undefined ? {} : { requiredWorkMode }),
       ...(explicitSkill === undefined ? {} : { explicitSkill }),
       ...(plainRunBoundary === undefined ? {} : { plainRunBoundary }),
-      ...(principalId ? { principalId } : {}) }]);
+      ...(principalId ? { principalId } : {}),
+      ...(subject ? { subject } : {}) }]);
     const messageId = this.queue.enqueue({
       agentId: input.sessionId, mode: 'prompt', priority: 'user', content: input.text,
       ...(input.inputArtifacts !== undefined ? { inputArtifacts: structuredClone(input.inputArtifacts) } : {}),
@@ -250,7 +263,8 @@ export class SessionInputQueue {
     this.facts.set(this.key(input.sessionId, input.inputId), {
       sessionId: input.sessionId, inputId: input.inputId, digest: inputIntentDigest(input, productExecutionIntentKey(execution)), messageId,
       delivery: input.delivery, targetRunId: input.targetRunId,
-      execution, principalId, awaitingBinding, requiredWorkMode,
+      ...(input.runOptions === undefined ? {} : { runOptions: structuredClone(input.runOptions) }),
+      execution, principalId, subject, awaitingBinding, requiredWorkMode,
       explicitSkill,
       plainRunBoundary,
       skill, state: 'queued',
@@ -269,6 +283,7 @@ export class SessionInputQueue {
     this.facts.set(this.key(input.sessionId, input.inputId), {
       sessionId: input.sessionId, inputId: input.inputId, digest: inputIntentDigest(input, productExecutionIntentKey(currentProductExecution())),
       principalId: currentProductExecution()?.principalId,
+      subject: currentProductExecution()?.subject,
       skill: false, state, runId, steerInput: structuredClone(input),
     });
     this.changed(input.sessionId);
@@ -338,6 +353,7 @@ export class SessionInputQueue {
         input: { sessionId, inputId: fact.inputId, text: message.content,
           ...(fact.delivery !== undefined ? { delivery: fact.delivery } : {}),
           ...(fact.targetRunId !== undefined ? { targetRunId: fact.targetRunId } : {}),
+          ...(fact.runOptions !== undefined ? { runOptions: fact.runOptions } : {}),
           ...(message.inputArtifacts !== undefined ? { inputArtifacts: message.inputArtifacts } : {}) },
         skill: fact.skill,
         explicitSkill: fact.explicitSkill,
@@ -351,15 +367,15 @@ export class SessionInputQueue {
 
   /**
    * One drain unit: compatible plain texts merge; legacy `skill: true`
-   * drains alone at a new Run boundary. `explicitSkill` distinguishes a
+   * drains alone at a new Run boundary, and so does an input with Run options. `explicitSkill` distinguishes a
    * named method from a default/authority boundary; expansion happens at consumption.
    */
   batch(sessionId: string): readonly { readonly input: ClientSubmitInput; readonly enqueuedAt: number; readonly skill: boolean; readonly explicitSkill?: string | null; readonly plainRunBoundary?: true; readonly execution?: ProductExecutionContext }[] {
     const ordered = this.ordered(sessionId);
     const first = ordered[0];
     if (!first || first.awaitingBinding) return [];
-    const end = first.skill ? 1 : ordered.findIndex((item, index) => index > 0
-      && (item.skill || item.awaitingBinding || item.execution?.key !== first.execution?.key
+    const end = first.skill || first.input.runOptions !== undefined ? 1 : ordered.findIndex((item, index) => index > 0
+      && (item.skill || item.input.runOptions !== undefined || item.awaitingBinding || item.execution?.key !== first.execution?.key
         || item.execution?.profile?.requiredWorkMode !== first.execution?.profile?.requiredWorkMode
         || item.execution?.principalId !== first.execution?.principalId));
     return end === -1 ? ordered : ordered.slice(0, end);
@@ -386,7 +402,7 @@ export class SessionInputQueue {
     persist: (inputs: readonly QueuedMessage[]) => Promise<void>, executionKey?: string, principalId?: string,
     authorize?: (input: ClientSubmitInput, execution: ProductExecutionContext) => Promise<boolean>): Promise<readonly QueuedMessage[]> {
     let batch = this.batch(sessionId);
-    if (batch.length === 0 || batch[0]!.skill
+    if (batch.length === 0 || batch[0]!.skill || batch[0]!.input.runOptions !== undefined
       || batch[0]!.execution?.principalId !== principalId) return [];
     if (batch[0]!.execution?.resolve === undefined && batch[0]!.execution?.key !== executionKey) return [];
     let count = 0;
@@ -409,15 +425,16 @@ export class SessionInputQueue {
     return prompts;
   }
 
-  private assertWithdrawalOwner(original: string | undefined, principalId: string | undefined): void {
-    if (original !== principalId) throw Object.assign(new Error('Input withdrawal requires its original principal.'), { code: 'permission_denied' });
+  /** The party that submitted an input may withdraw it from any of its client instances. */
+  private assertWithdrawalOwner(original: RuntimeRequester, requester: RuntimeRequester | undefined): void {
+    if (!sameRequester(original, requester)) throw Object.assign(new Error('Input withdrawal requires its original principal.'), { code: 'permission_denied' });
   }
 
   /** `releaseSteer` synchronously removes an undelivered steer input from its Run; false means delivery has begun. */
-  withdraw(sessionId: string, inputId: string, principalId = currentProductExecution()?.principalId,
+  withdraw(sessionId: string, inputId: string, requester: RuntimeRequester | undefined = currentProductExecution(),
     releaseSteer?: (runId: string) => boolean): ClientSubmitInput {
     const fact = this.facts.get(this.key(sessionId, inputId));
-    if (fact) this.assertWithdrawalOwner(fact.principalId, principalId);
+    if (fact) this.assertWithdrawalOwner(fact, requester);
     const previous = this.withdrawals.get(this.key(sessionId, inputId));
     if (previous) return structuredClone(previous.input);
     if (!fact || fact.state !== 'queued') throw conflict('Input has already been submitted or withdrawn.');
@@ -425,7 +442,8 @@ export class SessionInputQueue {
     const original = this.snapshot(sessionId).find(value => value.input.inputId === inputId);
     if (!original) throw conflict('Input is already being submitted.');
     const receipt: WithdrawnSessionInput = { input: structuredClone(original.input),
-      ...(fact.principalId === undefined ? {} : { principalId: fact.principalId }) };
+      ...(fact.principalId === undefined ? {} : { principalId: fact.principalId }),
+      ...(fact.subject === undefined ? {} : { subject: fact.subject }) };
     this.persistPending(sessionId, this.snapshot(sessionId).filter(value => value.input.inputId !== inputId),
       [...this.withdrawals.values()].filter(value => value.input.sessionId === sessionId).concat(receipt));
     const [message] = this.queue.dequeue({ agentId: sessionId, mode: 'prompt', maxPriority: 'user', id: fact.messageId });
@@ -442,7 +460,8 @@ export class SessionInputQueue {
     const { sessionId, inputId, steerInput, runId } = fact;
     if (!steerInput || !runId) throw conflict('Input has already been submitted or withdrawn.');
     const receipt: WithdrawnSessionInput = { input: structuredClone(steerInput),
-      ...(fact.principalId === undefined ? {} : { principalId: fact.principalId }) };
+      ...(fact.principalId === undefined ? {} : { principalId: fact.principalId }),
+      ...(fact.subject === undefined ? {} : { subject: fact.subject }) };
     const receipts = [...this.withdrawals.values()].filter(value => value.input.sessionId === sessionId);
     // Commit the receipt first; roll it back if the Run has already started delivering
     // the input or could not record the release.
@@ -480,7 +499,7 @@ export class SessionInputQueue {
       // Steer inputs settle with their Run, which client cleanup stops separately.
       if (fact.sessionId !== sessionId || fact.state !== 'queued' || fact.principalId !== principalId
         || fact.messageId === undefined) continue;
-      this.withdraw(fact.sessionId, fact.inputId, principalId);
+      this.withdraw(fact.sessionId, fact.inputId, { principalId });
       withdrawn.push({ sessionId: fact.sessionId, inputId: fact.inputId });
     }
     return withdrawn;

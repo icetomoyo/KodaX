@@ -161,7 +161,7 @@ describe('F270 actor tree and scheduler', () => {
 
     expect(() => controller.output('/root', first.actorPath, second.turnId)).toThrow(
       expect.objectContaining<Partial<AgentControlError>>({
-        code: 'permission_denied',
+        code: 'turn_not_found',
       }),
     );
   });
@@ -1531,6 +1531,45 @@ describe('F270 actor tree and scheduler', () => {
     await expect(controller.followup('/root', '/root/worker', 'Try again.')).resolves.toMatchObject({
       delivery: 'started_turn',
     });
+  });
+
+  it('interrupts only the turn it is told to, and leaves a later turn running', async () => {
+    const executor = new DeferredExecutor();
+    const controller = await createAgentActorController({ executor });
+    const first = await controller.spawn('/root', { taskName: 'worker', objective: 'First.' });
+    await controller.interrupt('/root', '/root/worker', 'change of plan', 'turn', first.turnId);
+    const { turn: second } = await controller.followup('/root', '/root/worker', 'Second.');
+    const revision = controller.get('/root', '/root/worker').actor.revision;
+
+    // A late repeat names a turn that already ended: nothing is interrupted and nothing is saved.
+    await controller.interrupt('/root', '/root/worker', 'change of plan', 'turn', first.turnId);
+    expect(controller.get('/root', '/root/worker').actor).toMatchObject({ currentTurnId: second.turnId, revision });
+
+    await expect(controller.interrupt('/root', '/root/worker', 'typo', 'turn', 'turn_never'))
+      .rejects.toMatchObject({ code: 'turn_not_found' });
+    expect(controller.get('/root', '/root/worker').actor.currentTurnId).toBe(second.turnId);
+  });
+
+  it('delivers a message once for a request its sender repeats', async () => {
+    const executor = new DeferredExecutor();
+    const controller = await createAgentActorController({ executor });
+    await controller.spawn('/root', { taskName: 'worker', objective: 'First.' });
+    await controller.spawn('/root', { taskName: 'peer', objective: 'Other.' });
+
+    const sent = await controller.send('/root', '/root/worker', 'Check the tests too.', 'internal', undefined, 'request-1');
+    const events = controller.eventSnapshot('/root').length;
+    await expect(controller.send('/root', '/root/worker', 'Check the tests too.', 'internal', undefined, 'request-1'))
+      .resolves.toEqual(sent);
+    expect(controller.eventSnapshot('/root')).toHaveLength(events);
+
+    // Another request, another recipient or another sender is another delivery.
+    await controller.send('/root', '/root/worker', 'Check the tests too.', 'internal', undefined, 'request-2');
+    await controller.send('/root', '/root/peer', 'Check the tests too.', 'internal', undefined, 'request-1');
+    await controller.send('/root', '/root/worker', 'Check the tests too.');
+    await controller.send('/root', '/root/worker', 'Check the tests too.');
+    expect(controller.get('/root', '/root/worker').mailbox.map((message) => message.requestId))
+      .toEqual(['request-1', 'request-2', undefined, undefined]);
+    expect(controller.get('/root', '/root/peer').mailbox).toHaveLength(1);
   });
 
   it('atomically installs cancellation before a durable start becomes launchable', async () => {

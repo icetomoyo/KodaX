@@ -73,6 +73,8 @@ export interface RuntimeDaemonLockOwner {
   readonly kind?: 'daemon' | 'inline';
   /** OS-issued identity used to distinguish a live owner from PID reuse. */
   readonly processStartIdentity?: string;
+  /** Linux PID namespace the owner ran in; its PID means nothing in another one. */
+  readonly pidNamespace?: string;
   /** Present when the daemon was assigned to a Windows Job before user code could start. */
   readonly processContainment?: 'windows-job';
   /** Process outside the Job whose exit proves that the Job became empty. */
@@ -103,6 +105,28 @@ export function readRuntimeOwnerProcessStartIdentity(pid: number): string | unde
     currentProcessStartIdentityRead = true;
   }
   return currentProcessStartIdentity;
+}
+
+/** This process's Linux PID namespace (e.g. `pid:[4026531836]`); absent elsewhere or when it cannot be read. */
+export function readRuntimeOwnerPidNamespace(): string | undefined {
+  if (process.platform !== 'linux') return undefined;
+  try {
+    return fs.readlinkSync('/proc/self/ns/pid') || undefined;
+  } catch {
+    // Missing or unreadable evidence never authorizes reclaiming a lock.
+    return undefined;
+  }
+}
+
+/**
+ * One home has exactly one Host at a time, so an owner recorded in another PID
+ * namespace (a restarted container) no longer holds it. Both sides must be known.
+ */
+export function runtimeOwnerInOtherPidNamespace(
+  recorded: string | undefined,
+  current: string | undefined,
+): boolean {
+  return recorded !== undefined && current !== undefined && recorded !== current;
 }
 
 export function readRuntimeDaemonWindowsJobIdentity(): ReturnType<typeof readCurrentProcessWindowsJobIdentity> {
@@ -475,11 +499,13 @@ function tryAcquireRuntimeOwnerCoordination(
   if (inactive !== undefined) releaseRuntimeOwnerCoordination(paths, inactive);
   const nonce = randomUUID();
   const processStartIdentity = readRuntimeOwnerProcessStartIdentity(process.pid);
+  const pidNamespace = readRuntimeOwnerPidNamespace();
   const owner: RuntimeDaemonLockOwner = {
     runtimeId: `owner-transition-${nonce}`,
     pid: process.pid,
     createdAt: new Date().toISOString(),
     ...(processStartIdentity === undefined ? {} : { processStartIdentity }),
+    ...(pidNamespace === undefined ? {} : { pidNamespace }),
   };
   const record = { ...owner, nonce };
   const acquired = tryAcquireRuntimeDaemonLock({
@@ -732,9 +758,12 @@ type RuntimeOwnerProcessState = 'alive' | 'gone' | 'unknown';
 
 /** Shared by owner reclamation, daemon health and verified exit waiting. */
 export function runtimeOwnerProcessState(
-  owner: Pick<RuntimeDaemonLockOwner, 'pid' | 'processStartIdentity'>,
+  owner: Pick<RuntimeDaemonLockOwner, 'pid' | 'processStartIdentity' | 'pidNamespace'>,
 ): RuntimeOwnerProcessState {
   if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0) return 'gone';
+  // Decided before any PID probe: the number may name an unrelated process here.
+  if (owner.pidNamespace !== undefined
+    && runtimeOwnerInOtherPidNamespace(owner.pidNamespace, readRuntimeOwnerPidNamespace())) return 'gone';
   try {
     process.kill(owner.pid, 0);
   } catch (error: unknown) {
@@ -993,12 +1022,14 @@ export function acquireRuntimeSessionStorageOwner(
       fs.unlinkSync(paths.lockFile);
     }
     const processStartIdentity = readRuntimeOwnerProcessStartIdentity(process.pid);
+    const pidNamespace = readRuntimeOwnerPidNamespace();
     const lock = tryAcquireRuntimeDaemonLock(paths, {
       runtimeId,
       pid: process.pid,
       createdAt: new Date().toISOString(),
       kind: 'daemon',
       ...(processStartIdentity === undefined ? {} : { processStartIdentity }),
+      ...(pidNamespace === undefined ? {} : { pidNamespace }),
     });
     if (!lock) throw conflict();
     return lock;
@@ -1404,6 +1435,7 @@ function isRuntimeDaemonLockOwner(value: unknown): value is RuntimeDaemonLockOwn
       owner.processStartIdentity === undefined
       || (typeof owner.processStartIdentity === 'string' && owner.processStartIdentity.length > 0)
     )
+    && (owner.pidNamespace === undefined || (typeof owner.pidNamespace === 'string' && owner.pidNamespace.length > 0))
     && (owner.processContainment === undefined || owner.processContainment === 'windows-job')
     && (owner.windowsJobName === undefined || (owner.processContainment === 'windows-job'
       && typeof owner.windowsJobName === 'string' && /^Global\\KodaXDaemonJob-[0-9a-f-]{36}$/i.test(owner.windowsJobName)))

@@ -134,6 +134,7 @@ export type AgentControlErrorCode =
   | 'name_collision'
   | 'no_active_turn'
   | 'permission_denied'
+  | 'turn_not_found'
   | 'unsupported_operation';
 
 export class AgentControlError extends Error {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { KodaXMessage, KodaXSessionLineage } from '@kodax-ai/agent';
 import {
   buildRecoverySeed,
@@ -72,15 +72,30 @@ describe('session recovery memory', () => {
     expect(SESSION_RECOVERY_HINT_MESSAGE).toContain('session history');
   });
 
-  it('offers recovery for provider-service errors but not auth failures', () => {
-    expect(shouldOfferSessionRecovery({
+  it('offers recovery for provider-service errors but not auth failures', async () => {
+    expect(await shouldOfferSessionRecovery({
       error: new Error('Provider service Error, Try a moment later'),
-      messageCount: 5,
+      countMessages: () => 5,
     })).toBe(true);
 
-    expect(shouldOfferSessionRecovery({
+    expect(await shouldOfferSessionRecovery({
       error: new Error('Provider API error: 401 unauthorized'),
-      messageCount: 5,
+      countMessages: () => 5,
     })).toBe(false);
+  });
+
+  it('asks the conversation owner for its size only when the error qualifies', async () => {
+    const countMessages = vi.fn(async () => 0);
+    expect(await shouldOfferSessionRecovery({ error: new Error('Provider API error: 401 unauthorized'), countMessages })).toBe(false);
+    expect(countMessages).not.toHaveBeenCalled();
+
+    // A Host-owned conversation: the local cache is empty, the Host's count decides.
+    expect(await shouldOfferSessionRecovery({
+      error: new Error('Provider service Error, Try a moment later'), countMessages,
+    })).toBe(false);
+    countMessages.mockResolvedValueOnce(12);
+    expect(await shouldOfferSessionRecovery({
+      error: new Error('Provider service Error, Try a moment later'), countMessages,
+    })).toBe(true);
   });
 });

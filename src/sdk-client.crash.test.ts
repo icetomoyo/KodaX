@@ -197,9 +197,10 @@ it('a Host crash after input acceptance preserves content, marks the Run interru
     await new Promise((resolve) => setTimeout(resolve, 800));
     expect(providerRequests).toBe(requestsAfterRestart);
     expect(providerRequests).toBeLessThanOrEqual(1);
-    // Acceptance identity is current-Host scoped by design; the Run fact is
-    // the durable view the client reads after a Host change.
-    expect(await survivor.inputs.read(scenario.sessionId, 'crash-input')).toBeNull();
+    // The input is still known by the id it was accepted with, so a client
+    // that asks or submits it again is given this Run instead of a second one.
+    expect(await survivor.inputs.read(scenario.sessionId, 'crash-input'))
+      .toMatchObject({ inputId: 'crash-input', state: 'submitted', runId: scenario.runId });
   } finally {
     await survivor.disconnect().catch(() => undefined);
     await restarted.close().catch(() => undefined);

@@ -179,11 +179,13 @@ class DaemonManagementController implements RuntimeDaemonManagementController {
         throw managementError('conflict', 'Runtime daemon owner fence changed during inspection.');
       }
       const policy = readRuntimeOwnerPolicy(this.input.paths);
+      // The wire owner is a closed shape; the PID namespace stays in the lock record.
+      const { pidNamespace: _pidNamespace, ...wireOwner } = owner;
       return {
         runtimeId: this.input.runtime.identity.runtimeId,
         revision,
         ownerPolicy: { mode: policy.mode, revision: policy.revision, updatedAt: policy.updatedAt },
-        owner,
+        owner: wireOwner,
         preflight: current,
         ...(this.input.integrationStatuses
           ? { integrations: integrationHealth(this.input.integrationStatuses()) }

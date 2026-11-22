@@ -127,7 +127,7 @@ it('retains client ownership during withdrawal and enforces restore identity bef
     queue.restore(queue.snapshot('s'));
     expect(() => queue.validateRestore([{ input, skill: false, principalId: 'B' }])).toThrow(/intent/);
     queue.recordAccepted({ ...input, inputId: 'steer' }, 'root', 'queued');
-    expect(() => queue.withdraw('s', 'steer', 'A', () => false)).toThrow(/being delivered/);
+    expect(() => queue.withdraw('s', 'steer', { principalId: 'A' }, () => false)).toThrow(/being delivered/);
     expect(queue.read('s', 'steer')?.state).toBe('queued');
     queue.recordAccepted({ ...input, inputId: 'steer-pending' }, 'root', 'queued');
     queue.markDropped('s', 'steer');
@@ -150,14 +150,14 @@ it('withdraws a steer input only after its Run releases it, keeping a durable re
   const steer = { sessionId: 's', inputId: 'steer', text: 'Use the lighter script.', delivery: 'steer' as const, targetRunId: 'run-1' };
   const released: string[] = [];
   withProductExecution(a, () => queue.recordAccepted(steer, 'run-1', 'queued'));
-  expect(() => queue.withdraw('s', 'steer', 'B', () => true)).toThrow(/original principal/);
-  expect(() => queue.withdraw('s', 'steer', 'A', () => false)).toThrow(/being delivered/);
+  expect(() => queue.withdraw('s', 'steer', { principalId: 'B' }, () => true)).toThrow(/original principal/);
+  expect(() => queue.withdraw('s', 'steer', { principalId: 'A' }, () => false)).toThrow(/being delivered/);
   expect(saved).toEqual([]);
-  expect(queue.withdraw('s', 'steer', 'A', runId => { released.push(runId); return true; })).toEqual(steer);
+  expect(queue.withdraw('s', 'steer', { principalId: 'A' }, runId => { released.push(runId); return true; })).toEqual(steer);
   expect(released).toEqual(['run-1']);
   expect(queue.read('s', 'steer')).toEqual({ sessionId: 's', inputId: 'steer', state: 'withdrawn', runId: 'run-1' });
   expect(saved).toEqual([{ input: steer, principalId: 'A' }]);
-  expect(queue.withdraw('s', 'steer', 'A', () => false)).toEqual(steer);
+  expect(queue.withdraw('s', 'steer', { principalId: 'A' }, () => false)).toEqual(steer);
   queue.markSubmitted('s', 'steer');
   expect(queue.read('s', 'steer')?.state).toBe('withdrawn');
   expect(withProductExecution(a, () => queue.recordAccepted(steer, 'run-1', 'queued')).state).toBe('withdrawn');
@@ -260,4 +260,52 @@ it('keeps another Session input separate even when both clients used the same in
   expect(await queue.consumePlainBatch('a', 'run-a', async () => {})).toMatchObject([{ content: 'A' }]);
   expect(queue.read('b', 'same')).toMatchObject({ state: 'queued' });
   expect(queue.withdraw('b', 'same').text).toBe('B');
+});
+
+it('lets another client of the same person withdraw a queued input and keeps a service apart', () => {
+  let saved: unknown;
+  const queue = new SessionInputQueue(() => {}, (_session, pending, withdrawn) => { saved = structuredClone({ pending, withdrawn }); });
+  const laptop: ProductExecutionContext = { principalId: 'laptop', subject: 'person', key: 'laptop-key', bindRun: async input => input };
+  const input = { sessionId: 's', inputId: 'queued', text: 'Take this back from the phone.', delivery: 'after_turn' as const };
+  withProductExecution(laptop, () => queue.enqueue(input, false));
+  expect(saved).toMatchObject({ pending: [{ principalId: 'laptop', subject: 'person' }] });
+  expect(() => queue.withdraw('s', 'queued', { principalId: 'backend', subject: 'service:billing' })).toThrow(/original principal/);
+  expect(queue.withdraw('s', 'queued', { principalId: 'phone', subject: 'person' })).toEqual(input);
+  // Cleanup on client exit still follows the client instance that submitted the input.
+  expect(saved).toMatchObject({ withdrawn: [{ principalId: 'laptop', subject: 'person' }] });
+});
+
+it('checks an input recorded before subjects existed against its client instance', () => {
+  const queue = new SessionInputQueue(() => {});
+  const input = { sessionId: 's', inputId: 'old', text: 'Written by an earlier Host.' };
+  queue.restore([{ input, skill: false, principalId: 'laptop' }], true);
+  expect(queue.snapshot('s')).toEqual([{ input, skill: false, principalId: 'laptop' }]);
+  expect(() => queue.withdraw('s', 'old', { principalId: 'phone', subject: 'person' })).toThrow(/original principal/);
+  expect(queue.withdraw('s', 'old', { principalId: 'laptop', subject: 'person' })).toEqual(input);
+});
+
+it('gives an input with Run options a Run of its own and keeps the options through a restart', async () => {
+  const saved: PendingSessionInput[][] = [];
+  const queue = new SessionInputQueue(() => {}, (_sessionId, pending) => { saved.push(structuredClone([...pending])); });
+  const limited = { sessionId: 's', inputId: 'limited', text: 'Second', delivery: 'after_turn' as const, runOptions: { budget: { maxIter: 1 } } };
+  queue.enqueue({ sessionId: 's', inputId: 'before', text: 'First', delivery: 'after_turn' }, false);
+  queue.enqueue(limited, false);
+  queue.enqueue({ sessionId: 's', inputId: 'after', text: 'Third', delivery: 'after_turn' }, false);
+
+  // Sent again it is the same input; with other options it is another intent under the same id.
+  expect(queue.enqueue(limited, false)).toMatchObject({ inputId: 'limited', state: 'queued' });
+  expect(() => queue.enqueue({ ...limited, runOptions: { budget: { maxIter: 2 } } }, false)).toThrow(/different intent/);
+  expect(() => queue.enqueue({ ...limited, runOptions: undefined }, false)).toThrow(/different intent/);
+
+  expect(queue.batch('s').map(item => item.input.inputId)).toEqual(['before']);
+  // A Run that is already working does not take it in either.
+  expect(await queue.consumePlainBatch('s', 'run', async () => {})).toMatchObject([{ inputId: 'before' }]);
+  expect(await queue.consumePlainBatch('s', 'run', async () => {})).toEqual([]);
+  expect(queue.batch('s')).toMatchObject([{ input: limited }]);
+
+  const restored = new SessionInputQueue(() => {});
+  restored.restore(JSON.parse(JSON.stringify(saved.at(-1))) as PendingSessionInput[]);
+  expect(restored.batch('s')).toMatchObject([{ input: limited }]);
+  restored.submitBatch('s', ['limited'], 'run-limited');
+  expect(restored.batch('s').map(item => item.input.inputId)).toEqual(['after']);
 });

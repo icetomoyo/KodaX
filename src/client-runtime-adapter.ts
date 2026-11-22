@@ -2,7 +2,7 @@ import type { ClientWorkflowRun, KodaXProductClient } from '@kodax-ai/coding/cli
 import { KODAX_RUNTIME_SDK_CAPABILITIES, supportsRuntimeCapability, requireRuntimeCapability } from '@kodax-ai/coding/client-contract';
 import { memoryProposalRevision } from '@kodax-ai/agent';
 import type { KodaXRuntime } from './sdk-runtime.js';
-import { toClientConfig, toClientSessionSettings } from './client-settings.js';
+import { toClientConfig, toClientEffectiveConfig, toClientSessionSettings } from './client-settings.js';
 import type { KodaXClientExecutionRequest, KodaXClientHostAuthorization, RuntimeExecutionAuthorization } from './client-host-authorization.js';
 import { createExecutionServices } from './execution-services.js';
 
@@ -293,25 +293,7 @@ export function toKodaXProductClient(
     },
     config: {
       read: async () => toClientConfig(await runtime.config.read()),
-      readEffective: async () => {
-        const { entries, application } = await runtime.config.readEffective();
-        const project = <T>(key: string, value: T) => ({
-          value, source: entries[key]?.source ?? 'unset',
-          applied: entries[key]?.applied === true || entries[key]?.present !== true,
-        });
-        const chain = entries.fallbackProviders?.value;
-        return {
-          ...(application === undefined ? {} : { application,
-          maxOutputTokens: project('maxOutputTokens', entries.maxOutputTokens?.value === undefined ? undefined : Number(entries.maxOutputTokens.value)),
-          disablePromptCache: project('disablePromptCache', entries.disablePromptCache?.value === undefined ? undefined
-            : entries.disablePromptCache.value === true || entries.disablePromptCache.value === '1'),
-          lsp: project('lsp', entries.lsp?.value === undefined ? undefined : entries.lsp.value === true || entries.lsp.value === '1'), }),
-          stallLog: project('stallLog', entries.stallLog?.value === '1' || entries.stallLog?.value === true),
-          fallbackProviders: project('fallbackProviders', typeof chain === 'string'
-            ? chain.split(',').map(item => item.trim()).filter(Boolean)
-            : Array.isArray(chain) ? chain.filter((item): item is string => typeof item === 'string') : []),
-        };
-      },
+      readEffective: async () => toClientEffectiveConfig(await runtime.config.readEffective()),
       patch: async (patch) => toClientConfig(await runtime.config.patch(patch)),
       reload: async () => ({ ok: true, config: toClientConfig((await runtime.config.reload()).config) }),
     },

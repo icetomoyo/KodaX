@@ -16,6 +16,8 @@ export interface ProductExecutionContext {
   /** Captures the original authenticated Main connection, never a timeout heuristic. */
   readonly bindingAvailable?: () => boolean;
   readonly principalId?: string;
+  /** Who the request acts for; see `RuntimeRequester`. */
+  readonly subject?: string;
   readonly sessionId?: string;
   /** Fresh Host-default admission for a different Session on this same connection. */
   readonly defaultForSession?: (sessionId: string) => ProductExecutionContext;

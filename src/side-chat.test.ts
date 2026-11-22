@@ -25,14 +25,14 @@ it('restores published bindings and keeps unpublished or foreign side ids inacce
   directories.push(dir);
   const store = () => new SideChats(dir, (file, data) => writeFileSync(file, JSON.stringify(data)));
   const writer = store();
-  const binding = sideRequester.run('alice', () => writer.allocate('parent', 'main', null));
+  const binding = sideRequester.run({ principalId: 'alice' }, () => writer.allocate('parent', 'main', null));
   expect(writer.admits(binding.id)).toBe(false);
   writer.save({ ...binding, preparing: true });
   expect(store().admits(binding.id)).toBe(false);
   writer.save({ ...binding, letters: [{ id: '1', content: 'Only B', wake: false }] });
   const reader = store();
-  expect(reader.admits(binding.id, 'other')).toBe(false);
-  expect(reader.admits(binding.id, 'alice')).toBe(true);
+  expect(reader.admits(binding.id, { principalId: 'other' })).toBe(false);
+  expect(reader.admits(binding.id, { principalId: 'alice' })).toBe(true);
   expect(reader.receipts(reader.forParent('parent'))[0]?.text).toContain('queued');
   reader.remove(binding);
   expect(store().admits(binding.id)).toBe(false);
@@ -61,10 +61,10 @@ it('shows a parent only the side bindings that belong to the requesting principa
   const dir = mkdtempSync(path.join(os.tmpdir(), 'side-owner-view-'));
   directories.push(dir);
   const store = new SideChats(dir, (file, data) => writeFileSync(file, JSON.stringify(data)));
-  const binding = sideRequester.run('alice', () => store.allocate('parent', 'main', null));
+  const binding = sideRequester.run({ principalId: 'alice' }, () => store.allocate('parent', 'main', null));
   store.save({ ...binding, letters: [{ id: '1', content: 'Private to alice', wake: false }] });
-  expect(store.visibleTo('parent', 'alice')).toHaveLength(1);
-  expect(store.visibleTo('parent', 'bob')).toHaveLength(0);
+  expect(store.visibleTo('parent', { principalId: 'alice' })).toHaveLength(1);
+  expect(store.visibleTo('parent', { principalId: 'bob' })).toHaveLength(0);
   expect(store.visibleTo('parent')).toHaveLength(1);
 });
 
@@ -102,4 +102,23 @@ it('keeps the session policy runtime\'s hooks and events active around the side 
   await policy.dispose();
   // Without a policy runtime there is nothing to delegate to; the frame then carries no hooks.
   expect('runHook' in sideToolRuntime(async () => ({}))).toBe(false);
+});
+
+it('shows a side conversation to every client of the person who opened it and to no service', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'side-subject-'));
+  directories.push(dir);
+  const store = () => new SideChats(dir, (file, data) => writeFileSync(file, JSON.stringify(data)));
+  const writer = store();
+  const mine = sideRequester.run({ principalId: 'laptop', subject: 'person' }, () => writer.allocate('parent', 'main', null));
+  writer.save(mine);
+  // A binding written before subjects existed has only the client instance to compare.
+  const old = sideRequester.run({ principalId: 'laptop' }, () => writer.allocate('parent', 'older', null));
+  writer.save(old);
+  const reader = store();
+  expect(reader.get(mine.id)).toMatchObject({ owner: 'laptop', ownerSubject: 'person' });
+  expect(reader.admits(mine.id, { principalId: 'phone', subject: 'person' })).toBe(true);
+  expect(reader.admits(mine.id, { principalId: 'backend', subject: 'service:billing' })).toBe(false);
+  expect(reader.admits(old.id, { principalId: 'phone', subject: 'person' })).toBe(false);
+  expect(reader.admits(old.id, { principalId: 'laptop', subject: 'person' })).toBe(true);
+  expect(reader.visibleTo('parent', { principalId: 'phone', subject: 'person' }).map(binding => binding.id)).toEqual([mine.id]);
 });

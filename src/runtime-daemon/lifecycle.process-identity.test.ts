@@ -20,6 +20,10 @@ vi.mock('node:fs', async original => {
     const value = typeof args[0] === 'string' ? proc.get(args[0]) : undefined;
     if (value instanceof Error) throw value;
     return value ?? module.readFileSync(...args);
+  }, readlinkSync: (...args: Parameters<typeof module.readlinkSync>) => {
+    const value = typeof args[0] === 'string' ? proc.get(args[0]) : undefined;
+    if (value instanceof Error) throw value;
+    return value ?? module.readlinkSync(...args);
   } };
 });
 
@@ -193,4 +197,80 @@ it('does not use a different lock owner as process identity evidence for the sta
   const observation = await observeRuntimeDaemonHealth(paths, unreachable);
   expect(observation).toMatchObject({ pidAlive: true, endpointReachable: false });
   expect(readRuntimeDaemonLockOwner(paths.lockFile)?.runtimeId).toBe('different-owner');
+});
+
+// A restarted container keeps the home volume but gets a new PID namespace.
+const previousContainer = 'pid:[4026531836]';
+const thisContainer = 'pid:[4026532999]';
+const replacement = (): RuntimeDaemonLockOwner => ({ runtimeId: 'replacement', pid: process.pid, createdAt: new Date().toISOString() });
+
+function denyOwnerProbe(): void {
+  const kill = process.kill.bind(process);
+  vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+    if (pid === owner.pid && signal === 0) throw Object.assign(new Error('Cannot probe owner'), { code: 'EPERM' });
+    return kill(pid, signal);
+  });
+}
+
+it.each([
+  { descriptor: true, probe: 'alive' }, { descriptor: true, probe: 'EPERM' },
+  { descriptor: false, probe: 'alive' }, { descriptor: false, probe: 'EPERM' },
+])('starts over a Host lock left in another PID namespace (descriptor=$descriptor, PID $probe here)', async ({ descriptor, probe }) => {
+  const previous = { ...owner, pidNamespace: previousContainer };
+  if (descriptor) publishOwner(previous);
+  else expect(tryAcquireRuntimeDaemonLock(paths, previous)).toBeDefined();
+  proc.set('/proc/self/ns/pid', thisContainer);
+  if (probe === 'EPERM') denyOwnerProbe();
+  const decision = await resolveRuntimeDaemonOwnership(paths, replacement(), unreachable);
+  expect(decision.kind).toBe('claim');
+  expect(readRuntimeDaemonLockOwner(paths.lockFile)?.runtimeId).toBe('replacement');
+});
+
+it.each([
+  { evidence: 'no recorded namespace', recorded: undefined, current: thisContainer },
+  { evidence: 'the same namespace', recorded: thisContainer, current: thisContainer },
+  { evidence: 'an unreadable current namespace', recorded: previousContainer,
+    current: Object.assign(new Error('Namespace unavailable'), { code: 'EACCES' }) },
+])('preserves an unverified Host lock with $evidence', async ({ recorded, current }) => {
+  publishOwner({ ...owner, ...(recorded === undefined ? {} : { pidNamespace: recorded }) });
+  proc.set('/proc/self/ns/pid', current);
+  denyOwnerProbe();
+  const decision = await resolveRuntimeDaemonOwnership(paths, replacement(), unreachable);
+  expect(decision).toMatchObject({ kind: 'unhealthy', health: 'unhealthy' });
+  expect(readRuntimeDaemonLockOwner(paths.lockFile)?.runtimeId).toBe(owner.runtimeId);
+});
+
+it('verifies a shutdown whose owner lock was left in another PID namespace', async () => {
+  publishOwner({ ...owner, pidNamespace: previousContainer });
+  writeRuntimeDaemonShutdownOutcome(paths, { version: 1, runtimeId: owner.runtimeId,
+    pid: owner.pid, status: 'succeeded', completedAt: new Date().toISOString() });
+  proc.set('/proc/self/ns/pid', thisContainer);
+  denyOwnerProbe();
+  await expect(waitForRuntimeDaemonShutdown({ configHome: paths.configHome, owner, timeoutMs: 10,
+  })).resolves.toMatchObject({ status: 'succeeded' });
+});
+
+it('does not report a lock left in another PID namespace as a running replacement', async () => {
+  publishOwner({ ...owner, pidNamespace: previousContainer });
+  const stopped = { runtimeId: 'stopped-host', pid: owner.pid, processStartIdentity: 'linux:41' };
+  writeRuntimeDaemonShutdownOutcome(paths, { version: 1, runtimeId: stopped.runtimeId,
+    pid: stopped.pid, status: 'succeeded', completedAt: new Date().toISOString() });
+  proc.set('/proc/self/ns/pid', thisContainer);
+  await expect(waitForRuntimeDaemonShutdown({ configHome: paths.configHome, owner: stopped, timeoutMs: 10,
+  })).resolves.toMatchObject({ status: 'succeeded' });
+});
+
+it('recovers a client exit whose Host lock was left in another PID namespace', async () => {
+  publishOwner({ ...owner, pidNamespace: previousContainer });
+  writeRuntimeDaemonShutdownOutcome(paths, { version: 1, runtimeId: owner.runtimeId,
+    pid: owner.pid, status: 'succeeded', completedAt: new Date().toISOString() });
+  proc.set('/proc/self/ns/pid', thisContainer);
+  denyOwnerProbe();
+  const timestamp = new Date().toISOString();
+  expect(await verifyExitReceipt(paths, { requestId: 'restart-exit', clientId: 'client',
+    runtimeId: owner.runtimeId, accepted: true, requestedAt: timestamp, updatedAt: timestamp,
+    cleanup: { state: 'pending', runIds: [], operationIds: [], actorTurns: [], withdrawnInputs: [], issues: [] },
+    host: { requested: true, state: 'pending', owner },
+  })).toMatchObject({ cleanup: { state: 'unknown' }, host: { state: 'succeeded' },
+    recovery: { state: 'ready', reason: 'host_shutdown_verified' } });
 });
