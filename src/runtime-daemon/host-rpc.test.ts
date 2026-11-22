@@ -3561,6 +3561,7 @@ describe('v2 connections from the network, admitted by their credential', () => 
   /** A client reaching the bridge as a network transport would carry it, with the reasons the Host gave for hanging up. */
   async function connectOverNetwork(token: string, scheme: 'jwt' | 'ipc' = 'jwt') {
     const reasons: HostCloseReason[] = [];
+    let created: ReturnType<typeof createRuntimeDaemonHostRpcPeer> | undefined;
     const client = await connectHostRpc(async (events) => {
       let open = true;
       const end = (): void => {
@@ -3579,11 +3580,23 @@ describe('v2 connections from the network, admitted by their credential', () => 
         disconnect: (reason) => { reasons.push(reason); queueMicrotask(end); },
         congested: () => false,
       });
+      created = peer;
       return { send: frame => queueMicrotask(() => { if (open) peer.receive(frame); }), close: end };
     }, { client: { name: 'web', version: '1.0.0', instanceId: 'browser-1' }, auth: { scheme, token } });
     cleanup.push(() => client.close());
-    return { client, reasons };
+    return { client, reasons, peer: created! };
   }
+
+  it('tells an admitted client that the Host is draining, and keeps the connection', async () => {
+    issued.set('owner-token', { role: 'user', subject: 'user-42' });
+    const { client, peer, reasons } = await connectOverNetwork('owner-token');
+    const notices: string[] = [];
+    client.onNotification(method => notices.push(method));
+    peer.draining();
+    await vi.waitFor(() => expect(notices).toEqual(['host.draining']));
+    await expect(client.request('ping')).resolves.toEqual({});
+    expect(reasons).toEqual([]);
+  });
 
   it('admits the owner as user and a backend as that service, whatever role the endpoint was built with', async () => {
     issued.set('owner-token', { role: 'user', subject: 'user-42', expiresAt: Date.now() + 60_000 });

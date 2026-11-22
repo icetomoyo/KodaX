@@ -233,9 +233,9 @@ M0 之前的关闭顺序是先关传输层，再关 Runtime，所以客户端在
 
 **还没有做**：
 
-- 关闭前给客户端发"Host 正在排空"的通知，以及带原因的关闭帧，属于 D13，在 v2 上实现。v2 里这段时间的拒绝用 `unavailable`。
+- 关闭前给客户端发"Host 正在排空"的通知，以及带原因的关闭帧，属于 D13，在 v2 上实现。v2 里这段时间的拒绝用 `unavailable`。M1b 第 1 项已经给网络连接做了（`host.draining` 通知、4503 关闭帧），IPC 上的连接还没有。
 - 总截止时间只加在 `daemon serve` 的停止信号路径上。通过 `daemon.stop` 或嵌入方直接调用的 `host.close()` 没有总截止时间。
-- 管理面的排空开关在这段时间里没有打开，新客户端仍然可以完成握手，之后的请求得到上面的 `conflict`。
+- IPC 上的管理面排空开关在这段时间里没有打开，新的 IPC 客户端仍然可以完成握手，之后的请求得到上面的 `conflict`。网络监听在排空开始时就拒绝新的升级请求（503）。
 
 ### 健康检查
 
@@ -2012,6 +2012,12 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
   - 角色由凭据决定：`sub` 等于 `owner` 的是 `user`，在 `services` 里的是 `service`（subject 为 `service:<sub>`），其他回 `unauthorized` + `subject_not_admitted`。JWKS 读不到时回 `unavailable`。网络连接不能用 `ipc` 凭据，也拿不到 agent 注册管理权。
   - token 到 `exp` 时 Host 用 4401 断开。客户端在那之前调 `auth.renew` 换新 token：新 token 无效或暂时没法校验时报错，但连接保留；`sub` 或角色变了就回 `subject_changed` 并用 4401 断开；IPC 连接调它回 `invalid_state`。
   - `workspaceRoot` 随这一步加入配置（绝对路径），给网络客户端按相对路径指定项目用；不配就不能指定项目。
+- 第 ③ 步的取舍：
+  - `host.json` 改了之后，现有连接按新文件重新判一次。`jwt` 块变了，所有已接纳的连接用 4401 断开，客户端换一个新校验能接受的 token 再连。`sub` 不再以原来的角色被接纳、`jwt` 被删掉、浏览器的 origin 不再在 `allowedOrigins` 里，用 4403 断开。还在握手的连接，等校验结束后按新文件再校验一次，所以文件改动不会被一次慢的 JWKS 读取绕过。
+  - `listen` 和 `workspaceRoot` 要重启才生效：改了只记一条 warn 诊断（`detail.fields` 列出字段），同一次改动里的鉴权字段照常生效。
+  - 改坏的文件不生效，旧配置继续有效。具体错在哪里写进日志，`host` 集成域的状态带 `invalid-config` 诊断，`daemon.integrations.get` 能看到。启动时第一次读仍然直接报错、拒绝启动。
+  - Host 开始关闭时，网络监听立刻进入排空：新的升级请求回 503，已接纳的连接收到 `host.draining` 通知（还在握手的不发），`/healthz` 报 `draining`。连接保持到 Run 停完，再用 4503 关闭。
+  - `/healthz` 只认 `GET`，其他方法回 404，响应带 `no-store`。`blockers` 来自停止前置检查；前置检查因为有正在进行的变更而报 `conflict` 时，`blockers` 是 `['active_mutations']`。每次探测看到 `blockers` 不为空，就把 `lastActivityAt` 更新为当前时间，所以它表示 Host 最后一次被看到忙碌的时间，不单独埋点。健康检查本身出错时回 503，并记一条诊断。
 
 ### M1c Space 整体迁移到 v2
 

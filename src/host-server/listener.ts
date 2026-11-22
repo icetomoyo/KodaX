@@ -3,9 +3,10 @@
  * owns what belongs to the wire: which path and browser origins may open a
  * socket, how many sockets may wait for their handshake, silence, a client
  * that stops reading, and the close code that tells a client why. The peer it
- * creates for each socket owns the protocol, credentials included.
+ * creates for each socket owns the protocol, credentials included. The same
+ * port answers `GET /healthz` for the platform that runs the Host.
  */
-import { createServer, type IncomingMessage } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createRequire } from 'node:module';
 import type { Duplex } from 'node:stream';
 
@@ -16,6 +17,8 @@ import { prepareUnixSocketEndpoint } from '../runtime-daemon/transport.js';
 
 /** The path a client opens the WebSocket on. Others are left for the Host's web pages. */
 export const HOST_WEBSOCKET_PATH = '/v2';
+/** The path a platform probes. It carries no Session content, so it asks for no credential. */
+export const HOST_HEALTH_PATH = '/healthz';
 
 /** Sockets that may wait for their handshake at once. Each may hold one frame of up to `maxFrameBytes` while it waits. */
 const MAX_PENDING_HANDSHAKES = 32;
@@ -40,19 +43,33 @@ export interface HostNetworkPeer {
   receive(frame: string): void;
   /** The client caught up on reading after the connection was congested. */
   drained?(): void;
+  /** The Host is stopping. The connection stays open while its Runs settle. */
+  draining?(): void;
   close(): void;
   /** Whether the client finished its handshake. Until then it counts against the pending limit. */
   admitted(): boolean;
 }
 
+/** What the Host tells a platform probe. A platform may reclaim a Host that `canStop`. */
+export interface HostHealth {
+  readonly state: 'starting' | 'ready' | 'draining';
+  readonly canStop: boolean;
+  /** Why the Host should not be stopped now, such as `active_runs` or `connected_clients`. */
+  readonly blockers: readonly string[];
+  /** The last time the Host was seen busy, in UTC milliseconds. */
+  readonly lastActivityAt: number;
+}
+
 export interface HostNetworkListenerOptions {
   readonly listen: { readonly hostname: string; readonly port: number } | { readonly socketPath: string };
-  /** Browser origins that may open a socket. A client that sends no Origin is not a browser and is let through. */
-  readonly allowedOrigins: readonly string[];
+  /** Whether a browser origin may open a socket. A client that sends no Origin is not a browser and is let through. */
+  readonly allowsOrigin: (origin: string) => boolean;
   readonly maxFrameBytes: number;
   /** A socket the Host hears nothing on for this long is closed as idle. */
   readonly idleTimeoutMs: number;
-  readonly createPeer: (transport: HostNetworkTransport) => HostNetworkPeer;
+  readonly health: () => Promise<HostHealth>;
+  /** `origin` is the browser origin that opened the socket, absent for a client that is not a browser. */
+  readonly createPeer: (transport: HostNetworkTransport, request: { readonly origin?: string }) => HostNetworkPeer;
   /** @internal Tests lower the limits. */
   readonly maxPendingHandshakes?: number;
   /** @internal */
@@ -62,6 +79,8 @@ export interface HostNetworkListenerOptions {
 export interface HostNetworkListener {
   /** The TCP port it listens on, which is the one the system chose when the config named 0. Absent on a socket path. */
   readonly port?: number;
+  /** Refuses new sockets and tells the connected peers the Host is stopping. `close` ends the connections. */
+  drain(): void;
   close(): Promise<void>;
 }
 
@@ -90,11 +109,31 @@ export async function startHostNetworkListener(options: HostNetworkListenerOptio
   const wss = new WebSocketServer({ noServer: true, maxPayload: options.maxFrameBytes, perMessageDeflate: false, clientTracking: false });
   const maxPending = options.maxPendingHandshakes ?? MAX_PENDING_HANDSHAKES;
   const connections = new Map<WsSocket, HostNetworkPeer>();
-  let stopping = false;
+  let draining = false;
 
-  const server = createServer((_request, response) => {
+  const server = createServer((request, response) => {
+    if (request.method === 'GET' && new URL(request.url ?? '/', 'http://host').pathname === HOST_HEALTH_PATH) {
+      void answerHealth(response);
+      return;
+    }
     response.writeHead(404).end();
   });
+  async function answerHealth(response: ServerResponse): Promise<void> {
+    let health: HostHealth;
+    try {
+      const reported = await options.health();
+      health = draining ? { ...reported, state: 'draining' } : reported;
+    } catch (error: unknown) {
+      emitKodaXDiagnostic({
+        source: 'host.network', level: 'warn', message: 'The Host could not report its health to a probe.',
+        detail: { error: error instanceof Error ? error.message : String(error) },
+      });
+      response.writeHead(503).end();
+      return;
+    }
+    response.writeHead(health.state === 'ready' ? 200 : 503, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+      .end(JSON.stringify(health));
+  }
   server.on('upgrade', (request: IncomingMessage, socket: Duplex, head: Buffer) => {
     socket.on('error', () => socket.destroy());
     const refusal = refuseUpgrade(request);
@@ -102,19 +141,20 @@ export async function startHostNetworkListener(options: HostNetworkListenerOptio
       socket.end(`HTTP/1.1 ${refusal}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
       return;
     }
-    wss.handleUpgrade(request, socket, head, attach);
+    const { origin } = request.headers;
+    wss.handleUpgrade(request, socket, head, upgraded => attach(upgraded, origin));
   });
 
   function refuseUpgrade(request: IncomingMessage): string | undefined {
-    if (stopping) return '503 Service Unavailable';
+    if (draining) return '503 Service Unavailable';
     if (new URL(request.url ?? '/', 'http://host').pathname !== HOST_WEBSOCKET_PATH) return '404 Not Found';
     const { origin } = request.headers;
-    if (origin !== undefined && !options.allowedOrigins.includes(origin)) return '403 Forbidden';
+    if (origin !== undefined && !options.allowsOrigin(origin)) return '403 Forbidden';
     const pending = [...connections.values()].filter(peer => !peer.admitted()).length;
     return pending >= maxPending ? '503 Service Unavailable' : undefined;
   }
 
-  function attach(socket: WsSocket): void {
+  function attach(socket: WsSocket, origin: string | undefined): void {
     let open = true;
     let congested = false;
     let dropAfterGrace: ReturnType<typeof setTimeout> | undefined;
@@ -152,7 +192,7 @@ export async function startHostNetworkListener(options: HostNetworkListenerOptio
       },
       disconnect,
       congested: () => congested,
-    });
+    }, origin !== undefined ? { origin } : {});
     connections.set(socket, peer);
     socket.on('message', (data, isBinary) => {
       if (!open) return;
@@ -178,8 +218,13 @@ export async function startHostNetworkListener(options: HostNetworkListenerOptio
   const address = server.address();
   return {
     ...(typeof address === 'object' && address !== null ? { port: address.port } : {}),
+    drain() {
+      if (draining) return;
+      draining = true;
+      for (const peer of connections.values()) peer.draining?.();
+    },
     async close() {
-      stopping = true;
+      draining = true;
       const closed = new Promise<void>(resolve => server.close(() => resolve()));
       for (const socket of connections.keys()) socket.close(HOST_CLOSE_CODES.unavailable, 'unavailable');
       server.closeIdleConnections();

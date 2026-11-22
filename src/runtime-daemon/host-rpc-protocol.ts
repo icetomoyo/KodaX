@@ -9,6 +9,7 @@
  */
 export { createHostConnection } from '../host-protocol/connection.js';
 export { LEASE_NOTIFICATIONS } from '../host-protocol/lease.js';
+export { HOST_NOTIFICATIONS } from '../host-protocol/host.js';
 export { HOST_METHODS } from '../host-protocol/methods.js';
 export { LocalSessionView, SessionView } from '../host-protocol/view.js';
 export { startHostNetworkServer } from '../host-server/serve.js';

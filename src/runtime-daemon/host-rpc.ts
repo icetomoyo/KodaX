@@ -1396,7 +1396,7 @@ const MAX_TIMER_MS = 2 ** 31 - 1;
 
 export function createRuntimeDaemonHostRpcPeer(
   options: RuntimeDaemonHostRpcPeerOptions,
-): RuntimeDaemonFramePeer & { admitted(): boolean } {
+): RuntimeDaemonFramePeer & { admitted(): boolean; draining(): void } {
   const onInternalError = (method: string, error: unknown): void => emitKodaXDiagnostic({
     source: 'runtime.host-protocol',
     level: 'error',
@@ -1557,6 +1557,12 @@ export function createRuntimeDaemonHostRpcPeer(
     close: connection.close,
     drained: () => views?.drained(),
     admitted: () => views !== undefined,
+    draining() {
+      // A client still in its handshake learns of it from the refusal or the close that follows.
+      if (views === undefined) return;
+      const params = options.protocol.HOST_NOTIFICATIONS['host.draining'].params.parse({});
+      options.send(JSON.stringify(hostRpcNotification('host.draining', params)));
+    },
   };
 }
 

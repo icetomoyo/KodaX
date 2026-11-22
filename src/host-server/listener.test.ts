@@ -6,7 +6,13 @@ import { connect as connectTcp } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { HostCloseReason } from '../host-protocol/close.js';
-import { startHostNetworkListener, type HostNetworkListener, type HostNetworkListenerOptions, type HostNetworkPeer } from './listener.js';
+import {
+  startHostNetworkListener,
+  type HostHealth,
+  type HostNetworkListener,
+  type HostNetworkListenerOptions,
+  type HostNetworkPeer,
+} from './listener.js';
 
 interface ClientSocket {
   send(data: string | Buffer): void;
@@ -23,8 +29,10 @@ const { WebSocket } = createRequire(import.meta.url)('ws') as {
 
 interface TestPeer {
   readonly received: string[];
+  readonly origin: string | undefined;
   ready: boolean;
   closed: boolean;
+  toldDraining: boolean;
   send(frame: string): void;
   disconnect(reason: HostCloseReason): void;
 }
@@ -36,19 +44,24 @@ afterEach(async () => {
   for (const listener of listeners.splice(0)) await listener.close();
 });
 
+const READY: HostHealth = { state: 'ready', canStop: true, blockers: [], lastActivityAt: 1_800_000_000_000 };
+
 /** A listener on a loopback port whose peers echo what they receive, and the peers it made. */
 async function listen(options: Partial<HostNetworkListenerOptions> = {}) {
   const peers: TestPeer[] = [];
   const listener = await startHostNetworkListener({
     listen: { hostname: '127.0.0.1', port: 0 },
-    allowedOrigins: ['https://app.example.test'],
+    allowsOrigin: origin => origin === 'https://app.example.test',
     maxFrameBytes: 1024 * 1024,
     idleTimeoutMs: 60_000,
-    createPeer: (transport) => {
+    health: async () => READY,
+    createPeer: (transport, request) => {
       const peer: TestPeer & HostNetworkPeer = {
         received: [],
+        origin: request.origin,
         ready: false,
         closed: false,
+        toldDraining: false,
         send: transport.send,
         disconnect: transport.disconnect,
         receive(frame) {
@@ -56,6 +69,7 @@ async function listen(options: Partial<HostNetworkListenerOptions> = {}) {
           transport.send(`echo:${frame}`);
         },
         close() { peer.closed = true; },
+        draining() { peer.toldDraining = true; },
         admitted: () => peer.ready,
       };
       peers.push(peer);
@@ -64,7 +78,7 @@ async function listen(options: Partial<HostNetworkListenerOptions> = {}) {
     ...options,
   });
   listeners.push(listener);
-  return { listener, peers, url: `ws://127.0.0.1:${listener.port!}/v2` };
+  return { listener, peers, url: `ws://127.0.0.1:${listener.port!}/v2`, base: `http://127.0.0.1:${listener.port!}` };
 }
 
 /** Opens a client, or rejects with the HTTP status the listener refused it with. */
@@ -100,10 +114,12 @@ describe('startHostNetworkListener', () => {
   });
 
   it('refuses a browser origin it was not told to allow, and admits an allowed one or a client that sends none', async () => {
-    const { url } = await listen();
+    const { url, peers } = await listen();
     await expect(connect(url, 'https://evil.example.test').opened).rejects.toMatchObject({ status: 403 });
     await expect(connect(url, 'https://app.example.test').opened).resolves.toBeUndefined();
     await expect(connect(url).opened).resolves.toBeUndefined();
+    // The peer learns the origin, so a later change to the allowed list can find its connections.
+    expect(peers.map(peer => peer.origin)).toEqual(['https://app.example.test', undefined]);
   });
 
   it('refuses new connections while too many have not finished the handshake', async () => {
@@ -182,6 +198,39 @@ describe('startHostNetworkListener', () => {
     await client.opened;
     client.socket.close();
     await vi.waitFor(() => expect(peers[0]!.closed).toBe(true));
+  });
+
+  it('serves the health the Host reports at /healthz, 200 only when ready', async () => {
+    let health: HostHealth = { ...READY, state: 'starting' };
+    const { base } = await listen({ health: async () => health });
+    const starting = await fetch(`${base}/healthz`);
+    expect(starting.status).toBe(503);
+    await expect(starting.json()).resolves.toEqual(health);
+    health = { ...READY, canStop: false, blockers: ['active_runs'] };
+    const ready = await fetch(`${base}/healthz`);
+    expect(ready.status).toBe(200);
+    await expect(ready.json()).resolves.toEqual(health);
+    expect((await fetch(`${base}/healthz`, { method: 'POST' })).status).toBe(404);
+  });
+
+  it('answers /healthz with 503 when the Host cannot say how it is', async () => {
+    const { base } = await listen({ health: async () => { throw new Error('preflight failed'); } });
+    expect((await fetch(`${base}/healthz`)).status).toBe(503);
+  });
+
+  it('tells connected peers the Host is draining, refuses new sockets, and reports draining', async () => {
+    const { listener, url, peers, base } = await listen();
+    const client = connect(url);
+    await client.opened;
+    listener.drain();
+    expect(peers[0]!.toldDraining).toBe(true);
+    await expect(connect(url).opened).rejects.toMatchObject({ status: 503 });
+    const health = await fetch(`${base}/healthz`);
+    expect(health.status).toBe(503);
+    await expect(health.json()).resolves.toMatchObject({ state: 'draining' });
+    // Draining keeps the connections it has, so their Runs can still report how they ended.
+    client.socket.send('still here');
+    await vi.waitFor(() => expect(client.messages).toEqual(['echo:still here']));
   });
 
   it('tells every client the Host is unavailable when it stops, and accepts no more', async () => {

@@ -546,6 +546,22 @@ describe("runtime daemon host", () => {
     });
     await expect(local.request("initialize", { profile: "default", token }))
       .resolves.toMatchObject({ daemonLifecycle: "persistent", daemonRetention: "service" });
+    await expect(local.request("daemon.integrations.get"))
+      .resolves.toMatchObject({ domains: [expect.objectContaining({ domain: "host", source: "user", watching: true })] });
+
+    // A platform probe on the same port: ready, but not to be reclaimed while clients are connected.
+    const health = await fetch(`http://127.0.0.1:${port}/healthz`);
+    expect(health.status).toBe(200);
+    await expect(health.json()).resolves.toMatchObject({
+      state: "ready", canStop: false, blockers: expect.arrayContaining(["connected_clients"]), lastActivityAt: expect.any(Number),
+    });
+
+    // A stopping Host tells its network clients before it closes their sockets.
+    const notices: string[] = [];
+    person.onNotification(method => notices.push(method));
+    await host.close();
+    expect(notices).toContain("host.draining");
+    await person.closed;
   });
 
   it("shares concurrent close attempts and retries a failed Runtime cleanup", async () => {

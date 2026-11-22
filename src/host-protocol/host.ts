@@ -180,3 +180,13 @@ export const HOST_ADMIN_METHODS = {
     primitive: 'command', plane: 'local', params: hostCommandParams({ sessionId: SessionRef }), result: RepoIndexResult,
   },
 } as const satisfies HostMethodRegistry;
+
+/** What the Host sends on its own to every connection. A client never calls it, so it is not in the method table. */
+export const HOST_NOTIFICATIONS = {
+  /**
+   * The Host is stopping. It stops the Runs, their ends still arrive, and then
+   * the connection closes as `unavailable`. Start nothing new; reconnect after
+   * backing off, possibly to the Host that replaces this one.
+   */
+  'host.draining': { params: z.object({ _meta: z.record(z.string(), z.unknown()).optional() }) },
+} as const;

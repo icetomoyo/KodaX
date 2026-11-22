@@ -9,7 +9,8 @@ import {
   type KodaXDiagnostic,
 } from '@kodax-ai/agent';
 import { createRuntimeDaemonHostRpcPeer, type HostRpcProtocol } from './host-rpc.js';
-import type { HostNetworkListener } from '../host-server/listener.js';
+import type { HostHealth } from '../host-server/listener.js';
+import type { HostNetworkServer } from '../host-server/serve.js';
 import {
   createRuntimeDaemonDispatcher,
   createRuntimeDaemonRunResultStore,
@@ -118,7 +119,8 @@ export async function startRuntimeDaemonHost(
   if (proxyGap !== undefined) emitKodaXDiagnostic({ source: 'runtime:network', level: 'warn', message: proxyGap });
 
   let server: RuntimeDaemonSocketServer | undefined;
-  let network: HostNetworkListener | undefined;
+  let network: HostNetworkServer | undefined;
+  let hostState: HostHealth['state'] = 'starting';
   let scheduleStop: (() => void) | undefined;
   let stopPending = false;
   const requestStop = (): void => {
@@ -139,8 +141,8 @@ export async function startRuntimeDaemonHost(
     ...(options.orphanExitMs !== undefined ? { orphanExitMs: options.orphanExitMs } : {}),
     // Network clients come and go, so a Host that listens stays up between them.
     keepAlive: () => network !== undefined || options.keepAlive?.() === true,
-    ...(options.integrationStatuses
-      ? { integrationStatuses: options.integrationStatuses }
+    ...(options.integrationStatuses || options.networkConfigHome !== undefined
+      ? { integrationStatuses: () => [...options.integrationStatuses?.() ?? [], ...network ? [network.status()] : []] }
       : {}),
   });
   const clientLifecycle = createRuntimeClientLifecycleController({ runtime: options.runtime, paths: options.paths, management,
@@ -187,6 +189,7 @@ export async function startRuntimeDaemonHost(
       network = await protocol.startHostNetworkServer({
         configHome: options.networkConfigHome,
         maxFrameBytes: RUNTIME_DAEMON_MAX_FRAME_BYTES,
+        health: createHostHealth(management, () => hostState),
         createPeer: (transport, connection) => createRuntimeDaemonHostRpcPeer({
           protocol,
           dispatcher: networkDispatcherOptions,
@@ -208,6 +211,7 @@ export async function startRuntimeDaemonHost(
     }
     ready = createHostState(options, 'ready');
     writeRuntimeDaemonState(options.paths, ready);
+    hostState = 'ready';
     // A detached daemon can outlive its launcher between ready-state
     // publication and the first SDK initialize. Arm bootstrap recovery at the
     // same synchronous boundary; a real attach cancels the timer.
@@ -275,6 +279,9 @@ export async function startRuntimeDaemonHost(
     if (closed) return Promise.resolve();
     if (closeAttempt) return closeAttempt;
     maintenanceStopping = true;
+    // Probes and new sockets see the Host going away while its Runs settle.
+    hostState = 'draining';
+    network?.drain();
     const attempt = (async (): Promise<void> => {
       const failures: string[] = [];
       try {
@@ -432,6 +439,26 @@ export async function startRuntimeDaemonHost(
       server?.unref();
     },
     close: closeHost,
+  };
+}
+
+/** What a platform probe of `/healthz` sees: the stop preflight, and when the Host was last seen busy. */
+function createHostHealth(
+  management: ReturnType<typeof createRuntimeDaemonManagementController>,
+  state: () => HostHealth['state'],
+): () => Promise<HostHealth> {
+  let lastActivityAt = Date.now();
+  return async () => {
+    let blockers: readonly string[];
+    try {
+      blockers = (await management.preflight()).blockers;
+    } catch (error: unknown) {
+      // A change in flight is work, not a fault.
+      if (!(error instanceof Error && 'code' in error && error.code === 'conflict')) throw error;
+      blockers = ['active_mutations'];
+    }
+    if (blockers.length > 0) lastActivityAt = Date.now();
+    return { state: state(), canStop: blockers.length === 0, blockers, lastActivityAt };
   };
 }
 
