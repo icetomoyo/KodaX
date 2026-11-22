@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { getDefaultSkillPaths, initializeSkillRegistry, SkillRegistry } from '../dist/sdk-skills.js';
 import { KodaXBaseProvider, registerModelProvider } from '../dist/sdk-llm.js';
-import { createDefaultCodingAgent, runKodaX, resolveSkillModelOverride } from '../dist/sdk-coding.js';
+import { allowAll, createDefaultCodingAgent, runKodaX, resolveSkillModelOverride } from '../dist/sdk-coding.js';
 import { Runner } from '../dist/sdk-agent.js';
 import { ensureKodaXRuntime, waitForRuntimeDaemonShutdown } from '../dist/sdk-runtime.js';
 import { createServer } from 'node:http';
@@ -144,8 +144,10 @@ test('built SDK preserves Skill discovery, activation, permissions and refresh a
     }
   }
   registerModelProvider('bundled-skill-fixture', () => new Provider());
+  // The skill tool is not read-only, so a direct SDK entry runs it only with an approval callback.
   const base = { provider: 'bundled-skill-fixture', maxIter: 4, reasoningMode: 'off',
-    context: { configHome: path.join(root, 'home'), gitRoot: root, executionCwd: cwd, repoIntelligenceMode: 'off' } };
+    context: { configHome: path.join(root, 'home'), gitRoot: root, executionCwd: cwd, repoIntelligenceMode: 'off' },
+    events: { beforeToolExecute: allowAll } };
   for (const mode of ['model', 'explicit', 'runner-model', 'runner-explicit', 'hidden']) {
     const activation = mode.replace('runner-', '');
     cursor = 0; requests = [];
@@ -161,7 +163,7 @@ test('built SDK preserves Skill discovery, activation, permissions and refresh a
       ...(activation === 'explicit' ? { skillRegistry: registry, skillInvocation: { name: skill.name,
         path: file, expandedContent: skill.content, runtimePolicy: { enforceAtRuntime: true } } } : {}),
       ...(activation === 'hidden' ? { excludeTools: ['skill'] } : {}),
-    }, events: { onToolResult: event => results.push(event.content) } };
+    }, events: { ...base.events, onToolResult: event => results.push(event.content) } };
     const result = mode.startsWith('runner-')
       ? (await Runner.run(createDefaultCodingAgent(), 'Inspect source code.', { presetOptions: options })).data
       : await runKodaX(options, 'Inspect source code.');
@@ -191,7 +193,7 @@ test('built SDK preserves Skill discovery, activation, permissions and refresh a
   const refused = [];
   await runKodaX({ ...base, context: { ...base.context, skillRegistry: registry,
     skillsPrompt: registry.getSystemPromptSnippet() },
-    events: { onToolResult: event => refused.push(event.content) } }, 'Inspect source code.');
+    events: { ...base.events, onToolResult: event => refused.push(event.content) } }, 'Inspect source code.');
   assert.match(refused[0], /model invocation disabled/);
 
   for (let index = 0; index < 40; index++) {
@@ -226,7 +228,7 @@ test('built SDK preserves Skill discovery, activation, permissions and refresh a
       skillsPrompt: catalog,
       ...(activation === 'explicit' ? { skillInvocation: { name, path: skill.skillFilePath,
         expandedContent: skill.content, runtimePolicy: { enforceAtRuntime: true } } } : {}),
-    }, events: { onToolResult: event => outputs.push(event.content) } }, 'Inspect source code.');
+    }, events: { ...base.events, onToolResult: event => outputs.push(event.content) } }, 'Inspect source code.');
     assert.ok(visibleText(requests[0]).includes(catalog.trim()), 'The actual Provider must receive the bounded catalog');
     if (activation === 'model') assert.match(outputs[0], /CATALOG_BODY_0/);
     else assert.match(visibleText(requests[0]), /CATALOG_BODY_39/);

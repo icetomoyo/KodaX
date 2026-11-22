@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { test } from 'node:test';
-import { runKodaX, runManagedTask } from '../dist/index.js';
+import { allowAll, runKodaX, runManagedTask } from '../dist/index.js';
 import { KodaXBaseProvider, registerModelProvider, clearRuntimeModelProviders } from '../dist/sdk-llm.js';
 
 class TextProvider extends KodaXBaseProvider {
@@ -40,7 +40,9 @@ test('bundled SDK preserves Full Access and exact Auto text approvals', async (t
             ] },
             { textBlocks: [{ type: 'text', text: 'Done.' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' },
           ];
+          // A direct SDK entry approves through its callback first; the text authority below still applies.
           const result = await run({ provider: 'bundled-text-permission', reasoningMode: 'off', lsp: false,
+            events: { beforeToolExecute: allowAll },
             guardrails: mode === 'auto' ? [{ kind: 'tool', name: 'auto-mode', beforeTool: async () => ({ action: 'allow' }) }] : undefined,
             context: { executionCwd: workspace, gitRoot: workspace, skillsPrompt: '', repoIntelligenceMode: 'off',
               systemPromptOverride: 'Use the requested tools.', resolveShellPermissionMode: () => mode },

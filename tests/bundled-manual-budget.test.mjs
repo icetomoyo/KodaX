@@ -46,7 +46,7 @@ test('published SDK preserves standalone built-in tool definitions after prompt 
   const standalone = await import('../packages/coding/dist/index.js');
   const bundled = await import('../dist/sdk-coding.js');
   assert.deepEqual(JSON.parse(JSON.stringify(bundled.KODAX_TOOLS)), JSON.parse(JSON.stringify(standalone.KODAX_TOOLS)));
-  assert.equal(bundled.KODAX_TOOLS.length, 81);
+  assert.equal(bundled.KODAX_TOOLS.length, 82);
   for (const name of ['visual_history', 'visual_inspect', 'visual_read_pixels']) {
     assert.ok(bundled.KODAX_TOOLS.some(tool => tool.name === name));
   }

@@ -13,6 +13,11 @@ import { FileSessionStorage } from '../dist/sdk-repl.js';
 import { createKodaXRuntime, ensureKodaXRuntime, getKodaXRuntimeOwnerState,
   waitForRuntimeDaemonShutdown } from '../dist/sdk-runtime.js';
 
+// This suite covers the legacy episode review job. Note memory is the default and
+// has no such job, so pin the legacy plane, as vitest.config.ts does for its suites.
+// The Hosts this suite starts inherit the setting.
+process.env.KODAX_MEMORY_NOTES = '0';
+
 const provider = 'bundle-memory-openai';
 const keyEnv = 'KODAX_BUNDLE_MEMORY_TEST_KEY';
 const reviewTool = 'commit_episode_learning_review';

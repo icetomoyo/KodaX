@@ -29,6 +29,10 @@ if (process.argv[2] === '--run-fixture') {
         return { textBlocks: [], thinkingBlocks: [], toolBlocks: [{ type: 'tool_use', id: 'review', name: 'commit_episode_learning_review',
           input: { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['one_off'] } } }], stopReason: 'tool_use' };
       }
+      // The note memory's background reflection, which writes nothing here.
+      if (tools.some(tool => tool.name === 'memory_reflect')) {
+        return { textBlocks: [{ type: 'text', text: 'Nothing to note.' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
+      }
       calls++;
       if (mode === 'crash') throw new Error('offline-provider-crash');
       assert.ok(messages.some(message => message.content === 'Original user intent'));

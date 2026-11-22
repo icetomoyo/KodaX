@@ -53,7 +53,7 @@ test('actual npm tarball runs Script in a clean directory and fails explicitly o
       await symlink(join(root, 'node_modules', name), target, process.platform === 'win32' ? 'junction' : 'dir');
     }
     await writeFile(join(cwd, 'mode-probe.mjs'), `import assert from 'node:assert/strict';
-      import {assertWorkModeAvailable,runManagedTask,awaitLatestCodingMemoryReviewDrain,KODAX_TOOLS,getToolDefinition} from './dist/sdk-coding.js';
+      import {allowAll,assertWorkModeAvailable,runManagedTask,awaitLatestCodingMemoryReviewDrain,KODAX_TOOLS,getToolDefinition} from './dist/sdk-coding.js';
       import {KodaXBaseProvider,registerModelProvider} from './dist/sdk-llm.js';
       import {FileSessionStorage} from './dist/sdk-repl.js';
       import {writeFile} from 'node:fs/promises';
@@ -181,7 +181,7 @@ test('actual npm tarball runs Script in a clean directory and fails explicitly o
         const recoveryController=new AbortController();
         try {
           const recovery=await runManagedTask({provider:'packed-todo',workMode:mode,reasoningMode:'off',lsp:false,
-            abortSignal:recoveryController.signal,session:{storage},context:{executionCwd:process.cwd(),gitRoot:process.cwd(),repoIntelligenceMode:'off'}},'Create a plan item and report its state.');
+            abortSignal:recoveryController.signal,session:{storage},events:{beforeToolExecute:allowAll},context:{executionCwd:process.cwd(),gitRoot:process.cwd(),repoIntelligenceMode:'off'}},'Create a plan item and report its state.');
           assert.equal(recovery.success,true); assert.equal(todoCalls,3);
         } finally { recoveryController.abort(); await awaitLatestCodingMemoryReviewDrain(5000); }
       }
