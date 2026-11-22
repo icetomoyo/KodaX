@@ -191,6 +191,16 @@ describe('a listening Host that reads host.json again when it changes', () => {
     return response.headers.get('set-cookie')!.split(';')[0]!;
   }
 
+  it('tells a probe only whether it is ready while pairing is on, since a tunnel shows the port to anyone', async () => {
+    const health = async () => (await fetch(`http://127.0.0.1:${network!.port!}/healthz`)).json() as Promise<unknown>;
+    writeConfig({ owner: 'person-1', pairing: true });
+    await start();
+    await expect(health()).resolves.toEqual({ state: 'ready' });
+
+    writeConfig({ owner: 'person-1' });
+    await vi.waitFor(() => expect(health()).resolves.toEqual(HEALTH), { timeout: 5_000 });
+  });
+
   it('keeps the devices paired with it in the home', async () => {
     writeConfig({ owner: 'person-1', pairing: true });
     const { devices } = await start();

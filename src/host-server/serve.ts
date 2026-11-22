@@ -146,7 +146,12 @@ export async function startHostNetworkServer(options: HostNetworkServerOptions):
       serveHttp: createHostWebHandler({ ...(served.webRoot !== undefined ? { webRoot: served.webRoot } : {}), devices: pairing }),
       maxFrameBytes: options.maxFrameBytes,
       idleTimeoutMs: IDLE_TIMEOUT_MS,
-      health: options.health,
+      // A Host that pairs browsers is reached through a tunnel, which shows this port to anyone; no
+      // platform reads its blockers there, and they would tell a stranger when its owner is at work.
+      health: async () => {
+        const health = await options.health();
+        return pairing() === undefined ? health : { state: health.state };
+      },
       createPeer: (transport, request) => {
         const tracked: TrackedConnection = { transport, ...request };
         connections.add(tracked);

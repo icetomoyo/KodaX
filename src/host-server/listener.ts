@@ -81,7 +81,8 @@ export interface HostNetworkListenerOptions {
   readonly maxFrameBytes: number;
   /** A socket the Host hears nothing on for this long is closed as idle. */
   readonly idleTimeoutMs: number;
-  readonly health: () => Promise<HostHealth>;
+  /** What `/healthz` answers. Only `state` decides its status code. */
+  readonly health: () => Promise<HostHealth | Pick<HostHealth, 'state'>>;
   /**
    * `origin` is the browser origin that opened the socket, absent for a client that is not a browser.
    * `device` is the paired device it is, already admitted by its cookie.
@@ -146,7 +147,7 @@ export async function startHostNetworkListener(options: HostNetworkListenerOptio
     else response.writeHead(404).end();
   });
   async function answerHealth(response: ServerResponse): Promise<void> {
-    let health: HostHealth;
+    let health: HostHealth | Pick<HostHealth, 'state'>;
     try {
       const reported = await options.health();
       health = draining ? { ...reported, state: 'draining' } : reported;
