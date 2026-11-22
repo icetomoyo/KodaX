@@ -329,8 +329,12 @@ export async function run(options: RunOptions): Promise<RunSummary> {
   const root = options.rawRoot ?? NOTES_RAW_ROOT;
   assertCredentials(NOTES_ALIASES);
   const prepared = await prepare(root);
-  if (prepared.baselineHashMismatches.length > 0) {
-    throw new Error(`feature-308-notes: Phase 0 baseline inputs changed (${prepared.baselineHashMismatches.length} cells); bump the revision and rebaseline`);
+  const drift = [
+    ...(prepared.baselineHashMismatches.length > 0 ? [`${prepared.baselineHashMismatches.length} Phase 0 baseline cells changed`] : []),
+    ...(prepared.frozenCoversDerived ? [] : ['the frozen token budget no longer covers the derived one']),
+  ];
+  if (drift.length > 0) {
+    throw new Error(`feature-308-notes: production inputs no longer match the frozen experiment (${drift.join('; ')}); bump the revision and rebaseline`);
   }
   const cells = await prepareCells();
   const skipped: string[] = [];

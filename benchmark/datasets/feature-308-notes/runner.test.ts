@@ -8,7 +8,9 @@ const runOneShotMock = vi.hoisted(() => vi.fn());
 vi.mock('../../harness/harness.js', () => ({ runOneShot: runOneShotMock }));
 
 import { FEATURE_308_PROBE_CASES } from './cases.js';
+import { MODEL_ALIASES } from '../../harness/aliases.js';
 import {
+  NOTES_ALIASES,
   NOTES_BUDGET,
   NOTES_BUDGET_CONFIRMATION,
   buildNotesExperimentContract,
@@ -74,10 +76,20 @@ describe('blinding', () => {
 });
 
 describe('prepare', () => {
-  it('stays inside the frozen token budget and finds the Phase 0 baseline inputs unchanged', async () => {
+  // The experiment is frozen as the FEATURE_308 record. Production prompts have
+  // moved on since, so its inputs no longer match; a paid run must refuse
+  // instead of spending on inputs nobody confirmed.
+  it('refuses a paid run, with no provider call, once production inputs no longer match the frozen experiment', async () => {
     const summary = await prepare(root);
     expect(summary.cells).toBe(NOTES_BUDGET.plannedCalls);
-    expect(summary.frozenCoversDerived).toBe(true);
-    expect(summary.baselineHashMismatches).toEqual([]);
+    expect(summary.frozenCoversDerived && summary.baselineHashMismatches.length === 0).toBe(false);
+    for (const alias of NOTES_ALIASES) vi.stubEnv(MODEL_ALIASES[alias].apiKeyEnv, 'test-key');
+    try {
+      await expect(run({ confirmBudget: NOTES_BUDGET_CONFIRMATION, rawRoot: root }))
+        .rejects.toThrow(/no longer match the frozen experiment/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(runOneShotMock).not.toHaveBeenCalled();
   }, 300_000);
 });
