@@ -13,14 +13,14 @@ import type { Duplex } from 'node:stream';
 
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 
-import { HOST_CLOSE_CODES, type HostCloseReason } from '../host-protocol/close.js';
+import { HOST_CLOSE_CODES, HOST_WEBSOCKET_PATH, type HostCloseReason } from '../host-protocol/close.js';
 import { prepareUnixSocketEndpoint } from '../runtime-daemon/transport.js';
 
-/** The path a client opens the WebSocket on. Others are left for the Host's web pages. */
-export const HOST_WEBSOCKET_PATH = '/v2';
+export { HOST_WEBSOCKET_PATH };
 /** The path a platform probes. It carries no Session content, so it asks for no credential. */
 export const HOST_HEALTH_PATH = '/healthz';
 
+const ORIGIN_NOT_ALLOWED = 'origin_not_allowed';
 /** Sockets that may wait for their handshake at once. Each may hold one frame of up to `maxFrameBytes` while it waits. */
 const MAX_PENDING_HANDSHAKES = 32;
 /** Bytes queued for a client before it counts as behind, so view patches coalesce until it catches up. */
@@ -127,6 +127,8 @@ export async function startHostNetworkListener(options: HostNetworkListenerOptio
   // Compression is off: a small compressed frame could inflate past every limit here.
   const wss = new WebSocketServer({ noServer: true, maxPayload: options.maxFrameBytes, perMessageDeflate: false, clientTracking: false });
   const maxPending = options.maxPendingHandshakes ?? MAX_PENDING_HANDSHAKES;
+  /** Refused browsers waiting for their close to finish, which count against the pending limit. */
+  const refusing = new Set<WsSocket>();
   const connections = new Map<WsSocket, HostNetworkPeer>();
   const devices = new WeakMap<IncomingMessage, HostDeviceAdmission>();
   let draining = false;
@@ -162,6 +164,10 @@ export async function startHostNetworkListener(options: HostNetworkListenerOptio
   server.on('upgrade', (request: IncomingMessage, socket: Duplex, head: Buffer) => {
     socket.on('error', () => socket.destroy());
     const refusal = refuseUpgrade(request);
+    if (refusal === ORIGIN_NOT_ALLOWED) {
+      wss.handleUpgrade(request, socket, head, refuseBrowser);
+      return;
+    }
     if (refusal !== undefined) {
       socket.end(`HTTP/1.1 ${refusal}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
       return;
@@ -176,13 +182,25 @@ export async function startHostNetworkListener(options: HostNetworkListenerOptio
   function refuseUpgrade(request: IncomingMessage): string | undefined {
     if (draining) return '503 Service Unavailable';
     if (new URL(request.url ?? '/', 'http://host').pathname !== HOST_WEBSOCKET_PATH) return '404 Not Found';
-    const pending = [...connections.values()].filter(peer => !peer.admitted()).length;
+    const pending = [...connections.values()].filter(peer => !peer.admitted()).length + refusing.size;
     if (pending >= maxPending) return '503 Service Unavailable';
     const { origin, cookie } = request.headers;
     if (origin === undefined) return undefined;
     const device = cookie !== undefined ? options.admitsDevice?.({ origin, cookie }) : undefined;
     if (device !== undefined) devices.set(request, device);
-    return device !== undefined || options.allowsOrigin(origin) ? undefined : '403 Forbidden';
+    return device !== undefined || options.allowsOrigin(origin) ? undefined : ORIGIN_NOT_ALLOWED;
+  }
+
+  /**
+   * A browser cannot read the status of a refused upgrade, so it could not tell
+   * this from a Host that is down. It is let in only to be told why in a close
+   * frame, and nothing it sends is read.
+   */
+  function refuseBrowser(socket: WsSocket): void {
+    refusing.add(socket);
+    socket.on('close', () => refusing.delete(socket));
+    socket.on('error', () => undefined);
+    socket.close(HOST_CLOSE_CODES.revoked, ORIGIN_NOT_ALLOWED);
   }
 
   function attach(socket: WsSocket, request: { readonly origin?: string; readonly device?: string }): void {

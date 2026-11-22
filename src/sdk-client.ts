@@ -23,6 +23,7 @@ export type { RuntimeClientInfo } from './runtime-client-info.js';
 // The v2 Host protocol client. The v1 product Client above stays until every client has moved.
 export { ensureKodaXHostClient, type EnsureKodaXHostClientOptions } from './local-host-client.js';
 export { createKodaXHostClient, createRequestId } from './host-protocol/host-client.js';
+export { connectKodaXHost, type ConnectKodaXHostOptions } from './host-protocol/remote-host.js';
 export type {
   KodaXHostClient, KodaXHostClientOptions, HostAnswerScope, HostCallableMethod, HostCallParams, HostCallResult,
   HostCallOptions, HostConnectionState, HostSessionObserver, HostSessionObservation, HostSessionView,

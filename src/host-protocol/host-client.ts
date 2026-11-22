@@ -125,7 +125,10 @@ export interface KodaXHostClientOptions {
 
 /** A new id for one intent. Send it again, never a new one, to learn what came of a command that got no answer. */
 export function createRequestId(): string {
-  return globalThis.crypto.randomUUID();
+  const { crypto } = globalThis;
+  // A browser offers randomUUID only in a secure context, which a page over plain http on a LAN address is not.
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
 /** The first connection is opened before this resolves; its failure is the caller's to handle. */
@@ -232,11 +235,19 @@ function createHostLink(options: KodaXHostClientOptions, lifetime: AbortControll
       finish();
       return;
     }
-    setState({ state: 'reconnecting', attempt: 0 });
-    void reconnect();
+    // A close code is the Host saying what to do next; without one the link was simply lost.
+    const { ended } = connection;
+    if (ended?.action === 'stop') {
+      finish(ended.error);
+      return;
+    }
+    setState(ended === undefined ? { state: 'reconnecting', attempt: 0 } : { state: 'reconnecting', attempt: 0, error: ended.error });
+    void reconnect(ended?.action === 'back_off' ? ended.error : undefined);
   };
 
-  const reconnect = async (): Promise<void> => {
+  /** `backOff` is why the Host asked for a pause before the first attempt. */
+  const reconnect = async (backOff?: HostProtocolError): Promise<void> => {
+    if (backOff !== undefined) await pause(reconnectDelay(0, backOff), lifetime.signal);
     for (let attempt = 0; !finished; attempt += 1) {
       try {
         adopt(await options.open(lifetime.signal));

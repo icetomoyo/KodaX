@@ -508,6 +508,9 @@ log(`  ✓ dist/kodax_bootstrap.js (${(bootstrapBytes / 1024).toFixed(0)} kB)`);
 // does not affect the helper-depth contract verified below.
 
 const sdkSources = sdkEntriesFromPackage(rootPkg);
+// The browser entry runs in a web page, so it is built on its own below, not into the Node chunks.
+const browserSdkSource = sdkSources['sdk-browser'];
+delete sdkSources['sdk-browser'];
 const sdkEntryNames = Object.keys(sdkSources);
 const sdkEntryPoints = Object.fromEntries(Object.entries(sdkSources).map(([name, source]) => [name, path.join(repoRoot, source)]));
 // Internal CLI component, sharing the SDK chunks; not a new public package export.
@@ -543,6 +546,33 @@ for (const name of sdkEntryNames) {
   log(`  ✓ dist/${name}.js (${(sdkBytesByEntry[name] / 1024).toFixed(0)} kB)`);
 }
 const sdkBytes = sdkBytesByEntry.index;
+
+// ---- build the browser SDK entry ------------------------------------------
+//
+// One self-contained file for a web page: no externals, no Node built-ins, and
+// nothing outside the protocol client (the Host validates requests, so the
+// schema library stays out).
+log('Building dist/sdk-browser.js (browser SDK, standalone)…');
+const browserResult = await build({
+  absWorkingDir: repoRoot,
+  entryPoints: [path.join(repoRoot, browserSdkSource)],
+  outfile: path.join(distDir, 'sdk-browser.js'),
+  bundle: true,
+  platform: 'browser',
+  format: 'esm',
+  target: 'es2022',
+  minify: true,
+  keepNames: true,
+  metafile: true,
+  logLevel: 'warning',
+  banner: commonOptions.banner,
+});
+const strayBrowserInputs = Object.keys(browserResult.metafile.inputs)
+  .filter((input) => input !== 'src/sdk-browser.ts' && !input.startsWith('src/host-protocol/'));
+if (strayBrowserInputs.length > 0) {
+  throw new Error(`The browser SDK pulled in more than the protocol client: ${strayBrowserInputs.join(', ')}`);
+}
+const browserSdkBytes = statSync(path.join(distDir, 'sdk-browser.js')).size;
 
 // ---- build repo-intelligence worker sidecar -----------------------------
 //
@@ -743,6 +773,7 @@ for (const name of sdkEntryNames) {
   const label = name === 'index' ? 'SDK (root) ' : `SDK ${name.replace('sdk-', '/')}`.padEnd(11);
   log(`  ${label}:  ${(sdkBytesByEntry[name] / 1024).toFixed(0)} kB → dist/${name}.js`);
 }
+log(`  SDK /browser:  ${(browserSdkBytes / 1024).toFixed(0)} kB → dist/sdk-browser.js`);
 log(`  Builtin skills: dist/builtin/`);
 log(`  Worker:         dist/semantic-worker.js`);
 log(`  Handler worker: dist/constructed-handler-worker.js`);

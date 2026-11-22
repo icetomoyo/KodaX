@@ -15,6 +15,7 @@ import {
   parseHostRpcFrame,
   type HostRpcId,
 } from './codec.js';
+import { hostLinkEnd, type HostLinkClose, type HostLinkEnd } from './close.js';
 import type { HostInitializeParams, HostInitializeResult } from './methods.js';
 
 /** A Host that has not answered the handshake by then is given up on. */
@@ -23,8 +24,8 @@ const INITIALIZE_TIMEOUT_MS = 10_000;
 export interface HostRpcLinkEvents {
   /** One whole frame from the Host. */
   frame(text: string): void;
-  /** The link is gone, whichever side ended it. */
-  end(): void;
+  /** The link is gone, whichever side ended it, with the close a WebSocket saw. */
+  end(close?: HostLinkClose): void;
 }
 
 export interface HostRpcLink {
@@ -62,6 +63,8 @@ export interface HostRpcClient {
   onNotification(listener: HostRpcNotificationListener): () => void;
   /** Settles when the link is gone, whichever side ended it. */
   readonly closed: Promise<void>;
+  /** Set once the Host closed the link with a close code, which says what to do next. */
+  readonly ended: HostLinkEnd | undefined;
   close(): void;
 }
 
@@ -76,6 +79,9 @@ export async function connectHostRpc(dial: HostRpcDial, options: HostRpcClientOp
   let nextId = 1;
   let open = true;
   let link: HostRpcLink | undefined;
+  let ended: HostLinkEnd | undefined;
+  let lastSentAt = Date.now();
+  let keepAlive: ReturnType<typeof setInterval> | undefined;
   let maxFrameBytes = Number.POSITIVE_INFINITY;
   /** Set while the handshake waits. A frame that is not v2 then means the peer does not speak it. */
   let refuseHandshake: ((error: HostProtocolError) => void) | undefined;
@@ -86,6 +92,7 @@ export async function connectHostRpc(dial: HostRpcDial, options: HostRpcClientOp
   const transmit = (frame: string): boolean => {
     try {
       link?.send(frame);
+      lastSentAt = Date.now();
       return link !== undefined;
     } catch (error: unknown) {
       report(error);
@@ -93,9 +100,11 @@ export async function connectHostRpc(dial: HostRpcDial, options: HostRpcClientOp
     }
   };
 
-  const end = (): void => {
+  const end = (close?: HostLinkClose): void => {
     if (!open) return;
     open = false;
+    clearInterval(keepAlive);
+    if (close !== undefined) ended = hostLinkEnd(close);
     const lost = [...pending.values()];
     pending.clear();
     listeners.clear();
@@ -193,6 +202,17 @@ export async function connectHostRpc(dial: HostRpcDial, options: HostRpcClientOp
     }
   });
 
+  /** The Host hangs up on a client it has not heard from, so a quiet client pings. */
+  function startKeepAlive(idleTimeoutMs: number): ReturnType<typeof setInterval> {
+    const every = idleTimeoutMs / 3;
+    return setInterval(() => {
+      if (Date.now() - lastSentAt < every) return;
+      request('ping').catch((error: unknown) => {
+        if (open) report(error);
+      });
+    }, every);
+  }
+
   try {
     link = await dial({ frame: receive, end });
   } catch (cause: unknown) {
@@ -217,6 +237,7 @@ export async function connectHostRpc(dial: HostRpcDial, options: HostRpcClientOp
     ]);
     const handshake = readHandshake(answer);
     maxFrameBytes = handshake.limits.maxFrameBytes;
+    if (handshake.limits.idleTimeoutMs !== undefined) keepAlive = startKeepAlive(handshake.limits.idleTimeoutMs);
     return {
       handshake,
       request,
@@ -225,12 +246,14 @@ export async function connectHostRpc(dial: HostRpcDial, options: HostRpcClientOp
         return () => { listeners.delete(listener); };
       },
       closed,
+      get ended() { return ended; },
       close,
     };
   } catch (error: unknown) {
     close();
     // A handshake changes nothing on the Host, so losing the link during one is a plain failure to connect.
     if (error instanceof HostProtocolError && error.kodaxCode === 'unknown_outcome') {
+      if (ended !== undefined) throw ended.error;
       throw new HostProtocolError('unavailable', 'The Host closed the connection during the handshake.', {
         reason: 'connection_closed',
       });

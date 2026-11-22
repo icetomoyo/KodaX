@@ -67,6 +67,10 @@
       "types": "./dist/sdk-client.d.ts",
       "import": "./dist/sdk-client.js"
     },
+    "./browser": {
+      "types": "./dist/sdk-browser.d.ts",
+      "import": "./dist/sdk-browser.js"
+    },
     "./runtime": {
       "types": "./dist/sdk-runtime.d.ts",
       "import": "./dist/sdk-runtime.js"

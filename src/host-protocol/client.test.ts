@@ -4,7 +4,8 @@ import { z } from 'zod/v4';
 import { connectHostRpc, type HostRpcClient, type HostRpcDial, type HostRpcLinkEvents } from './client.js';
 import { HOST_PROTOCOL, HOST_PROTOCOL_REVISION, HostProtocolError, hostRpcNotification, hostRpcSuccess } from './codec.js';
 import { createHostConnection, type HostAdmission } from './connection.js';
-import { HOST_METHODS, hostParams, hostResult, type HostMethodRegistry } from './methods.js';
+import { HOST_CLOSE_CODES, type HostLinkClose } from './close.js';
+import { HOST_METHODS, hostParams, hostResult, type HostLimits, type HostMethodRegistry } from './methods.js';
 
 const METHODS: HostMethodRegistry = {
   ...HOST_METHODS,
@@ -22,31 +23,34 @@ interface Loopback {
   readonly sent: Array<Record<string, unknown>>;
   /** Delivers a frame to the client as if the Host sent it. */
   push(message: unknown): void;
-  /** Ends the link from the Host side. */
-  drop(): void;
+  /** Ends the link from the Host side, with the close the transport saw. */
+  drop(close?: HostLinkClose): void;
 }
 
 /** A client wired straight to a real Host connection, with no socket between them. */
-function loopback(call: HostAdmission['call'] = async (_method, params) => ({ text: String(params.text) })): Loopback {
+function loopback(
+  call: HostAdmission['call'] = async (_method, params) => ({ text: String(params.text) }),
+  limits: HostLimits = { maxFrameBytes: 1024 },
+): Loopback {
   const sent: Array<Record<string, unknown>> = [];
   let events: HostRpcLinkEvents | undefined;
   let ended = false;
-  const end = (): void => {
+  const end = (close?: HostLinkClose): void => {
     if (ended) return;
     ended = true;
     connection.close();
-    events?.end();
+    events?.end(close);
   };
   const connection = createHostConnection({
     methods: METHODS,
     send: (frame) => { queueMicrotask(() => { if (!ended) events?.frame(frame); }); },
-    disconnect: () => queueMicrotask(end),
+    disconnect: () => queueMicrotask(() => end()),
     onInternalError: () => undefined,
     admit: async ({ auth }) => {
       if (auth?.token !== 'secret') throw new HostProtocolError('unauthorized', 'The credential is not valid.');
       return {
         role: 'owner', subject: 'person', host: { id: 'runtime_1', version: '0.0.0-test' },
-        features: [], locks: [], limits: { maxFrameBytes: 1024 }, call, close: () => undefined,
+        features: [], locks: [], limits, call, close: () => undefined,
       };
     },
   });
@@ -60,7 +64,7 @@ function loopback(call: HostAdmission['call'] = async (_method, params) => ({ te
           sent.push(JSON.parse(frame) as Record<string, unknown>);
           queueMicrotask(() => { if (!ended) connection.receive(frame); });
         },
-        close: end,
+        close: () => end(),
       };
     },
     push: (message) => events?.frame(JSON.stringify(message)),
@@ -152,6 +156,56 @@ describe('host rpc client', () => {
     await expect(connectHostRpc(dial, IDENTITY)).rejects.toMatchObject({
       kodaxCode: 'unavailable', reason: 'connection_closed', retryable: true,
     });
+  });
+
+  it('refuses to connect, for good, when the Host closes the link during the handshake and asks not to come back', async () => {
+    const dial: HostRpcDial = async (events) => ({
+      send: () => queueMicrotask(() => events.end({ code: HOST_CLOSE_CODES.revoked, reason: 'origin_not_allowed' })),
+      close: () => undefined,
+    });
+    await expect(connectHostRpc(dial, IDENTITY)).rejects.toMatchObject({
+      kodaxCode: 'unauthorized', reason: 'origin_not_allowed', retryable: false,
+    });
+  });
+
+  it('keeps what the Host said when it closed the link, and nothing when this side closed it', async () => {
+    const dropped = await connected(loopback());
+    expect(dropped.ended).toBeUndefined();
+    const link = loopback();
+    const client = await connected(link);
+    link.drop({ code: HOST_CLOSE_CODES.overloaded, reason: 'overloaded' });
+    await client.closed;
+    expect(client.ended).toMatchObject({ action: 'back_off', error: { kodaxCode: 'overloaded' } });
+    dropped.close();
+    await dropped.closed;
+    expect(dropped.ended).toBeUndefined();
+  });
+
+  it('pings a Host that hangs up on silence, only while this side has said nothing', async () => {
+    vi.useFakeTimers();
+    const link = loopback(undefined, { maxFrameBytes: 1024, idleTimeoutMs: 3_000 });
+    const client = await connected(link);
+    const pings = (): number => link.sent.filter(frame => frame.method === 'ping').length;
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(pings()).toBe(1);
+    await vi.advanceTimersByTimeAsync(500);
+    await client.request('echo', { text: 'a' });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(pings()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(pings()).toBe(2);
+    client.close();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(pings()).toBe(2);
+  });
+
+  it('does not ping a Host without an idle limit', async () => {
+    vi.useFakeTimers();
+    const link = loopback();
+    await connected(link);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(link.sent.filter(frame => frame.method === 'ping')).toHaveLength(0);
   });
 
   it('answers a request from the Host, which it cannot serve yet', async () => {

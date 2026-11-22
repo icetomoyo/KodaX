@@ -60,6 +60,7 @@ import {
 import { connectHostRpc } from "../host-protocol/client.js";
 import { HOST_PROTOCOL, HOST_PROTOCOL_REVISION } from "../host-protocol/codec.js";
 import type { HostRpcDial } from "../host-protocol/client.js";
+import { connectKodaXHost } from "../host-protocol/remote-host.js";
 
 class BrokerSummaryProvider extends KodaXBaseProvider {
   readonly name = 'broker-summary';
@@ -537,8 +538,19 @@ describe("runtime daemon host", () => {
     if (token === undefined) throw new Error("Expected a daemon token for the network test.");
     await expect(connectHostRpc(dialWebSocket(url), { client, auth: { scheme: "ipc", token } }))
       .rejects.toMatchObject({ kodaxCode: "unauthorized", reason: "unsupported_auth_scheme" });
+    // A browser is told in a close frame, because it cannot read the status of a refused upgrade.
     await expect(connectHostRpc(dialWebSocket(url, "https://evil.example.test"), { client, auth: { scheme: "jwt", token: idp.token("person-1") } }))
-      .rejects.toThrow();
+      .rejects.toMatchObject({ kodaxCode: "unauthorized", reason: "origin_not_allowed", retryable: false });
+
+    // The SDK's own dial, on the global WebSocket, from the Host's http address.
+    const remote = await connectKodaXHost({
+      url: `http://127.0.0.1:${port}`,
+      client: { ...client, instanceId: "network-client-3" },
+      credential: () => idp.token("backend-1"),
+    });
+    cleanupTasks.push(async () => remote.close());
+    expect(remote.handshake).toMatchObject({ role: "service", subject: "service:backend-1", expiresAt: expect.any(Number) });
+    await expect(remote.call("ping")).resolves.toEqual({});
 
     const local = await createRuntimeDaemonSocketClientTransport(host.endpoint);
     cleanupTasks.push(async () => {
@@ -1664,7 +1676,8 @@ it("keeps Error diagnostic details diagnosable in the daemon log", async () => {
 interface TestWebSocket {
   send(data: string): void;
   close(): void;
-  on(event: "open" | "close", listener: () => void): void;
+  on(event: "open", listener: () => void): void;
+  on(event: "close", listener: (code: number, reason: Buffer) => void): void;
   on(event: "message", listener: (data: Buffer) => void): void;
   on(event: "error", listener: (error: Error) => void): void;
 }
@@ -1681,7 +1694,7 @@ function dialWebSocket(url: string, origin?: string): HostRpcDial {
       socket.on("error", reject);
     });
     socket.on("message", data => events.frame(data.toString("utf8")));
-    socket.on("close", () => events.end());
+    socket.on("close", (code, reason) => events.end({ code, reason: reason.toString("utf8") }));
     return { send: frame => socket.send(frame), close: () => socket.close() };
   };
 }

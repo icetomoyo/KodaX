@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { HostRpcClient } from './client.js';
+import { HOST_CLOSE_CODES, hostLinkEnd, type HostLinkClose, type HostLinkEnd } from './close.js';
 import { HOST_PROTOCOL, HostProtocolError } from './codec.js';
 import { createKodaXHostClient, createRequestId, type HostConnectionState, type KodaXHostClient } from './host-client.js';
 
@@ -13,8 +14,8 @@ interface FakeHost {
   /** Every request this connection was sent, in order. */
   readonly sent: Array<{ method: string; params: Params }>;
   notify(method: string, params: Params): void;
-  /** Ends the link from the Host side, as a crash or a restart would. */
-  drop(): void;
+  /** Ends the link from the Host side, as a crash or a restart would, or with the close code the Host sent. */
+  drop(close?: HostLinkClose): void;
 }
 
 /** One connection to a Host, without frames: what `open` hands the client. */
@@ -22,11 +23,13 @@ function fakeHost(id: string, respond: Responder): FakeHost {
   const listeners = new Set<(method: string, params: Params) => void>();
   const inFlight = new Set<(error: HostProtocolError) => void>();
   let open = true;
+  let ended: HostLinkEnd | undefined;
   let resolveClosed: () => void = () => undefined;
   const closed = new Promise<void>((resolve) => { resolveClosed = resolve; });
-  const drop = (): void => {
+  const drop = (close?: HostLinkClose): void => {
     if (!open) return;
     open = false;
+    if (close !== undefined) ended = hostLinkEnd(close);
     for (const reject of [...inFlight]) reject(new HostProtocolError('unknown_outcome', 'Lost.', { reason: 'connection_closed' }));
     inFlight.clear();
     resolveClosed();
@@ -55,7 +58,8 @@ function fakeHost(id: string, respond: Responder): FakeHost {
         return () => { listeners.delete(listener); };
       },
       closed,
-      close: drop,
+      get ended() { return ended; },
+      close: () => drop(),
     },
   };
   return host;
@@ -95,6 +99,21 @@ function states(target: KodaXHostClient<'local'>): HostConnectionState['state'][
 
 /** Never answers, so the call stays in flight until the link drops. */
 const hang = (): Promise<Params> => new Promise(() => undefined);
+
+describe('createRequestId', () => {
+  it('works in a page that is not a secure context, which has no randomUUID', () => {
+    // Shadows the prototype's method on this one object, as an http page on a LAN address lacks it.
+    Object.defineProperty(globalThis.crypto, 'randomUUID', { value: undefined, configurable: true });
+    try {
+      const ids = new Set([createRequestId(), createRequestId()]);
+      expect(ids.size).toBe(2);
+      for (const id of ids) expect(id).toMatch(/^[0-9a-f]{32}$/);
+    } finally {
+      Reflect.deleteProperty(globalThis.crypto, 'randomUUID');
+    }
+    expect(createRequestId()).toMatch(/^[0-9a-f-]{36}$/);
+  });
+});
 
 describe('a Host client that outlives its connections', () => {
   it('answers calls on the connection it opened', async () => {
@@ -167,6 +186,35 @@ describe('a Host client that outlives its connections', () => {
     await expect(host.call('ping')).rejects.toBe(refused);
     await host.closed;
     expect(seen.at(-1)).toEqual({ state: 'closed', error: refused });
+  });
+
+  it('closes for good when the Host closes the link and asks it not to come back', async () => {
+    const sequence = hostSequence(() => ({}));
+    const host = await client(sequence.open);
+    const seen: HostConnectionState[] = [];
+    host.onConnectionChange((state) => { seen.push(state); });
+    sequence.hosts[0]!.drop({ code: HOST_CLOSE_CODES.revoked, reason: 'revoked' });
+
+    await expect(host.call('ping')).rejects.toMatchObject({ kodaxCode: 'unauthorized', reason: 'revoked' });
+    await host.closed;
+    expect(seen.at(-1)).toMatchObject({ state: 'closed', error: { kodaxCode: 'unauthorized', reason: 'revoked' } });
+    expect(sequence.open).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits before it reconnects to a Host that closed the link as too busy, and at once after an idle close', async () => {
+    vi.useFakeTimers();
+    const sequence = hostSequence(() => ({}));
+    const host = await client(sequence.open);
+    sequence.hosts[0]!.drop({ code: HOST_CLOSE_CODES.overloaded, reason: 'overloaded' });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(sequence.open).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(sequence.open).toHaveBeenCalledTimes(2);
+
+    sequence.hosts[1]!.drop({ code: HOST_CLOSE_CODES.idle, reason: 'idle' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sequence.open).toHaveBeenCalledTimes(3);
+    await expect(host.call('ping')).resolves.toEqual({});
   });
 
   it('does not open the link again after the client exits', async () => {

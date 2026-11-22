@@ -6,7 +6,8 @@ import { sdkEntriesFromPackage } from './sdk-entrypoints.mjs';
 test('builds every published JS and type entry from the same manifest', () => {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   const entries = sdkEntriesFromPackage(pkg);
-  assert.equal(Object.keys(entries).length, 14);
+  assert.equal(Object.keys(entries).length, 15);
+  assert.equal(entries['sdk-browser'], 'src/sdk-browser.ts');
   assert.equal(entries['sdk-runtime'], 'src/sdk-runtime-public.ts');
   for (const source of Object.values(entries)) assert.ok(readFileSync(new URL(`../${source}`, import.meta.url)).length > 0);
 });

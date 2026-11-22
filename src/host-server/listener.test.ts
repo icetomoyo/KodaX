@@ -121,7 +121,10 @@ describe('startHostNetworkListener', () => {
 
   it('refuses a browser origin it was not told to allow, and admits an allowed one or a client that sends none', async () => {
     const { url, peers } = await listen();
-    await expect(connect(url, 'https://evil.example.test').opened).rejects.toMatchObject({ status: 403 });
+    // A browser cannot read an HTTP status, so the refusal comes as a close it can tell from a dropped network.
+    const evil = connect(url, 'https://evil.example.test');
+    await evil.opened;
+    await expect(evil.closed).resolves.toEqual({ code: 4403, reason: 'origin_not_allowed' });
     await expect(connect(url, 'https://app.example.test').opened).resolves.toBeUndefined();
     await expect(connect(url).opened).resolves.toBeUndefined();
     // The peer learns the origin, so a later change to the allowed list can find its connections.
@@ -139,7 +142,7 @@ describe('startHostNetworkListener', () => {
     await phone.opened;
     expect(phone.setCookie()).toEqual(['kodax_device=good; Max-Age=60']);
     // A cookie the Host does not take is no reason to let in an origin it does not allow.
-    await expect(connect(url, PHONE, 'kodax_device=bad').opened).rejects.toMatchObject({ status: 403 });
+    await expect(connect(url, PHONE, 'kodax_device=bad').closed).resolves.toEqual({ code: 4403, reason: 'origin_not_allowed' });
     const app = connect(url, 'https://app.example.test', 'kodax_device=bad');
     await app.opened;
     expect(app.setCookie()).toBeUndefined();
