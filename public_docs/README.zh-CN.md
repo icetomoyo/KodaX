@@ -32,6 +32,11 @@
 - [客户端契约](../docs/CLIENT_CONTRACT.md) — 完整产品方法清单、观测、历史记录与错误语义。
 - [Artifact SDK](../docs/ARTIFACT_SDK.md) — 可选独立包、共享 Host/Node 配置、九项操作、格式支持、证据与视觉审阅限制。
 
+## 部署
+
+- [运行 KodaX Host](./deployment/host.zh-CN.md) — host.json、Token、生命周期、健康检查、容器与服务、Web UI 安全（尚未发布）。
+- [远程访问](./deployment/remote-access.zh-CN.md) — 经隧道和设备配对，从手机访问自己的 Host（尚未发布）。
+
 ## 使用指南
 
 *（更多独立指南即将发布：CLI 参考、REPL 命令、会话、多 Agent、技能、扩展、MCP、A2A、仓库智能、记忆、工作流、Compaction、Doctor、工具参考。当前 Skill SDK 语义见嵌入指南。）*

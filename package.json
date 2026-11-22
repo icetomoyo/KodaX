@@ -286,6 +286,7 @@
     "docs/ARTIFACT_SDK.md",
     "public_docs/configuration",
     "public_docs/getting-started",
+    "public_docs/deployment",
     "LICENSE",
     "CHANGELOG.md"
   ],

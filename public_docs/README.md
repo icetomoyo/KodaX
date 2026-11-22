@@ -121,6 +121,11 @@ latency remains tracked in Issue 371.
 - [Client contract](../docs/CLIENT_CONTRACT.md) — complete Product method inventory, observation, history and error semantics.
 - [Artifact SDK](../docs/ARTIFACT_SDK.md) — optional independent package, shared-Host/Node setup, nine operations, format support, evidence and visual-review limits.
 
+## Deployment
+
+- [Run a KodaX Host](./deployment/host.md) — host.json, tokens, lifecycle, health, containers and services, web UI safety (unreleased).
+- [Remote access](./deployment/remote-access.md) — reach your own Host from a phone through a tunnel and device pairing (unreleased).
+
 ## Guides
 
 *(More standalone guides coming soon: CLI reference, REPL commands, sessions, multi-agent, skills, extensions, MCP, A2A, repo intelligence, memory, workflows, compaction, doctor, tools reference. Current Skill SDK semantics are documented in the Embedder Guide.)*
