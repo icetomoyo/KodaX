@@ -230,7 +230,9 @@ export interface EpisodeReviewDrainOptions {
     entry: PendingEpisodeReviewV2,
     decision: EpisodeReviewDecision,
     proposalIds: readonly string[],
-  ) => Promise<void>;
+    // A returned notifier runs once the job is durably completed, so whoever
+    // it tells already sees the job gone from the pending queue.
+  ) => Promise<void | (() => void)>;
 }
 
 interface EpisodeReviewBranchAuthority {
@@ -1579,10 +1581,12 @@ async function drainFencedEpisodeReview(
       .filter((action) => action.carrier === 'memory')
       .flatMap((action) => action.resultRefs);
     deliveringCompletion = true;
+    const completion: { notify?: () => void } = {};
     if (options.onV2Completed !== undefined) {
       await withEpisodeReviewClaimAuthority(identity, claim, async (revalidateAuthority) => {
         options.abortSignal?.throwIfAborted();
-        await options.onV2Completed?.(entry, decision, memoryRefs);
+        const notify = await options.onV2Completed?.(entry, decision, memoryRefs);
+        if (typeof notify === 'function') completion.notify = notify;
         await revalidateAuthority();
         await completeFencedEpisodeReviewWithSessionFence(identity, claim, memoryRefs);
       });
@@ -1590,6 +1594,17 @@ async function drainFencedEpisodeReview(
       await completeFencedEpisodeReview(identity, claim, memoryRefs);
     }
     deliveringCompletion = false;
+    try {
+      completion.notify?.();
+    } catch (error) {
+      // The job is already completed; a failing listener must not reopen it.
+      emitKodaXDiagnostic({
+        source: 'memory.review-inbox',
+        level: 'warn',
+        message: 'Episode review completion notifier failed.',
+        detail: { jobId: entry.jobId, error: error instanceof Error ? error.message : String(error) },
+      });
+    }
     return { kind: 'reviewed' };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
