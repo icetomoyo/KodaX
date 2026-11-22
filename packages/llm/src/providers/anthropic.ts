@@ -360,7 +360,19 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
   }
 
   private isNativeHistoryModel(model?: string): boolean {
-    return this.name === 'anthropic' && /^claude-(opus|sonnet|haiku)-5-5(?:-|$)/.test(model ?? this.config.model);
+    return this.name === 'anthropic' && /^claude-(?:(?:opus|sonnet|haiku)-5-5|fable-5-2)(?:-|$)/.test(model ?? this.config.model);
+  }
+
+  // Like localRejectEfforts in base.ts: only an explicit 'none' may fail on an always-thinking model;
+  // a legacy 'false' falls back to adaptive thinking instead of breaking sidecar callers.
+  private nativeThinkingMode(model: string, reasoning: KodaXNormalizedReasoningRequest, options?: KodaXProviderStreamOptions): NonNullable<KodaXProviderStreamOptions['thinkingMode']> {
+    if (options?.thinkingMode !== undefined) return options.thinkingMode;
+    if (reasoning.enabled || reasoning.effortSource === 'omitted') return 'adaptive';
+    return reasoning.effortSource === 'explicit' || model.startsWith('claude-haiku-') ? 'disabled' : 'adaptive';
+  }
+
+  private nativeDefaultEffort(model: string): string {
+    return this.getReasoningProfile(model)?.defaultEffort ?? 'medium';
   }
 
   private nativeHistoryInput(messages: KodaXMessage[], model: string, reasoning: KodaXNormalizedReasoningRequest, options?: KodaXProviderStreamOptions) {
@@ -368,8 +380,8 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     const source = this.getGenerationSource(model);
     let restored = native ? restoreAnthropicNativeHistory(messages, source) : undefined;
     const effort = reasoning.effort === 'auto' || reasoning.effortSource === 'omitted' || reasoning.effort === 'none'
-      ? model.startsWith('claude-sonnet-') ? 'high' : 'medium' : reasoning.effort;
-    const mode = options?.thinkingMode ?? (!reasoning.enabled && reasoning.effortSource !== 'omitted' ? 'disabled' : 'adaptive');
+      ? this.nativeDefaultEffort(model) : reasoning.effort;
+    const mode = this.nativeThinkingMode(model, reasoning, options);
     const resetLineage = !!restored && (restored.requested.thinkingMode !== mode
       || (mode !== 'adaptive' && restored.requested.effort !== effort));
     const tail = restored ? messages.slice(restored.start) : messages;
@@ -383,13 +395,13 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
 
   private applyNativeControls(params: Anthropic.Messages.MessageCreateParams, model: string, reasoning: KodaXNormalizedReasoningRequest, options?: KodaXProviderStreamOptions, suppressEffort = false): void {
     if (!this.isNativeHistoryModel(model)) {
-      if (options?.thinkingMode !== undefined) throw new KodaXProviderError('Thinking mode requires a supported native Claude 5.5 model.', this.name, { retryable: false });
+      if (options?.thinkingMode !== undefined) throw new KodaXProviderError('Thinking mode requires a native Claude 5.5 or Fable 5.2 model.', this.name, { retryable: false });
       return;
     }
-    const mode = options?.thinkingMode ?? (!reasoning.enabled && reasoning.effortSource !== 'omitted' ? 'disabled' : 'adaptive');
+    const mode = this.nativeThinkingMode(model, reasoning, options);
     const disabled = mode === 'disabled';
     const effort = reasoning.effort === 'auto' || reasoning.effortSource === 'omitted' || reasoning.effort === 'none'
-      ? model.startsWith('claude-sonnet-') ? 'high' : 'medium' : reasoning.effort;
+      ? this.nativeDefaultEffort(model) : reasoning.effort;
     if (disabled && !model.startsWith('claude-haiku-')) throw new KodaXProviderError('This Claude model requires adaptive thinking; effort none is unsupported.', this.name, { retryable: false });
     if (!['adaptive', 'between_tools', 'disabled'].includes(mode) || (mode === 'between_tools' && !model.startsWith('claude-sonnet-'))) {
       throw new KodaXProviderError('Unsupported native Claude thinking mode.', this.name, { retryable: false });
@@ -410,15 +422,15 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     }
     delete params.temperature; delete params.top_p; delete params.top_k;
     const last = [...params.messages].filter(message => message.role !== ('system' as string)).at(-1);
-    if (last?.role === 'assistant') throw new KodaXProviderError('Claude 5.5 does not support assistant prefill.', this.name, { retryable: false });
+    if (last?.role === 'assistant') throw new KodaXProviderError('This Claude model does not support assistant prefill.', this.name, { retryable: false });
   }
 
   private validateNativePayload(params: Anthropic.Messages.MessageCreateParams): void {
     if (params.temperature !== undefined || params.top_p !== undefined || params.top_k !== undefined) {
-      throw new KodaXProviderError('Claude 5.5 sampling controls cannot be set.', this.name, { retryable: false, failureCode: 'request_build_failed' });
+      throw new KodaXProviderError('This Claude model does not accept sampling controls.', this.name, { retryable: false, failureCode: 'request_build_failed' });
     }
     if ([...params.messages].filter(message => message.role !== ('system' as string)).at(-1)?.role === 'assistant') {
-      throw new KodaXProviderError('Claude 5.5 does not support assistant prefill.', this.name, { retryable: false, failureCode: 'request_build_failed' });
+      throw new KodaXProviderError('This Claude model does not support assistant prefill.', this.name, { retryable: false, failureCode: 'request_build_failed' });
     }
   }
 
@@ -894,7 +906,8 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
                   capability === 'native-adaptive' ||
                   capability === 'none',
                 );
-      let shouldForceToolChoice = tools.length > 0 && Boolean(streamOptions?.forcedToolName);
+      // Native Claude models return 400 on forced tool choice; skip the doomed attempt and use the auto fallback.
+      let shouldForceToolChoice = tools.length > 0 && Boolean(streamOptions?.forcedToolName) && !native.native;
 
       const buildRequest = (
         capability: 'profile' | 'native-budget' | 'native-toggle' | 'native-adaptive' | 'none',
@@ -1427,7 +1440,8 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
                   capability === 'native-adaptive' ||
                   capability === 'none',
                 );
-      let shouldForceToolChoice = tools.length > 0 && Boolean(streamOptions?.forcedToolName);
+      // Native Claude models return 400 on forced tool choice; skip the doomed attempt and use the auto fallback.
+      let shouldForceToolChoice = tools.length > 0 && Boolean(streamOptions?.forcedToolName) && !native.native;
 
       const buildRequest = (
         capability: 'profile' | 'native-budget' | 'native-toggle' | 'native-adaptive' | 'none',

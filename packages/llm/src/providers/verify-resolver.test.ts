@@ -252,7 +252,7 @@ describe('FEATURE_216 listProviderModels — static path', () => {
     expect(Array.isArray(r.models)).toBe(true);
     expect(r.models?.length).toBeGreaterThanOrEqual(2);
     // Default model is first
-    expect(r.models?.[0]).toBe('claude-sonnet-4-6');
+    expect(r.models?.[0]).toBe('claude-sonnet-5-5');
   });
 
   it('cli-bridge provider → ok + filled static models', async () => {

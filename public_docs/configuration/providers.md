@@ -13,8 +13,8 @@ provider's authentication behavior is unchanged.
 
 | Alias | Environment variable | Reasoning | Default model |
 |---|---|---|---|
-| `anthropic` | `ANTHROPIC_API_KEY` | Yes | `claude-sonnet-4-6` |
-| `openai` | `OPENAI_API_KEY` | Yes | `gpt-5.3-codex` |
+| `anthropic` | `ANTHROPIC_API_KEY` | Yes | `claude-sonnet-5-5` |
+| `openai` | `OPENAI_API_KEY` | Yes | `gpt-6.2-sol` |
 | `deepseek` | `DEEPSEEK_API_KEY` | Yes | `deepseek-flash` (Anthropic-compat; also legacy text-only `deepseek-v4-pro`) |
 | `kimi` | `KIMI_API_KEY` | Yes | `kimi-k2.7-code` |
 | `kimi-code` | `KIMI_CODE_API_KEY` | Yes | `k3-256k` |

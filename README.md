@@ -117,8 +117,8 @@ kodax setup --custom
 
 | Alias | Environment Variable | Default Model |
 |---|---|---|
-| `anthropic` | `ANTHROPIC_API_KEY` | claude-sonnet-4-6 |
-| `openai` | `OPENAI_API_KEY` | gpt-5.3-codex |
+| `anthropic` | `ANTHROPIC_API_KEY` | claude-sonnet-5-5 |
+| `openai` | `OPENAI_API_KEY` | gpt-6.2-sol |
 | `deepseek` | `DEEPSEEK_API_KEY` | deepseek-flash (1M ctx, image input) |
 | `kimi` | `KIMI_API_KEY` | kimi-k2.7-code (262K ctx) |
 | `kimi-code` | `KIMI_CODE_API_KEY` | k3-256k |

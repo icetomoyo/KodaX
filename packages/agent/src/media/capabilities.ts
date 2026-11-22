@@ -80,8 +80,9 @@ const SOURCE_BACKED_IMAGE_ROUTES = new Set([
   'deepseek/deepseek-flash',
   'kimi-code/k3-256k',
   'qwen-token-plan/qwen3.8-max',
-  'qwen-token-plan/qwen3.8-max-preview',
+  'qwen-token-plan/qwen3.8-flash',
   'qwen-token-plan/qwen3.7-plus',
+  'qwen-token-plan/deepseek-v4.1-flash',
   'qwen-token-plan/qwen3.6-flash',
 ]);
 const SOURCE_BACKED_NATIVE_MEDIA_ROUTES = new Set([

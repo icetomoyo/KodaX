@@ -6,8 +6,8 @@ KodaX 支持 16 个内置 LLM 提供商别名。每个提供商从专用环境�
 
 | 别名 | 环境变量 | 推理 | 默认模型 |
 |---|---|---|---|
-| `anthropic` | `ANTHROPIC_API_KEY` | 是 | `claude-sonnet-4-6` |
-| `openai` | `OPENAI_API_KEY` | 是 | `gpt-5.3-codex` |
+| `anthropic` | `ANTHROPIC_API_KEY` | 是 | `claude-sonnet-5-5` |
+| `openai` | `OPENAI_API_KEY` | 是 | `gpt-6.2-sol` |
 | `deepseek` | `DEEPSEEK_API_KEY` | 是 | `deepseek-flash`（Anthropic 兼容；也支持旧版纯文本 `deepseek-v4-pro`） |
 | `kimi` | `KIMI_API_KEY` | 是 | `kimi-k2.7-code` |
 | `kimi-code` | `KIMI_CODE_API_KEY` | 是 | `k3-256k` |

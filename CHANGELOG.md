@@ -6,6 +6,62 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- The `anthropic` provider lists Claude Fable 5.2 (1M context, 128K output,
+  always-on adaptive thinking, effort `low` to `max`, default `high`). It
+  uses the same native request path as the Claude 5.5 models. It has not been
+  tested live.
+- The `openai` provider lists GPT-6.2 Sol / Astra, GPT-6.1 Sol / Terra,
+  GPT-6 Sol / Astra / Luna, GPT-5.6 Sol / Terra / Luna, GPT-5.5 and
+  GPT-5.4 mini / nano. Each model declares the efforts its endpoint accepts:
+  GPT-6.2 and GPT-6.1 Sol and the Astra models cannot turn reasoning off,
+  GPT-5.6 and later accept `max`, and GPT-6 and GPT-5.5 do not accept
+  `minimal`. Cost estimates cover input up to 272K tokens; above that OpenAI
+  bills a higher tier, so the cost is reported as unknown.
+- The `anthropic` provider lists Claude Opus 5 and Claude Sonnet 5 (1M
+  context, 128K output, effort `low` to `max`, default `high`). Sonnet 5 can
+  turn thinking off. Opus 5 can turn thinking off only at `high` or below, so
+  KodaX does not offer it.
+- Qwen Token Plan lists `qwen3.8-flash`, `glm-5.3` and `deepseek-v4.1-flash`.
+  GLM-5.3 cannot turn thinking off. GLM-5.3 and DeepSeek V4.1 Flash send the
+  same `thinking` + `reasoning_effort` request shape that already works for
+  GLM-5.2 and DeepSeek V4 Pro on this gateway. They have not been tested live
+  on Token Plan.
+- `zhipu-coding` and `zai-coding` list `glm-5.3-highspeed`, a faster GLM-5.3
+  with the same context, output and effort settings. It has no published
+  price, so cost estimates use the GLM-5.3 rate. It has not been tested live.
+
+### Changed
+
+- The `anthropic` provider defaults to `claude-sonnet-5-5` (was
+  `claude-sonnet-4-6`) and the `openai` provider defaults to `gpt-6.2-sol`
+  (was `gpt-5.3-codex`). A configuration that names a model keeps it.
+- The Codex CLI bridge falls back to `gpt-6.2-sol` when `~/.codex/config.toml`
+  sets no model, and no longer offers GPT-5.3 Codex Spark, which Codex rejects
+  for ChatGPT accounts.
+- Qwen Token Plan no longer lists the deprecated `qwen3.8-max-preview`. A
+  configuration that still names it is sent unchanged and uses the provider's
+  default Qwen 3.8 reasoning settings, but image input is no longer declared
+  for it.
+
+### Fixed
+
+- Native Claude models (Claude 5.5, Fable 5.2) no longer fail a request that
+  forces a tool. These models reject forced `tool_choice`, so KodaX sends
+  `auto` up front instead. A legacy `reasoning: false` request now uses
+  adaptive thinking on these models instead of failing; only Haiku 5.5 turns
+  thinking off.
+- OpenAI strict tool schemas fall back to non-strict when a node has no
+  `type`. A Claude rejection for exceeding the strict tool limit is
+  remembered for the session, so later turns do not repeat the 400
+  (Issue 431).
+- Retry classification no longer treats any message containing `limit`,
+  `rate` or `503` as a rate limit. It retries mid-stream `api_error`
+  events, `finish_reason: "error"`, replies cut off after they began,
+  gateway "temporarily unavailable" messages and Cloudflare 520/524/525
+  (Issue 432).
+
 ---
 
 ## [0.7.97-beta.13] - 2026-11-21

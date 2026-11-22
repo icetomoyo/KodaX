@@ -12,6 +12,21 @@ it('prices the default OpenAI route and keeps unrepresented long-context charges
   expect(calculateCostWithCacheLifetimes(rate, 272_001, 1_000, 100_000, 0, undefined)).toBeNull();
 });
 
+it('prices GPT-6.x cache writes and keeps their long-context band unknown', () => {
+  const sol = getCostRate('openai', 'gpt-6.2-sol')!;
+  expect(sol).toMatchObject({ inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.1, cacheWritePer1M: 2.5 });
+  expect(calculateCostWithCacheLifetimes(sol, 272_001, 0, 0, 0, undefined)).toBeNull();
+  // The 5.4 small models cap input at 272K, so they have no long-context band to hide.
+  expect(getCostRate('openai', 'gpt-5.4-mini')?.maxPricedInputTokens).toBeUndefined();
+});
+
+it('prices Opus 5 and Sonnet 5 cache writes by lifetime', () => {
+  const opus = getCostRate('anthropic', 'claude-opus-5')!;
+  expect(opus).toMatchObject({ inputPer1M: 5, outputPer1M: 25, cacheReadPer1M: 0.5 });
+  expect(calculateCostWithCacheLifetimes(opus, 1_000_000, 0, 0, 1_000_000, { '1h': 1_000_000 })).toBe(10);
+  expect(getCostRate('anthropic', 'claude-sonnet-5')).toMatchObject({ inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.2, cacheWritePer1M: 2.5 });
+});
+
 it('prices Claude cache writes using their actual lifetime', () => {
   const haiku = getCostRate('anthropic', 'claude-haiku-4-5')!;
   expect(calculateCostWithCacheLifetimes(haiku, 1_000_000, 0, 0, 1_000_000, { '5m': 1_000_000 })).toBe(1.25);
@@ -22,6 +37,8 @@ it('prices Claude cache writes using their actual lifetime', () => {
 it('selects the Haiku 5.5 price band before subtracting cache writes', () => {
   expect(getCostRate('anthropic', 'claude-opus-5-5')?.cacheReadPer1M).toBe(0.2);
   expect(getCostRate('anthropic', 'claude-sonnet-5-5')?.cacheReadPer1M).toBe(0.1);
+  expect(getCostRate('anthropic', 'claude-fable-5-2')).toEqual({ inputPer1M: 8, outputPer1M: 40, cacheReadPer1M: 0.2,
+    cacheWritePer1M: 10, cacheWritePer1MByTtl: { '5m': 10, '1h': 16 } });
   const rate = getCostRate('anthropic', 'claude-haiku-5-5')!;
   expect(rate).toBeDefined();
   expect(calculateCost(rate, 100_000, 1_000)).toBeCloseTo(0.0105);
@@ -181,7 +198,7 @@ describe('cost-rates', () => {
 
     it('should price both Qwen 3.8 Token Plan model IDs', () => {
       const tokenPlan = DEFAULT_COST_RATES['qwen-token-plan'];
-      expect(tokenPlan['qwen3.8-max']).toEqual(tokenPlan['qwen3.8-max-preview']);
+      for (const model of ['qwen3.8-flash', 'glm-5.3', 'deepseek-v4.1-flash']) expect(tokenPlan[model]).toEqual(tokenPlan['qwen3.8-max']);
       expect(tokenPlan['qwen3.8-max']).toEqual({
         inputPer1M: 0.005,
         outputPer1M: 0.015,
@@ -191,6 +208,15 @@ describe('cost-rates', () => {
     it('should keep GLM-5.3 accounting non-zero on all three Zhipu routes', () => {
       for (const provider of ['zhipu', 'zhipu-coding', 'zai-coding'] as const) {
         expect(DEFAULT_COST_RATES[provider]['glm-5.3']).toEqual({
+          inputPer1M: 0.05,
+          outputPer1M: 0.1,
+        });
+      }
+    });
+
+    it('should keep glm-5.3-highspeed accounting non-zero on both Coding Plan routes', () => {
+      for (const provider of ['zhipu-coding', 'zai-coding'] as const) {
+        expect(DEFAULT_COST_RATES[provider]['glm-5.3-highspeed']).toEqual({
           inputPer1M: 0.05,
           outputPer1M: 0.1,
         });

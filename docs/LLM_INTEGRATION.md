@@ -187,7 +187,7 @@ Space H独立提交为`437cac7d`。最终Root完整18,659/发布70、Space完整
 [退役与替代](https://platform.claude.com/docs/en/about-claude/model-deprecations)、
 [GPT-5.4](https://developers.openai.com/api/docs/models/gpt-5.4)。
 
-费率是估算，不是账单。默认 OpenAI `gpt-5.3-codex` 补精确模型条目；GPT-5.4 的
+费率是估算，不是账单。OpenAI `gpt-5.3-codex`（2026-11-22 前的默认）补精确模型条目；GPT-5.4 的
 基础价覆盖输入不超过 272,000 tokens 的标准档。`maxPricedInputTokens` 之外，
 `calculateCostWithCacheLifetimes` 和聚合统计返回未知，不猜测长上下文整会话或地域附加费。
 旧数值 `calculateCost` 为兼容保留，调用方应采用可空计算器/CostTracker 表达这些限制。

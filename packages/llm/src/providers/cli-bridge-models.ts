@@ -2,13 +2,19 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const CODEX_DEFAULT_FALLBACK = 'gpt-5.4';
+const CODEX_DEFAULT_FALLBACK = 'gpt-6.2-sol';
 const GEMINI_DEFAULT_FALLBACK = 'auto-gemini-3';
 
+// Codex rejects GPT-5.5 and GPT-5.3 Codex Spark for ChatGPT accounts.
 const CODEX_KNOWN_MODELS = [
+  'gpt-6.2-sol',
+  'gpt-6.2-astra',
+  'gpt-6.1-sol',
+  'gpt-6.1-terra',
+  'gpt-6-sol',
+  'gpt-5.6-sol',
   'gpt-5.4',
   'gpt-5.3-codex',
-  'gpt-5.3-codex-spark',
 ];
 
 const GEMINI_KNOWN_MODELS = [

@@ -20,13 +20,15 @@ const ARK_CODING_IMAGE_MODELS = [
 
 const QWEN_TOKEN_PLAN_IMAGE_MODELS = [
   'qwen3.8-max',
-  'qwen3.8-max-preview',
+  'qwen3.8-flash',
   'qwen3.7-plus',
+  'deepseek-v4.1-flash',
   'qwen3.6-flash',
 ] as const;
 
 const QWEN_TOKEN_PLAN_TEXT_MODELS = [
   'qwen3.7-max',
+  'glm-5.3',
   'glm-5.2',
   'deepseek-v4-pro',
 ] as const;

@@ -32,13 +32,13 @@ it.each(['stream', 'complete'] as const)('preserves native ordered blocks and a 
       { headers: { 'content-type': 'application/json' } });
   });
   const provider = getProvider('anthropic');
-  const result = await provider[method]([{ role: 'user', content: 'read' }], [], '', { effort: 'high' }, { maxOutputTokensOverride: 4096 });
+  const result = await provider[method]([{ role: 'user', content: 'read' }], [], '', { effort: 'high' }, { modelOverride: 'claude-sonnet-4-6', maxOutputTokensOverride: 4096 });
   expect(result.contentBlocks).toMatchObject(blocks);
   await provider.complete([
     { role: 'user', content: 'read' }, { role: 'assistant', content: result.contentBlocks! },
     { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a', content: 'A' }, { type: 'tool_result', tool_use_id: 'b', content: 'B' }] },
     { role: 'assistant', content: [result.thinkingBlocks[0]!] }, { role: 'user', content: 'continue' },
-  ], [], '', { effort: 'high' }, { maxOutputTokensOverride: 4096 });
+  ], [], '', { effort: 'high' }, { modelOverride: 'claude-sonnet-4-6', maxOutputTokensOverride: 4096 });
   expect(requests[1]?.messages).toMatchObject([
     { role: 'user' }, { role: 'assistant', content: blocks }, { role: 'user' },
     { role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: 'opaque-only' }] }, { role: 'user' },
@@ -85,17 +85,17 @@ it.each(['stream', 'complete'] as const)('captures streamed signatures and repla
   const onThinkingDelta = vi.fn();
   const onThinkingEnd = vi.fn();
   const result = await provider.stream([{ role: 'user', content: 'Read a.txt' }], tools, '', { effort: 'high' }, {
-    maxOutputTokensOverride: 4096, onThinkingDelta, onThinkingEnd,
+    modelOverride: 'claude-sonnet-4-6', maxOutputTokensOverride: 4096, onThinkingDelta, onThinkingEnd,
   });
   expect(result.thinkingBlocks).toMatchObject(thinking);
-  expect(result.thinkingBlocks[0]?.source).toMatchObject({ provider: 'anthropic', api: 'anthropic-messages', model: provider.getModel() });
+  expect(result.thinkingBlocks[0]?.source).toMatchObject({ provider: 'anthropic', api: 'anthropic-messages', model: 'claude-sonnet-4-6' });
   expect(onThinkingDelta.mock.calls).toEqual([['Read the file.']]);
   expect(onThinkingEnd.mock.calls).toEqual([['Read the file.']]);
   await provider[method]([
     { role: 'user', content: 'Read a.txt' },
     { role: 'assistant', content: [...result.thinkingBlocks, ...result.toolBlocks] },
     { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'read-1', content: 'contents' }] },
-  ], tools, '', { effort: 'high' }, { maxOutputTokensOverride: 4096 });
+  ], tools, '', { effort: 'high' }, { modelOverride: 'claude-sonnet-4-6', maxOutputTokensOverride: 4096 });
   expect(requests).toHaveLength(2);
   expect(requests[1]?.messages).toMatchObject([
     { role: 'user' },

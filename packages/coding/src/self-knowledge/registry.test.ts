@@ -759,7 +759,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(providers).toContain('qwen-token-plan');
     expect(providers).toContain('QWEN_TOKEN_API_KEY');
     expect(providers).toContain('defaults to `qwen3.8-max`');
-    expect(providers).toContain('qwen3.8-max-preview');
+    expect(providers).toContain('qwen3.8-flash');
     expect(permissions).toContain('Runtime-owned');
     expect(permissions).toContain('allow once');
     expect(permissions).toContain('session-scoped');
