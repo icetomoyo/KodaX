@@ -461,14 +461,20 @@ function activeChildMatchesRecord(record: ManagedChildProcessRecord): boolean {
     && active.record.cwd === record.cwd;
 }
 
+// The owner's start identity cannot change while it runs. Reading it for every
+// child registration cost one PowerShell query per bash call on the Host loop.
+let ownerStartIdentity: string | undefined;
+
+function currentOwnerStartIdentity(): string | undefined {
+  ownerStartIdentity ??= processStartIdentity(process.pid);
+  return ownerStartIdentity;
+}
+
 function processStartIdentity(pid: number): string | undefined {
   if (process.platform === 'win32') {
-    const lookup = getWindowsProcessInfo(pid);
-    if (lookup.status !== 'found') return undefined;
-    const creationMs = parseWindowsDate(lookup.info.CreationDate);
-    return creationMs === undefined
-      ? undefined
-      : `windows:${(BigInt(creationMs) + 11_644_473_600_000n).toString()}`;
+    // Same `windows:<FILETIME ms>` form that cleanup compares against.
+    const identity = readProcessStartIdentities([pid]).get(pid);
+    return identity === undefined ? undefined : `windows:${identity}`;
   }
   if (process.platform === 'linux') {
     try {
@@ -878,7 +884,7 @@ export function registerManagedChildProcess(
 
   try {
     const rootProcessStartIdentity = rememberChildProcessTree(child);
-    const ownerProcessStartIdentity = processStartIdentity(process.pid);
+    const ownerProcessStartIdentity = currentOwnerStartIdentity();
     const processTreeIdentities = rememberedChildProcessTreeIdentities(child);
     const record: ManagedChildProcessRecord = {
       ...initialRecord,

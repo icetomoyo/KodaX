@@ -14,6 +14,8 @@ mod win;
 mod job_identity;
 #[cfg(windows)]
 mod job_supervisor;
+#[cfg(windows)]
+mod process_tree;
 
 #[cfg(windows)]
 use anyhow::{Context, ensure};
@@ -282,6 +284,42 @@ fn run() -> anyhow::Result<u32> {
             let supervisor = args.next().context("Supervisor PID is required")?.to_string_lossy().parse::<u32>()?;
             ensure!(args.next().is_none(), "Unexpected daemon identity arguments");
             println!("{}", job_identity::query(&name.to_string_lossy(), pid, supervisor)?);
+            Ok(0)
+        }
+        "__process-snapshot" => {
+            ensure!(args.next().is_none(), "Process snapshot accepts no arguments");
+            print!("{}", process_tree::snapshot_rows()?);
+            Ok(0)
+        }
+        "__process-start-identities" => {
+            let pids = args
+                .map(|value| process_tree::parse_pid(&value.to_string_lossy()))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            ensure!(!pids.is_empty(), "At least one PID is required");
+            print!("{}", process_tree::start_identity_rows(&pids));
+            Ok(0)
+        }
+        "__process-terminate-exact" => {
+            let mut values: Vec<String> = args.map(|value| value.to_string_lossy().into_owned()).collect();
+            let include_snapshot = values.first().is_some_and(|value| value == "--snapshot");
+            if include_snapshot {
+                values.remove(0);
+            }
+            let targets = values
+                .iter()
+                .map(|value| process_tree::parse_exact_target(value))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            ensure!(!targets.is_empty(), "At least one pid:creationMs target is required");
+            for (pid, creation) in targets {
+                process_tree::terminate_exact(pid, creation);
+            }
+            if include_snapshot {
+                use std::io::Write as _;
+                println!("{}", process_tree::TERMINATION_COMPLETED);
+                std::io::stdout().flush()?;
+                print!("{}", process_tree::snapshot_rows()?);
+                println!("{}", process_tree::SNAPSHOT_COMPLETED);
+            }
             Ok(0)
         }
         "__current-user-sid" => {

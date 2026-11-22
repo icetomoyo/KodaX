@@ -204,6 +204,7 @@ import {
   appendSessionLineageLabel,
   clearCapabilityCache,
   extractAssistantTextFromMessage,
+  installWindowsProcessHelper,
   isAskUserUnanswered,
   readLatestGoalState,
 } from "@kodax-ai/agent";
@@ -213,6 +214,7 @@ import type {
   ProviderCredentialLeaseScope,
 } from "@kodax-ai/llm";
 import * as replApi from "@kodax-ai/repl";
+import { resolveWindowsSandboxV2Executable } from "./windows-sandbox-v2.js";
 import type { KodaXExtensionSessionRecord } from "@kodax-ai/agent";
 import type {
   AskUserAnswer,
@@ -4259,6 +4261,11 @@ export async function createKodaXRuntime(
 export async function createKodaXHostRuntime(
   options: CreateKodaXHostRuntimeOptions = {},
 ): Promise<KodaXRuntime> {
+  // Bash cleanup reads process snapshots on the Host loop; the native helper
+  // keeps each read to tens of milliseconds instead of a PowerShell second.
+  if (process.platform === "win32") {
+    installWindowsProcessHelper(() => resolveWindowsSandboxV2Executable().path);
+  }
   if (options.sharedDaemonHost !== true) {
     return createKodaXRuntimeInternal(options);
   }

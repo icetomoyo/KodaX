@@ -446,6 +446,7 @@ export {
   killPidTreeSync,
   isCurrentProcessWindowsJobContained,
   readCurrentProcessWindowsJobIdentity,
+  installWindowsProcessHelper,
   readWindowsJobActiveProcessCount,
   readProcessStartIdentity,
   readProcessStartIdentities,
