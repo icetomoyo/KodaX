@@ -249,7 +249,8 @@ M0 之前的关闭顺序是先关传输层，再关 Runtime，所以客户端在
 - `ready` 时返回 200，`starting` 和 `draining` 时返回 503，方便直接接到 K8s 探针上。
 - `canStop` 和 `blockers` 直接复用现有的停止前置检查（`management.ts:238-246/341/400-408`），它已经包含了在途 Run、待回答的交互和后台工作。
 - 平台据此决定能不能回收这个 Host。
-- 返回内容不包含任何会话内容信息，所以不需要鉴权。(b) 经隧道暴露时，它只泄露"有一个 Host 在运行"。
+- 返回内容不包含任何会话内容信息，所以不需要鉴权。
+- 开着配对的 Host 只返回 `{state}`，状态码不变。(b) 经隧道暴露时，完整的返回会让公网知道主人什么时候在用电脑，而那里没有平台读 blockers（2026-11-23 用户确认，见"第 10 项的落地细节"）。
 
 ### 等待中的交互
 
@@ -305,6 +306,7 @@ M0 之前的关闭顺序是先关传输层，再关 Runtime，所以客户端在
 - Dockerfile 用 `tini` 或 `--init` 作为 PID 1，否则 bash 工具留下的孙进程会变成僵尸进程。
 - 提供 StatefulSet 样例。
 - 提供平台签发 JWT 的最小样例，写明需要哪些 claim。
+- 已写进 `public_docs/deployment/host.md`（第 10 项）。
 
 ## 3. 第一层：契约规则
 
@@ -2013,6 +2015,8 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
     - 隧道加配对指南（方案按"设备配对"里的表）；
     - UI 的 CSP 和输出净化须知。
 
+    **状态**：已落地，见"第 10 项的落地细节"。
+
 **出口标准**：
 
 - 浏览器经过样例反向代理，能完成提交、审批（看到 diff）、回答提问、Stop、上传图片，以及下载工具产出的图片。
@@ -2081,7 +2085,7 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
 - `webRoot`：必须是绝对路径，改动要重启。只认 GET 和 HEAD，`/` 对应 `index.html`，其他目录不当页面，没有 SPA 回退。路径解析跟随链接后必须仍在 `webRoot` 里，否则回 404。按扩展名给 content-type，带 `X-Content-Type-Options: nosniff` 和 `X-Frame-Options: DENY`；不发缓存头，CSP 留给第 10 项的文档。
 - 已验证（2026-11-22，真实 `kodax daemon start`）：网页 200；配对后 cookie 属性正确；同一个码第二次 403；别的 Origin 带同一个 cookie 403；连接时重新下发 cookie；不带 `auth` 的 `initialize` 得到 `user`/`person`，看不到 `device.*`；CLI 吊销后连接以 4403 `revoked` 断开；`devices.json` 里没有令牌明文。
 - 还没验证、要等 Space 的 Web UI（M1c）：真机 iPhone Safari 配对后 8 天不访问再打开仍然免配对；经 Tailscale serve 和 Cloudflare 快速隧道配对和连接；隧道地址变了以后旧设备被拒、重新配对可用。这几条在 M1b 交付时写进测试指南。
-- 待定：`/healthz` 和配对端点在同一个端口上，经 funnel 或快速隧道暴露时，公网也能看到 Host 忙不忙（不含 Session 内容）。第 10 项写隧道指南时决定要不要收窄。
+- ~~待定：`/healthz` 经隧道暴露时公网能看到 Host 忙不忙~~：已定，开着配对时只返回 `{state}`（见"第 10 项的落地细节"）。
 
 **第 5 项的落地细节**（2026-11-22，未经用户确认的取舍）：
 
@@ -2198,6 +2202,21 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
   - fork 和侧聊继承父 Session 的策略，租约绑定也一起继承。
   - 临时连接不能绑。
 - **已验证**：host-rpc 的三方集成测试（service 绑定、user 提交、owner 持有）：user 的 Run 能调用绑定的工具，工具集只有策略里的；自带租约的 Run 被拒；清掉策略后工具没了；user 调 `update` 报 `method_not_found`。绑定方离线时，凭证 Session 报 `unavailable`，工具 Session 的调用等到重连并 `lease.resume` 后完成，凭证 Session 随后用上了借出的 key。错误路径：租约不存在、没有 `instanceSecret`、Session 不存在。存储层测试覆盖了权威写入能替换和清掉策略、之后的快照保留它。
+
+**第 10 项的落地细节**（2026-11-23）：
+
+- **文档放在哪**：`public_docs/deployment/`，随 npm 包发布（加进 `package.json` 的 `files`），两个索引页都加了"部署"一节。每篇都有中英两份，开头注明尚未发布。
+  - `host.md`：写给替别人运行 Host 的一方。实例契约（§2）、`host.json` 字段和拒绝启动的规则、角色、关闭码、JWT claim 和 JWKS 规则、生命周期和宽限期、`/healthz`、日志、上限、平台检查清单、Dockerfile（tini）和 StatefulSet、systemd 用户服务和 Windows 任务计划程序、Web UI 的 CSP 和输出净化。
+  - `remote-access.md`：个人远程访问。打开配对、按用途选连接方案（"设备配对"里的表）、配对和管理设备、陌生人能看到什么。
+- **`/healthz` 收窄**（2026-11-23 用户确认）：开着配对时只返回 `{state}`，状态码仍然只看 `state`。配对开关从活的配置读，热切换不用重启。不加配置项：配对的 Host 走隧道，没有平台需要读 blockers；需要完整返回的平台不开配对。
+- **未经用户确认的取舍**：
+  - 文档建议平台把两个交互时限都设成 30 分钟（`--user-input-timeout-ms 1800000 --permission-timeout-ms 1800000`），跟 §11 第 3 条一致。代码的默认值没改：审批 5 分钟、普通提问不设时限，本机用户的行为不变。
+  - 宽限期写最坏情况约 250 秒（Host 90 秒截止加清理最多 160 秒），StatefulSet 样例设 260 秒；同时说明设短也安全，被提前杀掉的 Host 下次启动时恢复。
+  - 存活探针用 `tcpSocket`，不用 `/healthz`，因为启动和排空时它回 503，拿它做存活探针会在排空时重启 Host。
+  - 不推荐免费版 ngrok：它插的警告页会挡住页面里的脚本请求。
+  - CSP 由页面的 meta 标签给，Host 不发 CSP 头。Host 不知道 UI 需要什么，发错了 UI 就打不开。
+- **已验证**：JWT 最小样例在本机跑通，用 `createHostJwtVerifier` 加一个 loopback JWKS 服务器校验，签发的 token 通过，换了 audience 的被拒。文档里的事实逐条对照了代码（配置字段、关闭码、上限、日志格式、CLI 命令）。
+- **还没验证**：Dockerfile 和 StatefulSet 没有实际构建和部署；systemd 和任务计划程序样例没在真机上注册；隧道相关的几条等 M1c 的 Web UI，写在 `remote-access.md` 的"还没测过的"里。
 
 ### M1c Space 整体迁移到 v2
 
@@ -2356,6 +2375,10 @@ KodaX 在实例契约里给出检查清单，但不实现：
 12. 配对设备的凭证只放在 HttpOnly cookie 里，绑定配对时的 Origin，不在 `initialize` 里另收配对令牌（"设备配对"一节）。
 13. 连接方案按用途推荐：长期用 Tailscale，临时用 Cloudflare 快速隧道（"设备配对"一节）。
 14. Node 下限提到 22.4（ADR-080）。
+
+2026-11-23 确认：
+
+15. 开着配对的 Host，`/healthz` 只返回 `{state}`，不加配置项（"第 10 项的落地细节"）。
 
 ## 12. 风险与待核实
 
