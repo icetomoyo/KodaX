@@ -114,29 +114,28 @@ describe('GitHub release workflow', () => {
     }
   });
 
-  it('runs Node 20 unit and contract tiers beside the fast tier instead of after it', () => {
+  it('runs the Node 22 unit and contract tiers beside the fast tier instead of after it', () => {
     const workflow = parse(readFileSync(resolve('.github/workflows/ci.yml'), 'utf8')) as ReleaseWorkflow;
     const job = workflow.jobs?.test;
     expect(job?.strategy?.matrix?.include).toEqual([
-      { node: '20', suite: 'fast' },
-      { node: '20', suite: 'unit' },
-      { node: '22', suite: 'fast' },
+      { node: '22', suite: 'fast', gates: true },
+      { node: '22', suite: 'unit' },
+      { node: '24', suite: 'fast' },
     ]);
     const steps = job?.steps ?? [];
     const condition = (name: string) => steps.find(step => step.name === name)?.if;
     expect(condition('Fast tests')).toBe("matrix.suite == 'fast'");
     expect(condition('Unit tests')).toBe("matrix.suite == 'unit'");
     expect(condition('Contract tests')).toBe("matrix.suite == 'unit'");
-    // Each Node version still runs the bundle gate once, off the slowest row.
-    expect(condition('Bundled Provider credentials and daemon compaction'))
-      .toBe("matrix.suite == 'unit' || matrix.node == '22'");
+    // Each Node version runs the bundle gate once, on its fast row.
+    expect(condition('Bundled Provider credentials and daemon compaction')).toBe("matrix.suite == 'fast'");
   });
 
-  it('runs the complete serial system suite on its own Node 20 runner', () => {
+  it('runs the complete serial system suite on its own Node 22 runner', () => {
     const workflow = parse(readFileSync(resolve('.github/workflows/ci.yml'), 'utf8')) as ReleaseWorkflow;
     const system = workflow.jobs?.system;
     expect(system?.needs).toBeUndefined();
-    expect(system?.steps?.find(step => step.uses === 'actions/setup-node@v6')?.with?.['node-version']).toBe('20');
+    expect(system?.steps?.find(step => step.uses === 'actions/setup-node@v6')?.with?.['node-version']).toBe('22');
     expect(system?.steps?.find(step => step.name === 'System tests')?.run)
       .toBe('npm run test:system -- --no-file-parallelism --maxWorkers=1');
     expect(workflow.jobs?.test?.steps?.some(step => step.name === 'System tests')).toBe(false);
@@ -471,7 +470,7 @@ describe('GitHub release workflow', () => {
     expect(linuxX64?.steps?.find(
       (step) => step.name === 'Real POSIX per-command sandbox concurrency gate',
     )).toMatchObject({
-      if: "matrix.node == '22'",
+      if: 'matrix.gates',
       env: { KODAX_REAL_POSIX_SANDBOX: '1' },
     });
   });
