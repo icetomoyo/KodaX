@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
+import { setKodaXDiagnosticSink } from '@kodax-ai/agent';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { openHostDeviceRegistry, type HostDeviceRegistry } from './devices.js';
@@ -67,20 +68,33 @@ describe('createHostWebHandler', () => {
     expect(response.headers.get('set-cookie')).not.toMatch(/Secure/u);
   });
 
+  // A refusal of who is asking is a security event; a malformed request is not.
   it.each([
-    ['a code it did not issue', JSON.stringify({ code: 'guess' }), { origin: ORIGIN }, 403],
-    ['no browser origin', null, {}, 403],
-    ['an opaque origin', null, { origin: 'null' }, 403],
-    ['a page on another site', null, { origin: ORIGIN, 'sec-fetch-site': 'cross-site' }, 403],
-    ['a body that is not JSON', '{ code', { origin: ORIGIN }, 400],
-    ['a body larger than a code needs', JSON.stringify({ code: 'x'.repeat(4096) }), { origin: ORIGIN }, 413],
-  ])('refuses to pair %s', async (_name, body, headers, status) => {
+    ['a code it did not issue', JSON.stringify({ code: 'guess' }), { origin: ORIGIN }, 403,
+      { event: 'auth_failed', reason: 'pairing_code_refused', origin: ORIGIN }],
+    ['no browser origin', null, {}, 403, { event: 'auth_failed', reason: 'pairing_origin_refused' }],
+    ['an opaque origin', null, { origin: 'null' }, 403, { event: 'auth_failed', reason: 'pairing_origin_refused', origin: 'null' }],
+    ['a page on another site', null, { origin: ORIGIN, 'sec-fetch-site': 'cross-site' }, 403,
+      { event: 'auth_failed', reason: 'pairing_origin_refused', origin: ORIGIN }],
+    ['a body that is not JSON', '{ code', { origin: ORIGIN }, 400, undefined],
+    ['a body larger than a code needs', JSON.stringify({ code: 'x'.repeat(4096) }), { origin: ORIGIN }, 413, undefined],
+  ])('refuses to pair %s', async (_name, body, headers, status, event) => {
     const base = await serve();
     const { code } = devices.pair({ requestId: 'r1', name: 'Phone' });
-    const response = await pair(base, body ?? JSON.stringify({ code }), headers);
+    const events: unknown[] = [];
+    const restore = setKodaXDiagnosticSink((diagnostic) => {
+      if (diagnostic.source === 'host.security') events.push(diagnostic.detail);
+    });
+    let response: Response;
+    try {
+      response = await pair(base, body ?? JSON.stringify({ code }), headers);
+    } finally {
+      restore();
+    }
     expect(response.status).toBe(status);
     expect(response.headers.get('set-cookie')).toBeNull();
     expect(devices.list()).toEqual([]);
+    expect(events).toEqual(event === undefined ? [] : [event]);
   });
 
   it('answers /pair with 404 while pairing is off', async () => {

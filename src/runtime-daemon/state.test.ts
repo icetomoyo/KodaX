@@ -2,6 +2,7 @@ import fsDefault, * as fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
+import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -12,6 +13,7 @@ import {
   createRuntimeDaemonToken,
   enableRuntimeDaemonOwner,
   findRuntimeSessionStorageHost,
+  mirrorRuntimeDaemonLog,
   normalizeRuntimeDaemonProfile,
   readRuntimeDaemonShutdownOutcome,
   readRuntimeOwnerPolicy,
@@ -264,6 +266,32 @@ describe('runtime daemon state paths', () => {
     expect(fs.readFileSync(paths.logFile, 'utf8').trim().split('\n')).toHaveLength(1);
     expect(readRuntimeDaemonLog(paths, 2).map(entry => entry.message)).toEqual(['x'.repeat(200), 'new entry']);
     expect(readRuntimeDaemonLogLines(paths)[0]).toBe(old.trim());
+  });
+
+  it('mirrors each daemon log entry to a stream as the line the file gets, until the stream fails', () => {
+    const paths = resolveRuntimeDaemonPaths(tempHome(), 'log-mirror');
+    const written: string[] = [];
+    const stream = new PassThrough();
+    stream.on('data', (chunk: Buffer) => written.push(chunk.toString('utf8')));
+    const stop = mirrorRuntimeDaemonLog(paths, stream);
+    try {
+      appendRuntimeDaemonLog(paths, 'info', 'mirrored', { port: 1 });
+      expect(written).toEqual([readRuntimeDaemonLogLines(paths).at(-1) + '\n']);
+      expect(JSON.parse(written[0]!)).toMatchObject({ level: 'info', message: 'mirrored', data: { port: 1 } });
+
+      // A collector that went away must not take the Host down; the file keeps the log and says why stdout stopped.
+      stream.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+      appendRuntimeDaemonLog(paths, 'info', 'file only');
+      expect(written).toHaveLength(1);
+      expect(readRuntimeDaemonLog(paths).map(entry => entry.message)).toEqual([
+        'mirrored', 'The log stream failed; entries go to the daemon log file only.', 'file only',
+      ]);
+      expect(readRuntimeDaemonLog(paths)[1]!.data).toEqual({ error: 'write EPIPE' });
+    } finally {
+      stop();
+    }
+    appendRuntimeDaemonLog(paths, 'info', 'after stop');
+    expect(written).toHaveLength(1);
   });
 
   it('keeps a single previous daemon log generation', () => {

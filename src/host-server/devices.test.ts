@@ -107,4 +107,26 @@ describe('openHostDeviceRegistry', () => {
     }
     expect(diagnostics).toEqual([expect.objectContaining({ source: 'host.devices', level: 'warn' })]);
   });
+
+  it('records each device it pairs and revokes as a security event, never its token', () => {
+    const events: unknown[] = [];
+    const restore = setKodaXDiagnosticSink((diagnostic) => {
+      if (diagnostic.source === 'host.security') events.push(diagnostic.detail);
+    });
+    let token: string;
+    let id: string;
+    try {
+      const devices = open();
+      ({ token, device: { id } } = devices.redeem(devices.pair({ requestId: 'r1', name: 'Phone' }).code, ORIGIN)!);
+      devices.revoke(id);
+      devices.revoke(id);
+    } finally {
+      restore();
+    }
+    expect(events).toEqual([
+      { event: 'device_paired', device: id, name: 'Phone', origin: ORIGIN },
+      { event: 'device_revoked', device: id, name: 'Phone' },
+    ]);
+    expect(JSON.stringify(events)).not.toContain(token);
+  });
 });

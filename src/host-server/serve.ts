@@ -23,6 +23,7 @@ import type { HostCloseReason } from '../host-protocol/close.js';
 import { HostProtocolError } from '../host-protocol/codec.js';
 import type { HostInitializeParams, HostLimits } from '../host-protocol/methods.js';
 import type { HostCredential } from '../runtime-daemon/host-rpc.js';
+import { reportHostSecurityEvent } from '../runtime-daemon/security-log.js';
 import { createHostWorkspace, type HostWorkspace } from '../runtime-daemon/workspace.js';
 import { parseHostIntegrationDocument, readHostIntegration, type HostIntegrationDocument, type HostServerConfig } from './config.js';
 import { openHostDeviceRegistry, type HostDeviceRegistry } from './devices.js';
@@ -132,7 +133,11 @@ export async function startHostNetworkServer(options: HostNetworkServerOptions):
   try {
     listener = await startHostNetworkListener({
       listen: listenAddress(served.listen),
-      allowsOrigin: origin => admission.server?.allowedOrigins.includes(origin) === true,
+      allowsOrigin: (origin) => {
+        const allowed = admission.server?.allowedOrigins.includes(origin) === true;
+        if (!allowed) reportHostSecurityEvent({ event: 'auth_failed', reason: 'origin_not_allowed', origin });
+        return allowed;
+      },
       admitsDevice: ({ origin, cookie }) => {
         const token = readDeviceCookie(cookie);
         const device = token !== undefined ? pairing()?.admit(token, origin) : undefined;
@@ -155,7 +160,10 @@ export async function startHostNetworkServer(options: HostNetworkServerOptions):
             }
             for (;;) {
               const seen = generation;
-              const credential = await admission.authenticate(auth);
+              const credential = await admission.authenticate(auth).catch((error: unknown) => {
+                reportRefusal(error, tracked.origin);
+                throw error;
+              });
               if (seen !== generation) continue;
               tracked.credential = credential;
               return credential;
@@ -241,6 +249,12 @@ function recheck(connection: TrackedConnection, next: HostServerConfig | undefin
 function roleOf(server: Pick<HostServerConfig, 'owner' | 'services'>, subject: string): HostCredential['role'] | undefined {
   if (subject === server.owner) return 'user';
   return server.services.includes(subject) ? 'service' : undefined;
+}
+
+/** A refused credential is a security event; a check the Host could not make is not a refusal. */
+function reportRefusal(error: unknown, origin: string | undefined): void {
+  if (!(error instanceof HostProtocolError) || error.kodaxCode !== 'unauthorized') return;
+  reportHostSecurityEvent({ event: 'auth_failed', reason: error.reason ?? 'unauthorized', ...(origin !== undefined ? { origin } : {}) });
 }
 
 function notAdmitted(): HostProtocolError {

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   killChildProcessTree,
@@ -329,22 +329,29 @@ describe('daemon CLI smoke', () => {
     );
 
     let stderr = '';
+    let stdout = '';
     const child = spawn(process.execPath, [
       '--import', 'tsx', path.join(process.cwd(), 'src', 'kodax_cli.ts'),
       'daemon', 'serve', '--home', homeDir,
       '--provider', 'mock-provider',
     ], {
       cwd: process.cwd(),
-      stdio: ['ignore', 'ignore', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
       env: { ...process.env, KODAX_HOME: ambientConfigHome, KODAX_TRACING: '0' },
     });
     child.stderr?.on('data', (chunk: Buffer | string) => {
       stderr += chunk.toString();
     });
+    child.stdout?.on('data', (chunk: Buffer | string) => {
+      stdout += chunk.toString();
+    });
     const paths = resolveRuntimeDaemonPaths(homeDir, profile);
     try {
       await waitForHealthyDaemonStatus(paths, 'ready');
+      // Run by an operator, the Host prints its log to stdout as JSON lines, for a container's collector.
+      await vi.waitFor(() => expect(stdout.split(/\r?\n/u).filter(Boolean).map(line => JSON.parse(line) as { message: string }))
+        .toContainEqual(expect.objectContaining({ level: 'info', message: 'Runtime daemon ready.' })));
       const runtime = await connectKodaXRuntime({
         homeDir,
         autoStart: false,

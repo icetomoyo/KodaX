@@ -237,6 +237,28 @@ describe('a listening Host that reads host.json again when it changes', () => {
     await expect(connect('ignored', 'https://laptop.example.test', undefined, cookie)).rejects.toThrow();
   });
 
+  it('records each refused credential and refused browser origin as a security event', async () => {
+    const events: unknown[] = [];
+    const restore = setKodaXDiagnosticSink((diagnostic) => {
+      if (diagnostic.source === 'host.security') events.push(diagnostic.detail);
+    });
+    try {
+      writeConfig({ owner: 'person-1', allowedOrigins: ['https://app.example.test'] });
+      await start();
+      expect((await connect('stranger', 'https://app.example.test')).messages[0]).toBe('refused:subject_not_admitted');
+      expect((await connect('person-1', undefined, 'other-host')).messages[0]).toBe('refused:invalid_credential');
+      await expect(connect('person-1', 'https://evil.example.test')).rejects.toThrow();
+      expect((await connect('person-1')).messages[0]).toBe('ok:user');
+    } finally {
+      restore();
+    }
+    expect(events).toEqual([
+      { event: 'auth_failed', reason: 'subject_not_admitted', origin: 'https://app.example.test' },
+      { event: 'auth_failed', reason: 'invalid_credential' },
+      { event: 'auth_failed', reason: 'origin_not_allowed', origin: 'https://evil.example.test' },
+    ]);
+  });
+
   it('issues no pairing code while pairing is off, but still lists and revokes devices', async () => {
     writeConfig({ owner: 'person-1' });
     const { devices } = await start();

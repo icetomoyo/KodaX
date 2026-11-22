@@ -82,6 +82,7 @@ import {
   readRuntimeDaemonToken,
   removeRuntimeDaemonOwnershipIfUnchanged,
   isSameRuntimeDaemonPath,
+  mirrorRuntimeDaemonLog,
   resolveRuntimeDaemonPaths,
   resolveRuntimeDaemonPathsFromConfigHome,
   resolveRuntimeHostSlot,
@@ -777,6 +778,10 @@ async function serveDaemonCommand(input: {
       );
     }
   }
+  // Run by an operator rather than the SDK, stdout is the service log a container or service manager collects.
+  const stopLogMirror = process.env.KODAX_DAEMON_SERVE === '1'
+    ? undefined
+    : mirrorRuntimeDaemonLog(daemonPaths, process.stdout);
   reportDaemonStartupPhase('extensions');
   const extensions = await createDaemonOwnedExtensionRuntime(daemonConfigHome);
   const a2aIntegration = createConfiguredA2ARuntimeIntegration({
@@ -1055,6 +1060,7 @@ async function serveDaemonCommand(input: {
       // The durable outcome is the stop success fence; logging is best-effort here.
     }
   }
+  stopLogMirror?.();
 
   const ownsDaemonServeProcess =
     process.env.KODAX_DAEMON_SERVE === '1' || process.env.VITEST !== 'true';

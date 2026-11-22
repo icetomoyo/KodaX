@@ -4,7 +4,8 @@ import { randomUUID, timingSafeEqual, createHash } from "node:crypto";
 import { isDeepStrictEqual } from 'node:util';
 import { runtimeClientPrincipal, type RuntimeClientLifecycleController } from './client-lifecycle.js';
 import { isSideId, sideRequester } from '../side-chat.js';
-import { runtimeAccessDenial, runtimeAuthorizationSubject, type RuntimeConnectionRole } from './access.js';
+import { runtimeAccessDenial, runtimeAuthorizationSubject, runtimeTrustedUse, type RuntimeConnectionRole } from './access.js';
+import { reportHostSecurityEvent, type HostSecurityActor } from './security-log.js';
 import { sameRequester } from '../requester-identity.js';
 import { withProductExecution, currentProductExecution, type ProductExecutionContext } from '../product-execution-authorization.js';
 import { parseExecutionBindingSnapshot } from '../execution-binding-snapshot.js';
@@ -127,7 +128,10 @@ export interface RuntimeDaemonDispatcherOptions {
    * A dispatcher created without one refuses every method.
    */
   readonly role: RuntimeConnectionRole;
-  /** The verified token subject of a service connection; a service without one is refused. */
+  /**
+   * The verified subject of a network credential: a service's token subject, which names whom it acts
+   * for, or the login or device of a person, which only the security log reads. A service without one is refused.
+   */
   readonly tokenSubject?: string;
   readonly clientLifecycle?: RuntimeClientLifecycleController;
   readonly runtime: KodaXRuntime;
@@ -676,6 +680,9 @@ export function createRuntimeDaemonDispatcher(
       if (!isInitializeMethod(request.method)) {
         requireRuntimeMethodScope(request.method, grantedScopes, request);
         requirePersistentGrantScope(request, grantedScopes);
+        // The owner holds every power on its own machine and sends a credential with each turn, so only a backend's use is recorded.
+        const trusted = options.role === 'service' ? runtimeTrustedUse(request.method, request.params) : undefined;
+        if (trusted !== undefined) reportHostSecurityEvent({ event: 'trusted_use', actor: securityActor(options, clientName), method: request.method, params: trusted });
       }
       if (inFlightRequests.has(request.id)) {
         throw daemonError(
@@ -982,6 +989,15 @@ function requirePersistentGrantScope(
     "unauthorized",
     "Persistent permission grants require scope permission:grant-admin.",
   );
+}
+
+/** Who a security event names: the role, the credential subject, and the client the connection said it was. */
+function securityActor(options: Pick<RuntimeDaemonDispatcherOptions, 'role' | 'tokenSubject'>, clientName: string | undefined): HostSecurityActor {
+  return {
+    role: options.role,
+    ...(options.tokenSubject !== undefined ? { subject: options.tokenSubject } : {}),
+    ...(clientName !== undefined ? { client: clientName } : {}),
+  };
 }
 
 function parseRuntimeClientPrincipal(value: unknown, fallback: string): string {
@@ -2221,11 +2237,26 @@ async function dispatchRuntimeDaemonRequest(
     }
     case "interaction.respond": {
       const params = requireRecord(request.params);
+      const requestId = requireStringField(params, "requestId");
+      const response = requireRecord(params.response) as unknown as ClientInteractionResponse;
+      // Only a question can be answered without a decision, so only those skip the lookup.
+      const asked = response.kind.startsWith("question")
+        ? undefined
+        : (await runtime.interactions.list()).find(item => item.requestId === requestId);
       try {
-        return await runtime.interactions.respond(
-          requireStringField(params, "requestId"),
-          requireRecord(params.response) as unknown as ClientInteractionResponse,
-        );
+        const result = await runtime.interactions.respond(requestId, response);
+        if (result.accepted && asked?.kind === "permission") {
+          reportHostSecurityEvent({
+            event: "permission_decided",
+            actor: securityActor(options, clientName),
+            sessionId: asked.sessionId,
+            runId: asked.runId,
+            tool: asked.options.toolName,
+            // Cancelling or skipping an approval refuses the operation.
+            decision: response.kind === "permission" ? response.decision.type : "reject",
+          });
+        }
+        return result;
       } catch (error: unknown) {
         // Runtime input validation uses the runtime code; the wire contract
         // reports malformed or mismatched responses as invalid params.

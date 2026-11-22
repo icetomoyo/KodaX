@@ -14,6 +14,8 @@ import path from 'node:path';
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 import { writeCoreConfigAtomically } from '@kodax-ai/repl';
 
+import { reportHostSecurityEvent } from '../runtime-daemon/security-log.js';
+
 /** How long a pairing code may be redeemed. */
 export const HOST_PAIRING_CODE_TTL_MS = 10 * 60_000;
 
@@ -96,6 +98,7 @@ export function openHostDeviceRegistry(options: {
       };
       devices.set(device.tokenHash, device);
       save();
+      reportHostSecurityEvent({ event: 'device_paired', device: device.id, name: device.name, origin });
       return { device: visible(device), token };
     },
     admit(token, origin) {
@@ -112,6 +115,7 @@ export function openHostDeviceRegistry(options: {
       if (found === undefined) return false;
       devices.delete(found.tokenHash);
       save();
+      reportHostSecurityEvent({ event: 'device_revoked', device: found.id, name: found.name });
       for (const listener of listeners) listener(id);
       return true;
     },

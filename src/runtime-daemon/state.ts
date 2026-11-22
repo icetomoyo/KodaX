@@ -678,21 +678,48 @@ function renameRuntimeDaemonState(temporary: string, target: string): void {
   }
 }
 
+/** Where each entry is also written, as the same JSON line; see {@link mirrorRuntimeDaemonLog}. */
+let logMirror: ((line: string) => void) | undefined;
+
 export function appendRuntimeDaemonLog(
   paths: RuntimeDaemonPaths,
   level: RuntimeDaemonLogLevel,
   message: string,
   data?: Record<string, unknown>,
 ): void {
-  ensureRuntimeDaemonDirectories(paths);
   const entry: RuntimeDaemonLogEntry = {
     time: new Date().toISOString(),
     level,
     message,
     ...(data !== undefined ? { data } : {}),
   };
+  const line = `${JSON.stringify(entry)}\n`;
+  logMirror?.(line);
+  ensureRuntimeDaemonDirectories(paths);
   rotateRuntimeDaemonLog(paths.logFile);
-  fs.appendFileSync(paths.logFile, `${JSON.stringify(entry)}\n`, 'utf8');
+  fs.appendFileSync(paths.logFile, line, 'utf8');
+}
+
+/**
+ * Writes every daemon log entry to `stream` as well, for a `daemon serve` an
+ * operator runs, whose stdout a container or service manager collects. The
+ * file stays the log `daemon logs` reads. A stream that fails, such as a pipe
+ * whose reader went away, stops the mirror rather than the Host, and the file
+ * says so. Returns the function that stops it.
+ */
+export function mirrorRuntimeDaemonLog(paths: RuntimeDaemonPaths, stream: NodeJS.WritableStream): () => void {
+  const write = (line: string): void => { stream.write(line); };
+  const stop = (): void => {
+    stream.off('error', fail);
+    if (logMirror === write) logMirror = undefined;
+  };
+  const fail = (error: Error): void => {
+    stop();
+    appendRuntimeDaemonLog(paths, 'warn', 'The log stream failed; entries go to the daemon log file only.', { error: error.message });
+  };
+  stream.on('error', fail);
+  logMirror = write;
+  return stop;
 }
 
 export const RUNTIME_DAEMON_LOG_MAX_BYTES = 2 * 1024 * 1024;

@@ -36,7 +36,7 @@ import {
   respondToClientInteraction,
   type ClientInteractionRegistries,
 } from '../client-interactions.js';
-import type { ClientInteractionResponse } from '@kodax-ai/coding/client-contract';
+import type { ClientInteraction, ClientInteractionResponse } from '@kodax-ai/coding/client-contract';
 import {
   RUNTIME_DAEMON_METHODS,
   RUNTIME_DAEMON_MUTATION_METHODS,
@@ -532,6 +532,67 @@ describe('runtime daemon dispatcher', () => {
     const listed = await dispatcher.handle(createRuntimeDaemonRequest('req-service-list', 'interaction.list', {}));
     expect(isRuntimeDaemonSuccessResponse(listed)).toBe(true);
     dispatcher.close();
+  });
+
+  it('records each approval decision the Host accepts as a security event: who, which Run, what, and the answer', async () => {
+    const baseRuntime = makeRuntime();
+    const pending: ClientInteraction[] = [
+      { kind: 'permission', requestId: 'perm-1', sessionId: 'session-1', runId: 'run-1', createdAt: '2026-11-22T00:00:00.000Z', options: { toolName: 'bash' } },
+      { kind: 'permission', requestId: 'perm-2', sessionId: 'session-1', runId: 'run-1', createdAt: '2026-11-22T00:00:00.000Z', options: { toolName: 'write' } },
+      { kind: 'question_input', requestId: 'ask-1', sessionId: 'session-1', runId: 'run-1', createdAt: '2026-11-22T00:00:00.000Z', options: { question: 'Name?' } },
+    ];
+    const runtime: KodaXRuntime = {
+      ...baseRuntime,
+      interactions: {
+        list: async () => pending,
+        respond: async requestId => ({ requestId, accepted: requestId !== 'perm-late', status: requestId === 'perm-late' ? 'already_resolved' : 'answered' }),
+      },
+    };
+    const dispatcher = createRuntimeDaemonDispatcher({ role: 'user', tokenSubject: 'dev_1', runtime });
+    await initializeDispatcher(dispatcher, {});
+    const respond = (requestId: string, response: ClientInteractionResponse) => dispatcher.handle(
+      createRuntimeDaemonRequest(`req-${requestId}`, 'interaction.respond', { requestId, response }));
+
+    const events = await captureSecurityEvents(async () => {
+      await respond('perm-1', { kind: 'permission', decision: { type: 'allow_session', suggestionId: 's1' } });
+      // Cancelling an approval refuses the operation.
+      await respond('perm-2', { kind: 'cancel' });
+      await respond('ask-1', { kind: 'question_input', text: 'Ada' });
+      await respond('perm-late', { kind: 'permission', decision: { type: 'allow_once' } });
+    });
+    const actor = { role: 'user', subject: 'dev_1', client: 'vitest' };
+    expect(events).toEqual([
+      { event: 'permission_decided', actor, sessionId: 'session-1', runId: 'run-1', tool: 'bash', decision: 'allow_session' },
+      { event: 'permission_decided', actor, sessionId: 'session-1', runId: 'run-1', tool: 'write', decision: 'reject' },
+    ]);
+    dispatcher.close();
+  });
+
+  it('records the trusted authority a service uses by method and parameter name, never the values', async () => {
+    const service = createRuntimeDaemonDispatcher({ role: 'service', tokenSubject: 'billing', runtime: makeRuntime() });
+    const owner = createRuntimeDaemonDispatcher({ role: 'owner', runtime: makeRuntime() });
+    await initializeDispatcher(service, {});
+    await initializeDispatcher(owner, {});
+
+    const events = await captureSecurityEvents(async () => {
+      await service.handle(createRuntimeDaemonRequest('req-host-tools', 'run.start', {
+        sessionId: 'session-1', prompt: 'hello', hostTools: { leaseId: 'lease-secret-1' },
+      }));
+      await service.handle(createRuntimeDaemonRequest('req-lease', 'credential.get', { leaseId: 'lease-secret-2' }));
+      await service.handle(createRuntimeDaemonRequest('req-plain', 'run.start', { sessionId: 'session-1', prompt: 'hello' }));
+      // The owner holds every power on its own machine, and sends a credential with each turn.
+      await owner.handle(createRuntimeDaemonRequest('req-owner', 'run.start', {
+        sessionId: 'session-1', prompt: 'hello', hostTools: { leaseId: 'lease-secret-3' },
+      }));
+    });
+    const actor = { role: 'service', subject: 'billing', client: 'vitest' };
+    expect(events).toEqual([
+      { event: 'trusted_use', actor, method: 'run.start', params: ['hostTools'] },
+      { event: 'trusted_use', actor, method: 'credential.get', params: [] },
+    ]);
+    expect(JSON.stringify(events)).not.toContain('lease-secret');
+    service.close();
+    owner.close();
   });
 
   it('refuses a service connection that names no token subject', async () => {
@@ -4657,3 +4718,17 @@ it('authorizes Product catalog probes through fresh Main v2 credentials and a Ho
     await expect(client.catalog.probeReasoningEfforts({ provider: 'forbidden', efforts: ['high'], credential: approved!.credential })).rejects.toMatchObject({ code: 'credential_unavailable' });
   } finally { await authorizer.close(); await client.close(); dispatcher.close(); hub.close(); }
 });
+
+/** The security events the Host records while `act` runs. */
+async function captureSecurityEvents(act: () => Promise<void>): Promise<unknown[]> {
+  const events: unknown[] = [];
+  const restore = setKodaXDiagnosticSink((diagnostic) => {
+    if (diagnostic.source === 'host.security') events.push(diagnostic.detail);
+  });
+  try {
+    await act();
+  } finally {
+    restore();
+  }
+  return events;
+}

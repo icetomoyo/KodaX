@@ -43,6 +43,7 @@ import {
 } from './protocol.js';
 import { createRuntimeDaemonDispatcher, type RuntimeDaemonDispatcherOptions } from './server.js';
 import { runtimeConfigRevision } from '../runtime-config-revision.js';
+import { reportHostSecurityEvent } from './security-log.js';
 import type { RuntimeDaemonLogEntry } from './state.js';
 import type { RuntimeDaemonFramePeer } from './transport.js';
 import type { HostWorkspace } from './workspace.js';
@@ -1455,6 +1456,7 @@ export function createRuntimeDaemonHostRpcPeer(
         // A token that is not good, or a check the Host cannot make now, leaves the current credential in force.
         const next = await options.authenticate({ scheme: auth.scheme, token });
         if (next.role !== credential.role || next.subject !== credential.subject) {
+          reportHostSecurityEvent({ event: 'auth_failed', reason: 'subject_changed' });
           afterAnswer(() => options.disconnect('credential'));
           throw new HostProtocolError('unauthorized', 'A renewal must name the subject and role the connection speaks for.', {
             reason: 'subject_changed',
@@ -1578,7 +1580,8 @@ export function createRuntimeDaemonHostRpcPeer(
     }
     if (auth?.scheme === 'ipc') throw unsupported('A network connection cannot use the local IPC credential.');
     const credential = await options.authenticate(auth);
-    return { role: credential.role, tokenSubject: credential.role === 'service' ? credential.subject : undefined, credential };
+    // A person's connections all act for the person; the subject still names which login or device it was, for the security log.
+    return { role: credential.role, tokenSubject: credential.subject, credential };
   }
 
   return {

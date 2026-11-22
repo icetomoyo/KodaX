@@ -12,6 +12,7 @@ import { pipeline } from 'node:stream/promises';
 
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 
+import { reportHostSecurityEvent } from '../runtime-daemon/security-log.js';
 import type { HostDeviceRegistry } from './devices.js';
 
 /** The path a pairing page posts its code to. */
@@ -92,6 +93,7 @@ async function pair(request: IncomingMessage, response: ServerResponse, devices:
   // The device is bound to this origin, so it must be a real one, and the page must be the Host's own.
   const fetchSite = request.headers['sec-fetch-site'];
   if (origin === undefined || !isWebOrigin(origin) || (fetchSite !== undefined && fetchSite !== 'same-origin')) {
+    reportHostSecurityEvent({ event: 'auth_failed', reason: 'pairing_origin_refused', ...(origin !== undefined ? { origin } : {}) });
     return end(response, 403);
   }
   if (Number(request.headers['content-length'] ?? 0) > MAX_PAIR_BODY_BYTES) return end(response, 413, { connection: 'close' });
@@ -100,7 +102,10 @@ async function pair(request: IncomingMessage, response: ServerResponse, devices:
   const code = parseCode(body);
   if (code === undefined) return end(response, 400);
   const paired = devices.redeem(code, origin);
-  if (paired === undefined) return end(response, 403);
+  if (paired === undefined) {
+    reportHostSecurityEvent({ event: 'auth_failed', reason: 'pairing_code_refused', origin });
+    return end(response, 403);
+  }
   response.writeHead(200, {
     'content-type': 'application/json', 'cache-control': 'no-store', 'set-cookie': deviceCookie(paired.token, origin),
   }).end(JSON.stringify({ device: { id: paired.device.id, name: paired.device.name } }));

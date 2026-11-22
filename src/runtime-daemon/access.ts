@@ -269,6 +269,14 @@ export function runtimeAccessDenial(
   return undefined;
 }
 
+/** The trusted parameters a call sends, empty for a trusted method sent without any; undefined when it uses no trusted authority. */
+export function runtimeTrustedUse(method: RuntimeDaemonMethod, params: unknown): readonly string[] | undefined {
+  const record = typeof params === 'object' && params !== null ? params as Record<string, unknown> : {};
+  const sent = TRUSTED_PARAMS.filter(name => record[name] !== undefined);
+  const trustedMethod = Object.hasOwn(RUNTIME_METHOD_PLANES, method) && RUNTIME_METHOD_PLANES[method] === 'trusted';
+  return sent.length > 0 || trustedMethod ? sent : undefined;
+}
+
 function trustedParamIn(params: unknown): string | undefined {
   if (typeof params !== 'object' || params === null) return undefined;
   const record = params as Record<string, unknown>;
