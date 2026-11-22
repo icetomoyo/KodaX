@@ -2082,6 +2082,19 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
 - 还没验证、要等 Space 的 Web UI（M1c）：真机 iPhone Safari 配对后 8 天不访问再打开仍然免配对；经 Tailscale serve 和 Cloudflare 快速隧道配对和连接；隧道地址变了以后旧设备被拒、重新配对可用。这几条在 M1b 交付时写进测试指南。
 - 待定：`/healthz` 和配对端点在同一个端口上，经 funnel 或快速隧道暴露时，公网也能看到 Host 忙不忙（不含 Session 内容）。第 10 项写隧道指南时决定要不要收窄。
 
+**第 5 项的落地细节**（2026-11-22，未经用户确认的取舍）：
+
+- 日志行的格式不变：沿用 `daemon.log` 现有的 JSON 行 `{time, level, message, data}`。前台 `kodax daemon serve` 把每一行先原样写到 stdout，再追加到文件；`kodax daemon start` 起的后台进程（`KODAX_DAEMON_SERVE=1`）stdout 没人读，不写。stdout 写失败（比如管道另一端关了，EPIPE）就停止镜像，文件里记一条 warn，之后只写文件，Host 不退出。stdout 上只有 JSON 行。
+- 安全事件经 `emitKodaXDiagnostic` 发出，`source` 是 `host.security`，`message` 是事件名，事件本身在 `detail` 里（`src/runtime-daemon/security-log.ts`）。`auth_failed` 是 warn，其余是 info。事件里没有令牌、凭据或参数值。`actor` 是 `{role, subject?, client?}`：`subject` 是网络凭据校验过的 subject（配对设备是设备 id），`client` 是 `initialize` 报的客户端名。
+- 四类事件：
+  - `auth_failed`：JWT 被拒（`reason` 用协议错误的原因，比如 `subject_not_admitted`、`invalid_credential`，带连接的 Origin）；浏览器 Origin 不在白名单（`origin_not_allowed`）；`/pair` 的 Origin 不合格（`pairing_origin_refused`）或码不对（`pairing_code_refused`）；续期时 subject 变了（`subject_changed`）。JWKS 读不到（`unavailable`）不算鉴权失败，不记；`/pair` 的 400 和 413 是格式问题，不记。
+  - `permission_decided`：谁、哪个 Session 和 Run、哪个工具、`allow_once` / `allow_session` / `allow_always` / `reject`。记在 v1 dispatcher 的 `interaction.respond` 里，v2 也走这里，所以两种协议都覆盖。只记被接受的回复；取消或跳过一个权限请求记为 `reject`；问题类交互和迟到的回复不记。
+  - `trusted_use`：只记 `service` 角色。`method` 和用到的特权参数名（`authorization`、`credential`、`hostTools`、`policy`、`runOptions`），所以 Session 策略的创建和修改也在里面；调特权面方法但没带特权参数时 `params` 是空列表。owner 是本机 IPC 上的 Host 自己人，每个 REPL Run 都带 `runOptions`，记下来只是噪音，所以不记。
+  - `device_paired` / `device_revoked`：设备 id、名称，配对时再加 Origin。
+- 为了让 `actor.subject` 有值，host-rpc 现在对所有网络角色都把凭据的 subject 交给 dispatcher（以前只给 `service`）。授权身份不受影响：`user` 仍然是 `person`。
+- 不记的：IPC 令牌错误（本机同一个用户才读得到令牌文件）、配对码的签发（签发只有 owner 能做，兑换才是安全边界，兑换成功记 `device_paired`）。
+- 已验证：定向测试覆盖每类事件和"事件里没有令牌"；冒烟测试确认前台 `daemon serve` 的 stdout 全是 JSON 行。
+
 ### M1c Space 整体迁移到 v2
 
 - Renderer 和 Main 一起迁，在同一个 Space 版本里切换。升级到这个 SDK 版本的 Space 就只用 v2，不保留 v1 回退开关。
