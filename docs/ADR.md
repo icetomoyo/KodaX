@@ -8384,3 +8384,55 @@ The first milestone (M0) changes the v1 Host without changing the v1 wire:
   with POST is only a fallback where WebSocket is blocked.
 - **A general operation ledger for idempotency.** Each domain already keeps
   durable receipts, and the mainline removed the generic envelope once.
+
+---
+
+## ADR-080: The Node Floor Is 22.4
+
+**Status**: Accepted (2026-11-22). Supersedes the Node floor in ADR-072
+"Single-package Artifact distribution" (20.16 for the main package, 20.0 for the
+source workspaces).
+
+### Context
+
+Node 20 reached end of life on 2026-04-30. Its last release was 20.20.2.
+According to the release trackers, the security releases of 2026-10-21 and
+2026-11-11 patched Node 22, 24 and 26 only, including an actively exploited
+remote code execution flaw. KodaX runs
+model-chosen shell commands and, from SDK v2 M1b, listens on the network, so
+it should not tell users that an unpatched runtime is supported.
+
+SDK v2 also needs a WebSocket client that works in the browser and in Node
+without bundling `ws` (ADR-079, M1b item 6). Node's global `WebSocket` is
+stable from 22.4.
+
+### Decision
+
+- Every workspace declares `engines.node >=22.4.0`: the root package, `agent`,
+  `artifacts`, `coding`, `llm` and `repl`.
+- CI runs the build and fast suite on Node 22 and 24, and the unit, contract
+  and system tiers on Node 22. The native, sandbox and Host gates run once, on
+  the Node 22 fast row. The release build stays on Node 22.
+- The standalone binaries are unchanged. They do not need Node on the target
+  machine.
+- Code that only exists for Node 20 stays until someone touches it. It still
+  works on 22.
+
+Node 22 reaches end of life on 2027-04-30. Decide whether to move to 24
+before then.
+
+### Alternatives rejected
+
+- **Floor at 24.** It has the longest runway, but would drop users and
+  embedders on a supported LTS line with nothing in KodaX that needs 24.
+- **Floor at 22.0.** The global `WebSocket` is still experimental there.
+- **Keep 20 and add `ws` to the client.** It keeps an unpatched runtime on the
+  supported list and makes the browser and Node clients differ.
+
+### Consequences
+
+- Users on Node 20 get an `engines` warning from npm and must upgrade, or use
+  the standalone binary.
+- The esbuild targets in `scripts/build-bundle.mjs` (`node18`, `node20`) are
+  unchanged. Raising them changes the emitted code and the bundle size, so it
+  is a separate change measured against the bundle budget.

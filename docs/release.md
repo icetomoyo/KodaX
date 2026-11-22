@@ -32,8 +32,8 @@ on one commit.
 - The portable and system Windows source tiers each run as two vitest file
   shards instead of one ~20–26-minute serial job. The real terminal PTY gate
   runs only in portable shard 1.
-- Node 20's unit and contract tiers run on their own `test (node 20 unit)`
-  row beside the fast tier. That row also runs Node 20's `test:bundle`.
+- The unit and contract tiers run on their own `test (node 22 unit)` row
+  beside the fast tier. `test:bundle` runs on both fast rows (Node 22 and 24).
 - `build (win-x64)` no longer repeats the Windows source-build gates (bundle,
   native, trusted text, v2 sandbox, packaged Electron daemon). Full CI's
   packaged Electron job runs the same gates on Windows from the same commit,
@@ -1143,7 +1143,7 @@ LoongArch64 / MIPS are **not supported** (Bun has no toolchain for them).
 
 ### Prerequisites
 
-- Node.js 20+ (for build orchestration)
+- Node.js 22.4+ (for build orchestration)
 - Bun on PATH:
   ```
   Windows : scoop install bun       # or: npm i -g bun

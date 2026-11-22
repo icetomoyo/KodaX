@@ -539,7 +539,7 @@ and feature-specific Host compatibility checks.
 
 ## Optional Artifact SDK
 
-Install only `@kodax-ai/kodax` (ESM, Node >=20.16). The optional Artifact API
+Install only `@kodax-ai/kodax` (ESM, Node >=22.4). The optional Artifact API
 uses `/artifacts` subpaths; its pure SDK/types do not load renderers.
 `/artifacts/runtime` supplies an independently authorized Node host. For a
 product UI, register `/artifacts/kodax` once in the existing trusted Host and

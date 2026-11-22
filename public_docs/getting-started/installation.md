@@ -54,7 +54,7 @@ npm link
 
 ## Requirements
 
-- **Node.js** >= 20.0.0 (for npm install / source build; not needed for single binary)
+- **Node.js** >= 22.4.0 (for npm install / source build; not needed for single binary)
 - **TypeScript** >= 5.7.0 (root uses 5.9.x; only needed for source build)
 - An API key for any supported LLM provider
 

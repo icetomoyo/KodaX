@@ -1,6 +1,6 @@
 # Artifact SDK
 
-Artifact APIs ship inside the single ESM package `@kodax-ai/kodax` (Node >=20.16).
+Artifact APIs ship inside the single ESM package `@kodax-ai/kodax` (Node >=22.4).
 `packages/artifacts` remains a private source workspace; it is not a separate
 npm delivery target. The pure SDK entry contains types, validation, dispatch and
 mechanical coverage checks. Renderer loading and Chromium preparation remain
@@ -61,7 +61,7 @@ bundle, then stages its JS, declarations, worker, skill and license under
 existing runtime-relative resource paths. Do not bundle just the four JS
 exports and discard that layout. Root dependencies pin the same renderer
 versions as the workspace; the build rejects drift. The main package's declared
-Node floor is now 20.16 to match the Artifact runtime.
+Node floor is 22.4 (ADR-080), above what the Artifact runtime needs.
 
 `release.mjs --skip-build --pack-only` requires a complete current build.
 The existing main-tarball audit checks all four JS/type exports, worker, DOCX

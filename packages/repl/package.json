@@ -52,7 +52,7 @@
     "react": ">=19.0.0"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.4.0"
   },
   "repository": {
     "type": "git",

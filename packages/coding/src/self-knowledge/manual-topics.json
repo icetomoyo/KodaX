@@ -92,7 +92,7 @@
     ],
     "summary": "npm install, Node version, secure first-run setup, updating.",
     "body": [
-      "Install (Node >= 20.16.0):",
+      "Install (Node >= 22.4.0):",
       "  npm install -g @kodax-ai/kodax",
       "Then run `kodax` in any project directory to start the interactive REPL.",
       "",
@@ -2396,7 +2396,7 @@
       "  (`daemon.log.1`, rotated at 2 MiB); `debug` diagnostics are not persisted, so set",
       "  `KODAX_DIAGNOSTICS_STDERR=1` to see them live.",
       "- Windows: paths use forward slashes internally; case-insensitive workspace match is handled.",
-      "- Node/npm: ensure Node >= 20.16.0; reinstall the global package if the CLI is stale.",
+      "- Node/npm: ensure Node >= 22.4.0; reinstall the global package if the CLI is stale.",
       "- Daemon exits before healthy: inspect ~/.kodax/runtime/daemon/default/bootstrap.log.",
       "- `runtime_host_migration_required`: `profile`/`--profile` no longer names a Host; one Host",
       "  serves each KODAX_HOME. Delete the option; isolate Hosts with a separate `--home`/KODAX_HOME.",

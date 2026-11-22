@@ -18,6 +18,9 @@ All notable changes to this project will be documented in this file.
   result that says how to allow them, and the process gets one
   `KODAX_TOOL_APPROVAL_MISSING` warning. Pass the new `allowAll` export to
   run every tool as before. The Runtime, daemon, CLI and REPL are unchanged.
+- Node 22.4 or later is required (ADR-080). Node 20 reached end of life on
+  2026-04-30 and no longer gets security fixes. The standalone binaries still
+  need no Node on the target machine. CI now tests Node 22 and 24.
 
 ### Added
 

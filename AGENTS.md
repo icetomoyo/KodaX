@@ -42,7 +42,7 @@ If the user did not give a concrete task, read `README.md`, then check `docs/` f
 
 | Category | Technology | Version |
 |---|---|---|
-| Runtime | Node.js | >= 20.16.0 |
+| Runtime | Node.js | >= 22.4.0 |
 | Language | TypeScript | >= 5.7.0 (root uses 5.9.x) |
 | Package Manager | npm workspaces | — |
 | CLI Framework | Ink (React for CLI) | ^6.7.0 / React >= 19 |

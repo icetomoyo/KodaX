@@ -2527,7 +2527,7 @@ function posixSandboxSetupGuidance(doctor: SandboxRuntimeDoctorResult): readonly
   ))) {
     lines.push(
       'Optional interpreter repair: KodaX reuses KODAX_A2A_NODE when provided, or Electron\'s own executable in Node mode (ELECTRON_RUN_AS_NODE). Check that this executable can run; Electron does not require Node.js on PATH.',
-      'For a standalone bundled CLI without an available interpreter, optionally install Node.js (>=20.16.0) on PATH or set KODAX_A2A_NODE to an existing Node.js executable.',
+      'For a standalone bundled CLI without an available interpreter, optionally install Node.js (>=22.4.0) on PATH or set KODAX_A2A_NODE to an existing Node.js executable.',
     );
   }
   const missing = doctor.diagnostics.filter((line) => /not installed|not found|missing|ENOENT/i.test(line));

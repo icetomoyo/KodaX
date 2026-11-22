@@ -60,7 +60,7 @@ missing bubblewrap, socat, or ripgrep. KodaX uses `KODAX_A2A_NODE` when supplied
 otherwise Electron reuses its own executable in Node mode; Electron does not
 need a separate `node` on PATH. For a standalone bundled CLI, an optional repair
 is to provide an existing Node.js executable through `KODAX_A2A_NODE`, or install
-Node.js >=20.16.0 on PATH. Check an explicitly configured executable before
+Node.js >=22.4.0 on PATH. Check an explicitly configured executable before
 installing another interpreter.
 
 ASRT's missing seccomp-helper warning means Unix socket restrictions may be

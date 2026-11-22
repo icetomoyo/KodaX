@@ -1,16 +1,14 @@
 name: CI
 
-# Verifies the supported Node major versions. The root/Artifact runtime floor
-# is 20.16; the core source workspaces retain 20.0, but nothing was
-# proving the suite runs on anything other than the release build's Node 22.
-# This matrix runs the build + fast suite on the engines floor (20) and the
-# build version (22), then runs the expensive contract/system tiers once on
-# the supported runtime floor (20). That catches Node-version regressions
-# without duplicating every subprocess and daemon test. The Node 20 unit and
-# contract tiers run on their own row beside the fast tier, so neither waits
-# behind the other. Node 18 was dropped from the floor: the
-# codebase relies on Node 20+ features (e.g. the RegExp `v` flag), so 18 is no
-# longer supported.
+# Verifies the supported Node major versions. The engines floor is 22.4 in
+# every workspace, which is also the release build's Node. This matrix runs
+# the build + fast suite on the floor (22) and on the newer LTS (24), then runs
+# the expensive contract/system tiers once on the floor. That catches
+# Node-version regressions without duplicating every subprocess and daemon
+# test. The unit and contract tiers run on their own row beside the fast tier,
+# so neither waits behind the other. The native, sandbox and Host gates run
+# once, on the row marked `gates`. Node 20 was dropped from the floor: it
+# reached end of life on 2026-04-30 and no longer gets security fixes.
 
 # Run alongside release builds, or manually when an earlier check is needed.
 # Push/PR triggers are intentionally omitted to limit CI runs; regressions
@@ -33,11 +31,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - node: '20'
-            suite: fast
-          - node: '20'
-            suite: unit
           - node: '22'
+            suite: fast
+            gates: true
+          - node: '22'
+            suite: unit
+          - node: '24'
             suite: fast
     steps:
       - uses: actions/checkout@v6
@@ -68,36 +67,36 @@ jobs:
         run: npm run typecheck
 
       - name: Compile Linux native authority for glibc 2.17
-        if: matrix.node == '22'
+        if: matrix.gates
         run: node scripts/build-linux-native.mjs
 
       - name: Build trusted text native authority
         env:
-          KODAX_NATIVE_PREBUILT: ${{ matrix.node == '22' && '1' || '0' }}
+          KODAX_NATIVE_PREBUILT: ${{ matrix.gates && '1' || '0' }}
         run: npm run build:native
 
       - name: Enforce Linux glibc 2.17 ABI
-        if: matrix.node == '22'
+        if: matrix.gates
         run: node scripts/check-native-glibc.mjs --max 2.17 dist/native/linux-x64/kodax-text-transaction.node
 
       - name: Build bundled SDK and Worker sidecars
         run: npm run build:bundle
 
       - name: Bundled Provider credentials and daemon compaction
-        if: matrix.suite == 'unit' || matrix.node == '22'
+        if: matrix.suite == 'fast'
         timeout-minutes: 10
         run: npm run test:bundle
 
       - name: Native trusted text transaction tests
-        if: matrix.node == '22'
+        if: matrix.gates
         run: npm run test:native
 
       - name: Trusted text host integration
-        if: matrix.node == '22'
+        if: matrix.gates
         run: node node_modules/vitest/vitest.mjs run src/windows-text-transaction.test.ts src/windows-native-artifacts.test.ts
 
       - name: Real POSIX per-command sandbox concurrency gate
-        if: matrix.node == '22'
+        if: matrix.gates
         env:
           KODAX_REAL_POSIX_SANDBOX: '1'
           SRT_DEBUG: '1'
@@ -111,7 +110,7 @@ jobs:
         run: npm run test:fast
 
       - name: Shared Host ownership recovery regressions
-        if: matrix.node == '22'
+        if: matrix.gates
         run: node node_modules/vitest/vitest.mjs run src/runtime-daemon/lifecycle.process-identity.test.ts src/runtime-daemon/process.owner-exit.test.ts src/sdk-runtime-daemon-upgrade.test.ts
 
       - name: Unit tests
@@ -123,7 +122,7 @@ jobs:
         run: npm run test:contract
 
       - name: Runtime daemon Unix socket gate
-        if: matrix.node == '22'
+        if: matrix.gates
         shell: bash
         run: |
           set -euo pipefail
@@ -267,7 +266,7 @@ jobs:
           NODE
 
   system:
-    name: system (node 20)
+    name: system (node 22)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -275,7 +274,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
