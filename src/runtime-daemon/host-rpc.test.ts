@@ -27,6 +27,7 @@ import {
   createRuntimeDaemonHostRpcPeer, hostErrorFromV1, type HostCredential, type RuntimeDaemonHostRpcPeerOptions,
 } from './host-rpc.js';
 import * as hostRpcProtocol from './host-rpc-protocol.js';
+import { openHostDeviceRegistry } from '../host-server/devices.js';
 import type { RuntimeDaemonManagementController } from './management.js';
 import { createRuntimeDaemonReverseBridgeHub } from './reverse-bridge.js';
 import { createHostWorkspace, type HostWorkspace } from './workspace.js';
@@ -97,6 +98,8 @@ async function connect(
   host: Partial<RuntimeDaemonHostRpcPeerOptions['dispatcher']> = {},
   /** Proves a reconnect is the same client instance, so it keeps that instance's leases. */
   instanceSecret?: string,
+  /** What the Host's network listener adds, such as its paired devices. */
+  network: Pick<RuntimeDaemonHostRpcPeerOptions, 'devices'> = {},
 ): Promise<HostRpcClient> {
   const client = await connectHostRpc(async (events) => {
     let open = true;
@@ -111,6 +114,7 @@ async function connect(
       dispatcher: { ...host, role, runtime, authToken: 'secret', ...(role === 'service' ? { tokenSubject: 'backend' } : {}) },
       limits: { maxFrameBytes: 1024 * 1024 },
       ...(workspace !== undefined ? { workspace } : {}),
+      ...network,
       send: frame => queueMicrotask(() => { if (open) events.frame(frame); }),
       disconnect: () => queueMicrotask(end),
       congested: () => false,
@@ -2918,6 +2922,37 @@ describe('a v1 failure in v2 terms', () => {
     expect(refused('actor_settlement_not_persisted')).toMatchObject({ kodaxCode: 'invalid_state', reason: 'session_recovering' });
     expect(refused('recovery_stalled')).toMatchObject({ kodaxCode: 'invalid_state', reason: 'recovery_stalled' });
     expect(refused('revision_conflict')).toMatchObject({ kodaxCode: 'conflict', reason: 'revision_mismatch' });
+  });
+});
+
+describe('v2 paired devices, served by the peer itself', () => {
+  it('lets the owner pair, list and revoke devices', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'kodax-host-rpc-devices-'));
+    cleanup.push(() => rm(dir, { recursive: true, force: true }));
+    const devices = openHostDeviceRegistry({ file: path.join(dir, 'devices.json') });
+    const owner = await connect('owner', undefined, undefined, {}, undefined, { devices: () => devices });
+
+    const { code, expiresAt } = await owner.request('device.pair', { requestId: 'pair-1', name: ' Phone ' }) as
+      { code: string; expiresAt: number };
+    expect(expiresAt).toBeGreaterThan(Date.now());
+    const { device } = devices.redeem(code, 'https://laptop.example.test')!;
+    expect(device.name).toBe('Phone');
+    expect(await owner.request('device.list')).toEqual({ items: [device] });
+
+    expect(await owner.request('device.revoke', { requestId: 'revoke-1', deviceId: device.id })).toEqual({});
+    expect(await owner.request('device.revoke', { requestId: 'revoke-1', deviceId: device.id })).toEqual({});
+    expect(await owner.request('device.list')).toEqual({ items: [] });
+  });
+
+  it('says there is nothing to pair when the Host does not listen on the network', async () => {
+    const owner = await connect('owner', undefined, undefined, {}, undefined, { devices: () => undefined });
+    await expect(owner.request('device.list')).rejects.toMatchObject({ kodaxCode: 'invalid_state', reason: 'not_listening' });
+  });
+
+  it('keeps devices from every role but the owner', async () => {
+    const user = await connect('user');
+    expect(user.handshake.methods.filter(method => method.startsWith('device.'))).toEqual([]);
+    await expect(user.request('device.list')).rejects.toMatchObject({ kodaxCode: 'method_not_found' });
   });
 });
 

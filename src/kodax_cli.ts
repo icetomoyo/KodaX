@@ -233,6 +233,7 @@ import {
 } from '@kodax-ai/repl';
 import type { AcpPermissionMode } from './acp_server.js';
 import { configureLazyIntegrationCommands, prepareLazyIntegrationCommand } from './integration-cli-lazy.js';
+import { configureKodaXDeviceCommands } from './device-cli.js';
 import { configureKodaXExecPolicyCommand } from './exec-policy-cli.js';
 import {
   createIntegrationEventBridge,
@@ -3056,6 +3057,7 @@ export function configureKodaXDaemonCommand(program: Command): Command {
       },
     );
 
+  configureKodaXDeviceCommands(daemonCommand, { locate: daemonHostLocation, version, homeHelp: HELP_DAEMON_HOME });
   return daemonCommand;
 }
 

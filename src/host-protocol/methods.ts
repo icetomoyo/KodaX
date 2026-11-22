@@ -9,6 +9,7 @@ import { z } from 'zod/v4';
 import { ACTOR_METHODS } from './actor.js';
 import { CATALOG_METHODS } from './catalog.js';
 import { CONFIG_METHODS } from './config.js';
+import { DEVICE_METHODS } from './device.js';
 import { EXTENSION_METHODS } from './extension.js';
 import { HOST_PROTOCOL } from './codec.js';
 import { HISTORY_METHODS } from './history.js';
@@ -107,6 +108,7 @@ export const HOST_METHODS = {
   ...ACTOR_METHODS,
   ...WORKFLOW_METHODS,
   ...HOST_ADMIN_METHODS,
+  ...DEVICE_METHODS,
   ...CONFIG_METHODS,
   ...MCP_METHODS,
   ...EXTENSION_METHODS,

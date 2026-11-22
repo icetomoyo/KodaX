@@ -178,6 +178,7 @@ export async function startRuntimeDaemonHost(
         protocol,
         dispatcher: dispatcherOptions,
         limits: { maxFrameBytes: RUNTIME_DAEMON_MAX_FRAME_BYTES },
+        devices: () => network?.devices,
         send,
         disconnect,
         congested,

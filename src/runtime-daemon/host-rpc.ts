@@ -28,6 +28,7 @@ import type {
   RuntimeMcpValidateResult, RuntimeVersionedValue, RuntimeWorkflowSnapshot, RuntimeWorkflowStartResult, RuntimeWorkflowSummary,
 } from '../sdk-runtime.js';
 import type { RuntimeCredentialLease } from '../client-host-authorization.js';
+import type { HostDeviceRegistry } from '../host-server/devices.js';
 import { boundViewItem } from '../session-view.js';
 import { runtimeAuthorizationSubject, runtimeRoleHasPlane, type RuntimeConnectionRole } from './access.js';
 import {
@@ -90,7 +91,21 @@ type V1Call = (
   signal?: AbortSignal,
 ) => Promise<unknown>;
 
-type ForwardedMethod = Exclude<HostMethodName, 'initialize' | 'ping' | 'request.cancel' | 'auth.renew'>;
+type DeviceMethod = 'device.pair' | 'device.list' | 'device.revoke';
+type ForwardedMethod = Exclude<HostMethodName, 'initialize' | 'ping' | 'request.cancel' | 'auth.renew' | DeviceMethod>;
+
+/** What the owner manages of the paired devices. */
+export type HostDeviceAdmin = Pick<HostDeviceRegistry, 'pair' | 'list' | 'revoke'>;
+
+/** The paired devices belong to the network listener, not to v1, so the peer serves them itself. */
+const DEVICE_HANDLERS: { readonly [Method in DeviceMethod]: (params: HostParams<Method>, devices: HostDeviceAdmin) => unknown } = {
+  'device.pair': ({ requestId, name }, devices) => devices.pair({ requestId, name }),
+  'device.list': (_params, devices) => ({ items: devices.list() }),
+  'device.revoke': ({ deviceId }, devices) => {
+    devices.revoke(deviceId);
+    return {};
+  },
+};
 
 /** What a handler knows about the connection it serves. */
 interface HostCaller {
@@ -1385,6 +1400,8 @@ export interface RuntimeDaemonHostRpcPeerOptions {
   readonly limits: HostLimits;
   /** Where clients that are not on the Host's machine may name projects. Without it they can name none. */
   readonly workspace?: HostWorkspace;
+  /** The paired devices, while the Host listens on the network. */
+  readonly devices?: () => HostDeviceAdmin | undefined;
   readonly send: (frame: string) => void;
   readonly disconnect: (reason: HostCloseReason) => void;
   /** Whether the client is behind on reading what was already sent. */
@@ -1519,6 +1536,7 @@ export function createRuntimeDaemonHostRpcPeer(
         ...(credential?.expiresAt !== undefined ? { expiresAt: credential.expiresAt } : {}),
         call: async (method, params, signal, afterAnswer) => {
           if (method === 'auth.renew') return renew(String(params.token), afterAnswer);
+          if (Object.hasOwn(DEVICE_HANDLERS, method)) return serveDevices(method as DeviceMethod, params);
           // The connection passes only methods of the table, with params that passed that method's schema.
           const handlers = V1_HANDLERS as Readonly<Record<string,
             (params: unknown, v1: V1Call, caller: HostCaller) => Promise<unknown>>>;
@@ -1534,6 +1552,17 @@ export function createRuntimeDaemonHostRpcPeer(
       };
     },
   });
+
+  function serveDevices(method: DeviceMethod, params: unknown): unknown {
+    const devices = options.devices?.();
+    if (devices === undefined) {
+      throw new HostProtocolError('invalid_state', 'This Host does not listen on the network, so it has no devices to pair.', {
+        reason: 'not_listening',
+      });
+    }
+    const handler = DEVICE_HANDLERS[method] as (params: unknown, devices: HostDeviceAdmin) => unknown;
+    return handler(params, devices);
+  }
 
   /** Whom the connection speaks for: the network credential when there is an authenticator, else the endpoint's role. */
   async function admitCredential(auth: HostInitializeParams['auth']): Promise<{

@@ -1,5 +1,5 @@
 import { createSign, generateKeyPairSync, type KeyObject } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { createRequire } from 'node:module';
 import type { AddressInfo } from 'node:net';
@@ -178,6 +178,13 @@ describe('a listening Host that reads host.json again when it changes', () => {
     await vi.waitFor(() => expect(messages.length).toBeGreaterThan(0));
     return { messages, socket, closedWith: () => closedWith };
   }
+
+  it('keeps the devices paired with it in the home', async () => {
+    writeConfig({ owner: 'person-1' });
+    const { devices } = await start();
+    devices.redeem(devices.pair({ requestId: 'r1', name: 'Phone' }).code, 'https://laptop.example.test');
+    expect(existsSync(path.join(configHome, 'runtime', 'devices.json'))).toBe(true);
+  });
 
   it('hangs up with revoked on a subject no longer admitted, and keeps the others', async () => {
     writeConfig({ owner: 'person-1', services: ['backend-1', 'backend-2'] });

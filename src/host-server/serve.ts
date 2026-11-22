@@ -11,6 +11,7 @@
  * fetches a token the new check accepts. Where to listen and the workspace
  * take effect when the Host restarts.
  */
+import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
@@ -22,6 +23,7 @@ import type { HostInitializeParams, HostLimits } from '../host-protocol/methods.
 import type { HostCredential } from '../runtime-daemon/host-rpc.js';
 import { createHostWorkspace, type HostWorkspace } from '../runtime-daemon/workspace.js';
 import { parseHostIntegrationDocument, readHostIntegration, type HostIntegrationDocument, type HostServerConfig } from './config.js';
+import { openHostDeviceRegistry, type HostDeviceRegistry } from './devices.js';
 import { createHostJwtVerifier, HostJwtError, type HostJwtVerifier } from './jwt.js';
 import {
   startHostNetworkListener,
@@ -55,6 +57,8 @@ export interface HostNetworkServerOptions {
 export interface HostNetworkServer extends HostNetworkListener {
   /** The `host` integration domain: the revision of `host.json` in force, and why the last edit did not apply. */
   status(): IntegrationConfigStatus;
+  /** The browsers paired with this Host, kept in `<configHome>/runtime/devices.json`. */
+  readonly devices: HostDeviceRegistry;
 }
 
 /** Who may get in under one revision of the file. */
@@ -85,6 +89,7 @@ export async function startHostNetworkServer(options: HostNetworkServerOptions):
   });
   let admission = admit((await controller.initialize()).document.server, undefined);
   const connections = new Set<TrackedConnection>();
+  const devices = openHostDeviceRegistry({ file: path.join(options.configHome, 'runtime', 'devices.json') });
   /** Bumped by every applied edit, so a check that started under the previous one runs again. */
   let generation = 0;
 
@@ -154,6 +159,7 @@ export async function startHostNetworkServer(options: HostNetworkServerOptions):
     ...(listener.port !== undefined ? { port: listener.port } : {}),
     drain: () => listener.drain(),
     status: () => controller.status(),
+    devices,
     async close() {
       controller.close();
       await listener.close();
