@@ -821,7 +821,7 @@ async function serveDaemonCommand(input: {
         ...(a2aHandle ? [a2aHandle.status()] : []),
       ],
       ...(input.orphanExitMs !== undefined ? { orphanExitMs: input.orphanExitMs } : {}),
-      createRuntime: async (runtimeId) => {
+      createRuntime: async (runtimeId, host) => {
         const usesCanonicalHome = isSameRuntimeDaemonPath(
           daemonConfigHome,
           path.join(input.homeDir, '.kodax'),
@@ -843,6 +843,7 @@ async function serveDaemonCommand(input: {
           externalAgents: a2aIntegration.runtimeOptions,
           execPolicy: ownerBootstrap?.execPolicy,
           autoReview: ownerBootstrap?.autoReview,
+          ...host,
         });
         ownedRuntime = runtime;
         try {

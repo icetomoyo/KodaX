@@ -2017,7 +2017,17 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
   - `listen` 和 `workspaceRoot` 要重启才生效：改了只记一条 warn 诊断（`detail.fields` 列出字段），同一次改动里的鉴权字段照常生效。
   - 改坏的文件不生效，旧配置继续有效。具体错在哪里写进日志，`host` 集成域的状态带 `invalid-config` 诊断，`daemon.integrations.get` 能看到。启动时第一次读仍然直接报错、拒绝启动。
   - Host 开始关闭时，网络监听立刻进入排空：新的升级请求回 503，已接纳的连接收到 `host.draining` 通知（还在握手的不发），`/healthz` 报 `draining`。连接保持到 Run 停完，再用 4503 关闭。
-  - `/healthz` 只认 `GET`，其他方法回 404，响应带 `no-store`。`blockers` 来自停止前置检查；前置检查因为有正在进行的变更而报 `conflict` 时，`blockers` 是 `['active_mutations']`。每次探测看到 `blockers` 不为空，就把 `lastActivityAt` 更新为当前时间，所以它表示 Host 最后一次被看到忙碌的时间，不单独埋点。健康检查本身出错时回 503，并记一条诊断。
+  - `/healthz` 只认 `GET`，其他方法回 404，响应带 `no-store`。
+
+第 2 项（`/healthz`）随第 1 项的第 ③ 步一起交付。
+
+**第 3 项的落地细节**（2026-11-22，未经用户确认的取舍）：
+
+- `server.tools` 是工具名的完整白名单，空列表表示一个工具都不给。它不要求配 `listen`：`kodax daemon serve` 读到它，就对这个 Host 上的每个 Run 生效，IPC 来的和网络来的都一样。进程内嵌入的 Host 不读 `host.json`，没有这一层。
+- 在 Run 准入时、Session 策略之后再求一次交集，复用 `applySessionPolicy`，所以 `input.submit`、`run.start`、`run.startTool` 和命令都受它约束，Session 策略只能在它里面再收窄。被它挡住的工具调用和 Session 策略一样报 `Tool is not active`，不是因为缺审批而失败。
+- 每个 Run 准入时重读 `host.json`，改动对下一个 Run 生效，在途的 Run 不变。恢复的 Run 沿用准入时写下的上限，不按新文件重算。
+- 改坏的文件不生效，沿用上一次读到的上限，记一条 warn 诊断，同一个错误只记一次。启动时读不了就拒绝启动：读取放在创建 runtime 之前（`runtime-daemon/manager.ts`），经 `createRuntime` 的第二个参数交给 runtime。
+- 已知缺口：v1 的 `agents.spawn` 和 `agents.followup` 起的独立 Actor 回合不经过 Run 准入，不受这一层约束。只有本机可信的 v1 调用方能用这两个方法，v2 没有入口。v2 加 Actor 方法时，或者删除 v1 时（FEATURE_314）补上。`blockers` 来自停止前置检查；前置检查因为有正在进行的变更而报 `conflict` 时，`blockers` 是 `['active_mutations']`。每次探测看到 `blockers` 不为空，就把 `lastActivityAt` 更新为当前时间，所以它表示 Host 最后一次被看到忙碌的时间，不单独埋点。健康检查本身出错时回 503，并记一条诊断。
 
 ### M1c Space 整体迁移到 v2
 

@@ -15,7 +15,7 @@ import {
   runtimeDaemonEndpointFromState,
   type RuntimeDaemonHealthCheckOptions,
 } from './lifecycle.js';
-import { appendRuntimeDiagnostic, startRuntimeDaemonHost, type RuntimeDaemonHost } from './host.js';
+import { appendRuntimeDiagnostic, loadHostRpcProtocol, startRuntimeDaemonHost, type RuntimeDaemonHost } from './host.js';
 import {
   prepareRuntimeDaemonOwner,
   readRuntimeOwnerPidNamespace,
@@ -51,7 +51,13 @@ export interface RuntimeDaemonLeaseOptions {
   readonly networkConfigHome?: string;
   /** @internal Commit shared ownership before the first hosted A2A or daemon RPC publication. */
   readonly commitStartup?: () => void;
-  createRuntime(runtimeId: string): Promise<KodaXRuntime>;
+  createRuntime(runtimeId: string, host: RuntimeDaemonHostRuntimeOptions): Promise<KodaXRuntime>;
+}
+
+/** What the Host's own config fixes for the runtime it serves. */
+export interface RuntimeDaemonHostRuntimeOptions {
+  /** The tools `integrations/host.json` limits every Run to, read again for each Run. */
+  readonly hostToolCeiling?: () => readonly string[] | undefined;
 }
 
 export interface RuntimeDaemonLease {
@@ -198,7 +204,10 @@ async function createClaimedDaemonLease(
   let runtime: KodaXRuntime | undefined;
   let hostStartAttempted = false;
   try {
-    runtime = await options.createRuntime(owner.runtimeId);
+    // A host.json that cannot be read stops the Host here, before anything starts.
+    const hostToolCeiling = options.networkConfigHome === undefined ? undefined
+      : (await loadHostRpcProtocol()).createHostToolCeiling(options.networkConfigHome);
+    runtime = await options.createRuntime(owner.runtimeId, hostToolCeiling === undefined ? {} : { hostToolCeiling });
     if (runtime.identity.runtimeId !== owner.runtimeId) {
       throw new Error('Runtime factory returned an identity that does not match its owner fence.');
     }

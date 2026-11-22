@@ -2,9 +2,10 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { setKodaXDiagnosticSink, type KodaXDiagnostic } from '@kodax-ai/agent';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { parseHostIntegrationDocument, readHostIntegration } from './config.js';
+import { createHostToolCeiling, parseHostIntegrationDocument, readHostIntegration } from './config.js';
 
 const JWT = { issuer: 'https://idp.example.test/realm', audience: 'kodax-host-1', jwksUrl: 'https://idp.example.test/jwks' };
 const LISTEN = { hostname: '0.0.0.0', port: 8787 };
@@ -40,7 +41,14 @@ describe('parseHostIntegrationDocument', () => {
       .toMatchObject({ workspaceRoot });
   });
 
+  it('reads the tools every Run on the Host is limited to, with or without a listener', () => {
+    expect(parseHostIntegrationDocument({ version: 1, server: { listen: LISTEN, jwt: JWT, owner: 'u', tools: ['read', 'grep'] } }).server)
+      .toMatchObject({ tools: ['read', 'grep'] });
+    expect(parseHostIntegrationDocument({ version: 1, server: { tools: [] } }).server).toEqual({ services: [], allowedOrigins: [], tools: [] });
+  });
+
   it.each([
+    ['a tool without a name', { tools: [''] }, /tools/u],
     ['a relative workspace', { listen: LISTEN, jwt: JWT, owner: 'u', workspaceRoot: 'workspace' }, /absolute/u],
     ['a field it does not know', { listen: LISTEN, jwt: JWT, owner: 'u', tls: true }, /tls/u],
     ['a listener without authentication', { listen: LISTEN }, /authentication/u],
@@ -59,6 +67,52 @@ describe('parseHostIntegrationDocument', () => {
 
   it('refuses another version', () => {
     expect(() => parseHostIntegrationDocument({ version: 2 })).toThrow(/version/u);
+  });
+});
+
+describe('createHostToolCeiling', () => {
+  const homes: string[] = [];
+  afterEach(() => { for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
+  const home = (): string => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'kodax-host-tools-'));
+    homes.push(dir);
+    mkdirSync(path.join(dir, 'integrations'));
+    return dir;
+  };
+  const write = (configHome: string, content: unknown): void =>
+    writeFileSync(path.join(configHome, 'integrations', 'host.json'), typeof content === 'string' ? content : JSON.stringify(content));
+
+  it('reads the file for each Run, so a change applies to the next one', () => {
+    const configHome = home();
+    const ceiling = createHostToolCeiling(configHome);
+    expect(ceiling()).toBeUndefined();
+    write(configHome, { version: 1, server: { tools: ['read'] } });
+    expect(ceiling()).toEqual(['read']);
+    write(configHome, { version: 1 });
+    expect(ceiling()).toBeUndefined();
+  });
+
+  it('refuses to start from a file it cannot read', () => {
+    const configHome = home();
+    write(configHome, { version: 1, server: { tools: [''] } });
+    expect(() => createHostToolCeiling(configHome)).toThrow(/tools/u);
+  });
+
+  it('keeps the last limit it read when an edit cannot be read, and says so once', () => {
+    const diagnostics: KodaXDiagnostic[] = [];
+    const restore = setKodaXDiagnosticSink(diagnostic => diagnostics.push(diagnostic));
+    try {
+      const configHome = home();
+      write(configHome, { version: 1, server: { tools: ['read'] } });
+      const ceiling = createHostToolCeiling(configHome);
+      write(configHome, '{ version: 1');
+      expect([ceiling(), ceiling()]).toEqual([['read'], ['read']]);
+      expect(diagnostics).toEqual([expect.objectContaining({ level: 'warn', detail: { error: expect.stringMatching(/host\.json/u) } })]);
+      write(configHome, { version: 1, server: { tools: ['grep'] } });
+      expect(ceiling()).toEqual(['grep']);
+    } finally {
+      restore();
+    }
   });
 });
 

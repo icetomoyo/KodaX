@@ -60,7 +60,7 @@ function loadHostMaintenance(): Promise<typeof import('./maintenance-scheduler.j
   return import('./maintenance-scheduler.js');
 }
 /** The v2 protocol definitions. Loaded on demand like the maintenance scheduler, so a CLI that only connects never imports zod. */
-function loadHostRpcProtocol(): Promise<HostRpcProtocol> {
+export function loadHostRpcProtocol(): Promise<HostRpcProtocol> {
   if (typeof KODAX_CLI_LAZY_COMPONENTS !== 'undefined' && KODAX_CLI_LAZY_COMPONENTS && !('Bun' in globalThis)) {
     const directory = new URL('.', import.meta.url);
     const component = directory.pathname.endsWith('/chunks/')

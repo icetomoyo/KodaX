@@ -377,6 +377,36 @@ describe('runtime daemon lease manager', () => {
     expect(readRuntimeDaemonLockOwner(lease.paths.lockFile)).toBeUndefined();
   });
 
+  it('gives the runtime the tool limit host.json fixes, and starts nothing from a host.json it cannot read', async () => {
+    const homeDir = tempHome();
+    const configHome = path.join(homeDir, '.kodax');
+    const hostJson = path.join(configHome, 'integrations', 'host.json');
+    fs.mkdirSync(path.dirname(hostJson), { recursive: true });
+    fs.writeFileSync(hostJson, JSON.stringify({ version: 1, server: { tools: ['read'] } }));
+    let ceiling: (() => readonly string[] | undefined) | undefined;
+    const lease = await acquireRuntimeDaemonLease({
+      homeDir, endpoint: await makeTestEndpoint(), networkConfigHome: configHome,
+      createRuntime: async (runtimeId, host) => {
+        ceiling = host.hostToolCeiling;
+        return makeRuntime(runtimeId);
+      },
+    });
+    cleanupTasks.push(() => lease.shutdown());
+    expect(ceiling?.()).toEqual(['read']);
+    await lease.shutdown();
+
+    fs.writeFileSync(hostJson, JSON.stringify({ version: 1, server: { tools: [''] } }));
+    const created = vi.fn();
+    await expect(acquireRuntimeDaemonLease({
+      homeDir, endpoint: await makeTestEndpoint(), networkConfigHome: configHome,
+      createRuntime: async (runtimeId) => {
+        created();
+        return makeRuntime(runtimeId);
+      },
+    })).rejects.toThrow(/tools/u);
+    expect(created).not.toHaveBeenCalled();
+  });
+
   it('shares concurrent owned-host shutdown and permits retry after failure', async () => {
     const homeDir = tempHome();
     let runtime: ReturnType<typeof makeRuntime> | undefined;

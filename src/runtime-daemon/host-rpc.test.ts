@@ -184,7 +184,12 @@ interface TestHost {
   readonly workspaceRoot: string;
   readonly workspace: HostWorkspace;
   /** Starts a runtime on this home. Call it again after closing one to restart the Host. */
-  start(options?: { readonly defaultProvider?: string }): Promise<KodaXRuntime>;
+  start(options?: TestHostOptions): Promise<KodaXRuntime>;
+}
+
+interface TestHostOptions {
+  readonly defaultProvider?: string;
+  readonly hostToolCeiling?: () => readonly string[] | undefined;
 }
 
 /** A Host home with a workspace that holds the project `app`. */
@@ -584,10 +589,12 @@ async function makeModelHost(turn?: ModelTurn) {
   });
   return {
     ...host,
-    start: () => host.start({ defaultProvider: MODEL }),
+    start: (options: TestHostOptions = {}) => host.start({ defaultProvider: MODEL, ...options }),
     calls: () => calls,
     /** What the model was last asked: the tools it was offered, and its instructions and conversation as one text. */
     lastRequest: () => requests.at(-1)!,
+    /** The last request of a Run: the memory review a finished Run starts asks the model too. */
+    lastRunRequest: () => [...requests].reverse().find(request => !request.tools.includes('commit_episode_learning_review'))!,
     /** Makes the model wait. Resolves `called` when the model is next asked. */
     hold(): { readonly called: Promise<void>; readonly release: () => void } {
       gate = new Promise<void>((resolve) => { release = resolve; });
@@ -1560,6 +1567,38 @@ describe('v2 Session policy served by the v1 implementation', () => {
     expect(await user.request('session.policy.get', { sessionId: fork.session.id })).toEqual({ policy: POLICY });
     const recovered = await user.request('session.recover', { requestId: 'recover-1', sessionId: session.id }) as SessionAnswer;
     expect(await user.request('session.policy.get', { sessionId: recovered.session.id })).toEqual({ policy: POLICY });
+  }, 60_000);
+});
+
+describe('the tool limit of the Host, served by the v1 implementation', () => {
+  it('holds every Run and every named tool to the tools the Host allows, and follows a change for the next Run', async () => {
+    let ceiling: readonly string[] | undefined = ['read', 'grep'];
+    const host = await makeModelHost();
+    const runtime = await host.start({ hostToolCeiling: () => ceiling });
+    const service = await connect('service', runtime, host.workspace);
+    const user = await connect('user', runtime, host.workspace);
+    const offered = async (sessionId: string, requestId: string): Promise<string[]> => {
+      const { input } = await user.request('input.submit', { requestId, sessionId, text: 'What is in the notes?' }) as InputAnswer;
+      await user.request('run.wait', { runId: input.runId });
+      return [...host.lastRunRequest().tools].sort();
+    };
+
+    const { session } = await user.request('session.create', { requestId: 'create-1', project: 'app' }) as SessionAnswer;
+    expect(await offered(session.id, 'input-1')).toEqual(['grep', 'read']);
+    const bash = await user.request('run.startTool', {
+      requestId: 'tool-1', sessionId: session.id, tool: 'bash', input: { command: 'echo made > made.txt' }, text: 'run it',
+    }) as RunAnswer;
+    expect((await user.request('run.wait', { runId: bash.run.id }) as RunAnswer).run.outcome).toMatchObject({ status: 'failed' });
+    expect(existsSync(path.join(host.workspaceRoot, 'app', 'made.txt'))).toBe(false);
+    // Refused because the Host does not have the tool, not for want of an approval.
+    expect(JSON.stringify(await user.request('history.read', { sessionId: session.id }))).toContain('bash: Tool is not active');
+
+    // A Session policy narrows inside the Host limit and widens nothing.
+    const fixed = await service.request('session.create', { requestId: 'create-2', project: 'app', policy: { tools: ['grep', 'bash'] } }) as SessionAnswer;
+    expect(await offered(fixed.session.id, 'input-2')).toEqual(['grep']);
+
+    ceiling = undefined;
+    expect(await offered(session.id, 'input-3')).toContain('bash');
   }, 60_000);
 });
 

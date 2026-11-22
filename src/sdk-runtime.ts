@@ -994,6 +994,8 @@ export interface CreateKodaXHostRuntimeOptions extends Omit<CreateKodaXRuntimeOp
   readonly sharedDaemonHost?: boolean;
   readonly daemonHostRuntimeId?: string;
   readonly externalAgents?: RuntimeExternalAgentsOptions;
+  /** The only tools any Run on this Host may use, asked again for each Run. Undefined leaves them unlimited. */
+  readonly hostToolCeiling?: () => readonly string[] | undefined;
 }
 
 export interface RuntimeExecPolicyOptions {
@@ -5517,6 +5519,7 @@ async function createKodaXRuntimeInternal(
     defaultConfigHome: configHome,
     execPolicy: options.execPolicy,
     autoReview: options.autoReview,
+    hostToolCeiling: options.hostToolCeiling,
     ensureOpen,
     isClosed: () => closed,
     scheduleManagedTaskMaintenance,
@@ -10584,6 +10587,7 @@ async function createRuntimeRunService(deps: {
   readonly defaultProvider?: string;
   readonly execPolicy?: RuntimeExecPolicyOptions;
   readonly autoReview?: RuntimeAutoReviewOptions;
+  readonly hostToolCeiling?: () => readonly string[] | undefined;
   readonly defaultAgentContext?: AgentDispatchContext;
   readonly ensureOpen: () => void;
   readonly isClosed: () => boolean;
@@ -12833,6 +12837,9 @@ async function createRuntimeRunService(deps: {
     if (ownOptions !== undefined) options = { ...applySessionPolicy(options, ownOptions), soleInput: true };
     // A stored policy this Host cannot read refuses the Run: an unread limit is not a lifted one.
     options = applySessionPolicy(options, parseSessionPolicy(admittedSessionContext.runtimeInfo?.policy));
+    // The Host's limit is bound last, so neither the Run nor its Session can lift it.
+    const hostTools = deps.hostToolCeiling?.();
+    if (hostTools !== undefined) options = applySessionPolicy(options, { tools: hostTools });
     const side = deps.persistence.sideChats.get(input.sessionId);
     if (side) {
       const allowed = ['read', 'glob', 'grep', 'send_to_parent'];

@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 import { resolveIntegrationConfigPath, type IntegrationConfigSnapshot } from '@kodax-ai/repl';
 import { z } from 'zod/v4';
 
@@ -53,6 +54,8 @@ const Server = z.strictObject({
   allowedOrigins: z.array(Origin).default([]),
   /** The directory network clients may name projects in, by their path inside it. Without it they can name none. */
   workspaceRoot: z.string().refine(path.isAbsolute, { message: 'must be an absolute path' }).optional(),
+  /** The only tools any Run on this Host may use, whoever submits it. Absent leaves them unlimited. */
+  tools: z.array(z.string().min(1)).optional(),
 }).superRefine((server, context) => {
   const admitsBySubject = server.owner !== undefined || server.services.length > 0;
   if (server.jwt !== undefined && !admitsBySubject) {
@@ -102,6 +105,33 @@ export function readHostIntegration(configHome: string): IntegrationConfigSnapsh
     revision: createHash('sha256').update(raw).digest('hex'),
     document: parseHostIntegrationDocument(value),
     loadedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * The tool limit of the Host as host.json says now, read again for each Run.
+ * A file it cannot read at start stops the Host. A bad edit later leaves the
+ * last limit read in force, so a slip in the file never lifts it.
+ */
+export function createHostToolCeiling(configHome: string): () => readonly string[] | undefined {
+  let current = readHostIntegration(configHome).document.server?.tools;
+  let reported: string | undefined;
+  return () => {
+    try {
+      current = readHostIntegration(configHome).document.server?.tools;
+      reported = undefined;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      // Said once per mistake, not once per Run.
+      if (message !== reported) {
+        emitKodaXDiagnostic({
+          source: 'host.tools', level: 'warn', message: 'host.json was not applied; the previous tool limit stays in force.',
+          detail: { error: message },
+        });
+      }
+      reported = message;
+    }
+    return current;
   };
 }
 
