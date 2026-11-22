@@ -2053,9 +2053,11 @@ v1 只需要在 **Host** 里保留一段时间，原因是一台机器上的 Hos
 
 ### 删除 v1
 
-- 节奏自己定，比如 v2 发布后再过 2 个版本。
-- CHANGELOG 提前公告。
-- Host 遇到 v1 连接时打印弃用警告。
+- 删除线（2026-11-22 用户决定）：`v0.7.100`，如果先发 `v0.8.0` 就在 `v0.8.0`。0.8.0 排在 0.7.100 之后，所以只有一条线。
+- 保证到期会删：`src/host-protocol-v1-removal.test.ts` 从第一个 0.7.100 版本（预发布也算）起失败，CI 拦住带着 v1 的发版。删 v1 的提交同时删掉这个测试。任务登记为 FEATURE_314。
+- CHANGELOG 提前公告：[Unreleased] 的 Deprecated 已经写上。
+- Host 遇到 v1 连接时打印弃用警告：等 KodaX 自己不再用 v1 之后再加（打印模式、`-r`、`daemon` 命令、`ensureKodaXHostClient` 里的 v1 启动和探测、`recovering-runtime-client`、导出的 v1 product client）。v1 `initialize` 不带客户端版本，在那之前警告会打到当前版本的客户端上。每个 v1 客户端实例只打一次。
+- 窗口从发布 v2 的版本算起。v2 晚于 `v0.7.98` 发布时，同时带两个协议的版本不足 2 个，届时重新确认删除线。
 
 ### 其他规则
 

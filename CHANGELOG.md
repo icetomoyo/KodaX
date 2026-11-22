@@ -49,6 +49,14 @@ All notable changes to this project will be documented in this file.
     commands they add are in `/help`.
   - The status panel reads its counts from the Host.
 
+### Deprecated
+
+- Host protocol v1 is removed in 0.7.100, or in 0.8.0 if that comes first.
+  Clients that connect to a Host over v1 (the v1 product Client from
+  `@kodax-ai/kodax`, `ensureKodaXRuntime`, and KodaX CLIs or Zed ACP from
+  before the v2 release) must move to the v2 client
+  (`ensureKodaXHostClient` from `@kodax-ai/kodax/client`) by then.
+
 ### Removed
 
 - The `/auto-denials` REPL command.

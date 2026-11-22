@@ -22,12 +22,12 @@
 | Visual harness implementation | P3/P4/P5/P6 implemented within declared scope and released in `v0.7.97-beta.5` through the next-dev integration; [final ID/receipt contract delivery](designs/visual-harness-id-contract-delivery-2026-10-30.md). P7 task-value evaluation concluded **mixed; net task-quality/token value unproven**, against optimized pre-visual 1826cc22; [final review and limits](designs/visual-harness-current-version-closure-2026-10-30.md). The 2026-10-29 plan's "not executed" state and old r3 single-response results are historical, not the current outcome. Historical default suite 18,094 passed / 0 failed; earlier failures and unlocated causes remain recorded; [mainline integration acceptance](designs/next-dev-integration-execution-2026-11-09.md). No new feature ID/version assigned |
 | Roadmap updated | `2026-11-21` — beta.13 prepared on top of the npm-published beta.12 with the Space integration repairs and Session-read cost fixes (Issues 424-430) and the display-history checkpoint append; beta.12 published with one prompt chain and final Stop outcomes; FEATURE_312/313 registered for the SDK v2 contract; FEATURE_300 remains Planned; merged into `KodaX-next-dev` on 2026-11-21. `2026-11-16` — beta.11 prepared on top of the npm-published beta.10 with readable history during a busy Run and tool-neutral Skills, merged into `KodaX-next-dev` on 2026-11-17; FEATURE_300 remains Planned. `2026-11-15` — FEATURE_308 note memory Completed on `KodaX-next-dev` (unreleased, on by default); FEATURE_309 legacy memory code deletion Planned for `v0.8.11`, blocked by Issue 411; beta.10 published (GitHub prerelease and npm `beta`) with merged-input acknowledgement (`ClientViewItem.inputIds`) and the merged-input restore fix, merged into `KodaX-next-dev` on 2026-11-15. `2026-11-13` — beta.9 prepared on top of the published beta.8 with FEATURE_306 data root resolver and copy (Completed, shipped in `v0.7.97-beta.9`); FEATURE_305 Completed; FEATURE_300 remains Planned; `KodaX-next-dev` merged beta.9 on 2026-11-14 and carries the unreleased FEATURE_307 side chat and FEATURE_308 memory redesign |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
-| Total tracked features | `97` |
+| Total tracked features | `98` |
 | InProgress | `3` |
-| Planned | `20` |
+| Planned | `21` |
 | Completed | `68` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
-| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313` |
+| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314` |
 | Archive cutoff | Shipped / canceled / absorbed / shelved items through `v0.7.49` are archived. |
 
 ### 一览表
@@ -38,6 +38,7 @@
 | InProgress | 3 | `307, 298, 225` | `307`: R1–R6 hardening and verification per [side-chat plan](designs/side-chat-plan.md). `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
 | Planned, SDK v2 | 2 | `312, 313` | `312` and `313` are implemented on `KodaX-next-dev`, unreleased; they ship with the SDK v2 work. `313`, including its stall limit, is built wholly on `KodaX-next-dev`; mainline adds nothing. |
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
+| Planned, 0.7.100 | 1 | `314` | Remove Host protocol v1 (or in `v0.8.0` if that comes first); KodaX's own v1 callers move to v2 first. `src/host-protocol-v1-removal.test.ts` fails from the first 0.7.100 build. |
 | Planned, 0.8.x | 11 | `278, 279, 282, 283, 285, 280, 309, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
 | Reviewed out, 2026-07-12 | 6 | `244, 231, 235, 238, 232, 108` | Shelved, deferred, absorbed, or cancelled after the post-v0.7.70 roadmap review; F105 was restored by the 2026-07-29 MoA redesign. |
@@ -92,7 +93,7 @@
 | `v0.7.97` | `2` |
 | `v0.7.98` | `0` |
 | `v0.7.99` | `1` |
-| `v0.7.100` | `0` |
+| `v0.7.100` | `1` |
 | `v0.7.105` | `0` |
 | `v0.8.10` | `5` |
 | `v0.8.11` | `2` |
@@ -2471,6 +2472,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 |---|---|---|---|---|---|
 | `312` | Stable Product History Identity | SDK / Session History | High | SDK v2 | [Addition](#2026-11-21-feature_312-addition) — Implemented on `KodaX-next-dev` 2026-11-21, unreleased |
 | `313` | Queryable Session Recovery State | SDK / Runtime Recovery | High | SDK v2 | [Addition](#2026-11-21-feature_313-addition) — Implemented on `KodaX-next-dev` 2026-11-21, unreleased; built wholly there |
+| `314` | Host Protocol v1 Removal | SDK / Host Protocol | High | `v0.7.100` | [Addition](#2026-11-22-feature_314-addition) — Planned; `src/host-protocol-v1-removal.test.ts` fails from the first 0.7.100 build |
 | `300` | Git Execution Consolidation with Shared macOS Preflight | Refactor | Medium | `v0.7.99` | [v0.7.99](features/v0.7.99.md#feature_300-git-execution-consolidation-with-shared-macos-preflight) — Planned; design only |
 | `287` | Advisor Mode Virtual Provider | Enhancement / LLM Provider + Session Quality | High | `v0.8.13` | [v0.8.13](features/v0.8.13.md#feature_287-advisor-mode-virtual-provider) |
 | `288` | CLI-Space Daemon Profile Alignment | Enhancement / Runtime + Multi-Client UX | High | `v0.8.14` | [v0.8.14](features/v0.8.14.md#feature_288-cli-space-daemon-profile-alignment) |
@@ -2491,6 +2493,35 @@ fixed GitHub binary archive sidecar omission before tagging.
 | `262` | npm 12 Install-Time Security + Trusted Publishing Migration | Internal / Supply Chain Security | High | `v0.9.0` | [v0.9.0](features/v0.9.0.md#feature_262-npm-12-install-time-security--trusted-publishing-migration) |
 
 ---
+
+## 2026-11-22 FEATURE_314 Addition
+
+- Status: Planned. Owner decision (2026-11-22): remove Host protocol v1 in
+  `v0.7.100`, or in `v0.8.0` if that comes first. 0.8.0 sorts after 0.7.100,
+  so `src/host-protocol-v1-removal.test.ts` checks one line: it fails from the
+  first 0.7.100 build, prereleases included, and CI stops that release.
+- Why a window: one Host serves every client of its home, whatever their
+  version (ADR-075). Space upgrading often does not help an old global
+  `kodax` CLI, an old Zed ACP or a program built on the v1 client when they
+  connect to a Host a newer Space started. The test makes sure the window
+  closes.
+- Scope, in order:
+  - Move KodaX's own v1 callers to v2: print mode, `-r` session lookup and
+    the `daemon` commands in `src/kodax_cli.ts`; the v1 start and probe
+    inside `ensureKodaXHostClient` (`src/local-host-client.ts`);
+    `src/recovering-runtime-client.ts`; the v1 product client exported from
+    `src/sdk-runtime-public.ts`.
+  - Then the Host logs one deprecation warning per v1 client instance. It waits
+    for the step above because v1 `initialize` carries no client version: while
+    KodaX itself still opens v1, the warning would fire for current clients.
+  - Delete the v1 dispatch and its tests, the v1 REPL adapters
+    (`src/cli-client-plane.ts`, `src/repl-learning-binding.ts`,
+    `tests/repl-v1-auto-mode-control.ts`) and the removal test.
+  - CHANGELOG: the deprecation is announced under [Unreleased] now; the
+    release that removes v1 lists it under Breaking.
+- Risk: the window counts from the release that ships v2. If v2 ships after
+  `v0.7.98`, fewer than two versions carry both protocols; recheck the line
+  then.
 
 ## 2026-11-21 FEATURE_313 Addition
 
