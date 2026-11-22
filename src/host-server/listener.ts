@@ -4,7 +4,8 @@
  * socket, how many sockets may wait for their handshake, silence, a client
  * that stops reading, and the close code that tells a client why. The peer it
  * creates for each socket owns the protocol, credentials included. The same
- * port answers `GET /healthz` for the platform that runs the Host.
+ * port answers `GET /healthz` for the platform that runs the Host, and hands
+ * other HTTP requests to the Host's web pages.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createRequire } from 'node:module';
@@ -60,16 +61,32 @@ export interface HostHealth {
   readonly lastActivityAt: number;
 }
 
+/** A browser the Host paired with, and the cookie to send it again so the cookie does not lapse. */
+export interface HostDeviceAdmission {
+  readonly device: string;
+  readonly setCookie: string;
+}
+
 export interface HostNetworkListenerOptions {
   readonly listen: { readonly hostname: string; readonly port: number } | { readonly socketPath: string };
   /** Whether a browser origin may open a socket. A client that sends no Origin is not a browser and is let through. */
   readonly allowsOrigin: (origin: string) => boolean;
+  /**
+   * The paired device a browser is, from its `Cookie` header and the origin it opened the socket from. A
+   * device may open a socket from the origin it paired from without that origin being allowed.
+   */
+  readonly admitsDevice?: (request: { readonly origin: string; readonly cookie: string }) => HostDeviceAdmission | undefined;
+  /** Answers HTTP requests other than `/healthz`. Without it they get 404. */
+  readonly serveHttp?: (request: IncomingMessage, response: ServerResponse) => void;
   readonly maxFrameBytes: number;
   /** A socket the Host hears nothing on for this long is closed as idle. */
   readonly idleTimeoutMs: number;
   readonly health: () => Promise<HostHealth>;
-  /** `origin` is the browser origin that opened the socket, absent for a client that is not a browser. */
-  readonly createPeer: (transport: HostNetworkTransport, request: { readonly origin?: string }) => HostNetworkPeer;
+  /**
+   * `origin` is the browser origin that opened the socket, absent for a client that is not a browser.
+   * `device` is the paired device it is, already admitted by its cookie.
+   */
+  readonly createPeer: (transport: HostNetworkTransport, request: { readonly origin?: string; readonly device?: string }) => HostNetworkPeer;
   /** @internal Tests lower the limits. */
   readonly maxPendingHandshakes?: number;
   /** @internal */
@@ -95,6 +112,8 @@ interface WsSocket {
 }
 interface WsServer {
   handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer, callback: (socket: WsSocket) => void): void;
+  /** The response headers of a handshake it is about to accept, which a listener may add to. */
+  on(event: 'headers', listener: (headers: string[], request: IncomingMessage) => void): void;
 }
 type WsServerConstructor = new (options: {
   readonly noServer: true;
@@ -109,14 +128,20 @@ export async function startHostNetworkListener(options: HostNetworkListenerOptio
   const wss = new WebSocketServer({ noServer: true, maxPayload: options.maxFrameBytes, perMessageDeflate: false, clientTracking: false });
   const maxPending = options.maxPendingHandshakes ?? MAX_PENDING_HANDSHAKES;
   const connections = new Map<WsSocket, HostNetworkPeer>();
+  const devices = new WeakMap<IncomingMessage, HostDeviceAdmission>();
   let draining = false;
+  wss.on('headers', (headers, request) => {
+    const device = devices.get(request);
+    if (device !== undefined) headers.push(`Set-Cookie: ${device.setCookie}`);
+  });
 
   const server = createServer((request, response) => {
     if (request.method === 'GET' && new URL(request.url ?? '/', 'http://host').pathname === HOST_HEALTH_PATH) {
       void answerHealth(response);
       return;
     }
-    response.writeHead(404).end();
+    if (options.serveHttp !== undefined) options.serveHttp(request, response);
+    else response.writeHead(404).end();
   });
   async function answerHealth(response: ServerResponse): Promise<void> {
     let health: HostHealth;
@@ -142,19 +167,25 @@ export async function startHostNetworkListener(options: HostNetworkListenerOptio
       return;
     }
     const { origin } = request.headers;
-    wss.handleUpgrade(request, socket, head, upgraded => attach(upgraded, origin));
+    const device = devices.get(request)?.device;
+    wss.handleUpgrade(request, socket, head, upgraded => attach(upgraded, {
+      ...(origin !== undefined ? { origin } : {}), ...(device !== undefined ? { device } : {}),
+    }));
   });
 
   function refuseUpgrade(request: IncomingMessage): string | undefined {
     if (draining) return '503 Service Unavailable';
     if (new URL(request.url ?? '/', 'http://host').pathname !== HOST_WEBSOCKET_PATH) return '404 Not Found';
-    const { origin } = request.headers;
-    if (origin !== undefined && !options.allowsOrigin(origin)) return '403 Forbidden';
     const pending = [...connections.values()].filter(peer => !peer.admitted()).length;
-    return pending >= maxPending ? '503 Service Unavailable' : undefined;
+    if (pending >= maxPending) return '503 Service Unavailable';
+    const { origin, cookie } = request.headers;
+    if (origin === undefined) return undefined;
+    const device = cookie !== undefined ? options.admitsDevice?.({ origin, cookie }) : undefined;
+    if (device !== undefined) devices.set(request, device);
+    return device !== undefined || options.allowsOrigin(origin) ? undefined : '403 Forbidden';
   }
 
-  function attach(socket: WsSocket, origin: string | undefined): void {
+  function attach(socket: WsSocket, request: { readonly origin?: string; readonly device?: string }): void {
     let open = true;
     let congested = false;
     let dropAfterGrace: ReturnType<typeof setTimeout> | undefined;
@@ -192,7 +223,7 @@ export async function startHostNetworkListener(options: HostNetworkListenerOptio
       },
       disconnect,
       congested: () => congested,
-    }, origin !== undefined ? { origin } : {});
+    }, request);
     connections.set(socket, peer);
     socket.on('message', (data, isBinary) => {
       if (!open) return;

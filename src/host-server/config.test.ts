@@ -41,6 +41,12 @@ describe('parseHostIntegrationDocument', () => {
       .toMatchObject({ workspaceRoot });
   });
 
+  it('reads a Host that admits paired devices without a JWT check, and the web pages it serves', () => {
+    const webRoot = path.resolve('/opt/kodax-space/web');
+    expect(parseHostIntegrationDocument({ version: 1, server: { listen: LISTEN, pairing: true, webRoot } }).server)
+      .toEqual({ listen: LISTEN, pairing: true, webRoot, services: [], allowedOrigins: [] });
+  });
+
   it('reads the tools every Run on the Host is limited to, with or without a listener', () => {
     expect(parseHostIntegrationDocument({ version: 1, server: { listen: LISTEN, jwt: JWT, owner: 'u', tools: ['read', 'grep'] } }).server)
       .toMatchObject({ tools: ['read', 'grep'] });
@@ -52,6 +58,8 @@ describe('parseHostIntegrationDocument', () => {
     ['a relative workspace', { listen: LISTEN, jwt: JWT, owner: 'u', workspaceRoot: 'workspace' }, /absolute/u],
     ['a field it does not know', { listen: LISTEN, jwt: JWT, owner: 'u', tls: true }, /tls/u],
     ['a listener without authentication', { listen: LISTEN }, /authentication/u],
+    ['a listener with pairing turned off and no JWT check', { listen: LISTEN, pairing: false }, /authentication/u],
+    ['web pages at a relative path', { listen: LISTEN, pairing: true, webRoot: 'web' }, /absolute/u],
     ['a JWT check that admits nobody', { listen: LISTEN, jwt: JWT }, /owner or server\.services/u],
     ['subjects without a JWT check', { listen: LISTEN, owner: 'u' }, /server\.jwt/u],
     ['a subject that is both owner and service', { listen: LISTEN, jwt: JWT, owner: 'u', services: ['u'] }, /both/u],

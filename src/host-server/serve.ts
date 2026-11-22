@@ -1,15 +1,17 @@
 /**
  * Starts what the `server` block of `host.json` asks for: a WebSocket listener
- * whose clients prove who they are with a JWT. The owner's subject connects as
- * `user`, a listed backend's as `service`, and nobody else gets in. The caller
+ * whose clients prove who they are with a JWT or a paired device's cookie. The
+ * owner's subject connects as `user`, a listed backend's as `service`, a
+ * paired browser as `user`, and nobody else gets in. The same port serves the
+ * pairing endpoint and the pages in `webRoot`. The caller
  * builds the peer for each connection, so this module never loads the Host's
  * dispatcher and the dispatcher never loads this one.
  *
  * Who is admitted follows the file while the Host runs. A connection the new
  * file would not admit is closed: as `revoked` when its subject or origin was
- * dropped, as `credential` when the JWT check itself changed, so the client
- * fetches a token the new check accepts. Where to listen and the workspace
- * take effect when the Host restarts.
+ * dropped or pairing was turned off, as `credential` when the JWT check itself
+ * changed, so the client fetches a token the new check accepts. Where to
+ * listen, the workspace and the web root take effect when the Host restarts.
  */
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -33,11 +35,12 @@ import {
   type HostNetworkPeer,
   type HostNetworkTransport,
 } from './listener.js';
+import { createHostWebHandler, deviceCookie, readDeviceCookie } from './web.js';
 
 /** A network socket the Host hears nothing on for this long is closed. Clients ping well inside it. */
 const IDLE_TIMEOUT_MS = 60_000;
 /** Fields read once when the Host starts. */
-const RESTART_FIELDS = ['listen', 'workspaceRoot'] as const;
+const RESTART_FIELDS = ['listen', 'workspaceRoot', 'webRoot'] as const;
 
 /** What every network connection shares: how to check its credential, its limits, and the workspace it may name projects in. */
 export interface HostNetworkConnection {
@@ -71,6 +74,8 @@ interface Admission {
 interface TrackedConnection {
   readonly transport: HostNetworkTransport;
   readonly origin?: string;
+  /** The paired device it is, admitted by its cookie. */
+  readonly device?: string;
   /** The credential it was last admitted or renewed with. */
   credential?: HostCredential;
 }
@@ -79,8 +84,8 @@ interface TrackedConnection {
 export async function startHostNetworkServer(options: HostNetworkServerOptions): Promise<HostNetworkServer | undefined> {
   // Read directly first, so a file that stops the Host names what is wrong with it.
   const served = readHostIntegration(options.configHome).document.server;
-  // The config refuses `listen` without `jwt`; the second check only narrows the type.
-  if (served?.listen === undefined || served.jwt === undefined) return undefined;
+  // The config refuses `listen` with neither; the second check only narrows the type.
+  if (served?.listen === undefined || (served.jwt === undefined && served.pairing !== true)) return undefined;
   const controller = new IntegrationConfigController<HostIntegrationDocument>({
     domain: 'host',
     configHome: options.configHome,
@@ -116,11 +121,18 @@ export async function startHostNetworkServer(options: HostNetworkServerOptions):
     limits: { maxFrameBytes: options.maxFrameBytes, idleTimeoutMs: IDLE_TIMEOUT_MS },
     ...(served.workspaceRoot !== undefined ? { workspace: createHostWorkspace(served.workspaceRoot) } : {}),
   };
+  const pairing = (): HostDeviceRegistry | undefined => (admission.server?.pairing === true ? devices : undefined);
   let listener: HostNetworkListener;
   try {
     listener = await startHostNetworkListener({
       listen: listenAddress(served.listen),
       allowsOrigin: origin => admission.server?.allowedOrigins.includes(origin) === true,
+      admitsDevice: ({ origin, cookie }) => {
+        const token = readDeviceCookie(cookie);
+        const device = token !== undefined ? pairing()?.admit(token, origin) : undefined;
+        return device !== undefined ? { device: device.id, setCookie: deviceCookie(token!, origin) } : undefined;
+      },
+      serveHttp: createHostWebHandler({ ...(served.webRoot !== undefined ? { webRoot: served.webRoot } : {}), devices: pairing }),
       maxFrameBytes: options.maxFrameBytes,
       idleTimeoutMs: IDLE_TIMEOUT_MS,
       health: options.health,
@@ -130,6 +142,11 @@ export async function startHostNetworkServer(options: HostNetworkServerOptions):
         const peer = options.createPeer(transport, {
           ...shared,
           authenticate: async (auth) => {
+            // Its cookie already proved who it is.
+            if (tracked.device !== undefined) {
+              tracked.credential = { role: 'user', subject: tracked.device };
+              return tracked.credential;
+            }
             for (;;) {
               const seen = generation;
               const credential = await admission.authenticate(auth);
@@ -199,6 +216,7 @@ function admit(server: HostServerConfig | undefined, verifier: HostJwtVerifier |
 
 /** Why a connection must close under the new file, or undefined when it may stay. */
 function recheck(connection: TrackedConnection, next: HostServerConfig | undefined, jwtChanged: boolean): HostCloseReason | undefined {
+  if (connection.device !== undefined) return next?.pairing === true ? undefined : 'revoked';
   if (connection.origin !== undefined && next?.allowedOrigins.includes(connection.origin) !== true) return 'revoked';
   // One still in its handshake is checked under the new file when its check ends.
   if (connection.credential === undefined) return undefined;

@@ -163,8 +163,10 @@ describe('a listening Host that reads host.json again when it changes', () => {
     return started;
   }
 
-  async function connect(sub: string, origin?: string, audience?: string) {
-    const socket = new WebSocket(`ws://127.0.0.1:${network!.port!}/v2`, origin !== undefined ? { headers: { origin } } : {});
+  /** `cookie` is a paired device's; its first frame is then ignored. */
+  async function connect(sub: string, origin?: string, audience?: string, cookie?: string) {
+    const headers = { ...(origin !== undefined ? { origin } : {}), ...(cookie !== undefined ? { cookie } : {}) };
+    const socket = new WebSocket(`ws://127.0.0.1:${network!.port!}/v2`, { headers });
     sockets.push(socket);
     const messages: string[] = [];
     let closedWith: number | undefined;
@@ -179,11 +181,57 @@ describe('a listening Host that reads host.json again when it changes', () => {
     return { messages, socket, closedWith: () => closedWith };
   }
 
+  /** Pairs a browser on `origin` through `POST /pair`, and answers with the Cookie header it sends from then on. */
+  async function pairBrowser(origin: string): Promise<string> {
+    const { code } = network!.devices.pair({ requestId: origin, name: 'Phone' });
+    const response = await fetch(`http://127.0.0.1:${network!.port!}/pair`, {
+      method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ code }),
+    });
+    expect(response.status).toBe(200);
+    return response.headers.get('set-cookie')!.split(';')[0]!;
+  }
+
   it('keeps the devices paired with it in the home', async () => {
     writeConfig({ owner: 'person-1' });
     const { devices } = await start();
     devices.redeem(devices.pair({ requestId: 'r1', name: 'Phone' }).code, 'https://laptop.example.test');
     expect(existsSync(path.join(configHome, 'runtime', 'devices.json'))).toBe(true);
+  });
+
+  it('pairs a browser on a Host without a JWT check, and admits it as user from the origin it paired from only', async () => {
+    writeConfig({ jwt: undefined, pairing: true });
+    await start();
+    const cookie = await pairBrowser('https://laptop.example.test');
+
+    const phone = await connect('ignored', 'https://laptop.example.test', undefined, cookie);
+    expect(phone.messages[0]).toBe('ok:user');
+    await expect(connect('ignored', 'https://evil.example.test', undefined, cookie)).rejects.toThrow();
+    // Without a device cookie there is nothing else to admit it by.
+    await expect(connect('person-1').then(client => client.messages[0])).resolves.toBe('refused:subject_not_admitted');
+  });
+
+  it('hangs up with revoked on paired browsers when pairing is turned off, and pairs no more', async () => {
+    writeConfig({ owner: 'person-1', pairing: true });
+    await start();
+    const phone = await connect('ignored', 'https://laptop.example.test', undefined, await pairBrowser('https://laptop.example.test'));
+    const owner = await connect('person-1');
+
+    writeConfig({ owner: 'person-1' });
+    await vi.waitFor(() => expect(phone.closedWith()).toBe(4403), { timeout: 5_000 });
+    expect(owner.closedWith()).toBeUndefined();
+    const refused = await fetch(`http://127.0.0.1:${network!.port!}/pair`, {
+      method: 'POST', headers: { origin: 'https://laptop.example.test' }, body: JSON.stringify({ code: 'any' }),
+    });
+    expect(refused.status).toBe(404);
+  });
+
+  it('serves the web pages in its web root on the same port', async () => {
+    const webRoot = path.join(configHome, 'web');
+    mkdirSync(webRoot);
+    writeFileSync(path.join(webRoot, 'index.html'), '<title>KodaX</title>');
+    writeConfig({ owner: 'person-1', webRoot });
+    await start();
+    expect(await (await fetch(`http://127.0.0.1:${network!.port!}/`)).text()).toBe('<title>KodaX</title>');
   });
 
   it('hangs up with revoked on a subject no longer admitted, and keeps the others', async () => {

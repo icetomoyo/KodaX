@@ -52,6 +52,10 @@ const Server = z.strictObject({
   services: z.array(Subject).default([]),
   /** Browser origins allowed to connect. Empty refuses every browser. */
   allowedOrigins: z.array(Origin).default([]),
+  /** Whether a person may pair browsers with this Host, which then connect as `user` without a JWT. */
+  pairing: z.boolean().optional(),
+  /** The directory of static web pages the Host serves on its own port, such as KodaX Space's web UI. */
+  webRoot: z.string().refine(path.isAbsolute, { message: 'must be an absolute path' }).optional(),
   /** The directory network clients may name projects in, by their path inside it. Without it they can name none. */
   workspaceRoot: z.string().refine(path.isAbsolute, { message: 'must be an absolute path' }).optional(),
   /** The only tools any Run on this Host may use, whoever submits it. Absent leaves them unlimited. */
@@ -64,8 +68,10 @@ const Server = z.strictObject({
   if (server.jwt === undefined && admitsBySubject) {
     context.addIssue({ code: 'custom', path: ['owner'], message: 'server.owner and server.services name JWT subjects: set server.jwt' });
   }
-  if (server.listen !== undefined && server.jwt === undefined) {
-    context.addIssue({ code: 'custom', path: ['listen'], message: 'a Host that listens on the network needs authentication: set server.jwt' });
+  if (server.listen !== undefined && server.jwt === undefined && server.pairing !== true) {
+    context.addIssue({
+      code: 'custom', path: ['listen'], message: 'a Host that listens on the network needs authentication: set server.jwt or turn on server.pairing',
+    });
   }
   if (server.owner !== undefined && server.services.includes(server.owner)) {
     context.addIssue({ code: 'custom', path: ['services'], message: `${server.owner} is both the owner and a service` });

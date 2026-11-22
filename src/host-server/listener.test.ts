@@ -21,6 +21,7 @@ interface ClientSocket {
   on(event: 'message', listener: (data: Buffer) => void): void;
   on(event: 'close', listener: (code: number, reason: Buffer) => void): void;
   on(event: 'unexpected-response', listener: (request: unknown, response: IncomingMessage) => void): void;
+  on(event: 'upgrade', listener: (response: IncomingMessage) => void): void;
   on(event: 'error', listener: (error: Error) => void): void;
 }
 const { WebSocket } = createRequire(import.meta.url)('ws') as {
@@ -30,6 +31,7 @@ const { WebSocket } = createRequire(import.meta.url)('ws') as {
 interface TestPeer {
   readonly received: string[];
   readonly origin: string | undefined;
+  readonly device: string | undefined;
   ready: boolean;
   closed: boolean;
   toldDraining: boolean;
@@ -59,6 +61,7 @@ async function listen(options: Partial<HostNetworkListenerOptions> = {}) {
       const peer: TestPeer & HostNetworkPeer = {
         received: [],
         origin: request.origin,
+        device: request.device,
         ready: false,
         closed: false,
         toldDraining: false,
@@ -82,11 +85,14 @@ async function listen(options: Partial<HostNetworkListenerOptions> = {}) {
 }
 
 /** Opens a client, or rejects with the HTTP status the listener refused it with. */
-function connect(url: string, origin?: string) {
-  const socket = new WebSocket(url, origin !== undefined ? { headers: { origin } } : {});
+function connect(url: string, origin?: string, cookie?: string) {
+  const headers = { ...(origin !== undefined ? { origin } : {}), ...(cookie !== undefined ? { cookie } : {}) };
+  const socket = new WebSocket(url, { headers });
   sockets.push(socket);
   const messages: string[] = [];
+  let setCookie: string[] | undefined;
   socket.on('message', data => messages.push(data.toString('utf8')));
+  socket.on('upgrade', (response) => { setCookie = response.headers['set-cookie']; });
   const closed = new Promise<{ code: number; reason: string }>((resolve) => {
     socket.on('close', (code, reason) => resolve({ code, reason: reason.toString('utf8') }));
   });
@@ -95,7 +101,7 @@ function connect(url: string, origin?: string) {
     socket.on('unexpected-response', (_request, response) => reject(Object.assign(new Error('refused'), { status: response.statusCode })));
     socket.on('error', reject);
   });
-  return { socket, messages, closed, opened };
+  return { socket, messages, closed, opened, setCookie: () => setCookie };
 }
 
 describe('startHostNetworkListener', () => {
@@ -120,6 +126,31 @@ describe('startHostNetworkListener', () => {
     await expect(connect(url).opened).resolves.toBeUndefined();
     // The peer learns the origin, so a later change to the allowed list can find its connections.
     expect(peers.map(peer => peer.origin)).toEqual(['https://app.example.test', undefined]);
+  });
+
+  it('admits a browser that brings a device cookie from the origin it paired from, and sends the cookie back', async () => {
+    const PHONE = 'https://phone.example.test';
+    const { url, peers } = await listen({
+      admitsDevice: ({ origin, cookie }) => (origin === PHONE && cookie === 'theme=dark; kodax_device=good'
+        ? { device: 'dev_1', setCookie: 'kodax_device=good; Max-Age=60' }
+        : undefined),
+    });
+    const phone = connect(url, PHONE, 'theme=dark; kodax_device=good');
+    await phone.opened;
+    expect(phone.setCookie()).toEqual(['kodax_device=good; Max-Age=60']);
+    // A cookie the Host does not take is no reason to let in an origin it does not allow.
+    await expect(connect(url, PHONE, 'kodax_device=bad').opened).rejects.toMatchObject({ status: 403 });
+    const app = connect(url, 'https://app.example.test', 'kodax_device=bad');
+    await app.opened;
+    expect(app.setCookie()).toBeUndefined();
+    expect(peers.map(peer => [peer.origin, peer.device])).toEqual([[PHONE, 'dev_1'], ['https://app.example.test', undefined]]);
+  });
+
+  it('hands other HTTP requests to the web pages, after /healthz', async () => {
+    const { base } = await listen({ serveHttp: (_request, response) => response.writeHead(200).end('page') });
+    expect(await (await fetch(`${base}/index.html`)).text()).toBe('page');
+    expect((await fetch(`${base}/healthz`)).status).toBe(200);
+    expect(await (await fetch(`${base}/healthz`)).json()).toEqual(READY);
   });
 
   it('refuses new connections while too many have not finished the handshake', async () => {
