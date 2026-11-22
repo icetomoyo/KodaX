@@ -46,6 +46,8 @@ export const CONTRACT_TEST_FILES = [
   'packages/coding/src/task-engine.test.ts',
   'packages/coding/src/task-engine/runner-driven.test.ts',
   'packages/coding/src/workflows/author-via-worker.test.ts',
+  // The same Host scenarios driven over v1 and over v2.
+  'src/host-protocol/scenario.contract.test.ts',
 ];
 
 // High-value tests whose subprocess, daemon, repository-indexing, or storage
