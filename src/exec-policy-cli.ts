@@ -36,7 +36,7 @@ export function configureKodaXExecPolicyCommand(
   execPolicy
     .command('check')
     .description('Check a command without executing it')
-    .addOption(new Option('--mode <mode>', 'Permission profile (omitted: conservative built-in fallbacks)')
+    .addOption(new Option('--permission-mode <mode>', 'Permission profile (omitted: conservative built-in fallbacks)')
       .choices(['plan', 'accept-edits', 'auto', 'full-access']))
     .option('--cwd <dir>', 'Repository directory used to locate project policy')
     .option(
@@ -55,7 +55,7 @@ export function configureKodaXExecPolicyCommand(
       command: string[],
       options: {
         readonly cwd?: string;
-        readonly mode?: KodaXShellPermissionMode;
+        readonly permissionMode?: KodaXShellPermissionMode;
         readonly hostExecutable?: string;
         readonly trustProjectPolicy?: boolean;
         readonly json?: boolean;
@@ -76,7 +76,7 @@ export function configureKodaXExecPolicyCommand(
       }
       const hostFacts = {
         ...(options.hostExecutable === undefined ? {} : { hostExecutable: options.hostExecutable }),
-        ...(options.mode === undefined ? {} : { permissionMode: options.mode }),
+        ...(options.permissionMode === undefined ? {} : { permissionMode: options.permissionMode }),
       };
       const evaluated = command.length === 1
         ? evaluateShellExecPolicy(command[0]!, loaded.rules, hostFacts)
@@ -86,7 +86,7 @@ export function configureKodaXExecPolicyCommand(
           );
       const report: ExecPolicyCheckReport = {
         command,
-        ...(options.mode === undefined ? {} : { permissionMode: options.mode }),
+        ...(options.permissionMode === undefined ? {} : { permissionMode: options.permissionMode }),
         decision: evaluated.decision,
         criticalFallback: evaluated.criticalFallback,
         matchedRules: evaluated.matched,

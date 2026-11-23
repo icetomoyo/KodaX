@@ -1309,7 +1309,7 @@ requests converge, and owner/profile/scope failures are typed. Full Access
 executes directly on the host without sandbox, approval prompts, or built-in
 dangerous-command fallbacks while explicit forbidden rules stay enforced and
 prompt rules are rejected under Never approval semantics;
-`kodax execpolicy check --mode full-access` inspects the profile without
+`kodax execpolicy check --permission-mode full-access` inspects the profile without
 running it. Managed extensions gain an execution contract with reload
 isolation, runtime/session separation, and lock-independent effects. Legacy
 oversized `actorSnapshot` metadata pages correctly instead of failing

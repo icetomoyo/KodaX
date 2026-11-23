@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { Command } from 'commander';
 import { describe, expect, it } from 'vitest';
 import { configureKodaXExecPolicyCommand } from './exec-policy-cli.js';
+import { configureKodaXRootCommand } from './cli/root.js';
 
 describe('FEATURE_297 execpolicy CLI', () => {
   it('checks Full Access without the bundled fallback and reports the selected mode', async () => {
@@ -15,12 +16,26 @@ describe('FEATURE_297 execpolicy CLI', () => {
       writeOutput: (text) => { output = text; },
     });
     await program.parseAsync([
-      'node', 'kodax', 'execpolicy', 'check', '--json', '--mode', 'full-access', '--', 'rm -f generated.txt',
+      'node', 'kodax', 'execpolicy', 'check', '--json', '--permission-mode', 'full-access', '--', 'rm -f generated.txt',
     ]);
     expect(JSON.parse(output)).toMatchObject({
       permissionMode: 'full-access', decision: 'unmatched', criticalFallback: false,
       matchedRules: [],
     });
+  });
+
+  it('takes the permission profile under the kodax root, whose --mode means output mode', async () => {
+    const configHome = await mkdtemp(join(tmpdir(), 'kodax-execpolicy-root-'));
+    let output = '';
+    const program = configureKodaXRootCommand(new Command().name('kodax').exitOverride());
+    configureKodaXExecPolicyCommand(program, {
+      configHome, findProjectRoot: async () => null,
+      writeOutput: (text) => { output = text; },
+    });
+    await program.parseAsync([
+      'node', 'kodax', 'execpolicy', 'check', '--json', '--permission-mode', 'full-access', '--', 'git status',
+    ]);
+    expect(JSON.parse(output)).toMatchObject({ permissionMode: 'full-access' });
   });
 
   it('prints the decision and the matched rules as text by default', async () => {
@@ -54,7 +69,7 @@ describe('FEATURE_297 execpolicy CLI', () => {
       configHome, findProjectRoot: async () => null,
       writeOutput: (text) => { output = text; },
     });
-    await program.parseAsync(['node', 'kodax', 'execpolicy', 'check', '--json', '--mode', 'full-access', '--', ...command]);
+    await program.parseAsync(['node', 'kodax', 'execpolicy', 'check', '--json', '--permission-mode', 'full-access', '--', ...command]);
     expect(JSON.parse(output)).toMatchObject({
       permissionMode: 'full-access', decision: 'forbidden',
       matchedRules: [expect.objectContaining({ source: 'user' })],

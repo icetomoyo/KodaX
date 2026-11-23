@@ -30,10 +30,10 @@ Full Access 绕过沙箱、所有审批路径和内置危险命令回退（包�
 执行策略拒绝文本是 JSON，包含 `code`、`denialSource`、`source`、`sourcePath`、`permissionMode`、`matchedRules`、`retryable`、`remediation` 和 `guidance`。KodaX 内置或配置的规则并不代表 OS 限制。对于显式禁止，请联系策略所有者审查规则；对于 Full Access 下的 prompt 规则，请让用户选择 Edits 或授权策略变更。配置是快照；授权策略变更后启动新的 Run。绝不重写命令、切换解释器或创建脚本以绕过拒绝。
 
 ```bash
-kodax execpolicy check --mode full-access -- <命令>
+kodax execpolicy check --permission-mode full-access -- <命令>
 ```
 
-不带 `--mode` 时，检查器使用保守的内置回退契约。这是 token 前缀策略，不是任意脚本文件或动态生成程序的语义分析器。
+不带 `--permission-mode` 时，检查器使用保守的内置回退契约。这是 token 前缀策略，不是任意脚本文件或动态生成程序的语义分析器。
 
 ## SDK 权限控制
 

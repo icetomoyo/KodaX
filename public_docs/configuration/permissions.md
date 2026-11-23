@@ -53,8 +53,8 @@ Malformed policy must be repaired by its owner. Configuration is snapshotted;
 start a new Run after an authorized policy change. Never rewrite the command,
 switch interpreters, or create a script to bypass a refusal.
 
-Use `kodax execpolicy check --mode full-access -- <command>` to inspect Full
-Access policy without execution. Without `--mode`, the checker uses the
+Use `kodax execpolicy check --permission-mode full-access -- <command>` to
+inspect Full Access policy without execution. Without `--permission-mode`, the checker uses the
 conservative built-in fallback contract. This is a token-prefix policy, not a
 semantic analyzer of arbitrary script files or dynamically generated programs.
 

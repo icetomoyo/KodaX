@@ -3397,7 +3397,7 @@ Full Access now omits synthesized fallbacks while preserving explicit user,
 administrator, and trusted-project restrictions. Recognized wrappers preserve
 both forbidden and prompt decisions. The argv and shell-text CLI checks now
 share that evaluation, and child network qualifiers use the child's arguments.
-`kodax execpolicy check --mode full-access -- <command>` inspects this contract.
+`kodax execpolicy check --permission-mode full-access -- <command>` inspects this contract.
 
 Runtime and standalone REPL return JSON rejection text with `code`,
 `denialSource`, policy `source` / `sourcePath`, `permissionMode`, `matchedRules`,
