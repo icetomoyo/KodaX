@@ -115,7 +115,7 @@ import {
   type SessionViewObserveOptions,
 } from "./session-view.js";
 import { SessionInputQueue, inputIntentDigest } from "./session-input-queue.js";
-import { listClientInteractions, respondToClientInteraction } from "./client-interactions.js";
+import { createClientInteractionService } from "./client-interactions.js";
 import { assembleConversationHistoryEntry, readFollowingMessage } from './conversation-entry-reader.js';
 import { CLIENT_CONFIG_APPLICATION, toClientConfig, toClientSessionSettings } from "./client-settings.js";
 export type { ClientHistoryTurnSelector, ClientHistoryTurnResolution } from '@kodax-ai/coding/client-contract';
@@ -3440,6 +3440,8 @@ export interface RuntimeInteractionService {
   respond(
     requestId: string,
     response: ClientInteractionResponse,
+    /** The client's id for this answer. The same answer sent again under it gets the first result. */
+    answerId?: string,
   ): Promise<ClientInteractionResult>;
 }
 
@@ -4886,11 +4888,7 @@ async function createKodaXRuntimeInternal(
     userInputs: userInputs.service,
     permissions: permissions.service,
   };
-  const interactions: RuntimeInteractionService = {
-    list: (filter) => listClientInteractions(interactionRegistries, filter),
-    respond: (requestId, response) =>
-      respondToClientInteraction(interactionRegistries, requestId, response),
-  };
+  const interactions = createClientInteractionService(interactionRegistries);
   const artifacts = createRuntimeArtifactStore();
   const workflows = createRuntimeWorkflowService({
     configHome,

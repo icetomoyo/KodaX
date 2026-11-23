@@ -14,6 +14,7 @@ import type {
   ClientPermissionDecision,
 } from '@kodax-ai/coding/client-contract';
 import type {
+  RuntimeInteractionService,
   RuntimePermissionDecision,
   RuntimePermissionRequest,
   RuntimePermissionService,
@@ -45,6 +46,42 @@ export async function listClientInteractions(
     ...questions.map(toQuestionInteraction),
     ...permissions.map(toPermissionInteraction),
   ];
+}
+
+/** How many answers that settled an interaction the Host keeps, to answer a repeat of one. */
+const KEPT_ANSWERS = 256;
+
+/**
+ * Lists and answers interactions. An answer a client names with `answerId` and sends
+ * again gets what it got the first time, so a client that lost the reply learns
+ * whether its own answer settled the interaction.
+ */
+export function createClientInteractionService(registries: ClientInteractionRegistries): RuntimeInteractionService {
+  const answers = new Map<string, { readonly response: string; readonly result: Promise<ClientInteractionResult> }>();
+  return {
+    list: (filter) => listClientInteractions(registries, filter),
+    respond(requestId, response, answerId) {
+      if (answerId === undefined) return respondToClientInteraction(registries, requestId, response);
+      const key = JSON.stringify([requestId, answerId]);
+      const sent = JSON.stringify(response);
+      const before = answers.get(key);
+      if (before !== undefined) {
+        if (before.response !== sent) {
+          return Promise.reject(Object.assign(new Error('This answer id already answered with another response.'), {
+            code: 'conflict', currentRevision: 0,
+          }));
+        }
+        return before.result;
+      }
+      const result = respondToClientInteraction(registries, requestId, response);
+      answers.set(key, { response: sent, result });
+      if (answers.size > KEPT_ANSWERS) answers.delete(answers.keys().next().value!);
+      // Only an answer that settled the interaction is kept: one that did not may be tried again.
+      const forget = (): void => { if (answers.get(key)?.result === result) answers.delete(key); };
+      result.then(({ accepted }) => { if (!accepted) forget(); }, forget);
+      return result;
+    },
+  };
 }
 
 /** Answer one pending interaction by precise id; only the first valid answer counts. */

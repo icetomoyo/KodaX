@@ -1072,7 +1072,11 @@ describe('v2 interactions served by the v1 implementation', () => {
     await expect(service.request('interaction.respond', answer)).rejects.toMatchObject({ kodaxCode: 'method_not_found' });
 
     expect(await user.request('interaction.respond', answer)).toEqual({ status: 'answered' });
-    expect(await user.request('interaction.respond', answer)).toEqual({ status: 'already_resolved' });
+    // The same answer sent again is told it settled the interaction; another answer, that it came too late.
+    expect(await user.request('interaction.respond', answer)).toEqual({ status: 'answered' });
+    expect(await user.request('interaction.respond', { ...answer, requestId: 'answer-2' })).toEqual({ status: 'already_resolved' });
+    await expect(user.request('interaction.respond', { ...answer, response: { kind: 'question', answer: 'blue' } }))
+      .rejects.toMatchObject({ kodaxCode: 'conflict' });
     expect((await user.request('run.wait', { runId: input.runId }) as RunAnswer).run.outcome).toMatchObject({ status: 'completed' });
     expect(await user.request('interaction.list', { sessionId: session.id })).toEqual({ items: [] });
     await expect.poll(() => shown(sent, 'interactions'), { timeout: 5000 }).toEqual([]);

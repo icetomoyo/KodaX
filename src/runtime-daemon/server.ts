@@ -2260,7 +2260,7 @@ async function dispatchRuntimeDaemonRequest(
         ? undefined
         : (await runtime.interactions.list()).find(item => item.requestId === requestId);
       try {
-        const result = await runtime.interactions.respond(requestId, response);
+        const result = await runtime.interactions.respond(requestId, response, optionalStringField(params, "answerId"));
         if (result.accepted && asked?.kind === "permission") {
           reportHostSecurityEvent({
             event: "permission_decided",

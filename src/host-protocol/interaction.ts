@@ -169,13 +169,13 @@ export const INTERACTION_METHODS = {
   /**
    * `status` says what became of this answer:
    *   answered, unanswered, dismissed — it settled the interaction
-   *   already_resolved                — the interaction was settled before, timed out, or never existed
-   * An answer sent again gets `already_resolved`; the Session view shows how the interaction ended.
+   *   already_resolved                — another answer settled it first, it timed out, or it never existed
+   * The same answer sent again under the same `requestId` gets the status it got the first time.
+   * A different answer under that `requestId` fails with `conflict`.
    */
   'interaction.respond': {
     primitive: 'command',
-    // Sent again after it took effect, it answers `already_resolved`, which does not say whose answer won.
-    resend: 'never',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({ interactionId: InteractionRef, response: Response }),
     result: hostResult({ status: z.enum(['answered', 'unanswered', 'dismissed', 'already_resolved']) }),

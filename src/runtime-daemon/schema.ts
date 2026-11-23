@@ -444,7 +444,7 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
   },
   'interaction.list': { params: objectSchema({ sessionId: stringSchema }), result: arraySchema(interactionSchema()) },
   'interaction.respond': {
-    params: objectSchema({ requestId: stringSchema, response: interactionResponseSchema() }, ['requestId', 'response']),
+    params: objectSchema({ requestId: stringSchema, answerId: stringSchema, response: interactionResponseSchema() }, ['requestId', 'response']),
     result: interactionResultSchema(),
   },
   'credential.register': {

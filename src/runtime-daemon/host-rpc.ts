@@ -757,9 +757,10 @@ const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } =
     const items = await v1('interaction.list', defined({ sessionId })) as readonly ClientInteraction[];
     return { items: items.map(interaction => toInteraction(interaction, workspaceRoot)) };
   },
-  'interaction.respond': async ({ interactionId, response }, v1) => {
+  'interaction.respond': async ({ requestId, interactionId, response }, v1) => {
     const { status } = await v1('interaction.respond', {
       requestId: interactionId,
+      answerId: requestId,
       response: response.kind === 'dismiss' ? { ...response, kind: 'cancel' } : response,
     }) as ClientInteractionResult;
     return { status };

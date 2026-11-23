@@ -341,9 +341,9 @@ v1 里的各种做法都能归进来：
     - `permission.grant.revoke`：授权已经不在时返回成功，不再先比 revision。
     - `session.lineage.label`：条目已经带着要的标签（或已经没有标签）时，什么都不记，返回原来记录它的那一条。
     - `session.branch.select`：新增必填的 `ifActiveEntryId`（客户端读到的 `activeEntryId`）。对话已经停在目标上、或停在目标后面那条带摘要的切换结果上时，按已完成返回；否则 head 不再是 `ifActiveEntryId` 就报 `resync_required`（`head_changed`）。v1 的 `session.activeEntry.set` 多了可选的 `expectedHead`。
-  - 标 `never` 的 14 条，SDK 把 `unknown_outcome` 交给调用方重新读（未经用户确认）：
+  - 标 `never` 的 13 条，SDK 把 `unknown_outcome` 交给调用方重新读（未经用户确认）：
     - `provider.reasoning.probe`：每次探测都是一次付费请求。
-    - `interaction.respond`：重发得到 `already_resolved`，看不出是谁的回答生效了。等 Host 记下回答它的 `requestId` 和决定后改成 `auto`。
+    - ~~`interaction.respond`：重发得到 `already_resolved`，看不出是谁的回答生效了。等 Host 记下回答它的 `requestId` 和决定后改成 `auto`。~~ 2026-11-23 改成 `auto`：Host 记下结算了交互的回答（交互 ID + `requestId` → 回答内容和状态，内存里最多 256 条），同一个 `requestId`、同样的回答重发得到第一次的状态；同一个 `requestId` 换了回答报 `conflict`；没结算的回答（`already_resolved`）不记，可以再试。Host 重启后记录没了，重发得到 `already_resolved`，但这时等它的 Run 也已经不在了（未经用户确认）。v1 的 `interaction.respond` 多了可选的 `answerId`，不传时行为不变。
     - `learning.*` 的 8 条：决定带着读到的 revision，重发会报 `revision_mismatch`。开放 `learning.*` 给网络角色时（记忆管理 API 那一步）一起改成 `auto`。
     - `host.stop`：重发会停掉接替它的新 Host。`client.exit.request` 同理。
     - `mcp.server.reload`、`extension.reload`：重发会再断开一次全部服务器、再跑一遍全部扩展的初始化。`config.reload`、`mcp.tool.refresh` 只重读，保持 `auto`。

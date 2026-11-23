@@ -87,6 +87,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- An `interaction.respond` sent again with the same `requestId` and answer
+  now gets the status it got the first time, so the SDK sends it again after a
+  lost reply. Another answer under that `requestId` fails with `conflict`.
 - `command.list` on v2 lists only the commands `command.execute` runs:
   prompt and extension commands a person may start. The REPL's own commands,
   which the Host could not run, are no longer among them.

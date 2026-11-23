@@ -5,7 +5,6 @@ export const HOST_NO_RESEND: ReadonlySet<string> = new Set([
   'client.exit.request',
   'extension.reload',
   'host.stop',
-  'interaction.respond',
   'learning.acknowledge',
   'learning.disable',
   'learning.promote',
