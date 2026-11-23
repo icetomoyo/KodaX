@@ -167,6 +167,8 @@ interface AgentHostMutationOptions extends AgentMutationOptions {
   readonly beforeLaunch?: (plan: StartPlan) => void;
   /** Fail without delivering a message when an explicit scope requires a new turn. */
   readonly requireNewTurn?: boolean;
+  /** The sender's name for this spawn or follow-up. A repeat answers with what the first one did. */
+  readonly requestId?: string;
 }
 
 interface ActorMutationPersistenceOptions {
@@ -492,13 +494,17 @@ export class AgentActorController {
     let admittedTurnId: string | undefined;
     try {
       const plan = await this.mutate(async () => {
+        // Checked first: by the time a repeat arrives, the spawn it repeats moved the revisions on.
+        const repeated = this.repeatedSpawn(callerPath, input.taskName, options?.requestId);
+        if (repeated) return { repeated };
         this.assertExpectedTreeRevision(options);
         this.assertExpectedAdmissionRevision(options);
-        const created = await this.prepareSpawn(callerPath, input);
+        const created = await this.prepareSpawn(callerPath, input, options?.requestId);
         admittedTurnId = created.turn.turnId;
         options?.beforeLaunch?.(created);
         return created;
-      });
+      }, (result) => !('repeated' in result));
+      if ('repeated' in plan) return turnRef(plan.repeated);
       this.launch(plan);
       return turnRef(plan.turn);
     } catch (error) {
@@ -579,6 +585,9 @@ export class AgentActorController {
         this.assertExpectedTreeRevision(options);
         this.assertExpectedAdmissionRevision(options);
         const actor = this.requireControl(callerPath, targetPath);
+        // Checked first: the turn a repeat finds may be the one that now fails the checks below.
+        const repeated = this.repeatedFollowup(callerPath, targetPath, options?.requestId);
+        if (repeated) return { ...repeated, repeated: true as const };
         options?.validateTarget?.(actor);
         if (
           options?.expectedRevision !== undefined
@@ -615,15 +624,18 @@ export class AgentActorController {
             'followup',
             'internal',
             this.actors.get(callerPath)?.currentTurnId,
+            undefined,
+            undefined,
+            options?.requestId,
           );
           return { delivery: 'current_turn' as const, turn: turnRef(turn) };
         }
-        const plan = await this.prepareExistingTurn(actor, objective, metadata);
+        const plan = await this.prepareExistingTurn(actor, objective, metadata, options?.requestId);
         admittedTurnId = plan.turn.turnId;
         options?.beforeLaunch?.(plan);
         return { delivery: 'started_turn' as const, turn: turnRef(plan.turn), plan };
-      });
-      if (result.delivery === 'started_turn') this.launch(result.plan);
+      }, (outcome) => !('repeated' in outcome));
+      if ('plan' in result && result.plan) this.launch(result.plan);
       return { delivery: result.delivery, turn: result.turn };
     } catch (error) {
       if (admittedTurnId) await this.budget.refund?.(admittedTurnId);
@@ -1015,7 +1027,29 @@ export class AgentActorController {
     });
   }
 
-  private async prepareSpawn(callerPath: string, input: AgentSpawnInput): Promise<StartPlan> {
+  /** The first turn of the actor a sender's earlier spawn under this request started. */
+  private repeatedSpawn(callerPath: string, taskName: string, requestId: string | undefined): AgentTurn | undefined {
+    if (requestId === undefined) return undefined;
+    const firstTurnId = this.actors.get(`${callerPath}/${taskName}`)?.turnIds[0];
+    const turn = firstTurnId === undefined ? undefined : this.turns.get(firstTurnId);
+    return turn?.requestId === requestId ? turn : undefined;
+  }
+
+  /** What a sender's earlier follow-up under this request did: started a turn, or joined the one in progress. */
+  private repeatedFollowup(callerPath: string, targetPath: string, requestId: string | undefined): AgentFollowupResult | undefined {
+    if (requestId === undefined) return undefined;
+    const turns = (this.actors.get(targetPath)?.turnIds ?? []).map((turnId) => this.requireTurn(turnId));
+    const started = turns.find((turn) => turn.requestId === requestId);
+    if (started) return { delivery: 'started_turn', turn: turnRef(started) };
+    const message = this.mailboxes.get(targetPath)?.find((candidate) => (
+      candidate.kind === 'followup' && candidate.senderPath === callerPath && candidate.requestId === requestId
+    ));
+    // It joined the newest turn begun before it, the one in progress then.
+    const joined = message && turns.filter((turn) => turn.createdAt <= message.createdAt).at(-1);
+    return joined ? { delivery: 'current_turn', turn: turnRef(joined) } : undefined;
+  }
+
+  private async prepareSpawn(callerPath: string, input: AgentSpawnInput, requestId?: string): Promise<StartPlan> {
     const parent = this.requireActor(callerPath);
     if (parent.state === 'closed') throw new AgentControlError('actor_closed', `${callerPath} is closed`);
     validateTaskName(input.taskName);
@@ -1024,15 +1058,16 @@ export class AgentActorController {
     if (this.actors.has(path)) throw new AgentControlError('name_collision', `actor already exists: ${path}`);
     const capabilities = deriveCapabilities(parent.capabilities, input.capabilities);
     const actor = this.createActor(path, input.taskName, callerPath, input.kind ?? 'native', capabilities);
-    return this.admitTurn(actor, input.objective, input.forkTurns ?? 'all', true, input.metadata);
+    return this.admitTurn(actor, input.objective, input.forkTurns ?? 'all', true, input.metadata, requestId);
   }
 
   private prepareExistingTurn(
     actor: AgentActor,
     objective: string,
     metadata?: Readonly<Record<string, AgentMetadataValue>>,
+    requestId?: string,
   ): Promise<StartPlan> {
-    return this.admitTurn(actor, objective, 'all', false, metadata);
+    return this.admitTurn(actor, objective, 'all', false, metadata, requestId);
   }
 
   private async admitTurn(
@@ -1041,9 +1076,10 @@ export class AgentActorController {
     forkTurns: AgentForkTurns,
     createdActor: boolean,
     metadata?: AgentTurn['metadata'],
+    requestId?: string,
   ): Promise<StartPlan> {
     if (objective.trim().length === 0) throw new AgentControlError('invalid_message', 'objective is required');
-    const turn = this.createTurn(actor, objective, forkTurns, metadata);
+    const turn = this.createTurn(actor, objective, forkTurns, metadata, requestId);
     this.scheduler.reserve(turn.turnId);
     const admission = await this.budget.admit({
       actorPath: actor.path,
@@ -1864,6 +1900,7 @@ export class AgentActorController {
     objective: string,
     forkTurns: AgentForkTurns,
     metadata?: AgentTurn['metadata'],
+    requestId?: string,
   ): AgentTurn {
     const sequence = actor.turnIds.length + 1;
     return {
@@ -1874,6 +1911,7 @@ export class AgentActorController {
       objective,
       forkTurns,
       ...(metadata === undefined ? {} : { metadata }),
+      ...(requestId === undefined ? {} : { requestId }),
       createdAt: this.now(),
       progress: [],
       revision: 1,

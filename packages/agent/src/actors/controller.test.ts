@@ -1572,6 +1572,60 @@ describe('F270 actor tree and scheduler', () => {
     expect(controller.get('/root', '/root/peer').mailbox).toHaveLength(1);
   });
 
+  it('starts one turn for a spawn its sender repeats', async () => {
+    const executor = new DeferredExecutor();
+    const controller = await createAgentActorController({ executor });
+    const spawned = await controller.spawn('/root', { taskName: 'worker', objective: 'First.' }, { requestId: 'spawn-1' });
+    const events = controller.eventSnapshot('/root').length;
+
+    await expect(controller.spawn('/root', { taskName: 'worker', objective: 'First.' }, { requestId: 'spawn-1' }))
+      .resolves.toEqual(spawned);
+    executor.pending[0]?.resolve({ output: 'done' });
+    await settle();
+    const settled = controller.eventSnapshot('/root').length;
+    await expect(controller.spawn('/root', { taskName: 'worker', objective: 'First.' }, { requestId: 'spawn-1' }))
+      .resolves.toEqual(spawned);
+    expect(executor.pending).toHaveLength(1);
+    expect(settled).toBeGreaterThan(events);
+    expect(controller.eventSnapshot('/root')).toHaveLength(settled);
+
+    // The name is taken all the same for another request.
+    await expect(controller.spawn('/root', { taskName: 'worker', objective: 'First.' }, { requestId: 'spawn-2' }))
+      .rejects.toMatchObject({ code: 'name_collision' });
+    await expect(controller.spawn('/root', { taskName: 'worker', objective: 'First.' }))
+      .rejects.toMatchObject({ code: 'name_collision' });
+  });
+
+  it('delivers a follow-up once for a request its sender repeats', async () => {
+    const executor = new DeferredExecutor();
+    const controller = await createAgentActorController({ executor });
+    const first = await controller.spawn('/root', { taskName: 'worker', objective: 'First.' });
+
+    // Into the turn in progress.
+    const joined = await controller.followup('/root', '/root/worker', 'Check the tests too.', undefined, { requestId: 'follow-1' });
+    expect(joined).toEqual({ delivery: 'current_turn', turn: first });
+    const { revision } = controller.get('/root', '/root/worker').actor;
+    await expect(controller.followup('/root', '/root/worker', 'Check the tests too.', undefined, { requestId: 'follow-1' }))
+      .resolves.toEqual(joined);
+    expect(controller.get('/root', '/root/worker').mailbox).toHaveLength(1);
+
+    // A new turn, still answered after the actor moved on.
+    executor.pending[0]?.resolve({ output: 'done' });
+    await settle();
+    const started = await controller.followup('/root', '/root/worker', 'Second pass.', undefined,
+      { requestId: 'follow-2', expectedRevision: controller.get('/root', '/root/worker').actor.revision });
+    expect(started.delivery).toBe('started_turn');
+    executor.pending[1]?.resolve({ output: 'done again' });
+    await settle();
+    await expect(controller.followup('/root', '/root/worker', 'Second pass.', undefined,
+      { requestId: 'follow-2', expectedRevision: revision })).resolves.toEqual(started);
+    await expect(controller.followup('/root', '/root/worker', 'Check the tests too.', undefined, { requestId: 'follow-1' }))
+      .resolves.toEqual(joined);
+    expect(executor.pending).toHaveLength(2);
+    expect(controller.get('/root', '/root/worker').mailbox).toHaveLength(1);
+    expect(controller.get('/root', '/root/worker').turns.map(turn => turn.requestId)).toEqual([undefined, 'follow-2']);
+  });
+
   it('atomically installs cancellation before a durable start becomes launchable', async () => {
     let releaseStartSave: (() => void) | undefined;
     let startSaveEntered: (() => void) | undefined;

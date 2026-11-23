@@ -73,6 +73,8 @@ export interface AgentTurn {
   readonly objective: string;
   readonly forkTurns: AgentForkTurns;
   readonly metadata?: Readonly<Record<string, AgentMetadataValue>>;
+  /** The sender's name for the request that started this turn. Sending it again starts nothing more. */
+  readonly requestId?: string;
   readonly createdAt: string;
   readonly startedAt?: string;
   readonly completedAt?: string;
