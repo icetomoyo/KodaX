@@ -1623,7 +1623,7 @@ describe('runtime daemon dispatcher', () => {
             readonly turnId: string;
             readonly providers: readonly string[];
           }) => {
-            acquire(provider: string, purpose: 'primary', signal: AbortSignal): Promise<string>;
+            acquire(provider: string, purpose: 'primary' | 'cache_refresh', signal: AbortSignal): Promise<string>;
           };
         };
         const access = trusted?.providerCredentialAccessFactory?.({
@@ -1640,6 +1640,12 @@ describe('runtime daemon dispatcher', () => {
         await expect(access?.acquire(
           'openai',
           'primary',
+          new AbortController().signal,
+        )).resolves.toBe('keychain-agent-secret');
+        // A v1 client predates the cache_refresh purpose and would refuse it.
+        await expect(access?.acquire(
+          'openai',
+          'cache_refresh',
           new AbortController().signal,
         )).resolves.toBe('keychain-agent-secret');
         return {
@@ -1742,6 +1748,14 @@ describe('runtime daemon dispatcher', () => {
           turnId: 'turn-agent-followup',
         },
         purpose: 'primary',
+      }),
+      expect.objectContaining({
+        target: {
+          kind: 'actor_turn',
+          actorPath: '/root/reviewer',
+          turnId: 'turn-agent-followup',
+        },
+        purpose: 'utility',
       }),
     ]);
     expect(spawn).toHaveBeenCalledTimes(3);

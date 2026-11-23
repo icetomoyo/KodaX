@@ -116,8 +116,7 @@ export type RuntimeScopedCredentialPurpose =
   | "sidecar"
   | "compaction"
   | "workflow"
-  | "utility"
-  | "cache_refresh";
+  | "utility";
 
 export interface RuntimeScopedCredentialRequest {
   /** Optional negotiation; older hosts and callbacks retain plain-string credentials. */

@@ -2236,7 +2236,6 @@ function parseScopedCredentialPurpose(value: unknown): RuntimeScopedCredentialPu
     || value === 'compaction'
     || value === 'workflow'
     || value === 'utility'
-    || value === 'cache_refresh'
   ) return value;
   throw new Error('Invalid scoped credential purpose.');
 }

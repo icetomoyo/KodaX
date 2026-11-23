@@ -238,7 +238,7 @@ export const LEASE_NOTIFICATIONS = {
         provider: z.string(),
         sessionId: z.string(),
         target: Target,
-        /** `primary`, `fallback`, `classifier`, `sidecar`, `compaction`, `workflow`, `utility` or `cache_refresh`. */
+        /** `primary`, `fallback`, `classifier`, `sidecar`, `compaction`, `workflow` or `utility`. */
         purpose: z.string(),
         /** Proves which endpoint the call goes to, for a key bound to one endpoint. */
         connectionFingerprint: z.string().optional(),

@@ -3681,7 +3681,8 @@ function bindTrustedScopedCredentialAccess(input: {
       provider,
       sessionId: input.sessionId,
       target: attributedCredentialTarget(input.target, attribution),
-      purpose,
+      // Lenders' clients only know the purposes below; Session statistics keep cache_refresh from the Host's own record.
+      purpose: purpose === 'cache_refresh' ? 'utility' : purpose,
       signal,
     }),
     recoverRejectedCredential: async (provider, rejectedCredentialFingerprint, signal, attribution, connectionFingerprint) => {

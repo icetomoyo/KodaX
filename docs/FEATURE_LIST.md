@@ -2538,7 +2538,9 @@ fixed GitHub binary archive sidecar omission before tagging.
   - The refresh is the request's own options minus event callbacks, with
     `maxOutputTokensOverride: 1` and `singleAttempt`. It goes out as credential
     purpose `cache_refresh`, so Session statistics list it as its own request
-    and the Run transcript and turn usage never see it.
+    and the Run transcript and turn usage never see it. A client that lends the
+    key is asked with purpose `utility`, so the v1 and v2 wire contracts stay
+    unchanged and clients built before this feature keep lending keys.
   - Pays-for-itself rule (未经用户确认): all refreshes during one wait together
     must cost less than one rewrite of the entry. For Sonnet 4.6 that allows 11
     refreshes, about 50 minutes.
