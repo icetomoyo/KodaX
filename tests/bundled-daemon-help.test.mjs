@@ -23,7 +23,11 @@ test('informational commands remain available with corrupt core config and prese
       await writeFile(path.join(configHome, 'config.json'), raw);
       const before = await files(configHome);
       for (const args of [['--version'], ['--help'], ['doctor', '--help'], ['config', '--help'], ['auth', '--help'], ['auth', 'login', '--help'], ['doctor', '--json']]) {
-        const { stdout, stderr } = await run(homeDir, args);
+        // doctor still reports everything, and exits 1 because the core config is broken.
+        const { stdout, stderr } = await run(homeDir, args).then(
+          result => { assert.ok(!args.includes('--json'), 'doctor must exit 1 for a broken core config'); return result; },
+          error => { if (args.includes('--json') && error.code === 1) return error; throw error; },
+        );
         assert.ok(stdout.trim(), `${args.join(' ')} must produce information`);
         assert.doesNotMatch(stdout + stderr, /NEVER_PRINT_CREDENTIAL/);
         if (args.includes('--json')) assert.equal(JSON.parse(stdout).coreConfig.state, 'invalid');
