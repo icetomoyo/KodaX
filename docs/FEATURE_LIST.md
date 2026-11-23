@@ -2537,7 +2537,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 ## 2026-11-23 FEATURE_317 Addition
 
-- Status: Completed 2026-11-23, unreleased. Planned under `v0.7.98`, a planning identifier. ID 317 skips 314–316, which
+- Status: Completed 2026-11-23, unreleased; ships with the `v0.7.97` final release (rc.1 is out). ID 317 skips 314–316, which
   `KodaX-next-dev` already uses.
 - Source: the 2026-11-23 RepoIntel audit. The name-matched semantic index (sample call-target precision
   42.7%, recall 55.1%) was on the default tool surface, in automatic context injection and in background
@@ -2546,7 +2546,10 @@ fixed GitHub binary archive sidecar omission before tagging.
   [RepoIntel v2](designs/repointel-v2-2026-11-23.md)); phase 0 ships first on the old engine — default
   surface limited to overview, changed scope and diff, semantic tools opt-in via `full`/`light`, honest
   output, storage out of the repository, ADR-033 prompt calibration with an eval, and a truth baseline.
-- Design block: [v0.7.98](features/v0.7.98.md#feature_317-repointel-phase-0--honest-default-surface).
+- Scope: phase 0 only. Phases 1–4 of the design record (Rust engine, module resolution and repository map,
+  on-demand precise layer, BM25 lookup) and the old-engine removal are not part of FEATURE_317; each gets its
+  own feature ID when it starts.
+- Design block: [v0.7.97](features/v0.7.97.md#feature_317-repointel-phase-0--honest-default-surface).
 
 ---
 
@@ -2720,7 +2723,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Version | Design | Notes |
 |---|---|---|---|---|
-| `317` | RepoIntel Phase 0 — Honest Default Surface | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_317-repointel-phase-0--honest-default-surface) | Default `auto` offers `repo_overview`, `changed_scope` and `changed_diff`; the semantic tools, module/impact injection and the background index build need explicit `full` or `light`, and routing signals come from git changes. Output reports omitted items, not-found names and warming/unavailable indexes instead of placeholders. Storage moves to `<config home>/repo-intelligence`; `target_path` must stay in the workspace. Prompt eval (82 calls, blind-reviewed) recommended ship; `npm run bench:repo-intel-truth` holds the old-engine baseline. KNOWN_ISSUES #133 closed. |
+| `317` | RepoIntel Phase 0 — Honest Default Surface | `v0.7.97` (unreleased) | [v0.7.97](features/v0.7.97.md#feature_317-repointel-phase-0--honest-default-surface) | Default `auto` offers `repo_overview`, `changed_scope` and `changed_diff`; the semantic tools, module/impact injection and the background index build need explicit `full` or `light`, and routing signals come from git changes. Output reports omitted items, not-found names and warming/unavailable indexes instead of placeholders. Storage moves to `<config home>/repo-intelligence`; `target_path` must stay in the workspace. Prompt eval (82 calls, blind-reviewed) recommended ship; `npm run bench:repo-intel-truth` holds the old-engine baseline. KNOWN_ISSUES #133 closed. |
 | `311` | Unified Prompt Chain | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_311-unified-prompt-chain) | Every root Run uses the managed Worker and every entry sends one tool text: the request-time projection, the canonical Worker and tool texts, the direct root engine and `system.md` are deleted. `runs.start({ mode: 'coding' })` is ignored with a warning; the leaf executor stays internal for child Agents. `tests/f311-entry-matrix.test.ts` pins every entry; ADR "Every root Run uses one Worker and one tool text" records it. |
 | `310` | SA Mode Residue Removal | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_310-sa-mode-residue-removal) | Public and config.json `agentMode: 'sa'` normalize the way `amaw` did: managed entries run AMA, `runKodaX` and `runs.start` without a mode treat it as unset, and persisted `'sa'` records stay readable. The SA dispatch branch, Direct Path overlay, `'sa'` labels and the FEATURE_100 golden recorder are gone; ADR "SA mode is retired from every caller" records it. The `sa-mutation-reflection` eval id keeps its name. |
 | `306` | Data Root Resolver and Copy | `v0.7.98` (shipped in `v0.7.97-beta.9`) | [v0.7.98](features/v0.7.98.md#feature_306-data-root-resolver-and-copy) | `resolveKodaXHome` resolves the data root without touching `process.env` and ignores a relative `KODAX_HOME` with a warning; `copyKodaXDataRoot` copies a data root into an empty target under an incomplete marker, skips per-Host state, refuses a running Host and rebases absolute paths in `.json` / `.jsonl`. Source: Space F148 / ADR-011; the Space dependency bump follows the release. |
