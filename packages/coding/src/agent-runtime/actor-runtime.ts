@@ -696,6 +696,8 @@ async function executeCodingActorTurn(
     }
   }
   const bundle = actorBundle(input);
+  // The Run's (or Session policy's) iteration limit may lower a child's ceiling, never raise it.
+  const maxIterations = Math.min(options.maxIter ?? DEFAULT_MAX_CHILD_ITERATIONS, DEFAULT_MAX_CHILD_ITERATIONS);
   const parentConfig = parentCtx.parentAgentConfig;
   assertProviderAuthority(
     input,
@@ -722,7 +724,7 @@ async function executeCodingActorTurn(
   try {
     result = await executeChildAgents([bundle], parentCtx, {
       maxParallel: 1,
-      maxIterationsPerChild: DEFAULT_MAX_CHILD_ITERATIONS,
+      maxIterationsPerChild: maxIterations,
       abortSignal: input.signal,
       ...(options.session?.storage !== undefined
         ? { historyStorage: options.session.storage }
@@ -800,7 +802,7 @@ async function executeCodingActorTurn(
         ...(child.model === undefined ? {} : { effectiveModel: child.model }),
       },
       ...(child.iteration ? { iteration: child.iteration } : child.actualIterations !== undefined
-        ? { iteration: { current: child.actualIterations, max: DEFAULT_MAX_CHILD_ITERATIONS } } : {}),
+        ? { iteration: { current: child.actualIterations, max: maxIterations } } : {}),
     };
   }
   if (!child || child.status !== 'completed') {

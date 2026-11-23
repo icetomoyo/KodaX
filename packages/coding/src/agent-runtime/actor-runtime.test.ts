@@ -521,6 +521,20 @@ describe('F270 coding Actor runtime adapter', () => {
     await session.close();
   });
 
+  it('holds a child turn to the iteration limit of its environment, never above the child ceiling', async () => {
+    executeChildAgentsMock.mockResolvedValue(completedChild('done'));
+    const session = new CodingActorSession({ sessionId: 'session-1' });
+    const { ctx, options } = environment();
+    const limits = [12, 500, undefined];
+    for (const maxIter of limits) {
+      const factory = async () => ({ parentCtx: ctx, options: { ...options, ...(maxIter === undefined ? {} : { maxIter }) } });
+      await session.spawnRoot({ taskName: `worker-${maxIter ?? 'default'}`, objective: 'Finish.' }, undefined, undefined, factory);
+      await settle();
+    }
+    expect(executeChildAgentsMock.mock.calls.map(call => call[2].maxIterationsPerChild)).toEqual([12, 200, 200]);
+    await session.close();
+  });
+
   it('closes an Actor credential scope as soon as its turn is interrupted', async () => {
     let postAbortAcquire: Promise<unknown> | undefined;
     let releaseExecutor: (() => void) | undefined;

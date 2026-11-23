@@ -1467,7 +1467,7 @@ v1 的 `agents.*` 同时指"已安装的 Agent 定义"和"运行中的子代理"
   - 客户端开子 Agent、给子 Agent 新目标，和模型调用 `spawn_agent`/`followup_task` 一样。`actor.spawn` 只开原生子 Agent，因为外部 Agent 要靠 `metadata` 指定，v2 不带这个字段（未经用户确认）。
   - 新 Turn 用哪把 key 和 Run 一样：先用客户端自己的 `leases.credential`，再用 Session 策略绑定的租约，都没有就用 Host 自己的 key。原来 ADR-068 要求客户端开的子 Agent Turn 必须借 key，否则拒绝；2026-11-23 用户决定放开，理由和改法记在 ADR-068 第 5 条。外部 Agent 不变，仍然只用自己的 `credentialRef`。`user` 不能传 `leases`，只能用 Session 借出的。Session 绑定了租约时客户端再带自己的，报 `lease_bound_by_session`，和 Run 一样。
   - 客户端开的子 Agent Turn 现在受 Session 策略和 Host 工具上限约束，v1 和 v2 都一样。工具取交集；`maxDurationMs` 到点停下这个 Turn，记为 `interrupted`；`interactions: 'reject'` 也生效。
-  - `maxIter` 不生效，这是已知缺口：子 Agent 用自己的 200 轮上限，`executeCodingActorTurn` 不读 `maxIter`。
+  - `maxIter`（2026-11-24 补上，未经用户确认）：子 Agent Turn 的轮数上限取 Run/Session 策略的 `maxIter` 和子 Agent 自己的 200 里较小的那个，只能调低，不能调高。模型自己开的子 Agent 同样受所在 Run 的 `maxIter` 约束。
   - 重发：`spawn` 把 `requestId` 存在开出的 Turn 上；`followup` 存在开出的 Turn 上，或者并入在途 Turn 时存在那条信箱消息上。重发返回第一次的结果，不再开 Turn。换一个 `requestId` 用已占用的名字开子 Agent，报 `conflict`。
   - 子 Agent 正忙时，`followup` 并入在途的 Turn，返回 `current_turn`。用 Session 借出的 key 时是这样。客户端带了自己的 key 时沿用 v1 的规则：这把 key 只给新 Turn，所以报 `invalid_params`（未经用户确认）。
   - `ifRevision` 对应 actor 的 `revision`。不开放 `resumeCheckpoint`。
