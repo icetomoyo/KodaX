@@ -343,6 +343,9 @@ describe('v2 Sessions served by the v1 implementation', () => {
       .rejects.toMatchObject({ kodaxCode: 'invalid_params' });
     await expect(user.request('session.create', { requestId: 'c', project: 'missing' }))
       .rejects.toMatchObject({ kodaxCode: 'not_found', reason: 'project_not_found' });
+    // A stdio server is a command on the Host, like a Host path.
+    await expect(user.request('session.create', { requestId: 'd', mcpServers: { probe: { type: 'stdio', command: 'node' } } }))
+      .rejects.toMatchObject({ kodaxCode: 'forbidden', reason: 'param_not_allowed' });
     expect(await runtime.sessions.list()).toEqual([]);
   });
 

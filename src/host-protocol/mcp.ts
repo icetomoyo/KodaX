@@ -10,7 +10,8 @@ import { z } from 'zod/v4';
 
 import { hostCommandParams, hostList, hostParams, hostResult, type HostMethodRegistry } from './schema.js';
 
-const Name = z.string().min(1).max(256);
+export const McpServerName = z.string().min(1).max(256);
+const Name = McpServerName;
 
 /**
  * A server's configuration as the Host keeps it: `type` (`stdio`, `sse`,
@@ -18,7 +19,8 @@ const Name = z.string().min(1).max(256);
  * stdio, or `url` and `headers` for the others, and `connect` (`lazy`,
  * `prewarm` or `disabled`). The Host checks the rest.
  */
-const ServerConfig = z.record(z.string(), z.unknown());
+export const McpServerConfig = z.record(z.string(), z.unknown());
+const ServerConfig = McpServerConfig;
 
 const Server = z.object({
   name: z.string(),

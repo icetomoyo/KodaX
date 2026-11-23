@@ -2134,6 +2134,21 @@
         "temporary": {
           "type": "boolean"
         },
+        "mcpServers": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "additionalProperties": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
         "_meta": {
           "type": "object",
           "propertyNames": {
@@ -2149,7 +2164,8 @@
     },
     "restricted": {
       "projectRoot": "local",
-      "policy": "trusted"
+      "policy": "trusted",
+      "mcpServers": "local"
     },
     "result": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",

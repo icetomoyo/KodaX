@@ -8,6 +8,7 @@ import {
   HostId, HostPath, WorkspacePath, hostCommandParams, hostList, hostParams, hostResult, type HostMethodRegistry,
 } from './schema.js';
 import { CredentialLeases, RunLeases } from './lease.js';
+import { McpServerConfig, McpServerName } from './mcp.js';
 
 /**
  * Names a Session that already exists. Looser than a new id: a Host still holds
@@ -255,8 +256,15 @@ export const SESSION_METHODS = {
        * inputs do not start another Run.
        */
       temporary: z.boolean().optional(),
+      /**
+       * MCP servers of this Session alone, by name, configured as for
+       * `mcp.server.upsert`. Their tools join the Host's for its Runs, and
+       * other Sessions do not see them. Owner only: a stdio server is a
+       * command on the Host.
+       */
+      mcpServers: z.record(McpServerName, McpServerConfig).optional(),
     }),
-    restricted: { ...PROJECT_CHOICE_RESTRICTED, policy: 'trusted' },
+    restricted: { ...PROJECT_CHOICE_RESTRICTED, policy: 'trusted', mcpServers: 'local' },
     result: hostResult({ session: Session }),
     localResult: hostResult({ session: LocalSession }),
   },
