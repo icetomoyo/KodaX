@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -29,6 +30,7 @@ import {
   resolveIntegrationConfigPath,
   upsertMcpServer,
   writeIntegrationDocument,
+  KODAX_VERSION,
 } from "@kodax-ai/repl";
 import type { Command } from "commander";
 import { INTEGRATION_COMMAND_DESCRIPTIONS } from './integration-cli-lazy.js';
@@ -57,11 +59,14 @@ import {
   type A2AServerConfig,
 } from "./a2a/index.js";
 import { mergeCommandOptionsWithGlobals, removedHostProfileOption } from "./cli_option_helpers.js";
-import { connectKodaXRuntime } from "./sdk-runtime.js";
+import { connectHostRpc } from "./host-protocol/client.js";
+import { createKodaXHostClient } from "./host-protocol/host-client.js";
 import {
   isRuntimeDaemonOwnerPidAlive,
   observeRuntimeDaemonHealth,
+  runtimeDaemonEndpointFromState,
 } from "./runtime-daemon/lifecycle.js";
+import { dialRuntimeDaemonHostRpc, type RuntimeDaemonEndpoint } from "./runtime-daemon/transport.js";
 import {
   classifyRuntimeDaemonHealth,
   isSameRuntimeDaemonPath,
@@ -149,20 +154,34 @@ async function assertA2AConfigOwnerCompatible(
         `Daemon profile "${profile}" ownership cannot be verified; stop or restart it before changing A2A configuration.`,
       );
     }
+    const cannotApply = (cause: unknown) => new Error(
+      `Running daemon profile "${profile}" cannot safely apply A2A config version 2; restart it with the current KodaX version before changing A2A configuration.`,
+      { cause },
+    );
+    let reloadsA2A: boolean;
     try {
-      const runtime = await connectKodaXRuntime({
-        endpoint: state.endpoint,
-        daemonToken: readRuntimeDaemonToken(paths),
-        autoStart: false,
-        requirements: { externalAgentAdmin: 1, a2aConfigReconciler: 1 },
-      });
-      await runtime.close();
+      reloadsA2A = await hostReloadsA2AConfig(runtimeDaemonEndpointFromState(state), readRuntimeDaemonToken(paths));
     } catch (error: unknown) {
-      throw new Error(
-        `Running daemon profile "${profile}" cannot safely apply A2A config version 2; restart it with the current KodaX version before changing A2A configuration.`,
-        { cause: error },
-      );
+      throw cannotApply(error);
     }
+    if (!reloadsA2A) throw cannotApply(new Error("The Host does not reload the A2A config."));
+  }
+}
+
+/** Asks the running Host over v2 whether it watches and reloads the A2A config. */
+async function hostReloadsA2AConfig(endpoint: RuntimeDaemonEndpoint, token: string | undefined): Promise<boolean> {
+  if (token === undefined) throw new Error("The Host published no local credential.");
+  const client = await createKodaXHostClient<'local'>({
+    open: () => connectHostRpc(dialRuntimeDaemonHostRpc(endpoint), {
+      client: { name: "kodax-a2a", version: KODAX_VERSION, instanceId: randomUUID() },
+      auth: { scheme: "ipc", token },
+    }),
+  });
+  try {
+    const { integrations } = await client.call("host.get", {});
+    return integrations?.domains.some((domain) => domain.domain === "a2a") ?? false;
+  } finally {
+    await client.close();
   }
 }
 

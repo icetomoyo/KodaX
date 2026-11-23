@@ -406,7 +406,8 @@ describe("integration CLI", () => {
     }
   });
 
-  it("fails closed for legacy or mismatched daemon ownership beside a non-.kodax config home", async () => {
+  /** A Host beside `configHome`; `watchesA2A` makes it report the A2A config as one it reloads. */
+  async function startOwnerGuardHost(watchesA2A = false) {
     const [runtimeModule, hostModule, stateModule, transportModule] =
       await Promise.all([
         import("../tests/runtime-fixture.js"),
@@ -444,7 +445,15 @@ describe("integration CLI", () => {
         path.dirname(configHome),
       ),
       lock,
+      ...(watchesA2A
+        ? { integrationStatuses: () => [{ domain: "a2a" as const, path: path.join(configHome, "integrations", "a2a.json"), watching: true }] }
+        : {}),
     });
+    return { host, paths };
+  }
+
+  /** Writes one enabled outbound Agent, `guarded`; the returned function puts the file back. */
+  function writeGuardedA2AConfig() {
     const file = path.join(configHome, "integrations", "a2a.json");
     mkdirSync(path.dirname(file), { recursive: true });
     const previous = existsSync(file) ? readFileSync(file, "utf8") : undefined;
@@ -463,9 +472,31 @@ describe("integration CLI", () => {
       2,
     )}\n`;
     writeFileSync(file, document, "utf8");
+    const restore = () => {
+      if (previous === undefined) rmSync(file, { force: true });
+      else writeFileSync(file, previous, "utf8");
+    };
+    return { file, document, restore };
+  }
+
+  it("changes the A2A config when the running Host reports it reloads that config", async () => {
+    const { host } = await startOwnerGuardHost(true);
+    const { file, restore } = writeGuardedA2AConfig();
+    try {
+      await runCommand(["a2a", "disable", "guarded"]);
+      expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ agents: { guarded: { enabled: false } } });
+    } finally {
+      await host.close();
+      restore();
+    }
+  });
+
+  it("fails closed for legacy or mismatched daemon ownership beside a non-.kodax config home", async () => {
+    const { host, paths } = await startOwnerGuardHost();
+    const { file, document, restore } = writeGuardedA2AConfig();
     try {
       await expect(runCommand(["a2a", "disable", "guarded"])).rejects.toThrow(
-        /a2aConfigReconciler|safely apply A2A config/i,
+        /safely apply A2A config/i,
       );
       expect(readFileSync(file, "utf8")).toBe(document);
 
@@ -514,8 +545,7 @@ describe("integration CLI", () => {
       expect(readFileSync(file, "utf8")).toBe(document);
     } finally {
       await host.close();
-      if (previous === undefined) rmSync(file, { force: true });
-      else writeFileSync(file, previous, "utf8");
+      restore();
     }
   });
 
