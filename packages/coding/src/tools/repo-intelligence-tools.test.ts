@@ -19,6 +19,7 @@ import { toolProcessContext } from './process-context.js';
 import { toolRelationshipScan } from './relationship-scan.js';
 import { toolSymbolContext } from './symbol-context.js';
 import { commitAll, initGitRepo } from './test-helpers.js';
+import { resolveRepoIntelligenceStorageRoot } from '../repo-intelligence/internal.js';
 
 type RepoContext = Pick<KodaXToolExecutionContext, 'executionCwd' | 'gitRoot'>;
 type LightQueryOptions = { targetPath?: string; refresh?: boolean };
@@ -175,7 +176,7 @@ function createPolyglotFixture(workspaceRoot: string): void {
 }
 
 function getRepoIntelligenceStorageRoot(workspaceRoot: string): string {
-  return join(workspaceRoot, '.agent', 'repo-intelligence', 'light');
+  return join(resolveRepoIntelligenceStorageRoot(workspaceRoot), 'light');
 }
 
 function readJson<T>(filePath: string): T {
@@ -409,13 +410,10 @@ describe('repo intelligence tool surfaces', () => {
     const ctx = { backups: new Map<string, string>(), executionCwd: tempDir, gitRoot: tempDir };
     process.env.KODAX_REPO_INTELLIGENCE = 'off';
     const unavailable = await toolRelationshipScan({ symbol: 'createApp', module: '@demo/app' }, ctx);
-    for (const [tool, query] of [
-      ['symbol_context', 'symbol context'], ['module_context', 'module context'],
-      ['process_context', 'process context'], ['impact_estimate', 'impact estimate'],
-    ]) {
-      expect(unavailable).toContain(`${tool}: Repo intelligence ${query} unavailable`);
-    }
-    expect(unavailable).toContain('Validate critical edits with read, grep');
+    // The first index query reports the index as off; later queries would fail the same way, so they are skipped.
+    expect(unavailable).toContain('symbol_context: Repo intelligence symbol context is unavailable because repo intelligence is turned off');
+    expect(unavailable).toContain('Status: index unavailable');
+    expect(unavailable).toContain('NOT a "no relationships found" result');
     expect(unavailable).not.toContain('No additional gaps recorded');
     expect(unavailable).not.toMatch(/No (direct callers|direct callees|module dependents|module dependencies|impacted modules) found/);
     expect(unavailable).not.toContain('- Process ');
@@ -424,10 +422,10 @@ describe('repo intelligence tool surfaces', () => {
     const recovered = await toolRelationshipScan({ symbol: 'createApp', module: '@demo/app' }, ctx);
     expect(recovered).toContain('startServer');
     expect(recovered).toContain('Dependency module: packages/shared');
-    expect(recovered).not.toContain('symbol_context: Repo intelligence symbol context unavailable');
+    expect(recovered).not.toContain('symbol_context: Repo intelligence symbol context is unavailable');
   }, 30000);
 
-  it('keeps valid relationships while surfacing an unavailable process part', async () => {
+  it('keeps valid relationships while reporting a process that does not exist', async () => {
     tempDir = mkdtempSync(join(tmpdir(), 'kodax-relationship-partial-'));
     createWorkspaceFixture(tempDir);
     const result = await toolRelationshipScan({ symbol: 'createApp' }, {
@@ -435,7 +433,7 @@ describe('repo intelligence tool surfaces', () => {
     });
     expect(result).toContain('startServer');
     expect(result).toContain('Dependency module: packages/shared');
-    expect(result).toContain('process_context: Repo intelligence process context unavailable');
+    expect(result).toContain('process_context: No process matched');
     expect(result).not.toContain('No additional gaps recorded');
     expect(result).not.toContain('- Process ');
   }, 30000);

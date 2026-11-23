@@ -16,6 +16,7 @@ import {
   getSymbolContext,
   readRepoIntelligenceToolWaitMs,
 } from '../repo-intelligence/runtime.js';
+import { RepoIntelligenceUnavailableError } from '../repo-intelligence/internal.js';
 import { readOptionalString } from './internal.js';
 import { toolGrep } from './grep.js';
 
@@ -69,18 +70,39 @@ async function capture<T>(
   }
 }
 
-function recordCapabilityGap(
-  label: string,
-  result: ModuleContextResult | SymbolContextResult | ProcessContextResult | ImpactEstimateResult | undefined,
-  gaps: string[],
-): boolean {
+type IndexResult = ModuleContextResult | SymbolContextResult | ProcessContextResult | ImpactEstimateResult;
+
+interface IndexQueryState {
+  /** Set once the index cannot answer; later index queries would fail the same way. */
+  unavailable?: RepoIntelligenceUnavailableError['status'];
+}
+
+function recordCapabilityGap(label: string, result: IndexResult | undefined, gaps: string[]): void {
   const capability = result?.capability;
-  if (!capability) return false;
+  if (!capability) return;
   const warning = capability.warnings.join(' ');
   if (warning || capability.status !== 'ok') {
     gaps.push(`${label}: ${warning || `repo-intelligence ${capability.status}; validate with read, grep, glob or LSP and retry when available.`}`);
   }
-  return capability.status === 'warming';
+}
+
+async function captureIndexed<T extends IndexResult>(
+  label: string,
+  gaps: string[],
+  state: IndexQueryState,
+  load: () => Promise<T>,
+): Promise<T | undefined> {
+  try {
+    const result = await load();
+    recordCapabilityGap(label, result, gaps);
+    return result;
+  } catch (error) {
+    gaps.push(`${label}: ${errorMessage(error)}`);
+    if (error instanceof RepoIntelligenceUnavailableError) {
+      state.unavailable = error.status;
+    }
+    return undefined;
+  }
 }
 
 function symbolRef(symbol: RepoSymbolRecord): string {
@@ -424,6 +446,12 @@ function formatConfidence(parts: RelationshipParts): string {
   return average.toFixed(2);
 }
 
+function pushOmitted(lines: string[], omitted: number | undefined, noun: string): void {
+  if (omitted) {
+    lines.push(`- ... ${omitted} more ${noun} not shown`);
+  }
+}
+
 function renderIdentity(lines: string[], parts: RelationshipParts, label: string): void {
   lines.push('Identity');
   if (parts.symbolContext) {
@@ -431,6 +459,7 @@ function renderIdentity(lines: string[], parts: RelationshipParts, label: string
     lines.push(`- Symbol module: ${parts.symbolContext.symbol.moduleId}`);
     if (parts.symbolContext.alternatives.length > 0) {
       lines.push(`- Alternatives: ${parts.symbolContext.alternatives.map(symbolRef).join('; ')}`);
+      pushOmitted(lines, parts.symbolContext.omitted?.alternatives, 'alternative(s)');
     }
   } else if (parts.moduleContext) {
     lines.push(`- Module: ${moduleRef(parts.moduleContext.module)}`);
@@ -456,6 +485,7 @@ function renderUpstream(lines: string[], parts: RelationshipParts): void {
           symbolEvidence(caller),
         )}`),
     );
+    pushOmitted(lines, parts.symbolContext.omitted?.callers, 'caller(s)');
   }
   if (parts.moduleContext) {
     const source = edgeSource();
@@ -480,6 +510,7 @@ function renderUpstream(lines: string[], parts: RelationshipParts): void {
         symbolEvidence(caller),
       )}`);
     }
+    pushOmitted(lines, parts.impactEstimate.omitted?.callers, 'impact caller(s)');
   }
   lines.push('');
 }
@@ -543,6 +574,7 @@ function renderImpact(lines: string[], impact: ImpactEstimateResult | undefined)
   );
   if (impact.impactedSymbols.length > 0) {
     lines.push(`- Impacted symbols: ${impact.impactedSymbols.map(symbolRef).join('; ')}`);
+    pushOmitted(lines, impact.omitted?.impactedSymbols, 'impacted symbol(s)');
   }
   lines.push('');
 }
@@ -602,22 +634,26 @@ function renderGaps(
   pushList(lines, 'No additional gaps recorded.', gaps);
 }
 
-function renderWarmingRelationshipScan(
+function renderUnavailableRelationshipScan(
   label: string,
   direction: RelationshipDirection,
+  status: RepoIntelligenceUnavailableError['status'],
   gaps: string[],
 ): string {
+  const warming = status === 'warming';
   const lines = [
     `Relationship scan for ${label}`,
-    'Engine: warming',
+    `Engine: ${status}`,
     `Direction: ${direction}`,
-    'Status: index warming',
+    `Status: ${warming ? 'index warming' : 'index unavailable'}`,
     '',
     'Structural relationships unavailable',
-    '- The repository intelligence index is still warming; upstream, downstream, and impact edges are not available yet.',
+    warming
+      ? '- The repository intelligence index is still warming; upstream, downstream, and impact edges are not available yet.'
+      : '- The repository intelligence index did not respond; upstream, downstream, and impact edges are not available.',
     '- This is NOT a "no relationships found" result — the analysis has not completed.',
-    '- Retry relationship_scan shortly for full structural results.',
-    '- Use read, grep, glob, and LSP tools for immediate exploration while the index finishes.',
+    ...(warming ? ['- Retry relationship_scan shortly for full structural results.'] : []),
+    '- Use read, grep, glob, and LSP tools for exploration instead.',
     '',
     'Gaps',
   ];
@@ -683,41 +719,38 @@ export async function toolRelationshipScan(
     const gaps: string[] = [];
     const parts: RelationshipParts = {};
     const maxWaitMs = readRepoIntelligenceToolWaitMs();
-    let indexWarming = false;
+    const index: IndexQueryState = {};
     const symbolTarget = symbol ?? (!moduleName && !filePath ? entry : undefined);
     if (symbolTarget) {
-      parts.symbolContext = await capture('symbol_context', gaps, () => getSymbolContext(ctx, {
+      parts.symbolContext = await captureIndexed('symbol_context', gaps, index, () => getSymbolContext(ctx, {
         symbol: symbolTarget,
         module: moduleName,
         targetPath,
         refresh,
         maxWaitMs,
       }));
-      indexWarming = recordCapabilityGap('symbol_context', parts.symbolContext, gaps);
     }
-    if (!indexWarming && (moduleName || filePath || parts.symbolContext)) {
-      parts.moduleContext = await capture('module_context', gaps, () => getModuleContext(ctx, {
+    if (!index.unavailable && (moduleName || filePath || parts.symbolContext)) {
+      parts.moduleContext = await captureIndexed('module_context', gaps, index, () => getModuleContext(ctx, {
         module: moduleName ?? parts.symbolContext?.symbol.moduleId,
         targetPath,
         refresh: refresh && !symbolTarget,
         maxWaitMs,
       }));
-      indexWarming = recordCapabilityGap('module_context', parts.moduleContext, gaps);
     }
     const shouldLoadProcessContext = (direction === 'downstream' || direction === 'both')
       && Boolean(entry || symbolTarget);
-    if (!indexWarming && shouldLoadProcessContext) {
-      parts.processContext = await capture('process_context', gaps, () => getProcessContext(ctx, {
+    if (!index.unavailable && shouldLoadProcessContext) {
+      parts.processContext = await captureIndexed('process_context', gaps, index, () => getProcessContext(ctx, {
         entry,
         module: moduleName,
         targetPath: targetPath ?? parts.symbolContext?.symbol.filePath,
         refresh: false,
         maxWaitMs,
       }));
-      indexWarming = recordCapabilityGap('process_context', parts.processContext, gaps);
     }
-    if (!indexWarming) {
-      parts.impactEstimate = await capture('impact_estimate', gaps, () => getImpactEstimate(ctx, {
+    if (!index.unavailable) {
+      parts.impactEstimate = await captureIndexed('impact_estimate', gaps, index, () => getImpactEstimate(ctx, {
         symbol: symbolTarget,
         module: moduleName,
         path: filePath,
@@ -725,23 +758,19 @@ export async function toolRelationshipScan(
         refresh: false,
         maxWaitMs,
       }));
-      indexWarming = recordCapabilityGap('impact_estimate', parts.impactEstimate, gaps);
     }
 
-    if (indexWarming) {
-      // The semantic index has not finished building. Render a clean
-      // "warming" response instead of the relationship sections, whose
-      // empty edge lists ("No direct callers found") would otherwise read
-      // as a confident "no relationships" finding — a false negative on a
-      // cold first call. Mirrors the explicit warming handling in
-      // semantic_lookup so the headline tool holds the same honesty bar.
-      return renderWarmingRelationshipScan(label, direction, gaps);
+    if (index.unavailable) {
+      // The index could not answer. Render that plainly instead of the
+      // relationship sections, whose empty edge lists ("No direct callers
+      // found") would read as a confident "no relationships" finding.
+      return renderUnavailableRelationshipScan(label, direction, index.unavailable, gaps);
     }
 
-    const lspEvidence = includeLsp && !indexWarming
+    const lspEvidence = includeLsp
       ? await capture('lsp_validation', gaps, () => buildLspEvidence(parts, direction, ctx, gaps)) ?? []
       : [];
-    const textEvidence = includeTextSearch && !indexWarming
+    const textEvidence = includeTextSearch
       ? await capture('text_search_validation', gaps, () => buildTextSearchEvidence(
           parts,
           symbolTarget,

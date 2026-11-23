@@ -1302,10 +1302,12 @@
     ],
     "summary": "What the repo-intelligence tools do and their limits.",
     "body": [
-      "Repo intelligence gives the agent a repo-scope map (overview, symbols, module/flow",
-      "capsules, change-impact) to narrow scope before large reviews/refactors — cached under",
-      "<repo>/.agent/repo-intelligence/. Modes via repoIntelligenceMode / KODAX_REPO_INTELLIGENCE",
-      "(auto/off/light/full). It is batch, pre-task context — not a realtime type checker."
+      "Repo intelligence gives the agent a git-based repository overview, the current change",
+      "scope, and paged diffs. Symbol, module, process, and impact tools use a name-matched",
+      "semantic index and are off by default; set repoIntelligenceMode / KODAX_REPO_INTELLIGENCE",
+      "to full or light to turn them on (auto is the default, off disables everything). Caches live",
+      "under <config home>/repo-intelligence/, not in the repository. Index results are leads to",
+      "confirm in the source, not compiler-checked facts."
     ],
     "sources": [
       {

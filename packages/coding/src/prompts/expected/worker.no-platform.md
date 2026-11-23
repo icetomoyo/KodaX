@@ -33,17 +33,18 @@ REPO INTELLIGENCE TOOLS:
 - When a listed Skill matches the request, load it with `skill` before any tool below, because the Skill decides how these tools are used.
 - For upstream/downstream, callers/callees, dependencies, process links, or impact questions (上下游、调用链), use `relationship_scan` first.
 - When a task needs a module's overall shape before you read into it, use `module_context` for its dependencies, entry points, symbols, tests, and docs.
-- Use `symbol_context` before grepping for one symbol and its probable callers/callees.
+- Use `symbol_context` for one named symbol's definition and probable callers/callees.
 - Before planning a rename/refactor, use `impact_estimate` to estimate the blast radius.
 - Use `process_context` to trace execution from an entry point.
 - Reuse the supplied repository overview while it applies. When repository work needs structure and the overview is missing, outdated, or stale after workspace changes, use `repo_overview`.
 - For compare-changes, what-changed-since-X, or current-worktree/change-set review, acquire scope with one `changed_scope` call before reading any diff.
+- When the run context already holds a Repository Change Scope for the change set you need, reuse it instead of calling `changed_scope` again.
 - For change-set review, establish the requested scope, then fan out before `changed_diff` or reading every diff locally. The root reads its own lane and integrates the others.
 - Use `changed_diff` for paged diffs of explicit changed files.
 - Keep an explicitly scoped file/module/repository audit inside the requested scope; unrelated worktree changes do not expand it.
 - For exact file positions or compiler-backed symbol/call hierarchy edges, use the available LSP tools: `lsp_workspace_symbols`, `lsp_implementation`, `lsp_incoming_calls`, `lsp_outgoing_calls`.
 - Prefer grep/glob for local content/path lookup.
-- Use `semantic_lookup` for concepts rather than exact strings.
+- `semantic_lookup` matches indexed names, so query it with likely identifiers rather than descriptions of behavior.
 - Use read/grep for targeted lookups or edits in known files and for exact code or line numbers; capsules summarize.
 - If a pull-tool returns `[Tool Error]` or `unavailable`, fall back to read/grep without repeating that call.
 - Use structured diff tools for change review instead of `bash git diff`; `bash git` remains for non-review operations such as status, commit, tag, push, log, and branches.

@@ -114,9 +114,8 @@ import { effortToLegacyReasoningMode, reconcileAssistantContent, retainAnthropic
 import { resolveExecutionCwd, resolveExecutionPath } from '../runtime-paths.js';
 import type { KodaXWrittenFile } from '../types.js';
 import {
-  getRepoRoutingSignals,
+  getAgentRepoRoutingSignals,
   resolveKodaXAutoRepoMode,
-  resolveKodaXHotPathRepoMode,
 } from '../repo-intelligence/runtime.js';
 import {
   createCompletedTurnTokenSnapshot,
@@ -1212,7 +1211,6 @@ async function runSubstrateInContext(
     : undefined;
 
   const autoRepoMode = resolveKodaXAutoRepoMode(options.context?.repoIntelligenceMode);
-  const hotPathRepoMode = resolveKodaXHotPathRepoMode(options.context?.repoIntelligenceMode);
 
   // v0.7.41 P1.b — hydrateSession (MCP extension state restoration) and the
   // routing-signals lookup is independent, so run it concurrently
@@ -1226,12 +1224,10 @@ async function runSubstrateInContext(
   const routingSignalsPromise = options.context?.repoRoutingSignals
     ? Promise.resolve(options.context.repoRoutingSignals)
     : (autoRepoMode !== 'off' && (options.context?.executionCwd || options.context?.gitRoot))
-      ? getRepoRoutingSignals({
+      ? getAgentRepoRoutingSignals({
           executionCwd,
           gitRoot: options.context?.gitRoot ?? undefined,
-        }, {
-          mode: hotPathRepoMode,
-        }).catch(() => null)
+        }, options.context?.repoIntelligenceMode).catch(() => null)
       : Promise.resolve(null);
   const [, repoRoutingSignals] = await Promise.all([
     runtime?.hydrateSession?.(sessionId),

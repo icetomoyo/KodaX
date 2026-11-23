@@ -600,7 +600,7 @@ describe('FEATURE_189 B.2 — getActiveToolDefinitions deferred description swap
   });
 
   it('emits hints simultaneously for multiple un-unlocked deferred tools', () => {
-    const defs = getActiveToolDefinitions(ACTIVE);
+    const defs = getActiveToolDefinitions(ACTIVE, 'full');
     const moduleCtx = defs.find((d) => d.name === 'module_context');
     const symbolCtx = defs.find((d) => d.name === 'symbol_context');
     expect(moduleCtx!.description).toBe(DEFERRED_TOOL_HINTS.module_context);
@@ -611,7 +611,7 @@ describe('FEATURE_189 B.2 — getActiveToolDefinitions deferred description swap
     const unlocked = new Set(['module_context']);
     const defs = getActiveToolDefinitions(
       ACTIVE,
-      undefined,
+      'full',
       false,
       false,
       undefined,

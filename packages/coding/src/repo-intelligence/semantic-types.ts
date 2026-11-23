@@ -127,6 +127,8 @@ export interface SymbolContextResult {
   symbol: RepoSymbolRecord;
   alternatives: RepoSymbolRecord[];
   callers: RepoSymbolRecord[];
+  /** Entries left out of the lists above; absent when nothing was cut. */
+  omitted?: { callers?: number; alternatives?: number };
   freshness: string;
   confidence: number;
   capability?: KodaXRepoIntelligenceCapability;
@@ -153,6 +155,8 @@ export interface ImpactEstimateResult {
   impactedModules: ModuleCapsule[];
   impactedSymbols: RepoSymbolRecord[];
   callers: RepoSymbolRecord[];
+  /** Entries left out of the lists above; absent when nothing was cut. */
+  omitted?: { impactedSymbols?: number; callers?: number };
   changedScope?: ChangedScopeReport;
   freshness: string;
   confidence: number;

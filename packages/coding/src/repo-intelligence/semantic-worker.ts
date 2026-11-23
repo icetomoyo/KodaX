@@ -109,12 +109,23 @@ async function loadDevSemanticIndex(): Promise<typeof SemanticIndexModule> {
   }) as typeof SemanticIndexModule;
 }
 
+// Mirrors REPO_INTELLIGENCE_STORAGE_ENV in internal.ts; this entry keeps type-only imports.
+const STORAGE_ENV = 'KODAX_REPO_INTELLIGENCE_STORAGE_DIR';
+
+// A worker owns a private copy of process.env, so setting it here never leaks to the host thread.
+function applyStorageBase(message: SemanticWorkerRequest & { storageBase?: unknown }): void {
+  if (typeof message.storageBase === 'string' && message.storageBase.length > 0) {
+    process.env[STORAGE_ENV] = message.storageBase;
+  }
+}
+
 parentPort.on('message', (message: unknown) => {
   const next = queue.then(async () => {
     if (!isRequest(message)) {
       return;
     }
     try {
+      applyStorageBase(message);
       post({
         id: message.id,
         ok: true,

@@ -109,6 +109,7 @@ Answer directly when general knowledge covers the question. Check the workspace 
 
 <!-- @key worker.repo-tools.changed-scope -->
 - For compare-changes, what-changed-since-X, or current-worktree/change-set review, acquire scope with one `changed_scope` call before reading any diff.
+- When the run context already holds a Repository Change Scope for the change set you need, reuse it instead of calling `changed_scope` again.
 
 <!-- @key worker.repo-tools.local-review -->
 - For change-set review, establish the requested scope before reading diffs. Inspect the relevant review axes locally and synthesize the evidence.

@@ -70,6 +70,8 @@
   // ],
 
   // Repository intelligence. Mode: "auto", "full", "light", or "off".
+  // "auto" offers the git-based overview, change scope, and diff tools. "full" or "light"
+  // also turns on the semantic index (symbol, module, process, and impact tools).
   // "repoIntelligenceMode": "auto",
   // "repoIntelligenceTrace": false,
   // "repoIntelligence": {

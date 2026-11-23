@@ -9,6 +9,7 @@ import {
   getRepoRoutingSignals as getSemanticRepoRoutingSignals,
 } from './semantic-index.js';
 import { commitAll, initGitRepo } from '../tools/test-helpers.js';
+import { resolveRepoIntelligenceStorageRoot } from './internal.js';
 
 type RepoContext = { executionCwd?: string; gitRoot?: string };
 type LightQueryOptions = { targetPath?: string; refresh?: boolean };
@@ -43,7 +44,7 @@ function createWorkspaceFixture(workspaceRoot: string): void {
 }
 
 function getStorageRoot(workspaceRoot: string): string {
-  return join(workspaceRoot, '.agent', 'repo-intelligence');
+  return resolveRepoIntelligenceStorageRoot(workspaceRoot);
 }
 
 function forceDirtyOverviewArtifacts(workspaceRoot: string): void {
@@ -103,10 +104,10 @@ describe('repo overview baseline cache', () => {
     const context = { executionCwd: subdirectory ? join(tempDir, 'packages', 'app') : tempDir, gitRoot: tempDir };
     const combined = await buildRepoIntelligenceContext(context, { includeChangedScope: true });
     expect(combined.split('\n').filter(line => line.startsWith('Root: '))).toEqual([`Root: ${tempDir}`]);
-    expect(combined).not.toContain('Repository overview snapshot:');
-    expect(combined).toContain('Snapshot: git @ ');
+    // Injected context carries no clock time, so an unchanged workspace renders identical bytes.
+    expect(combined).not.toContain('Snapshot:');
+    expect(await buildRepoIntelligenceContext(context, { includeChangedScope: true })).toBe(combined);
     const combinedScope = combined.split('## Repository Change Scope\n')[1]!;
-    expect(combinedScope).toMatch(/^Snapshot: \d{4}-/m);
     expect(combinedScope).toContain(`Changed files: ${dirty ? 1 : 0}`);
     if (dirty) expect(combinedScope).toContain('docs/PRD.md');
 
@@ -115,14 +116,10 @@ describe('repo overview baseline cache', () => {
     const report = await analyzeChangedScope(context);
     const rendered = renderChangedScope(report);
     expect(rendered).toContain(`Root: ${tempDir}`);
-    expect(rendered).toContain(`Repository overview snapshot: ${report.overviewGeneratedAt}`);
-    expect(rendered).toContain(`Snapshot: ${report.analyzedAt}`);
-    const withoutAnalysisTime = (text: string) => text.replace(/^Snapshot: .*$/m, 'Snapshot: <analysis time>');
-    expect(withoutAnalysisTime(standalone)).toBe(`## Repository Change Scope\n${withoutAnalysisTime(rendered)}`);
-    const sharedIdentityRemoved = rendered.split('\n').filter(line =>
-      line !== `Root: ${tempDir}` && line !== `Repository overview snapshot: ${report.overviewGeneratedAt}`,
-    ).join('\n');
-    expect(withoutAnalysisTime(combinedScope)).toBe(withoutAnalysisTime(sharedIdentityRemoved));
+    expect(rendered).not.toContain('Snapshot:');
+    expect(standalone).toBe(`## Repository Change Scope\n${rendered}`);
+    const sharedIdentityRemoved = rendered.split('\n').filter(line => line !== `Root: ${tempDir}`).join('\n');
+    expect(combinedScope).toBe(sharedIdentityRemoved);
   }, 15000);
 
   it('flags workspace-root risk only for root source or config, not root docs', async () => {
@@ -145,7 +142,6 @@ describe('repo overview baseline cache', () => {
     createWorkspaceFixture(tempDir);
     const result = await buildRepoIntelligenceContext({ executionCwd: tempDir }, { includeChangedScope: true });
     expect(result).toContain(`Root: ${tempDir}`);
-    expect(result).toContain('Snapshot: filesystem @ ');
     expect(result).not.toContain('## Repository Change Scope');
     expect(await buildRepoIntelligenceContext({ executionCwd: tempDir }, {
       includeRepoOverview: false, includeChangedScope: true,
@@ -161,6 +157,18 @@ describe('repo overview baseline cache', () => {
     initGitRepo(tempDir);
 
     expect((await getRepoOverview(context)).source).toBe('git');
+  });
+
+  it('does not reuse a cached overview while the Git state is unknown', async () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'kodax-repo-overview-unknown-git-'));
+    initGitRepo(tempDir);
+    createWorkspaceFixture(tempDir);
+    const context = { executionCwd: tempDir };
+    // An unborn repository has no HEAD, so the Git summary cannot be read.
+    const first = await getRepoOverview(context);
+    writeFileSync(join(tempDir, 'docs', 'ADR.md'), '# ADR\n');
+    const second = await getRepoOverview(context);
+    expect(second.fileStats.totalFiles).toBe(first.fileStats.totalFiles + 1);
   });
 
   it('rebuilds filesystem overviews when cached overview artifacts are on an older schema', async () => {
@@ -201,8 +209,10 @@ describe('repo overview baseline cache', () => {
       process.env.KODAX_REPO_INTELLIGENCE_STORAGE_DIR = storageDir;
       await getRepoOverview({ executionCwd: tempDir }, { refresh: true });
 
-      expect(existsSync(join(storageDir, 'repo-overview.json'))).toBe(true);
-      expect(existsSync(join(storageDir, 'repo-overview-inventory.json'))).toBe(true);
+      const workspaceStorage = resolveRepoIntelligenceStorageRoot(tempDir);
+      expect(workspaceStorage.startsWith(storageDir)).toBe(true);
+      expect(existsSync(join(workspaceStorage, 'repo-overview.json'))).toBe(true);
+      expect(existsSync(join(workspaceStorage, 'repo-overview-inventory.json'))).toBe(true);
       expect(existsSync(join(tempDir, storageDir, 'repo-overview.json'))).toBe(false);
     } finally {
       if (originalStorageDir === undefined) {

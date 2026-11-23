@@ -33,8 +33,10 @@ afterEach(async () => {
 
 async function fixture(totalBudget = 8) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kodax-script-repo-'));
-  directories.push(root);
-  vi.stubEnv('KODAX_HOME', path.join(root, 'home'));
+  // The config home holds the repo-intelligence cache, so it must sit outside the scanned repository.
+  const home = `${root}-home`;
+  directories.push(root, home);
+  vi.stubEnv('KODAX_HOME', home);
   vi.stubEnv('KODAX_REPO_INTELLIGENCE', 'full');
   vi.stubEnv('KODAX_REPO_INTELLIGENCE_TOOL_WAIT_MS', '10000');
   execFileSync('git', ['init'], { cwd: root, windowsHide: true, stdio: 'pipe' });

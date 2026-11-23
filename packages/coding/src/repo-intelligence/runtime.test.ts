@@ -1,6 +1,7 @@
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { resolveRepoIntelligenceStorageRoot } from './internal.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -219,8 +220,10 @@ describe('repo-intelligence runtime facade', () => {
 
     const inspection = await inspectRepoIntelligenceRuntime();
 
-    expect(inspection.requestedMode).toBe('full');
-    expect(inspection.effectiveEngine).toBe('full');
+    // Auto keeps the semantic engine off; only an explicit full or light opts in.
+    expect(inspection.requestedMode).toBe('off');
+    expect(inspection.effectiveEngine).toBe('off');
+    expect(inspection.warnings.join(' ')).toContain('The semantic index is off by default');
     expect(inspection.warnings.join(' ')).toContain('Ignoring deprecated KODAX_REPO_INTELLIGENCE_MODE');
     expect(inspection.warnings.join(' ')).toContain('Ignoring legacy KODAX_REPOINTEL_ENDPOINT');
     expect(inspection.warnings.join(' ')).toContain('Ignoring legacy KODAX_REPOINTEL_BIN');
@@ -236,7 +239,7 @@ describe('repo-intelligence runtime facade', () => {
 
     expect(inspection.status).toBe('ok');
     expect(inspection.workerPath).toContain('semantic-worker');
-    expect(inspection.storageRoot).toBe(join(tempDir, '.agent', 'repo-intelligence'));
+    expect(inspection.storageRoot).toBe(resolveRepoIntelligenceStorageRoot(tempDir));
   });
 
   it('keeps automatic hot paths on the resolved full engine', () => {
@@ -251,7 +254,7 @@ describe('repo-intelligence runtime facade', () => {
     process.env.KODAX_PREWARM_REPO_INTELLIGENCE = '0';
     prewarmRepoIntelligenceCaches({ executionCwd: tempDir }, { mode: 'auto' });
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(existsSync(join(tempDir, '.agent', 'repo-intelligence'))).toBe(false);
+    expect(existsSync(resolveRepoIntelligenceStorageRoot(tempDir))).toBe(false);
   });
 
   it('does not schedule startup prewarm outside full mode', async () => {
@@ -261,7 +264,7 @@ describe('repo-intelligence runtime facade', () => {
     prewarmRepoIntelligenceCaches({ executionCwd: tempDir }, { mode: 'auto' });
     await vi.advanceTimersByTimeAsync(2_000);
 
-    expect(existsSync(join(tempDir, '.agent', 'repo-intelligence'))).toBe(false);
+    expect(existsSync(resolveRepoIntelligenceStorageRoot(tempDir))).toBe(false);
   });
 
   it('coalesces concurrent routing and preturn requests on the full engine', async () => {

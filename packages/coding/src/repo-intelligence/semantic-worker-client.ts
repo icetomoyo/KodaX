@@ -3,6 +3,7 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Worker, type WorkerOptions } from 'node:worker_threads';
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
+import { RepoIntelligenceQueryError, resolveRepoIntelligenceStorageBase } from './internal.js';
 import type {
   ImpactEstimateResult,
   ModuleContextResult,
@@ -308,7 +309,7 @@ function getWorkerState(): WorkerState {
       pending.resolve(message.result);
       return;
     }
-    const error = new Error(message.error.message);
+    const error = new RepoIntelligenceQueryError(message.error.message);
     if (message.error.stack) {
       error.stack = message.error.stack;
     }
@@ -361,7 +362,8 @@ export function detachRepoIntelligenceWorkerRequest(promise: Promise<unknown>): 
 function callWorker<T>(request: SemanticWorkerRequestPayload): Promise<T> {
   const state = getWorkerState();
   const id = nextRequestId++;
-  const message = cloneableWorkerRequest(request, id);
+  // The worker cannot see async-scoped overrides or a programmatic config home, so it gets the resolved base.
+  const message = { ...cloneableWorkerRequest(request, id), storageBase: resolveRepoIntelligenceStorageBase() };
   const timeoutMs = readWorkerTimeoutMs();
   const promise = new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {

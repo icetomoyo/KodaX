@@ -6,9 +6,14 @@ import type { KodaXStreamResult } from '@kodax-ai/llm';
 import { runComplexRuntime } from './first-turn-complex-runtime.js';
 import { inputHash } from './first-turn-eval-support.js';
 
-it('sends one current repository overview and change scope in the first managed Runtime request', async () => {
+// Module and impact summaries come from the semantic index, which is opt-in.
+it.each([
+  { surface: 'default', semantic: false },
+  { surface: 'full', semantic: true },
+] as const)('sends one current repository overview and change scope in the first managed Runtime request ($surface surface)', async ({ semantic }) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-first-repo-context-'));
   vi.stubEnv('KODAX_FIRST_REPO_CONTEXT_KEY', 'offline-only');
+  vi.stubEnv('KODAX_REPO_INTELLIGENCE', semantic ? 'full' : '');
   const fetcher = vi.fn(() => { throw new Error('Repository context regression must stay offline'); });
   vi.stubGlobal('fetch', fetcher);
   let context: string | undefined;
@@ -28,8 +33,8 @@ it('sends one current repository overview and change scope in the first managed 
     expect(context).toBeDefined();
     expect(context!.match(/^## Repository Intelligence$/gm)).toHaveLength(1);
     expect(context!.match(/^## Repository Change Scope$/gm)).toHaveLength(1);
-    expect(context).toContain('## Active Module Intelligence');
-    expect(context).toContain('## Active Impact Intelligence');
+    expect(context!.includes('## Active Module Intelligence')).toBe(semantic);
+    expect(context!.includes('## Active Impact Intelligence')).toBe(semantic);
     expect(context).toContain('packages/cache');
     expect(result.groundtruth.protectedUnchanged).toBe(true);
     expect(fetcher).not.toHaveBeenCalled();

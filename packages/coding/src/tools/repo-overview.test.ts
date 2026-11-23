@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { toolRepoOverview } from './repo-overview.js';
 import { initGitRepo } from './test-helpers.js';
+import { resolveRepoIntelligenceStorageRoot } from '../repo-intelligence/internal.js';
 
 describe('toolRepoOverview', () => {
   let tempDir = '';
@@ -40,6 +41,7 @@ describe('toolRepoOverview', () => {
     expect(result).toContain('@demo/app');
     expect(result).toContain('Entry hints:');
     expect(result).toContain('packages/app/src/index.ts');
-    expect(existsSync(join(tempDir, '.agent', 'repo-intelligence', 'repo-overview.json'))).toBe(true);
+    expect(existsSync(join(resolveRepoIntelligenceStorageRoot(tempDir), 'repo-overview.json'))).toBe(true);
+    expect(existsSync(join(tempDir, '.agent'))).toBe(false);
   });
 });

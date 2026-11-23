@@ -4807,7 +4807,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 | 145 | High | Resolved | Runtime daemon / SDK 边界存在生命周期、事件、权限与协议一致性缺口 | v0.7.64-v0.7.66 | v0.7.66 | 2026-07-10 | 2026-07-10 |
 | 141 | Medium | Open | CI workflow long-red on Linux: cross-platform test bugs (storage list() runtime-inspection, bash background-process, h2 spawn env, skill-creator API-key-at-load) | long-standing (pre-v0.7.49) | - | 2026-06-18 | - |
 | 136 | Low | Open | 流式 / 滚动时 spinner 动画卡顿 + 计时变慢 — 根因在 CPU 侧每帧渲染（React reconciliation + outputToScreen 全量重建），**非**终端写入字节量（cell-diff + DECSTBM 两次否证 I/O 假设） | 待调研 | - | 2026-05-31 | - |
-| 133 | Low | Open | `repo-intelligence/runtime.test.ts` "falls back to OSS when premium returns malformed preturn payloads" intermittent flake under heavy parallel load — failure mode not yet captured | 待调研 | - | 2026-05-16 | - |
+| 133 | Low | Won't Fix | `repo-intelligence/runtime.test.ts` "falls back to OSS when premium returns malformed preturn payloads" intermittent flake under heavy parallel load — the test and the premium cache it named no longer exist | 待调研 | - | 2026-05-16 | 2026-11-23 |
 | 126 | Low | Open | tmux 默认不透传 OSC 8 超链接 — kodax 输出中的 file:// / docs URL 在 tmux 内不可点击 | 一直存在 | - | 2026-04-28 | - |
 | 125 | Low | Open | Thinking-mode cross-provider replay — 三个不可测 OpenAI-compat 与 anthropic 官方 strict mode 待实证 | v0.7.28 | - | 2026-04-26 | - |
 | 124 | High | Open | AMA 子 Agent dispatch 实际触发率偏低 — Controller fanout gate + H1 工具白名单串联收得过紧 | v0.7.18 | - | 2026-04-26 | - |
@@ -19050,9 +19050,13 @@ DECSTBM 只优化了「把字节写到终端」这一 I/O 步，没有触碰上�
 ### 133: `repo-intelligence/runtime.test.ts` "falls back to OSS when premium returns malformed preturn payloads" intermittent flake
 
 - **Priority**: Low（测试 flake only；不影响 user-facing 行为，仅在并行 suite 高负载下偶发）
-- **Status**: Open（调研已展开，**暂未复现**，候选根因 narrowed）
+- **Status**: Won't Fix（2026-11-23：问题所在的代码已不存在，见下方 Resolution）
 - **Introduced**: 待调研（commit history 显示文件最近一次改动是 v0.7.37 FEATURE_142 `a840f22b`，但 flake 表现实际何时起飞需调研）
 - **Created**: 2026-05-16
+
+#### Resolution (2026-11-23)
+
+Closed without a fix. The premium engine, `premium-client.js`, `premiumPreturnCache`, and the test named in the title were all removed before RepoIntel v2 phase 0. The remaining preturn cache in `runtime.ts` is reset between tests by `_resetRepoIntelligenceCachesForTesting()`. A new flake in this area would be a new issue.
 
 #### Current Behavior
 
@@ -20295,7 +20299,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 314 (48 Open including 1 needs-info, 1 ready, 265 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 314 (47 Open including 1 needs-info, 1 ready, 265 Resolved, 0 Partially Resolved, 1 Won't Fix)
 - Ready: 1 (420)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md

@@ -2,7 +2,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 const worker = vi.hoisted(() => ({ getRepoRoutingSignals: vi.fn(async () => ({ changedFileCount: 3 })),
   getModuleContext: vi.fn(async () => undefined), getImpactEstimate: vi.fn(async () => undefined) }));
 vi.mock('./semantic-worker-client.js', () => worker);
-vi.mock('./index.js', () => ({ buildRepoIntelligenceContext: async () => 'Repository context' }));
+vi.mock('./index.js', () => ({ buildRepoIntelligenceContext: async () => 'Repository context',
+  analyzeChangedScope: async () => { throw new Error('Fixture workspace is not a git repository'); } }));
 import { _resetRepoIntelligenceCachesForTesting, getRepoPreturnBundle, getRepoRoutingSignals,
   inspectRepoIntelligenceProject, prepareRepoIntelligenceProject } from './runtime.js';
 afterEach(() => { _resetRepoIntelligenceCachesForTesting(); vi.clearAllMocks(); });

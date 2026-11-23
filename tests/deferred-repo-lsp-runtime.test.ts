@@ -62,6 +62,8 @@ it.each(['all', 'repo', 'manual', 'manual-tail'] as const)('keeps the %s root me
   const family = variant === 'manual-tail' ? 'manual' : variant;
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kodax-deferred-runtime-'));
   vi.stubEnv('KODAX_DEFERRED_RUNTIME_TEST_KEY', 'offline-only');
+  // module_context is on the opt-in semantic surface.
+  if (family !== 'manual') vi.stubEnv('KODAX_REPO_INTELLIGENCE', 'full');
   const fetcher = vi.fn(() => { throw new Error('Offline Runtime must not call a model endpoint'); });
   vi.stubGlobal('fetch', fetcher);
   let menu: string[] | undefined;

@@ -55,6 +55,7 @@ import {
   getImpactEstimate,
   getModuleContext,
   getRepoPreturnBundle,
+  isRepoIntelligenceSemanticSurfaceEnabled,
   resolveKodaXAutoRepoMode,
   resolveKodaXHotPathRepoMode,
 } from '../../repo-intelligence/runtime.js';
@@ -247,11 +248,13 @@ export async function buildAutoRepoIntelligenceContext(
       executionCwd: options.context?.executionCwd,
       gitRoot: options.context?.gitRoot ?? undefined,
     };
-    const includeActiveModule =
+    // Module and impact capsules come from the semantic index, which the
+    // default surface leaves off.
+    const includeActiveModule = isRepoIntelligenceSemanticSurfaceEnabled(options.context?.repoIntelligenceMode) && (
       decision.primaryTask === 'review'
       || decision.primaryTask === 'bugfix'
       || decision.primaryTask === 'edit'
-      || decision.primaryTask === 'refactor';
+      || decision.primaryTask === 'refactor');
 
     // First-round preturn stays best-effort and never forces refresh. The
     // worker-isolated engine can reuse a warm cache, while explicit tool

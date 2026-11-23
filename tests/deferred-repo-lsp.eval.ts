@@ -21,6 +21,9 @@ import type { CallEvidence } from './first-turn-edit-eval-support.js';
 import { runComplexRuntime } from './first-turn-complex-runtime.js';
 import { settleComplexAttempt } from './first-turn-complex-budget.js';
 import { checkComplexTool } from './first-turn-complex-guard.js';
+
+// The deferred repo tools under test live on the opt-in semantic surface.
+process.env.KODAX_REPO_INTELLIGENCE = 'full';
 import { projectDeferredRepoLspInput, resolveDeferredEvidenceRoot, isAuxiliaryLocalPreflight, isRejectOnlyBridgeCall, projectBridgeTeachingInput, projectLocalSearchInput } from './deferred-repo-lsp-support.js';
 import { captureReadonlySearchInput, restoreSearchCheckpoint, SEARCH_REFERENCE_REVISION, UNFAMILIAR_SEARCH_CASES } from './first-turn-unfamiliar-search.js';
 

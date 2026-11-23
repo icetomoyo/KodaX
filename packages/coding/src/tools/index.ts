@@ -48,6 +48,8 @@ export {
   listToolDefinitions,
   isRepoIntelligenceWorkingToolName,
   filterRepoIntelligenceWorkingToolNames,
+  filterRepoIntelligenceSemanticToolNames,
+  REPO_INTELLIGENCE_SEMANTIC_TOOL_NAMES,
   filterMcpToolNames,
   MCP_TOOL_NAMES,
   executeTool,

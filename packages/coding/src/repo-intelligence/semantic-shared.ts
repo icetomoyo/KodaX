@@ -20,18 +20,14 @@ import type {
 } from './public-bridge.js';
 import {
   ensureRepoIntelligenceStorageDir,
-  resolveRepoIntelligenceStorageDir,
+  resolveRepoIntelligenceStorageRoot,
   writeJsonFileAtomic as writeJsonFileAtomicInternal,
 } from './internal.js';
 
-export const DEFAULT_REPO_INTELLIGENCE_DIR = path.join('.agent', 'repo-intelligence');
 export const QUERY_INDEX_FILE = 'repo-intelligence-index.json';
 export const QUERY_MANIFEST_FILE = 'repo-intelligence-manifest.json';
 export const FILE_ANALYSIS_INDEX_FILE = 'file-analysis-index.json';
 export const DIRTY_SOURCE_HINT_FILE = 'repo-intelligence-dirty-source-hint.json';
-export const MODULE_INDEX_FILE = 'module-index.json';
-export const SYMBOL_INDEX_FILE = 'symbol-index.json';
-export const PROCESS_INDEX_FILE = 'process-index.json';
 export const QUERY_SCHEMA_VERSION = 9;
 export const MAX_FILE_BYTES = 512 * 1024;
 export const MAX_SYMBOLS_PER_FILE = 40;
@@ -444,10 +440,7 @@ export async function ensureStorageDir(
   workspaceRoot: string,
   profile: RepoIntelligenceAnalysisProfile = 'full',
 ): Promise<string> {
-  const configuredDir = getRepoIntelligenceDir();
-  const baseStorageRoot = path.isAbsolute(configuredDir)
-    ? configuredDir
-    : path.join(workspaceRoot, configuredDir);
+  const baseStorageRoot = resolveRepoIntelligenceStorageRoot(workspaceRoot);
   const storageRoot = profile === 'light'
     ? path.join(baseStorageRoot, 'light')
     : baseStorageRoot;
@@ -582,7 +575,7 @@ export function workspaceSnapshotFromOverview(overview: RepoOverview): RepoWorks
 }
 
 export function isCleanGitSnapshot(snapshot: RepoWorkspaceSnapshot): boolean {
-  return snapshot.source === 'git' && snapshot.hasUncommittedChanges !== true;
+  return snapshot.source === 'git' && snapshot.hasUncommittedChanges === false;
 }
 
 export function sameWorkspaceSnapshot(
@@ -717,8 +710,4 @@ export function extractImports(content: string, language: RepoLanguageId): strin
   }
 
   return dedupeStrings(matches, 12);
-}
-
-export function getRepoIntelligenceDir(): string {
-  return resolveRepoIntelligenceStorageDir(DEFAULT_REPO_INTELLIGENCE_DIR);
 }

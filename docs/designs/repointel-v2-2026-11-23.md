@@ -145,7 +145,7 @@ L3 精确层   按需：通过 Host 现有 LSP 服务（packages/coding/src/lsp/
    - changed_scope 支持翻页。
    - git 状态未知时按"有改动"处理。
 2. **退出默认：**
-   - 工具：symbol_context、process_context、impact_estimate、semantic_lookup、relationship_scan、cyclic_dependencies。
+   - 工具：module_context、symbol_context、process_context、impact_estimate、semantic_lookup、relationship_scan、cyclic_dependencies。
    - 自动注入里的 module/impact。
    - 默认不再后台构建语义索引。
    - SDK 显式启用时仍然可用。
@@ -156,6 +156,46 @@ L3 精确层   按需：通过 Host 现有 LSP 服务（packages/coding/src/lsp/
 4. **存储：** 移出用户仓库（至少写入 `.git/info/exclude`）；校验 `target_path`；删除只写不读的 index 文件。
 5. **提示词：** 删去 "concepts rather than exact strings"、"before grepping"、"read/grep only after structured tools"；changed_scope 加上复用已注入 scope 的说明。按 ADR-033 写并补 eval。
 6. **文档：** 关闭或重写 KNOWN_ISSUES #133，它引用的代码已经不存在。
+
+### 8.1 实施结果
+
+- **开关：** `auto`（默认）只开放 overview、changed_scope、changed_diff；显式 `full` 或 `light` 才开放语义工具、module/impact 注入和预热。直接调用 SDK 的 `getModuleContext` 等函数仍把 `auto` 当作 `full`，因为调用本身就是显式请求。
+- **存储：** 默认写到 `<config home>/repo-intelligence/<目录名>-<路径哈希12位>`，不再写进用户仓库，因此不需要 `.git/info/exclude`。`KODAX_REPO_INTELLIGENCE_STORAGE_DIR` 可以覆盖；相对路径表示调用方有意放回工作区。`target_path` 超出执行目录和 Git 根目录时报错。删除了 `changed-scope.json`、`module-index.json`、`symbol-index.json`、`process-index.json` 这几个只写不读的文件。
+- **错误语义：** 索引没响应时抛 `RepoIntelligenceUnavailableError`（`warming` 或 `unavailable`），worker 返回的"未找到"走 `RepoIntelligenceQueryError` 原样透出。relationship_scan 只在前者时停止并提示改用 read/grep/LSP。
+- **KNOWN_ISSUES #133：** 以 Won't Fix 关闭，所指的测试和缓存已删除。
+
+### 8.2 旧引擎基线（2026-11-23，KodaX 仓库，`npm run bench:repo-intel-truth`）
+
+真值来自 TypeScript 编译器，覆盖 3,383 个源文件、20,355 个单元、25,841 条调用边。
+
+| 关系 | 范围 | 精确率 | 召回率 |
+|---|---|---|---|
+| 调用目标 | 抽样 300 个符号 | 42.7% | 55.1% |
+| 调用目标 | 全部 19,593 个符号 | 29.3% | 48.7% |
+| 调用方（symbol_context 展示的每条 8 个） | 抽样 300 个符号 | 75.3% | 44.1% |
+| 模块依赖边 | 全部 | 70% | 63.6% |
+
+- 每个文件最多索引 40 个符号，79 个文件共丢掉 2,984 个符号。
+- `.js` 后缀的 import 没有解析到 `.ts`，所以每个包都多出一条指向根模块 `.` 的假边，唯一报出的依赖环也是假的。
+- 冷构建 13.8 秒、峰值 3.2 GB；worker 在 KodaX 上需要 6 GB 堆，2 GB 时内存溢出并静默返回 "unavailable"。
+- 评测局限：只覆盖 TS/JS；接口调用、`any`、JSX 和嵌套函数没有完整计入；跑的是编译后的 dist。
+
+### 8.3 提示词 eval（2026-11-23，`benchmark/repo-intel-prompt.eval.ts`）
+
+基线是 HEAD 的提示词，候选是阶段 0 的改动。模型 glm-5.3-flash、deepseek-flash、kimi，4 个用例 × 2 组 × 每格 3 次，正式轮 72 次调用（含试跑共 82 次）。先盲评、写下结论，再揭盲。
+
+| 用例 | 问题 | 结果 |
+|---|---|---|
+| C1 | 已注入 Change Scope 时是否还重复调 changed_scope | 候选 1/9，基线 2/9（deepseek 0/3 对 2/3，glm 1/3 对 0/3），持平偏候选 |
+| C2 | 未注入时是否仍先调 changed_scope（防退化） | 两组 18/18，无退化 |
+| C3 | 开启语义面时是否用描述句查 semantic_lookup | 只有 kimi 这样做：候选 2/3，基线 3/3；其余模型只用 grep |
+| C4 | 默认面的子 Agent 是否先用自己有的工具 | 两组都没提 module_context；候选 4/9 先用 glob/grep，基线 0/9（基线用 bash dir/ls），三个模型方向一致 |
+
+结论：发布。没有用例退化，可测到的方向都偏向候选。局限：
+- 每格 3 次，只看方向。
+- C2 到顶；C3 只有 kimi 表现出被测行为。
+- changed_scope 与 semantic_lookup 的工具说明、repo-explorer 说明和低置信说明不在首个请求里（延迟工具只发简短提示），本 eval 测不到。
+- 原始输出和盲评记录在本地 `%TEMP%/kodax-eval-dumps/repointel-p0-prompt/r3-full/`。
 
 ## 9. 待定项（开工时决定）
 

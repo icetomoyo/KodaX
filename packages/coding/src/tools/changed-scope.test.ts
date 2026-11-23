@@ -47,8 +47,8 @@ describe('toolChangedScope', () => {
     expect(result).toContain('packages/app/src/index.ts');
     expect(result).toContain('packages/api/package.json');
     expect(result).toContain('docs/PRD.md');
-    expect(result).not.toContain('.agent/repo-intelligence');
-    expect(existsSync(join(tempDir, '.agent', 'repo-intelligence', 'changed-scope.json'))).toBe(true);
+    // The cache lives outside the workspace, so the analysis never dirties the repository it reads.
+    expect(existsSync(join(tempDir, '.agent'))).toBe(false);
   });
 
   it.each(['true', 'false'])('preserves spaced Unicode paths and rename destinations with core.quotepath=%s', async quotePath => {
@@ -81,5 +81,44 @@ describe('toolChangedScope', () => {
     expect(compared).toContain('- added src/多  空格.ts [source] -> src');
     expect(compared).toContain('Changed files: 2');
     expect(compared).not.toContain('旧 file.ts');
+  });
+
+  it('pages the changed file list with offset and names the next offset', async () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'kodax-changed-scope-'));
+    initGitRepo(tempDir);
+    mkdirSync(join(tempDir, 'src'));
+    writeFileSync(join(tempDir, 'src', 'seed.ts'), 'export const seed = 1;\n');
+    commitAll(tempDir, 'initial');
+    for (let index = 0; index < 25; index += 1) {
+      writeFileSync(join(tempDir, 'src', `file-${String(index).padStart(2, '0')}.ts`), 'export const x = 1;\n');
+    }
+    const context = { backups: new Map<string, string>(), executionCwd: tempDir };
+
+    const first = await toolChangedScope({ scope: 'all' }, context);
+    expect(first).toContain('Changed files: 25');
+    expect(first).toContain('src/file-19.ts');
+    expect(first).not.toContain('src/file-20.ts');
+    expect(first).toContain('5 more file(s); call changed_scope with offset=20');
+
+    const second = await toolChangedScope({ scope: 'all', offset: 20 }, context);
+    expect(second).toContain('Changed files: 25');
+    expect(second).toContain('Showing files 21-25 of 25');
+    expect(second).toContain('src/file-24.ts');
+    expect(second).not.toContain('src/file-19.ts');
+    expect(second).not.toContain('more file(s)');
+  });
+
+  it('rejects a negative offset', async () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'kodax-changed-scope-'));
+    initGitRepo(tempDir);
+    const result = await toolChangedScope({ offset: -1 }, { backups: new Map(), executionCwd: tempDir });
+    expect(result).toContain('[Tool Error] changed_scope: offset must be a non-negative integer');
+  });
+
+  it('rejects a target_path outside the workspace', async () => {
+    tempDir = mkdtempSync(join(tmpdir(), 'kodax-changed-scope-'));
+    initGitRepo(tempDir);
+    const result = await toolChangedScope({ target_path: '..' }, { backups: new Map(), executionCwd: tempDir, gitRoot: tempDir });
+    expect(result).toContain('[Tool Error] changed_scope: target_path must stay inside the workspace');
   });
 });

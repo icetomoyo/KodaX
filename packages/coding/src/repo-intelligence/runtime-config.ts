@@ -6,9 +6,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
   probeRepoIntelligenceStorage,
-  resolveRepoIntelligenceStorageDir,
+  resolveRepoIntelligenceStorageRoot,
 } from './internal.js';
-import { DEFAULT_REPO_INTELLIGENCE_DIR } from './semantic-shared.js';
 import { getRepoIntelligenceWorkerPathForDiagnostics } from './semantic-worker-client.js';
 
 export interface RepoIntelligenceRuntimeInspection {
@@ -108,6 +107,23 @@ export function resolveRepoIntelligenceMode(
   return mode;
 }
 
+/**
+ * The agent surface (semantic tools, module/impact injection, background
+ * indexing) uses the semantic engine only when a caller explicitly asks for
+ * `full` or `light`. `auto` keeps the git-based overview, changed scope and
+ * diff tools. Direct SDK calls such as `getModuleContext` still resolve `auto`
+ * to `full`, because calling them is itself an explicit request.
+ */
+export function isRepoIntelligenceSemanticSurfaceEnabled(
+  modeOverride?: KodaXRepoIntelligenceMode,
+): boolean {
+  const mode = resolveRepoIntelligenceRuntimeConfig(modeOverride).mode;
+  return mode === 'full' || mode === 'light';
+}
+
+export const SEMANTIC_SURFACE_OPT_IN_NOTE =
+  'The semantic index is off by default; set repo intelligence to full or light to enable symbol, module and impact tools.';
+
 export async function inspectRepoIntelligenceRuntime(
   options: {
     mode?: KodaXRepoIntelligenceMode;
@@ -117,6 +133,17 @@ export async function inspectRepoIntelligenceRuntime(
   } = {},
 ): Promise<RepoIntelligenceRuntimeInspection> {
   const config = resolveRepoIntelligenceRuntimeConfig(options.mode, options.trace);
+  if (config.mode === 'auto') {
+    return {
+      configuredMode: config.mode,
+      requestedMode: 'off',
+      traceEnabled: config.trace,
+      effectiveEngine: 'off',
+      status: 'ok',
+      fallbackToLight: false,
+      warnings: [...config.warnings, SEMANTIC_SURFACE_OPT_IN_NOTE],
+    };
+  }
   const requestedMode = resolveRepoIntelligenceMode(config.mode);
   const inspection: RepoIntelligenceRuntimeInspection = {
     configuredMode: config.mode,
@@ -142,11 +169,8 @@ export async function inspectRepoIntelligenceRuntime(
     return inspection;
   }
 
-  const configuredDir = resolveRepoIntelligenceStorageDir(DEFAULT_REPO_INTELLIGENCE_DIR);
   const workspaceRoot = await resolveProbeWorkspaceRoot(options.workspaceRoot);
-  const storageRoot = path.isAbsolute(configuredDir)
-    ? configuredDir
-    : path.join(workspaceRoot, configuredDir);
+  const storageRoot = resolveRepoIntelligenceStorageRoot(workspaceRoot);
   inspection.storageRoot = storageRoot;
   const probePath = path.join(
     storageRoot,

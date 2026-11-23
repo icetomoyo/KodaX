@@ -18,6 +18,7 @@ import type {
   SymbolContextResult,
 } from './semantic-types.js';
 import { getRepoIntelligenceIndex, getRepoIntelligenceIndexFromSnapshot } from './semantic-build-cache.js';
+import { deriveReviewScale, deriveRoutingComplexity } from './routing-signals.js';
 import {
   MAX_RELATED_RESULTS,
   dedupeStrings,
@@ -25,73 +26,34 @@ import {
   type RepoIntelligenceAnalysisProfile,
 } from './semantic-shared.js';
 
-export function deriveRoutingComplexity(
-  changedFileCount: number,
-  changedLineCount: number,
-  touchedModuleCount: number,
-  impactedModuleCount: number,
-): KodaXRepoRoutingSignals['suggestedComplexity'] {
-  if (
-    changedFileCount >= 20
-    || changedLineCount >= 4000
-    || touchedModuleCount >= 5
-    || impactedModuleCount >= 5
-  ) {
-    return 'systemic';
-  }
-  if (
-    changedFileCount >= 8
-    || changedLineCount >= 1200
-    || touchedModuleCount >= 3
-    || impactedModuleCount >= 3
-  ) {
-    return 'complex';
-  }
-  if (
-    changedFileCount >= 3
-    || changedLineCount >= 250
-    || touchedModuleCount >= 2
-    || impactedModuleCount >= 2
-  ) {
-    return 'moderate';
-  }
-  return 'simple';
-}
-
-export function deriveReviewScale(
-  changedFileCount: number,
-  changedLineCount: number,
-  touchedModuleCount: number,
-): KodaXRepoRoutingSignals['reviewScale'] {
-  if (
-    changedFileCount >= 30
-    || changedLineCount >= 4000
-    || touchedModuleCount >= 5
-  ) {
-    return 'massive';
-  }
-  if (
-    changedFileCount >= 10
-    || changedLineCount >= 1200
-    || touchedModuleCount >= 3
-  ) {
-    return 'large';
-  }
-  return 'small';
-}
-
 export function buildFreshnessLabel(index: RepoIntelligenceIndex): string {
   return `${index.generatedAt} (overview ${index.overviewGeneratedAt})`;
 }
 
+/** The most specific module containing the path; the root module contains every workspace path. */
+function findModuleByPath(index: RepoIntelligenceIndex, targetPath: string): ModuleCapsule | null {
+  const relative = path.isAbsolute(targetPath) ? path.relative(index.workspaceRoot, targetPath) : targetPath;
+  const normalizedPath = normalizeRelativePath(relative);
+  const containing = index.modules.filter((module) =>
+    module.root === '.'
+    || normalizedPath === module.root
+    || normalizedPath.startsWith(`${module.root}/`)
+    || module.sampleFiles.includes(normalizedPath),
+  );
+  return containing.sort((left, right) => rootDepth(right) - rootDepth(left))[0] ?? null;
+}
+
+function rootDepth(module: ModuleCapsule): number {
+  return module.root === '.' ? 0 : module.root.split('/').length;
+}
+
+/**
+ * Returns null when nothing matches so callers report "not found"; guessing a
+ * module would hand the model a confident answer about unrelated code.
+ */
 export function findModuleMatch(index: RepoIntelligenceIndex, query?: string, targetPath?: string): ModuleCapsule | null {
   if (targetPath) {
-    const normalizedPath = normalizeRelativePath(targetPath);
-    const byPath = index.modules.find((module) =>
-      normalizedPath === module.root
-      || normalizedPath.startsWith(`${module.root}/`)
-      || module.sampleFiles.includes(normalizedPath),
-    );
+    const byPath = findModuleByPath(index, targetPath);
     if (byPath) {
       return byPath;
     }
@@ -99,7 +61,7 @@ export function findModuleMatch(index: RepoIntelligenceIndex, query?: string, ta
 
   const normalizedQuery = query?.trim().toLowerCase();
   if (!normalizedQuery) {
-    return index.modules.find((module) => module.moduleId !== '.') ?? index.modules[0] ?? null;
+    return targetPath ? null : index.modules.find((module) => module.root === '.') ?? null;
   }
 
   return index.modules
@@ -167,11 +129,23 @@ export function findProcessMatches(
     .sort((left, right) => right.confidence - left.confidence || left.label.localeCompare(right.label));
 }
 
-export function collectCallers(index: RepoIntelligenceIndex, symbolId: string): RepoSymbolRecord[] {
+/** Every symbol that calls one of `symbolIds`, most confident first. */
+export function collectCallers(index: RepoIntelligenceIndex, symbolIds: ReadonlySet<string>): RepoSymbolRecord[] {
   return index.symbols
-    .filter((candidate) => candidate.callTargets.some((target) => target.symbolId === symbolId))
-    .sort((left, right) => right.confidence - left.confidence)
-    .slice(0, MAX_RELATED_RESULTS);
+    .filter((candidate) => candidate.callTargets.some((target) => symbolIds.has(target.symbolId)))
+    .sort((left, right) => right.confidence - left.confidence);
+}
+
+const MAX_ALTERNATIVES = 4;
+
+function limitList<T>(items: readonly T[], limit: number): { shown: T[]; omitted: number } {
+  return { shown: items.slice(0, limit), omitted: Math.max(0, items.length - limit) };
+}
+
+/** Keeps only non-zero counts so an uncut result carries no `omitted` field. */
+function omittedCounts<K extends string>(counts: Record<K, number>): { omitted?: Partial<Record<K, number>> } {
+  const entries = Object.entries(counts).filter(([, count]) => (count as number) > 0);
+  return entries.length > 0 ? { omitted: Object.fromEntries(entries) as Partial<Record<K, number>> } : {};
 }
 
 export function resolveModuleContextFromIndex(
@@ -200,11 +174,14 @@ export function resolveSymbolContextFromIndex(
     throw new Error(`No symbol matched "${options.symbol}".`);
   }
 
-  const [symbol, ...alternatives] = matches;
+  const [symbol, ...rest] = matches;
+  const alternatives = limitList(rest, MAX_ALTERNATIVES);
+  const callers = limitList(collectCallers(index, new Set([symbol.id])), MAX_RELATED_RESULTS);
   return {
     symbol,
-    alternatives: alternatives.slice(0, 4),
-    callers: collectCallers(index, symbol.id),
+    alternatives: alternatives.shown,
+    callers: callers.shown,
+    ...omittedCounts({ callers: callers.omitted, alternatives: alternatives.omitted }),
     freshness: buildFreshnessLabel(index),
     confidence: symbol.confidence,
   };
@@ -259,10 +236,11 @@ export function resolveImpactEstimateFromIndex(
       symbol: options.symbol,
       module: options.module,
     });
+    const symbolCallers = collectCallers(index, new Set([symbolContext.symbol.id]));
     const directModules = dedupeStrings([
       symbolContext.symbol.moduleId,
       ...symbolContext.symbol.callTargets.map((targetRef) => targetRef.moduleId),
-      ...symbolContext.callers.map((caller) => caller.moduleId),
+      ...symbolCallers.map((caller) => caller.moduleId),
     ]);
 
     target = {
@@ -275,11 +253,11 @@ export function resolveImpactEstimateFromIndex(
     impactedSymbols = dedupeStrings([
       symbolContext.symbol.id,
       ...symbolContext.symbol.callTargets.map((targetRef) => targetRef.symbolId),
-      ...symbolContext.callers.map((caller) => caller.id),
+      ...symbolCallers.map((caller) => caller.id),
     ])
       .map((id) => index.symbols.find((symbol) => symbol.id === id))
       .filter((symbol): symbol is RepoSymbolRecord => symbol !== undefined);
-    callers = symbolContext.callers;
+    callers = symbolCallers;
     confidence = symbolContext.confidence;
   } else if (options.path) {
     const normalizedPath = normalizeRelativePath(options.path);
@@ -293,7 +271,7 @@ export function resolveImpactEstimateFromIndex(
     };
     impactedModules = module ? [module, ...index.modules.filter((candidate) => module.dependents.includes(candidate.moduleId))] : [];
     impactedSymbols = symbolsInFile;
-    callers = symbolsInFile.flatMap((symbol) => collectCallers(index, symbol.id)).slice(0, MAX_RELATED_RESULTS);
+    callers = collectCallers(index, new Set(symbolsInFile.map((symbol) => symbol.id)));
     confidence = module?.confidence ?? 0.62;
   } else {
     const module = findModuleMatch(index, options.module, options.targetPath);
@@ -306,8 +284,8 @@ export function resolveImpactEstimateFromIndex(
       moduleId: module.moduleId,
     };
     impactedModules = [module, ...index.modules.filter((candidate) => module.dependents.includes(candidate.moduleId))];
-    impactedSymbols = index.symbols.filter((symbol) => symbol.moduleId === module.moduleId).slice(0, MAX_RELATED_RESULTS);
-    callers = impactedSymbols.flatMap((symbol) => collectCallers(index, symbol.id)).slice(0, MAX_RELATED_RESULTS);
+    impactedSymbols = index.symbols.filter((symbol) => symbol.moduleId === module.moduleId);
+    callers = collectCallers(index, new Set(impactedSymbols.map((symbol) => symbol.id)));
     confidence = module.confidence;
   }
 
@@ -317,6 +295,8 @@ export function resolveImpactEstimateFromIndex(
       || impactedSymbols.some((symbol) => file.path === symbol.filePath),
     ).length
     : 0;
+  const shownSymbols = limitList(impactedSymbols, MAX_RELATED_RESULTS);
+  const shownCallers = limitList(callers, MAX_RELATED_RESULTS);
 
   return {
     target,
@@ -324,8 +304,9 @@ export function resolveImpactEstimateFromIndex(
       ? `${target.label} overlaps with ${changedOverlap} currently changed file(s); validate blast radius before editing.`
       : `${target.label} primarily affects ${dedupeStrings(impactedModules.map((module) => module.label), 4).join(', ') || 'its local module'} and ${impactedSymbols.length} indexed symbol(s).`,
     impactedModules,
-    impactedSymbols: impactedSymbols.slice(0, MAX_RELATED_RESULTS),
-    callers: callers.slice(0, MAX_RELATED_RESULTS),
+    impactedSymbols: shownSymbols.shown,
+    callers: shownCallers.shown,
+    ...omittedCounts({ impactedSymbols: shownSymbols.omitted, callers: shownCallers.omitted }),
     changedScope,
     freshness: buildFreshnessLabel(index),
     confidence,

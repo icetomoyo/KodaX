@@ -239,7 +239,7 @@ function renderRepoIntelligenceTools(tools: WorkerTools): string {
     hasTool('module_context')
       ? staticText("worker.repo-tools.module-context") : undefined,
     hasTool('symbol_context')
-      ? '- Use `symbol_context` before grepping for one symbol and its probable callers/callees.' : undefined,
+      ? '- Use `symbol_context` for one named symbol\'s definition and probable callers/callees.' : undefined,
     hasTool('impact_estimate')
       ? '- Before planning a rename/refactor, use `impact_estimate` to estimate the blast radius.' : undefined,
     hasTool('process_context')
@@ -258,7 +258,7 @@ function renderRepoIntelligenceTools(tools: WorkerTools): string {
     hasTool('grep') && hasTool('glob')
       ? '- Prefer grep/glob for local content/path lookup.' : undefined,
     hasTool('semantic_lookup')
-      ? '- Use `semantic_lookup` for concepts rather than exact strings.' : undefined,
+      ? '- `semantic_lookup` matches indexed names, so query it with likely identifiers rather than descriptions of behavior.' : undefined,
     hasRepoPullTool ? staticText("worker.repo-tools.pull-fallback") : undefined,
     hasTool('changed_diff_bundle') || hasTool('changed_diff')
       ? staticText("worker.repo-tools.structured-diff") : undefined,

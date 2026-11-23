@@ -19,10 +19,14 @@ import {
   getRegisteredToolDefinition,
   toolRequiresSerialExecution,
   isMcpToolName,
+  isRepoIntelligenceSemanticToolName,
   isRepoIntelligenceWorkingToolName,
   listToolDefinitions,
 } from '../../../tools/registry.js';
-import { resolveKodaXAutoRepoMode } from '../../../repo-intelligence/runtime.js';
+import {
+  isRepoIntelligenceSemanticSurfaceEnabled,
+  resolveKodaXAutoRepoMode,
+} from '../../../repo-intelligence/runtime.js';
 import {
   executeRunScopedTool,
   listRunScopedTools,
@@ -119,6 +123,8 @@ function isManagedToolVisibleForContext(
   // Matches the direct engine: with repository intelligence off, its working tools are not offered.
   if (resolveKodaXAutoRepoMode(ctx.parentAgentConfig?.repoIntelligenceMode) === 'off'
     && isRepoIntelligenceWorkingToolName(name)) return false;
+  if (!isRepoIntelligenceSemanticSurfaceEnabled(ctx.parentAgentConfig?.repoIntelligenceMode)
+    && isRepoIntelligenceSemanticToolName(name)) return false;
   const activeTools = (ctx.extensionRuntime as ExtensionRuntimeContract | undefined)?.getDefaults?.().activeTools;
   if (activeTools && !activeTools.includes(name) && !lookupRunScopedTool(ctx.extensionRuntime, name)) return false;
   return isToolDiscoverable(name, ctx);

@@ -309,6 +309,11 @@ For change-set reviews, list worktree/range changes to set scope; keep explicit 
     "refresh_overview": {
       "type": "boolean",
       "description": "When true, rebuild the repo overview snapshot before analyzing changes"
+    },
+    "offset": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Index of the first changed file to list. Use the offset named in the previous result to page through a long change set. Defaults to 0."
     }
   }
 }
@@ -373,17 +378,6 @@ Create only on explicit user/system/developer request, never infer from ordinary
   "required": [
     "objective"
   ]
-}
-```
-
-## cyclic_dependencies
-
-Detect circular import/dependency chains (Tarjan SCC) over the module-level import graph. Answers "is there a dependency cycle" — the one question the 1-hop tools (impact_estimate / module_context / symbol_context) cannot. Use when refactoring or moving modules, before merging a PR that reshapes imports, or to enforce a no-cycles rule. Returns each cycle as an ordered module chain with a hop count + severity. Distinct from impact_estimate (that is 1-hop blast radius; this is reachability cycles).
-
-```json
-{
-  "type": "object",
-  "properties": {}
 }
 ```
 
@@ -581,38 +575,6 @@ Search file contents: regex by default, literal:true for verbatim/long text; glo
   "required": [
     "pattern"
   ]
-}
-```
-
-## impact_estimate
-
-Indexed impact and changed-scope overlap. Query symbol, path or module directly before refactoring.
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "symbol": {
-      "type": "string",
-      "description": "Optional symbol to estimate impact for"
-    },
-    "module": {
-      "type": "string",
-      "description": "Optional module to estimate impact for"
-    },
-    "path": {
-      "type": "string",
-      "description": "Optional repository-relative or absolute path to estimate impact for"
-    },
-    "target_path": {
-      "type": "string",
-      "description": "Optional path used to resolve the repository root from"
-    },
-    "refresh": {
-      "type": "boolean",
-      "description": "When true, rebuild repo intelligence before returning the impact estimate"
-    }
-  }
 }
 ```
 
@@ -1076,30 +1038,6 @@ Read-only, current MemorySession-scoped prior experience for a concrete decision
 }
 ```
 
-## module_context
-
-Module deps, entries, symbols, tests/docs and evidence. Query module or target_path directly.
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "module": {
-      "type": "string",
-      "description": "Module id, label, or package name to inspect"
-    },
-    "target_path": {
-      "type": "string",
-      "description": "Optional path used to infer the enclosing module"
-    },
-    "refresh": {
-      "type": "boolean",
-      "description": "When true, rebuild repo intelligence before returning the module capsule"
-    }
-  }
-}
-```
-
 ## multi_edit
 
 Apply multiple exact-text replacements to a single file in ONE atomic tool call.
@@ -1169,34 +1107,6 @@ Each `old_string` must be unique in the WHOLE current file, not just in the wind
 }
 ```
 
-## process_context
-
-Approximate static process summary/steps. Query entry, module or target_path directly.
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "entry": {
-      "type": "string",
-      "description": "Entry symbol or file hint for the process to trace"
-    },
-    "module": {
-      "type": "string",
-      "description": "Optional module hint used to select a process capsule"
-    },
-    "target_path": {
-      "type": "string",
-      "description": "Optional path used to infer the relevant module or entry file"
-    },
-    "refresh": {
-      "type": "boolean",
-      "description": "When true, rebuild repo intelligence before returning the process capsule"
-    }
-  }
-}
-```
-
 ## read
 
 Read line-numbered bounded text. Continue offset/limit; partial lines require exact line_offset cursor. Context recovery’s kodax-transient://text/ is a local run-scoped capability: read directly, not network or user re-paste. PNG/JPG/JPEG/GIF/WEBP return inline vision, so inspect them rather than rejecting as binary. Attached or inlined images are already visible; rereading only repeats them.
@@ -1228,65 +1138,6 @@ Read line-numbered bounded text. Continue offset/limit; partial lines require ex
 }
 ```
 
-## relationship_scan
-
-Indexed upstream/downstream summary with impact, evidence, confidence and gaps. Supply symbol, module, path or entry; target_path alone is insufficient. For module details, signatures/imports, process summaries or impact alone, use module_context, symbol_context, process_context or impact_estimate directly. The aggregate omits some capsule evidence.
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "symbol": {
-      "type": "string",
-      "description": "Optional symbol/function/class name to trace"
-    },
-    "module": {
-      "type": "string",
-      "description": "Optional module/package label to trace"
-    },
-    "path": {
-      "type": "string",
-      "description": "Optional repository-relative or absolute path to trace"
-    },
-    "entry": {
-      "type": "string",
-      "description": "Optional entry symbol or file hint for execution/process tracing"
-    },
-    "direction": {
-      "type": "string",
-      "enum": [
-        "upstream",
-        "downstream",
-        "both"
-      ],
-      "description": "Relationship direction to emphasize. Defaults to both."
-    },
-    "depth": {
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 3,
-      "description": "Requested depth (default 1). Results remain bounded indexed relationships; values above 1 report a gap, not recursive traversal."
-    },
-    "target_path": {
-      "type": "string",
-      "description": "Optional path used to resolve the repository root or narrow context"
-    },
-    "refresh": {
-      "type": "boolean",
-      "description": "When true, rebuild repo intelligence before the first relationship lookup"
-    },
-    "include_lsp": {
-      "type": "boolean",
-      "description": "When true, attach LSP incoming/outgoing call hierarchy evidence when an LSP service is available"
-    },
-    "include_text_search": {
-      "type": "boolean",
-      "description": "When true, attach bounded exact-name grep evidence for cross-checking static relationships"
-    }
-  }
-}
-```
-
 ## repo_overview
 
 Workspace structure snapshot for repository work that needs structure. Reuse a supplied overview while applicable; a new session or task alone needs no call.
@@ -1304,47 +1155,6 @@ Workspace structure snapshot for repository work that needs structure. Reuse a s
       "description": "When true, rebuild the repo overview snapshot before returning it"
     }
   }
-}
-```
-
-## semantic_lookup
-
-Search indexed symbols, modules or processes, not raw text. refresh rebuilds the index; use it only when stale.
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "query": {
-      "type": "string",
-      "description": "Semantic query to resolve inside repository intelligence"
-    },
-    "kind": {
-      "type": "string",
-      "enum": [
-        "auto",
-        "symbol",
-        "module",
-        "process"
-      ],
-      "description": "Optional semantic lookup category"
-    },
-    "target_path": {
-      "type": "string",
-      "description": "Optional path hint to scope the semantic lookup"
-    },
-    "limit": {
-      "type": "number",
-      "description": "Maximum number of semantic matches to return"
-    },
-    "refresh": {
-      "type": "boolean",
-      "description": "When true, refresh repository intelligence before searching"
-    }
-  },
-  "required": [
-    "query"
-  ]
 }
 ```
 
@@ -1489,34 +1299,6 @@ Start a named direct child; returns canonical path. Runtime atomically enforces 
     "task_name",
     "objective"
   ]
-}
-```
-
-## symbol_context
-
-Definition, signature, imports and probable callers/callees. Query symbol directly; module disambiguates.
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "symbol": {
-      "type": "string",
-      "description": "The symbol name to inspect"
-    },
-    "module": {
-      "type": "string",
-      "description": "Optional module hint to disambiguate the symbol search"
-    },
-    "target_path": {
-      "type": "string",
-      "description": "Optional path inside the workspace to resolve the repository root from"
-    },
-    "refresh": {
-      "type": "boolean",
-      "description": "When true, rebuild repo intelligence before returning the symbol capsule"
-    }
-  }
 }
 ```
 

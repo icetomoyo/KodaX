@@ -3148,9 +3148,10 @@ UI/API follow-ups that should consume the SDK contracts already exposed here.
   opportunistically; if Space needs visible progress or a completed state, the
   next SDK step should be a small handle/result API rather than inferring status
   from cache side effects.
-- **Relationship scan**: `relationship_scan` is a v0.7.57 agent/tool capability.
-  It is intentionally model-facing today. Space can decide separately whether it
-  deserves a top-level UI entry or remains available through normal agent turns.
+- **Relationship scan**: `relationship_scan` is a model-facing tool on the
+  semantic surface, which is off by default. Set `repoIntelligenceMode` to `full`
+  or `light` to offer it and the other symbol, module, process, and impact tools;
+  the default `auto` mode offers only the overview, change scope, and diff tools.
 - **Quick Ask / `sideQuery`**: `sideQuery` is exported from
   `@kodax-ai/kodax/llm`, so the capability ledger can move from blocked to
   partial. Migrating Space Quick Ask still needs an application-level decision
