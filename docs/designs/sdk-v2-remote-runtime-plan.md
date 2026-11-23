@@ -1576,7 +1576,7 @@ MCP 这 8 个的落地细节（M1a 已落地，2026-11-21，未经用户确认�
 
 - **`extension.list`、`extension.reload`** 返回同样的 `{active, extensions, failures}`：加载了哪些模块（Host 上的路径、怎么找到的），哪些加载失败、失败在哪一步。v1 的整份诊断（注册的工具、命令、钩子）不进 v2，要看这些用 `tool.list`、`command.list`。
   - `reload` 只重新加载已经加载的模块，改了模块代码之后用。配置里新加的扩展、启动时加载失败的扩展，要等 Host 重启。
-  - **已有的问题，没改**：`config.get` 说 `extensions` 改了之后 `extension_reload` 生效（`client-settings.ts`），实际要重启。要么改成 `restart`，要么让 `reload` 按配置增删扩展，由用户定。记入 §12。
+  - ~~已有的问题：`config.get` 说 `extension_reload`，实际要重启~~：这条记错了，见 §12 第 12 条。配置改动由 integration watcher 热生效，不经过 `extension.reload`。
 - **`agent.registration.*`**：Host 启动时没有接外部 Agent，四个方法都报 `method_not_found`，和 v1 一样。
   - v1 的 `expectedConfigurationRevision`、`expectedManagementOwner` 改叫 `ifRevision`、`ifOwner`，和 `config.update` 的 `ifRevision` 一个说法；`null` 表示必须没有。条件不满足报 `conflict`（`external_agent_registration_conflict`）。
   - `setEnabled` 找不到这个 Agent 报 `not_found`（v1 返回空）。
@@ -1830,9 +1830,11 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
 
 ## 7. 路线图
 
-**关键路径**：M0 → M1a → M1b → M1c。
+**关键路径**：M0 → M1a → M1b → M1c（SDK 侧支持 Space 迁移）。
 
-到 M1b，(a)(c)(d) 可用；到 M1c，(b) 可用。多租户由平台承担，不需要等 M2。
+到 M1b，(a)(c)(d) 可用；(b) 的 SDK 侧也已就绪，还差 Space 提供的 Web UI。多租户由平台承担，不需要等 M2。
+
+这份计划只写 SDK 自己的改动和交给客户端的契约。Space 怎么适配、什么时候切换，由 Space 自己的线程负责（2026-11-23 用户确认）。
 
 **方法的两步落地**：v2 的编解码和 handler 的抽取分开做。
 
@@ -2041,7 +2043,7 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
   - 第四条：`host-rpc.test.ts` 的 Host 工具上限（含 `run.startTool`）；
   - 第六条：`host-rpc.test.ts` 的三方场景。
 - **没覆盖的**：
-  - 真浏览器引擎。Node 的 WebSocket 不发 `Origin`，所以 CORS、cookie 和 CSP 都没跑到。这一条等 M1c 的 Web UI。
+  - 真浏览器引擎。Node 的 WebSocket 不发 `Origin`，所以 CORS、cookie 和 CSP 都没跑到。这一条等 Space 的 Web UI。
   - 真实的反向代理：测试里只有字节管道，没有 nginx 或 Cloudflare。
 
 **第 1 项的落地细节**（2026-11-22，未经用户确认的取舍）：
@@ -2102,7 +2104,7 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
 - 只开配对、不配 `jwt` 的 Host 可以监听；这时 `owner` 和 `services` 仍然要求 `jwt`。
 - `webRoot`：必须是绝对路径，改动要重启。只认 GET 和 HEAD，`/` 对应 `index.html`，其他目录不当页面，没有 SPA 回退。路径解析跟随链接后必须仍在 `webRoot` 里，否则回 404。按扩展名给 content-type，带 `X-Content-Type-Options: nosniff` 和 `X-Frame-Options: DENY`；不发缓存头，CSP 留给第 10 项的文档。
 - 已验证（2026-11-22，真实 `kodax daemon start`）：网页 200；配对后 cookie 属性正确；同一个码第二次 403；别的 Origin 带同一个 cookie 403；连接时重新下发 cookie；不带 `auth` 的 `initialize` 得到 `user`/`person`，看不到 `device.*`；CLI 吊销后连接以 4403 `revoked` 断开；`devices.json` 里没有令牌明文。
-- 还没验证、要等 Space 的 Web UI（M1c）：真机 iPhone Safari 配对后 8 天不访问再打开仍然免配对；经 Tailscale serve 和 Cloudflare 快速隧道配对和连接；隧道地址变了以后旧设备被拒、重新配对可用。这几条在 M1b 交付时写进测试指南。
+- 还没验证、要等 Space 的 Web UI：真机 iPhone Safari 配对后 8 天不访问再打开仍然免配对；经 Tailscale serve 和 Cloudflare 快速隧道配对和连接；隧道地址变了以后旧设备被拒、重新配对可用。这几条在 M1b 交付时写进测试指南。
 - ~~待定：`/healthz` 经隧道暴露时公网能看到 Host 忙不忙~~：已定，开着配对时只返回 `{state}`（见"第 10 项的落地细节"）。
 
 **第 5 项的落地细节**（2026-11-22，未经用户确认的取舍）：
@@ -2234,14 +2236,21 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
   - 不推荐免费版 ngrok：它插的警告页会挡住页面里的脚本请求。
   - CSP 由页面的 meta 标签给，Host 不发 CSP 头。Host 不知道 UI 需要什么，发错了 UI 就打不开。
 - **已验证**：JWT 最小样例在本机跑通，用 `createHostJwtVerifier` 加一个 loopback JWKS 服务器校验，签发的 token 通过，换了 audience 的被拒。文档里的事实逐条对照了代码（配置字段、关闭码、上限、日志格式、CLI 命令）。
-- **还没验证**：Dockerfile 和 StatefulSet 没有实际构建和部署；systemd 和任务计划程序样例没在真机上注册；隧道相关的几条等 M1c 的 Web UI，写在 `remote-access.md` 的"还没测过的"里。
+- **还没验证**：Dockerfile 和 StatefulSet 没有实际构建和部署；systemd 和任务计划程序样例没在真机上注册；隧道相关的几条等 Space 的 Web UI，写在 `remote-access.md` 的"还没测过的"里。
 
-### M1c Space 整体迁移到 v2
+### M1c SDK 侧支持 Space 迁到 v2
 
-- Renderer 和 Main 一起迁，在同一个 Space 版本里切换。升级到这个 SDK 版本的 Space 就只用 v2，不保留 v1 回退开关。
-- 没迁完之前，Space 就继续用旧版 SDK。
-- Space 打包一份静态 Web UI，交给 Host 的 `server.webRoot`。(b) 的远程访问依赖这一步。
-- Artifact SDK 改为按 blob 引用匹配附件（D11）。
+Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客户端：一次切换"）。SDK 这边交付：
+
+1. 给 Space 的迁移说明：Space 用到的每个 v1 调用对应哪个 v2 方法，行为、错误码和身份有什么不同。写进 `docs/SDK_MIGRATION.md`，交给 Space 线程。
+2. 按 Space 的反馈补方法：§12 第 1 条列的调用点由 Space 线程核对。有调用方的，SDK 补上对应的 v2 方法。
+3. 授权方租约：形状按 Space 线程给出的真实调用点定（见"第 9 项的落地细节"）。
+4. Artifact SDK 改为按 blob 引用匹配附件（D11）。Artifact SDK 是 KodaX 的包，这一项归 SDK。
+
+等 Space 那边才能做的，记在这里是因为 SDK 有事项等着它：
+
+- 真浏览器引擎的验证（M1b 出口核对里剩下的那条），以及配对相关的几条（"设备配对"的落地细节、`remote-access.md` 的"还没测过的"）。这些要有一个 Web UI；Web UI 由 Space 做，SDK 只提供 `webRoot` 和部署文档里的契约。
+- 删除 v1 的条件（§8）。
 
 ### M2 前半：用户设置域对 user 开放
 
@@ -2397,6 +2406,8 @@ KodaX 在实例契约里给出检查清单，但不实现：
 2026-11-23 确认：
 
 15. 开着配对的 Host，`/healthz` 只返回 `{state}`，不加配置项（"第 10 项的落地细节"）。
+16. `config.*` 里的 `extensions` 读写 Host 实际加载的那份（§12 第 12 条）。
+17. 这份计划只写 SDK 的改动和交给客户端的契约，Space 自己适配。M1c 改为"SDK 侧支持 Space 迁到 v2"。
 
 ## 12. 风险与待核实
 
@@ -2411,7 +2422,10 @@ KodaX 在实例契约里给出检查清单，但不实现：
 9. 身份拆分对 Space 重连的影响：靠双读，加上"升级后再降级"的回归测试兜底。
 10. A2A：主线 Issue 418 之后，同一 context 的 Task 续用一个 Runtime Session。迁到产品层之前，要重新核对 task-store 和 Session 是否双写，以及 A2A 的 principal key 怎么并入授权身份。
 11. 沿用自第 3 版的行号没有重新核对（见文首）。M1a 开工前要先合并主线，再整体重核。
-12. 扩展改了配置之后什么时候生效：`config.get` 说 `extension_reload`，实际 `extension.reload` 只重载已加载的模块，新加的要重启。改成如实说 `restart`，还是让 `reload` 按配置增删扩展，由用户定（2026-11-21 发现，见"用户设置"里扩展的落地细节）。
+12. ~~扩展改了配置之后什么时候生效~~：已解决（2026-11-23）。
+    - 11-21 的记录有误。Host 的 integration watcher 同时盯 `integrations/extensions.json` 和 `config.json`，配置一变就调用 `reconcileExtensions` 增删扩展，不用重启，所以 `extension_reload` 的说法是对的。`extension.reload` 方法只重载已加载的模块，是另一件事。
+    - 真正的缺陷：`integrations/extensions.json` 存在时，Host 忽略 `config.json` 里的 `extensions`，而 `config.update` 写的正是 `config.json`，写了不生效，也不报错。
+    - 用户确认的修法：`config.*` 里的 `extensions` 读写 Host 实际加载的那份（`sdk-runtime.ts` 的 `withManagedExtensions`、`writeManagedExtensions`）。清空时文件保留、列表为空，因为删掉文件会让 `config.json` 的旧值重新生效。revision 按合并后的内容算，只改这个文件也会让 `ifRevision` 冲突。文件坏了时其他设置照常可读，`extensions` 不出现。
 
 ## 13. 后续 Feature（不在 v2.0 范围）
 
