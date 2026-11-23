@@ -813,10 +813,10 @@ describe('New Commands', () => {
     expect(modelCmd?.aliases).toContain('m');
   });
 
-  it('should have thinking command', () => {
-    const thinkingCmd = BUILTIN_COMMANDS.find(c => c.name === 'thinking');
-    expect(thinkingCmd).toBeDefined();
-    expect(thinkingCmd.aliases).toContain('t');
+  it('should keep /thinking and /t as aliases of /reasoning', () => {
+    const reasoningCmd = BUILTIN_COMMANDS.find(c => c.name === 'reasoning');
+    expect(reasoningCmd?.aliases).toEqual(expect.arrayContaining(['thinking', 't']));
+    expect(BUILTIN_COMMANDS.find(c => c.name === 'thinking')).toBeUndefined();
   });
 
   it('should have auto command', () => {
