@@ -445,7 +445,10 @@ describe('provider registry', () => {
     const zhipuCoding = getProvider('zhipu-coding');
     expect(zhipuCoding.getModel()).toBe('glm-5.3');
     expect(zhipuCoding.getWireModel()).toBe('glm-5.3');
-    expect(zhipuCoding.getAvailableModels()).toEqual(['glm-5.3', 'glm-5.3-highspeed', 'glm-5.3-flash', 'glm-5.2', 'glm-5-turbo', 'glm-4.7']);
+    expect(zhipuCoding.getAvailableModels()).toEqual(['glm-5.3', 'glm-5.4', 'glm-5.3-highspeed', 'glm-5.3-flash', 'glm-5.2', 'glm-5-turbo', 'glm-4.7']);
+    expect(zhipuCoding.getWireModel('glm-5.4')).toBe('glm-5.4');
+    expect(zhipuCoding.getEffectiveContextWindow('glm-5.4')).toBe(1_000_000);
+    expect(zhipuCoding.getEffectiveMaxOutputTokens('glm-5.4')).toBe(131_072);
     expect(zhipuCoding.getEffectiveContextWindow('glm-5.3')).toBe(1_000_000);
     expect(zhipuCoding.getEffectiveMaxOutputTokens('glm-5.3')).toBe(131_072);
     // Highspeed: faster serving of the same GLM-5.3 weights on the plan.

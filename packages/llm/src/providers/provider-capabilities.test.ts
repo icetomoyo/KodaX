@@ -423,8 +423,9 @@ describe('FEATURE_198 — provider-capabilities loader', () => {
       }));
       // GLM-5.2 remains an explicit rollback choice during the 5.3 rollout;
       // glm-5.3-flash (2026-08-26, native multimodal) sits right after 5.3.
+      // glm-5.4 (2026-11-23, Coding Plan only, no official doc yet) leads the list.
       expect(z.model).toBe('glm-5.3');
-      expect(z.models?.map((m) => m.id)).toEqual(['glm-5.3', 'glm-5.3-highspeed', 'glm-5.3-flash', 'glm-5.2', 'glm-5-turbo', 'glm-4.7']);
+      expect(z.models?.map((m) => m.id)).toEqual(['glm-5.4', 'glm-5.3','glm-5.3-highspeed', 'glm-5.3-flash', 'glm-5.2', 'glm-5-turbo', 'glm-4.7']);
       expect(z.models?.find((m) => m.id === 'glm-4.7')).toEqual(expect.objectContaining({
         id: 'glm-4.7',
         displayName: 'GLM-4.7',

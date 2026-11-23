@@ -6,6 +6,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `zhipu-coding` lists `glm-5.4`, which went live on the GLM Coding Plan on
+  2026-11-23 without an official document. It uses the `glm-5.3-flash`
+  settings: 1M context, 131,072 output tokens, thinking always on with the
+  GLM-5.3 effort mapping. Cost estimates use the GLM-5.3 rate. A live check
+  confirmed the model ID exists, but the upstream was overloaded (error 1305)
+  for nearly every request, so effort, tools, limits and image input are not
+  verified. Image input stays off until a live check passes.
+
 ### Changed
 
 - RepoIntel keeps to what git can answer by default (FEATURE_317). Its

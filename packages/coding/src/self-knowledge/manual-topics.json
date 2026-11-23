@@ -223,6 +223,8 @@
       "`glm-5.2`; never append `[1m]` to the wire name.",
       "`zhipu-coding` and `zai-coding` also offer `glm-5.3-highspeed`, a faster",
       "GLM-5.3 with the same limits and effort mapping.",
+      "`zhipu-coding` also lists `glm-5.4` (Coding Plan only, no official doc yet),",
+      "registered with the `glm-5.3-flash` limits and effort mapping, text only.",
       "GLM-5.3 cannot disable thinking: none/minimal/light/low map to low,",
       "medium/high map to high, and xhigh/max/ultra map to max. An off/none intent",
       "therefore becomes enabled low-effort thinking instead of a disabled request.",

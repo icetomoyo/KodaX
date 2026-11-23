@@ -210,6 +210,19 @@ describe('built-in provider model capabilities (no API key required)', () => {
     }
   });
 
+  it('registers glm-5.4 on zhipu-coding only, with the GLM-5.3 Flash shape', () => {
+    const caps = getModelCapabilities('zhipu-coding', 'glm-5.4');
+    expect(caps?.contextWindow).toBe(1_000_000);
+    expect(caps?.maxOutputTokens).toBe(131_072);
+    expect(caps?.reasoningCapability).toBe('native-effort');
+    expect(caps?.reasoningProfile).toMatchObject({
+      reasoningPreset: 'zai-glm-5.3',
+      defaultEffort: 'max',
+      supportsDisabledThinking: false,
+    });
+    expect(getProviderModelDescriptors('zai-coding').map((m) => m.id)).not.toContain('glm-5.4');
+  });
+
   it('registers glm-5.3-highspeed with the GLM-5.3 shape on both Coding Plan routes', () => {
     for (const provider of ['zhipu-coding', 'zai-coding'] as const) {
       const highspeed = getModelCapabilities(provider, 'glm-5.3-highspeed');

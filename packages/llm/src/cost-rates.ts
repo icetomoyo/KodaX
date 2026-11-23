@@ -162,6 +162,8 @@ export const DEFAULT_COST_RATES: Readonly<Record<string, Readonly<Record<string,
   'zhipu-coding': {
     // Subscription routes use nominal rates for local accounting; actual
     // billing is plan/quota based. Historical GLM-5.2 requests auto-route to 5.3.
+    // GLM-5.4 has no published price yet; reuse the GLM-5.3 nominal rate.
+    'glm-5.4': { inputPer1M: 0.05, outputPer1M: 0.1 },
     'glm-5.3': { inputPer1M: 0.05, outputPer1M: 0.1 },
     // Highspeed has no published per-token price; reuse the GLM-5.3 nominal rate.
     'glm-5.3-highspeed': { inputPer1M: 0.05, outputPer1M: 0.1 },

@@ -235,6 +235,10 @@ describe('cost-rates', () => {
       }
     });
 
+    it('should price glm-5.4 on zhipu-coding at the GLM-5.3 nominal rate until a price is published', () => {
+      expect(DEFAULT_COST_RATES['zhipu-coding']['glm-5.4']).toEqual(DEFAULT_COST_RATES['zhipu-coding']['glm-5.3']);
+    });
+
     it('should have empty entries for CLI bridge providers', () => {
       expect(DEFAULT_COST_RATES['gemini-cli']).toEqual({});
       expect(DEFAULT_COST_RATES['codex-cli']).toEqual({});
