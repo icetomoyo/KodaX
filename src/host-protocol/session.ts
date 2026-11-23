@@ -249,6 +249,12 @@ export const SESSION_METHODS = {
        * Host that restarts first no longer has it.
        */
       draft: z.boolean().optional(),
+      /**
+       * Deleted by the Host when its Run ends, also when no client is
+       * attached any more, so a one-off task leaves nothing behind. Queued
+       * inputs do not start another Run.
+       */
+      temporary: z.boolean().optional(),
     }),
     restricted: { ...PROJECT_CHOICE_RESTRICTED, policy: 'trusted' },
     result: hostResult({ session: Session }),

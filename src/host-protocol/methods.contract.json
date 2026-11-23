@@ -2131,6 +2131,9 @@
         "draft": {
           "type": "boolean"
         },
+        "temporary": {
+          "type": "boolean"
+        },
         "_meta": {
           "type": "object",
           "propertyNames": {
