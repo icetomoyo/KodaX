@@ -174,3 +174,12 @@ describe('resolveWorkflowMaxConcurrency (default 8, configurable, clamped)', () 
     ).toBe(32);
   });
 });
+
+describe('cacheWarming in nested Runs', () => {
+  it('keeps the enclosing Run setting unless the nested Run sets its own', () => {
+    const outer = deriveRunScopedConfig({ cacheWarming: 'off' } as KodaXOptions);
+    expect(runWithScopedConfig(outer, () => deriveRunScopedConfig({} as KodaXOptions).cacheWarming)).toBe('off');
+    expect(runWithScopedConfig(outer, () => deriveRunScopedConfig({ cacheWarming: 'run' } as KodaXOptions).cacheWarming)).toBe('run');
+    expect(deriveRunScopedConfig({} as KodaXOptions).cacheWarming).toBeUndefined();
+  });
+});

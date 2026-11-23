@@ -9,7 +9,7 @@
 
 // FEATURE_221: SDK consumers inject their own product manual topics.
 import type { KodaXManualTopicId, KodaXManualTopicInput } from './self-knowledge/types.js';
-import type { KodaXReasoningResolution } from '@kodax-ai/llm';
+import type { CacheWarmingMode, KodaXReasoningResolution } from '@kodax-ai/llm';
 import type { KodaXTimeoutConfig } from './timeouts.js';
 import type { ToolResultRecovery } from './tool-result-recovery.js';
 import type { ExtensionExecutionScope, ExtensionToolResult } from './extensions/execution-contract.js';
@@ -2299,6 +2299,12 @@ export interface KodaXOptions {
    */
   maxOutputTokens?: number;
   disablePromptCache?: boolean;
+  /**
+   * When prompt cache entries are kept warm: `off`, `run` (while a Run is active)
+   * or `idle` (also while a Session waits for its next Run). Defaults to
+   * `KODAX_CACHE_WARMING`, then `idle`. Nested Runs inherit it.
+   */
+  cacheWarming?: CacheWarmingMode;
   lsp?: boolean;
   /**
    * Workflow engine run-scoped overrides. `maxConcurrency` caps how many child

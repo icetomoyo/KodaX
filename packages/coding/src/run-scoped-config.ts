@@ -24,12 +24,15 @@ import { emitResilienceDebug } from './agent-runtime/resilience-debug.js';
 import type { KodaXOptions } from './types.js';
 
 export function deriveRunScopedConfig(options: KodaXOptions): KodaXRunScopedConfig {
+  // Nested Runs (child agents, workflows) keep the enclosing Run's setting.
+  const cacheWarming = options.cacheWarming ?? getRunScopedConfig()?.cacheWarming;
   return {
     ...(options.modelTiers !== undefined ? { modelTiers: options.modelTiers } : {}),
     ...(options.maxOutputTokens !== undefined ? { maxOutputTokens: options.maxOutputTokens } : {}),
     ...(options.disablePromptCache !== undefined
       ? { disablePromptCache: options.disablePromptCache }
       : {}),
+    ...(cacheWarming !== undefined ? { cacheWarming } : {}),
     ...(options.lsp !== undefined ? { lsp: options.lsp } : {}),
     ...(options.workflow !== undefined ? { workflow: options.workflow } : {}),
     ...withSessionId(runSessionId(options)),

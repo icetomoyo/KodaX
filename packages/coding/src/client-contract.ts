@@ -1262,6 +1262,7 @@ export interface ClientConfig {
   readonly deepModel?: string;
   readonly maxOutputTokens?: number;
   readonly disablePromptCache?: boolean;
+  readonly cacheWarming?: 'off' | 'run' | 'idle';
   readonly lsp?: boolean;
   readonly lspAutoDownload?: boolean;
   readonly acpLogLevel?: string;
@@ -1286,6 +1287,7 @@ export interface ClientEffectiveExecutionConfig {
   readonly fallbackProviders: ClientEffectiveConfigValue<readonly string[]>;
   readonly maxOutputTokens?: ClientEffectiveConfigValue<number | undefined>;
   readonly disablePromptCache?: ClientEffectiveConfigValue<boolean | undefined>;
+  readonly cacheWarming?: ClientEffectiveConfigValue<'off' | 'run' | 'idle' | undefined>;
   readonly lsp?: ClientEffectiveConfigValue<boolean | undefined>;
   /** Saved defaults take effect at this boundary; Session overrides retain their own lifecycle. */
   readonly application?: Readonly<Partial<Record<keyof ClientConfig, 'immediate' | 'next_run' | 'restart' | 'extension_reload'>>>;

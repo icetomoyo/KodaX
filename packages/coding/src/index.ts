@@ -758,6 +758,7 @@ export { KodaXClient } from './client.js';
 export {
   runManagedTask,
 } from './task-engine.js';
+export { cancelPromptCacheWarming } from './agent-runtime/prompt-cache-warmer.js';
 
 export type {
   CapabilityKind,
