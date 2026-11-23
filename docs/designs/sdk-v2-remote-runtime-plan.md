@@ -334,11 +334,22 @@ v1 里的各种做法都能归进来：
 - **`requestId` 的作用域是授权身份**。带 `sessionId` 的命令在该 Session 内判重，不带的在 Host 内判重。
 - **重试安全是契约层的保证**，实现沿用各领域已有的回执（持久化的 pending-inputs、session-stops、CAS），不新建通用账本。主线曾经删除过通用的 operation envelope（`docs/CLIENT_CONTRACT.md:649`）。
 - **每条命令声明能不能自动重发**（2026-11-23 协议审查，用户同意方向，r1 冻结前落地）：69 条命令里只有 17 条按 `requestId` 判重，上一条对其余的不成立；而 SDK 断线后会用同样的参数一直重发，直到成功或被取消（`host-client.ts:304-326`）。改法：
-  - 方法定义带 `resend: 'auto' | 'never'`。SDK 不自动重发的集合由它生成，替换 `host-client.ts` 里写死的那份。
-  - `auto` 的命令要做到：同一个 `requestId`、同样的参数再发一次，答复成功并反映当前状态；只有当前状态和这条命令要的结果不同时才报 `conflict`。做法和 `session.goal.*` 一样，revision 对不上时先看是不是已经做完了（`host-rpc.ts:466-482`），不建通用账本。带 `ifRevision` 的写入现在第一次成功、重发却报 `conflict`，按这条改。
-  - 做不到的标 `never`，SDK 把 `unknown_outcome` 交给调用方重新读。先标 `never` 的：`provider.reasoning.probe`；`interaction.respond`，等 Host 记下回答它的 `requestId` 和决定后改成 `auto`，同时让没抢到的那一方读到是怎么答的。
-  - 要先补"已经做完"判断的：`branch.select`（没有 head 检查，迟到的重发会把别的客户端刚跑的 Run 切走）、`session.policy.update`（整份替换、没有 `ifRevision`，迟到的重发会撤销平台刚做的收紧）。
-  - 漂移测试：每条命令必须声明 `resend`；一张表把每条 `auto` 命令发两次，要求两次答复一致；没有夹具的 `auto` 命令让测试失败。
+  - 方法定义带 `resend: 'auto' | 'never'`。`methods.test.ts` 由它生成 `src/host-protocol/no-resend.ts`（`vitest -u` 更新），SDK 用这份集合，不加载 schema。
+  - `auto` 的命令要做到：同一个 `requestId`、同样的参数再发一次，答复成功并反映当前状态；只有当前状态和这条命令要的结果不同时才报 `conflict`。做法和 `session.goal.*` 一样，revision 对不上时先看是不是已经做完了，不建通用账本。已按这条改的：
+    - `session.settings.update`、`config.update`：revision 对不上，但再应用一遍补丁什么都不变时，返回当前状态，不写盘、不涨 revision。
+    - `agent.registration.upsert`：已存的登记和要存的完全一样时直接返回，不看条件。`setEnabled`：已经是要的开关和归属时直接返回；条件不符时报 `conflict`，原来报的是 `not_found`。v1 和 agent 包的返回约定不变。
+    - `permission.grant.revoke`：授权已经不在时返回成功，不再先比 revision。
+    - `session.lineage.label`：条目已经带着要的标签（或已经没有标签）时，什么都不记，返回原来记录它的那一条。
+    - `session.branch.select`：新增必填的 `ifActiveEntryId`（客户端读到的 `activeEntryId`）。对话已经停在目标上、或停在目标后面那条带摘要的切换结果上时，按已完成返回；否则 head 不再是 `ifActiveEntryId` 就报 `resync_required`（`head_changed`）。v1 的 `session.activeEntry.set` 多了可选的 `expectedHead`。
+  - 标 `never` 的 14 条，SDK 把 `unknown_outcome` 交给调用方重新读（未经用户确认）：
+    - `provider.reasoning.probe`：每次探测都是一次付费请求。
+    - `interaction.respond`：重发得到 `already_resolved`，看不出是谁的回答生效了。等 Host 记下回答它的 `requestId` 和决定后改成 `auto`。
+    - `learning.*` 的 8 条：决定带着读到的 revision，重发会报 `revision_mismatch`。开放 `learning.*` 给网络角色时（记忆管理 API 那一步）一起改成 `auto`。
+    - `host.stop`：重发会停掉接替它的新 Host。`client.exit.request` 同理。
+    - `mcp.server.reload`、`extension.reload`：重发会再断开一次全部服务器、再跑一遍全部扩展的初始化。`config.reload`、`mcp.tool.refresh` 只重读，保持 `auto`。
+  - 没改的：`session.policy.update` 整份替换、没有 `ifRevision`。同一个客户端断线重连期间，别人刚做的收紧会被它迟到的重发覆盖。要防这个得加条件写，等有平台真的并发改策略再做（未经用户确认）。
+  - 漂移测试：`methods.test.ts` 要求每条命令声明 `resend`；`host-rpc.test.ts` 记下每个测试经由 `connect` 发出的命令，最后一个测试要求每条 `auto` 命令都被原样（同一 Host、同一角色、同样参数）重发过且答复成功，答复是否正确由各自的测试断言。新加一条 `auto` 命令而没有测试重发它，这个测试就失败。
+  - 漂移测试顺带发现：`session.create` 重发返回的 Session 没有 `createdAt`，因为 v1 读 Session 时不带它，`session.get` 也一样（待补，归入 B 类）。
   - 所有命令继续带必填的 `requestId`，以后从 `never` 改成 `auto` 不用改协议。
 - **要补的缺口**：
   - 立即启动的输入只在 Host 的一次启动内判重。云端形态下 Host 重启是常态，判重要能跨重启。M1a 已落地，见下一条。
@@ -1021,8 +1032,9 @@ blob.read({sessionId, blobId, cursor?}) -> {data, mediaType, byteLength, sha256,
   - `limit` 是 1 到 1000，默认 200。v1 一次返回整棵树，长对话会超过帧的上限，所以 v2 分页。
   - `cursor` 是上一页最后一条的 ID。这条不在了报 `resync_required`（`cursor_gone`），客户端从头再读。
   - 分页现在在桥接层做，每页都向 v1 读一次整棵树。M3 拆领域的时候下沉。
-- **`session.lineage.label`**：参数是 `{requestId, sessionId, entry, label?}`，结果是 `{entry}`，也就是记录这次标签的那一条。`entry` 是条目 ID 或已有的标签。不给 `label` 表示去掉标签。重发会再记一条同样的标签，读树的人看到的结果不变。
-- **`session.branch.select`**：参数是 `{requestId, sessionId, entry, summarize?}`，结果是 `{session}`。
+- **`session.lineage.label`**：参数是 `{requestId, sessionId, entry, label?}`，结果是 `{entry}`，也就是记录这次标签的那一条。`entry` 是条目 ID 或已有的标签。不给 `label` 表示去掉标签。条目已经是要的样子时（比如重发），什么都不记，返回原来记录它的那一条。
+- **`session.branch.select`**：参数是 `{requestId, sessionId, entry, summarize?, ifActiveEntryId}`，结果是 `{session}`。
+  - `ifActiveEntryId` 是客户端读到的 `activeEntryId`。切换已经生效时按已完成返回；否则 head 变了报 `resync_required`。
   - 带 `summarize` 时，被离开的那段分支的摘要挂在目标条目后面，对话停在摘要上。
   - v1 的变化：对话已经停在这样一条摘要上时，同一个带摘要的切换什么都不做。原来重发会给摘要再做一份摘要，并多出一条分支。
 - **`session.notice.append`**：参数是 `{requestId, sessionId, text, source?}`，结果是 `{itemId}`。

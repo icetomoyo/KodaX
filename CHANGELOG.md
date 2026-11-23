@@ -29,7 +29,11 @@ All notable changes to this project will be documented in this file.
   over v2, and starts the Host again if it dies. `call` takes typed params and
   returns typed results for every query and command. `observeSession` delivers
   the whole Session view as it changes. Calls whose link drops are sent again
-  with the same `requestId`. Runs that a dead Host left in `recovering` are
+  with the same `requestId`, and a command sent again answers with the state
+  it left instead of a conflict. A command that is not safe to repeat, such as
+  `host.stop` or `interaction.respond`, is not sent again: the caller gets
+  `unknown_outcome` and reads what happened. `session.branch.select` now
+  takes `ifActiveEntryId`. Runs that a dead Host left in `recovering` are
   continued once on the new Host. `createKodaXHostClient` takes any connection
   opener; `createRequestId` makes command ids. The v1 product Client is
   unchanged.
