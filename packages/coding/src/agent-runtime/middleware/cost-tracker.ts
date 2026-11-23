@@ -25,6 +25,8 @@
  *     REPL `/cost` command displays
  */
 
+import { getSummary, type CostTracker, type KodaXTokenUsage } from '@kodax-ai/llm';
+
 export {
   createCostTracker,
   recordUsage,
@@ -33,6 +35,19 @@ export {
   formatCost,
   formatCostReport,
 } from '@kodax-ai/llm';
+
+/** What the tracked calls used together, as a result reports it. Undefined before any call. */
+export function trackedUsage(tracker: CostTracker): KodaXTokenUsage | undefined {
+  const summary = getSummary(tracker);
+  if (summary.callCount === 0) return undefined;
+  return {
+    inputTokens: summary.totalInputTokens,
+    outputTokens: summary.totalOutputTokens,
+    totalTokens: summary.totalInputTokens + summary.totalOutputTokens,
+    ...(summary.totalCacheReadTokens > 0 ? { cachedReadTokens: summary.totalCacheReadTokens } : {}),
+    ...(summary.totalCacheWriteTokens > 0 ? { cachedWriteTokens: summary.totalCacheWriteTokens } : {}),
+  };
+}
 
 export type {
   CostTracker,

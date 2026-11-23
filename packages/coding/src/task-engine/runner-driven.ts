@@ -3237,6 +3237,7 @@ async function runManagedTaskViaRunnerInner(
     // legacy path.
     routingDecision: plan?.decision,
     ...(limitReachedRef.current ? { limitReached: true } : {}),
+    ...(tokenState.runUsage !== undefined ? { usage: tokenState.runUsage } : {}),
   };
   const runtimeSessionSnapshot = snapshotRuntimeSessionState(
     runtimeSessionState,

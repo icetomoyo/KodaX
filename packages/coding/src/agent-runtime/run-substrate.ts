@@ -294,6 +294,7 @@ import { shouldCompact, getProviderReasoningCacheOptions } from '@kodax-ai/agent
 import { resolveWireEffort } from '@kodax-ai/llm';
 import { runCompactionLifecycle } from './middleware/compaction-orchestration.js';
 import { createCompactionAntiThrashState } from './middleware/compaction-pressure.js';
+import { trackedUsage } from './middleware/cost-tracker.js';
 import { maybeContinueAfterMaxTokens } from './max-tokens-continuation.js';
 import { maybeAutoContinueManagedProtocol } from './managed-protocol-continue.js';
 import { applyIterationLimitTerminal } from './iteration-limit-terminal.js';
@@ -1121,15 +1122,10 @@ async function runSubstrateInContext(
       runtimeSessionState,
       { includeUnchanged: false },
     );
-    const usage = getSummary(turnState.costTracker);
+    const usage = turnState.usageComplete ? trackedUsage(turnState.costTracker) : undefined;
     const finalized = {
       ...result,
-      ...(turnState.usageComplete && usage.callCount > 0 ? { usage: {
-        inputTokens: usage.totalInputTokens, outputTokens: usage.totalOutputTokens,
-        totalTokens: usage.totalInputTokens + usage.totalOutputTokens,
-        ...(usage.totalCacheReadTokens > 0 ? { cachedReadTokens: usage.totalCacheReadTokens } : {}),
-        ...(usage.totalCacheWriteTokens > 0 ? { cachedWriteTokens: usage.totalCacheWriteTokens } : {}),
-      } } : {}),
+      ...(usage !== undefined ? { usage } : {}),
       writtenFiles: [...writtenFiles.values()],
       ...(payload ? { managedProtocolPayload: payload } : {}),
       ...(runtimeSessionSnapshot ? { runtimeSessionSnapshot } : {}),

@@ -99,6 +99,7 @@ import {
   getSummary as getCostSummary,
   recordRetry as recordCostRetry,
   recordUsage as recordCostUsage,
+  trackedUsage,
   type CostTracker,
 } from '../../../agent-runtime/middleware/cost-tracker.js';
 import { countTokens, estimateTokens } from '../../../tokenizer.js';
@@ -174,6 +175,10 @@ export interface RunnerAdapterTokenState {
   totalTokens: number;
   lastUsage?: KodaXTokenUsage;
   source: 'api' | 'estimate';
+  /** What every model call of the Run used together; absent once a call did not report it. */
+  runUsage?: KodaXTokenUsage;
+  /** A model call of the Run did not report what it used. */
+  runUsageIncomplete?: true;
 }
 
 /**
@@ -1575,6 +1580,7 @@ export function buildRunnerLlmAdapter(
     if (tokenStateRef && streamResult.usage) {
       const current = tokenStateRef.current;
       tokenStateRef.current = {
+        ...current,
         totalTokens: streamResult.usage.totalTokens ?? current.totalTokens,
         lastUsage: streamResult.usage,
         source: 'api',
@@ -1593,6 +1599,16 @@ export function buildRunnerLlmAdapter(
         cacheWriteTokens: streamResult.usage.cachedWriteTokens,
         ...(streamResult.usage.cachedWriteTokensByTtl ? { cacheWriteTokensByTtl: streamResult.usage.cachedWriteTokensByTtl } : {}),
       });
+    }
+    if (tokenStateRef) {
+      const { runUsage: _previous, ...current } = tokenStateRef.current;
+      const incomplete = current.runUsageIncomplete === true || streamResult.usage === undefined;
+      const runUsage = incomplete ? undefined : trackedUsage(costTracker);
+      tokenStateRef.current = {
+        ...current,
+        ...(incomplete ? { runUsageIncomplete: true as const } : {}),
+        ...(runUsage !== undefined ? { runUsage } : {}),
+      };
     }
 
     // onStreamEnd fires after the provider finishes the current turn's
