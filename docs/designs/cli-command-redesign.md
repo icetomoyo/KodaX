@@ -1,6 +1,6 @@
 # FEATURE_318 CLI、REPL 命令、帮助与健康检查重构
 
-状态：设计中（2026-11-23），在 `KodaX-next-dev` 上随 SDK v2 一起做，归 v0.7.97。
+状态：第 1–4 期已实现（2026-11-24），在 `KodaX-next-dev` 上随 SDK v2 一起做，归 v0.7.97。
 
 ## 为什么
 
@@ -123,6 +123,7 @@ CLI、REPL `/status`、`/healthz`、`kodax doctor` 用同一组状态：
 - **Space 与 SDK 调用方**：不调用这些 CLI 命令，走 SDK。v2 `initialize` 只加一个可选字段，`methods.contract.json` 随之更新。
 - **脚本**：解析 `kodax mcp list` 等 JSON 输出的脚本要加 `--json`；CHANGELOG 和 SDK_MIGRATION 写明。
 - **模型可见内容**：自我认知手册（`manual-topics.json`）的 `commands` 和 Host 相关主题要改写。按 ADR-033 写，并按 `benchmark/EVAL_GUIDELINES.md` 补一个 eval：问模型“怎么重启 Host / 怎么看 Host 日志”，答案用 `kodax host`。
+  - 已做：`benchmark/manual-commands.eval.ts`，Layer 3，模型继续查手册时用同一臂的手册内容回答，每格最多 3 次调用，用 glm53flash 和 ds/flash 跑了 1 个样本。8 组盲评中新手册赢 6 组、没有退步：其中 2 组改进明显，终端删除会话答出了 `kodax sessions delete`，代理问题答出了 `kodax host restart`/`logs`。另外 2 组双方查满 3 次都没给出答案，没法评。结论 recommend-ship。第 1 轮只取模型的一次回答，可 16 格里 11 格模型又去查手册，判为 eval 设计问题，不计入结论。
 
 ## 未定（未经用户确认，按推荐先做）
 
@@ -130,3 +131,8 @@ CLI、REPL `/status`、`/healthz`、`kodax doctor` 用同一组状态：
 - `kodax host logs --follow`：运维常用，第 1 期已加；和 `--json` 一起用时报错，因为跟随输出的日志行本身就是 JSON。
 - 第 2 期：`execpolicy --pretty` 隐含 `--json`；`integrations` 检查失败退出 1；各命令的文字输出格式；用法错误退出 2；不带子命令的命令组退出 1；未知帮助主题退出 2；`execpolicy check --mode` 改名 `--permission-mode`。
 - `-s` 系列保留到什么时候删：建议和 `daemon` 一起在 0.7.100 删。
+- 第 4 期：
+  - 手册里 `host`、`daemon` 是 `commands` 主题的别名；
+  - `public_docs/README*` 的 beta.6 历史说明改成“`kodax host`（当时名为 `daemon`）”；
+  - REPL `/reasoning` 的用法和帮助显示 `off`，`none` 作为它的同义词。
+- 第 4 期的文档防漂移测试（`src/cli/docs-drift.test.ts`）只查 `kodax …` 写法能走到可见命令和开关，不查参数值是否合法。
