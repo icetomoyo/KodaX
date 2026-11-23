@@ -550,7 +550,7 @@ const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } =
     };
   },
 
-  'history.read': async ({ sessionId, limit, cursor, around }, v1) => {
+  'history.read': async ({ sessionId, limit, cursor, around }, v1, caller) => {
     const { projectConversationHistoryPage, readHistoryPageWithBoundaryRetry } = await import('../client-history.js');
     const saved = await readHistoryPageWithBoundaryRetry(
       () => v1('session.conversation.page', defined({
@@ -568,13 +568,14 @@ const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } =
       chunk => v1('session.conversation.entryChunk', { ...chunk }) as Promise<RuntimeConversationHistoryEntryChunk | null>,
       emitKodaXDiagnostic, boundViewItem,
     );
+    const workspaceRoot = await caller.workspace?.root();
     // A message keeps the id the view shows it under, however the conversation is saved later.
     const { stableHistoryItemIds } = await import('../session-view.js');
     const ids = stableHistoryItemIds(sessionId, page.items);
     const located = page.locatedBoundaryId === undefined ? -1
       : page.items.findIndex(item => item.historyBoundary?.entryId === page.locatedBoundaryId);
     return {
-      items: page.items.map((item, index) => toViewItem({ ...item, id: ids[index]! })),
+      items: page.items.map((item, index) => toViewItem({ ...item, id: ids[index]! }, undefined, undefined, workspaceRoot)),
       status: page.status,
       issues: page.issues,
       nextCursor: page.nextCursor,

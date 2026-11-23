@@ -2948,6 +2948,8 @@ export interface KodaXToolExecutionContext {
   resolveToolResultCapacityTokens?: (messages: readonly KodaXMessage[]) => number;
   /** Trusted side-channel for a tool-owned recovery artifact. */
   recordToolResultArtifact?: (toolCallId: string, outputPath: string) => void;
+  /** What a file tool changed once it wrote, for clients that show the change in the transcript. */
+  recordToolFileChange?: (toolCallId: string, change: import('./tools/file-change.js').ProposedFileChange) => void;
   /** Trusted renderer separation of data from mandatory notes. Consumers must match the final content exactly. */
   recordToolResultProjection?: (toolCallId: string, projection: ToolResultProjection) => void;
   /** Optional Script durability fence, after permission hooks; execution uses this same input snapshot. */

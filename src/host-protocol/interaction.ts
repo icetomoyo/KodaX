@@ -50,8 +50,8 @@ const Questions = z.object({
 
 const TextQuestion = z.object({ question: z.string(), default: z.string().optional() });
 
-/** What a file tool would change, worked out before asking. */
-const FileChange = z.object({
+/** What a file tool would change, worked out before asking, or what it changed once it ran. */
+export const FileChange = z.object({
   /** The file inside the Host workspace. Absent when it lies outside, or the Host has no workspace. */
   path: z.string().optional(),
   added: z.int(),

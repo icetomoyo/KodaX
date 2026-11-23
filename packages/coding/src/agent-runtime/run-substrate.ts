@@ -4,6 +4,7 @@
  * Agent 主循环 - Core 层核心入口
  */
 
+import type { ProposedFileChange } from '../tools/file-change.js';
 import { randomUUID } from 'node:crypto';
 import { buildLocalExecutionFailure, buildProviderExecutionFailure } from '../execution-failure.js';
 import { withEffectivePermissionContext } from '../prompts/effective-permissions.js';
@@ -2794,7 +2795,9 @@ async function runSubstrateInContext(
         // raw until visibility filtering and mutation reflection finish.
         const previousToolResultCapacity = ctx.toolResultCapacityTokens;
         const previousArtifactRecorder = ctx.recordToolResultArtifact;
+        const previousFileChangeRecorder = ctx.recordToolFileChange;
         const toolResultArtifactPaths = new Map<string, string>();
+        const toolFileChanges = new Map<string, ProposedFileChange>();
         ctx.maximumInputTokens = toolResultCurrentTokens + toolResultBudget.aggregateInlineTokens;
         ctx.toolResultCapacityTokens = toolResultBudget.aggregateInlineTokens;
         if (ctx.visualOutputReservations) ctx.reserveVisualOutput = tokens => ctx.visualOutputReservations!.reserve(
@@ -2802,6 +2805,10 @@ async function runSubstrateInContext(
         ctx.recordToolResultArtifact = (toolCallId, outputPath) => {
           toolResultArtifactPaths.set(toolCallId, outputPath);
           previousArtifactRecorder?.(toolCallId, outputPath);
+        };
+        ctx.recordToolFileChange = (toolCallId, change) => {
+          toolFileChanges.set(toolCallId, change);
+          previousFileChangeRecorder?.(toolCallId, change);
         };
         let resultMap: Map<string, KodaXToolResultBlock['content']>;
         try {
@@ -2856,6 +2863,8 @@ async function runSubstrateInContext(
           else ctx.toolResultCapacityTokens = previousToolResultCapacity;
           if (previousArtifactRecorder === undefined) delete ctx.recordToolResultArtifact;
           else ctx.recordToolResultArtifact = previousArtifactRecorder;
+          if (previousFileChangeRecorder === undefined) delete ctx.recordToolFileChange;
+          else ctx.recordToolFileChange = previousFileChangeRecorder;
         }
         // CAP-078 + CAP-079: form the final visible batch, then admit that
         // physical transcript payload against the one aggregate capacity.
@@ -2868,6 +2877,7 @@ async function runSubstrateInContext(
           runtimeSessionState,
           toolResultBudget,
           toolResultArtifactPaths,
+          toolFileChanges,
         });
         toolResults = postProcessed.toolResults;
         editRecoveryMessages = postProcessed.editRecoveryMessages;

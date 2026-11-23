@@ -102,6 +102,7 @@
  * — pre-FEATURE_100 baseline — during FEATURE_100 P3.3d.
  */
 
+import type { ProposedFileChange } from '../tools/file-change.js';
 import type { ToolResult } from '../tools/types.js';
 import { recordWrittenFile } from './written-files.js';
 import { resolveExecutionCwd } from '../runtime-paths.js';
@@ -386,8 +387,7 @@ export function createContextForToolCall(
         ...ctx,
         ...visualSource,
         toolCallId: toolCall.id,
-        ...(ctx.recordToolResultArtifact ? { recordToolResultArtifact: (sourceId: string, outputPath: string) =>
-          ctx.recordToolResultArtifact!(sourceId === toolCall.id ? toolExecution(toolCall).resultKey : sourceId, outputPath) } : {}),
+        ...resultKeyedRecorders(ctx, toolCall),
         ...(reportsProgress
           ? {
               reportToolProgress: (message: string) => {
@@ -418,8 +418,19 @@ export function createContextForToolCall(
       }
     : { ...ctx, toolCallId: toolCall.id,
       ...visualSource,
-      ...(ctx.recordToolResultArtifact ? { recordToolResultArtifact: (sourceId: string, outputPath: string) =>
-        ctx.recordToolResultArtifact!(sourceId === toolCall.id ? toolExecution(toolCall).resultKey : sourceId, outputPath) } : {}) };
+      ...resultKeyedRecorders(ctx, toolCall) };
+}
+
+/** A tool reports under its call id; the batch keys results by execution, which differs for a nested call. */
+function resultKeyedRecorders(
+  ctx: KodaXToolExecutionContext, toolCall: RunnableToolCall,
+): Pick<KodaXToolExecutionContext, 'recordToolResultArtifact' | 'recordToolFileChange'> {
+  const keyOf = (sourceId: string) => (sourceId === toolCall.id ? toolExecution(toolCall).resultKey : sourceId);
+  const { recordToolResultArtifact: artifact, recordToolFileChange: fileChange } = ctx;
+  return {
+    ...(artifact ? { recordToolResultArtifact: (sourceId: string, outputPath: string) => artifact(keyOf(sourceId), outputPath) } : {}),
+    ...(fileChange ? { recordToolFileChange: (sourceId: string, change: ProposedFileChange) => fileChange(keyOf(sourceId), change) } : {}),
+  };
 }
 
 function describeBridgeTools(
@@ -927,6 +938,8 @@ export interface PostToolProcessingInput {
   readonly mutationScopeReflection?: boolean;
   /** Trusted artifacts recorded by tools during this dispatch. */
   readonly toolResultArtifactPaths?: ReadonlyMap<string, string>;
+  /** What file tools changed during this dispatch, by result key. */
+  readonly toolFileChanges?: ReadonlyMap<string, ProposedFileChange>;
 }
 
 export interface PostToolProcessingOutput {
@@ -993,11 +1006,12 @@ export async function applyPostToolProcessing(
     }
     if (isVisibleToolName(tc.name)) {
       const outputPath = input.toolResultArtifactPaths?.get(toolExecution(tc).resultKey);
+      const fileChange = input.toolFileChanges?.get(toolExecution(tc).resultKey);
       toolResults.push(createToolResultBlock(
         tc.id,
         content,
-        outputPath
-          ? { truncated: true, capacityFallback: true, outputPath }
+        outputPath || fileChange
+          ? { ...(outputPath ? { truncated: true, capacityFallback: true, outputPath } : {}), ...(fileChange ? { fileChange } : {}) }
           : undefined,
       ));
     }

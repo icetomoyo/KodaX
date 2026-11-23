@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { describeFileChange } from '../file-change.js';
 
 import type {
   KodaXToolExecutionContext,
@@ -303,6 +304,21 @@ async function writeHostTextFile(
 }
 
 export async function writeTextFileForMutation(
+  snapshot: TextFileMutationSnapshot,
+  content: string,
+  createParentDirectories: boolean,
+  ctx: KodaXToolExecutionContext,
+  backupContent?: string,
+  undoReceipt?: TrustedTextMutationBackupReceipt,
+): Promise<void> {
+  await commitTextFileMutation(snapshot, content, createParentDirectories, ctx, backupContent, undoReceipt);
+  const toolCallId = snapshot.request.toolCallId;
+  if (toolCallId === undefined || ctx.recordToolFileChange === undefined) return;
+  const change = describeFileChange(snapshot.request.path, snapshot.state === 'missing' ? undefined : snapshot.content, content);
+  if (change !== undefined) ctx.recordToolFileChange(toolCallId, change);
+}
+
+async function commitTextFileMutation(
   snapshot: TextFileMutationSnapshot,
   content: string,
   createParentDirectories: boolean,

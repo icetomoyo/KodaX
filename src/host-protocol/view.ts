@@ -14,7 +14,7 @@
  */
 import { z } from 'zod/v4';
 
-import { Interaction, LocalInteraction } from './interaction.js';
+import { FileChange, Interaction, LocalInteraction } from './interaction.js';
 import { HostId, hostParams, hostResult, type HostMethodRegistry } from './schema.js';
 import { LocalSession, Session, SessionRef } from './session.js';
 import { Settings } from './settings.js';
@@ -48,6 +48,8 @@ const ToolCall = z.object({
   inputTotal: z.int().optional(),
   /** The item's `text` is a shortened output and the Host kept the complete one; `item.read` returns it. */
   outputSaved: z.boolean().optional(),
+  /** What a file tool changed, once it ran. A client that shows no diffs ignores it. */
+  change: FileChange.optional(),
   progress: z.string().optional(),
   startedAt: z.int().optional(),
   endedAt: z.int().optional(),
@@ -76,9 +78,10 @@ export const ViewItem = z.object({
   notice: z.object({ kind: z.string() }).optional(),
 });
 
-/** The owner on the Host's machine also gets where each attachment is. */
+/** The owner on the Host's machine also gets where each attachment is, and the file a tool changed. */
 export const LocalViewItem = ViewItem.extend({
   attachments: z.array(Attachment.extend({ path: z.string() })).optional(),
+  tool: ToolCall.extend({ change: FileChange.extend({ hostPath: z.string() }).optional() }).optional(),
 });
 
 const Run = z.object({

@@ -1,5 +1,6 @@
 
 
+import type { ProposedFileChange } from '../../../tools/file-change.js';
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
 import type {
   RunnableTool,
@@ -173,6 +174,7 @@ export function wrapCodingToolAsRunnable(
       recordMutationForTool(baseCtx.mutationTracker, definition.name, input);
       const toolCallId = runnerCtx?.toolCallId;
       let outputPath: string | undefined;
+      let fileChange: ProposedFileChange | undefined;
       const toolResultCapacityTokens = runnerCtx?.transcript
         ? baseCtx.resolveToolResultCapacityTokens?.(runnerCtx.transcript)
         : undefined;
@@ -197,6 +199,10 @@ export function wrapCodingToolAsRunnable(
               recordToolResultArtifact: (recordedToolCallId, recordedOutputPath) => {
                 if (recordedToolCallId === toolCallId) outputPath = recordedOutputPath;
                 baseCtx.recordToolResultArtifact?.(recordedToolCallId, recordedOutputPath);
+              },
+              recordToolFileChange: (recordedToolCallId, change) => {
+                if (recordedToolCallId === toolCallId) fileChange = change;
+                baseCtx.recordToolFileChange?.(recordedToolCallId, change);
               },
             }
           : {}),
@@ -223,8 +229,11 @@ export function wrapCodingToolAsRunnable(
         return {
           content,
           ...(isToolResultErrorContent(content) ? { isError: true } : {}),
-          ...(outputPath
-            ? { metadata: { truncated: true, capacityFallback: true, outputPath } }
+          ...(outputPath || fileChange
+            ? { metadata: {
+                ...(outputPath ? { truncated: true, capacityFallback: true, outputPath } : {}),
+                ...(fileChange ? { fileChange } : {}),
+              } }
             : {}),
         };
       } catch (err) {

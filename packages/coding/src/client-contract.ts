@@ -910,6 +910,8 @@ export interface ClientViewItem {
     readonly totalInputLength?: number;
     /** Saved original text; read it through sessions.readItem with part: 'original'. */
     readonly outputPath?: string;
+    /** What a file tool changed, once it ran. */
+    readonly fileChange?: ProposedFileChange;
     readonly progress?: string;
     readonly startedAt?: number;
     readonly endedAt?: number;

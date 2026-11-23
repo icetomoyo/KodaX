@@ -21,7 +21,9 @@ import type {
   ClientItemContent,
 } from '@kodax-ai/coding/client-contract';
 import { createSessionNoticeEvents } from './session-view-notices.js';
-import { canonicalTools, canonicalToolKey, toolResultAttachments, toolResultOutputPath, withoutInternalToolRecords } from './client-canonical-tools.js';
+import {
+  canonicalTools, canonicalToolKey, toolResultAttachments, toolResultFileChange, toolResultOutputPath, withoutInternalToolRecords,
+} from './client-canonical-tools.js';
 import { readItemImage } from './session-view-image.js';
 import { readSavedToolOutput } from './tool-output-reader.js';
 
@@ -369,7 +371,7 @@ export class SessionViewOwner {
         upsert({ id: toolItemId(result.id), type: 'tool', text: result.content, timestamp: Date.now(),
           ...(result.toolResult ? { attachments: toolResultAttachments(result.toolResult.content) } : {}),
           sourceTurnId: meta?.turnId ?? previous?.sourceTurnId, tool: { ...previous?.tool, resultRecorded: true, callId: result.id, name: result.name, status, endedAt: Date.now(), progress: undefined,
-            outputPath: toolResultOutputPath(result.toolResult) } });
+            outputPath: toolResultOutputPath(result.toolResult), fileChange: toolResultFileChange(result.toolResult) } });
         this.checkpoint(sessionId);
       },
       onManagedTaskStatus: (status) => {

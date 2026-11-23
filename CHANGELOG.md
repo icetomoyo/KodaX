@@ -63,6 +63,9 @@ All notable changes to this project will be documented in this file.
   fixed. Paths on the Host, the Host's own keys and external Agent
   registrations stay with the owner, and MCP secret values read back as
   `[redacted]`.
+- Protocol v2 tool items in the session view and in `history.read` carry
+  `tool.change`: the diff a file tool made, in the shape of the approval
+  `diff`. The file path is relative to the Host workspace.
 - `kodax host` manages the Host, which `kodax daemon` did. `kodax daemon` still
   works, prints that it was renamed, and is removed in 0.7.100.
 - `kodax host logs --follow` keeps printing new log lines until Ctrl+C, across

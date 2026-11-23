@@ -6,6 +6,8 @@ import type { KodaXToolExecutionContext } from '../types.js';
 import { createContentHashCache } from '../multi-instance/content-hash-cache.js';
 import { inspectEditFailure, parseEditToolError, toolEdit, toolEditWithCompactReceipt } from './edit.js';
 import { toolInsertAfterAnchor } from './insert-after-anchor.js';
+import type { ProposedFileChange } from './file-change.js';
+import { toolWrite } from './write.js';
 
 describe('edit tool', () => {
   let tempDir = '';
@@ -349,5 +351,39 @@ describe('insert_after_anchor tool', () => {
 
     expect(result).toContain('ANCHOR_AMBIGUOUS');
     await expect(fs.readFile(filePath, 'utf8')).resolves.not.toContain('new section');
+  });
+  describe('reporting what a call changed', () => {
+    function recording(toolCallId: string): ProposedFileChange[] {
+      const changes: ProposedFileChange[] = [];
+      ctx = { ...ctx, toolCallId, recordToolFileChange: (id, change) => {
+        expect(id).toBe(toolCallId);
+        changes.push(change);
+      } };
+      return changes;
+    }
+
+    it('reports the lines an edit changed', async () => {
+      const filePath = path.join(tempDir, 'notes.md');
+      await fs.writeFile(filePath, 'alpha\nbeta\ngamma\n', 'utf8');
+      const changes = recording('call-1');
+      await toolEdit({ path: filePath, old_string: 'beta', new_string: 'delta' }, ctx);
+      expect(changes).toEqual([{ path: filePath, added: 1, removed: 1, unified: expect.stringContaining('-beta\n+delta') }]);
+    });
+
+    it('reports a new file as all added lines', async () => {
+      const filePath = path.join(tempDir, 'new.md');
+      const changes = recording('call-2');
+      await toolWrite({ path: filePath, content: 'one\ntwo\n' }, ctx);
+      expect(changes).toEqual([{ path: filePath, added: 2, removed: 0, unified: '@@ -0,0 +1,2 @@\n+one\n+two' }]);
+    });
+
+    it('reports nothing when the call changed nothing or failed', async () => {
+      const filePath = path.join(tempDir, 'same.md');
+      await fs.writeFile(filePath, 'same\n', 'utf8');
+      const changes = recording('call-3');
+      await toolWrite({ path: filePath, content: 'same\n' }, ctx);
+      await toolEdit({ path: filePath, old_string: 'missing', new_string: 'x' }, ctx);
+      expect(changes).toEqual([]);
+    });
   });
 });

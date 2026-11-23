@@ -7,6 +7,7 @@
  * A Session's view also carries its workflows. v1 reports that they changed
  * on a subscription of its own, and the Host then reads them again.
  */
+import type { ProposedFileChange } from '@kodax-ai/coding';
 import type { ClientInteraction, ClientSession, ClientSessionView, ClientViewItem } from '@kodax-ai/coding/client-contract';
 
 import { HostProtocolError, hostRpcNotification } from '../host-protocol/codec.js';
@@ -339,7 +340,7 @@ export function toSessionView(
       // Display history saved by old builds can repeat an id; a client's copy is keyed by it.
       const repeats = seen.get(item.id) ?? 0;
       seen.set(item.id, repeats + 1);
-      return toViewItem(item, repeats === 0 ? item.id : `${item.id}~${repeats}`, streaming);
+      return toViewItem(item, repeats === 0 ? item.id : `${item.id}~${repeats}`, streaming, workspaceRoot);
     }),
     session: toSessionResource(view.session, workspaceRoot !== undefined && view.session.workspaceRoot !== undefined
       ? within(workspaceRoot, view.session.workspaceRoot) : undefined),
@@ -390,9 +391,14 @@ export function toInteraction(interaction: ClientInteraction, workspaceRoot?: st
     kind: interaction.kind,
     request: diff === undefined ? interaction.options : {
       ...interaction.options,
-      diff: { ...diff, path: workspaceRoot === undefined ? undefined : within(workspaceRoot, diff.path), hostPath: diff.path },
+      diff: toFileChange(diff, workspaceRoot),
     },
   };
+}
+
+/** A file change named by its place in the workspace; its Host path stays in for the contract to drop. */
+function toFileChange(change: ProposedFileChange, workspaceRoot: string | undefined): Readonly<Record<string, unknown>> {
+  return { ...change, path: workspaceRoot === undefined ? undefined : within(workspaceRoot, change.path), hostPath: change.path };
 }
 
 /**
@@ -400,7 +406,7 @@ export function toInteraction(interaction: ClientInteraction, workspaceRoot?: st
  * it the item comes from saved history, where nothing changes any more.
  */
 export function toViewItem(
-  item: ClientViewItem, id: string = item.id, streaming?: ReadonlySet<string>,
+  item: ClientViewItem, id: string = item.id, streaming?: ReadonlySet<string>, workspaceRoot?: string,
 ): Readonly<Record<string, unknown>> {
   const { tool } = item;
   const notice = noticeKind(item.icon);
@@ -425,6 +431,7 @@ export function toViewItem(
       inputText: tool.inputText,
       inputTotal: tool.totalInputLength,
       outputSaved: tool.outputPath !== undefined ? true : undefined,
+      change: tool.fileChange === undefined ? undefined : toFileChange(tool.fileChange, workspaceRoot),
       progress: tool.progress,
       startedAt: wholeNumber(tool.startedAt),
       endedAt: wholeNumber(tool.endedAt),

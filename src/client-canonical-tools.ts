@@ -20,6 +20,15 @@ export function toolResultOutputPath(result: KodaXToolResultBlock | undefined): 
     ? metadata.outputPath : undefined;
 }
 
+/** What a file tool changed, recorded as it wrote. */
+export function toolResultFileChange(result: KodaXToolResultBlock | undefined): NonNullable<ClientViewItem['tool']>['fileChange'] {
+  const change = result?.metadata?.fileChange;
+  if (change === null || typeof change !== 'object') return undefined;
+  const { path, added, removed, unified, truncated } = change as Record<string, unknown>;
+  return typeof path === 'string' && typeof added === 'number' && typeof removed === 'number' && typeof unified === 'string'
+    ? { path, added, removed, unified, ...(truncated === true ? { truncated } : {}) } : undefined;
+}
+
 function resultStatus(result: KodaXToolResultBlock | undefined): NonNullable<ClientViewItem['tool']>['status'] {
   if (!result) return 'cancelled';
   if (result.metadata?.cancelled === true) return 'cancelled';
@@ -86,7 +95,8 @@ export function canonicalTools(messages: readonly KodaXMessage[]): ReadonlyMap<s
         tools.set(key, { ...item, text: toolResultText(block.content),
           ...(attachments.length > 0 ? { attachments } : {}), tool: { ...item.tool,
           status: resultStatus(block), endedAt: timestamp,
-          ...(toolResultOutputPath(block) ? { outputPath: toolResultOutputPath(block) } : {}) } });
+          ...(toolResultOutputPath(block) ? { outputPath: toolResultOutputPath(block) } : {}),
+          ...(toolResultFileChange(block) ? { fileChange: toolResultFileChange(block) } : {}) } });
         pending.delete(block.tool_use_id);
       }
     }

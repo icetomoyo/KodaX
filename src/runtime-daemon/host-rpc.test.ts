@@ -1185,6 +1185,30 @@ describe('v2 interactions served by the v1 implementation', () => {
     expect(written()).toBe(true);
   });
 
+  it('shows in the transcript what a file tool changed, with the Host path only to the owner', async () => {
+    const { host, runtime, user, projectRoot, sessionId, write } = await hostThatWrites();
+    const runId = await write('input-1');
+    const pending = await pendingInteraction(user, sessionId);
+    await user.request('interaction.respond', permission(pending.id, 'answer-1', { type: 'allow_once' }));
+    await user.request('run.wait', { runId });
+
+    type ToolFacts = { readonly tool?: { readonly name: string; readonly change?: Record<string, unknown> } };
+    const changeOf = async (client: HostRpcClient, subscriptionId: string) => {
+      const { snapshot } = await client.request('view.subscribe', {
+        subscriptionId, target: { kind: 'session', sessionId },
+      }) as unknown as { readonly snapshot: { readonly items: readonly ToolFacts[] } };
+      return snapshot.items.find(item => item.tool?.name === 'write')?.tool?.change;
+    };
+    const change = { path: 'app/.kodax/note.txt', added: 1, removed: 0, unified: '@@ -0,0 +1,1 @@\n+note' };
+    expect(await changeOf(user, 'main')).toEqual(change);
+    const owner = await connect('owner', runtime, host.workspace);
+    expect(await changeOf(owner, 'owner')).toEqual({ ...change, hostPath: path.join(projectRoot, WRITE.path) });
+
+    // Saved history tells the same.
+    const page = await user.request('history.read', { sessionId }) as { readonly items: readonly ToolFacts[] };
+    expect(page.items.find(item => item.tool?.name === 'write')?.tool?.change).toEqual(change);
+  });
+
   it('keeps a wider answer as a grant until it is revoked', async () => {
     const { user, projectRoot, sessionId, written, write } = await hostThatWrites();
     const empty = await user.request('permission.grant.list') as GrantPage;

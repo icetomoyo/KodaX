@@ -6,25 +6,11 @@
 import fs from 'node:fs/promises';
 
 import { resolveExecutionPath } from '../runtime-paths.js';
-import { generateDiff } from './diff.js';
+import { describeFileChange, MAX_FILE_CHANGE_BYTES, type ProposedFileChange } from './file-change.js';
 import { prepareInsertionContent, resolveAnchorInsertion } from './insert-after-anchor.js';
 import { applyOneEdit } from './multi-edit.js';
 
-/** A file change as a person reviews it. `unified` holds standard unified-diff hunks, without the file header lines. */
-export interface ProposedFileChange {
-  /** The file on the Host the tool would change. */
-  readonly path: string;
-  readonly added: number;
-  readonly removed: number;
-  readonly unified: string;
-  /** The hunks were cut at a line to stay within the cap; the counts are for the whole change. */
-  readonly truncated?: true;
-}
-
-/** Larger files are not read just to show a diff; the approval goes without one. */
-const MAX_FILE_BYTES = 4 * 1024 * 1024;
-/** How much of the hunks an approval carries. */
-const MAX_UNIFIED_CHARS = 64 * 1024;
+export type { ProposedFileChange } from './file-change.js';
 
 /**
  * The change `toolName` would make with `input`, relative paths resolved against
@@ -42,8 +28,7 @@ export async function proposeFileChange(
   if (file === undefined) return undefined;
   const before = file.exists ? file.content : undefined;
   const after = PLANNERS.get(toolName)!(before, input);
-  if (after === undefined || after === before) return undefined;
-  return describeChange(filePath, before === undefined ? newFileHunks(after) : changedHunks(before, after));
+  return after === undefined ? undefined : describeFileChange(filePath, before, after);
 }
 
 /** The file's next content, or undefined when the tool would refuse. `before` is undefined for a missing file. */
@@ -81,37 +66,10 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
 async function readForPlanning(filePath: string): Promise<{ readonly exists: false } | { readonly exists: true; readonly content: string } | undefined> {
   try {
     const stat = await fs.stat(filePath);
-    if (!stat.isFile() || stat.size > MAX_FILE_BYTES) return undefined;
+    if (!stat.isFile() || stat.size > MAX_FILE_CHANGE_BYTES) return undefined;
     return { exists: true, content: await fs.readFile(filePath, 'utf8') };
   } catch (error: unknown) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { exists: false };
     throw error;
   }
-}
-
-/** A new file is all added lines. */
-function newFileHunks(content: string): string[] {
-  const lines = (content.endsWith('\n') ? content.slice(0, -1) : content).split('\n');
-  return [`@@ -0,0 +1,${lines.length} @@`, ...lines.map(line => `+${line}`)];
-}
-
-function changedHunks(before: string, after: string): string[] {
-  // The newline that ends both files is no line of its own.
-  const [from, to] = before.endsWith('\n') && after.endsWith('\n') ? [before.slice(0, -1), after.slice(0, -1)] : [before, after];
-  // generateDiff starts with the `---` and `+++` lines, which the path replaces, and puts
-  // a space after each line's sign; standard hunks have none.
-  return generateDiff(from, to, '').split('\n').slice(2).map(line => (line.startsWith('@@') ? line : line[0] + line.slice(2)));
-}
-
-function describeChange(filePath: string, hunks: readonly string[]): ProposedFileChange {
-  let added = 0;
-  let removed = 0;
-  for (const line of hunks) {
-    if (line.startsWith('+')) added += 1;
-    else if (line.startsWith('-')) removed += 1;
-  }
-  const unified = hunks.join('\n');
-  if (unified.length <= MAX_UNIFIED_CHARS) return { path: filePath, added, removed, unified };
-  const cut = unified.lastIndexOf('\n', MAX_UNIFIED_CHARS);
-  return { path: filePath, added, removed, unified: unified.slice(0, Math.max(cut, 0)), truncated: true };
 }

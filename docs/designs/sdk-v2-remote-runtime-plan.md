@@ -448,7 +448,7 @@ v1 里的各种做法都能归进来：
   - `settings` 是这个 Session 实际生效的设置：Session 自己选的，加上没选的那些项的 Host 默认值。形状和 `session.settings.get` 的 `settings` 相同，含义不同（见"设置的落地细节"）。
   - `session` 的形状和 `session.get` 的 `session` 相同，带 FEATURE_313 的恢复状态（见"Session 的恢复状态"）。
   - `activity` 是从 v1 照搬的（去掉了带 Host 路径的 `workflow`），r1 冻结之前要再过一遍。
-- **只有本机 owner 能看到的字段**：附件的 `path`、`sandbox.degradedReadRoots`。工具完整输出的保存路径对谁都不暴露，只给一个布尔值 `tool.outputSaved`，内容用 `item.read` 读。
+- **只有本机 owner 能看到的字段**：附件的 `path`、`tool.change.hostPath`、`sandbox.degradedReadRoots`。工具完整输出的保存路径对谁都不暴露，只给一个布尔值 `tool.outputSaved`，内容用 `item.read` 读。
 - **显示项的状态**：`live` 表示还会变，`settled` 表示只有历史被改写时才变。工具项看它自己的状态（运行中、等待审批）；输出项要同时满足"还是草稿"和"所属的 Run 还在跑"，因为中断的 Run 留下的草稿在恢复之后仍然标着草稿。
 - **v1 里有、v2 显示项没有带的字段**：`historyBoundary`、`taskResult`、`sidecar`、`icon`、`compactText`、`outputId`、`textRevision` 等。`icon`、`compactText`、`sidecar`、`textRevision` 不带，提示类的项改带 `notice.kind`（见"REPL 切到 v2 的决定"）。另外三个要在后面的分组里决定去留：
   - `historyBoundary`：v1 的 fork、rewind、retry 用它定位。v2 不带它：`history.resolveTurn` 接受显示项 ID，返回一个不透明的轮次引用（M1a 已落地，见"分叉、回退、恢复和侧聊的落地细节"）。
@@ -856,7 +856,7 @@ interface ViewItem {
   text; textTotal?;                 // 被截断时带全文长度，全文用 item.read 读
   at?; runId?; inputIds?;
   attachments?: BlobRef[];
-  tool?: {callId; name; status; inputText?; inputTotal?; outputSaved?; progress?; startedAt?; endedAt?};
+  tool?: {callId; name; status; inputText?; inputTotal?; outputSaved?; change? /* M2：执行后的文件改动，形状同审批的 diff */; progress?; startedAt?; endedAt?};
 }
 
 // Run 的结局：一个封闭的类型，取代 phase、terminal、error、result 的组合
@@ -2344,7 +2344,7 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
 
 ### M2 富 UI（M，四项可以并行）
 
-1. 执行后的 `ToolFacts`：`edit.ts:207` 和 `write.ts:58` 已经算出了 diff，只需要接线。
+1. 执行后的 `ToolFacts`：`edit.ts:207` 和 `write.ts:58` 已经算出了 diff，只需要接线。**状态**：2026-11-24 落地，见下面"第 1 项的落地细节"。
 2. 只读的 workspace 域：
    - 提供 `list`、`read`、`gitDiff`；
    - 根目录是 `workspaceRoot`；
@@ -2354,6 +2354,15 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
 4. WS 被拦截时的自动回退：
    - Host 侧：在同一端口上提供 HTTP 承载，下行用 SSE，上行用 POST；SSE 带心跳，并禁用代理缓冲。
    - SDK 侧：浏览器 SDK 自动探测并切换。
+
+**第 1 项的落地细节**（2026-11-24，未经用户确认的取舍）：
+
+- 形状：视图项和 `history.read` 的 `tool.change`，和审批里的 `diff` 同一个形状 `{path?, added, removed, unified, truncated?}`，路径同样换成工作区相对路径，工作区外不给 `path`。本机连接多一个 `hostPath`。v2 还没发布，按"客户端忽略不认识的字段"加在 r1 里，不升 `revision`。
+- 在哪里算：五个改文件的工具（`edit`、`multi_edit`、`write`、`insert_after_anchor`、`undo`）最后都经过 `writeTextFileForMutation`。写成功后它用写之前的快照和写进去的内容算一次，交给 `ctx.recordToolFileChange`。没有改动、或者任一边超过 4 MiB 时不算。和计划写的"在 `edit.ts:207` 接线"不同：一个地方覆盖全部工具，算法和审批共用 `tools/file-change.ts`。
+- 怎么传：和 `recordToolResultArtifact` 同一条路，按调用记下来，放进 tool_result 块的 `metadata.fileChange`（provider 序列化时去掉 `metadata`，模型看不到）。直接执行和 managed Worker 两条路径都接上了。视图和历史都从这个块读，所以重启、重新加载历史后还在。
+- 代价：每次改文件多算一次 diff（工具本来就算一次给模型看），会话文件里每次改动多存最多 64 KiB 的 `unified`。
+- 没做：脚本（`script` 工具）里调用的文件工具不带 `change`，脚本的单元结果不进视图。
+- 已验证：`edit.test.ts`（改动、新文件、没改动和失败时不报）；host-rpc 的集成测试里，模型调用 `write` 并被批准后，user 在视图和 `history.read` 里看到 `change`，路径是 `app/.kodax/note.txt`，owner 还能看到 `hostPath`。
 
 ### M3 收尾
 
