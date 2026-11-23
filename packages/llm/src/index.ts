@@ -9,6 +9,7 @@
 export { reconcileAssistantContent } from './assistant-content.js';
 export { retainAnthropicNativeHistory } from './providers/anthropic-native-history.js';
 export { projectResponsesMessages } from './providers/responses-messages.js';
+export { replayableReasoning, withoutReplayArtifacts } from './providers/reasoning-replay.js';
 export { KodaXOpenAIResponsesProvider } from './providers/openai-responses.js';
 export { installCliWindowsProcessHelper } from './cli-events/process-tree.js';
 export { runWithProviderRequestObserver, runWithAdditionalProviderRequestObserver, runWithProviderRequestAbortSignal, runWithProviderRequestRoute, runWithProviderRequestAttribution } from './provider-request-observation.js';

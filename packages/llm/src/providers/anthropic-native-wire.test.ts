@@ -71,7 +71,7 @@ it('never replays unverified opaque thinking in a tail after a verified native f
   await provider.complete(input, [], '', { effort: 'high' }, options);
   expect(JSON.stringify(requests[1]!.messages)).not.toContain('sig-unproven-B');
   expect(JSON.stringify(requests[1]!.messages)).toContain('verified-A');
-  expect(JSON.stringify(requests[1]!.messages)).toContain('retain readable context');
+  expect(JSON.stringify(requests[1]!.messages)).not.toContain('retain readable context');
 });
 
 it('repairs a missing tool result on a new native lineage without running the tool', async () => {
@@ -264,7 +264,7 @@ it.each(['claude-sonnet-5-5', 'claude-haiku-5-5'])('keeps admitted images when %
       thinkingMode: modelOverride.includes('sonnet') ? 'between_tools' : 'disabled' });
     expect(JSON.stringify(requests[1]?.messages)).toContain(imageBytes.toString('base64'));
     expect(JSON.stringify(requests[1]?.messages)).not.toContain('old-signature');
-    expect(JSON.stringify(requests[1]?.messages)).toContain('old reasoning');
+    expect(JSON.stringify(requests[1]?.messages)).not.toContain('old reasoning');
     expect(next.nativeHistory?.parent).toBeUndefined(); expect(next.nativeHistory?.baseline).toBeDefined();
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

@@ -47,6 +47,142 @@ not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
 
+## Issue 441: Replayed reasoning from another model becomes reply text, and models learn to write their thinking into the answer
+
+- Priority: High
+- Status: Resolved
+- Introduced: `v0.7.97-alpha.12` (`363ab1e1e`, FEATURE_302 T06) for lenient providers; the `'...'` placeholder since `v0.7.28`
+- Created / Resolved: 2026-11-23 / 2026-11-23
+- Fixed: unreleased (after `v0.7.97-rc.1`)
+- Reported by: KodaX Space
+
+### Original Problem
+
+In a Space session (zhipu-coding, `anthropic-messages`) that switched
+glm-5.3 → glm-5.3-flash → deepseek-flash → glm-5.3-flash, replies began with
+`<prior_reasoning>…</prior_reasoning>` in the visible text while the thinking
+block held only `"..."`. The session file stores them that way.
+
+Counts from that session: glm-5.3 wrote 104 replies (94 with real thinking,
+none tagged). glm-5.3-flash wrote 46 replies, all with `"..."` as thinking and
+25 with the tag. deepseek-flash wrote 31 replies, 11 with `"..."` and 5 with
+the tag. All 35 tags open the text block.
+
+Two mechanisms combine:
+
+1. `canReplayReasoning` (`anthropic.ts`) rejects thinking whose generation
+   source differs in provider, api, model, baseUrl or credential. Since
+   `363ab1e1e` this also applies to lenient providers. A rejected block is
+   rewritten as an assistant text block `<prior_reasoning>\n…\n</prior_reasoning>`.
+   Bedrock, Google, Mistral, pi-messages, Responses, the Claude native-history
+   rebuild and the prompt-cache diagnostic projection do the same.
+2. After that rewrite, the tool turns have no thinking left, so the lenient
+   Anthropic serializer injects `{ thinking: '...', signature: '' }` into each
+   of them. The new model sees hundreds of its "own" turns shaped as
+   thinking `...` plus tagged reasoning in the text, and copies that shape.
+
+Polluted replies are written back to history, so the pattern reinforces
+itself, even after switching back.
+
+The rule also depends on the protocol pair. Thinking produced on the
+OpenAI-compatible path has no `source`, so it replays as thinking to a
+lenient Anthropic-compatible target, and Anthropic-compatible thinking
+replays as `reasoning_content` to an OpenAI-compatible target. Only some
+pairs are rewritten to text.
+
+Expected: reasoning never reaches the reply text, whatever the switch.
+
+### Fix plan (agreed 2026-11-23)
+
+- Readable reasoning goes to the target's own reasoning channel when the
+  target accepts unsigned reasoning (lenient Anthropic-compatible thinking with
+  an empty signature, OpenAI-compatible `reasoning_content`). Otherwise it is
+  dropped. It is never written as text.
+- Opaque data (signatures, redacted thinking, `reasoning_details`, encrypted
+  content) replays only to the source that produced it.
+- No `'...'` placeholder thinking is injected. A provider gets a declared need
+  only if a live probe shows a rejection.
+- Replay removes a leading `<prior_reasoning>` segment from assistant text and
+  drops thinking that is exactly `'...'`, so polluted sessions stop
+  reinforcing the pattern.
+- Verification: offline invariants over every serializer and the diagnostic
+  projection; a live switch matrix (cross-provider, cross-model, same model on
+  both protocols, completed turn and mid tool loop) run before and after the
+  change; a behaviour eval replaying the polluted session.
+
+### Resolution
+
+The plan shipped with one change found by the live probes: on lenient
+Anthropic-compatible targets, placeholder reasoning is empty instead of
+absent. DeepSeek rejects an in-loop tool turn without thinking (400 "The
+`content[].thinking` in the thinking mode must be passed back"), which is
+why the `'...'` existed (`039a44a68`, added for Kimi). Dropping `'...'`
+thinking failed 4 of 4 DeepSeek mid-loop requests, while an empty block was
+accepted everywhere and carries nothing to imitate.
+
+- Readable reasoning from another source replays as unsigned thinking on
+  lenient Anthropic-compatible targets and as `reasoning_content` on
+  OpenAI-compatible targets that replay it. Every other serializer (strict
+  Anthropic, Claude native history, Responses, Bedrock, Google, Mistral,
+  pi-messages) drops it. None writes reasoning as text.
+- Signatures, redacted thinking, `reasoning_details` and encrypted content
+  replay only to their source, as before.
+- On a lenient thinking-mode target, a tool turn with no thinking gets
+  `{ thinking: '', signature: '' }`. Thinking that is only `'...'` replays
+  as `''` there and in `reasoning_content`. Strict targets are unchanged.
+- `withoutReplayArtifacts` removes a leading `<prior_reasoning>` segment
+  from assistant replies on every replay path. A tag later in the text
+  stays. Stored history is not changed.
+- The prompt-cache diagnostic projection mirrors all of the above through
+  the provider's `replayThinking` and `missingToolTurnThinking`.
+
+Files changed: `packages/llm/src/providers/reasoning-replay.ts` (new),
+`anthropic.ts`, `anthropic-native-history.ts`, `openai.ts`,
+`responses-messages.ts`, `bedrock-messages.ts`, `google-messages.ts`,
+`mistral-messages.ts`, `pi-messages-history.ts`, `registry.ts`,
+`packages/llm/src/types.ts`, `packages/llm/src/index.ts`,
+`packages/coding/src/agent-runtime/prompt-cache-diagnostics.ts`.
+
+Tests:
+
+- `reasoning-replay.test.ts` runs one mixed-source, already-polluted history
+  through every serializer and checks that no reasoning, tag or opaque value
+  reaches reply text, that `'...'` never appears as thinking, and that tool
+  calls stay paired. It failed before the change. Existing serializer tests
+  were updated to the new rule.
+- Live switch matrix (`reasoning-handoff.integration.test.ts`): 8 sources ×
+  9 targets, including the same models on Anthropic- and OpenAI-compatible
+  endpoints, for completed, mid-loop and mid-loop-without-thinking
+  histories. Before: 192/192 accepted, 52 requests carried
+  `<prior_reasoning>` text, 110 carried `'...'`, and 7 replies opened with
+  the tag. After: 192/192 accepted, none of either in any request or reply.
+- Polluted-session eval (`reasoning-pollution.integration.test.ts`,
+  glm-5.3-flash / deepseek-flash / kimi-for-coding, 2 cases × 4 runs).
+  Tagged replies: old serializer 12/24, new 0/24. `'...'`-only thinking:
+  old 13/24, new with `'...'` replayed as is 8/24, with `'...'` replayed
+  empty 0/24. Answers stayed correct and every tool step still called the
+  tool.
+- The same eval across protocols, for kimi and deepseek: the polluted
+  session replayed on the OpenAI-compatible endpoint, written on the
+  Anthropic-compatible endpoint and replayed on the OpenAI-compatible one,
+  and the reverse (6 cells × 8 runs). Tagged replies: old 19/48, new 0/48.
+  `'...'`-only thinking: old 22/48, new 0/48. All 48 were accepted in both
+  arms, and answers stayed correct.
+- Whole conversations across switches (`REASONING_HANDOFF_MODE=conversation`).
+  Each conversation has three user turns on endpoints A, B, then A again,
+  and every turn finishes a real tool loop. The pairs are the same model on
+  both protocols (kimi, deepseek), different models across protocols, and
+  different models on one protocol. 6 pairs × 2 directions × 3 runs:
+  36/36 conversations finished. All 216 requests were accepted, with no
+  tag and no `'...'` thinking. All 36 final answers recalled the codes from
+  both earlier turns and gave the correct sum. Back on A, the cache read
+  covered A's own earlier prefix up to each provider's cache block size
+  (35/36; one zhipu miss).
+
+Not covered: the official Anthropic endpoint (the provided gateway's
+upstream credentials were all disabled) and MiMo (no key). Unit tests cover
+both paths.
+
 ## Issue 440: A memory review receipt is announced before the job is completed
 
 - Priority: Medium
@@ -4515,6 +4651,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 441 | High | Resolved | Replayed reasoning from another model becomes reply text, and models learn to write their thinking into the answer | `v0.7.97-alpha.12` | unreleased (after `v0.7.97-rc.1`) | 2026-11-23 | 2026-11-23 |
 | 437 | Low | Open | Per-session lock and review directories are never reclaimed | `v0.7.85` | - | 2026-11-22 | - |
 | 436 | Medium | Resolved | Test runs left about 3600 review entries in the real config home | before `v0.7.97` | `fee13b700` (test setup) | 2026-11-22 | 2026-11-22 |
 | 435 | Medium | Resolved | The memory review inbox scan locks every session ever run, and nothing reclaims its directories | `v0.7.85` | unreleased (after `v0.7.97-beta.13`) | 2026-11-22 | 2026-11-22 |
@@ -20299,7 +20436,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 314 (47 Open including 1 needs-info, 1 ready, 265 Resolved, 0 Partially Resolved, 1 Won't Fix)
+- Total: 315 (47 Open including 1 needs-info, 1 ready, 266 Resolved, 0 Partially Resolved, 1 Won't Fix)
 - Ready: 1 (420)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md

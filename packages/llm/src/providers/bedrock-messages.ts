@@ -2,6 +2,7 @@ import type { ContentBlock, Message, ConverseCommandInput, ToolResultContentBloc
 import type { KodaXGenerationSource, KodaXMessage, KodaXImageBlock, KodaXToolResultImageItem } from '../types.js';
 import { prepareImageBlock, UNSUPPORTED_TOOL_RESULT_IMAGE_PLACEHOLDER } from './image-serialization.js';
 import { repairCloudToolHistory, sameCloudSource } from './cloud-history.js';
+import { withoutReplayArtifacts } from './reasoning-replay.js';
 import { resolvePromptCacheDisabled } from '../run-scoped-config.js';
 
 type Document = Exclude<ConverseCommandInput['additionalModelRequestFields'], undefined>;
@@ -22,15 +23,16 @@ async function image(block: KodaXImageBlock | KodaXToolResultImageItem, enabled:
 }
 export async function projectBedrockMessages(messages: readonly KodaXMessage[], source: KodaXGenerationSource, cache: boolean, images = false): Promise<Message[]> {
   const result: Message[] = [];
-  for (const message of repairCloudToolHistory(messages)) {
+  for (const message of repairCloudToolHistory(withoutReplayArtifacts(messages))) {
     const content: ContentBlock[] = [];
     if (typeof message.content === 'string') { if (message.content) content.push({ text: message.content }); }
     else for (const block of message.content) {
       switch (block.type) {
         case 'text': if (block.text) content.push({ text: block.text }); break;
         case 'thinking':
+          // Only signed same-source reasoning replays; other reasoning is never reply text (Issue 441).
           if (block.source && sameCloudSource(block.source, source) && block.signature) content.push({ reasoningContent: { reasoningText: { text: block.thinking, signature: block.signature } } });
-          else if (block.thinking) content.push({ text: `<prior_reasoning>\n${block.thinking}\n</prior_reasoning>` }); break;
+          break;
         case 'redacted_thinking': if (block.source && sameCloudSource(block.source, source)) content.push({ reasoningContent: { redactedContent: Buffer.from(block.data, 'base64') } }); break;
         case 'tool_use': content.push({ toolUse: { toolUseId: block.id, name: block.name, input: bedrockDocument(block.input) } }); break;
         case 'tool_result': {

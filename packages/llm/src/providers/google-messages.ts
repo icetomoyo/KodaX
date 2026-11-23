@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { KodaXAssistantBlock, KodaXGenerationSource, KodaXMessage, KodaXToolUseBlock, KodaXImageBlock, KodaXToolResultImageItem } from '../types.js';
 import { prepareImageBlock, UNSUPPORTED_TOOL_RESULT_IMAGE_PLACEHOLDER } from './image-serialization.js';
 import { repairCloudToolHistory, sameCloudSource } from './cloud-history.js';
+import { withoutReplayArtifacts } from './reasoning-replay.js';
 
 export interface GooglePart {
   text?: string; thought?: boolean; thoughtSignature?: string;
@@ -22,7 +23,7 @@ async function imageParts(block: KodaXImageBlock | KodaXToolResultImageItem, ena
 export async function projectGoogleMessages(messages: readonly KodaXMessage[], source: KodaXGenerationSource, images = false): Promise<{ role: 'user' | 'model'; parts: GooglePart[] }[]> {
   const result: { role: 'user' | 'model'; parts: GooglePart[] }[] = [];
   const calls = new Map<string, { block: KodaXToolUseBlock; native: boolean }>();
-  for (const message of repairCloudToolHistory(messages)) {
+  for (const message of repairCloudToolHistory(withoutReplayArtifacts(messages))) {
     const parts: GooglePart[] = [];
     if (typeof message.content === 'string') parts.push({ text: message.content });
     else for (const block of message.content) {
@@ -31,8 +32,8 @@ export async function projectGoogleMessages(messages: readonly KodaXMessage[], s
       const signature = own && replay.thoughtSignature ? { thoughtSignature: replay.thoughtSignature } : {};
       switch (block.type) {
         case 'text': parts.push({ text: block.text, ...signature }); break;
-        case 'thinking': if (own) parts.push({ text: block.thinking, thought: true, ...signature });
-          else if (block.thinking) parts.push({ text: `<prior_reasoning>\n${block.thinking}\n</prior_reasoning>` }); break;
+        // Only own reasoning replays; other reasoning is never reply text (Issue 441).
+        case 'thinking': if (own) parts.push({ text: block.thinking, thought: true, ...signature }); break;
         case 'tool_use': {
           // Foreign/edited calls are readable history, never synthetic signed tool turns.
           calls.set(block.id, { block, native: own });

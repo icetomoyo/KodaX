@@ -43,7 +43,7 @@ it('projects legacy assistant history without inventing Pi usage, signatures or 
   const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body));
   expect(body.context.messages.slice(1).every((m: { role: string }) => m.role === 'user')).toBe(true);
   expect(JSON.stringify(body)).toContain('old result');
-  expect(JSON.stringify(body)).toContain('old plan');
+  expect(JSON.stringify(body)).not.toContain('old plan');
   expect(JSON.stringify(body)).not.toContain('foreign-signature');
   expect(JSON.stringify(body)).not.toContain('"usage"');
 });

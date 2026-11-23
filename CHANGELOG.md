@@ -34,6 +34,25 @@ All notable changes to this project will be documented in this file.
     `target_path` outside the working directory and its Git root is an
     error.
 
+### Fixed
+
+- Switching models no longer teaches the new model to write its thinking
+  into the reply (Issue 441). Reasoning from another model used to be
+  replayed as `<prior_reasoning>` reply text, and tool turns without
+  thinking got a `'...'` thinking block. Models copied both: replies opened
+  with the tag while the thinking held only `'...'`. Now:
+  - readable reasoning replays only through the target's reasoning channel
+    (unsigned thinking on lenient Anthropic-compatible endpoints,
+    `reasoning_content` on OpenAI-compatible ones) and is dropped
+    elsewhere. It never becomes reply text on any serializer;
+  - signatures, redacted thinking and encrypted reasoning still replay only
+    to the endpoint that produced them;
+  - a lenient tool turn without thinking, or with only `'...'`, carries an
+    empty thinking block. DeepSeek still requires one there;
+  - replay removes a leading `<prior_reasoning>` segment from earlier
+    replies, so already-polluted sessions recover. Stored history is not
+    changed.
+
 ---
 
 ## [0.7.97-rc.1] - 2026-11-23

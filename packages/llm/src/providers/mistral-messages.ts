@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { KodaXGenerationSource, KodaXImageBlock, KodaXMessage, KodaXToolResultBlock, KodaXToolResultImageItem } from '../types.js';
 import { sameCloudSource, repairCloudToolHistory } from './cloud-history.js';
+import { withoutReplayArtifacts } from './reasoning-replay.js';
 import { prepareImageBlock, UNSUPPORTED_TOOL_RESULT_IMAGE_PLACEHOLDER } from './image-serialization.js';
 
 type Part = { type: 'text'; text: string } | { type: 'thinking'; thinking: { type: 'text'; text: string }[] }
@@ -20,7 +21,7 @@ async function receiptImages(content: KodaXToolResultBlock['content'], enabled: 
   return result;
 }
 export async function projectMistralMessages(messages: readonly KodaXMessage[], source: KodaXGenerationSource, images: boolean): Promise<Record<string, unknown>[]> {
-  const history = repairCloudToolHistory(messages);
+  const history = repairCloudToolHistory(withoutReplayArtifacts(messages));
   const calls = history.flatMap(m => typeof m.content === 'string' ? [] : m.content.filter(b => b.type === 'tool_use'));
   const occupied = new Set(calls.map(c => c.id).filter(id => /^[A-Za-z0-9]{9}$/.test(id)));
   const ids = new Map<string, string>();
@@ -42,9 +43,9 @@ export async function projectMistralMessages(messages: readonly KodaXMessage[], 
       switch (block.type) {
         case 'text': content.push({ type: 'text', text: block.text }); break;
         case 'thinking':
-          content.push(block.source && sameCloudSource(block.source, source)
-            ? { type: 'thinking', thinking: [{ type: 'text', text: block.thinking }] }
-            : { type: 'text', text: `<prior_reasoning>\n${block.thinking}\n</prior_reasoning>` }); break;
+          // Only same-source reasoning replays; other reasoning is never reply text (Issue 441).
+          if (block.source && sameCloudSource(block.source, source)) content.push({ type: 'thinking', thinking: [{ type: 'text', text: block.thinking }] });
+          break;
         case 'tool_use': toolCalls.push({ id: ids.get(block.id), type: 'function', function: { name: block.name, arguments: JSON.stringify(block.input) } }); break;
         case 'tool_result': {
           const text = typeof block.content === 'string' ? block.content : block.content.filter(b => b.type === 'text').map(b => b.text).join('\n');

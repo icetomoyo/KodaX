@@ -124,9 +124,9 @@ export function prepareAnthropicNativeHistory<T extends Record<string, unknown>>
       messages: history.messages.map(message => {
         const wire = { ...message }; delete wire.output_config;
         if (message.role === 'assistant' && Array.isArray(message.content)) {
-          const content = message.content.flatMap((block: unknown) => record(block) && block.type === 'thinking'
-            ? typeof block.thinking === 'string' && block.thinking ? [{ type: 'text', text: `<prior_reasoning>\n${block.thinking}\n</prior_reasoning>` }] : []
-            : record(block) && block.type === 'redacted_thinking' ? [] : [block]);
+          // Reasoning is never replayed as reply text (Issue 441).
+          const content = message.content.filter((block: unknown) => !(record(block)
+            && (block.type === 'thinking' || block.type === 'redacted_thinking')));
           wire.content = content.length ? content : [{ type: 'text', text: '...' }];
         }
         return wire;

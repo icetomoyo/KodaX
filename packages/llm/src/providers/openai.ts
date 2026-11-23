@@ -1,4 +1,5 @@
 import { recordRejectedImage } from './rejected-image.js';
+import { replayableReasoning, withoutReplayArtifacts } from './reasoning-replay.js';
 import { createHash } from 'node:crypto';
 import { requestEnvironment, hasRequestEnvironment, prepareProviderPayload, requestExtensionFetch, providerStreamEvent } from './request-extensions.js';
 import { withCacheWritePartition } from './request-extensions.js';
@@ -1434,7 +1435,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
         ): block is KodaXThinkingBlock | KodaXRedactedThinkingBlock =>
           block.type === 'thinking' || block.type === 'redacted_thinking',
       )
-      .map((block) => block.type === 'thinking' ? block.thinking : '')
+      .map((block) => block.type === 'thinking' ? replayableReasoning(block.thinking) : '')
       .filter(Boolean)
       .join('\n\n');
 
@@ -1652,7 +1653,7 @@ export abstract class KodaXOpenAICompatProvider extends KodaXBaseProvider {
     const converted: OpenAI.Chat.ChatCompletionMessageParam[] = [];
     const attachments: ToolResultImages = new Map();
 
-    for (const message of messages) {
+    for (const message of withoutReplayArtifacts(messages)) {
       if (message.role === 'system') {
         converted.push(...this.serializeSystemMessage(message.content));
         continue;

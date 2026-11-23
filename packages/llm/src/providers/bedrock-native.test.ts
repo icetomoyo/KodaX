@@ -247,6 +247,6 @@ describe('native Bedrock Converse', () => {
     ], [], ''));
     const body = String(fetch.mock.calls[0]?.[1]?.body);
     expect(body).toContain('"status":"error"'); expect(body).toContain('Historical image unavailable');
-    expect(body).not.toContain('foreign-signature'); expect(body).not.toContain('foreign-opaque'); expect(body).toContain('prior_reasoning');
+    expect(body).not.toContain('foreign-signature'); expect(body).not.toContain('foreign-opaque'); expect(body).not.toContain('prior_reasoning');
   });
 });

@@ -949,16 +949,16 @@ export interface KodaXProviderConfig {
    * ark-coding / mimo-coding / zhipu-coding / minimax-coding) lack the
    * signing key and accept any signature.
    *
-   * When true, thinking blocks with empty/cross-provider signatures get
-   * converted to a `<prior_reasoning>` text block instead of being passed
-   * through (which would 400 on signature verification). Cross-provider
+   * When true, thinking blocks with empty/cross-provider signatures are
+   * dropped (they would 400 on signature verification). Cross-provider
    * `redacted_thinking` blocks (ciphertext signed by their origin) are
-   * dropped silently — there's no plaintext to recover and forging the
-   * field would also fail server-side decryption.
+   * dropped too.
    *
-   * When false (default), thinking blocks pass through unchanged — matches
-   * legacy behaviour and works for all third-party Anthropic-compat
-   * providers. v0.7.28.
+   * When false (default), cross-provider thinking replays as unsigned
+   * thinking (`signature: ''`). A tool turn left without thinking, or with
+   * only `'...'`, carries an empty thinking block: DeepSeek rejects an
+   * in-loop tool turn without one. Reasoning is never rewritten as reply
+   * text, because models imitate it (Issue 441). v0.7.28.
    */
   strictThinkingSignature?: boolean;
   /**
