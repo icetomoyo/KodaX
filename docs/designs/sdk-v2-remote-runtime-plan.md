@@ -349,7 +349,7 @@ v1 里的各种做法都能归进来：
     - `mcp.server.reload`、`extension.reload`：重发会再断开一次全部服务器、再跑一遍全部扩展的初始化。`config.reload`、`mcp.tool.refresh` 只重读，保持 `auto`。
   - 没改的：`session.policy.update` 整份替换、没有 `ifRevision`。同一个客户端断线重连期间，别人刚做的收紧会被它迟到的重发覆盖。要防这个得加条件写，等有平台真的并发改策略再做（未经用户确认）。
   - 漂移测试：`methods.test.ts` 要求每条命令声明 `resend`；`host-rpc.test.ts` 记下每个测试经由 `connect` 发出的命令，最后一个测试要求每条 `auto` 命令都被原样（同一 Host、同一角色、同样参数）重发过且答复成功，答复是否正确由各自的测试断言。新加一条 `auto` 命令而没有测试重发它，这个测试就失败。
-  - 漂移测试顺带发现：`session.create` 重发返回的 Session 没有 `createdAt`，因为 v1 读 Session 时不带它，`session.get` 也一样（待补，归入 B 类）。
+  - ~~漂移测试顺带发现：`session.create` 重发返回的 Session 没有 `createdAt`，因为 v1 读 Session 时不带它，`session.get` 也一样（待补，归入 B 类）。~~ 2026-11-23 补上：Session 存储记下它写过或读过的每个 Session 的创建时间（`knownCreatedAt`），v1 读出的 Session 都带上它。没放进加载出来的 Session 数据，因为派生 Session（fork、recover）会展开源数据，会带上源 Session 的时间。新建时返回的 `createdAt` 改成存储写下的那个，和之后读到的一致。草稿还没写盘，读回来仍没有 `createdAt`（未经用户确认）。
   - 所有命令继续带必填的 `requestId`，以后从 `never` 改成 `auto` 不用改协议。
 - **要补的缺口**：
   - 立即启动的输入只在 Host 的一次启动内判重。云端形态下 Host 重启是常态，判重要能跨重启。M1a 已落地，见下一条。

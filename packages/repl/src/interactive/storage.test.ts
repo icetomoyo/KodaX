@@ -169,6 +169,26 @@ describe('FileSessionStorage', () => {
     }
   });
 
+  it('knows when a Session it wrote or read was created, and keeps that time across saves', async () => {
+    const { FileSessionStorage } = await import('./storage.js');
+    const writer = new FileSessionStorage({ sessionsDir: testSessionsDir() });
+    const base = {
+      messages: [{ role: 'user' as const, content: 'when was this made' }],
+      title: 'Dated',
+      gitRoot: path.resolve(KODAX_REPO_ROOT).replace(/\\/g, '/'),
+    };
+    expect(writer.knownCreatedAt('dated')).toBeUndefined();
+    await writer.save('dated', base);
+    const created = writer.knownCreatedAt('dated');
+    expect(created).toEqual(expect.any(String));
+    await writer.save('dated', { ...base, title: 'Dated again' });
+    expect(writer.knownCreatedAt('dated')).toBe(created);
+
+    const reader = new FileSessionStorage({ sessionsDir: testSessionsDir() });
+    expect(await reader.load('dated')).not.toBeNull();
+    expect(reader.knownCreatedAt('dated')).toBe(created);
+  });
+
   it('persists the Runtime-owned Actor snapshot without a private sidecar journal', async () => {
     const { FileSessionStorage } = await import('./storage.js');
     const storage = new FileSessionStorage({ sessionsDir: testSessionsDir() });

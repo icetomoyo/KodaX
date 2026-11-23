@@ -277,10 +277,14 @@ describe('v2 Sessions served by the v1 implementation', () => {
     });
     expect(session.createdAt).toEqual(expect.any(Number));
 
+    // A Session read back, or created again by the same request, says when it was created.
     expect(await owner.request('session.get', { sessionId: session.id })).toMatchObject({
-      session: { id: session.id, title: 'Report', project: 'app', workspaceRoot: projectRoot, revision: expect.any(String) },
+      session: { id: session.id, title: 'Report', project: 'app', workspaceRoot: projectRoot, revision: expect.any(String),
+        createdAt: session.createdAt },
       phase: 'idle',
     });
+    expect(await owner.request('session.create', { requestId: 'create-1', title: 'Report', projectRoot }))
+      .toMatchObject({ session: { id: session.id, createdAt: session.createdAt } });
   });
 
   it('keeps a draft Session off disk until it has a conversation, and answers a repeat with the same draft', async () => {

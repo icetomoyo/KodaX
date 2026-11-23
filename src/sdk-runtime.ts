@@ -7532,7 +7532,7 @@ function createRuntimeSessionService(
   const toRuntimeSession = (
     id: string,
     data: KodaXSessionData,
-    createdAt?: string,
+    createdAt = manager.storage.knownCreatedAt(id),
   ): RuntimeSession => ({
     id,
     ...persistence.sideChats.metadata(id),
@@ -9000,10 +9000,11 @@ function createRuntimeSessionService(
       if (asAgent !== undefined && Object.keys(asAgent.settings).length > 0) {
         await settingsOwner.update(sessionId, asAgent.settings, undefined, () => undefined);
       }
+      // A draft is not saved yet, so the storage knows no time for it.
       const session = toRuntimeSession(
         sessionId,
         data,
-        new Date().toISOString(),
+        manager.storage.knownCreatedAt(sessionId) ?? new Date().toISOString(),
       );
       bus.emit("session.created", session, { sessionId, runId: sessionId });
       return session;

@@ -87,6 +87,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- A Session read back with `session.get`, or created again by the same
+  request, says when it was created, as `session.create` and `session.list` do.
 - An `interaction.respond` sent again with the same `requestId` and answer
   now gets the status it got the first time, so the SDK sends it again after a
   lost reply. Another answer under that `requestId` fails with `conflict`.

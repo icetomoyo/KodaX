@@ -3215,6 +3215,8 @@ export class FileSessionStorage implements KodaXSessionStorage {
     uiHistoryAppendBytes?: number;
   }>();
   private lineageIdentityFilterHashes = new Map<string, string>();
+  /** When each Session this storage wrote or read was created. A Session's creation time never changes. */
+  private readonly createdAts = new Map<string, string>();
 
   private projectJsonWritten = new Map<string, string>();
 
@@ -3680,6 +3682,7 @@ export class FileSessionStorage implements KodaXSessionStorage {
 
     warnMalformedSessionData(filePath, snapshot.malformedCount);
     const resolved = buildSessionData(snapshot, filePath);
+    if (resolved.createdAt !== undefined) this.createdAts.set(id, resolved.createdAt);
     if (resolved.lineageIdentityFilterHash === undefined) {
       this.lineageIdentityFilterHashes.delete(id);
     } else {
@@ -4252,7 +4255,17 @@ export class FileSessionStorage implements KodaXSessionStorage {
     } else {
       this.lineageIdentityFilterHashes.set(id, completeIdentityFilterHash);
     }
+    this.createdAts.set(id, meta.createdAt);
     return targetPath;
+  }
+
+  /**
+   * When a Session was first saved, once this storage has written or read it.
+   * Loaded Session data leaves the time out, so that a Session made from
+   * another's data does not take the other's time.
+   */
+  knownCreatedAt(id: string): string | undefined {
+    return this.createdAts.get(id);
   }
 
   // ── Merge helper ──
