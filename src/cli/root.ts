@@ -8,59 +8,28 @@ import {
   parseRepoIntelligenceModeOption,
 } from '../cli_option_helpers.js';
 import { prepareLazyIntegrationCommand } from '../integration-cli-lazy.js';
-import { configureKodaXExecPolicyCommand } from '../exec-policy-cli.js';
 import { loadProviderAuth } from '../cli-lazy-components.js';
 
 export const HELP_WORKSPACE_ROOT = "Workspace root to inspect (defaults to current directory)";
 export const HELP_DAEMON_HOME = "Base directory whose .kodax holds the Host state";
-export const HELP_EFFORT = "Reasoning effort: off, auto, low, medium, high, xhigh, max, or model-supported value";
+export const EFFORT_LEVELS = ['off', 'auto', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export const HELP_EFFORT = `Reasoning effort: ${EFFORT_LEVELS.join(', ')}, or model-supported value`;
 export const HELP_REPO_INTELLIGENCE = "Repo intelligence mode: auto, full, light, off";
 export const HELP_SESSION = "Use this session ID (resume = most recent); list, delete and the other operations moved to `kodax sessions`";
 export const HELP_THINKING = "Compatibility alias for --reasoning auto";
 
-export const KODAX_CLI_SUBCOMMAND_NAMES = [
-  'acp',
-  'skill',
-  'tools',
-  'sessions',
-  'constructed',
-  'doctor',
-  'host',
-  'daemon',
-  'completion',
-  'config',
-  'integrations',
-  'mcp',
-  'extensions',
-  'a2a',
-  'sandbox',
-  'setup',
-  'auth',
-  'memory',
-  'execpolicy',
-] as const;
-export const CLI_SUBCOMMAND_NAMES = new Set<string>(KODAX_CLI_SUBCOMMAND_NAMES);
+/** The command `name` (or one of its aliases) names, if any. */
+export function findKodaXCommand(program: Command, name: string): Command | undefined {
+  return program.commands.find((command) => command.name() === name || command.aliases().includes(name));
+}
 
-export const KODAX_COMPLETION_ROOT_SUBCOMMANDS = [
-  'setup',
-  'auth',
-  'acp',
-  'skill',
-  'tools',
-  'sessions',
-  'constructed',
-  'doctor',
-  'host',
-  'completion',
-  'config',
-  'integrations',
-  'mcp',
-  'extensions',
-  'a2a',
-  'sandbox',
-  'execpolicy',
-] as const;
-export const KODAX_EXEC_POLICY_SUBCOMMANDS = ['check'] as const;
+/** Lazy groups register their subcommands on first use; help and completion need them registered. */
+export async function loadLazyCommand(root: Command, command: Command): Promise<void> {
+  await prepareLazyIntegrationCommand(command);
+  if (command.name() === 'auth' && command.commands.length === 0) {
+    (await loadProviderAuth()).configureProviderAuthCommand(root, command);
+  }
+}
 
 /** Removed root flags. Each still parses so the user gets a pointer instead of "unknown option". */
 const REMOVED_ROOT_OPTIONS = [
@@ -93,7 +62,7 @@ export function exitWithUsageCode(error: CommanderError): never {
 export function configureKodaXRootCommand(program: Command): Command {
   const configured = (
     program
-      // Disable commander default help so the custom topic help can take over.
+      // `-h [topic]` replaces Commander's help option: a topic can name a command or a guide.
       .helpOption(false)
       .argument('[prompt...]', 'Prompt text for a single CLI run')
       .option('-h, --help [topic]', 'Show help, or detailed help for a topic')
@@ -155,13 +124,11 @@ export function configureKodaXRootCommand(program: Command): Command {
       });
     });
   }
-  configureKodaXExecPolicyCommand(configured);
   // Topic help is a root option, consumed before subcommand dispatch.
   // Stop before any nested action or argument validation can run.
   configured.hook('preSubcommand', async (root, command) => {
     if (root.opts().help === undefined) return;
-    await prepareLazyIntegrationCommand(command);
-    if (command.name() === 'auth' && command.commands.length === 0) (await loadProviderAuth()).configureProviderAuthCommand(root, command);
+    await loadLazyCommand(root, command);
     let target = command;
     for (const name of root.args.slice(1)) {
       const child = target.commands.find(candidate => candidate.name() === name || candidate.aliases().includes(name));

@@ -6,12 +6,10 @@ import {
   configureKodaXRootCommand,
   configureKodaXHostCommand,
   configureKodaXSetupCommand,
-  KODAX_CLI_SUBCOMMAND_NAMES,
-  KODAX_COMPLETION_ROOT_SUBCOMMANDS,
-  KODAX_EXEC_POLICY_SUBCOMMANDS,
   shouldAutoStartCli,
   showKodaXSetupHelpIfRequested,
 } from './kodax_cli.js';
+import { createKodaXProgram } from './cli/program.js';
 
 describe('KodaX CLI entry ownership', () => {
   it('leaves bundled startup to the bootstrap without breaking direct Node execution', () => {
@@ -23,11 +21,8 @@ describe('KodaX CLI entry ownership', () => {
       .toBe(false);
   });
 
-  it('recognizes and completes the execpolicy command', () => {
-    expect(KODAX_CLI_SUBCOMMAND_NAMES).toContain('execpolicy');
-    expect(KODAX_COMPLETION_ROOT_SUBCOMMANDS).toContain('execpolicy');
-    expect(KODAX_EXEC_POLICY_SUBCOMMANDS).toContain('check');
-    const program = configureKodaXRootCommand(new Command().name('kodax').exitOverride());
+  it('registers the execpolicy command', () => {
+    const program = createKodaXProgram({ version: '9.9.9' });
     expect(program.commands.map((command) => command.name())).toContain('execpolicy');
   });
 });

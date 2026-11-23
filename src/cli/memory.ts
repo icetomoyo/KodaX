@@ -32,16 +32,7 @@ import { loadConfig, FileSessionStorage } from '@kodax-ai/repl';
 export function configureKodaXMemoryCommand(program: Command): Command {
   const memoryCommand = program
     .command('memory')
-    .description('Inspect and maintain governed memory review')
-    .action(() => {
-      console.log(chalk.cyan('\nKodaX Memory\n'));
-      console.log(chalk.bold('Commands:'));
-      console.log(
-        chalk.dim('  kodax memory review-drain [--max N]  ') +
-          'Drain pending memory review jobs in the foreground',
-      );
-      console.log();
-    });
+    .description('Inspect and maintain governed memory review');
 
   memoryCommand
     .command('review-drain')

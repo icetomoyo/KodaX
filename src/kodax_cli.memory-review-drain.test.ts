@@ -50,21 +50,14 @@ describe('FEATURE_289 §3.4 — kodax memory review-drain', () => {
     expect(reviewDrain?.options.some((opt) => opt.long === '--max')).toBe(true);
   });
 
-  it('prints the command listing on bare `kodax memory` without draining', async () => {
-    const program = new Command().name('kodax').exitOverride();
+  it('shows help on bare `kodax memory` without draining', async () => {
+    let stderr = '';
+    const program = new Command().name('kodax').exitOverride()
+      .configureOutput({ writeErr: (text) => { stderr += text; } });
     configureKodaXMemoryCommand(program);
 
-    const lines: string[] = [];
-    const spy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
-      lines.push(args.map((a) => String(a)).join(' '));
-    });
-    try {
-      await program.parseAsync(['node', 'kodax', 'memory']);
-    } finally {
-      spy.mockRestore();
-    }
-
-    expect(lines.some((line) => line.includes('review-drain'))).toBe(true);
+    await expect(program.parseAsync(['node', 'kodax', 'memory'])).rejects.toMatchObject({ exitCode: 1 });
+    expect(stderr).toContain('review-drain');
   });
 
   it('rejects a non-numeric --max value', async () => {

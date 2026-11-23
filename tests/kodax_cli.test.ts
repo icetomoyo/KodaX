@@ -24,6 +24,7 @@ import {
 } from '../src/kodax_cli.js';
 import { normalizeCliSessionFlags } from '../src/cli_option_helpers.js';
 import { configureLazyIntegrationCommands } from '../src/integration-cli-lazy.js';
+import { configureKodaXSkillCommand } from '../src/cli/skill.js';
 
 // 默认 provider
 // ============== 模拟测试环境 ==============
@@ -318,10 +319,8 @@ describe('CLI Entry Point', () => {
   it('should advertise ACP server help and register the ACP subcommand', async () => {
     const source = await readCliSource();
     expect(source).toContain("command('acp')");
-    expect(source).toContain('kodax -h acp');
     expect(source).toContain('kodax acp serve');
     expect(source).toContain(".option('--effort <level>', HELP_EFFORT, parseEffortOption)");
-    expect(source).toContain('const HELP_EFFORT = "Reasoning effort: off, auto, low, medium, high, xhigh, max, or model-supported value";');
     expect(source).toContain('const options = mergeCommandOptionsWithGlobals(localOptions, command);');
     expect(source).toContain('effort: options.effort');
     expect(source).not.toContain("--agent-mode <mode>          ') + 'Agent mode");
@@ -360,14 +359,9 @@ describe('CLI Entry Point', () => {
   it('should keep root help text aligned with current CLI behavior', async () => {
     const source = await readCliSource();
     expect(source).toContain('--model <name>');
-    expect(source).toContain('kodax -h project');
-    expect(source).toContain('/project ...            Project workflow commands');
-    expect(source).toContain('Legacy no-op; current CLI already starts a fresh session by default');
     expect(source).toContain('Resume session by ID or exact title (no value = open searchable session picker)');
     expect(source).toContain('Multiple sessions have the title');
     expect(source).not.toContain('list recent sessions, then resume the latest');
-    expect(source).toContain('/mode [plan|accept-edits|auto|full-access]');
-    expect(source).toContain('Backward-compat alias; no effect in non-REPL CLI');
     expect(source).toContain('runSessionPicker');
     expect(source).not.toContain('Auto-select the most recent session for resume');
     expect(source).not.toContain('echo "task" | kodax -p -');
@@ -375,37 +369,21 @@ describe('CLI Entry Point', () => {
     expect(source).not.toContain('Enter interactive mode (auto-resume)');
   });
 
-  it('should load normal resume candidates in one Host metadata query', async () => {
-    const source = await readCliSource();
-    const loader = source.match(
-      /async function loadResumableSessions[\s\S]*?\r?\n}/,
-    )?.[0] ?? '';
-
-    expect(loader).not.toBe('');
-    expect(loader.match(/\.sessions\.list\(/g)).toHaveLength(1);
-    expect(loader).toContain('toKodaXProductClient(runtime)');
-    expect(loader).toContain('Number.MAX_SAFE_INTEGER');
-    expect(loader).not.toContain('listCliResumeSessions(');
-    expect(loader).not.toContain('listSessions(');
-    expect(loader).not.toContain('while (');
-  });
-
-  it('should document provider and project caveats in help topics', async () => {
+  it('should document provider caveats in help topics', async () => {
     const source = await readCliSource();
     expect(source).toContain('CLI bridge provider (latest-user-message only, MCP unavailable)');
-    expect(source).toContain('Project mode spans two surfaces: non-REPL bootstrap commands and REPL /project commands.');
-    expect(source).toContain('/project verify [#index|--last]');
     expect(source).not.toContain('--team');
     expect(source).not.toContain('Legacy orchestration-based parallel execution');
   });
 
-  it('should keep custom skill subcommand help aligned with current options', async () => {
-    const source = await readCliSource();
-    expect(source).toContain('Required Options:');
-    expect(source).toContain('Usage: kodax skill eval [options]');
-    expect(source).toContain('Usage: kodax skill compare [options] <workspace>');
-    expect(source).toContain('Primary config (default: with_skill)');
-    expect(source).toContain('Baseline config (default: without_skill)');
+  it('should mark the required skill eval options in the generated help', () => {
+    const program = new Command().name('kodax');
+    const evalHelp = configureKodaXSkillCommand(program).commands
+      .find((command) => command.name() === 'eval')!.helpInformation();
+    expect(evalHelp).toContain('Usage: kodax skill eval [options]');
+    for (const option of ['--skill-path', '--evals', '--workspace']) {
+      expect(evalHelp).toMatch(new RegExp(`${option} \\S+ +.*\\(required\\)`));
+    }
   });
 });
 

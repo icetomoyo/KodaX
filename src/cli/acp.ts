@@ -11,6 +11,18 @@ import type { AcpPermissionMode } from '../acp_server.js';
 import { loadAcpServer } from '../cli-lazy-components.js';
 import { HELP_EFFORT, HELP_REPO_INTELLIGENCE, HELP_THINKING } from './root.js';
 
+const ACP_SERVE_HELP_FOOTER = `
+Sessions, streaming, cancellation and permission prompts follow the same rules as the REPL.
+
+Environment:
+  KODAX_ACP_LOG=<level>  stderr log level: off, error, info, debug
+
+Examples:
+  kodax acp serve
+  kodax acp serve --cwd C:\\repo --permission-mode accept-edits
+  kodax acp serve -m openai --model gpt-5.4 --effort medium
+`;
+
 export function configureKodaXAcpCommand(program: Command, version: string): Command {
   const acpCommand = program
     .command('acp')
@@ -19,7 +31,7 @@ export function configureKodaXAcpCommand(program: Command, version: string): Com
 
   acpCommand
     .command('serve')
-    .description('Run the ACP stdio server')
+    .description('Run KodaX as a stdio ACP server for editors and IDEs')
     .option('--cwd <dir>', 'Working directory exposed to ACP sessions')
     .option('-m, --provider <name>', 'Provider to use')
     .option('--model <name>', 'Model override')
@@ -83,7 +95,8 @@ export function configureKodaXAcpCommand(program: Command, version: string): Com
           agentVersion: version,
         });
       },
-    );
+    )
+    .addHelpText('after', ACP_SERVE_HELP_FOOTER);
 
   return acpCommand;
 }

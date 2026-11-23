@@ -2,11 +2,25 @@ import { Command } from 'commander';
 import { parseReasoningModeOption, mergeCommandOptionsWithGlobals } from '../cli_option_helpers.js';
 import { runSkillCreatorTool } from '../skill_cli.js';
 
+const SKILL_HELP_FOOTER = `
+These wrap the built-in skill-creator tools; none of them starts an agent session.
+
+Examples:
+  kodax skill init release-notes --dest ./.kodax/skills
+  kodax skill validate ./.kodax/skills/my-skill
+  kodax skill eval --skill-path ./.kodax/skills/my-skill --evals ./.kodax/skills/my-skill/evals/evals.json --workspace ./iteration-1
+  kodax skill grade ./iteration-1
+  kodax skill compare ./iteration-1 --config-a with_skill --config-b without_skill
+  kodax skill package ./.kodax/skills/my-skill --output ./my-skill.skill
+  kodax skill install ./my-skill.skill --dest ~/.kodax/skills --force
+`;
+
 export function configureKodaXSkillCommand(program: Command): Command {
   const skillCommand = program
     .command('skill')
     .description('Built-in skill packaging and installation helpers')
-    .helpOption('-h, --help', 'Show skill utility help');
+    .helpOption('-h, --help', 'Show skill utility help')
+    .addHelpText('after', SKILL_HELP_FOOTER);
 
   skillCommand
     .command('init <name>')
@@ -54,9 +68,9 @@ export function configureKodaXSkillCommand(program: Command): Command {
     .description(
       'Run end-to-end skill evals and write a benchmark/review workspace',
     )
-    .requiredOption('--skill-path <dir>', 'Skill directory to evaluate')
-    .requiredOption('--evals <file>', 'Evals JSON file')
-    .requiredOption('--workspace <dir>', 'Workspace output directory')
+    .requiredOption('--skill-path <dir>', 'Skill directory to evaluate (required)')
+    .requiredOption('--evals <file>', 'Evals JSON file (required)')
+    .requiredOption('--workspace <dir>', 'Workspace output directory (required)')
     .option('--provider <name>', 'Provider to use')
     .option('--model <name>', 'Model override')
     .option('--runs <n>', 'Runs per config')

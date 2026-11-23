@@ -1,199 +1,172 @@
-import { Command } from 'commander';
+import { Argument, Command, Help, Option } from 'commander';
 import { getAvailableProviderNames } from '@kodax-ai/coding';
-import { KODAX_COMPLETION_ROOT_SUBCOMMANDS, KODAX_EXEC_POLICY_SUBCOMMANDS } from './root.js';
+import {
+  ACP_PERMISSION_MODES,
+  KODAX_REPO_INTELLIGENCE_PUBLIC_MODES,
+  parseEffortOption,
+  parseOutputModeOption,
+  parsePermissionModeOption,
+  parseReasoningModeOption,
+  parseRepoIntelligenceModeOption,
+  parseWorkModeOption,
+} from '../cli_option_helpers.js';
+import { KODAX_REASONING_MODE_SEQUENCE } from '@kodax-ai/coding';
+import { EFFORT_LEVELS, loadLazyCommand } from './root.js';
+
+/** Values to offer for options whose parser accepts a known set. */
+const VALUES_BY_PARSER = new Map<unknown, readonly string[]>([
+  [parseEffortOption, EFFORT_LEVELS],
+  [parseReasoningModeOption, KODAX_REASONING_MODE_SEQUENCE],
+  [parseRepoIntelligenceModeOption, KODAX_REPO_INTELLIGENCE_PUBLIC_MODES],
+  [parseWorkModeOption, ['agent', 'coding', 'script']],
+  [parseOutputModeOption, ['json']],
+  [parsePermissionModeOption, ACP_PERMISSION_MODES],
+]);
+
+/** One reachable command: its words after `kodax`, and what can follow it. */
+interface CompletionNode {
+  readonly path: string;
+  readonly subcommands: readonly { readonly name: string; readonly description: string }[];
+  readonly options: readonly Option[];
+  readonly argumentValues: readonly string[];
+}
+
+function optionValues(option: Option): readonly string[] | undefined {
+  if (option.argChoices !== undefined) return option.argChoices;
+  if (option.long === '--provider') return getAvailableProviderNames();
+  return VALUES_BY_PARSER.get(option.parseArg);
+}
+
+function takesValue(option: Option): boolean {
+  return option.required || option.optional;
+}
+
+function argumentValues(command: Command): readonly string[] {
+  const first: Argument | undefined = command.registeredArguments[0];
+  return first?.argChoices ?? [];
+}
+
+/** Walks the visible tree, loading lazy groups first so their subcommands are included. */
+async function collectNodes(root: Command): Promise<CompletionNode[]> {
+  const help = new Help();
+  for (const command of root.commands) await loadLazyCommand(root, command);
+  const nodes: CompletionNode[] = [];
+  const visit = (command: Command, path: string): void => {
+    const subcommands = help.visibleCommands(command);
+    nodes.push({
+      path,
+      subcommands: subcommands.map((child) => ({ name: child.name(), description: child.description() })),
+      options: help.visibleOptions(command),
+      argumentValues: argumentValues(command),
+    });
+    for (const child of subcommands) visit(child, `${path} ${child.name()}`);
+  };
+  visit(root, '');
+  return nodes;
+}
+
+function flagsOf(option: Option): string[] {
+  return [option.short, option.long].filter((flag): flag is string => flag !== undefined);
+}
+
+function bashFunction(nodes: readonly CompletionNode[]): string {
+  const paths = nodes.filter((node) => node.path !== '').map((node) => `"${node.path}"`);
+  const valueCases = nodes.flatMap((node) => node.options.filter(takesValue).map((option) => {
+    const keys = flagsOf(option).map((flag) => `"${node.path}:${flag}"`).join('|');
+    const values = optionValues(option);
+    // No known values: leave COMPREPLY empty so `-o default` completes file names.
+    return values === undefined
+      ? `    ${keys}) return 0 ;;`
+      : `    ${keys}) words="${values.join(' ')}" ;;`;
+  }));
+  const wordCases = nodes.map((node) => {
+    const words = [
+      ...node.subcommands.map((child) => child.name),
+      ...node.argumentValues,
+      ...node.options.flatMap(flagsOf),
+    ];
+    return `      "${node.path}") words="${words.join(' ')}" ;;`;
+  });
+  return `_kodax_complete() {
+  local cur="\${COMP_WORDS[COMP_CWORD]}" prev="\${COMP_WORDS[COMP_CWORD-1]}" path="" words="" i
+  for ((i = 1; i < COMP_CWORD; i++)); do
+    case "$path \${COMP_WORDS[i]}" in
+      ${paths.join('|')}) path="$path \${COMP_WORDS[i]}" ;;
+    esac
+  done
+  case "$path:$prev" in
+${valueCases.join('\n')}
+  esac
+  if [[ -z "$words" ]]; then
+    case "$path" in
+${wordCases.join('\n')}
+    esac
+  fi
+  COMPREPLY=( $(compgen -W "$words" -- "$cur") )
+}
+complete -o default -F _kodax_complete kodax`;
+}
+
+function fishQuote(text: string): string {
+  return `'${text.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+}
+
+function fishScript(nodes: readonly CompletionNode[]): string {
+  const paths = nodes.filter((node) => node.path !== '').map((node) => fishQuote(node.path));
+  const lines = nodes.flatMap((node) => {
+    // Command paths are plain words, so double quotes around one need no escaping.
+    const at = `-n ${fishQuote(`__kodax_at "${node.path}"`)}`;
+    const subcommands = node.subcommands.map((child) =>
+      `complete -c kodax ${at} -f -a ${fishQuote(child.name)} -d ${fishQuote(child.description)}`);
+    const values = node.argumentValues.length > 0
+      ? [`complete -c kodax ${at} -f -a ${fishQuote(node.argumentValues.join(' '))}`]
+      : [];
+    const options = node.options.map((option) => {
+      const flags = [
+        option.short !== undefined ? `-s ${option.short.slice(1)}` : '',
+        option.long !== undefined ? `-l ${option.long.slice(2)}` : '',
+      ].filter(Boolean).join(' ');
+      const known = optionValues(option);
+      const value = !takesValue(option) ? '' : known !== undefined ? ` -x -a ${fishQuote(known.join(' '))}` : ' -r';
+      return `complete -c kodax ${at} ${flags} -d ${fishQuote(option.description)}${value}`;
+    });
+    return [...subcommands, ...values, ...options];
+  });
+  return `function __kodax_at
+    set -l path ''
+    for word in (commandline -opc)[2..-1]
+        switch "$path $word"
+            case ${paths.join(' ')}
+                set path "$path $word"
+        end
+    end
+    test "$path" = "$argv[1]"
+end
+${lines.join('\n')}`;
+}
+
+/** The completion script for one shell, generated from the command tree. */
+export async function renderCompletionScript(root: Command, shell: 'bash' | 'zsh' | 'fish'): Promise<string> {
+  const nodes = await collectNodes(root);
+  if (shell === 'bash') {
+    return `# KodaX bash completion. Add to ~/.bashrc:\n#   eval "$(kodax completion bash)"\n${bashFunction(nodes)}`;
+  }
+  if (shell === 'zsh') {
+    return `# KodaX zsh completion. Add to ~/.zshrc:
+#   eval "$(kodax completion zsh)"
+if ! (( $+functions[compdef] )); then autoload -U +X compinit && compinit; fi
+autoload -U +X bashcompinit && bashcompinit
+${bashFunction(nodes)}`;
+  }
+  return `# KodaX fish completion. Save it:\n#   kodax completion fish > ~/.config/fish/completions/kodax.fish\n${fishScript(nodes)}`;
+}
 
 export function configureKodaXCompletionCommand(program: Command): void {
-  // ============== completion subcommand ==============
   program
     .command('completion')
     .description('Generate shell completion script')
-    .argument('<shell>', 'Shell type: bash, zsh, or fish')
-    .action((shell: string) => {
-      const providerNames = getAvailableProviderNames().join(' ');
-      const reasoningModes = 'off auto quick balanced deep';
-      const effortModes = 'off auto low medium high xhigh max';
-      const repoModes = 'auto full light off';
-      const rootSubcommands = KODAX_COMPLETION_ROOT_SUBCOMMANDS.join(' ');
-      const allOptions = [
-        '-p',
-        '-c',
-        '-r',
-        '-n',
-        '-m',
-        '-t',
-        '-s',
-        '-y',
-        '-h',
-        '--help',
-        '--print',
-        '--mode',
-        '--continue',
-        '--resume',
-        '--new',
-        '--provider',
-        '--model',
-        '--thinking',
-        '--effort',
-        '--reasoning',
-        '--repo-intelligence',
-        '--repo-intelligence-trace',
-        '--auto',
-        '--session',
-        '--extension',
-        '--no-session',
-        '--max-iter',
-        '--version',
-        '--json',
-        '--ping',
-        '--cwd',
-        '--permission-mode',
-        '--dest',
-        '--description',
-        '--force',
-        '--no-evals',
-        '--skill-path',
-        '--evals',
-        '--workspace',
-        '--config-a',
-        '--config-b',
-        '--output',
-        '--apply',
-        '--all',
-        '--custom',
-        '--pretty',
-        '--trust-project-policy',
-      ].join(' ');
-      const skillSubcommands =
-        'init validate eval grade analyze compare package install';
-      const toolsSubcommands = 'list inspect revoke';
-      const sessionsSubcommands = 'dedupe';
-      const constructedSubcommands =
-        'reset-self-modify-budget audit disable-self-modify rollback';
-      const execPolicySubcommands = KODAX_EXEC_POLICY_SUBCOMMANDS.join(' ');
-
-      if (shell === 'bash') {
-        console.log(`# KodaX bash completion — add to ~/.bashrc:
-#   eval "$(kodax completion bash)"
-_kodax_complete() {
-  local cur prev opts subcmds
-  COMPREPLY=()
-  cur="\${COMP_WORDS[COMP_CWORD]}"
-  prev="\${COMP_WORDS[COMP_CWORD-1]}"
-  subcmds="${rootSubcommands}"
-  opts="${allOptions}"
-
-  case "\${prev}" in
-    --provider|-m) COMPREPLY=( $(compgen -W "${providerNames}" -- "\${cur}") ); return 0 ;;
-    --mode) COMPREPLY=( $(compgen -W "json" -- "\${cur}") ); return 0 ;;
-    --effort) COMPREPLY=( $(compgen -W "${effortModes}" -- "\${cur}") ); return 0 ;;
-    --reasoning) COMPREPLY=( $(compgen -W "${reasoningModes}" -- "\${cur}") ); return 0 ;;
-    --repo-intelligence) COMPREPLY=( $(compgen -W "${repoModes}" -- "\${cur}") ); return 0 ;;
-    --session|-s) COMPREPLY=( $(compgen -W "list resume delete delete-all" -- "\${cur}") ); return 0 ;;
-    completion) COMPREPLY=( $(compgen -W "bash zsh fish" -- "\${cur}") ); return 0 ;;
-    acp) COMPREPLY=( $(compgen -W "serve" -- "\${cur}") ); return 0 ;;
-    host) COMPREPLY=( $(compgen -W "start stop restart status logs serve pair devices" -- "\${cur}") ); return 0 ;;
-    skill) COMPREPLY=( $(compgen -W "${skillSubcommands}" -- "\${cur}") ); return 0 ;;
-    tools) COMPREPLY=( $(compgen -W "${toolsSubcommands}" -- "\${cur}") ); return 0 ;;
-    sessions) COMPREPLY=( $(compgen -W "${sessionsSubcommands}" -- "\${cur}") ); return 0 ;;
-    constructed) COMPREPLY=( $(compgen -W "${constructedSubcommands}" -- "\${cur}") ); return 0 ;;
-    config) COMPREPLY=( $(compgen -W "template paths" -- "\${cur}") ); return 0 ;;
-    integrations) COMPREPLY=( $(compgen -W "status validate reload migrate" -- "\${cur}") ); return 0 ;;
-    mcp) COMPREPLY=( $(compgen -W "list add remove" -- "\${cur}") ); return 0 ;;
-    extensions) COMPREPLY=( $(compgen -W "list add remove reload" -- "\${cur}") ); return 0 ;;
-    a2a) COMPREPLY=( $(compgen -W "list add remove test call expose serve" -- "\${cur}") ); return 0 ;;
-    sandbox) COMPREPLY=( $(compgen -W "doctor setup" -- "\${cur}") ); return 0 ;;
-    execpolicy) COMPREPLY=( $(compgen -W "${execPolicySubcommands}" -- "\${cur}") ); return 0 ;;
-  esac
-
-  if [[ "\${cur}" == -* ]]; then
-    COMPREPLY=( $(compgen -W "\${opts}" -- "\${cur}") )
-  elif [[ \${COMP_CWORD} -eq 1 ]]; then
-    COMPREPLY=( $(compgen -W "\${subcmds}" -- "\${cur}") )
-  fi
-}
-complete -F _kodax_complete kodax`);
-      } else if (shell === 'zsh') {
-        console.log(`# KodaX zsh completion — add to ~/.zshrc:
-#   eval "$(kodax completion zsh)"
-_kodax() {
-  local -a subcmds opts providers reasoning_modes agent_modes repo_modes
-  subcmds=(${rootSubcommands})
-  providers=(${providerNames.replace(/ /g, ' ')})
-  reasoning_modes=(off auto quick balanced deep)
-  effort_modes=(off auto low medium high xhigh max)
-  repo_modes=(${repoModes})
-
-  _arguments -C \\
-    '-p[Print mode]+:text:' \\
-    '--print+[Print mode]:text:' \\
-    '--mode+[Output mode]:mode:(json)' \\
-    '-c[Continue most recent non-empty conversation]' \\
-    '--continue[Continue most recent non-empty conversation]' \\
-    '-n[Start fresh session]' \\
-    '--new[Start fresh session]' \\
-    '-r[Resume session by ID or exact title]::id-or-title:' \\
-    '--resume[Resume session by ID or exact title]::id-or-title:' \\
-    '-m[LLM provider]+:provider:($providers)' \\
-    '--provider+[LLM provider]:provider:($providers)' \\
-    '--model+[Model override]:model:' \\
-    '-t[Enable thinking]' \\
-    '--thinking[Enable thinking]' \\
-    '--effort+[Reasoning effort]:level:($effort_modes)' \\
-    '--reasoning+[Compatibility reasoning mode]:mode:($reasoning_modes)' \\
-    '--repo-intelligence+[Repo intelligence mode]:mode:($repo_modes)' \\
-    '--repo-intelligence-trace[Enable repo intelligence trace]' \\
-    '-s[Legacy session operation]+:operation:(list resume delete delete-all)' \\
-    '--session+[Legacy session operation]:operation:(list resume delete delete-all)' \\
-    '--extension+[Load local extension]:path:_files' \\
-    '--no-session[Disable session persistence in print mode]' \\
-    '--max-iter+[Max iterations]:n:' \\
-    '--version[Show version]' \\
-    '-h[Show help]::topic:' \\
-    '--help[Show help]::topic:' \\
-    '1:subcommand:($subcmds)' \\
-    '*::arg:->args'
-}
-compdef _kodax kodax`);
-      } else if (shell === 'fish') {
-        console.log(`# KodaX fish completion — add to ~/.config/fish/completions/kodax.fish:
-#   kodax completion fish > ~/.config/fish/completions/kodax.fish
-complete -c kodax -n '__fish_use_subcommand' -a '${rootSubcommands}' -d 'Subcommands'
-complete -c kodax -n '__fish_seen_subcommand_from completion' -a 'bash zsh fish' -d 'Shell'
-complete -c kodax -n '__fish_seen_subcommand_from acp' -a 'serve' -d 'ACP subcommand'
-complete -c kodax -n '__fish_seen_subcommand_from host' -a 'start stop restart status logs serve pair devices' -d 'Host subcommand'
-complete -c kodax -n '__fish_seen_subcommand_from skill' -a '${skillSubcommands}' -d 'Skill subcommand'
-complete -c kodax -n '__fish_seen_subcommand_from tools' -a '${toolsSubcommands}' -d 'Tools subcommand'
-complete -c kodax -n '__fish_seen_subcommand_from sessions' -a '${sessionsSubcommands}' -d 'Sessions subcommand'
-complete -c kodax -n '__fish_seen_subcommand_from constructed' -a '${constructedSubcommands}' -d 'Constructed subcommand'
-complete -c kodax -n '__fish_seen_subcommand_from config' -a 'template paths' -d 'Config subcommand'
-complete -c kodax -n '__fish_seen_subcommand_from integrations' -a 'status validate reload migrate' -d 'Integration subcommand'
-complete -c kodax -n '__fish_seen_subcommand_from mcp' -a 'list add remove' -d 'MCP subcommand'
-complete -c kodax -n '__fish_seen_subcommand_from extensions' -a 'list add remove reload' -d 'Extension subcommand'
-complete -c kodax -n '__fish_seen_subcommand_from a2a' -a 'list add remove test call expose serve' -d 'A2A subcommand'
-complete -c kodax -n '__fish_seen_subcommand_from sandbox' -a 'doctor setup' -d 'Sandbox subcommand'
-complete -c kodax -n '__fish_seen_subcommand_from execpolicy' -a '${execPolicySubcommands}' -d 'Exec Policy subcommand'
-complete -c kodax -s h -l help -d 'Show help'
-complete -c kodax -s p -l print -d 'Print mode' -r
-complete -c kodax -l mode -d 'Output mode' -xa 'json'
-complete -c kodax -s c -l continue -d 'Continue most recent conversation'
-complete -c kodax -s n -l new -d 'Start fresh session'
-complete -c kodax -s r -l resume -d 'Resume session by ID or exact title' -r
-complete -c kodax -s m -l provider -d 'LLM provider' -xa '${providerNames}'
-complete -c kodax -l model -d 'Model override' -r
-complete -c kodax -s t -l thinking -d 'Enable thinking'
-complete -c kodax -l effort -d 'Reasoning effort' -xa 'off auto low medium high xhigh max'
-complete -c kodax -l reasoning -d 'Reasoning mode' -xa '${reasoningModes}'
-complete -c kodax -l repo-intelligence -d 'Repo intelligence mode' -xa '${repoModes}'
-complete -c kodax -l repo-intelligence-trace -d 'Enable repo intelligence trace'
-complete -c kodax -s y -l auto -d 'Backward-compatible no-op'
-complete -c kodax -s s -l session -d 'Legacy session operation' -xa 'list resume delete delete-all'
-complete -c kodax -l extension -d 'Load local extension' -r
-complete -c kodax -l no-session -d 'Disable session persistence in print mode'
-complete -c kodax -l max-iter -d 'Max iterations' -r
-complete -c kodax -l version -d 'Show version'`);
-      } else {
-        console.error(`Unknown shell: ${shell}. Supported: bash, zsh, fish`);
-        process.exit(1);
-      }
+    .addArgument(new Argument('<shell>', 'Shell type').choices(['bash', 'zsh', 'fish']))
+    .action(async (shell: 'bash' | 'zsh' | 'fish') => {
+      process.stdout.write(`${await renderCompletionScript(program, shell)}\n`);
     });
 }

@@ -65,8 +65,7 @@ import { bootstrapTracing, estimateTokens } from '@kodax-ai/coding';
 import { KodaXClient, runKodaX, runManagedTask } from './trusted-coding-entry.js';
 import { shutdownTracing, applyProcessHardening } from '@kodax-ai/agent';
 import { version } from './cli-version.js';
-import { CLI_SUBCOMMAND_NAMES } from './cli/root.js';
-import { printAcpSubcommandHelp, printSkillSubcommandHelp } from './cli/help.js';
+import { findKodaXCommand } from './cli/root.js';
 import { loadSandboxRuntimeModule, INTERNAL_SANDBOX_STARTUP_RECOVERY_ARG, INTERNAL_SANDBOX_STARTUP_RECOVERY_ENV, INTERNAL_SANDBOX_STARTUP_REPORT_PREFIX, prepareSetupSandboxReport } from './cli/interactive-sandbox.js';
 import { configureKodaXSetupCommand, showKodaXSetupHelpIfRequested } from './cli/setup.js';
 import { runKodaXRootCommand } from './cli/run.js';
@@ -85,12 +84,7 @@ export {
   resolveCliAgentMode,
 };
 export type { KodaXCommand, KodaXCommandContext };
-export {
-  KODAX_CLI_SUBCOMMAND_NAMES,
-  KODAX_COMPLETION_ROOT_SUBCOMMANDS,
-  KODAX_EXEC_POLICY_SUBCOMMANDS,
-  configureKodaXRootCommand,
-} from './cli/root.js';
+export { configureKodaXRootCommand } from './cli/root.js';
 export { prepareInteractiveSandboxStartup } from './cli/interactive-sandbox.js';
 export { configureKodaXHostCommand } from './cli/host.js';
 export { configureKodaXSetupCommand, showKodaXSetupHelpIfRequested } from './cli/setup.js';
@@ -176,35 +170,7 @@ async function runCliMain(startupProgress?: CliStartupProgress) {
     });
   }
 
-  const { program, skillCommand, acpCommand } = createKodaXProgram({ version });
-
-  if (argv[0] === 'skill') {
-    if (argv.length === 1 || argv[1] === '-h' || argv[1] === '--help') {
-      console.log(skillCommand.helpInformation());
-      return;
-    }
-
-    const skillSubcommand = argv[1];
-    if (skillSubcommand && (argv.includes('-h') || argv.includes('--help'))) {
-      if (printSkillSubcommandHelp(skillSubcommand)) {
-        return;
-      }
-    }
-  }
-
-  if (argv[0] === 'acp') {
-    if (argv.length === 1 || argv[1] === '-h' || argv[1] === '--help') {
-      console.log(acpCommand.helpInformation());
-      return;
-    }
-
-    const acpSubcommand = argv[1];
-    if (acpSubcommand && (argv.includes('-h') || argv.includes('--help'))) {
-      if (printAcpSubcommandHelp(acpSubcommand)) {
-        return;
-      }
-    }
-  }
+  const program = createKodaXProgram({ version });
 
   // ============== constructed-tool direct dispatch ==============
   // BEFORE commander parses, intercept `kodax <constructed-tool-name> ...`
@@ -217,7 +183,7 @@ async function runCliMain(startupProgress?: CliStartupProgress) {
     argv.length > 0 &&
     argv[0] &&
     !argv[0].startsWith('-') &&
-    !CLI_SUBCOMMAND_NAMES.has(argv[0])
+    findKodaXCommand(program, argv[0]) === undefined
   ) {
     const { detectConstructedToolDispatch, runConstructedToolDispatch } =
       await import('./constructed_cli.js');

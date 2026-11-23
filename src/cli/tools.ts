@@ -8,7 +8,7 @@ export function configureKodaXToolsCommands(program: Command): void {
   // REPL where a dialog can solicit user approval; see DD §14.5.4).
   const toolsCommand = program
     .command('tools')
-    .description('Inspect and manage constructed tools (FEATURE_088, v0.7.28)')
+    .description('Inspect and manage constructed tools')
     .helpOption('-h, --help', 'Show tools subcommand help');
 
   toolsCommand
@@ -66,7 +66,7 @@ export function configureKodaXToolsCommands(program: Command): void {
   const constructedCommand = program
     .command('constructed')
     .description(
-      'Manage the self-modify lifecycle of constructed agents (FEATURE_090, v0.7.32)',
+      'Manage the self-modify lifecycle of constructed agents',
     )
     .helpOption('-h, --help', 'Show constructed subcommand help');
 

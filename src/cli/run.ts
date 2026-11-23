@@ -57,8 +57,8 @@ import {
   shouldAutoLaunchProviderSetup,
 } from '../provider-setup-cli.js';
 import { loadProviderAuth } from '../cli-lazy-components.js';
-import { CLI_SUBCOMMAND_NAMES } from './root.js';
-import { showCliHelpTopic, showCliHelpTopics, showBasicHelp } from './help.js';
+import { findKodaXCommand } from './root.js';
+import { showKodaXHelp } from './help.js';
 import { cleanupInteractiveProcessResources } from './process-cleanup.js';
 import { getReplHostStatus } from './host.js';
 import { CliHost, runCliTaskViaClient } from './cli-host.js';
@@ -105,27 +105,14 @@ export async function runKodaXRootCommand(
   version: string,
   startupProgress?: CliStartupProgress,
 ): Promise<void> {
-  if (
-    program.args[0] !== undefined &&
-    CLI_SUBCOMMAND_NAMES.has(program.args[0])
-  ) {
+  // A subcommand already ran its own action.
+  if (program.args[0] !== undefined && findKodaXCommand(program, program.args[0]) !== undefined) {
     return;
   }
 
   const opts = program.opts();
-  // -h / --help [topic]: show basic help or a detailed help topic
   if (opts.help !== undefined) {
-    if (typeof opts.help === 'string') {
-      const topic = opts.help.toLowerCase();
-      if (showCliHelpTopic(topic)) {
-        return;
-      }
-      console.log(chalk.yellow(`\n[Unknown help topic: ${topic}]`));
-      showCliHelpTopics();
-      return;
-    }
-    // No topic specified: show basic help overview.
-    showBasicHelp();
+    await showKodaXHelp(program, opts.help as string | true);
     return;
   }
 
@@ -518,9 +505,9 @@ export async function runKodaXRootCommand(
       return;
     }
 
-    // No prompt + --print: show basic help and exit.
+    // No prompt + --print: show help and exit.
     if (!userPrompt && options.print) {
-      showBasicHelp();
+      program.outputHelp();
       return;
     }
 

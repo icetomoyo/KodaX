@@ -13,7 +13,7 @@ async function parse(args: readonly string[]): Promise<{ exitCode: number | stri
   vi.spyOn(process, 'exit').mockImplementation((code) => { throw new ProcessExit(code); });
   vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => { stderr += String(chunk); return true; });
   vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-  const { program } = createKodaXProgram({ version: '9.9.9' });
+  const program = createKodaXProgram({ version: '9.9.9' });
   try {
     await program.parseAsync(['node', 'kodax', ...args]);
     return { exitCode: undefined, stderr };
@@ -31,6 +31,7 @@ describe('kodax exit codes', () => {
     [['host', 'status', '--bogus']],
     [['mcp', 'list', '--bogus']],
     [['completion']],
+    [['completion', 'powershell']],
   ])('exits 2 for the usage error in %j', async (args) => {
     expect((await parse(args)).exitCode).toBe(2);
   });
@@ -57,7 +58,7 @@ describe('removed root options', () => {
   });
 
   it('keeps them out of help', () => {
-    const { program } = createKodaXProgram({ version: '9.9.9' });
+    const program = createKodaXProgram({ version: '9.9.9' });
     expect(program.helpInformation()).not.toMatch(/--new|--auto|--extension/);
   });
 });
