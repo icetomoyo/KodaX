@@ -58,6 +58,17 @@ export interface HostAdmission {
   close(): void;
 }
 
+/** One failure the client is not shown. The client gets `incidentId`; the Host log keeps it with what went wrong. */
+export interface HostIncident {
+  readonly incidentId: string;
+  /** The request that failed, when one did. */
+  readonly rpcId?: HostRpcId;
+}
+
+export function newHostIncident(rpcId?: HostRpcId): HostIncident {
+  return { incidentId: globalThis.crypto.randomUUID(), ...(rpcId !== undefined ? { rpcId } : {}) };
+}
+
 export interface HostConnectionOptions {
   readonly methods: HostMethodRegistry;
   readonly send: (frame: string) => void;
@@ -66,7 +77,7 @@ export interface HostConnectionOptions {
   /** Checks the credential. Throws `HostProtocolError` to refuse; the connection then hangs up. */
   readonly admit: (request: HostAdmissionRequest) => Promise<HostAdmission>;
   /** Receives what the client is not shown: an unexpected failure or a result that broke the contract. */
-  readonly onInternalError: (method: string, error: unknown) => void;
+  readonly onInternalError: (method: string, error: unknown, incident: HostIncident) => void;
   /** @internal Tests shorten the handshake deadline. */
   readonly initializeTimeoutMs?: number;
 }
@@ -110,11 +121,18 @@ export function createHostConnection(options: HostConnectionOptions): HostConnec
     if (state !== 'closed') options.send(JSON.stringify(message));
   };
   const fail = (id: HostRpcId | null, error: HostProtocolError): void => send(hostRpcFailure(id, error));
-  /** Hides everything but a deliberate protocol error from the client. */
-  const clientError = (method: string, error: unknown): HostProtocolError => {
-    if (error instanceof HostProtocolError) return error;
-    options.onInternalError(method, error);
-    return new HostProtocolError('internal', 'The Host could not complete this request.');
+  /**
+   * Hides what an internal failure says, which may name Host paths or storage,
+   * behind an incident the Host log names too. Other protocol errors are meant for the client.
+   */
+  const clientError = (method: string, error: unknown, rpcId?: HostRpcId): HostProtocolError => {
+    if (error instanceof HostProtocolError && error.kodaxCode !== 'internal') return error;
+    const incident = newHostIncident(rpcId);
+    options.onInternalError(method, error, incident);
+    return new HostProtocolError('internal', `The Host could not complete this request (incident ${incident.incidentId}).`, {
+      ...(error instanceof HostProtocolError && error.reason !== undefined ? { reason: error.reason } : {}),
+      incidentId: incident.incidentId,
+    });
   };
   /**
    * Sends what the contract names and nothing else, so a handler cannot leak a
@@ -130,7 +148,7 @@ export function createHostConnection(options: HostConnectionOptions): HostConnec
       }
       options.send(JSON.stringify(hostRpcSuccess(id, checked.data as Record<string, unknown>)));
     } catch (error: unknown) {
-      fail(id, clientError(method, error));
+      fail(id, clientError(method, error, id));
     }
   };
 
@@ -152,7 +170,7 @@ export function createHostConnection(options: HostConnectionOptions): HostConnec
     try {
       admitted = await options.admit({ client: params.data.client, auth: params.data.auth, revision });
     } catch (error: unknown) {
-      const refusal = clientError('initialize', error);
+      const refusal = clientError('initialize', error, request.id);
       fail(request.id, refusal);
       hangUp(refusal.kodaxCode === 'unavailable' || refusal.kodaxCode === 'overloaded' ? refusal.kodaxCode
         : refusal.kodaxCode === 'internal' ? 'unavailable' : 'credential');
@@ -238,7 +256,7 @@ export function createHostConnection(options: HostConnectionOptions): HostConnec
     }
     // The id is free again before the answer goes out, so the client may reuse it at once.
     if (inFlight.get(id) === controller) inFlight.delete(id);
-    if ('error' in outcome) fail(id, clientError(method, outcome.error));
+    if ('error' in outcome) fail(id, clientError(method, outcome.error, id));
     else succeed(id, method, outcome.result);
     for (const run of afterAnswer) run();
   };
@@ -264,8 +282,8 @@ export function createHostConnection(options: HostConnectionOptions): HostConnec
       const parsed = parseHostRpcFrame(frame);
       if (parsed.kind === 'invalid') send(parsed.failure);
       else if (parsed.kind === 'request') {
-        const { method } = parsed.message;
-        handleRequest(parsed.message).catch((error: unknown) => options.onInternalError(method, error));
+        const { method, id } = parsed.message;
+        handleRequest(parsed.message).catch((error: unknown) => options.onInternalError(method, error, newHostIncident(id)));
       }
       else if (parsed.kind === 'notification') handleNotification(parsed.message);
       // The Host sends no requests on this connection yet, so a response has nothing to answer.

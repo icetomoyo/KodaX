@@ -73,6 +73,12 @@ describe('host protocol codec', () => {
     });
   });
 
+  it('carries the incident of an internal error both ways', () => {
+    const sent = new HostProtocolError('internal', 'The Host could not complete this request.', { incidentId: 'inc-1' });
+    expect(hostRpcFailure('r1', sent).error.data).toEqual({ kodaxCode: 'internal', retryable: false, incidentId: 'inc-1' });
+    expect(hostProtocolErrorFrom(hostRpcFailure('r1', sent))).toMatchObject({ kodaxCode: 'internal', incidentId: 'inc-1' });
+  });
+
   it('reports an error code from a newer peer as internal and keeps the unknown code as the reason', () => {
     const failure = {
       jsonrpc: '2.0',

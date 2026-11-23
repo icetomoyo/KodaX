@@ -254,7 +254,8 @@ function viewDocument<Item extends z.ZodType, Keys extends Readonly<Record<strin
   };
 }
 
-const ViewClosed = hostResult({ subscriptionId: HostId, reason: z.string() });
+/** `incidentId` names an `internal` end in the Host log, as on an `internal` error. */
+const ViewClosed = hostResult({ subscriptionId: HostId, reason: z.string(), incidentId: z.string().optional() });
 
 const shared = viewDocument(ViewItem, SESSION_VIEW_KEYS);
 const local = viewDocument(LocalViewItem, LOCAL_SESSION_VIEW_KEYS);

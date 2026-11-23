@@ -14,6 +14,7 @@ import {
 } from '@kodax-ai/agent';
 
 import type { HostCloseReason } from '../host-protocol/close.js';
+import type { HostIncident } from '../host-protocol/connection.js';
 import { HostProtocolError, hostRpcNotification, type HostErrorCode } from '../host-protocol/codec.js';
 import type { HostInitializeParams, HostLimits, HostMethodName, HostParams } from '../host-protocol/methods.js';
 import type {
@@ -1666,11 +1667,18 @@ const MAX_TIMER_MS = 2 ** 31 - 1;
 export function createRuntimeDaemonHostRpcPeer(
   options: RuntimeDaemonHostRpcPeerOptions,
 ): RuntimeDaemonFramePeer & { admitted(): boolean; draining(): void } {
-  const onInternalError = (method: string, error: unknown): void => emitKodaXDiagnostic({
+  /** Whom the connection speaks for, once it is admitted. */
+  let speaker: string | undefined;
+  const onInternalError = (method: string, error: unknown, { incidentId, rpcId }: HostIncident): void => emitKodaXDiagnostic({
     source: 'runtime.host-protocol',
     level: 'error',
-    message: `${method} failed.`,
-    detail: error instanceof Error ? (error.stack ?? error.message) : String(error),
+    message: `${method} failed (incident ${incidentId}).`,
+    detail: {
+      incidentId,
+      ...(rpcId !== undefined ? { rpcId } : {}),
+      ...(speaker !== undefined ? { subject: speaker } : {}),
+      error: error instanceof Error ? (error.stack ?? error.message) : String(error),
+    },
   });
   /** The subscriptions of this connection, once it is admitted. */
   let views: HostViewStreams | undefined;
@@ -1689,6 +1697,7 @@ export function createRuntimeDaemonHostRpcPeer(
           reason: 'unsupported_auth_scheme',
         });
       }
+      speaker = subject;
       let expiry: ReturnType<typeof setTimeout> | undefined;
       const expireAt = (expiresAt: number | undefined): void => {
         clearTimeout(expiry);

@@ -10,7 +10,7 @@ import {
   type HostRpcFailure,
   type HostRpcSuccess,
 } from './codec.js';
-import { createHostConnection, type HostAdmission, type HostAdmissionRequest } from './connection.js';
+import { createHostConnection, type HostAdmission, type HostAdmissionRequest, type HostIncident } from './connection.js';
 import { HOST_METHODS, hostParams, hostResult, type HostMethodRegistry } from './methods.js';
 
 const METHODS: HostMethodRegistry = {
@@ -45,6 +45,7 @@ interface Harness {
   readonly frames: Array<HostRpcSuccess | HostRpcFailure>;
   readonly admitted: HostAdmissionRequest[];
   readonly faults: string[];
+  readonly incidents: HostIncident[];
   readonly disconnect: ReturnType<typeof vi.fn>;
   readonly closeAdmission: ReturnType<typeof vi.fn>;
   receive(message: unknown): void;
@@ -63,6 +64,7 @@ function harness(overrides: {
   const waiting = new Map<string, (frame: HostRpcSuccess | HostRpcFailure) => void>();
   const admitted: HostAdmissionRequest[] = [];
   const faults: string[] = [];
+  const incidents: HostIncident[] = [];
   const disconnect = vi.fn();
   const closeAdmission = vi.fn();
   const admission: HostAdmission = {
@@ -84,13 +86,16 @@ function harness(overrides: {
     },
     disconnect,
     admit: overrides.admit ?? (async (request) => { admitted.push(request); return admission; }),
-    onInternalError: (method, error) => { faults.push(`${method}: ${error instanceof Error ? error.message : String(error)}`); },
+    onInternalError: (method, error, incident) => {
+      faults.push(`${method}: ${error instanceof Error ? error.message : String(error)}`);
+      incidents.push(incident);
+    },
     ...(overrides.initializeTimeoutMs !== undefined ? { initializeTimeoutMs: overrides.initializeTimeoutMs } : {}),
   });
   cleanup.push(() => connection.close());
   const receive = (message: unknown): void => connection.receive(typeof message === 'string' ? message : JSON.stringify(message));
   return {
-    frames, admitted, faults, disconnect, closeAdmission, receive,
+    frames, admitted, faults, incidents, disconnect, closeAdmission, receive,
     close: () => connection.close(),
     request: (id, method, params) => new Promise((resolve) => {
       waiting.set(id, resolve);
@@ -310,6 +315,22 @@ describe('host connection requests', () => {
     expect(reply.error.data).toMatchObject({ kodaxCode: 'internal' });
     expect(reply.error.message).not.toContain('secret');
     expect(h.faults).toEqual(['echo: ENOENT C:\\secret\\path']);
+    // The client and the Host log name the same incident.
+    const { incidentId } = reply.error.data as { readonly incidentId?: string };
+    expect(incidentId).toEqual(expect.any(String));
+    expect(reply.error.message).toContain(incidentId);
+    expect(h.incidents).toEqual([{ incidentId, rpcId: 'e' }]);
+  });
+
+  it('hides what an internal failure a method reports says, and keeps its reason', async () => {
+    const h = await ready({
+      call: async () => { throw new HostProtocolError('internal', 'store at C:\\secret\\db is corrupt', { reason: 'data_corrupt' }); },
+    });
+    const reply = await h.request('e', 'echo', { text: 'hi' }) as HostRpcFailure;
+    expect(reply.error.message).not.toContain('secret');
+    expect(reply.error.data).toEqual({ kodaxCode: 'internal', reason: 'data_corrupt', retryable: false, incidentId: expect.any(String) });
+    expect(h.faults).toEqual(['echo: store at C:\\secret\\db is corrupt']);
+    expect(h.incidents).toEqual([{ incidentId: (reply.error.data as { readonly incidentId: string }).incidentId, rpcId: 'e' }]);
   });
 
   it('drops what a result carries beyond the contract', async () => {
@@ -324,6 +345,7 @@ describe('host connection requests', () => {
     expect(reply.error.data).toMatchObject({ kodaxCode: 'internal' });
     expect(JSON.stringify(reply)).not.toContain('someone');
     expect(h.faults).toHaveLength(1);
+    expect(h.incidents[0]!.incidentId).toBe((reply.error.data as { readonly incidentId?: string }).incidentId);
   });
 
   it.each([

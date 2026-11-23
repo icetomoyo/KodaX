@@ -6,7 +6,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createLearningCenterService, createMcpTestServerFixture, createReferenceAgentExecutorFactory } from '@kodax-ai/agent';
+import {
+  createLearningCenterService, createMcpTestServerFixture, createReferenceAgentExecutorFactory, setKodaXDiagnosticSink,
+  type KodaXDiagnostic,
+} from '@kodax-ai/agent';
 import { awaitLatestCodingMemoryReviewDrain, getActiveExtensionRuntime } from '@kodax-ai/coding';
 import {
   KodaXBaseProvider, registerModelProvider, type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult,
@@ -200,6 +203,24 @@ describe('v2 catalogs served by the v1 implementation', () => {
     };
     const owner = await connect('owner', runtime);
     await expect(owner.request('provider.list')).rejects.toMatchObject({ kodaxCode: 'overloaded', reason: 'overloaded', retryable: true });
+  });
+
+  it('tells a client an internal v1 failure only by an incident the Host log names', async () => {
+    const runtime = fakeRuntime();
+    (runtime.catalog as { providers: unknown }).providers = async () => {
+      throw new Error('catalog at C:\\Users\\someone\\.kodax is unreadable');
+    };
+    const logged: KodaXDiagnostic[] = [];
+    const restore = setKodaXDiagnosticSink(diagnostic => logged.push(diagnostic));
+    cleanup.push(restore);
+    const user = await connect('user', runtime);
+    const failure = await user.request('provider.list').catch((error: unknown) => error) as HostProtocolError;
+    expect(failure).toMatchObject({ kodaxCode: 'internal', incidentId: expect.any(String) });
+    expect(failure.message).not.toContain('someone');
+    const entry = logged.find(diagnostic => diagnostic.source === 'runtime.host-protocol');
+    expect(entry?.message).toContain(failure.incidentId);
+    expect(entry?.detail).toMatchObject({ incidentId: failure.incidentId, rpcId: expect.anything(), subject: expect.any(String) });
+    expect(JSON.stringify(entry?.detail)).toContain('someone');
   });
 });
 

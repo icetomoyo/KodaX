@@ -488,7 +488,9 @@ v1 里的各种做法都能归进来：
 
 ### 错误模型
 
-错误统一为 JSON-RPC 的 `code` 加 `data: {kodaxCode, reason?, retryable, retryAfterMs?}`。`kodaxCode` 是封闭集合，按"客户端该做什么"来划分。`reason` 是开放的字符串，只用于展示和排查。
+错误统一为 JSON-RPC 的 `code` 加 `data: {kodaxCode, reason?, retryable, retryAfterMs?, incidentId?}`。`kodaxCode` 是封闭集合，按"客户端该做什么"来划分。`reason` 是开放的字符串，只用于展示和排查。
+
+`internal` 错误不带 Host 自己的错误信息，因为里面可能有本机路径或存储细节。它的 message 是通用说明，`data.incidentId` 是一个编号，Host 日志里用同一个编号记下原始错误、method、请求 id 和连接的 subject。`incidentId` 不透明，客户端只拿来展示或对照日志，不解析。`view.closed` 的 reason 是 `internal` 时也带 `incidentId`（2026-11-23 落地）。
 
 | kodaxCode | 含义 | 客户端动作 |
 |---|---|---|
@@ -2486,7 +2488,7 @@ KodaX 在实例契约里给出检查清单，但不实现：
     - 真正的缺陷：`integrations/extensions.json` 存在时，Host 忽略 `config.json` 里的 `extensions`，而 `config.update` 写的正是 `config.json`，写了不生效，也不报错。
     - 用户确认的修法：`config.*` 里的 `extensions` 读写 Host 实际加载的那份（`sdk-runtime.ts` 的 `withManagedExtensions`、`writeManagedExtensions`）。清空时文件保留、列表为空，因为删掉文件会让 `config.json` 的旧值重新生效。revision 按合并后的内容算，只改这个文件也会让 `ifRevision` 冲突。文件坏了时其他设置照常可读，`extensions` 不出现。
 13. 2026-11-23 协议审查找到、r1 冻结前要做的（三份审查报告和综合结论在本地 `docs/research/2026-11-23-v2-*`）：
-    - 错误：v1 的错误映射成 `internal` 时带着原始 message 发给客户端，而且不记日志。改成发通用说明和一个 `incidentId`，同一个编号写进日志。
+    - ~~错误：v1 的错误映射成 `internal` 时带着原始 message 发给客户端，而且不记日志。改成发通用说明和一个 `incidentId`，同一个编号写进日志。~~ 2026-11-23 落地，见"错误模型"。MCP 工具列表里单个服务器读不到时的 `error` 字段仍是原始信息，这是有意展示给客户端的服务器故障，没有改（未经用户确认）。
     - blob：提交后的 blob 只在 Session 删除时回收，没有删除方法，Host 共用 1 GiB 上限。Host 要自己回收不再被引用的 blob，客户端不知道哪些还在用。
     - `command.list` 列出了 `command.execute` 跑不了的命令（REPL 内建命令，`runtime-product-commands.ts:92-111`）。要么只列能执行的，要么标出哪些只能在 REPL 里用。
     - `initialize.methods` 对 service 列出了它不能调用的 `interaction.respond`（`connection.ts:166-168` 和 `access.ts:263-265` 不一致）。

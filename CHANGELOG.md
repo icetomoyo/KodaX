@@ -93,6 +93,11 @@ All notable changes to this project will be documented in this file.
   managed path since the unified prompt chain, and that path left `usage` out.
 - A child Agent turn a client starts is held to the tools and time limit of
   its Session and to the tools of the Host, as a Run is.
+- An `internal` error no longer shows a v2 client the Host's own message, which
+  could name local paths. The client gets an `incidentId` instead, in the
+  error data and its message, and the Host log records the same id with the
+  original error, the method, the request id and the connection's subject.
+  `view.closed` for an internal failure carries it too.
 
 ---
 

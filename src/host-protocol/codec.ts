@@ -47,6 +47,8 @@ export interface HostErrorData {
   readonly reason?: string;
   readonly retryable: boolean;
   readonly retryAfterMs?: number;
+  /** Names an `internal` failure in the Host log. Opaque: a client shows or quotes it and never parses it. */
+  readonly incidentId?: string;
 }
 
 export type HostRpcId = string | number;
@@ -89,6 +91,7 @@ export class HostProtocolError extends Error {
   readonly reason?: string;
   readonly retryable: boolean;
   readonly retryAfterMs?: number;
+  readonly incidentId?: string;
 
   constructor(
     kodaxCode: HostErrorCode,
@@ -97,6 +100,7 @@ export class HostProtocolError extends Error {
       readonly reason?: string;
       readonly retryable?: boolean;
       readonly retryAfterMs?: number;
+      readonly incidentId?: string;
       /** Kept on this side for diagnosis. It never travels in a frame. */
       readonly cause?: unknown;
     } = {},
@@ -107,6 +111,7 @@ export class HostProtocolError extends Error {
     this.retryable = detail.retryable ?? ERROR_CODES[kodaxCode].retryable;
     if (detail.reason !== undefined) this.reason = detail.reason;
     if (detail.retryAfterMs !== undefined) this.retryAfterMs = detail.retryAfterMs;
+    if (detail.incidentId !== undefined) this.incidentId = detail.incidentId;
   }
 }
 
@@ -141,6 +146,7 @@ export function hostRpcFailure(id: HostRpcId | null, error: HostProtocolError, r
         ...(error.reason !== undefined ? { reason: error.reason } : {}),
         retryable: error.retryable,
         ...(error.retryAfterMs !== undefined ? { retryAfterMs: error.retryAfterMs } : {}),
+        ...(error.incidentId !== undefined ? { incidentId: error.incidentId } : {}),
       },
     },
   };
@@ -159,6 +165,7 @@ export function hostProtocolErrorFrom(failure: HostRpcFailure): HostProtocolErro
       : `unknown_error_code:${String(data.kodaxCode ?? failure.error.code)}`,
     retryable: known && typeof data.retryable === 'boolean' ? data.retryable : undefined,
     retryAfterMs: typeof data.retryAfterMs === 'number' ? data.retryAfterMs : undefined,
+    incidentId: typeof data.incidentId === 'string' ? data.incidentId : undefined,
   });
 }
 

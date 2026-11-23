@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { ClientViewItem } from '@kodax-ai/coding/client-contract';
 import { createRetryHistoryItem } from '@kodax-ai/repl';
 
+import type { HostIncident } from '../host-protocol/connection.js';
 import { LocalSessionView, SessionView } from '../host-protocol/view.js';
 import { applyViewOps, type SyncItem, type SyncView, type ViewOp } from '../host-protocol/view-sync.js';
 import type { RuntimeWorkflowSummary } from '../sdk-runtime.js';
@@ -47,6 +48,7 @@ interface Rig {
   workflowChanged(id?: string): void;
   workflowFailed(id?: string): void;
   readonly errors: unknown[];
+  readonly incidents: HostIncident[];
   congested: boolean;
   /** What v1 answers an observe with. A test replaces it to hold the answer back. */
   observe: () => Promise<{ readonly view: unknown }>;
@@ -68,6 +70,7 @@ function rig(local = false): Rig {
     calls: [],
     workflowCalls: [],
     errors: [],
+    incidents: [],
     listWorkflows: async () => [],
     workflowChanged: (id = 'wf-1') => self.streams.receive(
       createRuntimeDaemonNotification('event', { subscriptionId: id, event: { type: 'agent_started' } }),
@@ -82,7 +85,7 @@ function rig(local = false): Rig {
       send: frame => self.frames.push(JSON.parse(frame) as Frame),
       congested: () => self.congested,
       closeObservation: async (subscriptionId) => { self.calls.push(`close ${subscriptionId}`); },
-      onInternalError: (_method, error) => self.errors.push(error),
+      onInternalError: (_method, error, incident) => { self.errors.push(error); self.incidents.push(incident); },
     }),
     v1: async (method, params) => {
       if (method === 'workflow.subscribe') {
@@ -232,7 +235,10 @@ describe('a view subscription', () => {
     await host.subscribe(v1View([hello]));
     host.push(v1View([{ ...hello, text: 42 as unknown as string }]));
     expect(host.errors).toHaveLength(1);
-    expect(host.frames).toEqual([expect.objectContaining({ method: 'view.closed', params: { subscriptionId: 'sub-1', reason: 'internal' } })]);
+    // The client is told which incident the Host log names.
+    expect(host.frames).toEqual([expect.objectContaining({ method: 'view.closed',
+      params: { subscriptionId: 'sub-1', reason: 'internal', incidentId: host.incidents[0]!.incidentId } })]);
+    expect(host.incidents[0]!.incidentId).toEqual(expect.any(String));
     expect(host.calls.at(-1)).toBe('close sub-1');
   });
 
@@ -362,7 +368,8 @@ describe("a view of the Session's workflows", () => {
     const host = rig();
     await host.subscribe(v1View([hello]));
     host.workflowFailed();
-    expect(host.frames).toEqual([expect.objectContaining({ method: 'view.closed', params: { subscriptionId: 'sub-1', reason: 'internal' } })]);
+    expect(host.frames).toEqual([expect.objectContaining({ method: 'view.closed',
+      params: { subscriptionId: 'sub-1', reason: 'internal', incidentId: host.incidents[0]!.incidentId } })]);
     expect(host.calls.at(-1)).toBe('close sub-1');
   });
 });

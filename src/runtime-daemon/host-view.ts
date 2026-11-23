@@ -10,6 +10,7 @@
 import type { ClientInteraction, ClientSession, ClientSessionView, ClientViewItem } from '@kodax-ai/coding/client-contract';
 
 import { HostProtocolError, hostRpcNotification } from '../host-protocol/codec.js';
+import { newHostIncident, type HostIncident } from '../host-protocol/connection.js';
 import type { LocalSessionView, SessionView } from '../host-protocol/view.js';
 import { diffSessionView, type SyncItem, type SyncView } from '../host-protocol/view-sync.js';
 import type { RuntimeWorkflowSummary } from '../sdk-runtime.js';
@@ -24,6 +25,12 @@ type View = SyncView<SyncItem>;
 interface Shown {
   readonly epoch: string;
   readonly view: View;
+}
+
+/** Why the Host ended a subscription, and the incident in its log when it failed. */
+interface Closed {
+  readonly reason: string;
+  readonly incidentId?: string;
 }
 
 /** One subscription. A new object each time the id is subscribed, so a late event can tell it was replaced. */
@@ -41,7 +48,7 @@ interface Stream {
   /** The newest view the client was not sent yet. */
   pending?: Shown;
   /** Why the Host ended the subscription before its answer was on the wire. */
-  ended?: string;
+  ended?: Closed;
   /** The newest view v1 sent. */
   base?: ItemBoundedSessionView;
   /** The Session's workflows as last read, in v2 terms. */
@@ -68,7 +75,7 @@ export interface HostViewStreamsOptions {
   readonly congested: () => boolean;
   /** Ends the v1 observation behind a subscription. Succeeds when there is none. */
   readonly closeObservation: (subscriptionId: string) => Promise<void>;
-  readonly onInternalError: (method: string, error: unknown) => void;
+  readonly onInternalError: (method: string, error: unknown, incident: HostIncident) => void;
 }
 
 export interface HostViewSubscription {
@@ -95,6 +102,11 @@ export function createHostViewStreams(options: HostViewStreamsOptions): HostView
   /** Streams by the v1 subscription that follows their workflows. */
   const workflowStreams = new Map<string, Stream>();
   const { contract } = options;
+  const report = (method: string, error: unknown): HostIncident => {
+    const incident = newHostIncident();
+    options.onInternalError(method, error, incident);
+    return incident;
+  };
   const notify = (method: string, params: Readonly<Record<string, unknown>>): void => {
     options.send(JSON.stringify(hostRpcNotification(method, params)));
   };
@@ -126,20 +138,20 @@ export function createHostViewStreams(options: HostViewStreamsOptions): HostView
     notify('view.patch', { ...position, ops });
   };
   /** The Host ended the subscription. The client learns it and may subscribe again. */
-  const end = (stream: Stream, reason: string): void => {
+  const end = (stream: Stream, closed: Closed): void => {
     if (streams.get(stream.subscriptionId) !== stream) return;
     streams.delete(stream.subscriptionId);
     unfollowWorkflows(stream);
-    if (stream.answered) notify('view.closed', { subscriptionId: stream.subscriptionId, reason });
-    else stream.ended = reason;
+    if (stream.answered) notify('view.closed', { subscriptionId: stream.subscriptionId, ...closed });
+    else stream.ended = closed;
   };
   /** Something the client would be shown cannot be. Ending the subscription beats leaving the client stale. */
   const fail = (stream: Stream, error: unknown): void => {
-    options.onInternalError('view.subscribe', error);
+    const { incidentId } = report('view.subscribe', error);
     if (streams.get(stream.subscriptionId) !== stream) return;
-    end(stream, 'internal');
+    end(stream, { reason: 'internal', incidentId });
     options.closeObservation(stream.subscriptionId)
-      .catch((failure: unknown) => options.onInternalError('view.subscribe', failure));
+      .catch((failure: unknown) => report('view.subscribe', failure));
   };
   const unfollowWorkflows = (stream: Stream): void => {
     const followed = stream.workflowSubscription;
@@ -147,7 +159,7 @@ export function createHostViewStreams(options: HostViewStreamsOptions): HostView
     stream.workflowSubscription = undefined;
     workflowStreams.delete(followed);
     stream.v1('workflow.unsubscribe', { subscriptionId: followed })
-      .catch((error: unknown) => options.onInternalError('view.subscribe', error));
+      .catch((error: unknown) => report('view.subscribe', error));
   };
   /** Drops the subscription under an id, if there is one. */
   const release = (subscriptionId: string): void => {
@@ -227,7 +239,8 @@ export function createHostViewStreams(options: HostViewStreamsOptions): HostView
           { readonly view: unknown };
         if (stream.ended !== undefined) {
           throw new HostProtocolError('unavailable', 'The Host ended the subscription before answering it.', {
-            reason: stream.ended,
+            reason: stream.ended.reason,
+            ...(stream.ended.incidentId !== undefined ? { incidentId: stream.ended.incidentId } : {}),
           });
         }
         // A view that arrived ahead of the answer is newer than the answer's.
@@ -239,7 +252,7 @@ export function createHostViewStreams(options: HostViewStreamsOptions): HostView
           answer: { subscriptionId, epoch, seq: 0, snapshot: view },
           answered: () => {
             if (stream.ended !== undefined) {
-              notify('view.closed', { subscriptionId, reason: stream.ended });
+              notify('view.closed', { subscriptionId, ...stream.ended });
               return;
             }
             stream.answered = true;
@@ -285,7 +298,7 @@ export function createHostViewStreams(options: HostViewStreamsOptions): HostView
           fail(stream, error);
         }
       } else if (params.status?.state === 'closed' && params.status.reason !== 'client') {
-        end(stream, params.status.reason ?? 'unavailable');
+        end(stream, { reason: params.status.reason ?? 'unavailable' });
       }
     },
     drained() {
