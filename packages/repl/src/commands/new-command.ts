@@ -40,6 +40,7 @@ export async function moveToNewSession(context: InteractiveContext, callbacks: C
  */
 export const newCommand: Command = {
   name: 'new',
+  category: 'Session',
   description: 'Start a new conversation session',
   usage: '/new',
   handler: async (_args, context, callbacks) => {

@@ -119,6 +119,7 @@ import {
 import { getActivePasteStore } from '../ui/utils/paste-store.js';
 import { retrievePastedText } from '../ui/utils/paste-cache.js';
 import {
+  HELP_CATEGORIES,
   toCommandDefinition,
   clientCommandResult,
   type Command as RegisteredCommand,
@@ -305,6 +306,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   workModeCommand,
   {
     name: 'help',
+    category: 'General',
     aliases: ['h', '?'],
     description: 'Show all available commands',
     usage: '/help [command]',
@@ -351,6 +353,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'setup',
+    category: 'General',
     description: 'Initialize configuration and configure a provider',
     usage: '/setup [--custom|--help]',
     handler: async (args, _context, callbacks) => {
@@ -428,6 +431,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'exit',
+    category: 'General',
     aliases: ['quit', 'q', 'bye'],
     description: 'Exit interactive mode',
     handler: async (_args, context, callbacks) => {
@@ -451,6 +455,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   {
     // The fullscreen UI intercepts /side before parsing; only the classic renderer reaches this handler.
     name: 'side',
+    category: 'General',
     aliases: ['btw'],
     description: 'Open a private side chat (fullscreen UI only)',
     usage: '/side [question] | /side end',
@@ -460,6 +465,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'clear',
+    category: 'General',
     description: 'Clear the conversation and continue in a new session',
     handler: async (_args, context, callbacks) => {
       // A Host replays history by session id, so clearing must move to a new id;
@@ -489,6 +495,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'cost',
+    category: 'General',
     description: 'Show session cost report',
     usage: '/cost',
     handler: async (_args, _context, callbacks) => {
@@ -510,6 +517,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   {
     // Issue 121: inspect a `[Pasted text #N]` placeholder's original content.
     name: 'paste',
+    category: 'General',
     description: 'Inspect pasted text stored in the input buffer',
     usage: '/paste show <id> | /paste list',
     argumentHint: 'show <id> | list',
@@ -593,6 +601,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'compact',
+    category: 'General',
     description: 'Manually trigger context compaction',
     usage: '/compact [instructions]',
     handler: async (args, context, callbacks, currentConfig) => {
@@ -790,6 +799,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'reload',
+    category: 'General',
     description: 'Reload project rules, skills, and active extensions',
     handler: async (_args, context, callbacks, _currentConfig) => {
       console.log(chalk.cyan('\nReloading project rule files, skills, and runtime extensions...\n'));
@@ -871,6 +881,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'extensions',
+    category: 'Integrations',
     aliases: ['ext'],
     description: 'Show active extension runtime diagnostics',
     usage: '/extensions',
@@ -962,6 +973,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'sandbox',
+    category: 'Integrations',
     description: 'Inspect the optional ASRT sandbox backend',
     usage: '/sandbox',
     handler: async (args, _context, callbacks) => {
@@ -1009,6 +1021,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'status',
+    category: 'General',
     aliases: ['info', 'ctx'],
     description: 'Show current session status',
     handler: async (args, context, callbacks, currentConfig) => {
@@ -1035,6 +1048,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'mcp',
+    category: 'Integrations',
     description: 'Show MCP server status or refresh catalogs',
     usage: '/mcp [status|refresh]',
     handler: async (args, _context, callbacks) => {
@@ -1107,6 +1121,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'repo-intel',
+    category: 'Settings',
     description: 'Inspect built-in repo intelligence',
     usage: '/repo-intel [status|mode|trace]',
     handler: async (args, context, callbacks, currentConfig) => {
@@ -1207,53 +1222,8 @@ export const BUILTIN_COMMANDS: Command[] = [
     },
   },
   {
-    name: 'repointel',
-    aliases: ['ri'],
-    description: 'Deprecated alias for /repo-intel status',
-    usage: '/repointel [status]',
-    userInvocable: false,
-    handler: async (args, context, _callbacks, currentConfig) => {
-      const subcommand = args[0]?.toLowerCase() ?? 'status';
-      console.log(chalk.yellow('\n[/repointel is deprecated; use /repo-intel status]\n'));
-
-      if (subcommand === 'status') {
-        const inspection = await inspectRepoIntelligenceRuntime({
-          mode: currentConfig.repoIntelligenceMode,
-          trace: currentConfig.repoIntelligenceTrace,
-          probe: true,
-          workspaceRoot: getRepoIntelInspectionWorkspaceRoot(context),
-        });
-        printRepoIntelStatus(inspection);
-        return;
-      }
-
-      if (subcommand === 'mode') {
-        console.log(chalk.dim('Use /repo-intel mode [auto|full|light|off] to change repo-intelligence mode.\n'));
-        return;
-      }
-
-      if (subcommand === 'trace') {
-        console.log(chalk.dim('Use /repo-intel trace [on|off|toggle] to change repo-intelligence trace output.\n'));
-        return;
-      }
-
-      if (subcommand === 'warm' || subcommand === 'endpoint' || subcommand === 'bin') {
-        console.log(chalk.dim('Repo intelligence is built into KodaX; external daemon/bin controls are no longer a normal REPL command surface.'));
-        console.log(chalk.dim('Use /repo-intel status to inspect the active engine.\n'));
-        return;
-      }
-
-      console.log(chalk.dim('Usage: /repointel [status]\n'));
-    },
-    detailedHelp: () => {
-      console.log(chalk.cyan('\n/repointel - Deprecated\n'));
-      console.log(chalk.dim('Use /repo-intel status for built-in repo-intelligence diagnostics.'));
-      console.log(chalk.dim('External endpoint/bin/warm controls are deprecated for KodaX.'));
-      console.log();
-    },
-  },
-  {
     name: 'fallback',
+    category: 'Settings',
     description: 'Configure the cross-provider fallback chain for child tasks',
     usage: '/fallback [status | <p1,p2,...> | off]',
     handler: async (args, _context, _callbacks, _currentConfig) => {
@@ -1306,6 +1276,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'mode',
+    category: 'Permission',
     description: 'Show or switch permission mode (plan/accept-edits/auto/full-access)',
     usage: '/mode [plan|accept-edits|auto|full-access]',
     handler: async (args, _context, callbacks, currentConfig) => {
@@ -1352,6 +1323,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'save',
+    category: 'Session',
     description: 'Save current session',
     handler: async (_args, context, callbacks) => {
       await callbacks.saveSession();
@@ -1375,6 +1347,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'load',
+    category: 'Session',
     aliases: ['resume'],
     description: 'Load a session',
     usage: '/load <session-id>',
@@ -1409,6 +1382,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'tree',
+    category: 'Session',
     description: 'Inspect or switch the current session tree',
     usage: '/tree [entry-id|label] | /tree label <entry-id|label> <name> | /tree unlabel <entry-id|label>',
     handler: async (args, _context, callbacks) => {
@@ -1464,6 +1438,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'fork',
+    category: 'Session',
     description: 'Fork the current branch into a new session',
     usage: '/fork [entry-id|label]',
     handler: async (args, _context, callbacks) => {
@@ -1486,6 +1461,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'rewind',
+    category: 'Session',
     description: 'Rewind the current session to a previous point',
     usage: '/rewind [entry-id|label]',
     handler: async (args, _context, callbacks) => {
@@ -1511,6 +1487,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'sessions',
+    category: 'Session',
     aliases: ['ls', 'list'],
     description: 'List recent sessions',
     handler: async (_args, _context, callbacks) => {
@@ -1533,6 +1510,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'history',
+    category: 'Session',
     aliases: ['hist'],
     description: 'Show conversation history',
     handler: async (_args, _context, callbacks) => {
@@ -1552,6 +1530,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'delete',
+    category: 'Session',
     aliases: ['rm', 'del'],
     description: 'Delete a session',
     usage: '/delete <session-id> or /delete all',
@@ -1592,6 +1571,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'model',
+    category: 'Settings',
     aliases: ['m'],
     description: 'Show or switch provider/model',
     usage: '/model [<provider>[/<model>] | /<model>]',
@@ -1708,6 +1688,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'provider',
+    category: 'Settings',
     description: 'Inspect provider semantics and policy constraints',
     usage: '/provider [<provider>[/<model>]]',
     handler: async (args, _context, _callbacks, currentConfig) => {
@@ -1873,25 +1854,9 @@ export const BUILTIN_COMMANDS: Command[] = [
     },
   },
   {
-    name: 'thinking',
-    aliases: ['think', 't'],
-    description: 'Show or set native reasoning effort',
-    usage: '/thinking [none|auto|low|medium|high|xhigh|max]',
-    handler: async (args, _context, callbacks, currentConfig) => {
-      if (callbacks.config) return hostEffortCommand(args, callbacks, currentConfig);
-      await handleReasoningEffortCommand('thinking', args, callbacks, currentConfig);
-    },
-    detailedHelp: () => {
-      console.log(chalk.cyan('\n/thinking - Set Native Reasoning Effort\n'));
-      console.log(chalk.bold('Usage:'));
-      printReasoningEffortHelp('thinking');
-      console.log(chalk.dim('  /t                 ') + 'Alias for /thinking');
-      console.log();
-    },
-  },
-  {
     name: 'reasoning',
-    aliases: ['reason'],
+    category: 'Settings',
+    aliases: ['reason', 'thinking', 'think', 't'],
     description: 'Show or set native reasoning effort',
     usage: '/reasoning [none|auto|low|medium|high|xhigh|max]',
     handler: async (args, _context, callbacks, currentConfig) => {
@@ -1902,12 +1867,13 @@ export const BUILTIN_COMMANDS: Command[] = [
       console.log(chalk.cyan('\n/reasoning - Set Native Reasoning Effort\n'));
       console.log(chalk.bold('Usage:'));
       printReasoningEffortHelp('reasoning');
-      console.log(chalk.dim('  /reason                ') + 'Alias for /reasoning');
+      console.log(chalk.dim('  /reason, /thinking, /think, /t  ') + 'Aliases for /reasoning');
       console.log();
     },
   },
   {
     name: 'effort',
+    category: 'Settings',
     description: 'Show or set native reasoning effort',
     usage: '/effort [level]',
     handler: async (args, _context, callbacks, currentConfig) => {
@@ -1932,6 +1898,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'agent-mode',
+    category: 'Settings',
     aliases: ['am'],
     description: 'Show or set agent mode',
     usage: '/agent-mode [ama]',
@@ -1978,6 +1945,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'auto',
+    category: 'Permission',
     aliases: ['a'],
     description: 'Quick switch to auto mode',
     handler: async (_args, _context, callbacks, currentConfig) => {
@@ -2003,6 +1971,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'skill',
+    category: 'Skills and Memory',
     description: 'Skill namespace - list, invoke, or review skill learning',
     usage: '/skill[:name] [pending|args]',
     handler: async (args, context) => {
@@ -2040,6 +2009,7 @@ export const BUILTIN_COMMANDS: Command[] = [
   },
   {
     name: 'stall-log',
+    category: 'Settings',
     description: 'Toggle Stall Sidecar log line (off by default)',
     usage: '/stall-log [on|off]',
     argumentHint: 'on | off',
@@ -2125,21 +2095,12 @@ export const BUILTIN_COMMANDS: Command[] = [
 ];
 
 // Print help.
-const COMMAND_CATEGORIES: Record<string, string[]> = {
-  General: ['help', 'copy', 'exit', 'clear', 'compact', 'reload', 'extensions', 'status', 'agents'],
-  Permission: ['mode', 'auto'],
-  Session: ['new', 'recover', 'save', 'load', 'sessions', 'history', 'delete'],
-  Settings: ['model', 'provider', 'thinking', 'reasoning', 'effort', 'agent-mode', 'plan', 'repo-intel'],
-  Skills: ['skill', 'learn'],
+/** Removed commands and what replaces them, so a habit gets a pointer instead of "unknown command". */
+const RETIRED_COMMANDS: Readonly<Record<string, string>> = {
+  repointel: '/repo-intel status',
+  ri: '/repo-intel status',
+  plan: '/mode plan',
 };
-
-function getCommandsForCategory(names: string[]) {
-  const registry = getCommandRegistry();
-  return names
-    .map((name) => registry.get(name))
-    .filter((cmd): cmd is NonNullable<ReturnType<CommandRegistry['get']>> => cmd !== undefined)
-    .filter((cmd) => cmd.userInvocable !== false);
-}
 
 function reasoningModeToLegacyThinking(mode: KodaXReasoningMode): boolean {
   return mode !== 'off';
@@ -2517,15 +2478,13 @@ function printHelp(hostCommands: readonly ClientCommandInfo[] = []): void {
   const registry = getCommandRegistry();
   const categorizedNames = new Set<string>();
 
-  for (const [category, names] of Object.entries(COMMAND_CATEGORIES)) {
-    const commands = getCommandsForCategory(names);
-    if (commands.length === 0) continue;
-
+  for (const category of HELP_CATEGORIES) {
+    const commands = registry.getAll()
+      .filter((cmd) => cmd.userInvocable !== false && cmd.category === category);
     for (const cmd of commands) {
       categorizedNames.add(cmd.name.toLowerCase());
     }
     printCommandSection(category, commands);
-
   }
 
   const dynamicSections = new Map<string, Array<{ name: string; aliases?: string[]; description: string }>>();
@@ -2584,8 +2543,7 @@ function printHelp(hostCommands: readonly ClientCommandInfo[] = []): void {
   console.log(`  ${chalk.cyan('@path')}             Attach image to context`);
   console.log(`  ${chalk.cyan('!command')}         Execute shell command`);
   console.log();
-  console.log(chalk.dim('Skills:'));
-  console.log(`  ${chalk.cyan('/skill')}            List all available skills`);
+  console.log(chalk.dim('Invoking skills:'));
   console.log(`  ${chalk.cyan('/<skill-name>')}     Invoke a skill when no command has that name`);
   console.log(`  ${chalk.cyan('/skill:<name>')}     Compatibility form (e.g., /skill:code-review)`);
   console.log(`  ${chalk.cyan('/skill pending')}    Review pending skill learning suggestions`);
@@ -3296,7 +3254,10 @@ export async function executeCommand(
     );
   }
 
-  console.log(chalk.yellow(`\n[Unknown command: /${parsed.command}. Type /help for available commands]`));
+  const replacement = RETIRED_COMMANDS[parsed.command.toLowerCase()];
+  console.log(chalk.yellow(replacement
+    ? `\n[/${parsed.command} was removed; use ${replacement}]`
+    : `\n[Unknown command: /${parsed.command}. Type /help for available commands]`));
   return false;
 }
 

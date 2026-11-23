@@ -294,6 +294,7 @@ function printReviewHelp(): void {
 
 export const reviewCommand: Command = {
   name: 'review',
+  category: 'Tasks',
   description: 'Review git changes for bugs, security, performance, design, and optional lean diffs',
   usage: '/review [--lean] [--workflow] [base | sha <hash>] [prompt...]',
   argumentHint: '[--lean] [--workflow] [base | sha <hash>] [prompt...]',

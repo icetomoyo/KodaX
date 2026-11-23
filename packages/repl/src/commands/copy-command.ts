@@ -16,6 +16,7 @@ import { extractLastAssistantText } from '../ui/utils/message-utils.js';
  */
 export const copyCommand: Command = {
   name: 'copy',
+  category: 'General',
   description: 'Copy last assistant message to clipboard',
   usage: '/copy',
   handler: async (_args, context, callbacks) => {

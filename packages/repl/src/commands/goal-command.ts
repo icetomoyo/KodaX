@@ -319,7 +319,8 @@ async function doClear(
 
 export const goalCommand: Command = {
   name: 'goal',
-  description: 'Manage a persistent session goal (FEATURE_192)',
+  category: 'Tasks',
+  description: 'Manage a persistent session goal',
   usage: '/goal [<objective> [--tokens N] | status | pause | resume | clear | help]',
   argumentHint: '<objective> | status | pause | resume | clear | help',
   handler: async (args, context, callbacks) => {

@@ -309,14 +309,6 @@ const REPO_INTEL_TRACE_ARGS: ArgumentDefinition[] = [
   },
 ];
 
-const LEGACY_REPOINTEL_SUBCOMMAND_ARGS: ArgumentDefinition[] = [
-  {
-    name: 'status',
-    description: 'Deprecated alias for /repo-intel status',
-    type: 'enum',
-  },
-];
-
 const WORKFLOW_SUBCOMMAND_ARGS: ArgumentDefinition[] = [
   { name: 'list', description: 'List built-in and saved workflows', type: 'enum' },
   { name: 'create', description: 'Generate and run a workflow from a request', type: 'enum' },
@@ -697,7 +689,6 @@ export const COMMAND_ARGUMENTS: CommandArgumentsRegistry = new Map([
  */
 const MODEL_COMMAND_NAMES = new Set(['model', 'm', 'provider']);
 const REPO_INTEL_COMMAND_NAMES = new Set(['repo-intel']);
-const LEGACY_REPOINTEL_COMMAND_NAMES = new Set(['repointel', 'ri']);
 const WORKFLOW_COMMAND_NAMES = new Set(['workflow']);
 const LEARN_COMMAND_NAMES = new Set(['learn']);
 
@@ -708,9 +699,6 @@ export function getCommandArguments(commandName: string, partial?: string, argPa
   }
   if (REPO_INTEL_COMMAND_NAMES.has(key)) {
     return getRepoIntelArgs(argParts);
-  }
-  if (LEGACY_REPOINTEL_COMMAND_NAMES.has(key)) {
-    return argParts.length <= 1 ? LEGACY_REPOINTEL_SUBCOMMAND_ARGS : [];
   }
   if (WORKFLOW_COMMAND_NAMES.has(key)) {
     return getWorkflowArgs(argParts);

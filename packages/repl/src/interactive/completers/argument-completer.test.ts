@@ -78,11 +78,9 @@ describe('ArgumentCompleter', () => {
       expect(completer.canComplete('/ctx ', 5)).toBe(true);
     });
 
-    it('should trigger on /repo-intel command and legacy alias', () => {
+    it('should trigger on /repo-intel command', () => {
       expect(completer.canComplete('/repo-intel ', 12)).toBe(true);
       expect(completer.canComplete('/repo-intel mode ', 17)).toBe(true);
-      expect(completer.canComplete('/repointel ', 11)).toBe(true);
-      expect(completer.canComplete('/ri ', 4)).toBe(true);
     });
 
     it('should trigger on aliased commands', () => {
@@ -414,15 +412,6 @@ describe('ArgumentCompleter', () => {
         expect(displays).not.toContain('warm');
         expect(displays).not.toContain('endpoint');
         expect(displays).not.toContain('bin');
-      });
-
-      it('should keep legacy /repointel and /ri completion narrow', async () => {
-        const repointelCompletions = await completer.getCompletions('/repointel ', 11);
-        const completions = await completer.getCompletions('/ri ', 4);
-
-        expect(repointelCompletions.map(c => c.display)).toEqual(['status']);
-        expect(completions.some(c => c.display === 'status')).toBe(true);
-        expect(completions.some(c => c.display === 'mode')).toBe(false);
       });
 
       it('should return public runtime modes after /repo-intel mode', async () => {

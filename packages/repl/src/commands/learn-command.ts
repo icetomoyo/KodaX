@@ -209,6 +209,7 @@ async function resolveLearningCapabilityId(
 
 export const learnCommand: Command = {
   name: 'learn',
+  category: 'Skills and Memory',
   description: 'Inspect and control the Learning Center',
   usage: '/learn [list|ready|pending|show|review|trust|reject|disable|rollback|promote|help] [name|slug|capability-id] [--scope user]',
   argumentHint: 'list [search] | ready [search] | pending [search] | show <slug> | trust <slug> | disable <slug> | promote <slug> [--scope user] | help [promote]',

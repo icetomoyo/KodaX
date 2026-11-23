@@ -157,6 +157,7 @@ function printAgentsHelp(): void {
 
 export const agentsCommand: Command = {
   name: 'agents',
+  category: 'Tasks',
   description: 'Initialize target-project AGENTS.md instructions',
   usage: '/agents init | lean',
   argumentHint: 'init | lean',

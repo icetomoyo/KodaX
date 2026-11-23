@@ -4,6 +4,7 @@ import { normalizeRecoveryPrompt } from '../session/recovery.js';
 
 export const recoverCommand: Command = {
   name: 'recover',
+  category: 'Session',
   aliases: ['handoff'],
   description: 'Create a fresh session from safe memory and continue',
   usage: '/recover [prompt]',

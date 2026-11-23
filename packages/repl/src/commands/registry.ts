@@ -195,6 +195,7 @@ export class CommandRegistry {
           name: def.name,
           aliases: def.aliases,
           description: def.description,
+          category: def.category,
           source: def.source ?? 'builtin',
           usage: def.usage,
           priority: def.priority,

@@ -836,6 +836,7 @@ async function runMemorySubcommand(
  */
 export const memoryCommand: Command = {
   name: 'memory',
+  category: 'Skills and Memory',
   description: 'View or manage durable Memory',
   usage: '/memory [list|candidates|show|approve|forget|help]',
   argumentHint: 'list | candidates | show <id> | approve <id> | forget <id> | help',

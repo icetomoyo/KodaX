@@ -11,7 +11,6 @@ import { BUILTIN_COMMANDS } from './commands.js';
 import type { CommandCallbacks, CurrentConfig, InteractiveContext } from '../commands/types.js';
 
 const effortCmd = BUILTIN_COMMANDS.find((command) => command.name === 'effort')!;
-const thinkingCmd = BUILTIN_COMMANDS.find((command) => command.name === 'thinking')!;
 const reasoningCmd = BUILTIN_COMMANDS.find((command) => command.name === 'reasoning')!;
 const ctx = {} as unknown as InteractiveContext;
 const ANSI_PATTERN = /\u001b\[[0-9;]*m/g;
@@ -202,7 +201,6 @@ describe('/effort command', () => {
   });
 
   it.each([
-    [thinkingCmd, 'deep'],
     [reasoningCmd, 'deep'],
   ])('routes legacy %s depth through the native effort writer', async (command, value) => {
     const setEffort = vi.fn();
@@ -231,7 +229,7 @@ describe('/effort command', () => {
       thinking: true,
     });
 
-    await thinkingCmd.handler(['none'], ctx, callbacks, config);
+    await reasoningCmd.handler(['none'], ctx, callbacks, config);
 
     expect(saveConfig).not.toHaveBeenCalled();
     expect(callbacks.setEffort).not.toHaveBeenCalled();

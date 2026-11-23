@@ -303,7 +303,8 @@ function buildSavedWorkflowProcessMetadata(input: {
 
 export const workflowCommand: Command = {
   name: 'workflow',
-  description: 'Run a dynamic multi-agent workflow (FEATURE_217)',
+  category: 'Tasks',
+  description: 'Run a dynamic multi-agent workflow',
   usage: '/workflow [help | list | pending | runs | show | pause | resume | stop | delete | prune | rerun | save | rename | revise | create | <name> [args] | <request>]',
   argumentHint: 'help | list | pending | runs [--all|--limit N] | show [runId] | pause <runId> | resume <runId> | stop [runId] | delete [--force] [--run|--saved] <runId|savedName> | prune --dry-run|--keep N|--older-than Nd | rerun <runId|savedName> [args] | save <runId> <name> | rename <runId|alias|savedName> <newName> | revise [--replace] <runId|alias|savedName> <change> | create <request> | <name> [args]',
   detailedHelp: printWorkflowHelp,

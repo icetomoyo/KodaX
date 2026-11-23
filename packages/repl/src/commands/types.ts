@@ -373,10 +373,17 @@ export type CommandHandler = (
   currentConfig: CurrentConfig
 ) => Promise<CommandResult | void>;
 
+/** The `/help` sections, in display order. Every user-facing built-in command names one. */
+export const HELP_CATEGORIES = [
+  'General', 'Session', 'Permission', 'Settings', 'Tasks', 'Skills and Memory', 'Integrations',
+] as const;
+export type CommandCategory = typeof HELP_CATEGORIES[number];
+
 export interface CommandDefinition {
   name: string;
   aliases?: string[];
   description: string;
+  category?: CommandCategory;
   usage?: string;
   detailedHelp?: (args?: readonly string[]) => void;
   handler: CommandHandler;
@@ -399,6 +406,7 @@ export interface CommandInfo {
   name: string;
   aliases?: string[];
   description: string;
+  category?: CommandCategory;
   source: CommandSource;
   usage?: string;
   priority?: CommandPriority;
@@ -420,6 +428,7 @@ export interface Command {
   name: string;
   aliases?: string[];
   description: string;
+  category?: CommandCategory;
   usage?: string;
   handler: CommandHandler;
   detailedHelp?: (args?: readonly string[]) => void;

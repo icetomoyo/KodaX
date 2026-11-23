@@ -59,7 +59,7 @@ describe('status workspace output', () => {
     expect(output).toContain('managed');
   });
 
-  it.each(['thinking', 'reasoning', 'mode', 'agent-mode'])('reports Host default in /%s after a peer clears the override', async name => {
+  it.each(['effort', 'reasoning', 'mode', 'agent-mode'])('reports Host default in /%s after a peer clears the override', async name => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     currentConfig.hostSettings = {};
     const command = BUILTIN_COMMANDS.find(candidate => candidate.name === name)!;
@@ -177,44 +177,5 @@ describe('status workspace output', () => {
     expect(output).toContain('on');
     expect(output).not.toContain('Endpoint:');
     expect(output).not.toContain('Bin:');
-  });
-
-  it('keeps deprecated /repointel warm away from external runtime control', async () => {
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const repointelCommand = BUILTIN_COMMANDS.find((command) => command.name === 'repointel');
-
-    expect(repointelCommand).toBeDefined();
-    await repointelCommand!.handler(['warm'], context, {} as CommandCallbacks, currentConfig);
-
-    const output = logSpy.mock.calls.flat().join('\n');
-    expect(output).toContain('/repointel is deprecated');
-    expect(output).toContain('external daemon/bin controls');
-    expect(output).toContain('/repo-intel status');
-    expect(output).not.toContain('warmed successfully');
-  });
-
-  it('keeps deprecated /repointel mode and trace from mutating runtime config', async () => {
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const saveConfig = vi.fn();
-    const repointelCommand = BUILTIN_COMMANDS.find((command) => command.name === 'repointel');
-
-    expect(repointelCommand).toBeDefined();
-    await repointelCommand!.handler(
-      ['mode', 'off'],
-      context,
-      { saveConfig } as unknown as CommandCallbacks,
-      { ...currentConfig, repoIntelligenceMode: 'full', repoIntelligenceTrace: false },
-    );
-    await repointelCommand!.handler(
-      ['trace', 'on'],
-      context,
-      { saveConfig } as unknown as CommandCallbacks,
-      { ...currentConfig, repoIntelligenceMode: 'full', repoIntelligenceTrace: false },
-    );
-
-    const output = logSpy.mock.calls.flat().join('\n');
-    expect(saveConfig).not.toHaveBeenCalled();
-    expect(output).toContain('Use /repo-intel mode');
-    expect(output).toContain('Use /repo-intel trace');
   });
 });

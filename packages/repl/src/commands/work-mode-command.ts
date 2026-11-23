@@ -2,7 +2,7 @@ import type { Command } from './types.js';
 
 /** One Session selector; /mode remains the independent permission control. */
 export const workModeCommand: Command = {
-  name: 'work-mode', description: 'Select Agent, Coding or Script before the first Run',
+  name: 'work-mode', category: 'Settings', description: 'Select Agent, Coding or Script before the first Run',
   usage: '/work-mode [agent|coding|script]',
   handler: async (args, _context, callbacks, current) => {
     if (!args.length) return { success: true,
