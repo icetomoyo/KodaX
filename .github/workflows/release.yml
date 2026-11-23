@@ -381,12 +381,12 @@ jobs:
         timeout-minutes: 5
         run: npm run test:host-cutover
 
-      - name: Published beta.13 Host in-place upgrade gate
+      - name: Published rc.1 Host in-place upgrade gate
         timeout-minutes: 5
         env:
-          KODAX_BETA13_TARBALL: ${{ runner.temp }}/kodax-ai-kodax-0.7.97-beta.13.tgz
+          KODAX_RC1_TARBALL: ${{ runner.temp }}/kodax-ai-kodax-0.7.97-rc.1.tgz
         run: |
-          npm pack @kodax-ai/kodax@0.7.97-beta.13 --ignore-scripts --pack-destination "$RUNNER_TEMP"
+          npm pack @kodax-ai/kodax@0.7.97-rc.1 --ignore-scripts --pack-destination "$RUNNER_TEMP"
           npm run test:host-upgrade
 
       - name: Hash npm package

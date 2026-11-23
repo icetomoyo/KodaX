@@ -6,6 +6,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [0.7.97-rc.2] - 2026-11-23
+
+Second release candidate of the v0.7.97 line: RepoIntel phase 0, the
+reasoning-replay repairs and the `glm-5.4` listing. RepoIntel keeps to what
+git can answer by default (FEATURE_317): under the default `auto` mode
+agents get `repo_overview`, `changed_scope` and `changed_diff` while the
+semantic tools, the injected module/impact context and the background index
+build need `repoIntelligenceMode` `full` or `light`, truncated lists report
+how many items were left out with no placeholder results, and the index
+moves from `.agent/repo-intelligence/` in the workspace to
+`<config home>/repo-intelligence/`. Switching models no longer teaches the
+new model to write its thinking into the reply: readable reasoning replays
+only through the target's reasoning channel and never becomes reply text
+(Issue 441), and Gemini and pi-messages endpoints replay tool calls from
+another model as real calls and results instead of `<prior_tool_call>` text
+(Issue 442). `zhipu-coding` lists `glm-5.4` with the `glm-5.3-flash`
+settings; the upstream was overloaded at listing time, so effort, tools,
+limits and image input are unverified. Every v0.7.96 stable and
+v0.7.97-alpha.1 through rc.1 client contract is retained. npm publication
+remains a manual maintainer action.
+
 ### Added
 
 - `zhipu-coding` lists `glm-5.4`, which went live on the GLM Coding Plan on

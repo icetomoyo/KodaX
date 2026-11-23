@@ -48,10 +48,78 @@ on one commit.
   The step limit is ten minutes because the passing Windows suite alone takes
   about 4.6 minutes.
 
+## v0.7.97-rc.2 release preparation
+
+Release state: `v0.7.97-rc.2` is a candidate awaiting the publishing
+dispatch. npm publication has not occurred. The candidate is the
+second release candidate of the v0.7.97 line: RepoIntel phase 0, the
+reasoning-replay repairs and the `glm-5.4` listing. RepoIntel keeps to
+what git can answer by default (FEATURE_317): under the default `auto`
+mode agents get `repo_overview`, `changed_scope` and `changed_diff`
+while the semantic tools, the injected module/impact context and the
+background index build need `repoIntelligenceMode` `full` or `light`
+(or `KODAX_REPO_INTELLIGENCE=full|light`), truncated lists report how
+many items were left out with no placeholder results and no fallback
+to the largest module, `changed_scope` pages its file list and
+injected context no longer carries timestamps, and the index is
+stored under `<config home>/repo-intelligence/` instead of
+`.agent/repo-intelligence/` in the workspace. Switching models no
+longer teaches the new model to write its thinking into the reply:
+readable reasoning replays only through the target's reasoning
+channel (unsigned thinking on lenient Anthropic-compatible endpoints,
+`reasoning_content` on OpenAI-compatible ones) and is dropped
+elsewhere, signatures, redacted thinking and encrypted reasoning
+still replay only to the endpoint that produced them, a lenient tool
+turn without thinking carries an empty thinking block, and replay
+removes a leading `<prior_reasoning>` segment from earlier replies so
+already-polluted sessions recover (Issue 441). Gemini and pi-messages
+endpoints replay tool calls from another model as real calls and
+results instead of `<prior_tool_call>` text, using Google's documented
+skip signature on Gemini and an `unknown` origin with zero usage on
+pi-messages (Issue 442; pi-messages has not been tested live), and
+Gemini no longer fails its next request after a reply that left an
+empty text block. `zhipu-coding` lists `glm-5.4` with the
+`glm-5.3-flash` settings; a live check confirmed the model ID exists
+but the upstream was overloaded (error 1305), so effort, tools,
+limits and image input are unverified and image input stays off.
+Every v0.7.96 stable and v0.7.97-alpha.1 through rc.1 client contract
+is retained.
+
+The CI/Release in-place upgrade gates now pin the published
+`0.7.97-rc.1` tarball (published 2026-11-23T00:09:21.196Z; registry
+dist.integrity sha512-gQRxS0S5…vI7QA== packs to the same bytes as the
+kodax-ai-kodax-0.7.97-rc.1.tgz asset of the v0.7.97-rc.1 GitHub
+Release, sha256 bfa64c8b…9afe17). Run that fixture locally with Windows
+`tar.exe` ahead of Git's GNU `tar` on `PATH`: GNU `tar` reads the `C:`
+drive in the archive path as a remote host.
+
+Local candidate validation on Windows with Node 22.23.1: full build
+(after the version bump, so `dist` carries 0.7.97-rc.2), source and
+test typechecks, the self-knowledge/`kodax_manual` registry suite,
+`tests/release-workflow.test.ts`, `tests/tracker-consistency.test.ts`
+and the Issue 441/442 regression suites, `test:host-cutover`, the real
+published rc.1 Host in-place upgrade against the integrity-pinned
+public tarball, `test:bundle` and the fast tier. The packaged Electron
+daemon gate runs in Release CI.
+
+This release follows the single publishing dispatch described under
+[Current release execution](#current-release-execution): `target=all`
+with `release_tag=v0.7.97-rc.2` runs Full CI, all five archive builds
+and the npm package gates, then creates the tag at the dispatched
+commit and the GitHub pre-release from that run's artifacts. Ordinary
+branch pushes do not run CI. Cross-platform manual acceptance,
+installed Space/SDK acceptance, the Space dependency bump and npm
+publication remain separate maintainer steps.
+
 ## v0.7.97-rc.1 release preparation
 
-Release state: `v0.7.97-rc.1` is a candidate awaiting the publishing
-dispatch. npm publication has not occurred. The candidate is the first
+Release state: `v0.7.97-rc.1` was published on 2026-11-22 as a GitHub
+prerelease from run 45083896500 at `c9589bdc2` (every job green on
+that dispatch's first attempt: Full CI including the packaged Electron
+daemon job, all five archive builds and the npm package gates; 13
+assets) and to npm on 2026-11-23T00:09:21Z (dist-tag `rc`). The
+universal npm tarball asset is `kodax-ai-kodax-0.7.97-rc.1.tgz`,
+sha256 `bfa64c8b…9afe17`, matching `SHA256SUMS`. The candidate was the first
 release candidate of the v0.7.97 line: the model catalog refresh and
 the late provider/Host/REPL repairs (Issues 431-440). The `anthropic`
 provider lists Claude Fable 5.2 (1M context, 128K output, always-on
@@ -95,8 +163,9 @@ from the incoming geometry props, Issue 438) and echoes a submitted
 input at once before the Host view shows it. Every v0.7.96 stable and
 v0.7.97-alpha.1 through beta.13 client contract is retained.
 
-The CI/Release in-place upgrade gates now pin the published
-`0.7.97-beta.13` tarball (published 2026-11-21T07:59:13.884Z; registry
+The CI/Release in-place upgrade gates pinned the published
+`0.7.97-beta.13` tarball for this candidate (published
+2026-11-21T07:59:13.884Z; registry
 dist.integrity sha512-4/dwRjmM…THnFwfA== packs to the same bytes as the
 kodax-ai-kodax-0.7.97-beta.13.tgz asset of the v0.7.97-beta.13 GitHub
 Release, sha256 fd748c85…186bc). Run that fixture locally with Windows
@@ -113,10 +182,10 @@ Host in-place upgrade (1 passed) against the integrity-pinned public
 tarball, `test:bundle` (110 passed) and the fast tier (3,795 passed,
 58 skipped). The packaged Electron daemon gate runs in Release CI.
 
-This release follows the single publishing dispatch described under
+This release followed the single publishing dispatch described under
 [Current release execution](#current-release-execution): `target=all`
-with `release_tag=v0.7.97-rc.1` runs Full CI, all five archive builds
-and the npm package gates, then creates the tag at the dispatched
+with `release_tag=v0.7.97-rc.1` ran Full CI, all five archive builds
+and the npm package gates, then created the tag at the dispatched
 commit and the GitHub pre-release from that run's artifacts. Ordinary
 branch pushes do not run CI. Cross-platform manual acceptance,
 installed Space/SDK acceptance, the Space dependency bump and npm

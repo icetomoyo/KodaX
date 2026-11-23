@@ -11,16 +11,16 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.97-rc.1` (Git tag); `v0.7.96` remains the last stable release |
-| Current package version | `@kodax-ai/kodax@0.7.97-rc.1`; npm `beta` is `0.7.97-beta.13` (published 2026-11-21T07:59:13Z); rc.1 npm publication remains a manual maintainer step |
+| Current released version | `v0.7.97-rc.2` (Git tag); `v0.7.96` remains the last stable release |
+| Current package version | `@kodax-ai/kodax@0.7.97-rc.2`; npm `rc` is `0.7.97-rc.1` (published 2026-11-23T00:09:21Z); rc.2 npm publication remains a manual maintainer step |
 | Workspace baseline | `llm / agent / coding / repl` 4 core packages + private optional `artifacts` source workspace; one public npm package |
 | Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4` and extended with the unified Artifact SDK in `v0.7.97-alpha.5`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3` and extended with startup streamlining, Session recency ordering, draft admission, concurrent-launch recovery and shared-Session Host ownership resolution through `v0.7.97-alpha.7`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
 | Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement released in alpha.4; missing visual capabilities remain unverified; [design](ADR.md#verification-responsibility-and-tradeoffs) |
 | Artifact distribution revision | `2026-10-18` — one `@kodax-ai/kodax` npm package; four `/artifacts` subpaths and resources staged in the main tarball; local implementation, not yet published |
 | Current Artifact SDK additions | Unified visual evidence SDK and format backends released in `v0.7.97-alpha.5`: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
-| Current development | `v0.7.97-rc.1` model catalog refresh and late provider/Host/REPL repairs (Issues 431-440) — the `anthropic` provider lists Claude Fable 5.2, the `openai` provider lists the GPT-6.x lineup with per-model effort declarations, defaults move to `claude-sonnet-5-5` and `gpt-6.2-sol` with the Codex bridge falling back to `gpt-6.2-sol`, native Claude models accept forced-tool and legacy `reasoning: false` requests, OpenAI strict tool schemas fall back to non-strict and remember the strict-limit rejection (Issue 431), retry classification retries the real transient shapes (Issue 432), extension internal tool calls stay out of the Session view (Issue 433), Windows process trees read through native `kodax-windows-sandbox` exports so bash no longer blocks the Host event loop (Issue 434), the memory review scan locks only a stale-claimed session (Issue 435), the Host and CLI stop blocking on repeated Git and PowerShell probes (Issue 439), the review receipt is announced only after its job completes (Issue 440), the REPL stops jumping while a reply streams (Issue 438), and it echoes a submitted input before the Host view shows it; [release preparation](release.md#v0797-rc1-release-preparation). On top of the beta.13 Space integration repairs and Session-read cost fixes. Cross-platform manual acceptance, installed Space/SDK acceptance, the Space dependency bump and the original slow first resume after rebuild remain open; Issue 395's intermittent failure cause and Issue 394's whole-task non-inferiority remain unproven. |
+| Current development | `v0.7.97-rc.2` RepoIntel phase 0, reasoning-replay repairs and the `glm-5.4` listing — RepoIntel keeps to what git can answer by default (FEATURE_317): under the default `auto` mode agents get `repo_overview`, `changed_scope` and `changed_diff` while the semantic tools, the injected module/impact context and the background index build need `repoIntelligenceMode` `full` or `light`, truncated lists report omitted counts with no placeholder results, and the index moves from `.agent/repo-intelligence/` in the workspace to `<config home>/repo-intelligence/`; switching models no longer teaches the new model to write its thinking into the reply because readable reasoning replays only through the target's reasoning channel (Issue 441), Gemini and pi-messages endpoints replay foreign tool calls as real calls instead of `<prior_tool_call>` text (Issue 442), and `zhipu-coding` lists `glm-5.4` with the `glm-5.3-flash` settings (unverified upstream at listing time); [release preparation](release.md#v0797-rc2-release-preparation). On top of the rc.1 model catalog refresh and late provider/Host/REPL repairs. Cross-platform manual acceptance, installed Space/SDK acceptance, the Space dependency bump and the original slow first resume after rebuild remain open; Issue 395's intermittent failure cause and Issue 394's whole-task non-inferiority remain unproven. |
 | Visual harness implementation | P3/P4/P5/P6 implemented within declared scope and released in `v0.7.97-beta.5` through the next-dev integration; [final ID/receipt contract delivery](designs/visual-harness-id-contract-delivery-2026-10-30.md). P7 task-value evaluation concluded **mixed; net task-quality/token value unproven**, against optimized pre-visual 1826cc22; [final review and limits](designs/visual-harness-current-version-closure-2026-10-30.md). The 2026-10-29 plan's "not executed" state and old r3 single-response results are historical, not the current outcome. Historical default suite 18,094 passed / 0 failed; earlier failures and unlocated causes remain recorded; [mainline integration acceptance](designs/next-dev-integration-execution-2026-11-09.md). No new feature ID/version assigned |
-| Roadmap updated | `2026-11-23` — rc.1 prepared on top of the npm-published beta.13 with the model catalog refresh (Fable 5.2, GPT-6.x lineup, new defaults) and the late provider/Host/REPL repairs (Issues 431-440) including the submitted-input echo; beta.13 published with the Space integration repairs; FEATURE_300 remains Planned |
+| Roadmap updated | `2026-11-23` — rc.2 prepared on top of the npm-published rc.1 with RepoIntel phase 0 (FEATURE_317 default surface), the reasoning/tool-call replay repairs (Issues 441-442) and `glm-5.4` on zhipu-coding; rc.1 published with the model catalog refresh; FEATURE_300 remains Planned |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
 | Total tracked features | `95` |
 | InProgress | `3` |
@@ -555,6 +555,45 @@ Final frozen package **80** and historical/real-alpha.11 Host gates **4** passed
 and build fingerprints remained unchanged throughout. See the J guide for exact checkpoints.
 Space stays independently at `da531f0a`; its historical I counts do not certify a newly paired
 Space build. No push/publication.
+
+## v0.7.97-rc.2 Release Record
+
+`v0.7.97-rc.2` is the second release candidate of the v0.7.97 line:
+RepoIntel phase 0, the reasoning-replay repairs and the `glm-5.4`
+listing. RepoIntel keeps to what git can answer by default (FEATURE_317):
+under the default `auto` mode agents get `repo_overview`, `changed_scope`
+and `changed_diff` while the semantic tools (`module_context`,
+`symbol_context`, `process_context`, `impact_estimate`,
+`relationship_scan`, `cyclic_dependencies`, `semantic_lookup`), the
+injected module/impact context and the background index build need
+`repoIntelligenceMode` `full` or `light` or
+`KODAX_REPO_INTELLIGENCE=full|light`; truncated lists report how many
+items were left out, a name the index does not know is a not-found error,
+an unresponsive index reports warming or unavailable with no placeholder
+result and no fallback to the largest module; `changed_scope` pages its
+file list and injected context no longer carries timestamps; and the
+index is stored under `<config home>/repo-intelligence/` instead of
+`.agent/repo-intelligence/` in the workspace. Switching models no longer
+teaches the new model to write its thinking into the reply: readable
+reasoning replays only through the target's reasoning channel (unsigned
+thinking on lenient Anthropic-compatible endpoints, `reasoning_content`
+on OpenAI-compatible ones) and is dropped elsewhere, signatures,
+redacted thinking and encrypted reasoning still replay only to the
+endpoint that produced them, and replay removes a leading
+`<prior_reasoning>` segment from earlier replies so already-polluted
+sessions recover (Issue 441). Gemini and pi-messages endpoints replay
+tool calls from another model as real calls and results instead of
+`<prior_tool_call>` text, using Google's documented skip signature on
+Gemini and an `unknown` origin with zero usage on pi-messages (Issue 442;
+pi-messages has not been tested live). `zhipu-coding` lists `glm-5.4`
+with the `glm-5.3-flash` settings; a live check confirmed the model ID
+exists but the upstream was overloaded (error 1305), so effort, tools,
+limits and image input are unverified. The CI/Release in-place upgrade
+gate now pins the published rc.1 tarball. Every v0.7.96 stable and
+v0.7.97-alpha.1 through rc.1 client contract is retained. The changes
+are listed in the [CHANGELOG](../CHANGELOG.md). Cross-platform manual
+acceptance, installed Space/SDK acceptance, the Space dependency bump and
+npm publication remain manual maintainer steps.
 
 ## v0.7.97-rc.1 Release Record
 
@@ -2723,7 +2762,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Version | Design | Notes |
 |---|---|---|---|---|
-| `317` | RepoIntel Phase 0 — Honest Default Surface | `v0.7.97` (unreleased) | [v0.7.97](features/v0.7.97.md#feature_317-repointel-phase-0--honest-default-surface) | Default `auto` offers `repo_overview`, `changed_scope` and `changed_diff`; the semantic tools, module/impact injection and the background index build need explicit `full` or `light`, and routing signals come from git changes. Output reports omitted items, not-found names and warming/unavailable indexes instead of placeholders. Storage moves to `<config home>/repo-intelligence`; `target_path` must stay in the workspace. Prompt eval (82 calls, blind-reviewed) recommended ship; `npm run bench:repo-intel-truth` holds the old-engine baseline. KNOWN_ISSUES #133 closed. |
+| `317` | RepoIntel Phase 0 — Honest Default Surface | `v0.7.97-rc.2` | [v0.7.97](features/v0.7.97.md#feature_317-repointel-phase-0--honest-default-surface) | Default `auto` offers `repo_overview`, `changed_scope` and `changed_diff`; the semantic tools, module/impact injection and the background index build need explicit `full` or `light`, and routing signals come from git changes. Output reports omitted items, not-found names and warming/unavailable indexes instead of placeholders. Storage moves to `<config home>/repo-intelligence`; `target_path` must stay in the workspace. Prompt eval (82 calls, blind-reviewed) recommended ship; `npm run bench:repo-intel-truth` holds the old-engine baseline. KNOWN_ISSUES #133 closed. |
 | `311` | Unified Prompt Chain | `v0.7.97` (shipped in `v0.7.97-beta.12`) | [v0.7.97](features/v0.7.97.md#feature_311-unified-prompt-chain) | Every root Run uses the managed Worker and every entry sends one tool text: the request-time projection, the canonical Worker and tool texts, the direct root engine and `system.md` are deleted. `runs.start({ mode: 'coding' })` is ignored with a warning; the leaf executor stays internal for child Agents. `tests/f311-entry-matrix.test.ts` pins every entry; ADR "Every root Run uses one Worker and one tool text" records it. |
 | `310` | SA Mode Residue Removal | `v0.7.97` (shipped in `v0.7.97-beta.12`) | [v0.7.97](features/v0.7.97.md#feature_310-sa-mode-residue-removal) | Public and config.json `agentMode: 'sa'` normalize the way `amaw` did: managed entries run AMA, `runKodaX` and `runs.start` without a mode treat it as unset, and persisted `'sa'` records stay readable. The SA dispatch branch, Direct Path overlay, `'sa'` labels and the FEATURE_100 golden recorder are gone; ADR "SA mode is retired from every caller" records it. The `sa-mutation-reflection` eval id keeps its name. |
 | `306` | Data Root Resolver and Copy | `v0.7.97` (shipped in `v0.7.97-beta.9`) | [v0.7.97](features/v0.7.97.md#feature_306-data-root-resolver-and-copy) | `resolveKodaXHome` resolves the data root without touching `process.env` and ignores a relative `KODAX_HOME` with a warning; `copyKodaXDataRoot` copies a data root into an empty target under an incomplete marker, skips per-Host state, refuses a running Host and rebases absolute paths in `.json` / `.jsonl`. Source: Space F148 / ADR-011; the Space dependency bump follows the release. |
