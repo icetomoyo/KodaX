@@ -23,9 +23,9 @@
 | Roadmap updated | `2026-11-23` — rc.1 prepared on top of the npm-published beta.13 with the model catalog refresh (Fable 5.2, GPT-6.x lineup, new defaults) and the late provider/Host/REPL repairs (Issues 431-440) including the submitted-input echo; beta.13 published with the Space integration repairs; FEATURE_300 remains Planned |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
 | Total tracked features | `95` |
-| InProgress | `4` |
+| InProgress | `3` |
 | Planned | `19` |
-| Completed | `66` |
+| Completed | `67` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
 | Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 310, 311, 312, 313, 317` |
 | Archive cutoff | Shipped / canceled / absorbed / shelved items through `v0.7.49` are archived. |
@@ -34,8 +34,8 @@
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 67 | `311, 310, 306, 305, 304, 303, 302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
-| InProgress | 3 | `317, 298, 225` | `317`: RepoIntel phase 0 implemented; prompt eval recommends ship. `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
+| Completed | 68 | `317, 311, 310, 306, 305, 304, 303, 302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| InProgress | 2 | `298, 225` | `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
 | Planned, SDK v2 | 2 | `312, 313` | Specify in the SDK v2 contract on `KodaX-next-dev`; only the stall cap of `313` can land on mainline first. |
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
 | Planned, 0.8.x | 10 | `278, 279, 282, 283, 285, 280, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
@@ -523,7 +523,6 @@
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
-| `317` | RepoIntel Phase 0 — Honest Default Surface | Core / Repo Intelligence | High | `v0.7.98` | [v0.7.98](features/v0.7.98.md#feature_317-repointel-phase-0--honest-default-surface) — implemented; prompt eval recommends ship |
 | `298` | Product Host and Client Contract Simplification | Core / Runtime + UI SDK + Execution | Critical | `v0.7.97` | [v0.7.97](features/v0.7.97.md#feature-298) — core, [consumer completion T38–T42](features/v0.7.97.md#consumer-completion-tickets) and parity follow-ups T43–T56 implemented; cross-platform/manual release verification pending |
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
@@ -2538,7 +2537,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 ## 2026-11-23 FEATURE_317 Addition
 
-- Status: InProgress. Planned under `v0.7.98`, a planning identifier. ID 317 skips 314–316, which
+- Status: Completed 2026-11-23, unreleased. Planned under `v0.7.98`, a planning identifier. ID 317 skips 314–316, which
   `KodaX-next-dev` already uses.
 - Source: the 2026-11-23 RepoIntel audit. The name-matched semantic index (sample call-target precision
   42.7%, recall 55.1%) was on the default tool surface, in automatic context injection and in background
@@ -2721,6 +2720,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Version | Design | Notes |
 |---|---|---|---|---|
+| `317` | RepoIntel Phase 0 — Honest Default Surface | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_317-repointel-phase-0--honest-default-surface) | Default `auto` offers `repo_overview`, `changed_scope` and `changed_diff`; the semantic tools, module/impact injection and the background index build need explicit `full` or `light`, and routing signals come from git changes. Output reports omitted items, not-found names and warming/unavailable indexes instead of placeholders. Storage moves to `<config home>/repo-intelligence`; `target_path` must stay in the workspace. Prompt eval (82 calls, blind-reviewed) recommended ship; `npm run bench:repo-intel-truth` holds the old-engine baseline. KNOWN_ISSUES #133 closed. |
 | `311` | Unified Prompt Chain | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_311-unified-prompt-chain) | Every root Run uses the managed Worker and every entry sends one tool text: the request-time projection, the canonical Worker and tool texts, the direct root engine and `system.md` are deleted. `runs.start({ mode: 'coding' })` is ignored with a warning; the leaf executor stays internal for child Agents. `tests/f311-entry-matrix.test.ts` pins every entry; ADR "Every root Run uses one Worker and one tool text" records it. |
 | `310` | SA Mode Residue Removal | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_310-sa-mode-residue-removal) | Public and config.json `agentMode: 'sa'` normalize the way `amaw` did: managed entries run AMA, `runKodaX` and `runs.start` without a mode treat it as unset, and persisted `'sa'` records stay readable. The SA dispatch branch, Direct Path overlay, `'sa'` labels and the FEATURE_100 golden recorder are gone; ADR "SA mode is retired from every caller" records it. The `sa-mutation-reflection` eval id keeps its name. |
 | `306` | Data Root Resolver and Copy | `v0.7.98` (shipped in `v0.7.97-beta.9`) | [v0.7.98](features/v0.7.98.md#feature_306-data-root-resolver-and-copy) | `resolveKodaXHome` resolves the data root without touching `process.env` and ignores a relative `KODAX_HOME` with a warning; `copyKodaXDataRoot` copies a data root into an empty target under an incomplete marker, skips per-Host state, refuses a running Host and rebases absolute paths in `.json` / `.jsonl`. Source: Space F148 / ADR-011; the Space dependency bump follows the release. |
