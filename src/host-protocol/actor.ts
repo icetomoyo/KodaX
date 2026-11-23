@@ -4,8 +4,10 @@
  * `/root/audit`, and does its work a turn at a time. Paths and turn ids stay
  * the same across a Host restart.
  *
- * A client reads the tree and steers a child as the root. Starting a child and
- * giving one a new objective are not here yet.
+ * A client reads the tree and steers a child as the root: it starts children
+ * and gives them new objectives as the root does. A child's turn runs within
+ * the tools, time limit and leases of its Session and the tools of the Host.
+ * It needs a provider key lent for it, by the client or by the Session.
  *
  * What a child wrote is named by paths on the Host, so only a role that
  * reaches the local plane is sent `artifacts`, `artifactDetails` and the
@@ -13,6 +15,7 @@
  */
 import { z } from 'zod/v4';
 
+import { RunLeases } from './lease.js';
 import { hostCommandParams, hostParams, hostResult, type HostMethodRegistry } from './schema.js';
 import { SessionRef } from './session.js';
 
@@ -158,6 +161,15 @@ const Output = {
 
 const Target = { sessionId: SessionRef, actorPath: ActorPath };
 
+/** What a child may do, inside what its Session allows. Absent fields take the defaults of a child. */
+const Capabilities = z.strictObject({
+  tools: z.array(z.string().min(1).max(256)).max(256).optional(),
+  filesystem: z.enum(['none', 'read', 'write']).optional(),
+  network: z.boolean().optional(),
+  providers: z.array(z.string().min(1).max(128)).max(64).optional(),
+  canAskUser: z.boolean().optional(),
+});
+
 export const ACTOR_METHODS = {
   'actor.tree': {
     primitive: 'query',
@@ -214,6 +226,48 @@ export const ACTOR_METHODS = {
         createdAt: z.int(),
       }).optional(),
     }),
+  },
+  /**
+   * Starts a child of the root at `/root/<taskName>` with its first turn. A
+   * name in use is refused with `conflict`. The model calls of the turn use
+   * the key of `leases.credential`, or of the Session when it binds one; with
+   * neither the start fails as `unavailable` with reason `credential_unavailable`.
+   */
+  'actor.spawn': {
+    primitive: 'command',
+    resend: 'auto',
+    plane: 'data',
+    params: hostCommandParams({
+      sessionId: SessionRef,
+      taskName: z.string().min(1).max(64),
+      objective: z.string().min(1).max(32_768),
+      /** How much of the root's conversation the child starts from: `all` (the default), `none` or a number of turns. */
+      forkTurns: z.union([z.enum(['all', 'none']), z.int().min(1)]).optional(),
+      capabilities: Capabilities.optional(),
+      leases: RunLeases.optional(),
+    }),
+    restricted: { leases: 'trusted' },
+    result: hostResult({ actorPath: z.string(), turnId: z.string() }),
+  },
+  /**
+   * Gives a child a new objective. An idle child starts a turn for it
+   * (`started_turn`), under the same key rules as `actor.spawn`. A child at
+   * work takes it into the turn in progress (`current_turn`), except that a
+   * key the client lends is for a new turn only and is refused there with
+   * `invalid_params`. `ifRevision` is the actor `revision` the child must still have.
+   */
+  'actor.followup': {
+    primitive: 'command',
+    resend: 'auto',
+    plane: 'data',
+    params: hostCommandParams({
+      ...Target,
+      objective: z.string().min(1).max(32_768),
+      ifRevision: z.int().optional(),
+      leases: RunLeases.optional(),
+    }),
+    restricted: { leases: 'trusted' },
+    result: hostResult({ delivery: z.enum(['started_turn', 'current_turn']), turnId: z.string() }),
   },
   /** Puts a message from the root in an actor's mailbox. It starts no turn: an idle actor reads it in its next one. */
   'actor.send': {

@@ -1450,18 +1450,25 @@ v1 的 `agents.*` 同时指"已安装的 Agent 定义"和"运行中的子代理"
 | `actor.get` | 查 | `agents.detail` | M1a 已转发。Host 路径只发给 owner |
 | `actor.output` | 查 | `agents.output` | M1a 已转发。Host 路径只发给 owner |
 | `actor.wait` | 查 | `agents.wait` | M1a 已转发。等待上限 60 秒，默认 30 秒 |
-| `actor.spawn` | 命 | `agents.spawn` | 挪到 M1b（2026-11-21 改，未经用户确认），见下面的落地细节 |
+| `actor.spawn` | 命 | `agents.spawn` | 2026-11-23 转发，见下面的落地细节 |
 | `actor.send` | 命 | `agents.send` | M1a 已转发。按 `requestId` 去重 |
-| `actor.followup` | 命 | `agents.followup` | 已核实，不并入 `actor.send`。`send` 只往信箱里放一条消息，不会开新的 Turn；`followup` 需要控制权限和 revision 检查，要绑定凭证，可能开新的 Turn，返回值也不同（`controller.ts:509-534`、`561-624`）。Space 用的是 `followup`。挪到 M1b（2026-11-21 改，未经用户确认），见下面的落地细节 |
+| `actor.followup` | 命 | `agents.followup` | 已核实，不并入 `actor.send`。`send` 只往信箱里放一条消息，不会开新的 Turn；`followup` 需要控制权限和 revision 检查，要绑定凭证，可能开新的 Turn，返回值也不同（`controller.ts:509-534`、`561-624`）。Space 用的是 `followup`。2026-11-23 转发，见下面的落地细节 |
 | `actor.interrupt` | 命 | `agents.interrupt` | M1a 已转发。必须带 `turnId` |
 
 `agents.events` 删除：并入会话视图。
 
 `agents.preflight` 删除（已核实）：它等于 `agents.describe` 加一次配置 revision 比对，针对的是可派发的外部 Agent 定义，不是 `actor.spawn`。启动任务时 Host 自己会做同一个检查并报告原因（`executor-plane.ts:994-1006`）。本仓库没有产品调用方，只有 embedder-guide 里的一个示例。
 
-子代理的落地细节（2026-11-21，未经用户确认）。转发了六个方法：`actor.tree`、`actor.get`、`actor.output`、`actor.wait`、`actor.send`、`actor.interrupt`。客户端都是以根（`/root`）的身份读和操作。
+子代理的落地细节（2026-11-21，未经用户确认）。转发了六个方法：`actor.tree`、`actor.get`、`actor.output`、`actor.wait`、`actor.send`、`actor.interrupt`。2026-11-23 又转发了 `actor.spawn` 和 `actor.followup`。客户端都是以根（`/root`）的身份读和操作。
 
-- **`actor.spawn` 和 `actor.followup` 挪到 M1b**：两个都可能开新的 Turn。v1 要求为新 Turn 显式绑定一份限定范围的凭证（`credential`/`authorization`），`user` 角色不能传这两个参数；v2 要等 M1b 的租约绑定到 Session 之后才有对应的东西。另外它们现在不经过 `startRun`，Session 策略（工具、时长）管不到它们开的 Turn，先补上再开放。模型自己调用 `spawn_agent`/`followup_task` 不受影响。
+- **`actor.spawn` 和 `actor.followup`**（2026-11-23 落地）：
+  - 客户端开子 Agent、给子 Agent 新目标，和模型调用 `spawn_agent`/`followup_task` 一样。`actor.spawn` 只开原生子 Agent，因为外部 Agent 要靠 `metadata` 指定，v2 不带这个字段（未经用户确认）。
+  - 新 Turn 仍要有人借出 provider key，ADR 里的 fail-closed 规则不变。key 来自客户端自己的 `leases.credential`，或者 Session 策略绑定的租约。两者都没有时报 `unavailable`，原因是 `credential_unavailable`。`user` 不能传 `leases`，只能用 Session 借出的。Session 绑定了租约时客户端再带自己的，报 `lease_bound_by_session`，和 Run 一样。
+  - 客户端开的子 Agent Turn 现在受 Session 策略和 Host 工具上限约束，v1 和 v2 都一样。工具取交集；`maxDurationMs` 到点停下这个 Turn，记为 `interrupted`；`interactions: 'reject'` 也生效。
+  - `maxIter` 不生效，这是已知缺口：子 Agent 用自己的 200 轮上限，`executeCodingActorTurn` 不读 `maxIter`。
+  - 重发：`spawn` 把 `requestId` 存在开出的 Turn 上；`followup` 存在开出的 Turn 上，或者并入在途 Turn 时存在那条信箱消息上。重发返回第一次的结果，不再开 Turn。换一个 `requestId` 用已占用的名字开子 Agent，报 `conflict`。
+  - 子 Agent 正忙时，`followup` 并入在途的 Turn，返回 `current_turn`。用 Session 借出的 key 时是这样。客户端带了自己的 key 时沿用 v1 的规则：这把 key 只给新 Turn，所以报 `invalid_params`（未经用户确认）。
+  - `ifRevision` 对应 actor 的 `revision`。不开放 `resumeCheckpoint`。
 - **结果的形状**：
   - `actor.tree` 是 `{items, activeNonRootTurns, maxConcurrentThreads, revision}`，`items` 含根。去掉恒为 `/root` 的 `rootPath` 和内部的 `admissionRevision`。
   - `actor.get` 是 `{actor, turns, mailbox}`。信箱消息的 `content` 改叫 `text`，和 `actor.send` 的参数一致；消息上记的 `requestId` 不返回。
@@ -2118,7 +2125,7 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
 - 在 Run 准入时、Session 策略之后再求一次交集，复用 `applySessionPolicy`，所以 `input.submit`、`run.start`、`run.startTool` 和命令都受它约束，Session 策略只能在它里面再收窄。被它挡住的工具调用和 Session 策略一样报 `Tool is not active`，不是因为缺审批而失败。
 - 每个 Run 准入时重读 `host.json`，改动对下一个 Run 生效，在途的 Run 不变。恢复的 Run 沿用准入时写下的上限，不按新文件重算。
 - 改坏的文件不生效，沿用上一次读到的上限，记一条 warn 诊断，同一个错误只记一次。启动时读不了就拒绝启动：读取放在创建 runtime 之前（`runtime-daemon/manager.ts`），经 `createRuntime` 的第二个参数交给 runtime。
-- 已知缺口：v1 的 `agents.spawn` 和 `agents.followup` 起的独立 Actor 回合不经过 Run 准入，不受这一层约束。只有本机可信的 v1 调用方能用这两个方法，v2 没有入口。v2 加 Actor 方法时，或者删除 v1 时（FEATURE_314）补上。`blockers` 来自停止前置检查；前置检查因为有正在进行的变更而报 `conflict` 时，`blockers` 是 `['active_mutations']`。每次探测看到 `blockers` 不为空，就把 `lastActivityAt` 更新为当前时间，所以它表示 Host 最后一次被看到忙碌的时间，不单独埋点。健康检查本身出错时回 503，并记一条诊断。
+- 客户端经 `agents.spawn`/`agents.followup`（v2 的 `actor.spawn`/`actor.followup`）开的子 Agent Turn 不经过 Run 准入，2026-11-23 起在它们的执行环境里同样先套 Session 策略再套这一层。`blockers` 来自停止前置检查；前置检查因为有正在进行的变更而报 `conflict` 时，`blockers` 是 `['active_mutations']`。每次探测看到 `blockers` 不为空，就把 `lastActivityAt` 更新为当前时间，所以它表示 Host 最后一次被看到忙碌的时间，不单独埋点。健康检查本身出错时回 503，并记一条诊断。
 
 **第 4 项的落地细节**（2026-11-22，按"设备配对"一节实现；下面是实现时定的细节）：
 
@@ -2350,7 +2357,7 @@ v1 只需要在 **Host** 里保留一段时间，原因是一台机器上的 Hos
 - Host 遇到 v1 连接时打印弃用警告：等 KodaX 自己不再用 v1 之后再加（打印模式、`-r`、`daemon` 命令、`ensureKodaXHostClient` 里的 v1 启动和探测、`recovering-runtime-client`、导出的 v1 product client）。v1 `initialize` 不带客户端版本，在那之前警告会打到当前版本的客户端上。每个 v1 客户端实例只打一次。
 - 窗口从发布 v2 的版本算起。v2 晚于 `v0.7.98` 发布时，同时带两个协议的版本不足 2 个，届时重新确认删除线。
 - 删除前要先落地的（2026-11-23 协议审查，用户同意，FEATURE_314 里有同样的清单）：
-  - `actor.spawn` 和 `actor.followup`：方法表把它们挪到了 M1b，但 M1b 没有交付；Space 用 `followup`。
+  - ~~`actor.spawn` 和 `actor.followup`~~：2026-11-23 落地（子代理的落地细节）。
   - M1c 第 3 项的授权方租约。
   - `kodax acp` 改走 v2：它现在开的是 v1 客户端（`acp_server.ts` 的 `ensureKodaXClient`）。
   - `kodax a2a` 的探测改走 v2，`agent.registration.*` 留给本机 owner。

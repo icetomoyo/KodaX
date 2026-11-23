@@ -2919,6 +2919,102 @@ describe('v2 child Agents served by the v1 implementation', () => {
     await user.request('run.wait', { runId: input.runId });
   }, 90_000);
 
+  /** Answers the key requests of a client with `key`. */
+  function lendKey(client: HostRpcClient, key: string): void {
+    client.onNotification((method, params) => {
+      const request = params as { readonly kind: string; readonly callId: string };
+      if (method !== 'lease.request' || request.kind !== 'credential') return;
+      void client.request('lease.complete', { requestId: `complete-${request.callId}`, kind: 'credential', callId: request.callId, credential: key });
+    });
+  }
+
+  it('starts a child and gives it a new objective once per request, with the key the client lends', async () => {
+    const host = await makeModelHost();
+    const owner = await connect('owner', await host.start(), host.workspace);
+    await owner.request('lease.register', { requestId: 'key-1', kind: 'credential', providers: [MODEL] });
+    lendKey(owner, 'leased-key');
+    const { session } = await owner.request('session.create', { requestId: 'create-1', project: 'app' }) as SessionAnswer;
+    const sessionId = session.id;
+
+    const spawn = { requestId: 'spawn-1', sessionId, taskName: 'audit-child', objective: 'CHILD-WORK', leases: { credential: 'key-1' } };
+    const started = await owner.request('actor.spawn', spawn) as { readonly turnId: string };
+    expect(started).toEqual({ actorPath: CHILD, turnId: expect.any(String) });
+    // Sent again, the same answer, and no second child or turn.
+    expect(await owner.request('actor.spawn', spawn)).toEqual(started);
+    await expect.poll(async () => (await child(owner, sessionId))?.latestTurn?.state, { timeout: 15_000 }).toBe('completed');
+    expect(host.lastRunRequest().apiKey).toBe('leased-key');
+    expect(await owner.request('actor.spawn', spawn)).toEqual(started);
+    expect((await child(owner, sessionId))!.turnIds).toEqual([started.turnId]);
+    // Another request for a name in use is refused.
+    await expect(owner.request('actor.spawn', { ...spawn, requestId: 'spawn-2' })).rejects.toMatchObject({ kodaxCode: 'conflict' });
+
+    // An idle child starts a new turn for the new objective.
+    const followup = { requestId: 'follow-1', sessionId, actorPath: CHILD, objective: 'Check the tests too.', leases: { credential: 'key-1' } };
+    const next = await owner.request('actor.followup', followup) as { readonly turnId: string };
+    expect(next).toEqual({ delivery: 'started_turn', turnId: expect.any(String) });
+    expect(next.turnId).not.toBe(started.turnId);
+    expect(await owner.request('actor.followup', followup)).toEqual(next);
+    await expect.poll(async () => (await child(owner, sessionId))?.latestTurn?.state, { timeout: 15_000 }).toBe('completed');
+    expect(await owner.request('actor.followup', followup)).toEqual(next);
+    expect((await child(owner, sessionId))!.turnIds).toEqual([started.turnId, next.turnId]);
+    // The request names stay with the Host.
+    expect(JSON.stringify(await owner.request('actor.get', { sessionId, actorPath: CHILD }))).not.toContain('spawn-1');
+
+    // Without a key to run on, no turn starts.
+    await expect(owner.request('actor.spawn', { ...spawn, requestId: 'spawn-3', taskName: 'keyless', leases: undefined }))
+      .rejects.toMatchObject({ kodaxCode: 'unavailable', reason: 'credential_unavailable' });
+    await expect(owner.request('actor.followup', { ...followup, requestId: 'follow-2', leases: undefined }))
+      .rejects.toMatchObject({ kodaxCode: 'unavailable', reason: 'credential_unavailable' });
+  }, 90_000);
+
+  it('holds a child a person starts to the key, tools and time limit of the Session and the Host', async () => {
+    const host = await makeModelHost();
+    const runtime = await host.start({ hostToolCeiling: () => ['read', 'grep'] });
+    const reverseBridgeHub = createRuntimeDaemonReverseBridgeHub();
+    cleanup.push(() => reverseBridgeHub.close());
+    const backend = await connect('service', runtime, host.workspace, { reverseBridgeHub }, 's'.repeat(32));
+    const user = await connect('user', runtime, host.workspace, { reverseBridgeHub });
+    await backend.request('lease.register', { requestId: 'key-1', kind: 'credential', providers: [MODEL] });
+    lendKey(backend, 'session-key');
+    const { session } = await backend.request('session.create', {
+      requestId: 'create-1', project: 'app', policy: { tools: ['grep', 'bash'], leases: { credential: 'key-1' } },
+    }) as SessionAnswer;
+
+    // A person lends no key, and the Session's runs the child.
+    await expect(user.request('actor.spawn', {
+      requestId: 'spawn-0', sessionId: session.id, taskName: 'audit-child', objective: 'CHILD-WORK', leases: { credential: 'key-1' },
+    })).rejects.toMatchObject({ kodaxCode: 'forbidden', reason: 'param_not_allowed' });
+    await user.request('actor.spawn', { requestId: 'spawn-1', sessionId: session.id, taskName: 'audit-child', objective: 'CHILD-WORK' });
+    await expect.poll(async () => (await child(user, session.id))?.latestTurn?.state, { timeout: 15_000 }).toBe('completed');
+    const asked = host.lastRunRequest();
+    expect(asked.apiKey).toBe('session-key');
+    // Only what both the Session and the Host allow.
+    expect(asked.tools).toContain('grep');
+    expect(asked.tools).not.toContain('read');
+    expect(asked.tools).not.toContain('bash');
+
+    // A Session that lends no key leaves a child nothing to run on.
+    const { session: open } = await user.request('session.create', { requestId: 'create-2', project: 'app' }) as SessionAnswer;
+    await expect(user.request('actor.spawn', { requestId: 'spawn-2', sessionId: open.id, taskName: 'audit-child', objective: 'CHILD-WORK' }))
+      .rejects.toMatchObject({ kodaxCode: 'unavailable', reason: 'credential_unavailable' });
+
+    // A child turn ends at the time limit of its Session. A follow-up while it works joins that turn.
+    const { session: tight } = await backend.request('session.create', {
+      requestId: 'create-3', project: 'app', policy: { budget: { maxDurationMs: 300 }, leases: { credential: 'key-1' } },
+    }) as SessionAnswer;
+    const held = host.hold();
+    const { turnId } = await user.request('actor.spawn', {
+      requestId: 'spawn-3', sessionId: tight.id, taskName: 'audit-child', objective: 'CHILD-WORK',
+    }) as { readonly turnId: string };
+    await held.called;
+    const followup = { requestId: 'follow-1', sessionId: tight.id, actorPath: CHILD, objective: 'Also check the tests.' };
+    expect(await user.request('actor.followup', followup)).toEqual({ delivery: 'current_turn', turnId });
+    await expect.poll(async () => (await child(user, tight.id))?.latestTurn?.state, { timeout: 15_000 }).toBe('interrupted');
+    expect(await user.request('actor.followup', followup)).toEqual({ delivery: 'current_turn', turnId });
+    expect((await child(user, tight.id))!.turnIds).toEqual([turnId]);
+    held.release();
+  }, 90_000);
+
   it('sends the owner the Host paths of what a child wrote', async () => {
     const runtime = fakeRuntime();
     const turn = {

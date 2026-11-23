@@ -7,8 +7,9 @@
 import { isDeepStrictEqual } from 'node:util';
 
 import {
-  emitKodaXDiagnostic, type AgentActor, type AgentDetail, type AgentEvent, type AgentMailboxMessage, type AgentOutput,
-  type AgentProgressItem, type AgentTreeSnapshot, type AgentTurn, type LearnedCapabilityRecord, type LearningEvent,
+  emitKodaXDiagnostic, type AgentActor, type AgentDetail, type AgentEvent, type AgentFollowupResult, type AgentMailboxMessage,
+  type AgentOutput, type AgentProgressItem, type AgentTreeSnapshot, type AgentTurn, type AgentTurnRef,
+  type LearnedCapabilityRecord, type LearningEvent,
   type LearningPage,
 } from '@kodax-ai/agent';
 
@@ -415,6 +416,21 @@ const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } =
       sessionId, actorPath, content: text, classification, requestId: `${caller.subject}:${requestId}`,
     }));
     return {};
+  },
+  'actor.spawn': async ({ requestId, sessionId, taskName, objective, forkTurns, capabilities, leases }, v1, caller) => {
+    // The turn keeps the request's name, so a repeat finds the child the first one started.
+    const { actorPath, turnId } = await v1('agents.spawn', defined({
+      sessionId, input: defined({ taskName, objective, forkTurns, capabilities }),
+      requestId: `${caller.subject}:${requestId}`, authorization: await leaseAuthorization(v1, leases),
+    })) as AgentTurnRef;
+    return { actorPath, turnId };
+  },
+  'actor.followup': async ({ requestId, sessionId, actorPath, objective, ifRevision, leases }, v1, caller) => {
+    const { delivery, turn } = await v1('agents.followup', defined({
+      sessionId, actorPath, objective, expectedRevision: ifRevision,
+      requestId: `${caller.subject}:${requestId}`, authorization: await leaseAuthorization(v1, leases),
+    })) as AgentFollowupResult;
+    return { delivery, turnId: turn.turnId };
   },
   'actor.interrupt': async ({ sessionId, actorPath, turnId, reason }, v1) => {
     // Naming the turn makes a repeat harmless: once that turn ended, the actor is left as it is.
@@ -1136,7 +1152,8 @@ function toProgress({ createdAt, ...progress }: AgentProgressItem): Readonly<Rec
 }
 
 /** The executor's checkpoint stays on the Host; the result schema leaves it out. */
-function toTurn({ createdAt, startedAt, completedAt, progress, ...turn }: AgentTurn): Readonly<Record<string, unknown>> {
+/** `requestId` names a client's intent and is not sent back. */
+function toTurn({ createdAt, startedAt, completedAt, progress, requestId: _request, ...turn }: AgentTurn): Readonly<Record<string, unknown>> {
   return {
     ...turn,
     createdAt: utcMilliseconds(createdAt),

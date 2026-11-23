@@ -44,6 +44,9 @@ All notable changes to this project will be documented in this file.
   `lease.register`, pass `leases: {credential}` to the commands that call a
   model, and answer the Host through `answerLeaseRequests`. A lease survives a
   reconnect of the same `instanceId` and `instanceSecret` to the same Host.
+- A v2 client can start a child Agent with `actor.spawn` and give one a new
+  objective with `actor.followup`. A new turn runs on a key the client or the
+  Session lends, and a repeat of the same request starts nothing more.
 - `ensureKodaXHostClient` takes `exitWhenIdle`: a Host it starts stops about
   30 seconds after its last client leaves, unless it still has work. It also
   takes `recoveryLeases`, which gives the leases for a Run it continues on a
@@ -83,6 +86,8 @@ All notable changes to this project will be documented in this file.
   client that reads the run on that event sees it ended.
 - A Run's result reports the tokens it used again. Root Runs have taken the
   managed path since the unified prompt chain, and that path left `usage` out.
+- A child Agent turn a client starts is held to the tools and time limit of
+  its Session and to the tools of the Host, as a Run is.
 
 ---
 
