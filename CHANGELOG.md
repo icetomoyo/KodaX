@@ -87,6 +87,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- A v2 service connection is no longer offered `interaction.respond`, which it
+  may not call. Calling it now gets `method_not_found`.
 - A workflow's finished event now arrives after its run has settled, so a
   client that reads the run on that event sees it ended.
 - A Run's result reports the tokens it used again. Root Runs have taken the

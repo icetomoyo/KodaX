@@ -26,6 +26,23 @@ export function runtimeRoleHasPlane(role: RuntimeConnectionRole | undefined, pla
   return role !== undefined && Object.hasOwn(ROLE_PLANES, role) && ROLE_PLANES[role].has(plane);
 }
 
+/** Methods a role may not call although it reaches their plane, each with why. */
+const ROLE_REFUSALS: Readonly<Record<RuntimeConnectionRole, Readonly<Record<string, string>>>> = {
+  owner: {},
+  user: {},
+  service: {
+    'interaction.respond': 'A service connection cannot answer an approval or question addressed to the person.',
+  },
+};
+
+/**
+ * Why a role may not call a method of a plane it reaches, or `undefined`.
+ * Both protocols read it, so what a connection is offered matches what it may call.
+ */
+export function runtimeRoleRefusal(role: RuntimeConnectionRole, method: string): string | undefined {
+  return Object.hasOwn(ROLE_REFUSALS[role], method) ? ROLE_REFUSALS[role][method] : undefined;
+}
+
 /** Parameters that carry Host-trusted authority. Only roles with the trusted plane may send them. */
 const TRUSTED_PARAMS = ['authorization', 'credential', 'hostTools', 'policy', 'runOptions'] as const;
 
@@ -260,9 +277,8 @@ export function runtimeAccessDenial(
   const plane: RuntimeMethodPlane | undefined = Object.hasOwn(RUNTIME_METHOD_PLANES, method)
     ? RUNTIME_METHOD_PLANES[method] : undefined;
   if (plane === undefined || !runtimeRoleHasPlane(role, plane)) return `${method} is not available to the ${role} role.`;
-  if (role === 'service' && method === 'interaction.respond') {
-    return 'A service connection cannot answer an approval or question addressed to the person.';
-  }
+  const refusal = runtimeRoleRefusal(role, method);
+  if (refusal !== undefined) return refusal;
   if (!runtimeRoleHasPlane(role, 'trusted')) {
     const sent = trustedParamIn(params);
     if (sent !== undefined) return `The ${role} role cannot send the trusted parameter "${sent}".`;

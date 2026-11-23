@@ -1061,8 +1061,11 @@ describe('v2 interactions served by the v1 implementation', () => {
     // An answer of another kind settles nothing, and neither does one from a service.
     await expect(user.request('interaction.respond', { ...answer, response: { kind: 'question_input', text: 'red' } }))
       .rejects.toMatchObject({ kodaxCode: 'invalid_params' });
+    // A service is not offered the method, so it learns no more than for one the Host lacks.
     const service = await connect('service', runtime, host.workspace);
-    await expect(service.request('interaction.respond', answer)).rejects.toMatchObject({ kodaxCode: 'forbidden' });
+    expect(service.handshake.methods).not.toContain('interaction.respond');
+    expect(service.handshake.methods).toContain('interaction.list');
+    await expect(service.request('interaction.respond', answer)).rejects.toMatchObject({ kodaxCode: 'method_not_found' });
 
     expect(await user.request('interaction.respond', answer)).toEqual({ status: 'answered' });
     expect(await user.request('interaction.respond', answer)).toEqual({ status: 'already_resolved' });

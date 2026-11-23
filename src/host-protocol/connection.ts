@@ -3,7 +3,7 @@
  * and takes text frames back; this layer owns the handshake, which methods the
  * connection may call, validation in both directions and cancellation.
  */
-import { runtimeRoleHasPlane, type RuntimeConnectionRole, type RuntimeMethodPlane } from '../runtime-daemon/access.js';
+import { runtimeRoleHasPlane, runtimeRoleRefusal, type RuntimeConnectionRole, type RuntimeMethodPlane } from '../runtime-daemon/access.js';
 import {
   HOST_PROTOCOL,
   HOST_PROTOCOL_REVISION,
@@ -182,7 +182,7 @@ export function createHostConnection(options: HostConnectionOptions): HostConnec
     }
     admission = admitted;
     callable = new Set(Object.entries(options.methods)
-      .filter(([, spec]) => reaches(spec.plane))
+      .filter(([name, spec]) => reaches(spec.plane) && runtimeRoleRefusal(admitted.role, name) === undefined)
       .map(([name]) => name));
     state = 'ready';
     clearTimeout(deadline);
