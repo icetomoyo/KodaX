@@ -62,6 +62,14 @@ All notable changes to this project will be documented in this file.
   - replay removes a leading `<prior_reasoning>` segment from earlier
     replies, so already-polluted sessions recover. Stored history is not
     changed.
+- Gemini and pi-messages endpoints replay tool calls from another model as
+  real calls and results instead of `<prior_tool_call>` text (Issue 442).
+  On Gemini, those calls use Google's documented skip signature. On
+  pi-messages, the turn comes from an `unknown` origin with zero usage.
+  pi-messages has not been tested live.
+- Gemini no longer fails its next request after a reply that left an empty
+  text block. Switching from Gemini to Kimi's Anthropic-compatible endpoint
+  no longer fails for the same reply (Issue 442).
 
 ---
 

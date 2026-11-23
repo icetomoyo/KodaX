@@ -47,6 +47,81 @@ not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
 
+## Issue 442: Gemini and pi-messages replay another model's tool calls as text
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: `v0.7.97-alpha.12` (`c91152b18`, `e6247c3a5`, FEATURE_302 T08/T09)
+- Created / Resolved: 2026-11-23 / 2026-11-23
+- Fixed: unreleased (after `v0.7.97-rc.1`)
+- Reported by: follow-up review of Issue 441
+
+### Original Problem
+
+The Gemini native and pi-messages serializers rewrite a tool turn written by
+another model, or edited since, as user text: `<prior_tool_call>`,
+`<prior_tool_result>` and `<prior_assistant>`. This is the same shape that
+taught models to copy `<prior_reasoning>` in Issue 441, applied to tool calls.
+A model shown tool calls as text may start writing its calls as text.
+
+Gemini 3 requires a signature on the first function call of each model step,
+which is why foreign calls were not sent as calls. Google documents the skip
+value `skip_thought_signature_validator` for calls that no Gemini model
+produced. pi drops reasoning and signatures from any assistant message whose
+api, provider and model differ from the target, and keeps its calls.
+
+The live checks found two earlier bugs on the same path:
+
+- Gemini rejects an unsigned empty text part (400 "required oneof field
+  'data' must have one initialized field"). A Gemini reply that left an empty
+  text block failed its own next request.
+- Kimi's Anthropic-compatible endpoint rejects an empty text block (400 "text
+  content is empty"). Switching from Gemini to Kimi failed for the same
+  reply.
+
+### Resolution
+
+- Gemini replays foreign or edited calls and their results as
+  `functionCall` and `functionResponse`. The first call of each model step
+  without its own signature carries the documented skip value,
+  base64-encoded because the field is bytes. Own signatures and call IDs
+  replay only to their source.
+- Gemini drops empty text and thinking parts unless they carry a signature.
+- The Anthropic-compatible serializer drops empty text blocks. A turn left
+  empty still gets the existing `'...'` text.
+- pi-messages replays a foreign turn as an assistant message with api,
+  provider and model `unknown`, zero usage and `stopReason` `toolUse` or
+  `stop`, so pi treats it as foreign. Its calls and results are `toolCall`
+  and `toolResult`. Reasoning from another model is still dropped.
+
+Files changed: `packages/llm/src/providers/google-messages.ts`,
+`pi-messages-history.ts`, `anthropic.ts`.
+
+Tests:
+
+- `google-native.test.ts`: foreign calls replay structured with the skip
+  value on the first call of each step; unsigned empty parts are dropped.
+- `pi-messages.test.ts`: foreign turns replay from an unknown origin with
+  zero usage, structured calls and no foreign reasoning or signature.
+- `reasoning-replay.test.ts`: the pi serializer now pairs calls and results
+  by ID; Kimi gets no empty text block.
+- Live switch matrix (`reasoning-handoff.integration.test.ts`, gateway
+  configured by `GEMINI_GATEWAY_URL`): 8 sources × 8 targets including
+  Gemini native, OpenAI-compatible and Anthropic-compatible, for completed
+  and mid-loop histories. 160/160 requests accepted, no tag and no call
+  written as text in any reply, every mid-loop answer correct, every
+  completed history continued with the right call. The old serializer
+  into Gemini native also passed 10/10 without imitation, so this fixture
+  shows no measurable gain. The change follows Google's guidance.
+
+Not covered: pi-messages has no live test. There is no key, and the
+server is closed source, so whether it accepts the `unknown` origin and
+zero usage is unverified.
+
+Not changed: the `'...'` text for an assistant turn left empty
+(`anthropic.ts`, `openai.ts`). A scan of local sessions found 8 such turns
+in 38,724 (all thinking-only) and no reply that copied `'...'`.
+
 ## Issue 441: Replayed reasoning from another model becomes reply text, and models learn to write their thinking into the answer
 
 - Priority: High
@@ -4651,6 +4726,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 442 | Medium | Resolved | Gemini and pi-messages replay another model's tool calls as text | `v0.7.97-alpha.12` | unreleased (after `v0.7.97-rc.1`) | 2026-11-23 | 2026-11-23 |
 | 441 | High | Resolved | Replayed reasoning from another model becomes reply text, and models learn to write their thinking into the answer | `v0.7.97-alpha.12` | unreleased (after `v0.7.97-rc.1`) | 2026-11-23 | 2026-11-23 |
 | 437 | Low | Open | Per-session lock and review directories are never reclaimed | `v0.7.85` | - | 2026-11-22 | - |
 | 436 | Medium | Resolved | Test runs left about 3600 review entries in the real config home | before `v0.7.97` | `fee13b700` (test setup) | 2026-11-22 | 2026-11-22 |
@@ -20436,12 +20512,19 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 315 (47 Open including 1 needs-info, 1 ready, 266 Resolved, 0 Partially Resolved, 1 Won't Fix)
+- Total: 316 (47 Open including 1 needs-info, 1 ready, 267 Resolved, 0 Partially Resolved, 1 Won't Fix)
 - Ready: 1 (420)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-23: Issue 442
+
+- Gemini and pi-messages replay another model's tool calls as structured
+  calls instead of text. Gemini drops unsigned empty parts, and the
+  Anthropic-compatible serializer drops empty text blocks, which fixes two
+  400s found by the live matrix. pi is not tested live. Unreleased.
 
 ### 2026-11-22: Issues 434, 435, 436 and 437
 

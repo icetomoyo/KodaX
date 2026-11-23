@@ -1770,7 +1770,8 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             // already had no user-visible content; only the model's
             // sealed reasoning is lost.
           } else if (b.type === 'text') {
-            content.push({ type: 'text', text: b.text });
+            // Kimi rejects an empty text block (Gemini replies leave them); a turn left empty gets the guard below.
+            if (b.text) content.push({ type: 'text', text: b.text });
           } else if (b.type === 'tool_use' && strictSignature) {
             content.push({ type: 'tool_use', id: b.id, name: b.name, input: b.input });
           }

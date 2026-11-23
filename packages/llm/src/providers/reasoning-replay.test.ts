@@ -178,7 +178,20 @@ describe('replayed reasoning never becomes reply text (Issue 441)', () => {
     // Mistral re-keys call ids to its 9-character format.
     expectReplayInvariants(await projectMistralMessages(HISTORY, cloudSource('mistral-chat'), false), { readableReasoning: false, pairsById: false });
     expectReplayInvariants(await projectGoogleMessages(HISTORY, cloudSource('google-generate-content')), { readableReasoning: false, pairsById: false });
-    expectReplayInvariants(await projectPiMessages(HISTORY, cloudSource('pi-messages'), false), { readableReasoning: false, pairsById: false });
+    expectReplayInvariants(await projectPiMessages(HISTORY, cloudSource('pi-messages'), false), { readableReasoning: false });
+  });
+
+  it('drops empty text beside other content, which Kimi rejects as empty', async () => {
+    const history: KodaXMessage[] = [
+      { role: 'user', content: 'Find the code for alpha.' },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'call_1', name: 'lookup', input: { item: 'alpha' } }, { type: 'text', text: '' }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'alpha => 7319' }] },
+    ];
+    const { provider, create } = anthropicProvider('kimi-code', {});
+    await provider.stream(history, [], 'system', { enabled: true });
+    const assistant = (create.mock.calls[0]?.[0] as { messages: { content: { type: string; text?: string }[] }[] }).messages[1]!;
+    expect(assistant.content.filter(b => b.type === 'text')).toEqual([]);
+    expect(assistant.content.some(b => b.type === 'tool_use')).toBe(true);
   });
 
   it('keeps a <prior_reasoning> tag that is not at the start of the reply', async () => {

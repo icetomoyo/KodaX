@@ -39,6 +39,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createCustomProvider } from './custom-provider.js';
 import { resolveProvider } from './resolver.js';
+import { createCloudProviderConfig } from '../cloud/provider-config.js';
+import { serializeCloudCredential } from '../cloud/credentials.js';
+import { runWithProviderCredential } from '../provider-credential-context.js';
 import type { KodaXBaseProvider } from './base.js';
 import type {
   KodaXAssistantBlock,
@@ -59,12 +62,44 @@ const RESULT_DIR = path.join(ROOT, RUN_LABEL);
 
 interface Endpoint {
   readonly id: string;
-  readonly protocol: 'anthropic' | 'openai';
+  readonly protocol: 'anthropic' | 'openai' | 'google';
   readonly model?: string;
   readonly create: () => KodaXBaseProvider;
 }
 
 const builtin = (name: string) => () => resolveProvider(name);
+
+/** A gateway serving Gemini on all three protocols (GEMINI_GATEWAY_URL is its origin, GEMINI_KEY its key). */
+const GEMINI_GATEWAY = process.env.GEMINI_GATEWAY_URL;
+const GEMINI_KEY = process.env.GEMINI_KEY;
+const GEMINI_MODEL = process.env.GEMINI_MODEL ?? 'gemini-3.8-flash';
+const unconfigured = (name: string) => createCustomProvider({ name, protocol: 'openai', baseUrl: 'https://unconfigured.invalid', apiKeyEnv: 'KODAX_UNSET_KEY', model: 'none' });
+
+/** Native Gemini takes its key through the cloud credential scope, not an env var. */
+function geminiNative(): KodaXBaseProvider {
+  if (!GEMINI_GATEWAY || !GEMINI_KEY) return unconfigured('gemini-native');
+  const config = {
+    ...createCloudProviderConfig({ service: 'gemini', name: 'gemini-native', model: GEMINI_MODEL }),
+    baseUrl: `${GEMINI_GATEWAY}/v1beta`,
+    reasoningProfile: { effortStrategy: 'google-thinking-level' as const, supportedEfforts: [{ value: 'high' as const, isDefault: true }] },
+  };
+  const provider = createCustomProvider(config);
+  const credential = serializeCloudCredential(config.name, { type: 'api-key', key: GEMINI_KEY });
+  const stream = provider.stream.bind(provider);
+  return Object.assign(provider, {
+    isConfigured: () => true,
+    stream: (...args: Parameters<typeof stream>) => runWithProviderCredential(config.name, credential, () => stream(...args)),
+  });
+}
+
+function geminiCompat(protocol: 'anthropic' | 'openai'): KodaXBaseProvider {
+  const name = `gemini-${protocol}`;
+  if (!GEMINI_GATEWAY) return unconfigured(name);
+  return createCustomProvider({
+    name, protocol, baseUrl: protocol === 'openai' ? `${GEMINI_GATEWAY}/v1` : GEMINI_GATEWAY,
+    apiKeyEnv: 'GEMINI_KEY', model: GEMINI_MODEL, supportsThinking: true,
+  });
+}
 
 const ENDPOINTS: Endpoint[] = [
   { id: 'zhipu-coding', protocol: 'anthropic', create: builtin('zhipu-coding') },
@@ -100,6 +135,9 @@ const ENDPOINTS: Endpoint[] = [
       reasoningProfile: { effortStrategy: 'openai-responses-effort' },
     }),
   },
+  { id: 'gemini-native', protocol: 'google', create: geminiNative },
+  { id: 'gemini-openai', protocol: 'openai', create: () => geminiCompat('openai') },
+  { id: 'gemini-anthropic', protocol: 'anthropic', create: () => geminiCompat('anthropic') },
 ];
 
 /** ark-coding serves the same GLM model as zhipu-coding, so it is a target only. */
@@ -194,12 +232,14 @@ async function loadOrCreateFixture(endpoint: Endpoint): Promise<SourceFixture> {
   const provider = endpoint.create();
   const user: KodaXMessage = { role: 'user', content: FIRST_TASK };
   // A fixture without reasoning tests nothing, so retry a few samples before giving up.
+  // Gemini carries its reasoning as a signature on the call, and its compatible routes return no reasoning text.
+  const needsThinking = !endpoint.id.startsWith('gemini-');
   let first: KodaXStreamResult | undefined;
-  for (let attempt = 0; attempt < 3 && !(first?.toolBlocks.length && first.thinkingBlocks.length); attempt++) {
+  for (let attempt = 0; attempt < 3 && !(first?.toolBlocks.length && (first.thinkingBlocks.length || !needsThinking)); attempt++) {
     first = await streamOn(endpoint, provider, [user]);
   }
   const toolUse = first?.toolBlocks[0];
-  if (!first || !toolUse || first.thinkingBlocks.length === 0) {
+  if (!first || !toolUse || (needsThinking && first.thinkingBlocks.length === 0)) {
     throw new Error(`${endpoint.id} produced no [thinking, tool_use] turn: ${first?.textBlocks.map(b => b.text).join('')}`);
   }
   const toolTurn = assistantMessage(first);

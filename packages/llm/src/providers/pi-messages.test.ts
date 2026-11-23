@@ -33,19 +33,26 @@ it('projects native Pi Messages context, consumes a strict SSE terminal and pair
   expect(body.options.maxTokens).toBeGreaterThan(0);
   expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get('authorization')).toBe('Bearer fake-key');
 });
-it('projects legacy assistant history without inventing Pi usage, signatures or provider metadata', async () => {
+it('replays assistant turns from other models as structured history from an unknown origin', async () => {
   vi.stubEnv(config.apiKeyEnv, 'fake-key');
   const fetch = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => new Response('data: {"type":"start"}\n\ndata: {"type":"done","reason":"stop"}\n\n'));
   vi.stubGlobal('fetch', fetch);
   await createCustomProvider(config).complete([{ role: 'assistant', content: [{ type: 'thinking', thinking: 'old plan', signature: 'foreign-signature' },
-    { type: 'tool_use', id: 'old-call', name: 'read', input: { path: 'a' } }] },
-    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'old-call', content: 'old result' }] }], [], '');
+    { type: 'text', text: 'reading' }, { type: 'tool_use', id: 'old-call', name: 'read', input: { path: 'a' } }, { type: 'text', text: '' }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'old-call', content: 'old result' }] },
+    { role: 'assistant', content: 'done' }], [], '');
   const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body));
-  expect(body.context.messages.slice(1).every((m: { role: string }) => m.role === 'user')).toBe(true);
-  expect(JSON.stringify(body)).toContain('old result');
+  const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+  const origin = { api: 'unknown', provider: 'unknown', model: 'unknown', usage: zero };
+  expect(body.context.messages.slice(1)).toMatchObject([
+    { role: 'assistant', content: [{ type: 'text', text: 'reading' }, { type: 'toolCall', id: 'old-call', name: 'read', arguments: { path: 'a' } }], ...origin, stopReason: 'toolUse' },
+    { role: 'toolResult', toolCallId: 'old-call', toolName: 'read', content: [{ type: 'text', text: 'old result' }], isError: false },
+    { role: 'assistant', content: [{ type: 'text', text: 'done' }], ...origin, stopReason: 'stop' },
+  ]);
+  expect(body.context.messages[1].content).toHaveLength(2);
   expect(JSON.stringify(body)).not.toContain('old plan');
   expect(JSON.stringify(body)).not.toContain('foreign-signature');
-  expect(JSON.stringify(body)).not.toContain('"usage"');
+  expect(JSON.stringify(body)).not.toContain('prior_');
 });
 it.each([
   ['missing start', [{ type: 'done', reason: 'stop' }]],
