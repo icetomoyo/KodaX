@@ -77,7 +77,9 @@ All notable changes to this project will be documented in this file.
 
 - Interactive `kodax` (Ink and classic), print mode (`-p`), the `-r` lookup
   and `-s list` now run on the Host over the v2 protocol, on one connection.
-  `kodax acp` runs on the Host over v2 too. The `daemon` commands still use v1.
+  `kodax acp` runs on the Host over v2 too. Before `kodax a2a` changes the
+  A2A config, it asks each running Host over v2 whether it reloads that
+  config. The `daemon` commands still use v1.
   - Print mode shows the reply, thinking and tool calls from the Session view.
     `--mode json` no longer writes `iteration.*`, `provider.*`, `retry`,
     `compact.*`, `managed_task.status`, `repo_intelligence.trace`, `turn.*`

@@ -2382,7 +2382,7 @@ v1 只需要在 **Host** 里保留一段时间，原因是一台机器上的 Hos
   - ~~`actor.spawn` 和 `actor.followup`~~：2026-11-23 落地（子代理的落地细节）。
   - M1c 第 3 项的授权方租约。
   - ~~`kodax acp` 改走 v2~~：2026-11-23 落地（ACP 的落地细节）。
-  - `kodax a2a` 的探测改走 v2，`agent.registration.*` 留给本机 owner。
+  - ~~`kodax a2a` 的探测改走 v2，`agent.registration.*` 留给本机 owner~~：2026-11-23 落地。`kodax a2a` 改 A2A 配置之前，对每个在跑的 Host 用 v2 的 `host.get` 看 `integrations.domains` 里有没有 `a2a`，有才说明这个 Host 会重新加载这份配置；v1 看的是 `a2aConfigReconciler` 能力。两者在 `kodax daemon` 起的 Host 上同时成立，配置无效时也一样。`agent.registration.*` 在 settings 平面，本来就只给 owner。Host 存活和归属的判断（`observeRuntimeDaemonHealth`）仍走 v1 的 `initialize`，和 `daemon` 命令一起迁。
   - ~~打印模式像 REPL 一样读 v2 会话视图~~：2026-11-23 落地（打印模式的落地细节）。
   - ~~Run 结局补上的字段~~：2026-11-23 落地（`RunOutcome` 一条）。
   - 记忆管理方法组（"记忆与技能学习"）。
