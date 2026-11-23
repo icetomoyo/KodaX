@@ -479,7 +479,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('omit empty `tools` arrays for strict vLLM gateways');
     expect(sdk).toContain('`compaction.reasoning` applies to');
     expect(sdk).toContain('The beta.9 release ships FEATURE_299');
-    expect(sdk).toContain('`kodax execpolicy check --mode full-access`');
+    expect(sdk).toContain('`kodax execpolicy check --permission-mode full-access`');
     expect(sdk).toContain('multimodal result fidelity (text/image tool results survive dispatch');
     expect(sdk).toContain('`runtime.sessions.confirmIdentityAlias` registers an explicitly confirmed legacy interrupt identity');
     expect(sdk).toContain('without inferring');
@@ -780,13 +780,26 @@ describe('FEATURE_218 manual registry', () => {
     const commands = resolveKodaXManual({ topic: 'commands' }).content;
     const permissions = resolveKodaXManual({ topic: 'permissions' }).content;
 
-    expect(commands).toContain('same native reasoning-effort control');
-    expect(commands).toContain('none');
+    expect(commands).toContain('`/effort` is the same control');
+    expect(commands).toContain('`/thinking`, `/think`, `/reason` and `/t` are aliases');
+    expect(commands).toContain('`none` also means `off`');
     expect(commands).toContain('quick/balanced/deep');
     expect(commands).not.toContain('/auto-denials');
     expect(permissions).toContain('Legacy grants without a Runtime-issued matcher');
     expect(permissions).toContain('remain visible and revocable');
     expect(permissions).toMatch(/never\s+authorize a concrete call/);
+  });
+
+  it('names the Host, sessions and help commands of the CLI', () => {
+    const commands = resolveKodaXManual({ topic: 'commands' }).content;
+
+    expect(commands).toContain('`kodax host start|stop|restart|status|logs`');
+    expect(commands).toContain('`kodax sessions list|delete|delete-all`');
+    expect(commands).toContain('`kodax -h <command>`');
+    expect(commands).not.toContain('`kodax daemon');
+    expect(resolveKodaXManual({ topic: 'host' }).matchedTopic).toBe('commands');
+    expect(resolveKodaXManual({ topic: 'daemon' }).matchedTopic).toBe('commands');
+    expect(resolveKodaXManual({ topic: 'sessions' }).content).toContain('`kodax sessions delete <id>`');
   });
 
   it('keeps setup commands and the default mode shortcuts in the commands topic', () => {

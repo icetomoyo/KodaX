@@ -165,6 +165,10 @@ All notable changes to this project will be documented in this file.
   `kodax -h thinking` lists the effort levels the CLI accepts.
 - REPL `/help` groups each command under its own category. `/thinking`,
   `/think` and `/t` are aliases of `/reasoning`.
+- The KodaX manual the agent reads names `kodax host`, `kodax sessions` and
+  `kodax -h <command>`, so the agent answers Host, session and help questions
+  with today's commands. `/reasoning` help shows `off` to disable reasoning
+  (`none` still works).
 - A child Agent a daemon client starts with `agents.spawn` or
   `agents.followup` without lending a key now runs on the Host's own keys, as
   a Run does, instead of failing with `credential_unavailable`. A key the

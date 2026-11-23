@@ -1858,7 +1858,7 @@ export const BUILTIN_COMMANDS: Command[] = [
     category: 'Settings',
     aliases: ['reason', 'thinking', 'think', 't'],
     description: 'Show or set native reasoning effort',
-    usage: '/reasoning [none|auto|low|medium|high|xhigh|max]',
+    usage: '/reasoning [off|auto|low|medium|high|xhigh|max]',
     handler: async (args, _context, callbacks, currentConfig) => {
       if (callbacks.config) return hostEffortCommand(args, callbacks, currentConfig);
       await handleReasoningEffortCommand('reasoning', args, callbacks, currentConfig);
@@ -2291,7 +2291,7 @@ async function handleReasoningEffortCommand(
 
 function printReasoningEffortHelp(commandName: string): void {
   console.log(chalk.dim(`  /${commandName}             `) + 'Show current native reasoning effort');
-  console.log(chalk.dim(`  /${commandName} none        `) + 'Disable reasoning when supported');
+  console.log(chalk.dim(`  /${commandName} off         `) + 'Disable reasoning when supported (`none` also works)');
   console.log(chalk.dim(`  /${commandName} auto        `) + 'Clear the explicit effort override');
   console.log(chalk.dim(`  /${commandName} low         `) + 'Use low native reasoning effort');
   console.log(chalk.dim(`  /${commandName} medium      `) + 'Use medium native reasoning effort');
