@@ -687,7 +687,7 @@ see the [Client contract](CLIENT_CONTRACT.md#连接启动与所有权).
 `createKodaXRuntime()` defaults to an inline embedded runtime in the caller's
 process (the v0.7.96 Worker-hosted isolation form was removed in v0.7.97).
 `mode: 'daemon'` starts or attaches to a detached
-`kodax daemon serve` owner at the home's endpoint. Custom daemon
+`kodax host serve` owner at the home's endpoint. Custom daemon
 endpoints are attach-only.
 
 **Host layout (ADR-075).** One Host serves each agent home (`homeDir` or
@@ -700,7 +700,7 @@ endpoints are attach-only.
 `sessions/.product-host/owner.lock` is the single-writer fence for the Session
 storage root. Older clients may still run a Host in another slot (older Space:
 `coder`); while it owns Session storage, `resolveRuntimeHostSlot` returns its
-slot so passive connect and `kodax daemon stop|status|logs|restart` act on it,
+slot so passive connect and `kodax host stop|status|logs|restart` act on it,
 and `readKodaXClientExits` reads every slot listed by `listRuntimeDaemonSlots`.
 At startup the canonical Host merges each legacy `runtime/profiles/<p>/` into
 `default` once and renames it to `<p>.merged-<YYYYMMDD>`

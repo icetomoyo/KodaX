@@ -68,11 +68,11 @@ export NODE_EXTRA_CA_CERTS=/etc/ssl/corp-root.pem
 export HTTPS_PROXY=http://proxy.corp.example:3128
 export NO_PROXY=localhost,127.0.0.1,.corp.example
 export NODE_USE_ENV_PROXY=1
-kodax daemon stop   # a running Host keeps the environment it started with
+kodax host stop   # a running Host keeps the environment it started with
 kodax -p "Review this repository"
 ```
 
-When a proxy variable is set but some requests would bypass it, the Host writes a `[runtime:network]` warning to `kodax daemon logs`. The warning names the variable and never prints its value.
+When a proxy variable is set but some requests would bypass it, the Host writes a `[runtime:network]` warning to `kodax host logs`. The warning names the variable and never prints its value.
 
 ## Shared Host ownership
 
@@ -83,9 +83,9 @@ Explicit low-level `/runtime` embedding remains separate, and Worker-hosted
 embedded Runtime is removed. See the [SDK migration guide](../../docs/SDK_MIGRATION.md).
 
 ```bash
-kodax daemon start
+kodax host start
 kodax -p "Review this repository"
-kodax daemon stop
+kodax host stop
 ```
 
 By default, daemon state, config, and runtime session storage use the exact

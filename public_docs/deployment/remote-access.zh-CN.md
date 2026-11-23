@@ -27,8 +27,8 @@
 重启 Host，让它开始监听：
 
 ```bash
-kodax daemon stop
-kodax daemon start
+kodax host stop
+kodax host start
 ```
 
 想让它开机后自动在线，看[让自己电脑上的 Host 一直在线](host.zh-CN.md#让自己电脑上的-host-一直在线)。
@@ -55,7 +55,7 @@ cloudflared tunnel --url http://127.0.0.1:8787  # Cloudflare 快速隧道
 ## 3. 配对一台设备
 
 ```bash
-kodax daemon pair --name "我的手机" --url https://my-pc.tailnet-name.ts.net
+kodax host pair --name "我的手机" --url https://my-pc.tailnet-name.ts.net
 ```
 
 它打印一个链接，形如 `https://my-pc.tailnet-name.ts.net/#pair=…`。在设备上打开它。怎么把链接发给自己都可以，也可以做成二维码。
@@ -70,8 +70,8 @@ kodax daemon pair --name "我的手机" --url https://my-pc.tailnet-name.ts.net
 ## 4. 管理设备
 
 ```bash
-kodax daemon devices                    # id、名称、地址、最后连接时间
-kodax daemon devices revoke "我的手机"
+kodax host devices                    # id、名称、地址、最后连接时间
+kodax host devices revoke "我的手机"
 ```
 
 吊销设备会立即断开它的连接。在 `host.json` 里关掉 `pairing`，不用重启就会断开所有配对设备，也不能再配对；设备列表还在，可以照常清理。

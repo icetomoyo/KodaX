@@ -6,10 +6,10 @@
 
 ## Host 是什么
 
-一个 Host 就是一个 `kodax daemon serve` 进程。它独占一个 home 目录（`KODAX_HOME`，通常是 `~/.kodax`），里面是这个人的设置、Session 和记忆，并运行他的 Agent。客户端通过 WebSocket 连到它的 `/v2`。
+一个 Host 就是一个 `kodax host serve` 进程。它独占一个 home 目录（`KODAX_HOME`，通常是 `~/.kodax`），里面是这个人的设置、Session 和记忆，并运行他的 Agent。客户端通过 WebSocket 连到它的 `/v2`。
 
 - **一个 Host 只属于一个人。** 能连上的都是这个人本人，或者替他工作的后端。每个用户一个 Host，放在各自的容器或系统账号里。
-- **一个 home 只有一个 Host。** home 已经被一个活着的 Host 持有时，再启动 `kodax daemon serve` 会以非 0 退出。
+- **一个 home 只有一个 Host。** home 已经被一个活着的 Host 持有时，再启动 `kodax host serve` 会以非 0 退出。
 - 需要 Node.js 22.4 或更高版本，或者单文件版。见[安装](../getting-started/installation.zh-CN.md)。
 
 ## 配置监听
@@ -176,7 +176,7 @@ Host 这一段有 90 秒的总截止时间，之后的清理最多再花 160 秒
 默认情况下，审批请求等 30 分钟，超时后这次调用被拒绝，模型接着做。普通提问一直等。没人回答的提问让 Host 一直处于忙碌状态，永远不会报 `canStop`。平台上应该给提问设一个时限：
 
 ```bash
-kodax daemon serve --user-input-timeout-ms 1800000
+kodax host serve --user-input-timeout-ms 1800000
 ```
 
 ## 健康检查：`/healthz`
@@ -195,7 +195,7 @@ kodax daemon serve --user-input-timeout-ms 1800000
 
 ## 日志
 
-日志是 JSON 行：`{time, level, message, data}`。前台运行的 `kodax daemon serve` 把它写到 stdout，同时写进 home 里的 `daemon.log`。`kodax daemon logs` 打印这个文件。
+日志是 JSON 行：`{time, level, message, data}`。前台运行的 `kodax host serve` 把它写到 stdout，同时写进 home 里的 `daemon.log`。`kodax host logs` 打印这个文件；`kodax host logs --follow` 持续打印新写入的行，直到按 Ctrl+C。
 
 安全事件的 `data.source` 是 `host.security`，消息是 `[host.security] <事件名>`，事件内容在 `data.detail` 里。里面不会有 token 或参数值：
 
@@ -314,7 +314,7 @@ Description=KodaX Host
 After=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/kodax daemon serve
+ExecStart=/usr/local/bin/kodax host serve
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=260
@@ -334,7 +334,7 @@ journalctl --user -u kodax-host  # 查看日志
 
 ### Windows：任务计划程序
 
-`kodax daemon start` 在后台启动 Host，不弹窗口。登录时运行它：
+`kodax host start` 在后台启动 Host，不弹窗口。登录时运行它：
 
 ```powershell
 $kodax = (Get-Command kodax.cmd).Source

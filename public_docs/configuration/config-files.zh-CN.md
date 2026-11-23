@@ -58,20 +58,20 @@ export NODE_EXTRA_CA_CERTS=/etc/ssl/corp-root.pem
 export HTTPS_PROXY=http://proxy.corp.example:3128
 export NO_PROXY=localhost,127.0.0.1,.corp.example
 export NODE_USE_ENV_PROXY=1
-kodax daemon stop   # 已运行的 Host 沿用它启动时的环境变量
+kodax host stop   # 已运行的 Host 沿用它启动时的环境变量
 kodax -p "Review this repository"
 ```
 
-设置了代理变量、但仍有请求会绕过代理时，Host 会向 `kodax daemon logs` 写入一条 `[runtime:network]` 警告。警告只给出变量名，不会打印变量值。
+设置了代理变量、但仍有请求会绕过代理时，Host 会向 `kodax host logs` 写入一条 `[runtime:network]` 警告。警告只给出变量名，不会打印变量值。
 
 ## 共享 Host 所有权
 
 产品 CLI 使用共享 Daemon Host。产品 SDK 应用使用 `ensureKodaXClient` 或 `connectKodaXClient`。详见 [SDK 迁移指南](../../docs/SDK_MIGRATION.md)。
 
 ```bash
-kodax daemon start
+kodax host start
 kodax -p "Review 这个仓库"
-kodax daemon stop
+kodax host stop
 ```
 
 Daemon 状态、配置和 Runtime 会话存储默认使用解析后的 `KODAX_HOME`（通常为 `<OS 用户主目录>/.kodax`），CLI 和 SDK 客户端因此收敛到同一个本地 Daemon。

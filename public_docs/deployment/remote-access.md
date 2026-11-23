@@ -35,8 +35,8 @@ if you set `KODAX_HOME`):
 Restart the Host so it starts listening:
 
 ```bash
-kodax daemon stop
-kodax daemon start
+kodax host stop
+kodax host start
 ```
 
 To keep it up after a reboot, see
@@ -65,7 +65,7 @@ scripts on the page can get the warning page too.
 ## 3. Pair a device
 
 ```bash
-kodax daemon pair --name "My phone" --url https://my-pc.tailnet-name.ts.net
+kodax host pair --name "My phone" --url https://my-pc.tailnet-name.ts.net
 ```
 
 It prints a link like `https://my-pc.tailnet-name.ts.net/#pair=…`. Open it on
@@ -87,8 +87,8 @@ front of it.
 ## 4. Manage devices
 
 ```bash
-kodax daemon devices                  # id, name, address, last connection
-kodax daemon devices revoke "My phone"
+kodax host devices                  # id, name, address, last connection
+kodax host devices revoke "My phone"
 ```
 
 Revoking a device closes its connections at once. Turning `pairing` off in

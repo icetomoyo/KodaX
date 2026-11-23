@@ -11,14 +11,14 @@ a phone, see [Remote access](remote-access.md).
 
 ## What a Host is
 
-A Host is one `kodax daemon serve` process. It owns one home directory
+A Host is one `kodax host serve` process. It owns one home directory
 (`KODAX_HOME`, normally `~/.kodax`) with that person's settings, Sessions and
 memory, and runs their agents. Clients connect to it over WebSocket at `/v2`.
 
 - **One person per Host.** Everyone who can connect is the same person or a
   backend acting for them. Give each user their own Host, in their own
   container or OS account.
-- **One Host per home.** A second `kodax daemon serve` on a home that a live
+- **One Host per home.** A second `kodax host serve` on a home that a live
   Host already owns exits with a non-zero code.
 - Node.js 22.4 or later, or the standalone binary. See
   [Installation](../getting-started/installation.md).
@@ -230,7 +230,7 @@ answers keeps the Host busy, so it never reports `canStop`. On a platform, set a
 question deadline:
 
 ```bash
-kodax daemon serve --user-input-timeout-ms 1800000
+kodax host serve --user-input-timeout-ms 1800000
 ```
 
 ## Health: `/healthz`
@@ -255,8 +255,9 @@ kodax daemon serve --user-input-timeout-ms 1800000
 ## Logs
 
 Logs are JSON lines, `{time, level, message, data}`. A foreground
-`kodax daemon serve` writes them to stdout and to the home's `daemon.log`.
-`kodax daemon logs` prints the file.
+`kodax host serve` writes them to stdout and to the home's `daemon.log`.
+`kodax host logs` prints the file; `kodax host logs --follow` keeps printing
+new lines until Ctrl+C.
 
 Security events have `data.source` `host.security` and the message
 `[host.security] <event>`, with the event in `data.detail`. They never carry
@@ -390,7 +391,7 @@ Description=KodaX Host
 After=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/kodax daemon serve
+ExecStart=/usr/local/bin/kodax host serve
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=260
@@ -411,7 +412,7 @@ retries every 10 s until that Host stops.
 
 ### Windows: Task Scheduler
 
-`kodax daemon start` starts the Host in the background without a window.
+`kodax host start` starts the Host in the background without a window.
 Run it when you sign in:
 
 ```powershell

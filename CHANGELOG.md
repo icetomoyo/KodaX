@@ -21,9 +21,32 @@ All notable changes to this project will be documented in this file.
 - Node 22.4 or later is required (ADR-080). Node 20 reached end of life on
   2026-04-30 and no longer gets security fixes. The standalone binaries still
   need no Node on the target machine. CI now tests Node 22 and 24.
+- `kodax host status`, `stop` and `restart` report the Host's health as
+  `ready`, `starting`, `draining`, `stopped`, `stale`, `unreachable` or
+  `mismatch`, the words `kodax doctor` and REPL `/status runtime` use too.
+  Scripts that read the JSON `health` field must change `healthy` to `ready`,
+  `missing` to `stopped` and `unhealthy` to `unreachable`; the `stop` result
+  `reason` changes the same way. `runtime.summary` in `status --json` names
+  `pendingPermissions` `pendingInteractions`, which also counts questions, and
+  adds `clients`.
+- `kodax host status` exits 3 when no Host is running (`stopped` or `stale`)
+  and 1 when the Host does not answer as itself (`unreachable` or
+  `mismatch`). It exited 0 in every case.
+- `kodax doctor` exits 1 when the Host does not answer as itself or the core
+  config cannot be read. It exited 0 in every case. A stopped Host is not a
+  failure.
 
 ### Added
 
+- `kodax host` manages the Host, which `kodax daemon` did. `kodax daemon` still
+  works, prints that it was renamed, and is removed in 0.7.100.
+- `kodax host logs --follow` keeps printing new log lines until Ctrl+C, across
+  a log rotation.
+- `kodax doctor` reports the Host of the home and its health.
+- v2 `initialize` takes `purpose: 'probe'`. A probe connection may call only
+  `ping`, `host.get` and `host.preflight`, is not listed among the clients,
+  and does not keep an idle Host running. `kodax host status` reads the Host
+  this way.
 - v2 `session.create` takes `temporary`: the Host deletes the Session when its
   Run ends, also when no client is attached any more.
 - A v2 client can manage the notes the agent keeps, from any role: list them
@@ -129,6 +152,9 @@ All notable changes to this project will be documented in this file.
 - The `/auto-denials` REPL command.
 
 ### Fixed
+
+- `kodax host restart` starts the Host when none is running, or when the
+  state file names a process that is gone. It used to fail and start nothing.
 
 - A Host removes an uploaded blob nobody used for a day, as it does an upload
   nobody finished. A Session keeps its own copy of an image submitted with it.

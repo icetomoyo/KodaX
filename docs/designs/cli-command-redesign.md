@@ -44,7 +44,7 @@ CLI 子命令和 REPL 命令各有一份数据表，帮助、补全、名单、�
 | `kodax host stop [--force]` | 停止 |
 | `kodax host restart [--force]` | 先停再起；没在运行或已失效时直接启动 |
 | `kodax host status` | 健康状态 |
-| `kodax host logs [--lines n] [--follow]` | 日志；`--follow` 未经用户确认，见“未定” |
+| `kodax host logs [--lines n] [--follow]` | 日志；`--follow` 一直打印新行到 Ctrl+C，跨日志轮转（未经用户确认，见“未定”） |
 | `kodax host serve` | 前台运行（服务管理器用） |
 | `kodax host pair` / `devices` / `devices revoke` | 设备配对，不变 |
 
@@ -53,7 +53,8 @@ CLI 子命令和 REPL 命令各有一份数据表，帮助、补全、名单、�
   - 探测连接用 v2 `initialize` 加一个可选的 `purpose: 'probe'`。探测连接只能调 `ping`、`host.get`、`host.preflight`（只读），不算已连接的客户端，不重置空闲计时，也不出现在 `host.preflight` 的 `clients` 里。这和 v1 的 `connectionPurpose: 'probe'` 是同一件事，v2 原来没有；v2 在 Host 内部转到 v1 dispatcher 时带上 `probe`，沿用 v1 的只读限制。`status` 要的计数和待处理交互数由 `host.get` 与 `host.preflight` 给出。
   - 身份核对：`initialize` 结果里的 `host.id` 等于 `daemon.json` 的 `runtimeId`，锁文件的持有者与 `daemon.json` 一致。
   - CLI 的 `status`、`stop` 改走 v2。`observeRuntimeDaemonHealth` 暂时留在 v1：启动器（`process.ts`、`sdk-runtime.ts` 的 `parseProbedDaemon`）读它返回的 v1 `initialize` 结果，要和启动器一起在 FEATURE_314 迁移，0.7.100 删 v1 前完成。
-- 停止和日志用普通客户端连接调 `host.stop`、`host.logs`（v1 的 stop 也是普通连接）；Windows 进程树兜底和替换检测保持原样。
+- 停止用普通客户端连接调 `host.stop`（v1 的 stop 也是普通连接）；Windows 进程树兜底和替换检测保持原样。
+- 日志仍直接读日志文件，不走 `host.logs`：Host 停了或起不来时最需要看日志，这时连不上 Host。
 
 ### 3. 一个健康模型
 
@@ -71,7 +72,8 @@ CLI、REPL `/status`、`/healthz`、`kodax doctor` 用同一组状态：
 
 - `/healthz` 继续只报 `starting`/`ready`/`draining`（网络探测只关心这三个），字段名不变。
 - 退出码 3 表示“没在运行”，与 LSB `status` 约定一致（未经用户确认）。
-- `kodax doctor` 增加 Host 一项：报告上面的状态；Host 不健康、存储坏、没有可用 Provider 凭据时退出 1。现在它永远退出 0。
+- `kodax doctor` 增加 Host 一项：报告上面的状态。Host 是 `unreachable`/`mismatch`，或核心配置读不了、不是合法 JSON 时退出 1；Host 没在运行不算失败。以前它永远退出 0。
+- doctor 不因“没有 Provider 凭据”退出 1：凭据可以来自环境变量、配置文件或 Gemini/Codex CLI 登录，doctor 只看环境变量，按它判失败会误报（未经用户确认）。
 
 ### 4. 输出与退出码约定
 
@@ -122,5 +124,5 @@ CLI、REPL `/status`、`/healthz`、`kodax doctor` 用同一组状态：
 ## 未定（未经用户确认，按推荐先做）
 
 - `host status` 用退出码 3 表示没在运行。
-- `kodax host logs --follow`：现在没有，运维常用；第 1 期顺手加，代价小。
+- `kodax host logs --follow`：运维常用，第 1 期已加；和 `--json` 一起用时报错，因为跟随输出的日志行本身就是 JSON。
 - `-s` 系列保留到什么时候删：建议和 `daemon` 一起在 0.7.100 删。

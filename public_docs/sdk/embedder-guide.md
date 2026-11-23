@@ -3403,7 +3403,7 @@ The connected daemon must advertise `daemonShutdownVerification: 1` when a host
 requires this contract. A legacy daemon without Job-containment metadata is
 kept usable for ordinary Session recovery, but it is never reported as a
 verified shutdown and is not silently upgraded in place. Stop it explicitly and
-relaunch it before requiring the capability. The CLI's `kodax daemon stop
+relaunch it before requiring the capability. The CLI's `kodax host stop
 --json` follows the same daemon-plus-supervisor boundary.
 
 The daemon-owned slice does not carry the former Runtime Worker's
@@ -3640,7 +3640,7 @@ Public Runtime connections share one ownership contract:
 | daemon client | Detaches only this client transport. Other REPL/Space/SDK clients and runs remain owned by the daemon. | Aborts only the addressed run. | The client connection rejects; reconnect explicitly after the daemon is healthy. |
 
 `close()` is idempotent. It is not a shared-daemon stop command. Use
-`kodax daemon stop`, `kodax daemon restart`, or an authenticated low-level
+`kodax host stop`, `kodax host restart`, or an authenticated low-level
 `runtime.shutdown` request for administrative shutdown. KodaX does not
 automatically retry or replay an in-flight run after a daemon owner dies,
 because provider and tool side effects may already have happened.
@@ -3654,7 +3654,7 @@ implicitly. Public inline ownership and its switching helpers are retired by
 the unified Host cutover. The former `stopForInline()` rollback and the
 crash-resumable exit-settlement transaction were removed in v0.7.97. Host-close
 logging and owner-lock release are still intermediate
-progress boundaries. A successful `kodax daemon stop` / `restart` additionally
+progress boundaries. A successful `kodax host stop` / `restart` additionally
 waits for the original daemon PID to disappear and verifies a shutdown-success
 outcome bound to that exact Runtime ID and PID. Before that process exits, the
 serve host completes bounded A2A/extension, LSP, managed-child-tree, and tracing
@@ -3673,7 +3673,7 @@ results use `replacementRunning: true` and return the current state/health when
 a replacement daemon has already acquired the owner lock. Such a result also
 uses `stopped: false` and `reason: 'replacement_running'`, so existing callers
 that gate cleanup on `stopped` remain safe. Callers must not clean or rebuild a
-home while that flag is present or health is non-missing.
+home while that flag is present or health is anything but `stopped`.
 The administrative connection also verifies that `initialize.identity` still
 matches the Runtime ID observed before connecting; if an old owner exits
 and a replacement binds the same endpoint first, the stale stop command fails
@@ -3689,7 +3689,7 @@ Daemon ownership is scoped by `homeDir`: one Host serves each home (ADR-075).
   and is kept only for older clients.
 - A Host started by an older client under another profile (for example `coder`)
   keeps serving until it is idle. While it owns Session storage, `ensure`,
-  passive `connect`, and `kodax daemon start|stop|status|logs|restart` act on it;
+  passive `connect`, and `kodax host start|stop|status|logs|restart` act on it;
   `identity.profile` then reports its directory name. `readKodaXClientExits`
   reads the receipts of every Host directory in the home, so exits recorded by
   such a Host stay recoverable after it is replaced.
@@ -3702,9 +3702,9 @@ For a given home, one owner wins an atomic lock. Concurrent starters wait for
 the winner and connect once it is ready. Stale state is cleaned only after pid,
 endpoint, token, and runtime identity checks. If ownership cannot be verified,
 KodaX reports the daemon as unhealthy instead of killing an arbitrary process.
-SDK auto-start launches a detached `kodax daemon serve` process; it never treats
+SDK auto-start launches a detached `kodax host serve` process; it never treats
 an in-process socket listener as daemon mode. Closing the SDK client detaches
-without stopping that shared process. Use `kodax daemon stop` or the explicit
+without stopping that shared process. Use `kodax host stop` or the explicit
 runtime shutdown protocol to stop the owner.
 
 CLI and SDK startup retain the exact spawned candidate until health confirms
@@ -3765,26 +3765,32 @@ Operational guidance:
 - use a separate `homeDir` for tests, previews, and incompatible
   configurations;
 - test harnesses that auto-start a process daemon must send authenticated
-  `runtime.shutdown` (or run `kodax daemon stop --home <dir>`)
+  `runtime.shutdown` (or run `kodax host stop --home <dir>`)
   before deleting their temporary home; use the CLI command when the caller
   needs a completed process-exit boundary, because `runtime.close()` only
   detaches and the low-level shutdown response is acceptance, not completion;
 - KodaX's own Vitest harness also supplies an internal worker-PID marker so a
   forcibly terminated worker cannot strand its test daemon; this is a test-only
   fallback, not a public SDK option or a production idle-shutdown policy;
-- query `kodax daemon status --json` before deciding to restart;
-- inspect `kodax daemon logs --lines 100` when startup times out;
+- query `kodax host status --json` before deciding to restart. Its `health` is
+  `ready`, `starting` or `draining` (exit code 0), `stopped` or `stale` (no Host
+  is running; exit code 3), or `unreachable` or `mismatch` (exit code 1). The
+  `runtime.summary` counts come over a probe connection, which is not a client
+  and does not keep an idle Host running. `kodax host restart` starts a Host
+  that is not running;
+- inspect `kodax host logs --lines 100` when startup times out, or add
+  `--follow` to keep printing new lines;
 - custom endpoints and injected transports are attach-only unless the caller
   implements their owner lifecycle explicitly.
 
 The matching CLI surface is:
 
 ```bash
-kodax daemon start
-kodax daemon status --json
-kodax daemon logs --lines 100
-kodax daemon stop --json
-kodax daemon restart
+kodax host start
+kodax host status --json
+kodax host logs --lines 100
+kodax host stop --json
+kodax host restart
 ```
 
 Inside the REPL, `/status runtime` reports Host identity,
@@ -4194,7 +4200,7 @@ There is no required-answer flag. An ordinary-question deadline is controlled
 for a newly started shared Host by `ensureKodaXClient({ userInputTimeoutMs })`
 or `ensureKodaXRuntime`, including the retained `createKodaXRuntime` daemon launcher.
 Connecting to an existing Host does not change its policy. The CLI equivalent
-is `kodax daemon serve --user-input-timeout-ms <milliseconds>`; this is not a
+is `kodax host serve --user-input-timeout-ms <milliseconds>`; this is not a
 `config.json` setting.
 The timeout defaults to `0`, disabling it; positive values are integer
 milliseconds up to 2,147,483,647. Defaults only suggest an answer for display.
@@ -5482,7 +5488,7 @@ a 30-second idle grace and reuses a compatible persistent Host without a policy
 refresh. The product CLI uses this lifecycle. In contrast, the explicit
 `daemonOrphanExitMs` option still requires the enabled orphan-exit capability.
 `daemonLifecycle:'persistent'` retains the authenticated current Host in place,
-as used by `kodax daemon start`; only a logical Client with `daemon:admin` can
+as used by `kodax host start`; only a logical Client with `daemon:admin` can
 request this. Configured A2A serving also retains its Host. An interactive
 rebuild refresh preserves a Host's declared persistent lifecycle. These options
 are startup operations; passive `connectKodaXRuntime` rejects `daemonLifecycle`.

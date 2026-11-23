@@ -17,6 +17,27 @@ Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` �
 `systemPromptOverride` 在根运行上的语义见[统一提示词链路](#统一提示词链路未发布)。
 `sa` 和 `amaw` 都是已弃用的输入，见 [SA 模式退役](#sa-模式退役未发布)。
 进程内入口不传 `events.beforeToolExecute` 时只运行只读工具，见[工具调用默认只读](#工具调用默认只读未发布)。
+调用 `kodax daemon …` 的脚本见 [`kodax host` 命令与健康状态](#kodax-host-命令与健康状态未发布)。
+
+## `kodax host` 命令与健康状态（未发布）
+
+只影响调用 CLI 的脚本。SDK 调用方（含 Space）不调用这些命令，不受影响。
+
+- `kodax daemon …` 改名为 `kodax host …`，子命令和开关不变。`kodax daemon` 在 0.7.100 之前仍可用，会往 stderr 打一行改名提示。
+- `--json` 结果里的 `health` 换了一组词，`kodax doctor --json` 的 `host.state` 用同一组：
+
+  | 原来 | 现在 |
+  |---|---|
+  | `healthy` | `ready`；Host 正在启动或停止时是 `starting`、`draining` |
+  | `missing` | `stopped` |
+  | `stale` | `stale` |
+  | `unhealthy` | `unreachable` |
+  | `mismatch` | `mismatch` |
+
+- `stop --json` 的 `reason` 同样改：`missing` → `stopped`，`unhealthy` → `unreachable`。
+- `status --json` 的 `runtime.summary.pendingPermissions` 改名 `pendingInteractions`，也计入等待回答的提问；新增 `clients`。
+- 退出码：`kodax host status` 在 `stopped`、`stale` 时退出 3，在 `unreachable`、`mismatch` 时退出 1，其余 0。`kodax doctor` 在 Host 是 `unreachable`、`mismatch` 或核心配置读不了时退出 1。两者以前总是退出 0；用 `set -e` 或检查退出码的脚本要按这个处理。
+- `kodax host restart` 在没有 Host 时直接启动，以前会失败。
 
 ## 工具调用默认只读（未发布）
 
@@ -141,7 +162,7 @@ Run 一定会得到终态，不再停在 `unknown` 等待无限重试（GitHub #
 - 只有当 Session 写盘或隔离前放行的工具调用永远不返回时，才需要重启 Host。若另一个存活进程占用该 Actor 树，
   `runs.start` 以 `actor_owner_conflict` 拒绝；那个进程退出后会自动恢复，重启没有帮助。
 - 隔离中的 Session 不再阻止 Host 停止：它的 Actor turn 已不可能提交，`status.preflight()` 不再把它们列入
-  `activeAgentTurns` 和 `blockers`。Host 停止、`kodax daemon restart`、空闲退出和客户端完整退出（如退出 Space）
+  `activeAgentTurns` 和 `blockers`。Host 停止、`kodax host restart`、空闲退出和客户端完整退出（如退出 Space）
   都能完成。此前这种 Host 拒绝一切停止，退出 Space 后它仍在运行，重启无从进行。
 - 已请求停止的 Run 或 Workflow 不再阻止 Host 停止，即使它的执行体永远不返回（例如工具调用或子 Agent 忽略
   abort）。`status.preflight()` 不再把它列入 `activeRuns`、`activeWorkflows` 和 `blockers`。Host 退出时这部分
