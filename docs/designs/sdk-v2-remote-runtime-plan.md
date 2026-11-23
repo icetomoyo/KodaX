@@ -2306,7 +2306,7 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
 
 Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客户端：一次切换"）。SDK 这边交付：
 
-1. 给 Space 的迁移说明：Space 用到的每个 v1 调用对应哪个 v2 方法，行为、错误码和身份有什么不同。写进 `docs/SDK_MIGRATION.md`，交给 Space 线程。
+1. 给 Space 的迁移说明：Space 用到的每个 v1 调用对应哪个 v2 方法，行为、错误码和身份有什么不同。写进 `docs/SDK_MIGRATION.md`，交给 Space 线程。**状态**：2026-11-24 写入"协议 v2：v1 方法对照"一节，覆盖握手里的全部 140 个方法，`methods.contract.json` 有的方法表里都有。
 2. 按 Space 的反馈补方法：§12 第 1 条列的调用点由 Space 线程核对。有调用方的，SDK 补上对应的 v2 方法。
 3. 授权方租约：形状按 Space 线程给出的真实调用点定（见"第 9 项的落地细节"）。
 4. Artifact SDK 改为按 blob 引用匹配附件（D11）。Artifact SDK 是 KodaX 的包，这一项归 SDK。
@@ -2385,7 +2385,7 @@ v1 只需要在 **Host** 里保留一段时间，原因是一台机器上的 Hos
   - ~~`kodax a2a` 的探测改走 v2，`agent.registration.*` 留给本机 owner~~：2026-11-23 落地。`kodax a2a` 改 A2A 配置之前，对每个在跑的 Host 用 v2 的 `host.get` 看 `integrations.domains` 里有没有 `a2a`，有才说明这个 Host 会重新加载这份配置；v1 看的是 `a2aConfigReconciler` 能力。两者在 `kodax daemon` 起的 Host 上同时成立，配置无效时也一样。`agent.registration.*` 在 settings 平面，本来就只给 owner。Host 存活和归属的判断（`observeRuntimeDaemonHealth`）仍走 v1 的 `initialize`，和 `daemon` 命令一起迁。
   - ~~打印模式像 REPL 一样读 v2 会话视图~~：2026-11-23 落地（打印模式的落地细节）。
   - ~~Run 结局补上的字段~~：2026-11-23 落地（`RunOutcome` 一条）。
-  - 记忆管理方法组（"记忆与技能学习"）。
+  - ~~记忆管理方法组（"记忆与技能学习"）~~：2026-11-23 落地。
 
 ### 打印模式的落地细节
 

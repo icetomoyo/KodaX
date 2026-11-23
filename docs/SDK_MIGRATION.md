@@ -17,7 +17,246 @@ Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` �
 `systemPromptOverride` 在根运行上的语义见[统一提示词链路](#统一提示词链路随-v0797-beta12-发布)。
 `sa` 和 `amaw` 都是已弃用的输入，见 [SA 模式退役](#sa-模式退役随-v0797-beta12-发布)。
 进程内入口不传 `events.beforeToolExecute` 时只运行只读工具，见[工具调用默认只读](#工具调用默认只读未发布)。
+直接调用 Host 协议的客户端从 v1 换到 v2 时见[协议 v2：v1 方法对照](#协议-v2v1-方法对照未发布)。
 调用 `kodax daemon …` 的脚本见 [`kodax host` 命令与健康状态](#kodax-host-命令与健康状态未发布)；解析其他 CLI 命令输出或检查退出码的脚本见 [CLI 输出、退出码与旧开关](#cli-输出退出码与旧开关未发布)。
+
+## 协议 v2：v1 方法对照（未发布）
+
+只影响直接调用 Host 协议的客户端：用 `connectKodaXClient`/`ensureKodaXClient` 拿到 v1 产品 Client 的程序，以及自己说 v1 JSON-RPC 的程序。v1 在 `0.7.100` 删除（`0.8.0` 先发就在 `0.8.0`）；过渡期内 Host 两种协议都接，客户端只用其中一种，不在一个客户端里保留两条路径。
+
+**怎么连**：本机用 `ensureKodaXHostClient`（`@kodax-ai/kodax/client`，会拉起 Host）；网络和浏览器用 `connectKodaXHost`（`/client` 和 `/browser`）。握手结果的 `methods` 是这条连接能调用的方法，`locks` 是对它生效的锁定项；按这两项决定显示什么，不按角色名分支。部署和鉴权见 `public_docs/deployment/host.md`。
+
+**和 v1 不同的规则**：
+
+- **错误**：只看 `HostProtocolError.code`（`kodaxCode`），不解析错误文本。`internal` 不带 Host 的原始信息，只带 `incidentId`，用它对照 Host 日志。`daemon_upgrade_required` 不再出现，调用 Host 没有的方法报 `method_not_found`。
+- **重发**：命令带 `requestId`。同一个 `requestId` 重发得到第一次的结果；换了参数报 `conflict`。连接断开时在途的请求报 `unknown_outcome`，用原 `requestId` 再发一次查结果，不能换 id。
+- **修订**：资源的 `revision` 是不透明字符串，只用于 `ifRevision`；不匹配报 `conflict`（`revision_mismatch`），重新读取后再决定。
+- **时间和 ID**：时间是 UTC 毫秒整数，字段名以 `At` 结尾；分页一律用不透明游标；ID 的字符集是 `[A-Za-z0-9_-]{1,128}`。
+- **严格输入**：Host 拒绝未知参数（`invalid_params`）。客户端忽略结果里不认识的字段；供展示的枚举（显示项类型、`reason`）不认识时按通用值处理。
+- **Run 的结局**：读 `RunOutcome.status`（`completed`、`failed`、`cancelled`、`interrupted`、`unknown`），不再组合 `phase`、`terminal`、`error`、`result`。
+- **视图**：`view.subscribe` 一次给出快照，之后是连续 `seq` 的 `view.patch`；`seq` 断了或收到 `view.reset` 就整体替换。被截断的显示项带 `textTotal`，全文用 `item.read` 读。附件只给 `blobId`，字节用 `blob.read` 读，不给 Host 路径。
+- **设置**：v2 的 Session 设置没有 `agentMode`、`reasoningMode`、`thinking`；推理强度只用 `effort`。
+
+**对照表**：左边是 v2 方法，右边是它取代的 v1 方法。"新增"是 v1 没有的。没出现在右边的 v1 方法在 v2 里没有对应，调用报 `method_not_found`；需要的话告诉 KodaX，按真实调用点补。
+**连接与同步（所有角色）**
+
+| v2 | v1 |
+|---|---|
+| `initialize` | `initialize`、`runtime.initialize`、`runtime.identity`、`runtime.capabilities`、`runtime.status` |
+| `ping` | `ping` |
+| `auth.renew` | 新增 |
+| `request.cancel` | `request.cancel` |
+| `view.subscribe` | `session.view.observe`、`session.observe`、`workflow.subscribe`、`learning.subscribe` |
+| `view.unsubscribe` | `session.view.close`、`subscription.close`、`workflow.unsubscribe`、`learning.unsubscribe` |
+
+**数据面：会话（所有角色）**
+
+| v2 | v1 |
+|---|---|
+| `session.create` | `session.create` |
+| `session.list` | `session.list` |
+| `session.get` | `session.load`、`session.status`、`session.autoMode.getStats` |
+| `session.archive` | `session.archive` |
+| `session.unarchive` | `session.unarchive` |
+| `session.delete` | `session.delete` |
+| `session.cancel` | `session.cancel` |
+| `session.settings.get` | `session.settings.get`、`session.settings.getVersioned` |
+| `session.settings.update` | `session.settings.update`、`session.settings.updateVersioned`、`run.model.set`、`run.provider.set`、`run.reasoning.set`、`run.setModel`、`run.setProvider`、`run.setReasoning` |
+| `session.policy.get` | 新增 |
+| `session.compact` | `session.compact` |
+| `session.notice.append` | `session.notice.append` |
+| `session.fork` | `session.fork` |
+| `session.rewind` | `session.rewind` |
+| `session.branch.select` | `session.activeEntry.set`、`session.active_entry.set` |
+| `session.lineage.get` | `session.lineage.get` |
+| `session.lineage.label` | `session.lineage.label` |
+| `session.recover` | `session.recover` |
+| `session.side.open` | `session.side.open` |
+| `session.goal.get` | `session.goal.get` |
+| `session.goal.create` | `session.goal.create` |
+| `session.goal.pause` | `session.goal.pause` |
+| `session.goal.resume` | `session.goal.resume` |
+| `session.goal.clear` | `session.goal.clear` |
+
+**数据面：历史与显示项（所有角色）**
+
+| v2 | v1 |
+|---|---|
+| `history.read` | `session.conversation.page` |
+| `history.search` | `session.transcript.search` |
+| `history.resolveTurn` | `session.history.resolveTurn` |
+| `item.read` | `session.view.item` |
+
+**数据面：输入与 Run（所有角色）**
+
+| v2 | v1 |
+|---|---|
+| `input.submit` | `input.submit`、`run.input.submit`、`run.start` |
+| `input.get` | `input.read` |
+| `input.withdraw` | `input.withdraw` |
+| `run.startTool` | `run.start`（带工具调用） |
+| `run.get` | `run.get` |
+| `run.list` | `run.list` |
+| `run.wait` | `run.await` |
+| `run.stop` | `run.abort` |
+| `run.recover` | `run.recover` |
+
+**数据面：交互与授权记录（所有角色；service 不能回答人的审批）**
+
+| v2 | v1 |
+|---|---|
+| `interaction.list` | `interaction.list` |
+| `interaction.respond` | `interaction.respond` |
+| `permission.grant.list` | `permission.grants.list` |
+| `permission.grant.revoke` | `permission.grants.revoke` |
+
+**数据面：Blob（所有角色）**
+
+| v2 | v1 |
+|---|---|
+| `blob.begin` | `artifact.create`（只接受路径） |
+| `blob.write` | 新增 |
+| `blob.commit` | 新增 |
+| `blob.read` | `artifact.get`、`session.view.item` 的附件分块 |
+
+**数据面：只读目录与统计（所有角色）**
+
+| v2 | v1 |
+|---|---|
+| `agent.list` | `agent.list`（新增） |
+| `command.list` | `command.list` |
+| `skill.list` | `skill.list` |
+| `skill.get` | `skill.describe`、`skill.read` |
+| `tool.list` | `tool.catalog` |
+| `provider.list` | `provider.list`、`model.list` |
+| `provider.reasoning.efforts` | `provider.reasoning.efforts` |
+| `stats.get` | `session.facts.read` |
+| `stats.requests` | `session.facts.requests` |
+| `stats.tools` | `session.facts.tools` |
+
+**数据面：命令与评审（所有角色）**
+
+| v2 | v1 |
+|---|---|
+| `command.execute` | `invocations.executeCommand` |
+| `command.readPrompt` | `invocations.readCommandPrompt` |
+| `review.start` | `invocations.prepareReview`、`invocations.startReview` |
+| `agent.reviewLean` | `invocations.prepareAgentsLean`、`invocations.startAgentsLean` |
+
+**数据面：运行中的子代理（所有角色）**
+
+| v2 | v1 |
+|---|---|
+| `actor.tree` | `agents.tree` |
+| `actor.get` | `agents.detail` |
+| `actor.output` | `agents.output` |
+| `actor.wait` | `agents.wait` |
+| `actor.spawn` | `agents.spawn` |
+| `actor.send` | `agents.send` |
+| `actor.followup` | `agents.followup` |
+| `actor.interrupt` | `agents.interrupt` |
+
+**数据面：Workflow（所有角色）**
+
+| v2 | v1 |
+|---|---|
+| `workflow.list` | `workflow.list` |
+| `workflow.get` | `workflow.get` |
+| `workflow.start` | `workflow.start` |
+| `workflow.pause` | `workflow.pause` |
+| `workflow.resume` | `workflow.resume` |
+| `workflow.stop` | `workflow.stop` |
+
+**用户设置（owner）**
+
+| v2 | v1 |
+|---|---|
+| `config.get` | `config.read`、`config.effective` |
+| `config.update` | `config.patch` |
+| `config.reload` | `config.reload` |
+| `provider.custom.list` | `provider.custom.list` |
+| `provider.custom.upsert` | `provider.custom.upsert` |
+| `provider.custom.remove` | `provider.custom.remove` |
+| `provider.reasoning.probe` | `provider.reasoning.probe` |
+| `provider.reasoning.forget` | `provider.capabilities.forget` |
+| `mcp.server.list` | `mcp.server.list`、`mcp.server.status` |
+| `mcp.server.get` | `mcp.server.get` |
+| `mcp.server.validate` | `mcp.server.validate` |
+| `mcp.server.upsert` | `mcp.server.upsert` |
+| `mcp.server.remove` | `mcp.server.delete`、`mcp.server.remove` |
+| `mcp.server.reload` | `mcp.server.reload` |
+| `mcp.tool.list` | `mcp.tool.list` |
+| `mcp.tool.refresh` | `mcp.tool.list`（`forceRefresh`） |
+| `extension.list` | `extension.list` |
+| `extension.reload` | `extension.reload` |
+| `agent.registration.list` | `agentRegistrations.list` |
+| `agent.registration.upsert` | `agentRegistrations.upsert` |
+| `agent.registration.setEnabled` | `agentRegistrations.setEnabled` |
+| `agent.registration.remove` | `agentRegistrations.remove` |
+
+**记忆（所有角色；v2 管的是 FEATURE_308 的笔记，不是 v1 旧记忆的改名）**
+
+| v2 | v1 |
+|---|---|
+| `memory.list` | `memory.listRefs`、`memory.listInbox` |
+| `memory.get` | `memory.readRef`、`memory.showProposal` |
+| `memory.create` | `memory.remember` |
+| `memory.update` | 新增 |
+| `memory.approve` | `memory.approveProposal` |
+| `memory.forget` | `memory.forgetRef`、`memory.rejectProposal` |
+
+**技能学习（所有角色）**
+
+| v2 | v1 |
+|---|---|
+| `learning.list` | `learning.list` |
+| `learning.get` | `learning.get` |
+| `learning.snapshot` | `learning.snapshot` |
+| `learning.events` | `learning.events`；`learning.subscribe` 的推送改为按 `afterRevision` 读 |
+| `learning.acknowledge` | `learning.acknowledge` |
+| `learning.snooze` | `learning.snooze` |
+| `learning.reject` | `learning.reject` |
+| `learning.disable` | `learning.disable` |
+| `learning.rollback` | `learning.rollback` |
+| `learning.review` | `learning.review` |
+| `learning.trust` | `learning.trust` |
+| `learning.promote` | `learning.promote` |
+
+**可信面（owner 和 service；永不进浏览器 SDK）**
+
+| v2 | v1 |
+|---|---|
+| `lease.register` | `execution.register`、`credential.register`、`host_tool.register` |
+| `lease.resume` | `credential.get`、`host_tool.get` |
+| `lease.revoke` | `execution.revoke`、`credential.revoke`、`host_tool.revoke` |
+| `lease.complete` | `execution.complete`、`credential.supply`、`host_tool.complete` |
+| `lease.call.get` | `host_tool.invocation.get` |
+| `session.policy.update` | 新增 |
+| `session.promote` | `session.promote` |
+| `session.promotion.get` | `session.promotion.read` |
+
+**本机管理（owner，只走 IPC）**
+
+| v2 | v1 |
+|---|---|
+| `host.get` | `daemon.status`、`daemon.management.get`、`daemon.integrations.get` |
+| `host.preflight` | `daemon.preflight` |
+| `host.stop` | `daemon.stop`、`runtime.shutdown` |
+| `host.logs` | `daemon.logs` |
+| `client.exit.request` | `client.exit.request` |
+| `client.exit.get` | `client.exit.read` |
+| `client.exit.list` | `client.exit.pending` |
+| `session.diagnostics` | `session.diagnostics` |
+| `repo.intelligence.inspect` | `repo.intelligence.inspect` |
+| `repo.intelligence.prewarm` | `repo.intelligence.prewarm` |
+
+**设备配对（owner，本机）**
+
+| v2 | v1 |
+|---|---|
+| `device.pair` | 新增 |
+| `device.list` | 新增 |
+| `device.revoke` | 新增 |
 
 ## `kodax host` 命令与健康状态（未发布）
 

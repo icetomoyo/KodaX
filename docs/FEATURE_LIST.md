@@ -2745,6 +2745,12 @@ fixed GitHub binary archive sidecar omission before tagging.
     approve or reject candidates) open to network `user` and `service`,
     designed together with opening `learning.*`. It replaces Space's v1
     memory calls and closes Issue 411.
+- Progress (2026-11-24): every prerequisite above has landed on
+  `KodaX-next-dev` except the authorizer lease, which waits for Space's call
+  sites. Of KodaX's own v1 callers, print mode, `-r`, ACP and the a2a probe
+  are on v2; the `daemon`/`host` health probe (`observeRuntimeDaemonHealth`),
+  the v1 path in `ensureKodaXHostClient`, `recovering-runtime-client` and the
+  exported v1 client remain.
 - Risk: the window counts from the release that ships v2. If v2 ships after
   `v0.7.98`, fewer than two versions carry both protocols; recheck the line
   then.
