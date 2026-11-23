@@ -2340,6 +2340,7 @@ export interface RuntimeRunStatus {
   readonly failureDetail?: RuntimeFailureDetail;
   readonly lifecycleError?: RuntimeRunLifecycleError;
   readonly terminal?: RuntimeTerminalFact;
+  readonly answer?: RuntimeRunAnswer;
   readonly continuation?: RuntimeContinuationStatus;
   readonly interruptInputs?: readonly RuntimeInterruptInputStatus[];
   /** Durable Stop request/result; distinct from chat interruptInputs. */
@@ -2545,6 +2546,32 @@ export interface RuntimeTerminalFact {
   /** Safe diagnostic category for failed terminals, independent from display text. */
   readonly failureKind?: RuntimeRunFailureKind;
 }
+
+/** What a Run that ended answered and used, kept with its status so it outlives the Host. */
+export interface RuntimeRunAnswer {
+  /** The model's last text, cut at {@link RUNTIME_RUN_ANSWER_TEXT_LIMIT} characters. Absent for a Run that was stopped. */
+  readonly finalText?: string;
+  readonly finalTextTruncated?: true;
+  readonly signal?: "COMPLETE" | "BLOCKED" | "DECIDE";
+  readonly signalReason?: string;
+  /** The Run ended because it used all its turns. */
+  readonly limitReached?: true;
+  /** What the whole Run used, present only when every model call reported it. */
+  readonly usage?: RuntimeRunUsage;
+}
+
+export interface RuntimeRunUsage {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly totalTokens: number;
+  readonly cachedReadTokens?: number;
+  readonly cachedWriteTokens?: number;
+}
+
+/** How a terminal is asked for: what is not given takes the default for its kind. */
+type RuntimeTerminalInput = Partial<Omit<RuntimeTerminalFact, "revision" | "kind">> & {
+  readonly answer?: RuntimeRunAnswer;
+};
 
 export interface RuntimeRunResult {
   readonly runId: string;
@@ -3802,6 +3829,7 @@ interface RuntimeRunRecord {
   failureDetail?: RuntimeFailureDetail;
   lifecycleError?: RuntimeRunLifecycleError;
   terminal?: RuntimeTerminalFact;
+  answer?: RuntimeRunAnswer;
   readonly result: Promise<RuntimeRunResult>;
   sessionControl?: KodaXSessionMutators;
   abortController?: AbortController;
@@ -11937,7 +11965,7 @@ async function createRuntimeRunService(deps: {
         : value.success
           ? "completed"
           : "failed";
-      const terminal = terminalFromExecutorResult(record, value, phase);
+      const terminal = { ...terminalFromExecutorResult(record, value, phase), answer: runtimeRunAnswer(value) };
       try {
         markRunTerminal(
           deps.bus,
@@ -12411,7 +12439,7 @@ async function createRuntimeRunService(deps: {
           deps.persistence,
           record,
           phase,
-          terminalFromExecutorResult(record, value, phase),
+          { ...terminalFromExecutorResult(record, value, phase), answer: runtimeRunAnswer(value) },
         );
         return {
           runId: record.runId,
@@ -19879,6 +19907,9 @@ function parseRuntimeRunStatus(value: unknown): RuntimeRunStatus | undefined {
     ...(parseRuntimeTerminalFact(value.terminal) !== undefined
       ? { terminal: parseRuntimeTerminalFact(value.terminal)! }
       : {}),
+    ...(parseRuntimeRunAnswer(value.answer) !== undefined
+      ? { answer: parseRuntimeRunAnswer(value.answer)! }
+      : {}),
     ...(parseRuntimeContinuationStatus(value.continuation) !== undefined
       ? { continuation: parseRuntimeContinuationStatus(value.continuation)! }
       : {}),
@@ -20159,6 +20190,27 @@ function parseRuntimeTerminalFact(
       ? { failureKind: value.failureKind }
       : {}),
   };
+}
+
+function parseRuntimeRunAnswer(value: unknown): RuntimeRunAnswer | undefined {
+  if (!isRecord(value)) return undefined;
+  const count = (field: unknown): field is number => typeof field === "number" && Number.isFinite(field) && field >= 0;
+  const { usage } = value;
+  const answer: RuntimeRunAnswer = {
+    ...(typeof value.finalText === "string" ? { finalText: value.finalText } : {}),
+    ...(value.finalTextTruncated === true ? { finalTextTruncated: true as const } : {}),
+    ...(value.signal === "COMPLETE" || value.signal === "BLOCKED" || value.signal === "DECIDE" ? { signal: value.signal } : {}),
+    ...(typeof value.signalReason === "string" ? { signalReason: value.signalReason } : {}),
+    ...(value.limitReached === true ? { limitReached: true as const } : {}),
+    ...(isRecord(usage) && count(usage.inputTokens) && count(usage.outputTokens) && count(usage.totalTokens)
+      ? { usage: {
+          inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, totalTokens: usage.totalTokens,
+          ...(count(usage.cachedReadTokens) ? { cachedReadTokens: usage.cachedReadTokens } : {}),
+          ...(count(usage.cachedWriteTokens) ? { cachedWriteTokens: usage.cachedWriteTokens } : {}),
+        } }
+      : {}),
+  };
+  return Object.keys(answer).length > 0 ? answer : undefined;
 }
 
 function parseRuntimeFailureDetail(
@@ -25232,6 +25284,7 @@ function statusFromRecord(run: RuntimeRunRecord): RuntimeRunStatus {
       ? { lifecycleError: run.lifecycleError }
       : {}),
     ...(run.terminal !== undefined ? { terminal: run.terminal } : {}),
+    ...(run.answer !== undefined ? { answer: run.answer } : {}),
     ...(run.stop !== undefined ? { stop: run.stop } : {}),
     ...(run.continuation !== undefined
       ? {
@@ -25613,7 +25666,7 @@ function markRunTerminal(
   persistence: RuntimePersistence,
   run: RuntimeRunRecord,
   phase: RuntimeRunPhase,
-  terminal?: Omit<RuntimeTerminalFact, "revision" | "kind">,
+  terminal?: RuntimeTerminalInput,
   expected?: PersistedRuntimeRunStatus,
 ): void {
   if (run.terminalEmitted) return;
@@ -25637,6 +25690,7 @@ function markRunTerminal(
     error: run.error,
     lifecycleError: run.lifecycleError,
     terminal: run.terminal,
+    answer: run.answer,
   };
   delete run.lifecycleError;
   if (run.error === "stop_outcome_unconfirmed" || run.error === "shell_cleanup_unconfirmed") delete run.error;
@@ -25690,6 +25744,7 @@ function markRunTerminal(
       ? { failureKind: terminal.failureKind }
       : {}),
   };
+  run.answer = terminal?.answer;
   const type: RuntimeEventType =
     phase === "completed"
       ? "run.completed"
@@ -25799,6 +25854,7 @@ function applyAuthoritativeRunStatus(
   run.failureDetail = status.failureDetail;
   run.lifecycleError = status.lifecycleError;
   run.terminal = status.terminal;
+  run.answer = status.answer;
   run.stop = status.stop;
   run.terminalEmitted = isTerminalRunPhase(status.phase);
   run.interruptInputOpen = false;
@@ -25825,6 +25881,34 @@ function isFinalWorkflowStatus(
   return (
     status === "completed" || status === "failed" || status === "cancelled"
   );
+}
+
+/** Characters of a Run's final text kept with its status. The Session's history holds all of it. */
+const RUNTIME_RUN_ANSWER_TEXT_LIMIT = 64_000;
+
+/** What the executor says a Run answered and used, in the form kept with the Run's status. */
+function runtimeRunAnswer(value: KodaXResult): RuntimeRunAnswer | undefined {
+  // A stopped Run's text is what it said before the stop, or a notice of the stop, not its answer.
+  const text = value.interrupted ? "" : value.lastText;
+  let end = Math.min(text.length, RUNTIME_RUN_ANSWER_TEXT_LIMIT);
+  // Never split a character written as two UTF-16 units.
+  if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1] ?? "")) end -= 1;
+  const { usage } = value;
+  const answer: RuntimeRunAnswer = {
+    ...(text ? { finalText: text.slice(0, end) } : {}),
+    ...(end < text.length ? { finalTextTruncated: true as const } : {}),
+    ...(value.signal !== undefined ? { signal: value.signal } : {}),
+    ...(value.signalReason ? { signalReason: value.signalReason } : {}),
+    ...(value.limitReached ? { limitReached: true as const } : {}),
+    ...(usage !== undefined
+      ? { usage: {
+          inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, totalTokens: usage.totalTokens,
+          ...(usage.cachedReadTokens !== undefined ? { cachedReadTokens: usage.cachedReadTokens } : {}),
+          ...(usage.cachedWriteTokens !== undefined ? { cachedWriteTokens: usage.cachedWriteTokens } : {}),
+        } }
+      : {}),
+  };
+  return Object.keys(answer).length > 0 ? answer : undefined;
 }
 
 function defaultRuntimeTerminalCode(

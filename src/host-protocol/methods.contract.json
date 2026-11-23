@@ -10434,6 +10434,52 @@
                     "safeMessage"
                   ],
                   "additionalProperties": false
+                },
+                "finalText": {
+                  "type": "string"
+                },
+                "finalTextTruncated": {
+                  "type": "boolean"
+                },
+                "signal": {
+                  "type": "string",
+                  "enum": [
+                    "complete",
+                    "blocked",
+                    "decide"
+                  ]
+                },
+                "signalReason": {
+                  "type": "string"
+                },
+                "limitReached": {
+                  "type": "boolean"
+                },
+                "usage": {
+                  "type": "object",
+                  "properties": {
+                    "inputTokens": {
+                      "type": "number"
+                    },
+                    "outputTokens": {
+                      "type": "number"
+                    },
+                    "totalTokens": {
+                      "type": "number"
+                    },
+                    "cachedReadTokens": {
+                      "type": "number"
+                    },
+                    "cachedWriteTokens": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "inputTokens",
+                    "outputTokens",
+                    "totalTokens"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -10614,6 +10660,52 @@
                       "safeMessage"
                     ],
                     "additionalProperties": false
+                  },
+                  "finalText": {
+                    "type": "string"
+                  },
+                  "finalTextTruncated": {
+                    "type": "boolean"
+                  },
+                  "signal": {
+                    "type": "string",
+                    "enum": [
+                      "complete",
+                      "blocked",
+                      "decide"
+                    ]
+                  },
+                  "signalReason": {
+                    "type": "string"
+                  },
+                  "limitReached": {
+                    "type": "boolean"
+                  },
+                  "usage": {
+                    "type": "object",
+                    "properties": {
+                      "inputTokens": {
+                        "type": "number"
+                      },
+                      "outputTokens": {
+                        "type": "number"
+                      },
+                      "totalTokens": {
+                        "type": "number"
+                      },
+                      "cachedReadTokens": {
+                        "type": "number"
+                      },
+                      "cachedWriteTokens": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "inputTokens",
+                      "outputTokens",
+                      "totalTokens"
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "required": [
@@ -10789,6 +10881,52 @@
                     "stage",
                     "code",
                     "safeMessage"
+                  ],
+                  "additionalProperties": false
+                },
+                "finalText": {
+                  "type": "string"
+                },
+                "finalTextTruncated": {
+                  "type": "boolean"
+                },
+                "signal": {
+                  "type": "string",
+                  "enum": [
+                    "complete",
+                    "blocked",
+                    "decide"
+                  ]
+                },
+                "signalReason": {
+                  "type": "string"
+                },
+                "limitReached": {
+                  "type": "boolean"
+                },
+                "usage": {
+                  "type": "object",
+                  "properties": {
+                    "inputTokens": {
+                      "type": "number"
+                    },
+                    "outputTokens": {
+                      "type": "number"
+                    },
+                    "totalTokens": {
+                      "type": "number"
+                    },
+                    "cachedReadTokens": {
+                      "type": "number"
+                    },
+                    "cachedWriteTokens": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "inputTokens",
+                    "outputTokens",
+                    "totalTokens"
                   ],
                   "additionalProperties": false
                 }
@@ -11049,6 +11187,52 @@
                     "safeMessage"
                   ],
                   "additionalProperties": false
+                },
+                "finalText": {
+                  "type": "string"
+                },
+                "finalTextTruncated": {
+                  "type": "boolean"
+                },
+                "signal": {
+                  "type": "string",
+                  "enum": [
+                    "complete",
+                    "blocked",
+                    "decide"
+                  ]
+                },
+                "signalReason": {
+                  "type": "string"
+                },
+                "limitReached": {
+                  "type": "boolean"
+                },
+                "usage": {
+                  "type": "object",
+                  "properties": {
+                    "inputTokens": {
+                      "type": "number"
+                    },
+                    "outputTokens": {
+                      "type": "number"
+                    },
+                    "totalTokens": {
+                      "type": "number"
+                    },
+                    "cachedReadTokens": {
+                      "type": "number"
+                    },
+                    "cachedWriteTokens": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "inputTokens",
+                    "outputTokens",
+                    "totalTokens"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -11254,6 +11438,52 @@
                     "safeMessage"
                   ],
                   "additionalProperties": false
+                },
+                "finalText": {
+                  "type": "string"
+                },
+                "finalTextTruncated": {
+                  "type": "boolean"
+                },
+                "signal": {
+                  "type": "string",
+                  "enum": [
+                    "complete",
+                    "blocked",
+                    "decide"
+                  ]
+                },
+                "signalReason": {
+                  "type": "string"
+                },
+                "limitReached": {
+                  "type": "boolean"
+                },
+                "usage": {
+                  "type": "object",
+                  "properties": {
+                    "inputTokens": {
+                      "type": "number"
+                    },
+                    "outputTokens": {
+                      "type": "number"
+                    },
+                    "totalTokens": {
+                      "type": "number"
+                    },
+                    "cachedReadTokens": {
+                      "type": "number"
+                    },
+                    "cachedWriteTokens": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "inputTokens",
+                    "outputTokens",
+                    "totalTokens"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -11456,6 +11686,52 @@
                     "safeMessage"
                   ],
                   "additionalProperties": false
+                },
+                "finalText": {
+                  "type": "string"
+                },
+                "finalTextTruncated": {
+                  "type": "boolean"
+                },
+                "signal": {
+                  "type": "string",
+                  "enum": [
+                    "complete",
+                    "blocked",
+                    "decide"
+                  ]
+                },
+                "signalReason": {
+                  "type": "string"
+                },
+                "limitReached": {
+                  "type": "boolean"
+                },
+                "usage": {
+                  "type": "object",
+                  "properties": {
+                    "inputTokens": {
+                      "type": "number"
+                    },
+                    "outputTokens": {
+                      "type": "number"
+                    },
+                    "totalTokens": {
+                      "type": "number"
+                    },
+                    "cachedReadTokens": {
+                      "type": "number"
+                    },
+                    "cachedWriteTokens": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "inputTokens",
+                    "outputTokens",
+                    "totalTokens"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -11652,6 +11928,52 @@
                     "safeMessage"
                   ],
                   "additionalProperties": false
+                },
+                "finalText": {
+                  "type": "string"
+                },
+                "finalTextTruncated": {
+                  "type": "boolean"
+                },
+                "signal": {
+                  "type": "string",
+                  "enum": [
+                    "complete",
+                    "blocked",
+                    "decide"
+                  ]
+                },
+                "signalReason": {
+                  "type": "string"
+                },
+                "limitReached": {
+                  "type": "boolean"
+                },
+                "usage": {
+                  "type": "object",
+                  "properties": {
+                    "inputTokens": {
+                      "type": "number"
+                    },
+                    "outputTokens": {
+                      "type": "number"
+                    },
+                    "totalTokens": {
+                      "type": "number"
+                    },
+                    "cachedReadTokens": {
+                      "type": "number"
+                    },
+                    "cachedWriteTokens": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "inputTokens",
+                    "outputTokens",
+                    "totalTokens"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -11846,6 +12168,52 @@
                     "stage",
                     "code",
                     "safeMessage"
+                  ],
+                  "additionalProperties": false
+                },
+                "finalText": {
+                  "type": "string"
+                },
+                "finalTextTruncated": {
+                  "type": "boolean"
+                },
+                "signal": {
+                  "type": "string",
+                  "enum": [
+                    "complete",
+                    "blocked",
+                    "decide"
+                  ]
+                },
+                "signalReason": {
+                  "type": "string"
+                },
+                "limitReached": {
+                  "type": "boolean"
+                },
+                "usage": {
+                  "type": "object",
+                  "properties": {
+                    "inputTokens": {
+                      "type": "number"
+                    },
+                    "outputTokens": {
+                      "type": "number"
+                    },
+                    "totalTokens": {
+                      "type": "number"
+                    },
+                    "cachedReadTokens": {
+                      "type": "number"
+                    },
+                    "cachedWriteTokens": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "inputTokens",
+                    "outputTokens",
+                    "totalTokens"
                   ],
                   "additionalProperties": false
                 }

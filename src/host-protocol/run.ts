@@ -79,6 +79,30 @@ const RunOutcome = z.object({
     skillName: z.string().optional(),
     retryAfterMs: z.number().optional(),
   }).optional(),
+  /**
+   * The model's last text, unless the Run was stopped. It is cut at 64,000
+   * characters; `finalTextTruncated` says so, and the Session's history holds
+   * all of it. `run.list` leaves both out: read the Run for them.
+   */
+  finalText: z.string().optional(),
+  finalTextTruncated: z.boolean().optional(),
+  /**
+   * How the task ended: `complete`, `blocked` when something stopped it before
+   * it was done (a hook can), or `decide` when a person must choose.
+   * `signalReason` says why, when there is a reason.
+   */
+  signal: z.enum(['complete', 'blocked', 'decide']).optional(),
+  signalReason: z.string().optional(),
+  /** The Run ended because it used all its turns (`maxIter`). */
+  limitReached: z.boolean().optional(),
+  /** What the whole Run used. Absent when a model call did not report it. */
+  usage: z.object({
+    inputTokens: z.number(),
+    outputTokens: z.number(),
+    totalTokens: z.number(),
+    cachedReadTokens: z.number().optional(),
+    cachedWriteTokens: z.number().optional(),
+  }).optional(),
 });
 
 /** A Run is in progress until it has an `outcome`. Branch on that, not on `phase`. */

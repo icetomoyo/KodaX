@@ -559,7 +559,10 @@ interface RunFacts {
   readonly id: string;
   readonly phase: string;
   readonly inputId?: string;
-  readonly outcome?: { readonly status: string; readonly effects: string; readonly code: string };
+  readonly outcome?: {
+    readonly status: string; readonly effects: string; readonly code: string;
+    readonly finalText?: string; readonly finalTextTruncated?: boolean; readonly usage?: unknown;
+  };
   readonly stop?: { readonly confirmed: boolean };
 }
 type RunAnswer = { readonly run: RunFacts };
@@ -649,7 +652,8 @@ describe('v2 inputs and Runs served by the v1 implementation', () => {
     expect(await user.request('input.submit', submit)).toEqual({ input });
     expect(await user.request('input.get', { sessionId: session.id, inputId: 'input-1' })).toEqual({ input });
     expect(await user.request('run.get', { runId: input.runId })).toEqual({ run });
-    expect(await user.request('run.list', { sessionId: session.id })).toEqual({ items: [run] });
+    const { finalText: _answer, ...listed } = run.outcome!;
+    expect(await user.request('run.list', { sessionId: session.id })).toEqual({ items: [{ ...run, outcome: listed }] });
     expect(host.calls()).toBe(modelCalls);
     await expect(user.request('input.submit', { ...submit, text: 'Say something else.' }))
       .rejects.toMatchObject({ kodaxCode: 'conflict' });
@@ -733,6 +737,58 @@ describe('v2 inputs and Runs served by the v1 implementation', () => {
     await user.request('run.wait', { runId: first.input.runId });
     expect((await user.request('run.list', { sessionId: session.id }) as { items: RunFacts[] }).items).toHaveLength(1);
   });
+
+  it('says what a finished Run answered and used, across a Host restart', async () => {
+    const answer = 'The release is on Friday.';
+    const host = await makeModelHost(() => ({
+      textBlocks: [{ type: 'text', text: answer }], toolBlocks: [], thinkingBlocks: [],
+      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+    }));
+    const first = await host.start();
+    const before = await connect('user', first, host.workspace);
+    const { session } = await before.request('session.create', { requestId: 'create-1', project: 'app' }) as SessionAnswer;
+    const { input } = await before.request('input.submit', { requestId: 'input-1', sessionId: session.id, text: 'When?' }) as InputAnswer;
+    const { run } = await before.request('run.wait', { runId: input.runId }) as RunAnswer;
+    expect(run.outcome).toMatchObject({
+      status: 'completed', signal: 'complete', finalText: answer, usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+    });
+    expect(run.outcome).not.toHaveProperty('limitReached');
+    // A list stays small: the answer is read from the Run itself.
+    const [listed] = (await before.request('run.list', { sessionId: session.id }) as { items: RunFacts[] }).items;
+    expect(listed!.outcome).not.toHaveProperty('finalText');
+    expect(listed!.outcome).toMatchObject({ usage: run.outcome!.usage });
+    before.close();
+    await first.close();
+
+    const after = await connect('user', await host.start(), host.workspace);
+    expect(await after.request('run.get', { runId: input.runId })).toEqual({ run });
+  });
+
+  it('cuts a long answer short and says so', async () => {
+    const answer = 'a'.repeat(70_000);
+    const host = await makeModelHost(() => ({ textBlocks: [{ type: 'text', text: answer }], toolBlocks: [], thinkingBlocks: [] }));
+    const user = await connect('user', await host.start(), host.workspace);
+    const { session } = await user.request('session.create', { requestId: 'create-1', project: 'app' }) as SessionAnswer;
+    const { input } = await user.request('input.submit', { requestId: 'input-1', sessionId: session.id, text: 'Talk.' }) as InputAnswer;
+    const { outcome } = (await user.request('run.wait', { runId: input.runId }) as RunAnswer).run;
+    expect(outcome!.finalText).toBe(answer.slice(0, 64_000));
+    expect(outcome!.finalTextTruncated).toBe(true);
+  });
+
+  it('says when a Run stopped at its turn limit', async () => {
+    // A model that never stops asking for the file.
+    const host = await makeModelHost(messages => ({
+      textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use',
+      toolBlocks: [{ type: 'tool_use', id: `call-${messages.length}`, name: 'read', input: { path: 'notes.txt' } }],
+    }));
+    const user = await connect('user', await host.start(), host.workspace);
+    await writeFile(path.join(host.workspaceRoot, 'app', 'notes.txt'), 'The release is on Friday.');
+    const { session } = await user.request('session.create', { requestId: 'create-1', project: 'app' }) as SessionAnswer;
+    await user.request('session.settings.update', { requestId: 'set-1', sessionId: session.id, patch: { maxIter: 1 } });
+    const { input } = await user.request('input.submit', { requestId: 'input-1', sessionId: session.id, text: 'Read it.' }) as InputAnswer;
+    expect((await user.request('run.wait', { runId: input.runId }) as RunAnswer).run.outcome)
+      .toMatchObject({ status: 'completed', limitReached: true });
+  }, 60_000);
 
   it('stops what a Session is doing only while the named Run is its current one', async () => {
     const host = await makeModelHost();

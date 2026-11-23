@@ -25,7 +25,7 @@ import type {
 import type { McpServerStatus, McpServerToolList } from '@kodax-ai/coding';
 import type {
   RuntimeCompactSessionResult, RuntimeConfigReloadResult, RuntimeDaemonManagementState, RuntimeEffectiveConfigSnapshot, RuntimeExtensionListResult, RuntimeIdentity, RuntimeIntegrationHealth, RuntimeStatusSnapshot,
-  RuntimeConversationHistoryEntryChunk, RuntimeConversationHistorySlice, RuntimePermissionGrant, RuntimeRunStatus,
+  RuntimeConversationHistoryEntryChunk, RuntimeConversationHistorySlice, RuntimePermissionGrant, RuntimeRunAnswer, RuntimeRunStatus,
   RuntimeSession, RuntimeSessionPromotionResult, RuntimeSessionSettings, RuntimeSessionStatus, RuntimeSessionSummary, RuntimeTranscriptSearchResult,
   RuntimeMcpValidateResult, RuntimeVersionedValue, RuntimeWorkflowSnapshot, RuntimeWorkflowStartResult, RuntimeWorkflowSummary,
 } from '../sdk-runtime.js';
@@ -662,7 +662,9 @@ const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } =
       throw new HostProtocolError('resync_required', 'cursor names no Run of this Session.', { reason: 'cursor_expired' });
     }
     const page = runs.slice(from, from + limit);
-    return { items: page.map(toRun), nextCursor: from + limit < runs.length ? page.at(-1)?.runId : undefined };
+    // A page stays small: a Run's answer is read from the Run itself.
+    const items = page.map(status => toRun(status.answer === undefined ? status : { ...status, answer: listedAnswer(status.answer) }));
+    return { items, nextCursor: from + limit < runs.length ? page.at(-1)?.runId : undefined };
   },
   'run.wait': async ({ runId, timeoutMs = RUN_WAIT_MS }, v1, caller) => {
     const waited = AbortSignal.timeout(timeoutMs);
@@ -1332,6 +1334,7 @@ function runOutcome(status: RuntimeRunStatus): Readonly<Record<string, unknown>>
     effects: terminal?.effectOutcome ?? 'unknown',
     code: terminal?.code ?? ended,
     message: terminal?.message ?? status.error,
+    ...answerFacts(status.answer),
     failure: ended !== 'failed' || failureDetail === undefined ? undefined : {
       kind: failureDetail.failureKind,
       stage: failureDetail.stage,
@@ -1342,6 +1345,24 @@ function runOutcome(status: RuntimeRunStatus): Readonly<Record<string, unknown>>
       retryAfterMs: failureDetail.retryAfterMs,
     },
   };
+}
+
+/** What a Run answered and used, in v2 terms. */
+function answerFacts(answer: RuntimeRunAnswer | undefined): Readonly<Record<string, unknown>> {
+  if (answer === undefined) return {};
+  return {
+    finalText: answer.finalText,
+    finalTextTruncated: answer.finalTextTruncated,
+    signal: answer.signal?.toLowerCase(),
+    signalReason: answer.signalReason,
+    limitReached: answer.limitReached,
+    usage: answer.usage,
+  };
+}
+
+function listedAnswer(answer: RuntimeRunAnswer): RuntimeRunAnswer {
+  const { finalText: _text, finalTextTruncated: _truncated, ...rest } = answer;
+  return rest;
 }
 
 /** A chunk of a blob as `blob.read` answers it, with how many bytes it holds. */
