@@ -14,7 +14,9 @@ export type ProviderCredentialPurpose =
   | 'sidecar'
   | 'compaction'
   | 'workflow'
-  | 'utility';
+  | 'utility'
+  /** A one-token resend that keeps a prompt cache entry alive while a Run waits for a person. */
+  | 'cache_refresh';
 
 export interface ProviderCredentialLeaseAccess {
   readonly allowedProviders: readonly string[];

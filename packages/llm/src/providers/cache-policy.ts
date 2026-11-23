@@ -8,6 +8,8 @@ export function validateCacheCapabilities(value: unknown): void {
   const lifetimes: Record<KodaXCacheCapabilities['dialect'], readonly string[]> = {
     'openai-retention': ['24h'], 'openai-options': ['30m', '12h'], anthropic: ['1h'], bedrock: ['1h'], pi: [], affinity: [],
   };
+  const shortLifetimes: readonly string[] = profile.dialect === 'anthropic' || profile.dialect === 'bedrock' ? ['5m'] : [];
+  if (profile.shortTtl !== undefined && !shortLifetimes.includes(profile.shortTtl)) throw new Error('Invalid declared cache dialect, lifetime or checkpoints.');
   if ((profile.affinityHeader !== undefined && !['x-session-affinity', 'x-affinity'].includes(profile.affinityHeader)) || !Object.hasOwn(lifetimes, profile.dialect) || (profile.longTtl !== undefined && !lifetimes[profile.dialect]?.includes(profile.longTtl))
     || (profile.locations !== undefined && (!Array.isArray(profile.locations) || profile.locations.some(location => !['system', 'tools', 'messages'].includes(location))))
     || (profile.maxCheckpoints !== undefined && (!Number.isSafeInteger(profile.maxCheckpoints) || profile.maxCheckpoints < 1))) throw new Error('Invalid declared cache dialect, lifetime or checkpoints.');

@@ -282,6 +282,8 @@ export type { KodaXStopClass } from './stop-reason.js';
 // ============== Cost Tracking ==============
 export { DEFAULT_COST_RATES, getCostRate, getCostRateBasis, calculateCost, calculateCostWithCacheLifetimes } from './cost-rates.js';
 export type { CostRate } from './cost-rates.js';
+export { cacheRefreshDelayMs, cacheRefreshPrices, promptCacheLifetime, promptCacheLifetimeMs, replaysWithOutputCap } from './cache-warming.js';
+export type { CacheRefreshPrices, PromptCacheLifetime } from './cache-warming.js';
 
 export {
   createCostTracker,

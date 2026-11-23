@@ -1123,6 +1123,8 @@ export interface KodaXProviderRequestProjection extends KodaXProviderRequestMeta
 export interface KodaXCacheCapabilities {
   dialect: 'openai-retention' | 'openai-options' | 'anthropic' | 'bedrock' | 'pi' | 'affinity';
   affinityHeader?: 'x-session-affinity' | 'x-affinity';
+  /** Lifetime of an entry written with short (default) retention; FEATURE_316 warms only entries with a declared lifetime. */
+  shortTtl?: '5m';
   longTtl?: '1h' | '24h' | '12h' | '30m';
   locations?: readonly ('system' | 'tools' | 'messages')[];
   maxCheckpoints?: number;

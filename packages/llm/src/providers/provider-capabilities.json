@@ -5,7 +5,7 @@
     "anthropic": {
       "apiKeyEnv": "ANTHROPIC_API_KEY",
       "toolCapabilities": { "strict": true },
-      "cacheCapabilities": { "dialect": "anthropic", "longTtl": "1h", "locations": ["system", "tools", "messages"], "maxCheckpoints": 4 },
+      "cacheCapabilities": { "dialect": "anthropic", "shortTtl": "5m", "longTtl": "1h", "locations": ["system", "tools", "messages"], "maxCheckpoints": 4 },
       "model": "claude-sonnet-4-6",
       "models": [
         {
