@@ -1,88 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
-import type { KodaXRuntime, RuntimeEvent } from './sdk-runtime.js';
+import type { KodaXRuntime } from './sdk-runtime.js';
 import { createReplRuntimeAutoModeControl } from '../tests/repl-v1-auto-mode-control.js';
-import { forwardDaemonCompactionEvent, forwardRunProgressEvent } from './run-progress-events.js';
 
 describe('one-shot runtime option shaping and auto-mode settings', () => {
-  it('forwards canonical sandbox updates and rejects an update without its tool identity', () => {
-    const onToolSandboxObservation = vi.fn();
-    const payload = { update: { id: 'tool-1', observation: { version: 1, state: 'not_selected' } } };
-    const event: RuntimeEvent = { id: 'event-1', seq: 1, time: '2026-09-08T00:00:00Z',
-      sessionId: 'session-1', runId: 'run-1', type: 'tool.sandbox', payload };
-    forwardRunProgressEvent({ onToolSandboxObservation }, event, payload, new Map());
-    expect(onToolSandboxObservation).toHaveBeenCalledWith(payload.update, undefined);
-    const malformed = { update: { observation: payload.update.observation } };
-    expect(() => forwardRunProgressEvent({ onToolSandboxObservation }, { ...event, payload: malformed }, malformed, new Map()))
-      .toThrow('tool.sandbox');
-    expect(onToolSandboxObservation).toHaveBeenCalledTimes(1);
-  });
-  it('forwards a resolved reasoning setting without reporting provider recovery', () => {
-    const onProviderRecovery = vi.fn();
-    const onReasoningResolved = vi.fn();
-    const resolution = { provider: 'zhipu-coding', model: 'glm-5.3-flash', requestedEffort: 'auto', sentEffort: 'medium',
-      verified: false, fallbacks: [] };
-    const payload = { kind: 'reasoning_resolved', event: resolution };
-    const event: RuntimeEvent = { id: 'event-1', seq: 1, time: '2026-11-19T00:00:00Z',
-      sessionId: 'session-1', runId: 'run-1', type: 'provider.recovery', payload };
-    forwardRunProgressEvent({ onProviderRecovery, onReasoningResolved }, event, payload, new Map());
-    expect(onReasoningResolved).toHaveBeenCalledWith(resolution);
-    expect(onProviderRecovery).not.toHaveBeenCalled();
-  });
-  it('projects only committed daemon compactions as legacy successes', () => {
-    const onCompact = vi.fn();
-    const onCompactEnd = vi.fn();
-    const onContextCompactionFinished = vi.fn();
-    const events = { onCompact, onCompactEnd, onContextCompactionFinished };
-    const payload = {
-      source: 'manual' as const,
-      tokensBefore: 80_000,
-      tokensAfter: 80_000,
-      committed: false,
-      elapsedMs: 10,
-    };
-    const event: RuntimeEvent = {
-      id: 'event-1',
-      seq: 1,
-      time: '2026-08-08T00:00:00.000Z',
-      sessionId: 'session-1',
-      runId: 'run-1',
-      type: 'context.compaction.finished',
-      payload,
-    };
-
-    forwardDaemonCompactionEvent(events, event, payload);
-    expect(onCompact).not.toHaveBeenCalled();
-    expect(onContextCompactionFinished).toHaveBeenCalledWith(payload);
-
-    const committedPayload = { ...payload, tokensAfter: 20_000, committed: true };
-    forwardDaemonCompactionEvent(
-      events,
-      { ...event, id: 'event-2', payload: committedPayload },
-      committedPayload,
-    );
-    expect(onCompact).toHaveBeenCalledWith(20_000, undefined);
-
-    const endedPayload = {
-      outcome: 'failed' as const,
-      reason: 'summary_generation_failed' as const,
-      failurePhase: 'summary_generation' as const,
-      currentTokens: 300_000,
-      compactableTokens: 280_000,
-      consecutiveFailures: 3,
-      circuitBreakerLimit: 3,
-      circuitBreakerState: 'open' as const,
-      cooldownTurnsRemaining: 2,
-    };
-    forwardDaemonCompactionEvent(
-      events,
-      { ...event, id: 'event-3', type: 'context.compaction.ended', payload: endedPayload },
-      endedPayload,
-    );
-    expect(onCompactEnd).toHaveBeenCalledWith(undefined, endedPayload);
-  });
-
   it('synchronizes Auto reviewer settings without writing an engine selector', async () => {
     const updateSettings = vi.fn<KodaXProductClient['sessions']['updateSettings']>(async () => ({ permissionMode: 'auto' }));
     const runtime = {

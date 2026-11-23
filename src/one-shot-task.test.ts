@@ -1,424 +1,121 @@
-import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-import { expect, it, vi } from 'vitest';
-import { setKodaXDiagnosticSink, type KodaXDiagnostic } from '@kodax-ai/agent';
-import type {
-  KodaXEvents,
-  KodaXOptions,
-  KodaXResult,
-  RunningSession,
-} from '@kodax-ai/coding';
-import { FileSessionStorage } from '@kodax-ai/repl';
-import { connectKodaXClient } from '@kodax-ai/kodax/client';
-import { toKodaXProductClient } from './client-runtime-adapter.js';
-import { createKodaXRuntime, type KodaXRuntime } from "../tests/runtime-fixture.js";
-import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
-import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
-import { runOneShotClientTask } from './one-shot-task.js';
+import { afterEach, expect, it, vi } from 'vitest';
+import type { KodaXEvents } from '@kodax-ai/coding';
 
-const executor = vi.hoisted(() => ({
-  managed: vi.fn(),
-  options: [] as KodaXOptions[],
-  events: [] as (KodaXEvents | undefined)[],
-}));
-vi.mock('@kodax-ai/coding', async (original) => ({
-  ...await original<typeof import('@kodax-ai/coding')>(),
-  startKodaX: (): RunningSession => {
-    throw new Error('one-shot product runs must not use the direct engine');
-  },
-  runManagedTask: executor.managed,
-}));
+import { HostProtocolError } from './host-protocol/codec.js';
+import type { HostCallResult } from './host-protocol/host-client.js';
+import { exitCodeForOneShotResult, projectOneShotOutcome, resolveOneShotSession, runOneShotClientTask } from './one-shot-task.js';
+import { createRequestId } from './host-protocol/host-client.js';
+import { disposeReplHosts, LONG_REPLY, MODEL, replHost } from '../tests/repl-v2-host.js';
 
-interface Harness {
-  readonly runtime: KodaXRuntime;
-  readonly homeDir: string;
-  readonly endpoint: string;
-  readonly close: () => Promise<void>;
+afterEach(async () => {
+  vi.restoreAllMocks();
+  await disposeReplHosts();
+});
+
+/** The CLI works in its directory; the Host's own home keeps the test out of this repository. */
+async function oneShotHost(mode: Parameters<typeof replHost>[0]) {
+  const host = await replHost(mode);
+  vi.spyOn(process, 'cwd').mockReturnValue(host.homeDir);
+  return host;
 }
 
-async function startHarness(prefix: string): Promise<Harness> {
-  const homeDir = await mkdtemp(path.join(os.tmpdir(), prefix));
-  const runtime = await createKodaXRuntime({
-    homeDir, sharedDaemonHost: true, defaultProvider: 'one-shot-provider',
-  });
-  const paths = resolveRuntimeDaemonPaths(homeDir);
-  const lock = tryAcquireRuntimeDaemonLock(paths, {
-    runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
-  });
-  if (!lock) throw new Error('Could not acquire isolated one-shot Host.');
-  const endpoint = process.platform === 'win32'
-    ? { kind: 'pipe' as const, path: `\\\\.\\pipe\\kodax-one-shot-${randomUUID()}` }
-    : { kind: 'unix' as const, path: path.join(homeDir, 'host.sock') };
-  const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
-  return {
-    runtime,
-    homeDir,
-    endpoint: endpoint.path,
-    close: async () => {
-      await runtime.close();
-      await host.close();
-      await rm(homeDir, { recursive: true, force: true, maxRetries: 3 });
-    },
+type HostRun = HostCallResult<'run.get', 'local'>['run'];
+
+function recorder() {
+  const seen: string[] = [];
+  let text = '';
+  const events: KodaXEvents = {
+    onSessionStart: () => { seen.push('session'); },
+    onTextDelta: (delta) => { text += delta; },
+    onStreamEnd: () => { seen.push('stream-end'); },
+    onComplete: () => { seen.push('complete'); },
+    onError: (error) => { seen.push(`error:${error.message}`); },
   };
+  return { events, seen, text: () => text };
 }
 
-function mockManagedResult(result: KodaXResult): void {
-  executor.managed.mockImplementation((options: KodaXOptions) => {
-    executor.options.push(options);
-    executor.events.push(options.events);
-    return Promise.resolve(result);
+it('runs a prompt in a temporary Session, streams the whole reply and leaves nothing behind', async () => {
+  const { client } = await oneShotHost('answer');
+  const output = recorder();
+  const result = await runOneShotClientTask({
+    client, leases: async () => undefined, options: { provider: MODEL, events: output.events }, prompt: 'Say something long.',
   });
-}
-
-function holdManagedResult() {
-  let entered!: (options: KodaXOptions) => void;
-  let release!: (result: KodaXResult) => void;
-  const started = new Promise<KodaXOptions>(resolve => { entered = resolve; });
-  const result = new Promise<KodaXResult>(resolve => { release = resolve; });
-  executor.managed.mockImplementation((options: KodaXOptions) => {
-    executor.options.push(options);
-    executor.events.push(options.events);
-    entered(options);
-    return result;
-  });
-  return { started, release };
-}
-
-async function getGitRootForTest(): Promise<string | null> {
-  const { getGitRoot } = await import('@kodax-ai/repl');
-  return getGitRoot();
-}
-
-it('FEATURE_298 T35 — one-shot runs the product path: Host-owned temporary session, settings shaping, live progress, and legacy result projection', async () => {
-  const harness = await startHarness('kodax-one-shot-product-');
-  const storage = new FileSessionStorage({ cwd: harness.homeDir });
-  const success: KodaXResult = {
-    success: true, lastText: 'one-shot done', messages: [], sessionId: 'host-assigned',
-  };
-  mockManagedResult(success);
-  const client = toKodaXProductClient(harness.runtime);
-  const cliEvents: KodaXEvents = {};
-  const onIterationStart = vi.fn();
-  const onRetry = vi.fn();
-  cliEvents.onIterationStart = onIterationStart;
-  cliEvents.onRetry = onRetry;
-  try {
-    // no-session: undefined session options mean a temporary Host session.
-    const options: KodaXOptions = {
-      provider: 'flag-provider',
-      maxIter: 9,
-      context: { repoIntelligenceMode: 'full', repoIntelligenceTrace: false },
-      events: cliEvents,
-    };
-    const result = await runOneShotClientTask({
-      client, runtime: harness.runtime, options, prompt: 'Do the one-shot work.',
-    });
-
-    // Legacy shape the CLI printers expect, byte-identical fields.
-    expect(result).toMatchObject({ success: true, lastText: 'one-shot done' });
-
-    // Run shaping crossed through session settings.
-    expect(executor.options.at(-1)).toMatchObject({
-      provider: 'flag-provider',
-      maxIter: 9,
-      context: { repoIntelligenceMode: 'full', repoIntelligenceTrace: false },
-    });
-
-    // The temporary session is gone once the run settles (Host-owned delete).
-    const sessionId = executor.options.at(-1)!.session!.id!;
-    await expect.poll(() => storage.load(sessionId)).toBeNull();
-
-    // Live progress crossed the runtime event bus into the CLI formatters
-    // while the run was in flight (the adapter closes with the task).
-    const held = holdManagedResult();
-    const eventsBaseline = executor.events.length;
-    const pending = runOneShotClientTask({
-      client, runtime: harness.runtime, options, prompt: 'Stream while running.',
-    });
-    const streamed: KodaXResult = {
-      success: true, lastText: 'streamed', messages: [], sessionId: 'host-assigned',
-    };
-    try {
-      const entered = await Promise.race([held.started, pending.then(() => {
-        throw new Error('One-shot settled before entering the managed executor.');
-      })]);
-      expect(executor.events.length).toBe(eventsBaseline + 1);
-      const liveEvents = entered.events;
-      expect(liveEvents?.onIterationStart).toBeTypeOf('function');
-      liveEvents?.onIterationStart?.(1, 9, { providerRequestId: 'iteration-probe' });
-      liveEvents?.onRetry?.('rate_limit', 1, 3);
-      held.release(streamed);
-      await expect(pending).resolves.toMatchObject({ success: true, lastText: 'streamed' });
-      expect(onIterationStart).toHaveBeenCalledWith(
-        1, 9, expect.objectContaining({ providerRequestId: 'iteration-probe' }),
-      );
-      expect(onRetry).toHaveBeenCalledWith('rate_limit', 1, 3);
-    } finally {
-      held.release(streamed);
-      await pending;
-    }
-  } finally {
-    await harness.close();
-  }
-}, 120_000);
-
-it('FEATURE_298 T35 — resume submits into the newest project session and restores its settings afterwards', async () => {
-  const harness = await startHarness('kodax-one-shot-resume-');
-  const client = toKodaXProductClient(harness.runtime);
-  mockManagedResult({
-    success: true, lastText: 'resumed', messages: [], sessionId: 'host-assigned',
-  });
-  try {
-    const seeded = await client.sessions.create({
-      projectPath: process.cwd(),
-      gitRoot: (await getGitRootForTest()) ?? process.cwd(),
-      surface: 'cli',
-    });
-    await client.sessions.updateSettings(seeded.id, { workMode: 'agent' });
-    await client.inputs.submit({
-      sessionId: seeded.id, inputId: 'seed-input', text: 'seed turn',
-    });
-    await new Promise((resolve) => setTimeout(resolve, 200));
-
-    // Resume by id (the --resume <id> / -s <id> flow): read-or-create over
-    // the Host session face. The resume-newest variant uses the same
-    // sessions.list({projectRoot}) call as interactive resume; on worktree
-    // checkouts that project filter is subject to a pre-existing FEATURE_219
-    // bucket/canonical-root divergence (recorded as a T35 residual), so this
-    // test pins the deterministic id path.
-    const options: KodaXOptions = {
-      provider: 'resume-provider',
-      workMode: 'agent',
-      context: { repoIntelligenceMode: 'full', repoIntelligenceTrace: true },
-      session: { id: seeded.id, scope: 'user' },
-    };
-    await client.sessions.updateSettings(seeded.id, { model: 'seed-model', repoIntelligenceMode: 'light', repoIntelligenceTrace: false });
-    await expect(runOneShotClientTask({ client, runtime: harness.runtime,
-      options: { ...options, workMode: 'coding' }, prompt: 'Do not change the existing mode.' }))
-      .rejects.toMatchObject({ code: 'conflict' });
-    const result = await runOneShotClientTask({
-      client, runtime: harness.runtime, options, prompt: 'Continue here.',
-    });
-    expect(result).toMatchObject({ success: true });
-    expect(executor.options.at(-1)!.session!.id).toBe(seeded.id);
-    expect(executor.options.at(-1)).toMatchObject({ provider: 'resume-provider', workMode: 'agent',
-      context: { repoIntelligenceMode: 'full', repoIntelligenceTrace: true } });
-
-    // A resumed session keeps its own settings after the invocation.
-    await expect.poll(async () => (await client.sessions.getSettings(seeded.id)).provider)
-      .toBeUndefined();
-    expect((await client.sessions.getSettings(seeded.id)).model).toBe('seed-model');
-    expect(await client.sessions.getSettings(seeded.id)).toMatchObject({ workMode: 'agent', repoIntelligenceMode: 'light', repoIntelligenceTrace: false });
-  } finally {
-    await harness.close();
-  }
-}, 120_000);
-
-it('preserves another Client setting change made while a one-shot invocation is running', async () => {
-  const harness = await startHarness('kodax-one-shot-concurrent-settings-');
-  const client = await connectKodaXClient({ homeDir: harness.homeDir, endpoint: harness.endpoint });
-  const other = await connectKodaXClient({ homeDir: harness.homeDir, endpoint: harness.endpoint });
-  try {
-    const session = await client.sessions.create({ title: 'Shared settings', projectPath: harness.homeDir });
-    await client.sessions.updateSettings(session.id, { model: 'original-model' });
-    executor.managed.mockImplementation(async () => {
-      expect(await other.sessions.getSettings(session.id)).toMatchObject({ model: 'invocation-model' });
-      await other.sessions.updateSettings(session.id, { model: 'new-ui-model' });
-      return { success: true, lastText: 'done', messages: [], sessionId: session.id };
-    });
-    await runOneShotClientTask({ client, runtime: harness.runtime,
-      options: { provider: 'one-shot-provider', model: 'invocation-model', session: { id: session.id } }, prompt: 'Work' });
-    expect(await other.sessions.getSettings(session.id)).toMatchObject({ model: 'new-ui-model' });
-  } finally {
-    await client.disconnect();
-    await other.disconnect();
-    await harness.close();
-  }
-}, 120_000);
-
-it('reports settings restoration failure even when no CLI error callback is installed', async () => {
-  const harness = await startHarness('kodax-one-shot-restore-');
-  const client = toKodaXProductClient(harness.runtime);
-  const session = await client.sessions.create({ title: 'Restore', projectPath: harness.homeDir });
-  const update = client.sessions.updateSettingsVersioned.bind(client.sessions);
-  let calls = 0;
-  client.sessions.updateSettingsVersioned = async (sessionId, patch, options) => {
-    if (++calls === 2) throw new Error('restore transport lost');
-    return update(sessionId, patch, options);
-  };
-  const diagnostics: KodaXDiagnostic[] = [];
-  const restoreDiagnostics = setKodaXDiagnosticSink((diagnostic) => diagnostics.push(diagnostic));
-  mockManagedResult({ success: true, lastText: 'done', messages: [], sessionId: session.id });
-  try {
-    await runOneShotClientTask({ client, runtime: harness.runtime,
-      options: { provider: 'temporary-provider', session: { id: session.id } }, prompt: 'Work' });
-    expect(diagnostics).toContainEqual(expect.objectContaining({ source: 'kodax.one-shot', level: 'warn',
-      message: expect.stringContaining('restore'), detail: expect.objectContaining({ message: 'restore transport lost' }) }));
-  } finally {
-    restoreDiagnostics();
-    await harness.close();
-  }
-}, 120_000);
-
-it('persists validated repo intelligence settings across Host restart and supports clearing them', async () => {
-  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-repo-settings-'));
-  let runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
-  try {
-    let client = toKodaXProductClient(runtime);
-    const session = await client.sessions.create({ title: 'Repo settings', projectPath: homeDir });
-    await expect(client.sessions.updateSettings(session.id, { repoIntelligenceMode: 'invalid' } as never))
-      .rejects.toThrow('repoIntelligenceMode');
-    await expect(client.sessions.updateSettings(session.id, { repoIntelligenceTrace: 'yes' } as never))
-      .rejects.toThrow('repoIntelligenceTrace');
-    await client.sessions.updateSettings(session.id, { repoIntelligenceMode: 'off', repoIntelligenceTrace: false });
-    await runtime.close();
-    runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true });
-    client = toKodaXProductClient(runtime);
-    expect(await client.sessions.getSettings(session.id)).toMatchObject({ repoIntelligenceMode: 'off', repoIntelligenceTrace: false });
-    await client.sessions.updateSettings(session.id, { repoIntelligenceMode: null, repoIntelligenceTrace: null });
-    const cleared = await client.sessions.getSettings(session.id);
-    expect(cleared.repoIntelligenceMode).toBeUndefined();
-    expect(cleared.repoIntelligenceTrace).toBeUndefined();
-  } finally {
-    await runtime.close();
-    await rm(homeDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
-  }
+  expect(result).toMatchObject({ success: true, lastText: LONG_REPLY });
+  // The view carries only the end of the reply; the rest is read before it.
+  expect(output.text()).toBe(LONG_REPLY);
+  expect(output.seen).toEqual(['session', 'stream-end', 'complete']);
+  await expect(client.call('session.get', { sessionId: result.sessionId }))
+    .rejects.toSatisfy(error => error instanceof HostProtocolError && error.kodaxCode === 'not_found');
 }, 60_000);
 
-it('FEATURE_298 T35 — a cancelled run projects the interrupted legacy result', async () => {
-  const harness = await startHarness('kodax-one-shot-cancel-');
-  const client = toKodaXProductClient(harness.runtime);
-  const awaitRun = client.runs.await.bind(client.runs);
-  client.runs.await = async runId => {
-    const { sessionId } = await client.runs.read(runId);
-    // A terminal result remains observable after its temporary Session is
-    // deleted, even if the caller is descheduled before sending await.
-    await expect.poll(async () => {
-      try { await client.sessions.read(sessionId); return false; }
-      catch (error: unknown) {
-        if (error instanceof Error && error.message.startsWith('Session not found:')) return true;
-        throw error;
-      }
-    }, { timeout: 15_000 }).toBe(true);
-    return awaitRun(runId);
-  };
-  mockManagedResult({
-    success: false, lastText: '', messages: [], sessionId: 'host-assigned',
-    interrupted: true, signal: 'BLOCKED',
+it('gives a kept Session back its settings, and -c continues it', async () => {
+  const { client } = await oneShotHost('answer');
+  const first = await runOneShotClientTask({
+    client, leases: async () => undefined, options: { provider: MODEL, session: {} }, prompt: 'Keep this one.',
   });
-  try {
-    const result = await runOneShotClientTask({
-      client, runtime: harness.runtime, options: { provider: 'cancel-provider' }, prompt: 'Cancel me.',
-    });
-    // Parity: an executor-produced interrupted result is passed through
-    // untouched; the synthesized interrupted shape only applies when the
-    // run settles without one.
-    expect(result).toMatchObject({
-      success: false,
-      interrupted: true,
-      signal: 'BLOCKED',
-    });
-  } finally {
-    await harness.close();
-  }
-}, 120_000);
+  const before = await client.call('session.settings.get', { sessionId: first.sessionId });
+  let during: unknown;
+  const again = await runOneShotClientTask({
+    client, leases: async () => undefined, prompt: 'Continue.',
+    options: { provider: MODEL, session: { resume: true }, maxIter: 7, reasoningMode: 'deep', events: {
+      onSessionStart: () => { void client.call('session.settings.get', { sessionId: first.sessionId }).then(read => { during = read.settings; }); },
+    } },
+  });
+  expect(again.sessionId).toBe(first.sessionId);
+  // The old reasoning flag reaches the Run as the effort it stands for.
+  await expect.poll(() => during).toMatchObject({ maxIter: 7, effort: 'high' });
+  const after = await client.call('session.settings.get', { sessionId: first.sessionId });
+  expect(after.settings.maxIter).toBe(before.settings.maxIter);
+  expect(after.settings.effort).toBe(before.settings.effort);
+}, 60_000);
 
-it('FEATURE_298 T35 — abort requests a Host stop and settles as interrupted', async () => {
-  const harness = await startHarness('kodax-one-shot-abort-');
-  const client = toKodaXProductClient(harness.runtime);
-  let markStopRequested!: () => void;
-  const stopRequested = new Promise<void>(resolve => { markStopRequested = resolve; });
-  const stop = client.runs.stop.bind(client.runs);
-  const stopSpy = vi.fn((...args: Parameters<typeof stop>) => {
-    markStopRequested();
-    return stop(...args);
+it('answers a question nobody can answer as skipped, and the Run goes on', async () => {
+  const { client } = await oneShotHost('ask');
+  const result = await runOneShotClientTask({
+    client, leases: async () => undefined, options: { provider: MODEL }, prompt: 'Ask me.',
   });
-  client.runs.stop = stopSpy;
-  const held = holdManagedResult();
+  expect(result).toMatchObject({ success: true, lastText: LONG_REPLY });
+}, 60_000);
+
+it('stops the Run when aborted, and reports it interrupted', async () => {
+  const { client } = await oneShotHost('hold');
   const controller = new AbortController();
-  try {
-    const baseline = executor.options.length;
-    const pending = runOneShotClientTask({
-      client, runtime: harness.runtime,
-      options: { provider: 'abort-provider' },
-      prompt: 'Stop on request.',
-      abortSignal: controller.signal,
-    });
-    const interrupted: KodaXResult = {
-      success: false, lastText: '', messages: [], sessionId: 'host-assigned',
-      interrupted: true, signal: 'BLOCKED',
-    };
-    try {
-      await Promise.race([held.started, pending.then(() => {
-        throw new Error('One-shot settled before entering the managed executor.');
-      })]);
-      expect(executor.options.length).toBe(baseline + 1);
-      controller.abort();
-      await stopRequested;
-      expect(stopSpy).toHaveBeenCalledTimes(1);
-      held.release(interrupted);
-      await expect(pending).resolves.toMatchObject({ interrupted: true });
-    } finally {
-      held.release(interrupted);
-      await pending;
-    }
-  } finally {
-    await harness.close();
-  }
-}, 120_000);
-
-it('FEATURE_298 T35 — maps one-shot results to process exit codes', async () => {
-  const { exitCodeForOneShotResult } = await import('./one-shot-task.js');
-  expect(exitCodeForOneShotResult({
-    success: true, lastText: 'ok', messages: [], sessionId: 's',
-  })).toBe(0);
-  expect(exitCodeForOneShotResult({
-    success: false, lastText: '', messages: [], sessionId: 's',
-    interrupted: true, signal: 'BLOCKED', signalReason: 'Runtime run cancelled.',
-  })).toBe(130);
-  expect(exitCodeForOneShotResult({
-    success: false, lastText: '', messages: [], sessionId: 's', limitReached: true,
-  })).toBe(1);
-  expect(exitCodeForOneShotResult({
-    success: false, lastText: 'err', messages: [], sessionId: 's',
-  })).toBe(1);
-});
-
-it('rejects an unconfirmed Run outcome rather than treating it as completion or interruption', async () => {
-  const { projectOneShotOutcome } = await import('./one-shot-task.js');
-  expect(() => projectOneShotOutcome({ phase: 'unknown' }, 'unconfirmed-run', 'session'))
-    .toThrow('Runtime run unconfirmed-run ended without a result.');
-});
-
-it('rejects the one-shot wait on a real client disconnect while the Host Run retains ownership', async () => {
-  const harness = await startHarness('kodax-one-shot-disconnect-');
-  const client = await connectKodaXClient({ homeDir: harness.homeDir, endpoint: harness.endpoint });
-  let release: ((result: KodaXResult) => void) | undefined;
-  executor.managed.mockImplementation((options: KodaXOptions) => {
-    executor.options.push(options);
-    return new Promise<KodaXResult>((resolve) => { release = resolve; });
+  const result = await runOneShotClientTask({
+    client,
+    leases: async () => { controller.abort(); return undefined; },
+    options: { provider: MODEL }, prompt: 'Wait.', abortSignal: controller.signal,
   });
-  let pending: Promise<unknown> | undefined;
-  try {
-    const baseline = executor.options.length;
-    pending = runOneShotClientTask({ client, runtime: harness.runtime,
-      options: { provider: 'disconnect-provider' }, prompt: 'Keep Host ownership.' });
-    await expect.poll(() => executor.options.length).toBe(baseline + 1);
-    const runs = await harness.runtime.runs.list();
-    expect(runs).toHaveLength(1);
-    const rejected = expect(pending).rejects.toThrow(/closed|disconnect|transport|socket/i);
-    await client.disconnect();
-    await rejected;
-    expect((await harness.runtime.runs.get(runs[0]!.runId))?.phase).toBe('running');
-    release?.({ success: true, lastText: 'Host finished', messages: [], sessionId: runs[0]!.sessionId });
-    await expect(harness.runtime.runs.await(runs[0]!.runId)).resolves.toMatchObject({ phase: 'completed' });
-    expect(executor.options.length).toBe(baseline + 1);
-  } finally {
-    release?.({ success: false, interrupted: true, lastText: '', messages: [], sessionId: 'cleanup' });
-    await Promise.allSettled(pending ? [pending] : []);
-    await client.disconnect();
-    await harness.close();
-  }
+  expect(result).toMatchObject({ success: false, interrupted: true, signal: 'BLOCKED' });
+  expect(exitCodeForOneShotResult(result)).toBe(130);
 }, 60_000);
+
+it('refuses to resume an archived Session or one the Host does not have', async () => {
+  const { client, sessionId } = await oneShotHost('answer');
+  await client.call('session.archive', { requestId: createRequestId(), sessionId });
+  await expect(resolveOneShotSession(client, { provider: MODEL, session: { id: sessionId } }, 'resume')).rejects.toThrow('archived');
+  await expect(resolveOneShotSession(client, { provider: MODEL, session: { id: 'missing' } }, 'resume')).rejects.toThrow('Session not found: missing');
+}, 60_000);
+
+function run(outcome: HostRun['outcome']): HostRun {
+  return { id: 'run-1', sessionId: 'session-1', phase: 'completed', ...(outcome !== undefined ? { outcome } : {}) } as HostRun;
+}
+
+it('reads the result from the Run outcome', () => {
+  expect(projectOneShotOutcome(run({ status: 'completed', effects: 'none', code: 'ok', finalText: 'done', signal: 'complete' })))
+    .toMatchObject({ success: true, lastText: 'done', signal: 'COMPLETE', sessionId: 'session-1' });
+  expect(projectOneShotOutcome(run({ status: 'cancelled', effects: 'none', code: 'cancelled' })))
+    .toMatchObject({ success: false, interrupted: true, signal: 'BLOCKED' });
+  expect(projectOneShotOutcome(run({ status: 'failed', effects: 'none', code: 'failed', limitReached: true, finalText: 'partial' })))
+    .toMatchObject({ success: false, limitReached: true, lastText: 'partial' });
+  expect(() => projectOneShotOutcome(run({ status: 'failed', effects: 'none', code: 'failed',
+    failure: { kind: 'provider', stage: 'model', code: 'auth', safeMessage: 'The provider refused the key.' } })))
+    .toThrow('The provider refused the key.');
+  expect(() => projectOneShotOutcome(run({ status: 'unknown', effects: 'unknown', code: 'unknown' })))
+    .toThrow('Run run-1 ended without a known outcome.');
+});
+
+it('maps results to exit codes', () => {
+  expect(exitCodeForOneShotResult({ success: true, lastText: 'ok', messages: [], sessionId: 's' })).toBe(0);
+  expect(exitCodeForOneShotResult({ success: false, lastText: '', messages: [], sessionId: 's', limitReached: true })).toBe(1);
+  expect(exitCodeForOneShotResult({ success: false, lastText: 'err', messages: [], sessionId: 's' })).toBe(1);
+});
