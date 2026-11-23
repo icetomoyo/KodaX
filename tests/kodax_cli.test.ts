@@ -285,6 +285,17 @@ describe('File Operations', () => {
 
 // ============== CLI 入口测试 ==============
 
+/** The CLI command source: the entry file plus the command files in src/cli. */
+async function readCliSource(): Promise<string> {
+  const cliDir = path.join(process.cwd(), 'src', 'cli');
+  const commandFiles = (await fs.readdir(cliDir))
+    .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
+    .sort()
+    .map((name) => path.join(cliDir, name));
+  const files = [path.join(process.cwd(), 'src', 'kodax_cli.ts'), ...commandFiles];
+  return (await Promise.all(files.map((file) => fs.readFile(file, 'utf-8')))).join('\n');
+}
+
 describe('CLI Entry Point', () => {
   it('should have correct CLI entry in package.json', async () => {
     const pkgPath = path.join(process.cwd(), 'package.json');
@@ -300,12 +311,12 @@ describe('CLI Entry Point', () => {
   });
 
   it('should not attach a bare action to the root skill subcommand', async () => {
-    const source = await fs.readFile(path.join(process.cwd(), 'src', 'kodax_cli.ts'), 'utf-8');
+    const source = await readCliSource();
     expect(source).not.toContain('skillCommand.action(() =>');
   });
 
   it('should advertise ACP server help and register the ACP subcommand', async () => {
-    const source = await fs.readFile(path.join(process.cwd(), 'src', 'kodax_cli.ts'), 'utf-8');
+    const source = await readCliSource();
     expect(source).toContain("command('acp')");
     expect(source).toContain('kodax -h acp');
     expect(source).toContain('kodax acp serve');
@@ -317,7 +328,7 @@ describe('CLI Entry Point', () => {
   });
 
   it('should pass resolved CLI effort into interactive mode startup options', async () => {
-    const source = await fs.readFile(path.join(process.cwd(), 'src', 'kodax_cli.ts'), 'utf-8');
+    const source = await readCliSource();
     expect(source).toContain('const interactiveOptions = {');
     expect(source).toContain('effort: kodaXOptions.effort');
   });
@@ -347,7 +358,7 @@ describe('CLI Entry Point', () => {
   });
 
   it('should keep root help text aligned with current CLI behavior', async () => {
-    const source = await fs.readFile(path.join(process.cwd(), 'src', 'kodax_cli.ts'), 'utf-8');
+    const source = await readCliSource();
     expect(source).toContain('--model <name>');
     expect(source).toContain('kodax -h project');
     expect(source).toContain('/project ...            Project workflow commands');
@@ -365,7 +376,7 @@ describe('CLI Entry Point', () => {
   });
 
   it('should load normal resume candidates in one Host metadata query', async () => {
-    const source = await fs.readFile(path.join(process.cwd(), 'src', 'kodax_cli.ts'), 'utf-8');
+    const source = await readCliSource();
     const loader = source.match(
       /async function loadResumableSessions[\s\S]*?\r?\n}/,
     )?.[0] ?? '';
@@ -380,7 +391,7 @@ describe('CLI Entry Point', () => {
   });
 
   it('should document provider and project caveats in help topics', async () => {
-    const source = await fs.readFile(path.join(process.cwd(), 'src', 'kodax_cli.ts'), 'utf-8');
+    const source = await readCliSource();
     expect(source).toContain('CLI bridge provider (latest-user-message only, MCP unavailable)');
     expect(source).toContain('Project mode spans two surfaces: non-REPL bootstrap commands and REPL /project commands.');
     expect(source).toContain('/project verify [#index|--last]');
@@ -389,7 +400,7 @@ describe('CLI Entry Point', () => {
   });
 
   it('should keep custom skill subcommand help aligned with current options', async () => {
-    const source = await fs.readFile(path.join(process.cwd(), 'src', 'kodax_cli.ts'), 'utf-8');
+    const source = await readCliSource();
     expect(source).toContain('Required Options:');
     expect(source).toContain('Usage: kodax skill eval [options]');
     expect(source).toContain('Usage: kodax skill compare [options] <workspace>');

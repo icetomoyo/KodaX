@@ -1,0 +1,158 @@
+import { Command, Option } from 'commander';
+import {
+  parseAgentModeOption,
+  parseWorkModeOption,
+  parseEffortOption,
+  parseOutputModeOption,
+  parseReasoningModeOption,
+  parseRepoIntelligenceModeOption,
+} from '../cli_option_helpers.js';
+import { prepareLazyIntegrationCommand } from '../integration-cli-lazy.js';
+import { configureKodaXExecPolicyCommand } from '../exec-policy-cli.js';
+import { loadProviderAuth } from '../cli-lazy-components.js';
+
+export const HELP_WORKSPACE_ROOT = "Workspace root to inspect (defaults to current directory)";
+export const HELP_DAEMON_HOME = "Base directory whose .kodax holds the Host state";
+export const HELP_EFFORT = "Reasoning effort: off, auto, low, medium, high, xhigh, max, or model-supported value";
+export const HELP_REPO_INTELLIGENCE = "Repo intelligence mode: auto, full, light, off";
+export const HELP_SESSION = "Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID";
+export const HELP_THINKING = "Compatibility alias for --reasoning auto";
+export const HELP_NEW_SESSION = "Legacy no-op; current CLI already starts a fresh session by default";
+
+export const KODAX_CLI_SUBCOMMAND_NAMES = [
+  'acp',
+  'skill',
+  'tools',
+  'sessions',
+  'constructed',
+  'doctor',
+  'host',
+  'daemon',
+  'completion',
+  'config',
+  'integrations',
+  'mcp',
+  'extensions',
+  'a2a',
+  'sandbox',
+  'setup',
+  'auth',
+  'memory',
+  'execpolicy',
+] as const;
+export const CLI_SUBCOMMAND_NAMES = new Set<string>(KODAX_CLI_SUBCOMMAND_NAMES);
+
+export const KODAX_COMPLETION_ROOT_SUBCOMMANDS = [
+  'setup',
+  'auth',
+  'acp',
+  'skill',
+  'tools',
+  'sessions',
+  'constructed',
+  'doctor',
+  'host',
+  'completion',
+  'config',
+  'integrations',
+  'mcp',
+  'extensions',
+  'a2a',
+  'sandbox',
+  'execpolicy',
+] as const;
+export const KODAX_EXEC_POLICY_SUBCOMMANDS = ['check'] as const;
+
+function collectRepeatedOption(
+  value: string,
+  previous: string[] = [],
+): string[] {
+  return [...previous, value];
+}
+
+export function configureKodaXRootCommand(program: Command): Command {
+  const configured = (
+    program
+      // Disable commander default help so the custom topic help can take over.
+      .helpOption(false)
+      .argument('[prompt...]', 'Prompt text for a single CLI run')
+      .option('-h, --help [topic]', 'Show help, or detailed help for a topic')
+      .option('-p, --print <text>', 'Print mode: run single task and exit')
+      .option('--mode <mode>', 'Output mode: json', parseOutputModeOption)
+      .option(
+        '-c, --continue',
+        'Continue most recent non-empty conversation in current directory',
+      )
+      .option(
+        '-n, --new',
+        HELP_NEW_SESSION,
+      )
+      .option(
+        '-r, --resume [id-or-title]',
+        'Resume session by ID or exact title (no value = open searchable session picker)',
+      )
+      .option('-m, --provider <name>', 'LLM provider')
+      .option('--model <name>', 'Model override')
+      .option('-t, --thinking', HELP_THINKING)
+      .option(
+        '--effort <level>',
+        HELP_EFFORT,
+        parseEffortOption,
+      )
+      .option(
+        '--reasoning <mode>',
+        'Reasoning mode: off, auto, quick, balanced, deep',
+        parseReasoningModeOption,
+      )
+      .addOption(new Option('--agent-mode <mode>').argParser(parseAgentModeOption).hideHelp())
+      .option('--work-mode <mode>', 'Session work mode: agent, coding (default), script', parseWorkModeOption)
+      .option(
+        '--repo-intelligence <mode>',
+        HELP_REPO_INTELLIGENCE,
+        parseRepoIntelligenceModeOption,
+      )
+      .option(
+        '--repo-intelligence-trace',
+        'Enable repo intelligence trace metadata/logging',
+      )
+      .option('-y, --auto', 'Backward-compat alias; no effect in non-REPL CLI')
+      .option(
+        '-s, --session <op>',
+        HELP_SESSION,
+      )
+      .option(
+        '--apply-session-cleanup',
+        'Archive strictly matched empty ACP test sessions (with -s cleanup-acp)',
+      )
+      .option(
+        '--extension <path>',
+        'Load local extension module (.js/.mjs/.cjs/.ts/.mts/.cts)',
+        collectRepeatedOption,
+        [],
+      )
+      .option('--no-session', 'Disable session persistence (print mode only)')
+      .option(
+        '--max-iter <n>',
+        'Max iterations (default: 200 from coding package)',
+      )
+      .allowUnknownOption(false)
+      // Keep the root command executable even when subcommands like `skill` exist.
+      .action(() => {})
+  );
+  configureKodaXExecPolicyCommand(configured);
+  // Topic help is a root option, consumed before subcommand dispatch.
+  // Stop before any nested action or argument validation can run.
+  configured.hook('preSubcommand', async (root, command) => {
+    if (root.opts().help === undefined) return;
+    await prepareLazyIntegrationCommand(command);
+    if (command.name() === 'auth' && command.commands.length === 0) (await loadProviderAuth()).configureProviderAuthCommand(root, command);
+    let target = command;
+    for (const name of root.args.slice(1)) {
+      const child = target.commands.find(candidate => candidate.name() === name || candidate.aliases().includes(name));
+      if (!child) break;
+      target = child;
+    }
+    target.help();
+  });
+  return configured;
+}
