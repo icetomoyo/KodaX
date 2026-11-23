@@ -2331,7 +2331,10 @@ a Workflow-targeted handle and closes it on success, failure, cancellation, or
 parent closure.
 
 Shared-daemon `agents.spawn` and newly admitted internal `agents.followup`
-turns fail before admission when no scoped binding is supplied. External turns
+turns take their key in the order a Run does: the binding the client sends,
+else the lease the Session binds, else the Host's own keys (ADR-068, revised
+2026-11-23). They run in their own environment, held to the Session policy
+and the Host tool ceiling. External turns
 use only their independent `credentialRef` plane and reject a Runtime Provider
 binding; their executor scope also suppresses daemon ambient Provider keys.
 Embedded/local Agent calls retain their existing configuration model.

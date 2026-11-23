@@ -1795,7 +1795,6 @@ interface RuntimeTrustedAgentOperationOptions extends RuntimeAgentOperationOptio
 
 interface RuntimeTrustedAgentFollowupOptions extends RuntimeAgentFollowupOptions, RuntimeTrustedAgentOperationOptions {
   readonly providerCredentialAccessFactory?: CodingActorCredentialAccessFactory;
-  readonly requireCredentialForNewTurn?: true;
   /** The leases are the Session's, not the caller's: a child that needs no new turn takes the follow-up without them. */
   readonly credentialLent?: true;
 }
@@ -16685,6 +16684,16 @@ function createRuntimeAgentService(
   ): Promise<T> =>
     withActorSession(sessionId, (session) => operation(session.rootControl()));
 
+  /**
+   * A turn a Host client starts, or one a key is lent for, runs on its own
+   * within the Session's policy and the Host's tools, with a lent key or the
+   * Host's own. Other turns run in the Run they are part of.
+   */
+  const clientTurnEnvironment = (
+    sessionId: string, external: boolean, credentialFactory: CodingActorCredentialAccessFactory | undefined,
+    trusted: RuntimeTrustedAgentOperationOptions | undefined,
+  ): CodingActorEnvironmentFactory | undefined =>
+    external || (credentialFactory === undefined && trusted?.origin === undefined) ? undefined : environment(sessionId, trusted ?? {});
   const trustedCredentialFactory = (
     options: RuntimeAgentOperationOptions | undefined,
   ): CodingActorCredentialAccessFactory | undefined => {
@@ -16756,7 +16765,7 @@ function createRuntimeAgentService(
       return withActorSession(sessionId, (session) =>
         session.spawnRoot(input, { executionPrincipalId: (options as RuntimeTrustedAgentOperationOptions | undefined)?.origin?.principalId,
           requestId: (options as RuntimeTrustedAgentOperationOptions | undefined)?.requestId }, credentialFactory,
-          credentialFactory === undefined ? undefined : environment(sessionId, options as RuntimeTrustedAgentOperationOptions)));
+          clientTurnEnvironment(sessionId, input.kind === 'external', credentialFactory, options as RuntimeTrustedAgentOperationOptions | undefined)));
     },
     async send(sessionId, actorPath, content, classification, requestId) {
       await withRoot(sessionId, (root) =>
@@ -16792,8 +16801,7 @@ function createRuntimeAgentService(
             executionPrincipalId: trusted?.origin?.principalId, requestId: trusted?.requestId,
             ...(trusted?.credentialLent ? { credentialLent: true } : {}) },
           bound,
-          trusted?.requireCredentialForNewTurn === true,
-          bound === undefined ? undefined : environment(sessionId, trusted ?? {}),
+          clientTurnEnvironment(sessionId, external, bound, trusted),
         );
       });
     },

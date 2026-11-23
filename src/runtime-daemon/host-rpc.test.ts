@@ -2960,11 +2960,11 @@ describe('v2 child Agents served by the v1 implementation', () => {
     // The request names stay with the Host.
     expect(JSON.stringify(await owner.request('actor.get', { sessionId, actorPath: CHILD }))).not.toContain('spawn-1');
 
-    // Without a key to run on, no turn starts.
-    await expect(owner.request('actor.spawn', { ...spawn, requestId: 'spawn-3', taskName: 'keyless', leases: undefined }))
-      .rejects.toMatchObject({ kodaxCode: 'unavailable', reason: 'credential_unavailable' });
-    await expect(owner.request('actor.followup', { ...followup, requestId: 'follow-2', leases: undefined }))
-      .rejects.toMatchObject({ kodaxCode: 'unavailable', reason: 'credential_unavailable' });
+    // A client that lends no key runs the turn on the Host's own, as a Run does.
+    const own = await owner.request('actor.followup', { ...followup, requestId: 'follow-2', leases: undefined }) as { readonly turnId: string };
+    expect(own).toEqual({ delivery: 'started_turn', turnId: expect.any(String) });
+    await expect.poll(async () => (await child(owner, sessionId))?.latestTurn?.state, { timeout: 15_000 }).toBe('completed');
+    expect(host.lastRunRequest().apiKey).toBe('offline-test');
   }, 90_000);
 
   it('holds a child a person starts to the key, tools and time limit of the Session and the Host', async () => {
@@ -2993,10 +2993,12 @@ describe('v2 child Agents served by the v1 implementation', () => {
     expect(asked.tools).not.toContain('read');
     expect(asked.tools).not.toContain('bash');
 
-    // A Session that lends no key leaves a child nothing to run on.
+    // A Session that lends no key runs a child on the Host's own key, still within the Host's tools.
     const { session: open } = await user.request('session.create', { requestId: 'create-2', project: 'app' }) as SessionAnswer;
-    await expect(user.request('actor.spawn', { requestId: 'spawn-2', sessionId: open.id, taskName: 'audit-child', objective: 'CHILD-WORK' }))
-      .rejects.toMatchObject({ kodaxCode: 'unavailable', reason: 'credential_unavailable' });
+    await user.request('actor.spawn', { requestId: 'spawn-2', sessionId: open.id, taskName: 'audit-child', objective: 'CHILD-WORK' });
+    await expect.poll(async () => (await child(user, open.id))?.latestTurn?.state, { timeout: 15_000 }).toBe('completed');
+    expect(host.lastRunRequest().apiKey).toBe('offline-test');
+    expect(host.lastRunRequest().tools).not.toContain('bash');
 
     // A child turn ends at the time limit of its Session. A follow-up while it works joins that turn.
     const { session: tight } = await backend.request('session.create', {

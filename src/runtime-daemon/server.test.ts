@@ -280,11 +280,9 @@ describe('runtime daemon dispatcher', () => {
       'session-1',
       '/root/worker',
       'Distinct stale follow-up.',
-      expect.objectContaining({
-        expectedRevision: 4,
-        requireCredentialForNewTurn: true,
-      }),
+      expect.objectContaining({ expectedRevision: 4 }),
     );
+    expect(followup.mock.calls[0]![3]).not.toHaveProperty('requireCredentialForNewTurn');
     expect(detail).not.toHaveBeenCalled();
     expect(isRuntimeDaemonSuccessResponse(response)).toBe(false);
     if (!isRuntimeDaemonSuccessResponse(response)) {
@@ -1594,6 +1592,10 @@ describe('runtime daemon dispatcher', () => {
             state: 'accepted',
           };
         }
+        // A turn no client lends a key for runs on the Host's own, as a Run does.
+        if (trusted?.providerCredentialAccessFactory === undefined) {
+          return { actorPath: '/root/unbound-native', turnId: 'turn-agent-unbound', state: 'accepted' };
+        }
         const access = trusted?.providerCredentialAccessFactory?.({
           actorPath: '/root/reviewer',
           turnId: 'turn-agent-1',
@@ -1616,7 +1618,6 @@ describe('runtime daemon dispatcher', () => {
     const followup = vi.spyOn(runtime.agents, 'followup').mockImplementation(
       async (_sessionId, actorPath, _objective, options) => {
         const trusted = options as typeof options & {
-          readonly requireCredentialForNewTurn?: true;
           readonly providerCredentialAccessFactory?: (target: {
             readonly actorPath: string;
             readonly turnId: string;
@@ -1631,16 +1632,10 @@ describe('runtime daemon dispatcher', () => {
           providers: ['openai'],
         });
         if (access === undefined) {
-          if (trusted?.requireCredentialForNewTurn === true && !exposeCurrentTurn) {
-            throw Object.assign(
-              new Error('A new internal Agent turn requires an explicit scoped credential binding.'),
-              { code: 'credential_unavailable' as const },
-            );
-          }
-          return {
-            delivery: 'current_turn',
-            turn: { actorPath, turnId: 'turn-agent-followup', state: 'running' },
-          };
+          expect(trusted).not.toHaveProperty('requireCredentialForNewTurn');
+          return exposeCurrentTurn
+            ? { delivery: 'current_turn', turn: { actorPath, turnId: 'turn-agent-followup', state: 'running' } }
+            : { delivery: 'started_turn', turn: { actorPath, turnId: 'turn-agent-unbound', state: 'accepted' } };
         }
         await expect(access?.acquire(
           'openai',
@@ -1684,8 +1679,8 @@ describe('runtime daemon dispatcher', () => {
 
     await expect(client.agents.spawn('session-1', {
       taskName: 'unbound-native',
-      objective: 'Must not use daemon environment credentials.',
-    })).rejects.toMatchObject({ code: 'credential_unavailable' });
+      objective: 'Runs on the Host keys.',
+    })).resolves.toMatchObject({ turnId: 'turn-agent-unbound' });
     await expect(client.agents.spawn('session-1', {
       taskName: 'remote',
       objective: 'Use the external credentialRef plane.',
@@ -1718,8 +1713,8 @@ describe('runtime daemon dispatcher', () => {
     await expect(client.agents.followup(
       'session-1',
       '/root/reviewer',
-      'Must not use the daemon environment.',
-    )).rejects.toMatchObject({ code: 'credential_unavailable' });
+      'Runs on the Host keys.',
+    )).resolves.toMatchObject({ delivery: 'started_turn', turn: { turnId: 'turn-agent-unbound' } });
     exposeCurrentTurn = true;
     await expect(client.agents.followup(
       'session-1',
@@ -1749,7 +1744,7 @@ describe('runtime daemon dispatcher', () => {
         purpose: 'primary',
       }),
     ]);
-    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(spawn).toHaveBeenCalledTimes(3);
     expect(followup).toHaveBeenCalledTimes(3);
     await client.close();
     dispatcher.close();

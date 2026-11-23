@@ -328,7 +328,7 @@ export class CodingActorSession {
     let credentialTurnId: string | undefined;
     const admission = this.controller.spawn('/root', input, {
       ...options,
-      ...(credentialAccess === undefined && options?.executionPrincipalId === undefined
+      ...(credentialAccess === undefined && options?.executionPrincipalId === undefined && environment === undefined
         ? {}
         : {
             beforeLaunch: (plan) => {
@@ -362,24 +362,17 @@ export class CodingActorSession {
     objective: string,
     options?: ClientActorMutationOptions,
     credentialAccess?: CodingActorCredentialAccessFactory,
-    requireCredentialForNewTurn = false,
     environment?: CodingActorEnvironmentFactory,
   ): Promise<AgentFollowupResult> {
     let credentialTurnId: string | undefined;
     const strict = credentialAccess !== undefined && options?.credentialLent !== true;
     const validateTarget = credentialAccess === undefined
-      ? requireCredentialForNewTurn
-        ? (actor: ActorFollowupTarget) => {
-            if (actor.kind !== 'external' && actor.currentTurnId === undefined) {
-              throw missingAgentCredentialBindingError();
-            }
-          }
-        : undefined
+      ? undefined
       : (actor: ActorFollowupTarget) => {
           if (actor.kind === 'external') throw externalCredentialBindingError();
           if (strict && actor.currentTurnId !== undefined) throw currentTurnCredentialBindingError(actor.path);
         };
-    const beforeLaunch = credentialAccess === undefined && options?.executionPrincipalId === undefined
+    const beforeLaunch = credentialAccess === undefined && options?.executionPrincipalId === undefined && environment === undefined
       ? undefined
       : (plan: ActorStartPlan) => {
           credentialTurnId = plan.turn.turnId;
@@ -582,13 +575,6 @@ function currentTurnCredentialBindingError(actorPath: string): Error {
   return Object.assign(
     new Error(`${actorPath} already has a credential-bound turn; follow-up credentials cannot replace it.`),
     { code: 'invalid_params' as const },
-  );
-}
-
-function missingAgentCredentialBindingError(): Error {
-  return Object.assign(
-    new Error('A new internal Agent turn requires an explicit scoped credential binding.'),
-    { code: 'credential_unavailable' as const },
   );
 }
 

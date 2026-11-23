@@ -6201,9 +6201,10 @@ all leases.
 
 Native/constructed child Agents inherit only the intersection of the parent
 scope and their concrete Provider capabilities; `'*'` never expands the parent
-allowlist. Host `agents.spawn(..., { credential })` and a follow-up that starts
-a new internal turn must bind explicitly at the shared-daemon boundary. A
-follow-up delivered into the current turn cannot replace its binding. External
+allowlist. A turn that Host `agents.spawn` or a follow-up starts uses the
+`credential` it is given, else the lease its Session binds, else the Host's
+own keys, as a Run does. A follow-up delivered into the current turn cannot
+replace its binding. External
 turns keep using `credentialRef`, reject Runtime Provider bindings, and cannot
 read daemon ambient Provider keys. Detached
 Workflow work receives a derived,

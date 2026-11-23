@@ -1593,7 +1593,6 @@ async function dispatchRuntimeDaemonRequest(
           ...(credentialAccessFactory === undefined
             ? {}
             : { providerCredentialAccessFactory: credentialAccessFactory }),
-          requireCredentialForNewTurn: true,
           ...(lent ? { credentialLent: true } : {}),
           assertAdmission: () => options.clientLifecycle?.assertAdmission(principalId),
           origin: { principalId, subject, clientName, clientVersion },
@@ -1602,7 +1601,6 @@ async function dispatchRuntimeDaemonRequest(
           requestId: optionalStringField(params, "requestId"),
         } as RuntimeAgentFollowupOptions & {
           readonly providerCredentialAccessFactory?: CodingActorCredentialAccessFactory;
-          readonly requireCredentialForNewTurn: true;
         },
       );
     }
@@ -3749,23 +3747,18 @@ function bindTrustedAgentCredentialAccessFactory(input: {
   };
 }
 
+/**
+ * An external Agent runs on its own credentialRef, so a lent key is refused.
+ * Other turns with no lent key run on the Host's own keys, as a Run does.
+ */
 function assertDaemonAgentCredentialBinding(
   actorKind: string,
   binding: Record<string, unknown> | undefined,
 ): void {
-  if (actorKind === "external") {
-    if (binding !== undefined) {
-      throw daemonError(
-        "invalid_params",
-        "External Agents use credentialRef and cannot bind Runtime Provider credentials.",
-      );
-    }
-    return;
-  }
-  if (binding === undefined) {
+  if (actorKind === "external" && binding !== undefined) {
     throw daemonError(
-      "credential_unavailable",
-      "Native, constructed, and workflow Agent turns require an explicit scoped credential binding.",
+      "invalid_params",
+      "External Agents use credentialRef and cannot bind Runtime Provider credentials.",
     );
   }
 }

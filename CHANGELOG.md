@@ -45,8 +45,9 @@ All notable changes to this project will be documented in this file.
   model, and answer the Host through `answerLeaseRequests`. A lease survives a
   reconnect of the same `instanceId` and `instanceSecret` to the same Host.
 - A v2 client can start a child Agent with `actor.spawn` and give one a new
-  objective with `actor.followup`. A new turn runs on a key the client or the
-  Session lends, and a repeat of the same request starts nothing more.
+  objective with `actor.followup`. A new turn runs on the key the client
+  lends, else the Session's, else the Host's own, and a repeat of the same
+  request starts nothing more.
 - `ensureKodaXHostClient` takes `exitWhenIdle`: a Host it starts stops about
   30 seconds after its last client leaves, unless it still has work. It also
   takes `recoveryLeases`, which gives the leases for a Run it continues on a
@@ -63,6 +64,10 @@ All notable changes to this project will be documented in this file.
   - `/extensions` lists the loaded extensions and recent failures. The
     commands they add are in `/help`.
   - The status panel reads its counts from the Host.
+- A child Agent a daemon client starts with `agents.spawn` or
+  `agents.followup` without lending a key now runs on the Host's own keys, as
+  a Run does, instead of failing with `credential_unavailable`. A key the
+  client lends or its Session binds still comes first.
 - A permission request now waits 30 minutes instead of 5 before it is
   rejected. The model still carries on after a rejection, and
   `permissionTimeoutMs: 0` still turns the timer off. Questions still wait

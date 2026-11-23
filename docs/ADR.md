@@ -7027,10 +7027,21 @@ explain which startup source the daemon actually applied.
    an explicit host-only binding; a follow-up delivered to an already-running
    turn cannot replace or widen its binding. External Agent credentials remain
    on their independent `credentialRef` broker. At the shared-daemon boundary,
-   every newly admitted native/constructed/workflow turn must carry a scoped
-   binding; missing bindings fail closed instead of reading daemon environment
-   credentials, while External turns reject Runtime Provider bindings and run
-   under an explicit deny scope that suppresses daemon ambient Provider keys.
+   a native/constructed/workflow turn a client starts takes its key in the
+   order a Run does: the binding the client sends, else the lease its Session
+   binds, else the Host's own keys. External turns reject Runtime Provider
+   bindings and run under an explicit deny scope that suppresses daemon
+   ambient Provider keys.
+
+   Revised 2026-11-23 (owner decision): the shared-daemon boundary first
+   required a scoped binding on every newly admitted native/constructed/
+   workflow turn and failed closed without one. That made a child a client
+   starts the only work refused on the Host's keys: a Run on the same Session
+   uses them, and so does a child the model starts with `spawn_agent`. The
+   rule protected nothing a Run did not already expose. A client that wants a
+   child on its own key still lends it, a Session-bound lease still takes
+   precedence, and a child a client starts is held to the tools and time limit
+   of its Session and the tools of the Host.
 6. A detached Workflow receives a derived, explicitly closable lease handle.
    ALS propagates that handle but is not the authority or lifetime boundary.
    Completion, failure, cancellation, parent revocation, and parent settlement

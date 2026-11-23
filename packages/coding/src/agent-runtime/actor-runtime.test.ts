@@ -503,42 +503,21 @@ describe('F270 coding Actor runtime adapter', () => {
     await session.close();
   });
 
-  it('atomically requires a daemon credential only when follow-up admits a new internal turn', async () => {
-    executeChildAgentsMock.mockResolvedValue(completedChild('first turn complete'));
+  it('runs a client turn no key is lent for in the environment the client brings', async () => {
+    executeChildAgentsMock.mockResolvedValue(completedChild('done'));
+    // No Run is attached: only the environment brought with the turn can run it.
     const session = new CodingActorSession({ sessionId: 'session-1' });
     const { ctx, options } = environment();
-    const root = session.attach(ctx, options);
-    const first = await root.spawn({ taskName: 'worker', objective: 'Finish once.' });
+    const factory = vi.fn(async () => ({ parentCtx: ctx, options }));
+
+    const first = await session.spawnRoot({ taskName: 'worker', objective: 'Finish once.' }, undefined, undefined, factory);
     await settle();
-    expect(root.output(first.actorPath, first.turnId)).toMatchObject({ state: 'completed' });
-
-    await expect(session.followupRoot(
-      first.actorPath,
-      'This would start a new unbound turn.',
-      undefined,
-      undefined,
-      true,
-    )).rejects.toMatchObject({ code: 'credential_unavailable' });
-    expect(root.get(first.actorPath).mailbox).toEqual([]);
-
-    executeChildAgentsMock.mockImplementation((_bundles, _ctx, childOptions) =>
-      new Promise((resolve) => {
-        childOptions.abortSignal?.addEventListener(
-          'abort',
-          () => resolve(completedChild('interrupted')),
-          { once: true },
-        );
-      }));
-    const active = await root.spawn({ taskName: 'active', objective: 'Keep running.' });
-    await vi.waitFor(() => expect(executeChildAgentsMock).toHaveBeenCalledTimes(2));
-    await expect(session.followupRoot(
-      active.actorPath,
-      'Continue the already-bound current turn.',
-      undefined,
-      undefined,
-      true,
-    )).resolves.toMatchObject({ delivery: 'current_turn' });
-    await root.interrupt(active.actorPath);
+    expect(session.rootControl().output(first.actorPath, first.turnId)).toMatchObject({ state: 'completed' });
+    const next = await session.followupRoot(first.actorPath, 'Once more.', undefined, undefined, factory);
+    await settle();
+    expect(next.delivery).toBe('started_turn');
+    expect(session.rootControl().output(first.actorPath, next.turn.turnId)).toMatchObject({ state: 'completed' });
+    expect(factory).toHaveBeenCalledTimes(2);
     await session.close();
   });
 
