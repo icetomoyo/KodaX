@@ -10,6 +10,7 @@
  * (`invalid_transition`), and so does one sent again after it took effect:
  * read the capability to see where it stands. A capability that changed while
  * the decision was being made fails with `conflict` (`revision_mismatch`).
+ * That is why the SDK does not send a decision again when its answer was lost.
  */
 import { z } from 'zod/v4';
 
@@ -107,25 +108,27 @@ export const LEARNING_METHODS = {
     result: hostList(LearningEvent),
   },
   /** Marks the capability's latest event as seen by this client. */
-  'learning.acknowledge': { primitive: 'command', plane: 'local', params: Decision, result: Done },
+  'learning.acknowledge': { primitive: 'command', resend: 'never', plane: 'local', params: Decision, result: Done },
   /** Hides the capability's latest event from this client until `until`, in UTC milliseconds. */
   'learning.snooze': {
     primitive: 'command',
+    resend: 'never',
     plane: 'local',
     params: hostCommandParams({ nameOrSlug: Name, until: z.int().min(0) }),
     result: Done,
   },
-  'learning.reject': { primitive: 'command', plane: 'local', params: Decision, result: Done },
+  'learning.reject': { primitive: 'command', resend: 'never', plane: 'local', params: Decision, result: Done },
   /** Stops using the capability. A rollback brings back the last good revision. */
-  'learning.disable': { primitive: 'command', plane: 'local', params: Decision, result: Done },
-  'learning.rollback': { primitive: 'command', plane: 'local', params: Decision, result: Done },
+  'learning.disable': { primitive: 'command', resend: 'never', plane: 'local', params: Decision, result: Done },
+  'learning.rollback': { primitive: 'command', resend: 'never', plane: 'local', params: Decision, result: Done },
   /** Puts a Skill on trial: the Host uses it a few times and watches how it fares before it becomes active. */
-  'learning.review': { primitive: 'command', plane: 'local', params: Decision, result: Done },
+  'learning.review': { primitive: 'command', resend: 'never', plane: 'local', params: Decision, result: Done },
   /** Lets the Host use the capability without a trial. */
-  'learning.trust': { primitive: 'command', plane: 'local', params: Decision, result: Done },
+  'learning.trust': { primitive: 'command', resend: 'never', plane: 'local', params: Decision, result: Done },
   /** Makes a learned Skill one of the person's own Skills. Promoted already, it succeeds. */
   'learning.promote': {
     primitive: 'command',
+    resend: 'never',
     plane: 'local',
     params: hostCommandParams({ nameOrSlug: Name, scope: z.literal('user') }),
     result: Done,

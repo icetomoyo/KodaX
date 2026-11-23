@@ -27,6 +27,7 @@ export const DEVICE_METHODS = {
    */
   'device.pair': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'local',
     params: hostCommandParams({ name: z.string().trim().min(1).max(64) }),
     result: hostResult({ code: z.string(), expiresAt: z.int() }),
@@ -35,6 +36,7 @@ export const DEVICE_METHODS = {
   /** Its connections close as `revoked`. A device that is not paired, such as one already revoked, answers the same. */
   'device.revoke': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'local',
     params: hostCommandParams({ deviceId: HostId }),
     result: hostResult({}),

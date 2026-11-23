@@ -1954,6 +1954,7 @@
   },
   "session.create": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -2561,6 +2562,7 @@
   },
   "session.policy.update": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "trusted",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -2868,6 +2870,7 @@
   },
   "session.archive": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -2913,6 +2916,7 @@
   },
   "session.unarchive": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -2958,6 +2962,7 @@
   },
   "session.delete": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -3003,6 +3008,7 @@
   },
   "session.promote": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "trusted",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -3555,6 +3561,7 @@
   },
   "session.compact": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -3736,6 +3743,7 @@
   },
   "session.lineage.label": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -3836,6 +3844,7 @@
   },
   "session.branch.select": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -3858,6 +3867,11 @@
         "summarize": {
           "type": "boolean"
         },
+        "ifActiveEntryId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
         "_meta": {
           "type": "object",
           "propertyNames": {
@@ -3869,7 +3883,8 @@
       "required": [
         "requestId",
         "sessionId",
-        "entry"
+        "entry",
+        "ifActiveEntryId"
       ],
       "additionalProperties": false
     },
@@ -4115,6 +4130,7 @@
   },
   "session.notice.append": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -4266,6 +4282,7 @@
   },
   "session.goal.create": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -4374,6 +4391,7 @@
   },
   "session.goal.pause": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -4471,6 +4489,7 @@
   },
   "session.goal.resume": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -4568,6 +4587,7 @@
   },
   "session.goal.clear": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -4613,6 +4633,7 @@
   },
   "session.fork": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -4900,6 +4921,7 @@
   },
   "session.recover": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -5179,6 +5201,7 @@
   },
   "session.rewind": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -5464,6 +5487,7 @@
   },
   "session.side.open": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -5863,6 +5887,7 @@
   },
   "session.settings.update": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -9754,6 +9779,7 @@
   },
   "input.submit": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -10109,6 +10135,7 @@
   },
   "input.withdraw": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -10798,6 +10825,7 @@
   },
   "run.stop": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -10843,6 +10871,7 @@
   },
   "run.startTool": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -11054,6 +11083,7 @@
   },
   "command.execute": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -11261,6 +11291,7 @@
   },
   "review.start": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -11462,6 +11493,7 @@
   },
   "agent.reviewLean": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -11657,6 +11689,7 @@
   },
   "run.recover": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -11849,6 +11882,7 @@
   },
   "session.cancel": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -11900,6 +11934,7 @@
   },
   "blob.begin": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -11974,6 +12009,7 @@
   },
   "blob.write": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -12046,6 +12082,7 @@
   },
   "blob.commit": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -13088,6 +13125,7 @@
   },
   "interaction.respond": {
     "primitive": "command",
+    "resend": "never",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -13508,6 +13546,7 @@
   },
   "permission.grant.revoke": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -15935,6 +15974,7 @@
   },
   "actor.send": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -16000,6 +16040,7 @@
   },
   "actor.interrupt": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -16812,6 +16853,7 @@
   },
   "workflow.start": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -16936,6 +16978,7 @@
   },
   "workflow.pause": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -16987,6 +17030,7 @@
   },
   "workflow.resume": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -17038,6 +17082,7 @@
   },
   "workflow.stop": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -17422,6 +17467,7 @@
   },
   "host.stop": {
     "primitive": "command",
+    "resend": "never",
     "plane": "local",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -17531,6 +17577,7 @@
   },
   "client.exit.request": {
     "primitive": "command",
+    "resend": "never",
     "plane": "local",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -18250,6 +18297,7 @@
   },
   "repo.intelligence.prewarm": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "local",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -18328,6 +18376,7 @@
   },
   "device.pair": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "local",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -18458,6 +18507,7 @@
   },
   "device.revoke": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "local",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -18627,6 +18677,7 @@
   },
   "config.update": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "settings",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -19049,6 +19100,7 @@
   },
   "config.reload": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "settings",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -19150,6 +19202,7 @@
   },
   "provider.custom.upsert": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "settings",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -19207,6 +19260,7 @@
   },
   "provider.custom.remove": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "settings",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -19252,6 +19306,7 @@
   },
   "provider.reasoning.probe": {
     "primitive": "command",
+    "resend": "never",
     "plane": "settings",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -19355,6 +19410,7 @@
   },
   "provider.reasoning.forget": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "settings",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -19618,6 +19674,7 @@
   },
   "mcp.server.upsert": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "settings",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -19681,6 +19738,7 @@
   },
   "mcp.server.remove": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "settings",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -19726,6 +19784,7 @@
   },
   "mcp.server.reload": {
     "primitive": "command",
+    "resend": "never",
     "plane": "settings",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -19934,6 +19993,7 @@
   },
   "mcp.tool.refresh": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "settings",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -20132,6 +20192,7 @@
   },
   "extension.reload": {
     "primitive": "command",
+    "resend": "never",
     "plane": "settings",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -20346,6 +20407,7 @@
   },
   "agent.registration.upsert": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "settings",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -20496,6 +20558,7 @@
   },
   "agent.registration.setEnabled": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "settings",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -20653,6 +20716,7 @@
   },
   "agent.registration.remove": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "settings",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -21189,6 +21253,7 @@
   },
   "learning.acknowledge": {
     "primitive": "command",
+    "resend": "never",
     "plane": "local",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -21234,6 +21299,7 @@
   },
   "learning.snooze": {
     "primitive": "command",
+    "resend": "never",
     "plane": "local",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -21285,6 +21351,7 @@
   },
   "learning.reject": {
     "primitive": "command",
+    "resend": "never",
     "plane": "local",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -21330,6 +21397,7 @@
   },
   "learning.disable": {
     "primitive": "command",
+    "resend": "never",
     "plane": "local",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -21375,6 +21443,7 @@
   },
   "learning.rollback": {
     "primitive": "command",
+    "resend": "never",
     "plane": "local",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -21420,6 +21489,7 @@
   },
   "learning.review": {
     "primitive": "command",
+    "resend": "never",
     "plane": "local",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -21465,6 +21535,7 @@
   },
   "learning.trust": {
     "primitive": "command",
+    "resend": "never",
     "plane": "local",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -21510,6 +21581,7 @@
   },
   "learning.promote": {
     "primitive": "command",
+    "resend": "never",
     "plane": "local",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -21560,6 +21632,7 @@
   },
   "lease.register": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "trusted",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -21940,6 +22013,7 @@
   },
   "lease.revoke": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "trusted",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -21993,6 +22067,7 @@
   },
   "lease.complete": {
     "primitive": "command",
+    "resend": "auto",
     "plane": "trusted",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",

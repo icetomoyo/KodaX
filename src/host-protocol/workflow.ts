@@ -101,6 +101,7 @@ const Target = { sessionId: SessionRef, workflowId: WorkflowId };
 /** A workflow command answers once the Host took it. What it led to shows in `workflow.get`. */
 const command = {
   primitive: 'command',
+  resend: 'auto',
   plane: 'data',
   params: hostCommandParams(Target),
   result: hostResult({}),
@@ -137,6 +138,7 @@ export const WORKFLOW_METHODS = {
    */
   'workflow.start': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({
       sessionId: SessionRef,

@@ -18,6 +18,7 @@ import type {
   HostResult,
 } from './methods.js';
 import type { LocalSessionView, SessionView, ViewPatch, ViewSnapshot } from './view.js';
+import { HOST_NO_RESEND } from './no-resend.js';
 import { applyViewOps, viewPatchStep, type ViewPosition } from './view-sync.js';
 
 /** The longest pause between two attempts to reach a Host that went away. */
@@ -320,8 +321,10 @@ function createHostLink(options: KodaXHostClientOptions, lifetime: AbortControll
         if (ends && !linkLost) leaving = false;
         if (linkLost) lost(link);
         // A call that was in flight when the client closed keeps that outcome; one never sent learns why the client closed.
-        const inFlightAtClose = finished && error instanceof HostProtocolError && error.kodaxCode === 'unknown_outcome';
-        if (ends || !linkLost || inFlightAtClose || callOptions.signal?.aborted) throw error;
+        const mayHaveArrived = error instanceof HostProtocolError && error.kodaxCode === 'unknown_outcome';
+        const inFlightAtClose = finished && mayHaveArrived;
+        const notResent = mayHaveArrived && HOST_NO_RESEND.has(method);
+        if (ends || !linkLost || inFlightAtClose || notResent || callOptions.signal?.aborted) throw error;
       }
     }
   };

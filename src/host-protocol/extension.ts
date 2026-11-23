@@ -66,9 +66,10 @@ export const EXTENSION_METHODS = {
    * Loads again the extensions the Host has loaded, so a changed module takes
    * effect. One that fails is listed under `failures`; the others still load.
    * An extension newly added to the configuration, or one that failed when the
-   * Host started, loads at the next restart.
+   * Host started, loads at the next restart. The SDK does not send it again:
+   * that would run every extension's setup once more.
    */
-  'extension.reload': { primitive: 'command', plane: 'settings', params: hostCommandParams({}), result: Extensions },
+  'extension.reload': { primitive: 'command', resend: 'never', plane: 'settings', params: hostCommandParams({}), result: Extensions },
   /** Fails with `method_not_found` when the Host was started without external Agents. */
   'agent.registration.list': {
     primitive: 'query', plane: 'settings', params: hostParams({}), result: hostList(Registration),
@@ -80,6 +81,7 @@ export const EXTENSION_METHODS = {
    */
   'agent.registration.upsert': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'settings',
     params: hostCommandParams({ registration: z.record(z.string(), z.unknown()), ...Conditions }),
     result: hostResult({ registration: Registration }),
@@ -90,6 +92,7 @@ export const EXTENSION_METHODS = {
    */
   'agent.registration.setEnabled': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'settings',
     params: hostCommandParams({ agentId: AgentId, enabled: z.boolean(), claimOwner: z.string().min(1).max(256).optional(), ...Conditions }),
     result: hostResult({ registration: Registration }),
@@ -100,6 +103,6 @@ export const EXTENSION_METHODS = {
    * `ifRevision` or `ifOwner`.
    */
   'agent.registration.remove': {
-    primitive: 'command', plane: 'settings', params: hostCommandParams({ agentId: AgentId, ...Conditions }), result: hostResult({}),
+    primitive: 'command', resend: 'auto', plane: 'settings', params: hostCommandParams({ agentId: AgentId, ...Conditions }), result: hostResult({}),
   },
 } as const satisfies HostMethodRegistry;

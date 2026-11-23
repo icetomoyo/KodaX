@@ -77,16 +77,20 @@ export const MCP_METHODS = {
    */
   'mcp.server.upsert': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'settings',
     params: hostCommandParams({ name: Name, config: ServerConfig }),
     result: hostResult({ config: ServerConfig }),
   },
   /** Answers the same whether or not the server was there, so it is safe to send again. */
   'mcp.server.remove': {
-    primitive: 'command', plane: 'settings', params: hostCommandParams({ name: Name }), result: hostResult({}),
+    primitive: 'command', resend: 'auto', plane: 'settings', params: hostCommandParams({ name: Name }), result: hostResult({}),
   },
-  /** Disconnects every server and connects again with the saved configurations. */
-  'mcp.server.reload': { primitive: 'command', plane: 'settings', params: hostCommandParams({}), result: hostList(Server) },
+  /**
+   * Disconnects every server and connects again with the saved configurations.
+   * The SDK does not send it again: that would cut every server off once more.
+   */
+  'mcp.server.reload': { primitive: 'command', resend: 'never', plane: 'settings', params: hostCommandParams({}), result: hostList(Server) },
   /**
    * The tools of every server, or of `server`. Reading a server the Host has
    * not connected to yet connects to it, which for a stdio server starts its
@@ -97,6 +101,6 @@ export const MCP_METHODS = {
   },
   /** Like `mcp.tool.list`, but asks each server again instead of reading what the Host kept. */
   'mcp.tool.refresh': {
-    primitive: 'command', plane: 'settings', params: hostCommandParams({ server: Name.optional() }), result: hostList(ServerTools),
+    primitive: 'command', resend: 'auto', plane: 'settings', params: hostCommandParams({ server: Name.optional() }), result: hostList(ServerTools),
   },
 } as const satisfies HostMethodRegistry;

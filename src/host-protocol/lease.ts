@@ -102,6 +102,7 @@ export const LEASE_METHODS = {
    */
   'lease.register': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'trusted',
     params: z.discriminatedUnion('kind', [
       hostCommandParams({
@@ -136,6 +137,7 @@ export const LEASE_METHODS = {
    */
   'lease.revoke': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'trusted',
     params: hostCommandParams({ kind: Kind, leaseId: LeaseRef }),
     result: hostResult({}),
@@ -149,6 +151,7 @@ export const LEASE_METHODS = {
    */
   'lease.complete': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'trusted',
     params: z.discriminatedUnion('kind', [
       hostCommandParams({

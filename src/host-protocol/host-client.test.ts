@@ -140,6 +140,27 @@ describe('a Host client that outlives its connections', () => {
     expect(seen).toEqual(['connected', 'reconnecting', 'connected']);
   });
 
+  it('hands the caller an unknown outcome of a command not sent again, and sends one that never left', async () => {
+    const sequence = hostSequence((_method, params, connection) => {
+      if (connection !== sequence.hosts[0]) return { status: 'answered' };
+      if (params.interactionId === 'i1') return hang();
+      // A link that fails to send is closing: the call that was in flight hears so next.
+      setTimeout(() => connection.drop(), 0);
+      return Promise.reject(new HostProtocolError('unavailable', 'Not sent.', { reason: 'send_failed' }));
+    });
+    const host = await client(sequence.open);
+    const respond = (interactionId: string) => host.call('interaction.respond', {
+      requestId: createRequestId(), interactionId, response: { kind: 'skip' },
+    });
+    const received = respond('i1');
+    await vi.waitFor(() => expect(sequence.hosts[0]!.sent).toHaveLength(1));
+    const unsent = respond('i2');
+
+    await expect(received).rejects.toMatchObject({ kodaxCode: 'unknown_outcome' });
+    await expect(unsent).resolves.toEqual({ status: 'answered' });
+    expect(sequence.hosts.map(connection => connection.sent.map(sent => sent.params.interactionId))).toEqual([['i1', 'i2'], ['i2']]);
+  });
+
   it('holds calls made while it reconnects, and lets a caller give up waiting', async () => {
     vi.useFakeTimers();
     const sequence = hostSequence(() => ({}));

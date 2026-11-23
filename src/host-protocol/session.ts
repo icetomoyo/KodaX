@@ -224,6 +224,7 @@ export const SESSION_METHODS = {
   },
   'session.create': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({
       ...ProjectChoice,
@@ -267,15 +268,16 @@ export const SESSION_METHODS = {
    */
   'session.policy.update': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'trusted',
     params: hostCommandParams({ sessionId: SessionRef, policy: SessionPolicy }),
     result: hostResult({ policy: SessionPolicy }),
   },
   // Each of these names a state, so sending one again changes nothing.
-  'session.archive': { primitive: 'command', plane: 'data', params: SessionCommand, result: Done },
-  'session.unarchive': { primitive: 'command', plane: 'data', params: SessionCommand, result: Done },
+  'session.archive': { primitive: 'command', resend: 'auto', plane: 'data', params: SessionCommand, result: Done },
+  'session.unarchive': { primitive: 'command', resend: 'auto', plane: 'data', params: SessionCommand, result: Done },
   /** Succeeds when the Session is already gone: what was asked for holds. */
-  'session.delete': { primitive: 'command', plane: 'data', params: SessionCommand, result: Done },
+  'session.delete': { primitive: 'command', resend: 'auto', plane: 'data', params: SessionCommand, result: Done },
   /**
    * Gives a Session its lasting tag once, as when a quick question becomes a
    * working Session; the id and the conversation stay. `ifRevision` is the
@@ -287,6 +289,7 @@ export const SESSION_METHODS = {
    */
   'session.promote': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'trusted',
     params: hostCommandParams({
       sessionId: SessionRef,
@@ -316,6 +319,7 @@ export const SESSION_METHODS = {
    */
   'session.compact': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({
       sessionId: SessionRef,
@@ -357,12 +361,14 @@ export const SESSION_METHODS = {
   },
   /**
    * Puts a label on an entry, or takes its label off when `label` is absent.
-   * Answers with the entry that records it. Sent again, it records the same
-   * once more, which changes nothing a reader of the tree is shown. Fails with
-   * `conflict` when no entry matches, and while the Session is running.
+   * Answers with the entry that records it. When the entry already carries
+   * what is asked, as when this is sent again, it records nothing and answers
+   * with the entry that recorded it. Fails with `conflict` when no entry
+   * matches, and while the Session is running.
    */
   'session.lineage.label': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({
       sessionId: SessionRef,
@@ -375,14 +381,22 @@ export const SESSION_METHODS = {
    * Moves the conversation to another entry of its tree. The next Run goes on
    * from there, and what came after stays in the tree as a branch. With
    * `summarize`, a summary of the branch that is left is put after the entry,
-   * so the model knows what was tried. Naming where the conversation already
-   * stands changes nothing. Fails with `conflict` when no entry matches, and
-   * while the Session is running.
+   * so the model knows what was tried. A switch already in place changes
+   * nothing, so it is safe to send again. Fails with `conflict` when no entry
+   * matches, and while the Session is running; with `resync_required` when the
+   * conversation no longer stands on `ifActiveEntryId`.
    */
   'session.branch.select': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
-    params: hostCommandParams({ sessionId: SessionRef, entry: EntryRef, summarize: z.boolean().optional() }),
+    params: hostCommandParams({
+      sessionId: SessionRef,
+      entry: EntryRef,
+      summarize: z.boolean().optional(),
+      /** The `activeEntryId` of the tree as the client read it. */
+      ifActiveEntryId: z.string().min(1).max(256),
+    }),
     result: hostResult({ session: Session }),
     localResult: hostResult({ session: LocalSession }),
   },
@@ -395,6 +409,7 @@ export const SESSION_METHODS = {
    */
   'session.notice.append': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({
       sessionId: SessionRef,
@@ -421,6 +436,7 @@ export const SESSION_METHODS = {
    */
   'session.goal.create': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({
       sessionId: SessionRef,
@@ -432,11 +448,11 @@ export const SESSION_METHODS = {
   // Pause, resume and clear each name a state, so sending one again changes nothing.
   // Each fails with `conflict` when it would change the goal while the Session is running.
   /** Sets an `active` goal aside. Fails with `conflict` for a goal in any other state but `paused`. */
-  'session.goal.pause': { primitive: 'command', plane: 'data', params: SessionCommand, result: GoalAnswer },
+  'session.goal.pause': { primitive: 'command', resend: 'auto', plane: 'data', params: SessionCommand, result: GoalAnswer },
   /** Takes a `paused` goal up again. Fails with `conflict` for a goal in any other state but `active`. */
-  'session.goal.resume': { primitive: 'command', plane: 'data', params: SessionCommand, result: GoalAnswer },
+  'session.goal.resume': { primitive: 'command', resend: 'auto', plane: 'data', params: SessionCommand, result: GoalAnswer },
   /** Leaves the Session without a goal. Succeeds when it already has none. */
-  'session.goal.clear': { primitive: 'command', plane: 'data', params: SessionCommand, result: Done },
+  'session.goal.clear': { primitive: 'command', resend: 'auto', plane: 'data', params: SessionCommand, result: Done },
 
   /**
    * A new Session that starts with the conversation of this one: all of it, or
@@ -448,6 +464,7 @@ export const SESSION_METHODS = {
    */
   'session.fork': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({
       sessionId: SessionRef,
@@ -471,6 +488,7 @@ export const SESSION_METHODS = {
    */
   'session.recover': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({
       sessionId: SessionRef,
@@ -491,6 +509,7 @@ export const SESSION_METHODS = {
    */
   'session.rewind': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({
       sessionId: SessionRef,
@@ -509,5 +528,5 @@ export const SESSION_METHODS = {
    * the conversation and each client identity, so asking again answers with
    * the same one. Fails with `conflict` when `sessionId` is itself a side chat.
    */
-  'session.side.open': { primitive: 'command', plane: 'data', params: SessionCommand, ...SessionAnswer },
+  'session.side.open': { primitive: 'command', resend: 'auto', plane: 'data', params: SessionCommand, ...SessionAnswer },
 } as const satisfies HostMethodRegistry;

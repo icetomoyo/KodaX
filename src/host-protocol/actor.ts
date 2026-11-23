@@ -218,6 +218,7 @@ export const ACTOR_METHODS = {
   /** Puts a message from the root in an actor's mailbox. It starts no turn: an idle actor reads it in its next one. */
   'actor.send': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({
       ...Target,
@@ -230,6 +231,7 @@ export const ACTOR_METHODS = {
   /** Ends the named turn as `interrupted`. A turn that already ended is left as it is. */
   'actor.interrupt': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({ ...Target, turnId: TurnId, reason: z.string().min(1).max(1024).optional() }),
     result: hostResult({}),

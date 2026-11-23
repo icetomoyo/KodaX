@@ -145,6 +145,7 @@ export type HostLocalResult<Method extends HostMethodName> =
 export function hostMethodContract(): Record<string, unknown> {
   return Object.fromEntries(Object.entries(HOST_METHODS as HostMethodRegistry).map(([name, spec]) => [name, {
     primitive: spec.primitive,
+    ...(spec.resend !== undefined ? { resend: spec.resend } : {}),
     plane: spec.plane,
     // What a client may send, then what the Host produces.
     params: z.toJSONSchema(spec.params, { io: 'input' }),

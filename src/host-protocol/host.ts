@@ -137,8 +137,12 @@ const RepoIndexResult = hostResult({
 export const HOST_ADMIN_METHODS = {
   'host.get': { primitive: 'query', plane: 'local', params: hostParams({}), result: HostGetResult },
   'host.preflight': { primitive: 'query', plane: 'local', params: hostParams({}), result: PreflightResult },
-  /** Fails with `conflict` while stopping would cut work short; `host.preflight` says what. */
-  'host.stop': { primitive: 'command', plane: 'local', params: hostCommandParams({}), result: hostResult({}) },
+  /**
+   * Fails with `conflict` while stopping would cut work short; `host.preflight`
+   * says what. The SDK does not send it again: that would stop the Host that
+   * replaced the one it stopped.
+   */
+  'host.stop': { primitive: 'command', resend: 'never', plane: 'local', params: hostCommandParams({}), result: hostResult({}) },
   'host.logs': { primitive: 'query', plane: 'local', params: hostParams({}), result: LogResult },
   /**
    * Stops this client's work on the Host, and the Host too with `shutdownHost`
@@ -147,6 +151,8 @@ export const HOST_ADMIN_METHODS = {
    */
   'client.exit.request': {
     primitive: 'command',
+    // A lost link most likely means it did what it asked; the client does not come back to ask again.
+    resend: 'never',
     plane: 'local',
     params: hostCommandParams({ shutdownHost: z.boolean().optional() }),
     result: hostResult({ exit: ClientExit }),
@@ -177,7 +183,7 @@ export const HOST_ADMIN_METHODS = {
   },
   /** Builds the Session's code index now, so its first Run does not wait for it. */
   'repo.intelligence.prewarm': {
-    primitive: 'command', plane: 'local', params: hostCommandParams({ sessionId: SessionRef }), result: RepoIndexResult,
+    primitive: 'command', resend: 'auto', plane: 'local', params: hostCommandParams({ sessionId: SessionRef }), result: RepoIndexResult,
   },
 } as const satisfies HostMethodRegistry;
 

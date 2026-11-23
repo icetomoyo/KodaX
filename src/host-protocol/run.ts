@@ -126,6 +126,7 @@ export const RUN_METHODS = {
    */
   'input.submit': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({
       sessionId: SessionRef,
@@ -156,6 +157,7 @@ export const RUN_METHODS = {
   /** Takes back a queued input. Sent again, it answers the same. */
   'input.withdraw': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({ sessionId: SessionRef, inputId: InputRef }),
     result: hostResult({ input: WithdrawnInput }),
@@ -194,6 +196,7 @@ export const RUN_METHODS = {
   /** Asks the Run to stop. The answer says the request was recorded; the Run's `outcome` says how it ended. */
   'run.stop': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({ runId: RunRef }),
     result: Done,
@@ -208,6 +211,7 @@ export const RUN_METHODS = {
    */
   'run.startTool': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({
       sessionId: SessionRef,
@@ -232,6 +236,7 @@ export const RUN_METHODS = {
    */
   'command.execute': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({
       sessionId: SessionRef,
@@ -254,6 +259,7 @@ export const RUN_METHODS = {
    */
   'review.start': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({
       sessionId: SessionRef,
@@ -273,6 +279,7 @@ export const RUN_METHODS = {
    */
   'agent.reviewLean': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({ sessionId: SessionRef, leases: RunLeases.optional() }),
     restricted: { leases: 'trusted' },
@@ -289,6 +296,7 @@ export const RUN_METHODS = {
    */
   'run.recover': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({ runId: RunRef, leases: RunLeases.optional() }),
     restricted: { leases: 'trusted' },
@@ -300,6 +308,7 @@ export const RUN_METHODS = {
    */
   'session.cancel': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({ sessionId: SessionRef, ifRunId: RunRef }),
     result: Done,

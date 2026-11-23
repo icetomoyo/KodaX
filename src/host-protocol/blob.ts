@@ -35,6 +35,7 @@ export const BLOB_METHODS = {
    */
   'blob.begin': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({
       sessionId: SessionRef,
@@ -51,6 +52,7 @@ export const BLOB_METHODS = {
    */
   'blob.write': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({ ...BlobTarget, offset: z.int().min(0), data: Chunk }),
     result: hostResult({ received: z.int() }),
@@ -58,6 +60,7 @@ export const BLOB_METHODS = {
   /** Checks the bytes against the `sha256` the upload began with. Bytes that do not match end the upload. */
   'blob.commit': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams(BlobTarget),
     result: hostResult({ blob: BlobRef }),

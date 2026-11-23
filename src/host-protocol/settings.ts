@@ -82,10 +82,12 @@ export const SETTINGS_METHODS = {
   },
   /**
    * Answers with the settings as they are after the change.
-   * With `ifRevision`, fails with `conflict` when the settings changed since that revision was read.
+   * With `ifRevision`, fails with `conflict` when the settings changed since that revision was read,
+   * unless they already hold what the patch asks, as when it is sent again after it applied.
    */
   'session.settings.update': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({
       sessionId: SessionRef,

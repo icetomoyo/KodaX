@@ -20,6 +20,16 @@ export type HostPrimitive = 'handshake' | 'query' | 'command' | 'subscription' |
 
 export interface HostMethodSpec {
   readonly primitive: HostPrimitive;
+  /**
+   * Whether the SDK sends a command again, unchanged, after the link was lost
+   * while the Host may have received it. Every command says.
+   *   auto  — sent again under the same `requestId`, it succeeds and answers
+   *           with the state as it now is. It fails with `conflict` only when
+   *           that state is not what the command asked for.
+   *   never — the SDK hands `unknown_outcome` to the caller, who reads what
+   *           happened.
+   */
+  readonly resend?: 'auto' | 'never';
   readonly plane: RuntimeMethodPlane;
   readonly params: z.ZodType;
   /** Absent for a notification. */

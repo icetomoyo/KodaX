@@ -174,6 +174,8 @@ export const INTERACTION_METHODS = {
    */
   'interaction.respond': {
     primitive: 'command',
+    // Sent again after it took effect, it answers `already_resolved`, which does not say whose answer won.
+    resend: 'never',
     plane: 'data',
     params: hostCommandParams({ interactionId: InteractionRef, response: Response }),
     result: hostResult({ status: z.enum(['answered', 'unanswered', 'dismissed', 'already_resolved']) }),
@@ -192,6 +194,7 @@ export const INTERACTION_METHODS = {
    */
   'permission.grant.revoke': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'data',
     params: hostCommandParams({ grantId: GrantRef, ifRevision: z.string().min(1).max(64).optional() }),
     result: hostResult({}),

@@ -98,23 +98,25 @@ export const CONFIG_METHODS = {
   /** Fails with `conflict` when `ifRevision` is not the saved configuration's revision. */
   'config.update': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'settings',
     params: hostCommandParams({ patch: ConfigPatch, ifRevision: z.string().min(1).max(128).optional() }),
     result: SavedConfig,
   },
   /** Reads the saved configuration again after something other than the Host changed it. */
-  'config.reload': { primitive: 'command', plane: 'settings', params: hostCommandParams({}), result: SavedConfig },
+  'config.reload': { primitive: 'command', resend: 'auto', plane: 'settings', params: hostCommandParams({}), result: SavedConfig },
   'provider.custom.list': { primitive: 'query', plane: 'settings', params: hostParams({}), result: hostList(CustomProvider) },
   /** Adds a provider, or replaces the one of the same `name`. Fails with `invalid_params` when the Host cannot use it. */
   'provider.custom.upsert': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'settings',
     params: hostCommandParams({ provider: CustomProvider }),
     result: hostResult({ provider: CustomProvider }),
   },
   /** Answers the same whether or not the provider was there, so it is safe to send again. */
   'provider.custom.remove': {
-    primitive: 'command', plane: 'settings', params: hostCommandParams({ name: Name }), result: hostResult({}),
+    primitive: 'command', resend: 'auto', plane: 'settings', params: hostCommandParams({ name: Name }), result: hostResult({}),
   },
   /**
    * Asks the provider which of `efforts` a model accepts, by sending one small
@@ -123,6 +125,8 @@ export const CONFIG_METHODS = {
    */
   'provider.reasoning.probe': {
     primitive: 'command',
+    // Each probe is a paid provider request.
+    resend: 'never',
     plane: 'settings',
     params: hostCommandParams({ provider: Name, model: Name.optional(), efforts: z.array(Name).min(1).max(16), leases: CredentialLeases.optional() }),
     restricted: { leases: 'trusted' },
@@ -136,6 +140,7 @@ export const CONFIG_METHODS = {
   /** Forgets what probing learned, for one model, one provider, or all of them. */
   'provider.reasoning.forget': {
     primitive: 'command',
+    resend: 'auto',
     plane: 'settings',
     params: hostCommandParams({ provider: Name.optional(), model: Name.optional() }),
     result: hostResult({}),
