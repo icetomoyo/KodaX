@@ -260,6 +260,7 @@ M0 之前的关闭顺序是先关传输层，再关 Runtime，所以客户端在
 - 第 3 版按提交者的角色来定。那样的话，后端创建、人来使用的会话里，后端提交的 Run 会立即拒绝审批，即使用户就在线上。
 - 现在 `userInputTimeoutMs` 默认为 0，也就是永不超时（`kodax_cli.ts:3018`），一个没人回答的提问会让容器永远无法回收。
 - 契约里写明：平台在 `blockers` 不为空时强行 SIGTERM，等待中的 Run 会以不确定的结局结束，提问也会丢失。
+- **代码还没跟上**（2026-11-23 核对）：§11 第 3 条定的是 30 分钟，代码里审批默认还是 5 分钟（`sdk-runtime.ts` 的 `DEFAULT_PERMISSION_TIMEOUT_MS`），提问默认永不超时。随 v2 都改成 30 分钟。审批超时照旧是拒绝这一步、模型换路继续（`runtimePermissionTimeoutDecision`），Run 不失败。等待期间 provider 的 prompt 缓存会过期，保温由 FEATURE_316 在 v2 协议做完后补上。
 
 ### 状态与锁
 
@@ -332,6 +333,13 @@ v1 里的各种做法都能归进来：
 - **"已受理"不等于"已完成"**。回执只说明 Host 记下了这个意图，并给出它产生的资源 ID（`inputId`、`runId`、`sessionId`）。结果通过订阅或查询去看。这条规则 v1 已经在 Stop 上用了，v2 推广到所有命令。
 - **`requestId` 的作用域是授权身份**。带 `sessionId` 的命令在该 Session 内判重，不带的在 Host 内判重。
 - **重试安全是契约层的保证**，实现沿用各领域已有的回执（持久化的 pending-inputs、session-stops、CAS），不新建通用账本。主线曾经删除过通用的 operation envelope（`docs/CLIENT_CONTRACT.md:649`）。
+- **每条命令声明能不能自动重发**（2026-11-23 协议审查，用户同意方向，r1 冻结前落地）：69 条命令里只有 17 条按 `requestId` 判重，上一条对其余的不成立；而 SDK 断线后会用同样的参数一直重发，直到成功或被取消（`host-client.ts:304-326`）。改法：
+  - 方法定义带 `resend: 'auto' | 'never'`。SDK 不自动重发的集合由它生成，替换 `host-client.ts` 里写死的那份。
+  - `auto` 的命令要做到：同一个 `requestId`、同样的参数再发一次，答复成功并反映当前状态；只有当前状态和这条命令要的结果不同时才报 `conflict`。做法和 `session.goal.*` 一样，revision 对不上时先看是不是已经做完了（`host-rpc.ts:466-482`），不建通用账本。带 `ifRevision` 的写入现在第一次成功、重发却报 `conflict`，按这条改。
+  - 做不到的标 `never`，SDK 把 `unknown_outcome` 交给调用方重新读。先标 `never` 的：`provider.reasoning.probe`；`interaction.respond`，等 Host 记下回答它的 `requestId` 和决定后改成 `auto`，同时让没抢到的那一方读到是怎么答的。
+  - 要先补"已经做完"判断的：`branch.select`（没有 head 检查，迟到的重发会把别的客户端刚跑的 Run 切走）、`session.policy.update`（整份替换、没有 `ifRevision`，迟到的重发会撤销平台刚做的收紧）。
+  - 漂移测试：每条命令必须声明 `resend`；一张表把每条 `auto` 命令发两次，要求两次答复一致；没有夹具的 `auto` 命令让测试失败。
+  - 所有命令继续带必填的 `requestId`，以后从 `never` 改成 `auto` 不用改协议。
 - **要补的缺口**：
   - 立即启动的输入只在 Host 的一次启动内判重。云端形态下 Host 重启是常态，判重要能跨重启。M1a 已落地，见下一条。
   - `memory.remember` 现在重试不安全，不补：旧记忆面整个由 FEATURE_309 删除，见"记忆与技能学习"。`workflow.start` 已经补上，见"Workflow 的落地细节"。`session.create`、`session.compact` 已经补上，见下面两条；`session.fork` 和 `session.recover` 用的是 `session.create` 的办法，见"分叉、回退、恢复和侧聊的落地细节"。`command.execute` 的重试规则见"输入与 Run 的落地细节"里它自己那条：Host 直接做完的命令只在 Host 的一次启动内判重。
@@ -1251,6 +1259,7 @@ Run 的限制与选项的落地细节（2026-11-21，未经用户确认）。这
   - `status: unknown` 表示 Host 现在说不清这个 Run 结束没有（例如它属于另一个还不确定死活的 Host 进程）。之后再读可能换成真实的结局。
   - `failure` 是 `{kind, stage, code, safeMessage, detail?, skillName?, retryAfterMs?}`，只在 `failed` 而且 Host 记下了失败细节时出现。
   - **推迟的字段**：`finalText`、`outputItemId`、`usage`、`writtenFiles` 和 `limitReached`。它们现在只在进程内的执行结果里，持久化的 Run 状态里没有，Host 重启后就读不到。等把 one-shot CLI 和 SDK 的 `run()` 搬到 v2 时再决定：要么把它们持久化，要么让调用方从视图和 `item.read` 取。
+  - 2026-11-23 协议审查定了：Run 结局冻结前补上最终文本（`finalText` 或 `outputItemId`）、`usage`、`signal`/`signalReason` 和 `limitReached`，并持久化到 Run 状态里。打印模式的 `run.result` 和服务集成都要用。`writtenFiles` 仍推迟。
 - **`run.list`**：`{sessionId, limit?, cursor?}`，`sessionId` 必填，最新的在前，`limit` 是 1 到 200，默认 50。游标是上一页最后一个 Run 的 ID；这个 Run 不在了报 `resync_required`（`cursor_expired`）。分页现在是桥接层对 v1 的整份列表做的。
 - **`run.wait`**：`{runId, timeoutMs?}`，`timeoutMs` 是 0 到 60000，默认 30000。
   - Run 有了结局就返回 `{run}`。到了上限还没有，报 `timeout`（`run_in_progress`）；Run 照常继续，客户端可以马上再等。
@@ -1553,7 +1562,9 @@ Workflow 的落地细节（2026-11-21，未经用户确认）。六个方法都�
 - **重试**：这几个命令不记 `requestId`。同样的 `patch` 再写一遍结果一样，删 provider 不论原来在不在都返回 `{}`，所以重发是安全的。`probe` 重发会再花一次请求。
 - **M2 开放给 user 之前要定的安全项**（现在只有 owner 能调，暂不构成问题）：
   - `provider.custom.upsert` 里 `apiKeyEnv` 加上 `baseUrl`，等于让调用方指定"把 Host 上哪个环境变量发到哪个地址"。对 user 开放时，`apiKeyEnv` 必须限制在平台允许的名单里，或者只能用用户自带的 key。
-  - `config.update` 里的 `extensions`（Host 加载的模块路径）、`repoIntelligence.storageDir`（Host 上的目录）、`permissionMode: 'full-access'` 必须受 `userLocks` 管，或者对 user 直接拒绝。
+  - `config.update` 里的 `extensions`（Host 加载的模块路径）、`repoIntelligence.storageDir`（Host 上的目录）必须受 `userLocks` 管，或者对 user 直接拒绝。
+  - `permissionMode: 'full-access'` 是用户本来就有的设置（D4），不对 user 拒绝（2026-11-23 用户确认）。`userLocks.fullAccess` 要管住所有能设 `permissionMode` 的入口，不只 `config.update`：`session.settings.update` 在 data 平面，user 和 service 现在都能把会话设成 `full-access`（`access.ts:77`、`host-rpc.ts:487-495`）。service 是平台自己，这样不算漏洞；锁默认不开，加上它不破坏现有客户端，等有平台要锁时再做。
+  - 外部 Agent 注册（`agent.registration.*`）继续只给本机 owner：注册里的 `credentialEnv` 会把 Host 上任意环境变量当作 Bearer 发到注册给的地址（`a2a/runtime-config.ts:106-125`）。不放进 user 的设置面；真要开放时先给环境变量设白名单。
 - **没有验证的**：Host 用全局配置（没有指定配置文件）时经 v2 改设置；`probe` 对真实 provider 的结果。
 
 MCP 这 8 个的落地细节（M1a 已落地，2026-11-21，未经用户确认）：
@@ -1585,11 +1596,17 @@ MCP 这 8 个的落地细节（M1a 已落地，2026-11-21，未经用户确认�
   - **已有的问题，没改**：注册信息本身不合法（缺字段、`agentId` 不在 `external:` 下）时报 `internal`，不是 `invalid_params`。检查做在 `packages/agent` 里，抛的是普通错误，和存盘失败分不开。要改得在那一层给这类错误一个代码。
 - **没有验证的**：A2A 配置文件同步出来的注册经 v2 修改；service 角色管理注册（v1 里平台用这条路，v2 暂时只给 owner，M2 定）。
 
-**记忆与技能学习（owner；v2.0 不对网络角色开放）**
+**记忆与技能学习（2026-11-23 改：对网络 user 和 service 开放，0.7.100 前落地）**
+
+- **2026-11-23 用户决定**：第三方基于 SDK 做的网页版也要能管理记忆，所以记忆管理不只给本机 owner。按 FEATURE_308 的笔记模型新定一组方法：列出（含待确认的候选）、读一条、新建（用户亲手写的直接生效）、修改（带 `ifRevision`）、遗忘、确认或拒绝候选。放在 data 平面，user 和 service 都能用。
+  - 结果只带库内的 ID，不带 Host 路径；owner 另外拿得到路径，REPL 用它打开编辑器。`memory.ensureOpenTarget` 这类返回路径、打开本机编辑器的仍只给 owner。
+  - 写入走记忆库已有的检查（例如 `memory-store/secrets.ts`）。
+  - 和 `learning.*` 一起设计：反思同时产出笔记和技能提议，两者的开放放在一处定。`learning.*` 里的 Host 路径（`learning.ts:38`）对网络角色去掉。
+  - 它替换 Space 现在走 v1 的记忆调用，关闭 Issue 411，FEATURE_309 随之解锁。
 
 - `memory.*` 12 个方法：next-dev 的 FEATURE_308 已经换了记忆模型，旧实现计划在 FEATURE_309 删除。v2 不照搬这 12 个方法，等 FEATURE_309 之后按新模型重定。`memory.ensureOpenTarget` 返回路径、由 UI 打开本机编辑器，只属于本机 owner。
   - **改了原计划**（2026-11-21，未经用户确认）：原计划在 FEATURE_309 之前让 owner 经 v2 编解码原样调用这 12 个方法，并补上 `memory.remember` 的重试安全。两样都不做。FEATURE_308 已经默认开启，这 12 个方法只剩 v1 客户端在用，FEATURE_309 连同它们一起删掉；先接进 v2 再删，是白做，还会让 v2 的方法表里出现注定要删的方法。在那之前 owner 继续走 v1。
-- `learning.*` 14 个方法：`learning.subscribe` 和 `learning.unsubscribe` 并入 `view.subscribe`，其余 12 个由 owner 原样调用。是否对网络角色开放，另立 feature 决定。
+- `learning.*` 14 个方法：`learning.subscribe` 和 `learning.unsubscribe` 并入 `view.subscribe`，其余 12 个由 owner 原样调用。对网络角色开放和记忆管理一起做，见本节开头（2026-11-23）。
   - **订阅放到 M2**（2026-11-21，未经用户确认）：学到的技能属于整个 Host，不属于某个 Session，放进 Session 视图不对，所以并入 M2 的 Host 文档，不在 M1a 做。在那之前客户端用 `learning.events` 的 `afterRevision` 拉取。
   - **落地细节**（M1a 已落地，2026-11-21，未经用户确认）：12 个方法都在本机管理面，只有 owner 看得到，`user` 和 service 调用报 `method_not_found`。查询四项（`learning.list/get/snapshot/events`），决定八项（`acknowledge`、`snooze`、`reject`、`disable`、`rollback`、`review`、`trust`、`promote`），决定都带 `requestId`，结果是 `{}`。
   - 读出来的 capability 字段改名：`id`、`name`（v1 的 `capabilityId`、`displayName`），时间是 UTC 毫秒。来源、作用域哈希、出处和试用绑定不出 Host，试用只给计数（`canary`）。`artifactPath` 是 Host 路径，本机管理面只给 owner，所以不拆本机结果。`snooze.until` 收 UTC 毫秒，Host 转成 v1 的 ISO 时间。
@@ -2314,6 +2331,14 @@ v1 只需要在 **Host** 里保留一段时间，原因是一台机器上的 Hos
 - CHANGELOG 提前公告：[Unreleased] 的 Deprecated 已经写上。
 - Host 遇到 v1 连接时打印弃用警告：等 KodaX 自己不再用 v1 之后再加（打印模式、`-r`、`daemon` 命令、`ensureKodaXHostClient` 里的 v1 启动和探测、`recovering-runtime-client`、导出的 v1 product client）。v1 `initialize` 不带客户端版本，在那之前警告会打到当前版本的客户端上。每个 v1 客户端实例只打一次。
 - 窗口从发布 v2 的版本算起。v2 晚于 `v0.7.98` 发布时，同时带两个协议的版本不足 2 个，届时重新确认删除线。
+- 删除前要先落地的（2026-11-23 协议审查，用户同意，FEATURE_314 里有同样的清单）：
+  - `actor.spawn` 和 `actor.followup`：方法表把它们挪到了 M1b，但 M1b 没有交付；Space 用 `followup`。
+  - M1c 第 3 项的授权方租约。
+  - `kodax acp` 改走 v2：它现在开的是 v1 客户端（`acp_server.ts` 的 `ensureKodaXClient`）。
+  - `kodax a2a` 的探测改走 v2，`agent.registration.*` 留给本机 owner。
+  - 打印模式像 REPL 一样读 v2 会话视图，`run.result` 的字段取自 v2 的 Run 结局。不加原始事件订阅，也不列为破坏性变更。
+  - Run 结局补上的字段（"推迟的字段"一条）。
+  - 记忆管理方法组（"记忆与技能学习"）。
 
 ### 其他规则
 
@@ -2409,6 +2434,15 @@ KodaX 在实例契约里给出检查清单，但不实现：
 16. `config.*` 里的 `extensions` 读写 Host 实际加载的那份（§12 第 12 条）。
 17. 这份计划只写 SDK 的改动和交给客户端的契约，Space 自己适配。M1c 改为"SDK 侧支持 Space 迁到 v2"。
 
+2026-11-23 确认（协议完备性的两轮交叉审查之后）：
+
+18. 远程的 user 和 service 与本机 owner 能力一致。只给 owner 要有具体理由：会暴露 Host 路径，或者属于平台控制面。平台的限制是可选的锁，默认不开。
+19. `full-access` 对 user 和 service 照常开放；`userLocks.fullAccess` 将来覆盖所有能设权限模式的入口（"用户设置"一节）。
+20. 记忆管理对网络角色开放，和技能学习一起设计，0.7.100 前落地（"记忆与技能学习"）。
+21. 打印模式读 v2 会话视图（§8 "删除 v1"）。
+22. 交互默认超时按第 3 条落进代码：30 分钟，超时拒绝、模型继续。等待期间的缓存保温另立 FEATURE_316，v2 协议做完后同一批做完。
+23. 命令按 `resend` 标记决定 SDK 能否自动重发（§3 "命令与回执"）。
+
 ## 12. 风险与待核实
 
 1. 方法表里原先标"核实"的 7 个条目已在 M0 对照本仓库确认。还没有核对的是 Space 的调用点（Space 仓库不在这里）：Space 是否直接调用 `runs.setModel` 一类的方法、是否分页读原始 transcript、是否发原始的 `run.start`、是否调用 `prepareSkill`。M1c 切 Space 之前要对照 Space 的代码确认；任何一项有调用方，对应的 v2 方法要补回来。
@@ -2426,6 +2460,13 @@ KodaX 在实例契约里给出检查清单，但不实现：
     - 11-21 的记录有误。Host 的 integration watcher 同时盯 `integrations/extensions.json` 和 `config.json`，配置一变就调用 `reconcileExtensions` 增删扩展，不用重启，所以 `extension_reload` 的说法是对的。`extension.reload` 方法只重载已加载的模块，是另一件事。
     - 真正的缺陷：`integrations/extensions.json` 存在时，Host 忽略 `config.json` 里的 `extensions`，而 `config.update` 写的正是 `config.json`，写了不生效，也不报错。
     - 用户确认的修法：`config.*` 里的 `extensions` 读写 Host 实际加载的那份（`sdk-runtime.ts` 的 `withManagedExtensions`、`writeManagedExtensions`）。清空时文件保留、列表为空，因为删掉文件会让 `config.json` 的旧值重新生效。revision 按合并后的内容算，只改这个文件也会让 `ifRevision` 冲突。文件坏了时其他设置照常可读，`extensions` 不出现。
+13. 2026-11-23 协议审查找到、r1 冻结前要做的（三份审查报告和综合结论在本地 `docs/research/2026-11-23-v2-*`）：
+    - 错误：v1 的错误映射成 `internal` 时带着原始 message 发给客户端，而且不记日志。改成发通用说明和一个 `incidentId`，同一个编号写进日志。
+    - blob：提交后的 blob 只在 Session 删除时回收，没有删除方法，Host 共用 1 GiB 上限。Host 要自己回收不再被引用的 blob，客户端不知道哪些还在用。
+    - `command.list` 列出了 `command.execute` 跑不了的命令（REPL 内建命令，`runtime-product-commands.ts:92-111`）。要么只列能执行的，要么标出哪些只能在 REPL 里用。
+    - `initialize.methods` 对 service 列出了它不能调用的 `interaction.respond`（`connection.ts:166-168` 和 `access.ts:263-265` 不一致）。
+    - 只写进文档：同一个 `instanceSecret` 被多个浏览器标签页共用时会互相顶掉，浏览器 SDK 本身不存它，所以只影响自己传它又持有租约的调用方；JWT 时钟偏差会让重连失败几次，每次重连都会取新凭证，能自己恢复。
+    - 不改：`learning.*` 不合并成一个 `learning.decide`（闭合的动作枚举加一项就要升 revision）；review 的三个入口不合并（Space 的授权方把它们当成不同的类别）；附件放开到图片以外推迟，v1 本身也不收，以后的做法是把文件复制进工作目录、把路径写进输入。
 
 ## 13. 后续 Feature（不在 v2.0 范围）
 
@@ -2435,7 +2476,8 @@ KodaX 在实例契约里给出检查清单，但不实现：
   - 写入前备份，可撤销；
   - 写入要进入安全日志；
   - 要让 agent 知道文件被用户改过。
-- **记忆和技能学习对网络角色开放**：等 FEATURE_309 之后按新模型设计。
+- ~~记忆和技能学习对网络角色开放~~：提前到 0.7.100 之前（§11 第 20 条）。
+- **等待期间的 prompt 缓存保温**：FEATURE_316，v2 协议做完后同一批做完（§11 第 22 条）。
 - **单独的 HTTP blob 端点**：等有了大文件的真实需求再做。
 - **一键远程**：由 Host 或 Space 启动 cloudflared 快速隧道，从它的本地 metrics 接口（`/quicktunnel`）读到地址，直接显示配对二维码。地址变了仍要重新扫码。可选，不在 M1b。
 - 定稿 ADR 时，把 v2 的 feature 一起登记到 FEATURE_LIST。一起登记是为了避免分支之间撞 ID。登记前查一遍 KodaX、KodaX-next-dev 和在途 worktree 的最大编号。截至 2026-11-20 已占用：

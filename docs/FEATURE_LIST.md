@@ -22,12 +22,12 @@
 | Visual harness implementation | P3/P4/P5/P6 implemented within declared scope and released in `v0.7.97-beta.5` through the next-dev integration; [final ID/receipt contract delivery](designs/visual-harness-id-contract-delivery-2026-10-30.md). P7 task-value evaluation concluded **mixed; net task-quality/token value unproven**, against optimized pre-visual 1826cc22; [final review and limits](designs/visual-harness-current-version-closure-2026-10-30.md). The 2026-10-29 plan's "not executed" state and old r3 single-response results are historical, not the current outcome. Historical default suite 18,094 passed / 0 failed; earlier failures and unlocated causes remain recorded; [mainline integration acceptance](designs/next-dev-integration-execution-2026-11-09.md). No new feature ID/version assigned |
 | Roadmap updated | `2026-11-21` — beta.13 prepared on top of the npm-published beta.12 with the Space integration repairs and Session-read cost fixes (Issues 424-430) and the display-history checkpoint append; beta.12 published with one prompt chain and final Stop outcomes; FEATURE_312/313 registered for the SDK v2 contract; FEATURE_300 remains Planned; merged into `KodaX-next-dev` on 2026-11-21. `2026-11-16` — beta.11 prepared on top of the npm-published beta.10 with readable history during a busy Run and tool-neutral Skills, merged into `KodaX-next-dev` on 2026-11-17; FEATURE_300 remains Planned. `2026-11-15` — FEATURE_308 note memory Completed on `KodaX-next-dev` (unreleased, on by default); FEATURE_309 legacy memory code deletion Planned for `v0.8.11`, blocked by Issue 411; beta.10 published (GitHub prerelease and npm `beta`) with merged-input acknowledgement (`ClientViewItem.inputIds`) and the merged-input restore fix, merged into `KodaX-next-dev` on 2026-11-15. `2026-11-13` — beta.9 prepared on top of the published beta.8 with FEATURE_306 data root resolver and copy (Completed, shipped in `v0.7.97-beta.9`); FEATURE_305 Completed; FEATURE_300 remains Planned; `KodaX-next-dev` merged beta.9 on 2026-11-14 and carries the unreleased FEATURE_307 side chat and FEATURE_308 memory redesign |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
-| Total tracked features | `99` |
+| Total tracked features | `100` |
 | InProgress | `3` |
-| Planned | `22` |
+| Planned | `23` |
 | Completed | `68` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
-| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315` |
+| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316` |
 | Archive cutoff | Shipped / canceled / absorbed / shelved items through `v0.7.49` are archived. |
 
 ### 一览表
@@ -40,6 +40,7 @@
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
 | Planned, 0.7.100 | 1 | `314` | Remove Host protocol v1 (or in `v0.8.0` if that comes first); KodaX's own v1 callers move to v2 first. `src/host-protocol-v1-removal.test.ts` fails from the first 0.7.100 build. |
 | Planned, on demand | 1 | `315` | AG-UI adapter in front of the v2 Host; starts when a real AG-UI client needs it. |
+| Planned, after SDK v2 | 1 | `316` | Keep the prompt cache warm while a Run waits for an approval or an answer; done right after the SDK v2 protocol work, in the same push. |
 | Planned, 0.8.x | 11 | `278, 279, 282, 283, 285, 280, 309, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
 | Reviewed out, 2026-07-12 | 6 | `244, 231, 235, 238, 232, 108` | Shelved, deferred, absorbed, or cancelled after the post-v0.7.70 roadmap review; F105 was restored by the 2026-07-29 MoA redesign. |
@@ -2475,6 +2476,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 | `313` | Queryable Session Recovery State | SDK / Runtime Recovery | High | SDK v2 | [Addition](#2026-11-21-feature_313-addition) — Implemented on `KodaX-next-dev` 2026-11-21, unreleased; built wholly there |
 | `314` | Host Protocol v1 Removal | SDK / Host Protocol | High | `v0.7.100` | [Addition](#2026-11-22-feature_314-addition) — Planned; `src/host-protocol-v1-removal.test.ts` fails from the first 0.7.100 build |
 | `315` | AG-UI Adapter for the v2 Host | SDK / Host Protocol | Medium | On demand | [Addition](#2026-11-23-feature_315-addition) — Planned; waits for a real AG-UI client |
+| `316` | Prompt Cache Warming During In-Run Waits | LLM Cost / Runtime | High | After SDK v2 | [Addition](#2026-11-23-feature_316-addition) — Planned; follows the SDK v2 protocol work |
 | `300` | Git Execution Consolidation with Shared macOS Preflight | Refactor | Medium | `v0.7.99` | [v0.7.99](features/v0.7.99.md#feature_300-git-execution-consolidation-with-shared-macos-preflight) — Planned; design only |
 | `287` | Advisor Mode Virtual Provider | Enhancement / LLM Provider + Session Quality | High | `v0.8.13` | [v0.8.13](features/v0.8.13.md#feature_287-advisor-mode-virtual-provider) |
 | `288` | CLI-Space Daemon Profile Alignment | Enhancement / Runtime + Multi-Client UX | High | `v0.8.14` | [v0.8.14](features/v0.8.14.md#feature_288-cli-space-daemon-profile-alignment) |
@@ -2495,6 +2497,34 @@ fixed GitHub binary archive sidecar omission before tagging.
 | `262` | npm 12 Install-Time Security + Trusted Publishing Migration | Internal / Supply Chain Security | High | `v0.9.0` | [v0.9.0](features/v0.9.0.md#feature_262-npm-12-install-time-security--trusted-publishing-migration) |
 
 ---
+
+## 2026-11-23 FEATURE_316 Addition
+
+- Status: Planned. Owner decision (2026-11-23): a separate feature, done right
+  after the SDK v2 protocol work in the same push.
+- Why: the default approval timeout goes from 5 to 30 minutes with the SDK v2
+  work, so a remote user who steps away can still answer. A provider cache with
+  a five-minute lifetime then expires while the Run waits, and the next request
+  writes the whole prompt again. The wait always ends in a next request: an
+  approval continues the Run, and a timeout rejects the call and the model goes
+  on another way.
+- Shape, following pi (`packages/ai/src/cache-warming.ts` and
+  `packages/coding-agent/src/core/cache-warmer.ts`, pi commit `edfe6b2ef`):
+  - While a Run waits for an approval or a question answer, resend its last
+    model request with a one-token output cap shortly before the cache entry
+    expires (90% of its lifetime, at least ten seconds early).
+  - Stop when the wait ends, after 60 minutes, or when a refresh is not
+    expected to save money: a cache read of the prompt must cost less than
+    rewriting it.
+  - Skip models where the replay changes the cache key, such as Anthropic
+    budget-based thinking.
+  - Count refresh usage in the Session's stats, kept apart from model turns and
+    out of the model context.
+- Needs: a cache lifetime per model and retention tier in the model catalog;
+  `cacheRetention` and `cost-rates.ts` already exist in `packages/llm`.
+- No new setting: the existing prompt-cache off switch also turns warming off.
+- Not in scope: warming after a Run ends while the user may type again. pi does
+  it with a fixed 15% guess; decide from KodaX's own data later.
 
 ## 2026-11-23 FEATURE_315 Addition
 
@@ -2553,6 +2583,21 @@ fixed GitHub binary archive sidecar omission before tagging.
     `tests/repl-v1-auto-mode-control.ts`) and the removal test.
   - CHANGELOG: the deprecation is announced under [Unreleased] now; the
     release that removes v1 lists it under Breaking.
+- Prerequisites found by the 2026-11-23 protocol review (the owner agreed):
+  - `actor.spawn` and `actor.followup` on v2; Space uses `followup`.
+  - The Space authorizer lease from M1c item 3.
+  - `kodax acp` on v2: it opens the v1 client today
+    (`src/acp_server.ts` `ensureKodaXClient`).
+  - The `kodax a2a` probe on v2, which keeps `agent.registration.*`
+    for the local owner.
+  - Print mode reads the v2 Session view the way the REPL does, and its
+    `run.result` fields come from the v2 Run outcome.
+  - The Run outcome carries the final text, `outputItemId`, `usage`,
+    `signal`/`signalReason` and `limitReached` before it freezes.
+  - A v2 memory management group (list, read, create, update, forget,
+    approve or reject candidates) open to network `user` and `service`,
+    designed together with opening `learning.*`. It replaces Space's v1
+    memory calls and closes Issue 411.
 - Risk: the window counts from the release that ships v2. If v2 ships after
   `v0.7.98`, fewer than two versions carry both protocols; recheck the line
   then.
