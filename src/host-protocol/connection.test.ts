@@ -24,6 +24,7 @@ const METHODS: HostMethodRegistry = {
     result: hostResult({ text: z.string() }),
   },
   'host.stop': { primitive: 'command', plane: 'local', params: hostParams({}), result: hostResult({}) },
+  'host.get': { primitive: 'query', plane: 'local', params: hostParams({}), result: hostResult({}) },
   'skill.list': {
     primitive: 'query',
     plane: 'data',
@@ -141,6 +142,14 @@ describe('host connection handshake', () => {
     const h = harness({ role: 'owner' });
     const reply = await h.request('i', 'initialize', INITIALIZE) as HostRpcSuccess;
     expect(reply.result.methods).toContain('host.stop');
+  });
+
+  it('limits a probe connection to reading whether the Host is up', async () => {
+    const h = harness({ role: 'owner' });
+    const reply = await h.request('i', 'initialize', { ...INITIALIZE, purpose: 'probe' }) as HostRpcSuccess;
+    expect(reply.result.methods).toEqual(['ping', 'host.get']);
+    expect(h.admitted[0]?.purpose).toBe('probe');
+    expect(errorData(await h.request('s', 'host.stop'))).toMatchObject({ kodaxCode: 'method_not_found' });
   });
 
   it('settles on the lower of the two revisions', async () => {

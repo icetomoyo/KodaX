@@ -41,6 +41,7 @@ export interface HostRpcClientOptions {
   readonly client: HostInitializeParams['client'];
   /** Leave it out when the transport carries the credential, such as a browser's device cookie. */
   readonly auth?: HostInitializeParams['auth'];
+  readonly purpose?: HostInitializeParams['purpose'];
   /** Receives what no caller is otherwise told: a listener that threw, a frame that could not be read or sent. */
   readonly onError?: (error: unknown) => void;
 }
@@ -227,6 +228,7 @@ export async function connectHostRpc(dial: HostRpcDial, options: HostRpcClientOp
         revision: HOST_PROTOCOL_REVISION,
         client: options.client,
         ...(options.auth !== undefined ? { auth: options.auth } : {}),
+        ...(options.purpose !== undefined ? { purpose: options.purpose } : {}),
       }),
       new Promise<never>((_resolve, reject) => {
         refuseHandshake = reject;

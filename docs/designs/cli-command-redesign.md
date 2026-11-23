@@ -50,9 +50,9 @@ CLI 子命令和 REPL 命令各有一份数据表，帮助、补全、名单、�
 
 - `kodax daemon …` 是隐藏别名，往 stderr 打一行“`kodax daemon` 已改名为 `kodax host`，0.7.100 删除”，其余行为相同。别名登记进 `src/host-protocol-v1-removal.test.ts` 的 0.7.100 清单，到期不删就构建失败。
 - 全部走 v2：
-  - 探测连接用 v2 `initialize` 加一个可选的 `client.purpose: 'probe'`。探测连接只能调 `ping`、`host.get`、`host.preflight`（只读），不算已连接的客户端，不重置空闲计时，也不出现在 `host.preflight` 的 `clients` 里。这和 v1 的 `connectionPurpose: 'probe'` 是同一件事，v2 原来没有；v2 在 Host 内部转到 v1 dispatcher 时带上 `probe`，沿用 v1 的只读限制。`status` 要的计数和待处理交互数由 `host.get` 与 `host.preflight` 给出。
+  - 探测连接用 v2 `initialize` 加一个可选的 `purpose: 'probe'`。探测连接只能调 `ping`、`host.get`、`host.preflight`（只读），不算已连接的客户端，不重置空闲计时，也不出现在 `host.preflight` 的 `clients` 里。这和 v1 的 `connectionPurpose: 'probe'` 是同一件事，v2 原来没有；v2 在 Host 内部转到 v1 dispatcher 时带上 `probe`，沿用 v1 的只读限制。`status` 要的计数和待处理交互数由 `host.get` 与 `host.preflight` 给出。
   - 身份核对：`initialize` 结果里的 `host.id` 等于 `daemon.json` 的 `runtimeId`，锁文件的持有者与 `daemon.json` 一致。
-  - `observeRuntimeDaemonHealth` 改为 v2 探测，调用方（status、stop、start、serve、A2A 归属检查、设备 CLI、process.ts）不变。
+  - CLI 的 `status`、`stop` 改走 v2。`observeRuntimeDaemonHealth` 暂时留在 v1：启动器（`process.ts`、`sdk-runtime.ts` 的 `parseProbedDaemon`）读它返回的 v1 `initialize` 结果，要和启动器一起在 FEATURE_314 迁移，0.7.100 删 v1 前完成。
 - 停止和日志用普通客户端连接调 `host.stop`、`host.logs`（v1 的 stop 也是普通连接）；Windows 进程树兜底和替换检测保持原样。
 
 ### 3. 一个健康模型
@@ -103,7 +103,7 @@ CLI、REPL `/status`、`/healthz`、`kodax doctor` 用同一组状态：
 
 ## 分期
 
-1. **Host 管理与健康模型**：v2 `client.purpose: 'probe'`；`observeRuntimeDaemonHealth` 改 v2；`kodax host` 加 `daemon` 别名；restart 修好；健康状态表；`status` 退出码；`/status` 和 `doctor` 用同一个模型。
+1. **Host 管理与健康模型**：v2 `purpose: 'probe'`；CLI `status`/`stop` 改 v2；`kodax host` 加 `daemon` 别名；restart 修好；健康状态表；`status` 退出码；`/status` 和 `doctor` 用同一个模型。
 2. **CLI 命令表**：总表、帮助、补全从表生成；`--json` 与退出码约定；旧开关按上表处理；拆 `kodax_cli.ts`；README / quickstart 改正。
 3. **REPL 命令**：`category` 字段生成 `/help`；`/thinking` 等合并成别名；删 `/repointel`、`/plan`、`/project` 残留。
 4. **文档与防漂移测试**：

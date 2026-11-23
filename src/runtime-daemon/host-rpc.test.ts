@@ -111,6 +111,7 @@ async function connect(
   instanceSecret?: string,
   /** What the Host's network listener adds, such as its paired devices. */
   network: Pick<RuntimeDaemonHostRpcPeerOptions, 'devices' | 'blobs'> = {},
+  purpose?: 'probe',
 ): Promise<HostRpcClient> {
   const client = await connectHostRpc(async (events) => {
     let open = true;
@@ -134,6 +135,7 @@ async function connect(
   }, {
     client: { name: 'test', version: '1.0.0', instanceId: `instance-${role}`, ...(instanceSecret !== undefined ? { instanceSecret } : {}) },
     auth: { scheme: 'ipc', token: 'secret' },
+    ...(purpose !== undefined ? { purpose } : {}),
   });
   cleanup.push(() => client.close());
   return recordingResends(client, `${hostIds.get(runtime) ?? hostIds.set(runtime, hostIds.size).size - 1} ${role}`);
@@ -3494,6 +3496,30 @@ describe('v2 local management served by the v1 implementation', () => {
         .toMatchObject({ workspaceRoot: path.join(host.workspaceRoot, 'app') });
     }
   }, 60_000);
+
+  it('reads the Host through a probe without counting it as a client', async () => {
+    const attachClient = vi.fn();
+    const management = fakeManagement({
+      attachClient,
+      inspect: async () => ({
+        runtimeId: 'runtime-test',
+        revision: 7,
+        ownerPolicy: { mode: 'daemon', revision: 1, updatedAt: '2026-11-21T00:00:00.000Z' },
+        owner: { runtimeId: 'runtime-test', pid: 4242, createdAt: '2026-11-21T00:00:00.500Z', kind: 'daemon', processStartIdentity: 'start-1' },
+        preflight: {
+          runtimeId: 'runtime-test', clientCount: 0, clients: [], activeRuns: [], queuedRuns: [], activeWorkflows: [], activeAgentTurns: [], activeAgentTasks: [],
+          pendingPermissions: [], pendingUserInputs: [], pendingBackgroundWork: 0, blockers: [], canStop: true,
+        },
+      }) as unknown as Awaited<ReturnType<RuntimeDaemonManagementController['inspect']>>,
+    });
+    const host = await makeModelHost();
+    const probe = await connect('owner', await host.start(), host.workspace, { management }, undefined, {}, 'probe');
+
+    expect(await probe.request('host.get')).toMatchObject({ host: { id: expect.any(String) }, integrations: { state: 'healthy' } });
+    expect(await probe.request('host.preflight')).toMatchObject({ canStop: true });
+    await expect(probe.request('host.stop')).rejects.toMatchObject({ kodaxCode: 'method_not_found' });
+    expect(attachClient).not.toHaveBeenCalled();
+  });
 
   it.each(['user', 'service'] as const)('offers a %s none of it', async (role) => {
     const client = await connect(role, fakeRuntime(), undefined, { management: fakeManagement() });

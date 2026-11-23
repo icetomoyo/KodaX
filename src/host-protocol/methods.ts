@@ -53,6 +53,11 @@ const InitializeParams = hostParams({
     scheme: z.enum(['ipc', 'jwt']),
     token: z.string().min(1).max(8192),
   }).optional(),
+  /**
+   * `probe`: the connection only checks whether the Host is up (`ping`, `host.get`, `host.preflight`).
+   * It does not count as a connected client, so polling it never keeps an idle Host running.
+   */
+  purpose: z.literal('probe').optional(),
 });
 
 const InitializeResult = hostResult({

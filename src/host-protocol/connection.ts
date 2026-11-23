@@ -27,9 +27,13 @@ const PRE_INITIALIZE_FRAME_CHARS = 16 * 1024;
 /** How many validation problems one error message names. */
 const REPORTED_ISSUES = 5;
 
+/** What a probe connection may call: whether the Host is up and could stop. */
+const PROBE_METHODS: ReadonlySet<string> = new Set(['ping', 'host.get', 'host.preflight']);
+
 export interface HostAdmissionRequest {
   readonly client: HostInitializeParams['client'];
   readonly auth: HostInitializeParams['auth'];
+  readonly purpose?: HostInitializeParams['purpose'];
   /** The revision this connection will use. */
   readonly revision: number;
 }
@@ -168,7 +172,12 @@ export function createHostConnection(options: HostConnectionOptions): HostConnec
     state = 'admitting';
     let admitted: HostAdmission;
     try {
-      admitted = await options.admit({ client: params.data.client, auth: params.data.auth, revision });
+      admitted = await options.admit({
+        client: params.data.client,
+        auth: params.data.auth,
+        ...(params.data.purpose !== undefined ? { purpose: params.data.purpose } : {}),
+        revision,
+      });
     } catch (error: unknown) {
       const refusal = clientError('initialize', error, request.id);
       fail(request.id, refusal);
@@ -183,6 +192,7 @@ export function createHostConnection(options: HostConnectionOptions): HostConnec
     admission = admitted;
     callable = new Set(Object.entries(options.methods)
       .filter(([name, spec]) => reaches(spec.plane) && runtimeRoleRefusal(admitted.role, name) === undefined)
+      .filter(([name]) => params.data.purpose !== 'probe' || PROBE_METHODS.has(name))
       .map(([name]) => name));
     state = 'ready';
     clearTimeout(deadline);

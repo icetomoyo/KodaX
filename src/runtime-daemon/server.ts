@@ -187,6 +187,8 @@ const RUNTIME_PROBE_METHODS = new Set<RuntimeDaemonMethod>([
   "runtime.status",
   "runtime.capabilities",
   "daemon.status",
+  "daemon.integrations.get",
+  "daemon.management.get",
 ]);
 
 const ALL_RUNTIME_GRANTED_SCOPES = [

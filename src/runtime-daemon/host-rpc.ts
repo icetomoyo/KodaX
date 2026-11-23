@@ -1761,7 +1761,7 @@ export function createRuntimeDaemonHostRpcPeer(
     send: options.send,
     disconnect: options.disconnect,
     onInternalError,
-    admit: async ({ client, auth }) => {
+    admit: async ({ client, auth, purpose }) => {
       const access = await admitCredential(auth);
       let credential = access.credential;
       const { role } = access;
@@ -1847,7 +1847,7 @@ export function createRuntimeDaemonHostRpcPeer(
       try {
         // A network credential was checked above; only the local one is the shared secret v1 compares.
         await v1('initialize', {
-          ...(credential === undefined && auth !== undefined ? { token: auth.token } : {}), clientInfo: client, connectionPurpose: 'client',
+          ...(credential === undefined && auth !== undefined ? { token: auth.token } : {}), clientInfo: client, connectionPurpose: purpose ?? 'client',
         });
       } catch (error: unknown) {
         dispatcher.close();

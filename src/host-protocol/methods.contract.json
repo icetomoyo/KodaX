@@ -67,6 +67,10 @@
           ],
           "additionalProperties": false
         },
+        "purpose": {
+          "type": "string",
+          "const": "probe"
+        },
         "_meta": {
           "type": "object",
           "propertyNames": {
