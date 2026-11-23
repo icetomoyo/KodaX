@@ -30,8 +30,8 @@ inserts a newline.
 
 ```bash
 kodax "Review this repository and summarize the architecture"
-kodax --session review "Find the riskiest parts of src/"
-kodax --session review "Give me concrete fix suggestions"
+kodax -c "Find the riskiest parts of src/"
+kodax -c "Give me concrete fix suggestions"
 ```
 
 ## Basic workflow

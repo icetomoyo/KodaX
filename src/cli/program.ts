@@ -54,7 +54,7 @@ export function createKodaXProgram(deps: KodaXProgramDeps): KodaXProgram {
   });
   configureKodaXMemoryCommand(program);
   configureKodaXCompletionCommand(program);
-  configureKodaXSessionsCommand(program);
+  configureKodaXSessionsCommand(program, version);
   configureKodaXDoctorCommand(program, version);
   configureKodaXHostCommand(program);
   const skillCommand = configureKodaXSkillCommand(program);

@@ -147,16 +147,20 @@ kodax --provider deepseek --thinking "Find performance bottlenecks in src/"
 ## Sessions: fork, rewind, resume
 
 ```bash
-# Start or resume a named session
-kodax --session refactor "Rename getUserName to getUsername across the codebase"
-kodax --session refactor "Now add deprecation warnings to the old name"
+# Every run is saved as a session
+kodax "Rename getUserName to getUsername across the codebase"
+
+# Continue the most recent conversation in this directory
+kodax -c "Now add deprecation warnings to the old name"
+
+# Resume a session by ID or exact title (no value opens a picker)
+kodax -r <session-id> "Actually, keep the old name and just add an alias"
 
 # List sessions
-kodax --session list
-
-# Fork from a previous point, try a different approach
-kodax --session refactor --fork "Actually, keep the old name and just add an alias"
+kodax sessions list
 ```
+
+In the REPL, `/tree` shows the session lineage, `/fork` copies a branch into a new session, and `/rewind` returns to an earlier turn.
 
 Session history is a DAG. Forks keep their parent intact; rewinds create a branch marker, not a destructive reset. After a crash or disconnect, KodaX recovers to an exact terminal state — no silent omissions.
 
@@ -194,8 +198,8 @@ The agent uses `spawn_agent`, `followup_task`, `send_message`, and `interrupt_ag
 KodaX ships built-in understanding of large codebases:
 
 ```bash
-# Show active engine and index state
-kodax /repo-intel status
+# In the REPL: show the active engine and index state
+/repo-intel status
 
 # Run with full indexing
 kodax --repo-intelligence full "What are the riskiest files to change in packages/agent?"
@@ -207,13 +211,13 @@ Built-in tools the agent uses automatically: `repo_overview`, `module_context`, 
 
 ## Safety and permissions
 
-Four permission modes, set per session:
+Four permission modes. Switch in the REPL with `/mode` (or Shift-Tab); set the default with `permissionMode` in `~/.kodax/config.json`:
 
 ```bash
-kodax --mode plan          # Propose only — no file changes without approval
-kodax --mode accept-edits  # File edits auto-approved, shell commands need approval
-kodax --mode auto          # Auto-approve safe commands via LLM review
-kodax --mode full-access   # No prompts (CI / trusted environments)
+/mode plan          # Propose only — no file changes without approval
+/mode accept-edits  # File edits auto-approved, shell commands need approval
+/mode auto          # Auto-approve safe commands via LLM review
+/mode full-access   # No prompts (CI / trusted environments)
 ```
 
 The optional ASRT sandbox routes shell commands through an isolated account on Windows or Seatbelt/bubblewrap on macOS/Linux:

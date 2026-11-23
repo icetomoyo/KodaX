@@ -29,8 +29,8 @@ Shift-Tab 在 Plan → Edits → Auto[LLM] → Full Access 之间切换权限模
 
 ```bash
 kodax "Review 这个仓库并概括架构"
-kodax --session review "找出 src/ 中最危险的部分"
-kodax --session review "给出具体的修复建议"
+kodax -c "找出 src/ 中最危险的部分"
+kodax -c "给出具体的修复建议"
 ```
 
 ## 基本工作流

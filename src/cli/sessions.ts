@@ -14,7 +14,13 @@ import {
   type SessionDedupeReport,
   formatSessionTimestamp,
 } from '@kodax-ai/repl';
-import { CliHost } from './cli-host.js';
+import { emitKodaXDiagnostic } from '@kodax-ai/agent';
+import { ensureKodaXHostClient } from '../local-host-client.js';
+import type { CliHost } from './cli-host.js';
+import { reported, withJsonOption } from './output.js';
+
+/** What the session commands need from a Host connection. */
+type SessionHost = Pick<CliHost, 'client'>;
 
 function printSessionDedupeReport(
   report: SessionDedupeReport,
@@ -67,7 +73,7 @@ function printSessionDedupeReport(
   }
 }
 
-export async function loadResumableSessions(host: CliHost): Promise<SessionPickerItem[]> {
+export async function loadResumableSessions(host: SessionHost): Promise<SessionPickerItem[]> {
   const sessions: SessionPickerItem[] = [];
   let cursor: string | undefined;
   do {
@@ -93,127 +99,131 @@ export async function readResumeTarget(host: CliHost, sessionId: string): Promis
   }
 }
 
+/** The newest sessions as lines; `kodax -r` searches and pages the rest. */
+function renderSessionList(sessions: readonly SessionPickerItem[]): string {
+  if (sessions.length === 0) return 'No resumable sessions.';
+  const visible = sessions.slice(0, 50);
+  const lines = visible.map((session) => {
+    const surface = session.surface ? ` ${session.surface}` : '';
+    return `  ${formatSessionTimestamp(session.lastMessageAt ?? session.createdAt)}  ${session.id} [${session.msgCount}]${surface} ${session.title}`;
+  });
+  if (sessions.length > visible.length) {
+    lines.push(`  ... ${sessions.length - visible.length} more; use \`kodax -r\` to search and page.`);
+  }
+  return `Sessions:\n${lines.join('\n')}`;
+}
+
+/** A short-lived Host connection for one query; a Host it starts stops once idle. */
+async function withHostClient<T>(version: string, use: (host: SessionHost) => Promise<T>): Promise<T> {
+  const client = await ensureKodaXHostClient({
+    client: { name: 'kodax-cli', version },
+    exitWhenIdle: true,
+    onError: (error: unknown) => emitKodaXDiagnostic({
+      source: 'cli:sessions',
+      level: 'warn',
+      message: 'The Host connection reported an error.',
+      detail: error instanceof Error ? error.message : String(error),
+    }),
+  });
+  try {
+    return await use({ client });
+  } finally {
+    client.close();
+  }
+}
+
+async function deleteSession(sessionId: string): Promise<void> {
+  await new FileSessionStorage().delete(sessionId);
+  console.log(`Deleted session: ${sessionId}`);
+}
+
+async function deleteAllSessions(): Promise<void> {
+  await new FileSessionStorage().deleteAll();
+  console.log('Deleted all sessions.');
+}
+
+/** Previews, or with `apply` archives, the empty ACP placeholder sessions of this project. */
+async function cleanupAcpSessions(apply: boolean, applyFlag: string): Promise<void> {
+  const storage = new FileSessionStorage({ cwd: process.cwd() });
+  const candidates = await findAcpPollutionCandidates(storage);
+  console.log(`Matched ${candidates.length} empty ACP placeholder sessions in the current project.`);
+  for (const candidate of candidates.slice(0, 10)) {
+    console.log(`  ${candidate.id}${candidate.createdAt ? ` ${candidate.createdAt}` : ''}`);
+  }
+  if (candidates.length > 10) console.log(`  ... ${candidates.length - 10} more`);
+  if (!apply) {
+    console.log(`Preview only. Re-run with ${applyFlag} to archive these sessions reversibly.`);
+    return;
+  }
+  const archived = await archiveAcpPollutionCandidates(storage, candidates);
+  console.log(`Archived ${archived.length} sessions. Use the session SDK unarchive operation to restore one.`);
+}
+
+/** `-s` values that are operations rather than a Session ID to use. */
+function legacyOperation(session: string | undefined): 'list' | 'delete' | 'delete-all' | 'cleanup-acp' | undefined {
+  if (session === 'delete' || session?.startsWith('delete ')) return 'delete';
+  return session === 'list' || session === 'delete-all' || session === 'cleanup-acp' ? session : undefined;
+}
+
 /** The legacy `-s list|delete <id>|delete-all|cleanup-acp` operations; `true` when one ran. */
 export async function runLegacySessionOperation(
   options: CliOptions,
   opts: { readonly resume?: unknown; readonly applySessionCleanup?: unknown },
-  getCliHost: () => Promise<CliHost>,
+  getCliHost: () => Promise<SessionHost>,
 ): Promise<boolean> {
-  const isLegacySessionManagement =
-    options.session === 'list' ||
-    options.session === 'delete' ||
-    options.session === 'delete-all' ||
-    options.session === 'cleanup-acp' ||
-    options.session?.startsWith('delete ');
-
-  if (options.outputMode === 'json' && isLegacySessionManagement) {
-    validateCliModeSelection(options, {
-      resumeWithoutId: opts.resume === true,
-    });
+  const operation = legacyOperation(options.session);
+  if (operation === undefined) return false;
+  if (options.outputMode === 'json') {
+    validateCliModeSelection(options, { resumeWithoutId: opts.resume === true });
   }
+  const replacement = `kodax sessions ${operation}${operation === 'delete' ? ' <id>' : ''}`;
+  process.stderr.write(`\`kodax -s ${operation}\` is now \`${replacement}\`; the -s form is removed in 0.7.100.\n`);
 
-  // Session list: show a bounded preview; bare -r provides searchable navigation.
-  if (options.session === 'list') {
-    const sessions = await loadResumableSessions(await getCliHost());
-    const visible = sessions.slice(0, 50);
-    const lines = visible.map((session) => {
-      const surface = session.surface ? ` ${session.surface}` : '';
-      return `  ${formatSessionTimestamp(session.lastMessageAt ?? session.createdAt)}  ${session.id} [${session.msgCount}]${surface} ${session.title}`;
-    });
-    if (sessions.length > visible.length) {
-      lines.push(
-        `  ... ${sessions.length - visible.length} more; use \`kodax -r\` to search and page.`,
-      );
-    }
-    console.log(
-      lines.length > 0
-        ? `Sessions:\n${lines.join('\n')}`
-        : 'No resumable sessions.',
-    );
-    return true;
-  }
-
-  if (options.session === 'cleanup-acp') {
-    const storage = new FileSessionStorage({ cwd: process.cwd() });
-    const candidates = await findAcpPollutionCandidates(storage);
-    console.log(
-      `Matched ${candidates.length} empty ACP placeholder sessions in the current project.`,
-    );
-    for (const candidate of candidates.slice(0, 10)) {
-      console.log(
-        `  ${candidate.id}${candidate.createdAt ? ` ${candidate.createdAt}` : ''}`,
-      );
-    }
-    if (candidates.length > 10)
-      console.log(`  ... ${candidates.length - 10} more`);
-    if (opts.applySessionCleanup !== true) {
-      console.log(
-        'Preview only. Re-run with --apply-session-cleanup to archive these sessions reversibly.',
-      );
-      return true;
-    }
-    const archived = await archiveAcpPollutionCandidates(storage, candidates);
-    console.log(
-      `Archived ${archived.length} sessions. Use the session SDK unarchive operation to restore one.`,
-    );
-    return true;
-  }
-
-  if (options.session === 'delete-all') {
-    const storage = new FileSessionStorage();
-    await storage.deleteAll();
-    console.log('Deleted all sessions.');
-    return true;
-  }
-
-  const sessionOperation = options.session;
-  if (
-    sessionOperation === 'delete' ||
-    sessionOperation?.startsWith('delete ')
-  ) {
-    const quotedId = sessionOperation.startsWith('delete ')
-      ? sessionOperation.slice('delete '.length).trim()
-      : undefined;
-    const positionalId =
-      sessionOperation === 'delete' ? options.prompt[0]?.trim() : undefined;
-    const sessionId = quotedId || positionalId;
-    if (!sessionId) {
-      throw new Error(
-        '`-s delete` requires a session id. Usage: kodax -s delete <id>',
-      );
-    }
-    if (sessionOperation === 'delete' && options.prompt.length > 1) {
+  if (operation === 'list') {
+    console.log(renderSessionList(await loadResumableSessions(await getCliHost())));
+  } else if (operation === 'cleanup-acp') {
+    await cleanupAcpSessions(opts.applySessionCleanup === true, '--apply-session-cleanup');
+  } else if (operation === 'delete-all') {
+    await deleteAllSessions();
+  } else {
+    const quotedId = options.session?.startsWith('delete ') ? options.session.slice('delete '.length).trim() : undefined;
+    const sessionId = quotedId || (options.session === 'delete' ? options.prompt[0]?.trim() : undefined);
+    if (!sessionId) throw new Error('`-s delete` requires a session id. Usage: kodax sessions delete <id>');
+    if (options.session === 'delete' && options.prompt.length > 1) {
       throw new Error('`-s delete` accepts exactly one session id.');
     }
-    const storage = new FileSessionStorage();
-    await storage.delete(sessionId);
-    console.log(`Deleted session: ${sessionId}`);
-    return true;
+    await deleteSession(sessionId);
   }
-  return false;
+  return true;
 }
 
-export function configureKodaXSessionsCommand(program: Command): void {
-  // ============== sessions subcommands ==============
+export function configureKodaXSessionsCommand(program: Command, version: string): void {
+  const listSessions = (): Promise<SessionPickerItem[]> => withHostClient(version, loadResumableSessions);
   const sessionsCommand = program
     .command('sessions')
-    .description('Manage saved KodaX sessions')
-    .action(() => {
-      console.log(chalk.cyan('\nKodaX Sessions\n'));
-      console.log(chalk.bold('Commands:'));
-      console.log(
-        chalk.dim('  kodax sessions dedupe          ') +
-          'Dry-run historical runner ghost cleanup',
-      );
-      console.log(
-        chalk.dim('  kodax sessions dedupe --apply  ') +
-          'Move uniquely matched runner ghosts to .dedupe-archive',
-      );
-      console.log(chalk.dim('\nLegacy:'));
-      console.log(
-        chalk.dim('  kodax -s list                  ') + 'List saved sessions',
-      );
-    });
+    .description('List, delete and clean up saved KodaX sessions');
+
+  withJsonOption(sessionsCommand
+    .command('list', { isDefault: true })
+    .description('List resumable sessions in the current project, newest first (the default)'))
+    .action(reported(listSessions, renderSessionList));
+
+  sessionsCommand
+    .command('delete')
+    .description('Delete one saved session')
+    .argument('<id>', 'Session ID')
+    .action(deleteSession);
+
+  sessionsCommand
+    .command('delete-all')
+    .description('Delete every saved session')
+    .action(deleteAllSessions);
+
+  sessionsCommand
+    .command('cleanup-acp')
+    .description('Find empty ACP placeholder sessions in the current project; archive them with --apply')
+    .option('--apply', 'Archive the matched sessions (reversible)')
+    .action((subOpts: { apply?: boolean }) => cleanupAcpSessions(subOpts.apply === true, '--apply'));
 
   sessionsCommand
     .command('dedupe')

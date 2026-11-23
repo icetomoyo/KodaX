@@ -15,7 +15,7 @@ export const HELP_WORKSPACE_ROOT = "Workspace root to inspect (defaults to curre
 export const HELP_DAEMON_HOME = "Base directory whose .kodax holds the Host state";
 export const HELP_EFFORT = "Reasoning effort: off, auto, low, medium, high, xhigh, max, or model-supported value";
 export const HELP_REPO_INTELLIGENCE = "Repo intelligence mode: auto, full, light, off";
-export const HELP_SESSION = "Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID";
+export const HELP_SESSION = "Use this session ID (resume = most recent); list, delete and the other operations moved to `kodax sessions`";
 export const HELP_THINKING = "Compatibility alias for --reasoning auto";
 
 export const KODAX_CLI_SUBCOMMAND_NAMES = [
@@ -135,10 +135,8 @@ export function configureKodaXRootCommand(program: Command): Command {
         '-s, --session <op>',
         HELP_SESSION,
       )
-      .option(
-        '--apply-session-cleanup',
-        'Archive strictly matched empty ACP test sessions (with -s cleanup-acp)',
-      )
+      // Only the old `-s cleanup-acp` form reads it; `kodax sessions cleanup-acp --apply` replaces both.
+      .addOption(new Option('--apply-session-cleanup').hideHelp())
       .option('--no-session', 'Disable session persistence (print mode only)')
       .option(
         '--max-iter <n>',

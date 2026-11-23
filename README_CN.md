@@ -147,16 +147,20 @@ kodax --provider deepseek --thinking "找出 src/ 中的性能瓶颈"
 ## 会话：Fork、回退、恢复
 
 ```bash
-# 启动或恢复命名会话
-kodax --session refactor "将 getUserName 重命名为 getUsername"
-kodax --session refactor "现在给旧名称加上弃用警告"
+# 每次运行都保存为一个会话
+kodax "将 getUserName 重命名为 getUsername"
+
+# 继续当前目录最近的对话
+kodax -c "现在给旧名称加上弃用警告"
+
+# 按 ID 或完整标题恢复会话（不带值则打开选择器）
+kodax -r <session-id> "其实保留旧名称，只加一个别名就好"
 
 # 列出会话
-kodax --session list
-
-# 从某个历史节点 Fork，尝试不同方向
-kodax --session refactor --fork "其实保留旧名称，只加一个别名就好"
+kodax sessions list
 ```
+
+在 REPL 中，`/tree` 查看会话谱系，`/fork` 把一个分支复制成新会话，`/rewind` 回到之前的某一轮。
 
 会话历史是有向无环图。Fork 保留父节点不变；回退创建分支标记，而非破坏性重置。崩溃或断连后，KodaX 精确恢复到终止时的状态——不会静默遗漏。
 
@@ -194,8 +198,8 @@ Agent 会自动使用 `spawn_agent`、`followup_task`、`send_message`、`interr
 KodaX 内置对大型代码库的理解能力：
 
 ```bash
-# 查看当前引擎和索引状态
-kodax /repo-intel status
+# 在 REPL 中：查看当前引擎和索引状态
+/repo-intel status
 
 # 开启完整索引运行
 kodax --repo-intelligence full "packages/agent/ 中最危险的改动区域是哪里？"
@@ -207,13 +211,13 @@ Agent 自动调用的内置工具：`repo_overview`、`module_context`、`symbol
 
 ## 安全与权限
 
-四种权限模式，按会话设置：
+四种权限模式。在 REPL 中用 `/mode`（或 Shift-Tab）切换；默认值由 `~/.kodax/config.json` 的 `permissionMode` 设置：
 
 ```bash
-kodax --mode plan          # 仅提议——文件修改需审批
-kodax --mode accept-edits  # 文件编辑自动通过，Shell 命令需审批
-kodax --mode auto          # 通过 LLM 审查自动批准安全命令
-kodax --mode full-access   # 无提示（CI / 可信环境）
+/mode plan          # 仅提议——文件修改需审批
+/mode accept-edits  # 文件编辑自动通过，Shell 命令需审批
+/mode auto          # 通过 LLM 审查自动批准安全命令
+/mode full-access   # 无提示（CI / 可信环境）
 ```
 
 可选的 ASRT 沙箱在 Windows 上通过隔离账户、在 macOS/Linux 上通过 Seatbelt/bubblewrap 隔离 Shell 命令：
