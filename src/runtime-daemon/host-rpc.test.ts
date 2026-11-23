@@ -1017,6 +1017,32 @@ describe('v2 blobs', () => {
   });
 });
 
+describe('v2 workspace', () => {
+  it('lets a person list and read the workspace, without its secrets', async () => {
+    const host = await makeHost();
+    await writeFile(path.join(host.workspaceRoot, 'app', 'readme.md'), 'hello');
+    await writeFile(path.join(host.workspaceRoot, 'app', '.env'), 'KEY=1');
+    const user = await connect('user', fakeRuntime(), host.workspace);
+
+    const listed = await user.request('workspace.list', { path: 'app' }) as { entries: readonly { name: string }[] };
+    expect(listed.entries.map(entry => entry.name)).toEqual(['readme.md']);
+    const read = await user.request('workspace.read', { path: 'app/readme.md' }) as { data: string; byteLength: number };
+    expect(Buffer.from(read.data, 'base64').toString('utf8')).toBe('hello');
+    expect(read.byteLength).toBe(5);
+    await expect(user.request('workspace.read', { path: 'app/.env' }))
+      .rejects.toMatchObject({ kodaxCode: 'forbidden', reason: 'path_refused' });
+    await expect(user.request('workspace.read', { path: '../outside' })).rejects.toMatchObject({ kodaxCode: 'invalid_params' });
+    await expect(user.request('workspace.gitDiff', { path: 'app' }))
+      .rejects.toMatchObject({ kodaxCode: 'invalid_state', reason: 'not_a_git_repository' });
+  });
+
+  it('refuses every client when the Host has no workspace', async () => {
+    const owner = await connect('owner', fakeRuntime());
+    await expect(owner.request('workspace.list', {}))
+      .rejects.toMatchObject({ kodaxCode: 'forbidden', reason: 'workspace_not_configured' });
+  });
+});
+
 /** A model that calls one tool and, once it has the result, answers `done`. */
 function callsToolOnce(name: string, input: Record<string, unknown>): ModelTurn {
   return (messages) => {

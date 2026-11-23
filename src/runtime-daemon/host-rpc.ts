@@ -56,6 +56,7 @@ import { reportHostSecurityEvent } from './security-log.js';
 import type { RuntimeDaemonLogEntry } from './state.js';
 import type { RuntimeDaemonFramePeer } from './transport.js';
 import type { HostWorkspace } from './workspace.js';
+import { listWorkspace, readWorkspaceFile, workspaceGitDiff } from './workspace-files.js';
 import { redactUserMcpConfig, userSettingsRefusal, type HostUserLock } from './user-settings.js';
 
 /** What a v2 client should do about each v1 failure. The v1 code travels on as the `reason`. */
@@ -676,6 +677,14 @@ const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } =
       nextCursor: next < chunk.byteLength ? `${next}.${chunk.sha256}` : undefined,
     };
   },
+
+  'workspace.list': async ({ path: at = '.', limit, cursor }, _v1, caller) => (
+    listWorkspace(await requireWorkspace(caller).root(), at, { limit, cursor })
+  ),
+  'workspace.read': async ({ path: at, cursor }, _v1, caller) => readWorkspaceFile(await requireWorkspace(caller).root(), at, cursor),
+  'workspace.gitDiff': async ({ path: at = '.', staged = false }, _v1, caller) => (
+    workspaceGitDiff(await requireWorkspace(caller).root(), at, staged)
+  ),
 
   'run.get': async ({ runId }, v1) => ({ run: toRun(await v1('run.get', { runId }) as RuntimeRunStatus) }),
   'run.list': async ({ sessionId, limit = 50, cursor }, v1) => {

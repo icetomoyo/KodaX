@@ -107,6 +107,7 @@ import {
   windowsNativeArtifactCacheRoot,
   windowsSandboxControlDirectory,
 } from './windows-native-artifacts.js';
+import { isSecretPath } from './secret-paths.js';
 
 export { rewriteWindowsGitSafeDirectoryArgv, windowsGitTrustRoots };
 
@@ -479,13 +480,6 @@ const moduleRequire = createRequire(import.meta.url);
 const ASRT_MODULE_URL = process.env.KODAX_BUNDLED === 'true'
   ? undefined
   : pathToFileURL(moduleRequire.resolve('@anthropic-ai/sandbox-runtime')).href;
-const SENSITIVE_PATH_PARTS = new Set([
-  '.ssh', '.aws', '.azure', '.gnupg', '.kodax', '.agents', '.codex', '.claude', '.gemini',
-  '.direnv', '.terraform.d',
-]);
-const SENSITIVE_FILES = new Set([
-  '.env', '.envrc', '.pgpass', '.npmrc', '.pypirc', 'credentials', 'id_rsa', 'id_ed25519',
-]);
 const WORKSPACE_SHELL_LEGACY_HOME_DENY_PATHS = [
   '.ssh', '.aws', '.azure', '.gnupg', '.kube', '.docker', '.kodax', '.agents',
   '.codex', '.claude', '.gemini', '.direnv', '.terraform.d',
@@ -2640,12 +2634,6 @@ function isInside(root: string, candidate: string): boolean {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
-function isSensitiveRelative(relative: string): boolean {
-  const parts = relative.split(path.sep).map((part) => part.toLowerCase());
-  return parts.some((part) => SENSITIVE_PATH_PARTS.has(part))
-    || parts.some((part) => SENSITIVE_FILES.has(part) || part.startsWith('.env.'));
-}
-
 async function copySkillSnapshot(skill: Skill, root: string): Promise<void> {
   await mkdir(root, { recursive: true, mode: 0o700 });
   const files = [
@@ -3721,7 +3709,7 @@ async function workspaceSource(root: string, relative: string): Promise<string> 
   const realRoot = await realpath(root);
   const candidate = path.resolve(root, canonicalRelative(relative, 'Skill script input'));
   const resolved = await realpath(candidate);
-  if (!isInside(realRoot, resolved) || isSensitiveRelative(path.relative(realRoot, resolved))) {
+  if (!isInside(realRoot, resolved) || isSecretPath(path.relative(realRoot, resolved))) {
     throw new Error('Skill script input is outside the permitted workspace surface.');
   }
   if (!(await stat(resolved)).isFile()) throw new Error('Skill script inputs must be files.');
@@ -3731,7 +3719,7 @@ async function workspaceSource(root: string, relative: string): Promise<string> 
 async function workspaceTarget(root: string, relative: string): Promise<string> {
   const realRoot = await realpath(root);
   const candidate = path.resolve(root, canonicalRelative(relative, 'Skill script output target'));
-  if (!isInside(path.resolve(root), candidate) || isSensitiveRelative(path.relative(path.resolve(root), candidate))) {
+  if (!isInside(path.resolve(root), candidate) || isSecretPath(path.relative(path.resolve(root), candidate))) {
     throw new Error('Skill script output target is outside the permitted workspace surface.');
   }
   await mkdir(path.dirname(candidate), { recursive: true });

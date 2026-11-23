@@ -27,6 +27,7 @@ import { SETTINGS_METHODS } from './settings.js';
 import { STATS_METHODS } from './stats.js';
 import { VIEW_METHODS } from './view.js';
 import { WORKFLOW_METHODS } from './workflow.js';
+import { WORKSPACE_METHODS } from './workspace.js';
 
 export { hostCommandParams, hostList, hostParams, hostResult } from './schema.js';
 export type { HostMethodRegistry, HostMethodSpec, HostPrimitive } from './schema.js';
@@ -122,6 +123,7 @@ export const HOST_METHODS = {
   ...STATS_METHODS,
   ...ACTOR_METHODS,
   ...WORKFLOW_METHODS,
+  ...WORKSPACE_METHODS,
   ...HOST_ADMIN_METHODS,
   ...DEVICE_METHODS,
   ...CONFIG_METHODS,

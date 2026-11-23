@@ -119,6 +119,14 @@ Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` �
 | `blob.commit` | 新增 |
 | `blob.read` | `artifact.get`、`session.view.item` 的附件分块 |
 
+**数据面：工作区，只读（所有角色；Host 要配了 `server.workspaceRoot`）**
+
+| v2 | v1 |
+|---|---|
+| `workspace.list` | 新增 |
+| `workspace.read` | 新增 |
+| `workspace.gitDiff` | 新增 |
+
 **数据面：只读目录与统计（所有角色）**
 
 | v2 | v1 |

@@ -57,7 +57,7 @@ Host starts.
 | `allowedOrigins` | Browser origins that may connect, such as `https://app.example.com`, without a path. Empty refuses every browser. |
 | `pairing` | Lets the person pair browsers without a JWT. For personal remote access; see [Remote access](remote-access.md). |
 | `webRoot` | An absolute path to static web pages the Host serves on the same port. See [Serve a web UI](#serve-a-web-ui). |
-| `workspaceRoot` | An absolute path. Network clients name projects by their path inside it, and cannot name any project without it. |
+| `workspaceRoot` | An absolute path. Network clients name projects by their path inside it, and cannot name any project without it. Clients can also list and read the files in it and see the git diff of a project, but never secrets such as `.env` or `.ssh`. |
 | `tools` | The only tools any Run on this Host may use, whoever submits it. Session and Run policies can narrow it, never widen it. Absent means no Host limit. |
 | `userLocks` | The person's settings you keep fixed, any of `mcp`, `extensions`, `providers`, `permissions`, `fullAccess`. See [The person's settings](#the-persons-settings). Absent locks none. |
 

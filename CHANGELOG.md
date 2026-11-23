@@ -66,6 +66,11 @@ All notable changes to this project will be documented in this file.
 - Protocol v2 tool items in the session view and in `history.read` carry
   `tool.change`: the diff a file tool made, in the shape of the approval
   `diff`. The file path is relative to the Host workspace.
+- Protocol v2 `workspace.list`, `workspace.read` and `workspace.gitDiff` let
+  a client browse the Host workspace, read a file in chunks and see what git
+  sees changed in a project. They only read. Files that hold secrets, such as
+  `.env` and anything under `.ssh`, are refused and left out of listings and
+  diffs.
 - `kodax host` manages the Host, which `kodax daemon` did. `kodax daemon` still
   works, prints that it was renamed, and is removed in 0.7.100.
 - `kodax host logs --follow` keeps printing new log lines until Ctrl+C, across

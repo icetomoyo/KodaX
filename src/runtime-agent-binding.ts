@@ -47,6 +47,7 @@ import type {
   RuntimeRunService,
   RuntimeSessionService,
 } from './sdk-runtime.js';
+import { isSecretPath } from './secret-paths.js';
 
 export interface RuntimeUserMarkdownAgentRef {
   readonly source: 'markdown:user';
@@ -220,8 +221,6 @@ const SUBAGENT_TOOLS = [
   'agent_output',
 ] as const;
 const PATH_TOOLS = new Set<string>([...NATIVE_READ_TOOLS, ...NATIVE_WRITE_TOOLS]);
-const SENSITIVE_PATH_PARTS = new Set(['.ssh', '.aws', '.azure', '.gnupg', '.kodax', '.agents']);
-const SENSITIVE_FILES = new Set(['.env', '.npmrc', '.pypirc', 'credentials', 'id_rsa', 'id_ed25519']);
 const HOST_TOOL_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_.-]{0,127}$/;
 const HOST_CAPABILITY_PATTERN = /^host:([^:]+):(.+)$/;
 
@@ -744,10 +743,7 @@ function skillsPrompt(skills: readonly RuntimeEffectiveSkillRef[], registry: ISk
 }
 
 function sensitivePath(candidate: string, root: string): boolean {
-  const relative = path.relative(root, candidate);
-  const parts = relative.split(path.sep).map((part) => part.toLowerCase());
-  return parts.some((part) => SENSITIVE_PATH_PARTS.has(part))
-    || parts.some((part) => SENSITIVE_FILES.has(part) || part.startsWith('.env.'));
+  return isSecretPath(path.relative(root, candidate));
 }
 
 function nearestExistingPath(candidate: string): string {

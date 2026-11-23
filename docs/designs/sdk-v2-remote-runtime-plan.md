@@ -2350,6 +2350,7 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
    - 根目录是 `workspaceRoot`；
    - 文件打开后基于 fd 做包含关系校验；
    - 沿用 read 工具的拒绝规则。
+   - **状态**：2026-11-24 落地，见下面"第 2 项的落地细节"。
 3. Host 文档：`view.subscribe` 新增一种文档，内容是会话列表的实时状态、跨会话的待处理事项和技能学习的变化（取代 `learning.subscribe`）。
 4. WS 被拦截时的自动回退：
    - Host 侧：在同一端口上提供 HTTP 承载，下行用 SSE，上行用 POST；SSE 带心跳，并禁用代理缓冲。
@@ -2363,6 +2364,15 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
 - 代价：每次改文件多算一次 diff（工具本来就算一次给模型看），会话文件里每次改动多存最多 64 KiB 的 `unified`。
 - 没做：脚本（`script` 工具）里调用的文件工具不带 `change`，脚本的单元结果不进视图。
 - 已验证：`edit.test.ts`（改动、新文件、没改动和失败时不报）；host-rpc 的集成测试里，模型调用 `write` 并被批准后，user 在视图和 `history.read` 里看到 `change`，路径是 `app/.kodax/note.txt`，owner 还能看到 `hostPath`。
+
+**第 2 项的落地细节**（2026-11-24，未经用户确认的取舍）：
+
+- 方法：`workspace.list {path?, limit?, cursor?}`（按名字排序分页，每页默认 500；链接只标 `kind: 'link'` 不跟进）、`workspace.read {path, cursor?}`（base64 分块，块大小同 `blob.read`；游标里带文件的 inode、mtime 和大小，文件变了报 `resync_required`/`file_changed`）、`workspace.gitDiff {path?, staged?}`（统一 diff，路径相对 `path`；超过 256 KiB 在行尾截断并给 `truncated`；未跟踪的新文件不在里面）。三个都在数据面，所有角色可用。和 ToolFacts 一样加在 r1，不升 `revision`。
+- 根目录：只认 `server.workspaceRoot`，没配时所有角色（含 owner）报 `forbidden`/`workspace_not_configured`。不按 Session 取根目录：Session 的 `project` 本来就是工作区相对路径，客户端拼起来即可。
+- 拒绝规则：read 工具对远端 Agent 的密钥路径规则原来在 `runtime-agent-binding.ts` 和 `sandbox-runtime.ts` 各有一份，名单还不一样。抽成 `src/secret-paths.ts` 一份，用较宽的 sandbox 名单（多了 `.codex`、`.claude`、`.gemini`、`.direnv`、`.terraform.d`、`.envrc`、`.pgpass`），所以远端 Agent 的拒绝范围也随之变宽。列目录时直接不列这些名字，读取报 `forbidden`/`path_refused`，diff 用 `:(exclude)` pathspec 排除。
+- 包含校验：名字先在工作区内，realpath 之后再查一次是否在工作区内、是否命中密钥规则。读文件时打开之后用 fd 的 `fstat` 和路径重新 realpath 后的 `stat` 比 inode/dev，不一致就拒绝，堵住"检查后、打开前把某一级换成链接"的竞态。
+- git：先 `rev-parse --is-inside-work-tree`（不在仓库里时 `git diff` 会变成比较两个路径）。带 `-c core.fsmonitor=false`、`--no-ext-diff`、`--no-textconv`，环境里 `GIT_OPTIONAL_LOCKS=0`、`GIT_TERMINAL_PROMPT=0`。filter driver 没有选项能关掉：仓库自己的配置（local/worktree 范围）里配了 `filter.*` 时报 `forbidden`/`repository_filters`。Host 全局 git 配置里的 filter（比如 Git LFS）是运维的选择，照常放行。理由：默认权限模式下文件工具不让写 `.git`，但 full-access 下可以，而 Host 的工具上限可能不含 bash，这时读 diff 不能变成在 Host 上执行命令的口子（和 `mcpStdio` 同一个道理）。
+- 已验证：`workspace-files.test.ts`（分页、链接、各种拒绝、分块和变更、staged/unstaged、密钥排除、截断、仓库自配 filter、非仓库）；host-rpc 集成测试（user 能列能读、读不到 `.env`；没有工作区时 owner 也被拒）。
 
 ### M3 收尾
 

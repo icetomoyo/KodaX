@@ -44,7 +44,7 @@
 | `allowedOrigins` | 允许连接的浏览器来源，比如 `https://app.example.com`，不带路径。留空就拒绝所有浏览器。 |
 | `pairing` | 允许这个人不用 JWT 配对浏览器。用于个人远程访问，见[远程访问](remote-access.zh-CN.md)。 |
 | `webRoot` | 绝对路径，Host 在同一个端口上提供这个目录里的静态网页。见[提供 Web UI](#提供-web-ui)。 |
-| `workspaceRoot` | 绝对路径。网络客户端按项目在它里面的相对路径指定项目；不配就不能指定项目。 |
+| `workspaceRoot` | 绝对路径。网络客户端按项目在它里面的相对路径指定项目；不配就不能指定项目。客户端还能列出、读取里面的文件，看项目的 git diff，但读不到 `.env`、`.ssh` 这类存放密钥的文件。 |
 | `tools` | 这个 Host 上任何 Run 能用的全部工具，不管谁提交。Session 和 Run 的策略只能在它里面再收窄。不配表示 Host 不设上限。 |
 | `userLocks` | 平台固定下来、这个人不能改的设置，可选 `mcp`、`extensions`、`providers`、`permissions`、`fullAccess`。见[这个人的设置](#这个人的设置)。不配表示都不锁。 |
 
