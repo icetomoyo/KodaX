@@ -12,6 +12,8 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 
+import type { CacheWarmingMode } from './cache-warming.js';
+
 export interface KodaXRunScopedConfig {
   readonly modelTiers?: {
     readonly fast?: { readonly provider?: string; readonly model?: string };
@@ -19,6 +21,7 @@ export interface KodaXRunScopedConfig {
   };
   readonly maxOutputTokens?: number;
   readonly disablePromptCache?: boolean;
+  readonly cacheWarming?: CacheWarmingMode;
   readonly lsp?: boolean;
   readonly workflow?: {
     /** Ceiling on concurrent workflow child agents (a run_workflow spawns). */
@@ -90,4 +93,18 @@ export function resolvePromptCacheDisabled(explicit?: boolean): boolean {
   const scoped = getRunScopedConfig()?.disablePromptCache;
   if (scoped !== undefined) return scoped;
   return process.env.KODAX_DISABLE_PROMPT_CACHE === '1';
+}
+
+const CACHE_WARMING_MODES: readonly CacheWarmingMode[] = ['off', 'run', 'idle'];
+
+/**
+ * When prompt cache entries are kept warm: the Run's setting, then
+ * `KODAX_CACHE_WARMING`, then `idle`. Always `off` while the prompt cache is off.
+ */
+export function resolveCacheWarmingMode(): CacheWarmingMode {
+  if (resolvePromptCacheDisabled()) return 'off';
+  const scoped = getRunScopedConfig()?.cacheWarming;
+  if (scoped !== undefined) return scoped;
+  const env = process.env.KODAX_CACHE_WARMING;
+  return CACHE_WARMING_MODES.find(mode => mode === env) ?? 'idle';
 }

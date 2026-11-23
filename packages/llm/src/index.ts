@@ -270,7 +270,7 @@ export { classifyStopReason, isCleanStop } from './stop-reason.js';
 export {
   runWithScopedConfig,
   getRunScopedConfig,
-  resolvePromptCacheDisabled,
+  resolvePromptCacheDisabled, resolveCacheWarmingMode,
   resolveWorkflowMaxConcurrency,
   isWireSessionId,
   WORKFLOW_MAX_CONCURRENCY_DEFAULT,
@@ -282,8 +282,14 @@ export type { KodaXStopClass } from './stop-reason.js';
 // ============== Cost Tracking ==============
 export { DEFAULT_COST_RATES, getCostRate, getCostRateBasis, calculateCost, calculateCostWithCacheLifetimes } from './cost-rates.js';
 export type { CostRate } from './cost-rates.js';
-export { cacheRefreshDelayMs, cacheRefreshPrices, promptCacheLifetime, promptCacheLifetimeMs, replaysWithOutputCap } from './cache-warming.js';
-export type { CacheRefreshPrices, PromptCacheLifetime } from './cache-warming.js';
+export {
+  CACHE_WARMING_IDLE_CONTINUATION_PROBABILITY, CACHE_WARMING_MAX_IDLE_AGE_MS, CACHE_WARMING_MAX_RUN_AGE_MS,
+  CACHE_WARMING_MINIMUM_EXPECTED_SAVINGS, cacheRefreshDelayMs, cacheRefreshPrices, decideCacheWarming,
+  promptCacheLifetime, promptCacheLifetimeMs, replaysWithOutputCap,
+} from './cache-warming.js';
+export type {
+  CacheRefreshPrices, CacheWarmingDecision, CacheWarmingMode, CacheWarmingPhase, PromptCacheLifetime,
+} from './cache-warming.js';
 
 export {
   createCostTracker,

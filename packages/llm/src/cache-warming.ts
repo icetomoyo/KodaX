@@ -11,6 +11,24 @@ import type {
   KodaXReasoningRequest,
 } from './types.js';
 
+/** `off`: never. `run`: while a Run is active. `idle`: also while the Session waits for its next Run. */
+export type CacheWarmingMode = 'off' | 'run' | 'idle';
+
+/** `run` while the Run that sent the request is active; `idle` after it ended. */
+export type CacheWarmingPhase = 'run' | 'idle';
+
+/** Warming during a Run stops this long after the real request it keeps warm. */
+export const CACHE_WARMING_MAX_RUN_AGE_MS = 60 * 60_000;
+
+/** Idle warming stops sooner: the chance of another request falls with time. */
+export const CACHE_WARMING_MAX_IDLE_AGE_MS = 30 * 60_000;
+
+/** A refresh goes out only when it is expected to save at least this many dollars. */
+export const CACHE_WARMING_MINIMUM_EXPECTED_SAVINGS = 0.05;
+
+/** pi's measured chance that an idle Session sends its next request before the entry expires. */
+export const CACHE_WARMING_IDLE_CONTINUATION_PROBABILITY = 0.15;
+
 export type PromptCacheLifetime = NonNullable<KodaXCacheCapabilities['shortTtl'] | KodaXCacheCapabilities['longTtl']>;
 
 /** The lifetime of the entry a request writes. Undefined when caching is off or the catalog declares none. */
@@ -77,4 +95,21 @@ export function cacheRefreshPrices(
   const write = calculateCostWithCacheLifetimes(rate, promptTokens, 0, 0, promptTokens, { [lifetime]: promptTokens });
   if (write === null) return undefined;
   return { refresh: calculateCost(rate, promptTokens, 1, promptTokens, 0), loss: Math.max(0, write - read) };
+}
+
+export interface CacheWarmingDecision {
+  readonly phase: CacheWarmingPhase;
+  /** Chance that a real request arrives before the entry expires. */
+  readonly continuationProbability: number;
+  /** `continuationProbability * loss - refresh`. */
+  readonly expectedSavings: number;
+  readonly action: 'warm' | 'stop';
+}
+
+/** Whether the next refresh pays for itself (pi's `evaluateCacheWarming`). */
+export function decideCacheWarming(prices: CacheRefreshPrices, phase: CacheWarmingPhase): CacheWarmingDecision {
+  const continuationProbability = phase === 'idle' ? CACHE_WARMING_IDLE_CONTINUATION_PROBABILITY : 1;
+  const expectedSavings = continuationProbability * prices.loss - prices.refresh;
+  const action = expectedSavings >= CACHE_WARMING_MINIMUM_EXPECTED_SAVINGS ? 'warm' : 'stop';
+  return { phase, continuationProbability, expectedSavings, action };
 }

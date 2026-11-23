@@ -1,14 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { validateCacheCapabilities } from './providers/cache-policy.js';
 import { getCostRate } from './cost-rates.js';
 import { getProvider } from './providers/registry.js';
 import {
+  CACHE_WARMING_IDLE_CONTINUATION_PROBABILITY,
+  CACHE_WARMING_MINIMUM_EXPECTED_SAVINGS,
   cacheRefreshDelayMs,
   cacheRefreshPrices,
+  decideCacheWarming,
   promptCacheLifetime,
   promptCacheLifetimeMs,
   replaysWithOutputCap,
 } from './cache-warming.js';
+import { resolveCacheWarmingMode, runWithScopedConfig } from './run-scoped-config.js';
 
 describe('prompt cache lifetime', () => {
   it('reads the short or long lifetime the request writes', () => {
@@ -96,5 +100,55 @@ describe('cache refresh prices', () => {
     const rate = getCostRate('anthropic', 'claude-sonnet-4-6')!;
     expect(cacheRefreshPrices(rate, 0, '5m')).toBeUndefined();
     expect(cacheRefreshPrices({ inputPer1M: 1, outputPer1M: 1, cacheReadPer1M: 0.1 }, 1000, '1h')).toBeUndefined();
+  });
+});
+
+describe('cache warming mode', () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it('defaults to warming while idle as well', () => {
+    vi.stubEnv('KODAX_CACHE_WARMING', '');
+    vi.stubEnv('KODAX_DISABLE_PROMPT_CACHE', '');
+    expect(resolveCacheWarmingMode()).toBe('idle');
+  });
+
+  it('takes the Run setting over the environment', () => {
+    vi.stubEnv('KODAX_CACHE_WARMING', 'off');
+    expect(resolveCacheWarmingMode()).toBe('off');
+    expect(runWithScopedConfig({ cacheWarming: 'run' }, () => resolveCacheWarmingMode())).toBe('run');
+  });
+
+  it('ignores an unknown environment value', () => {
+    vi.stubEnv('KODAX_CACHE_WARMING', 'always');
+    expect(resolveCacheWarmingMode()).toBe('idle');
+  });
+
+  it('is off while the prompt cache is off', () => {
+    expect(runWithScopedConfig({ cacheWarming: 'idle', disablePromptCache: true }, () => resolveCacheWarmingMode())).toBe('off');
+  });
+});
+
+describe('whether a refresh pays for itself', () => {
+  const prices = { refresh: 0.03, loss: 0.345 };
+
+  it('refreshes during a Run when the saving is at least five cents', () => {
+    const decision = decideCacheWarming(prices, 'run');
+    expect(decision.continuationProbability).toBe(1);
+    expect(decision.expectedSavings).toBeCloseTo(0.315, 9);
+    expect(decision.action).toBe('warm');
+  });
+
+  it('counts on a 15% chance of another request while the Session is idle', () => {
+    const decision = decideCacheWarming(prices, 'idle');
+    expect(decision.continuationProbability).toBe(CACHE_WARMING_IDLE_CONTINUATION_PROBABILITY);
+    expect(decision.expectedSavings).toBeCloseTo(0.15 * 0.345 - 0.03, 9);
+    expect(decision.action).toBe('stop');
+    expect(decideCacheWarming({ refresh: 0.06, loss: 0.9 }, 'idle').action).toBe('warm');
+  });
+
+  it('stops when the saving is under five cents', () => {
+    expect(decideCacheWarming({ refresh: 0.001, loss: 0.0509 }, 'run').action).toBe('stop');
+    expect(decideCacheWarming({ refresh: 0.001, loss: 0.052 }, 'run').action).toBe('warm');
+    expect(CACHE_WARMING_MINIMUM_EXPECTED_SAVINGS).toBe(0.05);
   });
 });
