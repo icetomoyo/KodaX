@@ -1789,11 +1789,15 @@ interface RuntimeTrustedAgentOperationOptions extends RuntimeAgentOperationOptio
   readonly origin?: RuntimeRunStatus['origin'];
   readonly tools?: readonly string[];
   readonly actorExtensionRuntime?: (runId: string, base: KodaXOptions['extensionRuntime']) => KodaXOptions['extensionRuntime'];
+  /** The client's name for this spawn or follow-up. A repeat answers with what the first one did. */
+  readonly requestId?: string;
 }
 
 interface RuntimeTrustedAgentFollowupOptions extends RuntimeAgentFollowupOptions, RuntimeTrustedAgentOperationOptions {
   readonly providerCredentialAccessFactory?: CodingActorCredentialAccessFactory;
   readonly requireCredentialForNewTurn?: true;
+  /** The leases are the Session's, not the caller's: a child that needs no new turn takes the follow-up without them. */
+  readonly credentialLent?: true;
 }
 
 interface RuntimeTrustedCompactSessionInput extends RuntimeCompactSessionInput {
@@ -3945,6 +3949,8 @@ type RuntimeArtifactStore = ReturnType<typeof createRuntimeArtifactStore>;
 
 interface RuntimeRunServiceInternal extends RuntimeRunService {
   settleIndependentActor(record: RuntimeRunRecord, turn?: AgentTurn): void;
+  /** Stops the execution of `record` when the time limit of its options passes. */
+  stopAtTimeLimit(record: RuntimeRunRecord, execution: Promise<unknown>): void;
   cleanupClientWork(principalId: string): Promise<ClientWorkCleanup>;
   startAdmitted(input: RuntimeTrustedStartRunInput): Promise<RuntimeRunHandle>;
   startPreparedInvocation(input: ClientCommandInput, invocation: RuntimeCommandInvocation): Promise<RuntimeRunHandle>;
@@ -5918,9 +5924,13 @@ async function createKodaXRuntimeInternal(
         const runId = actorGenerationRunId(sessionId, execution.turn.turnId);
         const recovery = execution.turn.checkpoint ? persistence.loadGenerationRecovery(runId) : undefined;
         const previous = recovery ? persistence.loadRunStatus(runId) : undefined;
-        const effective = buildEffectiveRuntimeOptions({ ...resolveExecutionConfig(toClientConfig(readRuntimeConfig(configFile))), ...recovery?.start.options,
+        // A turn a client starts is bound as a Run of the Session is: by its policy, then by the Host's tools.
+        const hostTools = options.hostToolCeiling?.();
+        const effective = applySessionPolicy(applySessionPolicy(buildEffectiveRuntimeOptions({
+          ...resolveExecutionConfig(toClientConfig(readRuntimeConfig(configFile))), ...recovery?.start.options,
           extensionRuntime: trusted.actorExtensionRuntime?.(runId, integrations.forSession(sessionId))
-          ?? integrations.forSession(sessionId) }, settings, [], session);
+          ?? integrations.forSession(sessionId) }, settings, [], session), parseSessionPolicy(session.runtimeInfo?.policy)),
+        hostTools === undefined ? undefined : { tools: hostTools });
         await protectRuntimeWorkflowProject(effective.context?.executionCwd);
         const provider = effective.provider ?? options.defaultProvider ?? KODAX_DEFAULT_PROVIDER;
         const startedAt = previous?.status.startedAt ?? new Date().toISOString();
@@ -5929,8 +5939,9 @@ async function createKodaXRuntimeInternal(
         Object.assign(record, { actorSession: await actorRegistry.forSession(sessionId) });
         Object.assign(record, { hadProviderCredential: trusted.providerCredentialAccessFactory !== undefined });
         record.recoveryRequiresExtensionRuntime = trusted.actorExtensionRuntime !== undefined;
-        record.recoveryToolCeiling = recovery?.actor?.tools === undefined ? trusted.tools
-          : recovery.actor.tools.filter(tool => trusted.tools === undefined || trusted.tools.includes(tool));
+        record.recoveryToolCeiling = [trusted.tools, recovery?.actor?.tools, effective.executionToolCeiling?.tools]
+          .reduce<readonly string[] | undefined>((allowed, tools) => tools === undefined ? allowed
+            : allowed === undefined ? tools : allowed.filter(tool => tools.includes(tool)), undefined);
         record.turnId = execution.turn.turnId;
         Object.assign(record, { independentActorRef: { actorPath: execution.actor.path, turnId: execution.turn.turnId, createdAt: execution.turn.createdAt },
           admittedSessionContext: { gitRoot: session.gitRoot, runtimeInfo: session.runtimeInfo } });
@@ -6002,6 +6013,7 @@ async function createKodaXRuntimeInternal(
         if (!saveRunStatusSafely(bus, persistence, record, statusFromRecord(record))) {
           runs.delete(runId); throw new Error('Independent Actor execution could not be persisted.');
         }
+        runService.stopAtTimeLimit(record, record.result!);
         return { signal, tools: allowed, options: runOptions,
           run: operation => runWithProviderRequestObserver(fact => executionFacts.provider(sessionId,
             { kind: 'actor_turn', actorPath: execution.actor.path, turnId: execution.turn.turnId }, fact),
@@ -14055,6 +14067,7 @@ async function createRuntimeRunService(deps: {
   };
 
   const service: RuntimeRunServiceInternal = {
+    stopAtTimeLimit,
     settleIndependentActor(record, turn) {
       if (!record.ownedByRuntime || !record.independentActorRef || record.generationSuspended || record.terminalEmitted) return;
       if (!turn) {
@@ -16741,7 +16754,8 @@ function createRuntimeAgentService(
     async spawn(sessionId, input, options) {
       const credentialFactory = trustedCredentialFactory(options);
       return withActorSession(sessionId, (session) =>
-        session.spawnRoot(input, { executionPrincipalId: (options as RuntimeTrustedAgentOperationOptions | undefined)?.origin?.principalId }, credentialFactory,
+        session.spawnRoot(input, { executionPrincipalId: (options as RuntimeTrustedAgentOperationOptions | undefined)?.origin?.principalId,
+          requestId: (options as RuntimeTrustedAgentOperationOptions | undefined)?.requestId }, credentialFactory,
           credentialFactory === undefined ? undefined : environment(sessionId, options as RuntimeTrustedAgentOperationOptions)));
     },
     async send(sessionId, actorPath, content, classification, requestId) {
@@ -16764,18 +16778,22 @@ function createRuntimeAgentService(
             environment(sessionId, trusted), trusted.origin?.principalId);
           return { delivery: 'current_turn' as const, turn };
         }
-        if ((trusted?.tools !== undefined || trusted?.actorExtensionRuntime !== undefined)
-          && session.rootControl().list().actors.find(actor => actor.path === actorPath)?.kind === 'external') {
+        const external = session.rootControl().list().actors.find(actor => actor.path === actorPath)?.kind === 'external';
+        // An external Agent runs on its own credentialRef: what its Session lends is not for it.
+        const lentToExternal = external && trusted?.credentialLent === true;
+        const bound = lentToExternal ? undefined : credentialFactory;
+        if (external && !lentToExternal && (trusted?.tools !== undefined || trusted?.actorExtensionRuntime !== undefined)) {
           throw Object.assign(new Error('External Actors cannot bind native tools or a Host Tool runtime.'), { code: 'invalid_params' });
         }
         return session.followupRoot(
           actorPath,
           objective,
           { ...(trusted?.expectedRevision === undefined ? {} : { expectedRevision: trusted.expectedRevision }),
-            executionPrincipalId: trusted?.origin?.principalId },
-          credentialFactory,
+            executionPrincipalId: trusted?.origin?.principalId, requestId: trusted?.requestId,
+            ...(trusted?.credentialLent ? { credentialLent: true } : {}) },
+          bound,
           trusted?.requireCredentialForNewTurn === true,
-          credentialFactory === undefined ? undefined : environment(sessionId, trusted ?? {}),
+          bound === undefined ? undefined : environment(sessionId, trusted ?? {}),
         );
       });
     },

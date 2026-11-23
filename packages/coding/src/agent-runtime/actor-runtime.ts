@@ -110,7 +110,12 @@ type ActorFollowupHostOptions = NonNullable<
 >;
 type ActorStartPlan = Parameters<NonNullable<ActorFollowupHostOptions['beforeLaunch']>>[0];
 type ActorFollowupTarget = Parameters<NonNullable<ActorFollowupHostOptions['validateTarget']>>[0];
-type ClientActorMutationOptions = AgentMutationOptions & { readonly executionPrincipalId?: string };
+type ClientActorMutationOptions = AgentMutationOptions & {
+  readonly executionPrincipalId?: string;
+  readonly requestId?: string;
+  /** The credential is lent by the Session, not chosen by the caller: a child at work takes a follow-up without it. */
+  readonly credentialLent?: boolean;
+};
 
 /** One Runtime-owned Actor tree for one KodaX session. */
 export class CodingActorSession {
@@ -361,6 +366,7 @@ export class CodingActorSession {
     environment?: CodingActorEnvironmentFactory,
   ): Promise<AgentFollowupResult> {
     let credentialTurnId: string | undefined;
+    const strict = credentialAccess !== undefined && options?.credentialLent !== true;
     const validateTarget = credentialAccess === undefined
       ? requireCredentialForNewTurn
         ? (actor: ActorFollowupTarget) => {
@@ -371,7 +377,7 @@ export class CodingActorSession {
         : undefined
       : (actor: ActorFollowupTarget) => {
           if (actor.kind === 'external') throw externalCredentialBindingError();
-          if (actor.currentTurnId !== undefined) throw currentTurnCredentialBindingError(actor.path);
+          if (strict && actor.currentTurnId !== undefined) throw currentTurnCredentialBindingError(actor.path);
         };
     const beforeLaunch = credentialAccess === undefined && options?.executionPrincipalId === undefined
       ? undefined
@@ -392,7 +398,7 @@ export class CodingActorSession {
         };
     const admission = this.controller.followup('/root', actorPath, objective, undefined, {
       ...options,
-      ...(credentialAccess === undefined ? {} : { requireNewTurn: true }),
+      ...(strict ? { requireNewTurn: true } : {}),
       ...(validateTarget === undefined ? {} : { validateTarget }),
       ...(beforeLaunch === undefined ? {} : { beforeLaunch }),
     });

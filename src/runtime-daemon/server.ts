@@ -1516,16 +1516,20 @@ async function dispatchRuntimeDaemonRequest(
       const sessionId = requireStringField(params, "sessionId");
       const actorInput = requireRecord(params.input);
       const actorKind = optionalStringField(actorInput, "kind") ?? "native";
-      const actorAuthorization = optionalRecord(params.authorization);
-      if (actorKind !== 'native' && (actorAuthorization?.tools !== undefined || actorAuthorization?.hostTools !== undefined)) {
+      if (actorKind !== 'native' && (optionalRecord(params.authorization)?.tools !== undefined
+        || optionalRecord(params.authorization)?.hostTools !== undefined)) {
         throw daemonError('invalid_params', 'External Actors cannot bind native tools or a Host Tool runtime.');
       }
+      // A Session lends its leases to native children only: the others bind no Host tools, and an external one runs on its own credentialRef.
+      const { authorization: actorAuthorization, bridge } = actorKind === 'native'
+        ? await actorLeases(runtime, sessionId, params, options.reverseBridgeHub, reverseBridge)
+        : { authorization: optionalRecord(params.authorization), bridge: reverseBridge };
       const credentialBinding = optionalRecord(actorAuthorization?.credential ?? params.credential);
       assertDaemonAgentCredentialBinding(actorKind, credentialBinding);
       const credentialAccessFactory = bindTrustedAgentCredentialAccessFactory({
         binding: credentialBinding,
         sessionId,
-        reverseBridge,
+        reverseBridge: bridge,
       });
       return runtime.agents.spawn(
         sessionId,
@@ -1537,7 +1541,8 @@ async function dispatchRuntimeDaemonRequest(
               assertAdmission: () => options.clientLifecycle?.assertAdmission(principalId),
               origin: { principalId, subject, clientName, clientVersion },
               tools: actorAuthorization?.tools,
-              actorExtensionRuntime: actorToolRuntimeFactory(actorAuthorization, sessionId, reverseBridge),
+              actorExtensionRuntime: actorToolRuntimeFactory(actorAuthorization, sessionId, bridge),
+              requestId: optionalStringField(params, "requestId"),
             } as RuntimeAgentOperationOptions & {
               readonly providerCredentialAccessFactory?: CodingActorCredentialAccessFactory;
             },
@@ -1570,12 +1575,13 @@ async function dispatchRuntimeDaemonRequest(
       const expectedRevision = optionalIntegerField(params, "expectedRevision");
       const sessionId = requireStringField(params, "sessionId");
       const actorPath = requireStringField(params, "actorPath");
-      const actorAuthorization = optionalRecord(params.authorization);
+      const { authorization: actorAuthorization, bridge, lent } = await actorLeases(
+        runtime, sessionId, params, options.reverseBridgeHub, reverseBridge);
       const credentialBinding = optionalRecord(actorAuthorization?.credential ?? params.credential);
       const credentialAccessFactory = bindTrustedAgentCredentialAccessFactory({
         binding: credentialBinding,
         sessionId,
-        reverseBridge,
+        reverseBridge: bridge,
       });
       return runtime.agents.followup(
         sessionId,
@@ -1588,10 +1594,12 @@ async function dispatchRuntimeDaemonRequest(
             ? {}
             : { providerCredentialAccessFactory: credentialAccessFactory }),
           requireCredentialForNewTurn: true,
+          ...(lent ? { credentialLent: true } : {}),
           assertAdmission: () => options.clientLifecycle?.assertAdmission(principalId),
           origin: { principalId, subject, clientName, clientVersion },
           tools: actorAuthorization?.tools,
-          actorExtensionRuntime: actorToolRuntimeFactory(actorAuthorization, sessionId, reverseBridge),
+          actorExtensionRuntime: actorToolRuntimeFactory(actorAuthorization, sessionId, bridge),
+          requestId: optionalStringField(params, "requestId"),
         } as RuntimeAgentFollowupOptions & {
           readonly providerCredentialAccessFactory?: CodingActorCredentialAccessFactory;
           readonly requireCredentialForNewTurn: true;
@@ -2706,6 +2714,23 @@ async function sessionLeaseAuthorization(
     ...(credential !== undefined ? { credential: { leaseId: credential.id, mode: 'scoped', providers: [...credential.providers] } } : {}),
     ...(leases.hostTools !== undefined ? { hostTools: { leaseId: leases.hostTools } } : {}),
   } };
+}
+
+/**
+ * The leases a child turn the client starts runs on: those the client sends,
+ * or else those its Session binds, with the bridge of the instance that holds
+ * them. `lent` says they are the Session's.
+ */
+async function actorLeases(
+  runtime: KodaXRuntime, sessionId: string, params: Record<string, unknown>,
+  hub: RuntimeDaemonReverseBridgeHub | undefined, own: RuntimeDaemonReverseBridge,
+): Promise<{ readonly authorization: Record<string, unknown> | undefined; readonly bridge: RuntimeDaemonReverseBridge; readonly lent: boolean }> {
+  const authorization = optionalRecord(params.authorization);
+  const ownLeases = params.credential !== undefined || authorization?.credential !== undefined || authorization?.hostTools !== undefined;
+  const session = await sessionLeaseAuthorization(runtime, sessionId, hub, ownLeases);
+  return session === undefined
+    ? { authorization, bridge: own, lent: false }
+    : { authorization: { ...authorization, ...session.approved }, bridge: session.bridge, lent: true };
 }
 
 function actorToolRuntimeFactory(authorization: Record<string, unknown> | undefined, sessionId: string,
