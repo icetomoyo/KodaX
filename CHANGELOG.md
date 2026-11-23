@@ -33,7 +33,9 @@ All notable changes to this project will be documented in this file.
   it left instead of a conflict. A command that is not safe to repeat, such as
   `host.stop` or `interaction.respond`, is not sent again: the caller gets
   `unknown_outcome` and reads what happened. `session.branch.select` now
-  takes `ifActiveEntryId`. Runs that a dead Host left in `recovering` are
+  takes `ifActiveEntryId`. A finished Run's `outcome` carries its final
+  text (up to 64,000 characters), `signal`, `limitReached` and the tokens it
+  used, and keeps them across a Host restart. Runs that a dead Host left in `recovering` are
   continued once on the new Host. `createKodaXHostClient` takes any connection
   opener; `createRequestId` makes command ids. The v1 product Client is
   unchanged.
@@ -79,6 +81,8 @@ All notable changes to this project will be documented in this file.
 
 - A workflow's finished event now arrives after its run has settled, so a
   client that reads the run on that event sees it ended.
+- A Run's result reports the tokens it used again. Root Runs have taken the
+  managed path since the unified prompt chain, and that path left `usage` out.
 
 ---
 

@@ -1265,13 +1265,19 @@ Run 的限制与选项的落地细节（2026-11-21，未经用户确认）。这
   - 没有 `outcome` 就是还在进行。客户端按这一点分支，不按 `phase`；`phase` 是开放字符串，只用于显示。
   - 时间都是 UTC 毫秒。
   - `stop` 是 `{requestedAt?, confirmed}`，有人请求过 Stop 才出现。
-- **`RunOutcome`**：`{status, effects, code, message?, failure?}`。
+- **`RunOutcome`**：`{status, effects, code, message?, failure?, finalText?, finalTextTruncated?, signal?, signalReason?, limitReached?, usage?}`。
   - `status` 沿用 v1 的含义：`cancelled` 是还没开始做事就停了；`interrupted` 是做到一半停下，用户 Stop、Host 退出和到了时间上限都算，由 `code` 区分（例如 `interrupted`、`runtime_restarted`、`time_limit`）。
   - `effects` 来自 v1 的终态事实。v1 更早的版本没有记终态事实，这种 Run 的 `effects` 一律是 `unknown`。
   - `status: unknown` 表示 Host 现在说不清这个 Run 结束没有（例如它属于另一个还不确定死活的 Host 进程）。之后再读可能换成真实的结局。
   - `failure` 是 `{kind, stage, code, safeMessage, detail?, skillName?, retryAfterMs?}`，只在 `failed` 而且 Host 记下了失败细节时出现。
-  - **推迟的字段**：`finalText`、`outputItemId`、`usage`、`writtenFiles` 和 `limitReached`。它们现在只在进程内的执行结果里，持久化的 Run 状态里没有，Host 重启后就读不到。等把 one-shot CLI 和 SDK 的 `run()` 搬到 v2 时再决定：要么把它们持久化，要么让调用方从视图和 `item.read` 取。
-  - 2026-11-23 协议审查定了：Run 结局冻结前补上最终文本（`finalText` 或 `outputItemId`）、`usage`、`signal`/`signalReason` 和 `limitReached`，并持久化到 Run 状态里。打印模式的 `run.result` 和服务集成都要用。`writtenFiles` 仍推迟。
+  - 结局里的回答和用量（2026-11-23 协议审查定的，同日落地）：v1 在 Run 结束时把它们存进 Run 状态的 `answer`，Host 重启后照样读得到。
+    - `finalText` 是模型最后一段文字。被停下的 Run 没有这一项，因为那时的文字不是回答，可能只是"已取消"的提示。
+    - `finalText` 最多保留 64,000 个字符，超出时截断并带 `finalTextTruncated: true`，完整内容在 Session 历史里（未经用户确认）。选了文字而不是 `outputItemId`：视图里的条目会随压缩消失，ID 不一定一直指得到。
+    - `run.list` 不带 `finalText` 和 `finalTextTruncated`，单个 Run 读 `run.get` 或 `run.wait`。这样 200 条一页不会因为长回答超过 8 MiB 的帧上限（未经用户确认）。
+    - `signal` 是 `complete`、`blocked` 或 `decide`，从 v1 的大写值转成小写，和 v2 其他枚举一致（未经用户确认）。FEATURE_311 之后根 Run 都走 managed 路径，这条路径只在 hook 拦下时给 `blocked`，其余都是 `complete`；模型文本里的 `<promise>` 标记不再解析。
+    - `limitReached` 表示 Run 用完了 `maxIter` 的轮数。
+    - `usage` 是 `{inputTokens, outputTokens, totalTokens, cachedReadTokens?, cachedWriteTokens?}`，统计这个 Run 自己的全部模型调用，包括压缩和输入整理时的调用。有一次调用没报用量，整个 `usage` 就不给，不给残缺的数。子 Agent 的调用不在里面。managed 路径以前不给 `usage`，这次补上。
+  - `writtenFiles` 仍推迟。
 - **`run.list`**：`{sessionId, limit?, cursor?}`，`sessionId` 必填，最新的在前，`limit` 是 1 到 200，默认 50。游标是上一页最后一个 Run 的 ID；这个 Run 不在了报 `resync_required`（`cursor_expired`）。分页现在是桥接层对 v1 的整份列表做的。
 - **`run.wait`**：`{runId, timeoutMs?}`，`timeoutMs` 是 0 到 60000，默认 30000。
   - Run 有了结局就返回 `{run}`。到了上限还没有，报 `timeout`（`run_in_progress`）；Run 照常继续，客户端可以马上再等。
@@ -2349,7 +2355,7 @@ v1 只需要在 **Host** 里保留一段时间，原因是一台机器上的 Hos
   - `kodax acp` 改走 v2：它现在开的是 v1 客户端（`acp_server.ts` 的 `ensureKodaXClient`）。
   - `kodax a2a` 的探测改走 v2，`agent.registration.*` 留给本机 owner。
   - 打印模式像 REPL 一样读 v2 会话视图，`run.result` 的字段取自 v2 的 Run 结局。不加原始事件订阅，也不列为破坏性变更。
-  - Run 结局补上的字段（"推迟的字段"一条）。
+  - ~~Run 结局补上的字段~~：2026-11-23 落地（`RunOutcome` 一条）。
   - 记忆管理方法组（"记忆与技能学习"）。
 
 ### 其他规则
