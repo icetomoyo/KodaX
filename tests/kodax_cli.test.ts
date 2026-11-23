@@ -534,20 +534,6 @@ describe('CLI Option Parsing', () => {
     expect(opts.thinking).toBe(true);
   });
 
-  it('should parse -y (auto) option', () => {
-    const program = createTestCommand();
-    program.parse(['node', 'test', '-y']);
-    const opts = program.opts();
-    expect(opts.auto).toBe(true);
-  });
-
-  it('should parse --auto option', () => {
-    const program = createTestCommand();
-    program.parse(['node', 'test', '--auto']);
-    const opts = program.opts();
-    expect(opts.auto).toBe(true);
-  });
-
   it('should parse -s (session) option', () => {
     const program = createTestCommand();
     program.parse(['node', 'test', '-s', 'resume']);
@@ -610,11 +596,10 @@ describe('CLI Option Parsing', () => {
 
   it('should parse short and long options mixed', () => {
     const program = createTestCommand();
-    program.parse(['node', 'test', '-t', '--provider', 'anthropic', '-y', '-r', 'abc']);
+    program.parse(['node', 'test', '-t', '--provider', 'anthropic', '-r', 'abc']);
     const opts = program.opts();
     expect(opts.thinking).toBe(true);
     expect(opts.provider).toBe('anthropic');
-    expect(opts.auto).toBe(true);
     expect(opts.resume).toBe('abc');
   });
 });
@@ -726,10 +711,10 @@ describe('CLI Behavior', () => {
     const program = createTestCommand();
     // Note: commander doesn't support combined short options like -ty
     // Each option must be separate or have its own value
-    program.parse(['node', 'test', '-t', '-y']);
+    program.parse(['node', 'test', '-t', '-c']);
     const opts = program.opts();
     expect(opts.thinking).toBe(true);
-    expect(opts.auto).toBe(true);
+    expect(opts.continue).toBe(true);
   });
 
 });

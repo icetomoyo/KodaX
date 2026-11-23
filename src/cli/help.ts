@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { getAvailableProviderNames } from '@kodax-ai/coding';
-import { HELP_EFFORT, HELP_REPO_INTELLIGENCE, HELP_SESSION, HELP_THINKING, HELP_NEW_SESSION } from './root.js';
+import { HELP_EFFORT, HELP_REPO_INTELLIGENCE, HELP_SESSION, HELP_THINKING } from './root.js';
 
 // ============== CLI Help Topics ==============
 
@@ -68,7 +68,6 @@ const CLI_HELP_TOPICS: Record<string, () => void> = {
     printHelpHeading('Options:');
     printHelpLine('  -c, --continue       ', 'Continue most recent non-empty conversation');
     printHelpLine('  -r, --resume [value] ', 'Resume by ID or exact title (no value = searchable picker)');
-    printHelpLine('  -n, --new            ', HELP_NEW_SESSION);
     printHelpLine('  -s, --session <op>   ', HELP_SESSION);
     printHelpLine('  --no-session         ', 'Disable session persistence (print mode only)\n');
     printHelpHeading('Examples:');

@@ -71,7 +71,7 @@ describe('KodaX root/subcommand option ownership', () => {
     { name, args: ['host', name, '--home', '/help-only', '-h'] },
     { name, args: ['host', name, '--help=topic'] },
     { name, args: ['host', name, '--help='] },
-    { name, args: ['host', name, '-yh'] },
+    { name, args: ['host', name, '-th'] },
     { name, args: ['host', name, '--timeout-ms', 'not-a-number', '--help'] },
   ]);
   it.each(helpCases)('keeps host $name help read-only: $args', async ({ name, args }) => {

@@ -1,4 +1,4 @@
-import { Command, Option } from 'commander';
+import { Command, CommanderError, Option } from 'commander';
 import {
   parseAgentModeOption,
   parseWorkModeOption,
@@ -17,7 +17,6 @@ export const HELP_EFFORT = "Reasoning effort: off, auto, low, medium, high, xhig
 export const HELP_REPO_INTELLIGENCE = "Repo intelligence mode: auto, full, light, off";
 export const HELP_SESSION = "Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID";
 export const HELP_THINKING = "Compatibility alias for --reasoning auto";
-export const HELP_NEW_SESSION = "Legacy no-op; current CLI already starts a fresh session by default";
 
 export const KODAX_CLI_SUBCOMMAND_NAMES = [
   'acp',
@@ -63,11 +62,32 @@ export const KODAX_COMPLETION_ROOT_SUBCOMMANDS = [
 ] as const;
 export const KODAX_EXEC_POLICY_SUBCOMMANDS = ['check'] as const;
 
-function collectRepeatedOption(
-  value: string,
-  previous: string[] = [],
-): string[] {
-  return [...previous, value];
+/** Removed root flags. Each still parses so the user gets a pointer instead of "unknown option". */
+const REMOVED_ROOT_OPTIONS = [
+  { flags: '-n, --new', pointer: 'a new session is already the default, so drop the flag' },
+  { flags: '-y, --auto', pointer: 'set permissionMode in ~/.kodax/config.json, or use /mode in the REPL' },
+  { flags: '--extension <path>', pointer: 'register the extension with `kodax extensions add <path>`' },
+] as const;
+
+/** Commander's parse errors that mean "you typed it wrong" rather than "it ran and failed". */
+const USAGE_ERROR_CODES = new Set([
+  'commander.unknownOption',
+  'commander.unknownCommand',
+  'commander.missingArgument',
+  'commander.optionMissingArgument',
+  'commander.missingMandatoryOptionValue',
+  'commander.conflictingOption',
+  'commander.excessArguments',
+  'commander.invalidArgument',
+]);
+
+/**
+ * Commander exits 1 for every parse error. Usage errors exit 2 so a script can
+ * tell a mistyped command from one that ran and failed. Set it on the root
+ * before adding commands: `.command()` copies it to each child it creates.
+ */
+export function exitWithUsageCode(error: CommanderError): never {
+  process.exit(USAGE_ERROR_CODES.has(error.code) ? 2 : error.exitCode);
 }
 
 export function configureKodaXRootCommand(program: Command): Command {
@@ -82,10 +102,6 @@ export function configureKodaXRootCommand(program: Command): Command {
       .option(
         '-c, --continue',
         'Continue most recent non-empty conversation in current directory',
-      )
-      .option(
-        '-n, --new',
-        HELP_NEW_SESSION,
       )
       .option(
         '-r, --resume [id-or-title]',
@@ -115,7 +131,6 @@ export function configureKodaXRootCommand(program: Command): Command {
         '--repo-intelligence-trace',
         'Enable repo intelligence trace metadata/logging',
       )
-      .option('-y, --auto', 'Backward-compat alias; no effect in non-REPL CLI')
       .option(
         '-s, --session <op>',
         HELP_SESSION,
@@ -123,12 +138,6 @@ export function configureKodaXRootCommand(program: Command): Command {
       .option(
         '--apply-session-cleanup',
         'Archive strictly matched empty ACP test sessions (with -s cleanup-acp)',
-      )
-      .option(
-        '--extension <path>',
-        'Load local extension module (.js/.mjs/.cjs/.ts/.mts/.cts)',
-        collectRepeatedOption,
-        [],
       )
       .option('--no-session', 'Disable session persistence (print mode only)')
       .option(
@@ -139,6 +148,15 @@ export function configureKodaXRootCommand(program: Command): Command {
       // Keep the root command executable even when subcommands like `skill` exist.
       .action(() => {})
   );
+  for (const removed of REMOVED_ROOT_OPTIONS) {
+    const option = new Option(removed.flags).hideHelp();
+    configured.addOption(option).on(`option:${option.name()}`, () => {
+      configured.error(`error: ${option.flags} was removed; ${removed.pointer}`, {
+        exitCode: 2,
+        code: 'kodax.removedOption',
+      });
+    });
+  }
   configureKodaXExecPolicyCommand(configured);
   // Topic help is a root option, consumed before subcommand dispatch.
   // Stop before any nested action or argument validation can run.

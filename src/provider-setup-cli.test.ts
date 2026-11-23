@@ -24,7 +24,6 @@ describe('shouldAutoLaunchProviderSetup', () => {
     { outputMode: 'text' as const, prompt: [], resumeRequested: true, isInputTty: true, isOutputTty: true },
     { outputMode: 'text' as const, prompt: [], sessionRequested: true, isInputTty: true, isOutputTty: true },
     { outputMode: 'text' as const, prompt: [], helpRequested: true, isInputTty: true, isOutputTty: true },
-    { outputMode: 'text' as const, prompt: [], extensionRequested: true, isInputTty: true, isOutputTty: true },
     { outputMode: 'text' as const, prompt: [], isInputTty: false, isOutputTty: true },
     { outputMode: 'text' as const, prompt: [], isInputTty: true, isOutputTty: false },
   ])('does not interrupt explicit or non-interactive invocation %#', (input) => {

@@ -2,7 +2,6 @@ import { cliStartupProgressMessage, type CliStartupProgress } from '../cli-start
 import type { KodaXClientHostAuthorization } from '../client-host-authorization.js';
 import { Command } from 'commander';
 import chalk from 'chalk';
-import path from 'path';
 import {
   loadCommands,
   parseCommandCall,
@@ -26,9 +25,6 @@ import {
 } from '../cli_option_helpers.js';
 import {
   type KodaXOptions,
-  dedupeExtensionPathsByEntrypoint,
-  discoverDefaultExtensions,
-  excludeExtensionPathsByEntrypoint,
   KODAX_DEFAULT_PROVIDER,
   KodaXTerminalError,
   shutdownDefaultLspService,
@@ -69,20 +65,6 @@ import { CliHost, runCliTaskViaClient } from './cli-host.js';
 import { loadResumableSessions, readResumeTarget, runLegacySessionOperation } from './sessions.js';
 import { loadSandboxRuntimeModule, prepareSetupSandboxReport, prepareInteractiveSandboxStartupInChild, prepareInteractiveSandboxStartup, reportInteractiveSandboxStartup, inspectSandboxReport } from './interactive-sandbox.js';
 import { executeProviderSetup } from './setup.js';
-
-async function discoverCliDefaultExtensions(): Promise<string[]> {
-  try {
-    return await discoverDefaultExtensions();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(
-      chalk.yellow(
-        '[extensions] Failed to discover default extensions: ' + message,
-      ),
-    );
-    return [];
-  }
-}
 
 type CliRunResultEvent = {
   type: 'run.result';
@@ -187,8 +169,6 @@ export async function runKodaXRootCommand(
       resumeRequested: opts.resume !== undefined,
       sessionRequested: opts.session !== undefined,
       helpRequested: opts.help !== undefined,
-      extensionRequested:
-        Array.isArray(opts.extension) && opts.extension.length > 0,
       isInputTty: process.stdin.isTTY,
       isOutputTty: process.stdout.isTTY,
     })
@@ -239,9 +219,6 @@ export async function runKodaXRootCommand(
       return;
     }
   }
-  const configWithExtensions = config as typeof config & {
-    extensions?: string[];
-  };
   if (
     typeof opts.repoIntelligence === 'string' &&
     opts.repoIntelligence.trim()
@@ -254,46 +231,6 @@ export async function runKodaXRootCommand(
   const reasoningMode = resolveCliReasoningMode(program, opts, config);
   const effort = resolveCliEffort(program, opts, config);
   const agentMode = resolveCliAgentMode(program, opts, config);
-  const configuredExtensions = Array.isArray(configWithExtensions.extensions)
-    ? configWithExtensions.extensions
-        .filter(
-          (value): value is string =>
-            typeof value === 'string' && value.trim().length > 0,
-        )
-        .map((value) =>
-          path.isAbsolute(value)
-            ? value
-            : path.resolve(path.dirname(KODAX_CONFIG_FILE), value),
-        )
-    : [];
-  const cliExtensions = Array.isArray(opts.extension)
-    ? opts.extension
-        .filter(
-          (value): value is string =>
-            typeof value === 'string' && value.trim().length > 0,
-        )
-        .map((value) => path.resolve(value))
-    : [];
-  const discoveredExtensions = await discoverCliDefaultExtensions();
-  const dedupedDiscoveredExtensions =
-    await dedupeExtensionPathsByEntrypoint(discoveredExtensions);
-  const dedupedConfiguredExtensions =
-    await dedupeExtensionPathsByEntrypoint(configuredExtensions);
-  const dedupedCliExtensions =
-    await dedupeExtensionPathsByEntrypoint(cliExtensions);
-  const configuredOnlyExtensions = await excludeExtensionPathsByEntrypoint(
-    dedupedConfiguredExtensions,
-    dedupedCliExtensions,
-  );
-  const discoveredOnlyExtensions = await excludeExtensionPathsByEntrypoint(
-    dedupedDiscoveredExtensions,
-    [...dedupedConfiguredExtensions, ...dedupedCliExtensions],
-  );
-  const activeExtensions = [
-    ...discoveredOnlyExtensions,
-    ...configuredOnlyExtensions,
-    ...dedupedCliExtensions,
-  ];
   const providerOverride = opts.provider ?? process.env.KODAX_PROVIDER;
   const selectedProvider = resolveCliProviderSelection(
     opts.provider,
@@ -308,7 +245,6 @@ export async function runKodaXRootCommand(
     config.model,
   );
   const sessionFlags = normalizeCliSessionFlags(opts);
-  // -y/--auto is kept for backward compatibility but has no effect in CLI.
   const options: CliOptions = {
     // Priority: CLI args > environment > config file > defaults.
     provider: selectedProvider,
@@ -319,7 +255,6 @@ export async function runKodaXRootCommand(
     agentMode,
     ...(typeof opts.workMode === 'string' ? { workMode: parseWorkModeOption(opts.workMode) } : {}),
     outputMode,
-    extensions: activeExtensions,
     session: sessionFlags.session,
     maxIter: parseOptionalNonNegativeInt(opts.maxIter),
     prompt: opts.print ? [opts.print] : program.args,
@@ -424,17 +359,6 @@ export async function runKodaXRootCommand(
       const target = await readResumeTarget(await getCliHost(), options.resume);
       if (target === undefined) throw new Error(`Session not found: ${options.resume}`);
       if (target.archived === true) throw new Error('Session is archived; unarchive it before resuming.');
-    }
-
-    // FEATURE_298 T27 — fixed to the independent Host: the client never
-    // constructs an embedded Runtime, so CLI --extension paths have no
-    // embedded fallback. The Host owns the extension runtime, configured
-    // MCP servers (with elicitation), and integration hot reload.
-    if (dedupedCliExtensions.length > 0) {
-      throw new Error(
-        'CLI --extension paths cannot cross the daemon process boundary. ' +
-          'Add the extension to the daemon profile config for this profile.',
-      );
     }
 
     // Command dispatch for /command-style invocations.

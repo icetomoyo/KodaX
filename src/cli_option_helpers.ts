@@ -61,7 +61,6 @@ export interface CliOptions {
   agentMode: KodaXAgentMode;
   workMode?: KodaXOptions['workMode'];
   outputMode: CliOutputMode;
-  extensions?: string[];
   extensionRuntime?: KodaXExtensionRuntime;
   session?: string;
   maxIter?: number;

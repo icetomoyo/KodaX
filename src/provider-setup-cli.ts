@@ -45,7 +45,6 @@ export function shouldAutoLaunchProviderSetup(input: {
   readonly resumeRequested?: boolean;
   readonly sessionRequested?: boolean;
   readonly helpRequested?: boolean;
-  readonly extensionRequested?: boolean;
   readonly isInputTty: boolean | undefined;
   readonly isOutputTty: boolean | undefined;
 }): boolean {
@@ -56,7 +55,6 @@ export function shouldAutoLaunchProviderSetup(input: {
     && input.resumeRequested !== true
     && input.sessionRequested !== true
     && input.helpRequested !== true
-    && input.extensionRequested !== true
     && input.isInputTty === true
     && input.isOutputTty === true;
 }

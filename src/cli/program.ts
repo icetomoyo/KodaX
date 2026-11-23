@@ -3,7 +3,7 @@ import { RUNTIME_HOST_SLOT } from '../runtime-daemon/state.js';
 import { KODAX_DIR } from '@kodax-ai/repl';
 import { configureLazyIntegrationCommands } from '../integration-cli-lazy.js';
 import { loadProviderAuth, loadIntegrationCli } from '../cli-lazy-components.js';
-import { configureKodaXRootCommand } from './root.js';
+import { configureKodaXRootCommand, exitWithUsageCode } from './root.js';
 import { serveDaemonCommand } from './host-serve.js';
 import { resolveCliRuntimeDaemonLocation, configureKodaXHostCommand } from './host.js';
 import { configureKodaXSessionsCommand } from './sessions.js';
@@ -34,7 +34,8 @@ export function createKodaXProgram(deps: KodaXProgramDeps): KodaXProgram {
     new Command()
       .name('kodax')
       .description('KodaX - Intelligent Coding Agent')
-      .version(version),
+      .version(version)
+      .exitOverride(exitWithUsageCode),
   );
   configureLazyIntegrationCommands(program, {
     version,
