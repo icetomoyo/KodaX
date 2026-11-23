@@ -90,7 +90,7 @@ plain lookup (36 calls, $0.042). Blind verdicts: 14 tie, 2 baseline,
 the attribution is provider noise. Input per call rose 1.2%, because the Run
 Context envelope outweighs the shorter system prompt.
 
-## Applications shape managed-Run prompts through one spec — 2026-11-19 (unreleased)
+## Applications shape managed-Run prompts through one spec — 2026-11-19 (shipped in v0.7.97-beta.12)
 
 Customers need KodaX to answer as their product, not as a coding agent. The
 only replacement seam was `systemPromptOverride`. That seam replaces the whole
@@ -192,7 +192,7 @@ Stored Run records that say `'sa'` stay readable as written. CLI
 keep their history, and their "SA remains for explicit SDK Runs" clause no
 longer holds.
 
-## Prompt variants keep conditions; Actor capacity states free slots — 2026-11-18 (unreleased)
+## Prompt variants keep conditions; Actor capacity states free slots — 2026-11-18 (shipped in v0.7.97-beta.12)
 
 Issue 415 came from a compact prompt projection that dropped a condition. The
 Skill catalog rule became an unconditional "invoke a matching Skill first".
@@ -234,7 +234,7 @@ as the backstop. Proactive delegation stays on.
 until the prompt store moves to sections. Substrate: 068b89d15 for the d-4
 eval; the fix commits are 4788f47a9, 36fac9eeb, 068b89d15 and d02236f84.
 
-## Stop always ends; an unconfirmed Actor tree fences the Session instead — 2026-11-17 (unreleased)
+## Stop always ends; an unconfirmed Actor tree fences the Session instead — 2026-11-17 (shipped in v0.7.97-beta.12)
 
 Status: Accepted. Issues 412 and 413; `actorSettlementConvergence:3`.
 
@@ -442,7 +442,7 @@ and narrower tool authority.
 projection, alongside actual mode/profile/verification, without inventing old Run values.
 Capability version 2 rejects older Hosts that cannot preserve this contract. Global defaults have explicit application boundaries, distinct from
 live Session settings and from values already captured by an admitted Run.
-See [composition and configuration](SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复未发布).
+See [composition and configuration](SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复随-v0797-alpha12-发布).
 
 ## Unified Host SDK ownership cutover — 2026-10-29 (shipped in v0.7.97-alpha.12)
 
@@ -479,7 +479,7 @@ Host readiness, exact process exit and Run recovery eligibility remain distinct.
 Existing Stop, history, principal, fresh authority and tool-cleanup checks govern
 checkpoint continuation. Migration never replays tools with unknown effects.
 See the [accepted slices](features/v0.7.97.md#2026-10-29-统一-host-sdk-收口未发布),
-[migration contract](SDK_MIGRATION.md#统一-host-sdk-收口未发布) and
+[migration contract](SDK_MIGRATION.md#统一-host-sdk-收口随-v0797-alpha12-发布) and
 [validation record](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md).
 
 Beta.3 repairs Windows WFP probe allocation in KodaX doctor and the bundled ASRT 0.0.65 dependency. SDK installs with `--ignore-scripts` receive the repair. Authenticated credential/Host Tool bridge takeover retires the old RPC connection so clients can reconnect and resume live scoped leases without replaying dispatched tools. Production and source-test TypeScript checks are separate; public SDK entry points remain unchanged.
@@ -6744,7 +6744,7 @@ Commits `37baedc7c`, `1eca089ba`, `14e1da985`, `64b218be8`, `cc48eea79`,
 Acceptance and the small-context pilot are recorded in the
 [Issue 322 regression guide](test-guides/ISSUE_322_v0.7.97_REGRESSION_GUIDE.md#2026-11-06-small-context-document-pipeline-acceptance).
 
-**2026-10-21 local implementation follow-up (after `87502cb9`, unreleased):**
+**2026-10-21 local implementation follow-up (after `87502cb9`, shipped in v0.7.97-alpha.10):**
 Issue 322 preserves prior summary failures on irreducible input. Capacity recovery
 now also pages older assistant text and cumulative user input, reduces excessive
 static tool schemas through the existing authorized bridge, scales the small-window
@@ -6773,7 +6773,7 @@ alone do not prove a replacement committed. Retry refreshes metadata, and permis
 failures still surface. Mixed user text/image messages page only text; a fixed
 request-only system notice explains runtime provenance and is included in the budget.
 
-**2026-10-22 completion of the local recovery follow-up (unreleased):** A generation
+**2026-10-22 completion of the local recovery follow-up (shipped in v0.7.97-alpha.10):** A generation
 checkpoint now binds the exact Session, active lineage entry, messages digest,
 original turn and remaining iteration budgets. SA and AMA reopen that boundary
 without appending the objective or dispatching completed tools again. Each child
@@ -7955,7 +7955,7 @@ directory on the data root and never split process or storage by profile.
 
 ## ADR-077: Provider Requests Name Their Conversation with `X-Session-Id`
 
-**Status**: Accepted (2026-11-17). Tracks Issues 416, 417 and 418. Unreleased.
+**Status**: Accepted (2026-11-17). Tracks Issues 416, 417 and 418. Shipped in v0.7.97-beta.12.
 
 **Context**: Provider HTTP requests carried no conversation id. A gateway
 could not group a conversation's requests for billing, quota or audit, so it
@@ -8049,7 +8049,7 @@ file name without checking it.
 
 ## ADR-078: Failed Runs Carry Their Real Cause, and Public Entries Settle Expected Outcomes
 
-**Status**: Accepted (2026-11-20). Unreleased. Amends the Runtime failure
+**Status**: Accepted (2026-11-20). Shipped in v0.7.97-beta.12. Amends the Runtime failure
 contract recorded in DD "Classified failures", which kept causes and raw
 errors inside the Runtime boundary.
 

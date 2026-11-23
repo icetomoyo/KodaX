@@ -67,7 +67,7 @@ Host 原子保存元数据和回执，保留原 Session ID、历史、原生历�
 Space 最新已发布包验收基线为 `codex/sdk-alpha12-preparation@ca8d2313`。其追加的配置
 原子性缺口已在 Root 后续实现补齐：所有核心配置 writer 共用锁与原子发布，坏文件不回落
 空配置。公开完整读取、锁忙/读取失败语义、混合旧 writer 限制及 Main 复合修改方式见
-[配置提交契约](SDK_MIGRATION.md#2026-11-02-核心配置提交补齐alpha12-之后未发布)。
+[配置提交契约](SDK_MIGRATION.md#2026-11-02-核心配置提交补齐随-v0797-beta1-发布)。
 Space 保留有限的明确锁忙重试，不能重试解析失败、绕过 CAS 或因改名默默采用另一账号。
 
 接手验收还需 Space 自己完成：所有现有专家和普通 Partner 的共享 Host 流程、队列切换/
@@ -111,7 +111,7 @@ Main/Renderer 不传该标记、不改 inputId，也不需自行迁移队列文�
 
 2026-10-30 的后续修复（已随 `v0.7.97-alpha.12` 发布）补齐统一 Host 的 Partner 准入、可信 profile 快照、
 实际 Run workMode 查询、Actor checkpoint 跨进程恢复和配置应用边界。
-采用 [SDK 组合契约](SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复未发布)，不再使用
+采用 [SDK 组合契约](SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复随-v0797-alpha12-发布)，不再使用
 旧 Partner inline 例外。`services.createExecutionProfile` 在 Main 基于 Host 实际目录评估显式策略，并保留
 profile/验证要求及工具元数据快照。Partner persona 默认不增加工具限制；显式上限
 继续覆盖 native、桥接与派生子任务。实际模式与工具集合用 `runs.read().effectiveConfig` 查询。
@@ -135,7 +135,7 @@ profile/验证要求及工具元数据快照。Partner persona 默认不增加�
 
 任务报告继续消费下文的结构化元数据；独立 `/session` transcript 的 `taskResults`
 现为 `KodaXTaskResultReport[]`，不要求每条都有 taskId，也不把 unknown 当成功。
-完整能力与边界见 [迁移清单](SDK_MIGRATION.md#2026-10-29-未发布改动对齐)。
+完整能力与边界见 [迁移清单](SDK_MIGRATION.md#2026-10-29-改动对齐随-v0797-alpha11-发布)。
 
 ## 启动进度与 Renderer 交接
 

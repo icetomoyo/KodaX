@@ -37,7 +37,7 @@ task reports with unknown outcomes, and estimated-token streaming displays.
 Clients consume Host estimates instead of treating raw character counts as
 tokens. These changes do not modify Provider billing or UTF-16 text offsets.
 Skill shell patterns constrain a single parsed command and retain Host
-authorization. [Current integration boundaries](SDK_MIGRATION.md#2026-10-29-未发布改动对齐)
+authorization. [Current integration boundaries](SDK_MIGRATION.md#2026-10-29-改动对齐随-v0797-alpha11-发布)
 are normative for consumers; historical release paragraphs below retain their dates.
 Issue 371's intermittent historical first-read latency remains open.
 

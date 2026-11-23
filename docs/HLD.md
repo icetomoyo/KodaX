@@ -12,7 +12,7 @@ before printing and never dispatches management operations. See the
 > Unified Host SDK cutover (shipped in v0.7.97-alpha.12): public product execution connects to one independent Host.
 > Embedded/default owner construction, inline switching and caller-owned external-agent
 > daemons are retired. Internal Runtime and independent libraries remain. See
-> [migration and ownership limits](SDK_MIGRATION.md#统一-host-sdk-收口未发布).
+> [migration and ownership limits](SDK_MIGRATION.md#统一-host-sdk-收口随-v0797-alpha12-发布).
 
 Last updated: 2026-11-23. Current development tree: FEATURE_298/299/301/302/303/304/305/306 on package
 `0.7.97-rc.1`, with `v0.7.96` as the last stable release; publication is separate.
