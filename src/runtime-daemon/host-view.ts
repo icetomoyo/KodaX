@@ -10,7 +10,8 @@
 import type { ClientInteraction, ClientSession, ClientSessionView, ClientViewItem } from '@kodax-ai/coding/client-contract';
 
 import { HostProtocolError, hostRpcNotification } from '../host-protocol/codec.js';
-import { newHostIncident, type HostIncident } from '../host-protocol/connection.js';
+// codec, not connection: the CLI loads this module at startup, and connection loads every method schema.
+import { newHostIncident, type HostIncident } from '../host-protocol/codec.js';
 import type { LocalSessionView, SessionView } from '../host-protocol/view.js';
 import { diffSessionView, type SyncItem, type SyncView } from '../host-protocol/view-sync.js';
 import type { RuntimeWorkflowSummary } from '../sdk-runtime.js';

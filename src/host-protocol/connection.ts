@@ -10,7 +10,9 @@ import {
   HostProtocolError,
   hostRpcFailure,
   hostRpcSuccess,
+  newHostIncident,
   parseHostRpcFrame,
+  type HostIncident,
   type HostRpcFailure,
   type HostRpcId,
   type HostRpcNotification,
@@ -60,17 +62,6 @@ export interface HostAdmission {
     afterAnswer: (run: () => void) => void,
   ): Promise<unknown>;
   close(): void;
-}
-
-/** One failure the client is not shown. The client gets `incidentId`; the Host log keeps it with what went wrong. */
-export interface HostIncident {
-  readonly incidentId: string;
-  /** The request that failed, when one did. */
-  readonly rpcId?: HostRpcId;
-}
-
-export function newHostIncident(rpcId?: HostRpcId): HostIncident {
-  return { incidentId: globalThis.crypto.randomUUID(), ...(rpcId !== undefined ? { rpcId } : {}) };
 }
 
 export interface HostConnectionOptions {

@@ -10,7 +10,8 @@ import {
   type HostRpcFailure,
   type HostRpcSuccess,
 } from './codec.js';
-import { createHostConnection, type HostAdmission, type HostAdmissionRequest, type HostIncident } from './connection.js';
+import type { HostIncident } from './codec.js';
+import { createHostConnection, type HostAdmission, type HostAdmissionRequest } from './connection.js';
 import { HOST_METHODS, hostParams, hostResult, type HostMethodRegistry } from './methods.js';
 
 const METHODS: HostMethodRegistry = {

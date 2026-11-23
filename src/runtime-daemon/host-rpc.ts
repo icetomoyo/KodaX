@@ -14,7 +14,7 @@ import {
 } from '@kodax-ai/agent';
 
 import type { HostCloseReason } from '../host-protocol/close.js';
-import type { HostIncident } from '../host-protocol/connection.js';
+import type { HostIncident } from '../host-protocol/codec.js';
 import { HostProtocolError, hostRpcNotification, type HostErrorCode } from '../host-protocol/codec.js';
 import type { HostInitializeParams, HostLimits, HostMethodName, HostParams } from '../host-protocol/methods.js';
 import type {

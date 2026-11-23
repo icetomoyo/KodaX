@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { ClientViewItem } from '@kodax-ai/coding/client-contract';
 import { createRetryHistoryItem } from '@kodax-ai/repl';
 
-import type { HostIncident } from '../host-protocol/connection.js';
+import type { HostIncident } from '../host-protocol/codec.js';
 import { LocalSessionView, SessionView } from '../host-protocol/view.js';
 import { applyViewOps, type SyncItem, type SyncView, type ViewOp } from '../host-protocol/view-sync.js';
 import type { RuntimeWorkflowSummary } from '../sdk-runtime.js';
