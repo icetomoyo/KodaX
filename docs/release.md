@@ -650,7 +650,7 @@ needing a newer `GLIBC_*` symbol), a failed native text addon load no
 longer crashes the next tracked write (Issue 402), and Session settings
 capture user-level defaults once instead of drifting with shared
 configuration. Acceptance is recorded in the
-[FEATURE_305 test guide](test-guides/FEATURE_305_v0.7.98_TEST_GUIDE.md).
+[FEATURE_305 test guide](test-guides/FEATURE_305_v0.7.97_TEST_GUIDE.md).
 
 The CI/Release in-place upgrade gates now pin the published
 `0.7.97-beta.5` tarball (published 2026-11-10T09:40:09.927Z; registry

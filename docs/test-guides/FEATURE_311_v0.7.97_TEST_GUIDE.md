@@ -1,7 +1,7 @@
 # FEATURE_311 — Unified Prompt Chain
 
-Date: 2026-11-20. Status: implemented on the local `KodaX` branch, unreleased.
-[Design block](../features/v0.7.98.md#feature_311-unified-prompt-chain),
+Date: 2026-11-20. Status: shipped in `v0.7.97-beta.12`.
+[Design block](../features/v0.7.97.md#feature_311-unified-prompt-chain),
 [ADR entry](../ADR.md#every-root-run-uses-one-worker-and-one-tool-text--2026-11-19-unreleased),
 [migration](../SDK_MIGRATION.md#统一提示词链路未发布).
 

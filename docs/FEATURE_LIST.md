@@ -795,7 +795,7 @@ glibc 2.17 and on kernels before 5.8 (Issues 403–404), a failed native text
 addon load no longer crashes the next tracked write (Issue 402), and Session
 settings no longer drift with shared user defaults. The CI/Release in-place
 upgrade gate now pins the published beta.5 tarball. Acceptance is recorded in
-the [FEATURE_305 test guide](test-guides/FEATURE_305_v0.7.98_TEST_GUIDE.md).
+the [FEATURE_305 test guide](test-guides/FEATURE_305_v0.7.97_TEST_GUIDE.md).
 Every v0.7.96 stable and v0.7.97-alpha.1 through beta.5 client contract is
 retained except the removed `profile` option; migration steps are in
 [SDK_MIGRATION.md](SDK_MIGRATION.md#one-host-per-kodax_home-profile-removed)
@@ -2610,7 +2610,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 ## 2026-11-19 FEATURE_311 Addition
 
-- Status: Completed 2026-11-20, unreleased. Planned under `v0.7.98`, a planning identifier. ID 311 is unused on
+- Status: Completed 2026-11-20; shipped in `v0.7.97-beta.12`. First planned under the `v0.7.98` planning identifier. ID 311 is unused on
   both `KodaX` and `KodaX-next-dev`.
 - Source: the 2026-10-26/27 first-turn token work replaced canonical text with compact text at request
   time and silently kept canonical text whenever an exact match failed. Two tool text sets and two Worker
@@ -2619,13 +2619,13 @@ fixed GitHub binary archive sidecar omission before tagging.
 - Owner decisions (2026-11-19): one source per role and one tool text set on every entry; every root Run
   moves to the managed Worker; `systemPromptOverride` replaces identity and style only; SDK customers no
   longer call `runKodaX`, so there is no deprecation window; eval budget authorized.
-- Design block: [v0.7.98](features/v0.7.98.md#feature_311-unified-prompt-chain).
+- Design block: [v0.7.97](features/v0.7.97.md#feature_311-unified-prompt-chain).
 
 ---
 
 ## 2026-11-18 FEATURE_310 Addition
 
-- Status: Completed 2026-11-19, unreleased. Planned under `v0.7.98`, a planning identifier.
+- Status: Completed 2026-11-19; shipped in `v0.7.97-beta.12`. First planned under the `v0.7.98` planning identifier.
   ID 310 skips 307–309, which `KodaX-next-dev` already uses.
 - Source: the SA selection was retired in 4c4c3774e (2026-10-16), but explicit SDK `'sa'`,
   config.json `'sa'`, the SA dispatch branch, `'sa'` labels and SA test fixtures remain.
@@ -2634,25 +2634,25 @@ fixed GitHub binary archive sidecar omission before tagging.
 - Owner decisions (2026-11-18): normalize config.json `'sa'` to AMA; retire public `'sa'` the
   amaw way and remove every SA call path in this pass, not in a later release window; delete
   the FEATURE_100 golden recorder; keep the `sa-mutation-reflection` eval id.
-- Design block: [v0.7.98](features/v0.7.98.md#feature_310-sa-mode-residue-removal).
+- Design block: [v0.7.97](features/v0.7.97.md#feature_310-sa-mode-residue-removal).
 
 ---
 
 ## 2026-11-13 FEATURE_306 Addition
 
-- Status: Completed 2026-11-13; shipped in `v0.7.97-beta.9`. Planned under `v0.7.98`, a
-  planning identifier. npm publication and the Space dependency bump follow.
+- Status: Completed 2026-11-13; shipped in `v0.7.97-beta.9`. First planned under the
+  `v0.7.98` planning identifier. npm publication and the Space dependency bump follow.
 - Source: KodaX Space F148 (Settings-based data location) and Space ADR-011. The SDK resolves
   the data root and copies it; selecting the new root, restarting the Host and deleting the
   old root stay with the embedder.
-- Design block: [v0.7.98](features/v0.7.98.md#feature_306-data-root-resolver-and-copy).
+- Design block: [v0.7.97](features/v0.7.97.md#feature_306-data-root-resolver-and-copy).
 
 ---
 
 ## 2026-11-10 FEATURE_305 Addition
 
-- Status: Completed 2026-11-11 and shipped in `v0.7.97-beta.6`; planned under `v0.7.98`, a
-  planning identifier.
+- Status: Completed 2026-11-11 and shipped in `v0.7.97-beta.6`; first planned under the
+  `v0.7.98` planning identifier.
 - Source: Issues 405–407 from the KodaX Space 0.1.47-alpha.5 + CLI 0.7.97-beta.4 report.
   Decision record: ADR-075 (Accepted). Design:
   [one-host-per-kodax-home-2026-11-10.md](designs/one-host-per-kodax-home-2026-11-10.md).
@@ -2660,13 +2660,13 @@ fixed GitHub binary archive sidecar omission before tagging.
   grants; remove the Host-location `profile` SDK option and `daemon --profile` now, with
   explicit errors and migration docs that ship in the npm package; keep the
   `identity.profile` wire field (`default`) for clients since v0.7.66.
-- Design block: [v0.7.98](features/v0.7.98.md#feature_305-one-host-per-kodax_home).
+- Design block: [v0.7.97](features/v0.7.97.md#feature_305-one-host-per-kodax_home).
 
 ---
 
 ## 2026-11-04 FEATURE_303 and FEATURE_304 Addition
 
-- Status: target `v0.7.98`. FEATURE_303 and FEATURE_304 completed 2026-11-05 and shipped
+- Status: first targeted at the `v0.7.98` planning identifier. FEATURE_303 and FEATURE_304 completed 2026-11-05 and shipped
   early in `v0.7.97-beta.5` through the `KodaX-next-dev` integration.
 - Source: WP6 and WP7 of the [SDK foundation hardening plan](designs/sdk-foundation-hardening-plan-2026-11-04.md).
   The plan's Phase 1 defects are Issues 378-381.
@@ -2676,7 +2676,7 @@ fixed GitHub binary archive sidecar omission before tagging.
   default. Decision: the Node floor stays `>=20`.
 - FEATURE_304: `ask` result for extension `tool:before`. Decision record: ADR-071 (Accepted).
   It does not wait for Space's callers.
-- Design: [v0.7.98](features/v0.7.98.md).
+- Design: [v0.7.97](features/v0.7.97.md#feature_303-proxy-and-private-ca-support).
 
 ---
 
@@ -2724,12 +2724,12 @@ fixed GitHub binary archive sidecar omission before tagging.
 | ID | Title | Version | Design | Notes |
 |---|---|---|---|---|
 | `317` | RepoIntel Phase 0 — Honest Default Surface | `v0.7.97` (unreleased) | [v0.7.97](features/v0.7.97.md#feature_317-repointel-phase-0--honest-default-surface) | Default `auto` offers `repo_overview`, `changed_scope` and `changed_diff`; the semantic tools, module/impact injection and the background index build need explicit `full` or `light`, and routing signals come from git changes. Output reports omitted items, not-found names and warming/unavailable indexes instead of placeholders. Storage moves to `<config home>/repo-intelligence`; `target_path` must stay in the workspace. Prompt eval (82 calls, blind-reviewed) recommended ship; `npm run bench:repo-intel-truth` holds the old-engine baseline. KNOWN_ISSUES #133 closed. |
-| `311` | Unified Prompt Chain | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_311-unified-prompt-chain) | Every root Run uses the managed Worker and every entry sends one tool text: the request-time projection, the canonical Worker and tool texts, the direct root engine and `system.md` are deleted. `runs.start({ mode: 'coding' })` is ignored with a warning; the leaf executor stays internal for child Agents. `tests/f311-entry-matrix.test.ts` pins every entry; ADR "Every root Run uses one Worker and one tool text" records it. |
-| `310` | SA Mode Residue Removal | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_310-sa-mode-residue-removal) | Public and config.json `agentMode: 'sa'` normalize the way `amaw` did: managed entries run AMA, `runKodaX` and `runs.start` without a mode treat it as unset, and persisted `'sa'` records stay readable. The SA dispatch branch, Direct Path overlay, `'sa'` labels and the FEATURE_100 golden recorder are gone; ADR "SA mode is retired from every caller" records it. The `sa-mutation-reflection` eval id keeps its name. |
-| `306` | Data Root Resolver and Copy | `v0.7.98` (shipped in `v0.7.97-beta.9`) | [v0.7.98](features/v0.7.98.md#feature_306-data-root-resolver-and-copy) | `resolveKodaXHome` resolves the data root without touching `process.env` and ignores a relative `KODAX_HOME` with a warning; `copyKodaXDataRoot` copies a data root into an empty target under an incomplete marker, skips per-Host state, refuses a running Host and rebases absolute paths in `.json` / `.jsonl`. Source: Space F148 / ADR-011; the Space dependency bump follows the release. |
-| `305` | One Host per KODAX_HOME | `v0.7.98` (shipped in `v0.7.97-beta.6`) | [v0.7.98](features/v0.7.98.md#feature_305-one-host-per-kodax_home) | One Host serves each `KODAX_HOME`; the Host-location `profile` SDK option and `--profile` CLI flag are removed with `runtime_host_migration_required` errors (ADR-075). Legacy-slot Hosts are found through the storage-owner redirect and profile-split Session state merges once (Issue 407); the Space dependency bump follows the release. |
-| `304` | Ask Result for Extension Tool Policy | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_304-ask-result-for-extension-tool-policy) | Extension `tool:before` may return `{ decision: 'ask', reason }`; block wins over ask. The Host raises an allow-once-only permission request with the reason in every mode, including Full Access and granted calls; a Host without `requestToolApproval` blocks. Capability `toolHookAsk: { version: 1 }` on embedded and daemon. The official sandbox asks for recursive and out-of-workspace deletes. |
-| `303` | Proxy and Private CA Support | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_303-proxy-and-private-ca-support) | The Responses WebSocket follows `HTTP(S)_PROXY` and `NO_PROXY` on Node 22.21+/24.5+ with `NODE_USE_ENV_PROXY=1` and on the Bun binary; the Host warns as `runtime:network` when a proxy variable would be bypassed. Node floor stays `>=20`. Verified on Node 22.23.1 and Bun 1.4.4 with a local proxy and private CA. |
+| `311` | Unified Prompt Chain | `v0.7.97` (shipped in `v0.7.97-beta.12`) | [v0.7.97](features/v0.7.97.md#feature_311-unified-prompt-chain) | Every root Run uses the managed Worker and every entry sends one tool text: the request-time projection, the canonical Worker and tool texts, the direct root engine and `system.md` are deleted. `runs.start({ mode: 'coding' })` is ignored with a warning; the leaf executor stays internal for child Agents. `tests/f311-entry-matrix.test.ts` pins every entry; ADR "Every root Run uses one Worker and one tool text" records it. |
+| `310` | SA Mode Residue Removal | `v0.7.97` (shipped in `v0.7.97-beta.12`) | [v0.7.97](features/v0.7.97.md#feature_310-sa-mode-residue-removal) | Public and config.json `agentMode: 'sa'` normalize the way `amaw` did: managed entries run AMA, `runKodaX` and `runs.start` without a mode treat it as unset, and persisted `'sa'` records stay readable. The SA dispatch branch, Direct Path overlay, `'sa'` labels and the FEATURE_100 golden recorder are gone; ADR "SA mode is retired from every caller" records it. The `sa-mutation-reflection` eval id keeps its name. |
+| `306` | Data Root Resolver and Copy | `v0.7.97` (shipped in `v0.7.97-beta.9`) | [v0.7.97](features/v0.7.97.md#feature_306-data-root-resolver-and-copy) | `resolveKodaXHome` resolves the data root without touching `process.env` and ignores a relative `KODAX_HOME` with a warning; `copyKodaXDataRoot` copies a data root into an empty target under an incomplete marker, skips per-Host state, refuses a running Host and rebases absolute paths in `.json` / `.jsonl`. Source: Space F148 / ADR-011; the Space dependency bump follows the release. |
+| `305` | One Host per KODAX_HOME | `v0.7.97` (shipped in `v0.7.97-beta.6`) | [v0.7.97](features/v0.7.97.md#feature_305-one-host-per-kodax_home) | One Host serves each `KODAX_HOME`; the Host-location `profile` SDK option and `--profile` CLI flag are removed with `runtime_host_migration_required` errors (ADR-075). Legacy-slot Hosts are found through the storage-owner redirect and profile-split Session state merges once (Issue 407); the Space dependency bump follows the release. |
+| `304` | Ask Result for Extension Tool Policy | `v0.7.97` (shipped in `v0.7.97-beta.5`) | [v0.7.97](features/v0.7.97.md#feature_304-ask-result-for-extension-tool-policy) | Extension `tool:before` may return `{ decision: 'ask', reason }`; block wins over ask. The Host raises an allow-once-only permission request with the reason in every mode, including Full Access and granted calls; a Host without `requestToolApproval` blocks. Capability `toolHookAsk: { version: 1 }` on embedded and daemon. The official sandbox asks for recursive and out-of-workspace deletes. |
+| `303` | Proxy and Private CA Support | `v0.7.97` (shipped in `v0.7.97-beta.5`) | [v0.7.97](features/v0.7.97.md#feature_303-proxy-and-private-ca-support) | The Responses WebSocket follows `HTTP(S)_PROXY` and `NO_PROXY` on Node 22.21+/24.5+ with `NODE_USE_ENV_PROXY=1` and on the Bun binary; the Host warns as `runtime:network` when a proxy variable would be bypassed. Node floor stays `>=20`. Verified on Node 22.23.1 and Bun 1.4.4 with a local proxy and private CA. |
 | `302` | Independent LLM Provider Parity | `v0.7.99` (unreleased) | [v0.7.99](features/v0.7.99.md#feature_302-independent-llm-provider-parity) | T01–T12/H/I accepted offline with paired Space; J Root/design local main integration and post-merge gates passed. Space remains independent; live accounts/platform installers unverified. |
 | `301` | Managed Artifact SDK and PPT Review Loop | Initial implementation in `v0.7.97-alpha.4`; unified Artifact SDK additions released in `v0.7.97-alpha.5` | [v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) | Optional SDK in the single main npm package, with a private source workspace, nine operations and shared Host execution; PPTX authoring/limited edits, PDF/image/SVG evidence, candidate DOCX and local HTML/SMIL capture. Native Office fidelity and full natural-task model repair/re-review/delivery remain unverified; [current support](ARTIFACT_SDK.md). |
 | `299` | Unified Stop, Full Access and Extension Execution Contracts | `v0.7.96` (release pending) | [v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) | Implements legacy large metadata paging, Full Access policy provenance, lock-independent Session Stop, CLI/ACP convergence and managed extension execution with reload isolation. |

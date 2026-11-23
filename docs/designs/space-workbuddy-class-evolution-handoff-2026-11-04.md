@@ -388,7 +388,7 @@ runtime, with `NODE_USE_ENV_PROXY=1`, `fetch`, `http`/`https` and both model SDK
 `HTTPS_PROXY` and respect `NO_PROXY`; `NODE_EXTRA_CA_CERTS` works for HTTPS and WSS. So Space can
 ship the settings screen and spawn-time injection without waiting for the SDK. The one SDK gap is the
 OpenAI Responses WebSocket (`ws`), which connects directly until FEATURE_303 lands. Details are in
-`docs/features/v0.7.98.md` (KodaX repo).
+`docs/features/v0.7.97.md` (KodaX repo).
 
 ### 4.11 Not now
 

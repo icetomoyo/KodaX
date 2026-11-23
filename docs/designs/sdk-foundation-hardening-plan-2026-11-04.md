@@ -20,7 +20,7 @@ and no prompt eval is needed. The Node floor (section 10, decision 2) and ADR-07
 | WP3 | Done | Issue 380 |
 | WP4 | Done | Issue 381 |
 | WP5 | Done (documentation; grants behavior settled, no code change) | `CLIENT_CONTRACT.md` "无人值守运行" |
-| WP6 | Done 2026-11-05 (verified on Node 22 and Bun 1.4.4); Node floor stays `>=20` | FEATURE_303, [v0.7.98](../features/v0.7.98.md#feature_303-proxy-and-private-ca-support) |
+| WP6 | Done 2026-11-05 (verified on Node 22 and Bun 1.4.4); Node floor stays `>=20` | FEATURE_303, [v0.7.97](../features/v0.7.97.md#feature_303-proxy-and-private-ca-support) |
 | WP7 | Done 2026-11-05; ADR-071 Accepted | FEATURE_304, ADR-071 |
 | WP8 | Done | see below |
 | WP9 | Not started; lives in the `KodaX-Extensions` repository | — |
@@ -54,7 +54,7 @@ and no prompt eval is needed. The Node floor (section 10, decision 2) and ADR-07
   was added because no Host has asked for one.
 - **WP6.** Measured on Node 20.20.2, Node 22.23.1, Space's Electron 42.5.0 (Node 24.17.0) and
   Bun 1.4.4, which builds the release binaries. Results are in
-  [FEATURE_303](../features/v0.7.98.md#2-spike-结果2026-11-04). The main findings: Space can use
+  [FEATURE_303](../features/v0.7.97.md#2-spike-结果2026-11-04). The main findings: Space can use
   a proxy today by passing `NODE_USE_ENV_PROXY=1` to the daemon. The SDK gap is `ws`, the Responses
   WebSocket client. In the binary, `fetch` and both model SDKs follow `HTTP(S)_PROXY` without
   `NODE_USE_ENV_PROXY`, `web_fetch` needs it, and Bun's built-in `ws` needs an explicit `proxy` option.
@@ -442,7 +442,7 @@ WP1-WP3 and WP4 touch different files.
 **Tracking** (after approval):
 - WP1-WP4 become issues in `KNOWN_ISSUES.md`, because they are defects.
 - WP6 and WP7 become features, with proposed IDs FEATURE_303-304. Their design goes in
-  `docs/features/v0.7.98.md`. WP5 is documentation in the same release.
+  `docs/features/v0.7.98.md`, since folded into `v0.7.97.md`. WP5 is documentation in the same release.
 - WP7 gets ADR-071.
 
 ## 6. Deliberately excluded

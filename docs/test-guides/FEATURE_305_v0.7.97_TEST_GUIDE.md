@@ -2,7 +2,7 @@
 
 Date: 2026-11-11. Status: T1–T7 done. Acceptance passed with a local package; Space keeps its
 beta.4 pin until KodaX publishes.
-[Design block](../features/v0.7.98.md#feature_305-one-host-per-kodax_home),
+[Design block](../features/v0.7.97.md#feature_305-one-host-per-kodax_home),
 [ADR-075](../ADR.md#adr-075-one-host-per-kodax_home-profile-is-not-host-identity),
 [design](../designs/one-host-per-kodax-home-2026-11-10.md).
 
