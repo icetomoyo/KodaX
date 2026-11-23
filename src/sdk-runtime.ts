@@ -15059,7 +15059,7 @@ function createRuntimeConfigService(
   return {
     async read() {
       ensureOpen();
-      return redactRuntimeConfig(readRuntimeConfig(configFile));
+      return redactRuntimeConfig(readRuntimeConfigView(configFile));
     },
 
     async readEffective() {
@@ -15075,7 +15075,7 @@ function createRuntimeConfigService(
       clearRemovedExecutionConfig(toClientConfig(readRuntimeConfig(configFile)));
       replApi.applyExecutionConfigEnvironment(normalized, true);
       options.onChanged?.();
-      return redactRuntimeConfig(readRuntimeConfig(configFile));
+      return redactRuntimeConfig(readRuntimeConfigView(configFile));
     },
 
     async reload() {
@@ -15087,10 +15087,10 @@ function createRuntimeConfigService(
         options.onChanged?.();
         return {
           ok: true,
-          config: redactRuntimeConfig(readRuntimeConfig(configFile)),
+          config: redactRuntimeConfig(readRuntimeConfigView(configFile)),
         };
       }
-      const config = redactRuntimeConfig(prepareRuntimeConfig());
+      const config = redactRuntimeConfig(withManagedExtensions(prepareRuntimeConfig() as unknown as Record<string, unknown>, undefined));
       options.onChanged?.();
       return { ok: true, config };
     },
@@ -24381,6 +24381,46 @@ function readRuntimeConfig(
   return document.config;
 }
 
+/** integrations/extensions.json, while it exists: the Host then loads extensions from it and ignores config.json's. */
+function managedExtensionsFile(configFile: string | undefined): string | undefined {
+  const file = replApi.resolveIntegrationConfigPath('extensions', path.dirname(configFile ?? replApi.KODAX_CONFIG_FILE));
+  return fs.existsSync(file) ? file : undefined;
+}
+
+/** The saved configuration with the `extensions` the Host actually loads from, so a client reads and writes those. */
+function withManagedExtensions(config: Record<string, unknown>, configFile: string | undefined): Record<string, unknown> {
+  if (managedExtensionsFile(configFile) === undefined) return config;
+  const { extensions: _ignored, ...rest } = config;
+  try {
+    const { paths } = replApi.readExtensionsIntegration(path.dirname(configFile ?? replApi.KODAX_CONFIG_FILE)).document;
+    return { ...rest, extensions: [...paths] };
+  } catch (error: unknown) {
+    // A broken file must not hide every other setting; the extension watcher reports it in its own status.
+    emitKodaXDiagnostic({ source: 'runtime.config', level: 'warn', message: 'integrations/extensions.json cannot be read, so the saved configuration shows no extensions.', detail: error });
+    return rest;
+  }
+}
+
+function readRuntimeConfigView(configFile: string | undefined): Record<string, unknown> {
+  return withManagedExtensions(readRuntimeConfig(configFile), configFile);
+}
+
+/** Writes `extensions` to integrations/extensions.json when the Host loads them from there; says whether it did. */
+function writeManagedExtensions(
+  configFile: string | undefined,
+  patch: Partial<Pick<ReplRuntimeConfigPatch, RuntimeConfigPatchKey>>,
+): boolean {
+  if (!Object.hasOwn(patch, 'extensions') || managedExtensionsFile(configFile) === undefined) return false;
+  replApi.writeIntegrationDocument({
+    domain: 'extensions',
+    configHome: path.dirname(configFile ?? replApi.KODAX_CONFIG_FILE),
+    // Cleared, the file stays and lists none: removing it would bring config.json's copy back.
+    document: { version: 1, paths: patch.extensions ?? [] },
+    validate: replApi.parseExtensionsIntegrationDocument,
+  });
+  return true;
+}
+
 function runtimeAutoReviewPolicy(
   config: Readonly<Record<string, unknown>>,
 ): string | undefined {
@@ -24638,21 +24678,28 @@ function patchRuntimeConfig(
   expectedRevision?: string,
 ): void {
   const assertRevision = (current: Record<string, unknown>): void => {
-    if (expectedRevision !== undefined && runtimeConfigRevision(redactRuntimeConfig(current)) !== expectedRevision) {
+    if (expectedRevision !== undefined
+      && runtimeConfigRevision(redactRuntimeConfig(withManagedExtensions(current, configFile))) !== expectedRevision) {
       throw createRuntimeStaleRevisionError('The saved configuration changed since it was read.', 0);
     }
+  };
+  const corePatch = (): typeof patch => {
+    if (!writeManagedExtensions(configFile, patch)) return patch;
+    const { extensions: _managed, ...rest } = patch;
+    return rest;
   };
   if (configFile === undefined) {
     // The global configuration is written under its own lock, so this check comes just before it, not inside it.
     assertRevision(readRuntimeConfig(undefined));
-    saveConfig(patch);
+    saveConfig(corePatch());
     return;
   }
   mutateRuntimeConfig(configFile, (current) => {
     assertRevision(current);
-    const merged: Record<string, unknown> = { ...current, ...patch };
-    for (const key of Object.keys(patch) as Array<keyof RuntimeConfigPatch>) {
-      if (patch[key] === undefined) delete merged[key];
+    const rest = corePatch();
+    const merged: Record<string, unknown> = { ...current, ...rest };
+    for (const key of Object.keys(rest) as Array<keyof RuntimeConfigPatch>) {
+      if (rest[key] === undefined) delete merged[key];
     }
     return { config: merged, result: undefined };
   });

@@ -157,8 +157,11 @@ Host owner 实际销毁视图服务时，先停止新的读取、刷新和监听
 | --- | --- | --- |
 | `immediate` | fallbackProviders、stallLog | 后续请求/日志采用新值；不改变已发出的请求 |
 | `next_run` | provider/model、effort/planModeEffort/thinking/reasoningMode、permissionMode/agentMode、maxOutputTokens、disablePromptCache、lsp、fast/deep Provider/Model、repoIntelligenceMode/Trace、workflow | 在新 Run 准入时捕获；活跃 Run 不因全局 patch/reload 改写 |
-| `extension_reload` | extensions | 等待 Host 的 integration watcher 校验并 reconcile；检查 catalog.extensions 与配置状态 |
+| `extension_reload` | extensions | 等待 Host 的 integration watcher 校验并 reconcile，新增和删除都不用重启；检查 catalog.extensions 与配置状态 |
 | `restart` | locale、providerModels、lspAutoDownload、acpLogLevel、sessionRetentionDays、repoIntelligence | 重启 Host 后检查相应能力；旧进程不承诺应用 |
+
+`extensions` 读写的是 Host 实际加载的那份：`integrations/extensions.json` 存在时读写它（清空时文件保留、列表为空），
+不存在时读写 `config.json`。这个文件变了，配置的 revision 也跟着变。
 
 按新 Run 捕获的输出、缓存、LSP 和模型分层默认低于真正的外部环境变量，低层 SDK
 显式 Run 参数优先。`fallbackProviders/stallLog` 保留既有即刻控制：显式

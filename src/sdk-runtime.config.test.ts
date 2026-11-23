@@ -128,6 +128,51 @@ describe('runtime config patch validation', () => {
     }
   });
 
+  it('reads and writes the extensions of integrations/extensions.json once that file exists, since the Host then ignores config.json\'s', async () => {
+    const home = path.join(tempRoot, '.kodax');
+    const configFile = path.join(home, 'config.json');
+    const extensionsFile = path.join(home, 'integrations', 'extensions.json');
+    await fs.mkdir(path.dirname(extensionsFile), { recursive: true });
+    await fs.writeFile(configFile, JSON.stringify({ model: 'before', extensions: ['legacy.mjs'] }));
+    const { createKodaXRuntime } = await import('../tests/runtime-fixture.js');
+    const { runtimeConfigRevision } = await import('./runtime-config-revision.js');
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot });
+    const readFile = async (file: string): Promise<unknown> => JSON.parse(await fs.readFile(file, 'utf8'));
+
+    try {
+      // Without the file, config.json holds them.
+      await expect(runtime.config.read()).resolves.toMatchObject({ extensions: ['legacy.mjs'] });
+
+      await fs.writeFile(extensionsFile, JSON.stringify({ version: 1, paths: ['managed.mjs'] }));
+      const managed = await runtime.config.read();
+      expect(managed).toMatchObject({ model: 'before', extensions: ['managed.mjs'] });
+
+      await runtime.config.patch({ model: 'after', extensions: ['next.mjs'] }, { expectedRevision: runtimeConfigRevision(managed) });
+      await expect(readFile(extensionsFile)).resolves.toEqual({ version: 1, paths: ['next.mjs'] });
+      await expect(readFile(configFile)).resolves.toEqual({ model: 'after', extensions: ['legacy.mjs'] });
+      await expect(runtime.config.read()).resolves.toMatchObject({ model: 'after', extensions: ['next.mjs'] });
+
+      // A change to that file alone is a change to what a client read.
+      const seen = await runtime.config.read();
+      await fs.writeFile(extensionsFile, JSON.stringify({ version: 1, paths: ['other.mjs'] }));
+      await expect(runtime.config.patch({ model: 'later' }, { expectedRevision: runtimeConfigRevision(seen) }))
+        .rejects.toMatchObject({ data: { conflict: 'revision_conflict' } });
+
+      // Clearing them empties the file: removing it would bring config.json's copy back.
+      await runtime.config.patch({ extensions: null });
+      await expect(readFile(extensionsFile)).resolves.toEqual({ version: 1, paths: [] });
+      await expect(runtime.config.read()).resolves.toMatchObject({ extensions: [] });
+
+      // A broken file leaves the rest readable, with no extensions to show.
+      await fs.writeFile(extensionsFile, '{ broken');
+      const broken = await runtime.config.read() as Record<string, unknown>;
+      expect(broken).toMatchObject({ model: 'after' });
+      expect(broken.extensions).toBeUndefined();
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it('uses the runtime homeDir for config, custom providers, and MCP servers', async () => {
     const runtimeHome = path.join(tempRoot, 'runtime-home');
     const envHome = path.join(tempRoot, 'env-home');
