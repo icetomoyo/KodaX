@@ -8,9 +8,11 @@ import {
   resolveScopedMemoryRoot,
   type MemoryManagementController,
   type MemoryContextIdentity,
+  type NoteScope,
+  type NoteStore,
   type PendingEpisodeReviewSummary,
 } from "@kodax-ai/agent";
-import { deriveCodingMemoryIdentityFromRoot } from "@kodax-ai/coding";
+import { deriveCodingMemoryIdentityFromRoot, noteStoresFor, resolveNotePlace } from "@kodax-ai/coding";
 import { resolveProvider } from "@kodax-ai/llm";
 
 /**
@@ -54,6 +56,11 @@ export interface RuntimeMemoryPlane {
 
 export interface RuntimeMemoryService {
   forProject(projectRoot: string): RuntimeMemoryPlane | Promise<RuntimeMemoryPlane>;
+  /**
+   * The note stores a Run in `projectRoot` reads and writes. Absent on a
+   * client facade, which reaches the notes through its Host.
+   */
+  notes?(projectRoot: string): Promise<Readonly<Record<NoteScope, NoteStore>>>;
 }
 
 interface TopicFile {
@@ -252,6 +259,11 @@ export function createRuntimeMemoryService(input: {
       };
       planes.set(key, plane);
       return plane;
+    },
+    async notes(projectRoot) {
+      await input.authorize?.(projectRoot, false);
+      // The place a Run of this Host in this project resolves: the Host strips a caller's identity.
+      return noteStoresFor(resolveNotePlace({ provider: "", context: { configHome: input.configHome } }, projectRoot));
     },
   };
 }

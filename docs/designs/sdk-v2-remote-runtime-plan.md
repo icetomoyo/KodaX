@@ -1,6 +1,6 @@
 # KodaX Runtime/SDK v2：可被编排的单用户 Host
 
-状态：第 4 版修订稿，2026-11-20。边界和 2026-11-14 定稿相同；规格改为按"规则、资源、传输"三层来写，并补上了方法表。用户 2026-11-20 要求按 §7 开始实现。M0 的代码和 ADR-079 已经写完，2026-11-22 在 `KodaX-next-dev` 上分层提交；各节里标"M0 已落地"的段落写的是实际行为。M1a 已经落地（含 REPL 跑在 v2 上），和 M0 一起提交：帧编解码、IPC 首帧区分、握手和 revision 协商、zod 方法定义和漂移测试、Node 无关的客户端核心已经写完并有测试，标"M1a 已落地"的段落写的是实际行为；方法表已有握手三项、只读目录三项（`provider.list`、`command.list`、`skill.list`）、会话七项（`session.list/get/create/archive/unarchive/delete/compact`）、视图三项（`view.subscribe`、`view.unsubscribe`、`item.read`，加上通知 `view.patch`、`view.reset`、`view.closed`；会话视图带这个 Session 的 Workflow）、输入与 Run 十项（`input.submit/get/withdraw`、`run.get/list/wait/stop/startTool/recover`、`session.cancel`）、交互与授权四项（`interaction.list/respond`、`permission.grant.list/revoke`）、设置两项（`session.settings.get/update`）、历史两项（`history.read`、`history.search`）、提升两项（`session.promote`、`session.promotion.get`）和技能学习十二项（`learning.*`，见"记忆与技能学习"），其余按 §7 的顺序逐组加入。2026-11-21 合入了主线 beta.13（本地合并提交 `4b688c8b4`），主线登记的 FEATURE_312（稳定的历史 ID）和 FEATURE_313（Session 的恢复状态）要求先在这份方案里定规格，见"历史两项的落地细节"和"Session 的恢复状态"。FEATURE_312 已经落地。主线推迟了 FEATURE_313，用户决定连同恢复时限一起在 next-dev 上做；它也已经落地，见"Session 的恢复状态"末尾的落地细节。
+状态：第 4 版修订稿，2026-11-20。边界和 2026-11-14 定稿相同；规格改为按"规则、资源、传输"三层来写，并补上了方法表。用户 2026-11-20 要求按 §7 开始实现。M0 的代码和 ADR-079 已经写完，2026-11-22 在 `KodaX-next-dev` 上分层提交；各节里标"M0 已落地"的段落写的是实际行为。M1a 已经落地（含 REPL 跑在 v2 上），和 M0 一起提交：帧编解码、IPC 首帧区分、握手和 revision 协商、zod 方法定义和漂移测试、Node 无关的客户端核心已经写完并有测试，标"M1a 已落地"的段落写的是实际行为；方法表已有握手三项、只读目录三项（`provider.list`、`command.list`、`skill.list`）、会话七项（`session.list/get/create/archive/unarchive/delete/compact`）、视图三项（`view.subscribe`、`view.unsubscribe`、`item.read`，加上通知 `view.patch`、`view.reset`、`view.closed`；会话视图带这个 Session 的 Workflow）、输入与 Run 十项（`input.submit/get/withdraw`、`run.get/list/wait/stop/startTool/recover`、`session.cancel`）、交互与授权四项（`interaction.list/respond`、`permission.grant.list/revoke`）、设置两项（`session.settings.get/update`）、历史两项（`history.read`、`history.search`）、提升两项（`session.promote`、`session.promotion.get`）、记忆六项（`memory.list/get/create/update/approve/forget`）和技能学习十二项（`learning.*`，都见"记忆与技能学习"），其余按 §7 的顺序逐组加入。2026-11-21 合入了主线 beta.13（本地合并提交 `4b688c8b4`），主线登记的 FEATURE_312（稳定的历史 ID）和 FEATURE_313（Session 的恢复状态）要求先在这份方案里定规格，见"历史两项的落地细节"和"Session 的恢复状态"。FEATURE_312 已经落地。主线推迟了 FEATURE_313，用户决定连同恢复时限一起在 next-dev 上做；它也已经落地，见"Session 的恢复状态"末尾的落地细节。
 
 **这一版改了什么**
 
@@ -1630,6 +1630,20 @@ MCP 这 8 个的落地细节（M1a 已落地，2026-11-21，未经用户确认�
   - 写入走记忆库已有的检查（例如 `memory-store/secrets.ts`）。
   - 和 `learning.*` 一起设计：反思同时产出笔记和技能提议，两者的开放放在一处定。`learning.*` 里的 Host 路径（`learning.ts:38`）对网络角色去掉。
   - 它替换 Space 现在走 v1 的记忆调用，关闭 Issue 411，FEATURE_309 随之解锁。
+  - **记忆的落地细节**（2026-11-23 已落地，未经用户确认）：
+    - 六个方法：`memory.list`、`memory.get`、`memory.create`、`memory.update`、`memory.approve`、`memory.forget`。都在 data 平面，命令都是 `auto`。
+    - 项目的指定方式和目录一样：用 `project`，或用只给 owner 的 `projectRoot`；都不给时，用不指定项目的 Session 所在的目录。Host 没有工作区、owner 也没给 `projectRoot` 时，报 `invalid_params`（`project_required`）。
+    - 读写的就是这个 Host 上该项目的 Run 读的那两个笔记库。Host 的 Run 不用调用方给的记忆身份，位置由 Host 的配置目录和项目目录决定，所以两边一致。`KODAX_MEMORY_NOTES=0` 退回旧记忆时，笔记照样能管，只是 Run 不读。
+    - `memory.list` 列出两个作用域、所有状态的笔记，不带正文。`memory.get` 带正文；owner 另外拿到 `path`。
+    - `revision` 是笔记内容的哈希，按库里存的样子算，不含被读的次数。`ifRevision` 的比较在笔记库的写队列里做，不会和别的写交错。为此笔记库的 `edit`、`remove` 多了一个可选的条件。
+    - 重发不用记 `requestId`，Host 重启后也成立：
+      - `create` 遇到同 ID 的笔记，内容和这次要写的一样就返回它，否则报 `conflict`（`note_exists`）。
+      - `update`、`approve` 遇到 revision 不符，笔记已经是要改成的样子就返回它，否则报 `conflict`（`revision_mismatch`）。
+      - `forget` 遇到笔记已经不在，算成功。
+    - 拒绝候选就是 `forget`，不另设方法。经客户端写或改的笔记记为这个人的（`source: user`）；`approve` 把候选改成 active，也记为这个人的。
+    - `update` 里不给的字段保持原样，所以清不掉 `why`、`check`。没有用户场景要求，没做。
+    - 错误：疑似密钥报 `invalid_params`（`secret_in_note`）；ID 不合规报 `invalid_params`（`invalid_note_id`）；找不到报 `not_found`（`note_not_found`）。
+    - 旧记忆的迁移不在这些方法里触发。和 REPL 的 `/memory` 一样，在第一次 Run 时迁移。
 
 - `memory.*` 12 个方法：next-dev 的 FEATURE_308 已经换了记忆模型，旧实现计划在 FEATURE_309 删除。v2 不照搬这 12 个方法，等 FEATURE_309 之后按新模型重定。`memory.ensureOpenTarget` 返回路径、由 UI 打开本机编辑器，只属于本机 owner。
   - **改了原计划**（2026-11-21，未经用户确认）：原计划在 FEATURE_309 之前让 owner 经 v2 编解码原样调用这 12 个方法，并补上 `memory.remember` 的重试安全。两样都不做。FEATURE_308 已经默认开启，这 12 个方法只剩 v1 客户端在用，FEATURE_309 连同它们一起删掉；先接进 v2 再删，是白做，还会让 v2 的方法表里出现注定要删的方法。在那之前 owner 继续走 v1。

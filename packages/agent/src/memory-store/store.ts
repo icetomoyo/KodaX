@@ -45,7 +45,7 @@ export type NoteResult =
   | { readonly ok: true; readonly note: MemoryNote }
   | {
       readonly ok: false;
-      readonly reason: 'invalid-id' | 'exists' | 'not-found' | 'secret' | 'empty-description';
+      readonly reason: 'invalid-id' | 'exists' | 'not-found' | 'secret' | 'empty-description' | 'changed';
       readonly detail?: string;
     };
 
@@ -54,8 +54,10 @@ export interface NoteStore {
   readonly scope: NoteScope;
   list(): Promise<readonly MemoryNote[]>;
   write(input: NewNote): Promise<NoteResult>;
-  edit(id: string, patch: NotePatch): Promise<NoteResult>;
-  remove(id: string): Promise<NoteResult>;
+  /** With `expected`, edits only a note that still passes it, and answers `changed` otherwise. */
+  edit(id: string, patch: NotePatch, expected?: (note: MemoryNote) => boolean): Promise<NoteResult>;
+  /** With `expected`, removes only a note that still passes it, and answers `changed` otherwise. */
+  remove(id: string, expected?: (note: MemoryNote) => boolean): Promise<NoteResult>;
   /** Adds observed reads to the usage counters of existing notes; no revision is kept. Returns how many notes were updated. */
   recordUse(uses: Readonly<Record<string, number>>, at: Date): Promise<number>;
   /** Returns true when MEMORY.md changed. */
@@ -180,16 +182,18 @@ export function createNoteStore(root: string, scope: NoteScope): NoteStore {
       });
     }),
 
-    edit: (id, patch) => serialized(async () => {
+    edit: (id, patch, expected) => serialized(async () => {
       if (!validId(id)) return { ok: false, reason: 'invalid-id' };
       const raw = await readOrUndefined(fileOf(id));
       if (raw === undefined) return { ok: false, reason: 'not-found' };
+      const current = parseNote(id, raw, scope);
+      if (expected !== undefined && !expected(current)) return { ok: false, reason: 'changed' };
       if (patch.description !== undefined && patch.description.trim().length === 0) {
         return { ok: false, reason: 'empty-description' };
       }
       const rejected = secretIn({ description: patch.description, why: patch.why, check: patch.check, body: patch.body });
       if (rejected !== undefined) return rejected;
-      return save({ ...parseNote(id, raw, scope), ...patch, scope });
+      return save({ ...current, ...patch, scope });
     }),
 
     recordUse: (uses, at) => serialized(async () => {
@@ -206,14 +210,16 @@ export function createNoteStore(root: string, scope: NoteScope): NoteStore {
       return updated;
     }),
 
-    remove: (id) => serialized(async () => {
+    remove: (id, expected) => serialized(async () => {
       if (!validId(id)) return { ok: false, reason: 'invalid-id' };
       const raw = await readOrUndefined(fileOf(id));
       if (raw === undefined) return { ok: false, reason: 'not-found' };
+      const note = parseNote(id, raw, scope);
+      if (expected !== undefined && !expected(note)) return { ok: false, reason: 'changed' };
       await keepRevision(root, id, raw);
       await fs.rm(fileOf(id));
       await rebuild();
-      return { ok: true, note: parseNote(id, raw, scope) };
+      return { ok: true, note };
     }),
   };
 }

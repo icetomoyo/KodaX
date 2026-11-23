@@ -68,6 +68,8 @@ function failure(result: Extract<NoteResult, { ok: false }>, id: string): Memory
       return { ok: false, message: 'description must be a non-empty one-line summary.' };
     case 'secret':
       return { ok: false, message: result.detail ?? 'Secrets are never stored in memory.' };
+    case 'changed':
+      return { ok: false, message: `The memory '${id}' changed meanwhile; read it again.` };
   }
 }
 

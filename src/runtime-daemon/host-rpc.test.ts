@@ -7,7 +7,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  createLearningCenterService, createMcpTestServerFixture, createReferenceAgentExecutorFactory, setKodaXDiagnosticSink,
+  createLearningCenterService, createMcpTestServerFixture, createNoteStore, createReferenceAgentExecutorFactory, setKodaXDiagnosticSink,
   type KodaXDiagnostic,
 } from '@kodax-ai/agent';
 import { awaitLatestCodingMemoryReviewDrain, getActiveExtensionRuntime } from '@kodax-ai/coding';
@@ -3802,6 +3802,72 @@ describe('v2 extensions and external Agents served by the v1 implementation', ()
     for (const method of ['extension.list', 'agent.registration.list']) {
       await expect(client.request(method)).rejects.toMatchObject({ kodaxCode: 'method_not_found' });
     }
+  });
+});
+
+describe('v2 Memory', () => {
+  type Note = { readonly id: string; readonly revision: string; readonly path?: string; readonly [field: string]: unknown };
+  type NoteAnswer = { readonly note: Note };
+
+  it('lets a person keep notes that the Runs in the project read, and answers each change sent again', async () => {
+    // The suite pins the legacy memory; the notes are the product default.
+    vi.stubEnv('KODAX_MEMORY_NOTES', '1');
+    const host = await makeModelHost();
+    const runtime = await host.start();
+    const user = await connect('user', runtime, host.workspace);
+    const owner = await connect('owner', runtime, host.workspace);
+    const create = { requestId: 'note-1', project: 'app', scope: 'project', id: 'fast-tests', type: 'feedback',
+      description: 'Run the fast tests with make check-fast', body: 'The full suite takes an hour.\n' };
+
+    const { note } = await user.request('memory.create', create) as NoteAnswer;
+    expect(note).toEqual({
+      id: 'fast-tests', scope: 'project', type: 'feedback', status: 'active', source: 'user',
+      description: create.description, used: 0, revision: expect.any(String), body: create.body,
+    });
+    expect(await user.request('memory.create', create)).toEqual({ note });
+    await user.request('memory.create', { requestId: 'note-2', project: 'app', scope: 'user', id: 'tone', type: 'user', description: 'Answer briefly' });
+    const { body: _body, ...listed } = note;
+    expect(await user.request('memory.list', { project: 'app' })).toEqual({
+      items: [expect.objectContaining({ scope: 'user', id: 'tone' }), listed],
+    });
+
+    // Only the owner, on the Host's machine, is told where a note is.
+    const { note: local } = await owner.request('memory.get', { project: 'app', scope: 'project', id: 'fast-tests' }) as NoteAnswer;
+    expect(local).toEqual({ ...note, path: expect.stringMatching(/fast-tests\.md$/) });
+    expect(JSON.stringify(await user.request('memory.get', { project: 'app', scope: 'project', id: 'fast-tests' })))
+      .not.toContain(path.basename(host.homeDir));
+
+    // A Run in the project reads the note.
+    const { session } = await user.request('session.create', { requestId: 'create-1', project: 'app' }) as SessionAnswer;
+    const { input } = await user.request('input.submit', { requestId: 'input-1', sessionId: session.id, text: 'Say done.' }) as InputAnswer;
+    await user.request('run.wait', { runId: input.runId });
+    expect(host.lastRunRequest().text).toContain('Run the fast tests with make check-fast');
+
+    // The agent's guess waits for the person.
+    await createNoteStore(path.dirname(local.path!), 'project').write({
+      id: 'guess', type: 'project', description: 'Deploys go out on Fridays', body: '', status: 'candidate', source: 'inferred',
+    });
+    const { note: guess } = await user.request('memory.get', { project: 'app', scope: 'project', id: 'guess' }) as NoteAnswer;
+    const approve = { requestId: 'approve-1', project: 'app', scope: 'project', id: 'guess', ifRevision: guess.revision };
+    const { note: approved } = await user.request('memory.approve', approve) as NoteAnswer;
+    expect(approved).toMatchObject({ status: 'active', source: 'user' });
+    expect(await user.request('memory.approve', approve)).toEqual({ note: approved });
+
+    const update = { requestId: 'update-1', project: 'app', scope: 'project', id: 'fast-tests', ifRevision: note.revision,
+      description: 'Run make check-fast first' };
+    const { note: changed } = await user.request('memory.update', update) as NoteAnswer;
+    expect(changed).toMatchObject({ description: 'Run make check-fast first', body: create.body });
+    expect(await user.request('memory.update', update)).toEqual({ note: changed });
+    await expect(user.request('memory.update', { ...update, requestId: 'update-2', description: 'Run everything' }))
+      .rejects.toMatchObject({ kodaxCode: 'conflict', reason: 'revision_mismatch' });
+
+    const forget = { requestId: 'forget-1', project: 'app', scope: 'project', id: 'fast-tests', ifRevision: changed.revision };
+    expect(await user.request('memory.forget', forget)).toEqual({});
+    expect(await user.request('memory.forget', forget)).toEqual({});
+    await expect(user.request('memory.get', { project: 'app', scope: 'project', id: 'fast-tests' }))
+      .rejects.toMatchObject({ kodaxCode: 'not_found', reason: 'note_not_found' });
+    await expect(user.request('memory.create', { ...create, requestId: 'note-3', body: 'token sk-live-9f8e7d6c5b4a39281716aabbccdd' }))
+      .rejects.toMatchObject({ kodaxCode: 'invalid_params', reason: 'secret_in_note' });
   });
 });
 

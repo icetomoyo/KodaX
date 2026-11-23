@@ -24,6 +24,12 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- A v2 client can manage the notes the agent keeps, from any role: list them
+  with candidates the agent proposed, read one, write one, change one at the
+  revision it read, approve a candidate, and forget one
+  (`memory.list/get/create/update/approve/forget`). These are the notes the
+  Runs in that project read. A web client built on the SDK can manage memory
+  without the local-only v1 methods.
 - `@kodax-ai/kodax/client` now exports a v2 Host protocol client.
   `ensureKodaXHostClient` starts the Host of a home when none runs, connects
   over v2, and starts the Host again if it dies. `call` takes typed params and

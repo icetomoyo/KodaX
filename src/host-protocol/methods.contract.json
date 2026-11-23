@@ -22235,6 +22235,1197 @@
       "additionalProperties": false
     }
   },
+  "memory.list": {
+    "primitive": "query",
+    "plane": "data",
+    "params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "project": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^(?!\\/)(?!(?:.*\\/)?\\.\\.(?:\\/|$))[^\\\\]+$"
+        },
+        "projectRoot": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "restricted": {
+      "projectRoot": "local"
+    },
+    "result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "scope": {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "project"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "feedback",
+                  "project",
+                  "reference",
+                  "procedure"
+                ]
+              },
+              "status": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "why": {
+                "type": "string"
+              },
+              "check": {
+                "type": "string"
+              },
+              "used": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "lastUsedAt": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "revision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": [
+              "id",
+              "scope",
+              "type",
+              "status",
+              "description",
+              "used",
+              "revision"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "nextCursor": {
+          "type": "string"
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "memory.get": {
+    "primitive": "query",
+    "plane": "data",
+    "params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "project": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^(?!\\/)(?!(?:.*\\/)?\\.\\.(?:\\/|$))[^\\\\]+$"
+        },
+        "projectRoot": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "user",
+            "project"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "scope",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "restricted": {
+      "projectRoot": "local"
+    },
+    "result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "note": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "user",
+                "project"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "user",
+                "feedback",
+                "project",
+                "reference",
+                "procedure"
+              ]
+            },
+            "status": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "why": {
+              "type": "string"
+            },
+            "check": {
+              "type": "string"
+            },
+            "used": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "lastUsedAt": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "body": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "scope",
+            "type",
+            "status",
+            "description",
+            "used",
+            "revision",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "note"
+      ],
+      "additionalProperties": false
+    },
+    "localResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "note": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "user",
+                "project"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "user",
+                "feedback",
+                "project",
+                "reference",
+                "procedure"
+              ]
+            },
+            "status": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "why": {
+              "type": "string"
+            },
+            "check": {
+              "type": "string"
+            },
+            "used": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "lastUsedAt": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "body": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "scope",
+            "type",
+            "status",
+            "description",
+            "used",
+            "revision",
+            "body",
+            "path"
+          ],
+          "additionalProperties": false
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "note"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "memory.create": {
+    "primitive": "command",
+    "resend": "auto",
+    "plane": "data",
+    "params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "project": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^(?!\\/)(?!(?:.*\\/)?\\.\\.(?:\\/|$))[^\\\\]+$"
+        },
+        "projectRoot": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "user",
+            "project"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "user",
+            "feedback",
+            "project",
+            "reference",
+            "procedure"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "body": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "why": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "check": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "requestId",
+        "scope",
+        "id",
+        "type",
+        "description"
+      ],
+      "additionalProperties": false
+    },
+    "restricted": {
+      "projectRoot": "local"
+    },
+    "result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "note": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "user",
+                "project"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "user",
+                "feedback",
+                "project",
+                "reference",
+                "procedure"
+              ]
+            },
+            "status": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "why": {
+              "type": "string"
+            },
+            "check": {
+              "type": "string"
+            },
+            "used": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "lastUsedAt": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "body": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "scope",
+            "type",
+            "status",
+            "description",
+            "used",
+            "revision",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "note"
+      ],
+      "additionalProperties": false
+    },
+    "localResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "note": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "user",
+                "project"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "user",
+                "feedback",
+                "project",
+                "reference",
+                "procedure"
+              ]
+            },
+            "status": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "why": {
+              "type": "string"
+            },
+            "check": {
+              "type": "string"
+            },
+            "used": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "lastUsedAt": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "body": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "scope",
+            "type",
+            "status",
+            "description",
+            "used",
+            "revision",
+            "body",
+            "path"
+          ],
+          "additionalProperties": false
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "note"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "memory.update": {
+    "primitive": "command",
+    "resend": "auto",
+    "plane": "data",
+    "params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "project": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^(?!\\/)(?!(?:.*\\/)?\\.\\.(?:\\/|$))[^\\\\]+$"
+        },
+        "projectRoot": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "user",
+            "project"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "ifRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "user",
+            "feedback",
+            "project",
+            "reference",
+            "procedure"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "body": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "why": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "check": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "requestId",
+        "scope",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "restricted": {
+      "projectRoot": "local"
+    },
+    "result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "note": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "user",
+                "project"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "user",
+                "feedback",
+                "project",
+                "reference",
+                "procedure"
+              ]
+            },
+            "status": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "why": {
+              "type": "string"
+            },
+            "check": {
+              "type": "string"
+            },
+            "used": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "lastUsedAt": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "body": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "scope",
+            "type",
+            "status",
+            "description",
+            "used",
+            "revision",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "note"
+      ],
+      "additionalProperties": false
+    },
+    "localResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "note": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "user",
+                "project"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "user",
+                "feedback",
+                "project",
+                "reference",
+                "procedure"
+              ]
+            },
+            "status": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "why": {
+              "type": "string"
+            },
+            "check": {
+              "type": "string"
+            },
+            "used": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "lastUsedAt": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "body": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "scope",
+            "type",
+            "status",
+            "description",
+            "used",
+            "revision",
+            "body",
+            "path"
+          ],
+          "additionalProperties": false
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "note"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "memory.approve": {
+    "primitive": "command",
+    "resend": "auto",
+    "plane": "data",
+    "params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "project": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^(?!\\/)(?!(?:.*\\/)?\\.\\.(?:\\/|$))[^\\\\]+$"
+        },
+        "projectRoot": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "user",
+            "project"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "ifRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "requestId",
+        "scope",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "restricted": {
+      "projectRoot": "local"
+    },
+    "result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "note": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "user",
+                "project"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "user",
+                "feedback",
+                "project",
+                "reference",
+                "procedure"
+              ]
+            },
+            "status": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "why": {
+              "type": "string"
+            },
+            "check": {
+              "type": "string"
+            },
+            "used": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "lastUsedAt": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "body": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "scope",
+            "type",
+            "status",
+            "description",
+            "used",
+            "revision",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "note"
+      ],
+      "additionalProperties": false
+    },
+    "localResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "note": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "user",
+                "project"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "user",
+                "feedback",
+                "project",
+                "reference",
+                "procedure"
+              ]
+            },
+            "status": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "why": {
+              "type": "string"
+            },
+            "check": {
+              "type": "string"
+            },
+            "used": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "lastUsedAt": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "body": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "scope",
+            "type",
+            "status",
+            "description",
+            "used",
+            "revision",
+            "body",
+            "path"
+          ],
+          "additionalProperties": false
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "note"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "memory.forget": {
+    "primitive": "command",
+    "resend": "auto",
+    "plane": "data",
+    "params": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "project": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^(?!\\/)(?!(?:.*\\/)?\\.\\.(?:\\/|$))[^\\\\]+$"
+        },
+        "projectRoot": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "user",
+            "project"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "ifRevision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "requestId",
+        "scope",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "restricted": {
+      "projectRoot": "local"
+    },
+    "result": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "additionalProperties": false
+    }
+  },
   "lease.register": {
     "primitive": "command",
     "resend": "auto",

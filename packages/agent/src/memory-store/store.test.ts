@@ -108,6 +108,19 @@ describe('note store', () => {
     expect(await store.remove('nope')).toMatchObject({ ok: false, reason: 'not-found' });
   });
 
+  it('edits or removes a note only when it still is what the caller expects', async () => {
+    await store.write({ id: 'a', ...base });
+    const before = await read('a.md');
+    const stale = (note: { readonly description: string }) => note.description === 'something else';
+    expect(await store.edit('a', { description: 'changed' }, stale)).toMatchObject({ ok: false, reason: 'changed' });
+    expect(await store.remove('a', stale)).toMatchObject({ ok: false, reason: 'changed' });
+    expect(await read('a.md')).toBe(before);
+
+    const current = (note: { readonly description: string }) => note.description === base.description;
+    expect(await store.edit('a', { description: 'changed' }, current)).toMatchObject({ ok: true, note: { description: 'changed' } });
+    expect(await store.remove('a', note => note.description === 'changed')).toMatchObject({ ok: true });
+  });
+
   it('removes a note and drops it from the index', async () => {
     await store.write({ id: 'a', ...base });
     expect((await store.remove('a')).ok).toBe(true);

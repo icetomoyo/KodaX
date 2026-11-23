@@ -36,6 +36,7 @@ import type {
 } from '../client-host-authorization.js';
 import type { HostDeviceRegistry } from '../host-server/devices.js';
 import type { HostBlobStore } from './host-blobs.js';
+import { createNote, forgetNote, getNote, listNotes, updateNote, type HostNoteStores } from './host-notes.js';
 import { boundViewItem } from '../session-view.js';
 import { runtimeAuthorizationSubject, runtimeRoleHasPlane, type RuntimeConnectionRole } from './access.js';
 import {
@@ -126,6 +127,8 @@ interface HostCaller {
   readonly service: boolean;
   readonly workspace?: HostWorkspace;
   readonly blobs?: HostBlobStore;
+  /** The note stores the Host's Runs in a project read. */
+  readonly notes?: (projectRoot: string) => Promise<HostNoteStores>;
   readonly views: HostViewStreams;
   /** Aborted when the client cancels this call or the connection ends. */
   readonly signal: AbortSignal;
@@ -941,6 +944,24 @@ const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } =
     return {};
   },
 
+  'memory.list': async ({ project, projectRoot }, _v1, caller) => listNotes(await notesOf(caller, project, projectRoot)),
+  'memory.get': async ({ project, projectRoot, scope, id }, _v1, caller) => (
+    getNote(await notesOf(caller, project, projectRoot), scope, id)
+  ),
+  'memory.create': async ({ project, projectRoot, scope, id, type, description, body, why, check }, _v1, caller) => (
+    createNote(await notesOf(caller, project, projectRoot), scope, id, { type, description, body, why, check })
+  ),
+  // Whoever edits a note through a client is the person, so the note becomes theirs.
+  'memory.update': async ({ project, projectRoot, scope, id, ifRevision, type, description, body, why, check }, _v1, caller) => (
+    updateNote(await notesOf(caller, project, projectRoot), scope, id, { type, description, body, why, check, source: 'user' }, ifRevision)
+  ),
+  'memory.approve': async ({ project, projectRoot, scope, id, ifRevision }, _v1, caller) => (
+    updateNote(await notesOf(caller, project, projectRoot), scope, id, { status: 'active', source: 'user' }, ifRevision)
+  ),
+  'memory.forget': async ({ project, projectRoot, scope, id, ifRevision }, _v1, caller) => (
+    forgetNote(await notesOf(caller, project, projectRoot), scope, id, ifRevision)
+  ),
+
   'learning.list': async ({ search, carrier, lifecycle, limit, cursor }, v1) => {
     const page = await v1('learning.list', defined({ search, carrier, lifecycle, limit, cursor })) as LearningPage;
     return { items: page.items.map(toLearning), nextCursor: page.nextCursor, revision: page.revision };
@@ -1484,6 +1505,18 @@ async function catalogProject(
   return await namedProject(caller, project, projectRoot) ?? await caller.workspace?.resolve('.');
 }
 
+/** The notes of the project named, else of the one a Session created without a project works in. */
+async function notesOf(caller: HostCaller, project: string | undefined, projectRoot: string | undefined): Promise<HostNoteStores> {
+  if (caller.notes === undefined) {
+    throw new HostProtocolError('invalid_state', 'This Host keeps no notes.', { reason: 'memory_unavailable' });
+  }
+  const directory = await catalogProject(caller, project, projectRoot);
+  if (directory === undefined) {
+    throw new HostProtocolError('invalid_params', 'Name the project whose notes these are.', { reason: 'project_required' });
+  }
+  return caller.notes(directory);
+}
+
 /** Where a new Session works when its creator named no project. Undefined leaves the choice to the Host. */
 async function defaultProject(caller: HostCaller): Promise<string | undefined> {
   if (caller.workspace === undefined && caller.local) return undefined;
@@ -1789,13 +1822,15 @@ export function createRuntimeDaemonHostRpcPeer(
         dispatcher.close();
         throw error;
       }
-      const { identity } = options.dispatcher.runtime;
+      const { identity, memory } = options.dispatcher.runtime;
+      const notes = memory?.notes?.bind(memory);
       const caller: Omit<HostCaller, 'afterAnswer' | 'signal'> = {
         subject,
         local: runtimeRoleHasPlane(role, 'local'),
         service: role === 'service',
         ...(options.workspace !== undefined ? { workspace: options.workspace } : {}),
         ...(options.blobs !== undefined ? { blobs: options.blobs } : {}),
+        ...(notes !== undefined ? { notes } : {}),
         views: streams,
       };
       views = streams;
