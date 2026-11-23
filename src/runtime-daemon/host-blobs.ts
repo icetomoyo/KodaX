@@ -1,14 +1,16 @@
 /**
  * Where a Host keeps the blobs clients upload. Each Session's blobs live in
  * `blobs/` inside its visual media directory, which the session store removes
- * with the Session, so a deleted Session leaves no blob behind. A blob is named
+ * with the Session, so a deleted Session leaves no blob behind. A submitted
+ * image is copied into the Session's own media, so after that only a client
+ * still needs the blob; one nobody used for a day is removed. A blob is named
  * by its SHA-256: the same bytes uploaded twice to one Session are one blob,
  * and an upload is a `<sha256>.part` file next to a `<sha256>.json` that says
  * what was declared for it.
  */
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { sessionVisualMediaDirectory } from '@kodax-ai/agent/media';
@@ -28,9 +30,10 @@ export const HOST_BLOB_LIMITS: HostBlobLimits = {
   blobQuotaBytes: 1024 * 1024 * 1024,
 };
 
-/** An upload nobody wrote to for this long was given up on. */
-const ABANDONED_UPLOAD_MS = 24 * 60 * 60 * 1000;
+/** An upload nobody wrote to, or a blob nobody used, for this long was given up on. */
+const UNUSED_BLOB_MS = 24 * 60 * 60 * 1000;
 const BLOB_ID = /^b_([a-f0-9]{64})$/;
+const BLOB_FILE = /^([a-f0-9]{64})(?:\.part)?$/;
 
 export interface HostBlobRef {
   readonly blobId: string;
@@ -47,7 +50,7 @@ export interface HostBlobStore {
   read(sessionId: string, blobId: string, offset: number): Promise<{ data: Buffer; ref: HostBlobRef }>;
   /** Where a committed blob is, for handing it to a Run. */
   file(sessionId: string, blobId: string): Promise<{ path: string; mediaType: string }>;
-  /** Removes uploads nobody finished. Answers how many. */
+  /** Removes uploads nobody finished and blobs nobody used for a day. Answers how many. */
   sweep(signal?: AbortSignal): Promise<number>;
 }
 
@@ -76,9 +79,11 @@ export function createHostBlobStore(options: { sessionsDir: string; limits?: Hos
     return run;
   };
 
+  /** A committed blob, which counts as used now. */
   const committed = async (sessionId: string, blobId: string): Promise<HostBlobRef & { path: string }> => {
     const sha256 = blobSha(blobId);
     const where = locate(sessionId, sha256);
+    if (!await touch(where.file)) throw blobNotFound();
     const [size, declared] = await Promise.all([sizeOf(where.file), readDeclared(where.meta)]);
     if (size === undefined || declared === undefined) throw blobNotFound();
     return { blobId, mediaType: declared.mediaType, byteLength: size, sha256, path: where.file };
@@ -94,7 +99,7 @@ export function createHostBlobStore(options: { sessionsDir: string; limits?: Hos
       const where = locate(sessionId, blob.sha256);
       return serial(where.file, async () => {
         const held = await sizeOf(where.file);
-        if (held !== undefined) return { blobId, received: held };
+        if (held !== undefined && await touch(where.file)) return { blobId, received: held };
         const received = await sizeOf(where.part);
         if (received === undefined && await usage(mediaRoot) + blob.byteLength > limits.blobQuotaBytes) {
           throw new HostProtocolError('limit_exceeded', 'The Host has no room for another blob.', { reason: 'blob_quota_exceeded' });
@@ -172,7 +177,21 @@ export function createHostBlobStore(options: { sessionsDir: string; limits?: Hos
       return { path: file, mediaType };
     },
 
-    sweep: signal => sweepAbandoned(mediaRoot, Date.now() - ABANDONED_UPLOAD_MS, signal),
+    async sweep(signal) {
+      const before = Date.now() - UNUSED_BLOB_MS;
+      let removed = 0;
+      for (const directory of await blobDirectories(mediaRoot)) {
+        for (const name of await namesIn(directory)) {
+          signal?.throwIfAborted();
+          const sha256 = BLOB_FILE.exec(name)?.[1];
+          if (sha256 === undefined) continue;
+          const base = path.join(directory, sha256);
+          // In the blob's queue, so a write, commit or use that is under way finishes first.
+          if (await serial(base, () => removeUnusedSince(path.join(directory, name), `${base}.json`, before))) removed += 1;
+        }
+      }
+      return removed;
+    },
   };
 }
 
@@ -244,23 +263,27 @@ async function usage(mediaRoot: string): Promise<number> {
   return total;
 }
 
-async function sweepAbandoned(mediaRoot: string, before: number, signal?: AbortSignal): Promise<number> {
-  let removed = 0;
-  for (const directory of await blobDirectories(mediaRoot)) {
-    for (const name of await namesIn(directory)) {
-      signal?.throwIfAborted();
-      if (!name.endsWith('.part')) continue;
-      const part = path.join(directory, name);
-      const modified = await stat(part).then(info => info.mtimeMs, (error: unknown) => {
-        if (isMissing(error)) return undefined;
-        throw error;
-      });
-      if (modified === undefined || modified >= before) continue;
-      await Promise.all([rm(part, { force: true }), rm(path.join(directory, `${name.slice(0, -5)}.json`), { force: true })]);
-      removed += 1;
-    }
+/** Marks a file as used now. Answers false when it is not there. */
+async function touch(file: string): Promise<boolean> {
+  const now = new Date();
+  try {
+    await utimes(file, now, now);
+    return true;
+  } catch (error: unknown) {
+    if (isMissing(error)) return false;
+    throw error;
   }
-  return removed;
+}
+
+/** Removes a blob or an upload, with what was declared for it, when nothing touched it since `before`. */
+async function removeUnusedSince(file: string, meta: string, before: number): Promise<boolean> {
+  const modified = await stat(file).then(info => info.mtimeMs, (error: unknown) => {
+    if (isMissing(error)) return undefined;
+    throw error;
+  });
+  if (modified === undefined || modified >= before) return false;
+  await Promise.all([rm(file, { force: true }), rm(meta, { force: true })]);
+  return true;
 }
 
 function isMissing(error: unknown): boolean {

@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -14,6 +14,7 @@ import { awaitLatestCodingMemoryReviewDrain, getActiveExtensionRuntime } from '@
 import {
   KodaXBaseProvider, registerModelProvider, type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult,
 } from '@kodax-ai/llm';
+import { sessionVisualMediaDirectory } from '@kodax-ai/agent/media';
 import { FileSessionStorage } from '@kodax-ai/repl';
 
 import { createKodaXRuntime } from '../../tests/runtime-fixture.js';
@@ -925,9 +926,19 @@ describe('v2 blobs', () => {
     expect(read).toEqual({ data: ONE_PIXEL_PNG.toString('base64'), mediaType: 'image/png', byteLength: blob.byteLength, sha256: blob.sha256 });
     expect(await user.request('blob.read', { sessionId: session.id, blobId: blob.blobId })).toEqual(read);
 
-    // The blobs go with their Session.
-    await user.request('session.delete', { requestId: 'delete-1', sessionId: session.id });
+    // The Session keeps its own copy of what was submitted, so the upload can go once nobody uses it.
+    const uploads = path.join(sessionVisualMediaDirectory(path.join(host.homeDir, '.kodax', 'sessions'), session.id), 'blobs');
+    const dayAgo = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    for (const name of await readdir(uploads)) await utimes(path.join(uploads, name), dayAgo, dayAgo);
+    expect(await blobs.sweep()).toBe(1);
     await expect(user.request('blob.read', { sessionId: session.id, blobId: blob.blobId }))
+      .rejects.toMatchObject({ kodaxCode: 'not_found', reason: 'blob_not_found' });
+    expect(await user.request('blob.read', { sessionId: session.id, blobId: attachment.blobId })).toEqual(read);
+
+    // The blobs go with their Session.
+    const again = await uploadBlob(user, session.id, ONE_PIXEL_PNG);
+    await user.request('session.delete', { requestId: 'delete-1', sessionId: session.id });
+    await expect(user.request('blob.read', { sessionId: session.id, blobId: again.blobId }))
       .rejects.toMatchObject({ kodaxCode: 'not_found', reason: 'blob_not_found' });
   }, 30_000);
 

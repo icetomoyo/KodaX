@@ -147,6 +147,11 @@ Keep tokens short-lived. When a token expires, the Host closes the connection
 with 4401. A client renews before that with `auth.renew`; the SDK does it when
 80% of the token's life has passed.
 
+Keep the Host's clock and the identity provider's in sync, for example with
+NTP. Past 30 s apart, a token can reach the Host already expired, or with an
+`nbf` still ahead, and is refused with 4401. A new token from the same
+provider is off by the same amount, so reconnecting does not fix it.
+
 ### Minimal example
 
 A platform that signs its own tokens needs one key pair, a JWKS endpoint and
@@ -189,6 +194,12 @@ const host = await connectKodaXHost({
 ```
 
 `credential` is called for each connection and each renewal.
+
+Each browser tab is its own client. If you also pass `instanceSecret`, so that
+credential leases survive a reconnect, keep it per tab, for example in
+`sessionStorage`. Tabs that send the same `instanceSecret` are one client to
+the Host: the tab that connects last takes over its leases, and the Host closes
+the other tab's connection.
 
 ## Lifecycle
 
@@ -265,6 +276,11 @@ tokens or parameter values:
 | Idle connection | 60 s; clients ping inside it |
 | Unread output to one client | 64 MiB, then the socket is dropped |
 | Upload chunk / file / whole Host | 512 KiB / 32 MiB / 1 GiB |
+| Uploaded blob nobody used | Removed after a day |
+
+A Session keeps its own copy of an image submitted with it, so removing the
+upload does not change the Session. A blob is used when it is uploaded, read,
+submitted, or begun again.
 
 ## Platform checklist
 

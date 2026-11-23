@@ -113,6 +113,8 @@ Host 用你的身份提供方发布的公钥校验 JWT，只要求这几个 clai
 
 token 的有效期要短。token 到期时 Host 以 4401 断开连接。客户端在那之前用 `auth.renew` 续期；SDK 在 token 有效期过去 80% 时自动续期。
 
+Host 和身份提供方的时钟要保持同步，比如都用 NTP。差出 30 秒以上，token 到 Host 时可能已经过期，或者 `nbf` 还没到，会被 4401 拒绝。同一个提供方新签的 token 差得一样多，所以重连解决不了。
+
 ### 最小样例
 
 自己签发 token 的平台需要一对密钥、一个 JWKS 地址和一个签发 token 的函数。下面只用 Node 标准库。
@@ -153,6 +155,8 @@ const host = await connectKodaXHost({
 ```
 
 每条连接、每次续期都会调用一次 `credential`。
+
+每个浏览器标签页是一个单独的客户端。如果还传了 `instanceSecret`，让凭证租约在重连后还在，就按标签页分开存，比如放在 `sessionStorage` 里。传同一个 `instanceSecret` 的标签页，在 Host 看来是同一个客户端：最后连上的那个接管租约，Host 关掉另一个的连接。
 
 ## 生命周期
 
@@ -209,6 +213,9 @@ kodax daemon serve --user-input-timeout-ms 1800000
 | 空闲连接 | 60 秒，客户端在此之内发 ping |
 | 发给一个客户端但它没读的数据 | 64 MiB，超过就断开 socket |
 | 上传的块 / 单个文件 / 整个 Host | 512 KiB / 32 MiB / 1 GiB |
+| 没人用的上传 blob | 一天后删除 |
+
+图片随输入提交后，Session 保存自己的一份，所以删掉上传的 blob 不影响 Session。上传、读取、提交、再次 begin 都算用过。
 
 ## 平台检查清单
 

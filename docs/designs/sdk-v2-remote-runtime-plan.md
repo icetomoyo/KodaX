@@ -2205,7 +2205,7 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
   - 超过单个上限报 `limit_exceeded` + `blob_too_large`。
   - 配额在 `begin` 时检查：已提交的 blob 按实际大小算，上传中的按声明的长度算，超了报 `limit_exceeded` + `blob_quota_exceeded`。这个检查不加锁，同时开始的两次上传可能一起超出一点。它只是自我保护，不是计费。
   - 没有 sessionsDir 的 Host（只有测试会这样）不收 blob，`blob.*` 报 `invalid_state` + `blobs_unavailable`。
-- 24 小时没人写的上传，由现有的 maintenance scheduler 在清理临时文件时一起删掉，没有另建 GC。
+- 24 小时没人写的上传，由现有的 maintenance scheduler 在清理临时文件时一起删掉，没有另建 GC。2026-11-23 起，24 小时没人用的已提交 blob 也一起删（见 §12 第 13 条）。
 - 偏离 §4 的地方：
   - 所有 `blob.*` 方法都带 `sessionId`。原因有两个：blob 归属一个 Session；Host 按 Session 定位文件，不用另建索引。这和 `item.read` 的做法一致。`begin`、`write`、`commit` 是带 `requestId` 的命令，`read` 是查询。
   - `blob.read` 的结果除了 `data` 和 `nextCursor`，每一块都带整个 blob 的 `mediaType`、`byteLength` 和 `sha256`。游标是 `<offset>.<sha256>`，中途字节变了报 `resync_required` + `blob_changed`，客户端从头再读。
@@ -2489,10 +2489,10 @@ KodaX 在实例契约里给出检查清单，但不实现：
     - 用户确认的修法：`config.*` 里的 `extensions` 读写 Host 实际加载的那份（`sdk-runtime.ts` 的 `withManagedExtensions`、`writeManagedExtensions`）。清空时文件保留、列表为空，因为删掉文件会让 `config.json` 的旧值重新生效。revision 按合并后的内容算，只改这个文件也会让 `ifRevision` 冲突。文件坏了时其他设置照常可读，`extensions` 不出现。
 13. 2026-11-23 协议审查找到、r1 冻结前要做的（三份审查报告和综合结论在本地 `docs/research/2026-11-23-v2-*`）：
     - ~~错误：v1 的错误映射成 `internal` 时带着原始 message 发给客户端，而且不记日志。改成发通用说明和一个 `incidentId`，同一个编号写进日志。~~ 2026-11-23 落地，见"错误模型"。MCP 工具列表里单个服务器读不到时的 `error` 字段仍是原始信息，这是有意展示给客户端的服务器故障，没有改（未经用户确认）。
-    - blob：提交后的 blob 只在 Session 删除时回收，没有删除方法，Host 共用 1 GiB 上限。Host 要自己回收不再被引用的 blob，客户端不知道哪些还在用。
+    - ~~blob：提交后的 blob 只在 Session 删除时回收，没有删除方法，Host 共用 1 GiB 上限。Host 要自己回收不再被引用的 blob，客户端不知道哪些还在用。~~ 2026-11-23 落地：Host 这边没有东西引用已提交的 blob，图片提交时 runtime 已经把字节复制进 Session 自己的媒体（`runtime-visual-input.ts` 的 `owner.pin`），视图里的附件读的是那份。只剩客户端可能还要用（撤回后重新提交、读回）。所以按"多久没人用"回收：`begin`（已提交的）、`commit`、`read`、提交时取文件都把 blob 的修改时间更新成现在；maintenance scheduler 清理时删掉 24 小时没人用的 blob，和没写完的上传同一个期限、同一次扫描，删除排在这个 blob 的写入队列里。没加删除方法（未经用户确认）。
     - ~~`command.list` 列出了 `command.execute` 跑不了的命令（REPL 内建命令，`runtime-product-commands.ts:92-111`）。要么只列能执行的，要么标出哪些只能在 REPL 里用。~~ 2026-11-23 落地，选了只列能执行的（未经用户确认）：v2 只列 prompt 命令和扩展命令，且是用户能启动的。REPL 内建命令由 REPL 自己跑，它的补全和 `/help` 本来就读本地注册表；Skill 命令用 `input.submit` 发 `/name` 启动，`skill.list` 照旧列出。v1 的 `command.list` 不变。
     - ~~`initialize.methods` 对 service 列出了它不能调用的 `interaction.respond`（`connection.ts:166-168` 和 `access.ts:263-265` 不一致）。~~ 2026-11-23 落地：两边读同一张表（`access.ts` 的 `runtimeRoleRefusal`），v2 不再给 service 列这个方法，调用时报 `method_not_found`，和 Host 没有的方法一样；v1 仍报 `forbidden`。
-    - 只写进文档：同一个 `instanceSecret` 被多个浏览器标签页共用时会互相顶掉，浏览器 SDK 本身不存它，所以只影响自己传它又持有租约的调用方；JWT 时钟偏差会让重连失败几次，每次重连都会取新凭证，能自己恢复。
+    - ~~只写进文档：同一个 `instanceSecret` 被多个浏览器标签页共用时会互相顶掉，浏览器 SDK 本身不存它，所以只影响自己传它又持有租约的调用方；JWT 时钟偏差会让重连失败几次，每次重连都会取新凭证，能自己恢复。~~ 2026-11-23 写进 `public_docs/deployment/host.md`。时钟偏差那条核对后改了说法：Host 只查 `exp` 和 `nbf`，容差 30 秒；偏差超过容差时，同一个提供方新签的 token 偏得一样多，重连解决不了，文档改成要求两边时钟同步。
     - 不改：`learning.*` 不合并成一个 `learning.decide`（闭合的动作枚举加一项就要升 revision）；review 的三个入口不合并（Space 的授权方把它们当成不同的类别）；附件放开到图片以外推迟，v1 本身也不收，以后的做法是把文件复制进工作目录、把路径写进输入。
 
 ## 13. 后续 Feature（不在 v2.0 范围）

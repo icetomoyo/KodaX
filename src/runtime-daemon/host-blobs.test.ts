@@ -137,20 +137,32 @@ describe('the blobs a Host keeps for its Sessions', () => {
     await expect(blobs.read('session-1', ref.blobId, 11)).rejects.toMatchObject({ kodaxCode: 'invalid_params' });
   });
 
-  it('removes uploads left unfinished for a day, and nothing else', async () => {
-    const { sessionsDir, blobs } = await store();
-    const kept = facts('kept');
-    await upload(blobs, 'session-1', (await blobs.begin('session-1', kept)).blobId, kept.bytes);
+  it('removes uploads left unfinished and blobs left unused for a day, and keeps what was used since', async () => {
+    const { sessionsDir, blobs } = await store({ ...LIMITS, blobQuotaBytes: 1024 });
+    const committed = async (text: string) => {
+      const blob = facts(text);
+      return upload(blobs, 'session-1', (await blobs.begin('session-1', blob)).blobId, blob.bytes);
+    };
+    const unused = await committed('idle');
+    const read = await committed('read');
+    const submitted = await committed('sent');
+    const begun = await committed('again');
     const stale = facts('stale');
     const { blobId } = await blobs.begin('session-1', stale);
     await blobs.begin('session-2', facts('fresh'));
     const directory = path.join(sessionVisualMediaDirectory(sessionsDir, 'session-1'), 'blobs');
     const dayAgo = new Date(Date.now() - 25 * 60 * 60 * 1000);
     for (const name of await readdir(directory)) await utimes(path.join(directory, name), dayAgo, dayAgo);
+    await blobs.read('session-1', read.blobId, 0);
+    await blobs.file('session-1', submitted.blobId);
+    await blobs.begin('session-1', facts('again'));
 
-    expect(await blobs.sweep()).toBe(1);
+    expect(await blobs.sweep()).toBe(2);
     expect(await blobs.begin('session-1', stale)).toEqual({ blobId, received: 0 });
-    expect(await blobs.begin('session-1', kept)).toMatchObject({ received: 4 });
+    expect(await blobs.begin('session-1', facts('idle'))).toEqual({ blobId: unused.blobId, received: 0 });
+    for (const kept of [read, submitted, begun]) {
+      await expect(blobs.file('session-1', kept.blobId)).resolves.toMatchObject({ mediaType: 'image/png' });
+    }
     expect((await stat(directory)).isDirectory()).toBe(true);
   });
 });
