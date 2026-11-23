@@ -1,7 +1,8 @@
 # FEATURE_307 private side chat — test guide
 
 `/side` (alias `/btw`) opens a private side chat seeded from the parent session. Only an explicit
-`send_to_parent` letter reaches the parent. Design record: `docs/designs/side-chat-plan.md`.
+`send_to_parent` letter reaches the parent. Decisions: ADR-081;
+design: HLD §8 and DD §10 "Side chat"; open gaps: Issue 443.
 
 ## Automated checks
 
@@ -17,7 +18,8 @@ Run vitest from the repository root; package directories give false failures.
 
 ## Intent eval (needs provider keys; spends calls)
 
-Pre-registered budget: 54 calls (3 aliases x 6 cells x 3 samples), see plan §8.1.
+Pre-registered budget: 54 calls (3 aliases x 6 cells x 3 samples), at most 500k tokens per
+invocation, 8192 output tokens, 120 s timeout, one request in flight per alias.
 
 ```powershell
 node tests/repl-pty-acceptance.mjs --source --side-chat-only   # leaves ink-requests.json with the production side prompt and tools

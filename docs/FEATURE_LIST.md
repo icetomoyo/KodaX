@@ -23,9 +23,9 @@
 | Roadmap updated | `2026-11-23` — rc.2 prepared on top of the npm-published rc.1 with RepoIntel phase 0 (FEATURE_317 default surface), the reasoning/tool-call replay repairs (Issues 441-442) and `glm-5.4` on zhipu-coding; rc.1 published with the model catalog refresh; FEATURE_300 remains Planned; `2026-11-24` — merged into `KodaX-next-dev`, which carries the unreleased SDK v2 work (FEATURE_312–316, 318), FEATURE_307 side chat and FEATURE_308 note memory |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
 | Total tracked features | `102` |
-| InProgress | `3` |
-| Planned | `24` |
-| Completed | `69` |
+| InProgress | `2` |
+| Planned | `23` |
+| Completed | `71` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
 | Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317, 318` |
 | Archive cutoff | Shipped / canceled / absorbed / shelved items through `v0.7.49` are archived. |
@@ -34,9 +34,9 @@
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 69 | `317, 311, 310, 308, 306, 305, 304, 303, 302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
-| InProgress | 3 | `307, 298, 225` | `307`: R1–R6 hardening and verification per [side-chat plan](designs/side-chat-plan.md). `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
-| Planned, SDK v2 | 4 | `312, 313, 316, 318` | `312`, `313` and `316` are implemented on `KodaX-next-dev`, unreleased; they ship with the SDK v2 work. `318` is being designed in [CLI command redesign](designs/cli-command-redesign.md). `313`, including its stall limit, is built wholly on `KodaX-next-dev`; mainline adds nothing. |
+| Completed | 71 | `318, 307, 317, 311, 310, 308, 306, 305, 304, 303, 302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| InProgress | 2 | `298, 225` | `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
+| Planned, SDK v2 | 3 | `312, 313, 316` | `312`, `313` and `316` are implemented on `KodaX-next-dev`, unreleased; they ship with the SDK v2 work. `313`, including its stall limit, is built wholly on `KodaX-next-dev`; mainline adds nothing. |
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
 | Planned, 0.7.100 | 1 | `314` | Remove Host protocol v1 (or in `v0.8.0` if that comes first); KodaX's own v1 callers move to v2 first. `src/host-protocol-v1-removal.test.ts` fails from the first 0.7.100 build. |
 | Planned, on demand | 1 | `315` | AG-UI adapter in front of the v2 Host; starts when a real AG-UI client needs it. |
@@ -91,7 +91,7 @@
 | `v0.7.94` | `0` |
 | `v0.7.95` | `0` |
 | `v0.7.96` | `0` |
-| `v0.7.97` | `2` |
+| `v0.7.97` | `1` |
 | `v0.7.98` | `0` |
 | `v0.7.99` | `1` |
 | `v0.7.100` | `1` |
@@ -525,7 +525,6 @@
 
 | ID | Title | Category | Priority | Planned | Design |
 |---|---|---|---|---|---|
-| `307` | Private Side Chat with Selective Delivery to the Parent Session | Enhancement / Host + REPL Session UX | Medium | `v0.7.97` | [v0.7.97](features/v0.7.97.md#feature_307-private-side-chat-with-selective-delivery-to-the-parent-session) — first version shipped in `de105cf26`; hardening R1–R6 in progress |
 | `298` | Product Host and Client Contract Simplification | Core / Runtime + UI SDK + Execution | Critical | `v0.7.97` | [v0.7.97](features/v0.7.97.md#feature-298) — core, [consumer completion T38–T42](features/v0.7.97.md#consumer-completion-tickets) and parity follow-ups T43–T56 implemented; cross-platform/manual release verification pending |
 | `225` | REPL Dead / Legacy Code Cleanup | Internal / Refactor + Tech Debt | Medium | `v0.7.105` | [v0.7.100](features/v0.7.100.md#feature_225-repl-dead--legacy-code-cleanup) |
 
@@ -2560,7 +2559,6 @@ fixed GitHub binary archive sidecar omission before tagging.
 | `314` | Host Protocol v1 Removal | SDK / Host Protocol | High | `v0.7.100` | [Addition](#2026-11-22-feature_314-addition) — Planned; `src/host-protocol-v1-removal.test.ts` fails from the first 0.7.100 build |
 | `315` | AG-UI Adapter for the v2 Host | SDK / Host Protocol | Medium | On demand | [Addition](#2026-11-23-feature_315-addition) — Planned; waits for a real AG-UI client |
 | `316` | Prompt Cache Warming | LLM Cost / Runtime | High | SDK v2 | [Addition](#2026-11-23-feature_316-addition) — Implemented on `KodaX-next-dev` 2026-11-23, unreleased |
-| `318` | CLI, REPL Command, Help and Health Redesign | CLI / Host Management | High | `v0.7.97` (SDK v2) | [Addition](#2026-11-23-feature_318-addition) — Designing; [plan](designs/cli-command-redesign.md) |
 | `300` | Git Execution Consolidation with Shared macOS Preflight | Refactor | Medium | `v0.7.99` | [v0.7.99](features/v0.7.99.md#feature_300-git-execution-consolidation-with-shared-macos-preflight) — Planned; design only |
 | `287` | Advisor Mode Virtual Provider | Enhancement / LLM Provider + Session Quality | High | `v0.8.13` | [v0.8.13](features/v0.8.13.md#feature_287-advisor-mode-virtual-provider) |
 | `288` | CLI-Space Daemon Profile Alignment | Enhancement / Runtime + Multi-Client UX | High | `v0.8.14` | [v0.8.14](features/v0.8.14.md#feature_288-cli-space-daemon-profile-alignment) |
@@ -2584,7 +2582,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 ## 2026-11-23 FEATURE_318 Addition
 
-- Status: Designing on `KodaX-next-dev` 2026-11-23; ships with the SDK v2 work.
+- Status: Completed on `KodaX-next-dev` 2026-11-24, unreleased; ships with the SDK v2 work.
 - Why: command help and lists are hand-kept in about ten places that already
   disagree; README shows flags the CLI rejects; `kodax daemon` management runs
   on v1, which goes in 0.7.100; `restart` cannot start a stopped Host; health
@@ -2593,7 +2591,7 @@ fixed GitHub binary archive sidecar omission before tagging.
   `daemon` as a hidden alias until 0.7.100; common old forms keep an alias for
   a while, broken or useless ones are removed with an error naming the new
   form; JSON-only commands print text by default and take `--json`.
-- Plan, phases and open points: [CLI command redesign](designs/cli-command-redesign.md).
+- Decisions: ADR-082. Design: HLD §12. Test guide: [FEATURE_318](test-guides/FEATURE_318_v0.7.97_TEST_GUIDE.md).
 
 ## 2026-11-23 FEATURE_316 Addition
 
@@ -2887,11 +2885,11 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 ## 2026-11-12 FEATURE_307 Addition
 
-- Status: target `v0.7.97`, InProgress. The first version (commit `de105cf26`) is on `KodaX-next-dev`; hardening and verification follow the plan below.
-- Source: [side-chat plan](designs/side-chat-plan.md), including the 2026-11-12 review (§8) and its R1–R6 schedule.
+- Status: Completed on `KodaX-next-dev` 2026-11-24, unreleased. First version `de105cf26`; hardening R1–R6 done.
 - Scope: `/side` and `/btw` open a private side Session seeded with a one-time snapshot of the parent's committed history. The side agent may read, and may send one explicit message back to the parent through `send_to_parent`. A message to a running parent is consumed at the next safe point. A message to an idle parent is left as a note, or starts a parent Run when the user asked for it (`wake`).
 - Decisions: `wake` is kept without an extra approval step; the Host reports the request truthfully and both sides show a receipt. The side chat does not inherit the parent's prompt cache; shared prefix is a conditional fallback decided after measurement.
-- Test guide: `test-guides/FEATURE_307_v0.7.97_TEST_GUIDE.md` (to be written in R6).
+- Decisions: ADR-081. Design: HLD §8 and DD §10 "Side chat". Open gaps: KNOWN_ISSUES Issue 443.
+- Test guide: [FEATURE_307](test-guides/FEATURE_307_v0.7.97_TEST_GUIDE.md).
 - Design: [v0.7.97](features/v0.7.97.md#feature_307-private-side-chat-with-selective-delivery-to-the-parent-session).
 
 ---
@@ -2970,6 +2968,8 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Version | Design | Notes |
 |---|---|---|---|---|
+| `318` | CLI, REPL Command, Help and Health Redesign | `v0.7.97` (on `KodaX-next-dev`, unreleased) | [v0.7.97](features/v0.7.97.md#feature_318-cli-repl-command-help-and-health-redesign) | `kodax daemon` becomes `kodax host` (hidden alias until 0.7.100); the Commander tree is the one command table for help, completion and docs; CLI, REPL `/status` and `kodax doctor` share one health model; result commands print text and take `--json`; usage errors exit 2. Manual eval recommended ship (ADR-082). [Test guide](test-guides/FEATURE_318_v0.7.97_TEST_GUIDE.md). |
+| `307` | Private Side Chat with Selective Delivery to the Parent Session | `v0.7.97` (on `KodaX-next-dev`, unreleased) | [v0.7.97](features/v0.7.97.md#feature_307-private-side-chat-with-selective-delivery-to-the-parent-session) | `/side` (`/btw`) opens a separate side Session from a snapshot of the parent's committed history; it can read and send letters to the parent with `send_to_parent`, optionally waking an idle parent; `/side end` deletes it (ADR-081). Gaps in Issue 443. [Test guide](test-guides/FEATURE_307_v0.7.97_TEST_GUIDE.md). |
 | `317` | RepoIntel Phase 0 — Honest Default Surface | `v0.7.97-rc.2` | [v0.7.97](features/v0.7.97.md#feature_317-repointel-phase-0--honest-default-surface) | Default `auto` offers `repo_overview`, `changed_scope` and `changed_diff`; the semantic tools, module/impact injection and the background index build need explicit `full` or `light`, and routing signals come from git changes. Output reports omitted items, not-found names and warming/unavailable indexes instead of placeholders. Storage moves to `<config home>/repo-intelligence`; `target_path` must stay in the workspace. Prompt eval (82 calls, blind-reviewed) recommended ship; `npm run bench:repo-intel-truth` holds the old-engine baseline. KNOWN_ISSUES #133 closed. |
 | `311` | Unified Prompt Chain | `v0.7.97` (shipped in `v0.7.97-beta.12`) | [v0.7.97](features/v0.7.97.md#feature_311-unified-prompt-chain) | Every root Run uses the managed Worker and every entry sends one tool text: the request-time projection, the canonical Worker and tool texts, the direct root engine and `system.md` are deleted. `runs.start({ mode: 'coding' })` is ignored with a warning; the leaf executor stays internal for child Agents. `tests/f311-entry-matrix.test.ts` pins every entry; ADR "Every root Run uses one Worker and one tool text" records it. |
 | `310` | SA Mode Residue Removal | `v0.7.97` (shipped in `v0.7.97-beta.12`) | [v0.7.97](features/v0.7.97.md#feature_310-sa-mode-residue-removal) | Public and config.json `agentMode: 'sa'` normalize the way `amaw` did: managed entries run AMA, `runKodaX` and `runs.start` without a mode treat it as unset, and persisted `'sa'` records stay readable. The SA dispatch branch, Direct Path overlay, `'sa'` labels and the FEATURE_100 golden recorder are gone; ADR "SA mode is retired from every caller" records it. The `sa-mutation-reflection` eval id keeps its name. |

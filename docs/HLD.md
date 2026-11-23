@@ -986,6 +986,18 @@ bodies, synthetic current/legacy compaction checkpoints, and raw payload
 placeholders from search and direct read. History discarded by a legacy build
 before exact sidecar persistence is not reconstructable.
 
+### Side chat (FEATURE_307, ADR-081)
+
+`/side` (alias `/btw`) opens a separate side Session bound to a parent Session
+and branch. It starts from one snapshot of the committed parent history and
+keeps its own turns out of the parent. The side Run reads (`read`, `glob`,
+`grep`) and can send one attributed letter to the parent with
+`send_to_parent`. A busy parent takes the letter at its next model boundary; an
+idle parent keeps it for its next Run unless the letter asks to wake it. The
+REPL shows the side chat in a panel, a one-line footer marker while the panel
+is closed, and `/side end` to discard it. The classic renderer registers the
+command and says the side chat needs the fullscreen UI.
+
 ## 9. Skills, MCP, And A2A
 
 Skills are Markdown-based capabilities discovered from configured paths and
@@ -1185,6 +1197,17 @@ lifted to `@kodax-ai/agent` (ADR-046) and the inline run is async / idle-yield
 `src/kodax_cli.ts` is the product entry for command-line execution and binary
 bootstrap. The CLI should stay thin and delegate product behavior to package
 APIs.
+
+The Commander tree built by `createKodaXProgram` (`src/cli/program.ts`) is the
+CLI's single command table: help, completion and subcommand detection read it,
+and `src/cli/docs-drift.test.ts` checks documented `kodax …` examples against
+it. Each command group lives in `src/cli/` (`host.ts`, `sessions.ts`,
+`run.ts`, `help.ts`, `completion.ts`, …); `src/kodax_cli.ts` only assembles
+them. `kodax host` manages the Host over protocol v2 with probe connections,
+and the CLI, REPL `/status` and `kodax doctor` report one health model:
+`ready`, `starting`, `draining`, `stopped`, `stale`, `unreachable`, `mismatch`.
+Commands print text by default and JSON with `--json`; usage errors exit 2
+(ADR-082). REPL commands carry a `category` that groups `/help`.
 
 ## 13. Design Constraints
 

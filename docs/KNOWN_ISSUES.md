@@ -47,6 +47,44 @@ not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
 
+## Issue 443: Side chat gaps left after FEATURE_307
+
+- Priority: Low
+- Status: Open
+- Introduced: FEATURE_307 (unreleased, `KodaX-next-dev`)
+- Created: 2026-11-24
+- Reported by: FEATURE_307 review (2026-11-12) and wrap-up
+
+### Original Problem
+
+FEATURE_307 shipped with these known gaps (ADR-081):
+
+- **Binding cache across Host processes.** `SideChats` caches each parent's
+  binding file in memory and does not reread it when another Host process
+  changes it. One Host per `KODAX_HOME` (ADR-075) makes this rare.
+- **Marker after restart.** The REPL footer marker covers only side chats
+  opened in the current REPL process; after a restart it appears once `/side`
+  is opened again.
+- **Unreachable approval path.** The panel's `/allow` and `/deny` handling runs
+  only when a hook or extension returns `ask`; the built-in side tools never
+  ask, so the path has no end-to-end test. Keep or delete is undecided.
+- **Untested Host cases.** A retried `send_to_parent` with the same id and
+  changed text, a wake refused by a pending approval or stop, and two windows of
+  one owner on the same side chat have no automated case.
+- **Ambiguous singular requests on a low-tier model.** In the 2026-11-16 eval,
+  `ark/v4flash` answered "tell the parent about that cause" (two candidates) by
+  sending both or guessing one, 0/3; `zhipu/glm52` and `ark/k27` asked, 3/3
+  each. Both sides see a receipt and the letter is reference material for the
+  parent, not an instruction it must act on.
+- **Extension hooks end to end.** `sideToolRuntime` forwarding of
+  `emit`/`runHook` is unit-tested only; a real Host hook was not run against a
+  side Run.
+
+### Next step
+
+Fix when a user report or a second Host process sharing one home makes one of
+these real.
+
 ## Issue 442: Gemini and pi-messages replay another model's tool calls as text
 
 - Priority: Medium
@@ -4751,6 +4789,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 443 | Low | Open | Side chat gaps left after FEATURE_307 | FEATURE_307 (unreleased, `KodaX-next-dev`) | — | 2026-11-24 | — |
 | 442 | Medium | Resolved | Gemini and pi-messages replay another model's tool calls as text | `v0.7.97-alpha.12` | unreleased (after `v0.7.97-rc.1`) | 2026-11-23 | 2026-11-23 |
 | 441 | High | Resolved | Replayed reasoning from another model becomes reply text, and models learn to write their thinking into the answer | `v0.7.97-alpha.12` | unreleased (after `v0.7.97-rc.1`) | 2026-11-23 | 2026-11-23 |
 | 437 | Low | Open | Per-session lock and review directories are never reclaimed | `v0.7.85` | - | 2026-11-22 | - |
@@ -20538,7 +20577,7 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 317 (47 Open including 1 needs-info, 1 ready, 267 Resolved, 0 Partially Resolved, 1 Won't Fix)
+- Total: 318 (48 Open including 1 needs-info, 1 ready, 267 Resolved, 0 Partially Resolved, 1 Won't Fix)
 - Ready: 1 (420)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md

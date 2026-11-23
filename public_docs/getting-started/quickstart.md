@@ -60,7 +60,7 @@ the [integration guide](../sdk/embedder-guide.md#post-alpha10-sdk-alignment).
 
 ## Ask a side question while the agent works
 
-In the interactive terminal, type `/side Why check the path first?` or use the alias `/btw`. The main task keeps running. The side chat starts from the committed parent history at the time you open it and remembers your follow-up questions. Type `/side` to return. Reopen it on the same parent branch to continue the discussion.
+In the interactive terminal, type `/side Why check the path first?` or use the alias `/btw`. The main task keeps running. The side chat starts from the committed parent history at the time you open it and remembers your follow-up questions. Type `/side` to return. Reopen it on the same parent branch to continue the discussion. Type `/side end` to close the side chat and delete it. The first answer in a new side chat is slower than later ones, because the model reads the copied parent history once before the cache covers it.
 
 To share a finding, ask “Tell the parent only about the drive-letter case mismatch.” The parent sees that attributed report. The rest of the conversation stays in the side chat. A running parent receives the report at its next available model boundary. An idle parent keeps it for the next run. To request a new run immediately, explicitly say “Tell the parent and ask it to resume now.” A parent requiring fresh authorization keeps the report until an authorized run starts.
 

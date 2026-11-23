@@ -8466,3 +8466,155 @@ before then.
 - The esbuild targets in `scripts/build-bundle.mjs` (`node18`, `node20`) are
   unchanged. Raising them changes the emitted code and the bundle size, so it
   is a separate change measured against the bundle budget.
+
+---
+
+## ADR-081: Side Chat Is a Separate Session That Reaches the Parent Only by Letter
+
+**Status**: Accepted (2026-11-24). FEATURE_307.
+
+### Context
+
+Users want to ask about the main agent's work while it runs without the
+question entering the main conversation. The side agent needs the parent's
+history to answer, and sometimes a conclusion should reach the parent.
+
+### Decision
+
+- `/side` (alias `/btw`) opens a separate side Session through
+  `sessions.openSide(parentSessionId)`. It starts from one snapshot of the
+  committed parent history. Reopening on the same owner, parent and branch
+  returns the same side Session.
+- The side Run gets `read`, `glob` and `grep` within the execution policy, plus
+  `send_to_parent`. The call path enforces this list; schema visibility is not
+  the boundary. Write, shell, delegation, skills, MCP and `ask_user` are
+  refused at dispatch without an approval prompt.
+- Only an explicit `send_to_parent` call reaches the parent, as one attributed
+  letter. A busy parent receives it at its next model boundary. An idle parent
+  keeps it for its next Run, unless the side agent sets `wake`.
+- `wake` needs no extra approval. The letter enters the parent's context on its
+  next Run anyway, so `wake` only changes when that happens. The Host's resume
+  prompt says the side agent asked for the resume; it does not claim the user
+  asked. A parent without its own Run record does not wake.
+- Letters are limited to 4,000 characters and 20 undelivered per side chat. A
+  rejected letter returns the reason to the side agent as a tool error.
+- The side Run's tools still fire the Session's own `tool:before` hooks and
+  events, so a policy that blocks a path also covers the side chat.
+- The side chat does not reuse the parent's prompt cache. Measured on
+  2026-11-12 with a 30k-token parent history on DeepSeek and zhipu-coding: the
+  first side request hit no cache, and from the second request on about 99% was
+  cached. The extra cost is one uncached read of the history per side chat. The
+  panel says the first answer is slower.
+
+### Alternatives rejected
+
+- **Sharing the parent's prefix for cache hits.** The side system prompt and
+  tool set differ from the parent's at the start of the prefix. Sharing would
+  also need the parent's cache key, which changes the isolation boundary. The
+  model would see write tools it may not call and retry refused calls; the
+  parent's plan mode and skill text would gain system authority over the side
+  agent, and the side instructions would drop to a trailing user message.
+  Revisit only as its own feature, if measured uncached cost is large at common
+  session lengths and the parent prefix is stable, with the invariants above, an
+  ADR-033 review and evals for inherited send/write instructions and plan-mode
+  parents.
+- **Shortening the inherited history.** The side agent could then not explain
+  the parent's work, which is the point of the feature.
+- **Approval before `wake`, or no `wake`.** Small safety gain, since the letter
+  reaches the parent anyway, for an extra step each time.
+- **A `sessions.sideFor` lookup and inherited-size fields on
+  `ClientSession.sideChat`.** The REPL tracks the side chats it opened in this
+  process and counts inherited items from the view, so the contract and daemon
+  schema stay unchanged. After a REPL restart the parent marker appears once
+  `/side` is opened again.
+
+### Consequences
+
+- Each side chat costs one uncached read of the parent history.
+- Extensions can replace the side chat's `read` and `grep`, the same as for any
+  Session; extensions are trusted in-process code.
+- The panel's `/allow` and `/deny` path is reachable only when a hook or
+  extension returns `ask`; the built-in side tools never ask.
+
+---
+
+## ADR-082: One Command Tree, `kodax host`, One Health Model
+
+**Status**: Accepted (2026-11-24). FEATURE_318. Owner decisions A–C of
+2026-11-23; the points marked *unconfirmed* were chosen by the implementer and
+await owner review.
+
+### Context
+
+Help text and command lists were kept by hand in about ten places that
+disagreed: basic help, help topics, three subcommand name lists, completion
+scripts, REPL categories and the manual's `commands` topic. README showed flags
+the CLI rejects. `kodax daemon status/stop` used protocol v1, which goes in
+0.7.100. `restart` could not start a stopped Host, `status` always exited 0,
+health had three vocabularies, and `kodax doctor` never checked the Host.
+Several commands printed only JSON, and some flags were no-ops or threw.
+
+### Decision
+
+- **The Commander tree is the command table.** `kodax -h`,
+  `kodax -h <command>`, completion and "is this a subcommand" read the tree;
+  lazy groups load their subcommands first. A parent and child may not share
+  an option name with different meanings, because the parent consumes it first.
+  REPL commands carry a `category` and `/help` groups by it.
+- **`kodax daemon` is now `kodax host`** (decision A). `daemon` is a hidden
+  alias that prints a rename notice to stderr; it is listed in the 0.7.100
+  removal test and goes with protocol v1. `status` and `stop` use v2; a probe
+  connection (`initialize` with `purpose: 'probe'`) may only call `ping`,
+  `host.get` and `host.preflight`, is not counted as a client and does not reset
+  the idle timer. `restart` starts a Host that is not running. `logs` reads the
+  log file directly, because the Host may be down.
+- **One health model.** CLI, REPL `/status` and `kodax doctor` report `ready`,
+  `starting`, `draining`, `stopped`, `stale`, `unreachable` or `mismatch`.
+  `/healthz` keeps reporting only `starting`, `ready` and `draining`.
+- **Text by default, `--json` for scripts** (decision C). The JSON is the old
+  output, so a script adds `--json` and nothing else.
+- **Exit codes.** 0 success, 1 failure, 2 usage error (unknown command or flag,
+  wrong arguments, invalid value, removed flag, unknown help topic), 3 only for
+  `host status` when no Host runs. Results with `ok: false` exit 1. `doctor`
+  exits 1 when the Host is `unreachable` or `mismatch` or the core config cannot
+  be read.
+- **Old forms** (decision B). Common ones stay as aliases: `kodax daemon`,
+  `-s list|delete|delete-all|cleanup-acp` (now `kodax sessions …`),
+  `-t/--thinking`, `/thinking`, `/think`, `/t`. Broken or useless ones are
+  removed and name the replacement: `-n/--new`, `-y/--auto`, `--extension`,
+  `/repointel`, `/plan`, `/project`.
+- **Docs are tested against the tree.** `src/cli/docs-drift.test.ts` parses
+  every `kodax …` example in README, README_CN and `public_docs/` and fails on
+  a command or flag the tree does not have. It does not check argument values.
+  The manual's `commands` topic is checked against both tables.
+
+Unconfirmed: exit code 3 for "not running" (the LSB `status` convention);
+`host logs --follow`, which refuses `--json` because the log lines are already
+JSON; `execpolicy --pretty` implying `--json`; `integrations` exiting 1 on a
+failed check; command groups without a subcommand printing help to stderr and
+exiting 1 (Commander's default); `doctor` not failing on missing provider
+credentials, since credentials can come from config or CLI logins that it does
+not read; removing the `-s` forms in 0.7.100 with `daemon`; renaming
+`execpolicy check --mode` to `--permission-mode`; `/reasoning` showing `off`, with
+`none` as a synonym.
+
+### Alternatives rejected
+
+- **A separate command data table.** The tree already holds names,
+  descriptions, options, aliases and hidden flags; a second table is one more
+  place to drift.
+- **Reading logs through `host.logs`.** Logs matter most when the Host is down
+  or cannot start, when no connection is possible.
+- **Failing `doctor` on missing credentials.** It sees only environment
+  variables and would report a false failure.
+
+### Consequences
+
+- Scripts that parse `kodax mcp list` and similar add `--json`; scripts that
+  call `kodax daemon` or rely on exit code 0 from `status` and `doctor` must be
+  updated (see SDK_MIGRATION). SDK callers, including Space, are unaffected.
+- `observeRuntimeDaemonHealth` and the launchers still read the v1
+  `initialize` result; they move to v2 with FEATURE_314 before 0.7.100.
+- The manual's command topics changed; `benchmark/manual-commands.eval.ts`
+  (Layer 3, glm-5.3-flash and deepseek-flash) found 6 of 8 blind pairs better
+  with the new manual and none worse; recommend-ship.

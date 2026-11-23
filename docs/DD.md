@@ -1509,6 +1509,60 @@ Each step that fails emits a `warn` diagnostic and the delete still succeeds.
 Other delete paths keep their existing behavior: `kodax -s delete`, the public
 `deleteSession`, the REPL fallback, retention and dedupe.
 
+### Side chat (FEATURE_307, ADR-081)
+
+Code: `src/side-chat.ts` (bindings, letters, tool runtime), `src/sdk-runtime.ts`
+(`sessions.openSide`, side Run setup, delivery and wake),
+`packages/repl/src/interactive/storage.ts` (`saveSideSnapshot`),
+`packages/repl/src/ui/components/SideChatPanel.tsx`.
+
+- **Identity.** A side Session id is `side_<parent key>_<32 hex>`, where the
+  parent key is a hash of the parent id. Orphans stay findable by the prefix
+  when the binding file cannot be read.
+- **Bindings.** `<runtime dir>/side-chats/<parent key>.json` lists the
+  bindings of one parent: owner principal, branch, boundary and letters.
+  `openSide` reuses the binding for the same owner, parent and branch.
+  It first discards `preparing` bindings left by a crash (calls run inside the
+  parent's gate). A failed open discards the half-made Session and still
+  removes the binding, then rethrows the original error.
+- **Snapshot.** `saveSideSnapshot` copies the committed parent prefix. A
+  dangling `tool_use` falls back to the last complete round. A duplicate
+  `tool_use` or an orphan `tool_result` throws. Goal and label entries are
+  dropped, thinking blocks are removed (a thinking-only message becomes
+  `[Earlier reasoning omitted]`), and parent `system` messages become `user`
+  reference material. A synthetic boundary message (`SIDE_BOUNDARY_TEXT`)
+  ends the snapshot. The side Run's system prompt is `SIDE_INSTRUCTIONS`.
+- **Tools.** The side Run's registry is `read`, `glob`, `grep` (within the
+  execution policy) plus `send_to_parent({ text, wake? })`. `sideToolRuntime`
+  forwards the Session's `emit` and `runHook` so `tool:before` policy hooks
+  still run, but not its tools.
+- **Letters.** At most 4,000 characters (`MAX_SIDE_LETTER_CHARS`) and 20
+  undelivered (`MAX_QUEUED_SIDE_LETTERS`); `sideLetterRejection` returns the
+  reason as a tool error. A letter enters the parent as a synthetic user message
+  (`_synthetic: true`, `_source: 'side-chat'`) with sender, letter id and text.
+  The Host reconciles by side Run id plus tool call id, so a retried call keeps
+  one receipt. A letter whose parent branch changed is not delivered; its
+  receipt says so.
+- **Wake.** `wake: true` starts one parent Run with a Host prompt saying the
+  side agent asked for the resume. A parent with no Run record of its own does
+  not wake and the tool returns `Waiting for the next authorized parent run.`
+- **Visibility.** A parent view lists receipts only for bindings its requester
+  owns (`SideChats.visibleTo`). A caller without a principal is an embedded
+  caller and sees all bindings, the same rule as `admits()`.
+- **Delete.** Deleting the parent deletes its side Sessions. A corrupt binding
+  file is renamed `.corrupt-<timestamp>` with a diagnostic, and the orphan side
+  Sessions are found by id prefix and removed with their settings, MCP storage
+  and run state.
+- **REPL.** The panel renders through the live transcript row model
+  (`visibleSideItems` → `clientViewToHistoryItems` →
+  `buildHistoryItemTranscriptSections` → `TranscriptRowRenderer`), keeping the
+  newest `terminalRows − 10` rows (at least 5). A `send_to_parent` tool row is hidden once its
+  receipt exists. The footer marker (`running`, `needs approval`, `new reply`)
+  covers side chats opened in this REPL process and never enters the transcript
+  or a request. `/side end` stops a running side Run, then deletes the side
+  Session; with unread letters to the parent the first `/side end` only reports
+  the count and a second one with the same count discards them.
+
 ## 11. Skills
 
 Skills live under `packages/agent/src/capabilities/skills`.

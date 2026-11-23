@@ -256,6 +256,8 @@ Ink 的命令结果和设置快捷键反馈通过既有 `sessions.appendNotice` 
 
 侧 Run 的可用工作区工具限于执行策略允许的 `read`、`glob`、`grep`。Host 为该 Run 绑定 `send_to_parent({text, wake?})` 的唯一收件人。工具的回执可为 `queued` 或 `delivered`；后者表示已进入父模型上下文。父会话的 canonical 记录带有 `_synthetic: true`、`_source: 'side-chat'` 和发送者、消息 ID、正文。Provider 使用其支持的消息角色；模型通过固定的侧 Agent 署名与正文中的来源 ID 识别留言。父侧视图提供署名回执。Host 用侧 Run 和工具调用 ID 对账。旧 Host 经能力协商返回不支持；需要受限凭证的空闲父会话等待其调用方重新准入。
 
+结束侧聊用 `sessions.delete(侧 ID)`，REPL 的 `/side end` 先停止在途的侧 Run 再删除。删除父 Session 会一并删除它的侧聊。Host 不提供按父 Session 查侧聊的接口，也不报告继承了多少历史；客户端自己记住打开过的侧 ID（ADR-081）。
+
 ## 身份、状态与事实权威
 
 普通提问由 Host 默认无限等待，允许用户明确跳过，不设置 `required` 作答约束。

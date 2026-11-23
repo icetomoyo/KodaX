@@ -1,7 +1,7 @@
 /**
  * Side-chat intent eval (FEATURE_307 R6). Run after the --side-chat-only PTY fixture; contains only synthetic conversations.
  *   tsx benchmark/side-chat-intent.eval.ts <ink-requests.json> <revision> [alias,alias,...] [cell,cell,...] [samples]
- * Defaults: alias ark/v4flash, every cell, 3 samples. Budget pre-registered in docs/designs/side-chat-plan.md §8.1:
+ * Defaults: alias ark/v4flash, every cell, 3 samples. Budget pre-registered (FEATURE_307 test guide):
  * 1 call per sample, at most 54 calls and 500k tokens per invocation, 8192 output tokens, 120 s timeout,
  * one request in flight per alias with aliases in parallel.
  * Raw output goes to <os.tmpdir()>/kodax-eval-dumps/feature-307-side-chat-intent/<revision>/.
