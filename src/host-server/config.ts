@@ -13,6 +13,7 @@ import { resolveIntegrationConfigPath, type IntegrationConfigSnapshot } from '@k
 import { z } from 'zod/v4';
 
 import { parseOAuthEndpointUrl, parseOAuthIssuerIdentifier } from '../a2a/security.js';
+import { HOST_USER_LOCKS } from '../runtime-daemon/user-settings.js';
 
 const Subject = z.string().min(1).max(256);
 
@@ -60,6 +61,8 @@ const Server = z.strictObject({
   workspaceRoot: z.string().refine(path.isAbsolute, { message: 'must be an absolute path' }).optional(),
   /** The only tools any Run on this Host may use, whoever submits it. Absent leaves them unlimited. */
   tools: z.array(z.string().min(1)).optional(),
+  /** The person's settings the platform keeps fixed. Applied on the next call after an edit. */
+  userLocks: z.array(z.enum(HOST_USER_LOCKS)).optional(),
 }).superRefine((server, context) => {
   const admitsBySubject = server.owner !== undefined || server.services.length > 0;
   if (server.jwt !== undefined && !admitsBySubject) {

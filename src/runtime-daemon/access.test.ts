@@ -38,9 +38,16 @@ describe('runtime connection access', () => {
     }
   });
 
-  it('limits the user role to the data plane', () => {
+  it('gives the user role the data plane and their own settings, without external Agent registrations', () => {
     for (const method of methodsIn('data')) expect(runtimeAccessDenial('user', method, {}), method).toBeUndefined();
-    for (const plane of ['settings', 'trusted', 'local'] as const) {
+    for (const method of methodsIn('settings')) {
+      if (method.startsWith('agentRegistrations.')) {
+        expect(runtimeAccessDenial('user', method, {}), method).toMatch(/owner on the Host's machine/);
+      } else {
+        expect(runtimeAccessDenial('user', method, {}), method).toBeUndefined();
+      }
+    }
+    for (const plane of ['trusted', 'local'] as const) {
       for (const method of methodsIn(plane)) {
         expect(runtimeAccessDenial('user', method, {}), method).toMatch(/not available to the user role/);
       }

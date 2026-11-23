@@ -1587,7 +1587,7 @@ Workflow 的落地细节（2026-11-21，未经用户确认）。六个方法都�
   - 带 `ifRevision` 的 `config.update`，在 Host 的跨进程配置写锁里比对，不一致报 `conflict`（`revision_mismatch`），什么都不写。两个窗口同时改设置，后到的那个会被拒，不会悄悄覆盖。
   - 例外：Host 没有指定配置文件、用的是全局配置时，比对在写入之前，不在写锁里面。全局配置的写法本来就不在这个锁下，这里不为它另加一层。
 - **重试**：这几个命令不记 `requestId`。同样的 `patch` 再写一遍结果一样，删 provider 不论原来在不在都返回 `{}`，所以重发是安全的。`probe` 重发会再花一次请求。
-- **M2 开放给 user 之前要定的安全项**（现在只有 owner 能调，暂不构成问题）：
+- **M2 开放给 user 之前要定的安全项**（2026-11-24 M2 前半按下面各条落地，做法见"M2 前半"的落地细节）：
   - `provider.custom.upsert` 里 `apiKeyEnv` 加上 `baseUrl`，等于让调用方指定"把 Host 上哪个环境变量发到哪个地址"。对 user 开放时，`apiKeyEnv` 必须限制在平台允许的名单里，或者只能用用户自带的 key。
   - `config.update` 里的 `extensions`（Host 加载的模块路径）、`repoIntelligence.storageDir`（Host 上的目录）必须受 `userLocks` 管，或者对 user 直接拒绝。
   - `permissionMode: 'full-access'` 是用户本来就有的设置（D4），不对 user 拒绝（2026-11-23 用户确认）。`userLocks.fullAccess` 要管住所有能设 `permissionMode` 的入口，不只 `config.update`：`session.settings.update` 在 data 平面，user 和 service 现在都能把会话设成 `full-access`（`access.ts:77`、`host-rpc.ts:487-495`）。service 是平台自己，这样不算漏洞；锁默认不开，加上它不破坏现有客户端，等有平台要锁时再做。
@@ -2321,6 +2321,26 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
 用户设置这一组方法在 M1a 已经有 v2 定义，owner 可用。M2 把它们对 user 角色开放，并支持 `userLocks`：MCP、skills/扩展、provider/模型、用户自带 key（只写）、权限规则、`full-access`、项目信任列表。(a) 的用户可以在网页上自己装 MCP。
 
 不包括人设存储：人设用已安装的 Agent（D4）。
+
+**状态**：2026-11-24 落地（未经用户确认的取舍见下）。没做的两项：用户自带 key 和项目信任列表，原因见最后两条。
+
+落地细节（未经用户确认）：
+
+- **开放范围**：`user` 角色拿到 settings 平面（`access.ts` 的 `ROLE_PLANES`），v1 和 v2 的设置方法都按同一条规则。`service` 不变，仍然没有 settings 平面：平台在每个 Session 和 Run 上设它要的东西。
+- **锁定项**：`host.json` 的 `server.userLocks`，可选 `mcp`、`extensions`、`providers`、`permissions`、`fullAccess`，规则在 `src/runtime-daemon/user-settings.ts`。
+  - 只约束 `user`，owner 不受锁。
+  - 每次调用现读一次配置，改了 `host.json` 下一次调用就生效。握手里的 `locks` 是连接时的快照，客户端重连后才更新显示。
+  - 被锁的调用报 `forbidden`，reason `locked`，消息里写是哪一项。
+  - `fullAccess` 管住 `config.update` 和 `session.settings.update` 两个入口；`permissions` 管存盘的权限模式和审批时的"总是允许"。
+  - `server.tools` 里没有 `bash` 时，Host 自动加上 `mcpStdio`：启动 stdio MCP server 等于在 Host 上执行命令，绕过了工具上限。
+- **不管锁不锁都拒绝 `user` 的**：
+  - Host 上的路径：`config.update` 里的 `extensions` 和 `repoIntelligence.storageDir`（reason `host_path`）。
+  - Host 的 key：`provider.custom.upsert` 的 `apiKeyEnv` 是 Host 环境里设了的变量，或者设了 `cloud`（reason `host_environment`）。provider 会把 key 发到调用方给的 `baseUrl`，没有白名单可配，所以只允许 Host 没设的变量名。
+  - 外部 Agent 注册：`agent.registration.*` 和 v1 的 `agentRegistrations.*` 不在 `user` 的握手里，理由同上一节最后一条。上面表里给它们标的 `extensions` 锁只对将来开放时有意义。
+- **MCP 的密钥**：对网络连接（`!caller.local`），`mcp.server.list/get/upsert/reload` 和 `config.get/update/reload` 里 v1 遗留的 `mcpServers`，`env` 和 `headers` 只给名字，值换成 `[redacted]`。`revision` 仍是 Host 的原值，`ifRevision` 照常可用。保存带 `[redacted]` 值的 server 报 `invalid_params`（reason `redacted_value`），避免把读回来的占位符写回去覆盖掉密钥。
+- **已知的缺口**：`apiKeyEnv` 只在保存时检查。保存时 Host 没设、之后平台又设了这个变量，这个 provider 会用上它。平台给 Host 加环境变量时要知道这一点；要堵上得在每次用 key 时再查一次，等有平台遇到再做。
+- **用户自带 key 没做**：v1 的 `provider.key.*` 写的是 Host 本机的 `auth.json`，可是 Host 跑 Run 时并不读 `auth.json`，只用 Host 环境里的 key 或客户端借来的凭据租约（CLI 客户端在自己这边读 `auth.json`）。对网络用户开放写 `auth.json` 不会让他的 Run 用上这个 key。要做先得让 Host 能按 Session 的主人解析存下来的 key，这是单独一项，等有平台要用时再定。网页用户现在用自己的 key 的办法是凭据租约（M1b 第 9 项）。
+- **项目信任列表没做**：v2 里还没有这组方法，等有客户端要用时随方法一起加。
 
 ### M2 富 UI（M，四项可以并行）
 

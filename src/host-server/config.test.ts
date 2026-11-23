@@ -53,7 +53,13 @@ describe('parseHostIntegrationDocument', () => {
     expect(parseHostIntegrationDocument({ version: 1, server: { tools: [] } }).server).toEqual({ services: [], allowedOrigins: [], tools: [] });
   });
 
+  it('reads the settings a platform locks for the person', () => {
+    expect(parseHostIntegrationDocument({ version: 1, server: { userLocks: ['mcp', 'fullAccess'] } }).server)
+      .toMatchObject({ userLocks: ['mcp', 'fullAccess'] });
+  });
+
   it.each([
+    ['a lock it does not know', { userLocks: ['mcpStdio'] }, /userLocks/u],
     ['a tool without a name', { tools: [''] }, /tools/u],
     ['a relative workspace', { listen: LISTEN, jwt: JWT, owner: 'u', workspaceRoot: 'workspace' }, /absolute/u],
     ['a field it does not know', { listen: LISTEN, jwt: JWT, owner: 'u', tls: true }, /tls/u],

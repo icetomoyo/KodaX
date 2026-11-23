@@ -46,6 +46,7 @@
 | `webRoot` | 绝对路径，Host 在同一个端口上提供这个目录里的静态网页。见[提供 Web UI](#提供-web-ui)。 |
 | `workspaceRoot` | 绝对路径。网络客户端按项目在它里面的相对路径指定项目；不配就不能指定项目。 |
 | `tools` | 这个 Host 上任何 Run 能用的全部工具，不管谁提交。Session 和 Run 的策略只能在它里面再收窄。不配表示 Host 不设上限。 |
+| `userLocks` | 平台固定下来、这个人不能改的设置，可选 `mcp`、`extensions`、`providers`、`permissions`、`fullAccess`。见[这个人的设置](#这个人的设置)。不配表示都不锁。 |
 
 以下情况 Host 拒绝启动：
 
@@ -57,10 +58,11 @@
 
 ### Host 运行时修改这个文件
 
-- `owner`、`services`、`allowedOrigins`、`pairing`、`jwt`、`tools` 不用重启就生效。按新文件不再被接纳的连接会被断开：
+- `owner`、`services`、`allowedOrigins`、`pairing`、`jwt`、`tools`、`userLocks` 不用重启就生效。按新文件不再被接纳的连接会被断开：
   - `jwt` 变了，所有连接以 4401 断开，客户端换一个新校验能接受的 token 再连；
   - subject 或来源被删、`jwt` 被删、配对被关，受影响的连接以 4403 断开。
 - `tools` 对下一个 Run 生效，正在跑的 Run 保留原来的上限。
+- `userLocks` 对下一次调用生效。客户端在连接时得知锁定项，所以重连后才会按新的锁定项显示。
 - `listen`、`workspaceRoot`、`webRoot` 要重启才生效，改了只记一条警告。
 - Host 读不懂的修改不生效，旧文件继续有效，错误写进日志。
 
@@ -73,7 +75,7 @@
 | 配对过的浏览器 | 配对时拿到的 cookie | `user` |
 | 本机客户端（CLI、桌面应用） | home 里的令牌文件 | `owner` |
 
-- `user` 能做一个人在界面上做的事：聊天、回答审批、看历史。
+- `user` 能做一个人在界面上做的事：聊天、回答审批、看历史；也能改这个人自己的设置，见[这个人的设置](#这个人的设置)。
 - `service` 还能把凭证和工具绑到 Session 上、设置 Session 策略。它创建的 Session 默认拒绝审批请求，因为那里没有人能回答。
 - 只有本机客户端能管理 Host 本身。
 
@@ -92,6 +94,29 @@ Host 断开连接时，关闭码告诉客户端该怎么做：
 | 4503 | 正在停止，或暂时没法校验 token | 退避后重连 |
 
 KodaX 客户端 SDK（`connectKodaXHost`）已经按这些关闭码处理。
+
+### 这个人的设置
+
+一个 Host 只属于一个人，所以 `user` 连接可以像这个人在自己电脑上那样改 Host 的设置：存盘的配置、MCP server、自己加的 provider、重新加载扩展。`service` 连接不改这些，而是在每个 Session 和 Run 上设置它需要的。
+
+`userLocks` 把其中一些固定下来。改被锁的项报 `forbidden`（reason 为 `locked`）；握手结果的 `locks` 列出生效的锁定项，客户端据此隐藏对应的控件。
+
+| 锁定项 | 固定什么 |
+|---|---|
+| `mcp` | 添加、删除、重新加载 MCP server |
+| `extensions` | 重新加载扩展 |
+| `providers` | provider 和模型设置、自己加的 provider、推理强度探测 |
+| `permissions` | 存盘的权限模式，以及审批时的"总是允许" |
+| `fullAccess` | `full-access` 模式，包括配置和每个 Session 上的 |
+
+不管锁不锁，`user` 连接都拿不到这些：
+
+- **Host 上的路径**：不能设 `extensions`（Host 加载的模块）和 `repoIntelligence.storageDir`。
+- **Host 的 key**：自己加的 provider 不能指定 Host 设置了的环境变量，也不能用 `cloud` 凭证，因为 provider 会把 key 发到这个人指定的地址。
+- **外部 Agent 注册**：只留给 Host 本机的 owner，因为注册会把 Host 的一个环境变量发到它指定的地址。
+- **MCP server 的密钥值**：能看到 `env` 和 `headers` 里有哪些名字，值都显示为 `[redacted]`。保存带 `[redacted]` 值的 server 会被拒绝，避免把读回来的占位符写回去覆盖掉密钥。
+
+`tools` 里没有 `bash` 时，stdio MCP server 也被锁定（握手里是 `mcpStdio`），因为启动它就是在 Host 上执行一条命令。
 
 ## Token
 

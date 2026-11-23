@@ -485,7 +485,7 @@ describe('runtime daemon dispatcher', () => {
     dispatcher.close();
   });
 
-  it('keeps a user connection to the data plane and refuses its trusted parameters', async () => {
+  it('keeps a user connection to the data plane and its own settings, and refuses its trusted parameters', async () => {
     const runtime = makeRuntime();
     const start = vi.spyOn(runtime.runs, 'start');
     const stop = vi.fn();
@@ -494,7 +494,7 @@ describe('runtime daemon dispatcher', () => {
 
     const denied: ReadonlyArray<readonly [RuntimeDaemonMethod, Record<string, unknown>]> = [
       ['daemon.stop', {}],
-      ['config.read', {}],
+      ['agentRegistrations.list', {}],
       ['credential.get', {}],
       ['memory.describe', {}],
       ['run.start', { sessionId: 'session-1', prompt: 'hello', authorization: {} }],

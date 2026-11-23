@@ -23,6 +23,7 @@ import type { HostCloseReason } from '../host-protocol/close.js';
 import { HostProtocolError } from '../host-protocol/codec.js';
 import type { HostInitializeParams, HostLimits } from '../host-protocol/methods.js';
 import type { HostCredential } from '../runtime-daemon/host-rpc.js';
+import type { HostUserLock } from '../runtime-daemon/user-settings.js';
 import { reportHostSecurityEvent } from '../runtime-daemon/security-log.js';
 import { createHostWorkspace, type HostWorkspace } from '../runtime-daemon/workspace.js';
 import { parseHostIntegrationDocument, readHostIntegration, type HostIntegrationDocument, type HostServerConfig } from './config.js';
@@ -48,6 +49,8 @@ export interface HostNetworkConnection {
   readonly authenticate: (auth: HostInitializeParams['auth']) => Promise<HostCredential>;
   readonly limits: HostLimits;
   readonly workspace?: HostWorkspace;
+  /** The person's settings host.json locks now, with `mcpStdio` while the tool limit leaves out `bash`. */
+  readonly userLocks: () => ReadonlySet<HostUserLock>;
 }
 
 export interface HostNetworkServerOptions {
@@ -125,6 +128,7 @@ export async function startHostNetworkServer(options: HostNetworkServerOptions):
   controller.startWatching();
 
   const shared = {
+    userLocks: () => userLocksOf(admission.server),
     limits: { maxFrameBytes: options.maxFrameBytes, idleTimeoutMs: IDLE_TIMEOUT_MS },
     ...(served.workspaceRoot !== undefined ? { workspace: createHostWorkspace(served.workspaceRoot) } : {}),
   };
@@ -209,6 +213,13 @@ export async function startHostNetworkServer(options: HostNetworkServerOptions):
       await listener.close();
     },
   };
+}
+
+/** Starting a stdio MCP server runs a command on the Host, which a tool limit without `bash` forbids. */
+function userLocksOf(server: HostServerConfig | undefined): ReadonlySet<HostUserLock> {
+  const locks = new Set<HostUserLock>(server?.userLocks ?? []);
+  if (server?.tools !== undefined && !server.tools.includes('bash')) locks.add('mcpStdio');
+  return locks;
 }
 
 /** Checks a network client's JWT and decides its role from the subject. */

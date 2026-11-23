@@ -56,6 +56,7 @@ import { reportHostSecurityEvent } from './security-log.js';
 import type { RuntimeDaemonLogEntry } from './state.js';
 import type { RuntimeDaemonFramePeer } from './transport.js';
 import type { HostWorkspace } from './workspace.js';
+import { redactUserMcpConfig, userSettingsRefusal, type HostUserLock } from './user-settings.js';
 
 /** What a v2 client should do about each v1 failure. The v1 code travels on as the `reason`. */
 const V1_ERROR_CODES: Readonly<Record<RuntimeDaemonErrorCode, HostErrorCode>> = {
@@ -860,12 +861,12 @@ const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } =
   'repo.intelligence.inspect': async ({ sessionId }, v1) => v1('repo.intelligence.inspect', { sessionId }),
   'repo.intelligence.prewarm': async ({ sessionId }, v1) => v1('repo.intelligence.prewarm', { sessionId }),
 
-  'config.get': async (_params, v1) => {
+  'config.get': async (_params, v1, caller) => {
     const [config, effective] = await Promise.all([
       v1('config.read'), v1('config.effective') as Promise<RuntimeEffectiveConfigSnapshot>,
     ]);
     return {
-      ...toSavedConfig(config),
+      ...savedFor(caller, toSavedConfig(config)),
       effective: {
         persisted: effective.persistedConfig.state,
         entries: effective.entries,
@@ -875,9 +876,10 @@ const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } =
     };
   },
   // Setting the same fields again changes nothing more, so a repeated update is safe without remembering it.
-  'config.update': async ({ patch, ifRevision }, v1) =>
-    toSavedConfig(await v1('config.patch', defined({ patch, expectedRevision: ifRevision }))),
-  'config.reload': async (_params, v1) => toSavedConfig((await v1('config.reload') as RuntimeConfigReloadResult).config),
+  'config.update': async ({ patch, ifRevision }, v1, caller) =>
+    savedFor(caller, toSavedConfig(await v1('config.patch', defined({ patch, expectedRevision: ifRevision })))),
+  'config.reload': async (_params, v1, caller) =>
+    savedFor(caller, toSavedConfig((await v1('config.reload') as RuntimeConfigReloadResult).config)),
   'provider.custom.list': async (_params, v1) => ({ items: await v1('provider.custom.list') }),
   'provider.custom.upsert': async ({ provider }, v1) => ({ provider: await v1('provider.custom.upsert', { config: provider }) }),
   'provider.custom.remove': async ({ name }, v1) => {
@@ -892,22 +894,26 @@ const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } =
     return {};
   },
 
-  'mcp.server.list': async (_params, v1) => ({ items: (await v1('mcp.server.status') as McpServerStatus[]).map(toMcpServer) }),
-  'mcp.server.get': async ({ name }, v1) => {
-    const config = await v1('mcp.server.get', { name });
+  'mcp.server.list': async (_params, v1, caller) => ({
+    items: (await v1('mcp.server.status') as McpServerStatus[]).map(status => toMcpServer(status, caller)),
+  }),
+  'mcp.server.get': async ({ name }, v1, caller) => {
+    const config = await v1('mcp.server.get', { name }) as Readonly<Record<string, unknown>> | null | undefined;
     if (config === undefined || config === null) {
       throw new HostProtocolError('not_found', 'The Host has no MCP server of that name.', { reason: 'mcp_server_not_found' });
     }
-    return { config };
+    return { config: mcpConfigFor(caller, config) };
   },
   'mcp.server.validate': async ({ name, config }, v1) => v1('mcp.server.validate', { name, config }) as Promise<RuntimeMcpValidateResult>,
-  'mcp.server.upsert': async ({ name, config }, v1) => ({ config: await v1('mcp.server.upsert', { name, config }) }),
+  'mcp.server.upsert': async ({ name, config }, v1, caller) => ({
+    config: mcpConfigFor(caller, await v1('mcp.server.upsert', { name, config }) as Readonly<Record<string, unknown>>),
+  }),
   'mcp.server.remove': async ({ name }, v1) => {
     await v1('mcp.server.remove', { name });
     return {};
   },
-  'mcp.server.reload': async (_params, v1) => ({
-    items: (await v1('mcp.server.reload') as { readonly servers: McpServerStatus[] }).servers.map(toMcpServer),
+  'mcp.server.reload': async (_params, v1, caller) => ({
+    items: (await v1('mcp.server.reload') as { readonly servers: McpServerStatus[] }).servers.map(status => toMcpServer(status, caller)),
   }),
   'mcp.tool.list': async ({ server }, v1) => ({ items: await mcpServerTools(v1, server, false) }),
   'mcp.tool.refresh': async ({ server }, v1) => ({ items: await mcpServerTools(v1, server, true) }),
@@ -1065,8 +1071,16 @@ function toExtensions({ active, extensions, diagnostics }: RuntimeExtensionListR
   return { active, extensions, failures: diagnostics?.failures ?? [] };
 }
 
-function toMcpServer({ serverId, resolvedTransport, dirty, ...status }: McpServerStatus): Readonly<Record<string, unknown>> {
-  return { ...status, name: serverId, transport: resolvedTransport, stale: dirty };
+function toMcpServer(
+  { serverId, resolvedTransport, dirty, config, ...status }: McpServerStatus, caller: HostCaller,
+): Readonly<Record<string, unknown>> {
+  return { ...status, config: mcpConfigFor(caller, config as unknown as Readonly<Record<string, unknown>>), name: serverId,
+    transport: resolvedTransport, stale: dirty };
+}
+
+/** A person at a network client sees which env and header names a server sets; the values may be the platform's secrets. */
+function mcpConfigFor(caller: HostCaller, config: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+  return caller.local ? config : redactUserMcpConfig(config);
 }
 
 /** Reads each server on its own, so one that cannot be reached does not hide the tools of the rest. */
@@ -1087,8 +1101,22 @@ async function mcpServerTools(v1: V1Call, server: string | undefined, forceRefre
 }
 
 /** The saved configuration a client reads, with the revision it may name in `ifRevision`. */
-function toSavedConfig(config: unknown): Readonly<Record<string, unknown>> {
+function toSavedConfig(config: unknown): { readonly config: unknown; readonly revision: string } {
   return { config, revision: runtimeConfigRevision(config) };
+}
+
+/**
+ * The legacy `mcpServers` of config.json, hidden from a network person as
+ * `mcp.server.get` hides them. The revision stays the one of what the Host
+ * keeps, so `ifRevision` still matches.
+ */
+function savedFor(caller: HostCaller, saved: ReturnType<typeof toSavedConfig>): ReturnType<typeof toSavedConfig> {
+  const { config } = saved;
+  if (caller.local || config === null || typeof config !== 'object') return saved;
+  const servers = (config as { readonly mcpServers?: unknown }).mcpServers;
+  if (servers === null || typeof servers !== 'object') return saved;
+  return { ...saved, config: { ...config, mcpServers: Object.fromEntries(Object.entries(servers).map(([name, server]) => [name,
+    server !== null && typeof server === 'object' ? redactUserMcpConfig(server as Record<string, unknown>) : server])) } };
 }
 
 /** A command's answer as v2 names it: the Run it started, or what the Host did itself. */
@@ -1729,6 +1757,8 @@ export interface RuntimeDaemonHostRpcPeerOptions {
   readonly devices?: () => HostDeviceAdmin | undefined;
   /** Where the Host keeps the blobs clients upload. Without it the Host takes none. */
   readonly blobs?: HostBlobStore;
+  /** What the platform has locked of a person's settings, read again on each call. Only `user` connections are held by it. */
+  readonly userLocks?: () => ReadonlySet<HostUserLock>;
   readonly send: (frame: string) => void;
   readonly disconnect: (reason: HostCloseReason) => void;
   /** Whether the client is behind on reading what was already sent. */
@@ -1871,12 +1901,16 @@ export function createRuntimeDaemonHostRpcPeer(
         subject,
         host: { id: identity.runtimeId, version: identity.version },
         features: [],
-        locks: [],
+        locks: role === 'user' ? [...(options.userLocks?.() ?? [])] : [],
         limits: options.limits,
         ...(credential?.expiresAt !== undefined ? { expiresAt: credential.expiresAt } : {}),
         call: async (method, params, signal, afterAnswer) => {
           if (method === 'auth.renew') return renew(String(params.token), afterAnswer);
           if (Object.hasOwn(DEVICE_HANDLERS, method)) return serveDevices(method as DeviceMethod, params);
+          if (role === 'user') {
+            const refusal = userSettingsRefusal(method, params, { locks: options.userLocks?.() ?? new Set(), environment: process.env });
+            if (refusal !== undefined) throw refusal;
+          }
           // The connection passes only methods of the table, with params that passed that method's schema.
           const handlers = V1_HANDLERS as Readonly<Record<string,
             (params: unknown, v1: V1Call, caller: HostCaller) => Promise<unknown>>>;

@@ -28,6 +28,7 @@ import { createHostCredentialService } from '../host-credentials.js';
 import { bindRequestCredentials } from '../request-credential-binding.js';
 import type { KodaXRuntime } from '../sdk-runtime.js';
 import type { RuntimeConnectionRole } from './access.js';
+import type { HostUserLock } from './user-settings.js';
 import type { RuntimeClientLifecycleController } from './client-lifecycle.js';
 import {
   createRuntimeDaemonHostRpcPeer, hostErrorFromV1, type HostCredential, type RuntimeDaemonHostRpcPeerOptions,
@@ -110,7 +111,7 @@ async function connect(
   /** Proves a reconnect is the same client instance, so it keeps that instance's leases. */
   instanceSecret?: string,
   /** What the Host's network listener adds, such as its paired devices. */
-  network: Pick<RuntimeDaemonHostRpcPeerOptions, 'devices' | 'blobs'> = {},
+  network: Pick<RuntimeDaemonHostRpcPeerOptions, 'devices' | 'blobs' | 'userLocks'> = {},
   purpose?: 'probe',
 ): Promise<HostRpcClient> {
   const client = await connectHostRpc(async (events) => {
@@ -3684,16 +3685,86 @@ describe('v2 user settings served by the v1 implementation', () => {
     expect(await owner.request('provider.reasoning.forget', { requestId: 'forget-2' })).toEqual({});
   });
 
-  it.each(['user', 'service'] as const)('offers a %s none of it until a platform opens it', async (role) => {
-    const client = await connect(role, fakeRuntime());
+  it('offers a service none of it: a backend sets what it needs on each Run', async () => {
+    const client = await connect('service', fakeRuntime());
     for (const method of ['config.get', 'provider.custom.list']) {
       await expect(client.request(method)).rejects.toMatchObject({ kodaxCode: 'method_not_found' });
     }
+  });
+
+  it('lets the person change their own settings, and keeps external Agent registrations with the local owner', async () => {
+    const host = await makeHost();
+    const user = await connect('user', await host.start(), host.workspace);
+    expect(user.handshake.locks).toEqual([]);
+    expect(user.handshake.methods).toEqual(expect.arrayContaining(['config.get', 'config.update', 'mcp.server.upsert', 'extension.list']));
+    expect(user.handshake.methods.filter(method => method.startsWith('agent.registration.'))).toEqual([]);
+    await expect(user.request('agent.registration.list')).rejects.toMatchObject({ kodaxCode: 'method_not_found' });
+
+    const { revision } = await user.request('config.get') as SavedConfig;
+    expect((await user.request('config.update', {
+      requestId: 'u-1', patch: { model: 'mine', permissionMode: 'full-access' }, ifRevision: revision,
+    }) as SavedConfig).config).toEqual({ model: 'mine', permissionMode: 'full-access' });
+    // A path on the Host is the owner's to name.
+    await expect(user.request('config.update', { requestId: 'u-2', patch: { extensions: ['./x.js'] } }))
+      .rejects.toMatchObject({ kodaxCode: 'forbidden', reason: 'host_path' });
+    // A provider the person adds cannot send a key the Host's environment holds.
+    process.env.KODAX_TEST_PLATFORM_KEY = 'platform secret';
+    cleanup.push(() => { delete process.env.KODAX_TEST_PLATFORM_KEY; });
+    const provider = { name: 'mine', protocol: 'openai', baseUrl: 'https://llm.example.com/v1', apiKeyEnv: 'KODAX_TEST_PLATFORM_KEY', model: 'm' };
+    await expect(user.request('provider.custom.upsert', { requestId: 'u-3', provider }))
+      .rejects.toMatchObject({ kodaxCode: 'forbidden', reason: 'host_environment' });
+    expect(await user.request('provider.custom.upsert', { requestId: 'u-4', provider: { ...provider, apiKeyEnv: 'KODAX_TEST_MY_KEY' } }))
+      .toMatchObject({ provider: { name: 'mine' } });
+  });
+
+  it('holds what the platform locked, reading the lock on each call', async () => {
+    const host = await makeHost();
+    const runtime = await host.start();
+    let locks: ReadonlySet<HostUserLock> = new Set(['providers', 'fullAccess', 'mcpStdio'] as const);
+    const user = await connect('user', runtime, host.workspace, {}, undefined, { userLocks: () => locks });
+    expect(user.handshake.locks).toEqual(['providers', 'fullAccess', 'mcpStdio']);
+
+    await expect(user.request('config.update', { requestId: 'l-1', patch: { model: 'other' } }))
+      .rejects.toMatchObject({ kodaxCode: 'forbidden', reason: 'locked' });
+    await expect(user.request('provider.custom.list')).rejects.toMatchObject({ kodaxCode: 'forbidden', reason: 'locked' });
+    await expect(user.request('mcp.server.upsert', { requestId: 'l-2', name: 'cmd', config: { command: 'node' } }))
+      .rejects.toMatchObject({ kodaxCode: 'forbidden', reason: 'tool_ceiling' });
+    const { session } = await user.request('session.create', { requestId: 'l-3', project: 'app' }) as SessionAnswer;
+    await expect(user.request('session.settings.update', {
+      requestId: 'l-4', sessionId: session.id, patch: { permissionMode: 'full-access' },
+    })).rejects.toMatchObject({ kodaxCode: 'forbidden', reason: 'locked' });
+    expect((await user.request('config.update', { requestId: 'l-5', patch: { locale: 'en' } }) as SavedConfig).config).toEqual({ locale: 'en' });
+
+    // The platform lifts a lock in host.json; the next call sees it.
+    locks = new Set(['fullAccess'] as const);
+    expect((await user.request('config.update', { requestId: 'l-6', patch: { model: 'other' } }) as SavedConfig).config)
+      .toMatchObject({ model: 'other' });
+    // The owner on the Host's machine is not held by them.
+    const owner = await connect('owner', runtime, host.workspace, {}, undefined, { userLocks: () => locks });
+    expect(owner.handshake.locks).toEqual([]);
+    expect((await owner.request('config.update', { requestId: 'l-7', patch: { permissionMode: 'full-access' } }) as SavedConfig).config)
+      .toMatchObject({ permissionMode: 'full-access' });
   });
 });
 
 describe('v2 MCP servers served by the v1 implementation', () => {
   type Server = { readonly name: string; readonly status: string; readonly stale: boolean; readonly config: Record<string, unknown> };
+
+  it('shows a network person the names of a server\'s env and headers, never their values', async () => {
+    const host = await makeHost();
+    const runtime = await host.start();
+    const owner = await connect('owner', runtime, host.workspace);
+    const user = await connect('user', runtime, host.workspace);
+    const config = { type: 'streamable-http', url: 'http://127.0.0.1:9/mcp', headers: { Authorization: 'Bearer platform' } };
+    expect(await owner.request('mcp.server.upsert', { requestId: 'r-1', name: 'docs', config })).toEqual({ config });
+    const hidden = { ...config, headers: { Authorization: '[redacted]' } };
+    expect(await user.request('mcp.server.get', { name: 'docs' })).toEqual({ config: hidden });
+    expect((await user.request('mcp.server.list') as { readonly items: readonly Server[] }).items.map(item => item.config)).toEqual([hidden]);
+    expect(await owner.request('mcp.server.get', { name: 'docs' })).toEqual({ config });
+    // Written back as read, the placeholder would replace the secret.
+    await expect(user.request('mcp.server.upsert', { requestId: 'r-2', name: 'docs', config: hidden }))
+      .rejects.toMatchObject({ kodaxCode: 'invalid_params', reason: 'redacted_value' });
+  });
 
   it('saves a server, connects to it on reload, and lists its tools while another cannot be reached', async () => {
     const host = await makeHost();
@@ -3739,8 +3810,8 @@ describe('v2 MCP servers served by the v1 implementation', () => {
       .toEqual([fixture.serverId]);
   });
 
-  it.each(['user', 'service'] as const)('offers a %s none of it until a platform opens it', async (role) => {
-    const client = await connect(role, fakeRuntime());
+  it('offers a service none of it', async () => {
+    const client = await connect('service', fakeRuntime());
     await expect(client.request('mcp.server.list')).rejects.toMatchObject({ kodaxCode: 'method_not_found' });
   });
 });
@@ -3827,11 +3898,14 @@ describe('v2 extensions and external Agents served by the v1 implementation', ()
     await expect(owner.request('agent.registration.list')).rejects.toMatchObject({ kodaxCode: 'method_not_found' });
   });
 
-  it.each(['user', 'service'] as const)('offers a %s none of it until a platform opens it', async (role) => {
-    const client = await connect(role, fakeRuntime());
+  it('offers a service none of it, and a person the extensions but not the external Agents', async () => {
+    const service = await connect('service', fakeRuntime());
     for (const method of ['extension.list', 'agent.registration.list']) {
-      await expect(client.request(method)).rejects.toMatchObject({ kodaxCode: 'method_not_found' });
+      await expect(service.request(method)).rejects.toMatchObject({ kodaxCode: 'method_not_found' });
     }
+    const user = await connect('user', fakeRuntime());
+    expect(user.handshake.methods).toContain('extension.list');
+    await expect(user.request('agent.registration.list')).rejects.toMatchObject({ kodaxCode: 'method_not_found' });
   });
 });
 

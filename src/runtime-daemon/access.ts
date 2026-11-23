@@ -9,7 +9,7 @@ export type RuntimeConnectionRole = 'owner' | 'user' | 'service';
 
 /**
  * data     — sessions, inputs, Runs, interactions, views, history, read-only catalogs
- * settings — the user's own Host settings (MCP, extensions, providers, config)
+ * settings — the person's own Host settings (MCP, extensions, providers, config); a platform may lock items
  * trusted  — leases and execution authorization a backend supplies for a person
  * local    — Host start/stop, logs, client exit, diagnostics, memory and learning
  */
@@ -17,7 +17,7 @@ export type RuntimeMethodPlane = 'data' | 'settings' | 'trusted' | 'local';
 
 const ROLE_PLANES: Readonly<Record<RuntimeConnectionRole, ReadonlySet<RuntimeMethodPlane>>> = {
   owner: new Set<RuntimeMethodPlane>(['data', 'settings', 'trusted', 'local']),
-  user: new Set<RuntimeMethodPlane>(['data']),
+  user: new Set<RuntimeMethodPlane>(['data', 'settings']),
   service: new Set<RuntimeMethodPlane>(['data', 'trusted']),
 };
 
@@ -26,10 +26,16 @@ export function runtimeRoleHasPlane(role: RuntimeConnectionRole | undefined, pla
   return role !== undefined && Object.hasOwn(ROLE_PLANES, role) && ROLE_PLANES[role].has(plane);
 }
 
+// A registration's credentialEnv sends any variable of the Host's environment, as a Bearer token, to the address it names.
+const REGISTRATION_REFUSAL = "External Agent registrations stay with the owner on the Host's machine.";
+
 /** Methods a role may not call although it reaches their plane, each with why. */
 const ROLE_REFUSALS: Readonly<Record<RuntimeConnectionRole, Readonly<Record<string, string>>>> = {
   owner: {},
-  user: {},
+  user: Object.fromEntries([
+    'agentRegistrations.list', 'agentRegistrations.upsert', 'agentRegistrations.setEnabled', 'agentRegistrations.remove',
+    'agent.registration.list', 'agent.registration.upsert', 'agent.registration.setEnabled', 'agent.registration.remove',
+  ].map(method => [method, REGISTRATION_REFUSAL])),
   service: {
     'interaction.respond': 'A service connection cannot answer an approval or question addressed to the person.',
   },

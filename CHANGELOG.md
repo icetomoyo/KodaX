@@ -57,6 +57,12 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- A person connected to a Host over the network (`user`) can change their own
+  settings: the saved configuration, MCP servers, the providers they add, and
+  extension reloads. `server.userLocks` in `host.json` keeps chosen items
+  fixed. Paths on the Host, the Host's own keys and external Agent
+  registrations stay with the owner, and MCP secret values read back as
+  `[redacted]`.
 - `kodax host` manages the Host, which `kodax daemon` did. `kodax daemon` still
   works, prints that it was renamed, and is removed in 0.7.100.
 - `kodax host logs --follow` keeps printing new log lines until Ctrl+C, across

@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HostProtocolError } from '../host-protocol/codec.js';
 import { HostJwtError, type HostJwtVerifier } from './jwt.js';
 import type { HostHealth, HostNetworkPeer } from './listener.js';
-import { createHostAuthenticator, startHostNetworkServer, type HostNetworkServer } from './serve.js';
+import { createHostAuthenticator, startHostNetworkServer, type HostNetworkConnection, type HostNetworkServer } from './serve.js';
 
 const verifier = (result: () => Promise<{ subject: string; expiresAt: number }>): HostJwtVerifier => ({ verify: result });
 const signed = (subject: string) => verifier(async () => ({ subject, expiresAt: 1_800_000_000_000 }));
@@ -137,6 +137,8 @@ describe('a listening Host that reads host.json again when it changes', () => {
     return `${input}.${createSign('sha256').update(input).sign(key).toString('base64url')}`;
   }
 
+  let lastConnection: HostNetworkConnection | undefined;
+
   /** Each peer reads its first frame as a JWT, answers with the role or the refusal, and echoes the rest. */
   async function start(): Promise<HostNetworkServer> {
     const started = await startHostNetworkServer({
@@ -144,6 +146,7 @@ describe('a listening Host that reads host.json again when it changes', () => {
       maxFrameBytes: 64 * 1024,
       health: async () => HEALTH,
       createPeer: (transport, connection): HostNetworkPeer => {
+        lastConnection = connection;
         let admitted = false;
         return {
           receive(frame) {
@@ -190,6 +193,16 @@ describe('a listening Host that reads host.json again when it changes', () => {
     expect(response.status).toBe(200);
     return response.headers.get('set-cookie')!.split(';')[0]!;
   }
+
+  it('tells each connection what host.json locks now, and locks stdio MCP while the tool limit leaves out bash', async () => {
+    writeConfig({ owner: 'person-1', userLocks: ['providers'], tools: ['read'] });
+    await start();
+    await connect('person-1');
+    expect([...lastConnection!.userLocks()]).toEqual(['providers', 'mcpStdio']);
+
+    writeConfig({ owner: 'person-1', tools: ['read', 'bash'] });
+    await vi.waitFor(() => expect([...lastConnection!.userLocks()]).toEqual([]), { timeout: 5_000 });
+  });
 
   it('tells a probe only whether it is ready while pairing is on, since a tunnel shows the port to anyone', async () => {
     const health = async () => (await fetch(`http://127.0.0.1:${network!.port!}/healthz`)).json() as Promise<unknown>;

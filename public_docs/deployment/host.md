@@ -59,6 +59,7 @@ Host starts.
 | `webRoot` | An absolute path to static web pages the Host serves on the same port. See [Serve a web UI](#serve-a-web-ui). |
 | `workspaceRoot` | An absolute path. Network clients name projects by their path inside it, and cannot name any project without it. |
 | `tools` | The only tools any Run on this Host may use, whoever submits it. Session and Run policies can narrow it, never widen it. Absent means no Host limit. |
+| `userLocks` | The person's settings you keep fixed, any of `mcp`, `extensions`, `providers`, `permissions`, `fullAccess`. See [The person's settings](#the-persons-settings). Absent locks none. |
 
 The Host refuses to start when:
 
@@ -70,13 +71,15 @@ The Host refuses to start when:
 
 ### Changing the file while the Host runs
 
-- `owner`, `services`, `allowedOrigins`, `pairing`, `jwt` and `tools` apply
-  without a restart. Connections the new file would not admit are closed:
+- `owner`, `services`, `allowedOrigins`, `pairing`, `jwt`, `tools` and
+  `userLocks` apply without a restart. Connections the new file would not admit are closed:
   - a change to `jwt` closes every connection with 4401, so clients come back
     with a token the new check accepts;
   - a dropped subject or origin, a removed `jwt`, or pairing turned off closes
     the affected connections with 4403.
 - `tools` applies to the next Run. Runs already working keep their limit.
+- `userLocks` applies to the next call. A client learns the locks when it
+  connects, so it shows the change after it reconnects.
 - `listen`, `workspaceRoot` and `webRoot` need a restart. Changing them only
   logs a warning.
 - An edit the Host cannot read does not apply. The previous file stays in
@@ -92,7 +95,8 @@ The Host refuses to start when:
 | A local client (CLI, desktop app) | The token file in the home | `owner` |
 
 - `user` can do what a person does in a UI: chat, answer approvals, read
-  history.
+  history. It can also change the person's own settings; see
+  [The person's settings](#the-persons-settings).
 - `service` can also bind credentials and tools to Sessions and set Session
   policies. A Session it creates rejects approval requests by default,
   because no person is there to answer.
@@ -116,6 +120,42 @@ When the Host closes a connection, the close code tells the client what to do:
 | 4503 | Stopping, or cannot check tokens right now | Back off, reconnect |
 
 The KodaX client SDK (`connectKodaXHost`) already acts on these codes.
+
+### The person's settings
+
+One Host belongs to one person, so a `user` connection may change the Host's
+settings the way the person would at their own machine: the saved
+configuration, MCP servers, providers they add, and extensions to reload. A
+`service` connection sets what it needs on each Session and Run instead.
+
+`userLocks` keeps items fixed. A locked call is refused with `forbidden`
+(reason `locked`), and the handshake's `locks` lists what holds, so a client
+can hide those controls.
+
+| Lock | What it fixes |
+|---|---|
+| `mcp` | Adding, removing and reloading MCP servers |
+| `extensions` | Reloading extensions |
+| `providers` | The provider and model settings, the providers the person adds, and reasoning probes |
+| `permissions` | The saved permission mode, and "always allow" answers to approvals |
+| `fullAccess` | `full-access` mode, on the configuration and on each Session |
+
+Some things a `user` connection never gets, whatever you lock:
+
+- **Paths on the Host.** It cannot set `extensions` (modules the Host loads)
+  or `repoIntelligence.storageDir`.
+- **The Host's keys.** A provider it adds cannot name an environment variable
+  the Host sets, and cannot use `cloud` credentials, since the provider sends
+  its key to the address the person chose.
+- **External Agent registrations.** They stay with the owner on the Host's
+  machine: a registration sends a Host environment variable to the address it
+  names.
+- **Secret values of MCP servers.** It reads the names in `env` and
+  `headers`, with each value shown as `[redacted]`. Saving a server with a
+  `[redacted]` value is refused, so a read-back cannot overwrite a secret.
+
+When `tools` leaves out `bash`, stdio MCP servers are locked as well
+(`mcpStdio` in the handshake), because starting one runs a command on the Host.
 
 ## Tokens
 

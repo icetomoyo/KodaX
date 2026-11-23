@@ -1,7 +1,7 @@
 /**
  * The Host's saved configuration and the providers a person added: the
- * defaults every Session starts from. Only the owner may change them for now;
- * a platform may later open them to the person, item by item.
+ * defaults every Session starts from. The owner and the person (`user`) may
+ * change them; a platform locks items with `server.userLocks`.
  *
  * Secrets never come back: a field whose name says it holds a key, token or
  * password reads as `[redacted]`.
