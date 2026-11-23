@@ -190,7 +190,7 @@ not automatically replay ambiguous delivery. Use caller/Host abort signals for
 deadlines. All listed service contracts are tested offline; real account access,
 model calibration, retention timing and charges are not verified by fixtures.
 
-协议来源与回归证据见 [operations test guide](../../docs/test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t10-native-operations--scoped-acceptance)。
+协议来源与回归证据见 [operations test guide](../../docs/test-guides/FEATURE_302_v0.7.97_TEST_GUIDE.md#t10-native-operations--scoped-acceptance)。
 
 ## 构建与测试
 

@@ -567,7 +567,7 @@ OAuth 和撤销规则保持；改名不证明新别名有权使用旧账号。
 [41401900534](https://github.com/icetomoyo/KodaX/actions/runs/41401900534) 全绿（16 个
 任务成功、发布按预期跳过）；本机冻结全套 19252 通过、87 条件跳过、0 失败/0 TODO，
 源码与产物指纹一致，双轴复审无剩余项。完整证据和先前失败见
-[最终验收](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#最终验收2026-11-02未发布)。
+[最终验收](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#最终验收2026-11-02随-v0797-beta1-发布)。
 设计子仓仍为 `7927f835744643b418d463b10a2e1c1c4bdd12e8`，Space 独立分支及产物未改。
 接手时先锁定包含该提交的 `v0.7.97-beta.1` SDK 字节（npm 发布为手动步骤），按能力门禁启用默认方法/业务 resolver 和
 promotion，保留配置有限锁忙重试与原凭证来源，再走 Space 生产安装包的账号保持、撤销、
@@ -1002,7 +1002,7 @@ OAuth 注销与 API-key 删除保持不同入口；高级原生连接沿 SDK/CLI
 包含本次契约的 SDK 字节，再运行原 exact-byte/安装包门禁。当前 dev-link 仅用于联调，
 不得绕过门禁或作为正式安装包。独立分支的完整测试不覆盖原工作区另一线程未合并改动；
 合并后重跑受影响的 Host/凭证/恢复/发布验证。精确测试与未验证范围见
-[FEATURE_302 最终验收](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-efg-final-offline-acceptance-2026-10-31)。
+[FEATURE_302 最终验收](test-guides/FEATURE_302_v0.7.97_TEST_GUIDE.md#t12-efg-final-offline-acceptance-2026-10-31)。
 
 ### FEATURE_302 T12-H：账号保持与可重试升级（随 v0.7.97-alpha.12 发布）
 
@@ -1034,7 +1034,7 @@ Space 接手时应保留统计的 `coverage: partial`/issues；单个损坏 pend
 模型描述新增可选 `multimodalSupport`；切换模型时按选中模型判断图片，保留原始历史。
 费用沿用可空/nominal 合同，新增 `maxPricedInputTokens` 限定已覆盖费率的输入范围；
 未知价格、TTL 或超范围不能显示为零。目录/费率来源和限制见
-[模型与费用边界](LLM_INTEGRATION.md#审计后续模型与费用估算边界2026-11-01未发布)。
+[模型与费用边界](LLM_INTEGRATION.md#审计后续模型与费用估算边界2026-11-01随-v0797-alpha12-发布)。
 
 Space 若提供存储维护，可显式调用 `/coding.inspectToolOutputStorage(directory)`；
 `partial`、`failed` 或子目录存在时，不能把平面容量统计当完整全局清单。

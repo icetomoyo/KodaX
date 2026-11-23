@@ -852,7 +852,7 @@ reserve targeted for v0.7.99. LibreOffice may recalculate fields;
 conversion is not proof of Word/WPS pagination or current TOC values.
 
 Joint regression, artifact and bounded real-model results are recorded in
-[the FEATURE_302 T12-J integration acceptance](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-j-local-main-integration--2026-10-31).
+[the FEATURE_302 T12-J integration acceptance](test-guides/FEATURE_302_v0.7.97_TEST_GUIDE.md#t12-j-local-main-integration--2026-10-31).
 Real-model probes use a 64K application budget on models with larger native
 windows; they do not validate native sub-100K models or arbitrary whole-document
 reading quality. Cross-platform native release gates and installed Space/SDK

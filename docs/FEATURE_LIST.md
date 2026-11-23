@@ -528,11 +528,11 @@
 
 ---
 
-## Unreleased implementation — FEATURE_302
+## FEATURE_302 implementation (shipped in v0.7.97-alpha.12)
 
-`v0.7.99` FEATURE_302 including T12-H/I is **Completed for implementation and offline acceptance** on
+`v0.7.97` FEATURE_302 (first planned under `v0.7.99`) including T12-H/I is **Completed for implementation and offline acceptance** on
 the accepted parity history; J has now integrated that history into local `KodaX` main and the
-design submodule. Released: **unreleased**. No version bump, push or publication.
+design submodule. Released: **`v0.7.97-alpha.12`**.
 T01–T12 include the full declared provider/API/OAuth and operation inventory, native cloud
 protocols, identity/history/cache/tool compatibility, hidden Key setup, unified file credentials
 and actual Space provider/stable-client-secret migration including H (`437cac7d`) and I (`da531f0a`). Existing aliases/config/env
@@ -542,8 +542,8 @@ historical cutover/real alpha.11 Host upgrade **4**; Space complete **4,531**, c
 and two actual Electron IPC/restart tests passed. The H coverage evidence remains historical.
 Both review axes have zero remaining findings. This does not certify live account entitlements,
 all service models, macOS/Linux legacy-vault migration, or a production Space installer.
-See [design](features/v0.7.99.md#feature_302-independent-llm-provider-parity) and
-[final evidence](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-j-local-main-integration--2026-10-31).
+See [design](features/v0.7.97.md#feature_302-independent-llm-provider-parity) and
+[final evidence](test-guides/FEATURE_302_v0.7.97_TEST_GUIDE.md#t12-j-local-main-integration--2026-10-31).
 I left the original workspaces untouched; J's authorized local main update is recorded below.
 Keep the separate design gitlink with Root and retain Space's commits on its independent branch.
 Publish/pin the paired SDK before production packaging.
@@ -2730,7 +2730,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 | `305` | One Host per KODAX_HOME | `v0.7.97` (shipped in `v0.7.97-beta.6`) | [v0.7.97](features/v0.7.97.md#feature_305-one-host-per-kodax_home) | One Host serves each `KODAX_HOME`; the Host-location `profile` SDK option and `--profile` CLI flag are removed with `runtime_host_migration_required` errors (ADR-075). Legacy-slot Hosts are found through the storage-owner redirect and profile-split Session state merges once (Issue 407); the Space dependency bump follows the release. |
 | `304` | Ask Result for Extension Tool Policy | `v0.7.97` (shipped in `v0.7.97-beta.5`) | [v0.7.97](features/v0.7.97.md#feature_304-ask-result-for-extension-tool-policy) | Extension `tool:before` may return `{ decision: 'ask', reason }`; block wins over ask. The Host raises an allow-once-only permission request with the reason in every mode, including Full Access and granted calls; a Host without `requestToolApproval` blocks. Capability `toolHookAsk: { version: 1 }` on embedded and daemon. The official sandbox asks for recursive and out-of-workspace deletes. |
 | `303` | Proxy and Private CA Support | `v0.7.97` (shipped in `v0.7.97-beta.5`) | [v0.7.97](features/v0.7.97.md#feature_303-proxy-and-private-ca-support) | The Responses WebSocket follows `HTTP(S)_PROXY` and `NO_PROXY` on Node 22.21+/24.5+ with `NODE_USE_ENV_PROXY=1` and on the Bun binary; the Host warns as `runtime:network` when a proxy variable would be bypassed. Node floor stays `>=20`. Verified on Node 22.23.1 and Bun 1.4.4 with a local proxy and private CA. |
-| `302` | Independent LLM Provider Parity | `v0.7.99` (unreleased) | [v0.7.99](features/v0.7.99.md#feature_302-independent-llm-provider-parity) | T01–T12/H/I accepted offline with paired Space; J Root/design local main integration and post-merge gates passed. Space remains independent; live accounts/platform installers unverified. |
+| `302` | Independent LLM Provider Parity | `v0.7.97` (shipped in `v0.7.97-alpha.12`) | [v0.7.97](features/v0.7.97.md#feature_302-independent-llm-provider-parity) | T01–T12/H/I accepted offline with paired Space; J Root/design local main integration and post-merge gates passed. Space remains independent; live accounts/platform installers unverified. |
 | `301` | Managed Artifact SDK and PPT Review Loop | Initial implementation in `v0.7.97-alpha.4`; unified Artifact SDK additions released in `v0.7.97-alpha.5` | [v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) | Optional SDK in the single main npm package, with a private source workspace, nine operations and shared Host execution; PPTX authoring/limited edits, PDF/image/SVG evidence, candidate DOCX and local HTML/SMIL capture. Native Office fidelity and full natural-task model repair/re-review/delivery remain unverified; [current support](ARTIFACT_SDK.md). |
 | `299` | Unified Stop, Full Access and Extension Execution Contracts | `v0.7.96` (release pending) | [v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) | Implements legacy large metadata paging, Full Access policy provenance, lock-independent Session Stop, CLI/ACP convergence and managed extension execution with reload isolation. |
 | `297` | Codex-Aligned Permission Profiles, Sandbox Escalation, and Exec Policy | `v0.7.96-alpha.5` | [v0.7.96](features/v0.7.96.md#feature_297-codex-aligned-permission-profiles-sandbox-escalation-and-exec-policy) | Makes sandbox completion authoritative, moves Edits/Auto decisions to an exact host boundary, adds Full Access and JSONC Exec Policy, removes Auto[RULES]/envPass/global-Git blocking, and preserves a single no-replay host retry. |

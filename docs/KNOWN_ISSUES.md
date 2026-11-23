@@ -5252,7 +5252,7 @@ scoped, fingerprinted and revoked on close, and every profile in one
 
 - Files changed: `src/provider-credential-authorizer.ts`, `src/kodax_cli.ts`,
   `docs/LLM_INTEGRATION.md`, `docs/SDK_MIGRATION.md`,
-  `docs/test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md`
+  `docs/test-guides/FEATURE_302_v0.7.97_TEST_GUIDE.md`
 - Tests: `src/provider-credential-authorizer.test.ts` registers a lease for an
   environment and an OAuth source with profile `work` against a Host whose
   profile is `coder` or absent, without reading the OAuth token (replaces the

@@ -96,7 +96,7 @@ mismatch predates this patch and remains a follow-up; this fix changes only
 bundle resolution and validation gates. The manual compaction HTTP 401 case is
 covered and passes.
 
-## Follow-up: stable-identity connection takeover (2026-09-08, unreleased)
+## Follow-up: stable-identity connection takeover (2026-09-08, shipped in v0.7.96-beta.3)
 
 This follow-up fixes a separate beta.2 failure after a diagnostic client reused
 Space's `principalId` and `instanceSecret`. A new connection took over the

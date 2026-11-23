@@ -34,7 +34,7 @@ is shared `auth.json` v2, with explicit legacy encrypted backends and source-pre
 migration. Missing/revoked/invalid state cannot silently select an environment key
 or another account. Canonical history remains intact across wire projections.
 See [accepted storage alignment](ADR.md#feature_302-implementation-alignment--2026-11-01-unreleased),
-[integration contracts](LLM_INTEGRATION.md), and [implementation acceptance](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md).
+[integration contracts](LLM_INTEGRATION.md), and [implementation acceptance](test-guides/FEATURE_302_v0.7.97_TEST_GUIDE.md).
 
 ## Current SDK alignment after alpha.10 (2026-10-29)
 

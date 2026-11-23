@@ -335,7 +335,7 @@ existing promotion path persists them. This adds no watcher or polling loop.
 ## FEATURE_302 implementation alignment — 2026-11-01 (released in v0.7.97-alpha.12)
 
 The accepted provider parity design is indexed in
-[FEATURE_302](features/v0.7.99.md#feature_302-independent-llm-provider-parity),
+[FEATURE_302](features/v0.7.97.md#feature_302-independent-llm-provider-parity),
 [transport and credential contracts](LLM_INTEGRATION.md), and the
 [SDK migration guide](SDK_MIGRATION.md). The design filename is a planning
 identifier; the implementation ships as package `0.7.97-alpha.12`; npm
@@ -478,7 +478,7 @@ module-loader framework is outside scope.
 Host readiness, exact process exit and Run recovery eligibility remain distinct.
 Existing Stop, history, principal, fresh authority and tool-cleanup checks govern
 checkpoint continuation. Migration never replays tools with unknown effects.
-See the [accepted slices](features/v0.7.97.md#2026-10-29-统一-host-sdk-收口未发布),
+See the [accepted slices](features/v0.7.97.md#2026-10-29-统一-host-sdk-收口随-v0797-alpha12-发布),
 [migration contract](SDK_MIGRATION.md#统一-host-sdk-收口随-v0797-alpha12-发布) and
 [validation record](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md).
 

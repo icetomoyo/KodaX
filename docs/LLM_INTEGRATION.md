@@ -1,6 +1,6 @@
 # LLM 接入补齐契约（FEATURE_302）
 
-## Issue 376 接缝补齐（2026-11-01，尚未发布）
+## Issue 376 接缝补齐（2026-11-01，随 v0.7.97-alpha.12 发布）
 
 内建 Anthropic 的 Claude Opus/Sonnet/Haiku 5.5 使用版本化 `nativeHistory`
 增量片段，保存实际已发送的图片/提醒和协议响应块（工具输入沿用既有解析策略）；
@@ -72,7 +72,7 @@ cached transport 要求显式 session 标识和有效 owner lifetime：独立调
 
 ## 验证与外部前提
 
-验收证据见 [测试指南](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md)。公开能力、目录内容、cache TTL、条件报价及 OAuth 端点来自固定 pi 源码与官方资料；实际账号模型权限、云身份、刷新服务、缓存命中/保留时长、真实计费仍需相应账号验证。OAuth client ID 必须由宿主合法注册，不借用其他应用身份。
+验收证据见 [测试指南](test-guides/FEATURE_302_v0.7.97_TEST_GUIDE.md)。公开能力、目录内容、cache TTL、条件报价及 OAuth 端点来自固定 pi 源码与官方资料；实际账号模型权限、云身份、刷新服务、缓存命中/保留时长、真实计费仍需相应账号验证。OAuth client ID 必须由宿主合法注册，不借用其他应用身份。
 
 
 ## T12-A Main 与产品入口（离线切片，最终凭证体验仍推进）
@@ -152,12 +152,12 @@ OpenAI/Anthropic 字段，认证配置与真实在线验证状态保持区分。
 
 Root 完整18,656、发布包70和Space完整4,498项通过；复审专项、真实第二Node进程与
 Windows隔离桌面的Electron Provider IPC均通过，两轴最终无剩余发现。详见
-[最终验收与逐项状态](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-efg-final-offline-acceptance-2026-10-31)。
+[最终验收与逐项状态](test-guides/FEATURE_302_v0.7.97_TEST_GUIDE.md#t12-efg-final-offline-acceptance-2026-10-31)。
 源代码和构建验收不代替服务端权益、macOS/Linux旧vault迁移或生产安装包认证。
 两仓版本/锁定Registry依赖未变，正式Space安装包须先锁定包含本契约的发布SDK；
 另一线程的在途改动不属于本独立分支测试范围，整合后需重新做相关回归。
 
-## T12-H 来源固定与自动重试（未发布）
+## T12-H 来源固定与自动重试（随 v0.7.97-alpha.12 发布）
 
 Space 自动导入旧 Key 时写应用私有 namespace，保留旧加密项；不同 Space 目录的私有
 来源也隔离。首次 legacy/env/shared 来源须成功固定，env 值仍动态读取、不复制到文件。
@@ -177,7 +177,7 @@ H 专项和完整验收单独记入 FEATURE_302 测试指南；两仓交接须�
 Space H独立提交为`437cac7d`。最终Root完整18,659/发布70、Space完整4,531/实际Electron2项
 均通过；跨平台实机、生产安装包及原线程后续代码的整合验收仍按测试指南边界执行。
 
-## 审计后续：模型与费用估算边界（2026-11-01，未发布）
+## 审计后续：模型与费用估算边界（2026-11-01，随 v0.7.97-alpha.12 发布）
 
 公开 SDK 的 `multimodalSupport` 可按模型覆盖连接默认值；省略时保持原继承行为。
 原生 Sonnet/Opus 4.6 和 GPT-5.4 的上下文、`outputTokenLimit` 按官方上限更新，

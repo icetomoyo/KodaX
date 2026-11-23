@@ -274,7 +274,7 @@ complete request bodies, both MiMo endpoints, explicit-off rejection before
 dispatch, exact capacities, historical MiniMax budgets, image/video gates,
 and thinking/signature/tool-result replay. No online success is claimed.
 
-## Output budgets and quota recovery (unreleased FEATURE_302)
+## Output budgets and quota recovery (FEATURE_302, shipped in v0.7.97-alpha.12)
 
 `maxOutputTokens` remains the default request budget for built-in and custom
 providers. The optional `outputTokenLimit` is a positive integer service ceiling,
