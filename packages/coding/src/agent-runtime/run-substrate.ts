@@ -329,6 +329,7 @@ import {
   saveSessionSnapshot,
 } from './middleware/session-snapshot.js';
 import { emitRepoIntelligenceTrace } from './middleware/repo-intelligence.js';
+import { streamKeepingCacheWarm } from './prompt-cache-warmer.js';
 // CAP-015 (`buildEditRecoveryUserMessage`, `RunnableToolCall`) and
 // CAP-016 mutation-reflection helpers are wired inside
 // `agent-runtime/tool-dispatch.ts:applyPostToolProcessing` since
@@ -2115,7 +2116,8 @@ async function runSubstrateInContext(
             streamProvider,
             'primary',
             retrySignal,
-            (credentialSignal) => streamProvider.stream(
+            (credentialSignal) => streamKeepingCacheWarm(
+              streamProvider,
               wireMessages,
               activeToolDefinitions,
               effectiveSystemPrompt,

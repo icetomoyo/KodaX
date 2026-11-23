@@ -38,6 +38,7 @@ import { resolveProvider } from './providers/index.js';
 import { reshapeToUserConversation } from './task-engine/_internal/round-boundary.js';
 import { readFailureResult } from './execution-failure.js';
 import { runManagedTaskViaRunner } from './task-engine/runner-driven.js';
+import { runWithPromptCacheWarming } from './agent-runtime/prompt-cache-warmer.js';
 import {
   getRepoRoutingSignals,
   resolveKodaXAutoRepoMode,
@@ -172,7 +173,7 @@ export async function runManagedTask(
     return await runWithScopedConfig(
       deriveRunScopedConfig(runtimeOptions),
       async () => {
-        const result = await executeRunManagedTask(runtimeOptions, prompt);
+        const result = await runWithPromptCacheWarming(runtimeOptions, warmOptions => executeRunManagedTask(warmOptions, prompt));
         const reshaped = reshapeToUserConversation(result, runtimeOptions, prompt);
         // FEATURE_247 (R1): echo the SDK-consumer profile back so the embedder can
         // confirm which profile actually ran (Partner vs default Coding Agent).

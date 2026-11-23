@@ -151,6 +151,7 @@ import {
 } from './sanitize.js';
 import type { ContextTokenSnapshotRef } from './compaction.js';
 import type { TodoStore } from '../../todo-store.js';
+import { streamKeepingCacheWarm } from '../../../agent-runtime/prompt-cache-warmer.js';
 import {
   buildTodoReminderText,
   detectAgentTransition,
@@ -1067,7 +1068,8 @@ export function buildRunnerLlmAdapter(
             provider,
             'primary',
             retrySignal,
-            (credentialSignal) => provider.stream(
+            (credentialSignal) => streamKeepingCacheWarm(
+              provider,
               wireProviderMessages,
               [...wireTools],
               system,
@@ -1496,7 +1498,8 @@ export function buildRunnerLlmAdapter(
             provider,
             'primary',
             l5Signal,
-            (credentialSignal) => provider.stream(
+            (credentialSignal) => streamKeepingCacheWarm(
+              provider,
               wireContinuationMessages,
               [...wireTools],
               system,

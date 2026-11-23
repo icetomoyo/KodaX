@@ -13,6 +13,7 @@ import { resolveWorkMode } from './work-mode.js';
 import { runWithScopedConfig } from '@kodax-ai/llm';
 
 import { runSubstrate } from './agent-runtime/run-substrate.js';
+import { runWithPromptCacheWarming } from './agent-runtime/prompt-cache-warmer.js';
 import { createCodingAgent } from './coding-preset.js';
 import { applyFollowupEscalationToOptions } from './reasoning.js';
 import { deriveRunScopedConfig } from './run-scoped-config.js';
@@ -63,15 +64,15 @@ export async function runLeafAgent(
   let failure: unknown;
   try {
     return await runWithScopedConfig(deriveRunScopedConfig(runtimeOptions), async () => {
-      const result = await Runner.run<KodaXResult>(createCodingAgent(runSubstrate), prompt, {
-        presetOptions: runtimeOptions,
+      const result = await runWithPromptCacheWarming(runtimeOptions, warmOptions => Runner.run<KodaXResult>(createCodingAgent(runSubstrate), prompt, {
+        presetOptions: warmOptions,
         abortSignal: runtimeOptions.abortSignal,
         // FEATURE_092 (v0.7.33): forward caller-supplied run-scoped guardrails.
         // Runtime owns Auto[LLM] review at the proven host boundary; these are
         // additional caller policies merged with `agent.guardrails`.
         guardrails: runtimeOptions.guardrails,
         permissionIntent: runtimeOptions.context?.permissionIntent,
-      });
+      }));
       // Substrate executor always lifts full `KodaXResult` onto `data` —
       // missing means the Agent declaration is mis-wired (fail loud, never
       // return a truncated `RunResult` typed as `KodaXResult`).
