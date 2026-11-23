@@ -65,7 +65,9 @@ function inputFor(name: string): Record<string, unknown> {
 
 // Preserve all evidence and warnings; only generated timestamps are nondeterministic.
 function stable(content: unknown): string {
-  return String(content).replace(/^(Snapshot: \S+ @ |- generatedAt: )\d{4}-\d{2}-\d{2}T[^\r\n]+$/gm, '$1<TIME>');
+  return String(content)
+    .replace(/^(Snapshot: \S+ @ |- generatedAt: )\d{4}-\d{2}-\d{2}T[^\r\n]+$/gm, '$1<TIME>')
+    .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g, '<TIME>');
 }
 
 it('projects the native contracts and preserves real overview, symbol and cycle evidence', async () => {
@@ -254,7 +256,7 @@ it.each(relations)('refreshes %s from changed source and returns complete native
   expect(result.receipts[0]?.result.content).toContain('packages/app');
   expect(result.receipts[0]?.input).toEqual(input);
   const baseline = await executeTool(name, { ...input, refresh: false }, ctx);
-  expect(result.receipts[0]?.result.content).toBe(baseline);
+  expect(stable(result.receipts[0]?.result.content)).toBe(stable(baseline));
   expect(result.value).toEqual(result.receipts[0]?.result);
   expect(budget.spentBudget).toBe(1);
 }, 30_000);
