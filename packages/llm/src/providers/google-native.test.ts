@@ -5,6 +5,7 @@ import { serializeCloudCredential } from '../cloud/credentials.js';
 import { runWithProviderCredential, createProviderCredentialLeaseScope, runWithProviderCredentialLeaseScope, withProviderRequestCredential } from '../provider-credential-context.js';
 import { runWithProviderRequestObserver, type ProviderRequestObservation } from '../provider-request-observation.js';
 import { fileURLToPath } from 'node:url';
+import { googleBlockHash, projectGoogleMessages } from './google-messages.js';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 const tool = { name: 'read', description: 'read file', input_schema: { type: 'object' as const, properties: { path: { type: 'string' } } } };
@@ -104,7 +105,7 @@ describe('native Gemini and Vertex', () => {
     await expect(runWithProviderCredential(config.name, serializeCloudCredential(config.name, { type: 'api-key', key: 'key' }), () => createCustomProvider(config).complete([], [], '')))
       .rejects.toThrow(/unfinished function call/);
   });
-  it('downgrades foreign or edited tool turns without sending a fake signature', async () => {
+  it('replays foreign or edited tool turns as structured calls under the documented skip sentinel', async () => {
     const fetch = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => Response.json(result)); vi.stubGlobal('fetch', fetch);
     const config = createCloudProviderConfig({ service: 'gemini', name: 'google-test', model: 'chosen' });
     const provider = createCustomProvider(config);
@@ -115,11 +116,41 @@ describe('native Gemini and Vertex', () => {
       first.toolBlocks[0]!.input = { path: 'changed' };
       await provider.complete(messages, [], '');
     });
+    const sentinel = Buffer.from('skip_thought_signature_validator').toString('base64');
     for (const index of [1, 2]) {
       const body = String(fetch.mock.calls[index]?.[1]?.body);
-      expect(body).not.toContain('tool-signature'); expect(body).not.toContain('functionResponse'); expect(body).not.toContain('skip_thought');
-      expect(body).toContain('prior_tool_call'); expect(body).toContain('prior_tool_result');
+      expect(body).not.toContain('tool-signature'); expect(body).not.toContain('prior_tool');
+      const contents = JSON.parse(body).contents as { role: string; parts: Record<string, unknown>[] }[];
+      const calls = contents.flatMap(c => c.parts).filter(p => p.functionCall);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toMatchObject({ functionCall: { name: 'read' }, thoughtSignature: sentinel });
+      expect(contents.at(-1)?.parts).toEqual([{ functionResponse: { name: 'read', response: { output: 'ok' } } }]);
     }
+  });
+  it('drops unsigned empty parts, which Gemini rejects as parts without data', async () => {
+    const source = { provider: 'google-test', api: 'google-generate-content' as const, model: 'chosen' };
+    const own = (block: { type: 'text'; text: string } | { type: 'thinking'; thinking: string }, thoughtSignature?: string) =>
+      ({ ...block, googlePart: { source, contentHash: googleBlockHash(block), ...(thoughtSignature ? { thoughtSignature } : {}) } });
+    const contents = await projectGoogleMessages([
+      { role: 'user', content: 'task' },
+      { role: 'assistant', content: [own({ type: 'thinking', thinking: '' }), own({ type: 'text', text: 'answer' }),
+        own({ type: 'text', text: '' }), own({ type: 'text', text: '' }, 'signed-empty')] },
+    ], source);
+    expect(contents[1]?.parts).toEqual([{ text: 'answer' }, { text: '', thoughtSignature: 'signed-empty' }]);
+  });
+  it('signs only the first foreign call of each model step', async () => {
+    const call = (id: string) => ({ type: 'tool_use' as const, id, name: 'read', input: { path: id } });
+    const done = (id: string) => ({ type: 'tool_result' as const, tool_use_id: id, content: id });
+    const contents = await projectGoogleMessages([
+      { role: 'user', content: 'task' },
+      { role: 'assistant', content: [{ type: 'text', text: 'reading both' }, call('a'), call('b')] },
+      { role: 'user', content: [done('a'), done('b')] },
+      { role: 'assistant', content: [call('c')] },
+      { role: 'user', content: [done('c')] },
+    ], { provider: 'google-test', api: 'google-generate-content', model: 'chosen' });
+    const signed = contents.filter(c => c.role === 'model').map(c => c.parts.map(p => p.thoughtSignature !== undefined));
+    expect(signed).toEqual([[false, true, false], [true]]);
+    expect(contents.flatMap(c => c.parts).filter(p => p.functionResponse)).toHaveLength(3);
   });
   it('rebuilds current tools, budgets, ephemeral suffixes and declared thinking controls on every call', async () => {
     const fetch = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => Response.json({ candidates: [{ finishReason: 'STOP', content: { parts: [] } }] })); vi.stubGlobal('fetch', fetch);

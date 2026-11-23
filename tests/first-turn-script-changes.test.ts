@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -250,10 +250,6 @@ it.each(names)('settles the admitted %s call after cancellation and does not exe
   expect(ended).toHaveBeenCalledOnce();
   expect(budget.spentBudget).toBe(1);
   expect(executing).toHaveBeenCalledTimes(2); // One baseline and one Script leaf; no replay or second leaf.
-  if (name === 'changed_scope') {
-    const saved = JSON.parse(await readFile(path.join(root, '.agent/repo-intelligence/changed-scope.json'), 'utf8')) as { files: { path: string }[] };
-    expect(saved.files.map(file => file.path)).toContain('src/value.ts');
-  }
   const preCancelled = await createScriptPilot({ ...dispatch, abortSignal: controller.signal,
     events: { onToolExecutionStart: admitted } }, budget).run(`return await tools[${JSON.stringify(name)}](${JSON.stringify(input)});`, limits);
   expect(preCancelled).toMatchObject({ status: 'cancelled', receipts: [] });

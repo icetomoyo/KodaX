@@ -300,7 +300,42 @@ function readWindowsProcessSnapshotFallback(): WindowsProcessIdentity[] | undefi
   return snapshot.length > 0 ? snapshot : undefined;
 }
 
+// CLI providers snapshot the process table when their child starts and exits.
+// A PowerShell probe compiles C# and blocks the event loop for about a second,
+// which stalls every session of a shared Host. The Host installs the same
+// native helper the agent runtime uses; standalone consumers keep PowerShell.
+let windowsProcessHelperResolver: (() => string) | undefined;
+let windowsProcessHelper: string | null | undefined;
+
+export function installCliWindowsProcessHelper(resolve: (() => string) | undefined): void {
+  windowsProcessHelperResolver = resolve;
+  windowsProcessHelper = undefined;
+}
+
+function readWindowsProcessSnapshotFromHelper(): WindowsProcessIdentity[] | undefined {
+  if (windowsProcessHelper === undefined) {
+    try {
+      windowsProcessHelper = windowsProcessHelperResolver?.() ?? null;
+    } catch {
+      // The PowerShell probe below is the documented fallback.
+      windowsProcessHelper = null;
+    }
+  }
+  if (windowsProcessHelper === null) return undefined;
+  const result = spawnSync(windowsProcessHelper, ['__process-snapshot'], {
+    encoding: 'utf8',
+    timeout: NATIVE_SNAPSHOT_TIMEOUT_MS,
+    windowsHide: true,
+  });
+  // A helper that cannot start will not start next time either.
+  if (result.error && (result.error as NodeJS.ErrnoException).code !== 'ETIMEDOUT') windowsProcessHelper = null;
+  if (result.error || result.status !== 0) return undefined;
+  return parseWindowsNativeProcessRows(result.stdout);
+}
+
 function readWindowsProcessSnapshotNative(): WindowsProcessIdentity[] | undefined {
+  const helped = readWindowsProcessSnapshotFromHelper();
+  if (helped !== undefined) return helped;
   const script = [
     "$source = @'",
     NATIVE_PARENT_PROCESS_SOURCE,

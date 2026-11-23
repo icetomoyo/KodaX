@@ -106,23 +106,16 @@ describe('FEATURE_218 manual registry', () => {
     expect(content).toContain('none/minimal/light/low');
   });
 
-  it('documents the v0.7.91 Runtime settlement and output projection contracts', () => {
+  it('documents the output projection, owner abort, and Session-read contracts', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const tools = resolveKodaXManual({ topic: 'tools' }).content;
-    const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
     const sessions = resolveKodaXManual({ topic: 'sessions' }).content;
 
-    expect(sdk).toContain('runtimeExitSettlement:1');
-    expect(sdk).toContain('settleKodaXRuntimeExit');
-    expect(sdk).toContain('clean');
-    expect(sdk).toContain('recovered');
-    expect(sdk).toContain('blocked');
     expect(tools).toContain('output-segment projection');
     expect(tools).toContain('responseId');
     expect(tools).toContain('providerRequestId');
     expect(tools).toContain('liveOutputSegments:1');
-    expect(sandbox).toContain('exact owner before stop');
-    expect(sandbox).toContain('Same-boot POSIX ambiguity');
+    expect(sdk).toContain('settleKodaXRuntimeExit');
     expect(sdk).toContain('owner AbortSignals');
     expect(sdk).toContain('userInputTimeoutMs');
     expect(sdk).toContain('reclaimStaleKodaXFileLock');
@@ -130,68 +123,50 @@ describe('FEATURE_218 manual registry', () => {
     expect(sessions).toContain('authoritative full delta path');
   });
 
-  it('documents the v0.7.94 sandboxed text concurrency and git trust contracts', () => {
+  it('documents the tool policy and worktree trust contracts', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
 
-    expect(sdk).toContain('v0.7.94 SDK keeps `sandboxRuntime:4`');
-    expect(sdk).toContain('The v0.7.95 SDK advertises Windows `sandboxRuntime:5`');
-    expect(sdk).toContain('`runtimeExitSettlement:2`');
-    expect(sdk).toContain('`runtimeExitSettlement:2` is retired');
-    expect(sdk).toContain('compatible live Bash lease');
-    expect(sdk).toContain('linked worktree roots persist in the owning Session');
-    expect(sdk).toContain('gitSafeDirectory: authorized-repo-roots');
-    expect(sdk).toContain('missing workspace directory');
     expect(sdk).toContain('conversationHistory:2');
     expect(sdk).toContain('disable-model-invocation');
     expect(sdk).toContain('`allowed-tools` no longer restricts');
     expect(sdk).toContain('PostToolUse');
     expect(sdk).toContain('stdin failures stay on the operation Promise');
-    expect(sdk).toContain('strict byte bounds');
     expect(sandbox).toContain('gitSafeDirectory: authorized-repo-roots');
     expect(sandbox).toContain('never emits `safe.directory=*`');
-    expect(sandbox).toContain('compatible live Bash lease');
-    expect(sandbox).toContain('Since v0.7.95, KodaX registers KodaX-created linked worktrees');
-    expect(sandbox).toContain('retained successful worktree_create');
-    expect(sandbox).toContain('An unregistered sibling remains');
     expect(sandbox).toContain('strict byte bounds');
-    expect(sandbox).toContain('stdin failures stay on the operation Promise');
+    expect(sandbox).toContain('sibling remains fenced');
+    expect(sandbox).toContain('deprecated lease APIs are inert');
   });
 
   it('documents the FEATURE_295 trusted-text and native-shell boundary', () => {
     const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
     const tools = resolveKodaXManual({ topic: 'tools' }).content;
 
-    expect(sandbox).toContain('trusted text transactions and platform shell containment are');
-    expect(sandbox).toContain('separate authorities on Windows, Linux, and macOS');
+    expect(sandbox).toContain('transactions and platform shell containment are separate authorities');
     expect(sandbox).toContain('never enter ASRT');
-    expect(sandbox).toContain('does not describe those\ntext writes as OS-token sandbox enforcement');
+    expect(sandbox).toContain('describe those text writes as OS-token sandbox enforcement');
     expect(sandbox).toContain('self-heals an old sandbox-owned file into host ownership');
     expect(sandbox).toContain('may canonicalize DACL protection/inheritance control at commit');
-    expect(sandbox).toContain('do not share a command-lifetime filesystem-effect');
+    expect(sandbox).toContain('per-file kernel lock');
     expect(sandbox).toContain('nonce-bound per-policy private desktop');
-    expect(sandbox).toContain('v0.7.97-beta.6 release uses Windows native shell protocol 10');
+    expect(sandbox).toContain('Windows uses native shell protocol 10');
     expect(sandbox).toContain('two authenticated, nonce-bound protocol streams');
     expect(sandbox).toContain('nonce-bound terminal record');
-    expect(sandbox).toContain('protected host/SYSTEM-only control directory');
+    expect(sandbox).toContain('per-command ASRT Seatbelt/bubblewrap');
+    expect(sandbox).toContain('filesystem-effect lease across a command');
+    expect(sandbox).toContain('Workspace-local .kodax/runtime state remains readable but is denied to shell writes');
+    expect(sandbox).toContain('Print-mode, daemon, and SDK startup never auto-activate');
+    expect(sandbox).toContain('Bare interactive Windows CLI startup');
+    expect(sandbox).toContain('protected two-phase marker');
+    expect(sandbox).toContain('host/SYSTEM-only control');
     expect(sandbox).toContain('re-applies a replaced top-level profile file root');
-    expect(sandbox).toContain('reported as `degradedReadRoots`, unless a write root of the command reaches it');
-    expect(sandbox).toContain('Non-interactive Runtime/daemon startup readiness remains verify-only');
-    expect(sandbox).toContain('Interactive Windows CLI startup performs one setup-generation check');
+    expect(sandbox).toContain('reported as `degradedReadRoots` unless a write root of the command');
+    expect(sandbox).toContain('Concurrent startup repairs converge through the setup-only lock');
     expect(sandbox).toContain('host control-plane command');
     expect(sandbox).toContain('not through the Bash tool');
-    expect(sandbox).toContain('Concurrent startup repairs converge through the setup-only lock');
-    expect(sandbox).toContain('expired dead-PID request');
-    expect(sandbox).toContain('windows-deny recovery records remain fail-closed');
     expect(sandbox).toContain('sandboxRuntime:11');
-    expect(sandbox).toContain('Workspace-local .kodax/runtime state remains readable but is denied to shell writes');
-    expect(sandbox).toContain('reconstructs from event ledgers after truncation');
     expect(sandbox).toContain('descriptor-verified addon loading');
-    expect(sandbox).toContain('Issue 307 retains');
-    expect(sandbox).toContain('Issue 308 records');
-    expect(sandbox).toContain('Issue 309 records');
-    expect(sandbox).toContain('per-command ASRT Seatbelt/bubblewrap');
-    expect(sandbox).toContain('removes it from the v0.7.96');
     expect(tools).toContain('per-file kernel locking');
     expect(tools).toContain('Shell writes do not join that lock');
   });
@@ -216,20 +191,17 @@ describe('FEATURE_218 manual registry', () => {
     expect(troubleshooting).toContain('(`daemon.log.1`, rotated at 2 MiB)');
   });
 
-  it('documents the v0.7.97-beta.6 one Host per KODAX_HOME release', () => {
+  it('documents the one-Host-per-KODAX_HOME contract', () => {
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
     const config = resolveKodaXManual({ topic: 'config' }).content;
     const troubleshooting = resolveKodaXManual({ topic: 'troubleshooting' }).content;
 
-    expect(sdk).toContain('The v0.7.97-beta.6 release removes the Host-location profile: one Host serves each');
-    expect(sdk).toContain('`runtime_host_migration_required`. Isolate Hosts with a separate homeDir, `--home` or');
-    expect(sdk).toContain('`identity.profile` stays on the wire and is deprecated.');
-    expect(sdk).toContain('queued inputs and Session permission grants merge once into the one Host\'s state; such');
-    expect(sdk).toContain('global grants are dropped and re-approved (Issue 407)');
-    expect(sdk).toContain('across installations and versions and replace only an idle older one (Issue 405)');
-    expect(sdk).toContain('beside Space\'s Host attaches to it with provider credentials (Issue 406)');
-    expect(sdk).toContain('no longer drift with shared user defaults.');
-    expect(sdk).toContain('through beta.5 contract is retained except the removed `profile` option.');
+    expect(sdk).toContain('RuntimeHostMigrationRequiredError');
+    expect(sdk).toContain('The Host-location `profile` option is removed');
+    expect(sdk).toContain('`runtime_host_migration_required`');
+    expect(sdk).toContain('`identity.profile` stays on the wire');
+    expect(sdk).toContain('replace only an idle older one');
+    expect(sdk).toContain('attaches to it with provider credentials');
     expect(sdk).toContain('The shared local daemon is authoritative for one KODAX_HOME (one Host per data root).');
     expect(config).toContain('~/.kodax/runtime/daemon/default/bootstrap.log');
     expect(troubleshooting).toContain('`runtime_host_migration_required`: `profile`/`--profile` no longer names a Host');
@@ -237,298 +209,48 @@ describe('FEATURE_218 manual registry', () => {
     expect(troubleshooting).toContain('~/.kodax/runtime/daemon/default/bootstrap.log');
   });
 
-  it('documents the v0.7.97-beta.7 Space SDK integration corrections', () => {
-    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
+  it('documents the Repo Intelligence default surface and storage relocation', () => {
+    const repoIntelligence = resolveKodaXManual({ topic: 'repo-intelligence' }).content;
 
-    expect(sdk).toContain('The v0.7.97-beta.7 release repairs the Space SDK image projection, attachment reads and');
-    expect(sdk).toContain('approval attribution from the Space integration report (Issue 408): user image observation');
-    expect(sdk).toContain('labels leave the current view, canonical history and search, which keep the user\'s original');
-    expect(sdk).toContain('text; attachments may carry `observationId`, `width`, `height` and `sha256`; Host attachment');
-    expect(sdk).toContain('reads cover PNG, JPEG, WebP and GIF with the actual mediaType, byte validation and the');
-    expect(sdk).toContain('unchanged 512 KiB chunk and 10 MiB image bounds; `visual_history`, `visual_inspect` and');
-    expect(sdk).toContain('`visual_read_pixels` resolve to the `read` capability; and extension `tool:before` approvals');
-    expect(sdk).toContain('carry optional `extensionAsks: { extension, reason }[]` attribution beside the aggregate');
-    expect(sdk).toContain('reason. Every v0.7.96 stable and v0.7.97-alpha.1 through beta.6 contract is retained.');
+    expect(repoIntelligence).toContain('repoIntelligenceMode');
+    expect(repoIntelligence).toContain('KODAX_REPO_INTELLIGENCE_STORAGE_DIR');
+    expect(repoIntelligence).toContain('.agent/repo-intelligence/');
   });
 
-  it('documents the v0.7.97-beta.13 Space integration repairs and Session-read cost fixes', () => {
+  it('documents the corrected CLI, provider, and SDK facts of the current manual', () => {
+    const overview = resolveKodaXManual({ topic: 'overview' }).content;
+    const commands = resolveKodaXManual({ topic: 'commands' }).content;
+    const doctor = resolveKodaXManual({ topic: 'doctor' }).content;
+    const install = resolveKodaXManual({ topic: 'install' }).content;
+    const a2a = resolveKodaXManual({ topic: 'a2a' }).content;
+    const customProviders = resolveKodaXManual({ topic: 'custom-providers' }).content;
+    const providers = resolveKodaXManual({ topic: 'providers' }).content;
     const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
 
-    expect(sdk).toContain('The v0.7.97-beta.13 release repairs the Space integration and Session-read costs. A client');
-    expect(sdk).toContain('with a prepared prompt saves and sends the user\'s exact words (`context.rawUserInput`), and');
-    expect(sdk).toContain('health without the preflight (`integrationConfigResilience.healthQuery`). The daemon preflight');
-    expect(sdk).toContain('during a Run instead of rewriting the whole Session every 500ms.');
-    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through beta.12 contract is retained.');
-  });
-
-  it('documents the v0.7.97-beta.12 unified prompt chain and final Stop outcomes', () => {
-    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
-
-    expect(sdk).toContain('The v0.7.97-beta.12 release gives every root Run one prompt chain and every Stop a final');
-    expect(sdk).toContain('advertise `promptSpec` v1. SDK capability `actorSettlementConvergence` is `3`: every Stop');
-    expect(sdk).toContain('memory. Constructed artifacts load only with a machine-local approval recorded at activation.');
-    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through beta.11 contract is retained.');
-  });
-
-  it('documents the v0.7.97-beta.11 readable history and tool-neutral Skills release', () => {
-    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
-
-    expect(sdk).toContain('The v0.7.97-beta.11 release keeps Session history readable while a Run writes and makes Skills');
-    expect(sdk).toContain('write boundary or the newest revision, full-save rebuilds keep an unchanged prefix, and');
-    expect(sdk).toContain('v0.7.96 stable and v0.7.97-alpha.1 through beta.10 contract is retained.');
-  });
-
-  it('documents the v0.7.97-beta.10 merged-input acknowledgement', () => {
-    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
-
-    expect(sdk).toContain('The v0.7.97-beta.10 release adds merged-input acknowledgement to the client contract:');
-    expect(sdk).toContain("client retires each merged input's pending bubble without per-input reads; the field is absent on");
-    expect(sdk).toContain('marking its batch submitted no longer restores the merged non-head inputs as `queued`. Every');
-  });
-
-  it('documents the v0.7.97-beta.9 data root relocation and steer withdrawal', () => {
-    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
-
-    expect(sdk).toContain('The v0.7.97-beta.9 release adds data root relocation (FEATURE_306). `resolveKodaXHome({ env?, homeDir? })`');
-    expect(sdk).toContain('KODAX_HOME is ignored (the default `~/.kodax` is used) and the CLI warns about it.');
-    expect(sdk).toContain('`copyKodaXDataRoot({ from, to, exclude?, onProgress?, signal? })` from `/runtime` copies a data root');
-    expect(sdk).toContain('what it created; a target left by a crashed copy is refused as `target_incomplete`. Selecting the new');
-    expect(sdk).toContain('`inputs.withdraw` takes back a `steer` input until its Run claims it; a `steer` whose Run ends');
-    expect(sdk).toContain('while another client is attached (Issue 410). Every v0.7.96 stable and v0.7.97-alpha.1 through');
-  });
-
-  it('documents the v0.7.97-beta.8 native daemon Job startup repairs', () => {
-    const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
-
-    expect(sandbox).toContain('The v0.7.97-beta.8 release moves daemon startup Job proof and supervision off PowerShell (Issue 409):');
-    expect(sandbox).toContain('the bundled, hash-verified native `__daemon-job-identity` verifies Job membership, kill-on-close and');
-    expect(sandbox).toContain('both creation identities, and `__daemon-job-supervise` owns the named kill-on-close Job with a');
-    expect(sandbox).toContain('suspended start, assignment before resume and atomic readiness publication. A failed start keeps its');
-    expect(sandbox).toContain('exact cleanup handles while same-slot admissions serialize; `child_exit` is retryable and carries the');
-    expect(sandbox).toContain('child\'s last bootstrap error line. Unverified ownership still fails closed.');
-  });
-
-  it('documents the v0.7.96 release capability and capacity-debt contracts', () => {
-    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
-    const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
-
-    expect(sdk).toContain('The v0.7.97-beta.6 release advertises Windows `sandboxRuntime:11`');
-    expect(sdk).toContain('beta.5 and earlier required glibc 2.28 (Issue 328)');
-    expect(sdk).toContain('The v0.7.97-alpha.10 release resumes checkpointed Runs and task trees after Host');
-    expect(sdk).toContain('The v0.7.97-alpha.11 release adds explicit Agent, Coding and experimental Script work modes');
-    expect(sdk).toContain('Script runs supported leaf tools through existing permission and receipt boundaries.');
-    expect(sdk).toContain('The v0.7.97-alpha.12 release converges public product execution on the independent');
-    expect(sdk).toContain('shared Host: embedded/default Runtime construction, inline owner switching and function-based');
-    expect(sdk).toContain('FEATURE_302 provider parity adds the native Responses transport, ordered history, native');
-    expect(sdk).toContain('permission hardening ships with lock diagnostics and a Windows streaming-history PTY CI gate.');
-    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.10 contract is retained.');
-    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.11 contract is retained.');
-    expect(sdk).toContain('The v0.7.97-beta.1 release completes Space-facing Host execution and Session seams:');
-    expect(sdk).toContain('Main-owned capability-gated default Skills and consumption-time execution bindings select');
-    expect(sdk).toContain('request-ID reconciliation while preserving the original Session and history.');
-    expect(sdk).toContain('the shared lock with old bytes retained on failed writes, damaged provider collections rejected');
-    expect(sdk).toContain('Bare `resume` discovery paints immediate `Finding sessions`');
-    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.12 contract is retained.');
-    expect(sdk).toContain('The v0.7.97-beta.2 release hardens Script execution reliability: complete VM call paths');
-    expect(sdk).toContain('expose collision-safe tool aliases beside original names, typed program data carries');
-    expect(sdk).toContain('an optional sourceContent view preserves original content beside display output, and');
-    expect(sdk).toContain('reclaims proven dead history locks and enforces trusted Agent mode before execution;');
-    expect(sdk).toContain('recommend-iterate; no efficiency or general intelligence improvement is claimed.');
-    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through beta.1 contract is retained.');
-    expect(sdk).toContain('The v0.7.97-beta.3 release repairs long-context recovery, durable Actor settlement and saved');
-    expect(sdk).toContain('budgets and strict complete-summary parsing that retain original tool evidence and report');
-    expect(sdk).toContain('execution; Session work mode locks after the first accepted root Run and survives Actor');
-    expect(sdk).toContain('`productHistoryLocation` and `productHistoryTurnResolution` Host capabilities locate saved');
-    expect(sdk).toContain('verified Windows containment evidence, identical Host builds are shared across installations,');
-    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through beta.2 contract is retained.');
-    expect(sdk).toContain('The v0.7.97-beta.4 release repairs Space SDK instruction and history client contracts:');
-    expect(sdk).toContain('carry `kind:\'agents\'|\'rule\'` with typed skip diagnostics. History contract v2 validates');
-    expect(sdk).toContain('replaces stale results with the shared `resync_required` error contract, and adds ordinary');
-    expect(sdk).toContain('requirements add no mandatory basic-startup gates, and model prompts are unchanged.');
-    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through beta.3 contract is retained.');
-    expect(sdk).toContain('The v0.7.97-beta.5 release integrates SDK foundation hardening, durable visual observations');
-    expect(sdk).toContain('may return `{ decision: \'ask\', reason }` so a person approves');
-    expect(sdk).toContain('`visual_history`, `visual_inspect` and `visual_read_pixels` page, re-display and sample them');
-    expect(sdk).toContain('`daemon.log` at 2 MiB. The visual tools\' whole-task value remains unproven.');
-    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through beta.4 contract is retained.');
-    expect(sdk).toContain('wait in `recovering`');
-    expect(sdk).toContain('Kimi K3.1 provider routes join the registry with all seven effort levels mapped');
-    expect(sdk).toContain('skip or Host timeout returns `unanswered` with its reason.');
-    expect(sdk).toContain('The v0.7.97-alpha.9 release checks Session admission through canonical identity');
-    expect(sdk).toContain('The v0.7.97-alpha.9 release checks Session admission through canonical identity');
-    expect(sdk).toContain('a Windows ERROR_CRC surfacing as EIO');
-    expect(sdk).toContain('Unreadable metadata still fails closed');
-    expect(sdk).toContain('Admission reuse is fenced to initialized Actor controllers that');
-    expect(sdk).toContain("`protected` exit receipts for other clients' work are preserved.");
-    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.8 contract is retained.');
-    expect(sdk).toContain('The v0.7.97-alpha.8 release ships the Artifact SDK inside the single main package');
-    expect(sdk).toContain('`@kodax-ai/kodax/artifacts`, `/artifacts/client`, `/artifacts/runtime`, and');
-    expect(sdk).toContain('no separate @kodax-ai/artifacts npm publication exists.');
-    expect(sdk).toContain('advances to 20.16');
-    expect(sdk).toContain('never certify visual approval.');
-    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.7 contract is retained.');
-    expect(sdk).toContain('The v0.7.97-alpha.7 release resolves shared-Session Host ownership across daemon');
-    expect(sdk).toContain('guarded same-build orphan-exit policy refresh');
-    expect(sdk).toContain('`daemon_startup_failed` and `ETIMEDOUT`');
-    expect(sdk).toContain('report `already_running` by its actual');
-    expect(sdk).toContain('retire after the accepted 30-second lifetime');
-    expect(sdk).toContain('reads targeted exact process identities within the original startup controls');
-    expect(sdk).toContain('starts exactly once, and');
-    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.6 contract is retained.');
-    expect(sdk).toContain('The v0.7.97-alpha.6 release streamlines shared-Host startup');
-    expect(sdk).toContain('optional `lastMessageAt`');
-    expect(sdk).toContain('The CLI requires');
-    expect(sdk).toContain('`sessionDrafts:1`');
-    expect(sdk).toContain('while refreshing an older Host (Issue 369)');
-    expect(sdk).toContain('shutdown or business requests are never replayed.');
-    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.5 contract is retained.');
-    expect(sdk).toContain("The v0.7.97-alpha.5 release ships FEATURE_301's unified Artifact SDK");
-    expect(sdk).toContain('nine public operations');
-    expect(sdk).toContain('safe to stop. Evidence readiness is not visual approval.');
-    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 through alpha.4 contract is retained.');
-    expect(sdk).toContain('The v0.7.97-alpha.4 release adds the independent `@kodax-ai/artifacts` package');
-    expect(sdk).toContain('The built-in `visual-review` skill verifies static images/charts');
-    expect(sdk).toContain('Main-agent result verification replaces the out-of-band Sidecar Verifier');
-    expect(sdk).toContain('`KODAX_VERIFIER_*`');
-    expect(sdk).toContain('`onStartupProgress` observer over the pure-data');
-    expect(sdk).toContain('`initializing` with Host phases');
-    expect(sdk).toContain('/client, /runtime, /sandbox');
-    expect(sdk).toContain('modules/extensions/runtime/recovery/mcp/sessions/a2a/listener');
-    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2/alpha.3 contract is retained.');
-    expect(sdk).toContain('The v0.7.97-alpha.3 release lets trusted Main bound Product Workflows');
-    expect(sdk).toContain('race-safe spawn-slot reservations');
-    expect(sdk).toContain('productExecutionAuthorization:2');
-    expect(sdk).toContain('never to independent Actor admissions');
-    expect(sdk).toContain('Release validation fixes scoped Memory review recovery (Issue 362)');
-    expect(sdk).toContain('Host statistics fixtures (366) harden the same surfaces');
-    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1/alpha.2 contract is retained.');
-    expect(sdk).toContain('The v0.7.97-alpha.2 release completes the FEATURE_298 product seams embedders need');
-    expect(sdk).toContain('`authorizeExecution(request, services)` callback');
-    expect(sdk).toContain('productExecutionAuthorization:1');
-    expect(sdk).toContain('queued consumes bind');
-    expect(sdk).toContain('`readKodaXClientExits` verifies after reconnect');
-    expect(sdk).toContain('Every v0.7.96 stable and v0.7.97-alpha.1 contract is retained.');
-    expect(sdk).toContain("The v0.7.97-alpha.1 release lands FEATURE_298's unified product Host and client contract");
-    expect(sdk).toContain('pins to the independent Host');
-    expect(sdk).toContain('`steer` and `redirect` deliveries');
-    expect(sdk).toContain('derive by fork or deterministic recovery seed');
-    expect(sdk).toContain('Every v0.7.96 stable contract is retained.');
-    expect(sdk).toContain('Release validation also fixed two Linux product defects');
-    expect(sdk).toContain('hooks never executed on Debian/Ubuntu — Issue 354');
-    expect(sdk).toContain('zombie pid no longer wedges crash recovery');
-    expect(sdk).toContain('intentionally static under `CI=true`');
-    expect(sdk).toContain('The stable v0.7.96 release finalizes the line with no contract changes beyond rc.14');
-    expect(sdk).toContain('`latest` moves to the stable tag');
-    expect(sdk).toContain('The rc.14 release hands the next managed or coding Run a labelled, bounded, transient record');
-    expect(sdk).toContain('matched per turn and budgeted across');
-    expect(sdk).toContain('providers ignore an inherited `ANTHROPIC_AUTH_TOKEN`');
-    expect(sdk).toContain('the single transcript writer');
-    expect(sdk).toContain('verifies the live NUL');
-    expect(sdk).toContain('SDK/daemon startup and ordinary admission stay read-only (Issues 341/343).');
-    expect(sdk).toContain('The rc.13 release persists Runtime-owned managed-run output at Runner commit boundaries');
-    expect(sdk).toContain('so an interrupted run keeps the current compacted transcript');
-    expect(sdk).toContain('never');
-    expect(sdk).toContain('partial streams that never reach a commit remain journal output');
-    expect(sdk).toContain('The rc.12 release makes uncertain Shell cleanup nonblocking');
-    expect(sdk).toContain("`stop.state: 'unknown'` and `terminal.effectOutcome: 'unknown'`");
-    expect(sdk).toContain('never claims verified');
-    expect(sdk).toContain('terminationReason: iteration_limit');
-    expect(sdk).toContain('The rc.11 release preflights the macOS system Git shim before SDK-owned Git calls');
-    expect(sdk).toContain('(exit code 2, `DEVELOPER_DIR`-aware), TTL-caches probes,');
-    expect(sdk).toContain('recovers after installation with no');
-    expect(sdk).toContain('commands remain unchanged (Issue 339).');
-    expect(sdk).toContain('The rc.10 release makes Runtime shutdown own and drain the background work it starts');
-    expect(sdk).toContain('awaits already-started maintenance and memory review drains before releasing');
-    expect(sdk).toContain('finishes durable memory finalization before publishing');
-    expect(sdk).toContain('scope cache protection to the authorized canonical');
-    expect(sdk).toContain('development artifact trust');
-    expect(sdk).toContain('still checks every authorized write root.');
-    expect(sdk).toContain('The rc.9 release arbitrates daemon publication against launcher loss with a one-shot startup');
-    expect(sdk).toContain('concurrent JSON readers no longer break replacement');
-    expect(sdk).toContain("`source: 'runtime:windows'`");
-    expect(sdk).toContain('probes, retries, and checks are unchanged.');
-    expect(sdk).toContain('The rc.8 release negotiates custom OpenAI-compatible reasoning from `auto`');
-    expect(sdk).toContain('lower through explicit levels without losing disable intent');
-    expect(sdk).toContain('keep native DOMException semantics, nested causes, and');
-    expect(sdk).toContain('so `npm install` and `npm ci` keep devDependencies.');
-    expect(sdk).toContain('The rc.7 release returns eligible A2A file outputs from successful writes in both coding and');
-    expect(sdk).toContain('independently of conversation compaction and the memory artifact ledger');
-    expect(sdk).toContain("recognized as `text/html`.");
-    expect(sdk).toContain('The rc.6 release reduces Windows exit delays from unresolved historical Shell records');
-    expect(sdk).toContain('only when every retained target is definitively absent');
-    expect(sdk).toContain('first post-termination snapshot');
-    expect(sdk).toContain('The rc.5 release fixes Issue 335');
-    expect(sdk).toContain('historical images are prepared at run admission');
-    expect(sdk).toContain('one evidence-backed text-only diagnostic plus one retry');
-    expect(sdk).toContain('The rc.4 release fixes Issue 334');
-    expect(sdk).toContain('removing a startup stall that could push concurrent history reads past');
-    expect(sdk).toContain('so replay never duplicates');
-    expect(sdk).toContain('The rc.3 release aligns daemon `sessionCancellation` and `toolInvocation` capabilities');
-    expect(sdk).toContain('cleanup retries target the');
-    expect(sdk).toContain('with the unconfirmed-cleanup note appended');
-    expect(sdk).toContain("The rc.2 release rejects a first `sessions.cancel` request whose `expectedRunId` is already");
-    expect(sdk).toContain('so a delayed request cannot stop');
-    expect(sdk).toContain("`denialSource: 'stale_run'`");
-    expect(sdk).toContain('`retryable: false`');
-    expect(sdk).toContain('The rc.1 release unifies trusted text authority across Runtime Sessions and direct SDK entries');
-    expect(sdk).toContain('without granting a directory or reusing an approval across');
-    expect(sdk).toContain('capability 6 fences older daemon authority');
-    expect(sdk).toContain('`manylinux2014` images and require no `GLIBC_*` symbol newer than 2.17');
-    expect(sdk).toContain('one generation retry after persisted history reduction without replaying tools');
-    expect(sdk).toContain('Bundled Provider credential scopes stay shared');
-    expect(sdk).toContain('omit empty `tools` arrays for strict vLLM gateways');
-    expect(sdk).toContain('`compaction.reasoning` applies to');
-    expect(sdk).toContain('The beta.9 release ships FEATURE_299');
-    expect(sdk).toContain('`kodax execpolicy check --permission-mode full-access`');
-    expect(sdk).toContain('multimodal result fidelity (text/image tool results survive dispatch');
-    expect(sdk).toContain('`runtime.sessions.confirmIdentityAlias` registers an explicitly confirmed legacy interrupt identity');
-    expect(sdk).toContain('without inferring');
-    expect(sdk).toContain('answered with the interrupted-tool marker inside their pairing scope');
-    expect(sdk).toContain('equals the real provider request across built-in and custom');
-    expect(sdk).toContain('records bounded `summaryRequests` plus `commitMs` per successful compaction report');
-    expect(sdk).toContain('api.deepseek.com/anthropic wire');
-    expect(sdk).toContain('interrupted-tool marker');
-    expect(sdk).toContain('npm publication remains a separate manual maintainer action');
-    expect(sdk).toContain('`runtimeExitSettlement:2`');
-    expect(sdk).toContain('bounded `capacityDebt`');
-    expect(sdk).toContain('commits through the recovery ladder instead of aborting the Run');
-    expect(sdk).toContain('irreducible overflow');
-    expect(sandbox).toContain('Since v0.7.96, trusted text transactions and platform shell containment are');
-    expect(sandbox).toContain('v0.7.96 raises it to version 11');
-  });
-
-  it('documents the v0.7.96-alpha.3 scoped credential and daemon inventory contracts', () => {
-    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
-    const agents = resolveKodaXManual({ topic: 'agents' }).content;
-
-    expect(sdk).toContain('The v0.7.96-alpha.3 SDK adds the v2 scoped Provider credential broker');
-    expect(sdk).toContain('resolve lazily, per wire call');
-    expect(sdk).toContain('require an explicit scoped credential');
-    expect(sdk).toContain('binding and fail closed without one');
-    expect(sdk).toContain('fails closed against an older daemon');
-    expect(sdk).toContain('`daemonClientInventory:1`');
-    expect(agents).toContain('intersection of the live parent authorization');
-    expect(agents).toContain('separate `credentialRef` broker');
-  });
-
-  it('documents the v0.7.95 self-healing cleanup and finalization contracts', () => {
-    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
-    const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
-
-    expect(sdk).toContain('The v0.7.95 SDK advertises Windows `sandboxRuntime:5`');
-    expect(sdk).toContain('`runtimeExitSettlement:2`');
-    expect(sdk).toContain('Windows per-command denyRead fails closed as unsupported_policy');
-    expect(sdk).toContain('Dynamic worktrees register their cleanup policy');
-    expect(sdk).toContain('zero-byte, malformed, or truncated owner data');
-    expect(sdk).toContain('finalizes its authoritative `KodaXResult` before emitting the');
-    expect(sdk).toContain('cannot observe an empty successful answer');
-    expect(sdk).toContain('Since v0.7.95, KodaX-created linked worktree roots persist');
-    expect(sdk).toContain('Since v0.7.95, Runtime rereads a terminal status');
-    expect(sandbox).toContain('capability metadata was version 5');
-    expect(sandbox).toContain('without a machine-global admission mutex');
-    expect(sandbox).toContain('Setup alone retires pre-cutover receipts');
-    expect(sdk).toContain('Dynamic worktrees register their cleanup policy');
-    expect(sandbox).toContain('Atomic control staging is retired only after exact dead-PID');
+    expect(overview).toContain('the `codex-cli` provider bridge reads ~/.codex/config.toml');
+    expect(providers).toContain('`anthropic` defaults to `claude-sonnet-5-5`');
+    expect(providers).toContain('falls back to `gpt-6.2-sol` when ~/.codex/config.toml sets no model');
+    expect(customProviders).toContain('bedrock');
+    expect(customProviders).toContain('pi-messages');
+    expect(customProviders).toContain("api: 'responses'");
+    expect(customProviders).toContain('OAuth');
+    expect(commands).toContain('saves the current conversation');
+    expect(commands).toContain('so /resume <id> returns to it');
+    expect(commands).toContain('fixed after the Session');
+    expect(commands).toContain('acp serve');
+    expect(commands).toContain('--native-text');
+    expect(doctor).toContain('--repair-storage');
+    expect(doctor).toContain('--verify-storage');
+    expect(doctor).toContain('--writers-stopped');
+    expect(install).toContain('Windows has no arm64 build');
+    expect(a2a).toContain('--confirm-daemons-stopped');
+    expect(a2a).toContain('--confirm-server-stopped');
+    expect(sdk).toContain('UUIDv7');
+    expect(sdk).toContain('X-Session-Id');
+    expect(sdk).toContain('machine-local approval recorded at activation');
+    expect(sdk).toContain('copyKodaXDataRoot');
+    expect(sdk).toContain('target_incomplete');
+    expect(sdk).toContain('inputs.withdraw');
   });
 
   it('documents the v0.7.94 Runtime settlement and reconnect contracts', () => {
@@ -544,31 +266,6 @@ describe('FEATURE_218 manual registry', () => {
     expect(troubleshooting).toContain('connectionId');
     expect(troubleshooting).toContain('reconnectable');
     expect(troubleshooting).toContain('invalid_frame');
-  });
-
-  it('documents the v0.7.93 exit settlement and abort classification contracts', () => {
-    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
-
-    expect(sdk).toContain('v0.7.93 SDK keeps `sandboxRuntime:4`');
-    expect(sdk).toContain('durable Windows failed shutdown outcome');
-    expect(sdk).toContain('previous-boot shared ACL markers');
-    expect(sdk).toContain('isolated SDK class');
-  });
-
-  it('documents the v0.7.92 filesystem-effect and managed terminal contracts', () => {
-    const sdk = resolveKodaXManual({ topic: 'sdk' }).content;
-    const tools = resolveKodaXManual({ topic: 'tools' }).content;
-    const sandbox = resolveKodaXManual({ topic: 'sandbox' }).content;
-
-    expect(sdk).toContain('sandboxRuntime:4');
-    expect(sdk).toContain('crashOutcomeModel:2');
-    expect(sdk).toContain('KodaXFileLockTimeoutError');
-    expect(sdk).toContain('executor Promise');
-    expect(sdk).toContain('Resume reconstruction uses canonical Session messages');
-    expect(tools).toContain('KodaX file lock timed out');
-    expect(sandbox).toContain('version 4');
-    expect(sandbox).toContain('Old model-filesystem-effects state is ignored');
-    expect(sandbox).toContain('deprecated lease APIs are inert compatibility shims');
   });
 
   it('documents the v0.7.79 provider, A2A, Session, and Runtime contracts', () => {
@@ -611,10 +308,8 @@ describe('FEATURE_218 manual registry', () => {
     expect(sandbox).toContain('Exec Policy');
     expect(sandbox).toContain('case-insensitive PATH/Path');
     expect(sandbox).toContain('verbatim-argument contract');
-    expect(sandbox).toContain('capability metadata was version 5');
     expect(sandbox).toContain('without a machine-global admission mutex');
     expect(sandbox).toContain('profile-specific host boundary');
-    expect(sandbox).toContain('setup-generation-10 cutover');
     expect(sandbox).toContain('protected two-phase marker');
     expect(sandbox).toContain('No helper overlaps ordinary admission');
   });
@@ -685,7 +380,6 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('live in-process stream');
     expect(sdk).toContain('no durable journal, replay, or cursor epoch');
     expect(sdk).toContain('from its status record alone');
-    expect(sdk).toContain('retires after its idle warm-cache window');
     expect(memory).toContain('conversation-first');
     expect(sdk).toContain('F289/F290');
     expect(sdk).toContain('MemoryManagementAgent');
@@ -759,7 +453,7 @@ describe('FEATURE_218 manual registry', () => {
     expect(providers).toContain('qwen-token-plan');
     expect(providers).toContain('QWEN_TOKEN_API_KEY');
     expect(providers).toContain('defaults to `qwen3.8-max`');
-    expect(providers).toContain('qwen3.8-max-preview');
+    expect(providers).toContain('qwen3.8-flash');
     expect(permissions).toContain('Runtime-owned');
     expect(permissions).toContain('allow once');
     expect(permissions).toContain('session-scoped');

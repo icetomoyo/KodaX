@@ -336,7 +336,7 @@ Read diff slices for multiple changed files in one call. Prefer this for large r
 
 ## changed_scope
 
-Analyze which files, areas, and categories are touched by the current git diff or a comparison range. This is the canonical entry point for current-worktree, compare-range, and other change-set review / commit-prep workflows — call it first to see that change surface before issuing per-file diffs. Do not use it to expand an explicitly scoped repository, module, or file audit into unrelated dirty-worktree changes. Returns files grouped by area/category (e.g., "tests", "docs", "core") with a one-line summary per file. The `scope` parameter selects which change set: `unstaged` (working tree vs HEAD), `staged` (index vs HEAD), `all` (working tree + index vs HEAD, default), `compare` (HEAD vs base_ref). When a broad review spans independent areas, hand them to read-only review lanes before reading every diff yourself with `changed_diff`, because the lanes will read those diffs.
+Analyze which files, areas, and categories are touched by the current git diff or a comparison range. This is the canonical entry point for current-worktree, compare-range, and other change-set review / commit-prep workflows — call it first to see that change surface before issuing per-file diffs. When the run context already includes a Repository Change Scope for the change set you need, reuse it instead of calling again. Do not use it to expand an explicitly scoped repository, module, or file audit into unrelated dirty-worktree changes. Returns files grouped by area/category (e.g., "tests", "docs", "core") with a one-line summary per file. The `scope` parameter selects which change set: `unstaged` (working tree vs HEAD), `staged` (index vs HEAD), `all` (working tree + index vs HEAD, default), `compare` (HEAD vs base_ref). When a broad review spans independent areas, hand them to read-only review lanes before reading every diff yourself with `changed_diff`, because the lanes will read those diffs.
 
 ```json
 {
@@ -363,6 +363,11 @@ Analyze which files, areas, and categories are touched by the current git diff o
     "refresh_overview": {
       "type": "boolean",
       "description": "When true, rebuild the repo overview snapshot before analyzing changes"
+    },
+    "offset": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Index of the first changed file to list. Use the offset named in the previous result to page through a long change set. Defaults to 0."
     }
   }
 }
@@ -1837,7 +1842,7 @@ Generate a fillable ConstructionArtifact JSON skeleton for a new tool. Returns a
 
 ## semantic_lookup
 
-Search repository intelligence for symbol-, module-, or process-aware semantic matches. "Repository intelligence" here is a pre-indexed structural view of the codebase (symbol definitions, module boundaries, process flows); `semantic_lookup` queries that index rather than scanning raw text. Use it when the question is structural ("what does symbol X relate to", "which module owns concept Y", "what flow does entry Z drive") rather than textual. The `kind` parameter narrows the lookup category (`symbol` / `module` / `process` / `auto`); `target_path` scopes to a subtree. `refresh: true` rebuilds the underlying index — expensive — so only set it when you have reason to believe the index is stale (e.g., right after a large bulk edit). For local text match prefer `grep`; for literal or provider-backed search use `code_search`; to read a file directly prefer `read`.
+Search repository intelligence for symbols, modules, or processes whose names or paths match the query. "Repository intelligence" here is a pre-indexed structural view of the codebase (symbol definitions, module boundaries, process flows); `semantic_lookup` queries that index rather than scanning raw text. It matches indexed names, so query with likely identifiers or path fragments rather than descriptions of behavior. The `kind` parameter narrows the lookup category (`symbol` / `module` / `process` / `auto`); `target_path` scopes to a subtree. `refresh: true` rebuilds the underlying index — expensive — so only set it when you have reason to believe the index is stale (e.g., right after a large bulk edit). For local text match prefer `grep`; for literal or provider-backed search use `code_search`; to read a file directly prefer `read`.
 
 ```json
 {

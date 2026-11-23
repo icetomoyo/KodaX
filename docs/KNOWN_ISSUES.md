@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-21_
+_Last Updated: 2026-11-23_
 
 ---
 
@@ -46,6 +46,707 @@ This predates the child contract projection; the eval uses raw per-call usage,
 not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
+
+## Issue 442: Gemini and pi-messages replay another model's tool calls as text
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: `v0.7.97-alpha.12` (`c91152b18`, `e6247c3a5`, FEATURE_302 T08/T09)
+- Created / Resolved: 2026-11-23 / 2026-11-23
+- Fixed: unreleased (after `v0.7.97-rc.1`)
+- Reported by: follow-up review of Issue 441
+
+### Original Problem
+
+The Gemini native and pi-messages serializers rewrite a tool turn written by
+another model, or edited since, as user text: `<prior_tool_call>`,
+`<prior_tool_result>` and `<prior_assistant>`. This is the same shape that
+taught models to copy `<prior_reasoning>` in Issue 441, applied to tool calls.
+A model shown tool calls as text may start writing its calls as text.
+
+Gemini 3 requires a signature on the first function call of each model step,
+which is why foreign calls were not sent as calls. Google documents the skip
+value `skip_thought_signature_validator` for calls that no Gemini model
+produced. pi drops reasoning and signatures from any assistant message whose
+api, provider and model differ from the target, and keeps its calls.
+
+The live checks found two earlier bugs on the same path:
+
+- Gemini rejects an unsigned empty text part (400 "required oneof field
+  'data' must have one initialized field"). A Gemini reply that left an empty
+  text block failed its own next request.
+- Kimi's Anthropic-compatible endpoint rejects an empty text block (400 "text
+  content is empty"). Switching from Gemini to Kimi failed for the same
+  reply.
+
+### Resolution
+
+- Gemini replays foreign or edited calls and their results as
+  `functionCall` and `functionResponse`. The first call of each model step
+  without its own signature carries the documented skip value,
+  base64-encoded because the field is bytes. Own signatures and call IDs
+  replay only to their source.
+- Gemini drops empty text and thinking parts unless they carry a signature.
+- The Anthropic-compatible serializer drops empty text blocks. A turn left
+  empty still gets the existing `'...'` text.
+- pi-messages replays a foreign turn as an assistant message with api,
+  provider and model `unknown`, zero usage and `stopReason` `toolUse` or
+  `stop`, so pi treats it as foreign. Its calls and results are `toolCall`
+  and `toolResult`. Reasoning from another model is still dropped.
+
+Files changed: `packages/llm/src/providers/google-messages.ts`,
+`pi-messages-history.ts`, `anthropic.ts`.
+
+Tests:
+
+- `google-native.test.ts`: foreign calls replay structured with the skip
+  value on the first call of each step; unsigned empty parts are dropped.
+- `pi-messages.test.ts`: foreign turns replay from an unknown origin with
+  zero usage, structured calls and no foreign reasoning or signature.
+- `reasoning-replay.test.ts`: the pi serializer now pairs calls and results
+  by ID; Kimi gets no empty text block.
+- Live switch matrix (`reasoning-handoff.integration.test.ts`, gateway
+  configured by `GEMINI_GATEWAY_URL`): 8 sources × 8 targets including
+  Gemini native, OpenAI-compatible and Anthropic-compatible, for completed
+  and mid-loop histories. 160/160 requests accepted, no tag and no call
+  written as text in any reply, every mid-loop answer correct, every
+  completed history continued with the right call. The old serializer
+  into Gemini native also passed 10/10 without imitation, so this fixture
+  shows no measurable gain. The change follows Google's guidance.
+
+Not covered: pi-messages has no live test. There is no key, and the
+server is closed source, so whether it accepts the `unknown` origin and
+zero usage is unverified.
+
+Not changed: the `'...'` text for an assistant turn left empty
+(`anthropic.ts`, `openai.ts`). A scan of local sessions found 8 such turns
+in 38,724 (all thinking-only) and no reply that copied `'...'`.
+
+## Issue 441: Replayed reasoning from another model becomes reply text, and models learn to write their thinking into the answer
+
+- Priority: High
+- Status: Resolved
+- Introduced: `v0.7.97-alpha.12` (`363ab1e1e`, FEATURE_302 T06) for lenient providers; the `'...'` placeholder since `v0.7.28`
+- Created / Resolved: 2026-11-23 / 2026-11-23
+- Fixed: unreleased (after `v0.7.97-rc.1`)
+- Reported by: KodaX Space
+
+### Original Problem
+
+In a Space session (zhipu-coding, `anthropic-messages`) that switched
+glm-5.3 → glm-5.3-flash → deepseek-flash → glm-5.3-flash, replies began with
+`<prior_reasoning>…</prior_reasoning>` in the visible text while the thinking
+block held only `"..."`. The session file stores them that way.
+
+Counts from that session: glm-5.3 wrote 104 replies (94 with real thinking,
+none tagged). glm-5.3-flash wrote 46 replies, all with `"..."` as thinking and
+25 with the tag. deepseek-flash wrote 31 replies, 11 with `"..."` and 5 with
+the tag. All 35 tags open the text block.
+
+Two mechanisms combine:
+
+1. `canReplayReasoning` (`anthropic.ts`) rejects thinking whose generation
+   source differs in provider, api, model, baseUrl or credential. Since
+   `363ab1e1e` this also applies to lenient providers. A rejected block is
+   rewritten as an assistant text block `<prior_reasoning>\n…\n</prior_reasoning>`.
+   Bedrock, Google, Mistral, pi-messages, Responses, the Claude native-history
+   rebuild and the prompt-cache diagnostic projection do the same.
+2. After that rewrite, the tool turns have no thinking left, so the lenient
+   Anthropic serializer injects `{ thinking: '...', signature: '' }` into each
+   of them. The new model sees hundreds of its "own" turns shaped as
+   thinking `...` plus tagged reasoning in the text, and copies that shape.
+
+Polluted replies are written back to history, so the pattern reinforces
+itself, even after switching back.
+
+The rule also depends on the protocol pair. Thinking produced on the
+OpenAI-compatible path has no `source`, so it replays as thinking to a
+lenient Anthropic-compatible target, and Anthropic-compatible thinking
+replays as `reasoning_content` to an OpenAI-compatible target. Only some
+pairs are rewritten to text.
+
+Expected: reasoning never reaches the reply text, whatever the switch.
+
+### Fix plan (agreed 2026-11-23)
+
+- Readable reasoning goes to the target's own reasoning channel when the
+  target accepts unsigned reasoning (lenient Anthropic-compatible thinking with
+  an empty signature, OpenAI-compatible `reasoning_content`). Otherwise it is
+  dropped. It is never written as text.
+- Opaque data (signatures, redacted thinking, `reasoning_details`, encrypted
+  content) replays only to the source that produced it.
+- No `'...'` placeholder thinking is injected. A provider gets a declared need
+  only if a live probe shows a rejection.
+- Replay removes a leading `<prior_reasoning>` segment from assistant text and
+  drops thinking that is exactly `'...'`, so polluted sessions stop
+  reinforcing the pattern.
+- Verification: offline invariants over every serializer and the diagnostic
+  projection; a live switch matrix (cross-provider, cross-model, same model on
+  both protocols, completed turn and mid tool loop) run before and after the
+  change; a behaviour eval replaying the polluted session.
+
+### Resolution
+
+The plan shipped with one change found by the live probes: on lenient
+Anthropic-compatible targets, placeholder reasoning is empty instead of
+absent. DeepSeek rejects an in-loop tool turn without thinking (400 "The
+`content[].thinking` in the thinking mode must be passed back"), which is
+why the `'...'` existed (`039a44a68`, added for Kimi). Dropping `'...'`
+thinking failed 4 of 4 DeepSeek mid-loop requests, while an empty block was
+accepted everywhere and carries nothing to imitate.
+
+- Readable reasoning from another source replays as unsigned thinking on
+  lenient Anthropic-compatible targets and as `reasoning_content` on
+  OpenAI-compatible targets that replay it. Every other serializer (strict
+  Anthropic, Claude native history, Responses, Bedrock, Google, Mistral,
+  pi-messages) drops it. None writes reasoning as text.
+- Signatures, redacted thinking, `reasoning_details` and encrypted content
+  replay only to their source, as before.
+- On a lenient thinking-mode target, a tool turn with no thinking gets
+  `{ thinking: '', signature: '' }`. Thinking that is only `'...'` replays
+  as `''` there and in `reasoning_content`. Strict targets are unchanged.
+- `withoutReplayArtifacts` removes a leading `<prior_reasoning>` segment
+  from assistant replies on every replay path. A tag later in the text
+  stays. Stored history is not changed.
+- The prompt-cache diagnostic projection mirrors all of the above through
+  the provider's `replayThinking` and `missingToolTurnThinking`.
+
+Files changed: `packages/llm/src/providers/reasoning-replay.ts` (new),
+`anthropic.ts`, `anthropic-native-history.ts`, `openai.ts`,
+`responses-messages.ts`, `bedrock-messages.ts`, `google-messages.ts`,
+`mistral-messages.ts`, `pi-messages-history.ts`, `registry.ts`,
+`packages/llm/src/types.ts`, `packages/llm/src/index.ts`,
+`packages/coding/src/agent-runtime/prompt-cache-diagnostics.ts`.
+
+Tests:
+
+- `reasoning-replay.test.ts` runs one mixed-source, already-polluted history
+  through every serializer and checks that no reasoning, tag or opaque value
+  reaches reply text, that `'...'` never appears as thinking, and that tool
+  calls stay paired. It failed before the change. Existing serializer tests
+  were updated to the new rule.
+- Live switch matrix (`reasoning-handoff.integration.test.ts`): 8 sources ×
+  9 targets, including the same models on Anthropic- and OpenAI-compatible
+  endpoints, for completed, mid-loop and mid-loop-without-thinking
+  histories. Before: 192/192 accepted, 52 requests carried
+  `<prior_reasoning>` text, 110 carried `'...'`, and 7 replies opened with
+  the tag. After: 192/192 accepted, none of either in any request or reply.
+- Polluted-session eval (`reasoning-pollution.integration.test.ts`,
+  glm-5.3-flash / deepseek-flash / kimi-for-coding, 2 cases × 4 runs).
+  Tagged replies: old serializer 12/24, new 0/24. `'...'`-only thinking:
+  old 13/24, new with `'...'` replayed as is 8/24, with `'...'` replayed
+  empty 0/24. Answers stayed correct and every tool step still called the
+  tool.
+- The same eval across protocols, for kimi and deepseek: the polluted
+  session replayed on the OpenAI-compatible endpoint, written on the
+  Anthropic-compatible endpoint and replayed on the OpenAI-compatible one,
+  and the reverse (6 cells × 8 runs). Tagged replies: old 19/48, new 0/48.
+  `'...'`-only thinking: old 22/48, new 0/48. All 48 were accepted in both
+  arms, and answers stayed correct.
+- Whole conversations across switches (`REASONING_HANDOFF_MODE=conversation`).
+  Each conversation has three user turns on endpoints A, B, then A again,
+  and every turn finishes a real tool loop. The pairs are the same model on
+  both protocols (kimi, deepseek), different models across protocols, and
+  different models on one protocol. 6 pairs × 2 directions × 3 runs:
+  36/36 conversations finished. All 216 requests were accepted, with no
+  tag and no `'...'` thinking. All 36 final answers recalled the codes from
+  both earlier turns and gave the correct sum. Back on A, the cache read
+  covered A's own earlier prefix up to each provider's cache block size
+  (35/36; one zhipu miss).
+
+Not covered: the official Anthropic endpoint (the provided gateway's
+upstream credentials were all disabled) and MiMo (no key). Unit tests cover
+both paths.
+
+## Issue 440: A memory review receipt is announced before the job is completed
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: exposed by the Issue 435 fix (`49a256325`); the ordering predates it
+- Created / Resolved: 2026-11-23 / 2026-11-23
+- Fixed: unreleased (after `v0.7.97-beta.13`)
+- Related: Issue 435
+
+### Original Problem
+
+`src/sdk-runtime.memory-review.test.ts` ("recovers unfinished review at
+coding/managed_task startup without delaying Stop") failed after Issue 435:
+right after `onMemoryReviewReceipt`, `listPendingEpisodeReviews` still listed
+the job.
+
+The v2 drain calls `onV2Completed` under the Session's review locks. That hook
+wrote the receipt to the Session lineage and fired the client event at once,
+before `completeFencedEpisodeReviewWithSessionFence` marked the job completed
+and removed `pending/<job>.json`. The old scan took the same locks, so it
+waited for completion by accident. The Issue 435 scan reads without locks and
+sees the job still pending.
+
+Expected: a client that hears the receipt sees the job gone from the queue.
+
+### Resolution
+
+- `onV2Completed` may return a notifier. The drain calls it after the job is
+  durably completed. A notifier that throws is reported as a diagnostic and does
+  not reopen the completed job.
+- The coding runtime still writes the receipt to the lineage before completion,
+  so recovery cannot replay applied effects. It returns the client
+  notification as the notifier. `persistMemoryReviewReceiptToSession` keeps
+  its write-then-notify contract for other callers.
+
+Files changed: `packages/agent/src/memory-control/review-inbox.ts`,
+`packages/coding/src/memory-runtime.ts`.
+
+Tests: the two failing `sdk-runtime.memory-review` cases pass again (they
+failed with the Issue 435 scan and passed with the pre-435 scan).
+
+## Issue 439: The Host and the CLI block on synchronous Git and PowerShell probes
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: `v0.7.43` (`tryGitRemote`); CLI-side probes with Issue 434's scope limit
+- Created / Resolved: 2026-11-22 / 2026-11-23
+- Fixed: unreleased (after `v0.7.97-beta.13`)
+- Related: Issue 434; the late query display report
+
+### Original Problem
+
+- Each Run on the shared Host ran `git config --get remote.origin.url` through
+  `execSync` about five times. The memory root, the learning store, the memory
+  runtime and project Skills each asked for the remote. A cold call measured up
+  to 827 ms, and every session waited on the Host loop meanwhile.
+- The CLI process read its own and the daemon's start identity through
+  PowerShell at startup, about 165 ms each, because only the Host installed the
+  Issue 434 helper.
+- CLI providers (codex-cli, gemini-cli, ACP) took a PowerShell `Add-Type`
+  process snapshot on every child start and exit.
+
+### Resolution
+
+- `tryGitRemote` remembers the answer per directory. Only the first lookup is
+  synchronous. A lookup after 10 s returns the remembered value and refreshes it
+  with an asynchronous `execFile`. Exit 1 ("no remote") clears the value, but a
+  timeout or launch failure keeps it. A failed macOS developer-tools check is
+  not remembered.
+- `runCliMain` installs the native helper on Windows, so daemon discovery no
+  longer starts PowerShell.
+- `@kodax-ai/llm` exports `installCliWindowsProcessHelper`. The Host installs
+  it with the same lazily resolved helper path. When the helper cannot start,
+  the llm package falls back to PowerShell permanently.
+
+Measured with a scripted REPL turn on a fresh Host (3 runs each): ready
+2.70 → 2.07–2.26 s, and first reply 5.1–5.7 → 3.9–4.2 s. An ordinary turn no
+longer starts any synchronous process.
+
+Files changed: `packages/agent/src/memory/paths.ts`, `src/kodax_cli.ts`,
+`packages/llm/src/cli-events/process-tree.ts`, `packages/llm/src/index.ts`,
+`src/sdk-runtime.ts`.
+
+Tests added: memo and background refresh cases in
+`packages/agent/src/memory/paths.test.ts`, and helper and permanent-fallback
+cases in `packages/llm/src/cli-events/process-tree.windows.test.ts`.
+`runner-windows-hide.test.ts` now expects one hidden probe across 20 queries.
+
+Not changed: the daemon reads its boot identity through PowerShell once per
+start (about 0.5 s). Repo-intelligence `git rev-parse` calls and run-status
+fsyncs are asynchronous and do not block other sessions.
+
+## Issue 438: Streamed output makes the spinner row and the history above it jump
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: owned renderer bottom-anchored transcript (`ScrollBox`)
+- Created / Resolved: 2026-11-22 / 2026-11-23
+- Fixed: unreleased (after `v0.7.97-beta.13`)
+
+### Original Problem
+
+While "Thinking..." showed and output streamed in, the spinner's first line
+and the history above it jumped. The composer and status bar stayed still.
+
+`ScrollBox` moved its window to new geometry in an effect, one render after
+the content grew. That render drew the grown content with the previous
+window. The new line covered the spinner row and the history shifted by the
+added rows. The next render then moved everything back. A PTY replay showed 6+
+such frames per streamed reply.
+
+### Resolution
+
+When geometry props differ from the committed ones, `ScrollBox` now computes
+the window from the new props in the same render. Imperative clamp bounds are
+kept, and a prop-driven move resets the pending delta. The effect still
+commits the snapshot as before.
+
+Files changed: `packages/repl/src/tui/components/ScrollBox.tsx`.
+
+Tests added: "renders grown content with the bottom window in the same frame"
+in `ScrollBox.test.tsx` (red before the fix). PTY replay after the fix: 0
+displaced frames; history moves down only when the spinner block appears or
+disappears at round boundaries.
+
+## Issue 434: Windows process snapshots block the Host event loop for about a second per bash call
+
+- Priority: High
+- Status: Resolved
+- Introduced: `v0.7.69` (synchronous PowerShell process snapshots in `process-tree.ts`)
+- Created / Resolved: 2026-11-22 / 2026-11-22
+- Fixed: unreleased (after `v0.7.97-beta.13`)
+- Related: Issue 435; REPL report on `v0.7.97-beta.13` with KodaX Space 0.1.47-beta.3 sharing the Host
+
+### Original Problem
+
+On Windows, `packages/agent/src/runtime/process-tree.ts` reads process
+snapshots, start identities and exact terminations through
+`spawnSync('powershell.exe', …)` with an `Add-Type` C# helper. Each call blocks
+the Host event loop for about one second. `rememberChildProcessTree` runs on
+every bash spawn, and cleanup runs again when the command ends.
+
+The REPL and Space share one Host daemon. While one client runs bash calls,
+every other client's requests wait behind these blocks:
+
+- A submitted user message shows in the REPL transcript after a visible delay.
+- Esc / Ctrl+C reports "Stop confirmed" late, and the Run keeps streaming
+  for a while (one report took about 26 seconds).
+- Short commands end before the snapshot is read, so cleanup reports status
+  `unknown` and the bash tool warns that cleanup could not be confirmed.
+
+Reproduction in a fresh Host with concurrent bash load: the user item appears
+after 5.3–7.3 s instead of 0.6–1.1 s, and Stop takes about 1 s instead of
+0.15–0.55 s.
+
+Expected: process snapshots do not block the event loop for more than a few
+tens of milliseconds, and Stop and message display do not depend on another
+client's bash load.
+
+### Resolution
+
+- The native Windows sandbox helper gained three internal subcommands:
+  `__process-snapshot`, `__process-start-identities` and
+  `__process-terminate-exact`. They use Toolhelp and `GetProcessTimes` and
+  print the same rows as the PowerShell script, so the parsers are unchanged.
+  A call takes 56–82 ms instead of about one second.
+- `installWindowsProcessHelper` lets the Host hand the agent package the
+  hash-verified helper path, so `@kodax-ai/agent` stays independent of the
+  native artifact. `createKodaXHostRuntime` installs it on Windows.
+- When the helper is missing, cannot start or fails, each call falls back to
+  PowerShell. A helper that cannot start is dropped for the rest of the
+  process, so the fallback does not pay for both. Termination falls back only
+  when the helper attempted nothing, because it validates every target first.
+- Managed child registration read the owner's start identity through a CIM
+  query on every bash call. It now reads it once per process through the same
+  helper path.
+
+Measured with the same concurrent bash load as above: the user item appears
+after 1.5–2.1 s (5.3–7.3 s before; 0.6–0.75 s with no load), and Stop is
+confirmed in 0.02–1.3 s.
+
+Files changed: `native/windows-sandbox-v2/src/process_tree.rs`,
+`native/windows-sandbox-v2/src/main.rs`,
+`packages/agent/src/runtime/process-tree.ts`,
+`packages/agent/src/runtime/managed-child-processes.ts`,
+`packages/agent/src/index.ts`, `src/sdk-runtime.ts`.
+
+Tests added: `packages/agent/src/runtime/process-tree.windows-helper.test.ts`
+(helper use, fallback, once-only resolution, dropping a helper that cannot
+start) and an owner-identity case in
+`managed-child-processes.cache.test.ts`. Rust unit tests cover the
+snapshot row, the identity mismatch guard and target parsing.
+
+The remaining per-call cost is one helper spawn, run synchronously twice per
+bash call. The CLI-provider copy in
+`packages/llm/src/cli-events/process-tree.ts` used PowerShell until Issue 439.
+
+## Issue 435: The memory review inbox scan locks every session ever run, and nothing reclaims its directories
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: `v0.7.85` (memory review inbox)
+- Created / Resolved: 2026-11-22 / 2026-11-22
+- Fixed: unreleased (after `v0.7.97-beta.13`)
+- Related: Issues 434, 436 and 437, FEATURE_308
+
+### Original Problem
+
+`scanPendingEpisodeReviews` takes two file locks on every session directory
+under the tenant before it checks whether the pending entries belong to the
+caller. A drain runs this scan several times at the start and end of each Run.
+Nothing deletes session directories, completed job directories or lock queue
+directories, so the scan cost grows with every session the machine has run.
+
+One user config home had 601 session directories, 4462 job directories with
+no pending entry, 606 + 2894 empty lock queue directories and 106 MB of data.
+One sweep took 20.3 s cold and 2.5 s warm. The scan is asynchronous and did
+not cause the delays in Issue 434, but it adds file system load to every Run
+and keeps conversation summaries after their sessions are deleted.
+
+Expected: the scan only locks directories that hold the caller's work. A
+session directory with no pending or processing work and only finished jobs
+is removed after an idle period. Lock queue directories are removed once
+they are empty.
+
+### Resolution
+
+`scanPendingEpisodeReviews` now checks `processing/` without a lock and takes
+the session locks only when a claim there is older than the stale-claim
+limit. Stale-claim recovery acts on nothing else, so the result is the same.
+A session held by another writer no longer stalls the scan either.
+
+On a copy of the affected inbox, one scan took 1.8–2.2 s instead of
+17.8–19.1 s and returned the same 3603 entries. Most of the remaining time
+reads the entries leaked by Issue 436.
+
+Reclaiming directories was not done here, because both reclaim ideas break
+an existing guarantee. Issue 437 tracks the design:
+
+- A completed job's `state.json` is the idempotency record:
+  `persistPendingEpisodeReview` skips a digest whose job is completed.
+  Deleting it lets the same digest be reviewed again.
+- `branch-authority.json` holds the session's fence epoch.
+- Session storage uses the identity of `.write-locks/<id>.lock.queue` to
+  detect a write during a lock-free read. Removing the queue after each
+  write would hide a write that happens between two reads.
+
+Files changed: `packages/agent/src/memory-control/review-inbox.ts`.
+
+Tests added: "lists a busy session without waiting for its lock when it has
+no stale claim" in `review-inbox.test.ts`. It held the session lock and failed
+before the change.
+
+## Issue 437: Per-session lock and review directories are never reclaimed
+
+- Priority: Low
+- Status: Open
+- Introduced: `v0.7.85` (memory review inbox); session write locks earlier
+- Created: 2026-11-22
+- Fixed: -
+- Related: Issue 435
+
+### Original Problem
+
+Each session that ever ran keeps directories that nothing deletes:
+
+- `memory-review-inbox/<tenant>/<session>/`, with one `jobs/<job>/` per
+  reviewed digest, and `.session-authority/<session>.lock.queue`.
+- `sessions/.write-locks/<id>.lock.queue`, which stays after its session is
+  deleted. One home had 2893 of these for 31 session files.
+
+Since Issue 435 the review scan no longer locks them. The scan still reads
+`pending/` and `processing/` of every session directory. Session location
+traversal still stats every write-lock queue twice; with 2893 entries, each
+pass blocks for about 32 ms.
+
+Deleting them is not a plain cleanup. Completed job state is the idempotency
+record for a digest, `branch-authority.json` holds the fence epoch, and the
+write-lock queue identity is a read fence (see Issue 435). A fix needs a
+record that keeps those guarantees, for example a compact tombstone per
+session, before the directories can go.
+
+Expected: directory count follows live sessions, not every session ever run,
+without weakening idempotency or the read fences.
+
+## Issue 436: Test runs left about 3600 review entries in the real config home
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: before `v0.7.97` (entries date from 2026-09-08 to 2026-10-31)
+- Created / Resolved: 2026-11-22 / 2026-11-22
+- Fixed: `fee13b700` (2026-10-31, test setup); local data cleanup is separate
+- Related: Issue 435
+
+### Original Problem
+
+The user's real `~/.kodax/memory-review-inbox` holds 3603 pending entries,
+mostly test fixtures written in October 2026. Some tests wrote into the real
+config home instead of a temporary one. The leaked entries add to the scan
+cost in Issue 435.
+
+Expected: tests never write into the real config home. The leaked entries
+are listed and removed with the user's confirmation. Which tests leaked, and
+whether they still do, is not yet known.
+
+### Resolution
+
+The entries came from 194 test sessions in
+`packages/coding/src/task-engine/runner-driven.test.ts` (for example
+`managed-idle-yield-window` and `runner-<timestamp>` sessions),
+`agent.queue-input-limit.test.ts` (`queue-limit-session`) and
+`agent.extension-runtime.test.ts` (`feature-034-persisted-session`,
+`kodax-034-*`). They ran reviews against the developer's home because the
+test worker inherited it.
+
+`fee13b700` gave every Vitest worker a private `KODAX_HOME` in
+`tests/config/vitest.setup.queue.ts`. The newest leaked entry is from
+2026-10-31, and running the three test files again (117 tests) added
+nothing to the real inbox.
+
+None of the leaked reviews changed real memory. Their decisions hold no
+memory proposals, and their 65 memory actions have empty results. The
+194 directories hold 3374 pending entries and 7138 jobs. Deleting them is
+a local action that needs the owner's confirmation; it does not change
+code.
+
+## Issue 433: An extension's internal tool calls stay running in the Session view
+
+- Priority: High
+- Status: Resolved
+- Introduced: every version where extension handlers call `scope.invokeTool` or `executeProcess`
+- Created / Resolved: 2026-11-22 / 2026-11-22
+- Fixed: unreleased (after `v0.7.97-beta.13`)
+- Related: KodaX Space report (0.1.47-beta.3/4 on `v0.7.97-beta.13`), artifacts extension
+
+### Original Problem
+
+An extension handler that calls another tool through `scope.invokeTool` or
+`executeProcess` (for example `artifact_render`, which runs write, bash and
+one read per page) reaches `runToolDispatch` again. That path fires
+`onToolUseStart` and `onToolExecutionStart` for the inner call, but
+`onToolResult` is only fired by `applyPostToolProcessing`, which inner calls
+never reach. Every Host that renders tool events gets a start with no end:
+
+- The Session view keeps each inner call as a top-level `running` tool item
+  with a UUID id and no `resultRecorded` or `endedAt`, even after the Run ends.
+  `persistSessionViewItems` then saves them as `cancelled`, so after a restart
+  the calls look interrupted although they succeeded. One Space session had
+  40 such records across 4 Runs; lineage had 130/130 matched pairs.
+- After an interrupted Run, `runtime-interrupted-run-recovery.ts` reads these
+  records (`executionBegan` without `resultRecorded`) and tells the model that
+  the inner write/read/bash calls were interrupted.
+- ACP, the REPL and JSON events also see a start without an end.
+- Extension progress through `tool_call` is reported under
+  `<call id>:<tool name>`, which matches no Session view item, so it is dropped.
+
+Expected: Session view tool items match the model's tool_use blocks in
+lineage. Inner calls stay under permission and sandbox checks but have no
+items of their own. Their progress shows on the model-issued parent call.
+When a Run ends, none of its items stay `running` or `awaiting_approval`, in
+memory or on disk. Old sessions drop the orphan records instead of showing
+them as cancelled.
+
+### Resolution
+
+- Dispatch marks a call made through an extension handler's execution scope
+  as nested. A nested call emits no `onToolUseStart` and no extension
+  `tool:start`. `onToolExecutionStart/End` still fire, so effect accounting,
+  shell drain and approval revocation are unchanged. Permission, sandbox and
+  guardrail checks still apply.
+- Each execution records the model-issued call that owns its Host item.
+  Extension `reportProgress` and tool progress use that id. A `tool_call`
+  target reports under the bridge call id, so its progress is no longer
+  dropped. A nested call does not forward its own tool progress, such as
+  `executeProcess` bash output.
+- `SessionViewOwner.settleRun` turns the ending Run's `running` and
+  `awaiting_approval` items into `cancelled` with `endedAt`. Items of other
+  Runs keep their state. `persistSessionViewItems` saves `awaiting_approval`
+  as `cancelled`.
+- `withoutInternalToolRecords` drops a saved tool record that never recorded
+  a result and whose assistant message in lineage has no tool_use with its id.
+  Session view restore and interrupted-Run recovery both apply it. History
+  pages and the conversation cache read lineage only and need no change.
+- `docs/CLIENT_CONTRACT.md` states that tool items match the model's tool_use
+  blocks one to one.
+
+Files changed: `packages/coding/src/agent-runtime/tool-dispatch.ts`,
+`packages/coding/src/task-engine/runner-driven.ts`,
+`packages/coding/src/task-engine/_internal/managed-task/agent-chain.ts`,
+`packages/coding/src/task-engine/_internal/managed-task/tool-wrappers.ts`,
+`src/session-view.ts`, `src/client-canonical-tools.ts`,
+`src/runtime-interrupted-run-recovery.ts`, `docs/CLIENT_CONTRACT.md`.
+
+Tests added: `src/session-view.nested-tools.test.ts`. It runs an extension
+tool directly and through `tool_call` on the runner path, then checks Run
+settling, the `awaiting_approval` save, restoring a session with an orphan
+record, and interrupted-Run evidence for that session.
+
+## Issue 432: LLM retry classification misses transient errors and misreads permanent ones
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: every version with `KodaXBaseProvider.isRateLimitError`
+- Created / Resolved: 2026-11-22 / 2026-11-22
+- Fixed: unreleased (after `v0.7.97-beta.13`)
+- Related: Issue 431 (found in the same comparison)
+- Context: comparison of the LLM access layer with pi-ai 1.6.0
+
+### Original Problem
+
+`isRateLimitError` in `packages/llm/src/providers/base.ts` matched bare
+substrings such as `limit`, `rate` and `503`. A permanent request error like
+"output limit must be positive", "Failed to generate…" or a request id
+containing `503` was retried as a rate limit before failing.
+
+Several transient errors were not retried at all:
+
+- Gateway wording, including "temporarily unavailable", a stream `api_error`
+  event, "Provider returned error" and "retry your request".
+- Cloudflare 520, 524 and 525.
+- A reply cut off after it had begun, such as "cut short after the reply had
+  begun" or "stream disconnected before completion".
+- An OpenAI-compatible stream that ended with `finish_reason: "error"`. It was
+  returned as a finished answer with partial content.
+
+### Resolution
+
+- `isRateLimitError` matches one bounded expression: rate-limit, too-many,
+  overload and busy wording, the Chinese rate-limit words, and the codes 429,
+  503, 529 and 1302 only when they are not part of a longer id or number.
+- The OpenAI-compatible stream throws a `StreamIncompleteError` on
+  `finish_reason: "error"`, so the coding resilience layer retries it with its
+  partial-output handling.
+- The coding classifier treats gateway wording and 504/520/524/525 as
+  `provider_overloaded`. It treats mid-reply wording as `incomplete_stream`.
+  "The provider is unavailable for this model" stays non-retryable.
+- The llm layer still retries only failures before response headers. Mid-stream
+  retries stay in the coding classifier.
+
+Files changed: `packages/llm/src/providers/base.ts`,
+`packages/llm/src/providers/openai.ts`,
+`packages/coding/src/resilience/classifier.ts`.
+
+Tests added: permanent and transient cases in
+`packages/llm/src/providers/base.test.ts`, the `finish_reason: "error"` case in
+`packages/llm/src/providers/streaming-robustness.test.ts`, and the gateway,
+mid-stream and routing cases in
+`packages/coding/src/resilience/resilience.test.ts`.
+
+## Issue 431: Preferred strict tools send untyped schema nodes and repeat the same rejection
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: every version with `strict: 'prefer'` tool constraints
+- Created / Resolved: 2026-11-22 / 2026-11-22
+- Fixed: unreleased (after `v0.7.97-beta.13`)
+- Related: Issue 432 (found in the same comparison)
+- Context: comparison of the LLM access layer with pi-ai 1.6.0
+
+### Original Problem
+
+`strictSchema` in `packages/llm/src/providers/tool-constraints.ts` accepted
+nodes without a type, such as `items: {}` or a bare `const`. Under `prefer` it
+sent such a tool as strict, and OpenAI rejected the request with a 400.
+
+When a provider rejected preferred constraints, for example because of
+Claude's limit on strict tools, the retry dropped them for that request only.
+Every later turn in the same session sent them again and paid for the same
+400.
+
+### Resolution
+
+- A strict node needs `type`, `enum`, `anyOf` or `$ref`. Otherwise the tool
+  falls back to non-strict under `prefer` and fails the build under `require`.
+  An enum-only node stays strict.
+- A preferred-constraint rejection is remembered per provider, model and
+  session id, up to 256 entries. Later requests in that session start with
+  preferred constraints dropped. Requests without a session id keep the
+  per-request behavior.
+- All six `withRateLimit` call sites pass `sessionId` to the guard.
+
+Files changed: `packages/llm/src/providers/tool-constraints.ts`,
+`packages/llm/src/providers/base.ts`, `packages/llm/src/providers/anthropic.ts`,
+`packages/llm/src/providers/openai.ts`,
+`packages/llm/src/providers/openai-responses.ts`,
+`packages/llm/src/providers/native-provider.ts`.
+
+Tests added: the untyped-node and session-memory cases in
+`packages/llm/src/providers/tool-constraints.test.ts`.
 
 ## Issue 430: The daemon preflight reads every Session and fails on one busy write
 
@@ -4050,6 +4751,15 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 442 | Medium | Resolved | Gemini and pi-messages replay another model's tool calls as text | `v0.7.97-alpha.12` | unreleased (after `v0.7.97-rc.1`) | 2026-11-23 | 2026-11-23 |
+| 441 | High | Resolved | Replayed reasoning from another model becomes reply text, and models learn to write their thinking into the answer | `v0.7.97-alpha.12` | unreleased (after `v0.7.97-rc.1`) | 2026-11-23 | 2026-11-23 |
+| 437 | Low | Open | Per-session lock and review directories are never reclaimed | `v0.7.85` | - | 2026-11-22 | - |
+| 436 | Medium | Resolved | Test runs left about 3600 review entries in the real config home | before `v0.7.97` | `fee13b700` (test setup) | 2026-11-22 | 2026-11-22 |
+| 435 | Medium | Resolved | The memory review inbox scan locks every session ever run, and nothing reclaims its directories | `v0.7.85` | unreleased (after `v0.7.97-beta.13`) | 2026-11-22 | 2026-11-22 |
+| 434 | High | Resolved | Windows process snapshots block the Host event loop for about a second per bash call | `v0.7.69` | unreleased (after `v0.7.97-beta.13`) | 2026-11-22 | 2026-11-22 |
+| 433 | High | Resolved | An extension's internal tool calls stay running in the Session view | every version with extension `invokeTool` / `executeProcess` | unreleased (after `v0.7.97-beta.13`) | 2026-11-22 | 2026-11-22 |
+| 432 | Medium | Resolved | LLM retry classification misses transient errors and misreads permanent ones | every version with `KodaXBaseProvider.isRateLimitError` | unreleased (after `v0.7.97-beta.13`) | 2026-11-22 | 2026-11-22 |
+| 431 | Medium | Resolved | Preferred strict tools send untyped schema nodes and repeat the same rejection | every version with `strict: 'prefer'` tool constraints | unreleased (after `v0.7.97-beta.13`) | 2026-11-22 | 2026-11-22 |
 | 430 | High | Resolved | The daemon preflight reads every Session and fails on one busy write | every version with the daemon preflight | unreleased (after `v0.7.97-beta.12`) | 2026-11-21 | 2026-11-21 |
 | 429 | Medium | Resolved | A status check pays for the full daemon preflight and oversized reads | every version with `daemon.management.get` | unreleased (after `v0.7.97-beta.12`) | 2026-11-21 | 2026-11-21 |
 | 428 | High | Resolved | The daemon reports a recovering Session as an internal error | daemon wire since Actor settlement fences | unreleased (after `v0.7.97-beta.12`) | 2026-11-21 | 2026-11-21 |
@@ -4336,7 +5046,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 | 145 | High | Resolved | Runtime daemon / SDK 边界存在生命周期、事件、权限与协议一致性缺口 | v0.7.64-v0.7.66 | v0.7.66 | 2026-07-10 | 2026-07-10 |
 | 141 | Medium | Open | CI workflow long-red on Linux: cross-platform test bugs (storage list() runtime-inspection, bash background-process, h2 spawn env, skill-creator API-key-at-load) | long-standing (pre-v0.7.49) | - | 2026-06-18 | - |
 | 136 | Low | Open | 流式 / 滚动时 spinner 动画卡顿 + 计时变慢 — 根因在 CPU 侧每帧渲染（React reconciliation + outputToScreen 全量重建），**非**终端写入字节量（cell-diff + DECSTBM 两次否证 I/O 假设） | 待调研 | - | 2026-05-31 | - |
-| 133 | Low | Open | `repo-intelligence/runtime.test.ts` "falls back to OSS when premium returns malformed preturn payloads" intermittent flake under heavy parallel load — failure mode not yet captured | 待调研 | - | 2026-05-16 | - |
+| 133 | Low | Won't Fix | `repo-intelligence/runtime.test.ts` "falls back to OSS when premium returns malformed preturn payloads" intermittent flake under heavy parallel load — the test and the premium cache it named no longer exist | 待调研 | - | 2026-05-16 | 2026-11-23 |
 | 126 | Low | Open | tmux 默认不透传 OSC 8 超链接 — kodax 输出中的 file:// / docs URL 在 tmux 内不可点击 | 一直存在 | - | 2026-04-28 | - |
 | 125 | Low | Open | Thinking-mode cross-provider replay — 三个不可测 OpenAI-compat 与 anthropic 官方 strict mode 待实证 | v0.7.28 | - | 2026-04-26 | - |
 | 124 | High | Open | AMA 子 Agent dispatch 实际触发率偏低 — Controller fanout gate + H1 工具白名单串联收得过紧 | v0.7.18 | - | 2026-04-26 | - |
@@ -4644,7 +5354,7 @@ scoped, fingerprinted and revoked on close, and every profile in one
 
 - Files changed: `src/provider-credential-authorizer.ts`, `src/kodax_cli.ts`,
   `docs/LLM_INTEGRATION.md`, `docs/SDK_MIGRATION.md`,
-  `docs/test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md`
+  `docs/test-guides/FEATURE_302_v0.7.97_TEST_GUIDE.md`
 - Tests: `src/provider-credential-authorizer.test.ts` registers a lease for an
   environment and an OAuth source with profile `work` against a Host whose
   profile is `coder` or absent, without reading the OAuth token (replaces the
@@ -18579,9 +19289,13 @@ DECSTBM 只优化了「把字节写到终端」这一 I/O 步，没有触碰上�
 ### 133: `repo-intelligence/runtime.test.ts` "falls back to OSS when premium returns malformed preturn payloads" intermittent flake
 
 - **Priority**: Low（测试 flake only；不影响 user-facing 行为，仅在并行 suite 高负载下偶发）
-- **Status**: Open（调研已展开，**暂未复现**，候选根因 narrowed）
+- **Status**: Won't Fix（2026-11-23：问题所在的代码已不存在，见下方 Resolution）
 - **Introduced**: 待调研（commit history 显示文件最近一次改动是 v0.7.37 FEATURE_142 `a840f22b`，但 flake 表现实际何时起飞需调研）
 - **Created**: 2026-05-16
+
+#### Resolution (2026-11-23)
+
+Closed without a fix. The premium engine, `premium-client.js`, `premiumPreturnCache`, and the test named in the title were all removed before RepoIntel v2 phase 0. The remaining preturn cache in `runtime.ts` is reset between tests by `_resetRepoIntelligenceCachesForTesting()`. A new flake in this area would be a new issue.
 
 #### Current Behavior
 
@@ -19824,12 +20538,48 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 308 (47 Open including 1 needs-info, 1 ready, 259 Resolved, 0 Partially Resolved, 0 Won't Fix)
+- Total: 317 (47 Open including 1 needs-info, 1 ready, 267 Resolved, 0 Partially Resolved, 1 Won't Fix)
 - Ready: 1 (420)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-23: Issue 442
+
+- Gemini and pi-messages replay another model's tool calls as structured
+  calls instead of text. Gemini drops unsigned empty parts, and the
+  Anthropic-compatible serializer drops empty text blocks, which fixes two
+  400s found by the live matrix. pi is not tested live. Unreleased.
+
+### 2026-11-22: Issues 434, 435, 436 and 437
+
+- Windows process snapshots, start identities and exact termination run
+  through the native helper instead of PowerShell, and the managed-child
+  owner identity is read once. With concurrent bash load a submitted message
+  shows in 1.5–2.1 s instead of 5.3–7.3 s. Unreleased.
+- The memory review scan takes a session's locks only when that session has
+  a stale claim. One scan of a large inbox dropped from about 18 s to about
+  2 s. Unreleased.
+- Issue 436 is traced to tests that ran before the per-worker test home
+  (`fee13b700`); leaked local data is cleaned with the owner's confirmation.
+- Issue 437 records that per-session directories are never reclaimed.
+
+### 2026-11-22: Issue 433
+
+- An extension handler's internal tool calls no longer appear as Session view
+  tool items. Their progress shows on the model-issued call, including calls
+  made through `tool_call`. A finished Run leaves no running or
+  awaiting-approval items, and old sessions drop the orphan records.
+  Unreleased.
+
+### 2026-11-22: Issues 431 and 432
+
+- Preferred strict tools fall back to non-strict when a schema node has no
+  type, and a session stops resending constraints its provider already
+  rejected. Rate-limit detection no longer matches bare words like "limit".
+  Gateway, Cloudflare 520/524/525 and mid-reply cut errors are retried, and
+  `finish_reason: "error"` is treated as an incomplete stream. Unreleased.
 
 ### 2026-11-21: Issue 430
 

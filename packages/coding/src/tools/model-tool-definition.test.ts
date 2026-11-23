@@ -9,8 +9,11 @@ import { buildRunnerLlmAdapter } from '../task-engine/_internal/managed-task/llm
 import type { KodaXToolDefinition } from '@kodax-ai/llm';
 
 describe('model tool contracts', () => {
-  it('publishes all four Repo capsules with their SDK parameters before discovery', async () => {
-    const worker = buildRunnerAgentChain({ backups: new Map<string, string>() }).worker;
+  it('publishes all four Repo capsules with their SDK parameters once the semantic surface is opted in', async () => {
+    const worker = buildRunnerAgentChain({
+      backups: new Map<string, string>(),
+      parentAgentConfig: { provider: 'test', repoIntelligenceMode: 'full' },
+    }).worker;
     let sent: readonly KodaXToolDefinition[] = [];
     const adapter = buildRunnerLlmAdapter({}, async (_messages, tools) => {
       sent = tools;

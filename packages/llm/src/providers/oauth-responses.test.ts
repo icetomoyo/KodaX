@@ -49,7 +49,8 @@ describe('broker-only subscription Responses', () => {
     await runWithProviderCredential(config.name, 'account-b-token', () => provider.complete([{ role: 'assistant', content: result.contentBlocks! }], [], ''));
     const replay = JSON.parse(String(fetch.mock.calls[1]?.[1]?.body));
     expect(JSON.stringify(replay)).not.toContain('account-a-cipher');
-    expect(replay.input).toEqual([{ role: 'assistant', content: '<prior_reasoning>\nreadable\n</prior_reasoning>' }]);
+    // Reasoning without a valid channel is dropped, never replayed as reply text (Issue 441).
+    expect(replay.input).toEqual([]);
   });
   it('keeps legacy Codex routing separate and buffers SSE for complete with no unsupported output limit', async () => {
     const fetch = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => new Response(`data: ${JSON.stringify({

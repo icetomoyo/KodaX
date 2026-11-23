@@ -479,12 +479,10 @@ describe('anthropic message serialization', () => {
     expect(JSON.stringify(kwargs)).not.toContain('C:/private/full-output.txt');
   });
 
-  // L5 (v0.7.28): strictThinkingSignature mode (Anthropic proper)
-  // converts thinking blocks with empty/cross-provider signatures into
-  // a <prior_reasoning> text block. This preserves the reasoning text
-  // for the model to read while keeping the thinking-block channel
-  // restricted to provider-issued, signature-verifiable content.
-  it('converts cross-provider thinking to prior_reasoning text in strict mode', async () => {
+  // Strict mode (Anthropic proper) cannot verify unsigned or foreign
+  // reasoning. It is dropped, never rewritten as reply text: models
+  // imitate reasoning they see as replies (Issue 441).
+  it('drops cross-provider thinking in strict mode', async () => {
     const create = vi.fn().mockResolvedValue(createCompletedAnthropicStream());
     class StrictProvider extends KodaXAnthropicCompatProvider {
       readonly name = 'anthropic';
@@ -523,13 +521,8 @@ describe('anthropic message serialization', () => {
     const thinkingBlocks = assistantWire.content.filter((b: { type: string }) => b.type === 'thinking');
     expect(thinkingBlocks).toHaveLength(0);
 
-    // The reasoning text rides on a text block tagged <prior_reasoning>
-    // before the original visible text.
-    const textBlocks = assistantWire.content.filter((b: { type: string }) => b.type === 'text');
-    expect(textBlocks).toHaveLength(2);
-    expect(textBlocks[0].text).toContain('<prior_reasoning>');
-    expect(textBlocks[0].text).toContain('I considered options A and B');
-    expect(textBlocks[1].text).toBe('Let me proceed with option A.');
+    expect(assistantWire.content).toEqual([{ type: 'text', text: 'Let me proceed with option A.' }]);
+    expect(JSON.stringify(kwargs.messages)).not.toContain('I considered options A and B');
   });
 
   // Lenient mode (default; third-party Anthropic-compat servers): same
@@ -659,13 +652,7 @@ describe('anthropic message serialization', () => {
     expect(textBlocks.some((b: { text: string }) => b.text === 'Hello!')).toBe(true);
   });
 
-  // Order regression: cross-provider reasoning text must appear in
-  // the thinking slot (before tool_use), not between tool_use and
-  // original text. The natural reading order on the wire is
-  // "think → act → explain"; placing prior_reasoning AFTER tool_use
-  // inverts that to "act → think → explain" which reads backwards
-  // and may confuse the model.
-  it('places prior_reasoning before tool_use in strict mode', async () => {
+  it('keeps a strict tool turn valid after dropping cross-provider thinking', async () => {
     const create = vi.fn().mockResolvedValue(createCompletedAnthropicStream());
     class StrictProvider extends KodaXAnthropicCompatProvider {
       readonly name = 'anthropic';
@@ -701,10 +688,8 @@ describe('anthropic message serialization', () => {
     const kwargs = create.mock.calls[0]?.[0];
     const assistantWire = kwargs.messages.find((m: { role: string }) => m.role === 'assistant');
     const types = assistantWire.content.map((b: { type: string }) => b.type);
-    // text(prior_reasoning) → tool_use, NOT tool_use → text.
-    expect(types).toEqual(['text', 'tool_use']);
-    expect(assistantWire.content[0].text).toContain('<prior_reasoning>');
-    expect(assistantWire.content[0].text).toContain('I should read package.json first.');
+    expect(types).toEqual(['tool_use']);
+    expect(JSON.stringify(kwargs.messages)).not.toContain('I should read package.json first.');
   });
 
   // Existing guard at anthropic.ts:704 injects a '...' thinking placeholder
@@ -760,9 +745,10 @@ describe('anthropic message serialization', () => {
     expect(toolUseBlocks).toHaveLength(1);
   });
 
-  // Conversely: lenient mode (Kimi) still fires the guard, preserving
-  // the legacy fallback behaviour for non-Anthropic-proper providers.
-  it('still injects thinking placeholder in lenient mode', async () => {
+  // Lenient servers accept tool turns without thinking (measured live,
+  // Issue 441). A '...' placeholder taught models to answer with '...'
+  // thinking, so none is invented.
+  it('gives a lenient tool turn without thinking an empty thinking block', async () => {
     const create = vi.fn().mockResolvedValue(createCompletedAnthropicStream());
     class LenientProvider extends KodaXAnthropicCompatProvider {
       readonly name = 'kimi-code';
@@ -798,9 +784,8 @@ describe('anthropic message serialization', () => {
     const thinkingBlocks = assistantWire.content.filter(
       (b: { type: string }) => b.type === 'thinking',
     );
-    // Guard fires for lenient providers (preserves legacy Kimi behaviour).
-    expect(thinkingBlocks).toHaveLength(1);
-    expect(thinkingBlocks[0]).toMatchObject({ thinking: '...', signature: '' });
+    // DeepSeek rejects an in-loop tool turn without thinking; '...' was imitated (Issue 441).
+    expect(thinkingBlocks).toEqual([{ type: 'thinking', thinking: '', signature: '' }]);
   });
 
   // P2: wire-only orphan repair (defense-in-depth, mirrors the OpenAI-side

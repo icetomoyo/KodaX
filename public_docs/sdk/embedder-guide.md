@@ -1,17 +1,25 @@
 # KodaX SDK — Product Client and Host Integration
 
 This page describes the current FEATURE_298/299/301/303/304/305/306 development tree, checked against
-package version `0.7.97-beta.13`. The version alone does not claim that all current
+package version `0.7.97-rc.2`. The version alone does not claim that all current
 working-tree changes are already published to npm. Check the installed
 package exports and the connected Host's capabilities when migrating.
-The beta.13 Space integration repairs — retired-input `warnings` on
+The rc.2 RepoIntel phase 0 default surface (`repo_overview`, `changed_scope`
+and `changed_diff` under `auto`; the semantic tools and the background index
+gated behind `repoIntelligenceMode`), the reasoning-replay repairs (Issues
+441-442) and the `glm-5.4` listing are current; the rc.1 catalog refresh
+(Fable 5.2, GPT-6.x lineup, new defaults), the
+provider hardening (strict-tool fallback, retry classification) and the
+nested extension tool-call view rules are covered in the
+[client contract](../../docs/CLIENT_CONTRACT.md); the beta.13 Space integration
+repairs — retired-input `warnings` on
 `runs.start`, Runtime error codes on the daemon wire, preflight-free
 integration health and the client-exit recovery reasons — are covered in the
 [client contract view-item table](../../docs/CLIENT_CONTRACT.md) and
 [Space SDK seams](../../docs/SPACE_SDK_SEAMS.md);
 the beta.12 unified prompt chain, final Stop outcomes and prompt-spec changes
-are covered in [One prompt chain for every root Run](#one-prompt-chain-for-every-root-run-unreleased)
-and [Actor settlement convergence v3](#actor-settlement-convergence-v3-unreleased-after-v0797-beta11);
+are covered in [One prompt chain for every root Run](#one-prompt-chain-for-every-root-run-shipped-in-v0797-beta12)
+and [Actor settlement convergence v3](#actor-settlement-convergence-v3-shipped-in-v0797-beta12);
 the beta.11 readable-history-during-a-Run changes and the beta.10 merged-input
 acknowledgement (`ClientViewItem.inputIds`) are covered in the
 [client contract view-item table](../../docs/CLIENT_CONTRACT.md); the
@@ -67,7 +75,7 @@ that they stopped writing. Long-lived apps must reload their SDK. Migration neve
 replays tools or bypasses Stop, checkpoint authority or cleanup checks.
 
 This section supersedes historical embedded recipes below. See the
-[migration contract](../../docs/SDK_MIGRATION.md#统一-host-sdk-收口未发布) and
+[migration contract](../../docs/SDK_MIGRATION.md#统一-host-sdk-收口随-v0797-alpha12-发布) and
 [validation evidence](../../docs/test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md).
 
 ## Product Client integration
@@ -78,7 +86,7 @@ The source audit through `b70d2d30` (2026-10-29) covers the changes after the
 `v0.7.97-alpha.10` tag; they shipped in the `v0.7.97-alpha.11` tag. The
 package version alone does not establish that an installed SDK or a running
 Host supports them. See the
-[migration checklist](../../docs/SDK_MIGRATION.md#2026-10-29-未发布改动对齐).
+[migration checklist](../../docs/SDK_MIGRATION.md#2026-10-29-改动对齐随-v0797-alpha11-发布).
 
 Set `client.sessions.updateSettings(sessionId, { workMode: 'coding' })` to choose
 a Session work surface; accepted values are `agent`, `coding` and `script`.
@@ -115,7 +123,7 @@ Explicit SDK profiles, specialist children and tool-visibility policies retain
 their declared scope instead of being replaced by product presets. CLI
 `--agent-mode sa/amaw` is a migration error. SDK input `agentMode: 'amaw'` is
 normalized to AMA. `'sa'` is deprecated and treated as unset, so managed entries run AMA.
-The direct engine is gone; see [One prompt chain for every root Run](#one-prompt-chain-for-every-root-run-unreleased).
+The direct engine is gone; see [One prompt chain for every root Run](#one-prompt-chain-for-every-root-run-shipped-in-v0797-beta12).
 Script availability does not prove model adoption or task-efficiency parity.
 
 Model-visible tool consolidation does not delete the underlying independently
@@ -135,7 +143,7 @@ The helper queries the Session's actual Host catalog. Its snapshot retains all p
 metadata; changed or newly loaded tools require fresh authorization. Root
 `authorization.tools` can also express a separate ceiling without a persona.
 This contract requires `productExecutionProfile.version === 2`; older Hosts fail
-explicitly. See the [Main example and boundaries](../../docs/SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复未发布).
+explicitly. See the [Main example and boundaries](../../docs/SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复随-v0797-alpha12-发布).
 
 #### Tool calls need an approval callback (unreleased, breaking)
 
@@ -174,9 +182,9 @@ that only read. Before, no callback meant every call ran.
 - Unchanged: the Runtime (`runs.start`), the daemon, the CLI and the REPL
   already approve every call.
 
-#### One prompt chain for every root Run (unreleased)
+#### One prompt chain for every root Run (shipped in v0.7.97-beta.12)
 
-Chinese: [统一提示词链路](../../docs/SDK_MIGRATION.md#统一提示词链路未发布).
+Chinese: [统一提示词链路](../../docs/SDK_MIGRATION.md#统一提示词链路随-v0797-beta12-发布).
 
 Every root Run uses the managed Worker, and every entry sends the same tool
 descriptions. The direct root engine and its `system.md` prompt are removed.
@@ -190,7 +198,7 @@ Public signatures do not change.
 - `runs.start({ mode: 'coding' })` and daemon `run.start` with `mode: 'coding'`
   are accepted and ignored, with a `runtime.runs.start` warning diagnostic; so is
   `agentMode: 'sa'`. The Run handle also lists each ignored
-  input in `warnings` (unreleased), including over the daemon client. New
+  input in `warnings` (since v0.7.97-beta.13), including over the daemon client. New
   Runs report `Run.mode: 'managed_task'`. Stored `coding` Runs stay readable and
   resume on the managed Worker.
 - A root without `agentMode` gets the Worker's short sections (execution
@@ -222,9 +230,9 @@ Public signatures do not change.
   removed. `buildCapabilityContextSections` emits only the shared capability
   sections the Worker still uses.
 
-#### Application prompt customization (unreleased)
+#### Application prompt customization (shipped in v0.7.97-beta.12)
 
-Chinese: [应用提示词定制](../../docs/SDK_MIGRATION.md#应用提示词定制未发布).
+Chinese: [应用提示词定制](../../docs/SDK_MIGRATION.md#应用提示词定制随-v0797-beta12-发布).
 
 The persona is still `agentProfile`, and it stays fixed for the Session.
 To shape the rest of the prompt, add `prompt` to the same execution profile:
@@ -1572,7 +1580,7 @@ The result status is part of the contract:
   region with an unprovable older boundary instead uses the `partial` truncation
   contract above.
 
-The unreleased Issue 340 repair can restore legacy tool-call/result pairs only
+The Issue 340 repair (shipped in v0.7.96-rc.14) can restore legacy tool-call/result pairs only
 when one retained sibling chain exactly reproduces the old cleanup damage.
 It is read-only and does not rewrite the Session. Re-compacted copies follow
 proven logical identity and content through at most eight predecessor hops.
@@ -1627,7 +1635,7 @@ authoritative full snapshot merges the newest UI/session state. Background
 write failures are emitted as structured diagnostics; they are not swallowed
 and a stale tail is never retried unchanged.
 Product Ink sessions use the Host Client API and never save a competing local
-transcript or lineage; see [transcript ownership](#unreleased-interrupted-run-recovery-and-transcript-ownership).
+transcript or lineage; see [transcript ownership](#interrupted-run-recovery-and-transcript-ownership-shipped-in-v0797-alpha1).
 
 A non-null fulfilled append result is the reusable successor boundary. A
 fulfilled `null` means the tail did commit exactly once, but the successor
@@ -3186,9 +3194,10 @@ UI/API follow-ups that should consume the SDK contracts already exposed here.
   opportunistically; if Space needs visible progress or a completed state, the
   next SDK step should be a small handle/result API rather than inferring status
   from cache side effects.
-- **Relationship scan**: `relationship_scan` is a v0.7.57 agent/tool capability.
-  It is intentionally model-facing today. Space can decide separately whether it
-  deserves a top-level UI entry or remains available through normal agent turns.
+- **Relationship scan**: `relationship_scan` is a model-facing tool on the
+  semantic surface, which is off by default. Set `repoIntelligenceMode` to `full`
+  or `light` to offer it and the other symbol, module, process, and impact tools;
+  the default `auto` mode offers only the overview, change scope, and diff tools.
 - **Quick Ask / `sideQuery`**: `sideQuery` is exported from
   `@kodax-ai/kodax/llm`, so the capability ledger can move from blocked to
   partial. Migrating Space Quick Ask still needs an application-level decision
@@ -3429,7 +3438,7 @@ unresolved stores fail closed. After repair, Promise terminal facts win over
 fallback callbacks, so a stale callback cannot rewind a terminal Run or emit a
 duplicate outcome. A no-op quiesce does not rewrite the Session.
 
-### Actor settlement convergence v3 (unreleased, after v0.7.97-beta.11)
+### Actor settlement convergence v3 (shipped in v0.7.97-beta.12)
 
 `KODAX_RUNTIME_SDK_CAPABILITIES.actorSettlementConvergence` is `3`. Under v2,
 a Stop whose Actor settlement stayed unconfirmed left the Run `unknown` while
@@ -3866,7 +3875,7 @@ sub.close();
 A raw upstream error is not a safe or stable SDK contract: it can contain a
 credential, request headers, a signed URL or a stack, and its wording differs
 between providers. Runtime therefore normalizes the useful facts once.
-`failureDetail.detail` (unreleased) still carries the real cause, because a
+`failureDetail.detail` (since v0.7.97-beta.12) still carries the real cause, because a
 failure that hides its reason cannot be diagnosed. It is the Provider's or the
 local error's text, with credentials, URL userinfo and query strings removed,
 capped at 1000 characters. Show it next to `safeMessage`. Do not branch on it. When a classified failure fact exists, it publishes the
@@ -5337,7 +5346,7 @@ the daemon or another client's run.
 Partner uses the unified Host with its original surface/profile identity.
 Trusted Main binds any existing persona or explicit profile policy through
 `authorizeExecution`; Partner identity alone does not require a profile. See
-the [current migration contract](../../docs/SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复未发布).
+the [current migration contract](../../docs/SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复随-v0797-alpha12-发布).
 Private inline product ownership is retired.
 
 ### Connect and fail closed on required capabilities
@@ -5576,10 +5585,9 @@ capability diagnostic is evidence for troubleshooting, not permission to bypass
 the required capability. Diagnostic sink exceptions remain isolated from the
 Runtime operation.
 
-### Unreleased: interrupted Run recovery and transcript ownership
+### Interrupted Run recovery and transcript ownership (shipped in v0.7.97-alpha.1)
 
-The current development tree integrates the rc.14 fixes under FEATURE_298 /
-v0.7.97. Product applications use [/client](#product-client-integration), and
+v0.7.97-alpha.1 integrates the v0.7.96-rc.14 fixes under FEATURE_298. Product applications use [/client](#product-client-integration), and
 the Host is the only Session writer. Ink/classic consumers render Host facts
 and submit intents; they do not save a competing transcript or lineage.
 
@@ -7208,7 +7216,7 @@ Windows, Linux, and macOS:
   No helper overlaps ordinary admission, shared system Temp is not prewarmed or
   rewritten, and doctor and normal admission never invoke this setup path.
 
-The unreleased Issue 341 fix changes bare interactive Windows CLI startup
+The Issue 341 fix (shipped in v0.7.96-rc.14) changes bare interactive Windows CLI startup
 (including `kodax -r`): a current disk marker must also pass a read-only check
 of the live NUL device's sandbox-account grant before startup skips recovery.
 The marker can survive a reboot while that device grant does not. Failure

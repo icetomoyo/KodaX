@@ -157,7 +157,8 @@ describe('/effort command', () => {
     const setEffort = vi.fn();
     const setReasoningMode = vi.fn();
     const callbacks = { setEffort, setReasoningMode } as unknown as CommandCallbacks;
-    const config = createConfig({ reasoningMode: 'auto', thinking: true });
+    // The default GPT-6.2 Sol cannot turn reasoning off; GPT-5.3 Codex can.
+    const config = createConfig({ model: 'gpt-5.3-codex', reasoningMode: 'auto', thinking: true });
 
     await effortCmd.handler(['none'], ctx, callbacks, config);
 
@@ -222,7 +223,7 @@ describe('/effort command', () => {
     const callbacks = { setEffort: vi.fn() } as unknown as CommandCallbacks;
     const config = createConfig({
       provider: 'qwen-token-plan',
-      model: 'qwen3.8-max-preview',
+      model: 'qwen3.8-flash',
       effort: 'high',
       effortOverride: true,
       reasoningMode: 'auto',

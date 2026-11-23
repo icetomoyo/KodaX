@@ -16,7 +16,7 @@
  *
  * Registered via `setupFiles` in `vitest.config.ts`.
  */
-import { mkdtempSync, realpathSync, rmdirSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeEach, vi } from 'vitest';
@@ -46,6 +46,8 @@ const defaultTestConfigHome = mkdtempSync(
 );
 process.env.KODAX_HOME = defaultTestConfigHome;
 afterAll(() => {
+  // Repo-intelligence caches are derived data, not child-cleanup evidence.
+  rmSync(path.join(defaultTestConfigHome, 'repo-intelligence'), { recursive: true, force: true });
   try {
     rmdirSync(defaultTestConfigHome);
   } catch (error: unknown) {

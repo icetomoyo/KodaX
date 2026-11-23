@@ -52,11 +52,14 @@ async function menu(options: Partial<KodaXOptions> = {}) {
   return tools;
 }
 
+// The semantic repo tools are opt-in, so this contract opts in to see all 18 specialist entries.
+const semanticSurface: Partial<KodaXOptions> = { context: { repoIntelligenceMode: 'full' } };
+
 it('keeps Coding wire contracts unchanged and removes only the 18 specialist entries from Agent', async () => {
-  const baseline = await menu();
-  expect(await menu({ workMode: 'coding' })).toEqual(baseline);
+  const baseline = await menu(semanticSurface);
+  expect(await menu({ ...semanticSurface, workMode: 'coding' })).toEqual(baseline);
   expect(baseline.filter(tool => specialized.includes(tool.name))).toHaveLength(18);
-  const agent = await menu({ workMode: 'agent' });
+  const agent = await menu({ ...semanticSurface, workMode: 'agent' });
   expect(agent).toEqual(baseline.filter(tool => !specialized.includes(tool.name)));
   expect(agent.some(tool => 'workSurface' in tool)).toBe(false);
   expect(agent.map(tool => tool.name)).toEqual(expect.arrayContaining([

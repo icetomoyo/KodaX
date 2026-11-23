@@ -48,6 +48,149 @@ on one commit.
   The step limit is ten minutes because the passing Windows suite alone takes
   about 4.6 minutes.
 
+## v0.7.97-rc.2 release preparation
+
+Release state: `v0.7.97-rc.2` is a candidate awaiting the publishing
+dispatch. npm publication has not occurred. The candidate is the
+second release candidate of the v0.7.97 line: RepoIntel phase 0, the
+reasoning-replay repairs and the `glm-5.4` listing. RepoIntel keeps to
+what git can answer by default (FEATURE_317): under the default `auto`
+mode agents get `repo_overview`, `changed_scope` and `changed_diff`
+while the semantic tools, the injected module/impact context and the
+background index build need `repoIntelligenceMode` `full` or `light`
+(or `KODAX_REPO_INTELLIGENCE=full|light`), truncated lists report how
+many items were left out with no placeholder results and no fallback
+to the largest module, `changed_scope` pages its file list and
+injected context no longer carries timestamps, and the index is
+stored under `<config home>/repo-intelligence/` instead of
+`.agent/repo-intelligence/` in the workspace. Switching models no
+longer teaches the new model to write its thinking into the reply:
+readable reasoning replays only through the target's reasoning
+channel (unsigned thinking on lenient Anthropic-compatible endpoints,
+`reasoning_content` on OpenAI-compatible ones) and is dropped
+elsewhere, signatures, redacted thinking and encrypted reasoning
+still replay only to the endpoint that produced them, a lenient tool
+turn without thinking carries an empty thinking block, and replay
+removes a leading `<prior_reasoning>` segment from earlier replies so
+already-polluted sessions recover (Issue 441). Gemini and pi-messages
+endpoints replay tool calls from another model as real calls and
+results instead of `<prior_tool_call>` text, using Google's documented
+skip signature on Gemini and an `unknown` origin with zero usage on
+pi-messages (Issue 442; pi-messages has not been tested live), and
+Gemini no longer fails its next request after a reply that left an
+empty text block. `zhipu-coding` lists `glm-5.4` with the
+`glm-5.3-flash` settings; a live check confirmed the model ID exists
+but the upstream was overloaded (error 1305), so effort, tools,
+limits and image input are unverified and image input stays off.
+Every v0.7.96 stable and v0.7.97-alpha.1 through rc.1 client contract
+is retained.
+
+The CI/Release in-place upgrade gates now pin the published
+`0.7.97-rc.1` tarball (published 2026-11-23T00:09:21.196Z; registry
+dist.integrity sha512-gQRxS0S5…vI7QA== packs to the same bytes as the
+kodax-ai-kodax-0.7.97-rc.1.tgz asset of the v0.7.97-rc.1 GitHub
+Release, sha256 bfa64c8b…9afe17). Run that fixture locally with Windows
+`tar.exe` ahead of Git's GNU `tar` on `PATH`: GNU `tar` reads the `C:`
+drive in the archive path as a remote host.
+
+Local candidate validation on Windows with Node 22.23.1: full build
+(after the version bump, so `dist` carries 0.7.97-rc.2), source and
+test typechecks, the self-knowledge/`kodax_manual` registry suite,
+`tests/release-workflow.test.ts`, `tests/tracker-consistency.test.ts`
+and the Issue 441/442 regression suites, `test:host-cutover`, the real
+published rc.1 Host in-place upgrade against the integrity-pinned
+public tarball, `test:bundle` and the fast tier. The packaged Electron
+daemon gate runs in Release CI.
+
+This release follows the single publishing dispatch described under
+[Current release execution](#current-release-execution): `target=all`
+with `release_tag=v0.7.97-rc.2` runs Full CI, all five archive builds
+and the npm package gates, then creates the tag at the dispatched
+commit and the GitHub pre-release from that run's artifacts. Ordinary
+branch pushes do not run CI. Cross-platform manual acceptance,
+installed Space/SDK acceptance, the Space dependency bump and npm
+publication remain separate maintainer steps.
+
+## v0.7.97-rc.1 release preparation
+
+Release state: `v0.7.97-rc.1` was published on 2026-11-22 as a GitHub
+prerelease from run 45083896500 at `c9589bdc2` (every job green on
+that dispatch's first attempt: Full CI including the packaged Electron
+daemon job, all five archive builds and the npm package gates; 13
+assets) and to npm on 2026-11-23T00:09:21Z (dist-tag `rc`). The
+universal npm tarball asset is `kodax-ai-kodax-0.7.97-rc.1.tgz`,
+sha256 `bfa64c8b…9afe17`, matching `SHA256SUMS`. The candidate was the first
+release candidate of the v0.7.97 line: the model catalog refresh and
+the late provider/Host/REPL repairs (Issues 431-440). The `anthropic`
+provider lists Claude Fable 5.2 (1M context, 128K output, always-on
+adaptive thinking) and the `openai` provider lists the GPT-6.x lineup
+with per-model effort declarations; defaults move to
+`claude-sonnet-5-5` and `gpt-6.2-sol`, and the Codex CLI bridge falls
+back to `gpt-6.2-sol` while dropping GPT-5.3 Codex Spark. Native
+Claude models no longer fail a forced-tool or legacy
+`reasoning: false` request; OpenAI strict tool schemas fall back to
+non-strict for untyped nodes and remember a strict-limit rejection for
+the session (Issue 431); retry classification no longer treats any
+message containing `limit`, `rate` or `503` as a rate limit and
+retries mid-stream `api_error` events, `finish_reason: "error"`,
+cut-off replies, gateway "temporarily unavailable" messages and
+Cloudflare 520/524/525 (Issue 432). Tool calls an extension handler
+makes through `scope.invokeTool`/`executeProcess` dispatch as nested
+calls that keep their permission/sandbox checks but emit no view-level
+start, each execution records the model-issued call that owns its
+item, and the Session view settles a terminal Run's running and
+`awaiting_approval` items as `cancelled` (Issue 433). Windows process
+snapshots, start identities and exact termination read through new
+native `__process-snapshot`/`__process-start-identities`/`__process-terminate-exact`
+exports of `kodax-windows-sandbox` with PowerShell fallback, so a bash
+call no longer blocks the Host event loop for about a second (Issue
+434). The memory review inbox scan checks `processing/` without a
+lock and locks only a stale-claimed session (Issue 435; reclamation
+stays with open Issue 437). The Host and the CLI stop blocking on
+repeated Git and PowerShell probes: `tryGitRemote` remembers
+`git config --get remote.origin.url` per directory and refreshes it
+asynchronously after ten seconds, `runCliMain` installs the native
+Windows process helper for daemon discovery, and `@kodax-ai/llm`
+exposes `installCliWindowsProcessHelper` so CLI providers no longer
+take a PowerShell snapshot on every child start and exit — a scripted
+first turn on a fresh Host replies in 3.9-4.2 s instead of 5.1-5.7 s
+and an ordinary turn starts no synchronous process (Issue 439). The
+memory review receipt fires `onMemoryReviewReceipt` only after its job
+is durably completed and `pending/<job>.json` removed, with a notifier
+a throwing one cannot reopen (Issue 440). The REPL no longer jumps
+while a reply streams under "Thinking…" (ScrollBox computes its window
+from the incoming geometry props, Issue 438) and echoes a submitted
+input at once before the Host view shows it. Every v0.7.96 stable and
+v0.7.97-alpha.1 through beta.13 client contract is retained.
+
+The CI/Release in-place upgrade gates pinned the published
+`0.7.97-beta.13` tarball for this candidate (published
+2026-11-21T07:59:13.884Z; registry
+dist.integrity sha512-4/dwRjmM…THnFwfA== packs to the same bytes as the
+kodax-ai-kodax-0.7.97-beta.13.tgz asset of the v0.7.97-beta.13 GitHub
+Release, sha256 fd748c85…186bc). Run that fixture locally with Windows
+`tar.exe` ahead of Git's GNU `tar` on `PATH`: GNU `tar` reads the `C:`
+drive in the archive path as a remote host.
+
+Local candidate validation on Windows with Node 20.20.2: full build
+(after the version bump, so `dist` carries 0.7.97-rc.1), source and
+test typechecks, the self-knowledge/`kodax_manual` registry suite,
+`tests/release-workflow.test.ts`, `tests/tracker-consistency.test.ts`
+and the Issue 433-440 regression suites (299 passed across the
+groups), `test:host-cutover` (3 passed), the real published beta.13
+Host in-place upgrade (1 passed) against the integrity-pinned public
+tarball, `test:bundle` (110 passed) and the fast tier (3,795 passed,
+58 skipped). The packaged Electron daemon gate runs in Release CI.
+
+This release followed the single publishing dispatch described under
+[Current release execution](#current-release-execution): `target=all`
+with `release_tag=v0.7.97-rc.1` ran Full CI, all five archive builds
+and the npm package gates, then created the tag at the dispatched
+commit and the GitHub pre-release from that run's artifacts. Ordinary
+branch pushes do not run CI. Cross-platform manual acceptance,
+installed Space/SDK acceptance, the Space dependency bump and npm
+publication remain separate maintainer steps.
+
 ## v0.7.97-beta.13 release preparation
 
 Release state: `v0.7.97-beta.13` is a candidate awaiting the publishing
@@ -576,7 +719,7 @@ needing a newer `GLIBC_*` symbol), a failed native text addon load no
 longer crashes the next tracked write (Issue 402), and Session settings
 capture user-level defaults once instead of drifting with shared
 configuration. Acceptance is recorded in the
-[FEATURE_305 test guide](test-guides/FEATURE_305_v0.7.98_TEST_GUIDE.md).
+[FEATURE_305 test guide](test-guides/FEATURE_305_v0.7.97_TEST_GUIDE.md).
 
 The CI/Release in-place upgrade gates now pin the published
 `0.7.97-beta.5` tarball (published 2026-11-10T09:40:09.927Z; registry
@@ -778,7 +921,7 @@ reserve targeted for v0.7.99. LibreOffice may recalculate fields;
 conversion is not proof of Word/WPS pagination or current TOC values.
 
 Joint regression, artifact and bounded real-model results are recorded in
-[the FEATURE_302 T12-J integration acceptance](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-j-local-main-integration--2026-10-31).
+[the FEATURE_302 T12-J integration acceptance](test-guides/FEATURE_302_v0.7.97_TEST_GUIDE.md#t12-j-local-main-integration--2026-10-31).
 Real-model probes use a 64K application budget on models with larger native
 windows; they do not validate native sub-100K models or arbitrary whole-document
 reading quality. Cross-platform native release gates and installed Space/SDK

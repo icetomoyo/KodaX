@@ -6,8 +6,18 @@
       "apiKeyEnv": "ANTHROPIC_API_KEY",
       "toolCapabilities": { "strict": true },
       "cacheCapabilities": { "dialect": "anthropic", "shortTtl": "5m", "longTtl": "1h", "locations": ["system", "tools", "messages"], "maxCheckpoints": 4 },
-      "model": "claude-sonnet-4-6",
+      "model": "claude-sonnet-5-5",
       "models": [
+        {
+          "id": "claude-fable-5-2", "displayName": "Fable 5.2", "contextWindow": 1000000, "outputTokenLimit": 128000,
+          "reasoningCapability": "native-adaptive",
+          "reasoningProfile": {
+            "reasoningPreset": "claude-adaptive-xhigh", "effortStrategy": "anthropic-output-effort", "thinkingStrategy": "anthropic-adaptive",
+            "defaultEffort": "high", "supportsThinkingDisplay": true, "supportsThinkingBlockBinding": true,
+            "supportsReasoningEffort": true, "supportsAdaptiveThinking": true,
+            "supportedEfforts": [{ "value": "low" }, { "value": "medium" }, { "value": "high", "isDefault": true }, { "value": "xhigh" }, { "value": "max" }]
+          }
+        },
         {
           "id": "claude-opus-5-5", "displayName": "Opus 5.5", "contextWindow": 1000000, "outputTokenLimit": 128000,
           "reasoningCapability": "native-adaptive",
@@ -36,6 +46,25 @@
             "defaultEffort": "medium", "supportsThinkingDisplay": true, "supportsThinkingBlockBinding": true,
             "supportsReasoningEffort": true, "supportsAdaptiveThinking": true, "supportsDisabledThinking": true, "disabledEfforts": ["none"],
             "supportedEfforts": [{ "value": "none" }, { "value": "low" }, { "value": "medium", "isDefault": true }, { "value": "high" }, { "value": "xhigh" }, { "value": "max" }]
+          }
+        },
+        {
+          "id": "claude-opus-5", "displayName": "Opus 5", "contextWindow": 1000000, "outputTokenLimit": 128000,
+          "reasoningCapability": "native-adaptive",
+          "reasoningProfile": {
+            "reasoningPreset": "claude-adaptive-xhigh", "effortStrategy": "anthropic-output-effort", "thinkingStrategy": "anthropic-adaptive",
+            "defaultEffort": "high", "supportsThinkingDisplay": true, "supportsReasoningEffort": true, "supportsAdaptiveThinking": true,
+            "supportedEfforts": [{ "value": "low" }, { "value": "medium" }, { "value": "high", "isDefault": true }, { "value": "xhigh" }, { "value": "max" }]
+          }
+        },
+        {
+          "id": "claude-sonnet-5", "displayName": "Sonnet 5", "contextWindow": 1000000, "outputTokenLimit": 128000,
+          "reasoningCapability": "native-adaptive",
+          "reasoningProfile": {
+            "reasoningPreset": "claude-adaptive-xhigh", "effortStrategy": "anthropic-output-effort", "thinkingStrategy": "anthropic-adaptive",
+            "defaultEffort": "high", "supportsThinkingDisplay": true, "supportsReasoningEffort": true, "supportsAdaptiveThinking": true,
+            "supportsDisabledThinking": true, "disabledEfforts": ["none"],
+            "supportedEfforts": [{ "value": "none" }, { "value": "low" }, { "value": "medium" }, { "value": "high", "isDefault": true }, { "value": "xhigh" }, { "value": "max" }]
           }
         },
         {
@@ -167,11 +196,115 @@
     "openai": {
       "apiKeyEnv": "OPENAI_API_KEY",
       "toolCapabilities": { "strict": true },
-      "model": "gpt-5.3-codex",
+      "model": "gpt-6.2-sol",
       "models": [
         { "id": "gpt-5.3-codex", "displayName": "GPT-5.3 Codex", "outputTokenLimit": 128000 },
         { "id": "gpt-5.4", "displayName": "GPT-5.4", "contextWindow": 1050000, "outputTokenLimit": 128000 },
-        { "id": "gpt-5.3-codex-spark", "displayName": "GPT-5.3 Codex Spark" }
+        { "id": "gpt-5.3-codex-spark", "displayName": "GPT-5.3 Codex Spark" },
+        {
+          "id": "gpt-6.2-sol", "displayName": "GPT-6.2 Sol", "contextWindow": 1050000, "outputTokenLimit": 128000,
+          "reasoningProfile": {
+            "reasoningPreset": "openai-chat-reasoning", "effortStrategy": "openai-chat-effort", "defaultEffort": "medium", "supportsDisabledThinking": false,
+            "supportsReasoningEffort": true, "supportsReasoningSummary": true, "supportsEncryptedReasoningReplay": true,
+            "supportedEfforts": [{ "value": "low" }, { "value": "medium", "isDefault": true }, { "value": "high" }, { "value": "xhigh" }, { "value": "max" }]
+          }
+        },
+        {
+          "id": "gpt-6.2-astra", "displayName": "GPT-6.2 Astra", "contextWindow": 1050000, "outputTokenLimit": 128000,
+          "reasoningProfile": {
+            "reasoningPreset": "openai-chat-reasoning", "effortStrategy": "openai-chat-effort", "defaultEffort": "medium", "supportsDisabledThinking": false,
+            "supportsReasoningEffort": true, "supportsReasoningSummary": true, "supportsEncryptedReasoningReplay": true,
+            "supportedEfforts": [{ "value": "low" }, { "value": "medium", "isDefault": true }, { "value": "high" }, { "value": "xhigh" }, { "value": "max" }]
+          }
+        },
+        {
+          "id": "gpt-6.1-sol", "displayName": "GPT-6.1 Sol", "contextWindow": 1050000, "outputTokenLimit": 128000,
+          "reasoningProfile": {
+            "reasoningPreset": "openai-chat-reasoning", "effortStrategy": "openai-chat-effort", "defaultEffort": "medium", "supportsDisabledThinking": false,
+            "supportsReasoningEffort": true, "supportsReasoningSummary": true, "supportsEncryptedReasoningReplay": true,
+            "supportedEfforts": [{ "value": "low" }, { "value": "medium", "isDefault": true }, { "value": "high" }, { "value": "xhigh" }, { "value": "max" }]
+          }
+        },
+        {
+          "id": "gpt-6.1-terra", "displayName": "GPT-6.1 Terra", "contextWindow": 1050000, "outputTokenLimit": 128000,
+          "reasoningProfile": {
+            "reasoningPreset": "openai-chat-reasoning", "effortStrategy": "openai-chat-effort", "defaultEffort": "medium", "disabledEfforts": ["none"],
+            "supportsReasoningEffort": true, "supportsReasoningSummary": true, "supportsEncryptedReasoningReplay": true,
+            "supportedEfforts": [{ "value": "none" }, { "value": "low" }, { "value": "medium", "isDefault": true }, { "value": "high" }, { "value": "xhigh" }, { "value": "max" }]
+          }
+        },
+        {
+          "id": "gpt-6-sol", "displayName": "GPT-6 Sol", "contextWindow": 1050000, "outputTokenLimit": 128000,
+          "reasoningProfile": {
+            "reasoningPreset": "openai-chat-reasoning", "effortStrategy": "openai-chat-effort", "defaultEffort": "medium", "disabledEfforts": ["none"],
+            "supportsReasoningEffort": true, "supportsReasoningSummary": true, "supportsEncryptedReasoningReplay": true,
+            "supportedEfforts": [{ "value": "none" }, { "value": "low" }, { "value": "medium", "isDefault": true }, { "value": "high" }, { "value": "xhigh" }, { "value": "max" }]
+          }
+        },
+        {
+          "id": "gpt-6-astra", "displayName": "GPT-6 Astra", "contextWindow": 1050000, "outputTokenLimit": 128000,
+          "reasoningProfile": {
+            "reasoningPreset": "openai-chat-reasoning", "effortStrategy": "openai-chat-effort", "defaultEffort": "medium", "supportsDisabledThinking": false,
+            "supportsReasoningEffort": true, "supportsReasoningSummary": true, "supportsEncryptedReasoningReplay": true,
+            "supportedEfforts": [{ "value": "low" }, { "value": "medium", "isDefault": true }, { "value": "high" }, { "value": "xhigh" }, { "value": "max" }]
+          }
+        },
+        {
+          "id": "gpt-6-luna", "displayName": "GPT-6 Luna", "contextWindow": 1050000, "outputTokenLimit": 128000,
+          "reasoningProfile": {
+            "reasoningPreset": "openai-chat-reasoning", "effortStrategy": "openai-chat-effort", "defaultEffort": "medium", "disabledEfforts": ["none"],
+            "supportsReasoningEffort": true, "supportsReasoningSummary": true, "supportsEncryptedReasoningReplay": true,
+            "supportedEfforts": [{ "value": "none" }, { "value": "low" }, { "value": "medium", "isDefault": true }, { "value": "high" }, { "value": "xhigh" }, { "value": "max" }]
+          }
+        },
+        {
+          "id": "gpt-5.6-sol", "displayName": "GPT-5.6 Sol", "contextWindow": 1050000, "outputTokenLimit": 128000,
+          "reasoningProfile": {
+            "reasoningPreset": "openai-chat-reasoning", "effortStrategy": "openai-chat-effort", "defaultEffort": "medium", "disabledEfforts": ["none"],
+            "supportsReasoningEffort": true, "supportsReasoningSummary": true, "supportsEncryptedReasoningReplay": true,
+            "supportedEfforts": [{ "value": "none" }, { "value": "low" }, { "value": "medium", "isDefault": true }, { "value": "high" }, { "value": "xhigh" }, { "value": "max" }]
+          }
+        },
+        {
+          "id": "gpt-5.6-terra", "displayName": "GPT-5.6 Terra", "contextWindow": 1050000, "outputTokenLimit": 128000,
+          "reasoningProfile": {
+            "reasoningPreset": "openai-chat-reasoning", "effortStrategy": "openai-chat-effort", "defaultEffort": "medium", "disabledEfforts": ["none"],
+            "supportsReasoningEffort": true, "supportsReasoningSummary": true, "supportsEncryptedReasoningReplay": true,
+            "supportedEfforts": [{ "value": "none" }, { "value": "low" }, { "value": "medium", "isDefault": true }, { "value": "high" }, { "value": "xhigh" }, { "value": "max" }]
+          }
+        },
+        {
+          "id": "gpt-5.6-luna", "displayName": "GPT-5.6 Luna", "contextWindow": 1050000, "outputTokenLimit": 128000,
+          "reasoningProfile": {
+            "reasoningPreset": "openai-chat-reasoning", "effortStrategy": "openai-chat-effort", "defaultEffort": "medium", "disabledEfforts": ["none"],
+            "supportsReasoningEffort": true, "supportsReasoningSummary": true, "supportsEncryptedReasoningReplay": true,
+            "supportedEfforts": [{ "value": "none" }, { "value": "low" }, { "value": "medium", "isDefault": true }, { "value": "high" }, { "value": "xhigh" }, { "value": "max" }]
+          }
+        },
+        {
+          "id": "gpt-5.5", "displayName": "GPT-5.5", "contextWindow": 1050000, "outputTokenLimit": 128000,
+          "reasoningProfile": {
+            "reasoningPreset": "openai-chat-reasoning", "effortStrategy": "openai-chat-effort", "defaultEffort": "medium", "disabledEfforts": ["none"],
+            "supportsReasoningEffort": true, "supportsReasoningSummary": true, "supportsEncryptedReasoningReplay": true,
+            "supportedEfforts": [{ "value": "none" }, { "value": "low" }, { "value": "medium", "isDefault": true }, { "value": "high" }, { "value": "xhigh" }]
+          }
+        },
+        {
+          "id": "gpt-5.4-mini", "displayName": "GPT-5.4 mini", "outputTokenLimit": 128000,
+          "reasoningProfile": {
+            "reasoningPreset": "openai-chat-reasoning", "effortStrategy": "openai-chat-effort", "defaultEffort": "medium", "disabledEfforts": ["none"],
+            "supportsReasoningEffort": true, "supportsReasoningSummary": true, "supportsEncryptedReasoningReplay": true,
+            "supportedEfforts": [{ "value": "none" }, { "value": "low" }, { "value": "medium", "isDefault": true }, { "value": "high" }, { "value": "xhigh" }]
+          }
+        },
+        {
+          "id": "gpt-5.4-nano", "displayName": "GPT-5.4 nano", "outputTokenLimit": 128000,
+          "reasoningProfile": {
+            "reasoningPreset": "openai-chat-reasoning", "effortStrategy": "openai-chat-effort", "defaultEffort": "medium", "disabledEfforts": ["none"],
+            "supportsReasoningEffort": true, "supportsReasoningSummary": true, "supportsEncryptedReasoningReplay": true,
+            "supportedEfforts": [{ "value": "none" }, { "value": "low" }, { "value": "medium", "isDefault": true }, { "value": "high" }, { "value": "xhigh" }]
+          }
+        }
       ],
       "reasoningCapability": "native-effort",
       "reasoningProfile": {
@@ -632,8 +765,8 @@
       "model": "qwen3.8-max",
       "models": [
         {
-          "id": "qwen3.8-max-preview",
-          "displayName": "Qwen 3.8 Max Preview"
+          "id": "qwen3.8-flash",
+          "displayName": "Qwen 3.8 Flash"
         },
         {
           "id": "qwen3.7-max",
@@ -726,6 +859,19 @@
           }
         },
         {
+          "id": "glm-5.3", "displayName": "GLM-5.3", "maxOutputTokens": 131072, "reasoningCapability": "native-effort",
+          "reasoningProfile": {
+            "effortStrategy": "anthropic-reasoning-effort", "defaultEffort": "max",
+            "supportedEfforts": [
+              { "value": "low", "description": "GLM low reasoning" },
+              { "value": "high", "description": "GLM high reasoning" },
+              { "value": "max", "description": "GLM maximum reasoning", "isDefault": true }
+            ],
+            "effortAliases": { "minimal": "low", "medium": "high", "xhigh": "max" },
+            "localRejectEfforts": ["none"], "supportsReasoningEffort": true, "supportsDisabledThinking": false
+          }
+        },
+        {
           "id": "glm-5.2",
           "displayName": "GLM-5.2",
           "maxOutputTokens": 131072,
@@ -752,6 +898,23 @@
             "disabledEfforts": ["none", "minimal"],
             "supportsReasoningEffort": true,
             "supportsDisabledThinking": true
+          }
+        },
+        {
+          "id": "deepseek-v4.1-flash", "displayName": "DeepSeek V4.1 Flash", "maxOutputTokens": 64000, "reasoningCapability": "native-effort",
+          "reasoningProfile": {
+            "effortStrategy": "anthropic-reasoning-effort", "thinkingStrategy": "provider-toggle", "defaultEffort": "high",
+            "supportedEfforts": [
+              { "value": "none", "description": "Disable thinking" },
+              { "value": "minimal", "description": "Disable thinking", "isUserVisible": false },
+              { "value": "low", "description": "DeepSeek low reasoning" },
+              { "value": "medium", "description": "Alias to high" },
+              { "value": "high", "description": "DeepSeek high reasoning", "isDefault": true },
+              { "value": "xhigh", "description": "Alias to max" },
+              { "value": "max", "description": "DeepSeek max reasoning" }
+            ],
+            "effortAliases": { "medium": "high", "xhigh": "max" },
+            "disabledEfforts": ["none", "minimal"], "supportsReasoningEffort": true, "supportsDisabledThinking": true
           }
         },
         {
@@ -948,8 +1111,76 @@
       "model": "glm-5.3",
       "models": [
         {
+          "id": "glm-5.4",
+          "displayName": "GLM-5.4",
+          "contextWindow": 1000000,
+          "maxOutputTokens": 131072,
+          "reasoningCapability": "native-effort",
+          "reasoningProfile": {
+            "reasoningPreset": "zai-glm-5.3",
+            "effortStrategy": "openai-chat-effort",
+            "thinkingStrategy": "provider-toggle",
+            "defaultEffort": "max",
+            "supportedEfforts": [
+              { "value": "none", "description": "Maps to low reasoning" },
+              { "value": "minimal", "description": "Alias to low", "isUserVisible": false },
+              { "value": "low", "description": "GLM low reasoning" },
+              { "value": "medium", "description": "Alias to high" },
+              { "value": "high", "description": "GLM high reasoning" },
+              { "value": "xhigh", "description": "Alias to max" },
+              { "value": "max", "description": "GLM maximum reasoning", "isDefault": true }
+            ],
+            "effortAliases": {
+              "none": "low",
+              "minimal": "low",
+              "minimum": "low",
+              "light": "low",
+              "medium": "high",
+              "xhigh": "max",
+              "ultra": "max"
+            },
+            "disabledEfforts": ["none"],
+            "supportsReasoningEffort": true,
+            "supportsDisabledThinking": false
+          }
+        },
+        {
           "id": "glm-5.3",
           "displayName": "GLM-5.3",
+          "contextWindow": 1000000,
+          "maxOutputTokens": 131072,
+          "reasoningCapability": "native-effort",
+          "reasoningProfile": {
+            "reasoningPreset": "zai-glm-5.3",
+            "effortStrategy": "openai-chat-effort",
+            "thinkingStrategy": "provider-toggle",
+            "defaultEffort": "max",
+            "supportedEfforts": [
+              { "value": "none", "description": "Maps to low reasoning" },
+              { "value": "minimal", "description": "Alias to low", "isUserVisible": false },
+              { "value": "low", "description": "GLM low reasoning" },
+              { "value": "medium", "description": "Alias to high" },
+              { "value": "high", "description": "GLM high reasoning" },
+              { "value": "xhigh", "description": "Alias to max" },
+              { "value": "max", "description": "GLM maximum reasoning", "isDefault": true }
+            ],
+            "effortAliases": {
+              "none": "low",
+              "minimal": "low",
+              "minimum": "low",
+              "light": "low",
+              "medium": "high",
+              "xhigh": "max",
+              "ultra": "max"
+            },
+            "disabledEfforts": ["none"],
+            "supportsReasoningEffort": true,
+            "supportsDisabledThinking": false
+          }
+        },
+        {
+          "id": "glm-5.3-highspeed",
+          "displayName": "GLM-5.3 Highspeed",
           "contextWindow": 1000000,
           "maxOutputTokens": 131072,
           "reasoningCapability": "native-effort",
@@ -1131,6 +1362,40 @@
         {
           "id": "glm-5.3",
           "displayName": "GLM-5.3",
+          "contextWindow": 1000000,
+          "maxOutputTokens": 131072,
+          "reasoningCapability": "native-effort",
+          "reasoningProfile": {
+            "reasoningPreset": "zai-glm-5.3",
+            "effortStrategy": "openai-chat-effort",
+            "thinkingStrategy": "provider-toggle",
+            "defaultEffort": "max",
+            "supportedEfforts": [
+              { "value": "none", "description": "Maps to low reasoning" },
+              { "value": "minimal", "description": "Alias to low", "isUserVisible": false },
+              { "value": "low", "description": "GLM low reasoning" },
+              { "value": "medium", "description": "Alias to high" },
+              { "value": "high", "description": "GLM high reasoning" },
+              { "value": "xhigh", "description": "Alias to max" },
+              { "value": "max", "description": "GLM maximum reasoning", "isDefault": true }
+            ],
+            "effortAliases": {
+              "none": "low",
+              "minimal": "low",
+              "minimum": "low",
+              "light": "low",
+              "medium": "high",
+              "xhigh": "max",
+              "ultra": "max"
+            },
+            "disabledEfforts": ["none"],
+            "supportsReasoningEffort": true,
+            "supportsDisabledThinking": false
+          }
+        },
+        {
+          "id": "glm-5.3-highspeed",
+          "displayName": "GLM-5.3 Highspeed",
           "contextWindow": 1000000,
           "maxOutputTokens": 131072,
           "reasoningCapability": "native-effort",

@@ -55,12 +55,16 @@ import {
   filterConstructionToolNames,
   filterAgentConstructionToolNames,
   filterMcpToolNames,
+  filterRepoIntelligenceSemanticToolNames,
   filterRepoIntelligenceWorkingToolNames,
   getRegisteredToolDefinition,
   listToolDefinitions,
 } from '../tools/index.js';
 import { isManagedProtocolToolName } from '../managed-protocol.js';
-import { resolveKodaXAutoRepoMode } from '../repo-intelligence/runtime.js';
+import {
+  isRepoIntelligenceSemanticSurfaceEnabled,
+  resolveKodaXAutoRepoMode,
+} from '../repo-intelligence/runtime.js';
 import { DEFERRED_TOOL_HINTS, isDeferredTool } from '../tools/deferred-tools.js';
 import { withManualToolBranding } from '../self-knowledge/tool-description.js';
 import { projectModelToolDefinition } from '../tools/model-tool-definition.js';
@@ -137,6 +141,9 @@ export function getRuntimeActiveToolNames(
   let result = resolveKodaXAutoRepoMode(repoIntelligenceMode) === 'off'
     ? filterRepoIntelligenceWorkingToolNames(activeToolNames)
     : activeToolNames;
+  if (!isRepoIntelligenceSemanticSurfaceEnabled(repoIntelligenceMode)) {
+    result = filterRepoIntelligenceSemanticToolNames(result);
+  }
   if (!hasCapabilityRuntime) {
     result = filterMcpToolNames(result);
   }

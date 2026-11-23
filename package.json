@@ -1,6 +1,6 @@
 {
   "name": "@kodax-ai/kodax",
-  "version": "0.7.97-beta.13",
+  "version": "0.7.97-rc.2",
   "description": "KodaX lightweight coding agent - TypeScript implementation with 16 built-in LLM provider aliases, published as a Node-free single-file CLI and SDK",
   "type": "module",
   "private": true,
@@ -148,6 +148,7 @@
     "bench:perf": "tsx benchmark/perf/repl-render-perf.bench.ts",
     "bench:perf:e2e": "tsx benchmark/perf/repl-render-engine-e2e.bench.ts",
     "bench:repo-intel": "tsx benchmark/perf/repo-intelligence-index.bench.ts",
+    "bench:repo-intel-truth": "node --max-old-space-size=6144 --import tsx benchmark/perf/repo-intelligence-truth.bench.ts",
     "bench:cli-first-ready": "tsx benchmark/perf/bare-cli-first-ready.bench.ts",
     "bench:session-cold-open": "vite-node benchmark/perf/runtime-tiny-session-cold-open.bench.ts",
     "bench:conversation-page-cold-open": "tsx benchmark/perf/runtime-conversation-page-cold-open.bench.ts",

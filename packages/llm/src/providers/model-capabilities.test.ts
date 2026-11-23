@@ -27,11 +27,11 @@ import {
 } from './index.js';
 
 describe('built-in provider model capabilities (no API key required)', () => {
-  it.each(['opus', 'sonnet', 'haiku'])('advertises Claude %s 5.5 without changing the existing default or output budget', family => {
+  it.each(['opus', 'sonnet', 'haiku'])('advertises Claude %s 5.5 without raising the default output budget', family => {
     const caps = getModelCapabilities('anthropic', `claude-${family}-5-5`);
     expect(caps).toMatchObject({ contextWindow: 1_000_000, maxOutputTokens: 64000, outputTokenLimit: 128000,
       reasoningCapability: 'native-adaptive', supportsThinking: true });
-    expect(getProviderModelDescriptors('anthropic')[0]?.id).toBe('claude-sonnet-4-6');
+    expect(getProviderModelDescriptors('anthropic')[0]?.id).toBe('claude-sonnet-5-5');
   });
   it('exposes the Sonnet 4.6 ceiling without raising its default output budget', () => {
     const caps = getModelCapabilities('anthropic', 'claude-sonnet-4-6');
@@ -41,7 +41,7 @@ describe('built-in provider model capabilities (no API key required)', () => {
     expect(caps?.outputTokenLimit).toBe(128000);
     expect(caps?.thinkingBudgetCap).toBe(28000);
     expect(caps?.supportsThinking).toBe(true);
-    expect(caps?.isDefault).toBe(true);
+    expect(caps?.isDefault).toBe(false);
   });
 
   it('honors per-model thinkingBudgetCap override for Haiku 4.5 (10K) without inheriting Opus 28K', () => {
@@ -171,8 +171,27 @@ describe('built-in provider model capabilities (no API key required)', () => {
       contextWindow: 1_050_000, maxOutputTokens: 32768, outputTokenLimit: 128000,
     });
     expect(getModelCapabilities('openai', 'gpt-5.3-codex')).toMatchObject({
-      contextWindow: 400000, maxOutputTokens: 32768, outputTokenLimit: 128000, isDefault: true,
+      contextWindow: 400000, maxOutputTokens: 32768, outputTokenLimit: 128000, isDefault: false,
     });
+    expect(getModelCapabilities('openai', 'gpt-6.2-sol')).toMatchObject({
+      contextWindow: 1_050_000, maxOutputTokens: 32768, outputTokenLimit: 128000, isDefault: true,
+    });
+  });
+
+  it('declares each GPT generation with the efforts its endpoint accepts', () => {
+    const efforts = (model: string) => getModelCapabilities('openai', model)?.reasoningProfile?.supportedEfforts?.map(e => e.value);
+    expect(getModelCapabilities('openai', 'gpt-6.2-sol')).toMatchObject({
+      contextWindow: 1_050_000, maxOutputTokens: 32768, outputTokenLimit: 128000,
+    });
+    // GPT-6.2/6.1 Sol and the Astra models cannot turn reasoning off.
+    expect(efforts('gpt-6.2-sol')).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+    expect(getModelCapabilities('openai', 'gpt-6.2-astra')?.reasoningProfile?.supportsDisabledThinking).toBe(false);
+    expect(efforts('gpt-6-luna')).toEqual(['none', 'low', 'medium', 'high', 'xhigh', 'max']);
+    expect(efforts('gpt-5.6-sol')).toEqual(['none', 'low', 'medium', 'high', 'xhigh', 'max']);
+    // GPT-5.5 and the 5.4 small models reject minimal and stop at xhigh.
+    expect(efforts('gpt-5.5')).toEqual(['none', 'low', 'medium', 'high', 'xhigh']);
+    expect(getModelCapabilities('openai', 'gpt-5.4-mini')).toMatchObject({ contextWindow: 400000, outputTokenLimit: 128000 });
+    expect(getModelCapabilities('openai', 'gpt-5.4-nano')?.reasoningProfile?.defaultEffort).toBe('medium');
   });
 
   it('registers glm-5.3-flash (native multimodal, 1M) on all three Zhipu routes', () => {
@@ -188,6 +207,30 @@ describe('built-in provider model capabilities (no API key required)', () => {
         defaultEffort: 'max',
         supportsDisabledThinking: false,
       });
+    }
+  });
+
+  it('registers glm-5.4 on zhipu-coding only, with the GLM-5.3 Flash shape', () => {
+    const caps = getModelCapabilities('zhipu-coding', 'glm-5.4');
+    expect(caps?.contextWindow).toBe(1_000_000);
+    expect(caps?.maxOutputTokens).toBe(131_072);
+    expect(caps?.reasoningCapability).toBe('native-effort');
+    expect(caps?.reasoningProfile).toMatchObject({
+      reasoningPreset: 'zai-glm-5.3',
+      defaultEffort: 'max',
+      supportsDisabledThinking: false,
+    });
+    expect(getProviderModelDescriptors('zai-coding').map((m) => m.id)).not.toContain('glm-5.4');
+  });
+
+  it('registers glm-5.3-highspeed with the GLM-5.3 shape on both Coding Plan routes', () => {
+    for (const provider of ['zhipu-coding', 'zai-coding'] as const) {
+      const highspeed = getModelCapabilities(provider, 'glm-5.3-highspeed');
+      const base = getModelCapabilities(provider, 'glm-5.3');
+      expect(highspeed?.contextWindow, `${provider} ctx`).toBe(base?.contextWindow);
+      expect(highspeed?.maxOutputTokens, `${provider} maxOut`).toBe(base?.maxOutputTokens);
+      expect(highspeed?.reasoningCapability, `${provider} reasoning`).toBe(base?.reasoningCapability);
+      expect(highspeed?.reasoningProfile, `${provider} profile`).toEqual(base?.reasoningProfile);
     }
   });
 
@@ -231,10 +274,8 @@ describe('built-in provider model capabilities (no API key required)', () => {
 
   it('inherits provider-level capability for an unknown model under a known provider', () => {
     const caps = getModelCapabilities('anthropic', 'claude-2-not-shipped');
-    const defaultCaps = getModelCapabilities(
-      'anthropic',
-      KODAX_PROVIDER_SNAPSHOTS['anthropic'].model,
-    );
+    // Sonnet 4.6 has no per-model profile, so it shows the provider-level one.
+    const defaultCaps = getModelCapabilities('anthropic', 'claude-sonnet-4-6');
     expect(caps).toBeDefined();
     expect(caps?.model).toBe('claude-2-not-shipped');
     expect(caps?.isDefault).toBe(false);
@@ -246,17 +287,39 @@ describe('built-in provider model capabilities (no API key required)', () => {
 
   it('descriptors list default first, then alternatives, per provider', () => {
     const descriptors = getProviderModelDescriptors('anthropic');
-    expect(descriptors[0]?.id).toBe('claude-sonnet-4-6'); // default
+    expect(descriptors[0]?.id).toBe('claude-sonnet-5-5'); // default
     expect(descriptors.map((d) => d.id)).toEqual([
-      'claude-sonnet-4-6',
-      'claude-opus-5-5',
       'claude-sonnet-5-5',
+      'claude-fable-5-2',
+      'claude-opus-5-5',
       'claude-haiku-5-5',
+      'claude-opus-5',
+      'claude-sonnet-5',
       'claude-opus-4-8',
       'claude-opus-4-7',
       'claude-opus-4-6',
       'claude-haiku-4-5',
+      'claude-sonnet-4-6',
     ]);
+  });
+
+  it('declares Fable 5.2 as always-thinking with a high default effort', () => {
+    const caps = getModelCapabilities('anthropic', 'claude-fable-5-2');
+    expect(caps).toMatchObject({ contextWindow: 1_000_000, outputTokenLimit: 128000, reasoningCapability: 'native-adaptive' });
+    expect(caps?.reasoningProfile).toMatchObject({ defaultEffort: 'high', supportsThinkingBlockBinding: true });
+    expect(caps?.reasoningProfile?.supportedEfforts?.map(e => e.value)).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+    expect(caps?.reasoningProfile?.supportsDisabledThinking).toBeUndefined();
+  });
+
+  it('declares Opus 5 and Sonnet 5 with their 1M window and full effort ladder', () => {
+    for (const model of ['claude-opus-5', 'claude-sonnet-5']) {
+      expect(getModelCapabilities('anthropic', model), model).toMatchObject({ contextWindow: 1_000_000, outputTokenLimit: 128000 });
+      expect(getModelCapabilities('anthropic', model)?.reasoningProfile?.supportedEfforts?.map(e => e.value))
+        .toEqual(expect.arrayContaining(['low', 'medium', 'high', 'xhigh', 'max']));
+    }
+    // Sonnet 5 accepts thinking disabled at any effort; Opus 5 only at high or below, so it is not offered.
+    expect(getModelCapabilities('anthropic', 'claude-sonnet-5')?.reasoningProfile?.supportsDisabledThinking).toBe(true);
+    expect(getModelCapabilities('anthropic', 'claude-opus-5')?.reasoningProfile?.supportsDisabledThinking).toBeUndefined();
   });
 
   it('CLI-bridge providers (gemini-cli, codex-cli) leave context fields undefined', () => {
@@ -278,7 +341,7 @@ describe('built-in provider model capabilities (no API key required)', () => {
     expect(new Set(routeKeys).size).toBe(routeKeys.length);
     // At least one entry per built-in provider; default models always present.
     const anthropicDefault = list.find(
-      (c) => c.provider === 'anthropic' && c.model === 'claude-sonnet-4-6',
+      (c) => c.provider === 'anthropic' && c.model === 'claude-sonnet-5-5',
     );
     expect(anthropicDefault?.isDefault).toBe(true);
     const haiku = list.find((c) => c.provider === 'anthropic' && c.model === 'claude-haiku-4-5');

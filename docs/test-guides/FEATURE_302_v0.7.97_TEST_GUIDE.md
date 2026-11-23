@@ -3,8 +3,8 @@
 Date: 2026-10-31. Status: T01–T12 implemented, contract-tested and reviewed offline,
 including actual Space migration. Complete Root, published SDK/CLI and Space regression
 passed. Historical intermediate failures and their corrections remain below. This is
-implementation acceptance in isolated branches, not live account certification or a release.
-[Accepted scope and tickets](../features/v0.7.99.md#feature_302-independent-llm-provider-parity).
+implementation acceptance in isolated branches, not live account certification. The work shipped in `v0.7.97-alpha.12`.
+[Accepted scope and tickets](../features/v0.7.97.md#feature_302-independent-llm-provider-parity).
 
 ## Baseline and isolation
 

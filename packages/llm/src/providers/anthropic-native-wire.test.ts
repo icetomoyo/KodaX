@@ -71,7 +71,7 @@ it('never replays unverified opaque thinking in a tail after a verified native f
   await provider.complete(input, [], '', { effort: 'high' }, options);
   expect(JSON.stringify(requests[1]!.messages)).not.toContain('sig-unproven-B');
   expect(JSON.stringify(requests[1]!.messages)).toContain('verified-A');
-  expect(JSON.stringify(requests[1]!.messages)).toContain('retain readable context');
+  expect(JSON.stringify(requests[1]!.messages)).not.toContain('retain readable context');
 });
 
 it('repairs a missing tool result on a new native lineage without running the tool', async () => {
@@ -132,7 +132,7 @@ it.each(['stream', 'complete'] as const)('keeps actual wire/image/suffix across 
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-it.each(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])('validates native thinking controls before %s dispatch', async modelOverride => {
+it.each(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-2'])('validates native thinking controls before %s dispatch', async modelOverride => {
   vi.stubEnv('ANTHROPIC_API_KEY', 'offline-fixture');
   const fetch = vi.fn(async (_url: unknown, _init?: RequestInit) => Response.json({ content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn' })); vi.stubGlobal('fetch', fetch);
   const provider = getProvider('anthropic'), messages: KodaXMessage[] = [{ role: 'user', content: 'hello' }];
@@ -145,6 +145,34 @@ it.each(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])('validates
   const controlled = provider.complete(messages, [], '', { effort: 'high' }, { ...options, thinkingMode: 'between_tools' });
   if (modelOverride.includes('sonnet')) await expect(controlled).resolves.toBeDefined();
   else await expect(controlled).rejects.toThrow(/mode|adaptive/);
+});
+
+it.each([
+  ['claude-sonnet-5-5', { type: 'adaptive' }, 'high'],
+  ['claude-fable-5-2', { type: 'adaptive' }, 'high'],
+  ['claude-haiku-5-5', { type: 'disabled' }, 'medium'],
+] as const)('treats legacy reasoning false on %s like base.ts: only Haiku turns thinking off', async (modelOverride, thinking, effort) => {
+  vi.stubEnv('ANTHROPIC_API_KEY', 'offline-fixture');
+  const fetch = vi.fn(async (_url: unknown, _init?: RequestInit) => Response.json({ content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn' })); vi.stubGlobal('fetch', fetch);
+  await getProvider('anthropic').complete([{ role: 'user', content: 'hello' }], [], '', false, { modelOverride, maxOutputTokensOverride: 4096 });
+  const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)) as { thinking?: Record<string, unknown>; output_config?: { effort?: string } };
+  expect(body.thinking).toMatchObject(thinking);
+  expect(body.output_config?.effort).toBe(effort);
+});
+
+it('sends Fable 5.2 through the native path with its high default effort and no forced tool choice', async () => {
+  vi.stubEnv('ANTHROPIC_API_KEY', 'offline-fixture');
+  const fetch = vi.fn(async (_url: unknown, _init?: RequestInit) => Response.json({ content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn' })); vi.stubGlobal('fetch', fetch);
+  const report: KodaXToolDefinition = { name: 'emit_verdict', description: 'report', input_schema: { type: 'object', properties: {} } };
+  await getProvider('anthropic').complete([{ role: 'user', content: 'judge this' }], [report], '', undefined,
+    { modelOverride: 'claude-fable-5-2', maxOutputTokensOverride: 4096, forcedToolName: 'emit_verdict' });
+  const init = fetch.mock.calls[0]?.[1];
+  const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+  expect(body.output_config).toEqual({ effort: 'high' });
+  expect(body.thinking).toMatchObject({ type: 'adaptive' });
+  // Fable 5.2 returns 400 on forced tool choice, so the judge request falls back to auto up front.
+  expect(body.tool_choice).toBeUndefined();
+  expect(new Headers(init?.headers).get('anthropic-beta')).toContain('mid-conversation-output-config-2026-07-01');
 });
 
 it.each(['stream', 'complete'] as const)('rejects unsupported sampling after SDK options/hooks in %s without sending a request', async method => {
@@ -236,7 +264,7 @@ it.each(['claude-sonnet-5-5', 'claude-haiku-5-5'])('keeps admitted images when %
       thinkingMode: modelOverride.includes('sonnet') ? 'between_tools' : 'disabled' });
     expect(JSON.stringify(requests[1]?.messages)).toContain(imageBytes.toString('base64'));
     expect(JSON.stringify(requests[1]?.messages)).not.toContain('old-signature');
-    expect(JSON.stringify(requests[1]?.messages)).toContain('old reasoning');
+    expect(JSON.stringify(requests[1]?.messages)).not.toContain('old reasoning');
     expect(next.nativeHistory?.parent).toBeUndefined(); expect(next.nativeHistory?.baseline).toBeDefined();
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

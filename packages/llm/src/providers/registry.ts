@@ -185,9 +185,9 @@ class AnthropicProvider extends KodaXAnthropicCompatProvider {
     // Anthropic proper cryptographically verifies `signature` on
     // `thinking` blocks. Cross-provider thinking (kept around when
     // user /model-switches mid-session) carries empty or other-issuer
-    // signatures that fail verification → 400. The serialiser converts
-    // those to a `<prior_reasoning>` text block; only Anthropic-issued
-    // thinking blocks pass through. Third-party Anthropic-compat
+    // signatures that fail verification → 400. The serialiser drops
+    // those; only Anthropic-issued thinking blocks pass through.
+    // Third-party Anthropic-compat
     // providers (kimi-code, ark-coding, etc.) lack the signing key and
     // accept any signature, so they keep the lenient default. v0.7.28.
     strictThinkingSignature: true,

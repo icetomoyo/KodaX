@@ -40,9 +40,8 @@ import { readFailureResult } from './execution-failure.js';
 import { runManagedTaskViaRunner } from './task-engine/runner-driven.js';
 import { runWithPromptCacheWarming } from './agent-runtime/prompt-cache-warmer.js';
 import {
-  getRepoRoutingSignals,
+  getAgentRepoRoutingSignals,
   resolveKodaXAutoRepoMode,
-  resolveKodaXHotPathRepoMode,
 } from './repo-intelligence/runtime.js';
 import {
   emitManagedRepoIntelligenceTrace,
@@ -257,16 +256,13 @@ export async function buildManagedReasoningPlan(options: KodaXOptions, prompt: s
     options.context?.executionCwd || options.context?.gitRoot,
   );
   const autoRepoMode = resolveKodaXAutoRepoMode(options.context?.repoIntelligenceMode);
-  const hotPathRepoMode = resolveKodaXHotPathRepoMode(options.context?.repoIntelligenceMode);
   const repoRoutingSignals = options.context?.repoRoutingSignals
     ?? (
       shouldLoadRepoSignals && autoRepoMode !== 'off'
-        ? await getRepoRoutingSignals({
+        ? await getAgentRepoRoutingSignals({
           executionCwd: options.context?.executionCwd,
           gitRoot: options.context?.gitRoot ?? undefined,
-        }, {
-          mode: hotPathRepoMode,
-        }).catch(() => null)
+        }, options.context?.repoIntelligenceMode).catch(() => null)
         : null
     );
   emitManagedRepoIntelligenceTrace(

@@ -1,7 +1,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { createHash } from 'node:crypto';
 import fs from 'fs/promises';
 import path from 'path';
-import { emitKodaXDiagnostic } from '@kodax-ai/agent';
+import { emitKodaXDiagnostic, getAgentConfigPath } from '@kodax-ai/agent';
 import { withFileMutation } from '../tools/_internal/file-mutation-queue.js';
 
 const repoIntelligenceStorageDirContext = new AsyncLocalStorage<string | undefined>();
@@ -45,8 +46,57 @@ export function resolveRepoIntelligenceStorageDir(
   defaultStorageDir: string,
 ): string {
   return repoIntelligenceStorageDirContext.getStore()?.trim()
-    || process.env.KODAX_REPO_INTELLIGENCE_STORAGE_DIR?.trim()
+    || process.env[REPO_INTELLIGENCE_STORAGE_ENV]?.trim()
     || defaultStorageDir;
+}
+
+export const REPO_INTELLIGENCE_STORAGE_ENV = 'KODAX_REPO_INTELLIGENCE_STORAGE_DIR';
+
+/**
+ * The semantic index could not answer: it is still building (`warming`) or the
+ * worker failed (`unavailable`). Callers must not read this as "nothing found".
+ */
+export class RepoIntelligenceUnavailableError extends Error {
+  constructor(readonly status: 'warming' | 'unavailable', message: string) {
+    super(message);
+    this.name = 'RepoIntelligenceUnavailableError';
+  }
+}
+
+/**
+ * The worker ran the query and the query itself failed, for example because
+ * nothing matched. Unlike a worker crash or timeout, this is a real answer.
+ */
+export class RepoIntelligenceQueryError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RepoIntelligenceQueryError';
+  }
+}
+
+/** The configured storage base, defaulting to the config home so the user's repository stays untouched. */
+export function resolveRepoIntelligenceStorageBase(): string {
+  return resolveRepoIntelligenceStorageDir(getAgentConfigPath('repo-intelligence'));
+}
+
+/**
+ * Cache directory for one workspace. An absolute base holds one subdirectory per
+ * workspace so different repositories never share files; a relative override is
+ * the caller's explicit choice to keep the cache inside the workspace.
+ */
+export function resolveRepoIntelligenceStorageRoot(workspaceRoot: string): string {
+  const base = resolveRepoIntelligenceStorageBase();
+  if (!path.isAbsolute(base)) {
+    return path.join(workspaceRoot, base);
+  }
+  return path.join(base, workspaceStorageKey(workspaceRoot));
+}
+
+function workspaceStorageKey(workspaceRoot: string): string {
+  const resolved = path.resolve(workspaceRoot);
+  const identity = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  const name = path.basename(resolved).replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 40) || 'workspace';
+  return `${name}-${createHash('sha256').update(identity).digest('hex').slice(0, 12)}`;
 }
 
 // Orphan temp files older than this are from writes that never completed

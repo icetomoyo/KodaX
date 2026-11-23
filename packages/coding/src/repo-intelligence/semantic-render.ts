@@ -12,6 +12,10 @@ function confidenceLabel(value: number): string {
   return 'low';
 }
 
+function moreMarker(omitted: number | undefined): string {
+  return omitted ? ` (+${omitted} more not shown)` : '';
+}
+
 function capabilityLines(capability: KodaXRepoIntelligenceCapability | undefined): string[] {
   if (!capability || (capability.status === 'ok' && capability.warnings.length === 0)) {
     return [];
@@ -54,10 +58,10 @@ export function renderSymbolContext(result: SymbolContextResult): string {
     `Confidence: ${confidenceLabel(result.confidence)} (${result.confidence.toFixed(2)})`,
     `Signature: ${symbol.signature}`,
     `Possible callees: ${symbol.callTargets.map((target) => `${target.name} -> ${target.filePath}`).join(' | ') || 'none'}`,
-    `Possible callers: ${result.callers.map((caller) => `${caller.name} -> ${caller.filePath}`).join(' | ') || 'none'}`,
+    `Possible callers: ${result.callers.map((caller) => `${caller.name} -> ${caller.filePath}`).join(' | ') || 'none'}${moreMarker(result.omitted?.callers)}`,
     `Imports: ${symbol.importPaths.join(' | ') || 'none'}`,
     result.alternatives.length > 0
-      ? `Alternatives: ${result.alternatives.map((candidate) => `${candidate.name} @ ${candidate.filePath}:${candidate.line}`).join(' | ')}`
+      ? `Alternatives: ${result.alternatives.map((candidate) => `${candidate.name} @ ${candidate.filePath}:${candidate.line}`).join(' | ')}${moreMarker(result.omitted?.alternatives)}`
       : 'Alternatives: none',
     ...capabilityLines(result.capability),
   ].join('\n');
@@ -89,8 +93,8 @@ export function renderImpactEstimate(result: ImpactEstimateResult): string {
     `Confidence: ${confidenceLabel(result.confidence)} (${result.confidence.toFixed(2)})`,
     `Summary: ${result.summary}`,
     `Impacted modules: ${result.impactedModules.map((module) => `${module.label}(${module.moduleId})`).join(' | ') || 'none'}`,
-    `Impacted symbols: ${result.impactedSymbols.map((symbol) => `${symbol.name} -> ${symbol.filePath}:${symbol.line}`).join(' | ') || 'none'}`,
-    `Possible callers: ${result.callers.map((caller) => `${caller.name} -> ${caller.filePath}:${caller.line}`).join(' | ') || 'none'}`,
+    `Impacted symbols: ${result.impactedSymbols.map((symbol) => `${symbol.name} -> ${symbol.filePath}:${symbol.line}`).join(' | ') || 'none'}${moreMarker(result.omitted?.impactedSymbols)}`,
+    `Possible callers: ${result.callers.map((caller) => `${caller.name} -> ${caller.filePath}:${caller.line}`).join(' | ') || 'none'}${moreMarker(result.omitted?.callers)}`,
     result.changedScope
       ? `Changed-scope overlap: ${result.changedScope.files.filter((file) =>
         result.impactedModules.some((module) => module.moduleId === file.areaId)

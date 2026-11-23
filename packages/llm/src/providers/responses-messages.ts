@@ -1,6 +1,7 @@
 import type { ResponseInput, ResponseInputContent } from 'openai/resources/responses/responses';
 import type { KodaXGenerationSource, KodaXImageBlock, KodaXMessage, KodaXToolResultImageItem } from '../types.js';
 import { KODAX_INTERRUPTED_TOOL_RESULT_MARKER } from '../constants.js';
+import { withoutReplayArtifacts } from './reasoning-replay.js';
 
 function sameSource(left: KodaXGenerationSource | undefined, right: KodaXGenerationSource): boolean {
   return !!left && left.api === right.api && left.provider === right.provider && left.model === right.model
@@ -32,7 +33,7 @@ export function projectResponsesMessages(
       output: `${KODAX_INTERRUPTED_TOOL_RESULT_MARKER} Tool execution was interrupted; no result is available.` });
     pending.clear();
   };
-  for (const message of messages) {
+  for (const message of withoutReplayArtifacts(messages)) {
     if (typeof message.content === 'string') {
       settleMissing();
       input.push({ role: message.role, content: message.content });
@@ -72,9 +73,8 @@ export function projectResponsesMessages(
           if (replay && sameSource(replay.source, source)) {
             input.push({ type: 'reasoning', id: replay.id, summary: replay.summary,
               ...(replay.encrypted_content ? { encrypted_content: replay.encrypted_content } : {}) });
-          } else if (block.thinking) {
-            input.push({ role: 'assistant', content: `<prior_reasoning>\n${block.thinking}\n</prior_reasoning>` });
           }
+          // Other reasoning has no channel here and is never replayed as reply text (Issue 441).
           break;
         }
         // Foreign opaque signatures and local-only boundaries are never sent.

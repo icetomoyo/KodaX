@@ -3,10 +3,10 @@
 > Unified Host SDK cutover (shipped in v0.7.97-alpha.12): public product execution connects to one independent Host.
 > Embedded/default owner construction, inline switching and caller-owned external-agent
 > daemons are retired. Internal Runtime and independent libraries remain. See
-> [migration and ownership limits](SDK_MIGRATION.md#统一-host-sdk-收口未发布).
+> [migration and ownership limits](SDK_MIGRATION.md#统一-host-sdk-收口随-v0797-alpha12-发布).
 
-Last updated: 2026-11-21. Current development tree: FEATURE_298/299/301/302/303/304/305/306 on package
-`0.7.97-beta.13`; `v0.7.96` is the last stable release.
+Last updated: 2026-11-23. Current development tree: FEATURE_298/299/301/302/303/304/305/306 on package
+`0.7.97-rc.2`; `v0.7.96` is the last stable release.
 
 The [Client contract](CLIENT_CONTRACT.md) and [SDK migration guide](SDK_MIGRATION.md)
 define current product integration. Version-labelled release context below does
@@ -30,7 +30,7 @@ Model-level modality overrides affect provider wire serialization and cache
 diagnostics together; stored history stays canonical. Cost estimates retain
 unknown/nominal distinctions and measured cache-write lifetime partitions.
 The detailed [protocol/storage boundaries](LLM_INTEGRATION.md) and
-[Root/Space handoff](SDK_MIGRATION.md#feature_302-t12-h账号保持与可重试升级未发布)
+[Root/Space handoff](SDK_MIGRATION.md#feature_302-t12-h账号保持与可重试升级随-v0797-alpha12-发布)
 are authoritative for integration, with real-service limits kept explicit.
 
 ## Post-alpha.10 SDK implementation alignment (2026-10-29)
@@ -132,7 +132,7 @@ reference and does not duplicate every type. It should answer three questions:
 
 ## 2. Published Package And Build Entries
 
-The development package version is `@kodax-ai/kodax@0.7.97-beta.13`, which includes the v2
+The development package version is `@kodax-ai/kodax@0.7.97-rc.2`, which includes the v2
 scoped Provider credential broker (ADR-068) and bounded daemon client
 inventory on top of the v0.7.96-alpha.1 feature set and the v0.7.96-alpha.2
 Windows boot-identity hotfix. The v0.7.96-alpha.1

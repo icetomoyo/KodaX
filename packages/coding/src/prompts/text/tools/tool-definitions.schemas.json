@@ -1114,6 +1114,11 @@
       "refresh_overview": {
         "type": "boolean",
         "description": "When true, rebuild the repo overview snapshot before analyzing changes"
+      },
+      "offset": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Index of the first changed file to list. Use the offset named in the previous result to page through a long change set. Defaults to 0."
       }
     }
   },

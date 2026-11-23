@@ -221,6 +221,237 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.7.97-rc.2] - 2026-11-23
+
+Second release candidate of the v0.7.97 line: RepoIntel phase 0, the
+reasoning-replay repairs and the `glm-5.4` listing. RepoIntel keeps to what
+git can answer by default (FEATURE_317): under the default `auto` mode
+agents get `repo_overview`, `changed_scope` and `changed_diff` while the
+semantic tools, the injected module/impact context and the background index
+build need `repoIntelligenceMode` `full` or `light`, truncated lists report
+how many items were left out with no placeholder results, and the index
+moves from `.agent/repo-intelligence/` in the workspace to
+`<config home>/repo-intelligence/`. Switching models no longer teaches the
+new model to write its thinking into the reply: readable reasoning replays
+only through the target's reasoning channel and never becomes reply text
+(Issue 441), and Gemini and pi-messages endpoints replay tool calls from
+another model as real calls and results instead of `<prior_tool_call>` text
+(Issue 442). `zhipu-coding` lists `glm-5.4` with the `glm-5.3-flash`
+settings; the upstream was overloaded at listing time, so effort, tools,
+limits and image input are unverified. Every v0.7.96 stable and
+v0.7.97-alpha.1 through rc.1 client contract is retained. npm publication
+remains a manual maintainer action.
+
+### Added
+
+- `zhipu-coding` lists `glm-5.4`, which went live on the GLM Coding Plan on
+  2026-11-23 without an official document. It uses the `glm-5.3-flash`
+  settings: 1M context, 131,072 output tokens, thinking always on with the
+  GLM-5.3 effort mapping. Cost estimates use the GLM-5.3 rate. A live check
+  confirmed the model ID exists, but the upstream was overloaded (error 1305)
+  for nearly every request, so effort, tools, limits and image input are not
+  verified. Image input stays off until a live check passes.
+
+### Changed
+
+- RepoIntel keeps to what git can answer by default (FEATURE_317). Its
+  name-matched semantic index sampled at 42.7% precision and 55.1% recall
+  on call targets, yet it was on the default tool surface, in automatic
+  context and in background builds. Now:
+  - under the default `auto` mode, agents get `repo_overview`,
+    `changed_scope` and `changed_diff`. The semantic tools (`module_context`,
+    `symbol_context`, `process_context`, `impact_estimate`,
+    `relationship_scan`, `cyclic_dependencies`, `semantic_lookup`), the
+    injected module and impact context and the background index build need
+    `repoIntelligenceMode` `full` or `light`, or
+    `KODAX_REPO_INTELLIGENCE=full|light`. Routing signals come from the git
+    change set. Direct SDK calls such as `getModuleContext` still run the
+    index;
+  - truncated lists report how many items were left out, a name the index
+    does not know is a not-found error, and an index that does not respond
+    reports warming or unavailable. There is no placeholder result and no
+    fallback to the largest module;
+  - `changed_scope` pages its file list, injected context no longer carries
+    timestamps, and an unknown git state counts as changed;
+  - the index is stored under `<config home>/repo-intelligence/` instead of
+    `.agent/repo-intelligence/` in the workspace. That old directory is no
+    longer used and can be deleted.
+    `KODAX_REPO_INTELLIGENCE_STORAGE_DIR` overrides the location.
+    `target_path` outside the working directory and its Git root is an
+    error.
+
+### Fixed
+
+- Switching models no longer teaches the new model to write its thinking
+  into the reply (Issue 441). Reasoning from another model used to be
+  replayed as `<prior_reasoning>` reply text, and tool turns without
+  thinking got a `'...'` thinking block. Models copied both: replies opened
+  with the tag while the thinking held only `'...'`. Now:
+  - readable reasoning replays only through the target's reasoning channel
+    (unsigned thinking on lenient Anthropic-compatible endpoints,
+    `reasoning_content` on OpenAI-compatible ones) and is dropped
+    elsewhere. It never becomes reply text on any serializer;
+  - signatures, redacted thinking and encrypted reasoning still replay only
+    to the endpoint that produced them;
+  - a lenient tool turn without thinking, or with only `'...'`, carries an
+    empty thinking block. DeepSeek still requires one there;
+  - replay removes a leading `<prior_reasoning>` segment from earlier
+    replies, so already-polluted sessions recover. Stored history is not
+    changed.
+- Gemini and pi-messages endpoints replay tool calls from another model as
+  real calls and results instead of `<prior_tool_call>` text (Issue 442).
+  On Gemini, those calls use Google's documented skip signature. On
+  pi-messages, the turn comes from an `unknown` origin with zero usage.
+  pi-messages has not been tested live.
+- Gemini no longer fails its next request after a reply that left an empty
+  text block. Switching from Gemini to Kimi's Anthropic-compatible endpoint
+  no longer fails for the same reply (Issue 442).
+
+---
+
+## [0.7.97-rc.1] - 2026-11-23
+
+First release candidate of the v0.7.97 line: the model catalog refresh
+and the late provider/Host/REPL repairs (Issues 431-440). The
+`anthropic` provider lists Claude Fable 5.2 and the `openai` provider
+lists the GPT-6.x lineup with per-model effort declarations, defaults
+move to `claude-sonnet-5-5` and `gpt-6.2-sol`, and the Codex CLI
+bridge falls back to `gpt-6.2-sol`. Native Claude models no longer
+fail a forced-tool or legacy `reasoning: false` request, OpenAI strict
+tool schemas fall back to non-strict and remember the strict-limit
+rejection (Issue 431), and retry classification stops treating any
+message that merely contains `limit`, `rate` or `503` as a rate limit
+while retrying the real transient shapes (Issue 432). Tool calls an
+extension handler makes internally stay out of the Session view and no
+longer leave running items behind (Issue 433). Windows process
+snapshots and exact termination read through new native exports of
+`kodax-windows-sandbox`, so a bash call no longer blocks the Host event
+loop for about a second and a submitted message under concurrent bash
+load shows after 1.5-2.1 s instead of 5.3-7.3 s (Issue 434). The
+memory review scan locks only a session with a stale claim, taking
+about 2 s instead of 18 s on a large inbox (Issue 435). The Host and
+CLI stop blocking on repeated Git and PowerShell probes — `git config
+--get remote.origin.url` is remembered per directory and refreshed
+asynchronously, and the CLI and its providers use the installed native
+Windows process helper, so a scripted first turn on a fresh Host
+replies in 3.9-4.2 s instead of 5.1-5.7 s and an ordinary turn starts
+no synchronous process (Issue 439). The memory review receipt is
+announced only after its job is durably completed (Issue 440), and the
+REPL neither jumps while a reply streams under "Thinking…" (Issue 438)
+nor loses a submitted input before the Host view shows it. Every
+v0.7.96 stable and v0.7.97-alpha.1 through beta.13 client contract is
+retained. npm publication remains a manual maintainer action.
+
+### Added
+
+- The REPL shows a submitted input at once instead of waiting for the
+  Host view, which adds the user item only after its Run starts. The
+  echo row carries the input id, so the Host's own item takes its place
+  without a remount once it appears (also inside a merged message or the
+  queue), and a rejected, withdrawn or never-started input is dropped
+  again.
+- The `anthropic` provider lists Claude Fable 5.2 (1M context, 128K output,
+  always-on adaptive thinking, effort `low` to `max`, default `high`). It
+  uses the same native request path as the Claude 5.5 models. It has not been
+  tested live.
+- The `openai` provider lists GPT-6.2 Sol / Astra, GPT-6.1 Sol / Terra,
+  GPT-6 Sol / Astra / Luna, GPT-5.6 Sol / Terra / Luna, GPT-5.5 and
+  GPT-5.4 mini / nano. Each model declares the efforts its endpoint accepts:
+  GPT-6.2 and GPT-6.1 Sol and the Astra models cannot turn reasoning off,
+  GPT-5.6 and later accept `max`, and GPT-6 and GPT-5.5 do not accept
+  `minimal`. Cost estimates cover input up to 272K tokens; above that OpenAI
+  bills a higher tier, so the cost is reported as unknown.
+- The `anthropic` provider lists Claude Opus 5 and Claude Sonnet 5 (1M
+  context, 128K output, effort `low` to `max`, default `high`). Sonnet 5 can
+  turn thinking off. Opus 5 can turn thinking off only at `high` or below, so
+  KodaX does not offer it.
+- Qwen Token Plan lists `qwen3.8-flash`, `glm-5.3` and `deepseek-v4.1-flash`.
+  GLM-5.3 cannot turn thinking off. GLM-5.3 and DeepSeek V4.1 Flash send the
+  same `thinking` + `reasoning_effort` request shape that already works for
+  GLM-5.2 and DeepSeek V4 Pro on this gateway. They have not been tested live
+  on Token Plan.
+- `zhipu-coding` and `zai-coding` list `glm-5.3-highspeed`, a faster GLM-5.3
+  with the same context, output and effort settings. It has no published
+  price, so cost estimates use the GLM-5.3 rate. It has not been tested live.
+
+### Changed
+
+- The `anthropic` provider defaults to `claude-sonnet-5-5` (was
+  `claude-sonnet-4-6`) and the `openai` provider defaults to `gpt-6.2-sol`
+  (was `gpt-5.3-codex`). A configuration that names a model keeps it.
+- The Codex CLI bridge falls back to `gpt-6.2-sol` when `~/.codex/config.toml`
+  sets no model, and no longer offers GPT-5.3 Codex Spark, which Codex rejects
+  for ChatGPT accounts.
+- Qwen Token Plan no longer lists the deprecated `qwen3.8-max-preview`. A
+  configuration that still names it is sent unchanged and uses the provider's
+  default Qwen 3.8 reasoning settings, but image input is no longer declared
+  for it.
+
+### Fixed
+
+- Native Claude models (Claude 5.5, Fable 5.2) no longer fail a request that
+  forces a tool. These models reject forced `tool_choice`, so KodaX sends
+  `auto` up front instead. A legacy `reasoning: false` request now uses
+  adaptive thinking on these models instead of failing; only Haiku 5.5 turns
+  thinking off.
+- OpenAI strict tool schemas fall back to non-strict when a node has no
+  `type`. A Claude rejection for exceeding the strict tool limit is
+  remembered for the session, so later turns do not repeat the 400
+  (Issue 431).
+- Retry classification no longer treats any message containing `limit`,
+  `rate` or `503` as a rate limit. It retries mid-stream `api_error`
+  events, `finish_reason: "error"`, replies cut off after they began,
+  gateway "temporarily unavailable" messages and Cloudflare 520/524/525
+  (Issue 432).
+- Tool calls an extension handler makes through `scope.invokeTool` or
+  `executeProcess` are dispatched as nested calls: they keep their
+  permission, sandbox and guardrail checks but emit no view-level
+  `onToolUseStart` or extension `tool:start`, so Hosts no longer see a
+  start with no end. Each execution records the model-issued call that
+  owns its item, and the Session view settles a terminal Run's running
+  and `awaiting_approval` items as `cancelled`; restore and
+  interrupted-Run recovery drop old records with no result and no
+  matching `tool_use` (Issue 433).
+- Windows process snapshots, start identities and exact termination run
+  through new native `__process-snapshot`,
+  `__process-start-identities` and `__process-terminate-exact` exports
+  of `kodax-windows-sandbox` instead of spawning PowerShell with an
+  inline C# helper, which blocked the Host event loop for about a second
+  per bash call. Every call falls back to PowerShell when the helper is
+  missing or fails. Under concurrent bash load a submitted message shows
+  after 1.5-2.1 s instead of 5.3-7.3 s, and Stop is confirmed in
+  0.02-1.3 s (Issue 434).
+- The memory review inbox scan no longer takes the session-authority and
+  branch locks on every session directory: it checks `processing/`
+  without a lock first and only a session with a stale claim is locked,
+  so one scan on a large inbox takes about 2 s instead of 18 s and a
+  session held by another writer no longer stalls it (Issue 435).
+- While a reply streamed under "Thinking…", the spinner row and the
+  history above it jumped one render before snapping back: ScrollBox
+  moved its window in an effect after the content grew, so that render
+  drew the grown content through the previous window. A render whose
+  geometry props differ from the committed ones now computes the window
+  from the incoming props (Issue 438).
+- The Host and the CLI stop blocking on repeated Git and PowerShell
+  probes. `tryGitRemote` ran `git config --get remote.origin.url`
+  through `execSync` about five times per Run (up to 827 ms cold); it
+  now remembers the answer per directory and refreshes it
+  asynchronously after ten seconds. `runCliMain` installs the native
+  Windows process helper for daemon discovery, and `@kodax-ai/llm`
+  exposes `installCliWindowsProcessHelper` so CLI providers no longer
+  take a PowerShell snapshot on every child start and exit. A scripted
+  first turn on a fresh Host replies in 3.9-4.2 s instead of 5.1-5.7 s
+  (Issue 439).
+- The memory review receipt is announced through
+  `onMemoryReviewReceipt` only after its job is durably completed and
+  `pending/<job>.json` removed. The v2 drain accepts a notifier from
+  `onV2Completed` and calls it at that point; a throwing notifier is
+  reported and cannot reopen the job. The receipt is still written
+  before completion so recovery cannot replay applied effects
+  (Issue 440).
+
+---
+
 ## [0.7.97-beta.13] - 2026-11-21
 
 Thirteenth beta of the v0.7.97 line: the Space integration repairs
@@ -524,7 +755,7 @@ inputs changed:
 
   Persona, override and tool-policy roots now also get the compact Worker
   and tool text, which cut first-request input by about 28-34% in evals. See
-  [SDK_MIGRATION.md](docs/SDK_MIGRATION.md#统一提示词链路未发布).
+  [SDK_MIGRATION.md](docs/SDK_MIGRATION.md#统一提示词链路随-v0797-beta12-发布).
 
 - The skill-creator helper scripts now call the model in the way each job
   needs:

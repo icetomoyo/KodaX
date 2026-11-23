@@ -60,6 +60,21 @@ const REPO_INTELLIGENCE_WORKING_TOOL_NAME_SET = new Set<string>(
   REPO_INTELLIGENCE_WORKING_TOOL_NAMES,
 );
 
+/** Tools backed by the semantic index; hidden unless the semantic surface is opted in. */
+export const REPO_INTELLIGENCE_SEMANTIC_TOOL_NAMES = [
+  'module_context',
+  'symbol_context',
+  'process_context',
+  'impact_estimate',
+  'relationship_scan',
+  'cyclic_dependencies',
+  'semantic_lookup',
+] as const;
+
+const REPO_INTELLIGENCE_SEMANTIC_TOOL_NAME_SET = new Set<string>(
+  REPO_INTELLIGENCE_SEMANTIC_TOOL_NAMES,
+);
+
 export const MCP_TOOL_NAMES = [
   'mcp_search',
   'mcp_describe',
@@ -465,6 +480,16 @@ export function filterRepoIntelligenceWorkingToolNames<T extends string>(
   toolNames: readonly T[],
 ): T[] {
   return toolNames.filter((name) => !isRepoIntelligenceWorkingToolName(name));
+}
+
+export function isRepoIntelligenceSemanticToolName(name: string): boolean {
+  return REPO_INTELLIGENCE_SEMANTIC_TOOL_NAME_SET.has(name);
+}
+
+export function filterRepoIntelligenceSemanticToolNames<T extends string>(
+  toolNames: readonly T[],
+): T[] {
+  return toolNames.filter((name) => !isRepoIntelligenceSemanticToolName(name));
 }
 
 export function isMcpToolName(name: string): boolean {

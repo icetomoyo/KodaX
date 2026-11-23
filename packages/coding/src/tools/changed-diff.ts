@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import { assertNoGitInstallPrompt } from '@kodax-ai/agent';
 import { promisify } from 'node:util';
 import type { KodaXToolExecutionContext } from '../types.js';
-import { resolveExecutionCwd } from '../runtime-paths.js';
+import { resolveWorkspaceTargetPath } from '../runtime-paths.js';
 import { readOptionalString } from './internal.js';
 
 const execFileAsync = promisify(execFile);
@@ -307,11 +307,8 @@ export async function toolChangedDiff(
     if (Object.hasOwn(input, 'limit_per_path')) {
       throw new Error('limit_per_path requires paths; use limit with legacy path.');
     }
-    const cwd = resolveExecutionCwd(ctx);
     const targetPath = readOptionalString(input, 'target_path');
-    const baseDir = targetPath
-      ? await resolveTargetDirectory(path.resolve(cwd, targetPath))
-      : cwd;
+    const baseDir = await resolveTargetDirectory(resolveWorkspaceTargetPath(targetPath, ctx));
     const workspaceRoot = await resolveWorkspaceRoot(baseDir);
     const rawPath = readOptionalString(input, 'path');
     if (!rawPath) {
@@ -356,11 +353,8 @@ async function readChangedDiffPaths(
   toolName: 'changed_diff' | 'changed_diff_bundle',
 ): Promise<string> {
   try {
-    const cwd = resolveExecutionCwd(ctx);
     const targetPath = readOptionalString(input, 'target_path');
-    const baseDir = targetPath
-      ? await resolveTargetDirectory(path.resolve(cwd, targetPath))
-      : cwd;
+    const baseDir = await resolveTargetDirectory(resolveWorkspaceTargetPath(targetPath, ctx));
     const workspaceRoot = await resolveWorkspaceRoot(baseDir);
     const rawPaths = readStringArray(input, 'paths');
     if (rawPaths.length === 0) {

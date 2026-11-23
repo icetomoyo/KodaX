@@ -27,10 +27,13 @@ export interface CostRate {
 // Estimates, not bills. Selected native routes rechecked 2026-11-01; see docs/LLM_INTEGRATION.md.
 export const DEFAULT_COST_RATES: Readonly<Record<string, Readonly<Record<string, CostRate>>>> = {
   anthropic: {
+    'claude-fable-5-2': { inputPer1M: 8, outputPer1M: 40, cacheReadPer1M: 0.2, cacheWritePer1M: 10, cacheWritePer1MByTtl: { '5m': 10, '1h': 16 } },
     'claude-opus-5-5': { inputPer1M: 4, outputPer1M: 20, cacheReadPer1M: 0.2, cacheWritePer1M: 5, cacheWritePer1MByTtl: { '5m': 5, '1h': 8 } },
     'claude-sonnet-5-5': { inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.1, cacheWritePer1M: 2.5, cacheWritePer1MByTtl: { '5m': 2.5, '1h': 4 } },
     'claude-haiku-5-5': { inputPer1M: 0.1, outputPer1M: 0.5, cacheReadPer1M: 0.01, cacheWritePer1M: 0.125, cacheWritePer1MByTtl: { '5m': 0.125, '1h': 0.2 },
       longContext: { aboveInputTokens: 100_000, inputPer1M: 0.5, outputPer1M: 2.5, cacheReadPer1M: 0.05, cacheWritePer1M: 0.625, cacheWritePer1MByTtl: { '5m': 0.625, '1h': 1 } } },
+    'claude-opus-5': { inputPer1M: 5, outputPer1M: 25, cacheReadPer1M: 0.5, cacheWritePer1M: 6.25, cacheWritePer1MByTtl: { '5m': 6.25, '1h': 10 } },
+    'claude-sonnet-5': { inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.2, cacheWritePer1M: 2.5, cacheWritePer1MByTtl: { '5m': 2.5, '1h': 4 } },
     'claude-opus-4-8': {
       inputPer1M: 5.0,
       outputPer1M: 25.0,
@@ -76,6 +79,20 @@ export const DEFAULT_COST_RATES: Readonly<Record<string, Readonly<Record<string,
     // Higher-context/session and regional charges need more facts than token counts.
     'gpt-5.4': { inputPer1M: 2.5, outputPer1M: 15, cacheReadPer1M: 0.25, maxPricedInputTokens: 272_000 },
     'gpt-5.3-codex-spark': { inputPer1M: 10.0, outputPer1M: 40.0 },
+    // models.dev 2026-11-22. Above 272K input OpenAI bills a higher session tier; left unknown like GPT-5.4.
+    'gpt-6.2-sol': { inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.1, cacheWritePer1M: 2.5, maxPricedInputTokens: 272_000 },
+    'gpt-6.2-astra': { inputPer1M: 8, outputPer1M: 40, cacheReadPer1M: 0.4, cacheWritePer1M: 10, maxPricedInputTokens: 272_000 },
+    'gpt-6.1-sol': { inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.1, cacheWritePer1M: 2.5, maxPricedInputTokens: 272_000 },
+    'gpt-6.1-terra': { inputPer1M: 1, outputPer1M: 5, cacheReadPer1M: 0.05, cacheWritePer1M: 1.25, maxPricedInputTokens: 272_000 },
+    'gpt-6-sol': { inputPer1M: 2, outputPer1M: 10, cacheReadPer1M: 0.2, cacheWritePer1M: 2.5, maxPricedInputTokens: 272_000 },
+    'gpt-6-astra': { inputPer1M: 10, outputPer1M: 50, cacheReadPer1M: 1, cacheWritePer1M: 12.5, maxPricedInputTokens: 272_000 },
+    'gpt-6-luna': { inputPer1M: 0.1, outputPer1M: 0.5, cacheReadPer1M: 0.01, cacheWritePer1M: 0.125, maxPricedInputTokens: 272_000 },
+    'gpt-5.6-sol': { inputPer1M: 4, outputPer1M: 20, cacheReadPer1M: 0.4, cacheWritePer1M: 5, maxPricedInputTokens: 272_000 },
+    'gpt-5.6-terra': { inputPer1M: 2, outputPer1M: 12, cacheReadPer1M: 0.2, cacheWritePer1M: 2.5, maxPricedInputTokens: 272_000 },
+    'gpt-5.6-luna': { inputPer1M: 0.2, outputPer1M: 1.2, cacheReadPer1M: 0.02, cacheWritePer1M: 0.25, maxPricedInputTokens: 272_000 },
+    'gpt-5.5': { inputPer1M: 5, outputPer1M: 30, cacheReadPer1M: 0.5, maxPricedInputTokens: 272_000 },
+    'gpt-5.4-mini': { inputPer1M: 0.75, outputPer1M: 4.5, cacheReadPer1M: 0.075 },
+    'gpt-5.4-nano': { inputPer1M: 0.2, outputPer1M: 1.25, cacheReadPer1M: 0.02 },
   },
   deepseek: {
     // Official USD off-peak estimates (2026-11-01); peak is 2x.
@@ -121,11 +138,13 @@ export const DEFAULT_COST_RATES: Readonly<Record<string, Readonly<Record<string,
     // placeholders keep cost tracking non-zero; actual consumption lives in
     // the Alibaba Cloud subscription console.
     'qwen3.8-max': { inputPer1M: 0.005, outputPer1M: 0.015 },
-    'qwen3.8-max-preview': { inputPer1M: 0.005, outputPer1M: 0.015 },
+    'qwen3.8-flash': { inputPer1M: 0.005, outputPer1M: 0.015 },
     'qwen3.7-max': { inputPer1M: 0.005, outputPer1M: 0.015 },
     'qwen3.7-plus': { inputPer1M: 0.005, outputPer1M: 0.015 },
     'qwen3.6-flash': { inputPer1M: 0.005, outputPer1M: 0.015 },
+    'glm-5.3': { inputPer1M: 0.005, outputPer1M: 0.015 },
     'glm-5.2': { inputPer1M: 0.005, outputPer1M: 0.015 },
+    'deepseek-v4.1-flash': { inputPer1M: 0.005, outputPer1M: 0.015 },
     'deepseek-v4-pro': { inputPer1M: 0.005, outputPer1M: 0.015 },
   },
   zhipu: {
@@ -143,7 +162,11 @@ export const DEFAULT_COST_RATES: Readonly<Record<string, Readonly<Record<string,
   'zhipu-coding': {
     // Subscription routes use nominal rates for local accounting; actual
     // billing is plan/quota based. Historical GLM-5.2 requests auto-route to 5.3.
+    // GLM-5.4 has no published price yet; reuse the GLM-5.3 nominal rate.
+    'glm-5.4': { inputPer1M: 0.05, outputPer1M: 0.1 },
     'glm-5.3': { inputPer1M: 0.05, outputPer1M: 0.1 },
+    // Highspeed has no published per-token price; reuse the GLM-5.3 nominal rate.
+    'glm-5.3-highspeed': { inputPer1M: 0.05, outputPer1M: 0.1 },
     // Flash is on the Coding Plan with 3x plan quota; nominal accounting
     // mirrors the published per-token rates (same as the zhipu entry).
     'glm-5.3-flash': { inputPer1M: 0.15, outputPer1M: 0.5, cachePer1M: 0.03 },
@@ -157,6 +180,7 @@ export const DEFAULT_COST_RATES: Readonly<Record<string, Readonly<Record<string,
     // same upstream backend. Mirror keeps cost-tracker output
     // comparable when users split between the CN and overseas endpoint.
     'glm-5.3': { inputPer1M: 0.05, outputPer1M: 0.1 },
+    'glm-5.3-highspeed': { inputPer1M: 0.05, outputPer1M: 0.1 },
     'glm-5.3-flash': { inputPer1M: 0.15, outputPer1M: 0.5, cachePer1M: 0.03 },
     'glm-5.2': { inputPer1M: 0.05, outputPer1M: 0.1 },
     'glm-5-turbo': { inputPer1M: 0.01, outputPer1M: 0.03 },

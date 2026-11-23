@@ -94,7 +94,9 @@ it('carries bound MCP and Repo contracts and evidence together in the root reque
     const promptContext: RunnerChainPromptContext = { prompt: task, decision: buildFallbackRoutingDecision(task),
       contextFactory: () => ({ originalTask: task, capabilityContextBlock: mcpContext }),
       repoIntelligenceContext: repoEvidence };
-    const worker = buildRunnerAgentChain({ ...context, extensionRuntime: runtime, workMode: 'coding' },
+    // The semantic Repo tools are opt-in; this contract covers the opted-in surface.
+    const worker = buildRunnerAgentChain({ ...context, extensionRuntime: runtime, workMode: 'coding',
+      parentAgentConfig: { provider: 'anthropic', repoIntelligenceMode: 'full' } },
       undefined, undefined, undefined, promptContext).worker;
     const original = instructions(worker);
     const envelope = resolveRoleRunContext('worker', worker.name, promptContext, undefined)!;

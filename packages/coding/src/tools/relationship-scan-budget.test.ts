@@ -16,6 +16,7 @@ vi.mock('../repo-intelligence/runtime.js', () => runtimeMocks);
 vi.mock('./grep.js', () => grepMocks);
 
 import { toolRelationshipScan } from './relationship-scan.js';
+import { RepoIntelligenceUnavailableError } from '../repo-intelligence/internal.js';
 
 describe('relationship_scan budget behavior', () => {
   beforeEach(() => {
@@ -44,37 +45,10 @@ describe('relationship_scan budget behavior', () => {
     }
   });
 
-  it('stops indexed follow-up calls after the first warming result', async () => {
-    runtimeMocks.getSymbolContext.mockResolvedValueOnce({
-      symbol: {
-        id: 'limited:NameService',
-        name: 'NameService',
-        qualifiedName: 'NameService',
-        kind: 'function',
-        filePath: '',
-        moduleId: '.',
-        language: 'unknown',
-        capabilityTier: 'low',
-        line: 1,
-        signature: 'NameService',
-        exported: false,
-        calls: [],
-        callTargets: [],
-        importPaths: [],
-        confidence: 0.1,
-      },
-      alternatives: [],
-      callers: [],
-      freshness: 'limited',
-      confidence: 0.1,
-      capability: {
-        mode: 'full',
-        engine: 'full',
-        level: 'enhanced',
-        status: 'warming',
-        warnings: ['Repo intelligence symbol context is still warming; retry shortly.'],
-      },
-    });
+  it('stops indexed follow-up calls after the index reports it is warming', async () => {
+    runtimeMocks.getSymbolContext.mockRejectedValueOnce(
+      new RepoIntelligenceUnavailableError('warming', 'Repo intelligence symbol context is still warming; retry shortly.'),
+    );
 
     const result = await toolRelationshipScan({ symbol: 'NameService' }, {
       backups: new Map(),
@@ -90,36 +64,9 @@ describe('relationship_scan budget behavior', () => {
   });
 
   it('renders a clean warming response without false-negative edge claims', async () => {
-    runtimeMocks.getSymbolContext.mockResolvedValueOnce({
-      symbol: {
-        id: 'limited:NameService',
-        name: 'NameService',
-        qualifiedName: 'NameService',
-        kind: 'function',
-        filePath: '',
-        moduleId: '.',
-        language: 'unknown',
-        capabilityTier: 'low',
-        line: 1,
-        signature: 'NameService',
-        exported: false,
-        calls: [],
-        callTargets: [],
-        importPaths: [],
-        confidence: 0.1,
-      },
-      alternatives: [],
-      callers: [],
-      freshness: 'limited',
-      confidence: 0.1,
-      capability: {
-        mode: 'full',
-        engine: 'full',
-        level: 'enhanced',
-        status: 'warming',
-        warnings: ['Repo intelligence symbol context is still warming; retry shortly.'],
-      },
-    });
+    runtimeMocks.getSymbolContext.mockRejectedValueOnce(
+      new RepoIntelligenceUnavailableError('warming', 'Repo intelligence symbol context is still warming; retry shortly.'),
+    );
 
     const result = await toolRelationshipScan({ symbol: 'NameService' }, {
       backups: new Map(),
@@ -134,7 +81,61 @@ describe('relationship_scan budget behavior', () => {
     // It must explicitly flag the warming state and that this is not a result.
     expect(result).toContain('Structural relationships unavailable');
     expect(result).toContain('NOT a "no relationships found" result');
-    expect(result).toContain('retry');
+    expect(result).toContain('Retry relationship_scan shortly');
+  });
+
+  it('reports an unavailable index without suggesting a retry', async () => {
+    runtimeMocks.getModuleContext.mockRejectedValueOnce(
+      new RepoIntelligenceUnavailableError('unavailable', 'Repo intelligence module context is unavailable because the index worker did not respond.'),
+    );
+
+    const result = await toolRelationshipScan({ module: 'example-module' }, {
+      backups: new Map(),
+      executionCwd: 'C:/repo',
+    });
+
+    expect(result).toContain('Status: index unavailable');
+    expect(result).toContain('NOT a "no relationships found" result');
+    expect(result).not.toContain('Retry relationship_scan');
+    expect(runtimeMocks.getImpactEstimate).not.toHaveBeenCalled();
+  });
+
+  it('says how many callers the index left out', async () => {
+    const record = {
+      id: 'NameService',
+      name: 'NameService',
+      qualifiedName: 'NameService',
+      kind: 'function',
+      filePath: 'src/name.ts',
+      moduleId: 'src',
+      language: 'typescript',
+      capabilityTier: 'high',
+      line: 3,
+      signature: 'function NameService()',
+      exported: true,
+      calls: [],
+      callTargets: [],
+      importPaths: [],
+      confidence: 0.9,
+    };
+    runtimeMocks.getSymbolContext.mockResolvedValueOnce({
+      symbol: record,
+      alternatives: [],
+      callers: [{ ...record, id: 'caller', name: 'caller', filePath: 'src/caller.ts' }],
+      omitted: { callers: 5 },
+      freshness: 'now',
+      confidence: 0.9,
+    });
+    runtimeMocks.getModuleContext.mockResolvedValueOnce(undefined);
+    runtimeMocks.getProcessContext.mockResolvedValueOnce(undefined);
+    runtimeMocks.getImpactEstimate.mockResolvedValueOnce(undefined);
+
+    const result = await toolRelationshipScan({ symbol: 'NameService' }, {
+      backups: new Map(),
+      executionCwd: 'C:/repo',
+    });
+
+    expect(result).toContain('- ... 5 more caller(s) not shown');
   });
 
   it('preserves grep evidence already bounded by head_limit without a second lossy clip', async () => {

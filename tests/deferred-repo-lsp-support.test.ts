@@ -12,7 +12,9 @@ import { buildWorkerStableInstructions } from '../packages/coding/src/agents/wor
 import type { ManagedTaskBudgetController } from '../packages/coding/src/task-engine/_internal/managed-task/budget.js';
 
 function fullInput(): FrozenInput {
-  const worker = buildRunnerAgentChain({ backups: new Map(), executionCwd: process.cwd() }).worker;
+  // Opt in to the semantic surface so the four detailed Repo contracts are present.
+  const worker = buildRunnerAgentChain({ backups: new Map(), executionCwd: process.cwd(),
+    parentAgentConfig: { provider: 'test', repoIntelligenceMode: 'full' } }).worker;
   return { system: 'Unchanged AMA instructions.', messages: [{ role: 'user', content: 'Review this repository.' }],
     tools: (worker.tools ?? []).map(tool => ({ name: tool.name, description: tool.description, input_schema: tool.input_schema })) };
 }

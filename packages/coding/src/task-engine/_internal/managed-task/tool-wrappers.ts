@@ -216,7 +216,7 @@ export function wrapCodingToolAsRunnable(
         // Lazy import avoids the registry -> construction -> AMA module cycle.
         const content = ctxForCall.invokeCheckedTool && toolCallId
           ? await (await import('../../../agent-runtime/tool-dispatch.js')).executeInExtensionScope(
-            { id: toolCallId, name: definition.name, input }, ctxForCall, runnerCtx?.abortSignal,
+            call, ctxForCall, runnerCtx?.abortSignal,
             events ?? {}, execute)
           : await execute();
         recordWrittenFile(baseCtx.writtenFiles, { name: definition.name, input }, content, resolveExecutionCwd(ctxForCall));

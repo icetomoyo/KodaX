@@ -10,6 +10,8 @@ const runtimeMocks = vi.hoisted(() => ({
   getImpactEstimate: vi.fn(),
   getModuleContext: vi.fn(),
   getRepoPreturnBundle: vi.fn(),
+  // These tests cover the opted-in semantic surface.
+  isRepoIntelligenceSemanticSurfaceEnabled: vi.fn(() => true),
   resolveKodaXAutoRepoMode: vi.fn(),
   resolveKodaXHotPathRepoMode: vi.fn(),
 }));
@@ -51,7 +53,7 @@ describe('CAP-001 repo-intelligence hot-path budget', () => {
       {
         context: {
           executionCwd: 'C:/repo',
-          repoIntelligenceMode: 'auto',
+          repoIntelligenceMode: 'full',
         },
       } as KodaXOptions,
       reviewPlan(),
@@ -81,7 +83,7 @@ describe('CAP-001 repo-intelligence hot-path budget', () => {
       {
         context: {
           executionCwd: 'C:/repo-overview-budget',
-          repoIntelligenceMode: 'auto',
+          repoIntelligenceMode: 'full',
         },
       } as KodaXOptions,
       reviewPlan(),
@@ -108,7 +110,7 @@ describe('CAP-001 repo-intelligence hot-path budget', () => {
     const options = {
       context: {
         executionCwd: 'C:/repo-second-budget',
-        repoIntelligenceMode: 'auto',
+        repoIntelligenceMode: 'full',
       },
     } as KodaXOptions;
 

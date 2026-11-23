@@ -16,10 +16,10 @@ import { setAgentConfigHome } from '@kodax-ai/agent';
 
 import {
   resolveRepoIntelligenceStorageDir,
+  resolveRepoIntelligenceStorageRoot,
   withRepoIntelligenceStorageDir,
   writeJsonFileAtomic,
 } from './internal.js';
-import { getRepoIntelligenceDir as getSemanticRepoIntelligenceDir } from './semantic-shared.js';
 
 describe('repo-intelligence internal storage overrides', () => {
   const originalStorageDir = process.env.KODAX_REPO_INTELLIGENCE_STORAGE_DIR;
@@ -60,11 +60,54 @@ describe('repo-intelligence internal storage overrides', () => {
 
   it('keeps semantic shared storage resolution on the same async override path', async () => {
     delete process.env.KODAX_REPO_INTELLIGENCE_STORAGE_DIR;
+    const workspaceRoot = path.resolve('repo');
 
     const observed = await withRepoIntelligenceStorageDir('.semantic-override', async () =>
-      getSemanticRepoIntelligenceDir());
+      resolveRepoIntelligenceStorageRoot(workspaceRoot));
 
-    expect(observed).toBe('.semantic-override');
+    expect(observed).toBe(path.join(workspaceRoot, '.semantic-override'));
+  });
+});
+
+describe('resolveRepoIntelligenceStorageRoot', () => {
+  const originalStorageDir = process.env.KODAX_REPO_INTELLIGENCE_STORAGE_DIR;
+  const configHome = path.resolve('kodax-config-home');
+
+  beforeEach(() => {
+    delete process.env.KODAX_REPO_INTELLIGENCE_STORAGE_DIR;
+    setAgentConfigHome(configHome);
+  });
+
+  afterEach(() => {
+    setAgentConfigHome(undefined);
+    if (originalStorageDir === undefined) {
+      delete process.env.KODAX_REPO_INTELLIGENCE_STORAGE_DIR;
+    } else {
+      process.env.KODAX_REPO_INTELLIGENCE_STORAGE_DIR = originalStorageDir;
+    }
+  });
+
+  it('keeps the default cache in the config home rather than the user repository', () => {
+    const workspaceRoot = path.resolve('work', 'my repo');
+    const root = resolveRepoIntelligenceStorageRoot(workspaceRoot);
+    expect(path.dirname(root)).toBe(path.join(configHome, 'repo-intelligence'));
+    expect(path.basename(root)).toMatch(/^my-repo-[0-9a-f]{12}$/);
+    expect(root.startsWith(workspaceRoot)).toBe(false);
+    expect(resolveRepoIntelligenceStorageRoot(workspaceRoot)).toBe(root);
+  });
+
+  it('gives each workspace its own directory under an absolute base', () => {
+    process.env.KODAX_REPO_INTELLIGENCE_STORAGE_DIR = path.resolve('shared-cache');
+    const first = resolveRepoIntelligenceStorageRoot(path.resolve('a', 'repo'));
+    const second = resolveRepoIntelligenceStorageRoot(path.resolve('b', 'repo'));
+    expect(path.dirname(first)).toBe(path.resolve('shared-cache'));
+    expect(first).not.toBe(second);
+  });
+
+  it('keeps a relative override inside the workspace', () => {
+    process.env.KODAX_REPO_INTELLIGENCE_STORAGE_DIR = '.cache/repointel';
+    const workspaceRoot = path.resolve('repo');
+    expect(resolveRepoIntelligenceStorageRoot(workspaceRoot)).toBe(path.join(workspaceRoot, '.cache', 'repointel'));
   });
 });
 

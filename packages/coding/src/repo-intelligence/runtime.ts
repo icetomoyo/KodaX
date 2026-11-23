@@ -46,8 +46,10 @@ import type { RepoPreturnBundle } from './protocol.js';
 import { REPOINTEL_CONTRACT_VERSION } from './protocol.js';
 import type { ClientRepoIntelligenceStatus } from '../client-contract.js';
 import {
+  isRepoIntelligenceSemanticSurfaceEnabled,
   resolveRepoIntelligenceMode,
   resolveRepoIntelligenceRuntimeConfig,
+  SEMANTIC_SURFACE_OPT_IN_NOTE,
 } from './runtime-config.js';
 export type {
   RepoIntelligenceRuntimeConfig,
@@ -55,10 +57,13 @@ export type {
 } from './runtime-config.js';
 export {
   inspectRepoIntelligenceRuntime,
+  isRepoIntelligenceSemanticSurfaceEnabled,
   resolveRepoIntelligenceMode,
   resolveRepoIntelligenceRuntimeConfig,
 } from './runtime-config.js';
-import { debugLogRepoIntelligence } from './internal.js';
+import { debugLogRepoIntelligence, RepoIntelligenceQueryError, RepoIntelligenceUnavailableError } from './internal.js';
+export { RepoIntelligenceUnavailableError } from './internal.js';
+import { getChangeRoutingSignals } from './routing-signals.js';
 
 type RepoContext = Pick<KodaXToolExecutionContext, 'executionCwd' | 'gitRoot'>;
 const REPO_INTELLIGENCE_PREWARM_DISABLED = '0';
@@ -296,10 +301,10 @@ function workspaceRootForContext(context: RepoContext): string {
   return context.gitRoot ?? context.executionCwd ?? process.cwd();
 }
 
-function limitedWarnings(label: string): string[] {
+function unavailableWarnings(label: string): string[] {
   return [
-    `Repo intelligence ${label} unavailable; worker fallback stayed lightweight to keep the UI responsive.`,
-    'Validate critical edits with read, grep, and targeted repo-intelligence tools after the worker recovers.',
+    `Repo intelligence ${label} is unavailable because the index worker did not respond.`,
+    'Use read, grep, glob, and LSP tools instead.',
   ];
 }
 
@@ -312,176 +317,32 @@ function warmingWarnings(label: string, maxWaitMs: number | undefined): string[]
   ];
 }
 
-function buildLimitedModule(context: RepoContext, targetPath?: string): ModuleCapsule {
-  return {
-    moduleId: '.',
-    label: 'Workspace Root (limited)',
-    kind: 'root',
-    root: '.',
-    fileCount: 0,
-    sourceFileCount: 0,
-    symbolCount: 0,
-    languages: [],
-    topSymbols: [],
-    dependencies: [],
-    dependents: [],
-    entryFiles: targetPath ? [targetPath] : [],
-    keyTests: [],
-    keyDocs: [],
-    sampleFiles: targetPath ? [targetPath] : [],
-    processIds: [],
-    confidence: 0.1,
-  };
-}
-
-function buildLimitedSymbol(name: string, targetPath?: string): RepoSymbolRecord {
-  return {
-    id: `limited:${name}`,
-    name,
-    qualifiedName: name,
-    kind: 'function',
-    filePath: targetPath ?? '',
-    moduleId: '.',
-    language: 'unknown',
-    capabilityTier: 'low',
-    line: 1,
-    signature: name,
-    exported: false,
-    calls: [],
-    callTargets: [],
-    importPaths: [],
-    confidence: 0.1,
-  };
-}
-
-function unavailableSummary(
+/**
+ * The index could not answer. Throwing keeps callers from mistaking an empty
+ * placeholder for a real "nothing found" result.
+ */
+function throwIndexUnavailable(
   label: string,
-  capability: KodaXRepoIntelligenceCapability,
-): string {
-  return capability.status === 'warming'
-    ? `Repo intelligence ${label} is still warming; retry this tool shortly for full structural results.`
-    : `Repo intelligence ${label} is unavailable because the worker did not respond.`;
+  mode: KodaXRepoIntelligenceResolvedMode,
+  timedOut: boolean,
+  maxWaitMs?: number,
+): never {
+  if (!profileForMode(mode)) {
+    throw new RepoIntelligenceUnavailableError('unavailable', `Repo intelligence ${label} is unavailable because repo intelligence is turned off. Use read, grep, glob, and LSP tools instead.`);
+  }
+  if (timedOut) {
+    throw new RepoIntelligenceUnavailableError('warming', warmingWarnings(label, maxWaitMs).join(' '));
+  }
+  throw new RepoIntelligenceUnavailableError('unavailable', unavailableWarnings(label).join(' '));
 }
 
-function buildLimitedProcess(
-  capability: KodaXRepoIntelligenceCapability,
-  targetPath?: string,
-): ProcessCapsule {
-  return {
-    id: 'limited',
-    label: 'Limited repo-intelligence process',
-    moduleId: '.',
-    entryFile: targetPath ?? '',
-    summary: unavailableSummary('process context', capability),
-    steps: [],
-    confidence: 0.1,
-  };
-}
-
-function buildLimitedIndex(
+/** Git-only routing signals, marked low-confidence because the index did not contribute. */
+async function fallbackRoutingSignals(
   context: RepoContext,
   capability: KodaXRepoIntelligenceCapability,
-  targetPath?: string,
-): RepoIntelligenceIndex {
-  const now = new Date().toISOString();
-  const module = buildLimitedModule(context, targetPath);
-  return {
-    schemaVersion: 1,
-    workspaceRoot: workspaceRootForContext(context),
-    generatedAt: now,
-    overviewGeneratedAt: now,
-    sourceFileCount: 0,
-    sourceFingerprint: 'limited',
-    languages: [],
-    modules: [module],
-    symbols: [],
-    processes: [],
-    capability,
-  };
-}
-
-function buildLimitedModuleContext(
-  context: RepoContext,
-  capability: KodaXRepoIntelligenceCapability,
-  targetPath?: string,
-): ModuleContextResult {
-  return {
-    module: buildLimitedModule(context, targetPath),
-    freshness: 'limited',
-    confidence: 0.1,
-    evidence: [],
-    capability,
-  };
-}
-
-function buildLimitedSymbolContext(
-  capability: KodaXRepoIntelligenceCapability,
-  symbol: string,
-  targetPath?: string,
-): SymbolContextResult {
-  return {
-    symbol: buildLimitedSymbol(symbol, targetPath),
-    alternatives: [],
-    callers: [],
-    freshness: 'limited',
-    confidence: 0.1,
-    capability,
-  };
-}
-
-function buildLimitedProcessContext(
-  capability: KodaXRepoIntelligenceCapability,
-  targetPath?: string,
-): ProcessContextResult {
-  return {
-    process: buildLimitedProcess(capability, targetPath),
-    alternatives: [],
-    freshness: 'limited',
-    confidence: 0.1,
-    capability,
-  };
-}
-
-function buildLimitedImpactEstimate(
-  capability: KodaXRepoIntelligenceCapability,
-  options: { symbol?: string; module?: string; path?: string; targetPath?: string },
-): ImpactEstimateResult {
-  const label = options.symbol ?? options.module ?? options.path ?? options.targetPath ?? 'workspace';
-  return {
-    target: options.symbol
-      ? { kind: 'symbol', label }
-      : options.module
-        ? { kind: 'module', label, moduleId: options.module }
-        : { kind: 'path', label, filePath: options.path ?? options.targetPath },
-    summary: unavailableSummary('impact estimate', capability),
-    impactedModules: [],
-    impactedSymbols: [],
-    callers: [],
-    freshness: 'limited',
-    confidence: 0.1,
-    capability,
-  };
-}
-
-function buildLimitedRoutingSignals(
-  context: RepoContext,
-  capability: KodaXRepoIntelligenceCapability,
-): KodaXRepoRoutingSignals {
-  return {
-    workspaceRoot: workspaceRootForContext(context),
-    changedFileCount: 0,
-    changedLineCount: 0,
-    addedLineCount: 0,
-    deletedLineCount: 0,
-    touchedModuleCount: 0,
-    changedModules: [],
-    crossModule: false,
-    riskHints: ['repo-intelligence-worker-unavailable'],
-    plannerBias: false,
-    investigationBias: true,
-    lowConfidence: true,
-    capability,
-  };
+): Promise<KodaXRepoRoutingSignals> {
+  const signals = await getChangeRoutingSignals(context);
+  return { ...signals, lowConfidence: true, capability };
 }
 
 function buildFullTrace(
@@ -548,6 +409,8 @@ async function tryWorkerQuery<T extends object>(
 interface WorkerQueryOutcome<T> {
   result?: T;
   timedOut: boolean;
+  /** The worker answered with an error, such as "no symbol matched"; callers report it as-is. */
+  queryError?: RepoIntelligenceQueryError;
 }
 
 function normalizeMaxWaitMs(maxWaitMs: number | undefined): number | undefined {
@@ -575,6 +438,9 @@ async function settleWorkerQueryWithinBudget<T>(
   const guarded = promise.then(
     (result): WorkerQueryOutcome<T> => ({ result, timedOut: false }),
     (error): WorkerQueryOutcome<T> => {
+      if (error instanceof RepoIntelligenceQueryError) {
+        return { timedOut: false, queryError: error };
+      }
       debugLogRepoIntelligence(`Repo-intelligence worker ${label} failed after budget race.`, error);
       return { result: undefined, timedOut: false };
     },
@@ -609,9 +475,10 @@ async function tryWorkerQueryOutcome<T extends object>(
   if (!profile) {
     return { result: undefined, timedOut: false };
   }
+  let outcome: WorkerQueryOutcome<T>;
   try {
     const workerPromise = load(profile);
-    return await settleWorkerQueryWithinBudget(
+    outcome = await settleWorkerQueryWithinBudget(
       label,
       workerPromise.then((result) => attachRepoIntelligenceMeta(
         result,
@@ -621,9 +488,16 @@ async function tryWorkerQueryOutcome<T extends object>(
       workerPromise,
     );
   } catch (error) {
+    if (error instanceof RepoIntelligenceQueryError) {
+      throw error;
+    }
     debugLogRepoIntelligence(`Repo-intelligence worker ${label} unavailable.`, error);
     return { result: undefined, timedOut: false };
   }
+  if (outcome.queryError) {
+    throw outcome.queryError;
+  }
+  return outcome;
 }
 
 async function tryFullPreturn(
@@ -791,11 +665,7 @@ export async function buildRepoIntelligenceIndex(
       buildWorkerRepoIntelligenceIndex(context, { ...options, profile: activeProfile }));
     if (result) return result;
   }
-  return buildLimitedIndex(
-    context,
-    buildWorkerCapability(resolvedMode, 'unavailable', limitedWarnings('index build')),
-    options.targetPath,
-  );
+  return throwIndexUnavailable('index build', resolvedMode, false);
 }
 
 export async function getRepoIntelligenceIndex(
@@ -809,11 +679,7 @@ export async function getRepoIntelligenceIndex(
       getWorkerRepoIntelligenceIndex(context, { ...options, profile: activeProfile }));
     if (result) return result;
   }
-  return buildLimitedIndex(
-    context,
-    buildWorkerCapability(resolvedMode, 'unavailable', limitedWarnings('index')),
-    options.targetPath,
-  );
+  return throwIndexUnavailable('index', resolvedMode, false);
 }
 
 export async function semanticLookup(
@@ -849,7 +715,7 @@ export async function semanticLookup(
   }
   const capability = outcome.timedOut
     ? buildWorkerCapability(resolvedMode, 'warming', warmingWarnings('semantic lookup', options.maxWaitMs))
-    : buildWorkerCapability(resolvedMode, 'unavailable', limitedWarnings('semantic lookup'));
+    : buildWorkerCapability(resolvedMode, 'unavailable', unavailableWarnings('semantic lookup'));
   return {
     items: [],
     artifacts: [],
@@ -896,13 +762,7 @@ export async function getModuleContext(
     getWorkerModuleContext(context, { ...options, profile }), options.maxWaitMs);
   const result = outcome.result;
   if (result) return result;
-  return buildLimitedModuleContext(
-    context,
-    outcome.timedOut
-      ? buildWorkerCapability(resolvedMode, 'warming', warmingWarnings('module context', options.maxWaitMs))
-      : buildWorkerCapability(resolvedMode, 'unavailable', limitedWarnings('module context')),
-    options.targetPath,
-  );
+  return throwIndexUnavailable('module context', resolvedMode, outcome.timedOut, options.maxWaitMs);
 }
 
 export async function getSymbolContext(
@@ -914,13 +774,7 @@ export async function getSymbolContext(
     getWorkerSymbolContext(context, { ...options, profile }), options.maxWaitMs);
   const result = outcome.result;
   if (result) return result;
-  return buildLimitedSymbolContext(
-    outcome.timedOut
-      ? buildWorkerCapability(resolvedMode, 'warming', warmingWarnings('symbol context', options.maxWaitMs))
-      : buildWorkerCapability(resolvedMode, 'unavailable', limitedWarnings('symbol context')),
-    options.symbol,
-    options.targetPath,
-  );
+  return throwIndexUnavailable('symbol context', resolvedMode, outcome.timedOut, options.maxWaitMs);
 }
 
 export async function getProcessContext(
@@ -932,12 +786,7 @@ export async function getProcessContext(
     getWorkerProcessContext(context, { ...options, profile }), options.maxWaitMs);
   const result = outcome.result;
   if (result) return result;
-  return buildLimitedProcessContext(
-    outcome.timedOut
-      ? buildWorkerCapability(resolvedMode, 'warming', warmingWarnings('process context', options.maxWaitMs))
-      : buildWorkerCapability(resolvedMode, 'unavailable', limitedWarnings('process context')),
-    options.targetPath,
-  );
+  return throwIndexUnavailable('process context', resolvedMode, outcome.timedOut, options.maxWaitMs);
 }
 
 export async function getImpactEstimate(
@@ -949,12 +798,21 @@ export async function getImpactEstimate(
     getWorkerImpactEstimate(context, { ...options, profile }), options.maxWaitMs);
   const result = outcome.result;
   if (result) return result;
-  return buildLimitedImpactEstimate(
-    outcome.timedOut
-      ? buildWorkerCapability(resolvedMode, 'warming', warmingWarnings('impact estimate', options.maxWaitMs))
-      : buildWorkerCapability(resolvedMode, 'unavailable', limitedWarnings('impact estimate')),
-    options,
-  );
+  return throwIndexUnavailable('impact estimate', resolvedMode, outcome.timedOut, options.maxWaitMs);
+}
+
+/**
+ * Routing signals for an agent Run. Without the semantic surface they come from
+ * git changes alone, so starting a Run never builds the semantic index.
+ */
+export function getAgentRepoRoutingSignals(
+  context: RepoContext,
+  mode?: KodaXRepoIntelligenceMode,
+): Promise<KodaXRepoRoutingSignals> {
+  if (!isRepoIntelligenceSemanticSurfaceEnabled(mode)) {
+    return getChangeRoutingSignals(context);
+  }
+  return getRepoRoutingSignals(context, { mode: resolveKodaXHotPathRepoMode(mode) });
 }
 
 export async function getRepoRoutingSignals(
@@ -1010,9 +868,9 @@ export async function getRepoRoutingSignals(
           full.trace,
         );
       }
-      return buildLimitedRoutingSignals(
+      return fallbackRoutingSignals(
         context,
-        buildWorkerCapability(resolvedMode, 'unavailable', limitedWarnings('routing signals')),
+        buildWorkerCapability(resolvedMode, 'unavailable', unavailableWarnings('routing signals')),
       );
     }
     if (resolvedMode === 'light') {
@@ -1021,12 +879,16 @@ export async function getRepoRoutingSignals(
           targetPath: activeTargetPath,
           refresh: options.refresh,
           profile,
-        }));
+        })).catch((error: unknown) => {
+        // Routing must always produce signals; a failed query falls back to git-only ones below.
+        debugLogRepoIntelligence('Light routing signals query failed.', error);
+        return undefined;
+      });
       if (result) return result;
     }
-    return buildLimitedRoutingSignals(
+    return fallbackRoutingSignals(
       context,
-      buildWorkerCapability(resolvedMode, 'unavailable', limitedWarnings('routing signals')),
+      buildWorkerCapability(resolvedMode, 'unavailable', unavailableWarnings('routing signals')),
     );
   })().then((result) => {
     entry.pending = false;
@@ -1111,15 +973,9 @@ async function fetchRepoPreturnBundleInner(
 ): Promise<RepoPreturnBundleResult> {
   const resolvedMode = resolveRepoIntelligenceMode(options.mode);
   if (resolvedMode === 'off') {
-    const capability = buildWorkerCapability(resolvedMode, 'unavailable', limitedWarnings('preturn bundle'));
+    const capability = buildWorkerCapability(resolvedMode, 'unavailable', ['Repo intelligence is disabled.']);
     return {
-      routingSignals: buildLimitedRoutingSignals(context, capability),
-      moduleContext: options.targetPath
-        ? buildLimitedModuleContext(context, capability, options.targetPath)
-        : undefined,
-      impactEstimate: options.targetPath
-        ? buildLimitedImpactEstimate(capability, options)
-        : undefined,
+      routingSignals: await fallbackRoutingSignals(context, capability),
       summary: 'Repo intelligence is disabled.',
       lowConfidence: true,
       capability,
@@ -1216,6 +1072,10 @@ export function inspectRepoIntelligenceProject(context: RepoContext,
   options: { mode?: KodaXRepoIntelligenceMode } = {}): ClientRepoIntelligenceStatus {
   const config = resolveRepoIntelligenceRuntimeConfig(options.mode);
   const configuredMode = config.mode;
+  if (!isRepoIntelligenceSemanticSurfaceEnabled(configuredMode) && configuredMode !== 'off') {
+    return { configuredMode, requestedMode: 'off', effectiveEngine: 'off', status: 'ok', initialized: true,
+      warnings: [...config.warnings, SEMANTIC_SURFACE_OPT_IN_NOTE] };
+  }
   const requestedMode = resolveRepoIntelligenceMode(configuredMode);
   const entry = preturnBundleCache.get(JSON.stringify({ mode: requestedMode,
     executionCwd: normalizeCachePath(context.executionCwd), gitRoot: normalizeCachePath(context.gitRoot),
@@ -1231,7 +1091,7 @@ export function inspectRepoIntelligenceProject(context: RepoContext,
 /** Explicit Host prewarm, sharing both execution caches rather than building a second index. */
 export async function prepareRepoIntelligenceProject(context: RepoContext,
   options: { mode?: KodaXRepoIntelligenceMode } = {}): Promise<ClientRepoIntelligenceStatus> {
-  if (resolveRepoIntelligenceMode(options.mode) === 'off'
+  if (!isRepoIntelligenceSemanticSurfaceEnabled(options.mode)
     || process.env.KODAX_PREWARM_REPO_INTELLIGENCE === REPO_INTELLIGENCE_PREWARM_DISABLED) {
     return inspectRepoIntelligenceProject(context, options);
   }
@@ -1277,14 +1137,13 @@ export function prewarmRepoIntelligenceCaches(
   if (process.env.KODAX_PREWARM_REPO_INTELLIGENCE === REPO_INTELLIGENCE_PREWARM_DISABLED) {
     return;
   }
-  const resolved = resolveKodaXAutoRepoMode(options.mode);
-  if (resolved === 'off') {
+  if (!isRepoIntelligenceSemanticSurfaceEnabled(options.mode)) {
     return;
   }
   if (!context.executionCwd && !context.gitRoot) {
     return;
   }
-  if (resolved !== 'full') {
+  if (resolveKodaXAutoRepoMode(options.mode) !== 'full') {
     return;
   }
 

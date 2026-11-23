@@ -182,20 +182,31 @@ export async function persistMemoryOutcomeToSession(
   }
 }
 
+interface MemoryReviewReceiptInput {
+  readonly jobId?: string;
+  readonly reviewKey: string;
+  readonly proposalIds: readonly string[];
+  readonly completedAt: string;
+  readonly notice?: {
+    readonly episodeId: string;
+    readonly summaries: readonly string[];
+    readonly proposalIds: readonly string[];
+  };
+}
+
 export async function persistMemoryReviewReceiptToSession(
   options: KodaXOptions,
   sessionId: string,
-  input: {
-    readonly jobId?: string;
-    readonly reviewKey: string;
-    readonly proposalIds: readonly string[];
-    readonly completedAt: string;
-    readonly notice?: {
-      readonly episodeId: string;
-      readonly summaries: readonly string[];
-      readonly proposalIds: readonly string[];
-    };
-  },
+  input: MemoryReviewReceiptInput,
+): Promise<void> {
+  await writeMemoryReviewReceiptToSession(options, sessionId, input);
+  notifyMemoryReviewReceipt(options, sessionId, input);
+}
+
+async function writeMemoryReviewReceiptToSession(
+  options: KodaXOptions,
+  sessionId: string,
+  input: MemoryReviewReceiptInput,
 ): Promise<void> {
   await mutateSessionLineage(
     options,
@@ -210,6 +221,13 @@ export async function persistMemoryReviewReceiptToSession(
           });
     },
   );
+}
+
+function notifyMemoryReviewReceipt(
+  options: KodaXOptions,
+  sessionId: string,
+  input: MemoryReviewReceiptInput,
+): void {
   options.events?.onMemoryReviewReceipt?.({
     jobId: input.jobId,
     reviewKey: input.reviewKey,
@@ -433,7 +451,7 @@ async function drainStartedCodingMemoryReviewInbox(
         : (await Promise.all(appliedProposalIds.map(async (proposalId) => (
             (await controller.showProposal(`memory:${proposalId}`))?.preview.summary
           )))).filter((summary): summary is string => summary !== undefined).slice(0, 3);
-      await persistMemoryReviewReceiptToSession(options, entry.ownerSessionRef, {
+      const receipt: MemoryReviewReceiptInput = {
         jobId: entry.jobId,
         reviewKey: entry.reviewKey,
         proposalIds,
@@ -447,7 +465,11 @@ async function drainStartedCodingMemoryReviewInbox(
                 proposalIds: appliedProposalIds,
               },
             }),
-      });
+      };
+      // The receipt is written before the job completes so recovery cannot
+      // replay applied effects; clients hear about it only after completion.
+      await writeMemoryReviewReceiptToSession(options, entry.ownerSessionRef, receipt);
+      return () => notifyMemoryReviewReceipt(options, entry.ownerSessionRef, receipt);
     },
   };
   const result = {

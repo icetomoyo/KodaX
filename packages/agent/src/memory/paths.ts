@@ -20,7 +20,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { execSync } from 'node:child_process';
+import { execFile, execSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import { assertNoGitInstallPromptSync } from '../runtime/macos-git.js';
 import * as path from 'node:path';
@@ -90,29 +90,94 @@ export function hashCwd(cwd: string): string {
   return createHash('sha256').update(normalized).digest('hex').slice(0, 16);
 }
 
+const GIT_REMOTE_ARGS = ['config', '--get', 'remote.origin.url'] as const;
+const GIT_REMOTE_TIMEOUT_MS = 1000;
+// One Run asks for the remote several times (memory root, learning store,
+// project skills). A shared Host serves every session from one event loop, so
+// only the first lookup per cwd may block; later lookups answer from memory and
+// re-check in the background once the answer is this old.
+const GIT_REMOTE_FRESH_MS = 10_000;
+const GIT_REMOTE_CACHE_LIMIT = 64;
+
+interface GitRemoteEntry {
+  value: string | undefined;
+  checkedAt: number;
+  refreshing: boolean;
+}
+
+const gitRemoteCache = new Map<string, GitRemoteEntry>();
+
+function normalizeGitRemote(stdout: string): string | undefined {
+  const trimmed = stdout.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function readGitRemoteSync(cwd: string): string | undefined {
+  try {
+    return normalizeGitRemote(execSync(`git ${GIT_REMOTE_ARGS.join(' ')}`, {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: GIT_REMOTE_TIMEOUT_MS,
+      windowsHide: true,
+    }));
+  } catch {
+    return undefined;
+  }
+}
+
+function refreshGitRemote(cwd: string, entry: GitRemoteEntry): void {
+  if (entry.refreshing) return;
+  entry.refreshing = true;
+  try {
+    execFile('git', [...GIT_REMOTE_ARGS], {
+      cwd,
+      encoding: 'utf-8',
+      timeout: GIT_REMOTE_TIMEOUT_MS,
+      windowsHide: true,
+    }, (error, stdout) => {
+      entry.refreshing = false;
+      entry.checkedAt = Date.now();
+      // Exit 1 means "no remote configured". A timeout or launch failure
+      // says nothing about the remote, so the previous answer stands.
+      if (!error) entry.value = normalizeGitRemote(stdout);
+      else if (error.code === 1) entry.value = undefined;
+    });
+  } catch {
+    entry.refreshing = false;
+    entry.checkedAt = Date.now();
+  }
+}
+
 /**
  * Read `git config --get remote.origin.url` from the given cwd. Returns
  * `undefined` on any failure (no git installed / not a repo / no remote
  * configured / git timed out). NEVER throws.
  *
  * 1000ms timeout — guards against pathological git hangs on broken
- * .git/config without blocking session startup.
+ * .git/config without blocking session startup. The answer is remembered per
+ * cwd; a stale answer is returned at once while a background read refreshes it.
  */
 export function tryGitRemote(cwd: string): string | undefined {
+  const key = path.resolve(cwd);
+  const cached = gitRemoteCache.get(key);
+  if (cached) {
+    if (Date.now() - cached.checkedAt >= GIT_REMOTE_FRESH_MS) refreshGitRemote(key, cached);
+    return cached.value;
+  }
   try {
     assertNoGitInstallPromptSync({ cwd });
-    const stdout = execSync('git config --get remote.origin.url', {
-      cwd,
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 1000,
-      windowsHide: true,
-    });
-    const trimmed = stdout.trim();
-    return trimmed.length > 0 ? trimmed : undefined;
   } catch {
+    // Not remembered: installing the developer tools makes Git usable later.
     return undefined;
   }
+  const value = readGitRemoteSync(cwd);
+  if (gitRemoteCache.size >= GIT_REMOTE_CACHE_LIMIT) {
+    const oldest = gitRemoteCache.keys().next().value;
+    if (oldest !== undefined) gitRemoteCache.delete(oldest);
+  }
+  gitRemoteCache.set(key, { value, checkedAt: Date.now(), refreshing: false });
+  return value;
 }
 
 /**

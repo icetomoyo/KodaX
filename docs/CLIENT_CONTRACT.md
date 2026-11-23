@@ -3,11 +3,11 @@
 本文面向 CLI、SDK 和未来 Web 客户端。产品客户端通过 `KodaXProductClient` 读取 Host 事实、提交意图；Host 执行并保存工作。显示层不读取或写入 Session 文件，不另建运行状态权威。
 
 当前契约核对至 2026-10-29 源码 `b70d2d30`；tag 后新增能力与层级差异见
-[SDK 一致性清单](SDK_MIGRATION.md#2026-10-29-未发布改动对齐)。这不是 npm 发布声明。
+[SDK 一致性清单](SDK_MIGRATION.md#2026-10-29-改动对齐随-v0797-alpha11-发布)。这不是 npm 发布声明。
 
 2026-11-01 审计补充以 `68a02521c` 及后续本地主分支修复为基线：Root/Space 的
 凭证、Skill、模型能力和维护诊断衔接见
-[T12-H 交接](SDK_MIGRATION.md#feature_302-t12-h账号保持与可重试升级未发布)与
+[T12-H 交接](SDK_MIGRATION.md#feature_302-t12-h账号保持与可重试升级随-v0797-alpha12-发布)与
 [Issue 376 验收](test-guides/ISSUE_376_v0.7.97_REGRESSION_GUIDE.md)。前述日期区间为
 历史清单范围，不表示后续未经验证的云账户或旧客户端已获得新能力。
 
@@ -20,7 +20,7 @@ Main 新类型包括 `KodaXClientHostServices`、`RuntimeDefaultSkill`、`Runtim
 Product 输入不能携带这些执行 authority；排队拒绝由 `ClientInputAdmissionError` 显式呈现，
 会话 promotion 返回 `ClientSessionPromotionResult` 和权威 `ClientSession.metadataRevision`。
 可信 Main 配置读写的原子提交、公开完整读取与可区分的配置锁忙/损坏错误见
-[配置提交契约](SDK_MIGRATION.md#2026-11-02-核心配置提交补齐alpha12-之后未发布)；
+[配置提交契约](SDK_MIGRATION.md#2026-11-02-核心配置提交补齐随-v0797-beta1-发布)；
 这些维护入口不授予 Renderer 读取凭证或跳过绑定/CAS 的权限。
 完整调用顺序、恢复/撤销与旧 Host 行为见 [SDK 迁移说明](SDK_MIGRATION.md)。
 
@@ -49,7 +49,7 @@ Shell 清理重试耗尽时保留 deferred 进程身份，允许后续对话和 
 均不导出内部构造器或 inline 所有权切换。旧 JavaScript 构造请求在启动副作用前返回
 `runtime_host_migration_required`。独立 llm/agent/coding 库保留，不能作为共享产品
 Session 的第二个写入者。旧所有权状态由统一启动器迁移，条件、降级限制和无法自动
-识别的无 fence 旧宿主见 [Host 收口迁移](SDK_MIGRATION.md#统一-host-sdk-收口未发布)。
+识别的无 fence 旧宿主见 [Host 收口迁移](SDK_MIGRATION.md#统一-host-sdk-收口随-v0797-alpha12-发布)。
 
 两个产品入口都返回 `Promise<KodaXProductClient>`；选项可以全部省略。连接时要求 Host 宣告整体 `productClient` v1 契约，覆盖统一业务入口和输出事实；不按单个方法维护客户端能力矩阵。旧 Host 缺少该契约时被动 connect 明确拒绝，ensure 仅沿用现有空闲升级机制，不能强停忙碌 Host 或回退私有执行。
 
@@ -193,7 +193,7 @@ permissionMode/planModeEffort 在下一次物理请求采用新选择，已发�
 快照会随请求更新并持久化，重连与 Host 重启不依赖客户端重新推导；不表示操作已获审批。
 Partner persona 不额外禁止 write/bash/edit/子任务；显式工具策略和授权继续约束能力。
 显式 profile 与工具策略的 Agent 组合参见
-[迁移契约](SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复未发布)。
+[迁移契约](SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复随-v0797-alpha12-发布)。
 
 `workflows.start` 接收 `inline`（manifest + source）、`request` 或 `name` 声明式来源，返回 `declined` 原因或 `started` 的 runId。它不接收预执行模块或函数。MCP 配置允许 stdio、SSE、HTTP 等 MCP transport；这不意味着产品 Client transport 已支持这些协议。
 
@@ -311,7 +311,7 @@ Host 超时或 Stop 结算后才到达的回调异常不能改写结果。未回
 
 接收状态 `submitted` 表示进入对话上下文，不证明 Provider 已接收；`queued` 等待安全交付点；`withdrawn` 已撤回；`dropped` 表示目标 Run 在交付前结束，正文未进入上下文。重新提交被丢弃意图使用新 ID。队列 text 是有界预览，编辑撤回内容应使用 `withdraw` 返回的完整原文。
 
-`runs.stop` 的 `accepted` 仅表示本次创建了持久 Stop 请求；返回的 state/outcome/phase 与 Run 真实终态分别解释。`runs.await` 的 `phase: 'unknown'` 表示终态无法确认，例如终态持久化失败；连接可能仍然健康。Host 能力 `actorSettlementConvergence:3` 起，Actor 结算无法确认的 Run 不再停在 unknown，而是以 `failed` + `actor_settlement_not_persisted` + `effectOutcome: 'unknown'` 结束；此后该 Session 保持隔离，`runs.start` 被拒绝，直到 Host 在后台修复或重新接管 Actor 树（无需重启）；只有写盘或隔离前的工具调用永不返回时才需重启 Host；隔离中的 Session 不阻止 Host 停止，preflight 不把它的 Actor turn 计为阻塞项；已请求 Stop 的 Run 或 Workflow 即使执行体不返回也不计为阻塞项，Host 退出后由下一个 Host 标为 `interrupted`。隔离期间 `sessions.load`、`sessions.list` 和会话视图的 `session` 带 `recovery: { state, since, code }`，修复完成后整个字段消失，视图随之更新。`state` 是 `recovering`，进入隔离 10 分钟后变成 `stalled`：后台修复仍在重试，但可能需要人来看；不认识的值按 `recovering` 处理。`since` 是进入隔离的 ISO 时间，只记在内存里，Host 重启后重新计。客户端应显示为“已停止，会话恢复中”，不是模型错误，详见 [SDK 迁移指南](SDK_MIGRATION.md#beta11-之后actor-结算收敛-v3未发布)。它绝不是成功或取消，也不保证重新连接可以解决。传输失败通常使在途 Promise reject，应与 unknown 分开处理并保留 error 原因。phase 当前是字符串类型，UI 必须保留未知值的安全显示，不能把不认识的状态当成功。结果中的 error 是错误文本，不能通过是否存在 result 单独推断成功。
+`runs.stop` 的 `accepted` 仅表示本次创建了持久 Stop 请求；返回的 state/outcome/phase 与 Run 真实终态分别解释。`runs.await` 的 `phase: 'unknown'` 表示终态无法确认，例如终态持久化失败；连接可能仍然健康。Host 能力 `actorSettlementConvergence:3` 起，Actor 结算无法确认的 Run 不再停在 unknown，而是以 `failed` + `actor_settlement_not_persisted` + `effectOutcome: 'unknown'` 结束；此后该 Session 保持隔离，`runs.start` 被拒绝，直到 Host 在后台修复或重新接管 Actor 树（无需重启）；只有写盘或隔离前的工具调用永不返回时才需重启 Host；隔离中的 Session 不阻止 Host 停止，preflight 不把它的 Actor turn 计为阻塞项；已请求 Stop 的 Run 或 Workflow 即使执行体不返回也不计为阻塞项，Host 退出后由下一个 Host 标为 `interrupted`。隔离期间 `sessions.load`、`sessions.list` 和会话视图的 `session` 带 `recovery: { state, since, code }`，修复完成后整个字段消失，视图随之更新。`state` 是 `recovering`，进入隔离 10 分钟后变成 `stalled`：后台修复仍在重试，但可能需要人来看；不认识的值按 `recovering` 处理。`since` 是进入隔离的 ISO 时间，只记在内存里，Host 重启后重新计。客户端应显示为“已停止，会话恢复中”，不是模型错误，详见 [SDK 迁移指南](SDK_MIGRATION.md#beta11-之后actor-结算收敛-v3随-v0797-beta12-发布)。它绝不是成功或取消，也不保证重新连接可以解决。传输失败通常使在途 Promise reject，应与 unknown 分开处理并保留 error 原因。phase 当前是字符串类型，UI 必须保留未知值的安全显示，不能把不认识的状态当成功。结果中的 error 是错误文本，不能通过是否存在 result 单独推断成功。
 
 delivery 的队列行为如下；空 queue 不能证明所有已知输入已经交付。
 
@@ -387,6 +387,17 @@ Interaction 的 kind 决定 options 和 response：单选问题、多问题、�
 | `tool.outputPath?` | Host 保存的完整工具结果引用 | 具体工具项用 part=original 补读；客户端不直接打开路径，缺失原文不能以预览冒充 |
 | `tool.progress?` | 最近的工具进度消息 | 当前提示而非追加日志；完成时可被清除 |
 | `tool.startedAt?`, `tool.endedAt?` | 工具开始/结束的 Unix 毫秒时间 | 两者具备时才可计算执行耗时；不存在 endedAt 不等于当前一定还运行 |
+
+工具项与模型发出的工具调用一一对应：`tool.callId` 是模型 tool_use 的 id，经 `tool_call`
+转发的工具沿用这次 `tool_call` 的 id。扩展处理器经执行作用域 `invokeTool` /
+`executeProcess` 发起的内部调用不产生工具项，但仍经过同样的权限、沙箱与审批检查；
+这类审批交互的 `toolCallId` 不对应任何工具项，按工具名与输入呈现即可。处理器的
+`reportProgress` 与经 `tool_call` 运行的工具进度都更新模型发出的那次调用的项。
+
+Run 进入终态后，它的工具项不再保持 running 或 awaiting_approval：尚无结果的项以
+cancelled 收尾并带 `endedAt`。恢复会话时，Host 丢弃旧版本保存的内部调用记录，
+即从未记录结果、且所属助手消息中没有对应 tool_use 的工具项。
+
 
 任务报告复用 canonical 消息中的 `_taskResult/_taskResults`：`taskResult.source`
 为 `child_task/workflow`，`taskId?` 是任务/Actor Turn 标识，`runId?` 沿用原元数据的

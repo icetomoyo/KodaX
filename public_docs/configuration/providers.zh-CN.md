@@ -6,8 +6,8 @@ KodaX 支持 16 个内置 LLM 提供商别名。每个提供商从专用环境�
 
 | 别名 | 环境变量 | 推理 | 默认模型 |
 |---|---|---|---|
-| `anthropic` | `ANTHROPIC_API_KEY` | 是 | `claude-sonnet-4-6` |
-| `openai` | `OPENAI_API_KEY` | 是 | `gpt-5.3-codex` |
+| `anthropic` | `ANTHROPIC_API_KEY` | 是 | `claude-sonnet-5-5` |
+| `openai` | `OPENAI_API_KEY` | 是 | `gpt-6.2-sol` |
 | `deepseek` | `DEEPSEEK_API_KEY` | 是 | `deepseek-flash`（Anthropic 兼容；也支持旧版纯文本 `deepseek-v4-pro`） |
 | `kimi` | `KIMI_API_KEY` | 是 | `kimi-k2.7-code` |
 | `kimi-code` | `KIMI_CODE_API_KEY` | 是 | `k3-256k` |
@@ -36,6 +36,8 @@ K3.1 始终开启思考：支持的强度为 `low`、`high` 和 `max`，默认�
 `zhipu-coding` 默认使用 `glm-5.3`，保留 `glm-5.2` 作为显式回退路由。海外 `zai-coding` 别名同样默认 `glm-5.3`（2026-08-15 起）。`ark-coding` 同样默认 `glm-5.3`（1M 上下文，128K 输出上限）并保留 `glm-5.2`。
 
 `glm-5.3-flash`（2026-08-26 发布）在 `zhipu`、`zhipu-coding` 和 `zai-coding` 上可用。它是第一个原生多模态 GLM——图像输入开箱即用（通过 `@路径` 或剪贴板粘贴）；拥有 1M 上下文窗口，无法关闭思考（与 `glm-5.3` 相同的强度映射），定价为 GLM-5.3 的十分之一。
+
+`zhipu-coding` 另提供 `glm-5.4`（2026-11-23 上线 Coding Plan，暂无官方文档）。KodaX 沿用 `glm-5.3-flash` 的上下文、输出上限和强度映射。图像输入尚未通过实测，暂不开启。默认模型仍为 `glm-5.3`，可通过 `--model glm-5.4` 或 `/model` 选择。
 
 KodaX 逐字发送两个上游模型 ID：`glm-5.3` 和 `glm-5.2`。不要附加 `[1m]`；上下文窗口属于本地能力元数据，不属于 wire 模型名称。GLM-5.3 无法关闭思考，`off`/`none` 映射到 `low`。
 

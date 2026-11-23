@@ -20,11 +20,23 @@ function readScope(
   return rawScope as 'unstaged' | 'staged' | 'all' | 'compare';
 }
 
+function readOffset(input: Record<string, unknown>): number {
+  const rawOffset = input.offset;
+  if (rawOffset === undefined || rawOffset === null) {
+    return 0;
+  }
+  if (typeof rawOffset !== 'number' || !Number.isInteger(rawOffset) || rawOffset < 0) {
+    throw new Error('offset must be a non-negative integer.');
+  }
+  return rawOffset;
+}
+
 export async function toolChangedScope(
   input: Record<string, unknown>,
   ctx: KodaXToolExecutionContext,
 ): Promise<string> {
   try {
+    const fileOffset = readOffset(input);
     const report = await analyzeChangedScope(ctx, {
       targetPath: readOptionalString(input, 'target_path'),
       scope: readScope(input),
@@ -32,7 +44,7 @@ export async function toolChangedScope(
       refreshOverview: input.refresh_overview === true,
     });
 
-    return renderChangedScope(report);
+    return renderChangedScope(report, { fileOffset });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return `[Tool Error] changed_scope: ${message}`;

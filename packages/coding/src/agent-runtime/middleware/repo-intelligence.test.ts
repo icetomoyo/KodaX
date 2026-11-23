@@ -8,7 +8,9 @@ const sources = vi.hoisted(() => ({
   getImpactEstimate: vi.fn(),
 }));
 vi.mock('../../repo-intelligence/index.js', () => ({ buildRepoIntelligenceContext: sources.buildRepoIntelligenceContext }));
+const surface = vi.hoisted(() => ({ enabled: vi.fn((_mode?: string) => true) }));
 vi.mock('../../repo-intelligence/runtime.js', () => ({ ...sources,
+  isRepoIntelligenceSemanticSurfaceEnabled: surface.enabled,
   resolveKodaXAutoRepoMode: () => 'full', resolveKodaXHotPathRepoMode: () => 'full' }));
 vi.mock('../../repo-intelligence/semantic-render.js', () => ({
   renderModuleContext: () => 'current module evidence', renderImpactEstimate: () => 'current impact evidence' }));
@@ -124,4 +126,17 @@ it('keeps the current change scope on resumed simple reviews without readding th
   expect(result).not.toContain('old changes');
   expect(result).toContain('current module evidence');
   expect(result).toContain('current impact evidence');
+});
+
+it('leaves module and impact capsules out unless the semantic surface is opted in', async () => {
+  surface.enabled.mockReturnValue(false);
+  sources.buildRepoIntelligenceContext.mockResolvedValue('current repository overview');
+  const result = await buildAutoRepoIntelligenceContext({ provider: 'offline-fixture', context: {
+    executionCwd: 'C:/repo-default-surface', repoIntelligenceMode: 'auto',
+  } }, plan, true);
+  expect(result).toBe('current repository overview');
+  expect(surface.enabled).toHaveBeenCalledWith('auto');
+  expect(sources.getRepoPreturnBundle).not.toHaveBeenCalled();
+  expect(sources.getModuleContext).not.toHaveBeenCalled();
+  expect(sources.getImpactEstimate).not.toHaveBeenCalled();
 });

@@ -33,7 +33,7 @@ WebP 和 GIF，返回实际 mediaType，保留 SHA256 校验与字节分块。�
 
 两个能力均支持可选建连要求。Space 在连接后按操作检查 Host 能力，使旧 Host 仍可提供已有的浏览及搜索原文。来源修订使用 SDK 返回的字符串；新保存的 view 项暂缺修订时，可以提交其稳定输入或输出身份由 SDK 验证。浏览与解析只读，均不调用模型。
 
-## 2026-11-02 后续接手：默认方法与 Quick Ask（alpha.12 之后，未发布）
+## 2026-11-02 后续接手：默认方法与 Quick Ask（随 v0.7.97-beta.1 发布）
 
 已发布 alpha.12 及 Space `codex/sdk-alpha12-preparation` 的先行适配仍是各自历史基线；
 本节 Root 新接口已随 `v0.7.97-beta.1` 发布（npm 发布为手动步骤）。Root 不修改 Space 分支、keychain、凭证来源或账号选择。
@@ -67,7 +67,7 @@ Host 原子保存元数据和回执，保留原 Session ID、历史、原生历�
 Space 最新已发布包验收基线为 `codex/sdk-alpha12-preparation@ca8d2313`。其追加的配置
 原子性缺口已在 Root 后续实现补齐：所有核心配置 writer 共用锁与原子发布，坏文件不回落
 空配置。公开完整读取、锁忙/读取失败语义、混合旧 writer 限制及 Main 复合修改方式见
-[配置提交契约](SDK_MIGRATION.md#2026-11-02-核心配置提交补齐alpha12-之后未发布)。
+[配置提交契约](SDK_MIGRATION.md#2026-11-02-核心配置提交补齐随-v0797-beta1-发布)。
 Space 保留有限的明确锁忙重试，不能重试解析失败、绕过 CAS 或因改名默默采用另一账号。
 
 接手验收还需 Space 自己完成：所有现有专家和普通 Partner 的共享 Host 流程、队列切换/
@@ -79,7 +79,7 @@ Root 上轮功能基线 `b385395c9f8686aee182a4c6a38b4f3008421d32` 已在 `origi
 设计子仓 `7927f835744643b418d463b10a2e1c1c4bdd12e8` 和 Space `ca8d2313` 保持原样。
 这批接缝已随 `v0.7.97-beta.1` 发布：Space 先锁定该 SDK 包（npm 发布为手动步骤），再完成以上默认方法、排队/
 恢复业务绑定、Quick Ask 与配置/账号保持验收。现有 API_KEY/config/broker 入口保留，
-不得因错误、改名或重试改变账号来源。[完整验收与历史失败](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#最终验收2026-11-02未发布)。
+不得因错误、改名或重试改变账号来源。[完整验收与历史失败](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#最终验收2026-11-02随-v0797-beta1-发布)。
 
 2026-11-02 Space 补审复现的 steer/redirect 两条漏测分支已补回归：同授权 steer 会先解析
 binding 后进入原 Run；Main 保留该 Run 的业务/profile/credential/tool lease，变化仍 conflict。
@@ -107,11 +107,11 @@ Main/Renderer 不传该标记、不改 inputId，也不需自行迁移队列文�
 
 2026-10-18 的 Space 核查样本安装主 SDK `@kodax-ai/kodax@0.7.97-alpha.7`（用户提供，当时官方 registry 也可查该版本）；此前独立 `@kodax-ai/artifacts` 的 E404 仅保留为历史核查；当前分发方案只发布主包。本文接缝按当前开发树 `0.7.97-beta.6` 核对，不据此推断 Space 已升级；源码实现、npm 发布、Space 启用分别判断。下文旧日期的验收记录保留当时状态。业务操作采用 `/client`；可信 Main 负责授权与宿主配置，Space 负责输入身份、队列展示、view、IPC 与 Renderer 状态迁移。
 
-## 2026-10-29 未发布 SDK 接入补充
+## 2026-10-29 SDK 接入补充（随 v0.7.97-alpha.11 发布）
 
 2026-10-30 的后续修复（已随 `v0.7.97-alpha.12` 发布）补齐统一 Host 的 Partner 准入、可信 profile 快照、
 实际 Run workMode 查询、Actor checkpoint 跨进程恢复和配置应用边界。
-采用 [SDK 组合契约](SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复未发布)，不再使用
+采用 [SDK 组合契约](SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复随-v0797-alpha12-发布)，不再使用
 旧 Partner inline 例外。`services.createExecutionProfile` 在 Main 基于 Host 实际目录评估显式策略，并保留
 profile/验证要求及工具元数据快照。Partner persona 默认不增加工具限制；显式上限
 继续覆盖 native、桥接与派生子任务。实际模式与工具集合用 `runs.read().effectiveConfig` 查询。
@@ -135,7 +135,7 @@ profile/验证要求及工具元数据快照。Partner persona 默认不增加�
 
 任务报告继续消费下文的结构化元数据；独立 `/session` transcript 的 `taskResults`
 现为 `KodaXTaskResultReport[]`，不要求每条都有 taskId，也不把 unknown 当成功。
-完整能力与边界见 [迁移清单](SDK_MIGRATION.md#2026-10-29-未发布改动对齐)。
+完整能力与边界见 [迁移清单](SDK_MIGRATION.md#2026-10-29-改动对齐随-v0797-alpha11-发布)。
 
 ## 启动进度与 Renderer 交接
 
@@ -485,7 +485,7 @@ Electron 使用 ASAR 时，worker 和其运行资源需解包为实际文件。�
 [E2E 范围](test-guides/FEATURE_301_v0.7.97_TEST_GUIDE.md#natural-task-observations-2026-10-13)。
 
 
-## FEATURE_302：共享凭证与 Space 迁移验收（2026-10-31，未发布）
+## FEATURE_302：共享凭证与 Space 迁移验收（2026-10-31，随 v0.7.97-alpha.12 发布）
 
 Space 独立实现提交 `065cc39c` 复用实际 Runtime 配置根的 auth.json；同根 CLI 共享，
 不同根隔离。Provider Key 与 OAuth/client-secret 在不同 namespace/精确绑定内，
@@ -497,7 +497,7 @@ Renderer 仅收到状态和revision，不读回秘密。Provider 更新用显示
 首次来源须持久固定；env 消失、旧库故障、墓碑或连接变更不能悄悄采用 CLI 另一账号。
 只有明确发布/采用操作改变共享选择。迁移、OAuth 切换和恢复保持连接 proof/epoch/owner
 检查，失败不生成替代身份。完整来源规则见
-[账号保持与升级验收](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-h-upgrade-compatibility-acceptance--2026-10-31)。
+[账号保持与升级验收](test-guides/FEATURE_302_v0.7.97_TEST_GUIDE.md#t12-h-upgrade-compatibility-acceptance--2026-10-31)。
 
 可信 Main 保留现有 lease/session/provider/purpose 与物理 connectionFingerprint 校验，
 按请求读取保存值，再使用批准的外部 env 或声明的 OAuth/cloud 身份。撤销先本地 fence，
@@ -508,7 +508,7 @@ OAuth/client identity 的存储变更不修改身份协议；active、retired、
 
 完整Space测试、实际第二Node进程及Windows隔离桌面Electron IPC通过；源码构建和
 开发链接不代表正式安装包。先发布/锁定匹配SDK字节，再走现有生产包门禁。
-[两仓最终证据与范围](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-efg-final-offline-acceptance-2026-10-31)。
+[两仓最终证据与范围](test-guides/FEATURE_302_v0.7.97_TEST_GUIDE.md#t12-efg-final-offline-acceptance-2026-10-31)。
 
 T12-I 在独立 Root 分支整合另一线程已提交的 `0fa38e5b2`，保留真实 Host 工具目录、
 执行 profile、恢复上限、view close drain 和 Windows 回收契约。授权服务新方法
@@ -522,7 +522,7 @@ T12-J 已将这些 Root 接缝与另一线程 `a9587af7e` 的 MCP/Skill 修复�
 Space 计数仍是该独立检查点的历史证据。本轮 Space 产品代码继续保留在 `da531f0a`，
 由负责线程接手后续合入、persona/Partner/profile 和生产打包，未推送或发布。
 
-## Issue 376 最新接手说明（2026-11-01，未发布）
+## Issue 376 最新接手说明（2026-11-01，随 v0.7.97-alpha.12 发布）
 
 Root 本轮修复已提交到本地 `KodaX`：`eb7d1a3bcb1426c8971437077201dc97b0ee7c95`
 （起点 `3cd3e5af`），设计子仓仍为 `8574086208d6b5cc6ff6599c825fe88d986c4dd0`；

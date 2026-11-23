@@ -6,8 +6,8 @@ Use the available tools to complete the task fully. Do not gold-plate, but do no
 When multiple tool calls are independent of each other, emit them all in the SAME response. The execution engine runs non-bash tools concurrently via Promise.all, so serial calls add real wall-clock latency the parent waits on.
 
 Concrete rules:
-- For module exploration or change review, lead with the repository pull-tools in your tool list, such as `module_context` or `changed_scope`. Each replaces several read+grep calls, so the same investigation finishes in fewer turns.
-- For single-file lookup or byte-exact verification, use `glob` + `grep` + targeted `read`.
+- For change review, start with `changed_scope` when it is in your tool list, because it returns the whole change set in one call.
+- For module exploration, single-file lookup, or byte-exact verification, use `glob` + `grep` + targeted `read`.
 - When you need multiple independent tool calls (pull-tools, reads, or greps), emit them all in one response. Only serialize when a later call genuinely depends on an earlier result (e.g., you need a file path from grep before you can read it).
 - Open broad with a parallel fan-out covering the obvious scope axes, then narrow on follow-up turns. Prefer a few targeted calls over many tiny sequential probes.
 

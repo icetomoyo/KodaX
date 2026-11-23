@@ -13,8 +13,8 @@ provider's authentication behavior is unchanged.
 
 | Alias | Environment variable | Reasoning | Default model |
 |---|---|---|---|
-| `anthropic` | `ANTHROPIC_API_KEY` | Yes | `claude-sonnet-4-6` |
-| `openai` | `OPENAI_API_KEY` | Yes | `gpt-5.3-codex` |
+| `anthropic` | `ANTHROPIC_API_KEY` | Yes | `claude-sonnet-5-5` |
+| `openai` | `OPENAI_API_KEY` | Yes | `gpt-6.2-sol` |
 | `deepseek` | `DEEPSEEK_API_KEY` | Yes | `deepseek-flash` (Anthropic-compat; also legacy text-only `deepseek-v4-pro`) |
 | `kimi` | `KIMI_API_KEY` | Yes | `kimi-k2.7-code` |
 | `kimi-code` | `KIMI_CODE_API_KEY` | Yes | `k3-256k` |
@@ -127,6 +127,11 @@ exists upstream but is not wired in KodaX yet. It has a 1M context window,
 cannot disable thinking (same effort mapping as `glm-5.3`), and is priced at
 1/10 of GLM-5.3 ($0.15 input / $0.50 output per million tokens, $0.03 cached
 input). On the GLM Coding Plan it comes with 3x plan quota.
+
+`zhipu-coding` also lists `glm-5.4` (on the Coding Plan since 2026-11-23, not
+yet officially documented). KodaX gives it the `glm-5.3-flash` limits and effort
+mapping. Image input is not enabled yet because it has not passed a live check.
+The default stays `glm-5.3`; select it with `--model glm-5.4` or `/model`.
 
 KodaX sends both upstream model IDs verbatim: `glm-5.3` and `glm-5.2`. Do not
 append `[1m]`; the context window belongs to local capability metadata, not the
@@ -274,7 +279,7 @@ complete request bodies, both MiMo endpoints, explicit-off rejection before
 dispatch, exact capacities, historical MiniMax budgets, image/video gates,
 and thinking/signature/tool-result replay. No online success is claimed.
 
-## Output budgets and quota recovery (unreleased FEATURE_302)
+## Output budgets and quota recovery (FEATURE_302, shipped in v0.7.97-alpha.12)
 
 `maxOutputTokens` remains the default request budget for built-in and custom
 providers. The optional `outputTokenLimit` is a positive integer service ceiling,

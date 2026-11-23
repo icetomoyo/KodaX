@@ -18,6 +18,8 @@ import {
   KodaXOpenAICompatProvider,
   KodaXOpenAIResponsesProvider,
   projectResponsesMessages,
+  withoutReplayArtifacts,
+  replayableReasoning,
   KODAX_INTERRUPTED_TOOL_RESULT_MARKER,
   resolvePromptCacheDisabled,
   getPreparedImageDiagnostic,
@@ -199,7 +201,7 @@ function projectOpenAIMessages(
   const attachments = new Map<DiagnosticOpenAIWireMessage, DiagnosticOpenAIWireMessage>();
   const multimodal = provider.getCapabilityProfile(model).multimodalSupport;
   const supportsImages = multimodal === 'image-input' || multimodal === 'full';
-  for (const message of messages) {
+  for (const message of withoutReplayArtifacts(messages)) {
     if (typeof message.content === 'string') {
       projected.push({
         role: message.role,
@@ -252,7 +254,7 @@ function projectOpenAIMessages(
         content: text || (toolCalls.length > 0 ? null : '...'),
         ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
         ...(provider.getEffectiveReplayReasoningContent(model)
-          ? { reasoning_content: thinkingBlocks.map((block) => block.thinking).join('\n\n') }
+          ? { reasoning_content: thinkingBlocks.map((block) => replayableReasoning(block.thinking)).filter(Boolean).join('\n\n') }
           : {}),
       });
       continue;
@@ -347,9 +349,8 @@ function projectAnthropicMessages(
 ): readonly DiagnosticAnthropicWireMessage[] {
   const strictSignature = provider.getEffectiveStrictThinkingSignature(model);
   const supportsImages = provider.getModelDescriptor(model)?.multimodalSupport !== 'none';
-  const supportsThinking = provider.getProviderSupportsThinking();
   const projected: DiagnosticAnthropicWireMessage[] = [];
-  for (const message of messages) {
+  for (const message of withoutReplayArtifacts(messages)) {
     if (message.role === 'system') continue;
     const role = message.role === 'user' ? 'user' : 'assistant';
     if (typeof message.content === 'string') {
@@ -362,16 +363,8 @@ function projectAnthropicMessages(
     // keep their text-first grouping. User messages emit results first.
     for (const block of role === 'assistant' ? blocks : []) {
       if (block.type === 'thinking') {
-        const trusted = provider.canReplayReasoning(block, model);
-        if (trusted) {
-          content.push({
-            type: 'thinking',
-            thinking: block.thinking,
-            signature: block.signature ?? '',
-          });
-        } else if (block.thinking) {
-          content.push({ type: 'text', text: `<prior_reasoning>\n${block.thinking}\n</prior_reasoning>` });
-        }
+        const thinking = provider.replayThinking(block, model);
+        if (thinking) content.push(thinking);
       } else if (block.type === 'redacted_thinking' && provider.canReplayReasoning(block, model)) {
         content.push({ type: 'redacted_thinking', data: block.data });
       } else if (block.type === 'text') {
@@ -400,6 +393,8 @@ function projectAnthropicMessages(
           input: block.input,
         });
       }
+      const filler = provider.missingToolTurnThinking(content, model);
+      if (filler) content.unshift(filler);
     }
     for (const block of role === 'user' ? blocks : []) {
       if (block.type === 'text') {
@@ -407,16 +402,6 @@ function projectAnthropicMessages(
       } else if (block.type === 'image' && role === 'user') {
         content.push(...(supportsImages ? projectPreparedImage(block, 'image') : [{ type: 'text', text: UNSUPPORTED_MODEL_IMAGE_PLACEHOLDER }]));
       }
-    }
-    if (
-      role === 'assistant'
-      && supportsThinking
-      && !strictSignature
-      && content.some((block) => block.type === 'tool_use')
-      && !content.some((block) =>
-        block.type === 'thinking' || block.type === 'redacted_thinking')
-    ) {
-      content.unshift({ type: 'thinking', thinking: '...', signature: '' });
     }
     const effectivelyEmpty = content.length === 0 || content.every((block) =>
       (block.type === 'thinking' && !block.thinking && !block.signature)

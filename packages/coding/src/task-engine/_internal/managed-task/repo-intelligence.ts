@@ -47,6 +47,7 @@ import {
   getImpactEstimate,
   getModuleContext,
   getRepoPreturnBundle,
+  isRepoIntelligenceSemanticSurfaceEnabled,
   renderImpactEstimate,
   renderModuleContext,
   resolveKodaXAutoRepoMode,
@@ -121,7 +122,10 @@ export async function captureManagedTaskRepoIntelligence(
   const artifacts: KodaXTaskEvidenceArtifact[] = [];
   const summarySections: string[] = [];
 
-  const activeModuleTargetPath = executionCwd ? '.' : undefined;
+  // Module and impact snapshots need the semantic index, which is opt-in.
+  const activeModuleTargetPath = executionCwd && isRepoIntelligenceSemanticSurfaceEnabled(context.repoIntelligenceMode)
+    ? '.'
+    : undefined;
   let preturnBundle: Awaited<ReturnType<typeof getRepoPreturnBundle>> | null = null;
 
   try {

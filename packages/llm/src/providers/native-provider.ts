@@ -127,6 +127,6 @@ export abstract class KodaXNativeProvider extends KodaXBaseProvider {
         return this.invoke({ ...request, profile: undefined, effort: undefined, disabled: false, sentReasoningEffort: undefined,
           reasoningFallbacks: [{ effort: request.sentReasoningEffort, reason: rejection.parameterRejected ? 'unsupported-parameter' : 'unsupported-effort' }] });
       }
-    }, signal, options?.singleAttempt ? 1 : 3, options?.onRateLimit, options?.onRetryAfter, { model, tools }));
+    }, signal, options?.singleAttempt ? 1 : 3, options?.onRateLimit, options?.onRetryAfter, { model, tools, sessionId: options?.sessionId }));
   }
 }

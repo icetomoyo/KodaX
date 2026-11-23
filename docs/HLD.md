@@ -12,10 +12,10 @@ before printing and never dispatches management operations. See the
 > Unified Host SDK cutover (shipped in v0.7.97-alpha.12): public product execution connects to one independent Host.
 > Embedded/default owner construction, inline switching and caller-owned external-agent
 > daemons are retired. Internal Runtime and independent libraries remain. See
-> [migration and ownership limits](SDK_MIGRATION.md#统一-host-sdk-收口未发布).
+> [migration and ownership limits](SDK_MIGRATION.md#统一-host-sdk-收口随-v0797-alpha12-发布).
 
-Last updated: 2026-11-21. Current development tree: FEATURE_298/299/301/302/303/304/305/306 on package
-`0.7.97-beta.13`, with `v0.7.96` as the last stable release; publication is separate.
+Last updated: 2026-11-23. Current development tree: FEATURE_298/299/301/302/303/304/305/306 on package
+`0.7.97-rc.2`, with `v0.7.96` as the last stable release; publication is separate.
 
 Product integrations use `KodaXProductClient` through `/client`. Read the
 [Client contract](CLIENT_CONTRACT.md) and [SDK migration guide](SDK_MIGRATION.md)
@@ -34,7 +34,7 @@ is shared `auth.json` v2, with explicit legacy encrypted backends and source-pre
 migration. Missing/revoked/invalid state cannot silently select an environment key
 or another account. Canonical history remains intact across wire projections.
 See [accepted storage alignment](ADR.md#feature_302-implementation-alignment--2026-11-01-unreleased),
-[integration contracts](LLM_INTEGRATION.md), and [implementation acceptance](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md).
+[integration contracts](LLM_INTEGRATION.md), and [implementation acceptance](test-guides/FEATURE_302_v0.7.97_TEST_GUIDE.md).
 
 ## Current SDK alignment after alpha.10 (2026-10-29)
 

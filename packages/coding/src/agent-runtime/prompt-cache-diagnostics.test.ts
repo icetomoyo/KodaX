@@ -46,6 +46,12 @@ describe('prompt-cache diagnostics', () => {
     expect(hashProviderVisibleMessages(history('a'), p, 'new')).toBe(hashProviderVisibleMessages(history('b'), p, 'new'));
     expect(hashProviderVisibleMessages(history('a'), p, 'old')).not.toBe(hashProviderVisibleMessages(history('b'), p, 'old'));
   });
+  it.each(['anthropic', 'openai'] as const)('hashes a polluted %s reply the way the wire replays it', protocol => {
+    const p = createCustomProvider({ name: 'replay', protocol, model: 'm', baseUrl: 'https://cache.test/v1', apiKeyEnv: 'UNUSED', supportsThinking: true });
+    const reply = (text: string): KodaXMessage[] => [{ role: 'user', content: 'q' }, { role: 'assistant', content: [{ type: 'text', text }] }];
+    expect(hashProviderVisibleMessages(reply('<prior_reasoning>\nold\n</prior_reasoning>\n\nanswer'), p, 'm'))
+      .toBe(hashProviderVisibleMessages(reply('answer'), p, 'm'));
+  });
   it('hashes only same-source Responses reasoning that the wire actually replays', () => {
     const provider = createCustomProvider({ name: 'responses', protocol: 'openai', api: 'responses', model: 'm', baseUrl: 'https://example.test/v1', apiKeyEnv: 'UNUSED' });
     const history = (cipher: string): KodaXMessage[] => [{ role: 'assistant', content: [{ type: 'thinking', thinking: '', responsesReasoning: {

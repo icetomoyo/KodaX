@@ -17,7 +17,7 @@ function transport() {
 }
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
-it('pairs interrupted imported calls before new turns, drops orphan receipts and preserves foreign readable reasoning', async () => {
+it('pairs interrupted imported calls before new turns, drops orphan receipts and drops foreign reasoning', async () => {
   const requests = transport();
   const messages: KodaXMessage[] = [
     { role: 'assistant', content: [
@@ -29,7 +29,6 @@ it('pairs interrupted imported calls before new turns, drops orphan receipts and
   const original = structuredClone(messages);
   await createCustomProvider(config).complete(messages, [], '');
   expect(requests[0]?.input).toEqual([
-    { role: 'assistant', content: '<prior_reasoning>\nUseful prior reasoning\n</prior_reasoning>' },
     { type: 'function_call', call_id: 'old', name: 'removed_tool', arguments: '{"old":true}' },
     { type: 'function_call_output', call_id: 'old', output: expect.stringContaining('interrupted') },
     { role: 'user', content: 'Continue' },
@@ -139,5 +138,5 @@ it('replays Anthropic reasoning only at its original model and endpoint', async 
   ] }]);
   await provider.complete(history, [], '', undefined, { modelOverride: 'second' });
   expect(JSON.stringify(requests[2])).not.toMatch(/sealed|secret/);
-  expect(JSON.stringify(requests[2])).toContain('prior_reasoning');
+  expect(JSON.stringify(requests[2])).not.toMatch(/prior_reasoning|plan/);
 });

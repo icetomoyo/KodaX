@@ -1,6 +1,7 @@
 import { classifyReasoningEffortRejection } from './reasoning-effort-rejection.js';
 import { prepareAnthropicNativeHistory, restoreAnthropicNativeHistory } from './anthropic-native-history.js';
 import { cacheWritePartition } from './cache-usage.js';
+import { replayableReasoning, withoutReplayArtifacts } from './reasoning-replay.js';
 import { applyAnthropicThinkingOptions, hasThinkingBinding, THINKING_BINDING_BETA } from './anthropic-thinking-options.js';
 import { withCacheWritePartition } from './request-extensions.js';
 import { recordRejectedImage } from './rejected-image.js';
@@ -270,6 +271,27 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     return !this.getEffectiveStrictThinkingSignature(model)
       || (block.type === 'thinking' ? Boolean(block.signature) : origin !== undefined);
   }
+  /**
+   * Wire form of replayed thinking: as generated for its own source, unsigned on lenient
+   * targets, otherwise dropped. Never text — models imitate reasoning they see as replies (Issue 441).
+   */
+  replayThinking(block: KodaXThinkingBlock, model?: string): { type: 'thinking'; thinking: string; signature: string } | undefined {
+    const strict = this.getEffectiveStrictThinkingSignature(model);
+    if (this.canReplayReasoning(block, model)) {
+      return { type: 'thinking', thinking: strict ? block.thinking : replayableReasoning(block.thinking), signature: block.signature ?? '' };
+    }
+    if (!block.thinking || strict) return undefined;
+    return { type: 'thinking', thinking: replayableReasoning(block.thinking), signature: '' };
+  }
+  /**
+   * A lenient thinking-mode tool turn left without thinking gets an empty block.
+   * DeepSeek rejects an in-loop tool turn without one, and the old '...' text was imitated.
+   */
+  missingToolTurnThinking(content: readonly { readonly type?: unknown }[], model?: string): { type: 'thinking'; thinking: ''; signature: '' } | undefined {
+    const needed = this.config.supportsThinking && !this.getEffectiveStrictThinkingSignature(model)
+      && content.some(b => b.type === 'tool_use') && !content.some(b => b.type === 'thinking' || b.type === 'redacted_thinking');
+    return needed ? { type: 'thinking', thinking: '', signature: '' } : undefined;
+  }
   protected readonly requestObservationBoundary = 'physical_attempt' as const;
   abstract override readonly name: string;
   readonly supportsThinking = true;
@@ -360,7 +382,19 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
   }
 
   private isNativeHistoryModel(model?: string): boolean {
-    return this.name === 'anthropic' && /^claude-(opus|sonnet|haiku)-5-5(?:-|$)/.test(model ?? this.config.model);
+    return this.name === 'anthropic' && /^claude-(?:(?:opus|sonnet|haiku)-5-5|fable-5-2)(?:-|$)/.test(model ?? this.config.model);
+  }
+
+  // Like localRejectEfforts in base.ts: only an explicit 'none' may fail on an always-thinking model;
+  // a legacy 'false' falls back to adaptive thinking instead of breaking sidecar callers.
+  private nativeThinkingMode(model: string, reasoning: KodaXNormalizedReasoningRequest, options?: KodaXProviderStreamOptions): NonNullable<KodaXProviderStreamOptions['thinkingMode']> {
+    if (options?.thinkingMode !== undefined) return options.thinkingMode;
+    if (reasoning.enabled || reasoning.effortSource === 'omitted') return 'adaptive';
+    return reasoning.effortSource === 'explicit' || model.startsWith('claude-haiku-') ? 'disabled' : 'adaptive';
+  }
+
+  private nativeDefaultEffort(model: string): string {
+    return this.getReasoningProfile(model)?.defaultEffort ?? 'medium';
   }
 
   private nativeHistoryInput(messages: KodaXMessage[], model: string, reasoning: KodaXNormalizedReasoningRequest, options?: KodaXProviderStreamOptions) {
@@ -368,28 +402,28 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     const source = this.getGenerationSource(model);
     let restored = native ? restoreAnthropicNativeHistory(messages, source) : undefined;
     const effort = reasoning.effort === 'auto' || reasoning.effortSource === 'omitted' || reasoning.effort === 'none'
-      ? model.startsWith('claude-sonnet-') ? 'high' : 'medium' : reasoning.effort;
-    const mode = options?.thinkingMode ?? (!reasoning.enabled && reasoning.effortSource !== 'omitted' ? 'disabled' : 'adaptive');
+      ? this.nativeDefaultEffort(model) : reasoning.effort;
+    const mode = this.nativeThinkingMode(model, reasoning, options);
     const resetLineage = !!restored && (restored.requested.thinkingMode !== mode
       || (mode !== 'adaptive' && restored.requested.effort !== effort));
     const tail = restored ? messages.slice(restored.start) : messages;
+    // Reasoning outside the native lineage is not replayed.
     const input = native ? tail.map(message => ({ ...message,
-      content: typeof message.content === 'string' ? message.content : message.content.flatMap(block => block.type === 'thinking'
-        ? block.thinking ? [{ type: 'text' as const, text: `<prior_reasoning>\n${block.thinking}\n</prior_reasoning>` }] : []
-        : block.type === 'redacted_thinking' ? [] : [block]),
+      content: typeof message.content === 'string' ? message.content
+        : message.content.filter(block => block.type !== 'thinking' && block.type !== 'redacted_thinking'),
     })) : messages;
     return { native, source, restored, input, resetLineage };
   }
 
   private applyNativeControls(params: Anthropic.Messages.MessageCreateParams, model: string, reasoning: KodaXNormalizedReasoningRequest, options?: KodaXProviderStreamOptions, suppressEffort = false): void {
     if (!this.isNativeHistoryModel(model)) {
-      if (options?.thinkingMode !== undefined) throw new KodaXProviderError('Thinking mode requires a supported native Claude 5.5 model.', this.name, { retryable: false });
+      if (options?.thinkingMode !== undefined) throw new KodaXProviderError('Thinking mode requires a native Claude 5.5 or Fable 5.2 model.', this.name, { retryable: false });
       return;
     }
-    const mode = options?.thinkingMode ?? (!reasoning.enabled && reasoning.effortSource !== 'omitted' ? 'disabled' : 'adaptive');
+    const mode = this.nativeThinkingMode(model, reasoning, options);
     const disabled = mode === 'disabled';
     const effort = reasoning.effort === 'auto' || reasoning.effortSource === 'omitted' || reasoning.effort === 'none'
-      ? model.startsWith('claude-sonnet-') ? 'high' : 'medium' : reasoning.effort;
+      ? this.nativeDefaultEffort(model) : reasoning.effort;
     if (disabled && !model.startsWith('claude-haiku-')) throw new KodaXProviderError('This Claude model requires adaptive thinking; effort none is unsupported.', this.name, { retryable: false });
     if (!['adaptive', 'between_tools', 'disabled'].includes(mode) || (mode === 'between_tools' && !model.startsWith('claude-sonnet-'))) {
       throw new KodaXProviderError('Unsupported native Claude thinking mode.', this.name, { retryable: false });
@@ -410,15 +444,15 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     }
     delete params.temperature; delete params.top_p; delete params.top_k;
     const last = [...params.messages].filter(message => message.role !== ('system' as string)).at(-1);
-    if (last?.role === 'assistant') throw new KodaXProviderError('Claude 5.5 does not support assistant prefill.', this.name, { retryable: false });
+    if (last?.role === 'assistant') throw new KodaXProviderError('This Claude model does not support assistant prefill.', this.name, { retryable: false });
   }
 
   private validateNativePayload(params: Anthropic.Messages.MessageCreateParams): void {
     if (params.temperature !== undefined || params.top_p !== undefined || params.top_k !== undefined) {
-      throw new KodaXProviderError('Claude 5.5 sampling controls cannot be set.', this.name, { retryable: false, failureCode: 'request_build_failed' });
+      throw new KodaXProviderError('This Claude model does not accept sampling controls.', this.name, { retryable: false, failureCode: 'request_build_failed' });
     }
     if ([...params.messages].filter(message => message.role !== ('system' as string)).at(-1)?.role === 'assistant') {
-      throw new KodaXProviderError('Claude 5.5 does not support assistant prefill.', this.name, { retryable: false, failureCode: 'request_build_failed' });
+      throw new KodaXProviderError('This Claude model does not support assistant prefill.', this.name, { retryable: false, failureCode: 'request_build_failed' });
     }
   }
 
@@ -894,7 +928,8 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
                   capability === 'native-adaptive' ||
                   capability === 'none',
                 );
-      let shouldForceToolChoice = tools.length > 0 && Boolean(streamOptions?.forcedToolName);
+      // Native Claude models return 400 on forced tool choice; skip the doomed attempt and use the auto fallback.
+      let shouldForceToolChoice = tools.length > 0 && Boolean(streamOptions?.forcedToolName) && !native.native;
 
       const buildRequest = (
         capability: 'profile' | 'native-budget' | 'native-toggle' | 'native-adaptive' | 'none',
@@ -1367,6 +1402,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       model: streamOptions?.modelOverride ?? this.config.model,
       onRejected: streamOptions?.onReasoningEffortRejected,
       tools,
+      sessionId: streamOptions?.sessionId,
     });
   }
 
@@ -1426,7 +1462,8 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
                   capability === 'native-adaptive' ||
                   capability === 'none',
                 );
-      let shouldForceToolChoice = tools.length > 0 && Boolean(streamOptions?.forcedToolName);
+      // Native Claude models return 400 on forced tool choice; skip the doomed attempt and use the auto fallback.
+      let shouldForceToolChoice = tools.length > 0 && Boolean(streamOptions?.forcedToolName) && !native.native;
 
       const buildRequest = (
         capability: 'profile' | 'native-budget' | 'native-toggle' | 'native-adaptive' | 'none',
@@ -1622,6 +1659,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       model: streamOptions?.modelOverride ?? this.config.model,
       onRejected: streamOptions?.onReasoningEffortRejected,
       tools,
+      sessionId: streamOptions?.sessionId,
     });
   }
 
@@ -1681,7 +1719,7 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
     const native = this.isNativeHistoryModel(model);
     const pendingSystems: Anthropic.Messages.MessageParam[] = [];
 
-    for (const m of messages) {
+    for (const m of withoutReplayArtifacts(messages)) {
       if (m.role === 'system') {
         if (native && (converted.length > 0 || !repair)) {
           const value = { role: 'system', content: [{ type: 'text', text: this.serializeSystemMessageContent(m.content) }] } as unknown as Anthropic.Messages.MessageParam;
@@ -1717,18 +1755,8 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
       if (role === 'assistant') {
         for (const b of m.content) {
           if (b.type === 'thinking') {
-            const trustedSignature = this.canReplayReasoning(b, model);
-            if (trustedSignature) {
-              content.push({ type: 'thinking', thinking: b.thinking, signature: b.signature ?? '' } as any);
-            } else if (b.thinking) {
-              // Strict mode + empty/missing signature → preserve the
-              // reasoning text in place via a <prior_reasoning> text block,
-              // dropped from the thinking-block channel.
-              content.push({
-                type: 'text',
-                text: `<prior_reasoning>\n${b.thinking}\n</prior_reasoning>`,
-              } as Anthropic.Messages.TextBlockParam);
-            }
+            const thinking = this.replayThinking(b, model);
+            if (thinking) content.push(thinking as Anthropic.Messages.ThinkingBlockParam);
           } else if (b.type === 'redacted_thinking') {
             if (this.canReplayReasoning(b, model)) {
               // Lenient: third-party server doesn't decrypt the data
@@ -1742,7 +1770,8 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             // already had no user-visible content; only the model's
             // sealed reasoning is lost.
           } else if (b.type === 'text') {
-            content.push({ type: 'text', text: b.text });
+            // Kimi rejects an empty text block (Gemini replies leave them); a turn left empty gets the guard below.
+            if (b.text) content.push({ type: 'text', text: b.text });
           } else if (b.type === 'tool_use' && strictSignature) {
             content.push({ type: 'tool_use', id: b.id, name: b.name, input: b.input });
           }
@@ -1752,6 +1781,8 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
             content.push({ type: 'tool_use', id: b.id, name: b.name, input: b.input });
           }
         }
+        const filler = this.missingToolTurnThinking(content, model);
+        if (filler) content.unshift(filler as Anthropic.Messages.ThinkingBlockParam);
       } else {
         // USER messages: grouped emission — tool_result MUST come before
         // text (protocol requirement), so blocks are grouped by type rather
@@ -1830,35 +1861,6 @@ export abstract class KodaXAnthropicCompatProvider extends KodaXBaseProvider {
               } as Anthropic.Messages.ImageBlockParam);
             }
           }
-        }
-      }
-
-      // Guard: when thinking is enabled, providers like Kimi require every assistant
-      // tool-call message to include non-empty reasoning content. For messages that
-      // never had thinking blocks (e.g. session restore, pre-thinking history),
-      // inject a minimal thinking block to satisfy this requirement.
-      //
-      // **Skipped in strictThinkingSignature mode (Anthropic proper)**:
-      // injecting a '...' placeholder with `signature: ''` would itself
-      // fail Anthropic's cryptographic signature verification (400
-      // "thinking signature invalid"). Anthropic doesn't require
-      // thinking blocks on tool-use turns that didn't originally have
-      // them — the guard exists for lenient third-party servers (Kimi)
-      // that strictly check field presence. If a cross-provider
-      // tool-use turn legitimately lacks thinking and Anthropic does
-      // 400 on it, the L3 sanitize_thinking_and_retry recovery cleans
-      // the history once and retries without thinking. v0.7.28.
-      if (
-        role === 'assistant' &&
-        this.config.supportsThinking &&
-        !strictSignature
-      ) {
-        const hasToolUse = content.some(b => (b as any).type === 'tool_use');
-        const hasThinking = content.some(b =>
-          (b as any).type === 'thinking' || (b as any).type === 'redacted_thinking',
-        );
-        if (hasToolUse && !hasThinking) {
-          content.unshift({ type: 'thinking', thinking: '...', signature: '' } as any);
         }
       }
 

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { KodaXAssistantBlock, KodaXGenerationSource, KodaXImageBlock, KodaXMessage, KodaXToolResultBlock, KodaXToolResultImageItem } from '../types.js';
 import { repairCloudToolHistory, sameCloudSource } from './cloud-history.js';
+import { withoutReplayArtifacts } from './reasoning-replay.js';
 import { prepareImageBlock, UNSUPPORTED_TOOL_RESULT_IMAGE_PLACEHOLDER } from './image-serialization.js';
 
 export function piBlockHash(block: KodaXAssistantBlock): string {
@@ -22,41 +23,52 @@ async function receiptParts(content: KodaXToolResultBlock['content'], images: bo
   }
   return result;
 }
+/**
+ * A turn written by another model, or edited since, replays as a pi assistant message from an
+ * unknown origin: pi then treats it as foreign, drops reasoning and signatures, and keeps the calls
+ * structured. Its usage is unknown, so it reports zero rather than another model's numbers.
+ */
+const FOREIGN_ORIGIN = { api: 'unknown', provider: 'unknown', model: 'unknown',
+  usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
+function foreignAssistant(blocks: readonly KodaXAssistantBlock[], timestamp: number): Record<string, unknown> | undefined {
+  const content = blocks.flatMap((block): Record<string, unknown>[] => block.type === 'tool_use' ? [{ type: 'toolCall', id: block.id, name: block.name, arguments: block.input }]
+    // Reasoning from another model is never replayed (Issue 441).
+    : block.type === 'text' && block.text ? [{ type: 'text', text: block.text }] : []);
+  if (!content.length) return undefined;
+  return { role: 'assistant', content, ...FOREIGN_ORIGIN, stopReason: content.some(b => b.type === 'toolCall') ? 'toolUse' : 'stop', timestamp };
+}
 export async function projectPiMessages(messages: readonly KodaXMessage[], source: KodaXGenerationSource, images: boolean): Promise<Record<string, unknown>[]> {
   const result: Record<string, unknown>[] = [];
-  const names = new Map<string, { name: string; native: boolean }>();
-  for (const message of repairCloudToolHistory(messages)) {
+  const names = new Map<string, string>();
+  for (const message of repairCloudToolHistory(withoutReplayArtifacts(messages))) {
     const parsedTime = Date.parse(message.timestamp ?? '');
     const timestamp = Number.isFinite(parsedTime) ? parsedTime : 0; // Explicitly unknown historical time.
-    if (typeof message.content === 'string') { result.push({ role: message.role === 'assistant' ? 'user' : message.role,
-      content: message.role === 'assistant' ? `<prior_assistant>\n${message.content}\n</prior_assistant>` : message.content, timestamp }); continue; }
-    const assistant = message.role === 'assistant' ? message.content.filter((b): b is KodaXAssistantBlock => ['text', 'thinking', 'tool_use', 'redacted_thinking'].includes(b.type)) : undefined;
+    const blocks = typeof message.content === 'string' ? [{ type: 'text' as const, text: message.content }] : message.content;
+    const assistant = message.role === 'assistant' ? blocks.filter((b): b is KodaXAssistantBlock => ['text', 'thinking', 'tool_use', 'redacted_thinking'].includes(b.type)) : undefined;
     const metadata = assistant?.[0]?.piPart?.message;
     const nativeAssistant = !!assistant?.length && !!metadata && assistant.every(block => block.piPart
       && sameCloudSource(block.piPart.source, source) && block.piPart.contentHash === piBlockHash(block));
     if (assistant && !nativeAssistant) {
-      const text = assistant.flatMap(block => {
-        if (block.type === 'tool_use') { names.set(block.id, { name: block.name, native: false }); return [`<prior_tool_call name=${JSON.stringify(block.name)}>\n${JSON.stringify(block.input)}\n</prior_tool_call>`]; }
-        return block.type === 'text' ? [block.text] : block.type === 'thinking' ? [`<prior_reasoning>\n${block.thinking}\n</prior_reasoning>`] : [];
-      }).join('\n');
-      if (text) result.push({ role: 'user', content: `<prior_assistant>\n${text}\n</prior_assistant>`, timestamp });
+      for (const block of assistant) if (block.type === 'tool_use') names.set(block.id, block.name);
+      const replay = foreignAssistant(assistant, timestamp);
+      if (replay) result.push(replay);
       continue;
     }
+    if (typeof message.content === 'string') { result.push({ role: message.role, content: message.content, timestamp }); continue; }
     const content: Record<string, unknown>[] = [];
     for (const block of message.content) {
       const replay = 'piPart' in block ? block.piPart : undefined;
       const own = !!replay && sameCloudSource(replay.source, source) && replay.contentHash === piBlockHash(block as KodaXAssistantBlock);
       switch (block.type) {
         case 'text': content.push({ type: 'text', text: block.text, ...(own && replay.contentSignature ? { textSignature: replay.contentSignature } : {}) }); break;
-        case 'thinking': content.push(own ? { type: 'thinking', thinking: block.thinking, ...(replay.contentSignature ? { thinkingSignature: replay.contentSignature } : {}) }
-          : { type: 'text', text: `<prior_reasoning>\n${block.thinking}\n</prior_reasoning>` }); break;
+        case 'thinking': if (own) content.push({ type: 'thinking', thinking: block.thinking, ...(replay.contentSignature ? { thinkingSignature: replay.contentSignature } : {}) }); break;
         case 'redacted_thinking': if (own) content.push({ type: 'thinking', thinking: '', thinkingSignature: block.data, redacted: true }); break;
-        case 'tool_use': names.set(block.id, { name: block.name, native: true }); content.push({ type: 'toolCall', id: block.id, name: block.name, arguments: block.input }); break;
+        case 'tool_use': names.set(block.id, block.name); content.push({ type: 'toolCall', id: block.id, name: block.name, arguments: block.input }); break;
         case 'tool_result': {
-          const receipt = await receiptParts(block.content, images);
-          const call = names.get(block.tool_use_id);
-          if (call?.native) result.push({ role: 'toolResult', toolCallId: block.tool_use_id, toolName: call.name, content: receipt, isError: block.is_error === true, timestamp });
-          else result.push({ role: 'user', content: [{ type: 'text', text: `<prior_tool_result name=${JSON.stringify(call?.name)}>\n${receipt.filter(p => p.type === 'text').map(p => p.text).join('\n')}\n</prior_tool_result>` }, ...receipt.filter(p => p.type === 'image')], timestamp });
+          // Repair drops receipts without a call, so every receipt here names one.
+          const toolName = names.get(block.tool_use_id);
+          if (toolName === undefined) break;
+          result.push({ role: 'toolResult', toolCallId: block.tool_use_id, toolName, content: await receiptParts(block.content, images), isError: block.is_error === true, timestamp });
           break;
         }
         case 'image': content.push(...await imagePart(block, images)); break;

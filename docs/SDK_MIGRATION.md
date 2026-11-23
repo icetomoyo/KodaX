@@ -14,8 +14,8 @@ Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附�
 Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` 保留，
 根运行都会向模型提供可用且已授权的 Skill 目录。运行时绑定生成的
 目录共用 8,000 UTF-16 单元上限；省略目录项不会删除已绑定的授权。
-`systemPromptOverride` 在根运行上的语义见[统一提示词链路](#统一提示词链路未发布)。
-`sa` 和 `amaw` 都是已弃用的输入，见 [SA 模式退役](#sa-模式退役未发布)。
+`systemPromptOverride` 在根运行上的语义见[统一提示词链路](#统一提示词链路随-v0797-beta12-发布)。
+`sa` 和 `amaw` 都是已弃用的输入，见 [SA 模式退役](#sa-模式退役随-v0797-beta12-发布)。
 进程内入口不传 `events.beforeToolExecute` 时只运行只读工具，见[工具调用默认只读](#工具调用默认只读未发布)。
 调用 `kodax daemon …` 的脚本见 [`kodax host` 命令与健康状态](#kodax-host-命令与健康状态未发布)；解析其他 CLI 命令输出或检查退出码的脚本见 [CLI 输出、退出码与旧开关](#cli-输出退出码与旧开关未发布)。
 
@@ -62,7 +62,7 @@ Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` �
 - `context.resolveShellPermissionMode` 用来告诉模型和原生文本宿主当前模式，它不批准调用。所以没有回调时，`'full-access'` 也只运行只读工具。
 - 不变的：Runtime（`runs.start`）、daemon、CLI 和 REPL 本来就会批准每次调用。
 
-## 统一提示词链路（未发布）
+## 统一提示词链路（随 v0.7.97-beta.12 发布）
 
 每个根运行都走 managed Worker，每个入口发出同一套工具说明。原来的直连根引擎和
 `system.md` 已删除。SDK 客户已不再直接依赖直连引擎，因此没有弃用期。
@@ -73,7 +73,7 @@ Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` �
   Actor 与 Workflow 工具。不需要这些工具时，用 `excludeTools` 或工具策略去掉。
 - `runs.start({ mode: 'coding' })` 和 daemon `run.start` 的 `mode: 'coding'` 仍被接受，但会被
   忽略并给出 `runtime.runs.start` 警告诊断；`agentMode: 'sa'` 同理。Run handle 的
-  `warnings` 会列出被忽略的输入（未发布），daemon 客户端同样可见。新 Run 的 `Run.mode` 一律是 `managed_task`。
+  `warnings` 会列出被忽略的输入（v0.7.97-beta.13 起），daemon 客户端同样可见。新 Run 的 `Run.mode` 一律是 `managed_task`。
   已持久化的 `coding` Run 记录照常可读，恢复时在 managed Worker 上继续。
 - 不带 `agentMode` 的根运行用 Worker 的精简段落（执行指导、Run Context 信任、收尾）。
   `agentMode: 'ama'` 的根运行用完整段落（信任与范围、并行工作、执行与交付）。两者来自同一个源头，
@@ -99,9 +99,9 @@ Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` �
   直连提示词的 registry 槽位 `base`、`runtime-context`、`base-suffix`。
   `buildCapabilityContextSections` 只产出 managed Worker 仍在用的共享能力段落。
 
-## 应用提示词定制（未发布）
+## 应用提示词定制（随 v0.7.97-beta.12 发布）
 
-英文版见[嵌入方指南](../public_docs/sdk/embedder-guide.md#application-prompt-customization-unreleased)。
+英文版见[嵌入方指南](../public_docs/sdk/embedder-guide.md#application-prompt-customization-shipped-in-v0797-beta12)。
 
 人设仍用 `agentProfile`，在整个 Session 内固定。要调整其余提示词，在同一个
 执行 profile 里加 `prompt`：
@@ -135,18 +135,18 @@ profile: await services.createExecutionProfile({
   包含 Managed Run Context 标记。所有条目文本合计不超过 8,000 字符。格式不对的 spec
   在开始工作前以 `invalid_params` 拒绝。
 
-`prompt` 用于根运行，现在所有根运行都是 managed（见[统一提示词链路](#统一提示词链路未发布)）。
+`prompt` 用于根运行，现在所有根运行都是 managed（见[统一提示词链路](#统一提示词链路随-v0797-beta12-发布)）。
 只有内部叶子执行器以 `prompt_spec_requires_managed_run` 拒绝它。Host 必须声明 `promptSpec.version === 1`；
 旧 Host 在输入发出前以 `daemon_upgrade_required` 拒绝。
 
-## SA 模式退役（未发布）
+## SA 模式退役（随 v0.7.97-beta.12 发布）
 
 `agentMode: 'sa'` 仍可传入，但不再选择任何行为，与 `amaw` 的处理方式相同：
 
 - `runManagedTask`、会话设置和 Product 输入收到 `'sa'` 时运行 AMA Worker。
   原来 SA 的子 Agent/Workflow 工具排除和 `[Direct Path Rule]` 叠加提示已删除。
 - `runKodaX` 和未指定 `mode` 的 `runs.start` 把 `'sa'` 当作未指定，运行不带 `agentMode` 的
-  managed Worker。直连引擎已删除，见[统一提示词链路](#统一提示词链路未发布)。
+  managed Worker。直连引擎已删除，见[统一提示词链路](#统一提示词链路随-v0797-beta12-发布)。
   新 Run 的 `effectiveConfig.agentMode` 和会话视图都报 `'ama'`。
 - 需要"不派子 Agent"的 Host 改用 `excludeTools`、`agentProfile` 或工具策略。
 - `runManagedTask` 带 `'sa'` 时，`context.systemPromptOverride` 按 AMA 语义作为 Worker 指令
@@ -156,7 +156,7 @@ profile: await services.createExecutionProfile({
 - 已持久化的 Run 记录里的 `'sa'` 原样可读。CLI `--agent-mode sa` 与 REPL `/agent-mode sa`
   的迁移报错不变。
 
-## beta.11 之后：Actor 结算收敛 v3（未发布）
+## beta.11 之后：Actor 结算收敛 v3（随 v0.7.97-beta.12 发布）
 
 Host 能力 `actorSettlementConvergence` 从 `2` 升到 `3`。Stop 遇到 Actor 结算无法确认时，
 Run 一定会得到终态，不再停在 `unknown` 等待无限重试（GitHub #2：界面停在“正在修复并停止”）。
@@ -199,7 +199,7 @@ Run 一定会得到终态，不再停在 `unknown` 等待无限重试（GitHub #
 
 仍要求 `2` 的旧客户端连接 v3 Host 不受影响，只是原先长期 `unknown` 的场景会收到上述 `failed` 终态。
 
-## beta.11 之后：`X-Session-Id`、UUIDv7 会话 id 与 id 校验（未发布）
+## beta.11 之后：`X-Session-Id`、UUIDv7 会话 id 与 id 校验（随 v0.7.97-beta.12 发布）
 
 Provider 的每个 HTTP 请求都带 `X-Session-Id`，值为根会话 id。子 Agent、
 Workflow 和压缩的请求带同一个值，网关可以按会话对账（ADR-077）。如果 Provider
@@ -223,7 +223,7 @@ A2A 服务端：同一主体、同一 `contextId` 的 Task 共用一个 Runtime 
 同一 context 中已有 Task 在运行或处于 `INPUT_REQUIRED` 时，新 Task 排队等待。
 此前创建的 Task 保留各自的会话。
 
-## beta.10 之后：Skill `allowed-tools` 不再生效（未发布）
+## beta.10 之后：Skill `allowed-tools` 不再生效（随 v0.7.97-beta.11 发布）
 
 Skill 或命令 frontmatter 里的 `allowed-tools` 现在被忽略（与 Codex 一致）：
 不再限制或预授权任何工具、hook 和动态上下文命令，每次调用都按 Host 的权限模式、
@@ -238,7 +238,7 @@ checkpoint 照常恢复；写错的条目不再报诊断。Skill 提示、manage
 这表示保存的历史不一定变化，短暂重试同一读取通常成功；其余原因的处理不变。
 按原因做穷举映射的客户端需加上这一项，见 [Client 契约](CLIENT_CONTRACT.md)。
 
-## 2026-11-03 beta.1 后续修复（未发布）
+## 2026-11-03 beta.1 后续修复（随 v0.7.97-beta.2 发布）
 
 本轮基线为 `v0.7.97-beta.1` / `e733e51f`，后续修复已随 `v0.7.97-beta.2` 发布
 （npm 发布为手动步骤）。截至 2026-11-07，`beta` 指向 beta.2、
@@ -350,7 +350,7 @@ S3 长任务与 Run 内数据；不以 JavaScript 可执行或选择 Script 模�
 新增字节、实际脚本执行比例、任务正确性及全部请求/token/耗时分别报告；有界 smoke
 不能证明总体效率提升或模型智能无回退。
 
-### 2026-11-04 原文返回与按需输出描述（未发布）
+### 2026-11-04 原文返回与按需输出描述（随 v0.7.97-beta.2 发布）
 
 基线 `37258ec5c`。Host Run 工具与显式 `mcp_call` 的成功、未被后处理改写的
 Script 结果可增加 `sourceContent`：它直接保留 `CapabilityResult.content`，可为
@@ -382,7 +382,7 @@ SDK 保证受权返回视图与证据保真可读。消费者若要求交付物�
 使用原值、在交付前比对并回读验证；本轮不增加全局写入拦截或自动修改文件。
 既有模型样本的警告前缀失败继续保留，不以新接口保证任意模型的业务产物正确。
 
-### 2026-11-04 Script 调用路径与程序数据（未发布）
+### 2026-11-04 Script 调用路径与程序数据（随 v0.7.97-beta.2 发布）
 
 基线为 `49da64f24`。前次真实样本的裸名调用和格式化文本解析失败，按通用调用与
 结果契约修复；生产说明只描述 API，不加入任务解法、文件扩展名分支或模型专属指令。
@@ -501,9 +501,9 @@ value 计算。旧 XML/日志样本未完成及警告改写也继续保留，不
 预算及受控样本评估智能与效率，再决定默认策略；生产说明不加入任务或模型专属解法。
 跨平台、麒麟、真实账号、覆盖安装和 Issue 371 仍由各自验收关闭。
 
-## 统一 Host SDK 收口（未发布）
+## 统一 Host SDK 收口（随 v0.7.97-alpha.12 发布）
 
-### 2026-11-02 Space 默认方法、消费绑定与 Quick Ask（alpha.12 之后，未发布）
+### 2026-11-02 Space 默认方法、消费绑定与 Quick Ask（随 v0.7.97-beta.1 发布）
 
 已发布的 `0.7.97-alpha.12` 不含本节接口；本节接口随 `v0.7.97-beta.1` 发布。
 请锁定该实际发布包（beta.1 的 npm 发布仍为手动步骤），并检查
@@ -559,7 +559,7 @@ principal 重绑，不能借迁移获得另一账号或专家的 authority。持
 凭证入口不变。
 前一次 steer/显式 redirect 修正提交 `00bfe7ed12407eda722a6bc4b15ace106e413dc5` 已在 Root 主分支，
 [完整 CI](https://github.com/icetomoyo/KodaX/actions/runs/41415454375) 16 个任务通过、
-发布跳过；尚未发布 npm。Space 需使用包含本次修正的新 SDK，不能只依赖旧 alpha.12。
+发布跳过；当时尚未发布 npm，后随 v0.7.97-beta.1 发布。Space 需使用包含本次修正的新 SDK，不能只依赖旧 alpha.12。
 该 CI 是普通 redirect 第二次补审前的基线；以上边界区分修正还需包含在后续新 SDK 中，
 本轮独立验证见 [普通 redirect 补审](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#普通-redirect-的补审修正2026-11-02)。
 普通 redirect 功能修正为 `cd151cb1ddf7eb273debb5e458a9c989d8804ac1`，含后续门禁修正的
@@ -581,7 +581,7 @@ Host 原子保存 tag 与操作回执，历史、原生历史、lineage、附件
 Node SDK 与独立二进制均携带。自定义打包需保留该资源，不能省略后放宽协议校验。
 CLI 原体积门禁、CI job/矩阵/触发条件和发布依赖关系保持原值。
 
-### 2026-11-02 核心配置提交补齐（alpha.12 之后，未发布）
+### 2026-11-02 核心配置提交补齐（随 v0.7.97-beta.1 发布）
 
 Space 正式 alpha.12 验收基线为 `codex/sdk-alpha12-preparation@ca8d2313`；其配置
 原子性反馈已纳入 Root 后续修复。本节新增实现已随 `v0.7.97-beta.1` 发布，历史
@@ -613,14 +613,14 @@ OAuth 和撤销规则保持；改名不证明新别名有权使用旧账号。
 [41401900534](https://github.com/icetomoyo/KodaX/actions/runs/41401900534) 全绿（16 个
 任务成功、发布按预期跳过）；本机冻结全套 19252 通过、87 条件跳过、0 失败/0 TODO，
 源码与产物指纹一致，双轴复审无剩余项。完整证据和先前失败见
-[最终验收](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#最终验收2026-11-02未发布)。
+[最终验收](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md#最终验收2026-11-02随-v0797-beta1-发布)。
 设计子仓仍为 `7927f835744643b418d463b10a2e1c1c4bdd12e8`，Space 独立分支及产物未改。
 接手时先锁定包含该提交的 `v0.7.97-beta.1` SDK 字节（npm 发布为手动步骤），按能力门禁启用默认方法/业务 resolver 和
 promotion，保留配置有限锁忙重试与原凭证来源，再走 Space 生产安装包的账号保持、撤销、
 排队/恢复和 Quick Ask 成品回归。已发布 alpha.12（标签 `f24a922c1`）不含本节后续补丁；
 本轮没有移动标签、发布 npm 或替 Space 完成产品侧适配。
 
-### 2026-10-30 SDK 组合契约修复（未发布）
+### 2026-10-30 SDK 组合契约修复（随 v0.7.97-alpha.12 发布）
 
 Partner 默认具备所选通用 Agent 工作面的能力：persona、surface/profileId 和专家验证
 不是隐式只读权限。使用 Session `workMode:'agent'`，不需要为了准入创建 profile。
@@ -738,7 +738,7 @@ Host ready 与 Run 可恢复分开；Stop、历史变化、授权失败或效果
 
 历史产物、支持范围与执行证据见 [FEATURE_298 测试指南](test-guides/FEATURE_298_v0.7.97_TEST_GUIDE.md)。
 
-## 2026-10-29 未发布改动对齐
+## 2026-10-29 改动对齐（随 v0.7.97-alpha.11 发布）
 
 核对范围为 `v0.7.97-alpha.10`（`6efeafa5`）之后至 `b70d2d30` 的源码。
 以下能力已贯通相应的公开类型、Host 实现和 daemon 适配；不据此声称旧安装包、
@@ -1027,7 +1027,7 @@ CLI Host 要求 providerCredentialConnectionBinding:1，保存值按实际 adapt
 此阶段修复了独立 Host 漏转发 providerProbeAuthorization 的问题，现按真实 owner 能力声明，避免 SDK 要求与 daemon 握手不一致。该修复不放宽旧 Host 的能力门槛。
 
 
-### FEATURE_302 T12-E/F/G：历史离线验收（未发布，2026-10-31）
+### FEATURE_302 T12-E/F/G：历史离线验收（2026-10-31，随 v0.7.97-alpha.12 发布）
 
 T01–T12 本地实现、离线完整回归和双轴评审完成，原 config.json、provider/model 别名及
 API_KEY 环境变量继续有效。默认保存值优先于批准 env，再走该连接声明的认证；
@@ -1048,9 +1048,9 @@ OAuth 注销与 API-key 删除保持不同入口；高级原生连接沿 SDK/CLI
 包含本次契约的 SDK 字节，再运行原 exact-byte/安装包门禁。当前 dev-link 仅用于联调，
 不得绕过门禁或作为正式安装包。独立分支的完整测试不覆盖原工作区另一线程未合并改动；
 合并后重跑受影响的 Host/凭证/恢复/发布验证。精确测试与未验证范围见
-[FEATURE_302 最终验收](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-efg-final-offline-acceptance-2026-10-31)。
+[FEATURE_302 最终验收](test-guides/FEATURE_302_v0.7.97_TEST_GUIDE.md#t12-efg-final-offline-acceptance-2026-10-31)。
 
-### FEATURE_302 T12-H：账号保持与可重试升级（未发布）
+### FEATURE_302 T12-H：账号保持与可重试升级（随 v0.7.97-alpha.12 发布）
 
 本轮 Root 代码与测试固定点：本地 `KodaX` 提交
 `a31f86206e413e89b5a97acad3b7090473cf474e`（基于 `68a02521c`）。
@@ -1058,7 +1058,7 @@ OAuth 注销与 API-key 删除保持不同入口；高级原生连接沿 SDK/CLI
 Space 仓库。Space 接手应采用包含此 Root 提交的 SDK/完整资源，继续保留自身独立
 分支的凭证迁移与 Main broker 代码；不把本地验收视作推送、发布或真实账户认证。
 
-2026-11-01 的 Root 审计补充仍未发布：既有 SDK/配置/API_KEY 入口和 auth.json v2
+2026-11-01 的 Root 审计补充随 v0.7.97-alpha.12 发布：既有 SDK/配置/API_KEY 入口和 auth.json v2
 保持有效。CLI 按需打开所选 OAuth，失败可重试；缺失、撤销或 profile/issuer 不匹配
 均报错，不能用环境 Key 或其他注册账号兜底。原始损坏配置、凭证及队列文件保留。
 已有核心配置损坏、非对象或读取被拒绝时，CLI 与 SDK 均显式拒绝按空配置执行或
@@ -1080,7 +1080,7 @@ Space 接手时应保留统计的 `coverage: partial`/issues；单个损坏 pend
 模型描述新增可选 `multimodalSupport`；切换模型时按选中模型判断图片，保留原始历史。
 费用沿用可空/nominal 合同，新增 `maxPricedInputTokens` 限定已覆盖费率的输入范围；
 未知价格、TTL 或超范围不能显示为零。目录/费率来源和限制见
-[模型与费用边界](LLM_INTEGRATION.md#审计后续模型与费用估算边界2026-11-01未发布)。
+[模型与费用边界](LLM_INTEGRATION.md#审计后续模型与费用估算边界2026-11-01随-v0797-alpha12-发布)。
 
 Space 若提供存储维护，可显式调用 `/coding.inspectToolOutputStorage(directory)`；
 `partial`、`failed` 或子目录存在时，不能把平面容量统计当完整全局清单。
@@ -1124,7 +1124,7 @@ docs/handoff/PROVIDER_UPGRADE.md。H 验收结果单独记录，不以 A–G 的
 H 对应 Space 独立提交 `437cac7d`；Root完整18,659、发布包70、Space完整4,531和实际
 Electron两项通过，两轴复审无剩余发现。详细证据见测试指南H节；原线程后续提交整合后须重验。
 
-### FEATURE_302 T12-I：整合最新 Host 契约（未发布）
+### FEATURE_302 T12-I：整合最新 Host 契约（随 v0.7.97-alpha.12 发布）
 
 独立分支整合本机主开发分支 `KodaX` 的 `0fa38e5b2`；原工作区和主分支未改动。
 保持 H 的账号来源/墓碑/撤销边界，并保留执行 profile、真实工具目录、恢复上限、
@@ -1140,7 +1140,7 @@ Session view close drain 和 Windows 进程回收。合并后的验收另记测�
 I 阶段时尚未合入/推送主分支。正式合入前复核主分支新提交，携带 `docs/features` 独立仓库
 提交；Space 发包前发布并锁定配套 SDK 字节，再执行原生产门禁。
 
-### FEATURE_302 T12-J：Root 本地主分支合入（未发布）
+### FEATURE_302 T12-J：Root 本地主分支合入（随 v0.7.97-alpha.12 发布）
 
 用户授权后，Root 的本地 `KodaX` 主分支已包含接入层改动及另一线程最新的
 `a9587af7e` MCP/Skill 修复，配套设计子仓也已同步。保留原配置/API_KEY、账号来源、
@@ -1152,7 +1152,7 @@ Skill 与 reasoning/cache/history 路径共同保留。未推送或发布。
 `codex/provider-credentials-space` 分支；本次 Root 合入不代表重新认证 Space 构建或
 完成其 persona/Partner/profile 产品迁移。Space 发布仍须先锁定匹配的已发布 SDK 字节。
 
-### 2026-10-31 恢复与凭证覆盖补齐（未发布）
+### 2026-10-31 恢复与凭证覆盖补齐（随 v0.7.97-alpha.12 发布）
 
 Root 在 `a65249d8` 审计后补上真实文件、独立 Main/Host 进程的凭证迁移中断、
 刷新期间换号、撤销后冷恢复，以及公开执行入口的崩溃快照/历史修复组合回归；
@@ -1179,7 +1179,7 @@ SDK 字节，再做 Space 生产安装包升级、旧配置/API_KEY 与凭证迁
 整合后仍需复验。旧 sealed 只作保留的恢复材料，不覆盖当前授权或撤销记录；旧新版本
 不得并行刷新同一 rotating grant，未知所有者旧锁不按时间强行清理。尚未推送或发布。
 
-### 2026-10-31 effort 链路修正：最新 Space 交接（未发布）
+### 2026-10-31 effort 链路修正：最新 Space 交接（随 v0.7.97-alpha.12 发布）
 
 Root 本地 `KodaX` 主分支已安全包含功能提交
 `9e3147da47536b1ed3fb8817c0e351b8923776c3`，以及测试夹具修正
@@ -1224,7 +1224,7 @@ Space 独立分支不推送，不创建版本标签、不发布包。最终主�
 分别核对远端 SHA。实际主仓重建、类型检查、109 项定向源码、8 项发布包验收通过；
 独立工作区完整发布包为 89 项通过。Space 保持独立，未推送、未改 SDK pin，未发布包或标签。
 
-## Issue 376：恢复、凭证与原生历史补齐（2026-11-01，未发布）
+## Issue 376：恢复、凭证与原生历史补齐（2026-11-01，随 v0.7.97-alpha.12 发布）
 
 本轮直接在 Root 本地 `KodaX` 主分支实施，基线 `3cd3e5af`；没有修改设计子仓
 `8574086` 或 Space 独立提交 `da531f0a`。本轮未推送、发布或改变 SDK pin，验收见

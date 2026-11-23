@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createCustomProvider, runWithProviderCredential } from '../index.js';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
-it.each(['anthropic', 'responses', 'chat'] as const)('keeps %s opaque replay within the acquired credential identity and preserves readable history', async route => {
+it.each(['anthropic', 'responses', 'chat'] as const)('keeps %s opaque replay within the acquired credential identity', async route => {
   const wire = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => Response.json(route === 'anthropic'
     ? { content: [{ type: 'thinking', thinking: 'readable', signature: 'opaque-identity-a' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }
     : route === 'responses' ? { status: 'completed', output: [{ type: 'reasoning', id: 'r', summary: [{ type: 'summary_text', text: 'readable' }], encrypted_content: 'opaque-identity-a' }] }
@@ -17,7 +17,8 @@ it.each(['anthropic', 'responses', 'chat'] as const)('keeps %s opaque replay wit
   await runWithProviderCredential(provider.name, 'account-b', () => provider.complete(messages, [], ''));
   expect(String(wire.mock.calls[1]?.[1]?.body)).toContain('opaque-identity-a');
   expect(String(wire.mock.calls[2]?.[1]?.body)).not.toContain('opaque-identity-a');
-  expect(String(wire.mock.calls[2]?.[1]?.body)).toContain('readable');
+  // Readable reasoning survives only where the target has an unsigned reasoning channel.
+  expect(String(wire.mock.calls[2]?.[1]?.body).includes('readable')).toBe(route !== 'responses');
 });
 
 it.each(['anthropic', 'responses', 'chat'] as const)('refreshes memoized %s credentials when the legacy environment key changes', async route => {

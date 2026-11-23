@@ -413,7 +413,7 @@ Host epoch rebinding. Relevant tests are
 [OAuth sessions](../../packages/llm/src/oauth/session.test.ts),
 [authorizer](../../src/provider-credential-authorizer.test.ts), and
 [OAuth broker binding](../../src/oauth-credential-binding.test.ts).
-The [FEATURE_302 ledger](FEATURE_302_v0.7.99_TEST_GUIDE.md#final-verification-ledger)
+The [FEATURE_302 ledger](FEATURE_302_v0.7.97_TEST_GUIDE.md#final-verification-ledger)
 already marks the live-service, non-Windows vault and installer limits explicitly.
 
 This audit reran 12 selected replacement/recovery/credential suites at the same

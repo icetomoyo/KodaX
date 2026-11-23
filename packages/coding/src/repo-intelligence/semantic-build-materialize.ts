@@ -29,8 +29,6 @@ import {
   collectSourceFileStates,
 } from './semantic-workspace.js';
 import {
-  MODULE_INDEX_FILE,
-  PROCESS_INDEX_FILE,
   DIRTY_SOURCE_HINT_FILE,
   FILE_ANALYSIS_INDEX_FILE,
   MAX_RELATED_RESULTS,
@@ -38,7 +36,6 @@ import {
   QUERY_MANIFEST_FILE,
   QUERY_SCHEMA_VERSION,
   SOURCE_EXTENSIONS,
-  SYMBOL_INDEX_FILE,
   capabilityTierForLanguage,
   computeModuleConfidence,
   computeOverviewFingerprint,
@@ -536,9 +533,6 @@ export async function materializeRepoIntelligenceIndex(
     dirtySourcePaths,
   };
 
-  await writeJsonFileAtomic(path.join(inputs.storageRoot, MODULE_INDEX_FILE), modulesWithProcesses);
-  await writeJsonFileAtomic(path.join(inputs.storageRoot, SYMBOL_INDEX_FILE), symbolsWithTargets);
-  await writeJsonFileAtomic(path.join(inputs.storageRoot, PROCESS_INDEX_FILE), processes);
   await writeJsonFileAtomic(path.join(inputs.storageRoot, QUERY_INDEX_FILE), index);
   await writeJsonFileAtomic(path.join(inputs.storageRoot, DIRTY_SOURCE_HINT_FILE), dirtySourceHint);
   if (shouldPersistRepoIntelligenceBaseline(inputs)) {

@@ -80,6 +80,7 @@ describe('provider registry', () => {
     ['qwen-token-plan', 'qwen3.6-flash'],
     ['qwen-token-plan', 'glm-5.2'],
     ['qwen-token-plan', 'deepseek-v4-pro'],
+    ['qwen-token-plan', 'deepseek-v4.1-flash'],
   ])('%s/%s explicitly supports disabling thinking', (provider, model) => {
     expect(getModelCapabilities(provider, model)?.reasoningProfile).toMatchObject({
       supportsDisabledThinking: true,
@@ -95,7 +96,8 @@ describe('provider registry', () => {
     ['ark-coding', 'kimi-k2.7-code'],
     ['ark-coding', 'MiniMax-M2.7'],
     ['qwen-token-plan', 'qwen3.8-max'],
-    ['qwen-token-plan', 'qwen3.8-max-preview'],
+    ['qwen-token-plan', 'qwen3.8-flash'],
+    ['qwen-token-plan', 'glm-5.3'],
   ])('%s/%s rejects attempts to disable always-on thinking', (provider, model) => {
     expect(getModelCapabilities(provider, model)?.reasoningProfile).toMatchObject({
       localRejectEfforts: expect.arrayContaining(['none']),
@@ -156,11 +158,13 @@ describe('provider registry', () => {
     expect(tokenPlan.getModel()).toBe('qwen3.8-max');
     expect(tokenPlan.getAvailableModels()).toEqual([
       'qwen3.8-max',
-      'qwen3.8-max-preview',
+      'qwen3.8-flash',
       'qwen3.7-max',
       'qwen3.7-plus',
       'qwen3.6-flash',
+      'glm-5.3',
       'glm-5.2',
+      'deepseek-v4.1-flash',
       'deepseek-v4-pro',
     ]);
 
@@ -169,13 +173,15 @@ describe('provider registry', () => {
     }
 
     expect(tokenPlan.getEffectiveMaxOutputTokens('qwen3.8-max')).toBe(131_072);
-    expect(tokenPlan.getEffectiveMaxOutputTokens('qwen3.8-max-preview')).toBe(131_072);
+    expect(tokenPlan.getEffectiveMaxOutputTokens('qwen3.8-flash')).toBe(131_072);
     expect(tokenPlan.getEffectiveMaxOutputTokens('qwen3.7-plus')).toBe(64_000);
     expect(tokenPlan.getEffectiveMaxOutputTokens('glm-5.2')).toBe(131_072);
     expect(tokenPlan.getEffectiveMaxOutputTokens('deepseek-v4-pro')).toBe(64_000);
+    expect(tokenPlan.getEffectiveMaxOutputTokens('glm-5.3')).toBe(131_072);
+    expect(tokenPlan.getEffectiveMaxOutputTokens('deepseek-v4.1-flash')).toBe(64_000);
     expect(getProviderConfiguredReasoningCapability('qwen-token-plan', 'qwen3.8-max'))
       .toBe('native-budget');
-    expect(getProviderConfiguredReasoningCapability('qwen-token-plan', 'qwen3.8-max-preview'))
+    expect(getProviderConfiguredReasoningCapability('qwen-token-plan', 'qwen3.8-flash'))
       .toBe('native-budget');
     expect(getProviderConfiguredReasoningCapability('qwen-token-plan', 'glm-5.2'))
       .toBe('native-effort');
@@ -185,8 +191,13 @@ describe('provider registry', () => {
     expectReasoningPreset('qwen-token-plan', 'glm-5.2', 'zai-glm-5.2');
     expect(getModelCapabilities('qwen-token-plan', 'qwen3.8-max')?.reasoningProfile)
       .toMatchObject({ localRejectEfforts: ['none', 'minimal'] });
-    expect(getModelCapabilities('qwen-token-plan', 'qwen3.8-max-preview')?.reasoningProfile)
+    expect(getModelCapabilities('qwen-token-plan', 'qwen3.8-flash')?.reasoningProfile)
       .toMatchObject({ localRejectEfforts: ['none', 'minimal'] });
+    // GLM-5.3 and DeepSeek V4.1 Flash reuse the gateway's proven enabled + reasoning_effort wire shape.
+    expect(getModelCapabilities('qwen-token-plan', 'glm-5.3')?.reasoningProfile)
+      .toMatchObject({ effortStrategy: 'anthropic-reasoning-effort', defaultEffort: 'max' });
+    expect(getModelCapabilities('qwen-token-plan', 'deepseek-v4.1-flash')?.reasoningProfile?.supportedEfforts?.map(e => e.value))
+      .toContain('low');
     expect(getModelCapabilities('qwen-token-plan', 'qwen3.7-max')?.reasoningProfile)
       .toMatchObject({ supportsDisabledThinking: true });
     expect(getModelCapabilities('qwen-token-plan', 'deepseek-v4-pro')?.reasoningProfile)
@@ -434,9 +445,15 @@ describe('provider registry', () => {
     const zhipuCoding = getProvider('zhipu-coding');
     expect(zhipuCoding.getModel()).toBe('glm-5.3');
     expect(zhipuCoding.getWireModel()).toBe('glm-5.3');
-    expect(zhipuCoding.getAvailableModels()).toEqual(['glm-5.3', 'glm-5.3-flash', 'glm-5.2', 'glm-5-turbo', 'glm-4.7']);
+    expect(zhipuCoding.getAvailableModels()).toEqual(['glm-5.3', 'glm-5.4', 'glm-5.3-highspeed', 'glm-5.3-flash', 'glm-5.2', 'glm-5-turbo', 'glm-4.7']);
+    expect(zhipuCoding.getWireModel('glm-5.4')).toBe('glm-5.4');
+    expect(zhipuCoding.getEffectiveContextWindow('glm-5.4')).toBe(1_000_000);
+    expect(zhipuCoding.getEffectiveMaxOutputTokens('glm-5.4')).toBe(131_072);
     expect(zhipuCoding.getEffectiveContextWindow('glm-5.3')).toBe(1_000_000);
     expect(zhipuCoding.getEffectiveMaxOutputTokens('glm-5.3')).toBe(131_072);
+    // Highspeed: faster serving of the same GLM-5.3 weights on the plan.
+    expect(zhipuCoding.getEffectiveContextWindow('glm-5.3-highspeed')).toBe(1_000_000);
+    expect(zhipuCoding.getEffectiveMaxOutputTokens('glm-5.3-highspeed')).toBe(131_072);
     // Flash on the Coding Plan: 3x plan quota, same 1M/128K text shape.
     expect(zhipuCoding.getEffectiveContextWindow('glm-5.3-flash')).toBe(1_000_000);
     expect(zhipuCoding.getEffectiveMaxOutputTokens('glm-5.3-flash')).toBe(131_072);
@@ -459,11 +476,13 @@ describe('provider registry', () => {
     expect(zai.name).toBe('zai-coding');
     expect(zai.getModel()).toBe('glm-5.3');
     expect(zai.getWireModel()).toBe('glm-5.3');
-    expect(zai.getAvailableModels()).toEqual(['glm-5.3', 'glm-5.3-flash', 'glm-5.2', 'glm-5-turbo', 'glm-4.7']);
+    expect(zai.getAvailableModels()).toEqual(['glm-5.3', 'glm-5.3-highspeed', 'glm-5.3-flash', 'glm-5.2', 'glm-5-turbo', 'glm-4.7']);
     expect(zai.getEffectiveContextWindow('glm-5.2')).toBe(1_000_000);
     expect(zai.getEffectiveMaxOutputTokens('glm-5.2')).toBe(131_072);
     expect(zai.getEffectiveContextWindow('glm-5.3')).toBe(1_000_000);
     expect(zai.getEffectiveMaxOutputTokens('glm-5.3')).toBe(131_072);
+    expect(zai.getEffectiveContextWindow('glm-5.3-highspeed')).toBe(1_000_000);
+    expect(zai.getEffectiveMaxOutputTokens('glm-5.3-highspeed')).toBe(131_072);
     expect(zai.getEffectiveContextWindow('glm-5.3-flash')).toBe(1_000_000);
     expect(zai.getEffectiveMaxOutputTokens('glm-5.3-flash')).toBe(131_072);
     expect(zai.getEffectiveContextWindow('glm-5-turbo')).toBe(200_000);

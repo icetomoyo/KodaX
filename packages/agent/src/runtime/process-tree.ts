@@ -453,7 +453,50 @@ function readWindowsProcessSnapshotFallback(): WindowsProcessIdentity[] | undefi
   return snapshot.length > 0 ? snapshot : undefined;
 }
 
+// Each PowerShell probe compiles C# and blocks the event loop for about a
+// second, which stalls every client of a shared Host (Issue 434). The bundled
+// SDK installs its hash-verified native helper, which answers in tens of
+// milliseconds. Standalone agent consumers keep PowerShell.
+let windowsProcessHelperResolver: (() => string) | undefined;
+let windowsProcessHelper: string | null | undefined;
+
+export function installWindowsProcessHelper(resolve: (() => string) | undefined): void {
+  windowsProcessHelperResolver = resolve;
+  windowsProcessHelper = undefined;
+}
+
+function resolveWindowsProcessHelper(): string | undefined {
+  if (windowsProcessHelper === undefined) {
+    try {
+      windowsProcessHelper = windowsProcessHelperResolver?.() ?? null;
+    } catch (error) {
+      windowsProcessHelper = null;
+      emitKodaXDiagnostic({
+        source: 'runtime:windows', level: 'warn', message: 'Native Windows process helper is unavailable; using PowerShell.',
+        detail: { stage: 'process-helper', available: false, error: error instanceof Error ? error.message : String(error) },
+      });
+    }
+  }
+  return windowsProcessHelper ?? undefined;
+}
+
+/** Run the native helper; undefined means it is not installed or could not start. */
+function runWindowsProcessHelper(stage: string, args: readonly string[], timeoutMs: number): SpawnSyncReturns<string> | undefined {
+  const helper = resolveWindowsProcessHelper();
+  if (helper === undefined) return undefined;
+  const startedAt = Date.now();
+  const result = spawnSync(helper, args, { encoding: 'utf8', timeout: timeoutMs, windowsHide: true });
+  if (result.error || result.status !== 0) reportWindowsProbe(`${stage}-helper`, result, startedAt, false);
+  // A helper that cannot start will not start next time either; dropping it
+  // keeps every later call from paying for the helper and PowerShell both.
+  if (result.error && (result.error as NodeJS.ErrnoException).code !== 'ETIMEDOUT') windowsProcessHelper = null;
+  return result.error ? undefined : result;
+}
+
 function readWindowsProcessSnapshotNative(): WindowsProcessIdentity[] | undefined {
+  const helped = runWindowsProcessHelper('process-snapshot', ['__process-snapshot'], DEFAULT_TASKKILL_MS);
+  const helpedSnapshot = helped?.status === 0 ? parseWindowsNativeProcessRows(helped.stdout) : undefined;
+  if (helpedSnapshot !== undefined) return helpedSnapshot;
   const script = [
     "$source = @'",
     NATIVE_PARENT_PROCESS_SOURCE,
@@ -561,6 +604,10 @@ function parseWindowsProcessStartIdentities(stdout: string, pids: readonly numbe
 function readWindowsProcessStartIdentities(pids: readonly number[]): Map<number, string> | undefined {
   // Scalar liveness checks need fresh creation times, not a compiled C# snapshot
   // of every process. Keep the native snapshot for tree capture and its fallback.
+  const helped = runWindowsProcessHelper('process-start-identities',
+    ['__process-start-identities', ...pids.map(String)], DEFAULT_TASKKILL_MS);
+  const helpedIdentities = helped?.status === 0 ? parseWindowsProcessStartIdentities(helped.stdout, pids) : undefined;
+  if (helpedIdentities !== undefined) return helpedIdentities;
   const startedAt = Date.now();
   const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsProcessStartIdentitiesScript(pids)], {
     encoding: 'utf8', timeout: DEFAULT_TASKKILL_MS, windowsHide: true,
@@ -887,12 +934,23 @@ function terminateCapturedWindowsProcesses(
   timeoutMs: number,
   includeSnapshot = false,
 ): WindowsTerminationResult {
-  const commands = [...captured].reverse().flatMap((identity) => (
-    /^\d+$/.test(identity.creationTime)
-      ? [`[KodaXNativeProcessSnapshot]::TerminateExact(${identity.pid}, [UInt64]${identity.creationTime}) | Out-Null`]
-      : []
+  const targets = [...captured].reverse().filter((identity) => /^\d+$/.test(identity.creationTime));
+  if (targets.length === 0) return { terminationAttempted: false };
+  const helped = runWindowsProcessHelper('process-terminate', ['__process-terminate-exact',
+    ...(includeSnapshot ? ['--snapshot'] : []),
+    ...targets.map((identity) => `${identity.pid}:${identity.creationTime}`)], timeoutMs);
+  const helpedTermination = helped === undefined
+    ? undefined
+    : readWindowsTerminationResult(helped.stdout ?? '', helped.status === 0);
+  // The helper validates arguments before terminating anything, so a run that
+  // attempted nothing can safely be retried through PowerShell.
+  if (helpedTermination?.terminationAttempted) {
+    invalidateSharedWindowsProcessSnapshot();
+    return helpedTermination;
+  }
+  const commands = targets.map((identity) => (
+    `[KodaXNativeProcessSnapshot]::TerminateExact(${identity.pid}, [UInt64]${identity.creationTime}) | Out-Null`
   ));
-  if (commands.length === 0) return { terminationAttempted: false };
   const script = [
     "$source = @'",
     NATIVE_PARENT_PROCESS_SOURCE,

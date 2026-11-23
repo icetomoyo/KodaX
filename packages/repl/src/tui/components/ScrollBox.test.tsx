@@ -129,6 +129,34 @@ describe("ScrollBox", () => {
     });
   });
 
+  it("renders grown content with the bottom window in the same frame", () => {
+    // A sticky transcript that grows must not paint the previous window over
+    // the new rows: that frame hides the newest rows, then the next commit
+    // jumps the history up (streaming jitter above the spinner).
+    const windows: string[] = [];
+    const renderBox = (scrollHeight: number) => (
+      <ScrollBox
+        scrollTop={0}
+        scrollHeight={scrollHeight}
+        viewportHeight={20}
+        renderWindow={(window) => {
+          windows.push(`${window.start}-${window.end}`);
+          return <Text>{`window:${window.start}-${window.end}`}</Text>;
+        }}
+      >
+        <Text>ignored</Text>
+      </ScrollBox>
+    );
+    const { rerender, lastFrame } = render(renderBox(50));
+    windows.length = 0;
+
+    rerender(renderBox(53));
+
+    expect(windows).not.toContain("30-50");
+    expect(windows[0]).toBe("33-53");
+    expect(lastFrame()).toContain("window:33-53");
+  });
+
   it("applies clamp bounds to the rendered window immediately", async () => {
     const ref = React.createRef<ScrollBoxHandle>();
     const { lastFrame } = render(

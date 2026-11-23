@@ -230,6 +230,16 @@ describe('CAP-022: getRuntimeActiveToolNames — runtime filter chain', () => {
     expect(getRuntimeActiveToolNames(tools, 'auto', true, false)).toEqual(['read', 'bash']);
     expect(getRuntimeActiveToolNames(tools, 'auto', true, true)).toEqual(tools);
   });
+
+  it('CAP-RUNTIME-TOOLS-001e: the semantic repo-intelligence tools appear only when full or light is explicit', () => {
+    const tools = ['repo_overview', 'changed_scope', 'changed_diff', 'module_context', 'relationship_scan'];
+    const gitOnly = ['repo_overview', 'changed_scope', 'changed_diff'];
+
+    expect(getRuntimeActiveToolNames(tools, 'auto', true)).toEqual(gitOnly);
+    expect(getRuntimeActiveToolNames(tools, 'full', true)).toEqual(tools);
+    expect(getRuntimeActiveToolNames(tools, 'light', true)).toEqual(tools);
+    expect(getRuntimeActiveToolNames(tools, 'off', true)).toEqual([]);
+  });
 });
 
 describe('CAP-021: getActiveToolDefinitions — top-level resolver', () => {

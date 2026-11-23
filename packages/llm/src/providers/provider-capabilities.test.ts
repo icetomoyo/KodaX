@@ -28,6 +28,7 @@ import {
   getProviderSnapshots,
 } from './provider-capabilities.loader.js';
 import { validateProviderCapabilitiesJson } from './provider-capabilities.types.js';
+import { getCodexCliKnownModels } from './cli-bridge-models.js';
 
 describe('FEATURE_198 — provider-capabilities loader', () => {
   it('retains explicit cache/tool declarations and native reasoning dialects in catalog validation', () => {
@@ -129,6 +130,13 @@ describe('FEATURE_198 — provider-capabilities loader', () => {
         expect(m.id).not.toBe(codex.model);
       }
     });
+
+    it('codex-cli offers models a ChatGPT-account Codex accepts', () => {
+      const known = getCodexCliKnownModels();
+      expect(known).toContain('gpt-6.2-sol');
+      // Codex rejects Spark for ChatGPT accounts ("not supported when using Codex with a ChatGPT account").
+      expect(known).not.toContain('gpt-5.3-codex-spark');
+    });
   });
 
   describe('snapshot frozen', () => {
@@ -175,7 +183,7 @@ describe('FEATURE_198 — provider-capabilities loader', () => {
     it('anthropic: full field set matches expected', () => {
       const a = getProviderSnapshots().anthropic;
       expect(a.apiKeyEnv).toBe('ANTHROPIC_API_KEY');
-      expect(a.model).toBe('claude-sonnet-4-6');
+      expect(a.model).toBe('claude-sonnet-5-5');
       expect(a.reasoningCapability).toBe('native-adaptive');
       expect(a.reasoningProfile).toMatchObject({
         reasoningPreset: 'claude-adaptive-max',
@@ -188,10 +196,18 @@ describe('FEATURE_198 — provider-capabilities loader', () => {
       expect(a.maxOutputTokens).toBe(64000);
       expect(a.thinkingBudgetCap).toBe(28000);
       expect(a.models).toEqual([
+        expect.objectContaining({
+          id: 'claude-fable-5-2', displayName: 'Fable 5.2', contextWindow: 1000000, outputTokenLimit: 128000,
+          reasoningCapability: 'native-adaptive', reasoningProfile: expect.objectContaining({ defaultEffort: 'high' }),
+        }),
         ...['opus', 'sonnet', 'haiku'].map(family => expect.objectContaining({
           id: `claude-${family}-5-5`, displayName: `${family[0]!.toUpperCase()}${family.slice(1)} 5.5`,
           contextWindow: 1000000, outputTokenLimit: 128000, reasoningCapability: 'native-adaptive',
           reasoningProfile: expect.objectContaining({ defaultEffort: family === 'sonnet' ? 'high' : 'medium' }),
+        })),
+        ...['opus', 'sonnet'].map(family => expect.objectContaining({
+          id: `claude-${family}-5`, contextWindow: 1000000, outputTokenLimit: 128000, reasoningCapability: 'native-adaptive',
+          reasoningProfile: expect.objectContaining({ defaultEffort: 'high' }),
         })),
         expect.objectContaining({
           id: 'claude-opus-4-8',
@@ -407,8 +423,9 @@ describe('FEATURE_198 — provider-capabilities loader', () => {
       }));
       // GLM-5.2 remains an explicit rollback choice during the 5.3 rollout;
       // glm-5.3-flash (2026-08-26, native multimodal) sits right after 5.3.
+      // glm-5.4 (2026-11-23, Coding Plan only, no official doc yet) leads the list.
       expect(z.model).toBe('glm-5.3');
-      expect(z.models?.map((m) => m.id)).toEqual(['glm-5.3', 'glm-5.3-flash', 'glm-5.2', 'glm-5-turbo', 'glm-4.7']);
+      expect(z.models?.map((m) => m.id)).toEqual(['glm-5.4', 'glm-5.3','glm-5.3-highspeed', 'glm-5.3-flash', 'glm-5.2', 'glm-5-turbo', 'glm-4.7']);
       expect(z.models?.find((m) => m.id === 'glm-4.7')).toEqual(expect.objectContaining({
         id: 'glm-4.7',
         displayName: 'GLM-4.7',
@@ -424,7 +441,7 @@ describe('FEATURE_198 — provider-capabilities loader', () => {
     it('zai-coding defaults to GLM-5.3 while retaining GLM-5.2', () => {
       const z = getProviderSnapshots()['zai-coding'];
       expect(z.model).toBe('glm-5.3');
-      expect(z.models?.map((m) => m.id)).toEqual(['glm-5.3', 'glm-5.3-flash', 'glm-5.2', 'glm-5-turbo', 'glm-4.7']);
+      expect(z.models?.map((m) => m.id)).toEqual(['glm-5.3', 'glm-5.3-highspeed', 'glm-5.3-flash', 'glm-5.2', 'glm-5-turbo', 'glm-4.7']);
       expect(z.reasoningProfile).toMatchObject({
         reasoningPreset: 'zai-glm-5.3',
         supportsDisabledThinking: false,

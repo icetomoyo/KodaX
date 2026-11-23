@@ -292,7 +292,7 @@ namespace 路由错误，但尚未观察到成功的 sourceContent→正确交�
 取值；不再追加同类端到端样本求绿、不加任务/模型专属提示、不删除原生能力。
 正式发包、运行 Host、Space、跨平台、账号、覆盖安装及 Issue 371 仍分开验收。
 
-## 2026-11-04 Script 返回契约与按需描述（源码修复已验证，未发布）
+## 2026-11-04 Script 返回契约与按需描述（源码修复已验证，随 v0.7.97-beta.2 发布）
 
 基线 `37258ec5c`。按本轮重新诊断的结论，将 SDK 返回合同、模型任务正确性及
 效率分开验收。旧 revision 8/9 的任务失败、partial/unknown usage 和原始记录保持，
@@ -413,7 +413,7 @@ SHA-256 仍为上述 ddd648…，未在验证期间改生产源码或构建。`g
 质量或效率结论。跨平台、真实账号、覆盖安装、麒麟自动回退及 Issue 371 继续独立
 验收，不随本次源码修复或未来发包自动关闭。
 
-## 2026-11-04 Script 显式执行与模式验收（源码已验证，未发布）
+## 2026-11-04 Script 显式执行与模式验收（源码已验证，随 v0.7.97-beta.2 发布）
 
 基线 `532243a27`。本轮补齐上一轮的验收缺口，区分“选中 Script 模式”、
 “实际执行脚本”和“任务正确完成”，不以采用率代替功能正确性或效率。
@@ -615,11 +615,11 @@ schema 值和递归键序不变，357 项既有静态资源值原样保留。仓
 | 实际运行 Host | 本地 SDK/Worker/受权 Host 与独立 Host 回归已验；未升级部署 Host，付费工具 fixture 不替代 reverse-bridge/lease 或外部服务验收 |
 | Space 成品接入 | 本轮未验；跨平台、麒麟、真实账号、覆盖安装与 Issue 371 均不据此关闭 |
 
-## 2026-11-04 Script 调用与程序数据后续（未发布）
+## 2026-11-04 Script 调用与程序数据后续（随 v0.7.97-beta.2 发布）
 
 源码基线 `49da64f24`，对应本轮真实模型暴露的命名空间与数据格式问题。
 这是前次交付后的新修订，前次 revision 4/5 raw、失败、成本和通过记录保持原样。
-API 契约见 [SDK 迁移说明](../SDK_MIGRATION.md#2026-11-04-script-调用路径与程序数据未发布)。
+API 契约见 [SDK 迁移说明](../SDK_MIGRATION.md#2026-11-04-script-调用路径与程序数据随-v0797-beta2-发布)。
 
 智能与泛化约束：从共同工具契约和受信结果生产者修复问题，调用路径适用于所有
 当前受权名称；数据来自选窗阶段，不按扩展名解析、不剥离展示字符串。生产教学仅
@@ -881,7 +881,7 @@ SDK Host fixture 匹配进程。此前三轮失败仍保留，首次检索和第
 ## 2026-11-03 beta.1 后续正确性与 Script/Workflow（实施中）
 
 来源为本轮 Space SDK 修订需求及 Workflow 自动收尾追补，基线 `e733e51f`。
-正式契约见 [SDK 迁移说明](../SDK_MIGRATION.md#2026-11-03-beta1-后续修复未发布)。
+正式契约见 [SDK 迁移说明](../SDK_MIGRATION.md#2026-11-03-beta1-后续修复随-v0797-beta2-发布)。
 本节测试存在或单独通过，均不能替代正式包、正在运行的 Host 或 Space 成品验收。
 
 基线包审计：本轮从 npm registry 读取 `0.7.97-beta.1` 的真实 tarball
@@ -1111,7 +1111,7 @@ Script 数据缓存。独立完整文件一次 3/3 通过（39.69 秒），不�
 后续只增强失败诊断，保留原断言、期限与权限，并停止其他验证负载后复验完整扫描；
 不修改生产代码去追求表面通过，也不提前将这一轮记为全绿。
 
-### 最终源码验收（2026-11-04，未发布）
+### 最终源码验收（2026-11-04，随 v0.7.97-beta.2 发布）
 
 最后增量只给上述崩溃用例增加失败诊断：成功路径没有新 RPC，两条原 60 秒 poll、
 全部断言和权限保留。失败后各限 2 秒读取 Run/Input，并附 bootstrap 尾部及原 cause；
@@ -1163,7 +1163,7 @@ Linux Node 指引沿用 beta.1 现有实现；Windows 上既有 readiness 文件
 不能替代 Linux/麒麟实机。跨平台、真实账号、覆盖安装及 Issue 371 性能保持独立验收；
 此前性能 probe 失败、两处手动临时目录清理被拒及本次未复现的崩溃测试均不隐去。
 
-## 2026-11-02 Space 接缝补齐（alpha.12 之后，未发布）
+## 2026-11-02 Space 接缝补齐（随 v0.7.97-beta.1 发布）
 
 能力与接手顺序见 [SDK 迁移](../SDK_MIGRATION.md) 与 [Space 接缝](../SPACE_SDK_SEAMS.md)。
 源码基线 `f24a922c1`；本节不改写已发布 alpha.12 的历史结果。所有新增模型响应为 loopback
@@ -1238,7 +1238,7 @@ RED→GREEN。仅当前 owner 的 temporary Run 复用既有缓存准入，未�
 completed 结果再检查三次请求；crash 夹具改为先核验原进程身份退出，并保留 bootstrap
 失败诊断。后两项单独重跑原已通过，未将新夹具写法宣称为首次失败唯一原因的复现证明。
 
-### 最终验收：2026-11-02（未发布）
+### 最终验收：2026-11-02（随 v0.7.97-beta.1 发布）
 
 本段保留 Space 补审前的功能基线记录；后续修正见下一节。
 
@@ -1400,7 +1400,7 @@ bootstrap 4,066 字节，生产启动预算、模型参数与提示词模板未�
 SDK 尚未发布，alpha.12 tag 仍为 `f24a922c117e0ece5d26224a133a69973b313ab6`，设计子仓
 仍为 `7927f835744643b418d463b10a2e1c1c4bdd12e8`；Space 未改，需新 SDK 后再做产品验收。
 
-## 2026-10-30 Partner 通用 Agent 契约修复（未发布）
+## 2026-10-30 Partner 通用 Agent 契约修复（随 v0.7.97-alpha.12 发布）
 
 下节保留修复前失败证据。本轮统一契约为：Partner persona 不增加只读上限；Session 选择
 Agent 工作面，显式策略/工具列表/授权、SA Solo、审批与沙箱仍取交集。纯 profile 不制造
@@ -1501,7 +1501,7 @@ workMode 的专用子 Agent 例外是已有设计，不能把子 Agent 正常保
 
 ## 2026-10-30 SDK 组合与配置边界
 
-本轮为 alpha.11 后未发布修复，契约见 [迁移指南](../SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复未发布)
+本轮为 alpha.11 后未发布修复，契约见 [迁移指南](../SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复随-v0797-alpha12-发布)
 及 [配置生效边界](../CLIENT_CONTRACT.md#配置生效边界)。六项审计回归分别覆盖：
 
 | 原缺陷 | 修复与验证 |
@@ -2402,10 +2402,10 @@ The second case supplied no screenshots or rendering command. A project-discover
 
 Two bounded cases, 22 physical requests including auxiliaries, max one provider stream in flight; 80 production source/build hashes unchanged from the prior gate. Raw, immutable native/non-Office renders, preflight failure, npm diagnostic and structured main-session assessment: `%TEMP%/kodax-eval-dumps/result-review-office/89632d90a0c1498791c4a345466c980c`. No runtime source or dependency change, so prior regression gates were not repeated. This closes the inspected static Office/PPT workflow; animations, other Office versions and the earlier video residue are not covered by this extension. Native model output also contains an unsupported incidental claim about invisible bottom images; the nonce badges are visibly present, and that claim remains in raw evidence.
 
-## 2026-10-29 Unified Host SDK cutover (unreleased)
+## 2026-10-29 Unified Host SDK cutover (shipped in v0.7.97-alpha.12)
 
 Baseline: `466b874d`, after `v0.7.97-alpha.11`. The accepted H01–H05 slices are in
-[the feature design](../features/v0.7.97.md#2026-10-29-统一-host-sdk-收口未发布).
+[the feature design](../features/v0.7.97.md#2026-10-29-统一-host-sdk-收口随-v0797-alpha12-发布).
 Public root and `/runtime` exports now provide shared Host connections; isolated
 core tests use the non-published `tests/runtime-fixture.ts`. Tests of public
 construction, launch/bootstrap, declaration compatibility and installed artifacts
@@ -2640,7 +2640,7 @@ through all gates. Native Linux/macOS and Node 20 execution, live-model quality,
 publication and deployed Space acceptance remain outside this Windows/Node 22 run.
 
 
-## 2026-11-08 Space SDK repair acceptance (unreleased)
+## 2026-11-08 Space SDK repair acceptance (shipped in v0.7.97-beta.4)
 
 Implementation requirements from Space's beta.3 feedback and the approved repair
 plan: restore legacy AGENTS-only loading while retaining tagged prompt sources

@@ -102,6 +102,8 @@ export async function runComplexRuntime(route:Pick<EditRoute,'id'|'env'|'model'|
    }finally{queued--;release();}
   }
  }
+ // Semantic repo tools are opt-in; a fixture that exercises them sets KODAX_REPO_INTELLIGENCE=full.
+ const repoIntelligenceMode=process.env.KODAX_REPO_INTELLIGENCE==='full'?'full' as const:'auto' as const;
  const unregister=registerModelProvider(name,()=>new Wrapped());let runtime:KodaXRuntime|undefined;
  try{
   runtime=await createKodaXRuntime({mode:'embedded',homeDir:path.join(directory,'home'),defaultProvider:name,defaultModel:route.model});
@@ -114,7 +116,7 @@ export async function runComplexRuntime(route:Pick<EditRoute,'id'|'env'|'model'|
   const handle=await runWithProviderRequestAttribution(rootAttribution,()=>activeRuntime.runs.start({sessionId:session.id,mode:'managed_task',prompt:taskPrompt+(collaboration?'\n另外，请派一个只读子 Agent 核对 README 和旧测试中的兼容约束；它只做检查与报告、不修改文件。主 Agent 负责修复、运行测试，并整合其结论。最多创建一个子 Agent，使用继承的模型设置。':'\n可按需要使用至多一个只读子 Agent，使用继承的模型设置；主 Agent 负责实际修复和验证。'),options:{provider:name,model:route.model,agentMode:'ama',reasoningMode:'off',effort:route.provider==='kimi-code'?'low':'none',lsp:false,maxIter:24,maxOutputTokens:limits.output??4096,abortSignal:abort.signal,disablePromptCache:true,
    workMode,guardrails:[executionBoundary,createComplexReadBoundary(workspace),...additionalGuardrails],
    learningReviewer:async()=>{reviewBypasses++;return{memoryPlan:{actions:[],warnings:[]},capabilityDecision:{disposition:'discard',reasonCodes:['eval-isolated']}};},
-   context:{executionCwd:workspace,gitRoot:workspace,skillsPrompt:'',skillRegistry:new SkillRegistry(workspace),repoIntelligenceMode:'auto',resolveShellPermissionMode:()=> 'full-access'},
+   context:{executionCwd:workspace,gitRoot:workspace,skillsPrompt:'',skillRegistry:new SkillRegistry(workspace),repoIntelligenceMode,resolveShellPermissionMode:()=> 'full-access'},
    events:{
     onToolUseStart:(tool,meta)=>{events.push({kind:'start',...tool,meta});snapshot();},
     onToolResult:(result,meta)=>{events.push({kind:'result',...result,meta});snapshot();},

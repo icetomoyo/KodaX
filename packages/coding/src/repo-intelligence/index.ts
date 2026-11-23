@@ -4,11 +4,11 @@ import { createHash } from 'node:crypto';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { assertNoGitInstallPrompt } from '@kodax-ai/agent';
-import { resolveExecutionCwd } from '../runtime-paths.js';
+import { resolveWorkspaceTargetPath } from '../runtime-paths.js';
 import type { KodaXToolExecutionContext } from '../types.js';
 import {
   debugLogRepoIntelligence,
-  resolveRepoIntelligenceStorageDir,
+  resolveRepoIntelligenceStorageRoot,
   safeReadJson,
   ensureRepoIntelligenceStorageDir,
   writeJsonFileAtomic,
@@ -16,13 +16,11 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-const DEFAULT_REPO_INTELLIGENCE_DIR = path.join('.agent', 'repo-intelligence');
 const MANIFEST_FILE = 'manifest.json';
 const OVERVIEW_FILE = 'repo-overview.json';
 const OVERVIEW_INVENTORY_FILE = 'repo-overview-inventory.json';
 const OVERVIEW_BASELINE_FILE = 'repo-overview-baseline.json';
 const OVERVIEW_BASELINE_INVENTORY_FILE = 'repo-overview-inventory-baseline.json';
-const CHANGED_SCOPE_FILE = 'changed-scope.json';
 const SCHEMA_VERSION = 3;
 const MAX_TRACKED_FILES = 12000;
 const MAX_OUTPUT_AREAS = 8;
@@ -595,7 +593,9 @@ async function getGitSummary(workspaceRoot: string, source: 'git' | 'filesystem'
       head: head.trim() || undefined,
       hasUncommittedChanges: status.trim().length > 0,
     };
-  } catch {
+  } catch (error) {
+    // Callers treat an unknown Git state as changed, so no cached snapshot is reused.
+    debugLogRepoIntelligence('Could not read the Git summary; treating the workspace as changed.', error);
     return undefined;
   }
 }
@@ -978,7 +978,7 @@ async function buildRepoOverviewSnapshotForWorkspace(
     git,
   );
   await writeRepoOverviewArtifacts(storageRoot, overview, inventory, {
-    writeBaseline: source === 'git' && git?.hasUncommittedChanges !== true,
+    writeBaseline: source === 'git' && git?.hasUncommittedChanges === false,
     dirtyIdentity,
   });
 
@@ -995,8 +995,7 @@ export async function resolveRepoOverviewSnapshot(
   context: Pick<KodaXToolExecutionContext, 'executionCwd' | 'gitRoot'>,
   options: { targetPath?: string; refresh?: boolean } = {},
 ): Promise<RepoOverviewSnapshot> {
-  const baseDir = resolveExecutionCwd(context);
-  const targetDir = await resolveTargetDirectory(options.targetPath ? path.resolve(baseDir, options.targetPath) : baseDir);
+  const targetDir = await resolveTargetDirectory(resolveWorkspaceTargetPath(options.targetPath, context));
   const { workspaceRoot, source } = await resolveWorkspaceRoot(targetDir);
   const cached = await readStoredRepoOverview(workspaceRoot, OVERVIEW_FILE);
   const cachedManifest = await readStoredRepoOverviewManifest(workspaceRoot);
@@ -1038,7 +1037,7 @@ export async function resolveRepoOverviewSnapshot(
       && (
         cached?.schemaVersion === SCHEMA_VERSION
         && cached.source === 'git'
-        && liveGit?.hasUncommittedChanges !== true
+        && liveGit?.hasUncommittedChanges === false
         && cached.git?.head === liveGit?.head
         && cached.git?.branch === liveGit?.branch
         && cached.git?.hasUncommittedChanges === liveGit?.hasUncommittedChanges
@@ -1139,7 +1138,6 @@ export function renderRepoOverview(overview: RepoOverview): string {
   const lines: string[] = [
     `Repository overview for ${path.basename(overview.workspaceRoot)}`,
     `Root: ${overview.workspaceRoot}`,
-    `Snapshot: ${overview.source} @ ${overview.generatedAt}`,
   ];
 
   if (overview.git?.branch || overview.git?.head) {
@@ -1513,8 +1511,6 @@ export async function analyzeChangedScopeFromSnapshot(
     riskHints: buildRiskHints(changedFiles, Array.from(areasTouchedMap.values())),
   };
 
-  const storageRoot = await ensureStorageDir(overview.workspaceRoot);
-  await writeJsonFileAtomic(path.join(storageRoot, CHANGED_SCOPE_FILE), report);
   return report;
 }
 
@@ -1532,24 +1528,38 @@ function describeChangedScope(report: ChangedScopeReport): string {
   }
 }
 
-export function renderChangedScope(report: ChangedScopeReport): string {
-  return renderChangedScopeContent(report, true);
+export function renderChangedScope(report: ChangedScopeReport, options: { fileOffset?: number } = {}): string {
+  return renderChangedScopeContent(report, true, options.fileOffset ?? 0);
 }
 
-function renderChangedScopeContent(report: ChangedScopeReport, includeOverviewIdentity: boolean): string {
+function renderChangedFiles(report: ChangedScopeReport, fileOffset: number): string[] {
+  const total = report.files.length;
+  const page = report.files.slice(fileOffset, fileOffset + MAX_OUTPUT_FILES);
+  const lines = ['Changed files:'];
+  if (fileOffset > 0) {
+    lines.push(page.length > 0
+      ? `Showing files ${fileOffset + 1}-${fileOffset + page.length} of ${total}`
+      : `Showing no files: offset ${fileOffset} is past the last of ${total} files`);
+  }
+  for (const file of page) {
+    lines.push(`- ${file.status} ${file.path} [${file.category}] -> ${file.areaId}`);
+  }
+  const nextOffset = fileOffset + page.length;
+  if (page.length > 0 && nextOffset < total) {
+    lines.push(`- ... ${total - nextOffset} more file(s); call changed_scope with offset=${nextOffset} to list them`);
+  }
+  return lines;
+}
+
+function renderChangedScopeContent(report: ChangedScopeReport, includeOverviewIdentity: boolean, fileOffset = 0): string {
   const lines: string[] = [
     `Changed scope for ${path.basename(report.workspaceRoot)}`,
     ...(includeOverviewIdentity ? [`Root: ${report.workspaceRoot}`] : []),
     `Scope: ${describeChangedScope(report)}`,
-    `Snapshot: ${report.analyzedAt}`,
     `Changed files: ${report.totalChangedFiles}`,
     `Changed lines: ${report.changedLineCount} (+${report.addedLineCount} / -${report.deletedLineCount}; line counts cover tracked diffs only, untracked files excluded)`,
     `Categories: source=${report.categories.source} docs=${report.categories.docs} tests=${report.categories.tests} config=${report.categories.config} other=${report.categories.other}`,
   ];
-
-  if (includeOverviewIdentity && report.overviewGeneratedAt) {
-    lines.push(`Repository overview snapshot: ${report.overviewGeneratedAt}`);
-  }
 
   lines.push('Areas touched:');
   if (report.areasTouched.length === 0) {
@@ -1571,24 +1581,10 @@ function renderChangedScopeContent(report: ChangedScopeReport, includeOverviewId
     }
   }
 
-  lines.push('Changed files:');
-  for (const file of report.files.slice(0, MAX_OUTPUT_FILES)) {
-    lines.push(`- ${file.status} ${file.path} [${file.category}] -> ${file.areaId}`);
-  }
-  if (report.files.length > MAX_OUTPUT_FILES) {
-    lines.push(`- ... ${report.files.length - MAX_OUTPUT_FILES} more file(s)`);
-  }
+  lines.push(...renderChangedFiles(report, fileOffset));
 
   return lines.join('\n');
 }
-function getRepoIntelligenceDir(): string {
-  return resolveRepoIntelligenceStorageDir(DEFAULT_REPO_INTELLIGENCE_DIR);
-}
-
 function resolveRepoIntelligencePath(workspaceRoot: string, ...segments: string[]): string {
-  const configuredDir = getRepoIntelligenceDir();
-  const storageRoot = path.isAbsolute(configuredDir)
-    ? configuredDir
-    : path.join(workspaceRoot, configuredDir);
-  return path.join(storageRoot, ...segments);
+  return path.join(resolveRepoIntelligenceStorageRoot(workspaceRoot), ...segments);
 }

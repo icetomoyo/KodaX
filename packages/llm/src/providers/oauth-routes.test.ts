@@ -42,9 +42,9 @@ it.each(['meta', 'xai'] as const)('drops encrypted Responses history when %s acc
   await runWithProviderCredential(config.name, 'account-two', () => provider.complete([{ role: 'assistant', content: first.contentBlocks! }], [], ''));
   const body = String(fetch.mock.calls[1]?.[1]?.body);
   expect(body).not.toContain('first-account-cipher');
-  expect(body).toContain('readable');
+  expect(body).not.toContain('readable');
 });
-it('keeps readable Anthropic history while dropping a different account signature', async () => {
+it('drops Anthropic reasoning signed by a different account', async () => {
   const fetch = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => Response.json({ id: 'msg', type: 'message', role: 'assistant', model: 'chosen',
     content: [{ type: 'thinking', thinking: 'readable', signature: 'account-one-signature' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 2 } }));
   vi.stubGlobal('fetch', fetch);
@@ -53,5 +53,5 @@ it('keeps readable Anthropic history while dropping a different account signatur
   const first = await runWithProviderCredential(config.name, 'account-one', () => provider.complete([], [], '', undefined, { maxOutputTokensOverride: 16 }));
   await runWithProviderCredential(config.name, 'account-two', () => provider.complete([{ role: 'assistant', content: first.contentBlocks ?? first.thinkingBlocks }], [], '', undefined, { maxOutputTokensOverride: 16 }));
   expect(String(fetch.mock.calls[1]?.[1]?.body)).not.toContain('account-one-signature');
-  expect(String(fetch.mock.calls[1]?.[1]?.body)).toContain('readable');
+  expect(String(fetch.mock.calls[1]?.[1]?.body)).not.toContain('readable');
 });

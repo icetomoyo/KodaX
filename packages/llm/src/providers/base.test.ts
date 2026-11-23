@@ -1038,6 +1038,37 @@ describe('KodaXBaseProvider', () => {
     }
   });
 
+  it.each([
+    'Failed to generate a response: invalid tool definition',
+    'Invalid request: output limit must be positive',
+    'Invalid parameter (request id: req_8f503a1)',
+  ])('does not mistake a permanent error for a rate limit: %s', async message => {
+    const task = vi.fn<() => Promise<string>>().mockRejectedValue(new Error(message));
+    const failure = await new TestProvider().exposeWithRateLimit(task, undefined, 3).catch((error: unknown) => error);
+    expect(task).toHaveBeenCalledTimes(1);
+    expect(failure).toMatchObject({ name: 'KodaXProviderError' });
+  });
+
+  it.each([
+    'rate_limit_reached_error: please slow down',
+    'Too Many Requests',
+    '[1302] 您的账户已达到速率限制',
+    'engine_overloaded_error',
+    'HTTP 529 from upstream',
+  ])('still retries a transient limit: %s', async message => {
+    const task = vi.fn<() => Promise<string>>().mockRejectedValueOnce(new Error(message)).mockResolvedValueOnce('ok');
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback: Parameters<typeof setTimeout>[0]) => {
+      if (typeof callback === 'function') callback();
+      return undefined as unknown as ReturnType<typeof setTimeout>;
+    });
+    try {
+      await expect(new TestProvider().exposeWithRateLimit(task, undefined, 2)).resolves.toBe('ok');
+      expect(task).toHaveBeenCalledTimes(2);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
+  });
+
   it('surfaces rate-limit retry callbacks with the computed delay', async () => {
     const provider = new TestProvider();
     const onRateLimit = vi.fn();

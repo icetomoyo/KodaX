@@ -7,10 +7,18 @@ const worker = vi.hoisted(() => ({
 }));
 
 vi.mock('./semantic-worker-client.js', () => worker);
-vi.mock('./index.js', () => ({ buildRepoIntelligenceContext: vi.fn(async () => 'Full repository context') }));
+const changedScope = vi.hoisted(() => vi.fn(async () => {
+  throw new Error('Fixture workspace is not a git repository');
+}));
+
+vi.mock('./index.js', () => ({
+  analyzeChangedScope: changedScope,
+  buildRepoIntelligenceContext: vi.fn(async () => 'Full repository context'),
+}));
 
 import {
   _resetRepoIntelligenceCachesForTesting,
+  getAgentRepoRoutingSignals,
   getRepoRoutingSignals,
   prewarmRepoIntelligenceCaches,
 } from './runtime.js';
@@ -42,5 +50,19 @@ describe('Full repository startup prewarm', () => {
     expect(routing.changedFileCount).toBe(7);
     expect(routing.capability).toMatchObject({ mode: 'full', engine: 'full', status: 'ok' });
     expect(worker.getRepoRoutingSignals).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not build the semantic index without an explicit full or light opt-in', async () => {
+    vi.stubEnv('KODAX_REPO_INTELLIGENCE', '');
+    const context = { executionCwd: 'C:/repo' };
+    prewarmRepoIntelligenceCaches(context, { mode: 'auto' });
+    prewarmRepoIntelligenceCaches(context);
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    const routing = await getAgentRepoRoutingSignals(context, 'auto');
+
+    expect(worker.getRepoRoutingSignals).not.toHaveBeenCalled();
+    expect(changedScope).toHaveBeenCalledTimes(1);
+    expect(routing).toMatchObject({ changedFileCount: 0, suggestedComplexity: 'simple' });
   });
 });

@@ -11,30 +11,30 @@
 
 | Item | Value |
 |---|---|
-| Current released version | `v0.7.97-beta.13` (Git tag); `v0.7.96` remains the last stable release |
-| Current package version | `@kodax-ai/kodax@0.7.97-beta.13`; npm `beta` is `0.7.97-beta.12` (published 2026-11-21T01:22:25Z); beta.13 npm publication remains a manual maintainer step |
+| Current released version | `v0.7.97-rc.2` (Git tag); `v0.7.96` remains the last stable release |
+| Current package version | `@kodax-ai/kodax@0.7.97-rc.2`; npm `rc` is `0.7.97-rc.1` (published 2026-11-23T00:09:21Z); rc.2 npm publication remains a manual maintainer step |
 | Workspace baseline | `llm / agent / coding / repl` 4 core packages + private optional `artifacts` source workspace; one public npm package |
 | Released implementation | [FEATURE_301 v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) — managed Artifact SDK and PPT review loop, released in `v0.7.97-alpha.4` and extended with the unified Artifact SDK in `v0.7.97-alpha.5`; [FEATURE_298 v0.7.97](features/v0.7.97.md#feature_298-product-host-and-client-contract-simplification) — unified product Host and client contract, T01–T56 implemented, released through `v0.7.97-alpha.3` and extended with startup streamlining, Session recency ordering, draft admission, concurrent-launch recovery and shared-Session Host ownership resolution through `v0.7.97-alpha.7`; [FEATURE_299 v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) remains stable through `v0.7.96` |
 | Result review | Main-agent evidence checks + universal visual-review skill; verifier retirement released in alpha.4; missing visual capabilities remain unverified; [design](ADR.md#verification-responsibility-and-tradeoffs) |
 | Artifact distribution revision | `2026-10-18` — one `@kodax-ai/kodax` npm package; four `/artifacts` subpaths and resources staged in the main tarball; local implementation, not yet published |
 | Current Artifact SDK additions | Unified visual evidence SDK and format backends released in `v0.7.97-alpha.5`: nine public operations, PDF/image/SVG/DOCX evidence, local HTML/SMIL capture and same-Host PNG reads; [support and limits](ARTIFACT_SDK.md) |
-| Current development | `v0.7.97-beta.13` Space integration repairs and Session-read cost fixes (Issues 424-430) — a client exit whose cleanup failed no longer blocks later starts once the old Host has exited (only `host_shutdown_verified` proves the old exit; the surviving gap becomes the reason of a ready/start_or_connect result), a managed Run with a prepared prompt saves and sends the user's exact words without the duplicated `runManagedTask` copy, `runs.start` reports retired inputs (`mode: 'coding'`, `agentMode: 'sa'`) as `warnings`, the daemon maps Runtime failure codes to protocol codes with the original code in `data.conflict`/`data.reason`, integration health reads without the preflight (`integrationConfigResilience.healthQuery`), the daemon preflight reuses cached Session-list/Actor metadata and retries busy Sessions (about 4.5s to about 40ms on 3230 Sessions), Session first-line reads start at 4KB, malformed-record warnings log once per count per process, and display-history checkpoints append a bounded delta during a Run instead of rewriting the whole Session every 500ms; [release preparation](release.md#v0797-beta13-release-preparation). On top of the beta.12 one prompt chain and final Stop outcomes. Cross-platform manual acceptance, installed Space/SDK acceptance, the Space dependency bump and the original slow first resume after rebuild remain open; Issue 395's intermittent failure cause and Issue 394's whole-task non-inferiority remain unproven. |
+| Current development | `v0.7.97-rc.2` RepoIntel phase 0, reasoning-replay repairs and the `glm-5.4` listing — RepoIntel keeps to what git can answer by default (FEATURE_317): under the default `auto` mode agents get `repo_overview`, `changed_scope` and `changed_diff` while the semantic tools, the injected module/impact context and the background index build need `repoIntelligenceMode` `full` or `light`, truncated lists report omitted counts with no placeholder results, and the index moves from `.agent/repo-intelligence/` in the workspace to `<config home>/repo-intelligence/`; switching models no longer teaches the new model to write its thinking into the reply because readable reasoning replays only through the target's reasoning channel (Issue 441), Gemini and pi-messages endpoints replay foreign tool calls as real calls instead of `<prior_tool_call>` text (Issue 442), and `zhipu-coding` lists `glm-5.4` with the `glm-5.3-flash` settings (unverified upstream at listing time); [release preparation](release.md#v0797-rc2-release-preparation). On top of the rc.1 model catalog refresh and late provider/Host/REPL repairs. Cross-platform manual acceptance, installed Space/SDK acceptance, the Space dependency bump and the original slow first resume after rebuild remain open; Issue 395's intermittent failure cause and Issue 394's whole-task non-inferiority remain unproven. |
 | Visual harness implementation | P3/P4/P5/P6 implemented within declared scope and released in `v0.7.97-beta.5` through the next-dev integration; [final ID/receipt contract delivery](designs/visual-harness-id-contract-delivery-2026-10-30.md). P7 task-value evaluation concluded **mixed; net task-quality/token value unproven**, against optimized pre-visual 1826cc22; [final review and limits](designs/visual-harness-current-version-closure-2026-10-30.md). The 2026-10-29 plan's "not executed" state and old r3 single-response results are historical, not the current outcome. Historical default suite 18,094 passed / 0 failed; earlier failures and unlocated causes remain recorded; [mainline integration acceptance](designs/next-dev-integration-execution-2026-11-09.md). No new feature ID/version assigned |
-| Roadmap updated | `2026-11-21` — beta.13 prepared on top of the npm-published beta.12 with the Space integration repairs and Session-read cost fixes (Issues 424-430) and the display-history checkpoint append; beta.12 published with one prompt chain and final Stop outcomes; FEATURE_312/313 registered for the SDK v2 contract; FEATURE_300 remains Planned; merged into `KodaX-next-dev` on 2026-11-21. `2026-11-16` — beta.11 prepared on top of the npm-published beta.10 with readable history during a busy Run and tool-neutral Skills, merged into `KodaX-next-dev` on 2026-11-17; FEATURE_300 remains Planned. `2026-11-15` — FEATURE_308 note memory Completed on `KodaX-next-dev` (unreleased, on by default); FEATURE_309 legacy memory code deletion Planned for `v0.8.11`, blocked by Issue 411; beta.10 published (GitHub prerelease and npm `beta`) with merged-input acknowledgement (`ClientViewItem.inputIds`) and the merged-input restore fix, merged into `KodaX-next-dev` on 2026-11-15. `2026-11-13` — beta.9 prepared on top of the published beta.8 with FEATURE_306 data root resolver and copy (Completed, shipped in `v0.7.97-beta.9`); FEATURE_305 Completed; FEATURE_300 remains Planned; `KodaX-next-dev` merged beta.9 on 2026-11-14 and carries the unreleased FEATURE_307 side chat and FEATURE_308 memory redesign |
+| Roadmap updated | `2026-11-23` — rc.2 prepared on top of the npm-published rc.1 with RepoIntel phase 0 (FEATURE_317 default surface), the reasoning/tool-call replay repairs (Issues 441-442) and `glm-5.4` on zhipu-coding; rc.1 published with the model catalog refresh; FEATURE_300 remains Planned; `2026-11-24` — merged into `KodaX-next-dev`, which carries the unreleased SDK v2 work (FEATURE_312–316, 318), FEATURE_307 side chat and FEATURE_308 note memory |
 | Artifact SDK | `2026-10-15` — complete preparation/evidence-read SDK and existing Host bridge shipped in `v0.7.97-alpha.5`; PDF/image/SVG, candidate DOCX, local HTML/SMIL backends; bundle acceptance requires prepared Chromium; [actual contract/support](ARTIFACT_SDK.md), [design](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) |
-| Total tracked features | `101` |
+| Total tracked features | `102` |
 | InProgress | `3` |
 | Planned | `24` |
-| Completed | `68` |
+| Completed | `69` |
 | Reviewed out of active roadmap | `6` (`108, 231, 232, 235, 238, 244`) |
-| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 318` |
+| Tracked feature IDs | `007, 030, 093, 105, 108, 113, 139, 174, 211, 221, 224, 225, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317, 318` |
 | Archive cutoff | Shipped / canceled / absorbed / shelved items through `v0.7.49` are archived. |
 
 ### 一览表
 
 | Status | Count | Feature IDs | Next checkpoint |
 |---|---:|---|---|
-| Completed | 68 | `311, 310, 308, 306, 305, 304, 303, 302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
+| Completed | 69 | `317, 311, 310, 308, 306, 305, 304, 303, 302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 3 | `307, 298, 225` | `307`: R1–R6 hardening and verification per [side-chat plan](designs/side-chat-plan.md). `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
 | Planned, SDK v2 | 4 | `312, 313, 316, 318` | `312`, `313` and `316` are implemented on `KodaX-next-dev`, unreleased; they ship with the SDK v2 work. `318` is being designed in [CLI command redesign](designs/cli-command-redesign.md). `313`, including its stall limit, is built wholly on `KodaX-next-dev`; mainline adds nothing. |
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
@@ -531,11 +531,11 @@
 
 ---
 
-## Unreleased implementation — FEATURE_302
+## FEATURE_302 implementation (shipped in v0.7.97-alpha.12)
 
-`v0.7.99` FEATURE_302 including T12-H/I is **Completed for implementation and offline acceptance** on
+`v0.7.97` FEATURE_302 (first planned under `v0.7.99`) including T12-H/I is **Completed for implementation and offline acceptance** on
 the accepted parity history; J has now integrated that history into local `KodaX` main and the
-design submodule. Released: **unreleased**. No version bump, push or publication.
+design submodule. Released: **`v0.7.97-alpha.12`**.
 T01–T12 include the full declared provider/API/OAuth and operation inventory, native cloud
 protocols, identity/history/cache/tool compatibility, hidden Key setup, unified file credentials
 and actual Space provider/stable-client-secret migration including H (`437cac7d`) and I (`da531f0a`). Existing aliases/config/env
@@ -545,8 +545,8 @@ historical cutover/real alpha.11 Host upgrade **4**; Space complete **4,531**, c
 and two actual Electron IPC/restart tests passed. The H coverage evidence remains historical.
 Both review axes have zero remaining findings. This does not certify live account entitlements,
 all service models, macOS/Linux legacy-vault migration, or a production Space installer.
-See [design](features/v0.7.99.md#feature_302-independent-llm-provider-parity) and
-[final evidence](test-guides/FEATURE_302_v0.7.99_TEST_GUIDE.md#t12-j-local-main-integration--2026-10-31).
+See [design](features/v0.7.97.md#feature_302-independent-llm-provider-parity) and
+[final evidence](test-guides/FEATURE_302_v0.7.97_TEST_GUIDE.md#t12-j-local-main-integration--2026-10-31).
 I left the original workspaces untouched; J's authorized local main update is recorded below.
 Keep the separate design gitlink with Root and retain Space's commits on its independent branch.
 Publish/pin the paired SDK before production packaging.
@@ -558,6 +558,90 @@ Final frozen package **80** and historical/real-alpha.11 Host gates **4** passed
 and build fingerprints remained unchanged throughout. See the J guide for exact checkpoints.
 Space stays independently at `da531f0a`; its historical I counts do not certify a newly paired
 Space build. No push/publication.
+
+## v0.7.97-rc.2 Release Record
+
+`v0.7.97-rc.2` is the second release candidate of the v0.7.97 line:
+RepoIntel phase 0, the reasoning-replay repairs and the `glm-5.4`
+listing. RepoIntel keeps to what git can answer by default (FEATURE_317):
+under the default `auto` mode agents get `repo_overview`, `changed_scope`
+and `changed_diff` while the semantic tools (`module_context`,
+`symbol_context`, `process_context`, `impact_estimate`,
+`relationship_scan`, `cyclic_dependencies`, `semantic_lookup`), the
+injected module/impact context and the background index build need
+`repoIntelligenceMode` `full` or `light` or
+`KODAX_REPO_INTELLIGENCE=full|light`; truncated lists report how many
+items were left out, a name the index does not know is a not-found error,
+an unresponsive index reports warming or unavailable with no placeholder
+result and no fallback to the largest module; `changed_scope` pages its
+file list and injected context no longer carries timestamps; and the
+index is stored under `<config home>/repo-intelligence/` instead of
+`.agent/repo-intelligence/` in the workspace. Switching models no longer
+teaches the new model to write its thinking into the reply: readable
+reasoning replays only through the target's reasoning channel (unsigned
+thinking on lenient Anthropic-compatible endpoints, `reasoning_content`
+on OpenAI-compatible ones) and is dropped elsewhere, signatures,
+redacted thinking and encrypted reasoning still replay only to the
+endpoint that produced them, and replay removes a leading
+`<prior_reasoning>` segment from earlier replies so already-polluted
+sessions recover (Issue 441). Gemini and pi-messages endpoints replay
+tool calls from another model as real calls and results instead of
+`<prior_tool_call>` text, using Google's documented skip signature on
+Gemini and an `unknown` origin with zero usage on pi-messages (Issue 442;
+pi-messages has not been tested live). `zhipu-coding` lists `glm-5.4`
+with the `glm-5.3-flash` settings; a live check confirmed the model ID
+exists but the upstream was overloaded (error 1305), so effort, tools,
+limits and image input are unverified. The CI/Release in-place upgrade
+gate now pins the published rc.1 tarball. Every v0.7.96 stable and
+v0.7.97-alpha.1 through rc.1 client contract is retained. The changes
+are listed in the [CHANGELOG](../CHANGELOG.md). Cross-platform manual
+acceptance, installed Space/SDK acceptance, the Space dependency bump and
+npm publication remain manual maintainer steps.
+
+## v0.7.97-rc.1 Release Record
+
+`v0.7.97-rc.1` is the first release candidate of the v0.7.97 line:
+the model catalog refresh and the late provider/Host/REPL repairs
+(Issues 431-440). The `anthropic` provider lists Claude Fable 5.2 (1M
+context, 128K output, always-on adaptive thinking) and the `openai`
+provider lists the GPT-6.x lineup with per-model effort declarations;
+defaults move to `claude-sonnet-5-5` and `gpt-6.2-sol`, and the Codex
+CLI bridge falls back to `gpt-6.2-sol` while dropping GPT-5.3 Codex
+Spark. Native Claude models no longer fail a forced-tool or legacy
+`reasoning: false` request; OpenAI strict tool schemas fall back to
+non-strict for untyped nodes and remember a strict-limit rejection for
+the session (Issue 431); retry classification no longer treats any
+message containing `limit`, `rate` or `503` as a rate limit and
+retries mid-stream `api_error` events, `finish_reason: "error"`,
+cut-off replies, gateway "temporarily unavailable" messages and
+Cloudflare 520/524/525 (Issue 432). Tool calls an extension handler
+makes through `scope.invokeTool`/`executeProcess` dispatch as nested
+calls that keep their permission/sandbox checks but emit no view-level
+start, each execution records the model-issued call that owns its
+item, and the Session view settles a terminal Run's running and
+`awaiting_approval` items as `cancelled` (Issue 433). Windows process
+snapshots, start identities and exact termination read through new
+native `__process-snapshot`/`__process-start-identities`/`__process-terminate-exact`
+exports of `kodax-windows-sandbox` with PowerShell fallback, so a bash
+call no longer blocks the Host event loop for about a second (Issue
+434). The memory review inbox scan checks `processing/` without a lock
+and locks only a stale-claimed session (Issue 435; reclamation stays
+with open Issue 437). The Host and the CLI stop blocking on repeated
+Git and PowerShell probes: `tryGitRemote` remembers `git config --get
+remote.origin.url` per directory and refreshes it asynchronously, and
+the CLI and its providers use the installed native Windows process
+helper, so a scripted first turn on a fresh Host replies in 3.9-4.2 s
+instead of 5.1-5.7 s and an ordinary turn starts no synchronous
+process (Issue 439). The memory review receipt fires
+`onMemoryReviewReceipt` only after its job is durably completed
+(Issue 440). The REPL no longer jumps while a reply streams under
+"Thinking…" (Issue 438) and echoes a submitted input at once before
+the Host view shows it. The CI/Release in-place upgrade gate now pins
+the published beta.13 tarball. Every v0.7.96 stable and v0.7.97-alpha.1
+through beta.13 client contract is retained. The changes are listed in
+the [CHANGELOG](../CHANGELOG.md). Cross-platform manual acceptance,
+installed Space/SDK acceptance, the Space dependency bump and npm
+publication remain manual maintainer steps.
 
 ## v0.7.97-beta.13 Release Record
 
@@ -753,7 +837,7 @@ glibc 2.17 and on kernels before 5.8 (Issues 403–404), a failed native text
 addon load no longer crashes the next tracked write (Issue 402), and Session
 settings no longer drift with shared user defaults. The CI/Release in-place
 upgrade gate now pins the published beta.5 tarball. Acceptance is recorded in
-the [FEATURE_305 test guide](test-guides/FEATURE_305_v0.7.98_TEST_GUIDE.md).
+the [FEATURE_305 test guide](test-guides/FEATURE_305_v0.7.97_TEST_GUIDE.md).
 Every v0.7.96 stable and v0.7.97-alpha.1 through beta.5 client contract is
 retained except the removed `profile` option; migration steps are in
 [SDK_MIGRATION.md](SDK_MIGRATION.md#one-host-per-kodax_home-profile-removed)
@@ -2607,6 +2691,22 @@ fixed GitHub binary archive sidecar omission before tagging.
   client, has no stream resumption, no multi-client view and no auth; v2
   needs all four.
 
+## 2026-11-23 FEATURE_317 Addition
+
+- Status: Completed 2026-11-23, unreleased; ships with the `v0.7.97` final release (rc.1 is out). ID 317 skips 314–316, which
+  `KodaX-next-dev` already uses.
+- Source: the 2026-11-23 RepoIntel audit. The name-matched semantic index (sample call-target precision
+  42.7%, recall 55.1%) was on the default tool surface, in automatic context injection and in background
+  builds; it cached inside the user repository and answered timeouts and misses with placeholder results.
+- Owner decisions (2026-11-23): v2 is a Rust Host-supervised engine (design record
+  [RepoIntel v2](designs/repointel-v2-2026-11-23.md)); phase 0 ships first on the old engine — default
+  surface limited to overview, changed scope and diff, semantic tools opt-in via `full`/`light`, honest
+  output, storage out of the repository, ADR-033 prompt calibration with an eval, and a truth baseline.
+- Scope: phase 0 only. Phases 1–4 of the design record (Rust engine, module resolution and repository map,
+  on-demand precise layer, BM25 lookup) and the old-engine removal are not part of FEATURE_317; each gets its
+  own feature ID when it starts.
+- Design block: [v0.7.97](features/v0.7.97.md#feature_317-repointel-phase-0--honest-default-surface).
+
 ## 2026-11-22 FEATURE_314 Addition
 
 - Status: Planned. Owner decision (2026-11-22): remove Host protocol v1 in
@@ -2728,7 +2828,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 ## 2026-11-19 FEATURE_311 Addition
 
-- Status: Completed 2026-11-20, unreleased. Planned under `v0.7.98`, a planning identifier. ID 311 is unused on
+- Status: Completed 2026-11-20; shipped in `v0.7.97-beta.12`. First planned under the `v0.7.98` planning identifier. ID 311 is unused on
   both `KodaX` and `KodaX-next-dev`.
 - Source: the 2026-10-26/27 first-turn token work replaced canonical text with compact text at request
   time and silently kept canonical text whenever an exact match failed. Two tool text sets and two Worker
@@ -2737,13 +2837,13 @@ fixed GitHub binary archive sidecar omission before tagging.
 - Owner decisions (2026-11-19): one source per role and one tool text set on every entry; every root Run
   moves to the managed Worker; `systemPromptOverride` replaces identity and style only; SDK customers no
   longer call `runKodaX`, so there is no deprecation window; eval budget authorized.
-- Design block: [v0.7.98](features/v0.7.98.md#feature_311-unified-prompt-chain).
+- Design block: [v0.7.97](features/v0.7.97.md#feature_311-unified-prompt-chain).
 
 ---
 
 ## 2026-11-18 FEATURE_310 Addition
 
-- Status: Completed 2026-11-19, unreleased. Planned under `v0.7.98`, a planning identifier.
+- Status: Completed 2026-11-19; shipped in `v0.7.97-beta.12`. First planned under the `v0.7.98` planning identifier.
   ID 310 skips 307–309, which `KodaX-next-dev` already uses.
 - Source: the SA selection was retired in 4c4c3774e (2026-10-16), but explicit SDK `'sa'`,
   config.json `'sa'`, the SA dispatch branch, `'sa'` labels and SA test fixtures remain.
@@ -2752,18 +2852,18 @@ fixed GitHub binary archive sidecar omission before tagging.
 - Owner decisions (2026-11-18): normalize config.json `'sa'` to AMA; retire public `'sa'` the
   amaw way and remove every SA call path in this pass, not in a later release window; delete
   the FEATURE_100 golden recorder; keep the `sa-mutation-reflection` eval id.
-- Design block: [v0.7.98](features/v0.7.98.md#feature_310-sa-mode-residue-removal).
+- Design block: [v0.7.97](features/v0.7.97.md#feature_310-sa-mode-residue-removal).
 
 ---
 
 ## 2026-11-13 FEATURE_306 Addition
 
-- Status: Completed 2026-11-13; shipped in `v0.7.97-beta.9`. Planned under `v0.7.98`, a
-  planning identifier. npm publication and the Space dependency bump follow.
+- Status: Completed 2026-11-13; shipped in `v0.7.97-beta.9`. First planned under the
+  `v0.7.98` planning identifier. npm publication and the Space dependency bump follow.
 - Source: KodaX Space F148 (Settings-based data location) and Space ADR-011. The SDK resolves
   the data root and copies it; selecting the new root, restarting the Host and deleting the
   old root stay with the embedder.
-- Design block: [v0.7.98](features/v0.7.98.md#feature_306-data-root-resolver-and-copy).
+- Design block: [v0.7.97](features/v0.7.97.md#feature_306-data-root-resolver-and-copy).
 
 ---
 
@@ -2798,8 +2898,8 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 ## 2026-11-10 FEATURE_305 Addition
 
-- Status: Completed 2026-11-11 and shipped in `v0.7.97-beta.6`; planned under `v0.7.98`, a
-  planning identifier.
+- Status: Completed 2026-11-11 and shipped in `v0.7.97-beta.6`; first planned under the
+  `v0.7.98` planning identifier.
 - Source: Issues 405–407 from the KodaX Space 0.1.47-alpha.5 + CLI 0.7.97-beta.4 report.
   Decision record: ADR-075 (Accepted). Design:
   [one-host-per-kodax-home-2026-11-10.md](designs/one-host-per-kodax-home-2026-11-10.md).
@@ -2807,13 +2907,13 @@ fixed GitHub binary archive sidecar omission before tagging.
   grants; remove the Host-location `profile` SDK option and `daemon --profile` now, with
   explicit errors and migration docs that ship in the npm package; keep the
   `identity.profile` wire field (`default`) for clients since v0.7.66.
-- Design block: [v0.7.98](features/v0.7.98.md#feature_305-one-host-per-kodax_home).
+- Design block: [v0.7.97](features/v0.7.97.md#feature_305-one-host-per-kodax_home).
 
 ---
 
 ## 2026-11-04 FEATURE_303 and FEATURE_304 Addition
 
-- Status: target `v0.7.98`. FEATURE_303 and FEATURE_304 completed 2026-11-05 and shipped
+- Status: first targeted at the `v0.7.98` planning identifier. FEATURE_303 and FEATURE_304 completed 2026-11-05 and shipped
   early in `v0.7.97-beta.5` through the `KodaX-next-dev` integration.
 - Source: WP6 and WP7 of the [SDK foundation hardening plan](designs/sdk-foundation-hardening-plan-2026-11-04.md).
   The plan's Phase 1 defects are Issues 378-381.
@@ -2823,7 +2923,7 @@ fixed GitHub binary archive sidecar omission before tagging.
   default. Decision: the Node floor stays `>=20`.
 - FEATURE_304: `ask` result for extension `tool:before`. Decision record: ADR-071 (Accepted).
   It does not wait for Space's callers.
-- Design: [v0.7.98](features/v0.7.98.md).
+- Design: [v0.7.97](features/v0.7.97.md#feature_303-proxy-and-private-ca-support).
 
 ---
 
@@ -2870,14 +2970,15 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Version | Design | Notes |
 |---|---|---|---|---|
-| `311` | Unified Prompt Chain | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_311-unified-prompt-chain) | Every root Run uses the managed Worker and every entry sends one tool text: the request-time projection, the canonical Worker and tool texts, the direct root engine and `system.md` are deleted. `runs.start({ mode: 'coding' })` is ignored with a warning; the leaf executor stays internal for child Agents. `tests/f311-entry-matrix.test.ts` pins every entry; ADR "Every root Run uses one Worker and one tool text" records it. |
-| `310` | SA Mode Residue Removal | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_310-sa-mode-residue-removal) | Public and config.json `agentMode: 'sa'` normalize the way `amaw` did: managed entries run AMA, `runKodaX` and `runs.start` without a mode treat it as unset, and persisted `'sa'` records stay readable. The SA dispatch branch, Direct Path overlay, `'sa'` labels and the FEATURE_100 golden recorder are gone; ADR "SA mode is retired from every caller" records it. The `sa-mutation-reflection` eval id keeps its name. |
+| `317` | RepoIntel Phase 0 — Honest Default Surface | `v0.7.97-rc.2` | [v0.7.97](features/v0.7.97.md#feature_317-repointel-phase-0--honest-default-surface) | Default `auto` offers `repo_overview`, `changed_scope` and `changed_diff`; the semantic tools, module/impact injection and the background index build need explicit `full` or `light`, and routing signals come from git changes. Output reports omitted items, not-found names and warming/unavailable indexes instead of placeholders. Storage moves to `<config home>/repo-intelligence`; `target_path` must stay in the workspace. Prompt eval (82 calls, blind-reviewed) recommended ship; `npm run bench:repo-intel-truth` holds the old-engine baseline. KNOWN_ISSUES #133 closed. |
+| `311` | Unified Prompt Chain | `v0.7.97` (shipped in `v0.7.97-beta.12`) | [v0.7.97](features/v0.7.97.md#feature_311-unified-prompt-chain) | Every root Run uses the managed Worker and every entry sends one tool text: the request-time projection, the canonical Worker and tool texts, the direct root engine and `system.md` are deleted. `runs.start({ mode: 'coding' })` is ignored with a warning; the leaf executor stays internal for child Agents. `tests/f311-entry-matrix.test.ts` pins every entry; ADR "Every root Run uses one Worker and one tool text" records it. |
+| `310` | SA Mode Residue Removal | `v0.7.97` (shipped in `v0.7.97-beta.12`) | [v0.7.97](features/v0.7.97.md#feature_310-sa-mode-residue-removal) | Public and config.json `agentMode: 'sa'` normalize the way `amaw` did: managed entries run AMA, `runKodaX` and `runs.start` without a mode treat it as unset, and persisted `'sa'` records stay readable. The SA dispatch branch, Direct Path overlay, `'sa'` labels and the FEATURE_100 golden recorder are gone; ADR "SA mode is retired from every caller" records it. The `sa-mutation-reflection` eval id keeps its name. |
 | `308` | Memory and Skill-Learning Redesign | `v0.8.10` (on `KodaX-next-dev`, unreleased) | [v0.8.10](features/v0.8.10.md#feature_308-memory-and-skill-learning-redesign) | Note memory replaces the governed memory plane and is on by default (ADR-076): one markdown file per note, a `MEMORY.md` index read by the model, the `memory` tool with exact-quote authorization, inferred notes kept as candidates, reflection after each root run (10 calls a day) that also proposes `ready` skills, and a reminder after a failed tool batch. `KODAX_MEMORY_NOTES=0` restores the legacy plane until FEATURE_309. [Test guide](test-guides/FEATURE_308_v0.8.10_TEST_GUIDE.md). |
-| `306` | Data Root Resolver and Copy | `v0.7.98` (shipped in `v0.7.97-beta.9`) | [v0.7.98](features/v0.7.98.md#feature_306-data-root-resolver-and-copy) | `resolveKodaXHome` resolves the data root without touching `process.env` and ignores a relative `KODAX_HOME` with a warning; `copyKodaXDataRoot` copies a data root into an empty target under an incomplete marker, skips per-Host state, refuses a running Host and rebases absolute paths in `.json` / `.jsonl`. Source: Space F148 / ADR-011; the Space dependency bump follows the release. |
-| `305` | One Host per KODAX_HOME | `v0.7.98` (shipped in `v0.7.97-beta.6`) | [v0.7.98](features/v0.7.98.md#feature_305-one-host-per-kodax_home) | One Host serves each `KODAX_HOME`; the Host-location `profile` SDK option and `--profile` CLI flag are removed with `runtime_host_migration_required` errors (ADR-075). Legacy-slot Hosts are found through the storage-owner redirect and profile-split Session state merges once (Issue 407); the Space dependency bump follows the release. |
-| `304` | Ask Result for Extension Tool Policy | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_304-ask-result-for-extension-tool-policy) | Extension `tool:before` may return `{ decision: 'ask', reason }`; block wins over ask. The Host raises an allow-once-only permission request with the reason in every mode, including Full Access and granted calls; a Host without `requestToolApproval` blocks. Capability `toolHookAsk: { version: 1 }` on embedded and daemon. The official sandbox asks for recursive and out-of-workspace deletes. |
-| `303` | Proxy and Private CA Support | `v0.7.98` (unreleased) | [v0.7.98](features/v0.7.98.md#feature_303-proxy-and-private-ca-support) | The Responses WebSocket follows `HTTP(S)_PROXY` and `NO_PROXY` on Node 22.21+/24.5+ with `NODE_USE_ENV_PROXY=1` and on the Bun binary; the Host warns as `runtime:network` when a proxy variable would be bypassed. Node floor stays `>=20`. Verified on Node 22.23.1 and Bun 1.4.4 with a local proxy and private CA. |
-| `302` | Independent LLM Provider Parity | `v0.7.99` (unreleased) | [v0.7.99](features/v0.7.99.md#feature_302-independent-llm-provider-parity) | T01–T12/H/I accepted offline with paired Space; J Root/design local main integration and post-merge gates passed. Space remains independent; live accounts/platform installers unverified. |
+| `306` | Data Root Resolver and Copy | `v0.7.97` (shipped in `v0.7.97-beta.9`) | [v0.7.97](features/v0.7.97.md#feature_306-data-root-resolver-and-copy) | `resolveKodaXHome` resolves the data root without touching `process.env` and ignores a relative `KODAX_HOME` with a warning; `copyKodaXDataRoot` copies a data root into an empty target under an incomplete marker, skips per-Host state, refuses a running Host and rebases absolute paths in `.json` / `.jsonl`. Source: Space F148 / ADR-011; the Space dependency bump follows the release. |
+| `305` | One Host per KODAX_HOME | `v0.7.97` (shipped in `v0.7.97-beta.6`) | [v0.7.97](features/v0.7.97.md#feature_305-one-host-per-kodax_home) | One Host serves each `KODAX_HOME`; the Host-location `profile` SDK option and `--profile` CLI flag are removed with `runtime_host_migration_required` errors (ADR-075). Legacy-slot Hosts are found through the storage-owner redirect and profile-split Session state merges once (Issue 407); the Space dependency bump follows the release. |
+| `304` | Ask Result for Extension Tool Policy | `v0.7.97` (shipped in `v0.7.97-beta.5`) | [v0.7.97](features/v0.7.97.md#feature_304-ask-result-for-extension-tool-policy) | Extension `tool:before` may return `{ decision: 'ask', reason }`; block wins over ask. The Host raises an allow-once-only permission request with the reason in every mode, including Full Access and granted calls; a Host without `requestToolApproval` blocks. Capability `toolHookAsk: { version: 1 }` on embedded and daemon. The official sandbox asks for recursive and out-of-workspace deletes. |
+| `303` | Proxy and Private CA Support | `v0.7.97` (shipped in `v0.7.97-beta.5`) | [v0.7.97](features/v0.7.97.md#feature_303-proxy-and-private-ca-support) | The Responses WebSocket follows `HTTP(S)_PROXY` and `NO_PROXY` on Node 22.21+/24.5+ with `NODE_USE_ENV_PROXY=1` and on the Bun binary; the Host warns as `runtime:network` when a proxy variable would be bypassed. Node floor stays `>=20`. Verified on Node 22.23.1 and Bun 1.4.4 with a local proxy and private CA. |
+| `302` | Independent LLM Provider Parity | `v0.7.97` (shipped in `v0.7.97-alpha.12`) | [v0.7.97](features/v0.7.97.md#feature_302-independent-llm-provider-parity) | T01–T12/H/I accepted offline with paired Space; J Root/design local main integration and post-merge gates passed. Space remains independent; live accounts/platform installers unverified. |
 | `301` | Managed Artifact SDK and PPT Review Loop | Initial implementation in `v0.7.97-alpha.4`; unified Artifact SDK additions released in `v0.7.97-alpha.5` | [v0.7.97](features/v0.7.97.md#feature_301-managed-artifact-sdk-and-ppt-review-loop) | Optional SDK in the single main npm package, with a private source workspace, nine operations and shared Host execution; PPTX authoring/limited edits, PDF/image/SVG evidence, candidate DOCX and local HTML/SMIL capture. Native Office fidelity and full natural-task model repair/re-review/delivery remain unverified; [current support](ARTIFACT_SDK.md). |
 | `299` | Unified Stop, Full Access and Extension Execution Contracts | `v0.7.96` (release pending) | [v0.7.96](features/v0.7.96.md#feature_299-unified-stop-full-access-and-extension-execution-contracts) | Implements legacy large metadata paging, Full Access policy provenance, lock-independent Session Stop, CLI/ACP convergence and managed extension execution with reload isolation. |
 | `297` | Codex-Aligned Permission Profiles, Sandbox Escalation, and Exec Policy | `v0.7.96-alpha.5` | [v0.7.96](features/v0.7.96.md#feature_297-codex-aligned-permission-profiles-sandbox-escalation-and-exec-policy) | Makes sandbox completion authoritative, moves Edits/Auto decisions to an exact host boundary, adds Full Access and JSONC Exec Policy, removes Auto[RULES]/envPass/global-Git blocking, and preserves a single no-replay host retry. |

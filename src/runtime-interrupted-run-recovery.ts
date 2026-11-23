@@ -1,6 +1,7 @@
 import type { KodaXSessionData } from '@kodax-ai/agent';
 import { getSessionLineagePath } from '@kodax-ai/agent';
 import type { KodaXInterruptedRunEvidence, KodaXInterruptedRunOperation } from '@kodax-ai/coding';
+import { withoutInternalToolRecords } from './client-canonical-tools.js';
 
 export interface InterruptedRunCandidate {
   readonly runId: string;
@@ -54,7 +55,7 @@ export function deriveInterruptedRunEvidence(
   const committed = new Set(messages.flatMap(message => message.outputId ? [message.outputId] : []));
   const operations: KodaXInterruptedRunOperation[] = [];
   const replies: NonNullable<KodaXInterruptedRunEvidence['replies']>[number][] = [];
-  for (const item of data.uiHistory ?? []) {
+  for (const item of withoutInternalToolRecords(data.uiHistory ?? [], messages)) {
     if (item.sourceRunId !== run.runId) continue;
     if (item.afterInputId && !messages.some(message => message.inputId === item.afterInputId && message._synthetic !== true)) continue;
     const turnId = item.sourceTurnId ?? run.turnId;

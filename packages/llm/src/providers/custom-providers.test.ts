@@ -731,7 +731,7 @@ describe('custom providers', () => {
 
     const provider = resolveProvider('openai');
 
-    expect(provider.getModel()).toBe('gpt-5.3-codex');
+    expect(provider.getModel()).toBe('gpt-6.2-sol');
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('shadows a built-in provider'),
     );

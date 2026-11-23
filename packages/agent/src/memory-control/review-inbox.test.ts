@@ -96,6 +96,36 @@ describe("FEATURE_260 episode review inbox", () => {
     expect(await readFile(first.path, "utf8")).not.toContain("tenant-a");
   });
 
+  it("lists a busy session without waiting for its lock when it has no stale claim", async () => {
+    home = await mkdtemp(path.join(os.tmpdir(), "kodax-review-inbox-busy-"));
+    const owned = { ...identity, configHome: home };
+    await persistPendingEpisodeReview(owned, digest());
+    const sessionRoot = path.join(
+      home,
+      "memory-review-inbox",
+      hashMemoryIdentityComponent("tenant", owned.tenantId),
+      hashMemoryIdentityComponent("session", owned.sessionId),
+    );
+    let release!: () => void;
+    let markHeld!: () => void;
+    const held = new Promise<void>((resolve) => { markHeld = resolve; });
+    const holder = withLearningFileLock(path.join(sessionRoot, ".branch-authority.lock"), async () => {
+      markHeld();
+      await new Promise<void>((resolve) => { release = resolve; });
+    });
+    await held;
+
+    const listed = listPendingEpisodeReviews({ configHome: home, tenantId: owned.tenantId });
+    const outcome = await Promise.race([
+      listed,
+      new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 1_000)),
+    ]);
+    release();
+    await Promise.all([holder, listed]);
+
+    expect(outcome).toMatchObject([{ reviewKey: "review-1" }]);
+  });
+
   it("retains an intent-only cancelled digest as one idempotent pending review", async () => {
     home = await mkdtemp(
       path.join(os.tmpdir(), "kodax-review-inbox-cancelled-intent-"),

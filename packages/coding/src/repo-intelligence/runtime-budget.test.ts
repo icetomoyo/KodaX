@@ -20,27 +20,49 @@ import {
   getModuleContext,
   semanticLookup,
 } from './runtime.js';
+import { RepoIntelligenceQueryError, RepoIntelligenceUnavailableError } from './internal.js';
 
 function never<T>(): Promise<T> {
   return new Promise<T>(() => {});
 }
 
 describe('repo-intelligence tool budgets', () => {
-  it('returns warming module context when the worker misses the tool budget', async () => {
+  it('rejects with a warming error instead of a placeholder module when the worker misses the tool budget', async () => {
     workerMocks.getModuleContext.mockReturnValueOnce(never());
 
-    const result = await getModuleContext(
+    const error = await getModuleContext(
       { executionCwd: 'C:/repo' },
       { targetPath: 'src/index.ts', mode: 'full', maxWaitMs: 1 },
-    );
+    ).catch((caught: unknown) => caught);
 
-    expect(result.capability).toMatchObject({
-      mode: 'full',
-      engine: 'full',
-      status: 'warming',
-    });
-    expect(result.capability?.warnings.join(' ')).toContain('still warming');
+    expect(error).toBeInstanceOf(RepoIntelligenceUnavailableError);
+    expect(error).toMatchObject({ status: 'warming' });
+    expect((error as Error).message).toContain('still warming');
     expect(workerMocks.getModuleContext).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects with an unavailable error when the worker fails', async () => {
+    workerMocks.getModuleContext.mockRejectedValueOnce(new Error('worker crashed'));
+
+    const error = await getModuleContext(
+      { executionCwd: 'C:/repo' },
+      { targetPath: 'src/index.ts', mode: 'full', maxWaitMs: 1_000 },
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(RepoIntelligenceUnavailableError);
+    expect(error).toMatchObject({ status: 'unavailable' });
+  });
+
+  it('passes a not-found answer from the worker through instead of calling the index unavailable', async () => {
+    workerMocks.getModuleContext.mockRejectedValueOnce(new RepoIntelligenceQueryError('No module matched "payments".'));
+
+    const error = await getModuleContext(
+      { executionCwd: 'C:/repo' },
+      { module: 'payments', mode: 'full', maxWaitMs: 1_000 },
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(RepoIntelligenceQueryError);
+    expect((error as Error).message).toBe('No module matched "payments".');
   });
 
   it('returns warming semantic lookup results when the worker misses the tool budget', async () => {

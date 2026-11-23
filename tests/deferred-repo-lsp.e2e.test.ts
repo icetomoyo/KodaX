@@ -22,7 +22,8 @@ async function fixture() {
     discover: () => ({ command: process.execPath, args: [fileURLToPath(new URL('../packages/coding/src/lsp/fake-lsp-server.fixture.mjs', import.meta.url))] }),
   }] });
   const context: KodaXToolExecutionContext = { backups: new Map(), executionCwd: workspace,
-    gitRoot: workspace, repoIntelligenceMode: 'full', lspService: lsp };
+    // The semantic repo tools under test are offered only on the opt-in surface.
+    gitRoot: workspace, parentAgentConfig: { provider: 'test', repoIntelligenceMode: 'full' }, lspService: lsp };
   return { workspace, context, close: async () => {
     await lsp.shutdownAll();
     if (path.dirname(workspace) !== path.resolve(os.tmpdir()) || !path.basename(workspace).startsWith('kodax-deferred-repo-lsp-')) throw new Error('Unsafe fixture cleanup');
@@ -34,7 +35,7 @@ it('keeps all twelve real handlers and native/bridge outputs and work charges eq
   const { context, close } = await fixture();
   const args: Record<string, Record<string, unknown>> = {
     module_context: { target_path: 'index.ts' }, symbol_context: { symbol: 'readX', target_path: 'index.ts' },
-    process_context: { entry: 'readX', target_path: 'index.ts' }, impact_estimate: { symbol: 'x', target_path: 'index.ts' },
+    process_context: { entry: 'readX', target_path: 'index.ts' }, impact_estimate: { symbol: 'readX', target_path: 'index.ts' },
     lsp_workspace_symbols: { query: 'x' }, lsp_document_symbols: { path: 'index.ts' },
   };
   const budget: ManagedTaskBudgetController = { totalBudget: 100, spentBudget: 0 };
@@ -43,7 +44,8 @@ it('keeps all twelve real handlers and native/bridge outputs and work charges eq
     module_context: ['Module context for', 'Docs: README.md', 'Top symbols: readX'],
     symbol_context: ['Symbol context for readX', 'Signature:', 'Definition: index.ts:2'],
     process_context: ['Process context for', 'Entry: index.ts', 'Steps:'],
-    impact_estimate: ['Impact estimate for x', 'Possible callers:', 'Changed-scope overlap:'],
+    // The index records functions, not `const x`; an unindexed name is a not-found error.
+    impact_estimate: ['Impact estimate for readX', 'Possible callers:', 'Changed-scope overlap:'],
     lsp_definition: ['index.ts:1:1'], lsp_references: ['index.ts:1:1', 'index.ts:3:1'],
     lsp_hover: ['const x: number'], lsp_document_symbols: ['Variable x (1)'],
     lsp_incoming_calls: ['Function entry', 'calls at 1:1'], lsp_outgoing_calls: ['Function save', 'called at 1:1'],

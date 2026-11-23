@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { KodaXAssistantBlock, KodaXGenerationSource, KodaXMessage, KodaXToolUseBlock, KodaXImageBlock, KodaXToolResultImageItem } from '../types.js';
 import { prepareImageBlock, UNSUPPORTED_TOOL_RESULT_IMAGE_PLACEHOLDER } from './image-serialization.js';
 import { repairCloudToolHistory, sameCloudSource } from './cloud-history.js';
+import { withoutReplayArtifacts } from './reasoning-replay.js';
 
 export interface GooglePart {
   text?: string; thought?: boolean; thoughtSignature?: string;
@@ -19,34 +20,46 @@ async function imageParts(block: KodaXImageBlock | KodaXToolResultImageItem, ena
   return 'placeholder' in prepared ? [{ text: prepared.placeholder }]
     : [...(prepared.notice ? [{ text: prepared.notice }] : []), { inlineData: { mimeType: prepared.mediaType, data: prepared.data } }];
 }
+/**
+ * Gemini 3 rejects a model step whose first functionCall has no signature. Calls written by
+ * another model or edited since carry Google's documented skip value instead, base64-encoded
+ * because the field is bytes.
+ */
+const SKIP_SIGNATURE = Buffer.from('skip_thought_signature_validator').toString('base64');
+function signFirstCall(parts: GooglePart[]): void {
+  const first = parts.find(part => part.functionCall);
+  if (first && !first.thoughtSignature) first.thoughtSignature = SKIP_SIGNATURE;
+}
 export async function projectGoogleMessages(messages: readonly KodaXMessage[], source: KodaXGenerationSource, images = false): Promise<{ role: 'user' | 'model'; parts: GooglePart[] }[]> {
   const result: { role: 'user' | 'model'; parts: GooglePart[] }[] = [];
-  const calls = new Map<string, { block: KodaXToolUseBlock; native: boolean }>();
-  for (const message of repairCloudToolHistory(messages)) {
+  const calls = new Map<string, { block: KodaXToolUseBlock; callId?: string }>();
+  for (const message of repairCloudToolHistory(withoutReplayArtifacts(messages))) {
     const parts: GooglePart[] = [];
     if (typeof message.content === 'string') parts.push({ text: message.content });
     else for (const block of message.content) {
       const replay = 'googlePart' in block ? block.googlePart : undefined;
       const own = !!replay && sameCloudSource(replay.source, source) && replay.contentHash === googleBlockHash(block as KodaXAssistantBlock);
       const signature = own && replay.thoughtSignature ? { thoughtSignature: replay.thoughtSignature } : {};
+      // Gemini reads an empty text as a part without data and rejects the request; a signed one must still echo back.
+      const dataless = (block.type === 'text' && !block.text) || (block.type === 'thinking' && !block.thinking);
+      if (dataless && !signature.thoughtSignature) continue;
       switch (block.type) {
         case 'text': parts.push({ text: block.text, ...signature }); break;
-        case 'thinking': if (own) parts.push({ text: block.thinking, thought: true, ...signature });
-          else if (block.thinking) parts.push({ text: `<prior_reasoning>\n${block.thinking}\n</prior_reasoning>` }); break;
+        // Only own reasoning replays; other reasoning is never reply text (Issue 441).
+        case 'thinking': if (own) parts.push({ text: block.thinking, thought: true, ...signature }); break;
         case 'tool_use': {
-          // Foreign/edited calls are readable history, never synthetic signed tool turns.
-          calls.set(block.id, { block, native: own });
-          parts.push(own ? { functionCall: { ...(replay.callId ? { id: replay.callId } : {}), name: block.name, args: block.input }, ...signature }
-            : { text: `<prior_tool_call name=${JSON.stringify(block.name)}>\n${JSON.stringify(block.input)}\n</prior_tool_call>` });
+          // Foreign or edited calls stay structured; read as text, the model starts writing calls as text.
+          const callId = own ? replay.callId : undefined;
+          calls.set(block.id, { block, callId });
+          parts.push({ functionCall: { ...(callId ? { id: callId } : {}), name: block.name, args: block.input }, ...signature });
           break;
         }
         case 'tool_result': {
           const call = calls.get(block.tool_use_id);
           if (!call) break;
           const text = typeof block.content === 'string' ? block.content : block.content.filter(item => item.type === 'text').map(item => item.text).join('\n');
-          if (call.native) parts.push({ functionResponse: { ...(call.block.googlePart?.callId ? { id: call.block.googlePart.callId } : {}),
+          parts.push({ functionResponse: { ...(call.callId ? { id: call.callId } : {}),
             name: call.block.name, response: block.is_error ? { error: text } : { output: text } } });
-          else parts.push({ text: `<prior_tool_result name=${JSON.stringify(call.block.name)}>\n${text}\n</prior_tool_result>` });
           const imagesInResult = typeof block.content === 'string' ? [] : block.content.filter(item => item.type === 'image');
           for (const item of imagesInResult) {
             parts.push(...await imageParts(item, images));
@@ -62,6 +75,7 @@ export async function projectGoogleMessages(messages: readonly KodaXMessage[], s
     }
     if (!parts.length) continue;
     const role = message.role === 'assistant' ? 'model' : 'user';
+    if (role === 'model') signFirstCall(parts);
     const previous = result.at(-1);
     if (previous?.role === role) previous.parts.push(...parts); else result.push({ role, parts });
   }

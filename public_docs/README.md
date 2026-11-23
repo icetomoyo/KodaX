@@ -3,8 +3,28 @@
 Documentation for KodaX users, product-client integrators and trusted Host developers.
 
 This development tree implements the unified Product Client contract under
-FEATURE_298/299/301/303/304/305/306. The package version is `0.7.97-beta.13`;
-`v0.7.96` remains the last stable release. `v0.7.97-beta.13` repairs the
+FEATURE_298/299/301/303/304/305/306. The package version is `0.7.97-rc.2`;
+`v0.7.96` remains the last stable release. `v0.7.97-rc.2` lands RepoIntel
+phase 0 (the default tool surface keeps to what git can answer: `repo_overview`,
+`changed_scope` and `changed_diff` under `auto`; the semantic tools and the
+background index need `repoIntelligenceMode` `full`/`light`; the index moves
+under `<config home>/repo-intelligence/`), repairs the reasoning-replay
+defects (Issues 441-442: reasoning from another model never becomes reply
+text and Gemini/pi-messages replay foreign tool calls as real calls instead
+of `<prior_tool_call>` text), and lists `glm-5.4` on `zhipu-coding`;
+`v0.7.97-rc.1` refreshes the
+model catalogs (Claude Fable 5.2, the GPT-6.x lineup with per-model effort
+declarations, defaults on `claude-sonnet-5-5` and `gpt-6.2-sol`) and
+repairs the late provider, Host and REPL issues (Issues 431-440): native
+Claude models accept forced-tool requests, OpenAI strict tool schemas fall
+back to non-strict, retry classification retries the real transient shapes,
+extension internal tool calls stay out of the Session view, Windows
+process trees read through the native sandbox helper so bash no longer
+blocks the Host event loop, the memory review scan locks only a
+stale-claimed session and its receipt is announced only after the job
+completes, the Host and CLI stop blocking on repeated Git and PowerShell
+probes, and the REPL neither jumps while a reply streams nor loses a
+submitted input before the Host view shows it; `v0.7.97-beta.13` repairs the
 Space integration and Session-read costs (Issues 424-430): a client exit
 whose cleanup failed no longer blocks later starts once the old Host has
 exited, a managed Run saves the user's exact words even with a prepared
@@ -94,7 +114,7 @@ Actor settlement and saved-history location/turn resolution shipped in
 support and durable visual observations shipped in `v0.7.97-beta.5`; one
 Host per `KODAX_HOME` with the Host-location `profile` removed shipped in
 `v0.7.97-beta.6`; the Space SDK image projection, attachment and
-approval-attribution corrections shipped in `v0.7.97-beta.7`; the Windows daemon native Job startup repairs shipped in `v0.7.97-beta.8`; data root relocation and steer withdrawal shipped in `v0.7.97-beta.9`; merged-input acknowledgement shipped in `v0.7.97-beta.10`; readable history during a busy Run and tool-neutral Skills shipped in `v0.7.97-beta.11`; one prompt chain for every root Run and final Stop outcomes shipped in `v0.7.97-beta.12`; the Space integration repairs and Session-read cost fixes shipped in `v0.7.97-beta.13`. Read the
+approval-attribution corrections shipped in `v0.7.97-beta.7`; the Windows daemon native Job startup repairs shipped in `v0.7.97-beta.8`; data root relocation and steer withdrawal shipped in `v0.7.97-beta.9`; merged-input acknowledgement shipped in `v0.7.97-beta.10`; readable history during a busy Run and tool-neutral Skills shipped in `v0.7.97-beta.11`; one prompt chain for every root Run and final Stop outcomes shipped in `v0.7.97-beta.12`; the Space integration repairs and Session-read cost fixes shipped in `v0.7.97-beta.13`; the model catalog refresh and late provider/Host repairs shipped in `v0.7.97-rc.1`; the RepoIntel phase 0 default surface, reasoning-replay repairs and the `glm-5.4` listing shipped in `v0.7.97-rc.2`. Read the
 [current SDK alignment](sdk/embedder-guide.md#post-alpha10-sdk-alignment),
 [unified Host cutover](sdk/embedder-guide.md#unified-host-sdk-cutover-shipped-in-v0797-alpha12)
 and [one Host per KODAX_HOME](../docs/SDK_MIGRATION.md#one-host-per-kodax_home-profile-removed)

@@ -38,6 +38,7 @@ import {
   getToolDefinition,
   listToolDefinitions,
   MCP_TOOL_NAMES,
+  REPO_INTELLIGENCE_SEMANTIC_TOOL_NAMES,
   registerTool,
 } from '../tools/registry.js';
 import { DEFERRED_TOOL_HINTS } from '../tools/deferred-tools.js';
@@ -70,6 +71,9 @@ function makeCtx(hasCapabilityRuntime = true, hasWorkflowHost = true): KodaXTool
     actorControl,
     visualObservationOwner: createFileVisualObservationOwner({ ownerId: 'inventory', directory: 'unused-media-inventory', list: async () => [] }),
     skillScriptRunner: { run: async () => 'ran' },
+    // Opt in to the semantic surface so these contracts cover every registered tool;
+    // the default surface is pinned separately below.
+    parentAgentConfig: { provider: 'test', repoIntelligenceMode: 'full' },
     ...(hasCapabilityRuntime
       ? { extensionRuntime: {} as KodaXToolExecutionContext['extensionRuntime'] }
       : {}),
@@ -265,6 +269,17 @@ describe('FEATURE_168 — repo-intel pull tools (FEATURE_161 v0.7.41 wiring fix)
     const names = getAgentToolNames('worker');
     for (const pullTool of PULL_TOOLS) {
       expect(names, `worker missing ${pullTool}`).toContain(pullTool);
+    }
+  });
+
+  it('worker keeps only the git-based repo-intel tools unless the semantic surface is opted in', () => {
+    const { parentAgentConfig: _optIn, ...defaultCtx } = makeCtx();
+    const names = (buildRunnerAgentChain(defaultCtx).worker.tools ?? []).map((tool) => tool.name);
+    for (const kept of ['repo_overview', 'changed_scope', 'changed_diff', 'changed_diff_bundle']) {
+      expect(names, `worker missing ${kept}`).toContain(kept);
+    }
+    for (const hidden of REPO_INTELLIGENCE_SEMANTIC_TOOL_NAMES) {
+      expect(names, `worker should hide ${hidden} by default`).not.toContain(hidden);
     }
   });
 

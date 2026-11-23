@@ -63,7 +63,8 @@ import {
 } from '@kodax-ai/agent/capabilities/skills';
 import { bootstrapTracing, estimateTokens } from '@kodax-ai/coding';
 import { KodaXClient, runKodaX, runManagedTask } from './trusted-coding-entry.js';
-import { shutdownTracing, applyProcessHardening } from '@kodax-ai/agent';
+import { shutdownTracing, applyProcessHardening, installWindowsProcessHelper } from '@kodax-ai/agent';
+import { resolveWindowsSandboxV2Executable } from './windows-sandbox-v2.js';
 import { version } from './cli-version.js';
 import { findKodaXCommand } from './cli/root.js';
 import { loadSandboxRuntimeModule, INTERNAL_SANDBOX_STARTUP_RECOVERY_ARG, INTERNAL_SANDBOX_STARTUP_RECOVERY_ENV, INTERNAL_SANDBOX_STARTUP_REPORT_PREFIX, prepareSetupSandboxReport } from './cli/interactive-sandbox.js';
@@ -118,6 +119,11 @@ async function runCliMain(startupProgress?: CliStartupProgress) {
   // addons. Opt-out: KODAX_DISABLE_HARDENING=1. Debug-preserving (no
   // PR_SET_DUMPABLE). No-op on Windows.
   applyProcessHardening();
+  // Daemon discovery checks process identities before the first frame; the
+  // native helper answers in tens of milliseconds instead of PowerShell.
+  if (process.platform === 'win32') {
+    installWindowsProcessHelper(() => resolveWindowsSandboxV2Executable().path);
+  }
   const kodaxHomeWarning = ignoredKodaXHomeWarning();
   if (kodaxHomeWarning !== undefined) process.stderr.write(`${kodaxHomeWarning}\n`);
   if (argv[0] === INTERNAL_SANDBOX_STARTUP_RECOVERY_ARG) {

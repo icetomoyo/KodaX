@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { EventEmitter } from 'node:events';
 import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -16,7 +17,7 @@ vi.mock('node:child_process', async () => {
 });
 
 import { setAgentConfigHome } from './agent-home.js';
-import { cleanupRegisteredManagedChildren } from './managed-child-processes.js';
+import { cleanupRegisteredManagedChildren, registerManagedChildProcess } from './managed-child-processes.js';
 
 describe.runIf(process.platform === 'win32')('managed child cleanup query reuse', () => {
   let tempHome = '';
@@ -511,5 +512,29 @@ describe.runIf(process.platform === 'win32')('managed child cleanup query reuse'
     await expect(cleanupRegisteredManagedChildren()).resolves.toEqual({ killed: 0, pruned: 0, skipped: 1 });
     expect(spawnSyncMock).toHaveBeenCalledTimes(1);
     await expect(readFile(file, 'utf8')).resolves.toBe(replacement);
+  });
+
+  it('reads the owner identity once across child registrations, without a CIM query', async () => {
+    tempHome = await mkdtemp(path.join(tmpdir(), 'kodax-managed-register-owner-'));
+    setAgentConfigHome(tempHome);
+    spawnSyncMock.mockImplementation((_command: string, args: readonly string[]) => ({
+      status: 0, signal: null, stderr: '', pid: 1, output: [],
+      stdout: String(args.at(-1)).includes(`@(${process.pid})`) ? `${process.pid},13400000000000
+` : '',
+    }));
+    const unregister = [91_001, 91_002].map(pid => registerManagedChildProcess(
+      Object.assign(new EventEmitter(), { pid, exitCode: null, signalCode: null }) as never,
+      { kind: 'test-child', command: 'cmd.exe' },
+    ));
+    const scripts = spawnSyncMock.mock.calls.map(([, args]) => String((args as string[]).at(-1)));
+    expect(scripts.filter(script => script.includes('Win32_Process -Filter'))).toEqual([]);
+    expect(scripts.filter(script => script.includes(`@(${process.pid})`))).toHaveLength(1);
+    const records = await readdir(path.join(tempHome, 'runtime', 'processes', 'children'));
+    for (const file of records) {
+      expect(JSON.parse(await readFile(path.join(tempHome, 'runtime', 'processes', 'children', file), 'utf8')))
+        .toMatchObject({ ownerProcessStartIdentity: 'windows:13400000000000' });
+    }
+    expect(records).toHaveLength(2);
+    unregister.forEach(stop => stop());
   });
 });

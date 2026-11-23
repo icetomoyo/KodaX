@@ -590,10 +590,13 @@ import {
   mintInkInputId,
   runClientPlaneRound,
   followClientPlaneRun,
+  viewCarriesInput,
   viewRunsActive,
+  withPendingClientEcho,
   type ClientPlaneDialogSurface,
   type ClientViewItemMemo,
   type InkClientPlane,
+  type PendingClientEcho,
 } from "./client-plane.js";
 import { createClientInputQueue } from "./client-input-queue.js";
 import type { ClientSessionView, ClientSessionSettingsPatch, ClientObservationStatus } from "@kodax-ai/coding/client-contract";
@@ -1874,6 +1877,19 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
   const ensureClientObservationRef = useRef<() => Promise<boolean>>(async () => false);
   const clientViewRef = useRef<ClientSessionView | null>(null);
   const clientViewItemMemoRef = useRef<ClientViewItemMemo>({ entries: new Map() });
+  const pendingClientEchoRef = useRef<PendingClientEcho | undefined>(undefined);
+  const clientViewHistory = useCallback((view: ClientSessionView): HistoryItem[] => withPendingClientEcho(
+    clientViewToHistoryItems(view.items, { activeRunId: viewRunsActive(view), memo: clientViewItemMemoRef.current }),
+    view,
+    pendingClientEchoRef.current,
+  ), []);
+  // Show (or drop) the submitted input at once instead of waiting for the
+  // Host view, which adds the user item only after its Run starts.
+  const setPendingClientEcho = useCallback((echo: PendingClientEcho | undefined): void => {
+    pendingClientEchoRef.current = echo;
+    const view = clientViewRef.current;
+    if (view !== null && view.session.id === context.sessionId) replaceHistoryItems(clientViewHistory(view));
+  }, [clientViewHistory, context.sessionId, replaceHistoryItems]);
   useEffect(() => {
     const plane = options.clientPlane;
     if (!plane) return;
@@ -1909,12 +1925,11 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
             },
           }, () => observedRunId) : undefined;
         }
-        replaceHistoryItems(
-          clientViewToHistoryItems(view.items, {
-            activeRunId: viewRunsActive(view),
-            memo: clientViewItemMemoRef.current,
-          }),
-        );
+        // Once the Host shows the input, the echo is done for good: a later
+        // view whose window no longer holds that item must not bring it back.
+        const echo = pendingClientEchoRef.current;
+        if (echo !== undefined && viewCarriesInput(view, echo.inputId)) pendingClientEchoRef.current = undefined;
+        replaceHistoryItems(clientViewHistory(view));
       }, { onStatus: (status) => {
         if (closed || context.sessionId !== observedSessionId) return;
         if (status.state === 'closed') { ready = false; closer = undefined; }
@@ -1953,7 +1968,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
       setClientView(null);
       setClientObservationStatus(null);
     };
-  }, [options.clientPlane, context.sessionId, replaceHistoryItems]);
+  }, [options.clientPlane, context.sessionId, replaceHistoryItems, clientViewHistory]);
   // FEATURE_298 T17 — pending Host interactions drive the Ink dialogs; the
   // answers travel back through respondInteraction (first valid answer wins
   // Host-side, so a late dialog result resolves as not accepted). An entry
@@ -3730,7 +3745,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
 
   const createTranscriptSnapshot = useCallback((): TranscriptSnapshot => {
     const snapshotItems = options.clientPlane && clientView
-      ? clientViewToHistoryItems(clientView.items, { activeRunId: viewRunsActive(clientView), memo: clientViewItemMemoRef.current })
+      ? clientViewHistory(clientView)
       : transcriptHistory;
     return captureTranscriptSnapshot({
     sessionId: context.sessionId,
@@ -3758,6 +3773,7 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
     options.clientPlane,
     context.sessionId,
     clientView,
+    clientViewHistory,
     isLoading,
     streamingState.isThinking,
     streamingState.thinkingCharCount,
@@ -8784,19 +8800,31 @@ const InkREPLInner: React.FC<InkREPLProps> = ({
           getDisplayedRunId: () => clientViewRef.current?.session.id === context.sessionId
             ? viewRunsActive(clientViewRef.current) : undefined });
       }
-      return await runClientPlaneRound({
-        ...runtimeStopCallbacks,
-        plane: options.clientPlane,
-        submit: clientInputQueue ? (input) => clientInputQueue.submit(input, originalPrompt) : undefined,
-        sessionId: context.sessionId,
-        prompt,
-        abortSignal: getSignal(),
-        getDisplayedRunId: () => clientViewRef.current?.session.id === context.sessionId
-          ? viewRunsActive(clientViewRef.current) : undefined,
-        ...(inputArtifacts !== undefined && inputArtifacts.length > 0
-          ? { inputArtifacts }
-          : {}),
-      });
+      let echoedInputId: string | undefined;
+      try {
+        return await runClientPlaneRound({
+          ...runtimeStopCallbacks,
+          plane: options.clientPlane,
+          submit: clientInputQueue ? (input) => clientInputQueue.submit(input, originalPrompt) : undefined,
+          sessionId: context.sessionId,
+          prompt,
+          abortSignal: getSignal(),
+          getDisplayedRunId: () => clientViewRef.current?.session.id === context.sessionId
+            ? viewRunsActive(clientViewRef.current) : undefined,
+          onSubmitting: (input) => {
+            echoedInputId = input.inputId;
+            setPendingClientEcho({ sessionId: context.sessionId, ...input });
+          },
+          ...(inputArtifacts !== undefined && inputArtifacts.length > 0
+            ? { inputArtifacts }
+            : {}),
+        });
+      } finally {
+        // A rejected, withdrawn or never-started input must not stay on screen.
+        if (echoedInputId !== undefined && pendingClientEchoRef.current?.inputId === echoedInputId) {
+          setPendingClientEcho(undefined);
+        }
+      }
     }
     autoModeBootstrap.resetTurn();
     outputSegmentProjectionRef.current = createOutputSegmentProjection();
