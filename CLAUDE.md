@@ -46,7 +46,7 @@ If the user did not give a concrete task, read `README.md`, then check `docs/` f
 
 ## Prompt Design Principles (ADR-033)
 
-When writing or modifying any LLM-facing prompt (role prompts in `packages/coding/src/agents/*-role-prompt.ts`, tool `description` fields, system prompt sections, etc.), follow these 5 principles. Full rationale + evidence in [`docs/ADR.md` ADR-033](docs/ADR.md).
+When writing or modifying any LLM-facing prompt (role prompts in `packages/coding/src/agents/*-role-prompt.ts`, tool `description` fields, system prompt sections, etc.), use these 5 principles as the default way to write. Deviate when you have a reason, and record it. Full rationale, evidence and the 2026-11-16 revision in [`docs/ADR.md` ADR-033](docs/ADR.md).
 
 1. **Qualitative criteria over quantitative thresholds** — write "when independent work would fill your context with raw output you won't need again" not "when ≥3 investigations". LLM is colleague making judgment, not a program looking up a table.
 2. **Single-concept sentences** — never compound `do X AND do Y` rules. One concept per sentence. Compound ✗-clauses cause cross-case regression (FEATURE_177 panel C5 kimi -60pp).
@@ -54,7 +54,9 @@ When writing or modifying any LLM-facing prompt (role prompts in `packages/codin
 4. **No enumerated taxonomies** — don't classify with "RULE A/B/C/D" labels. Use informal use-case examples (claudecode style: "Research:..." / "Implementation:..."). Taxonomies make LLM treat dispatch as a classification problem rather than a judgment.
 5. **No version metadata in prompt body** — `FEATURE_xxx vX.Y.Z` annotations belong in code comments, not in the prompt the LLM reads. They're noise + break prompt cache.
 
-**Trigger**: any change touching LLM-facing prompt content must (a) review against ADR-033 + (b) add/update a prompt eval per `benchmark/EVAL_GUIDELINES.md`.
+**Trigger**: any change touching LLM-facing prompt content must (a) review against ADR-033 + (b) add/update a prompt eval per `benchmark/EVAL_GUIDELINES.md`. The eval is the binding rule; it applies to simplifications too.
+
+Tool `description` fields carry what the model needs to choose and use the tool correctly. The ADR-033 rule to cut them to a few words was withdrawn: it contradicts Anthropic's tool-use guidance.
 
 ## Technology Stack
 

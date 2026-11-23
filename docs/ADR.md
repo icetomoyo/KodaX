@@ -3166,7 +3166,7 @@ KodaX 在 v0.7.39 的 ADR-024 把 npm 发布物正名 `@kodax-ai/kodax` + 形式
 
 ## ADR-033: claudecode-Style Prompt Design Principles — Qualitative Criteria over Quantitative Rules (v0.7.42-v0.7.43)
 
-**Status**: Accepted 2026-05-21
+**Status**: Accepted 2026-05-21; revised 2026-11-16 (§1–§5 become default guidance, §6 withdrawn; see 2026-11-16 修订)
 **Driver**: FEATURE_177 task_output Worker prompt RULE D Layer 2 panel hit pre-registered REVERT threshold (C5 kimi -60pp cross-case regression on RULE C write fan-out). 同 session 用户提出更深层质疑："RULE A-C 给的信号要求太强了，整个 prompt 应该简单些，让 AI 判断 dispatch 是否提升效率就行"。
 **Scope**: 所有 KodaX role prompts（worker / generator / evaluator / planner / scout）的设计哲学 + 措辞规范。本 ADR 是 umbrella；后续 FEATURE refactor 引用此 ADR 作为标准。
 
@@ -3300,6 +3300,19 @@ Per [`feedback_prompt_strengthening_cross_case_regression`](../../memory/feedbac
 - **保留量化阈值但改 wording** — rejected. C5 kimi -60pp 直接证明量化阈值不是 wording-tunable；问题在哲学层，不在某条具体阈值的数字。
 - **每 case 单独 wording iteration**（per FEATURE_177 panel #2 改 RULE D V2/V3）— rejected. 本质是 "在 over-prescription 框架内打补丁"，每补一处 cross-case regression 风险继续累积。User 直接指出问题在 systemic 层，不在 RULE D。
 - **直接全量改写所有 prompt** — rejected. Phase 2 之前需要 Phase 1 数据先证明哲学切换确实在 dispatch_child 这条线上正向。一次性大改无法归因哪个 segment 的改动导致哪个 cross-case 变化。
+
+### 2026-11-16 修订
+
+**原因**：复核发现本 ADR 的证据面窄，而且 §6 与 Anthropic 官方工具使用指南相反。
+
+**证据范围**：核心证据是 FEATURE_177 panel 中 kimi 一个模型、一个用例、每组 5 次（4/5 → 1/5），以及 FEATURE_120 的同类现象。它们说明"复合的否定规则会引起跨用例回退"确实发生过，不足以说明 §1–§5 对所有提示词都成立。References 中 `../../memory/` 下的记录不在仓库里，无法复查。
+
+**修订后的效力**：
+
+1. §1–§5 改为默认写法，不再是硬性门槛。有理由时可以偏离，理由写在代码注释或评测记录里。
+2. 硬性要求只有一条：任何面向 LLM 的提示词改动都按 `benchmark/EVAL_GUIDELINES.md` 用生产字节做评测。简化提示词也一样，见 Consequences 中"简化不是默认安全"。
+3. §1 补充：判断类的门槛用定性描述。环境事实可以直接写数字，例如工具实际执行的字节或条数上限；这类上限由代码执行，不靠提示词约束。
+4. §6 撤回。Anthropic 工具使用文档把详细的工具描述（做什么、何时用、何时不用、参数含义、限制）列为影响工具表现最重要的因素。§6 对 claudecode 只把 3–8 字描述发给模型的解读，所引源码已不在本机，无法复核。替代规则：工具 `description` 写清模型选择和正确使用该工具所需的信息；只与某个角色或运行状态有关的教学放到对应的 prompt 段；缩短或拆分描述时按反模式 8 用改动前后的字节做 A/B。已按 §6 完成的改动不回滚，下次改到这些工具时按新规则评估。
 
 ### References
 
