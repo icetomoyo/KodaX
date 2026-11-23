@@ -69,12 +69,15 @@ All notable changes to this project will be documented in this file.
   new Host, so a Run on a lent key does not fail for want of it.
 - v2 Session view items can carry `notice: {kind}` (`retry`, `compaction`)
   so a client can pick how to show them. `session.create` takes `draft`.
+- v2 `session.create` takes `mcpServers`: MCP servers for that Session alone,
+  configured as for `mcp.server.upsert`. Only the owner may pass them, since a
+  stdio server is a command on the Host.
 
 ### Changed
 
 - Interactive `kodax` (Ink and classic), print mode (`-p`), the `-r` lookup
   and `-s list` now run on the Host over the v2 protocol, on one connection.
-  The `daemon` commands still use v1.
+  `kodax acp` runs on the Host over v2 too. The `daemon` commands still use v1.
   - Print mode shows the reply, thinking and tool calls from the Session view.
     `--mode json` no longer writes `iteration.*`, `provider.*`, `retry`,
     `compact.*`, `managed_task.status`, `repo_intelligence.trace`, `turn.*`
@@ -86,6 +89,10 @@ All notable changes to this project will be documented in this file.
   - `/extensions` lists the loaded extensions and recent failures. The
     commands they add are in `/help`.
   - The status panel reads its counts from the Host.
+  - In `kodax acp` the Host picks the id of the Session it runs, so it is not
+    the ACP session id. A prompt reports the tokens its Run used, not the
+    context snapshot. `--reasoning` and `--thinking` set the effort they stand
+    for.
 - A child Agent a daemon client starts with `agents.spawn` or
   `agents.followup` without lending a key now runs on the Host's own keys, as
   a Run does, instead of failing with `credential_unavailable`. A key the

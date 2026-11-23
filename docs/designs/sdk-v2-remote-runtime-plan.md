@@ -992,7 +992,7 @@ blob.read({sessionId, blobId, cursor?}) -> {data, mediaType, byteLength, sha256,
 - **`session.list`**：`limit` 是 1 到 200，默认 50。v1 的 `scope` 和 `before` 两个筛选没有带过来。
 - **`session.get`**：结果是 `{session, phase, runId?}`。`phase` 是开放字符串。自动模式统计没有并入，因为 v1 的统计类型直接暴露了内部的跟踪器对象，要先定一个不泄漏的形状。
 - **找不到 Session** 在 runtime 里现在带 `not_found` 码；v1 以前报的是 `internal_error`。
-- **`session.create` 还没带的字段**：`draft`、`temporary`、`mcpServers`。
+- ~~**`session.create` 还没带的字段**：`draft`、`temporary`、`mcpServers`~~：三项都已带上。`mcpServers` 只给 owner，因为 stdio 服务器是 Host 上的一条命令（2026-11-23，未经用户确认）。
 
 设置两项的落地细节（2026-11-21，未经用户确认）：
 
@@ -2381,7 +2381,7 @@ v1 只需要在 **Host** 里保留一段时间，原因是一台机器上的 Hos
 - 删除前要先落地的（2026-11-23 协议审查，用户同意，FEATURE_314 里有同样的清单）：
   - ~~`actor.spawn` 和 `actor.followup`~~：2026-11-23 落地（子代理的落地细节）。
   - M1c 第 3 项的授权方租约。
-  - `kodax acp` 改走 v2：它现在开的是 v1 客户端（`acp_server.ts` 的 `ensureKodaXClient`）。
+  - ~~`kodax acp` 改走 v2~~：2026-11-23 落地（ACP 的落地细节）。
   - `kodax a2a` 的探测改走 v2，`agent.registration.*` 留给本机 owner。
   - ~~打印模式像 REPL 一样读 v2 会话视图~~：2026-11-23 落地（打印模式的落地细节）。
   - ~~Run 结局补上的字段~~：2026-11-23 落地（`RunOutcome` 一条）。
@@ -2400,6 +2400,17 @@ v1 只需要在 **Host** 里保留一段时间，原因是一台机器上的 Hos
 - **无人值守**：这次 Run 的审批一律拒绝，提问一律 `skip`（`non_interactive`），按 `interaction.runId` 过滤，不碰别的 Run。
 - **中断**：Ctrl-C 发 `run.stop`，结果仍由 Run 的结局决定。
 - **测试里发现的问题**（未处理）：Host 在本仓库这样的大 git 仓库里跑过一个 Run 后，关闭要 70 多秒；在空目录里不到 1 秒。测试把项目目录放在 Host 的临时 home 里绕开。原因还没查。
+
+### ACP 的落地细节
+
+2026-11-23 落地，未经用户确认的部分已标出。
+
+- **连接**：`kodax acp` 经 `ensureKodaXHostClient` 连 Host，走 v2。视图投影复用 REPL 的 v2 平面（`observe`、`readItem`、`respondInteraction`），不再开 v1 客户端。不设 `exitWhenIdle`，Host 照旧常驻。显式注入 Runtime 的内嵌路径不变。
+- **会话 id**（未经用户确认）：v2 的 `session.create` 不接受客户端指定的 id。ACP 会话保留自己的 id，旁边记下 Host 给的 id。Host 会话仍在第一次 prompt 时才建。发给 ACP 客户端的通知一律换回 ACP 的 id。不在 `newSession` 时建草稿，因为 Host 重启会丢掉草稿。
+- **设置**：`--reasoning` 和 `--thinking` 按 `mapLegacyReasoningModeToEffortIntent` 换成 `effort`，和打印模式一样（未经用户确认）。
+- **结局**：用打印模式的 `awaitHostRun` 和 `projectOneShotOutcome`。中断算 `cancelled`。`usage` 取这次 Run 结局里的总用量；v1 取的是上下文快照（未经用户确认）。
+- **取消**：`session.cancel` 带 `ifRunId`，重发用同一个 `requestId`。
+- **MCP**：ACP 客户端给的 MCP 服务器经 `session.create` 的 `mcpServers` 交给 Host，只对这个会话可见。
 
 ### 其他规则
 
