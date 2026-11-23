@@ -72,15 +72,18 @@ All notable changes to this project will be documented in this file.
 - v2 `session.create` takes `mcpServers`: MCP servers for that Session alone,
   configured as for `mcp.server.upsert`. Only the owner may pass them, since a
   stdio server is a command on the Host.
-- While a Run waits for an approval, a question answer or a plan exit, KodaX
-  keeps the provider's prompt cache warm. Shortly before the cache entry would
-  expire, it resends the Run's last model request with a one-token output cap.
-  This happens only where the catalog declares the cache lifetime (the direct
-  Anthropic API, five minutes), and only while the resends together cost less
-  than rewriting the entry once. It stops after 60 minutes. Models whose
-  thinking budget follows the output cap are not warmed. The prompt-cache off
-  switch turns it off. Session statistics list each resend as a request with
-  purpose `cache_refresh`.
+- KodaX keeps the provider's prompt cache warm, after pi's cache warmer. When
+  no new model request goes out before the cache entry would expire, it resends
+  the last one with a one-token output cap. This happens only where the catalog
+  declares the cache lifetime (the direct Anthropic API, five minutes), and only
+  when a refresh is expected to save at least five cents: always worth it while
+  a Run is active, worth a 15% chance of reuse after the Run ends. Warming stops
+  60 minutes after the last real request during a Run and 30 minutes after it
+  once the Run ended. Models whose thinking budget follows the output cap are
+  not warmed. The new `cacheWarming` setting (`off`, `run`, `idle`, default
+  `idle`) is a config key, env `KODAX_CACHE_WARMING`, an SDK option and a v2
+  `config` key; the prompt-cache off switch turns warming off. Session
+  statistics list each resend as a request with purpose `cache_refresh`.
 
 ### Changed
 

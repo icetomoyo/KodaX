@@ -156,7 +156,7 @@ Host owner 实际销毁视图服务时，先停止新的读取、刷新和监听
 | 边界 | 字段 | 确认方式 |
 | --- | --- | --- |
 | `immediate` | fallbackProviders、stallLog | 后续请求/日志采用新值；不改变已发出的请求 |
-| `next_run` | provider/model、effort/planModeEffort/thinking/reasoningMode、permissionMode/agentMode、maxOutputTokens、disablePromptCache、lsp、fast/deep Provider/Model、repoIntelligenceMode/Trace、workflow | 在新 Run 准入时捕获；活跃 Run 不因全局 patch/reload 改写 |
+| `next_run` | provider/model、effort/planModeEffort/thinking/reasoningMode、permissionMode/agentMode、maxOutputTokens、disablePromptCache、cacheWarming、lsp、fast/deep Provider/Model、repoIntelligenceMode/Trace、workflow | 在新 Run 准入时捕获；活跃 Run 不因全局 patch/reload 改写 |
 | `extension_reload` | extensions | 等待 Host 的 integration watcher 校验并 reconcile，新增和删除都不用重启；检查 catalog.extensions 与配置状态 |
 | `restart` | locale、providerModels、lspAutoDownload、acpLogLevel、sessionRetentionDays、repoIntelligence | 重启 Host 后检查相应能力；旧进程不承诺应用 |
 
