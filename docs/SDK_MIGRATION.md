@@ -17,7 +17,7 @@ Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` �
 `systemPromptOverride` 在根运行上的语义见[统一提示词链路](#统一提示词链路未发布)。
 `sa` 和 `amaw` 都是已弃用的输入，见 [SA 模式退役](#sa-模式退役未发布)。
 进程内入口不传 `events.beforeToolExecute` 时只运行只读工具，见[工具调用默认只读](#工具调用默认只读未发布)。
-调用 `kodax daemon …` 的脚本见 [`kodax host` 命令与健康状态](#kodax-host-命令与健康状态未发布)。
+调用 `kodax daemon …` 的脚本见 [`kodax host` 命令与健康状态](#kodax-host-命令与健康状态未发布)；解析其他 CLI 命令输出或检查退出码的脚本见 [CLI 输出、退出码与旧开关](#cli-输出退出码与旧开关未发布)。
 
 ## `kodax host` 命令与健康状态（未发布）
 
@@ -38,6 +38,17 @@ Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` �
 - `status --json` 的 `runtime.summary.pendingPermissions` 改名 `pendingInteractions`，也计入等待回答的提问；新增 `clients`。
 - 退出码：`kodax host status` 在 `stopped`、`stale` 时退出 3，在 `unreachable`、`mismatch` 时退出 1，其余 0。`kodax doctor` 在 Host 是 `unreachable`、`mismatch` 或核心配置读不了时退出 1。两者以前总是退出 0；用 `set -e` 或检查退出码的脚本要按这个处理。
 - `kodax host restart` 在没有 Host 时直接启动，以前会失败。
+
+## CLI 输出、退出码与旧开关（未发布）
+
+同样只影响调用 CLI 的脚本。
+
+- `kodax config`、`integrations`、`mcp`、`extensions`、`a2a`、`sandbox`、`execpolicy` 默认打印给人看的文本。解析输出的脚本加 `--json`，得到的 JSON 与以前相同；`execpolicy --pretty` 隐含 `--json`。`kodax integrations` 检查失败时两种形式都退出 1。
+- 用法错误退出 2，以前是 1：未知命令或开关、缺少或多余的参数、取值不合法，以及 `kodax -h` 后跟未知主题。命令运行失败仍是 1。
+- `-n`/`--new`、`-y`/`--auto`、`--extension` 已删除，使用时退出 2 并说明替代写法。
+- `kodax -s list|delete <id>|delete-all|cleanup-acp` 改为 `kodax sessions list|delete <id>|delete-all|cleanup-acp`。旧写法在 0.7.100 之前仍可用，会往 stderr 打一行提示；`kodax sessions list --json` 给脚本用。
+- `kodax execpolicy check --mode <profile>` 改为 `--permission-mode <profile>`；旧写法在命令行上从来没有生效过。
+- 不带子命令的 `kodax memory`、`kodax skill` 把帮助打到 stderr 并退出 1，和其他命令组一致。
 
 ## 工具调用默认只读（未发布）
 

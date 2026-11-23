@@ -35,6 +35,25 @@ All notable changes to this project will be documented in this file.
 - `kodax doctor` exits 1 when the Host does not answer as itself or the core
   config cannot be read. It exited 0 in every case. A stopped Host is not a
   failure.
+- `kodax config`, `integrations`, `mcp`, `extensions`, `a2a`, `sandbox` and
+  `execpolicy` print readable text. Scripts that parse their output must add
+  `--json`, which prints the JSON document they printed before;
+  `execpolicy --pretty` implies it. A failed `kodax integrations` check exits
+  1 in both forms.
+- A mistyped command line exits 2: an unknown command or option, a missing or
+  extra argument, an invalid value. It exited 1, like a command that ran and
+  failed. `kodax -h <topic>` with an unknown topic exits 2 too.
+- `-n`/`--new`, `-y`/`--auto` and `--extension` are removed. Each one exits 2
+  and says what to do instead: a new session is already the default; set
+  `permissionMode` in the config or use `/mode`; register an extension with
+  `kodax extensions add`.
+- `kodax execpolicy check` takes the permission profile as `--permission-mode`.
+  The documented `--mode` never worked from the command line, because
+  `--mode` belongs to `kodax` itself.
+- A bare `kodax memory` or `kodax skill` prints its help to stderr and exits 1,
+  as every other command group does.
+- In the REPL, `/repointel`, `/ri` and `/plan` are removed. Typing them points
+  at `/repo-intel status` and `/mode plan`.
 
 ### Added
 
@@ -43,6 +62,15 @@ All notable changes to this project will be documented in this file.
 - `kodax host logs --follow` keeps printing new log lines until Ctrl+C, across
   a log rotation.
 - `kodax doctor` reports the Host of the home and its health.
+- `kodax sessions` lists the resumable sessions of the project (`--json` for
+  scripts) and has `delete <id>`, `delete-all`, `cleanup-acp [--apply]` and
+  `dedupe`. `kodax -s list|delete|delete-all|cleanup-acp` still works, says
+  where the operation moved, and is removed in 0.7.100.
+- `kodax -h` lists every command and option from the command definitions, and
+  `kodax -h <command>` shows the help of any command, including `auth`, `mcp`
+  and the other groups that load on first use. `kodax completion bash|zsh|fish`
+  completes every command, subcommand and option, and the values of options
+  with a fixed set, such as `--provider`, `--effort` and `--permission-mode`.
 - v2 `initialize` takes `purpose: 'probe'`. A probe connection may call only
   `ping`, `host.get` and `host.preflight`, is not listed among the clients,
   and does not keep an idle Host running. `kodax host status` reads the Host
@@ -130,6 +158,13 @@ All notable changes to this project will be documented in this file.
     the ACP session id. A prompt reports the tokens its Run used, not the
     context snapshot. `--reasoning` and `--thinking` set the effort they stand
     for.
+- `kodax -h` lists the everyday commands first and ends with examples. The
+  help topics `acp`, `skill`, `sessions`, `project` and `auto` are gone:
+  `kodax -h acp`, `-h skill` and `-h sessions` show those commands' help, and
+  `project` and `auto` described commands and flags that no longer exist.
+  `kodax -h thinking` lists the effort levels the CLI accepts.
+- REPL `/help` groups each command under its own category. `/thinking`,
+  `/think` and `/t` are aliases of `/reasoning`.
 - A child Agent a daemon client starts with `agents.spawn` or
   `agents.followup` without lending a key now runs on the Host's own keys, as
   a Run does, instead of failing with `credential_unavailable`. A key the

@@ -32,7 +32,9 @@
 
 CLI 子命令和 REPL 命令各有一份数据表，帮助、补全、名单、手册对照测试都从表里来，不再手写第二份。
 
-- CLI 表的每一项：名字、一句话说明、子命令、开关（名字、参数、说明、是否隐藏）、别名、`deprecated`（换成什么写法、哪个版本删）、懒加载的处理函数。
+- CLI 表就是 Commander 命令树（`createKodaXProgram`）：名字、说明、子命令、开关、别名、隐藏都已在树上，再抄一份数据表只会多一处漂移。`kodax -h`、`kodax -h <command>`、补全、“是不是子命令”的判断都读这棵树；懒加载的组（`auth`、integration 那组）先用 `loadLazyCommand` 装上子命令再读。注册顺序就是 `kodax -h` 列命令的顺序，常用的在前。
+- 选项值的补全来自选项的 `choices`，或按它的解析函数查已知取值（`--effort`、`--reasoning`、`--permission-mode` 等），`--provider` 取内置 Provider 名单。
+- 父命令和子命令不能有同名但含义不同的开关：Commander 让父命令在整行里先吃掉它认识的开关。`execpolicy check --mode` 就因此从来没生效过，已改为 `--permission-mode`。同名且同义的（`acp serve -m` 等）用 `mergeCommandOptionsWithGlobals` 合并，没问题。
 - REPL 已有 `CommandRegistry`；给命令加 `category`，`/help` 的分类从命令自己的 `category` 生成，删掉手写的 `COMMAND_CATEGORIES`。
 - 补全脚本由 CLI 表生成，bash/zsh/fish 三种只是输出格式不同。
 
@@ -78,7 +80,8 @@ CLI、REPL `/status`、`/healthz`、`kodax doctor` 用同一组状态：
 ### 4. 输出与退出码约定
 
 - 默认输出给人看的文字；`--json` 输出一个 JSON 对象，字段就是现在的 JSON 输出，脚本迁移只需加 `--json`。
-- 退出码：0 成功；1 失败；2 用法错误（未知开关、缺参数，Commander 已经这样）；3 只用于 `host status` 的“没在运行”。
+- 退出码：0 成功；1 失败；2 用法错误（未知命令或开关、缺少或多余参数、取值不合法、已删除的开关、未知帮助主题）；3 只用于 `host status` 的“没在运行”。Commander 自己对用法错误退出 1，根命令的 `exitOverride` 把这些错误码改成 2，`.command()` 会把它带给每个子命令。
+- 不带子命令的命令组（`host`、`mcp`、`memory`、`skill` 等）把帮助打到 stderr 并退出 1，这是 Commander 的默认行为（未经用户确认）。
 - 结果里 `ok:false` 的命令（如 `integrations status`、`validate`）退出 1。
 - 一次性运行（`-p`、带提示词）的退出码规则不变。
 
@@ -125,4 +128,5 @@ CLI、REPL `/status`、`/healthz`、`kodax doctor` 用同一组状态：
 
 - `host status` 用退出码 3 表示没在运行。
 - `kodax host logs --follow`：运维常用，第 1 期已加；和 `--json` 一起用时报错，因为跟随输出的日志行本身就是 JSON。
+- 第 2 期：`execpolicy --pretty` 隐含 `--json`；`integrations` 检查失败退出 1；各命令的文字输出格式；用法错误退出 2；不带子命令的命令组退出 1；未知帮助主题退出 2；`execpolicy check --mode` 改名 `--permission-mode`。
 - `-s` 系列保留到什么时候删：建议和 `daemon` 一起在 0.7.100 删。
