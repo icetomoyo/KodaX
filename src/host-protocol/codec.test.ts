@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   HOST_ERROR_CODES,
   HostProtocolError,
@@ -18,6 +18,18 @@ function roundTrip(message: unknown): ReturnType<typeof parseHostRpcFrame> {
 }
 
 describe('host protocol codec', () => {
+  it('recognizes a protocol error made by another copy of this module, as another bundle has', async () => {
+    vi.resetModules();
+    const other = await import('./codec.js');
+    expect(other.HostProtocolError).not.toBe(HostProtocolError);
+    const error = new other.HostProtocolError('not_found', 'The Run has not ended yet.');
+    expect(error).toBeInstanceOf(HostProtocolError);
+    expect(new HostProtocolError('conflict', 'x')).toBeInstanceOf(other.HostProtocolError);
+    expect(new Error('plain')).not.toBeInstanceOf(HostProtocolError);
+    expect(Object.assign(new Error('look-alike'), { kodaxCode: 'not_found' })).not.toBeInstanceOf(HostProtocolError);
+    expect({ ...error }).not.toBeInstanceOf(HostProtocolError);
+  });
+
   it('round-trips each kind of message', () => {
     expect(roundTrip(hostRpcRequest('r1', 'ping', { a: 1 }))).toEqual({
       kind: 'request',

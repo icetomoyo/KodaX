@@ -96,8 +96,21 @@ export interface HostRpcFailure {
 
 export type HostRpcMessage = HostRpcRequest | HostRpcNotification | HostRpcSuccess | HostRpcFailure;
 
+/** Shared by every copy of this module: the CLI bundle and the lazily loaded protocol bundle each carry one. */
+const HOST_PROTOCOL_ERROR = Symbol.for('kodax.HostProtocolError');
+
 /** The one error type both ends use. Clients branch on `kodaxCode`, never on the message. */
 export class HostProtocolError extends Error {
+  /**
+   * An error from another copy of this class is one too. Otherwise a Host whose
+   * handlers and connection come from different bundles reports every expected
+   * error, such as not_found, as an internal failure.
+   */
+  static [Symbol.hasInstance](value: unknown): boolean {
+    return typeof value === 'object' && value !== null
+      && (value as { readonly [HOST_PROTOCOL_ERROR]?: unknown })[HOST_PROTOCOL_ERROR] === true;
+  }
+
   readonly kodaxCode: HostErrorCode;
   readonly reason?: string;
   readonly retryable: boolean;
@@ -118,6 +131,8 @@ export class HostProtocolError extends Error {
   ) {
     super(message, detail.cause !== undefined ? { cause: detail.cause } : undefined);
     this.name = 'HostProtocolError';
+    // Not enumerable, so spreading an error into a plain object does not brand the copy.
+    Object.defineProperty(this, HOST_PROTOCOL_ERROR, { value: true });
     this.kodaxCode = kodaxCode;
     this.retryable = detail.retryable ?? ERROR_CODES[kodaxCode].retryable;
     if (detail.reason !== undefined) this.reason = detail.reason;
