@@ -72,6 +72,15 @@ All notable changes to this project will be documented in this file.
 - v2 `session.create` takes `mcpServers`: MCP servers for that Session alone,
   configured as for `mcp.server.upsert`. Only the owner may pass them, since a
   stdio server is a command on the Host.
+- While a Run waits for an approval, a question answer or a plan exit, KodaX
+  keeps the provider's prompt cache warm. Shortly before the cache entry would
+  expire, it resends the Run's last model request with a one-token output cap.
+  This happens only where the catalog declares the cache lifetime (the direct
+  Anthropic API, five minutes), and only while the resends together cost less
+  than rewriting the entry once. It stops after 60 minutes. Models whose
+  thinking budget follows the output cap are not warmed. The prompt-cache off
+  switch turns it off. Session statistics list each resend as a request with
+  purpose `cache_refresh`.
 
 ### Changed
 

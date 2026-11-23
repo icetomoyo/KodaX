@@ -36,11 +36,10 @@
 |---|---:|---|---|
 | Completed | 68 | `311, 310, 308, 306, 305, 304, 303, 302, 301, 299, 297, 295, 296, 294, 293, 292, 291, 290, 289, 286, 284, 281, 277, 276, 263, 275, 274, 273, 272, 271, 270, 266, 269, 268, 267, 260, 261, 259, 258, 253, 254, 255, 256, 257, 228, 251, 252, 250, 248, 249, 247, 246, 245, 243, 242, 241, 233, 240, 239, 224, 221, 174, 211, 237, 229, 230, 234, 236` | `299` shipped in beta.9 and is extended by the rc.1 trusted-text authority unification; `297` is implemented and Issue 326 is stabilized through v0.7.96; `295` and `296` shipped in alpha.1. npm publication remains manual. |
 | InProgress | 3 | `307, 298, 225` | `307`: R1–R6 hardening and verification per [side-chat plan](designs/side-chat-plan.md). `298`: cross-platform/manual release verification pending. `225` remains the bounded cleanup. |
-| Planned, SDK v2 | 2 | `312, 313` | `312` and `313` are implemented on `KodaX-next-dev`, unreleased; they ship with the SDK v2 work. `313`, including its stall limit, is built wholly on `KodaX-next-dev`; mainline adds nothing. |
+| Planned, SDK v2 | 3 | `312, 313, 316` | `312`, `313` and `316` are implemented on `KodaX-next-dev`, unreleased; they ship with the SDK v2 work. `313`, including its stall limit, is built wholly on `KodaX-next-dev`; mainline adds nothing. |
 | Planned, 0.7.99 | 1 | `300` | Consolidate ordinary Git execution in coding; preserve specialized executors and share only the macOS platform check across layers. |
 | Planned, 0.7.100 | 1 | `314` | Remove Host protocol v1 (or in `v0.8.0` if that comes first); KodaX's own v1 callers move to v2 first. `src/host-protocol-v1-removal.test.ts` fails from the first 0.7.100 build. |
 | Planned, on demand | 1 | `315` | AG-UI adapter in front of the v2 Host; starts when a real AG-UI client needs it. |
-| Planned, after SDK v2 | 1 | `316` | Keep the prompt cache warm while a Run waits for an approval or an answer; done right after the SDK v2 protocol work, in the same push. |
 | Planned, 0.8.x | 11 | `278, 279, 282, 283, 285, 280, 309, 287, 288, 265, 105` | `v0.8.10` -> `v0.8.11` -> `v0.8.13` -> `v0.8.14` -> `v0.8.15` -> `v0.8.20` -> `v0.8.25` |
 | Planned, 0.9.x | 6 | `007, 030, 093, 113, 139, 262` | `v0.9.0` -> `v0.9.5` -> `v0.9.7` -> `v0.9.25` |
 | Reviewed out, 2026-07-12 | 6 | `244, 231, 235, 238, 232, 108` | Shelved, deferred, absorbed, or cancelled after the post-v0.7.70 roadmap review; F105 was restored by the 2026-07-29 MoA redesign. |
@@ -2476,7 +2475,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 | `313` | Queryable Session Recovery State | SDK / Runtime Recovery | High | SDK v2 | [Addition](#2026-11-21-feature_313-addition) — Implemented on `KodaX-next-dev` 2026-11-21, unreleased; built wholly there |
 | `314` | Host Protocol v1 Removal | SDK / Host Protocol | High | `v0.7.100` | [Addition](#2026-11-22-feature_314-addition) — Planned; `src/host-protocol-v1-removal.test.ts` fails from the first 0.7.100 build |
 | `315` | AG-UI Adapter for the v2 Host | SDK / Host Protocol | Medium | On demand | [Addition](#2026-11-23-feature_315-addition) — Planned; waits for a real AG-UI client |
-| `316` | Prompt Cache Warming During In-Run Waits | LLM Cost / Runtime | High | After SDK v2 | [Addition](#2026-11-23-feature_316-addition) — Planned; follows the SDK v2 protocol work |
+| `316` | Prompt Cache Warming During In-Run Waits | LLM Cost / Runtime | High | SDK v2 | [Addition](#2026-11-23-feature_316-addition) — Implemented on `KodaX-next-dev` 2026-11-23, unreleased |
 | `300` | Git Execution Consolidation with Shared macOS Preflight | Refactor | Medium | `v0.7.99` | [v0.7.99](features/v0.7.99.md#feature_300-git-execution-consolidation-with-shared-macos-preflight) — Planned; design only |
 | `287` | Advisor Mode Virtual Provider | Enhancement / LLM Provider + Session Quality | High | `v0.8.13` | [v0.8.13](features/v0.8.13.md#feature_287-advisor-mode-virtual-provider) |
 | `288` | CLI-Space Daemon Profile Alignment | Enhancement / Runtime + Multi-Client UX | High | `v0.8.14` | [v0.8.14](features/v0.8.14.md#feature_288-cli-space-daemon-profile-alignment) |
@@ -2500,8 +2499,9 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 ## 2026-11-23 FEATURE_316 Addition
 
-- Status: Planned. Owner decision (2026-11-23): a separate feature, done right
-  after the SDK v2 protocol work in the same push.
+- Status: Implemented on `KodaX-next-dev` 2026-11-23, unreleased; ships with the
+  SDK v2 work. Owner decision (2026-11-23): a separate feature, done right after
+  the SDK v2 protocol work in the same push.
 - Why: the default approval timeout goes from 5 to 30 minutes with the SDK v2
   work, so a remote user who steps away can still answer. A provider cache with
   a five-minute lifetime then expires while the Run waits, and the next request
@@ -2525,6 +2525,25 @@ fixed GitHub binary archive sidecar omission before tagging.
 - No new setting: the existing prompt-cache off switch also turns warming off.
 - Not in scope: warming after a Run ends while the user may type again. pi does
   it with a fixed 15% guess; decide from KodaX's own data later.
+- As built:
+  - Policy in `packages/llm/src/cache-warming.ts`; the timer in
+    `packages/coding/src/agent-runtime/prompt-cache-warmer.ts`. Each Run (root
+    and child) has its own warmer. Its model turns are remembered when they
+    complete, and the waiting callbacks (`beforeToolExecute`,
+    `requestToolApproval`, `askUser*`, `exitPlanMode`) keep the entry warm while
+    they are pending.
+  - The catalog declares `cacheCapabilities.shortTtl: "5m"` for the direct
+    Anthropic API only; proxies and compatible endpoints declare none and are
+    not warmed.
+  - The refresh is the request's own options minus event callbacks, with
+    `maxOutputTokensOverride: 1` and `singleAttempt`. It goes out as credential
+    purpose `cache_refresh`, so Session statistics list it as its own request
+    and the Run transcript and turn usage never see it.
+  - Pays-for-itself rule (未经用户确认): all refreshes during one wait together
+    must cost less than one rewrite of the entry. For Sonnet 4.6 that allows 11
+    refreshes, about 50 minutes.
+  - A refresh due later than half the remaining margin is skipped, since the
+    entry is likely gone. A failed refresh stops warming for that request.
 
 ## 2026-11-23 FEATURE_315 Addition
 
