@@ -8,6 +8,9 @@ vi.mock('./windows-text-transaction.js', () => ({
 }));
 
 import { runDoctor } from './kodax_doctor.js';
+import {
+  RUNTIME_HOST_SLOT, resolveRuntimeDaemonPathsFromConfigHome, writeRuntimeDaemonState,
+} from './runtime-daemon/state.js';
 
 describe('kodax doctor trusted text diagnostic', () => {
   afterEach(() => {
@@ -116,6 +119,36 @@ describe('kodax doctor trusted text diagnostic', () => {
       expect(fs.readFileSync(lock, 'utf8')).toBe('');
       expect(fs.existsSync(claim)).toBe(true);
       expect(fs.existsSync(migration)).toBe(true);
+    } finally { fs.rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it('reports the Host state and fails only when something is broken', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-doctor-host-'));
+    vi.stubEnv('KODAX_HOME', home);
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((value?: unknown) => { output.push(String(value)); });
+    const doctor = async (): Promise<{ report: { host: { state: string } }; exitCode: number }> => {
+      output.length = 0;
+      const exitCode = await runDoctor('test', true);
+      return { report: JSON.parse(output[0]!), exitCode };
+    };
+    try {
+      // No Host running is a normal state, not a failure.
+      expect(await doctor()).toMatchObject({ report: { host: { state: 'stopped' } }, exitCode: 0 });
+
+      // A live process owns the state file but nothing answers at its endpoint.
+      writeRuntimeDaemonState(resolveRuntimeDaemonPathsFromConfigHome(home, RUNTIME_HOST_SLOT), {
+        runtimeId: 'doctor-unreachable', profile: RUNTIME_HOST_SLOT, pid: process.pid,
+        startedAt: new Date().toISOString(), version: 'test', status: 'ready',
+        endpoint: process.platform === 'win32'
+          ? `\\\\.\\pipe\\kodax-doctor-missing-${process.pid}`
+          : path.join(home, 'missing.sock'),
+      });
+      expect(await doctor()).toMatchObject({ report: { host: { state: 'unreachable' } }, exitCode: 1 });
+
+      fs.rmSync(path.join(home, 'runtime'), { recursive: true, force: true });
+      fs.writeFileSync(path.join(home, 'config.json'), '{');
+      expect(await doctor()).toMatchObject({ report: { host: { state: 'stopped' } }, exitCode: 1 });
     } finally { fs.rmSync(home, { recursive: true, force: true }); }
   });
 

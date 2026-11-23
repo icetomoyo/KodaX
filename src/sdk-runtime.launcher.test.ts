@@ -86,7 +86,7 @@ it('preserves a live old inline owner of the canonical slot', async () => {
 it('concurrent launchers refresh a real idle older Host and keep its saved Session available', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-host-refresh-'));
   const paths = resolveRuntimeDaemonPaths(homeDir);
-  const child = spawn(process.execPath, ['--import', 'tsx', 'src/kodax_cli.ts', 'daemon', 'serve',
+  const child = spawn(process.execPath, ['--import', 'tsx', 'src/kodax_cli.ts', 'host', 'serve',
     '--home', homeDir, '--config-home', paths.configHome,
   ], {
     windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],

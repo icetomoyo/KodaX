@@ -52,7 +52,7 @@ async function launcher() {
   const controller = new AbortController();
   process.on('message', message => { if (message.kind === 'abort') controller.abort(); });
   const contained = await spawnWindowsJobContainedProcess({
-    executable: process.execPath, args: [cli, 'daemon', 'serve', '--home', home,
+    executable: process.execPath, args: [cli, 'host', 'serve', '--home', home,
       '--provider', 'handoff-local', '--model', 'handoff-model'],
     cwd: repo, env: process.env, logFile: path.join(home, 'bootstrap.log'), startupHandoff: true,
   });
@@ -258,7 +258,7 @@ async function rejectedA2A() {
   await configure(homeDir, 1, port);
   const marker = path.join(homeDir, 'already-aborted');
   await writeFile(marker, '', { flag: 'wx' });
-  const child = childProcess([cli, 'daemon', 'serve', '--home', homeDir], {
+  const child = childProcess([cli, 'host', 'serve', '--home', homeDir], {
     ...isolatedEnvironment(homeDir), KODAX_INTERNAL_WINDOWS_JOB_HANDOFF: marker,
   });
   try {

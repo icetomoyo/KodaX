@@ -56,6 +56,7 @@ if (
 import { Command, Option } from 'commander';
 import chalk from 'chalk';
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import os from 'node:os';
@@ -70,11 +71,12 @@ import {
   isRuntimeDaemonOwnerPidAlive,
   isRuntimeDaemonPidAlive,
   observeRuntimeDaemonHealth,
-  runtimeDaemonEndpointFromState,
 } from './runtime-daemon/lifecycle.js';
 import {
   appendRuntimeDaemonLog,
   classifyRuntimeDaemonHealth,
+  HOST_STATUS_EXIT_CODES,
+  hostHealthState,
   readRuntimeDaemonShutdownOutcome,
   readRuntimeDaemonLockOwner,
   readRuntimeDaemonToken,
@@ -86,12 +88,13 @@ import {
   resolveRuntimeHostSlot,
   RUNTIME_HOST_SLOT,
   readRuntimeDaemonLogLines,
+  followRuntimeDaemonLog,
   writeRuntimeDaemonShutdownOutcome,
+  type HostHealthState,
   type RuntimeDaemonHealth,
   type RuntimeDaemonPaths,
   type RuntimeDaemonState,
 } from './runtime-daemon/state.js';
-import { createRuntimeDaemonSocketClientTransport } from './runtime-daemon/transport.js';
 import { acquireRuntimeDaemonLease } from './runtime-daemon/manager.js';
 import { captureRuntimeDaemonStartupHandoff } from './runtime-daemon/startup-handoff.js';
 import {
@@ -235,7 +238,8 @@ import {
 } from '@kodax-ai/repl';
 import type { AcpPermissionMode } from './acp_server.js';
 import { configureLazyIntegrationCommands, prepareLazyIntegrationCommand } from './integration-cli-lazy.js';
-import { configureKodaXDeviceCommands } from './device-cli.js';
+import { configureKodaXDeviceCommands, connectHostOwner } from './device-cli.js';
+import type { HostResult } from './host-protocol/methods.js';
 import { configureKodaXExecPolicyCommand } from './exec-policy-cli.js';
 import {
   createIntegrationEventBridge,
@@ -381,7 +385,7 @@ interface DaemonStartResult {
   readonly started: boolean;
   readonly reason?: 'already_running';
   readonly pid?: number | null;
-  readonly health?: RuntimeDaemonHealth;
+  readonly health?: HostHealthState;
   readonly error?: string;
   readonly state: RuntimeDaemonState | null;
 }
@@ -389,7 +393,7 @@ interface DaemonStartResult {
 interface DaemonStopResult {
   readonly stopped: boolean;
   readonly reason?:
-    | RuntimeDaemonHealth
+    | HostHealthState
     | 'unverified_owner'
     | 'cleanup_failed'
     | 'cleanup_unverified'
@@ -397,7 +401,7 @@ interface DaemonStopResult {
   readonly forced?: boolean;
   /** A distinct live owner was observed after the requested daemon exited. */
   readonly replacementRunning?: boolean;
-  readonly health?: RuntimeDaemonHealth;
+  readonly health?: HostHealthState;
   readonly error?: string;
   readonly state: RuntimeDaemonState | null;
 }
@@ -415,17 +419,19 @@ interface DaemonLogsResult {
   readonly lines: readonly string[];
 }
 
-interface DaemonRuntimeStatusSummary {
+interface HostStatusSummary {
+  readonly clients: number;
   readonly sessions: number;
   readonly runs: number;
   readonly activeRuns: number;
   readonly queuedRuns: number;
-  readonly pendingPermissions: number;
+  /** Permission requests and questions waiting for an answer. */
+  readonly pendingInteractions: number;
   readonly workflows: number;
 }
 
-type DaemonRuntimeStatusProbe =
-  | { readonly ok: true; readonly summary: DaemonRuntimeStatusSummary }
+type HostStatusSummaryProbe =
+  | { readonly ok: true; readonly summary: HostStatusSummary }
   | { readonly ok: false; readonly error: string };
 
 interface CliRuntimeSurfaceStatus {
@@ -454,12 +460,8 @@ async function printDaemonStatus(input: {
     input.profile,
   );
   const observation = await observeRuntimeDaemonHealth(paths);
-  const health = classifyRuntimeDaemonHealth(observation);
-  const runtimeStatus = await readDaemonRuntimeStatusSummary(
-    paths,
-    observation.state,
-    health,
-  );
+  const health = hostHealthState(classifyRuntimeDaemonHealth(observation), observation.state);
+  const runtimeStatus = await readHostStatusSummary(paths, observation.state, health);
   const snapshot = {
     profile: paths.profile,
     health,
@@ -471,16 +473,15 @@ async function printDaemonStatus(input: {
     lockFile: paths.lockFile,
     ...(runtimeStatus !== null ? { runtime: runtimeStatus } : {}),
   };
+  process.exitCode = HOST_STATUS_EXIT_CODES[health];
   if (input.json) {
     console.log(JSON.stringify(snapshot, null, 2));
     return;
   }
-  console.log(chalk.cyan('\nKodaX Runtime Daemon\n'));
-  console.log(`Profile: ${snapshot.profile}`);
-  console.log(`Health: ${formatDaemonHealth(health)}`);
-  console.log(`State: ${snapshot.state ? snapshot.state.status : 'missing'}`);
+  console.log(chalk.cyan('\nKodaX Host\n'));
+  console.log(`Health: ${formatHostHealth(health)}`);
   if (snapshot.state) {
-    console.log(`Runtime: ${snapshot.state.runtimeId}`);
+    console.log(`Host: ${snapshot.state.runtimeId}`);
     console.log(
       `PID: ${snapshot.state.pid} (${snapshot.pidAlive ? 'alive' : 'not alive'})`,
     );
@@ -489,70 +490,45 @@ async function printDaemonStatus(input: {
     );
   }
   if (runtimeStatus?.ok === true) {
-    console.log(`Sessions: ${runtimeStatus.summary.sessions}`);
-    console.log(
-      `Runs: ${runtimeStatus.summary.runs} (${runtimeStatus.summary.activeRuns} active, ${runtimeStatus.summary.queuedRuns} queued)`,
-    );
-    console.log(
-      `Pending permissions: ${runtimeStatus.summary.pendingPermissions}`,
-    );
-    console.log(`Workflows: ${runtimeStatus.summary.workflows}`);
+    const summary = runtimeStatus.summary;
+    console.log(`Clients: ${summary.clients}`);
+    console.log(`Sessions: ${summary.sessions}`);
+    console.log(`Runs: ${summary.runs} (${summary.activeRuns} active, ${summary.queuedRuns} queued)`);
+    console.log(`Waiting for an answer: ${summary.pendingInteractions}`);
+    console.log(`Workflows: ${summary.workflows}`);
   } else if (runtimeStatus?.ok === false) {
-    console.log(
-      chalk.yellow(`Runtime status: unavailable (${runtimeStatus.error})`),
-    );
+    console.log(chalk.yellow(`Counts unavailable: ${runtimeStatus.error}`));
   }
+  if (HOST_STATUS_EXIT_CODES[health] === 3) console.log('Start it with `kodax host start`.');
   console.log(chalk.dim(`State file: ${snapshot.stateFile}`));
 }
 
-async function readDaemonRuntimeStatusSummary(
-  paths: ReturnType<typeof resolveRuntimeDaemonPaths>,
+/** The Host's counts over a v2 probe, which neither counts as a client nor keeps an idle Host running. */
+async function readHostStatusSummary(
+  paths: RuntimeDaemonPaths,
   state: RuntimeDaemonState | undefined,
-  health: RuntimeDaemonHealth,
-): Promise<DaemonRuntimeStatusProbe | null> {
-  if (health !== 'healthy' || state === undefined) return null;
-  const transport = await createRuntimeDaemonSocketClientTransport(
-    runtimeDaemonEndpointFromState(state),
-    { connectTimeoutMs: 1_000 },
-  );
+  health: HostHealthState,
+): Promise<HostStatusSummaryProbe | null> {
+  if (state === undefined || HOST_STATUS_EXIT_CODES[health] !== 0) return null;
   try {
     const token = readRuntimeDaemonToken(paths);
-    await transport.request('initialize', {
-      profile: paths.profile,
-      connectionPurpose: 'probe',
-      ...(token !== undefined ? { token } : {}),
-      clientInfo: { name: 'kodax-cli', title: 'KodaX CLI', clientType: 'cli' },
-      capabilities: { configAdmin: true },
-    });
-    return {
-      ok: true,
-      summary: summarizeDaemonRuntimeStatus(
-        await transport.request('daemon.status'),
-      ),
-    };
+    if (token === undefined) throw new Error('The Host token file is missing.');
+    const rpc = await connectHostOwner(state, token, version, 'probe');
+    try {
+      const [{ counts }, preflight] = await Promise.all([
+        rpc.request('host.get') as Promise<HostResult<'host.get'>>,
+        rpc.request('host.preflight') as Promise<HostResult<'host.preflight'>>,
+      ]);
+      return {
+        ok: true,
+        summary: { clients: preflight.clients.length, ...counts, pendingInteractions: preflight.pendingInteractions },
+      };
+    } finally {
+      rpc.close();
+    }
   } catch (error: unknown) {
-    return {
-      ok: false,
-      error: normalizeCliError(error).message,
-    };
-  } finally {
-    await transport.close?.();
+    return { ok: false, error: normalizeCliError(error).message };
   }
-}
-
-function summarizeDaemonRuntimeStatus(
-  value: unknown,
-): DaemonRuntimeStatusSummary {
-  const record = isRecord(value) ? value : {};
-  const runs = Array.isArray(record.runs) ? record.runs : [];
-  return {
-    sessions: arrayLength(record.sessions),
-    runs: runs.length,
-    activeRuns: runs.filter(isActiveDaemonRunStatus).length,
-    queuedRuns: runs.filter(isQueuedDaemonRunStatus).length,
-    pendingPermissions: arrayLength(record.pendingPermissions),
-    workflows: arrayLength(record.workflows),
-  };
 }
 
 async function getReplHostStatus(
@@ -573,7 +549,7 @@ async function getReplHostStatus(
     profile: host.profile,
     startedAt: new Date(host.startedAt).toISOString(),
     ...(endpoint !== undefined ? { endpoint } : {}),
-    health: classifyRuntimeDaemonHealth(observation),
+    health: hostHealthState(classifyRuntimeDaemonHealth(observation), observation.state),
     sessions: counts.sessions,
     runs: counts.runs,
     activeRuns: counts.activeRuns,
@@ -631,23 +607,6 @@ async function runCliTaskViaClient(
   }));
 }
 
-function isActiveDaemonRunStatus(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  return (
-    value.phase === 'running' ||
-    value.phase === 'waiting_permission' ||
-    value.phase === 'waiting_user_input'
-  );
-}
-
-function isQueuedDaemonRunStatus(value: unknown): boolean {
-  return isRecord(value) && value.phase === 'queued';
-}
-
-function arrayLength(value: unknown): number {
-  return Array.isArray(value) ? value.length : 0;
-}
-
 async function startDaemonCommand(input: {
   readonly homeDir: string;
   readonly configHome: string;
@@ -664,22 +623,16 @@ async function startDaemonCommand(input: {
   // The serving Host can belong to another profile that owns Session storage (Issue 406).
   const profile = result.state?.profile ?? RUNTIME_HOST_SLOT;
   if (result.reason === 'already_running') {
-    console.log(
-      chalk.green(
-        `KodaX runtime daemon already running for profile "${profile}".`,
-      ),
-    );
+    console.log(chalk.green(`The KodaX Host is already running${hostSlotNote(profile)}.`));
     return;
   }
-  if (result.health !== 'healthy') {
+  if (result.health !== 'ready') {
     throw new Error(
       result.error ??
-        `KodaX runtime daemon did not become healthy within ${input.timeoutMs}ms.`,
+        `The KodaX Host did not become ready within ${input.timeoutMs}ms.`,
     );
   }
-  console.log(
-    chalk.green(`KodaX runtime daemon started for profile "${profile}".`),
-  );
+  console.log(chalk.green(`The KodaX Host started${hostSlotNote(profile)}.`));
   if (result.state) {
     console.log(chalk.dim(`PID: ${result.state.pid}`));
     console.log(chalk.dim(`Endpoint: ${result.state.endpoint}`));
@@ -724,11 +677,16 @@ async function getDaemonStartResult(input: {
       return existingOwner?.runtimeId === runtime.identity.runtimeId
         && existingOwner.pid === observation.state.pid
         ? { started: false, reason: 'already_running', state: observation.state }
-        : { started: true, pid: observation.state?.pid ?? null, health: 'healthy', state: observation.state };
+        : { started: true, pid: observation.state?.pid ?? null, health: 'ready', state: observation.state };
     } finally { await runtime.close(); }
   } finally {
     cancellation.close();
   }
+}
+
+/** Names a legacy-slot Host (Issue 406); the usual slot needs no mention. */
+function hostSlotNote(profile: string): string {
+  return profile === RUNTIME_HOST_SLOT ? '' : ` (legacy slot "${profile}")`;
 }
 
 /** daemon commands act on the Host serving this home, which may be a legacy-slot Host (Issues 406, 407). */
@@ -1336,35 +1294,25 @@ async function stopDaemonCommand(input: {
   }
   if (result.reason === 'cleanup_failed' || result.reason === 'cleanup_unverified') {
     throw new Error(
-      result.error ?? `KodaX runtime daemon stop ${result.reason.replace('_', ' ')}.`,
+      result.error ?? `KodaX Host stop ${result.reason.replace('_', ' ')}.`,
     );
   }
   if (result.reason === 'replacement_running') {
-    throw new Error(
-      `The requested daemon exited, but a replacement owns profile "${paths.profile}".`,
-    );
+    throw new Error(`The KodaX Host exited, but another Host now serves this home${hostSlotNote(paths.profile)}.`);
   }
   if (result.reason === 'unverified_owner') {
     throw new Error(
-      `Refusing to force stop daemon profile "${paths.profile}" because ownership could not be verified.`,
+      `Refusing to force stop the KodaX Host${hostSlotNote(paths.profile)}: its ownership could not be verified.`,
     );
   }
   if (result.reason !== undefined) {
-    console.log(
-      chalk.yellow(
-        `No healthy KodaX runtime daemon for profile "${paths.profile}" (${result.reason}).`,
-      ),
-    );
+    console.log(chalk.yellow(`No running KodaX Host to stop (${result.reason}).`));
     return;
   }
   if (!result.stopped) {
-    throw new Error(
-      `KodaX runtime daemon did not stop within ${input.timeoutMs}ms.`,
-    );
+    throw new Error(`The KodaX Host did not stop within ${input.timeoutMs}ms.`);
   }
-  console.log(
-    chalk.green(`KodaX runtime daemon stopped for profile "${paths.profile}".`),
-  );
+  console.log(chalk.green(`The KodaX Host stopped${hostSlotNote(paths.profile)}.`));
 }
 
 async function getDaemonStopResult(input: {
@@ -1386,7 +1334,7 @@ async function getDaemonStopResult(input: {
     }
     return {
       stopped: false,
-      reason: health,
+      reason: hostHealthState(health, observation.state),
       state: observation.state ?? null,
     };
   }
@@ -1406,31 +1354,21 @@ async function getDaemonStopResult(input: {
   }
   const expectedProcessStartIdentity = readProcessStartIdentity(stoppedState.pid);
   await waitForDaemonStopObservationReleaseForTest(input.timeoutMs);
-  const endpoint = runtimeDaemonEndpointFromState(stoppedState);
-  const transport = await createRuntimeDaemonSocketClientTransport(endpoint, {
-    connectTimeoutMs: input.timeoutMs,
-  });
+  const token = readRuntimeDaemonToken(paths);
+  if (token === undefined) throw new Error('The Host token file is missing, so the Host cannot be asked to stop.');
+  const rpc = await connectHostOwner(stoppedState, token, version);
   let transportCloseError: Error | undefined;
   let stopAcceptedAt: number | undefined;
   try {
-    const token = readRuntimeDaemonToken(paths);
-    const initialized = await transport.request('initialize', {
-      profile: paths.profile,
-      ...(token !== undefined ? { token } : {}),
-      clientInfo: { name: 'kodax-cli', title: 'KodaX CLI', clientType: 'cli' },
-      capabilities: { configAdmin: true },
-    });
-    if (!daemonStopTargetMatches(initialized, stoppedState)) {
-      throw new Error(
-        'Runtime daemon owner changed before the stop request; refusing to stop the replacement.',
-      );
+    if (rpc.handshake.host.id !== stoppedState.runtimeId) {
+      throw new Error('The Host changed before the stop request; refusing to stop the Host that replaced it.');
     }
-    await transport.request('daemon.stop');
+    await rpc.request('host.stop', { requestId: randomUUID() });
     stopAcceptedAt = Date.now();
   } finally {
     const closeDeadline = (stopAcceptedAt ?? Date.now()) + input.timeoutMs;
     transportCloseError = await closeDaemonStopTransportWithin(
-      () => transport.close?.(),
+      async () => { rpc.close(); await rpc.closed; },
       Math.max(0, closeDeadline - Date.now()),
     );
   }
@@ -1514,7 +1452,7 @@ async function getDaemonStopResult(input: {
         ? cleanupError
         : `${cleanupError} Stop transport cleanup also failed: ${transportCloseError.message}`,
     }),
-    health: afterHealth,
+    health: hostHealthState(afterHealth, after.state),
     state: after.state ?? null,
   };
   return result;
@@ -1537,16 +1475,6 @@ async function waitForDaemonStopObservationReleaseForTest(timeoutMs: number): Pr
     }
     await delay(Math.min(50, remaining));
   }
-}
-
-function daemonStopTargetMatches(
-  initialized: unknown,
-  expected: RuntimeDaemonState,
-): boolean {
-  const record = isRecord(initialized) ? initialized : {};
-  const identity = isRecord(record.identity) ? record.identity : record;
-  return identity.runtimeId === expected.runtimeId
-    && identity.profile === expected.profile;
 }
 
 async function closeDaemonStopTransportWithin(
@@ -1583,7 +1511,7 @@ function forceStopDaemonOwnership(
         stopped: false,
         forced: true,
         reason: 'unverified_owner',
-        health,
+        health: hostHealthState(health, state ?? undefined),
         state,
       };
     }
@@ -1596,14 +1524,14 @@ function forceStopDaemonOwnership(
         stopped: false,
         forced: true,
         reason: 'unverified_owner',
-        health,
+        health: hostHealthState(health, state ?? undefined),
         state,
       };
     }
     return {
       stopped: true,
       forced: true,
-      health: 'missing',
+      health: 'stopped',
       state: null,
     };
   }
@@ -1623,14 +1551,14 @@ function forceStopDaemonOwnership(
         stopped: false,
         forced: true,
         reason: 'unverified_owner',
-        health,
+        health: hostHealthState(health, state ?? undefined),
         state,
       };
     }
     return {
       stopped: true,
       forced: true,
-      health: 'missing',
+      health: 'stopped',
       state: null,
     };
   }
@@ -1638,7 +1566,7 @@ function forceStopDaemonOwnership(
     stopped: false,
     forced: true,
     reason: 'unverified_owner',
-    health,
+    health: hostHealthState(health, state ?? undefined),
     state,
   };
 }
@@ -1663,14 +1591,10 @@ async function restartDaemonCommand(input: {
   );
   if (!result.restarted) {
     throw new Error(
-      `KodaX runtime daemon restart failed for profile "${paths.profile}".`,
+      result.stop.error ?? `The KodaX Host could not be restarted (${result.stop.reason ?? result.start.health ?? 'not started'}).`,
     );
   }
-  console.log(
-    chalk.green(
-      `KodaX runtime daemon restarted for profile "${paths.profile}".`,
-    ),
-  );
+  console.log(chalk.green(`The KodaX Host restarted${hostSlotNote(paths.profile)}.`));
   if (result.start.state) {
     console.log(chalk.dim(`PID: ${result.start.state.pid}`));
     console.log(chalk.dim(`Endpoint: ${result.start.state.endpoint}`));
@@ -1686,35 +1610,15 @@ async function getDaemonRestartResult(input: {
   readonly timeoutMs: number;
 }): Promise<DaemonRestartResult> {
   const stop = await getDaemonStopResult(input);
-  if (stop.health === 'healthy') {
+  // A Host that is not running, or whose process is gone, is simply started.
+  const notRunning = stop.reason === 'stopped' || stop.reason === 'stale';
+  if (!stop.stopped && !notRunning) {
     return {
       restarted: false,
       stop,
       start: {
         started: false,
-        reason: 'already_running',
-        state: stop.state,
-      },
-    };
-  }
-  if (!stop.stopped) {
-    return {
-      restarted: false,
-      stop,
-      start: {
-        started: false,
-        health: stop.health,
-        state: stop.state,
-      },
-    };
-  }
-  if (stop.reason === 'unhealthy' || stop.reason === 'mismatch') {
-    return {
-      restarted: false,
-      stop,
-      start: {
-        started: false,
-        health: stop.reason,
+        ...(stop.health !== undefined ? { health: stop.health } : {}),
         state: stop.state,
       },
     };
@@ -1733,21 +1637,30 @@ async function printDaemonLogs(input: {
   readonly configHome: string;
   readonly lines: number;
   readonly json: boolean;
+  readonly follow: boolean;
 }): Promise<void> {
+  if (input.follow && input.json) {
+    throw new Error('--follow prints the log lines as they arrive, which are JSON already; leave out --json.');
+  }
   const result = readDaemonLogs(input);
   if (input.json) {
     console.log(JSON.stringify(result, null, 2));
     return;
   }
-  console.log(chalk.cyan(`KodaX runtime daemon log (${result.profile})`));
+  console.log(chalk.cyan(`KodaX Host log${hostSlotNote(result.profile)}`));
   console.log(chalk.dim(result.logFile));
-  if (!result.exists) {
-    console.log(chalk.yellow('No daemon log file exists yet.'));
-    return;
-  }
+  if (!result.exists) console.log(chalk.yellow('The Host has not written a log yet.'));
   for (const line of result.lines) {
     console.log(line);
   }
+  if (!input.follow) return;
+  const stop = new AbortController();
+  process.once('SIGINT', () => stop.abort());
+  await followRuntimeDaemonLog(
+    resolveRuntimeDaemonPathsFromConfigHome(input.configHome, input.profile),
+    line => console.log(line),
+    stop.signal,
+  );
 }
 
 function readDaemonLogs(input: {
@@ -1881,20 +1794,14 @@ function delay(ms: number): Promise<void> {
   });
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
 function normalizeCliError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
-function formatDaemonHealth(
-  health: ReturnType<typeof classifyRuntimeDaemonHealth>,
-): string {
-  if (health === 'healthy') return chalk.green(health);
-  if (health === 'missing') return chalk.dim(health);
-  if (health === 'stale') return chalk.yellow(health);
+function formatHostHealth(health: HostHealthState): string {
+  if (health === 'ready') return chalk.green(health);
+  if (HOST_STATUS_EXIT_CODES[health] === 0 || health === 'stale') return chalk.yellow(health);
+  if (health === 'stopped') return chalk.dim(health);
   return chalk.red(health);
 }
 // ============== CLI Help Topics ==============
@@ -1904,7 +1811,7 @@ function printHelpLine(label: string, description = ''): void {
 }
 
 const HELP_WORKSPACE_ROOT = "Workspace root to inspect (defaults to current directory)";
-const HELP_DAEMON_HOME = "Base directory that owns the .kodax runtime daemon state";
+const HELP_DAEMON_HOME = "Base directory whose .kodax holds the Host state";
 const HELP_EFFORT = "Reasoning effort: off, auto, low, medium, high, xhigh, max, or model-supported value";
 const HELP_REPO_INTELLIGENCE = "Repo intelligence mode: auto, full, light, off";
 const HELP_SESSION = "Legacy session operations: list, resume, delete <id>, delete-all, or raw session ID";
@@ -2080,6 +1987,7 @@ export const KODAX_CLI_SUBCOMMAND_NAMES = [
   'sessions',
   'constructed',
   'doctor',
+  'host',
   'daemon',
   'completion',
   'config',
@@ -2104,7 +2012,7 @@ export const KODAX_COMPLETION_ROOT_SUBCOMMANDS = [
   'sessions',
   'constructed',
   'doctor',
-  'daemon',
+  'host',
   'completion',
   'config',
   'integrations',
@@ -2865,16 +2773,25 @@ async function executeProviderSetup(
   printProviderSetupCompletion(result.selection, result.credentialSource);
 }
 
-export function configureKodaXDaemonCommand(program: Command): Command {
-  const daemonCommand = program
-    .command('daemon')
-    .description('Inspect and manage the local KodaX runtime daemon')
-    .helpOption('-h, --help', 'Show daemon help');
+/** `kodax host`, with `kodax daemon` kept as a hidden alias until 0.7.100 (FEATURE_318). */
+export function configureKodaXHostCommand(program: Command): Command {
+  const host = configureHostCommandGroup(program.command('host'), 'host');
+  configureHostCommandGroup(program.command('daemon', { hidden: true }), 'daemon')
+    .hook('preAction', () => {
+      process.stderr.write('`kodax daemon` is now `kodax host`; the `daemon` name is removed in 0.7.100.\n');
+    });
+  return host;
+}
+
+function configureHostCommandGroup(daemonCommand: Command, name: string): Command {
+  daemonCommand
+    .description('Run and manage the local KodaX Host')
+    .helpOption('-h, --help', 'Show Host help');
 
   daemonCommand
     .command('start')
-    .description('Start the runtime daemon in a detached background process')
-    .addOption(removedHostProfileOption('kodax daemon start'))
+    .description('Start the Host in the background')
+    .addOption(removedHostProfileOption(`kodax ${name} start`))
     .option(
       '--home <dir>',
       HELP_DAEMON_HOME,
@@ -2883,7 +2800,7 @@ export function configureKodaXDaemonCommand(program: Command): Command {
     .option('--model <name>', 'Default model for hosted runs')
     .option(
       '--timeout-ms <n>',
-      'Milliseconds to wait for daemon health',
+      'Milliseconds to wait for the Host to become ready',
       parseOptionalNonNegativeInt,
       5_000,
     )
@@ -2912,21 +2829,21 @@ export function configureKodaXDaemonCommand(program: Command): Command {
 
   daemonCommand
     .command('stop')
-    .description('Stop a healthy runtime daemon')
-    .addOption(removedHostProfileOption('kodax daemon stop'))
+    .description('Stop the Host')
+    .addOption(removedHostProfileOption(`kodax ${name} stop`))
     .option(
       '--home <dir>',
       HELP_DAEMON_HOME,
     )
     .option(
       '--timeout-ms <n>',
-      'Milliseconds to wait for daemon shutdown',
+      'Milliseconds to wait for the Host to stop',
       parseOptionalNonNegativeInt,
       5_000,
     )
     .option(
       '--force',
-      'Clean verified stale daemon ownership without killing unverified live processes',
+      'Clean up verified stale Host ownership without killing unverified live processes',
     )
     .option('--json', 'Output machine-readable JSON')
     .action(
@@ -2947,8 +2864,8 @@ export function configureKodaXDaemonCommand(program: Command): Command {
 
   daemonCommand
     .command('restart')
-    .description('Restart the runtime daemon')
-    .addOption(removedHostProfileOption('kodax daemon restart'))
+    .description('Stop the Host and start it again; start it when it is not running')
+    .addOption(removedHostProfileOption(`kodax ${name} restart`))
     .option(
       '--home <dir>',
       HELP_DAEMON_HOME,
@@ -2957,7 +2874,7 @@ export function configureKodaXDaemonCommand(program: Command): Command {
     .option('--model <name>', 'Default model for hosted runs')
     .option(
       '--timeout-ms <n>',
-      'Milliseconds to wait for daemon shutdown/startup',
+      'Milliseconds to wait for each of stop and start',
       parseOptionalNonNegativeInt,
       5_000,
     )
@@ -2986,8 +2903,8 @@ export function configureKodaXDaemonCommand(program: Command): Command {
 
   daemonCommand
     .command('logs')
-    .description('Print the daemon log path and recent lines')
-    .addOption(removedHostProfileOption('kodax daemon logs'))
+    .description('Print the Host log path and recent lines')
+    .addOption(removedHostProfileOption(`kodax ${name} logs`))
     .option(
       '--home <dir>',
       HELP_DAEMON_HOME,
@@ -2998,16 +2915,19 @@ export function configureKodaXDaemonCommand(program: Command): Command {
       parseOptionalNonNegativeInt,
       80,
     )
+    .option('--follow', 'Keep printing new lines until Ctrl+C')
     .option('--json', 'Output machine-readable JSON')
     .action(
       async (subOpts: {
         home?: string;
         lines?: number;
+        follow?: boolean;
         json?: boolean;
       }) => {
         await printDaemonLogs({
           ...daemonHostLocation(subOpts.home),
           lines: subOpts.lines ?? 80,
+          follow: subOpts.follow === true,
           json: subOpts.json === true,
         });
       },
@@ -3015,8 +2935,8 @@ export function configureKodaXDaemonCommand(program: Command): Command {
 
   daemonCommand
     .command('serve')
-    .description('Run the runtime daemon host in the foreground')
-    .addOption(removedHostProfileOption('kodax daemon serve'))
+    .description('Run the Host in the foreground, for service managers')
+    .addOption(removedHostProfileOption(`kodax ${name} serve`))
     .option(
       '--home <dir>',
       HELP_DAEMON_HOME,
@@ -3070,8 +2990,8 @@ export function configureKodaXDaemonCommand(program: Command): Command {
 
   daemonCommand
     .command('status')
-    .description('Inspect daemon state and endpoint health')
-    .addOption(removedHostProfileOption('kodax daemon status'))
+    .description('Report whether the Host is running and healthy')
+    .addOption(removedHostProfileOption(`kodax ${name} status`))
     .option(
       '--home <dir>',
       HELP_DAEMON_HOME,
@@ -3290,7 +3210,7 @@ async function runCliMain(startupProgress?: CliStartupProgress) {
     showKodaXSetupHelpIfRequested(argv, helpCommand);
     return;
   }
-  const isDaemonManagementCommand = argv[0] === 'daemon' && argv[1] !== 'serve';
+  const isDaemonManagementCommand = (argv[0] === 'host' || argv[0] === 'daemon') && argv[1] !== 'serve';
 
   // FEATURE_208 (v0.7.45): strip dynamic-linker preload env vars
   // (LD_PRELOAD / DYLD_*) before anything spawns children or loads native
@@ -3460,7 +3380,7 @@ _kodax_complete() {
     --session|-s) COMPREPLY=( $(compgen -W "list resume delete delete-all" -- "\${cur}") ); return 0 ;;
     completion) COMPREPLY=( $(compgen -W "bash zsh fish" -- "\${cur}") ); return 0 ;;
     acp) COMPREPLY=( $(compgen -W "serve" -- "\${cur}") ); return 0 ;;
-    daemon) COMPREPLY=( $(compgen -W "start stop restart status logs serve" -- "\${cur}") ); return 0 ;;
+    host) COMPREPLY=( $(compgen -W "start stop restart status logs serve pair devices" -- "\${cur}") ); return 0 ;;
     skill) COMPREPLY=( $(compgen -W "${skillSubcommands}" -- "\${cur}") ); return 0 ;;
     tools) COMPREPLY=( $(compgen -W "${toolsSubcommands}" -- "\${cur}") ); return 0 ;;
     sessions) COMPREPLY=( $(compgen -W "${sessionsSubcommands}" -- "\${cur}") ); return 0 ;;
@@ -3529,7 +3449,7 @@ compdef _kodax kodax`);
 complete -c kodax -n '__fish_use_subcommand' -a '${rootSubcommands}' -d 'Subcommands'
 complete -c kodax -n '__fish_seen_subcommand_from completion' -a 'bash zsh fish' -d 'Shell'
 complete -c kodax -n '__fish_seen_subcommand_from acp' -a 'serve' -d 'ACP subcommand'
-complete -c kodax -n '__fish_seen_subcommand_from daemon' -a 'start stop restart status logs serve' -d 'Daemon subcommand'
+complete -c kodax -n '__fish_seen_subcommand_from host' -a 'start stop restart status logs serve pair devices' -d 'Host subcommand'
 complete -c kodax -n '__fish_seen_subcommand_from skill' -a '${skillSubcommands}' -d 'Skill subcommand'
 complete -c kodax -n '__fish_seen_subcommand_from tools' -a '${toolsSubcommands}' -d 'Tools subcommand'
 complete -c kodax -n '__fish_seen_subcommand_from sessions' -a '${sessionsSubcommands}' -d 'Sessions subcommand'
@@ -3630,13 +3550,13 @@ complete -c kodax -l version -d 'Show version'`);
         await runStorageRepairCli(opts); return;
       }
       const { runDoctor } = await loadCliComponent('./kodax_doctor.js', () => import('./kodax_doctor.js'));
-      await runDoctor(version, Boolean(opts?.json), {
+      process.exitCode = await runDoctor(version, Boolean(opts?.json), {
         ping: Boolean(opts?.ping),
         nativeText: Boolean(opts?.nativeText),
       });
     });
 
-  configureKodaXDaemonCommand(program);
+  configureKodaXHostCommand(program);
 
   const skillCommand = program
     .command('skill')

@@ -594,7 +594,7 @@ describe('CLI interactive exit lifecycle', () => {
     process.argv = [
       'node',
       'kodax',
-      'daemon',
+      'host',
       'serve',
       '--home',
       daemonHome,
@@ -630,7 +630,7 @@ describe('CLI interactive exit lifecycle', () => {
     process.argv = [
       'node',
       'kodax',
-      'daemon',
+      'host',
       'serve',
       '--home',
       daemonHome,
@@ -655,7 +655,7 @@ describe('CLI interactive exit lifecycle', () => {
     process.argv = [
       'node',
       'kodax',
-      'daemon',
+      'host',
       'serve',
       '--home',
       daemonHome,
@@ -683,7 +683,7 @@ describe('CLI interactive exit lifecycle', () => {
     process.argv = [
       'node',
       'kodax',
-      'daemon',
+      'host',
       'serve',
       '--home',
       daemonHome,
@@ -708,7 +708,7 @@ describe('CLI interactive exit lifecycle', () => {
     process.argv = [
       'node',
       'kodax',
-      'daemon',
+      'host',
       'serve',
       '--home',
       daemonHome,
@@ -740,7 +740,7 @@ describe('CLI interactive exit lifecycle', () => {
   it('ends a daemon serve whose Host never finishes closing with final cleanup, a failed outcome and exit 1', async () => {
     const daemonHome = await mkdtemp(join(tmpdir(), 'kodax-daemon-cleanup-'));
     daemonTempHomes.push(daemonHome);
-    process.argv = ['node', 'kodax', 'daemon', 'serve', '--home', daemonHome, '--provider', 'mock-provider'];
+    process.argv = ['node', 'kodax', 'host', 'serve', '--home', daemonHome, '--provider', 'mock-provider'];
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined as never) as typeof process.exit);
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { main, harness } = await importMainWithMocks({
@@ -780,7 +780,7 @@ describe('CLI interactive exit lifecycle', () => {
   it('fails an operator-run daemon serve when another Host already serves the home', async () => {
     const daemonHome = await mkdtemp(join(tmpdir(), 'kodax-daemon-owned-'));
     daemonTempHomes.push(daemonHome);
-    process.argv = ['node', 'kodax', 'daemon', 'serve', '--home', daemonHome];
+    process.argv = ['node', 'kodax', 'host', 'serve', '--home', daemonHome];
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined as never) as typeof process.exit);
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { main, harness } = await importMainWithMocks({ attachedDaemonLeaseOwnerPid: 4242 });
@@ -800,7 +800,7 @@ describe('CLI interactive exit lifecycle', () => {
     const daemonHome = await mkdtemp(join(tmpdir(), 'kodax-daemon-owned-'));
     daemonTempHomes.push(daemonHome);
     process.env.KODAX_DAEMON_SERVE = '1';
-    process.argv = ['node', 'kodax', 'daemon', 'serve', '--home', daemonHome];
+    process.argv = ['node', 'kodax', 'host', 'serve', '--home', daemonHome];
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined as never) as typeof process.exit);
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -1267,7 +1267,7 @@ describe('CLI interactive exit lifecycle', () => {
       process.argv = [
         'node',
         'kodax',
-        'daemon',
+        'host',
         'status',
         '--home',
         homeDir,
@@ -1281,7 +1281,8 @@ describe('CLI interactive exit lifecycle', () => {
       expect(harness.runInteractiveMode).not.toHaveBeenCalled();
       expect(harness.createKodaXHostRuntime).not.toHaveBeenCalled();
       expect(harness.ensureKodaXRuntime).not.toHaveBeenCalled();
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"health": "missing"'));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"health": "stopped"'));
+      expect(process.exitCode).toBe(3);
     } finally {
       await rm(homeDir, { recursive: true, force: true });
     }
@@ -1297,7 +1298,7 @@ describe('CLI interactive exit lifecycle', () => {
         'kodax',
         '--provider',
         'prefixed-provider',
-        'daemon',
+        'host',
         'status',
         '--home',
         homeDir,
@@ -1311,7 +1312,8 @@ describe('CLI interactive exit lifecycle', () => {
       expect(harness.runInteractiveMode).not.toHaveBeenCalled();
       expect(harness.createKodaXHostRuntime).not.toHaveBeenCalled();
       expect(harness.ensureKodaXRuntime).not.toHaveBeenCalled();
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"health": "missing"'));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"health": "stopped"'));
+      expect(process.exitCode).toBe(3);
     } finally {
       await rm(homeDir, { recursive: true, force: true });
     }

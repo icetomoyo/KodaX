@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { mergeCommandOptionsWithGlobals } from './cli_option_helpers.js';
 import {
   configureKodaXRootCommand,
-  configureKodaXDaemonCommand,
+  configureKodaXHostCommand,
   configureKodaXSetupCommand,
   KODAX_CLI_SUBCOMMAND_NAMES,
   KODAX_COMPLETION_ROOT_SUBCOMMANDS,
@@ -46,82 +46,82 @@ describe('KodaX root/subcommand option ownership', () => {
     expect(output).toContain('Usage: kodax host reset');
   });
 
-  it('prints real daemon start help without invoking any management action', async () => {
+  it('prints real host start help without invoking any management action', async () => {
     let output = '';
     const program = configureKodaXRootCommand(new Command().name('kodax').exitOverride()
       .configureOutput({ writeOut: text => { output += text; }, writeErr: text => { output += text; } }));
-    const daemon = configureKodaXDaemonCommand(program);
+    const host = configureKodaXHostCommand(program);
     const action = vi.fn();
-    for (const command of daemon.commands) command.action(action);
+    for (const command of host.commands) command.action(action);
 
-    const result = await program.parseAsync(['node', 'kodax', 'daemon', 'start', '--help'])
+    const result = await program.parseAsync(['node', 'kodax', 'host', 'start', '--help'])
       .then(() => undefined, (error: unknown) => error);
     expect(action).not.toHaveBeenCalled();
     expect(result).toMatchObject({ exitCode: 0 });
-    expect(output).toContain('Usage: kodax daemon start');
+    expect(output).toContain('Usage: kodax host start');
     expect(output).toContain('--home');
     expect(output).not.toContain('--profile');
   });
 
-  const daemonNames = ['start', 'stop', 'restart', 'logs', 'serve', 'status'] as const;
-  const helpCases = daemonNames.flatMap(name => [
-    { name, args: ['daemon', name, '--help'] },
-    { name, args: ['daemon', name, '-h'] },
-    { name, args: ['--provider', 'root-provider', 'daemon', name, '--help'] },
-    { name, args: ['daemon', name, '--home', '/help-only', '-h'] },
-    { name, args: ['daemon', name, '--help=topic'] },
-    { name, args: ['daemon', name, '--help='] },
-    { name, args: ['daemon', name, '-yh'] },
-    { name, args: ['daemon', name, '--timeout-ms', 'not-a-number', '--help'] },
+  const hostNames = ['start', 'stop', 'restart', 'logs', 'serve', 'status'] as const;
+  const helpCases = hostNames.flatMap(name => [
+    { name, args: ['host', name, '--help'] },
+    { name, args: ['host', name, '-h'] },
+    { name, args: ['--provider', 'root-provider', 'host', name, '--help'] },
+    { name, args: ['host', name, '--home', '/help-only', '-h'] },
+    { name, args: ['host', name, '--help=topic'] },
+    { name, args: ['host', name, '--help='] },
+    { name, args: ['host', name, '-yh'] },
+    { name, args: ['host', name, '--timeout-ms', 'not-a-number', '--help'] },
   ]);
-  it.each(helpCases)('keeps daemon $name help read-only: $args', async ({ name, args }) => {
+  it.each(helpCases)('keeps host $name help read-only: $args', async ({ name, args }) => {
     let output = '';
     const program = configureKodaXRootCommand(new Command().name('kodax').exitOverride()
       .configureOutput({ writeOut: text => { output += text; }, writeErr: text => { output += text; } }));
-    const daemon = configureKodaXDaemonCommand(program);
+    const host = configureKodaXHostCommand(program);
     const action = vi.fn();
-    for (const command of daemon.commands) command.action(action);
+    for (const command of host.commands) command.action(action);
     const result = await program.parseAsync(['node', 'kodax', ...args])
       .then(() => undefined, (error: unknown) => error);
     expect(action).not.toHaveBeenCalled();
     expect(result).toMatchObject({ exitCode: 0 });
-    expect(output).toContain(`Usage: kodax daemon ${name}`);
+    expect(output).toContain(`Usage: kodax host ${name}`);
   });
 
-  it.each([['daemon', '--help'], ['daemon', '-h'], ['daemon', '--help', 'start']])(
-    'shows daemon group help without any management action: %j', async (...args) => {
+  it.each([['host', '--help'], ['host', '-h'], ['host', '--help', 'start']])(
+    'shows host group help without any management action: %j', async (...args) => {
       let output = '';
       const program = configureKodaXRootCommand(new Command().name('kodax').exitOverride()
         .configureOutput({ writeOut: text => { output += text; }, writeErr: text => { output += text; } }));
-      const daemon = configureKodaXDaemonCommand(program);
+      const host = configureKodaXHostCommand(program);
       const action = vi.fn();
-      for (const command of daemon.commands) command.action(action);
+      for (const command of host.commands) command.action(action);
       const result = await program.parseAsync(['node', 'kodax', ...args])
         .then(() => undefined, (error: unknown) => error);
       expect(action).not.toHaveBeenCalled();
       expect(result).toMatchObject({ exitCode: 0 });
-      expect(output).toContain('Usage: kodax daemon [options] [command]');
+      expect(output).toContain('Usage: kodax host [options] [command]');
     },
   );
 
-  it.each(daemonNames)('preserves normal daemon %s options, including literal help in values', async name => {
+  it.each(hostNames)('preserves normal host %s options, including literal help in values', async name => {
     const program = configureKodaXRootCommand(new Command().name('kodax').exitOverride());
-    const daemon = configureKodaXDaemonCommand(program);
+    const host = configureKodaXHostCommand(program);
     const action = vi.fn();
-    for (const command of daemon.commands) command.action(action);
-    await program.parseAsync(['node', 'kodax', 'daemon', name, '--home=--help']);
+    for (const command of host.commands) command.action(action);
+    await program.parseAsync(['node', 'kodax', 'host', name, '--home=--help']);
     expect(action).toHaveBeenCalledTimes(1);
     expect(action.mock.calls[0]![0]).toMatchObject({ home: '--help' });
   });
 
-  it.each(daemonNames)('rejects the removed daemon %s --profile with migration guidance (FEATURE_305)', async name => {
+  it.each(hostNames)('rejects the removed host %s --profile with migration guidance (FEATURE_305)', async name => {
     let output = '';
     const program = configureKodaXRootCommand(new Command().name('kodax').exitOverride()
       .configureOutput({ writeOut: text => { output += text; }, writeErr: text => { output += text; } }));
-    const daemon = configureKodaXDaemonCommand(program);
+    const host = configureKodaXHostCommand(program);
     const action = vi.fn();
-    for (const command of daemon.commands) command.action(action);
-    const result = await program.parseAsync(['node', 'kodax', 'daemon', name, '--profile', 'coder'])
+    for (const command of host.commands) command.action(action);
+    const result = await program.parseAsync(['node', 'kodax', 'host', name, '--profile', 'coder'])
       .then(() => undefined, (error: unknown) => error);
     expect(action).not.toHaveBeenCalled();
     expect(result).toMatchObject({ code: 'commander.invalidArgument', exitCode: 1 });
@@ -134,14 +134,36 @@ describe('KodaX root/subcommand option ownership', () => {
     let output = '';
     const program = configureKodaXRootCommand(new Command().name('kodax').exitOverride()
       .configureOutput({ writeOut: text => { output += text; }, writeErr: text => { output += text; } }));
-    const daemon = configureKodaXDaemonCommand(program);
+    const host = configureKodaXHostCommand(program);
     const action = vi.fn();
-    for (const command of daemon.commands) command.action(action);
-    const result = await program.parseAsync(['node', 'kodax', 'daemon', 'start', '--', '--help'])
+    for (const command of host.commands) command.action(action);
+    const result = await program.parseAsync(['node', 'kodax', 'host', 'start', '--', '--help'])
       .then(() => undefined, (error: unknown) => error);
     expect(result).toMatchObject({ code: 'commander.excessArguments' });
     expect(action).not.toHaveBeenCalled();
     expect(output).not.toContain('Usage:');
+  });
+
+  it('keeps `kodax daemon` as a hidden alias that names the new command', async () => {
+    let output = '';
+    const program = configureKodaXRootCommand(new Command().name('kodax').exitOverride()
+      .configureOutput({ writeOut: text => { output += text; }, writeErr: text => { output += text; } }));
+    configureKodaXHostCommand(program);
+    const daemon = program.commands.find(command => command.name() === 'daemon')!;
+    const action = vi.fn();
+    for (const command of daemon.commands) command.action(action);
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      await program.parseAsync(['node', 'kodax', 'daemon', 'status', '--home=/alias']);
+      expect(action).toHaveBeenCalledTimes(1);
+      expect(action.mock.calls[0]![0]).toMatchObject({ home: '/alias' });
+      expect(stderr.mock.calls.map(call => String(call[0])).join('')).toContain('`kodax daemon` is now `kodax host`');
+    } finally {
+      stderr.mockRestore();
+    }
+    expect(program.helpInformation()).not.toContain('daemon');
+    expect(daemon.commands.map(command => command.name()))
+      .toEqual(program.commands.find(command => command.name() === 'host')!.commands.map(command => command.name()));
   });
 
   it('gives `kodax setup --help` the shared guide and custom-provider option', () => {

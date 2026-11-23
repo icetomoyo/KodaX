@@ -184,7 +184,7 @@ test('release archive preserves work modes, partial effects, cancellation and re
     phase('starting packaged daemon');
     // The packaged daemon's cold start on a runner can exceed the CLI's 5s
     // default readiness budget; ask for the same 60s ceiling used elsewhere.
-    await cli(['daemon', 'start', '--home', homeDir, '--timeout-ms', '60000', '--json']); hostStarted = true;
+    await cli(['host', 'start', '--home', homeDir, '--timeout-ms', '60000', '--json']); hostStarted = true;
     const descriptor = JSON.parse(await readFile(path.join(configHome, 'runtime/daemon/default/daemon.json'), 'utf8'));
     client = await connectKodaXRuntime({ homeDir, endpoint: descriptor.endpoint, daemonStartupSignal: t.signal });
     assert.ok(client.capabilities.sharedSessionSettings.keys.includes('workMode'));
@@ -197,8 +197,8 @@ test('release archive preserves work modes, partial effects, cancellation and re
     } finally {
       client = undefined;
       if (hostStarted) {
-        const result = JSON.parse((await cli(['daemon', 'stop', '--home', homeDir, '--json'], AbortSignal.timeout(20_000))).stdout);
-        assert.ok(result.stopped || result.reason === 'missing', JSON.stringify(result));
+        const result = JSON.parse((await cli(['host', 'stop', '--home', homeDir, '--json'], AbortSignal.timeout(20_000))).stdout);
+        assert.ok(result.stopped || result.reason === 'stopped', JSON.stringify(result));
         hostStarted = false;
       }
     }

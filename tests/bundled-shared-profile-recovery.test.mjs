@@ -61,10 +61,10 @@ test('ensure recovers a shared Session directory from an idle default-profile Ho
   } finally {
     await runtime?.close();
     const result = JSON.parse(execFileSync(process.execPath, [
-      cli, 'daemon', 'stop', '--timeout-ms', '5000', '--json',
+      cli, 'host', 'stop', '--timeout-ms', '5000', '--json',
     ], { env: { ...process.env, KODAX_HOME: configHome }, windowsHide: true, timeout: 20_000, encoding: 'utf8' }));
-    if (!result.stopped && result.health !== 'missing') {
-      const status = JSON.parse(execFileSync(process.execPath, [cli, 'daemon', 'status', '--json'], {
+    if (!result.stopped && result.health !== 'stopped') {
+      const status = JSON.parse(execFileSync(process.execPath, [cli, 'host', 'status', '--json'], {
         env: { ...process.env, KODAX_HOME: configHome }, windowsHide: true, timeout: 10_000, encoding: 'utf8',
       }));
       assert.equal(status.pidAlive, false, 'Unable to clean up the isolated Host');

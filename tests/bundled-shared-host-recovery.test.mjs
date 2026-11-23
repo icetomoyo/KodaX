@@ -50,10 +50,10 @@ test('ordinary CLI Host exits after 30 idle seconds and releases ownership', { t
     if (supervisorPid !== undefined) await waitForPidExit(supervisorPid);
     context.diagnostic(`CLI startup/reconnect ${Math.round(detachedAt - idleAt)}ms; idle owner release ${Math.round(performance.now() - detachedAt)}ms`);
   } finally {
-    const stopped = JSON.parse(execFileSync(process.execPath, [cli, 'daemon', 'stop', '--json'], {
+    const stopped = JSON.parse(execFileSync(process.execPath, [cli, 'host', 'stop', '--json'], {
       env: environment, windowsHide: true, timeout: 20_000, encoding: 'utf8',
     }));
-    assert.ok(stopped.stopped || stopped.reason === 'missing');
+    assert.ok(stopped.stopped || stopped.reason === 'stopped');
     if (ownerPid !== undefined) await waitForPidExit(ownerPid);
     if (supervisorPid !== undefined) await waitForPidExit(supervisorPid);
     assert.equal(path.dirname(homeDir), path.resolve(os.tmpdir()));

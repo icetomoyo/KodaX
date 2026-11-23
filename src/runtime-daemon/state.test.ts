@@ -9,6 +9,8 @@ import {
   appendRuntimeDaemonLog,
   claimRuntimeDaemonOwnership,
   classifyRuntimeDaemonHealth,
+  HOST_STATUS_EXIT_CODES,
+  hostHealthState,
   clearRuntimeDaemonShutdownOutcome,
   createRuntimeDaemonToken,
   enableRuntimeDaemonOwner,
@@ -20,6 +22,7 @@ import {
   readRuntimeDaemonLockOwner,
   readRuntimeDaemonLog,
   readRuntimeDaemonLogLines,
+  followRuntimeDaemonLog,
   readRuntimeDaemonState,
   RUNTIME_DAEMON_LOG_MAX_BYTES,
   readRuntimeDaemonToken,
@@ -266,6 +269,29 @@ describe('runtime daemon state paths', () => {
     expect(fs.readFileSync(paths.logFile, 'utf8').trim().split('\n')).toHaveLength(1);
     expect(readRuntimeDaemonLog(paths, 2).map(entry => entry.message)).toEqual(['x'.repeat(200), 'new entry']);
     expect(readRuntimeDaemonLogLines(paths)[0]).toBe(old.trim());
+  });
+
+  it('follows the daemon log as it grows, whole lines only, across a rotation', async () => {
+    const paths = resolveRuntimeDaemonPaths(tempHome(), 'log-follow');
+    appendRuntimeDaemonLog(paths, 'info', 'before');
+    const seen: string[] = [];
+    const controller = new AbortController();
+    const following = followRuntimeDaemonLog(paths, line => seen.push((JSON.parse(line) as { message: string }).message),
+      controller.signal, 10);
+    try {
+      appendRuntimeDaemonLog(paths, 'info', 'first');
+      await vi.waitFor(() => expect(seen).toEqual(['first']));
+      fs.appendFileSync(paths.logFile, '{"time":"t","level":"info","message":"spl');
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(seen).toEqual(['first']);
+      fs.appendFileSync(paths.logFile, 'it é"}\n{"time":"t","level":"info","message":"tail of old"}\n');
+      fs.renameSync(paths.logFile, `${paths.logFile}.1`);
+      appendRuntimeDaemonLog(paths, 'info', 'after rotation');
+      await vi.waitFor(() => expect(seen).toEqual(['first', 'split é', 'tail of old', 'after rotation']));
+    } finally {
+      controller.abort();
+      await following;
+    }
   });
 
   it('mirrors each daemon log entry to a stream as the line the file gets, until the stream fails', () => {
@@ -1102,6 +1128,25 @@ describe('runtime daemon health classification', () => {
       endpointReachable: true,
       identityMatches: false,
     })).toBe('mismatch');
+  });
+
+  it('reports one Host health vocabulary, with the exit code of host status', () => {
+    const running = { pidAlive: true, endpointReachable: true, identityMatches: true };
+    const cases = [
+      [hostHealthState('missing', undefined), 'stopped', 3],
+      [hostHealthState('stale', state()), 'stale', 3],
+      [hostHealthState('unhealthy', state()), 'unreachable', 1],
+      [hostHealthState('mismatch', state()), 'mismatch', 1],
+      [hostHealthState(classifyRuntimeDaemonHealth({ state: state(), ...running }), state()), 'ready', 0],
+      [hostHealthState('healthy', { ...state(), status: 'starting' }), 'starting', 0],
+      [hostHealthState('healthy', { ...state(), status: 'draining' }), 'draining', 0],
+      [hostHealthState('healthy', { ...state(), status: 'stopping' }), 'draining', 0],
+      [hostHealthState('healthy', { ...state(), status: 'unhealthy' }), 'unreachable', 1],
+    ] as const;
+    for (const [actual, expected, exitCode] of cases) {
+      expect(actual).toBe(expected);
+      expect(HOST_STATUS_EXIT_CODES[actual]).toBe(exitCode);
+    }
   });
 });
 

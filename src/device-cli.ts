@@ -1,5 +1,5 @@
 /**
- * `kodax daemon pair` and `kodax daemon devices`: the owner pairs browsers with
+ * `kodax host pair` and `kodax host devices`: the owner pairs browsers with
  * the running Host of this home, lists them and revokes them, over the same v2
  * methods KodaX Space uses. The Host holds the devices, so it must be running.
  */
@@ -11,7 +11,7 @@ import { connectHostRpc, type HostRpcClient } from './host-protocol/client.js';
 import type { HostResult } from './host-protocol/methods.js';
 import { observeRuntimeDaemonHealth, runtimeDaemonEndpointFromState } from './runtime-daemon/lifecycle.js';
 import {
-  classifyRuntimeDaemonHealth, readRuntimeDaemonToken, resolveRuntimeDaemonPathsFromConfigHome,
+  classifyRuntimeDaemonHealth, readRuntimeDaemonToken, resolveRuntimeDaemonPathsFromConfigHome, type RuntimeDaemonState,
 } from './runtime-daemon/state.js';
 import { dialRuntimeDaemonHostRpc } from './runtime-daemon/transport.js';
 
@@ -75,11 +75,22 @@ export async function connectRunningHost(
   const observation = await observeRuntimeDaemonHealth(paths);
   const token = readRuntimeDaemonToken(paths);
   if (classifyRuntimeDaemonHealth(observation) !== 'healthy' || observation.state === undefined || token === undefined) {
-    throw new Error('No Host is running for this home. Start it with `kodax daemon start`, or open KodaX Space.');
+    throw new Error('No Host is running for this home. Start it with `kodax host start`, or open KodaX Space.');
   }
-  return connectHostRpc(dialRuntimeDaemonHostRpc(runtimeDaemonEndpointFromState(observation.state)), {
+  return connectHostOwner(observation.state, token, version);
+}
+
+/** Connects as the owner to the Host a state file names. A `probe` connection only reads whether it is up. */
+export function connectHostOwner(
+  state: RuntimeDaemonState,
+  token: string,
+  version: string,
+  purpose?: 'probe',
+): Promise<HostRpcClient> {
+  return connectHostRpc(dialRuntimeDaemonHostRpc(runtimeDaemonEndpointFromState(state)), {
     client: { name: 'kodax-cli', version, instanceId: `cli-${randomUUID()}` },
     auth: { scheme: 'ipc', token },
+    ...(purpose !== undefined ? { purpose } : {}),
   });
 }
 
@@ -140,7 +151,7 @@ function pick(devices: readonly Device[], wanted: string): Device {
   if (byId !== undefined) return byId;
   const named = devices.filter(device => device.name === wanted);
   if (named.length === 1) return named[0]!;
-  if (named.length === 0) throw new Error(`No paired device has the id or name ${wanted}. See \`kodax daemon devices\`.`);
+  if (named.length === 0) throw new Error(`No paired device has the id or name ${wanted}. See \`kodax host devices\`.`);
   throw new Error(`Several devices are called ${wanted}: ${named.map(device => device.id).join(', ')}. Name one by its id.`);
 }
 

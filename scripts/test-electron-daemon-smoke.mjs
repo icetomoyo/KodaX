@@ -729,7 +729,7 @@ async function stopDaemonBestEffort() {
   const cli = path.join(repoRoot, 'dist', 'kodax_cli.js');
   if (!existsSync(cli)) return;
   try {
-    await run(process.execPath, [cli, 'daemon', 'stop', '--home', homeDir, '--timeout-ms', '3000', '--json'], repoRoot, 10_000);
+    await run(process.execPath, [cli, 'host', 'stop', '--home', homeDir, '--timeout-ms', '3000', '--json'], repoRoot, 10_000);
   } catch (error) {
     process.stderr.write(`[electron-daemon-smoke] cleanup warning: ${String(error)}\n`);
   }

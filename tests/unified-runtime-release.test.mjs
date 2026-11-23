@@ -127,12 +127,12 @@ test('actual npm tarball exposes one Host path and migrates real historical owne
     // Host through the normal CLI management path before deleting it.
     for (const homeDir of homes) {
       if (!existsSync(path.join(homeDir, '.kodax/runtime/daemon/default/daemon.lock'))) continue;
-      const result = await exec(process.execPath, ['dist/kodax_cli.js', 'daemon', 'stop', '--home', homeDir, '--json'], {
+      const result = await exec(process.execPath, ['dist/kodax_cli.js', 'host', 'stop', '--home', homeDir, '--json'], {
         cwd: consumer, windowsHide: true, timeout: 30_000, maxBuffer: 1024 * 1024,
         env: { ...process.env, KODAX_HOME: path.join(homeDir, '.kodax'), NODE_PATH: '', NODE_OPTIONS: '' },
       });
       const stopped = JSON.parse(result.stdout);
-      assert.ok(stopped.stopped || stopped.reason === 'missing', result.stdout);
+      assert.ok(stopped.stopped || stopped.reason === 'stopped', result.stdout);
     }
     assert.equal(path.dirname(directory), path.resolve(os.tmpdir()));
     await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

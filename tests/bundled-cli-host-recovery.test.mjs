@@ -210,9 +210,9 @@ for (const mode of modes) test(`bundled ${mode} automatically continues its orig
     const owner = getKodaXRuntimeOwnerState({ homeDir }).owner;
     // This isolated fixture may still have governed background work. Stop its
     // verified owner explicitly before removing a directory it can still write.
-    const stopped = JSON.parse(execFileSync(process.execPath, [cli, 'daemon', 'stop', '--force', '--json'],
+    const stopped = JSON.parse(execFileSync(process.execPath, [cli, 'host', 'stop', '--force', '--json'],
       { env, windowsHide: true, timeout: 20_000, encoding: 'utf8' }));
-    assert.ok(stopped.stopped || stopped.reason === 'missing' || stopped.health === 'missing', JSON.stringify(stopped));
+    assert.ok(stopped.stopped || stopped.reason === 'stopped' || stopped.health === 'stopped', JSON.stringify(stopped));
     if (owner) assert.equal((await waitForRuntimeDaemonShutdown({ configHome, owner })).status, 'succeeded');
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
     assert.equal(path.dirname(homeDir), path.resolve(os.tmpdir()));

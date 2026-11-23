@@ -182,7 +182,7 @@ describe("runtime daemon child process environment", () => {
     );
 
     expect(args).toEqual([
-      "daemon",
+      "host",
       "serve",
       "--home",
       "runtime-home",
@@ -206,7 +206,7 @@ describe("runtime daemon child process environment", () => {
     );
 
     expect(args).toEqual([
-      "daemon",
+      "host",
       "serve",
       "--home",
       "runtime-home",

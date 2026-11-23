@@ -11,6 +11,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { inspectDoctorCoreConfig, inspectDoctorLocks } from './doctor-storage.js';
+import { observeRuntimeDaemonHealth } from './runtime-daemon/lifecycle.js';
+import {
+  classifyRuntimeDaemonHealth, HOST_STATUS_EXIT_CODES, hostHealthState, resolveRuntimeDaemonPathsFromConfigHome,
+  resolveRuntimeHostSlot, type HostHealthState,
+} from './runtime-daemon/state.js';
 
 import { getAgentConfigHome } from '@kodax-ai/agent';
 import { KODAX_PROVIDER_SNAPSHOTS } from '@kodax-ai/coding';
@@ -59,6 +64,8 @@ interface DoctorReport {
   readonly locks: ReturnType<typeof inspectDoctorLocks>;
   readonly sessions: DirSummary | null;
   readonly traces: DirSummary | null;
+  /** The Host serving this home, in the vocabulary of `kodax host status`. */
+  readonly host: { readonly state: HostHealthState; readonly runtimeId?: string; readonly pid?: number };
   /** Present only when `--native-text` explicitly loads the verified addon. */
   readonly trustedTextNative?: TrustedTextNativeBindingProbe;
   /** Present only when `--ping` ran. Live reachability per configured provider. */
@@ -157,7 +164,22 @@ function formatBytes(bytes: number): string {
   return `${value.toFixed(1)} ${units[unit]}`;
 }
 
-function buildReport(version: string): DoctorReport {
+async function inspectHost(home: string): Promise<DoctorReport['host']> {
+  const slot = resolveRuntimeHostSlot(home, path.join(home, 'sessions'));
+  const observation = await observeRuntimeDaemonHealth(resolveRuntimeDaemonPathsFromConfigHome(home, slot));
+  const state = hostHealthState(classifyRuntimeDaemonHealth(observation), observation.state);
+  return observation.state === undefined
+    ? { state }
+    : { state, runtimeId: observation.state.runtimeId, pid: observation.state.pid };
+}
+
+/** A stopped Host is normal; a Host that does not answer, or a config KodaX cannot read, is a failure. */
+function doctorExitCode(report: DoctorReport): 0 | 1 {
+  const configBroken = report.coreConfig.state === 'invalid' || report.coreConfig.state === 'unreadable';
+  return configBroken || HOST_STATUS_EXIT_CODES[report.host.state] === 1 ? 1 : 0;
+}
+
+async function buildReport(version: string): Promise<DoctorReport> {
   const home = getAgentConfigHome();
   return {
     version,
@@ -172,6 +194,7 @@ function buildReport(version: string): DoctorReport {
     locks: inspectDoctorLocks(home),
     sessions: summarizeDir(path.join(home, 'sessions')),
     traces: summarizeDir(path.join(home, '.traces')),
+    host: await inspectHost(home),
   };
 }
 
@@ -184,8 +207,8 @@ export async function runDoctor(
   version: string,
   asJson: boolean,
   opts: { readonly ping?: boolean; readonly nativeText?: boolean } = {},
-): Promise<void> {
-  const base = buildReport(version);
+): Promise<0 | 1> {
+  const base = await buildReport(version);
   const providersPing = opts.ping ? await pingConfiguredProviders(base.providers) : undefined;
   const trustedTextNative = opts.nativeText ? probeTrustedTextNativeBinding() : undefined;
   const report: DoctorReport = {
@@ -196,7 +219,7 @@ export async function runDoctor(
 
   if (asJson) {
     console.log(JSON.stringify(report, null, 2));
-    return;
+    return doctorExitCode(report);
   }
   const lines = [
     `KodaX v${report.version} diagnostic`,
@@ -220,6 +243,9 @@ export async function runDoctor(
     summaryLine('sessions', report.sessions),
     summaryLine('traces  ', report.traces),
     `  Core config: ${report.coreConfig.state} (${report.coreConfig.path})${'offset' in report.coreConfig ? `; JSON offset ${report.coreConfig.offset}` : ''}`,
+    '',
+    'Host',
+    `  ${report.host.state}${report.host.runtimeId !== undefined ? ` (${report.host.runtimeId}, PID ${report.host.pid})` : ''}`,
     '',
     'Retained locks (presence alone does not prove abandonment)',
     ...report.locks.items.map(item => `  ${item.state}: ${item.path}${item.record ? `; ${item.kind}, record=${item.record}, ownership=${item.ownership}` : ''}`),
@@ -250,4 +276,5 @@ export async function runDoctor(
     );
   }
   console.log(lines.join('\n'));
+  return doctorExitCode(report);
 }

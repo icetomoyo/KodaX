@@ -16,7 +16,7 @@ function fakeHost(answers: Record<string, unknown>) {
   return { host, request, close, output };
 }
 
-describe('kodax daemon pair', () => {
+describe('kodax host pair', () => {
   it('prints the link the device opens, built on the address it reaches the Host at', async () => {
     const { host, request, close, output } = fakeHost({ 'device.pair': { code: 'abc_123', expiresAt: Date.parse('2026-11-22T10:10:00Z') } });
     await pairDevice({ name: 'Phone', url: 'https://laptop.example.test/', json: false }, host);
@@ -46,7 +46,7 @@ describe('kodax daemon pair', () => {
   });
 });
 
-describe('kodax daemon devices', () => {
+describe('kodax host devices', () => {
   it('lists the paired devices with where they connect from and when they were last seen', async () => {
     const { host, output } = fakeHost({ 'device.list': { items: [PHONE] } });
     await listDevices({ json: false }, host);

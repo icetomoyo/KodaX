@@ -748,6 +748,61 @@ export function readRuntimeDaemonLogLines(paths: RuntimeDaemonPaths): readonly s
   });
 }
 
+/**
+ * Passes each whole line appended to the daemon log from now on to `write`,
+ * until `signal` aborts. A rotation moves the active file to `.1`, so the rest
+ * of that file is read there before the new file starts from its beginning.
+ */
+export async function followRuntimeDaemonLog(
+  paths: RuntimeDaemonPaths,
+  write: (line: string) => void,
+  signal: AbortSignal,
+  intervalMs = 250,
+): Promise<void> {
+  let offset = runtimeDaemonLogSize(paths.logFile);
+  let pending = Buffer.alloc(0);
+  const take = (file: string, from: number): number => {
+    const size = runtimeDaemonLogSize(file);
+    if (size <= from) return size;
+    const chunk = Buffer.alloc(size - from);
+    const fd = fs.openSync(file, 'r');
+    try {
+      fs.readSync(fd, chunk, 0, chunk.length, from);
+    } finally {
+      fs.closeSync(fd);
+    }
+    pending = Buffer.concat([pending, chunk]);
+    // Lines split on bytes, so a character cut across two reads is decoded whole.
+    for (let end = pending.indexOf(0x0a); end >= 0; end = pending.indexOf(0x0a)) {
+      const line = pending.subarray(0, end).toString('utf8').replace(/\r$/, '');
+      pending = pending.subarray(end + 1);
+      if (line.trim().length > 0) write(line);
+    }
+    return size;
+  };
+  while (!signal.aborted) {
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, intervalMs);
+      signal.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+    });
+    if (signal.aborted) return;
+    if (runtimeDaemonLogSize(paths.logFile) < offset) {
+      take(`${paths.logFile}.1`, offset);
+      offset = 0;
+    }
+    offset = take(paths.logFile, offset);
+  }
+}
+
+function runtimeDaemonLogSize(file: string): number {
+  try {
+    return fs.statSync(file).size;
+  } catch (error: unknown) {
+    if (isNodeFileError(error) && error.code === 'ENOENT') return 0;
+    throw error;
+  }
+}
+
 export function readRuntimeDaemonLog(
   paths: RuntimeDaemonPaths,
   limit = 200,
@@ -1399,6 +1454,47 @@ export function classifyRuntimeDaemonHealth(
   }
   return 'unhealthy';
 }
+
+/**
+ * FEATURE_318: the Host's health as `kodax host`, REPL `/status` and `kodax doctor`
+ * report it. A Host that answers as itself reports its state file's status: `starting`,
+ * `ready`, or `draining` while it stops. `stopped` means no Host; `stale` a state file whose
+ * process is gone; `unreachable` a live process that does not answer;
+ * `mismatch` an answer from another Host than the state file names.
+ */
+export type HostHealthState = 'starting' | 'ready' | 'draining' | 'stopped' | 'stale' | 'unreachable' | 'mismatch';
+
+const HOST_HEALTH_OF_STATUS: Readonly<Record<RuntimeDaemonStatus, HostHealthState>> = {
+  starting: 'starting',
+  ready: 'ready',
+  draining: 'draining',
+  stopping: 'draining',
+  unhealthy: 'unreachable',
+  crashed: 'unreachable',
+};
+
+const HOST_HEALTH_OF: Readonly<Record<RuntimeDaemonHealth, HostHealthState>> = {
+  missing: 'stopped',
+  healthy: 'ready',
+  stale: 'stale',
+  unhealthy: 'unreachable',
+  mismatch: 'mismatch',
+};
+
+export function hostHealthState(health: RuntimeDaemonHealth, state: RuntimeDaemonState | undefined): HostHealthState {
+  return health === 'healthy' && state !== undefined ? HOST_HEALTH_OF_STATUS[state.status] : HOST_HEALTH_OF[health];
+}
+
+/** `kodax host status` exits 3 when no Host runs, as LSB init scripts do, and 1 when one runs but is unusable. */
+export const HOST_STATUS_EXIT_CODES: Readonly<Record<HostHealthState, 0 | 1 | 3>> = {
+  starting: 0,
+  ready: 0,
+  draining: 0,
+  stopped: 3,
+  stale: 3,
+  unreachable: 1,
+  mismatch: 1,
+};
 
 function isRuntimeDaemonState(value: unknown): value is RuntimeDaemonState {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {

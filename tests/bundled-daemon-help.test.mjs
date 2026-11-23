@@ -64,9 +64,9 @@ async function cleanup(homeDir) {
   let owner;
   try { owner = JSON.parse(await readFile(path.join(configHome, 'runtime/daemon/default/daemon.lock'), 'utf8')); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
-  const { stdout } = await run(homeDir, ['daemon', 'stop', '--home', homeDir, '--json']);
+  const { stdout } = await run(homeDir, ['host', 'stop', '--home', homeDir, '--json']);
   const result = JSON.parse(stdout);
-  assert.ok(result.stopped || result.reason === 'missing', 'The isolated fixture must stop safely');
+  assert.ok(result.stopped || result.reason === 'stopped', 'The isolated fixture must stop safely');
   if (owner) assert.equal((await waitForRuntimeDaemonShutdown({ configHome, owner })).status, 'succeeded');
 }
 
@@ -79,13 +79,13 @@ test('daemon group and every leaf help leave an absent Host and its files untouc
     await writeFile(path.join(configHome, 'config.json'), '{"provider":"help-fixture-not-configured"}\n');
     const before = await files(configHome);
     for (const name of names) for (const flag of ['--help', '-h']) {
-      const { stdout } = await run(homeDir, ['daemon', name, '--home', homeDir, flag]);
-      assert.match(stdout, new RegExp(`Usage: kodax daemon ${name}`));
+      const { stdout } = await run(homeDir, ['host', name, '--home', homeDir, flag]);
+      assert.match(stdout, new RegExp(`Usage: kodax host ${name}`));
       assert.deepEqual(await files(configHome), before, `${name} ${flag} must not create a Host or modify configuration`);
     }
     for (const flag of ['--help', '-h']) {
-      const { stdout } = await run(homeDir, ['daemon', flag]);
-      assert.match(stdout, /Usage: kodax daemon \[options\] \[command\]/);
+      const { stdout } = await run(homeDir, ['host', flag]);
+      assert.match(stdout, /Usage: kodax host \[options\] \[command\]/);
       assert.deepEqual(await files(configHome), before);
     }
     passed = true;
@@ -122,8 +122,8 @@ test('daemon help leaves an existing independent Host and its ownership intact',
     const critical = ['daemon.lock', 'daemon.json', 'daemon.token'];
     const hashes = await Promise.all(critical.map(async file => createHash('sha256').update(await readFile(path.join(directory, file))).digest('hex')));
     for (const name of names) for (const flag of ['--help', '-h']) {
-      const { stdout } = await run(homeDir, ['daemon', name, '--home', homeDir, flag]);
-      assert.match(stdout, new RegExp(`Usage: kodax daemon ${name}`));
+      const { stdout } = await run(homeDir, ['host', name, '--home', homeDir, flag]);
+      assert.match(stdout, new RegExp(`Usage: kodax host ${name}`));
       assert.equal((await runtime.daemon.inspect()).runtimeId, owner.runtimeId);
       const after = await Promise.all(critical.map(async file => createHash('sha256').update(await readFile(path.join(directory, file))).digest('hex')));
       assert.deepEqual(after, hashes, `${name} ${flag} must not stop, restart or replace the fixture Host`);

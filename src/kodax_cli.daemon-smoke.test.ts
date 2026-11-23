@@ -87,7 +87,7 @@ describe('daemon CLI smoke', () => {
     expect(fs.statSync(runtimeDaemonBootstrapLogPath(paths)).size).toBeLessThanOrEqual(
       RUNTIME_DAEMON_BOOTSTRAP_LOG_MAX_BYTES,
     );
-    await expect(start).resolves.toMatchObject({ started: true, health: 'healthy' });
+    await expect(start).resolves.toMatchObject({ started: true, health: 'ready' });
     expect(fs.statSync(runtimeDaemonBootstrapLogPath(paths)).size).toBeLessThanOrEqual(
       RUNTIME_DAEMON_BOOTSTRAP_LOG_MAX_BYTES,
     );
@@ -136,7 +136,7 @@ describe('daemon CLI smoke', () => {
       await expect(runDaemonCommand([
         'start', '--provider', 'mock-provider',
         '--timeout-ms', '30000', '--json',
-      ], env)).resolves.toMatchObject({ started: true, health: 'healthy' });
+      ], env)).resolves.toMatchObject({ started: true, health: 'ready' });
 
       const paths = resolveRuntimeDaemonPathsFromConfigHome(configHome, profile);
       expect(JSON.parse(fs.readFileSync(paths.stateFile, 'utf8'))).toMatchObject({
@@ -151,7 +151,7 @@ describe('daemon CLI smoke', () => {
       expect(JSON.parse(fs.readFileSync(path.join(integrationDir, 'a2a.json'), 'utf8')))
         .toMatchObject({ agents: { configured: { enabled: false } } });
       await expect(runDaemonCommand(['status', '--json'], env))
-        .resolves.toMatchObject({ health: 'healthy', stateFile: paths.stateFile });
+        .resolves.toMatchObject({ health: 'ready', stateFile: paths.stateFile });
     } finally {
       await runDaemonCommand([
         'stop', '--timeout-ms', '30000', '--force', '--json',
@@ -270,7 +270,7 @@ describe('daemon CLI smoke', () => {
       expect(first).toMatchObject({ state: { runtimeId: startingOwner!.runtimeId, pid: startingOwner!.pid } });
       expect(second).toMatchObject({ state: { runtimeId: startingOwner!.runtimeId, pid: startingOwner!.pid } });
       expect(runtime.identity.runtimeId).toBe(startingOwner!.runtimeId);
-      expect(first).toMatchObject({ started: true, health: 'healthy' });
+      expect(first).toMatchObject({ started: true, health: 'ready' });
       expect(second).toMatchObject({
         started: false,
         reason: 'already_running',
@@ -290,7 +290,7 @@ describe('daemon CLI smoke', () => {
       await expect(runDaemonCommand([
         'stop', '--home', homeDir,
         '--timeout-ms', '30000', '--json',
-      ])).resolves.toMatchObject({ stopped: true, health: 'missing' });
+      ])).resolves.toMatchObject({ stopped: true, health: 'stopped' });
       await waitForDaemonState(profile, homeDir, false);
     } finally {
       releaseCard?.();
@@ -332,7 +332,7 @@ describe('daemon CLI smoke', () => {
     let stdout = '';
     const child = spawn(process.execPath, [
       '--import', 'tsx', path.join(process.cwd(), 'src', 'kodax_cli.ts'),
-      'daemon', 'serve', '--home', homeDir,
+      'host', 'serve', '--home', homeDir,
       '--provider', 'mock-provider',
     ], {
       cwd: process.cwd(),
@@ -446,7 +446,7 @@ describe('daemon CLI smoke', () => {
 
     const child = spawn(process.execPath, [
       '--import', 'tsx', path.join(process.cwd(), 'src', 'kodax_cli.ts'),
-      'daemon', 'serve', '--home', homeDir,
+      'host', 'serve', '--home', homeDir,
       '--provider', 'mock-provider',
       '--orphan-exit-ms', '150',
     ], {
@@ -642,7 +642,7 @@ describe('daemon CLI smoke', () => {
       homeDir,
       '--json',
     ]);
-    expect(status).toMatchObject({ health: 'healthy' });
+    expect(status).toMatchObject({ health: 'ready' });
   }, 90_000);
 
   it('retains an existing idle-exit Host when daemon start explicitly makes it persistent', async () => {
@@ -668,7 +668,7 @@ describe('daemon CLI smoke', () => {
       .rejects.toThrow(/retained/);
     await new Promise((resolve) => setTimeout(resolve, CONNECTED_HOST_IDLE_FIXTURE_MS + 500));
     const status = await runDaemonCommand(['status', '--home', homeDir, '--json']);
-    expect(status).toMatchObject({ health: 'healthy', state: { runtimeId: runtime.identity.runtimeId } });
+    expect(status).toMatchObject({ health: 'ready', state: { runtimeId: runtime.identity.runtimeId } });
   }, 90_000);
 
   it('acts on the legacy-slot Host that owns Session storage (Issues 406, 407)', async () => {
@@ -683,7 +683,7 @@ describe('daemon CLI smoke', () => {
       try { expect(passive.identity).toMatchObject({ runtimeId: legacy.runtimeId, profile: 'coder' }); }
       finally { await passive.close(); }
       expect(await runDaemonCommand(['status', '--home', homeDir, '--json']))
-        .toMatchObject({ profile: 'coder', health: 'healthy', state: { runtimeId: legacy.runtimeId } });
+        .toMatchObject({ profile: 'coder', health: 'ready', state: { runtimeId: legacy.runtimeId } });
       expect(await runDaemonCommand(['logs', '--home', homeDir, '--json'])).toMatchObject({ profile: 'coder' });
       expect(await runDaemonCommand(['stop', '--home', homeDir, '--json']))
         .toMatchObject({ stopped: true });
@@ -725,7 +725,7 @@ describe('daemon CLI smoke', () => {
         '--import',
         'tsx',
         path.join(process.cwd(), 'src', 'kodax_cli.ts'),
-        'daemon',
+        'host',
         'serve',
         '--home',
         homeDir,
@@ -886,7 +886,7 @@ describe('daemon CLI smoke', () => {
     await third.close();
     await expect(runDaemonCommand([
       'status', '--home', homeDir, '--json',
-    ])).resolves.toMatchObject({ health: 'healthy' });
+    ])).resolves.toMatchObject({ health: 'ready' });
   }, 180_000);
 
   it('removes a killed client and reconnects the same instance without a ghost entry', async () => {
@@ -1114,7 +1114,7 @@ describe('daemon CLI smoke', () => {
       'stop', '--home', homeDir,
       '--timeout-ms', '30000', '--json',
     ]);
-    expect(stop).toMatchObject({ stopped: true, health: 'missing' });
+    expect(stop).toMatchObject({ stopped: true, health: 'stopped' });
     await waitForDaemonPidExit(daemonPid, 5_000);
     await waitForDaemonPidExit(mcpPid, 5_000);
     expect(fs.existsSync(paths.stateFile)).toBe(false);
@@ -1215,7 +1215,7 @@ describe('daemon CLI smoke', () => {
       `${JSON.stringify(start)}\n${readDaemonBootstrapLog(homeDir, profile)}`,
     ).toMatchObject({
       started: true,
-      health: 'healthy',
+      health: 'ready',
     });
     expect(start.state).toMatchObject({
       profile,
@@ -1240,15 +1240,17 @@ describe('daemon CLI smoke', () => {
     ]);
     expect(status).toMatchObject({
       profile,
-      health: 'healthy',
+      health: 'ready',
       runtime: {
         ok: true,
         summary: {
+          // status reads over a probe connection, which is not a client.
+          clients: 0,
           sessions: 0,
           runs: 0,
           activeRuns: 0,
           queuedRuns: 0,
-          pendingPermissions: 0,
+          pendingInteractions: 0,
           workflows: 0,
         },
       },
@@ -1266,6 +1268,7 @@ describe('daemon CLI smoke', () => {
     });
     expect(Array.isArray(logs.lines) ? logs.lines.join('\n') : '').toContain('Runtime daemon ready.');
     expect(String(logs.logFile)).toContain(path.join('.kodax', 'runtime', 'daemon', profile, 'daemon.log'));
+    await expect(runDaemonCommand(['logs', '--home', homeDir, '--follow', '--json'])).rejects.toThrow(/leave out --json/);
 
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const { defaultRuntimeDaemonEndpoint } = await import('./runtime-daemon/transport.js');
@@ -1309,7 +1312,7 @@ describe('daemon CLI smoke', () => {
       },
       start: {
         started: true,
-        health: 'healthy',
+        health: 'ready',
       },
     });
     if (process.platform === 'win32') {
@@ -1329,12 +1332,24 @@ describe('daemon CLI smoke', () => {
     ]);
     expect(stop).toEqual({
       stopped: true,
-      health: 'missing',
+      health: 'stopped',
       state: null,
     });
     if (process.platform === 'win32') {
       expect(isRuntimeDaemonPidAlive(restartedOwner.supervisorPid as number)).toBe(false);
     }
+    // No Host now: status says so with exit code 3, and restart simply starts one.
+    await expect(runDaemonCommand(['status', '--home', homeDir, '--json'])).rejects.toThrow(/exited with code 3/);
+    const restartFromStopped = await runDaemonCommand([
+      'restart', '--home', homeDir, '--provider', 'mock-provider', '--timeout-ms', '60000', '--json',
+    ], {}, 150_000);
+    expect(restartFromStopped).toMatchObject({
+      restarted: true,
+      stop: { stopped: false, reason: 'stopped' },
+      start: { started: true, health: 'ready' },
+    });
+    await expect(runDaemonCommand(['stop', '--home', homeDir, '--timeout-ms', '30000', '--json']))
+      .resolves.toMatchObject({ stopped: true, health: 'stopped' });
 
     const stateFile = path.join(homeDir, '.kodax', 'runtime', 'daemon', profile, 'daemon.json');
     const lockFile = path.join(homeDir, '.kodax', 'runtime', 'daemon', profile, 'daemon.lock');
@@ -1343,8 +1358,9 @@ describe('daemon CLI smoke', () => {
     const shutdownOutcomes = fs.readdirSync(path.dirname(stateFile)).filter(
       (name) => name.startsWith('shutdown-outcome.'),
     );
-    expect(shutdownOutcomes).toHaveLength(2);
-    expect(new Set(shutdownOutcomes.map((name) => name.split('.')[1])).size).toBe(2);
+    // One outcome per Host: the first, the restarted one, and the one restart started from stopped.
+    expect(shutdownOutcomes).toHaveLength(3);
+    expect(new Set(shutdownOutcomes.map((name) => name.split('.')[1])).size).toBe(3);
   }, 240_000);
 
   it.skipIf(process.platform !== 'win32')(
@@ -1445,7 +1461,7 @@ describe('daemon CLI smoke', () => {
     expect(stop).toMatchObject({
       stopped: true,
       forced: true,
-      health: 'missing',
+      health: 'stopped',
       state: null,
     });
     expect(fs.existsSync(paths.stateFile)).toBe(false);
@@ -1490,7 +1506,7 @@ describe('daemon CLI smoke', () => {
         stopped: false,
         forced: true,
         reason: 'unverified_owner',
-        health: 'unhealthy',
+        health: 'unreachable',
         state: {
           runtimeId: 'runtime-live',
           pid: process.pid,
@@ -1524,7 +1540,7 @@ describe('daemon CLI smoke', () => {
     expect(stop).toMatchObject({
       stopped: false,
       reason: 'cleanup_failed',
-      health: 'missing',
+      health: 'stopped',
     });
     await waitForDaemonPidExit(daemonPid, 5_000);
   }, 60_000);
@@ -1583,7 +1599,7 @@ describe('daemon CLI smoke', () => {
     expect(stop).toMatchObject({
       stopped: false,
       reason: 'cleanup_unverified',
-      health: 'missing',
+      health: 'stopped',
       state: null,
     });
     await waitForDaemonPidExit(daemonPid, 5_000);
@@ -1629,7 +1645,7 @@ describe('daemon CLI smoke', () => {
     expect(stop).toMatchObject({
       stopped: false,
       reason: 'cleanup_unverified',
-      health: 'missing',
+      health: 'stopped',
       state: null,
     });
     await waitForDaemonPidExit(daemonPid, 5_000);
@@ -1668,7 +1684,7 @@ describe('daemon CLI smoke', () => {
     ]);
     expect(replacement, JSON.stringify(replacement)).toMatchObject({
       started: true,
-      health: 'healthy',
+      health: 'ready',
     });
     const replacementPid = readDaemonResultPid(replacement, profile);
     const stop = await stopPromise;
@@ -1718,19 +1734,19 @@ describe('daemon CLI smoke', () => {
       await expect(runDaemonCommand([
         'stop', '--home', homeDir,
         '--timeout-ms', '30000', '--json',
-      ])).resolves.toMatchObject({ stopped: true, health: 'missing' });
+      ])).resolves.toMatchObject({ stopped: true, health: 'stopped' });
       await waitForDaemonPidExit(oldPid, 5_000);
       const replacement = await runDaemonCommand([
         'start', '--home', homeDir,
         '--provider', 'mock-provider', '--timeout-ms', '30000', '--json',
       ]);
-      expect(replacement).toMatchObject({ started: true, health: 'healthy' });
+      expect(replacement).toMatchObject({ started: true, health: 'ready' });
       const replacementPid = readDaemonResultPid(replacement, profile);
       releaseObservation();
       const outcome = await staleStop;
       if (outcome.ok) throw new Error('Stale stop unexpectedly succeeded.');
       expect(() => { throw outcome.error; }).toThrow(
-        'Runtime daemon owner changed before the stop request',
+        'The Host changed before the stop request',
       );
       expect(isRuntimeDaemonPidAlive(replacementPid)).toBe(true);
       await expect(observeRuntimeDaemonHealth(resolveRuntimeDaemonPaths(homeDir, profile)))
@@ -1801,7 +1817,7 @@ async function runDaemonCommand(
     '--import',
     'tsx',
     path.join(process.cwd(), 'src', 'kodax_cli.ts'),
-    'daemon',
+    'host',
     ...args,
   ], env, timeoutMs);
   return JSON.parse(stdout) as Record<string, unknown>;

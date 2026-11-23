@@ -936,7 +936,7 @@ async function serveA2A(options: {
   assertLoopbackHostname(options.hostname);
   if (!options.serveDaemonHost) {
     throw new Error(
-      "Host-owned A2A serving requires the runtime daemon host; run `kodax daemon serve` instead.",
+      "Host-owned A2A serving requires the runtime daemon host; run `kodax host serve` instead.",
     );
   }
   const controller = new IntegrationConfigController<A2AIntegrationDocument>({

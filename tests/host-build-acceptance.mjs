@@ -250,7 +250,7 @@ async function acceptanceMain() {
 
     await replaceDist('D');
     const cli = spawn(process.execPath, [path.join(installation, 'scripts/kodax-bin.cjs'),
-      'daemon', 'start', '--home', homeDir, '--timeout-ms', '30000', '--json'],
+      'host', 'start', '--home', homeDir, '--timeout-ms', '30000', '--json'],
       { cwd: installation, env: environment, windowsHide: true, timeout: 60_000, stdio: ['ignore', 'pipe', 'pipe'] });
     let cliOutput = '';
     cli.stdout.on('data', data => { cliOutput += data; });

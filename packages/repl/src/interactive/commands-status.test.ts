@@ -79,7 +79,7 @@ describe('status workspace output', () => {
       runtimeId: 'rt_status_test',
       startedAt: '2026-07-09T00:00:00.000Z',
       endpoint: '\\\\.\\pipe\\kodax-runtime-status-test',
-      health: 'healthy',
+      health: 'ready',
       sessions: 2,
       runs: 4,
       activeRuns: 1,
@@ -102,6 +102,7 @@ describe('status workspace output', () => {
     expect(output).toContain('daemon');
     expect(output).toContain('space');
     expect(output).toContain('rt_status_test');
+    expect(output).toMatch(/Health:\s+ready/);
     expect(output).toContain('kodax-runtime-status-test');
     expect(output).toContain('active=1');
     expect(output).toContain('queued=2');

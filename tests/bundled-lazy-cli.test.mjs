@@ -63,7 +63,7 @@ test('bundled ACP loads its adapter and initializes the protocol without a model
   } finally {
     try { child.stdin.end(); await closed; }
     finally {
-      run(['daemon', 'stop'], env);
+      run(['host', 'stop'], env);
       await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }
@@ -96,7 +96,7 @@ test('bundled daemon loads hosted A2A with its configured card and authenticatio
     // build) the first start can need longer, which surfaced as Release flakes
     // (run 42779240164 attempts 1 and 3). Ask for a CI-sized budget; the
     // spawnSync cap in run() stays the outer bound.
-    run(['daemon', 'start', '--home', home, '--provider', 'mock-provider',
+    run(['host', 'start', '--home', home, '--provider', 'mock-provider',
       '--timeout-ms', '25000'], env);
     const card = await fetch(`http://127.0.0.1:${port}/.well-known/agent-card.json`, { signal: t.signal });
     assert.equal(card.status, 200);
@@ -108,7 +108,7 @@ test('bundled daemon loads hosted A2A with its configured card and authenticatio
     assert.equal(refused.status, 401);
     await refused.arrayBuffer();
   } finally {
-    try { run(['daemon', 'stop', '--home', home], env); }
+    try { run(['host', 'stop', '--home', home], env); }
     finally { await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
   }
 });

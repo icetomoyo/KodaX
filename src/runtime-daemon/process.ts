@@ -950,7 +950,7 @@ function runtimeDaemonStartupTimeout(
   );
 }
 
-/** A new Host always serves the canonical slot; `daemon serve` has no `--profile` (FEATURE_305). */
+/** A new Host always serves the canonical slot; `host serve` has no `--profile` (FEATURE_305). */
 export interface RuntimeDaemonServeProcessInput {
   readonly startupProgressId?: string;
   readonly homeDir: string;
@@ -977,7 +977,7 @@ export function buildRuntimeDaemonServeArgs(
       ? daemonServeExecArgv(execArgv, entry.endsWith(".ts"))
       : []),
     ...(entry !== undefined ? [entry] : []),
-    "daemon",
+    "host",
     "serve",
     "--home",
     input.homeDir,

@@ -26,6 +26,7 @@ describe('Host protocol v1 removal', () => {
   it('is not due yet for the package version', () => {
     const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
     expect(isRemovalDue(version), `${version} must not ship protocol v1. Do FEATURE_314 in docs/FEATURE_LIST.md, `
+      + 'delete the hidden `kodax daemon` alias (FEATURE_318, configureKodaXHostCommand in src/kodax_cli.ts), '
       + 'then delete this test.').toBe(false);
   });
 });
