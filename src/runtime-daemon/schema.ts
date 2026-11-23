@@ -588,30 +588,31 @@ export const RUNTIME_DAEMON_METHOD_SCHEMAS: Record<RuntimeDaemonMethod, RuntimeD
     result: okSchema,
   },
   'learning.reject': {
-    params: objectSchema({ nameOrSlug: stringSchema }, ['nameOrSlug']),
+    params: objectSchema({ nameOrSlug: stringSchema, ifRevision: integerSchema }, ['nameOrSlug']),
     result: okSchema,
   },
   'learning.disable': {
-    params: objectSchema({ nameOrSlug: stringSchema }, ['nameOrSlug']),
+    params: objectSchema({ nameOrSlug: stringSchema, ifRevision: integerSchema }, ['nameOrSlug']),
     result: okSchema,
   },
   'learning.rollback': {
-    params: objectSchema({ nameOrSlug: stringSchema }, ['nameOrSlug']),
+    params: objectSchema({ nameOrSlug: stringSchema, ifRevision: integerSchema }, ['nameOrSlug']),
     result: okSchema,
   },
   'learning.promote': {
     params: objectSchema({
       nameOrSlug: stringSchema,
       scope: { type: 'string', enum: ['user'] },
+      ifRevision: integerSchema,
     }, ['nameOrSlug', 'scope']),
     result: okSchema,
   },
   'learning.review': {
-    params: objectSchema({ nameOrSlug: stringSchema }, ['nameOrSlug']),
+    params: objectSchema({ nameOrSlug: stringSchema, ifRevision: integerSchema }, ['nameOrSlug']),
     result: okSchema,
   },
   'learning.trust': {
-    params: objectSchema({ nameOrSlug: stringSchema }, ['nameOrSlug']),
+    params: objectSchema({ nameOrSlug: stringSchema, ifRevision: integerSchema }, ['nameOrSlug']),
     result: okSchema,
   },
 

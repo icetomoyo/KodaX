@@ -3202,7 +3202,7 @@ describe('runtime daemon dispatcher', () => {
     const accepted = await dispatcher.handle(createRuntimeDaemonRequest(
       'req-learning-promote-user',
       'learning.promote',
-      { nameOrSlug: 'runtime-test-skill', scope: 'user' },
+      { nameOrSlug: 'runtime-test-skill', scope: 'user', ifRevision: 4 },
     ));
     const rejected = await dispatcher.handle(createRuntimeDaemonRequest(
       'req-learning-promote-project',
@@ -3212,7 +3212,7 @@ describe('runtime daemon dispatcher', () => {
 
     expect(isRuntimeDaemonSuccessResponse(accepted)).toBe(true);
     expect(promote).toHaveBeenCalledTimes(1);
-    expect(promote).toHaveBeenCalledWith('runtime-test-skill', 'user');
+    expect(promote).toHaveBeenCalledWith('runtime-test-skill', 'user', 4);
     expect(isRuntimeDaemonSuccessResponse(rejected)).toBe(false);
     if (!isRuntimeDaemonSuccessResponse(rejected)) {
       expect(rejected.error).toMatchObject({

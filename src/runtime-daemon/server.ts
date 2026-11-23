@@ -2529,16 +2529,18 @@ async function dispatchRuntimeDaemonRequest(
     case "learning.review":
     case "learning.trust": {
       const learning = bindRuntimeLearningClient(runtime.learning, noticeIdentity);
-      const nameOrSlug = requireStringParam(request.params, "nameOrSlug");
+      const params = requireRecord(request.params);
+      const nameOrSlug = requireStringField(params, "nameOrSlug");
+      const ifRevision = optionalIntegerField(params, "ifRevision");
       if (request.method === "learning.reject")
-        await learning.reject(nameOrSlug);
+        await learning.reject(nameOrSlug, ifRevision);
       else if (request.method === "learning.disable")
-        await learning.disable(nameOrSlug);
+        await learning.disable(nameOrSlug, ifRevision);
       else if (request.method === "learning.rollback")
-        await learning.rollback(nameOrSlug);
+        await learning.rollback(nameOrSlug, ifRevision);
       else if (request.method === "learning.review")
-        await learning.review(nameOrSlug);
-      else await learning.trust(nameOrSlug);
+        await learning.review(nameOrSlug, ifRevision);
+      else await learning.trust(nameOrSlug, ifRevision);
       return { ok: true };
     }
     case "learning.promote": {
@@ -2552,6 +2554,7 @@ async function dispatchRuntimeDaemonRequest(
       await bindRuntimeLearningClient(runtime.learning, noticeIdentity).promote(
         requireStringField(params, "nameOrSlug"),
         scope,
+        optionalIntegerField(params, "ifRevision"),
       );
       return { ok: true };
     }

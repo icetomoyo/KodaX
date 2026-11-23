@@ -21391,7 +21391,7 @@
   },
   "learning.list": {
     "primitive": "query",
-    "plane": "local",
+    "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -21469,9 +21469,6 @@
                 "maximum": 9007199254740991
               },
               "lastAction": {
-                "type": "string"
-              },
-              "artifactPath": {
                 "type": "string"
               },
               "previousGoodRevision": {
@@ -21552,11 +21549,135 @@
         "revision"
       ],
       "additionalProperties": false
+    },
+    "localResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "slug": {
+                "type": "string"
+              },
+              "carrier": {
+                "type": "string"
+              },
+              "lifecycle": {
+                "type": "string"
+              },
+              "revision": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "createdAt": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "updatedAt": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "lastAction": {
+                "type": "string"
+              },
+              "previousGoodRevision": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "diagnostics": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "canary": {
+                "type": "object",
+                "properties": {
+                  "invocationCount": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "maxInvocations": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "verifiedSuccesses": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "credibleNegatives": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "invocationCount",
+                  "maxInvocations",
+                  "verifiedSuccesses",
+                  "credibleNegatives"
+                ],
+                "additionalProperties": false
+              },
+              "artifactPath": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "slug",
+              "carrier",
+              "lifecycle",
+              "revision",
+              "createdAt",
+              "updatedAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "nextCursor": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "items",
+        "revision"
+      ],
+      "additionalProperties": false
     }
   },
   "learning.get": {
     "primitive": "query",
-    "plane": "local",
+    "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -21617,9 +21738,6 @@
               "maximum": 9007199254740991
             },
             "lastAction": {
-              "type": "string"
-            },
-            "artifactPath": {
               "type": "string"
             },
             "previousGoodRevision": {
@@ -21690,11 +21808,123 @@
         "capability"
       ],
       "additionalProperties": false
+    },
+    "localResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "capability": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "slug": {
+              "type": "string"
+            },
+            "carrier": {
+              "type": "string"
+            },
+            "lifecycle": {
+              "type": "string"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "createdAt": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "updatedAt": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "lastAction": {
+              "type": "string"
+            },
+            "previousGoodRevision": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "diagnostics": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "canary": {
+              "type": "object",
+              "properties": {
+                "invocationCount": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "maxInvocations": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "verifiedSuccesses": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "credibleNegatives": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "invocationCount",
+                "maxInvocations",
+                "verifiedSuccesses",
+                "credibleNegatives"
+              ],
+              "additionalProperties": false
+            },
+            "artifactPath": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "slug",
+            "carrier",
+            "lifecycle",
+            "revision",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        },
+        "_meta": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "capability"
+      ],
+      "additionalProperties": false
     }
   },
   "learning.snapshot": {
     "primitive": "query",
-    "plane": "local",
+    "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -21758,7 +21988,7 @@
   },
   "learning.events": {
     "primitive": "query",
-    "plane": "local",
+    "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -21858,8 +22088,8 @@
   },
   "learning.acknowledge": {
     "primitive": "command",
-    "resend": "never",
-    "plane": "local",
+    "resend": "auto",
+    "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -21904,8 +22134,8 @@
   },
   "learning.snooze": {
     "primitive": "command",
-    "resend": "never",
-    "plane": "local",
+    "resend": "auto",
+    "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -21956,8 +22186,8 @@
   },
   "learning.reject": {
     "primitive": "command",
-    "resend": "never",
-    "plane": "local",
+    "resend": "auto",
+    "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -21970,6 +22200,11 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 256
+        },
+        "ifRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "_meta": {
           "type": "object",
@@ -22002,8 +22237,8 @@
   },
   "learning.disable": {
     "primitive": "command",
-    "resend": "never",
-    "plane": "local",
+    "resend": "auto",
+    "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -22016,6 +22251,11 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 256
+        },
+        "ifRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "_meta": {
           "type": "object",
@@ -22048,8 +22288,8 @@
   },
   "learning.rollback": {
     "primitive": "command",
-    "resend": "never",
-    "plane": "local",
+    "resend": "auto",
+    "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -22062,6 +22302,11 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 256
+        },
+        "ifRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "_meta": {
           "type": "object",
@@ -22094,8 +22339,8 @@
   },
   "learning.review": {
     "primitive": "command",
-    "resend": "never",
-    "plane": "local",
+    "resend": "auto",
+    "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -22108,6 +22353,11 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 256
+        },
+        "ifRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "_meta": {
           "type": "object",
@@ -22140,8 +22390,8 @@
   },
   "learning.trust": {
     "primitive": "command",
-    "resend": "never",
-    "plane": "local",
+    "resend": "auto",
+    "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -22154,6 +22404,11 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 256
+        },
+        "ifRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "_meta": {
           "type": "object",
@@ -22186,8 +22441,8 @@
   },
   "learning.promote": {
     "primitive": "command",
-    "resend": "never",
-    "plane": "local",
+    "resend": "auto",
+    "plane": "data",
     "params": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -22204,6 +22459,11 @@
         "scope": {
           "type": "string",
           "const": "user"
+        },
+        "ifRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "_meta": {
           "type": "object",

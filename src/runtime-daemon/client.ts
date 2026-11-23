@@ -1203,23 +1203,23 @@ export function createRuntimeDaemonClient(
       async snooze(nameOrSlug, until) {
         await request('learning.snooze', { nameOrSlug, until });
       },
-      async reject(nameOrSlug) {
-        await request('learning.reject', { nameOrSlug });
+      async reject(nameOrSlug, ifRevision) {
+        await request('learning.reject', learningDecision({ nameOrSlug }, ifRevision));
       },
-      async disable(nameOrSlug) {
-        await request('learning.disable', { nameOrSlug });
+      async disable(nameOrSlug, ifRevision) {
+        await request('learning.disable', learningDecision({ nameOrSlug }, ifRevision));
       },
-      async rollback(nameOrSlug) {
-        await request('learning.rollback', { nameOrSlug });
+      async rollback(nameOrSlug, ifRevision) {
+        await request('learning.rollback', learningDecision({ nameOrSlug }, ifRevision));
       },
-      async promote(nameOrSlug, scope) {
-        await request('learning.promote', { nameOrSlug, scope });
+      async promote(nameOrSlug, scope, ifRevision) {
+        await request('learning.promote', learningDecision({ nameOrSlug, scope }, ifRevision));
       },
-      async review(nameOrSlug) {
-        await request('learning.review', { nameOrSlug });
+      async review(nameOrSlug, ifRevision) {
+        await request('learning.review', learningDecision({ nameOrSlug }, ifRevision));
       },
-      async trust(nameOrSlug) {
-        await request('learning.trust', { nameOrSlug });
+      async trust(nameOrSlug, ifRevision) {
+        await request('learning.trust', learningDecision({ nameOrSlug }, ifRevision));
       },
     },
     config: {
@@ -2670,6 +2670,10 @@ function requireStringField(record: Record<string, unknown>, key: string): strin
     throw new Error(`Expected daemon response string field: ${key}`);
   }
   return value;
+}
+
+function learningDecision(params: Record<string, unknown>, ifRevision: number | undefined): Record<string, unknown> {
+  return ifRevision === undefined ? params : { ...params, ifRevision };
 }
 
 function optionalStringField(record: Record<string, unknown>, key: string): string | undefined {

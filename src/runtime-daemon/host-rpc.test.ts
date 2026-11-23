@@ -7,7 +7,8 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  createLearningCenterService, createMcpTestServerFixture, createNoteStore, createReferenceAgentExecutorFactory, setKodaXDiagnosticSink,
+  createLearnedCapabilityScope, createLearnedSkillRecord, createLearningCenterService, createMcpTestServerFixture, createNoteStore,
+  createReferenceAgentExecutorFactory, resolveProjectLearnedAreaRoot, setKodaXDiagnosticSink, stageLearnedSkillRevision,
   type KodaXDiagnostic,
 } from '@kodax-ai/agent';
 import { awaitLatestCodingMemoryReviewDrain, getActiveExtensionRuntime } from '@kodax-ai/coding';
@@ -3908,20 +3909,100 @@ describe('v2 Learning served by the v1 implementation', () => {
       .toEqual({});
     expect(await owner.request('learning.snapshot')).toMatchObject({ ready: 0 });
 
-    expect(await owner.request('learning.reject', { requestId: 'reject-1', nameOrSlug: 'Release check' })).toEqual({});
+    // A decision made on a revision the capability has left is refused.
+    await expect(owner.request('learning.reject', { requestId: 'reject-0', nameOrSlug: 'Release check', ifRevision: 0 }))
+      .rejects.toMatchObject({ kodaxCode: 'conflict', reason: 'revision_mismatch' });
+    const reject = { requestId: 'reject-1', nameOrSlug: 'Release check', ifRevision: 1 };
+    expect(await owner.request('learning.reject', reject)).toEqual({});
     const { capability } = await owner.request('learning.get', { nameOrSlug: 'lc_host_rpc' }) as { capability: Learning };
     expect(capability).toMatchObject({ lifecycle: 'rejected', revision: 2 });
-    // Sent again after it took effect, the decision is refused; the capability says where it stands.
-    await expect(owner.request('learning.reject', { requestId: 'reject-1', nameOrSlug: 'release-check' }))
+    // Sent again, the decision finds what it asked for and answers as the first did.
+    expect(await owner.request('learning.reject', reject)).toEqual({});
+    expect(await owner.request('learning.get', { nameOrSlug: 'lc_host_rpc' })).toEqual({ capability });
+    await expect(owner.request('learning.disable', { requestId: 'disable-1', nameOrSlug: 'release-check' }))
       .rejects.toMatchObject({ kodaxCode: 'conflict', reason: 'invalid_transition' });
     await expect(owner.request('learning.get', { nameOrSlug: 'missing' }))
       .rejects.toMatchObject({ kodaxCode: 'not_found', reason: 'capability_not_found' });
     await expect(owner.request('learning.promote', { requestId: 'promote-1', nameOrSlug: 'release-check', scope: 'project' }))
       .rejects.toMatchObject({ kodaxCode: 'invalid_params' });
+  });
 
-    for (const role of ['user', 'service'] as const) {
-      const client = await connect(role, runtime, host.workspace);
-      await expect(client.request('learning.list', {})).rejects.toMatchObject({ kodaxCode: 'method_not_found' });
+  it('lets any client govern a learned Skill, answers each decision sent again as the first, and keeps Host paths from other clients', async () => {
+    const host = await makeHost();
+    const configHome = path.join(host.homeDir, '.kodax');
+    const project = { tenantId: 'tenant-a', projectId: 'project-a' };
+    const artifact = await stageLearnedSkillRevision(resolveProjectLearnedAreaRoot(configHome, project), 'lc_release', {
+      name: 'release-notes',
+      description: 'Use when writing release notes.',
+      purpose: 'Write release notes from the merged changes.',
+      triggers: ['A release needs notes.'],
+      steps: ['List the merged changes.'],
+      verification: ['Every change has a line.'],
+      pitfalls: ['Do not invent changes.'],
+    });
+    const seed = createLearningCenterService({ rootDir: path.join(configHome, 'learned'), clientIdentity: 'seed' });
+    await seed.record({
+      ...createLearnedSkillRecord({
+        capabilityId: 'lc_release',
+        displayName: 'Release notes',
+        scope: createLearnedCapabilityScope(configHome, project),
+        artifact,
+        provenance: { jobId: 'job-1', inputHash: 'a'.repeat(64), decisionId: 'decision-1', actionId: 'action-1' },
+      }),
+      lifecycle: 'ready',
+    });
+    await seed.record({
+      schemaVersion: 1, capabilityId: 'lc_old', displayName: 'Old check', slug: 'old-check', carrier: 'skill', lifecycle: 'ready',
+      revision: 1, createdAt: '2026-07-17T00:00:00.000Z', updatedAt: '2026-07-17T00:00:00.000Z', source: { kind: 'learning_controller' },
+    });
+    const runtime = await host.start();
+    const owner = await connect('owner', runtime, host.workspace);
+    const user = await connect('user', runtime, host.workspace);
+    const service = await connect('service', runtime, host.workspace);
+    const read = async (client: HostRpcClient, nameOrSlug = 'lc_release'): Promise<Learning> => (
+      (await client.request('learning.get', { nameOrSlug }) as { capability: Learning }).capability
+    );
+
+    expect((await read(owner)).artifactPath).toBe(artifact.relativePath);
+    expect(await read(user)).not.toHaveProperty('artifactPath');
+    const { items } = await service.request('learning.list', {}) as { items: Learning[] };
+    expect(items.map(item => item.id).sort()).toEqual(['lc_old', 'lc_release']);
+    expect(JSON.stringify(items)).not.toContain(host.homeDir);
+    expect(await service.request('learning.snapshot')).toMatchObject({ ready: 2 });
+
+    const decide = async (method: string, extra: Readonly<Record<string, unknown>> = {}): Promise<Learning> => {
+      const before = await read(user);
+      const params = { requestId: `${method.replace('.', '-')}-1`, nameOrSlug: 'lc_release', ifRevision: before.revision, ...extra };
+      expect(await user.request(method, params)).toEqual({});
+      const after = await read(user);
+      expect(await user.request(method, params)).toEqual({});
+      expect(await read(user)).toEqual(after);
+      return after;
+    };
+    expect(await decide('learning.review')).toMatchObject({ lifecycle: 'testing' });
+    expect(await decide('learning.trust')).toMatchObject({ lifecycle: 'active_learned' });
+    expect(await decide('learning.rollback')).toMatchObject({ lifecycle: 'active_learned', lastAction: 'rollback' });
+    expect(await decide('learning.promote', { scope: 'user' })).toMatchObject({ lifecycle: 'promoted_user' });
+    expect(await readFile(path.join(configHome, 'skills', 'lc-release', 'SKILL.md'), 'utf8')).toContain('release notes');
+
+    const disable = { requestId: 'disable-1', nameOrSlug: 'old-check' };
+    expect(await service.request('learning.disable', disable)).toEqual({});
+    expect(await service.request('learning.disable', disable)).toEqual({});
+    expect(await read(service, 'old-check')).toMatchObject({ lifecycle: 'archived', revision: 2 });
+    // Back and disabled again by someone else: the Skill is what was asked, but not by the decision made on revision 1.
+    await seed.restore('lc_old');
+    await seed.disable('lc_old');
+    await expect(service.request('learning.disable', { requestId: 'disable-2', nameOrSlug: 'old-check', ifRevision: 1 }))
+      .rejects.toMatchObject({ kodaxCode: 'conflict', reason: 'revision_mismatch' });
+    expect(await service.request('learning.disable', { requestId: 'disable-3', nameOrSlug: 'old-check' })).toEqual({});
+    expect(await read(service, 'old-check')).toMatchObject({ lifecycle: 'archived', revision: 4 });
+    const notices = [
+      ['learning.acknowledge', { requestId: 'acknowledge-1', nameOrSlug: 'old-check' }],
+      ['learning.snooze', { requestId: 'snooze-1', nameOrSlug: 'old-check', until: Date.now() + 86_400_000 }],
+    ] as const;
+    for (const [method, params] of notices) {
+      expect(await service.request(method, params)).toEqual({});
+      expect(await service.request(method, params)).toEqual({});
     }
   });
 });

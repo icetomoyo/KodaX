@@ -25,12 +25,13 @@ export interface RuntimeLearningService {
   subscribe(options?: LearningSubscribeOptions): RuntimeLearningSubscription;
   acknowledge(nameOrSlugOrId: string): Promise<void>;
   snooze(nameOrSlugOrId: string, until: string): Promise<void>;
-  reject(nameOrSlugOrId: string): Promise<void>;
-  disable(nameOrSlugOrId: string): Promise<void>;
-  rollback(nameOrSlugOrId: string): Promise<void>;
-  promote(nameOrSlugOrId: string, scope: 'user'): Promise<void>;
-  review(nameOrSlugOrId: string): Promise<void>;
-  trust(nameOrSlugOrId: string): Promise<void>;
+  // `ifRevision` is the revision the person saw; without it a decision applies to the capability as it is.
+  reject(nameOrSlugOrId: string, ifRevision?: number): Promise<void>;
+  disable(nameOrSlugOrId: string, ifRevision?: number): Promise<void>;
+  rollback(nameOrSlugOrId: string, ifRevision?: number): Promise<void>;
+  promote(nameOrSlugOrId: string, scope: 'user', ifRevision?: number): Promise<void>;
+  review(nameOrSlugOrId: string, ifRevision?: number): Promise<void>;
+  trust(nameOrSlugOrId: string, ifRevision?: number): Promise<void>;
 }
 
 interface RuntimeLearningOwner extends RuntimeLearningService {
@@ -109,39 +110,39 @@ function createInitializedFacade(
     subscribe: (options) => subscribeWhenReady(ensureReady(), service, options),
     acknowledge: async (nameOrSlug) => { await ensureReady(); await service.acknowledge(nameOrSlug); },
     snooze: async (nameOrSlug, until) => { await ensureReady(); await service.snooze(nameOrSlug, until); },
-    reject: async (nameOrSlug) => {
+    reject: async (nameOrSlug, ifRevision) => {
       await ensureReady();
-      await withExplicitUserAuthority(service, nameOrSlug, (authority) => (
+      await withExplicitUserAuthority(service, nameOrSlug, ifRevision, (authority) => (
         service.reject(nameOrSlug, authority)
       ));
     },
-    disable: async (nameOrSlug) => {
+    disable: async (nameOrSlug, ifRevision) => {
       await ensureReady();
-      await withExplicitUserAuthority(service, nameOrSlug, (authority) => (
+      await withExplicitUserAuthority(service, nameOrSlug, ifRevision, (authority) => (
         service.disable(nameOrSlug, authority)
       ));
     },
-    rollback: async (nameOrSlug) => {
+    rollback: async (nameOrSlug, ifRevision) => {
       await ensureReady();
-      await withExplicitUserAuthority(service, nameOrSlug, (authority) => (
+      await withExplicitUserAuthority(service, nameOrSlug, ifRevision, (authority) => (
         service.rollback(nameOrSlug, authority)
       ));
     },
-    promote: async (nameOrSlug, scope) => {
+    promote: async (nameOrSlug, scope, ifRevision) => {
       await ensureReady();
-      await withExplicitUserAuthority(service, nameOrSlug, (authority) => (
+      await withExplicitUserAuthority(service, nameOrSlug, ifRevision, (authority) => (
         service.promote(nameOrSlug, scope, authority)
       ));
     },
-    review: async (nameOrSlug) => {
+    review: async (nameOrSlug, ifRevision) => {
       await ensureReady();
-      await withExplicitUserAuthority(service, nameOrSlug, (authority) => (
+      await withExplicitUserAuthority(service, nameOrSlug, ifRevision, (authority) => (
         service.review(nameOrSlug, authority)
       ));
     },
-    trust: async (nameOrSlug) => {
+    trust: async (nameOrSlug, ifRevision) => {
       await ensureReady();
-      await withExplicitUserAuthority(service, nameOrSlug, (authority) => (
+      await withExplicitUserAuthority(service, nameOrSlug, ifRevision, (authority) => (
         service.trust(nameOrSlug, authority)
       ));
     },
@@ -151,12 +152,14 @@ function createInitializedFacade(
 async function withExplicitUserAuthority(
   service: ReturnType<typeof createLearningCenterService>,
   nameOrSlug: string,
+  ifRevision: number | undefined,
   execute: (authority: LearningExplicitUserAuthority) => Promise<void>,
 ): Promise<void> {
   const current = await service.get(nameOrSlug);
   await execute({
     authority: 'explicit_user',
-    expectedRevision: current.revision,
+    // The learning center checks it again under its lock.
+    expectedRevision: ifRevision ?? current.revision,
     ...(current.schemaVersion === 2
       ? { expectedFingerprint: current.artifact.fingerprint }
       : {}),

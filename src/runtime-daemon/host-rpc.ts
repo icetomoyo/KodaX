@@ -977,13 +977,44 @@ const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } =
   'learning.snooze': async ({ nameOrSlug, until }, v1) => (
     learningDecision(v1, 'learning.snooze', { nameOrSlug, until: new Date(until).toISOString() })
   ),
-  'learning.reject': async ({ nameOrSlug }, v1) => learningDecision(v1, 'learning.reject', { nameOrSlug }),
-  'learning.disable': async ({ nameOrSlug }, v1) => learningDecision(v1, 'learning.disable', { nameOrSlug }),
-  'learning.rollback': async ({ nameOrSlug }, v1) => learningDecision(v1, 'learning.rollback', { nameOrSlug }),
-  'learning.review': async ({ nameOrSlug }, v1) => learningDecision(v1, 'learning.review', { nameOrSlug }),
-  'learning.trust': async ({ nameOrSlug }, v1) => learningDecision(v1, 'learning.trust', { nameOrSlug }),
-  'learning.promote': async ({ nameOrSlug, scope }, v1) => learningDecision(v1, 'learning.promote', { nameOrSlug, scope }),
+  'learning.reject': async ({ nameOrSlug, ifRevision }, v1) => learningOutcome(v1, 'learning.reject', { nameOrSlug, ifRevision }),
+  'learning.disable': async ({ nameOrSlug, ifRevision }, v1) => learningOutcome(v1, 'learning.disable', { nameOrSlug, ifRevision }),
+  'learning.rollback': async ({ nameOrSlug, ifRevision }, v1) => learningOutcome(v1, 'learning.rollback', { nameOrSlug, ifRevision }),
+  'learning.review': async ({ nameOrSlug, ifRevision }, v1) => learningOutcome(v1, 'learning.review', { nameOrSlug, ifRevision }),
+  'learning.trust': async ({ nameOrSlug, ifRevision }, v1) => learningOutcome(v1, 'learning.trust', { nameOrSlug, ifRevision }),
+  'learning.promote': async ({ nameOrSlug, scope, ifRevision }, v1) => (
+    learningOutcome(v1, 'learning.promote', { nameOrSlug, scope, ifRevision })
+  ),
 };
+
+/** What a capability is once each decision has taken effect. */
+const LEARNING_OUTCOMES: Readonly<Record<string, (capability: LearnedCapabilityRecord) => boolean>> = {
+  'learning.reject': ({ lifecycle }) => lifecycle === 'rejected',
+  'learning.disable': ({ lifecycle }) => lifecycle === 'archived',
+  'learning.review': ({ lifecycle }) => lifecycle === 'testing',
+  'learning.trust': ({ lifecycle }) => lifecycle === 'active_learned',
+  'learning.rollback': ({ lifecycle, lastAction }) => lifecycle === 'active_learned' && lastAction === 'rollback',
+  'learning.promote': ({ lifecycle }) => lifecycle === 'promoted_user',
+};
+
+/**
+ * A decision the capability already reflects is not made again, so one sent
+ * again neither fails on its lifecycle nor moves the revision. Made on
+ * `ifRevision`, it counts as made only when the revision right after is that
+ * outcome: anything later the person did not see. Promoting again still runs:
+ * it puts back the person's copy of the Skill if it went missing.
+ */
+async function learningOutcome(
+  v1: V1Call, method: RuntimeDaemonMethod, { ifRevision, ...params }: { readonly nameOrSlug: string; readonly ifRevision?: number; readonly scope?: string },
+): Promise<Readonly<Record<string, never>>> {
+  const current = await v1('learning.get', { nameOrSlug: params.nameOrSlug }) as LearnedCapabilityRecord;
+  const made = ifRevision === undefined || current.revision === ifRevision + 1;
+  if (made && LEARNING_OUTCOMES[method]?.(current) === true) {
+    if (method === 'learning.promote') await v1(method, params);
+    return {};
+  }
+  return learningDecision(v1, method, defined({ ...params, ifRevision }));
+}
 
 // v1 answers a decision with `{ ok: true }`; v2 answers with nothing to read.
 async function learningDecision(v1: V1Call, method: RuntimeDaemonMethod, params: Readonly<Record<string, unknown>>): Promise<Readonly<Record<string, never>>> {

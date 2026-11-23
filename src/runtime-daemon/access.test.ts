@@ -90,7 +90,7 @@ describe('runtime connection access', () => {
       'runtime.shutdown': 'local',
       'client.exit.request': 'local',
       'memory.remember': 'local',
-      'learning.trust': 'local',
+      'learning.trust': 'data',
       'session.diagnostics': 'local',
       'repo.intelligence.prewarm': 'local',
     };

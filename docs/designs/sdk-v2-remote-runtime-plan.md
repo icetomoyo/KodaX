@@ -341,10 +341,10 @@ v1 里的各种做法都能归进来：
     - `permission.grant.revoke`：授权已经不在时返回成功，不再先比 revision。
     - `session.lineage.label`：条目已经带着要的标签（或已经没有标签）时，什么都不记，返回原来记录它的那一条。
     - `session.branch.select`：新增必填的 `ifActiveEntryId`（客户端读到的 `activeEntryId`）。对话已经停在目标上、或停在目标后面那条带摘要的切换结果上时，按已完成返回；否则 head 不再是 `ifActiveEntryId` 就报 `resync_required`（`head_changed`）。v1 的 `session.activeEntry.set` 多了可选的 `expectedHead`。
-  - 标 `never` 的 13 条，SDK 把 `unknown_outcome` 交给调用方重新读（未经用户确认）：
+  - 标 `never` 的 5 条，SDK 把 `unknown_outcome` 交给调用方重新读（未经用户确认）：
     - `provider.reasoning.probe`：每次探测都是一次付费请求。
     - ~~`interaction.respond`：重发得到 `already_resolved`，看不出是谁的回答生效了。等 Host 记下回答它的 `requestId` 和决定后改成 `auto`。~~ 2026-11-23 改成 `auto`：Host 记下结算了交互的回答（交互 ID + `requestId` → 回答内容和状态，内存里最多 256 条），同一个 `requestId`、同样的回答重发得到第一次的状态；同一个 `requestId` 换了回答报 `conflict`；没结算的回答（`already_resolved`）不记，可以再试。Host 重启后记录没了，重发得到 `already_resolved`，但这时等它的 Run 也已经不在了（未经用户确认）。v1 的 `interaction.respond` 多了可选的 `answerId`，不传时行为不变。
-    - `learning.*` 的 8 条：决定带着读到的 revision，重发会报 `revision_mismatch`。开放 `learning.*` 给网络角色时（记忆管理 API 那一步）一起改成 `auto`。
+    - ~~`learning.*` 的 8 条：决定带着读到的 revision，重发会报 `revision_mismatch`。开放 `learning.*` 给网络角色时（记忆管理 API 那一步）一起改成 `auto`。~~ 2026-11-23 改成 `auto`，见"记忆与技能学习"里 `learning.*` 的落地细节。
     - `host.stop`：重发会停掉接替它的新 Host。`client.exit.request` 同理。
     - `mcp.server.reload`、`extension.reload`：重发会再断开一次全部服务器、再跑一遍全部扩展的初始化。`config.reload`、`mcp.tool.refresh` 只重读，保持 `auto`。
   - 没改的：`session.policy.update` 整份替换、没有 `ifRevision`。同一个客户端断线重连期间，别人刚做的收紧会被它迟到的重发覆盖。要防这个得加条件写，等有平台真的并发改策略再做（未经用户确认）。
@@ -1647,13 +1647,19 @@ MCP 这 8 个的落地细节（M1a 已落地，2026-11-21，未经用户确认�
 
 - `memory.*` 12 个方法：next-dev 的 FEATURE_308 已经换了记忆模型，旧实现计划在 FEATURE_309 删除。v2 不照搬这 12 个方法，等 FEATURE_309 之后按新模型重定。`memory.ensureOpenTarget` 返回路径、由 UI 打开本机编辑器，只属于本机 owner。
   - **改了原计划**（2026-11-21，未经用户确认）：原计划在 FEATURE_309 之前让 owner 经 v2 编解码原样调用这 12 个方法，并补上 `memory.remember` 的重试安全。两样都不做。FEATURE_308 已经默认开启，这 12 个方法只剩 v1 客户端在用，FEATURE_309 连同它们一起删掉；先接进 v2 再删，是白做，还会让 v2 的方法表里出现注定要删的方法。在那之前 owner 继续走 v1。
-- `learning.*` 14 个方法：`learning.subscribe` 和 `learning.unsubscribe` 并入 `view.subscribe`，其余 12 个由 owner 原样调用。对网络角色开放和记忆管理一起做，见本节开头（2026-11-23）。
+- `learning.*` 14 个方法：`learning.subscribe` 和 `learning.unsubscribe` 并入 `view.subscribe`，其余 12 个经 v2 调用。2026-11-23 对网络角色开放，见下面的"对网络角色开放"。
   - **订阅放到 M2**（2026-11-21，未经用户确认）：学到的技能属于整个 Host，不属于某个 Session，放进 Session 视图不对，所以并入 M2 的 Host 文档，不在 M1a 做。在那之前客户端用 `learning.events` 的 `afterRevision` 拉取。
-  - **落地细节**（M1a 已落地，2026-11-21，未经用户确认）：12 个方法都在本机管理面，只有 owner 看得到，`user` 和 service 调用报 `method_not_found`。查询四项（`learning.list/get/snapshot/events`），决定八项（`acknowledge`、`snooze`、`reject`、`disable`、`rollback`、`review`、`trust`、`promote`），决定都带 `requestId`，结果是 `{}`。
-  - 读出来的 capability 字段改名：`id`、`name`（v1 的 `capabilityId`、`displayName`），时间是 UTC 毫秒。来源、作用域哈希、出处和试用绑定不出 Host，试用只给计数（`canary`）。`artifactPath` 是 Host 路径，本机管理面只给 owner，所以不拆本机结果。`snooze.until` 收 UTC 毫秒，Host 转成 v1 的 ISO 时间。
+  - **落地细节**（M1a 已落地，2026-11-21，未经用户确认）：查询四项（`learning.list/get/snapshot/events`），决定八项（`acknowledge`、`snooze`、`reject`、`disable`、`rollback`、`review`、`trust`、`promote`），决定都带 `requestId`，结果是 `{}`。
+  - 读出来的 capability 字段改名：`id`、`name`（v1 的 `capabilityId`、`displayName`），时间是 UTC 毫秒。来源、作用域哈希、出处和试用绑定不出 Host，试用只给计数（`canary`）。`artifactPath` 是 Host 路径，只在 owner 的结果里。`snooze.until` 收 UTC 毫秒，Host 转成 v1 的 ISO 时间。
   - 被拒绝的决定说明原因：找不到报 `not_found`（`capability_not_found`）；名字或 slug 对应多个报 `invalid_params`（`ambiguous_name`）；生命周期不允许、或这种 capability 不支持这个动作，报 `conflict`（`invalid_transition`、`unsupported_action`）；做决定期间 capability 变了，报 `conflict`（`revision_mismatch`）。v1 以前这些都报 `internal_error`，现在 daemon 按同样的规则映射，v1 也受益。为了把"变了"和别的校验失败分开，learning 层的 `invalid_record` 里拆出一个 `revision_conflict`，其余的 `invalid_record` 仍报 `internal_error`，因为它也是存储自己的检查，说明不了调用方错了。
-  - **重发**：决定不按 `requestId` 判重。生效之后重发，多数会因为生命周期不允许报 `conflict`（`invalid_transition`），客户端读一次 capability 就知道结果；`promote` 已经提升过时直接成功。v1 本来就这样，判重要在 learning 层加回执，没有用户场景要求，没做。
-  - **已有的问题，没改**：v1 的治理动作在执行前自己读一次当前 revision 当作"用户看到的版本"，所以用户看到的是旧内容、执行时内容已经变了，决定照样落在新内容上。要改得让客户端把看到的 `revision` 带上来（v2 加可选的 `ifRevision`），learning 层已经支持，只是 facade 没接。窗口很小，等对网络角色开放时一起做。
+  - **对网络角色开放**（2026-11-23 已落地，未经用户确认）：
+    - 12 个方法都在 data 平面，`user` 和 service 和 owner 一样能读、能做决定。v1 的同名方法也改到 data 平面；`learning.subscribe`、`learning.unsubscribe` 仍只给本机 owner，v2 不用它们。
+    - `artifactPath` 只在 owner 的结果里（`localResult`），别的角色拿到的 capability 不带它。
+    - 决定八项都改成 `auto`，重发不记 `requestId`，Host 重启后也成立：Host 先读一次 capability，决定的结果已经成立就直接返回 `{}`，不再做一次。结果的判定：`reject` 是 rejected，`disable` 是 archived，`review` 是 testing，`trust` 是 active_learned，`rollback` 是 active_learned 且上一个动作是 rollback，`promote` 是 promoted_user。`acknowledge`、`snooze` 本来就是幂等的。
+    - `rollback` 原来重发会成功，但会再回滚一次：revision 加一、试用计数清零、多发一条事件。现在不会。
+    - `promote` 结果已经成立时仍交给 v1 做一次，因为 v1 这时会把被删掉的用户 Skill 文件补回来，revision 不变。
+    - 不带 `ifRevision` 时只看状态：别的客户端先做了同样的决定，这次也返回 `{}`，想要的结果已经成立。
+  - **`ifRevision`**（2026-11-23 已落地，未经用户确认）：六个改生命周期的决定（`acknowledge`、`snooze` 除外）多了可选的 `ifRevision`，是客户端读到的 capability `revision`。不符时报 `conflict`（`revision_mismatch`），决定不落在客户端没看过的内容上。不给时和以前一样，按执行前读到的 revision。v1 的这六个方法和 SDK 的 `RuntimeLearningService` 多了同样的可选参数，learning 层原本就支持，只是 facade 没接。带着 `ifRevision` 时，结果已成立还要 capability 正好停在 `ifRevision + 1`，才算这次决定已经做过；第一次成功正好让 revision 加一，所以重发返回 `{}`。中间还有别的变化（例如学习循环换了内容、试用通过后自动生效），就报 `revision_mismatch`，让客户端重新读，不把它没看过的内容说成它做的决定。
 
 **可信面（owner 和 service；永不进浏览器 SDK）**
 
