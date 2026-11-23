@@ -19342,16 +19342,18 @@ describe("createKodaXRuntime", () => {
     expect(listed.value).toEqual([
       expect.objectContaining({ persistence: "session" }),
     ]);
+    const grantId = listed.value[0]?.id ?? "";
     await expect(
-      runtime.permissions.revokeGrant("missing", listed.revision - 1),
+      runtime.permissions.revokeGrant(grantId, listed.revision - 1),
     ).rejects.toThrow(/stale/i);
     expect(
-      await runtime.permissions.revokeGrant(
-        listed.value[0]?.id ?? "",
-        listed.revision,
-      ),
+      await runtime.permissions.revokeGrant(grantId, listed.revision),
     ).toBe(true);
     expect((await runtime.permissions.listGrants()).value).toEqual([]);
+    // Sent again after it applied, the revoke finds the grant gone and answers rather than refusing.
+    expect(
+      await runtime.permissions.revokeGrant(grantId, listed.revision),
+    ).toBe(false);
     await runtime.close();
   });
 

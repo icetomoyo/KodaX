@@ -374,6 +374,7 @@ import {
 } from "@kodax-ai/agent";
 import {
   buildRecoverySeed,
+  resolveSessionLineageTarget,
   searchSessionHistoryCooperatively,
   validateSessionHistorySearchQuery,
 } from "@kodax-ai/agent/session-lineage";
@@ -1743,6 +1744,8 @@ export interface RuntimeSetActiveEntryInput {
   readonly entryId: string;
   /** FEATURE_298 T34 — summarize the abandoned branch before switching (REPL /branch semantics). */
   readonly summarizeCurrentBranch?: boolean;
+  /** The active entry the caller read. A switch already in place is answered whatever the head; any other needs this head. */
+  readonly expectedHead?: string | null;
 }
 
 export interface RuntimeCompactSessionInput {
@@ -7351,17 +7354,19 @@ function createRuntimeSessionSettingsOwner(
         if (isDraft(sessionId)) pendingDraftSettings.add(sessionId);
         const loaded = initialize(sessionId, pendingDraftSettings.has(sessionId) ? current.get(sessionId) ?? { revision: 0, value: {} }
           : persistence.loadSessionSettingsVersioned(sessionId));
+        const canonicalPatch = canonicalizeRuntimeSessionSettingsPatch(patch);
+        const settings = applySessionSettingsPatch(loaded.value, canonicalPatch);
         if (
           expectedRevision !== undefined &&
           loaded.revision !== expectedRevision
         ) {
+          // A change already in place, as when it is sent again after it applied, is answered rather than refused.
+          if (isDeepStrictEqual(settings, loaded.value)) return loaded;
           throw createRuntimeStaleRevisionError(
             `Session settings revision ${expectedRevision} is stale; current revision is ${loaded.revision}`,
             loaded.revision,
           );
         }
-        const canonicalPatch = canonicalizeRuntimeSessionSettingsPatch(patch);
-        const settings = applySessionSettingsPatch(loaded.value, canonicalPatch);
         validate(settings);
         if (canonicalPatch.executionCwd !== undefined) await protectRuntimeWorkflowProject(settings.executionCwd);
         const updated = { revision: loaded.revision + 1, value: settings };
@@ -10298,9 +10303,12 @@ function createRuntimeSessionService(
     },
 
     async setActiveEntry(input) {
-      return mutateActiveSession(input.sessionId, async () => {
+      return mutateActiveSession(input.sessionId, async (current) => {
         assertSessionMutationAllowed(input.sessionId, sessionMutationOwner);
         await sessionViews.flush(input.sessionId);
+        if (current.lineage !== undefined && !branchSwitchApplies(current.lineage, input)) {
+          throw createRuntimeResyncError('Session head changed; select again.', 'head_changed');
+        }
         const data = await manager.setActiveEntry(
           input.sessionId,
           input.entryId,
@@ -20874,14 +20882,16 @@ function createRuntimePermissionRegistry(
     },
     async revokeGrant(grantId, expectedRevision) {
       const persistent = loadPersistentPermissionGrants();
+      const sessionGrant = sessionGrants.get(grantId);
+      const target = sessionGrant ?? persistent.value.find(grant => grant.id === grantId);
+      // A grant already gone, as when this is sent again after it applied, is answered rather than refused.
+      if (target === undefined) return false;
       if (expectedRevision !== undefined && grantRevision !== expectedRevision) {
         throw createRuntimeStaleRevisionError(
           `Permission grant revision ${expectedRevision} is stale; current revision is ${grantRevision}`,
           grantRevision,
         );
       }
-      const sessionGrant = sessionGrants.get(grantId);
-      const target = sessionGrant ?? persistent.value.find(grant => grant.id === grantId);
       if (target?.scope.sessionId && !persistence.sideChats.admits(target.scope.sessionId)) return false;
       if (sessionGrant !== undefined) {
         sessionGrants.delete(grantId);
@@ -24678,11 +24688,18 @@ function patchRuntimeConfig(
   patch: Partial<Pick<ReplRuntimeConfigPatch, RuntimeConfigPatchKey>>,
   expectedRevision?: string,
 ): void {
-  const assertRevision = (current: Record<string, unknown>): void => {
-    if (expectedRevision !== undefined
-      && runtimeConfigRevision(redactRuntimeConfig(withManagedExtensions(current, configFile))) !== expectedRevision) {
+  /** Whether the patch still has to be written: false when the configuration already holds it. */
+  const mustWrite = (current: Record<string, unknown>): boolean => {
+    const view = withManagedExtensions(current, configFile);
+    // Cleared extensions kept in their own file stay listed there as none.
+    const written = (key: string, value: unknown) => key === 'extensions' && view !== current ? value ?? [] : value;
+    const holds = Object.entries(patch).every(([key, value]) => isDeepStrictEqual(view[key], written(key, value)));
+    if (expectedRevision !== undefined && runtimeConfigRevision(redactRuntimeConfig(view)) !== expectedRevision) {
+      // A change already in place, as when it is sent again after it applied, is answered rather than refused.
+      if (holds) return false;
       throw createRuntimeStaleRevisionError('The saved configuration changed since it was read.', 0);
     }
+    return true;
   };
   const corePatch = (): typeof patch => {
     if (!writeManagedExtensions(configFile, patch)) return patch;
@@ -24691,12 +24708,11 @@ function patchRuntimeConfig(
   };
   if (configFile === undefined) {
     // The global configuration is written under its own lock, so this check comes just before it, not inside it.
-    assertRevision(readRuntimeConfig(undefined));
-    saveConfig(corePatch());
+    if (mustWrite(readRuntimeConfig(undefined))) saveConfig(corePatch());
     return;
   }
   mutateRuntimeConfig(configFile, (current) => {
-    assertRevision(current);
+    if (!mustWrite(current)) return { result: undefined };
     const rest = corePatch();
     const merged: Record<string, unknown> = { ...current, ...rest };
     for (const key of Object.keys(rest) as Array<keyof RuntimeConfigPatch>) {
@@ -27312,6 +27328,20 @@ function createSessionArchivedError(
     ),
     { code: "session_archived" as const },
   );
+}
+
+/**
+ * Whether a branch switch may go ahead: the conversation still stands where the
+ * caller read it, or the switch is already in place and is being sent again.
+ * A target that does not resolve is left to the switch, which reports it.
+ */
+function branchSwitchApplies(lineage: KodaXSessionLineage, input: RuntimeSetActiveEntryInput): boolean {
+  const head = lineage.activeEntryId ?? null;
+  if (input.expectedHead === undefined || head === input.expectedHead) return true;
+  const target = resolveSessionLineageTarget(lineage, input.entryId);
+  if (target === undefined || head === target.id) return true;
+  const active = lineage.entries.find(entry => entry.id === head);
+  return input.summarizeCurrentBranch === true && active?.type === 'branch_summary' && active.parentId === target.id;
 }
 
 function createRuntimeResyncError(

@@ -18,6 +18,7 @@ import { connectHostRpc, type HostRpcClient } from '../host-protocol/client.js';
 import type { HostCloseReason } from '../host-protocol/close.js';
 import { HostProtocolError } from '../host-protocol/codec.js';
 import { createKodaXHostClient } from '../host-protocol/host-client.js';
+import { HOST_METHODS, type HostMethodSpec } from '../host-protocol/methods.js';
 import { createHostCredentialService } from '../host-credentials.js';
 import { bindRequestCredentials } from '../request-credential-binding.js';
 import type { KodaXRuntime } from '../sdk-runtime.js';
@@ -126,7 +127,25 @@ async function connect(
     auth: { scheme: 'ipc', token: 'secret' },
   });
   cleanup.push(() => client.close());
-  return client;
+  return recordingResends(client, `${hostIds.get(runtime) ?? hostIds.set(runtime, hostIds.size).size - 1} ${role}`);
+}
+
+/** Each command answered, by the Host and role it went to and what was sent; and the commands answered again when sent again. */
+const hostIds = new Map<KodaXRuntime, number>();
+const answered = new Set<string>();
+const answeredAgain = new Set<string>();
+
+function recordingResends(client: HostRpcClient, sender: string): HostRpcClient {
+  const request: HostRpcClient['request'] = async (method, params, options) => {
+    const answer = await client.request(method, params, options);
+    if (typeof params?.requestId === 'string') {
+      const sent = `${sender} ${method} ${JSON.stringify(params)}`;
+      if (answered.has(sent)) answeredAgain.add(method);
+      answered.add(sent);
+    }
+    return answer;
+  };
+  return Object.assign(Object.create(client) as HostRpcClient, { request });
 }
 
 describe('v2 catalogs served by the v1 implementation', () => {
@@ -834,16 +853,22 @@ describe('v2 blobs', () => {
     });
     const user = await connect('user', await host.start(), host.workspace, {}, undefined, { blobs });
     const { session } = await user.request('session.create', { requestId: 'create-1', project: 'app' }) as SessionAnswer;
-    const { blobId } = await user.request('blob.begin', {
+    const begin = {
       requestId: 'begin-1', sessionId: session.id, mediaType: 'image/png', byteLength: ONE_PIXEL_PNG.length,
       sha256: createHash('sha256').update(ONE_PIXEL_PNG).digest('hex'),
-    }) as BlobAnswer;
+    };
+    const { blobId } = await user.request('blob.begin', begin) as BlobAnswer;
+    // Each step sent again, as after a lost answer, answers as it did.
+    expect(await user.request('blob.begin', begin)).toEqual({ blobId, received: 0 });
     for (let offset = 0; offset < ONE_PIXEL_PNG.length; offset += 32) {
-      await user.request('blob.write', {
+      const write = {
         requestId: `write-${offset}`, sessionId: session.id, blobId, offset, data: ONE_PIXEL_PNG.subarray(offset, offset + 32).toString('base64'),
-      });
+      };
+      const written = await user.request('blob.write', write);
+      expect(await user.request('blob.write', write)).toEqual(written);
     }
-    await user.request('blob.commit', { requestId: 'commit-1', sessionId: session.id, blobId });
+    const committed = await user.request('blob.commit', { requestId: 'commit-1', sessionId: session.id, blobId });
+    expect(await user.request('blob.commit', { requestId: 'commit-1', sessionId: session.id, blobId })).toEqual(committed);
 
     const chunks: Buffer[] = [];
     let cursor: string | undefined;
@@ -1082,7 +1107,8 @@ describe('v2 interactions served by the v1 implementation', () => {
     await expect(user.request('permission.grant.revoke', { ...revoke, requestId: 'revoke-0', ifRevision: 'not-a-revision' }))
       .rejects.toMatchObject({ kodaxCode: 'conflict', reason: 'revision_mismatch' });
     expect(await user.request('permission.grant.revoke', { ...revoke, requestId: 'revoke-1', ifRevision: granted.revision })).toEqual({});
-    // The grant is gone either way, so asking again succeeds.
+    // The grant is gone either way, so asking again succeeds, on the old revision too.
+    expect(await user.request('permission.grant.revoke', { ...revoke, requestId: 'revoke-1', ifRevision: granted.revision })).toEqual({});
     expect(await user.request('permission.grant.revoke', { ...revoke, requestId: 'revoke-2' })).toEqual({});
     expect((await user.request('permission.grant.list') as GrantPage).items).toEqual([]);
 
@@ -1147,6 +1173,17 @@ describe('v2 Session settings served by the v1 implementation', () => {
     }
     expect(await read()).toEqual(first);
     expect((await change('set-3', { effort: 'low' }, first.revision)).settings).toMatchObject({ effort: 'low' });
+  });
+
+  it('answers a change sent again with the settings as they now stand', async () => {
+    const { read, change } = await sessionWithSettings();
+    const before = await read();
+    const first = await change('set-1', { effort: 'high', maxIter: 12 }, before.revision);
+    expect(await change('set-1', { effort: 'high', maxIter: 12 }, before.revision)).toEqual(first);
+
+    const cleared = await change('set-2', { maxIter: null }, first.revision);
+    expect(await change('set-2', { maxIter: null }, first.revision)).toEqual(cleared);
+    expect(await read()).toEqual(cleared);
   });
 
   it('refuses a setting the contract does not name', async () => {
@@ -2222,11 +2259,19 @@ describe('v2 conversation tree served by the v1 implementation', () => {
     }) as { readonly entry: TreeEntry };
     expect(labelled.entry).toMatchObject({ type: 'label', targetId: messages[1]!.id, label: 'checkpoint' });
     expect((await tree()).items.at(-1)).toEqual(labelled.entry);
+    // Sent again, it answers with the entry that recorded the label and records nothing more.
+    const entries = (await tree()).items.length;
+    expect(await user.request('session.lineage.label', {
+      requestId: 'label-1', sessionId, entry: messages[1]!.id, label: 'checkpoint',
+    })).toEqual(labelled);
+    expect((await tree()).items).toHaveLength(entries);
     // An entry is named by its id or by its label.
-    const removed = await user.request('session.lineage.label', { requestId: 'label-2', sessionId, entry: 'checkpoint' }) as
-      { readonly entry: TreeEntry };
+    const removal = { requestId: 'label-2', sessionId, entry: 'checkpoint' };
+    const removed = await user.request('session.lineage.label', removal) as { readonly entry: TreeEntry };
     expect(removed.entry).toMatchObject({ type: 'label', targetId: messages[1]!.id });
     expect(removed.entry.label).toBeUndefined();
+    expect(await user.request('session.lineage.label', { ...removal, entry: messages[1]!.id })).toEqual(removed);
+    expect((await tree()).items).toHaveLength(entries + 1);
 
     await expect(user.request('session.lineage.label', { requestId: 'label-3', sessionId, entry: 'no-such-entry', label: 'x' }))
       .rejects.toMatchObject({ kodaxCode: 'conflict' });
@@ -2238,29 +2283,38 @@ describe('v2 conversation tree served by the v1 implementation', () => {
   it('moves the conversation to another entry, once however often it is asked', async () => {
     const { host, user, sessionId, tree, messages } = await conversation();
 
-    const moved = await user.request('session.branch.select', { requestId: 'select-1', sessionId, entry: messages[1]!.id }) as SessionAnswer;
+    const first = { requestId: 'select-1', sessionId, entry: messages[1]!.id, ifActiveEntryId: messages[3]!.id };
+    const moved = await user.request('session.branch.select', first) as SessionAnswer;
     expect(moved.session).toMatchObject({ id: sessionId, messageCount: 2 });
     expect((await tree()).activeEntryId).toBe(messages[1]!.id);
-    expect(await user.request('session.branch.select', { requestId: 'select-1', sessionId, entry: messages[1]!.id })).toEqual(moved);
+    expect(await user.request('session.branch.select', first)).toEqual(moved);
 
     // Leaving a branch with a summary hangs the summary under the entry gone to.
-    await user.request('session.branch.select', { requestId: 'select-2', sessionId, entry: messages[3]!.id });
-    await user.request('session.branch.select', { requestId: 'select-3', sessionId, entry: messages[1]!.id, summarize: true });
+    await user.request('session.branch.select', {
+      requestId: 'select-2', sessionId, entry: messages[3]!.id, ifActiveEntryId: messages[1]!.id,
+    });
+    const third = { requestId: 'select-3', sessionId, entry: messages[1]!.id, summarize: true, ifActiveEntryId: messages[3]!.id };
+    await user.request('session.branch.select', third);
     const summarized = await tree();
     const summary = summarized.items.at(-1)!;
     expect(summary).toMatchObject({ type: 'branch_summary', parentId: messages[1]!.id });
     expect(summarized.activeEntryId).toBe(summary.id);
-    await user.request('session.branch.select', { requestId: 'select-3', sessionId, entry: messages[1]!.id, summarize: true });
+    await user.request('session.branch.select', third);
+    expect(await tree()).toEqual(summarized);
+    // The conversation has moved on since the first switch was asked for, so sent again late it is refused.
+    await expect(user.request('session.branch.select', first)).rejects.toMatchObject({ kodaxCode: 'resync_required' });
     expect(await tree()).toEqual(summarized);
 
-    await expect(user.request('session.branch.select', { requestId: 'select-4', sessionId, entry: 'no-such-entry' }))
-      .rejects.toMatchObject({ kodaxCode: 'conflict' });
+    await expect(user.request('session.branch.select', {
+      requestId: 'select-4', sessionId, entry: 'no-such-entry', ifActiveEntryId: summary.id,
+    })).rejects.toMatchObject({ kodaxCode: 'conflict' });
     // The conversation stays where it is while a Run works on it.
     const held = host.hold();
     const { input } = await user.request('input.submit', { requestId: 'input-held', sessionId, text: 'Go on.' }) as InputAnswer;
     await held.called;
-    await expect(user.request('session.branch.select', { requestId: 'select-5', sessionId, entry: messages[1]!.id }))
-      .rejects.toMatchObject({ kodaxCode: 'conflict' });
+    await expect(user.request('session.branch.select', {
+      requestId: 'select-5', sessionId, entry: messages[1]!.id, ifActiveEntryId: summary.id,
+    })).rejects.toMatchObject({ kodaxCode: 'conflict' });
     await expect(user.request('session.notice.append', { requestId: 'notice-held', sessionId, text: 'Later.' }))
       .rejects.toMatchObject({ kodaxCode: 'conflict' });
     held.release();
@@ -2456,8 +2510,9 @@ describe('v2 turns, forks and rewinds served by the v1 implementation', () => {
 
     const side = await user.request('session.side.open', { requestId: 'side-1', sessionId }) as SessionAnswer;
     expect(side.session.id).not.toBe(sessionId);
-    expect(await user.request('session.side.open', { requestId: 'side-2', sessionId }))
-      .toMatchObject({ session: { id: side.session.id } });
+    for (const requestId of ['side-1', 'side-2']) {
+      expect(await user.request('session.side.open', { requestId, sessionId })).toMatchObject({ session: { id: side.session.id } });
+    }
     // A side chat is a leaf: nothing opens or forks from it.
     await expect(user.request('session.side.open', { requestId: 'side-3', sessionId: side.session.id }))
       .rejects.toMatchObject({ kodaxCode: 'conflict' });
@@ -2792,14 +2847,15 @@ describe('v2 child Agents served by the v1 implementation', () => {
       .rejects.toMatchObject({ kodaxCode: 'not_found', reason: 'turn_not_found' });
     expect((await child(user, sessionId))!.currentTurnId).toBe(turnId);
 
-    expect(await user.request('actor.interrupt', { requestId: 'stop-2', ...stop, turnId, reason: 'No longer needed.' })).toEqual({});
+    const interrupt = { requestId: 'stop-2', ...stop, turnId, reason: 'No longer needed.' };
+    expect(await user.request('actor.interrupt', interrupt)).toEqual({});
     const stopped = (await child(user, sessionId))!;
     expect(stopped).toMatchObject({ state: 'idle', latestTurn: { turnId, state: 'interrupted' } });
     expect(stopped).not.toHaveProperty('currentTurnId');
     expect(await user.request('actor.output', { sessionId, actorPath: CHILD, turnId }))
       .toMatchObject({ state: 'interrupted', error: 'No longer needed.' });
     // The turn has ended, so asking again changes nothing and does not fail.
-    expect(await user.request('actor.interrupt', { requestId: 'stop-2', ...stop, turnId })).toEqual({});
+    expect(await user.request('actor.interrupt', interrupt)).toEqual({});
     expect(await user.request('actor.interrupt', { requestId: 'stop-3', ...stop, turnId })).toEqual({});
     expect(await child(user, sessionId)).toMatchObject({ state: 'idle', turnIds: [turnId], latestTurn: { turnId, state: 'interrupted' } });
 
@@ -2943,14 +2999,17 @@ describe('v2 workflows served by the v1 implementation', () => {
     // Each command asked again answers as the first did.
     expect(await user.request('workflow.pause', { requestId: 'pause-1', ...target })).toEqual({});
     expect(await status()).toMatchObject({ status: 'paused' });
+    expect(await user.request('workflow.pause', { requestId: 'pause-1', ...target })).toEqual({});
     expect(await user.request('workflow.pause', { requestId: 'pause-2', ...target })).toEqual({});
     expect(await user.request('workflow.resume', { requestId: 'resume-1', ...target })).toEqual({});
     expect(await status()).toMatchObject({ status: 'running' });
+    expect(await user.request('workflow.resume', { requestId: 'resume-1', ...target })).toEqual({});
     expect(await user.request('workflow.resume', { requestId: 'resume-2', ...target })).toEqual({});
 
     expect(await user.request('workflow.stop', { requestId: 'stop-1', ...target })).toEqual({});
     await expect.poll(async () => (await status()).status, { timeout: 15_000 }).toBe('stopped');
     await user.request('run.wait', { runId: started.runId });
+    expect(await user.request('workflow.stop', { requestId: 'stop-1', ...target })).toEqual({});
     expect(await user.request('workflow.stop', { requestId: 'stop-2', ...target })).toEqual({});
     for (const method of ['workflow.pause', 'workflow.resume']) {
       await expect(user.request(method, { requestId: `${method.slice('workflow.'.length)}-ended`, ...target }))
@@ -3052,6 +3111,7 @@ describe('v2 paired devices, served by the peer itself', () => {
     const { code, expiresAt } = await owner.request('device.pair', { requestId: 'pair-1', name: ' Phone ' }) as
       { code: string; expiresAt: number };
     expect(expiresAt).toBeGreaterThan(Date.now());
+    expect(await owner.request('device.pair', { requestId: 'pair-1', name: ' Phone ' })).toEqual({ code, expiresAt });
     const { device } = devices.redeem(code, 'https://laptop.example.test')!;
     expect(device.name).toBe('Phone');
     expect(await owner.request('device.list')).toEqual({ items: [device] });
@@ -3222,8 +3282,10 @@ describe('v2 local management served by the v1 implementation', () => {
       status: expect.any(String), initialized: expect.any(Boolean), warnings: expect.any(Array),
       workspaceRoot: path.join(host.workspaceRoot, 'app'),
     });
-    expect(await owner.request('repo.intelligence.prewarm', { requestId: 'warm-1', sessionId: session.id }))
-      .toMatchObject({ workspaceRoot: path.join(host.workspaceRoot, 'app') });
+    for (let sent = 0; sent < 2; sent += 1) {
+      expect(await owner.request('repo.intelligence.prewarm', { requestId: 'warm-1', sessionId: session.id }))
+        .toMatchObject({ workspaceRoot: path.join(host.workspaceRoot, 'app') });
+    }
   }, 60_000);
 
   it.each(['user', 'service'] as const)('offers a %s none of it', async (role) => {
@@ -3332,15 +3394,19 @@ describe('v2 user settings served by the v1 implementation', () => {
     const saved = JSON.parse(await readFile(path.join(host.homeDir, '.kodax', 'config.json'), 'utf8')) as unknown;
     expect(saved).toEqual({ model: 'model-one', maxOutputTokens: 1234 });
 
-    // Sent again, the change is made again on top of itself; on the old revision it is refused.
-    expect(await owner.request('config.update', { requestId: 'update-1', patch: { model: 'model-one', maxOutputTokens: 1234 } }))
-      .toEqual(updated);
+    // Sent again, on the revision it was made from or on none, it answers with the configuration it left.
+    for (const resent of [{ ifRevision: first.revision }, {}]) {
+      expect(await owner.request('config.update', { requestId: 'update-1', patch: { model: 'model-one', maxOutputTokens: 1234 }, ...resent }))
+        .toEqual(updated);
+    }
+    // Any other change on the old revision is refused.
     await expect(owner.request('config.update', { requestId: 'update-2', patch: { model: 'model-two' }, ifRevision: first.revision }))
       .rejects.toMatchObject({ kodaxCode: 'conflict', reason: 'revision_mismatch' });
     expect((await owner.request('config.get') as SavedConfig).config).toMatchObject({ model: 'model-one' });
 
-    expect((await owner.request('config.update', { requestId: 'update-3', patch: { model: null } }) as SavedConfig).config)
-      .toEqual({ maxOutputTokens: 1234 });
+    const cleared = { requestId: 'update-3', patch: { model: null }, ifRevision: updated.revision };
+    expect((await owner.request('config.update', cleared) as SavedConfig).config).toEqual({ maxOutputTokens: 1234 });
+    expect((await owner.request('config.update', cleared) as SavedConfig).config).toEqual({ maxOutputTokens: 1234 });
     for (const patch of [{ agentMode: 'ama' }, { model: 5 }, { maxOutputTokens: -1 }, { workflow: { maxConcurrency: 2, other: 1 } }]) {
       await expect(owner.request('config.update', { requestId: 'update-4', patch })).rejects.toMatchObject({ kodaxCode: 'invalid_params' });
     }
@@ -3349,6 +3415,7 @@ describe('v2 user settings served by the v1 implementation', () => {
     await writeFile(path.join(host.homeDir, '.kodax', 'config.json'), JSON.stringify({ model: 'model-nine' }));
     const reloaded = await owner.request('config.reload', { requestId: 'reload-1' }) as SavedConfig;
     expect(reloaded.config).toEqual({ model: 'model-nine' });
+    expect(await owner.request('config.reload', { requestId: 'reload-1' })).toEqual(reloaded);
     expect(await owner.request('config.get')).toMatchObject(reloaded);
   });
 
@@ -3361,6 +3428,7 @@ describe('v2 user settings served by the v1 implementation', () => {
     expect(await owner.request('provider.custom.upsert', { requestId: 'add-1', provider })).toEqual({ provider });
     expect(await owner.request('provider.custom.list')).toEqual({ items: [provider] });
     const larger = { ...provider, model: 'large' };
+    expect(await owner.request('provider.custom.upsert', { requestId: 'add-2', provider: larger })).toEqual({ provider: larger });
     expect(await owner.request('provider.custom.upsert', { requestId: 'add-2', provider: larger })).toEqual({ provider: larger });
     expect(await owner.request('provider.custom.list')).toEqual({ items: [larger] });
     await expect(owner.request('provider.custom.upsert', { requestId: 'add-3', provider: { name: 'broken' } }))
@@ -3378,6 +3446,7 @@ describe('v2 user settings served by the v1 implementation', () => {
     expect(await owner.request('provider.reasoning.probe', { requestId: 'probe-1', provider: MODEL, efforts: ['low', 'high'] })).toEqual({
       items: [{ effort: 'low', status: expect.any(String) }, { effort: 'high', status: expect.any(String) }],
     });
+    expect(await owner.request('provider.reasoning.forget', { requestId: 'forget-1', provider: MODEL })).toEqual({});
     expect(await owner.request('provider.reasoning.forget', { requestId: 'forget-1', provider: MODEL })).toEqual({});
     expect(await owner.request('provider.reasoning.forget', { requestId: 'forget-2' })).toEqual({});
   });
@@ -3408,6 +3477,7 @@ describe('v2 MCP servers served by the v1 implementation', () => {
       .rejects.toMatchObject({ kodaxCode: 'invalid_params' });
 
     expect(await owner.request('mcp.server.upsert', { requestId: 'add-1', name: fixture.serverId, config })).toEqual({ config });
+    expect(await owner.request('mcp.server.upsert', { requestId: 'add-1', name: fixture.serverId, config })).toEqual({ config });
     expect(await owner.request('mcp.server.upsert', { requestId: 'add-2', name: 'broken', config: broken })).toEqual({ config: broken });
     expect(await owner.request('mcp.server.get', { name: fixture.serverId })).toEqual({ config });
     await expect(owner.request('mcp.server.get', { name: 'absent' }))
@@ -3423,7 +3493,10 @@ describe('v2 MCP servers served by the v1 implementation', () => {
       { server: fixture.serverId, tools: [expect.objectContaining({ id: fixture.toolId, name: 'echo_tool' })], cachedAt: expect.any(String) },
       { server: 'broken', error: expect.any(String) },
     ]);
-    expect(await owner.request('mcp.tool.refresh', { requestId: 'refresh-1', server: fixture.serverId })).toEqual({ items: [tools.items[0]!].map((item) => ({ ...item, cachedAt: expect.any(String) })) });
+    for (let sent = 0; sent < 2; sent += 1) {
+      expect(await owner.request('mcp.tool.refresh', { requestId: 'refresh-1', server: fixture.serverId }))
+        .toEqual({ items: [tools.items[0]!].map((item) => ({ ...item, cachedAt: expect.any(String) })) });
+    }
     await expect(owner.request('mcp.tool.list', { server: 'absent' }))
       .rejects.toMatchObject({ kodaxCode: 'not_found', reason: 'mcp_server_not_found' });
 
@@ -3489,15 +3562,20 @@ describe('v2 extensions and external Agents served by the v1 implementation', ()
     }) as { readonly registration: Record<string, unknown> };
     expect(saved).toMatchObject({ agentId: 'external:partner', configurationRevision: 'rev-1', credentialConfigured: false, diagnostics: [] });
     expect(saved).not.toHaveProperty('executorConfig');
-    // Sent again unchanged it is accepted; a resend that insists nothing is there is refused.
+    // Sent again, with its conditions or without, it is answered with what it saved; other content insisting nothing is there is refused.
+    expect(await owner.request('agent.registration.upsert', { requestId: 'add-1', registration, ifRevision: null, ifOwner: null }))
+      .toEqual({ registration: saved });
     expect(await owner.request('agent.registration.upsert', { requestId: 'add-1', registration })).toEqual({ registration: saved });
-    await expect(owner.request('agent.registration.upsert', { requestId: 'add-2', registration, ifRevision: null }))
-      .rejects.toMatchObject({ kodaxCode: 'conflict', reason: 'external_agent_registration_conflict' });
+    await expect(owner.request('agent.registration.upsert', {
+      requestId: 'add-2', registration: { ...registration, displayName: 'Other' }, ifRevision: null,
+    })).rejects.toMatchObject({ kodaxCode: 'conflict', reason: 'external_agent_registration_conflict' });
 
-    const claimed = await owner.request('agent.registration.setEnabled', {
-      requestId: 'claim-1', agentId: 'external:partner', enabled: false, claimOwner: 'platform', ifRevision: 'rev-1',
-    });
+    const claim = { requestId: 'claim-1', agentId: 'external:partner', enabled: false, claimOwner: 'platform', ifRevision: 'rev-1', ifOwner: null };
+    const claimed = await owner.request('agent.registration.setEnabled', claim);
     expect(claimed).toMatchObject({ registration: { enabled: false, managementOwner: 'platform' } });
+    expect(await owner.request('agent.registration.setEnabled', claim)).toEqual(claimed);
+    await expect(owner.request('agent.registration.setEnabled', { requestId: 'enable-1', agentId: 'external:partner', enabled: true, ifOwner: 'someone-else' }))
+      .rejects.toMatchObject({ kodaxCode: 'conflict', reason: 'external_agent_registration_conflict' });
     await expect(owner.request('agent.registration.setEnabled', { requestId: 'claim-2', agentId: 'external:absent', enabled: true }))
       .rejects.toMatchObject({ kodaxCode: 'not_found', reason: 'agent_not_found' });
     await expect(owner.request('agent.registration.remove', { requestId: 'remove-0', agentId: 'external:partner', ifOwner: 'someone-else' }))
@@ -3619,9 +3697,10 @@ describe('v2 credential leases served by the v1 reverse bridge', () => {
       target: { kind: 'run', runId: input.runId }, purpose: expect.any(String),
       connectionFingerprint: expect.any(String), credentialContextVersion: expect.any(Number),
     });
-    // The request was answered once; a late answer learns that.
-    expect(await owner.request('lease.complete', { requestId: 'late-1', kind: 'credential', callId: asked[0]!.callId, credential: 'again' }))
-      .toEqual({ status: 'already_settled' });
+    // The request was answered once; a late answer learns that, as does the same answer sent again.
+    const late = { requestId: 'late-1', kind: 'credential', callId: asked[0]!.callId, credential: 'again' };
+    expect(await owner.request('lease.complete', late)).toEqual({ status: 'already_settled' });
+    expect(await owner.request('lease.complete', late)).toEqual({ status: 'already_settled' });
     expect(JSON.stringify(await owner.request('lease.resume', { kind: 'credential', leaseId: 'lease-1' }))).not.toContain('leased-key');
 
     // Without the lease, the Run uses what the Host has.
@@ -3884,8 +3963,10 @@ describe('v2 Host Tool leases served by the v1 reverse bridge', () => {
       })).rejects.toMatchObject({ kodaxCode: 'invalid_params', reason: 'lease_bound_by_session' });
 
       // An update replaces the policy for later Runs; without the lease the tool is gone.
-      expect(await backend.request('session.policy.update', { requestId: 'update-1', sessionId: session.id, policy: {} }))
-        .toEqual({ policy: { interactions: 'reject' } });
+      for (let sent = 0; sent < 2; sent += 1) {
+        expect(await backend.request('session.policy.update', { requestId: 'update-1', sessionId: session.id, policy: {} }))
+          .toEqual({ policy: { interactions: 'reject' } });
+      }
       const { input: later } = await user.request('input.submit', { requestId: 'input-3', sessionId: session.id, text: 'Again.' }) as InputAnswer;
       await user.request('run.wait', { runId: later.runId });
       expect(host.lastRunRequest().tools).toContain('read');
@@ -4102,5 +4183,14 @@ describe('v2 connections from the network, admitted by their credential', () => 
     const owner = await connect('owner');
     await expect(owner.request('auth.renew', { token: 'secret' }))
       .rejects.toMatchObject({ kodaxCode: 'invalid_state', reason: 'credential_does_not_expire' });
+  });
+});
+
+// Runs after every test above, which send through `connect`. Each test checks what its resend answers.
+describe('commands the SDK sends again', () => {
+  it('has a test send each of them again unchanged', () => {
+    const specs: Array<[string, HostMethodSpec]> = Object.entries(HOST_METHODS);
+    const auto = specs.filter(([, spec]) => spec.resend === 'auto').map(([name]) => name);
+    expect(auto.filter(name => !answeredAgain.has(name))).toEqual([]);
   });
 });

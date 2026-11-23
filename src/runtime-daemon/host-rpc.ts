@@ -297,13 +297,17 @@ const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } =
     });
   },
   'session.lineage.label': async ({ sessionId, entry, label }, v1) => {
+    const before = await v1('session.lineage.get', { sessionId }) as ClientLineageSummary | null;
+    const recorded = before === null ? undefined : newestLabelRecord(before.entries, entry);
+    // Sent again after it worked: the entry already carries what was asked, so nothing more is recorded.
+    if (recorded !== undefined && recorded.label === label?.trim()) return { entry: toTreeEntry(recorded) };
     const tree = await v1('session.lineage.label', defined({ sessionId, selector: entry, label })) as ClientLineageSummary;
     // v1 answers with the whole tree. The entry that records the label is its newest.
     return { entry: toTreeEntry(tree.entries.at(-1)!) };
   },
-  'session.branch.select': async ({ sessionId, entry, summarize }, v1, caller) => ({
+  'session.branch.select': async ({ sessionId, entry, summarize, ifActiveEntryId }, v1, caller) => ({
     session: await toSession(await v1('session.activeEntry.set', defined({
-      sessionId, entryId: entry, summarizeCurrentBranch: summarize,
+      sessionId, entryId: entry, summarizeCurrentBranch: summarize, expectedHead: ifActiveEntryId,
     })) as RuntimeSession, caller),
   }),
   'session.notice.append': async ({ requestId, sessionId, text, source }, v1, caller) => {
@@ -900,23 +904,18 @@ const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } =
     const registration = await v1('agentRegistrations.setEnabled', defined({
       agentId, enabled, claimOwner, expectedConfigurationRevision: ifRevision, expectedManagementOwner: ifOwner,
     }));
-    if (registration === undefined || registration === null) {
-      throw new HostProtocolError('not_found', 'The Host has no external Agent of that id.', { reason: 'agent_not_found' });
-    }
-    return { registration };
+    if (registration !== undefined && registration !== null) return { registration };
+    // v1 answers nothing both when the Agent is gone and when a condition failed; only the second is a conflict.
+    if (await registeredAgent(v1, agentId)) throw registrationConflict();
+    throw new HostProtocolError('not_found', 'The Host has no external Agent of that id.', { reason: 'agent_not_found' });
   },
   'agent.registration.remove': async ({ agentId, ifRevision, ifOwner }, v1) => {
     const removed = await v1('agentRegistrations.remove', defined({
       agentId, expectedConfigurationRevision: ifRevision, expectedManagementOwner: ifOwner,
     })) as boolean;
     // v1 answers `false` both when the Agent is gone and when a condition failed; only the second is a refusal.
-    if (!removed && (ifRevision !== undefined || ifOwner !== undefined)) {
-      const listed = await v1('agentRegistrations.list') as readonly { readonly agentId: string }[];
-      if (listed.some((item) => item.agentId === agentId)) {
-        throw new HostProtocolError('conflict', 'The external Agent no longer meets the conditions.', {
-          reason: 'external_agent_registration_conflict',
-        });
-      }
+    if (!removed && (ifRevision !== undefined || ifOwner !== undefined) && await registeredAgent(v1, agentId)) {
+      throw registrationConflict();
     }
     return {};
   },
@@ -1210,6 +1209,21 @@ function workflowSource(
   return sources[0]!;
 }
 
+/**
+ * The newest label record of the entry `selector` names, by its id or by its
+ * current label, as the lineage resolves it. Undefined when it has none.
+ */
+function newestLabelRecord(entries: readonly ClientLineageEntry[], selector: string): ClientLineageEntry | undefined {
+  const name = selector.trim();
+  const records = entries.filter(entry => entry.type === 'label' && entry.targetId !== undefined);
+  const current = new Map<string, string | undefined>();
+  for (const record of records) current.set(record.targetId!, record.label);
+  const targetId = entries.some(entry => entry.id === name && entry.type !== 'label')
+    ? name
+    : [...current].find(([, label]) => label === name)?.[0];
+  return targetId === undefined ? undefined : records.filter(record => record.targetId === targetId).at(-1);
+}
+
 function toTreeEntry({ parentId, timestamp, ...entry }: ClientLineageEntry): Readonly<Record<string, unknown>> {
   return defined({ ...entry, parentId: parentId ?? undefined, createdAt: utcMilliseconds(timestamp) });
 }
@@ -1239,6 +1253,17 @@ async function holdsAlready(
     if (!holds(goal)) throw error;
     return toGoalAnswer(goal);
   }
+}
+
+async function registeredAgent(v1: V1Call, agentId: string): Promise<boolean> {
+  const listed = await v1('agentRegistrations.list') as readonly { readonly agentId: string }[];
+  return listed.some(item => item.agentId === agentId);
+}
+
+function registrationConflict(): HostProtocolError {
+  return new HostProtocolError('conflict', 'The external Agent no longer meets the conditions.', {
+    reason: 'external_agent_registration_conflict',
+  });
 }
 
 function toSettingsState({ revision, value, workModeLocked }: VersionedSettings): Readonly<Record<string, unknown>> {

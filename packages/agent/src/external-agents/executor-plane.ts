@@ -667,6 +667,8 @@ class AgentExecutorPlaneRuntime {
     }
     const summary = await this.withRegistrationMutation(async () => {
       const current = this.#registrations.get(candidate.agentId);
+      // Already saved as asked, as when it is sent again after it applied: answered whatever the conditions.
+      if (current !== undefined && isDeepStrictEqual(current, candidate)) return summaryFromRegistration(current);
       if (!registrationMutationMatches(current, mutationOptions)) {
         throw new ExternalAgentRegistrationConflictError(candidate.agentId);
       }
@@ -743,20 +745,22 @@ class AgentExecutorPlaneRuntime {
     const mutationOptions = options ? clone(options) : undefined;
     return this.withRegistrationMutation(async () => {
       const current = this.#registrations.get(agentId);
-      if (!current || !registrationMutationMatches(current, mutationOptions)) return undefined;
+      if (!current) return undefined;
       const claimOwner = mutationOptions?.claimOwner;
       if (claimOwner !== undefined && claimOwner.trim().length === 0) {
         throw new Error('External agent claimOwner must not be empty.');
       }
+      // Already as asked, as when it is sent again after it applied: answered whatever the conditions.
+      if (current.enabled === enabled
+        && (claimOwner === undefined || current.managementOwner === claimOwner)) {
+        return summaryFromRegistration(current);
+      }
+      if (!registrationMutationMatches(current, mutationOptions)) return undefined;
       if (claimOwner !== undefined && current.managementOwner !== undefined
         && current.managementOwner !== claimOwner) {
         throw new Error(
           `External agent registration is owned by ${current.managementOwner}: ${agentId}.`,
         );
-      }
-      if (current.enabled === enabled
-        && (claimOwner === undefined || current.managementOwner === claimOwner)) {
-        return summaryFromRegistration(current);
       }
       const registration = {
         ...current,

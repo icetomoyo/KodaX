@@ -128,10 +128,15 @@ export function createReplSessionBindings(client: KodaXHostClient<'local'>, leas
       const all = await list({ ...(gitRoot !== undefined ? { projectRoot: gitRoot } : {}), limit: Number.MAX_SAFE_INTEGER });
       for (const session of all) await client.call('session.delete', { ...fresh(), sessionId: session.id });
     },
-    setActiveEntry: ({ sessionId, selector, summarizeCurrentBranch }) => onEntry(() => client.call('session.branch.select', {
-      ...fresh(), sessionId, entry: selector,
-      ...(summarizeCurrentBranch !== undefined ? { summarize: summarizeCurrentBranch } : {}),
-    })),
+    async setActiveEntry({ sessionId, selector, summarizeCurrentBranch }) {
+      const { activeEntryId } = await client.call('session.lineage.get', { sessionId, limit: 1 });
+      // A conversation with no entries yet has none to move to.
+      if (activeEntryId === undefined) return false;
+      return onEntry(() => client.call('session.branch.select', {
+        ...fresh(), sessionId, entry: selector, ifActiveEntryId: activeEntryId,
+        ...(summarizeCurrentBranch !== undefined ? { summarize: summarizeCurrentBranch } : {}),
+      }));
+    },
     setLabel: ({ sessionId, selector, label }) => onEntry(() => client.call('session.lineage.label', {
       ...fresh(), sessionId, entry: selector, ...(text(label) !== undefined ? { label } : {}),
     })),
