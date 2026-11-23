@@ -34,7 +34,7 @@ cover PNG, JPEG, WebP and GIF with the actual mediaType, the read-only visual
 tools resolve to the `read` capability, and extension approvals carry
 structured per-extension attribution; `v0.7.97-beta.6` moves to one
 Host per `KODAX_HOME`: the Host-location `profile` is removed from the SDK
-entry points and the `kodax daemon`/`a2a serve` commands (breaking), Space
+entry points and the `kodax host` (then named `daemon`) and `a2a serve` commands (breaking), Space
 and the CLI share one compatible Host across installations, the standalone
 binary's Linux floor drops to glibc 2.17, and Session settings no longer
 drift with shared user defaults; `v0.7.97-beta.5` integrates the
