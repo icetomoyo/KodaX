@@ -84,15 +84,27 @@ import {
   type RuntimePermissionRequest,
   type RuntimeRunHandle,
 } from './sdk-runtime.js';
+import { mapLegacyReasoningModeToEffortIntent } from '@kodax-ai/llm';
 import { toKodaXProductClient } from './client-runtime-adapter.js';
-import { ensureKodaXClient } from './sdk-client.js';
 import { observeAcpClientPrompt } from './acp-client-view.js';
+import { createRequestId, type HostCallParams, type KodaXHostClient } from './host-protocol/host-client.js';
+import { ensureKodaXHostClient } from './local-host-client.js';
+import { awaitHostRun, projectOneShotOutcome } from './one-shot-task.js';
+import { createReplClientPlane } from './repl-host/plane.js';
+import type { InkClientPlane } from '@kodax-ai/repl';
 import type {
   ClientPermissionDecision,
   ClientSessionSettings,
-  ClientSessionSettingsPatch,
   KodaXProductClient,
 } from '@kodax-ai/coding/client-contract';
+
+type HostSettingsPatch = HostCallParams<'session.settings.update'>['patch'];
+
+/** The shared Host ACP runs on, and the view plane the REPL reads it through. */
+interface AcpHost {
+  readonly client: KodaXHostClient<'local'>;
+  readonly plane: InkClientPlane;
+}
 
 // v0.7.42 — replaced the hardcoded `Set(['write', 'edit'])` with the
 // metadata-driven `isToolFileMutation` from `@kodax-ai/coding`. The old
@@ -183,8 +195,11 @@ interface KodaXAcpSessionState {
   promptTail?: Promise<void>;
   cancellationGeneration: number;
   stopRequest?: { expectedRunId: string; requestId: string };
-  /** Created lazily on the first valid prompt so handshake-only sessions stay in memory. */
-  runtimeSessionReady?: Promise<void>;
+  /**
+   * Created lazily on the first valid prompt so handshake-only sessions stay
+   * in memory. Resolves to the Host's id for it, which the Host picks.
+   */
+  runtimeSessionReady?: Promise<string>;
   contextTokenSnapshot?: KodaXContextTokenSnapshot;
   /** Runtime view used for prompts when client provides per-session MCP servers. */
   extensionRuntime?: AcpPromptExtensionRuntime;
@@ -597,14 +612,11 @@ export class KodaXAcpServer implements Agent {
   private readonly agentVersion: string;
   private readonly storage?: FileSessionStorage;
   private readonly runtimeReady?: Promise<KodaXRuntime>;
-  /**
-   * FEATURE_298 T19 — the same Host seen through the product client face.
-   * Default ACP execution uses only this face. Explicit Runtime injection
-   * retains the lower-level in-process embedding callbacks below.
-   */
-  private readonly clientReady: Promise<KodaXProductClient>;
-  private readonly ownsClient: boolean;
-  private readonly initialHostSettings: ClientSessionSettingsPatch;
+  /** Explicit Runtime injection: the same Runtime through the product client face. */
+  private readonly clientReady?: Promise<KodaXProductClient>;
+  /** The default: the shared Host over the v2 protocol. */
+  private readonly hostReady?: Promise<AcpHost>;
+  private readonly initialHostSettings: HostSettingsPatch;
   private readonly logger: AcpLogger;
   private readonly events: AcpEventEmitter;
   private readonly configuredExtensions: string[];
@@ -657,10 +669,11 @@ export class KodaXAcpServer implements Agent {
     this.initialHostSettings = {
       ...(options.provider !== undefined || environmentProvider?.trim() ? { provider: this.provider } : {}),
       ...(options.model !== undefined ? { model: options.model } : {}),
-      ...(hasExplicitEffort ? { effort: this.effort ?? null } : {}),
+      // The Host keeps effort alone; the legacy flags become the effort they meant.
+      ...(hasExplicitEffort ? { effort: this.effort ?? null }
+        : options.reasoningMode !== undefined ? { effort: mapLegacyReasoningModeToEffortIntent(options.reasoningMode) }
+          : options.thinking !== undefined ? { effort: options.thinking ? 'auto' : 'none' } : {}),
       ...(options.planModeEffort !== undefined ? { planModeEffort: options.planModeEffort } : {}),
-      ...(options.thinking !== undefined ? { thinking: options.thinking } : {}),
-      ...(options.reasoningMode !== undefined ? { reasoningMode: options.reasoningMode } : {}),
       ...(options.permissionMode !== undefined ? { permissionMode: this.defaultPermissionMode } : {}),
       ...(process.env.KODAX_REPO_INTELLIGENCE !== undefined ? { repoIntelligenceMode: this.repoIntelligence.mode } : {}),
       ...(process.env.KODAX_REPO_INTELLIGENCE_TRACE !== undefined ? { repoIntelligenceTrace: this.repoIntelligence.trace } : {}),
@@ -679,12 +692,12 @@ export class KodaXAcpServer implements Agent {
     if (options.storage && !options.runtime) throw new Error('ACP custom storage requires an explicitly injected Runtime.');
     this.storage = options.runtime ? options.storage ?? new FileSessionStorage() : undefined;
     this.logger = logger;
-    this.ownsClient = options.runtime === undefined;
     this.runtimeReady = options.runtime ? Promise.resolve(options.runtime) : undefined;
-    this.clientReady = this.runtimeReady
-      ? this.runtimeReady.then((runtime) => toKodaXProductClient(runtime))
-      : ensureKodaXClient({ homeDir: options.homeDir,
-        clientInfo: { name: this.agentName, version: this.agentVersion, clientType: 'cli' } });
+    this.clientReady = this.runtimeReady?.then((runtime) => toKodaXProductClient(runtime));
+    this.hostReady = this.runtimeReady ? undefined
+      : ensureKodaXHostClient({ homeDir: options.homeDir, client: { name: this.agentName, version: this.agentVersion } })
+        // ACP carries no provider keys of its own; the Host's settings decide.
+        .then(client => ({ client, plane: createReplClientPlane(client, async () => undefined) }));
     this.configuredExtensions = configuredExtensions;
     this.discoveredExtensions = discoveredExtensionsPromise;
     this.events = new AcpEventEmitter({
@@ -793,9 +806,7 @@ export class KodaXAcpServer implements Agent {
       }
 
       await Promise.all([...runtimes].map((runtime) => runtime.dispose()));
-      if (this.ownsClient) {
-        await (await this.clientReady).disconnect();
-      }
+      if (this.hostReady) await (await this.hostReady).client.close();
       if (this.runtimeReady) await shutdownDefaultLspService();
     })();
 
@@ -886,13 +897,7 @@ export class KodaXAcpServer implements Agent {
     const session = this.requireSession(params.sessionId);
     const previousMode = session.permissionMode;
     const nextMode = parseSessionMode(params.modeId);
-    if (session.runtimeSessionReady) {
-      await session.runtimeSessionReady;
-      const client = await this.clientReady;
-      await client.sessions.updateSettings(session.sessionId, {
-        permissionMode: nextMode,
-      });
-    }
+    if (session.runtimeSessionReady) await this.updateSessionSettings(await session.runtimeSessionReady, { permissionMode: nextMode });
     session.permissionMode = nextMode;
     session.permissionModeExplicit = true;
     this.events.emit({
@@ -947,8 +952,8 @@ export class KodaXAcpServer implements Agent {
         if (this.extensionRuntimeReady) {
           await this.extensionRuntimeReady;
         }
-        await this.ensureRuntimeSession(session, promptText);
-        if (!this.runtimeReady) return await this.promptThroughHost(session, params, promptText, promptEffortOverride, promptStartedAt, cancellationGeneration);
+        const hostSessionId = await this.ensureRuntimeSession(session, promptText);
+        if (!this.runtimeReady) return await this.promptThroughHost(session, hostSessionId, params, promptText, promptEffortOverride, promptStartedAt, cancellationGeneration);
         const runtime = await this.runtimeReady;
         permissionBridge = this.createRuntimePermissionBridge(runtime, session);
         handle = await runtime.runs.start({
@@ -1040,6 +1045,7 @@ export class KodaXAcpServer implements Agent {
 
   private async promptThroughHost(
     session: KodaXAcpSessionState,
+    hostSessionId: string,
     params: PromptRequest,
     text: string,
     effortOverride: AcpPromptEffortOverride,
@@ -1048,14 +1054,15 @@ export class KodaXAcpServer implements Agent {
   ): Promise<PromptResponse> {
     const cancelledResponse: PromptResponse = { stopReason: 'cancelled', userMessageId: params.messageId ?? undefined };
     if (session.cancellationGeneration !== cancellationGeneration) return cancelledResponse;
-    const client = await this.clientReady;
+    const { client, plane } = await this.hostReady!;
     if (session.cancellationGeneration !== cancellationGeneration) return cancelledResponse;
     if (effortOverride.kind === 'value') {
-      await client.sessions.updateSettings(session.sessionId, { effort: effortOverride.value ?? null });
+      await this.updateSessionSettings(hostSessionId, { effort: effortOverride.value ?? null });
     }
     if (session.cancellationGeneration !== cancellationGeneration) return cancelledResponse;
-    const projection = await observeAcpClientPrompt(client, session.sessionId,
-      notification => this.sendSessionUpdate(notification),
+    // The client knows this session by ACP's own id, not the Host's.
+    const projection = await observeAcpClientPrompt(plane, hostSessionId,
+      notification => this.sendSessionUpdate({ ...notification, sessionId: session.sessionId }),
       async request => toClientPermissionDecision(await this.requestPermissionFromClient(session,
         request.options.toolName, request.options.plan === undefined
           ? parsePermissionInputPreview(request.options.inputPreview) : { plan: request.options.plan }, request.options.toolCallId), request.options),
@@ -1066,27 +1073,25 @@ export class KodaXAcpServer implements Agent {
     let runId: string | undefined;
     try {
       if (session.cancellationGeneration !== cancellationGeneration) return cancelledResponse;
-      const accepted = await client.inputs.submit({ sessionId: session.sessionId,
-        inputId: params.messageId ?? randomUUID(), text, delivery: 'immediate' });
-      runId = accepted.runId;
-      if (!runId) throw new Error(`ACP input was ${accepted.state} without an executable Run.`);
+      const { input } = await client.call('input.submit', { requestId: params.messageId ?? randomUUID(),
+        sessionId: hostSessionId, text, delivery: 'immediate' });
+      runId = input.runId;
+      if (!runId) throw new Error(`ACP input was ${input.state} without an executable Run.`);
       session.activeRunIds.add(runId);
-      if (session.cancellationGeneration !== cancellationGeneration) await client.runs.stop(runId);
-      const outcome = await Promise.race([client.runs.await(runId), projection.failed.then(error => { throw error; })]);
+      if (session.cancellationGeneration !== cancellationGeneration) await client.call('run.stop', { requestId: createRequestId(), runId });
+      const run = await Promise.race([awaitHostRun(client, runId), projection.failed.then(error => { throw error; })]);
       await projection.flush();
-      if (outcome.error) throw new Error(outcome.error);
-      const cancelled = outcome.phase === 'cancelled' || outcome.phase === 'interrupted';
-      if (!outcome.result && !cancelled) throw new Error(`Host Run ${runId} ended without a coding result (${outcome.phase}).`);
-      session.contextTokenSnapshot = outcome.result?.contextTokenSnapshot;
-      const interrupted = cancelled || !!outcome.result?.interrupted;
+      const result = projectOneShotOutcome(run);
+      const interrupted = !!result.interrupted;
       const stopReason = interrupted ? 'cancelled' : 'end_turn';
       this.events.emit({ type: 'prompt_finished', sessionId: session.sessionId,
         stopReason, interrupted, durationMs: Date.now() - startedAt });
-      const usage = toAcpUsage(session.contextTokenSnapshot);
+      // The Run's own total; the Host does not hand its context snapshot to clients.
+      const usage = run.outcome?.usage;
       return { stopReason, userMessageId: params.messageId ?? undefined, ...(usage ? { usage } : {}) };
     } catch (error) {
       if (runId) {
-        try { await client.runs.stop(runId); }
+        try { await client.call('run.stop', { requestId: createRequestId(), runId }); }
         catch (stopError) { throw new AggregateError([error, stopError], 'ACP delivery failed and its Host Run could not be stopped.'); }
       }
       throw error;
@@ -1099,28 +1104,41 @@ export class KodaXAcpServer implements Agent {
   private async ensureRuntimeSession(
     session: KodaXAcpSessionState,
     prompt: string,
-  ): Promise<void> {
-    if (!session.runtimeSessionReady) {
-      const client = await this.clientReady;
-      session.runtimeSessionReady = client.sessions.create({
-        sessionId: session.sessionId,
-        title: buildAcpSessionTitle(prompt),
-        projectPath: session.cwd,
-        gitRoot: session.cwd,
-        surface: 'acp',
-        ...(!this.runtimeReady && session.mcpServers.length > 0 ? { mcpServers: convertAcpMcpServers(session.mcpServers) } : {}),
-      }).then(async () => {
-        const settings = this.runtimeReady ? { permissionMode: session.permissionMode }
-          : { ...this.initialHostSettings, ...(session.permissionModeExplicit ? { permissionMode: session.permissionMode } : {}) };
-        if (Object.keys(settings).length > 0) await client.sessions.updateSettings(session.sessionId, settings);
-      });
-    }
+  ): Promise<string> {
+    session.runtimeSessionReady ??= this.createHostSession(session, buildAcpSessionTitle(prompt));
     try {
-      await session.runtimeSessionReady;
+      return await session.runtimeSessionReady;
     } catch (error) {
       session.runtimeSessionReady = undefined;
       throw error;
     }
+  }
+
+  private async createHostSession(session: KodaXAcpSessionState, title: string): Promise<string> {
+    if (this.clientReady) {
+      const client = await this.clientReady;
+      await client.sessions.create({ sessionId: session.sessionId, title, projectPath: session.cwd, gitRoot: session.cwd, surface: 'acp' });
+      await client.sessions.updateSettings(session.sessionId, { permissionMode: session.permissionMode });
+      return session.sessionId;
+    }
+    const { client } = await this.hostReady!;
+    const { session: created } = await client.call('session.create', { requestId: createRequestId(), title,
+      projectRoot: session.cwd, surface: 'acp',
+      ...(session.mcpServers.length > 0 ? { mcpServers: Object.fromEntries(Object.entries(convertAcpMcpServers(session.mcpServers))
+        .map(([name, config]) => [name, { ...config }])) } : {}) });
+    const settings = { ...this.initialHostSettings, ...(session.permissionModeExplicit ? { permissionMode: session.permissionMode } : {}) };
+    if (Object.keys(settings).length > 0) await this.updateSessionSettings(created.id, settings);
+    return created.id;
+  }
+
+  /** `id` is the Host's id for the session; an embedded Runtime takes only the mode. */
+  private async updateSessionSettings(id: string, patch: HostSettingsPatch): Promise<void> {
+    if (this.clientReady) {
+      const permissionMode = patch.permissionMode;
+      if (permissionMode) await (await this.clientReady).sessions.updateSettings(id, { permissionMode });
+      return;
+    }
+    await (await this.hostReady!).client.call('session.settings.update', { requestId: createRequestId(), sessionId: id, patch });
   }
 
   async cancel(params: { sessionId: string }): Promise<void> {
@@ -1139,13 +1157,19 @@ export class KodaXAcpServer implements Agent {
   private async abortSessionRuns(session: KodaXAcpSessionState): Promise<void> {
     if (session.activeRunIds.size === 0) return;
 
-    const client = await this.clientReady;
     const expectedRunId = session.activeRunIds.values().next().value;
     if (expectedRunId === undefined) return;
     if (session.stopRequest?.expectedRunId !== expectedRunId) {
       session.stopRequest = { expectedRunId, requestId: randomUUID() };
     }
-    await client.sessions.cancel({ sessionId: session.sessionId, ...session.stopRequest });
+    if (this.clientReady) {
+      await (await this.clientReady).sessions.cancel({ sessionId: session.sessionId, ...session.stopRequest });
+      return;
+    }
+    // A Run is active only once the Host session exists.
+    const sessionId = await session.runtimeSessionReady!;
+    await (await this.hostReady!).client.call('session.cancel', { requestId: session.stopRequest.requestId,
+      sessionId, ifRunId: expectedRunId });
   }
 
   private requireSession(sessionId: string): KodaXAcpSessionState {
@@ -1370,7 +1394,7 @@ export class KodaXAcpServer implements Agent {
     } finally {
       settlement.close();
     }
-    const client = await this.clientReady;
+    const client = await this.clientReady!;
     const result = await client.interactions.respond(request.id, {
       kind: 'permission',
       decision: toClientPermissionDecision(dialogDecision, request),

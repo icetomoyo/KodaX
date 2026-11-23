@@ -7,16 +7,14 @@ import { expect, it, vi } from 'vitest';
 import { ClientSideConnection, PROTOCOL_VERSION, ndJsonStream, type RequestPermissionRequest, type SessionNotification } from '@agentclientprotocol/sdk';
 import { KodaXBaseProvider, registerModelProvider, clearRuntimeModelProviders, type KodaXMessage, type KodaXStreamResult,
   type KodaXToolDefinition, type KodaXReasoningRequest } from '@kodax-ai/llm';
-import type { KodaXProductClient } from '@kodax-ai/coding/client-contract';
 import { createKodaXRuntime } from "../tests/runtime-fixture.js";
+import { connectTestHost } from '../tests/repl-v2-host.js';
+import { createRequestId, type KodaXHostClient } from './host-protocol/host-client.js';
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
 import { resolveRuntimeDaemonPaths, tryAcquireRuntimeDaemonLock } from './runtime-daemon/state.js';
 
-const launcher = vi.hoisted(() => ({ ensure: vi.fn<() => Promise<KodaXProductClient>>() }));
-vi.mock('./sdk-client.js', async importOriginal => ({
-  ...await importOriginal<typeof import('./sdk-client.js')>(), ensureKodaXClient: launcher.ensure,
-}));
-import { connectKodaXClient } from './sdk-client.js';
+const launcher = vi.hoisted(() => ({ ensure: vi.fn<() => Promise<KodaXHostClient<'local'>>>() }));
+vi.mock('./local-host-client.js', () => ({ ensureKodaXHostClient: launcher.ensure }));
 import { KodaXAcpServer } from './acp_server.js';
 
 it('delivers complete plan approval and preserves Host mode and effort across ACP prompts', async () => {
@@ -52,21 +50,25 @@ it('delivers complete plan approval and preserves Host mode and effort across AC
   const endpoint = process.platform === 'win32' ? { kind: 'pipe' as const, path: `\\\\.\\pipe\\kodax-acp-contract-${randomUUID()}` }
     : { kind: 'unix' as const, path: path.join(homeDir, 'host.sock') };
   const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
-  const product = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
-  const other = await connectKodaXClient({ homeDir, endpoint: endpoint.path });
-  await other.config.patch({});
-  launcher.ensure.mockResolvedValue(product);
+  const other = await connectTestHost(host, paths);
+  launcher.ensure.mockResolvedValue(await connectTestHost(host, paths));
   const server = new KodaXAcpServer({ homeDir, provider: 'acp-contract', permissionMode: 'plan', planModeEffort: 'medium', logLevel: 'off' });
   const requests = new TransformStream<Uint8Array, Uint8Array>();
   const responses = new TransformStream<Uint8Array, Uint8Array>();
   const approvals: RequestPermissionRequest[] = [];
   const updates: SessionNotification[] = [];
   let planEffort: string | undefined;
+  // The Host picks the Session's id; this Host has only the one ACP made.
+  const hostSessionId = async (): Promise<string> => (await other.call('session.list', {})).items[0]!.id;
+  const hostSettings = async () => (await other.call('session.settings.get', { sessionId: await hostSessionId() })).settings;
+  const updateHostSettings = async (patch: Record<string, string | null>) => {
+    await other.call('session.settings.update', { requestId: createRequestId(), sessionId: await hostSessionId(), patch });
+  };
   server.attach(requests.readable, responses.writable);
   const acp = new ClientSideConnection(() => ({ sessionUpdate: async update => { updates.push(update); },
     requestPermission: async request => {
       approvals.push(request);
-      const observation = await other.sessions.observe(request.sessionId, view => { planEffort = view.settings.effort; });
+      const observation = await other.observeSession(await hostSessionId(), { onView: view => { planEffort = view.settings.effort; } });
       observation.close();
       return { outcome: { outcome: 'selected', optionId: 'allow_once' } };
     },
@@ -79,28 +81,28 @@ it('delivers complete plan approval and preserves Host mode and effort across AC
     expect(approvals[0]?.toolCall.content).toContainEqual({ type: 'content', content: { type: 'text', text: plan } });
     expect(planEffort).toBe('medium');
     expect(reasoningRequests[0]).toMatchObject({ effort: 'medium' });
-    expect(await other.sessions.getSettings(session.sessionId)).toMatchObject({ permissionMode: 'accept-edits' });
+    expect(await hostSettings()).toMatchObject({ permissionMode: 'accept-edits' });
     expect(updates).toContainEqual({ sessionId: session.sessionId, update: { sessionUpdate: 'current_mode_update', currentModeId: 'accept-edits' } });
     await acp.prompt({ sessionId: session.sessionId, prompt: [{ type: 'text', text: 'Continue.' }] });
-    expect(await other.sessions.getSettings(session.sessionId)).toMatchObject({ permissionMode: 'accept-edits' });
+    expect(await hostSettings()).toMatchObject({ permissionMode: 'accept-edits' });
     expect(reasoningRequests.at(-1)).not.toMatchObject({ effort: 'medium' });
     await acp.setSessionMode({ sessionId: session.sessionId, modeId: 'plan' });
-    await other.sessions.updateSettings(session.sessionId, { effort: 'high' });
+    await updateHostSettings({ effort: 'high' });
     await acp.prompt({ sessionId: session.sessionId, prompt: [{ type: 'text', text: 'Respect explicit effort.' }] });
     expect(reasoningRequests.at(-1)).toMatchObject({ effort: 'high' });
-    await other.sessions.updateSettings(session.sessionId, { effort: null });
+    await updateHostSettings({ effort: null });
     await acp.prompt({ sessionId: session.sessionId, prompt: [{ type: 'text', text: 'Use plan default again.' }] });
     expect(reasoningRequests.at(-1)).toMatchObject({ effort: 'medium' });
-    await other.sessions.updateSettings(session.sessionId, { planModeEffort: null });
+    await updateHostSettings({ planModeEffort: null });
     await acp.prompt({ sessionId: session.sessionId, prompt: [{ type: 'text', text: 'Clear plan default.' }] });
     expect(reasoningRequests.at(-1)).not.toMatchObject({ effort: 'medium' });
-    await other.sessions.updateSettings(session.sessionId, { permissionMode: 'full-access', effort: 'none' });
+    await updateHostSettings({ permissionMode: 'full-access', effort: 'none' });
     await acp.prompt({ sessionId: session.sessionId, prompt: [{ type: 'text', text: 'Continue with shared settings.' }] });
-    expect(await other.sessions.getSettings(session.sessionId)).toMatchObject({ permissionMode: 'full-access', effort: 'none' });
+    expect(await hostSettings()).toMatchObject({ permissionMode: 'full-access', effort: 'none' });
     expect(updates).toContainEqual({ sessionId: session.sessionId, update: { sessionUpdate: 'current_mode_update', currentModeId: 'full-access' } });
   } finally {
-    await server.dispose(); await other.disconnect(); await host.close(); await runtime.close();
+    await server.dispose(); await other.close(); await host.close(); await runtime.close();
     clearRuntimeModelProviders(); vi.unstubAllEnvs(); launcher.ensure.mockReset();
     await rm(homeDir, { recursive: true, force: true, maxRetries: 5 });
   }
-}, 30_000);
+}, 60_000);

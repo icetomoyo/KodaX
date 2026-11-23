@@ -100,16 +100,23 @@ it('runs default ACP prompts in the existing shared Host and only detaches on di
       return { outcome: { outcome: 'selected', optionId: 'allow_once' } };
     },
   }), ndJsonStream(request.writable, response.readable));
+  /** The Host picks a Session's id; ACP keeps its own for the editor, so the Host's is found by its title. */
+  const hostSessionId = async (title: string): Promise<string> => {
+    const found = (await runtime.sessions.list()).find(item => item.title === title);
+    if (!found) throw new Error(`No Host Session titled ${title}.`);
+    return found.id;
+  };
   try {
     await client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
     const session = await client.newSession({ cwd: homeDir, mcpServers: [] });
     const result = await client.prompt({ sessionId: session.sessionId, prompt: [{ type: 'text', text: 'Say hello.' }] });
     expect(result.stopReason).toBe('end_turn');
-    expect(await runtime.sessions.getSettings(session.sessionId)).toMatchObject({
+    const hostId = await hostSessionId('Say hello.');
+    expect(hostId).not.toBe(session.sessionId);
+    expect(await runtime.sessions.getSettings(hostId)).toMatchObject({
       repoIntelligenceMode: 'light', repoIntelligenceTrace: true,
     });
-    expect((await runtime.sessions.list()).map(item => item.id)).toContain(session.sessionId);
-    expect((await runtime.runs.list({ sessionId: session.sessionId })).map(run => run.phase)).toEqual(['completed']);
+    expect((await runtime.runs.list({ sessionId: hostId })).map(run => run.phase)).toEqual(['completed']);
     const text = notifications.flatMap(({ update }) => update.sessionUpdate === 'agent_message_chunk'
       && update.content.type === 'text' ? [update.content.text] : []).join('');
     expect(text).toBe('Hello from shared Host.');
@@ -121,7 +128,7 @@ it('runs default ACP prompts in the existing shared Host and only detaches on di
     const writerGate = new Promise<void>(resolve => { releaseWriter = resolve; });
     const backgroundTitle = 'Controlled ACP background commit';
     const renameProbe = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
-      if (String(to).endsWith(`${path.sep}${session.sessionId}.jsonl`)) {
+      if (String(to).endsWith(`${path.sep}${hostId}.jsonl`)) {
         const meta: unknown = JSON.parse((await fs.readFile(from, 'utf8')).split('\n', 1)[0]!);
         if (meta !== null && typeof meta === 'object' && 'title' in meta && meta.title === backgroundTitle) {
           enterWriter();
@@ -134,7 +141,7 @@ it('runs default ACP prompts in the existing shared Host and only detaches on di
     const read = FileSessionStorage.prototype.read;
     let injectWriter = true;
     const readProbe = vi.spyOn(FileSessionStorage.prototype, 'read').mockImplementation(async function (this: FileSessionStorage, id, options) {
-      if (injectWriter && id === session.sessionId) {
+      if (injectWriter && id === hostId) {
         injectWriter = false;
         const data = await this.load(id);
         if (!data) throw new Error('Expected the saved ACP Session.');
@@ -156,7 +163,7 @@ it('runs default ACP prompts in the existing shared Host and only detaches on di
     await writer;
     clearTimeout(writerTimer);
     restoreReadProbe(); restoreWriterProbe();
-    expect((await runtime.runs.list({ sessionId: session.sessionId })).map(run => run.phase)).toEqual(['completed', 'completed']);
+    expect((await runtime.runs.list({ sessionId: hostId })).map(run => run.phase)).toEqual(['completed', 'completed']);
     expect(notifications).toContainEqual(expect.objectContaining({ update: expect.objectContaining({
       sessionUpdate: 'tool_call', toolCallId: 'read-probe', rawInput: { path: probePath }, kind: 'read',
     }) }));
@@ -172,23 +179,24 @@ it('runs default ACP prompts in the existing shared Host and only detaches on di
       sessionUpdate: 'tool_call_update', toolCallId: 'private-mcp', status: 'completed', rawOutput: expect.stringContaining('ACP private MCP'),
     }) }));
     expect(await runtime.mcp.listServers()).not.toHaveProperty(fixture.serverId);
+    expect(await runtime.sessions.load(await hostSessionId('Use the private MCP.'))).toBeTruthy();
     hold = true;
     providerStarted = false;
     const heldPrompt = client.prompt({ sessionId: session.sessionId, prompt: [{ type: 'text', text: 'Wait for approval.' }] });
     await heldProviderEntered;
     expect(providerStarted).toBe(true);
-    const active = (await runtime.runs.list({ sessionId: session.sessionId })).find(run => run.phase === 'running');
+    const active = (await runtime.runs.list({ sessionId: hostId })).find(run => run.phase === 'running');
     expect(active).toBeDefined();
     let queuedSettled = false;
     const queuedPrompt = client.prompt({ sessionId: session.sessionId, prompt: [{ type: 'text', text: 'Queued request must not execute.' }] })
       .then(result => { queuedSettled = true; return result; });
-    const permission = runtime.permissions.request({ sessionId: session.sessionId, runId: active!.runId,
+    const permission = runtime.permissions.request({ sessionId: hostId, runId: active!.runId,
       toolCallId: 'approve-probe', toolName: 'bash', inputPreview: '{"command":"echo approved"}' });
     await expect(permission).resolves.toMatchObject({ type: 'allow_once' });
     expect(permissionRequests).toBe(1);
     expect(queuedSettled).toBe(false);
     holdDialog = true;
-    const stale = runtime.permissions.request({ sessionId: session.sessionId, runId: active!.runId,
+    const stale = runtime.permissions.request({ sessionId: hostId, runId: active!.runId,
       toolCallId: 'stale-probe', toolName: 'bash', inputPreview: '{"command":"echo stale"}' });
     await expect.poll(() => permissionRequests).toBe(2);
     await client.cancel({ sessionId: session.sessionId });
@@ -199,13 +207,13 @@ it('runs default ACP prompts in the existing shared Host and only detaches on di
     vi.spyOn(serverConnection, 'sessionUpdate').mockRejectedValueOnce(new Error('Fixture notification transport failed'));
     const failedDelivery = await client.prompt({ sessionId: session.sessionId, prompt: [{ type: 'text', text: 'Fail notification delivery.' }] });
     expect(failedDelivery.stopReason).toBe('end_turn');
-    await expect.poll(async () => (await runtime.runs.list({ sessionId: session.sessionId }))
+    await expect.poll(async () => (await runtime.runs.list({ sessionId: hostId }))
       .every(run => run.phase !== 'running' && run.phase !== 'queued')).toBe(true);
     expect(notifications).toContainEqual(expect.objectContaining({ update: expect.objectContaining({
       content: { type: 'text', text: expect.stringContaining('Fixture notification transport failed') },
     }) }));
     await server.dispose();
-    expect(await runtime.sessions.load(session.sessionId)).toBeTruthy();
+    expect(await runtime.sessions.load(hostId)).toBeTruthy();
   } finally {
     clearTimeout(writerTimer);
     releaseWriter();

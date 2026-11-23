@@ -2,11 +2,23 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
-import type { ClientSessionView, ClientObservationStatus, ClientPermissionDecision } from '@kodax-ai/coding/client-contract';
+import type { ClientSessionView, ClientObservationStatus, ClientPermissionDecision, KodaXProductClient } from '@kodax-ai/coding/client-contract';
 import type { SessionNotification } from '@agentclientprotocol/sdk';
 import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { toKodaXProductClient } from './client-runtime-adapter.js';
-import { observeAcpClientPrompt } from './acp-client-view.js';
+import { observeAcpClientPrompt, type AcpClientPlane } from './acp-client-view.js';
+
+/** The plane over the test's in-process client, so the spies on that client still decide what the projection sees. */
+function asPlane(client: KodaXProductClient): AcpClientPlane {
+  return {
+    async observe(sessionId, onView, options) {
+      const observation = await client.sessions.observe(sessionId, onView, options);
+      return () => observation.close();
+    },
+    readItem: (sessionId, itemId, options) => client.sessions.readItem(sessionId, itemId, typeof options === 'number' ? { offset: options } : options),
+    respondInteraction: async (requestId, response) => (await client.interactions.respond(requestId, response)).accepted,
+  };
+}
 
 it.each(['revision', 'state'] as const)('rejects mixed ACP pages when %s changes without replaying emitted content', async change => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-acp-page-identity-'));
@@ -26,7 +38,7 @@ it.each(['revision', 'state'] as const)('rejects mixed ACP pages when %s changes
     };
   });
   const updates: SessionNotification[] = [];
-  const projection = await observeAcpClientPrompt(client, session.id, async update => { updates.push(update); },
+  const projection = await observeAcpClientPrompt(asPlane(client), session.id, async update => { updates.push(update); },
     async () => ({ type: 'allow_once' }), () => ({}));
   try {
     const item = { id: 'output', type: 'assistant' as const, textRevision: 0, outputState: 'draft' as const };
@@ -64,7 +76,7 @@ it('projects continuous Host identities once through settlement and repeated sna
     textRevision: bodyRevision, ...{ outputState: bodyState },
   }));
   const updates: SessionNotification[] = [];
-  const projection = await observeAcpClientPrompt(client, session.id, async update => { updates.push(update); },
+  const projection = await observeAcpClientPrompt(asPlane(client), session.id, async update => { updates.push(update); },
     async () => ({ type: 'allow_once' }), () => ({}));
   const push = async (items: ClientSessionView['items']) => {
     view = { ...view, items };
@@ -123,7 +135,7 @@ it.each(['interrupted', 'closed'] as const)('fails ACP projection when observati
   const pendingDecision = new Promise<ClientPermissionDecision>(resolve => { answer = resolve; });
   const permission = vi.fn(() => pendingDecision);
   const respond = vi.spyOn(client.interactions, 'respond');
-  const projection = await observeAcpClientPrompt(client, session.id, async () => undefined, permission, () => ({}));
+  const projection = await observeAcpClientPrompt(asPlane(client), session.id, async () => undefined, permission, () => ({}));
   const failures: unknown[] = [];
   void projection.failed.then(error => { failures.push(error); });
   try {
@@ -169,7 +181,7 @@ it('projects full current text and explicit revisions without replaying bounded 
   const updates: SessionNotification[] = [];
   const respond = vi.spyOn(client.interactions, 'respond');
   let rejectDelivery = false;
-  const projection = await observeAcpClientPrompt(client, session.id, async notification => { if (rejectDelivery) throw new Error('Notification delivery failed'); updates.push(notification); },
+  const projection = await observeAcpClientPrompt(asPlane(client), session.id, async notification => { if (rejectDelivery) throw new Error('Notification delivery failed'); updates.push(notification); },
     async () => ({ type: 'allow_once' }), () => ({}));
   try {
     view = { ...view, items: [...view.items, { id: 'new', type: 'assistant', text: 'answer', textOffset: 17, totalTextLength: 23 }] };
@@ -217,7 +229,7 @@ it.each(['no-progress', 'disappeared'] as const)('fails promptly when a Host ite
   });
   const read = vi.spyOn(client.sessions, 'readItem').mockRejectedValue(new Error('Unexpected second page read'))
     .mockResolvedValueOnce(scenario === 'disappeared' ? null : { id: 'item', text: '', offset: 0, totalLength: 10, nextOffset: 0 });
-  const projection = await observeAcpClientPrompt(client, session.id, async () => {}, async () => ({ type: 'allow_once' }), () => ({}));
+  const projection = await observeAcpClientPrompt(asPlane(client), session.id, async () => {}, async () => ({ type: 'allow_once' }), () => ({}));
   try {
     listener!({ ...savedView, items: [{ id: 'item', type: 'assistant', text: 'tail', textOffset: 6, totalTextLength: 10 }] });
     await expect(projection.failed).resolves.toMatchObject({ message: expect.stringContaining(scenario === 'disappeared' ? 'disappeared' : 'inconsistent page') });

@@ -74,6 +74,21 @@ function scriptedModel(mode: ModelMode): ScriptedModel {
   return { provider: () => new ScriptedProvider(), releaseAll: () => { for (const release of [...held]) release(); } };
 }
 
+/** A v2 client of a test Host, as the owner on this machine. */
+export async function connectTestHost(
+  host: Awaited<ReturnType<typeof startRuntimeDaemonHost>>,
+  paths: ReturnType<typeof resolveRuntimeDaemonPaths>,
+): Promise<KodaXHostClient<'local'>> {
+  const token = readRuntimeDaemonToken(paths);
+  if (token === undefined) throw new Error('The test Host published no token.');
+  return createKodaXHostClient<'local'>({
+    open: () => connectHostRpc(dialRuntimeDaemonHostRpc(host.endpoint), {
+      client: { name: 'repl-v2', version: '1.0.0', instanceId: `repl-v2-${randomUUID()}` },
+      auth: { scheme: 'ipc', token },
+    }),
+  });
+}
+
 export async function replHost(mode: ModelMode) {
   const homeDir = await realpath(await mkdtemp(path.join(tmpdir(), 'kodax-repl-v2-')));
   cleanup.push(() => rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
@@ -98,14 +113,7 @@ export async function replHost(mode: ModelMode) {
     : { kind: 'unix', path: path.join(homeDir, 'host.sock') };
   const host = await startRuntimeDaemonHost({ runtime, paths, lock, endpoint });
   cleanup.push(() => host.close());
-  const token = readRuntimeDaemonToken(paths);
-  if (token === undefined) throw new Error('The test Host published no token.');
-  const client: KodaXHostClient<'local'> = await createKodaXHostClient<'local'>({
-    open: () => connectHostRpc(dialRuntimeDaemonHostRpc(host.endpoint), {
-      client: { name: 'repl-v2', version: '1.0.0', instanceId: `repl-v2-${randomUUID()}` },
-      auth: { scheme: 'ipc', token },
-    }),
-  });
+  const client = await connectTestHost(host, paths);
   cleanup.push(() => client.close());
   const { session } = await client.call('session.create', { requestId: createRequestId(), title: 'REPL', projectRoot: homeDir });
   return { client, model, homeDir, sessionId: session.id, plane: createReplClientPlane(client, async () => undefined) };

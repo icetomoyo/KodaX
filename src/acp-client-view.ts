@@ -1,12 +1,16 @@
 import type { SessionNotification, ToolCall } from '@agentclientprotocol/sdk';
 import { readClientItemRange } from '@kodax-ai/coding';
-import type { ClientInteraction, ClientPermissionDecision, ClientSessionView, ClientViewItem, KodaXProductClient } from '@kodax-ai/coding/client-contract';
+import type { ClientInteraction, ClientPermissionDecision, ClientSessionView, ClientViewItem } from '@kodax-ai/coding/client-contract';
+import type { InkClientPlane } from '@kodax-ai/repl';
 
 type PermissionInteraction = Extract<ClientInteraction, { kind: 'permission' }>;
 
+/** What the projection reads of the Host: the CLI's v2 plane gives all three. */
+export type AcpClientPlane = Pick<InkClientPlane, 'observe' | 'readItem' | 'respondInteraction'>;
+
 /** ACP is append-only: project the Host's stable items, never execute local callbacks. */
 export async function observeAcpClientPrompt(
-  client: KodaXProductClient,
+  plane: AcpClientPlane,
   sessionId: string,
   notify: (notification: SessionNotification) => Promise<void>,
   permission: (request: PermissionInteraction) => Promise<ClientPermissionDecision>,
@@ -32,7 +36,7 @@ export async function observeAcpClientPrompt(
     const preview = part === 'text' ? item.text : item.tool?.inputText ?? '';
     const total = (part === 'text' ? item.totalTextLength : item.tool?.totalInputLength) ?? preview.length;
     if (total <= preview.length && (part === 'input' || !item.textOffset)) return preview.slice(from);
-    return readClientItemRange(offset => client.sessions.readItem(sessionId, item.id, { part, offset }), item.id,
+    return readClientItemRange(offset => plane.readItem(sessionId, item.id, { part, offset }), item.id,
       { offset: from, length: total, ...(part === 'text' ? { version: item } : {}) });
   }
 
@@ -90,7 +94,7 @@ export async function observeAcpClientPrompt(
       }
       void permission(request).then(async decision => {
         if (closed || !latest?.interactions.some(item => item.requestId === request.requestId)) return;
-        await client.interactions.respond(request.requestId, { kind: 'permission', decision });
+        await plane.respondInteraction(request.requestId, { kind: 'permission', decision });
       }).catch(fail);
     }
   }
@@ -111,21 +115,21 @@ export async function observeAcpClientPrompt(
     chain = chain.then(async () => { for (const item of view.items) await projectItem(item); })
       .catch(fail);
   }
-  const observation = await client.sessions.observe(sessionId, receive, { onStatus(status) {
+  const closeObservation = await plane.observe(sessionId, receive, { onStatus(status) {
     if (closed || status.state === 'live' || (status.state === 'closed' && status.reason === 'client')) return;
     closed = true;
     fail(new Error(status.message ?? `ACP Host observation ${status.state === 'interrupted' ? 'was interrupted' : 'is unavailable'}.`));
   } });
   await chain;
-  if (failure !== undefined) { observation.close(); throw failure; }
+  if (failure !== undefined) { closeObservation(); throw failure; }
   return {
     failed,
     async flush() {
-      const final = await client.sessions.observe(sessionId, receive);
-      final.close();
+      const closeFinal = await plane.observe(sessionId, receive);
+      closeFinal();
       await chain;
       if (failure !== undefined) throw failure;
     },
-    close() { closed = true; observation.close(); },
+    close() { closed = true; closeObservation(); },
   };
 }

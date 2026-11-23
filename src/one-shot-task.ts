@@ -177,7 +177,8 @@ function createUnattended(client: KodaXHostClient<'local'>, events: KodaXOptions
   };
 }
 
-async function awaitRun(client: KodaXHostClient<'local'>, runId: string): Promise<HostRun> {
+/** Waits as long as the Run takes, which may be longer than one `run.wait` allows. */
+export async function awaitHostRun(client: KodaXHostClient<'local'>, runId: string): Promise<HostRun> {
   for (;;) {
     try {
       const { run } = await client.call('run.wait', { runId, timeoutMs: RUN_WAIT_MS });
@@ -232,7 +233,7 @@ export async function runOneShotClientTask(input: OneShotClientTaskInput): Promi
     input.abortSignal?.addEventListener('abort', requestStop, { once: true });
     if (input.abortSignal?.aborted === true) requestStop();
     try {
-      const run = await awaitRun(client, runId);
+      const run = await awaitHostRun(client, runId);
       await progress.settled();
       const result = projectOneShotOutcome(run);
       if (result.success) options.events?.onComplete?.();
