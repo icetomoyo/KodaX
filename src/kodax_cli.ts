@@ -6,9 +6,7 @@ import { reportDaemonStartupPhase } from './runtime-daemon/startup-progress.js';
 import {
   exitCodeForOneShotResult,
 } from './one-shot-exit-code.js';
-import { toKodaXProductClient } from './client-runtime-adapter.js';
 import type { KodaXClientHostAuthorization } from './client-host-authorization.js';
-import { ensureRecoveringKodaXRuntime } from './recovering-runtime-client.js';
 
 declare const KODAX_CLI_LAZY_COMPONENTS: boolean | undefined;
 function loadCliComponent<T>(file: string, source: () => Promise<T>): Promise<T> {
@@ -190,6 +188,9 @@ import {
 } from '@kodax-ai/coding';
 import type { KodaXHostClient } from './host-protocol/host-client.js';
 import { connectReplHost, createReplHostBindings } from './repl-host/connect.js';
+import type { ReplLeases } from './repl-host/leases.js';
+import { toClientSession } from './repl-host/view.js';
+import { HostProtocolError } from './host-protocol/codec.js';
 import { KodaXClient, runKodaX, runManagedTask } from './trusted-coding-entry.js';
 import {
   cleanupRegisteredManagedChildren,
@@ -605,21 +606,25 @@ async function runOneShotOwnedProcess(
   }
 }
 
+/** The CLI's one connection to the Host, over v2, and the keys it lends the Host's Runs. */
+interface CliHost {
+  readonly client: KodaXHostClient<'local'>;
+  readonly leases: ReplLeases;
+}
+
 /**
- * FEATURE_298 T35 — one-shot runs, including raw Skill invocations,
- * travel the product client face: the Host owns session lifecycle, input
- * acceptance, and settlement; CLI flags become session settings.
+ * One-shot runs, including raw Skill invocations, run on the Host: it owns
+ * the Session, the input and the Run; CLI flags become Session settings.
  */
 async function runCliTaskViaClient(
-  runtime: KodaXRuntime,
+  host: CliHost,
   options: KodaXOptions,
   prompt: string,
-  authorizeExecution?: KodaXClientHostAuthorization,
 ): Promise<KodaXResult> {
   const { runOneShotClientTask } = await loadCliComponent('./one-shot-task.js', () => import('./one-shot-task.js'));
   return runOneShotOwnedProcess((abortSignal) => runOneShotClientTask({
-    client: toKodaXProductClient(runtime, authorizeExecution),
-    runtime,
+    client: host.client,
+    leases: host.leases,
     options,
     prompt,
     abortSignal,
@@ -2556,12 +2561,30 @@ function showBasicHelp(): void {
   );
 }
 
-async function loadResumableSessions(
-  runtime: KodaXRuntime,
-): Promise<SessionPickerItem[]> {
-  return (await toKodaXProductClient(runtime).sessions.list({
-    projectRoot: process.cwd(), scope: 'user', limit: Number.MAX_SAFE_INTEGER,
-  })).filter(session => session.msgCount > 0);
+async function loadResumableSessions(host: CliHost): Promise<SessionPickerItem[]> {
+  const sessions: SessionPickerItem[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await host.client.call('session.list', {
+      projectRoot: process.cwd(), limit: 200, ...(cursor !== undefined ? { cursor } : {}),
+    });
+    for (const session of page.items) {
+      const msgCount = session.messageCount ?? 0;
+      if (msgCount > 0) sessions.push({ ...toClientSession(session), msgCount });
+    }
+    cursor = page.nextCursor;
+  } while (cursor !== undefined);
+  return sessions;
+}
+
+/** The Session to resume, or `undefined` when the Host has none by that id. */
+async function readResumeTarget(host: CliHost, sessionId: string): Promise<{ readonly id: string; readonly archived?: boolean } | undefined> {
+  try {
+    return (await host.client.call('session.get', { sessionId })).session;
+  } catch (error: unknown) {
+    if (error instanceof HostProtocolError && error.kodaxCode === 'not_found') return undefined;
+    throw error;
+  }
 }
 
 function printProviderSetupCompletion(selection: {
@@ -4392,10 +4415,9 @@ complete -c kodax -l version -d 'Show version'`);
     noSession: sessionFlags.noSession,
     print: opts.print ? true : false,
   };
-  // FEATURE_298 T27 — fixed Host: the CLI client owns no extension
-  // runtime, integration hot reload, or A2A handle; the Host does.
-  let cliRuntime: KodaXRuntime | undefined;
-  let replHostClient: KodaXHostClient<'local'> | undefined;
+  // The CLI owns no extension runtime, integration hot reload or A2A
+  // handle; the Host does. Every command reaches it over one v2 connection.
+  let cliHost: CliHost | undefined;
   const cliCredentials = (await import('./cli-provider-credentials.js')).createCliProviderCredentialAccess(config);
   const authorizeCli: KodaXClientHostAuthorization = cliCredentials.authorizeExecution;
   let shouldHardExitAfterInteractiveCleanup = false;
@@ -4403,28 +4425,24 @@ complete -c kodax -l version -d 'Show version'`);
     console.error(chalk.dim(message)),
   );
 
-  const getCliRuntime = async (): Promise<KodaXRuntime> => {
-    if (cliRuntime !== undefined) return cliRuntime;
-    // FEATURE_298 T27 — the product is fixed to the independent Host
-    // (D01): interactive and print flows always start-or-attach the shared
-    // daemon owner. The Host process owns extensions, configured MCP, and
-    // the A2A plane; embedded construction remains a low-level SDK path
-    // and is never a product fallback.
-    cliRuntime = await ensureRecoveringKodaXRuntime({
-      daemonLifecycle: 'interactive',
-      requirements: { productClient: 1, sessionDrafts: 1, productExecutionAuthorization: 2, productActorAuthorization: 1, providerProbeAuthorization: 1, providerCredentialConnectionBinding: 1 },
-      onStartupProgress: startupProgress === undefined ? undefined
-        : (progress) => { startupProgress.update(cliStartupProgressMessage(progress)); },
-      clientInfo: {
-        name: 'kodax-cli',
-        title: 'KodaX CLI',
-        version,
-        clientType: 'cli',
-      },
-      defaultProvider: options.provider,
-      ...(options.model !== undefined ? { defaultModel: options.model } : {}),
-    }, authorizeCli);
-    return cliRuntime;
+  // Interactive and print flows start the shared Host or attach to it. The
+  // Host owns extensions, configured MCP and the A2A plane; the CLI never
+  // builds a Runtime of its own.
+  const getCliHost = async (): Promise<CliHost> => {
+    cliHost ??= await connectReplHost({
+      version,
+      authorize: authorizeCli,
+      ...(startupProgress !== undefined
+        ? { onStartupProgress: (progress: Parameters<typeof cliStartupProgressMessage>[0]) => { startupProgress.update(cliStartupProgressMessage(progress)); } }
+        : {}),
+      onError: (error: unknown) => emitKodaXDiagnostic({
+        source: 'repl:host',
+        level: 'warn',
+        message: 'The Host connection reported an error.',
+        detail: error instanceof Error ? error.message : String(error),
+      }),
+    });
+    return cliHost;
   };
 
   try {
@@ -4443,7 +4461,7 @@ complete -c kodax -l version -d 'Show version'`);
 
     // Session list: show a bounded preview; bare -r provides searchable navigation.
     if (options.session === 'list') {
-      const sessions = await loadResumableSessions(await getCliRuntime());
+      const sessions = await loadResumableSessions(await getCliHost());
       const visible = sessions.slice(0, 50);
       const lines = visible.map((session) => {
         const surface = session.surface ? ` ${session.surface}` : '';
@@ -4528,7 +4546,7 @@ complete -c kodax -l version -d 'Show version'`);
 
     let validatedResumeId: string | undefined;
     if (opts.resume === true) {
-      const sessions = await loadResumableSessions(await getCliRuntime());
+      const sessions = await loadResumableSessions(await getCliHost());
       if (sessions.length === 0) {
         console.log(
           chalk.yellow(
@@ -4546,20 +4564,14 @@ complete -c kodax -l version -d 'Show version'`);
       }
     } else if (typeof opts.resume === 'string') {
       startupProgress?.update('Loading session');
-      const resumeClient = toKodaXProductClient(await getCliRuntime());
+      const host = await getCliHost();
       startupProgress?.update('Loading session');
-      let found = false;
-      try {
-        const target = await resumeClient.sessions.read(opts.resume);
-        if (target.archived) throw new Error('Session is archived; unarchive it before resuming.');
-        found = true;
-        validatedResumeId = target.id;
-      } catch (error) {
-        if (!(error instanceof Error) || !error.message.startsWith('Session not found:')) throw error;
-      }
-      if (!found) {
+      const target = await readResumeTarget(host, opts.resume);
+      if (target?.archived === true) throw new Error('Session is archived; unarchive it before resuming.');
+      validatedResumeId = target?.id;
+      if (target === undefined) {
         const titleMatches = findSessionTitleMatches(
-          await loadResumableSessions(await getCliRuntime()),
+          await loadResumableSessions(host),
           opts.resume,
         );
         if (titleMatches.length === 1) {
@@ -4586,8 +4598,9 @@ complete -c kodax -l version -d 'Show version'`);
     }
 
     if (options.resume && options.resume !== validatedResumeId) {
-      const target = await toKodaXProductClient(await getCliRuntime()).sessions.read(options.resume);
-      if (target.archived) throw new Error('Session is archived; unarchive it before resuming.');
+      const target = await readResumeTarget(await getCliHost(), options.resume);
+      if (target === undefined) throw new Error(`Session not found: ${options.resume}`);
+      if (target.archived === true) throw new Error('Session is archived; unarchive it before resuming.');
     }
 
     // FEATURE_298 T27 — fixed to the independent Host: the client never
@@ -4615,7 +4628,7 @@ complete -c kodax -l version -d 'Show version'`);
             commands,
             async (prompt: string) =>
               runCliTaskViaClient(
-                await getCliRuntime(),
+                await getCliHost(),
                 {
                   ...kodaXOptions,
                   context: {
@@ -4624,12 +4637,11 @@ complete -c kodax -l version -d 'Show version'`);
                   },
                 },
                 prompt,
-                authorizeCli,
               ),
           );
           if (commandPrompt) {
             const result = await runCliTaskViaClient(
-              await getCliRuntime(),
+              await getCliHost(),
               {
                 ...kodaXOptions,
                 context: {
@@ -4638,7 +4650,6 @@ complete -c kodax -l version -d 'Show version'`);
                 },
               },
               commandPrompt,
-              authorizeCli,
             );
             emitJsonRunResultIfNeeded(options.outputMode, result);
             return;
@@ -4678,26 +4689,8 @@ complete -c kodax -l version -d 'Show version'`);
           );
         }
 
-        // The REPL runs on the Host over v2. A v1 connection the -r lookup
-        // above opened is left only once v2 holds the Host, so the Host
-        // never sees its last client leave in between.
-        const { client: hostClient, leases } = await connectReplHost({
-          version,
-          authorize: authorizeCli,
-          ...(startupProgress !== undefined
-            ? { onStartupProgress: (progress: Parameters<typeof cliStartupProgressMessage>[0]) => { startupProgress.update(cliStartupProgressMessage(progress)); } }
-            : {}),
-          onError: (error: unknown) => emitKodaXDiagnostic({
-            source: 'repl:host',
-            level: 'warn',
-            message: 'The Host connection reported an error.',
-            detail: error instanceof Error ? error.message : String(error),
-          }),
-        });
-        replHostClient = hostClient;
-        const lookupRuntime = cliRuntime;
-        cliRuntime = undefined;
-        await lookupRuntime?.close();
+        // The REPL runs on the Host over the connection the -r lookup above may already have opened.
+        const { client: hostClient, leases } = await getCliHost();
 
         const initialClientSettings = {
           ...(program.getOptionValueSource('provider') === 'cli' ? { provider: options.provider, model: options.model ?? null } : {}),
@@ -4793,7 +4786,7 @@ complete -c kodax -l version -d 'Show version'`);
         taskSurface: 'cli',
       },
     };
-    const result = await runCliTaskViaClient(await getCliRuntime(), cliOptions, userPrompt, authorizeCli);
+    const result = await runCliTaskViaClient(await getCliHost(), cliOptions, userPrompt);
     emitJsonRunResultIfNeeded(options.outputMode, result);
   } finally {
     let credentialCloseError: unknown;
@@ -4802,34 +4795,21 @@ complete -c kodax -l version -d 'Show version'`);
       catch (error) { credentialCloseError = error; }
     };
     if (shouldHardExitAfterInteractiveCleanup) {
-      const runtime = cliRuntime;
-      const hostClient = replHostClient;
-      cliRuntime = undefined;
-      replHostClient = undefined;
+      const host = cliHost;
+      cliHost = undefined;
       await closeCredentials();
       await cleanupInteractiveProcessResources({
-        closeRuntime: async () => {
-          hostClient?.close();
-          await runtime?.close();
-        },
+        closeRuntime: async () => { host?.client.close(); },
       });
     } else {
       // Non-interactive callers own their process and receive cleanup errors.
       await awaitLatestCodingMemoryReviewDrain(15_000);
       await closeCredentials();
-      replHostClient?.close();
-      replHostClient = undefined;
-      let runtimeCloseError: unknown;
-      try {
-        await cliRuntime?.close();
-      } catch (error: unknown) {
-        runtimeCloseError = error;
-      }
-      cliRuntime = undefined;
+      cliHost?.client.close();
+      cliHost = undefined;
       await shutdownDefaultLspService();
       await cleanupRegisteredManagedChildren({ scope: 'current-owner', includeCurrentOwner: true });
       await shutdownTracing();
-      if (runtimeCloseError !== undefined) throw runtimeCloseError;
     }
     if (credentialCloseError !== undefined) throw credentialCloseError;
     if (

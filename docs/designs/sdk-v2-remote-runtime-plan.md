@@ -2028,8 +2028,8 @@ Host 发出的宿主请求是通知 `lease.request`。三种租约合成一组�
 
 **REPL 切到 v2 的落地细节**（2026-11-22，未经用户确认）：
 
-- **入口**：`kodax` 交互模式（Ink 和经典两种）经 `src/repl-host/connect.ts` 连 Host。`connectReplHost` 建连接和租约，`createReplHostBindings` 把各个 Host 能力交给 REPL。适配层都在 `src/repl-host/`，每个文件对着真的 Host 测。print 模式、`-r` 的查找、`kodax daemon` 等子命令仍走 v1。
-- **一个进程只用一种协议跑 REPL**：`-r` 的查找先经 v1 打开连接，v2 连上之后立刻关掉它。先连后关，Host 不会在中间看到最后一个客户端离开。
+- **入口**：`kodax` 交互模式（Ink 和经典两种）经 `src/repl-host/connect.ts` 连 Host。`connectReplHost` 建连接和租约，`createReplHostBindings` 把各个 Host 能力交给 REPL。适配层都在 `src/repl-host/`，每个文件对着真的 Host 测。2026-11-23 起 print 模式、`-r` 的查找和 `-s list` 也走 v2（"打印模式的落地细节"）；`kodax daemon` 等子命令仍走 v1。
+- **一个进程只用一条连接**：`-r` 的查找、print 模式和 REPL 共用 CLI 打开的那一条 v2 连接。
 - **Host 的去留**：v1 交互模式启动的 Host 在最后一个客户端离开约 30 秒后、没有剩余工作时退出。v2 启动器原来没有这个选项，启动的 Host 会一直运行。`ensureKodaXHostClient` 加了 `exitWhenIdle`，REPL 打开它。已经在运行的 Host 保持自己的策略。
 - **恢复时的租约**：补上"凭证租约的落地细节"里记的缺口。`connectReplHost` 给 `recoveryLeases`：先用 `run.get` 查到 Run 所属的 Session，再按 `recovery` 请求向 CLI 授权器要租约。
 - **会话**：
@@ -2376,16 +2376,30 @@ v1 只需要在 **Host** 里保留一段时间，原因是一台机器上的 Hos
 - 删除线（2026-11-22 用户决定）：`v0.7.100`，如果先发 `v0.8.0` 就在 `v0.8.0`。0.8.0 排在 0.7.100 之后，所以只有一条线。
 - 保证到期会删：`src/host-protocol-v1-removal.test.ts` 从第一个 0.7.100 版本（预发布也算）起失败，CI 拦住带着 v1 的发版。删 v1 的提交同时删掉这个测试。任务登记为 FEATURE_314。
 - CHANGELOG 提前公告：[Unreleased] 的 Deprecated 已经写上。
-- Host 遇到 v1 连接时打印弃用警告：等 KodaX 自己不再用 v1 之后再加（打印模式、`-r`、`daemon` 命令、`ensureKodaXHostClient` 里的 v1 启动和探测、`recovering-runtime-client`、导出的 v1 product client）。v1 `initialize` 不带客户端版本，在那之前警告会打到当前版本的客户端上。每个 v1 客户端实例只打一次。
+- Host 遇到 v1 连接时打印弃用警告：等 KodaX 自己不再用 v1 之后再加（`daemon` 命令、`ensureKodaXHostClient` 里的 v1 启动和探测、`recovering-runtime-client`、导出的 v1 product client）。v1 `initialize` 不带客户端版本，在那之前警告会打到当前版本的客户端上。每个 v1 客户端实例只打一次。
 - 窗口从发布 v2 的版本算起。v2 晚于 `v0.7.98` 发布时，同时带两个协议的版本不足 2 个，届时重新确认删除线。
 - 删除前要先落地的（2026-11-23 协议审查，用户同意，FEATURE_314 里有同样的清单）：
   - ~~`actor.spawn` 和 `actor.followup`~~：2026-11-23 落地（子代理的落地细节）。
   - M1c 第 3 项的授权方租约。
   - `kodax acp` 改走 v2：它现在开的是 v1 客户端（`acp_server.ts` 的 `ensureKodaXClient`）。
   - `kodax a2a` 的探测改走 v2，`agent.registration.*` 留给本机 owner。
-  - 打印模式像 REPL 一样读 v2 会话视图，`run.result` 的字段取自 v2 的 Run 结局。不加原始事件订阅，也不列为破坏性变更。
+  - ~~打印模式像 REPL 一样读 v2 会话视图~~：2026-11-23 落地（打印模式的落地细节）。
   - ~~Run 结局补上的字段~~：2026-11-23 落地（`RunOutcome` 一条）。
   - 记忆管理方法组（"记忆与技能学习"）。
+
+### 打印模式的落地细节
+
+2026-11-23 落地，未经用户确认的部分已标出。
+
+- **一条连接**：`kodax -p`、`-c`/`-r` 的查找、`-s list` 和 `/command` 都经 `connectReplHost` 连 Host，和 REPL 同一条 v2 连接、同一套租约。CLI 不再自己建 v1 Runtime。
+- **会话**：`--no-session`（以及不带会话参数的一次性调用）用新加的 `session.create` 参数 `temporary: true`，Run 结束时 Host 删掉会话；v1 本来就有这个字段，v2 handler 原样转过去。`-c` 在 git 根目录对应的项目里挑最新的、有消息的会话。
+- **设置**：命令行参数只管这一个 Run。保留的会话先读设置和 revision，带 `ifRevision` 改，结束后带改完的 revision 还原；中间有别的客户端改过，就保留它的改动并报一条警告。`workMode` 不还原，Run 开始后它属于会话。v2 没有 `reasoningMode`/`thinking`，`--reasoning` 和 `--thinking` 按 `mapLegacyReasoningModeToEffortIntent` 换成 `effort`，和 v1 一样每次都带（未经用户确认）。
+- **进度**（`src/one-shot-progress.ts`，未经用户确认）：每个视图减去上一个视图，报出回复和思考的增量、工具的开始/进度/结果、会话开始和流结束。视图里显示项不带 Run（已落盘的显示项没有 `runId`），所以以第一个视图里已有的显示项为界，之后出现的都算这次调用的。长文本只带结尾时，中间缺的部分先用 `item.read` 读回来再往后报。
+- **JSON 模式少了的事件**（未经用户确认）：`iteration.*`、`provider.*`、`retry`、`compact.*`、`managed_task.status`、`repo_intelligence.trace`、`turn.*`、`scout`。v2 视图里没有这些。CHANGELOG 列在 Changed，不列为破坏性变更。`run.result` 一行字段不变。
+- **结局**：`RunOutcome` 换成 CLI 的结果。completed 成功；cancelled/interrupted 是中断（退出码 130）；failed 带回答事实（signal 或 limitReached）且没有 `failure` 时照常返回，否则抛出 `failure.safeMessage`；unknown 抛错，不当成功。signal 转成大写。
+- **无人值守**：这次 Run 的审批一律拒绝，提问一律 `skip`（`non_interactive`），按 `interaction.runId` 过滤，不碰别的 Run。
+- **中断**：Ctrl-C 发 `run.stop`，结果仍由 Run 的结局决定。
+- **测试里发现的问题**（未处理）：Host 在本仓库这样的大 git 仓库里跑过一个 Run 后，关闭要 70 多秒；在空目录里不到 1 秒。测试把项目目录放在 Host 的临时 home 里绕开。原因还没查。
 
 ### 其他规则
 

@@ -26,6 +26,8 @@ interface InteractiveMainHarness {
   readonly createKodaXHostRuntime: ReturnType<typeof vi.fn>;
   readonly ensureKodaXRuntime: ReturnType<typeof vi.fn>;
   readonly connectReplHost: ReturnType<typeof vi.fn>;
+  /** What each one-shot Run was given: the options and the prompt. */
+  readonly oneShotRuns: Array<{ readonly options: Record<string, unknown>; readonly prompt: string }>;
   readonly runtimeOptions: unknown[];
   readonly runtimeStarts: unknown[];
   readonly runtimeDeletes: string[];
@@ -464,6 +466,14 @@ async function importMainWithMocks(options: {
     leases: async () => undefined,
   }));
   vi.doMock('./repl-host/connect.js', () => ({ connectReplHost, createReplHostBindings: vi.fn(() => ({})) }));
+  const oneShotRuns: InteractiveMainHarness['oneShotRuns'] = [];
+  vi.doMock('./one-shot-task.js', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('./one-shot-task.js')>()),
+    runOneShotClientTask: vi.fn(async (input: { options: Record<string, unknown>; prompt: string }) => {
+      oneShotRuns.push({ options: input.options, prompt: input.prompt });
+      return { success: true, lastText: 'done', messages: [], sessionId: 'session-1' };
+    }),
+  }));
   if (options.mockSdkRuntime !== false) {
     vi.doMock('./sdk-runtime.js', () => ({
       createKodaXHostRuntime,
@@ -561,6 +571,7 @@ async function importMainWithMocks(options: {
       createKodaXHostRuntime,
       ensureKodaXRuntime,
       connectReplHost,
+      oneShotRuns,
       runtimeOptions,
       runtimeStarts,
       runtimeDeletes,
@@ -1188,7 +1199,7 @@ describe('CLI interactive exit lifecycle', () => {
     }
   });
 
-  it('routes print mode through the configured daemon runtime', async () => {
+  it('runs print mode on the Host over v2', async () => {
     process.argv = ['node', 'kodax', '-p', 'inspect the repo'];
     const { main, harness } = await importMainWithMocks({
       config: { provider: 'mock-provider' },
@@ -1196,21 +1207,15 @@ describe('CLI interactive exit lifecycle', () => {
 
     await main();
 
-    expect(harness.ensureKodaXRuntime).toHaveBeenCalledOnce();
+    expect(harness.connectReplHost).toHaveBeenCalledOnce();
+    expect(harness.ensureKodaXRuntime).not.toHaveBeenCalled();
     expect(harness.createKodaXHostRuntime).not.toHaveBeenCalled();
-    expect(harness.runtimeOptions[0]).not.toHaveProperty('profile');
-    expect(harness.runtimeOptions[0]).not.toHaveProperty('externalAgents');
-    expect(harness.runtimeStarts).toHaveLength(1);
-    expect(harness.runtimeStarts[0]).toMatchObject({
-      sessionId: 'session-1',
-      text: 'inspect the repo',
-      delivery: 'immediate',
-    });
+    expect(harness.oneShotRuns).toEqual([expect.objectContaining({ prompt: 'inspect the repo' })]);
     expect(harness.runManagedTask).not.toHaveBeenCalled();
-    expect(harness.calls).toContain('runtime-close');
+    expect(harness.calls).toContain('host-close');
   });
 
-  it('removes the transient runtime session for --no-session runs', async () => {
+  it('asks for a temporary Session for --no-session runs', async () => {
     process.argv = ['node', 'kodax', '-p', 'stateless task', '--no-session'];
     const { main, harness } = await importMainWithMocks({
       config: { provider: 'mock-provider' },
@@ -1218,15 +1223,10 @@ describe('CLI interactive exit lifecycle', () => {
 
     await main();
 
-    expect(harness.runtimeStarts).toHaveLength(1);
-    expect(harness.runtimeStarts[0]).toMatchObject({
-      sessionId: 'session-1',
-      text: 'stateless task',
-      delivery: 'immediate',
-    });
-    // Temporary sessions are deleted by the Host at settlement, not client-side.
+    // No session option means a temporary Session, which the Host deletes when its Run ends.
+    expect(harness.oneShotRuns).toHaveLength(1);
+    expect(harness.oneShotRuns[0]?.options.session).toBeUndefined();
     expect(harness.runtimeDeletes).toEqual([]);
-    expect(harness.runManagedTask).not.toHaveBeenCalled();
   });
 
   it('applies CLI > env > config precedence to the provider on the fixed Host', async () => {
@@ -1238,12 +1238,8 @@ describe('CLI interactive exit lifecycle', () => {
 
     await main();
 
-    // FEATURE_298 T27 — the product is fixed to the independent Host:
-    // env still wins over config for the provider, and the runtime is
-    // always the started-or-attached daemon owner.
-    expect(harness.runtimeOptions[0]).toMatchObject({
-      defaultProvider: 'env-provider',
-    });
+    // Env still wins over config for the provider the Run uses.
+    expect(harness.oneShotRuns[0]?.options).toMatchObject({ provider: 'env-provider' });
   });
 
   it('ignores the retired worker.configuredA2A key and stays on the fixed Host', async () => {
@@ -1257,11 +1253,10 @@ describe('CLI interactive exit lifecycle', () => {
 
     await main();
 
-    expect(harness.ensureKodaXRuntime).toHaveBeenCalledOnce();
+    expect(harness.connectReplHost).toHaveBeenCalledOnce();
+    expect(harness.ensureKodaXRuntime).not.toHaveBeenCalled();
     expect(harness.createKodaXHostRuntime).not.toHaveBeenCalled();
-    expect(harness.runtimeOptions[0]).not.toHaveProperty('isolation');
-    expect(harness.runtimeOptions[0]).not.toHaveProperty('worker');
-    expect(harness.runtimeOptions[0]).not.toHaveProperty('externalAgents');
+    expect(harness.oneShotRuns[0]?.options).not.toHaveProperty('worker');
   });
 
   it('does not fall through to interactive mode after daemon subcommands', async () => {

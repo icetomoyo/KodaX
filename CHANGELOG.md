@@ -24,6 +24,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- v2 `session.create` takes `temporary`: the Host deletes the Session when its
+  Run ends, also when no client is attached any more.
 - A v2 client can manage the notes the agent keeps, from any role: list them
   with candidates the agent proposed, read one, write one, change one at the
   revision it read, approve a candidate, and forget one
@@ -70,8 +72,15 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- Interactive `kodax` (Ink and classic) now runs on the Host over the v2
-  protocol. Print mode, `-r` lookup and the `daemon` commands still use v1.
+- Interactive `kodax` (Ink and classic), print mode (`-p`), the `-r` lookup
+  and `-s list` now run on the Host over the v2 protocol, on one connection.
+  The `daemon` commands still use v1.
+  - Print mode shows the reply, thinking and tool calls from the Session view.
+    `--mode json` no longer writes `iteration.*`, `provider.*`, `retry`,
+    `compact.*`, `managed_task.status`, `repo_intelligence.trace`, `turn.*`
+    or `scout` events. The `run.result` line keeps its fields.
+  - In print mode `--reasoning` and `--thinking` set the effort they stand
+    for.
   - `/compact` reports the token counts the Host returns.
   - `/copy` reads the last reply from the Host, in full when it was cut short.
   - `/extensions` lists the loaded extensions and recent failures. The
