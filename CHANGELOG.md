@@ -6,6 +6,34 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- RepoIntel keeps to what git can answer by default (FEATURE_317). Its
+  name-matched semantic index sampled at 42.7% precision and 55.1% recall
+  on call targets, yet it was on the default tool surface, in automatic
+  context and in background builds. Now:
+  - under the default `auto` mode, agents get `repo_overview`,
+    `changed_scope` and `changed_diff`. The semantic tools (`module_context`,
+    `symbol_context`, `process_context`, `impact_estimate`,
+    `relationship_scan`, `cyclic_dependencies`, `semantic_lookup`), the
+    injected module and impact context and the background index build need
+    `repoIntelligenceMode` `full` or `light`, or
+    `KODAX_REPO_INTELLIGENCE=full|light`. Routing signals come from the git
+    change set. Direct SDK calls such as `getModuleContext` still run the
+    index;
+  - truncated lists report how many items were left out, a name the index
+    does not know is a not-found error, and an index that does not respond
+    reports warming or unavailable. There is no placeholder result and no
+    fallback to the largest module;
+  - `changed_scope` pages its file list, injected context no longer carries
+    timestamps, and an unknown git state counts as changed;
+  - the index is stored under `<config home>/repo-intelligence/` instead of
+    `.agent/repo-intelligence/` in the workspace. That old directory is no
+    longer used and can be deleted.
+    `KODAX_REPO_INTELLIGENCE_STORAGE_DIR` overrides the location.
+    `target_path` outside the working directory and its Git root is an
+    error.
+
 ---
 
 ## [0.7.97-rc.1] - 2026-11-23
