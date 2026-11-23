@@ -33,7 +33,8 @@ test('bundled optional CLI roots retain populated help and real command parsing'
     assert.match(run(['sandbox', '--help'], env), /doctor/);
     assert.match(run(['extensions', '--help'], env), /reload/);
     assert.match(run(['config', 'template', 'core'], env), /provider/);
-    assert.equal(run(['extensions', 'list'], env).trim(), '[]');
+    assert.equal(run(['extensions', 'list'], env).trim(), 'No extensions.');
+    assert.equal(run(['extensions', 'list', '--json'], env).trim(), '[]');
     assert.match(run(['integrations', 'status'], env), /mcp/);
     assert.match(run(['acp', 'serve', '--help'], env), /stdio ACP server/);
     assert.match(run(['auth', '--help'], env), /login/);

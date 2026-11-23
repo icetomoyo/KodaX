@@ -34,6 +34,7 @@ import {
 } from "@kodax-ai/repl";
 import type { Command } from "commander";
 import { INTEGRATION_COMMAND_DESCRIPTIONS } from './integration-cli-lazy.js';
+import { reported, withJsonOption } from './cli/output.js';
 
 import {
   migrateA2AIntegrationV1,
@@ -81,18 +82,12 @@ import {
   sandboxSetupGuidance,
 } from "./sandbox-runtime.js";
 
-type Output = (value: string) => void;
-
 function stdout(value: string): void {
   process.stdout.write(`${value}\n`);
 }
 
 function stderr(value: string): void {
   process.stderr.write(`${value}\n`);
-}
-
-function json(value: unknown, output: Output = stdout): void {
-  output(JSON.stringify(value, null, 2));
 }
 
 async function assertA2AConfigOwnerCompatible(
@@ -427,11 +422,10 @@ function configureConfigCommands(program: Command, root?: Command): void {
         ).trimEnd(),
       );
     });
-  config
+  withJsonOption(config
     .command("paths")
-    .description("Print active and example configuration paths")
-    .action(() =>
-      json({
+    .description("Print active and example configuration paths"))
+    .action(reported(() => ({
         home: KODAX_DIR,
         core: KODAX_CONFIG_FILE,
         integrations: {
@@ -441,8 +435,7 @@ function configureConfigCommands(program: Command, root?: Command): void {
         },
         coreExample: KODAX_EXAMPLE_CONFIG_FILE,
         integrationExamples: KODAX_INTEGRATION_EXAMPLE_FILES,
-      }),
-    );
+      })));
 }
 
 interface IntegrationDiskStatus {
@@ -504,31 +497,24 @@ function integrationStatus(): readonly IntegrationDiskStatus[] {
 
 function configureIntegrationManagement(program: Command, root?: Command): void {
   const integrations = root ?? program.command('integrations').description(INTEGRATION_COMMAND_DESCRIPTIONS.integrations);
-  integrations.command("status").action(() => json(integrationStatus()));
-  integrations.command("validate").action(() => {
-    const domains = integrationStatus();
-    json({ ok: domains.every((domain) => domain.state === "valid"), domains });
-  });
-  integrations
+  withJsonOption(integrations.command("status").description("Show whether each integration file is valid; exits 1 if one is not"))
+    .action(reported(integrationStatus, integrationStatusText, allIntegrationsValid));
+  withJsonOption(integrations.command("validate").description("Check every integration file; exits 1 if one is invalid"))
+    .action(reported(integrationValidation, (result) => integrationStatusText(result.domains), (result) => result.ok));
+  withJsonOption(integrations
     .command("reload")
     .description(
       "Validate current disk snapshots; running hosts watch independently",
-    )
-    .action(() => {
-      const domains = integrationStatus();
-      json({
-        ok: domains.every((domain) => domain.state === "valid"),
-        domains,
-      });
-    });
-  integrations
+    ))
+    .action(reported(integrationValidation, (result) => integrationStatusText(result.domains), (result) => result.ok));
+  withJsonOption(integrations
     .command("migrate")
     .option("--apply", "Create missing split files")
     .option(
       "--cleanup-legacy",
       "Remove migrated legacy fields from config.json",
-    )
-    .action((options: { apply?: boolean; cleanupLegacy?: boolean }) => {
+    ))
+    .action(reported((options: { apply?: boolean; cleanupLegacy?: boolean }) => {
       if (options.cleanupLegacy && !options.apply) {
         throw new Error("--cleanup-legacy requires --apply.");
       }
@@ -538,24 +524,40 @@ function configureIntegrationManagement(program: Command, root?: Command): void 
             cleanupLegacy: options.cleanupLegacy === true,
           })
         : planLegacyIntegrationMigration(KODAX_DIR);
-      json(result);
-    });
+      return result;
+    }));
+}
+
+function allIntegrationsValid(domains: readonly IntegrationDiskStatus[]): boolean {
+  return domains.every((domain) => domain.state === "valid");
+}
+
+function integrationValidation(): { readonly ok: boolean; readonly domains: readonly IntegrationDiskStatus[] } {
+  const domains = integrationStatus();
+  return { ok: allIntegrationsValid(domains), domains };
+}
+
+function integrationStatusText(domains: readonly IntegrationDiskStatus[]): string {
+  return domains.map((domain) => {
+    const line = `${domain.domain.padEnd(11)}${domain.state.padEnd(8)}${domain.path}`;
+    return domain.diagnostic === undefined ? line : `${line}\n  ${domain.diagnostic}`;
+  }).join("\n");
 }
 
 function configureMcpCommands(program: Command, root?: Command): void {
   const mcp = root ?? program.command('mcp').description(INTEGRATION_COMMAND_DESCRIPTIONS.mcp);
-  mcp
-    .command("list")
-    .action(() => json(readMcpIntegration(KODAX_DIR).document.servers));
-  mcp
+  withJsonOption(mcp.command("list").description("List configured MCP servers"))
+    .action(reported(() => readMcpIntegration(KODAX_DIR).document.servers, mcpServersText));
+  withJsonOption(mcp
     .command("add <name>")
+    .description("Add or replace an MCP server"))
     .option("--command <command>", "stdio command")
     .option("--arg <value>", "stdio argument (repeatable)", repeat, [])
     .option("--cwd <dir>", "stdio working directory")
     .option("--url <url>", "HTTP/SSE endpoint")
     .option("--transport <type>", "stdio, sse, http, or streamable-http")
     .option("--connect <mode>", "lazy, prewarm, or disabled", "lazy")
-    .action(
+    .action(reported(
       (
         name: string,
         options: {
@@ -583,12 +585,23 @@ function configureMcpCommands(program: Command, root?: Command): void {
               url: options.url!,
               connect: options.connect as "lazy",
             };
-        json({ name, config: upsertMcpServer(name, server) });
+        return { name, config: upsertMcpServer(name, server) };
       },
-    );
-  mcp
-    .command("remove <name>")
-    .action((name: string) => json({ name, removed: removeMcpServer(name) }));
+      (result) => `Saved MCP server ${result.name}.`,
+    ));
+  withJsonOption(mcp.command("remove <name>").description("Remove an MCP server"))
+    .action(reported(
+      (name: string) => ({ name, removed: removeMcpServer(name) }),
+      (result) => result.removed ? `Removed MCP server ${result.name}.` : `No MCP server named ${result.name}.`,
+    ));
+}
+
+function mcpServersText(servers: Readonly<Record<string, McpServerConfig>>): string {
+  const lines = Object.entries(servers).map(([name, server]) => {
+    const target = server.type === "stdio" ? [server.command, ...(server.args ?? [])].join(" ") : server.url;
+    return `${name}  ${server.type}  ${target}`;
+  });
+  return lines.length > 0 ? lines.join("\n") : "No MCP servers.";
 }
 
 async function writeExtensions(paths: readonly string[]): Promise<void> {
@@ -618,12 +631,13 @@ async function validateExtensions(paths: readonly string[]): Promise<void> {
 
 function configureExtensionCommands(program: Command, root?: Command): void {
   const extensions = root ?? program.command('extensions').description(INTEGRATION_COMMAND_DESCRIPTIONS.extensions);
-  extensions
-    .command("list")
-    .action(() => json(readExtensionsIntegration(KODAX_DIR).document.paths));
-  extensions
-    .command("add <extensionPath>")
-    .action(async (extensionPath: string) => {
+  withJsonOption(extensions.command("list").description("List configured extensions"))
+    .action(reported(
+      () => readExtensionsIntegration(KODAX_DIR).document.paths,
+      (paths) => paths.length > 0 ? paths.join("\n") : "No extensions.",
+    ));
+  withJsonOption(extensions.command("add <extensionPath>").description("Validate and add an extension"))
+    .action(reported(async (extensionPath: string) => {
       const resolved = await resolveExtensionEntrypoint(
         path.resolve(extensionPath),
       );
@@ -631,11 +645,10 @@ function configureExtensionCommands(program: Command, root?: Command): void {
       const current = readExtensionsIntegration(KODAX_DIR).document.paths;
       if (!current.includes(resolved))
         await writeExtensions([...current, resolved]);
-      json({ added: resolved });
-    });
-  extensions
-    .command("remove <extensionPath>")
-    .action(async (extensionPath: string) => {
+      return { added: resolved };
+    }, (result) => `Added extension ${result.added}.`));
+  withJsonOption(extensions.command("remove <extensionPath>").description("Remove an extension"))
+    .action(reported(async (extensionPath: string) => {
       let resolved = path.resolve(extensionPath);
       try {
         resolved = await resolveExtensionEntrypoint(resolved);
@@ -645,16 +658,16 @@ function configureExtensionCommands(program: Command, root?: Command): void {
       const current = readExtensionsIntegration(KODAX_DIR).document.paths;
       const next = current.filter((item) => path.resolve(item) !== resolved);
       await writeExtensions(next);
-      json({ removed: current.length !== next.length, path: resolved });
-    });
-  extensions
+      return { removed: current.length !== next.length, path: resolved };
+    }, (result) => result.removed ? `Removed extension ${result.path}.` : `No extension at ${result.path}.`));
+  withJsonOption(extensions
     .command("reload")
-    .description("Validate the complete candidate set atomically")
-    .action(async () => {
+    .description("Validate the complete candidate set atomically"))
+    .action(reported(async () => {
       const paths = readExtensionsIntegration(KODAX_DIR).document.paths;
       await validateExtensions(paths);
-      json({ ok: true, validated: paths.length });
-    });
+      return { ok: true, validated: paths.length };
+    }, (result) => `Validated ${result.validated} extension${result.validated === 1 ? "" : "s"}.`));
 }
 
 function parseListenPort(raw: string | undefined): number {
@@ -687,11 +700,11 @@ function groupPairs(
 }
 
 function configureA2AExpose(command: Command, version: string): void {
-  command
+  withJsonOption(command
     .command("expose [agent]")
     .description(
       "Publish the Runtime default Agent or one ~/.kodax/agents Markdown Agent",
-    )
+    ))
     .option("--name <name>", "Public Agent Card name", "KodaX Agent")
     .option(
       "--description <text>",
@@ -764,7 +777,7 @@ function configureA2AExpose(command: Command, version: string): void {
       "Port the Runtime daemon Host serves A2A on",
     )
     .option("--data-dir <dir>", "Durable task store", "~/.kodax/a2a/tasks")
-    .action(
+    .action(reported(
       async (
         agent: string | undefined,
         options: {
@@ -913,16 +926,16 @@ function configureA2AExpose(command: Command, version: string): void {
         });
         await assertA2AConfigOwnerCompatible();
         setA2AServerConfig(KODAX_DIR, parsed.server);
-        json({
+        return {
           configured: true,
           server: parsed.server,
           credential:
             options.auth === "bearer-env"
               ? `env:${options.tokenEnv}`
               : "external-oauth2-issuer",
-        });
+        };
       },
-    );
+    ));
 }
 
 async function serveA2A(options: {
@@ -983,24 +996,23 @@ function configureA2ACommands(
   root?: Command,
 ): void {
   const a2a = root ?? program.command('a2a').description(INTEGRATION_COMMAND_DESCRIPTIONS.a2a);
-  a2a
+  withJsonOption(a2a
     .command("migrate")
     .description(
       "Explicitly migrate a legacy non-empty A2A version 1 file to version 2",
-    )
+    ))
     .option(
       "--confirm-daemons-stopped",
       "Confirm every daemon using this config home has been stopped",
     )
-    .action(async (options: { confirmDaemonsStopped?: boolean }) => {
+    .action(reported(async (options: { confirmDaemonsStopped?: boolean }) => {
       const inspection = inspectA2AIntegration(KODAX_DIR);
       if (inspection.sourceVersion === 2) {
-        json({
+        return {
           migrated: false,
           path: inspection.snapshot.path,
           version: inspection.snapshot.document.version,
-        });
-        return;
+        };
       }
       if (options.confirmDaemonsStopped !== true) {
         throw new Error(
@@ -1012,15 +1024,15 @@ function configureA2ACommands(
         KODAX_DIR,
         inspection.snapshot.revision,
       );
-      json({
+      return {
         migrated: result.migrated,
         path: result.snapshot.path,
         version: result.snapshot.document.version,
-      });
-    });
-  a2a
+      };
+    }));
+  withJsonOption(a2a
     .command("migrate-tasks")
-    .description("Plan or apply the offline pre-realm A2A task-owner migration")
+    .description("Plan or apply the offline pre-realm A2A task-owner migration"))
     .option(
       "--subject <id>",
       "OAuth subject whose existing tasks should be migrated",
@@ -1030,7 +1042,7 @@ function configureA2ACommands(
       "--confirm-server-stopped",
       "Confirm the A2A server using this task store has been stopped",
     )
-    .action(
+    .action(reported(
       (options: {
         subject?: string;
         apply?: boolean;
@@ -1065,20 +1077,18 @@ function configureA2ACommands(
           }
           securityRealm = `oauth2-jwt:${server.authentication.issuer}`;
         }
-        json(
-          migrateA2ALegacyTaskOwners({
-            dataDir: server.dataDir,
-            mappings: [{ subject, securityRealm }],
-            apply: options.apply === true,
-          }),
-        );
+        return migrateA2ALegacyTaskOwners({
+          dataDir: server.dataDir,
+          mappings: [{ subject, securityRealm }],
+          apply: options.apply === true,
+        });
       },
-    );
-  a2a
-    .command("list")
-    .action(() => json(readA2AIntegration(KODAX_DIR).document));
-  a2a
+    ));
+  withJsonOption(a2a.command("list").description("List configured Agents and the exposed server"))
+    .action(reported(() => readA2AIntegration(KODAX_DIR).document, a2aDocumentText));
+  withJsonOption(a2a
     .command("add <name> <cardUrl>")
+    .description("Add a third-party A2A Agent"))
     .option("--credential-env <name>", "Bearer token environment variable")
     .option("--oauth-scheme <name>", "Agent Card OAuth2 security scheme name")
     .option("--oauth-issuer <url>", "Trusted OAuth2 issuer identifier")
@@ -1121,7 +1131,7 @@ function configureA2ACommands(
       "unknown",
     )
     .option("--no-test", "Store without fetching the Agent Card")
-    .action(
+    .action(reported(
       async (
         name: string,
         cardUrl: string,
@@ -1211,65 +1221,68 @@ function configureA2ACommands(
         }
         await assertA2AConfigOwnerCompatible();
         upsertA2AOutboundAgent(KODAX_DIR, name, candidate);
-        json({
+        return {
           added: name,
           cardUrl,
           enabled: candidate.enabled,
           authentication:
             candidate.authentication?.type ??
             (candidate.credentialEnv ? "http-bearer" : "none"),
-        });
+        };
       },
-    );
-  a2a.command("remove <name>").action(async (name: string) => {
-    await assertA2AConfigOwnerCompatible();
-    json({ name, removed: removeA2AOutboundAgent(KODAX_DIR, name) });
-  });
-  a2a
+      (result) => `Added Agent ${result.added} (${result.enabled ? "enabled" : "disabled"}).`,
+    ));
+  withJsonOption(a2a.command("remove <name>").description("Remove a configured Agent"))
+    .action(reported(async (name: string) => {
+      await assertA2AConfigOwnerCompatible();
+      return { name, removed: removeA2AOutboundAgent(KODAX_DIR, name) };
+    }, (result) => result.removed ? `Removed Agent ${result.name}.` : `No Agent named ${result.name}.`));
+  withJsonOption(a2a
     .command("enable <name>")
-    .description("Hot-activate a configured Agent for new orchestration")
-    .action(async (name: string) => {
+    .description("Hot-activate a configured Agent for new orchestration"))
+    .action(reported(async (name: string) => {
       await assertA2AConfigOwnerCompatible();
       const snapshot = setA2AOutboundAgentEnabled(KODAX_DIR, name, true);
-      json({ name, enabled: snapshot.document.agents[name]?.enabled === true });
-    });
-  a2a
+      return { name, enabled: snapshot.document.agents[name]?.enabled === true };
+    }, a2aEnabledText));
+  withJsonOption(a2a
     .command("disable <name>")
-    .description("Stop new orchestration without canceling in-flight tasks")
-    .action(async (name: string) => {
+    .description("Stop new orchestration without canceling in-flight tasks"))
+    .action(reported(async (name: string) => {
       await assertA2AConfigOwnerCompatible();
       const snapshot = setA2AOutboundAgentEnabled(KODAX_DIR, name, false);
-      json({ name, enabled: snapshot.document.agents[name]?.enabled === true });
-    });
-  a2a
+      return { name, enabled: snapshot.document.agents[name]?.enabled === true };
+    }, a2aEnabledText));
+  withJsonOption(a2a
     .command("test <name>")
+    .description("Fetch and check a configured Agent's card"))
     .option("--allow-private", "One-shot private network authorization")
     .option("--allow-insecure-http", "One-shot plaintext HTTP authorization")
-    .action(async (name: string, options: A2ANetworkOverrides) => {
+    .action(reported(async (name: string, options: A2ANetworkOverrides) => {
       const result = await discoverConfiguredAgent(name, options);
-      json({
+      return {
         ok: true,
         name: result.card.name,
         version: result.card.version,
         skills: result.card.skills,
-      });
-    });
-  a2a
+      };
+    }));
+  withJsonOption(a2a
     .command("call <name> <prompt>")
+    .description("Send one prompt to a configured Agent and print its task"))
     .option("--allow-private", "One-shot private network authorization")
     .option("--allow-insecure-http", "One-shot plaintext HTTP authorization")
-    .action(
+    .action(reported(
       async (
         name: string,
         prompt: string,
         options: A2ANetworkOverrides,
-      ) => {
-        json(await callConfiguredAgent(name, prompt, options));
-      },
-    );
+      ) => callConfiguredAgent(name, prompt, options),
+    ));
   configureA2AExpose(a2a, version);
   a2a
     .command("serve")
+    .description("Run the Host in the foreground, serving A2A on a loopback port")
     .option("--host <hostname>", "Loopback hostname", "127.0.0.1")
     .option("--port <port>", "Non-zero listener port", parsePort, 8765)
     .addOption(removedHostProfileOption("kodax a2a serve"))
@@ -1302,28 +1315,40 @@ function configureA2ACommands(
 
 function configureSandboxCommands(program: Command, root?: Command): void {
   const sandbox = root ?? program.command('sandbox').description(INTEGRATION_COMMAND_DESCRIPTIONS.sandbox);
-  sandbox
-    .command("doctor")
-    .action(async () => {
+  withJsonOption(sandbox.command("doctor").description("Check the Skill-script isolation backend"))
+    .action(reported(async () => {
       const doctor = await doctorSandboxExecution();
-      json({
+      return {
         ...doctor,
         capability: sandboxRuntimeCapability(),
         guidance: sandboxSetupGuidance(doctor),
-      });
-    });
-  sandbox
+      };
+    }));
+  withJsonOption(sandbox
     .command("setup")
-    .description("Activate or diagnose the platform ASRT backend (Windows may show UAC)")
-    .action(async () => {
+    .description("Activate or diagnose the platform ASRT backend (Windows may show UAC)"))
+    .action(reported(async () => {
       const doctor = await doctorSandboxExecution();
       if (doctor.platform === "win32" && !doctor.ready) {
         stderr(
           "KodaX sandbox setup will request one-time UAC approval; the terminal itself does not need Administrator mode.",
         );
       }
-      json(await prepareSandboxRuntimeForSetup({ initialDoctor: doctor }));
-    });
+      return prepareSandboxRuntimeForSetup({ initialDoctor: doctor });
+    }));
+}
+
+function a2aEnabledText(result: { readonly name: string; readonly enabled: boolean }): string {
+  return `Agent ${result.name} is ${result.enabled ? "enabled" : "disabled"}.`;
+}
+
+function a2aDocumentText(document: A2AIntegrationDocument): string {
+  const agents = Object.entries(document.agents).map(([name, agent]) =>
+    `${name}  ${agent.enabled ? "enabled" : "disabled"}  ${agent.cardUrl}`);
+  const server = document.server
+    ? `Exposed: ${document.server.published.name}${document.server.listen ? ` on ${document.server.listen.hostname}:${document.server.listen.port}` : ""}`
+    : "Not exposed.";
+  return [...(agents.length > 0 ? agents : ["No Agents."]), server].join("\n");
 }
 
 export interface A2AServeDelegateInput {

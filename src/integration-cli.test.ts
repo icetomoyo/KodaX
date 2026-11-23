@@ -14,7 +14,7 @@ import path from "node:path";
 
 import { Command } from "commander";
 import { configureLazyIntegrationCommands } from './integration-cli-lazy.js';
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 let configHome = "";
 let previousKodaXHome: string | undefined;
@@ -57,6 +57,11 @@ async function runCommand(args: readonly string[]): Promise<string> {
   }
 }
 
+/** The machine-readable form, which tests compare field by field. */
+function runJson(args: readonly string[]): Promise<string> {
+  return runCommand([...args, "--json"]);
+}
+
 function legacyTaskRecord(
   taskId: string,
   subject: string,
@@ -94,6 +99,9 @@ function legacyTaskRecord(
 }
 
 describe("integration CLI", () => {
+  // A failed check sets the exit code; it must not leak into the next test or the runner.
+  afterEach(() => { process.exitCode = undefined; });
+
   it.each(['config', 'integrations', 'mcp', 'extensions', 'a2a', 'sandbox'])(
     'preserves the complete %s help tree through lazy registration', async name => {
       const outputs: string[] = [];
@@ -130,7 +138,7 @@ describe("integration CLI", () => {
       "--arg",
       "server.mjs",
     ]);
-    const listed = JSON.parse(await runCommand(["mcp", "list"])) as Record<
+    const listed = JSON.parse(await runJson(["mcp", "list"])) as Record<
       string,
       unknown
     >;
@@ -144,7 +152,7 @@ describe("integration CLI", () => {
     });
 
     await runCommand(["mcp", "remove", "local"]);
-    expect(JSON.parse(await runCommand(["mcp", "list"]))).toEqual({});
+    expect(JSON.parse(await runJson(["mcp", "list"]))).toEqual({});
   });
 
   it("creates an inert authenticated A2A server declaration without persisting a token", async () => {
@@ -219,17 +227,17 @@ describe("integration CLI", () => {
       "--disabled",
       "--no-test",
     ]);
-    let listed = JSON.parse(await runCommand(["a2a", "list"])) as {
+    let listed = JSON.parse(await runJson(["a2a", "list"])) as {
       readonly agents: Readonly<Record<string, { readonly enabled: boolean }>>;
     };
     expect(listed.agents.managed?.enabled).toBe(false);
 
     await runCommand(["a2a", "enable", "managed"]);
-    listed = JSON.parse(await runCommand(["a2a", "list"])) as typeof listed;
+    listed = JSON.parse(await runJson(["a2a", "list"])) as typeof listed;
     expect(listed.agents.managed?.enabled).toBe(true);
 
     await runCommand(["a2a", "disable", "managed"]);
-    listed = JSON.parse(await runCommand(["a2a", "list"])) as typeof listed;
+    listed = JSON.parse(await runJson(["a2a", "list"])) as typeof listed;
     expect(listed.agents.managed?.enabled).toBe(false);
   });
 
@@ -243,7 +251,7 @@ describe("integration CLI", () => {
       "--allow-insecure-http",
       "--no-test",
     ]);
-    const listed = JSON.parse(await runCommand(["a2a", "list"])) as {
+    const listed = JSON.parse(await runJson(["a2a", "list"])) as {
       readonly agents: Readonly<Record<string, { readonly network?: unknown }>>;
     };
     expect(listed.agents["private-http"]?.network).toEqual({
@@ -282,7 +290,7 @@ describe("integration CLI", () => {
       expect(readFileSync(file, "utf8")).toBe(legacy);
 
       const output = JSON.parse(
-        await runCommand(["a2a", "migrate", "--confirm-daemons-stopped"]),
+        await runJson(["a2a", "migrate", "--confirm-daemons-stopped"]),
       ) as { readonly migrated: boolean; readonly version: number };
       expect(output).toMatchObject({ migrated: true, version: 2 });
       expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({
@@ -316,7 +324,7 @@ describe("integration CLI", () => {
         "--data-dir",
         dataDir,
       ]);
-      const plan = JSON.parse(await runCommand(["a2a", "migrate-tasks"])) as {
+      const plan = JSON.parse(await runJson(["a2a", "migrate-tasks"])) as {
         readonly applied: boolean;
         readonly matchedLegacyTaskCount: number;
       };
@@ -327,7 +335,7 @@ describe("integration CLI", () => {
       ).rejects.toThrow(/confirm-server-stopped/i);
 
       const applied = JSON.parse(
-        await runCommand([
+        await runJson([
           "a2a",
           "migrate-tasks",
           "--apply",
@@ -393,7 +401,7 @@ describe("integration CLI", () => {
         /requires --subject/i,
       );
       const plan = JSON.parse(
-        await runCommand(["a2a", "migrate-tasks", "--subject", "oauth-client"]),
+        await runJson(["a2a", "migrate-tasks", "--subject", "oauth-client"]),
       ) as {
         readonly applied: boolean;
         readonly matchedLegacyTaskCount: number;
@@ -501,7 +509,7 @@ describe("integration CLI", () => {
       expect(readFileSync(file, "utf8")).toBe(document);
 
       const idempotentMigration = JSON.parse(
-        await runCommand(["a2a", "migrate"]),
+        await runJson(["a2a", "migrate"]),
       ) as {
         readonly migrated: boolean;
         readonly version: number;
@@ -590,7 +598,7 @@ describe("integration CLI", () => {
   });
 
   it("reports split paths and validates every current domain snapshot", async () => {
-    const paths = JSON.parse(await runCommand(["config", "paths"])) as {
+    const paths = JSON.parse(await runJson(["config", "paths"])) as {
       readonly home: string;
       readonly core: string;
       readonly integrations: Record<string, string>;
@@ -610,7 +618,7 @@ describe("integration CLI", () => {
     ]);
 
     const status = JSON.parse(
-      await runCommand(["integrations", "status"]),
+      await runJson(["integrations", "status"]),
     ) as Array<{
       readonly domain: string;
     }>;
@@ -619,10 +627,10 @@ describe("integration CLI", () => {
       "a2a",
       "extensions",
     ]);
-    await expect(runCommand(["integrations", "validate"])).resolves.toContain(
+    await expect(runJson(["integrations", "validate"])).resolves.toContain(
       '"ok": true',
     );
-    await expect(runCommand(["integrations", "reload"])).resolves.toContain(
+    await expect(runJson(["integrations", "reload"])).resolves.toContain(
       '"ok": true',
     );
     await expect(runCommand(["config", "template", "unknown"])).rejects.toThrow(
@@ -638,7 +646,7 @@ describe("integration CLI", () => {
     writeFileSync(file, "{ broken SECRET_VALUE", "utf8");
     try {
       const status = JSON.parse(
-        await runCommand(["integrations", "status"]),
+        await runJson(["integrations", "status"]),
       ) as Array<{
         readonly domain: string;
         readonly state: "valid" | "invalid";
@@ -658,7 +666,7 @@ describe("integration CLI", () => {
       expect(JSON.stringify(status)).not.toContain("SECRET_VALUE");
 
       const validation = JSON.parse(
-        await runCommand(["integrations", "validate"]),
+        await runJson(["integrations", "validate"]),
       ) as {
         readonly ok: boolean;
       };
@@ -666,6 +674,33 @@ describe("integration CLI", () => {
     } finally {
       if (previous === undefined) rmSync(file, { force: true });
       else writeFileSync(file, previous, "utf8");
+    }
+  });
+
+  it("prints readable text by default and exits 1 while an integration file is invalid", async () => {
+    await runCommand(["mcp", "add", "readable", "--command", "node", "--arg", "server.mjs"]);
+    try {
+      expect(await runCommand(["mcp", "list"])).toContain("readable  stdio  node server.mjs");
+      expect(await runCommand(["integrations", "status"])).toMatch(/^mcp\s+valid\s+\S/m);
+      expect(process.exitCode).toBeUndefined();
+    } finally {
+      await expect(runCommand(["mcp", "remove", "readable"])).resolves.toBe("Removed MCP server readable.\n");
+    }
+    const file = path.join(configHome, "integrations", "mcp.json");
+    const previous = readFileSync(file, "utf8");
+    writeFileSync(file, "{ broken", "utf8");
+    try {
+      for (const command of ["status", "validate", "reload"]) {
+        expect(await runCommand(["integrations", command])).toMatch(/^mcp\s+invalid\s+\S[^\n]*\n {2}\S/m);
+        expect(process.exitCode).toBe(1);
+        process.exitCode = undefined;
+        await runJson(["integrations", command]);
+        expect(process.exitCode).toBe(1);
+        process.exitCode = undefined;
+      }
+    } finally {
+      process.exitCode = undefined;
+      writeFileSync(file, previous, "utf8");
     }
   });
 
@@ -686,7 +721,7 @@ describe("integration CLI", () => {
     );
     try {
       const status = JSON.parse(
-        await runCommand(["integrations", "status"]),
+        await runJson(["integrations", "status"]),
       ) as Array<{
         readonly domain: string;
         readonly path: string;
@@ -738,7 +773,7 @@ describe("integration CLI", () => {
       "--connect",
       "prewarm",
     ]);
-    expect(JSON.parse(await runCommand(["mcp", "list"]))).toMatchObject({
+    expect(JSON.parse(await runJson(["mcp", "list"]))).toMatchObject({
       remote: {
         type: "streamable-http",
         url: "https://mcp.example.com/api",
@@ -759,16 +794,16 @@ describe("integration CLI", () => {
     );
 
     await runCommand(["extensions", "add", extensionDir]);
-    expect(JSON.parse(await runCommand(["extensions", "list"]))).toEqual([
+    expect(JSON.parse(await runJson(["extensions", "list"]))).toEqual([
       entrypoint,
     ]);
-    await expect(runCommand(["extensions", "reload"])).resolves.toContain(
+    await expect(runJson(["extensions", "reload"])).resolves.toContain(
       '"validated": 1',
     );
     await expect(
-      runCommand(["extensions", "remove", extensionDir]),
+      runJson(["extensions", "remove", extensionDir]),
     ).resolves.toContain('"removed": true');
-    expect(JSON.parse(await runCommand(["extensions", "list"]))).toEqual([]);
+    expect(JSON.parse(await runJson(["extensions", "list"]))).toEqual([]);
   });
 
   it("calls a configured loopback A2A Agent without application code", async () => {
@@ -873,7 +908,7 @@ describe("integration CLI", () => {
         expect.arrayContaining(["SendMessage", "GetTask"]),
       );
       await expect(
-        runCommand(["a2a", "remove", "loopback"]),
+        runJson(["a2a", "remove", "loopback"]),
       ).resolves.toContain('"removed": true');
     } finally {
       await new Promise<void>((resolve, reject) =>
@@ -1020,7 +1055,7 @@ describe("integration CLI", () => {
       baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
       try {
         await runCommand(["a2a", "add", name, `${baseUrl}/card`, "--no-test"]);
-        const result = await runCommand(["a2a", "call", name, label]);
+        const result = await runJson(["a2a", "call", name, label]);
         expect(result).toContain('"state": "completed"');
         expect(result).toContain(
           `data:application/octet-stream;base64,${raw.slice(0, 16)}`,

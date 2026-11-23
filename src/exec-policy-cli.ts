@@ -10,6 +10,7 @@ import {
   type KodaXShellPermissionMode,
 } from '@kodax-ai/coding';
 import { getGitRoot, KODAX_DIR } from '@kodax-ai/repl';
+import { JSON_OPTION_HELP } from './cli/output.js';
 
 export interface ExecPolicyCheckReport {
   readonly command: readonly string[];
@@ -46,7 +47,8 @@ export function configureKodaXExecPolicyCommand(
       '--host-executable <path>',
       'Exact host launcher executable used for qualified policy matching',
     )
-    .option('--pretty', 'Pretty-print JSON output')
+    .option('--json', JSON_OPTION_HELP)
+    .option('--pretty', 'Print indented JSON (implies --json)')
     .argument('<command...>', 'Command tokens to inspect')
     .allowUnknownOption()
     .action(async (
@@ -56,6 +58,7 @@ export function configureKodaXExecPolicyCommand(
         readonly mode?: KodaXShellPermissionMode;
         readonly hostExecutable?: string;
         readonly trustProjectPolicy?: boolean;
+        readonly json?: boolean;
         readonly pretty?: boolean;
       },
     ) => {
@@ -90,10 +93,19 @@ export function configureKodaXExecPolicyCommand(
       };
       const serialized = options.pretty === true
         ? JSON.stringify(report, null, 2)
-        : JSON.stringify(report);
+        : options.json === true ? JSON.stringify(report) : execPolicyReportText(report);
       (dependencies.writeOutput ?? ((text: string) => process.stdout.write(text)))(
         `${serialized}\n`,
       );
     });
   return execPolicy;
+}
+
+function execPolicyReportText(report: ExecPolicyCheckReport): string {
+  const decision = report.decision === 'unmatched'
+    ? 'unmatched (no rule applies; the permission mode decides)'
+    : `${report.decision}${report.criticalFallback ? ' (built-in critical fallback)' : ''}`;
+  const rules = report.matchedRules.map(rule =>
+    `  ${rule.decision}  ${rule.source} ${rule.sourcePath}: ${rule.justification}`);
+  return [`Decision: ${decision}`, ...(rules.length > 0 ? ['Matched rules:', ...rules] : [])].join('\n');
 }

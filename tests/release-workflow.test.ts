@@ -309,7 +309,7 @@ describe('GitHub release workflow', () => {
   it('rejects standalone binaries that emit more than one A2A document', () => {
     const source = readFileSync(resolve('scripts/build-binary.mjs'), 'utf8');
 
-    expect(source).toContain("['a2a', 'list']");
+    expect(source).toContain("['a2a', 'list', '--json']");
     expect(source).toContain('JSON.parse');
     expect(source).toContain('KODAX_HOME');
     expect(source).toContain('mkdtempSync');

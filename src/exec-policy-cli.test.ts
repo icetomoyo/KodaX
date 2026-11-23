@@ -15,12 +15,29 @@ describe('FEATURE_297 execpolicy CLI', () => {
       writeOutput: (text) => { output = text; },
     });
     await program.parseAsync([
-      'node', 'kodax', 'execpolicy', 'check', '--mode', 'full-access', '--', 'rm -f generated.txt',
+      'node', 'kodax', 'execpolicy', 'check', '--json', '--mode', 'full-access', '--', 'rm -f generated.txt',
     ]);
     expect(JSON.parse(output)).toMatchObject({
       permissionMode: 'full-access', decision: 'unmatched', criticalFallback: false,
       matchedRules: [],
     });
+  });
+
+  it('prints the decision and the matched rules as text by default', async () => {
+    const configHome = await mkdtemp(join(tmpdir(), 'kodax-execpolicy-text-'));
+    await writeFile(join(configHome, 'exec-policy.jsonc'), JSON.stringify({
+      rules: [{ prefix: ['git', 'push'], decision: 'forbidden', justification: 'Publishing is disabled' }],
+    }));
+    const outputs: string[] = [];
+    const program = new Command().name('kodax').exitOverride();
+    configureKodaXExecPolicyCommand(program, {
+      configHome, findProjectRoot: async () => null,
+      writeOutput: (text) => { outputs.push(text); },
+    });
+    await program.parseAsync(['node', 'kodax', 'execpolicy', 'check', '--', 'git', 'push']);
+    await program.parseAsync(['node', 'kodax', 'execpolicy', 'check', '--', 'git', 'status']);
+    expect(outputs[0]).toBe(`Decision: forbidden\nMatched rules:\n  forbidden  user ${join(configHome, 'exec-policy.jsonc')}: Publishing is disabled\n`);
+    expect(outputs[1]).toMatch(/^Decision: unmatched/);
   });
 
   it.each([
@@ -37,7 +54,7 @@ describe('FEATURE_297 execpolicy CLI', () => {
       configHome, findProjectRoot: async () => null,
       writeOutput: (text) => { output = text; },
     });
-    await program.parseAsync(['node', 'kodax', 'execpolicy', 'check', '--mode', 'full-access', '--', ...command]);
+    await program.parseAsync(['node', 'kodax', 'execpolicy', 'check', '--json', '--mode', 'full-access', '--', ...command]);
     expect(JSON.parse(output)).toMatchObject({
       permissionMode: 'full-access', decision: 'forbidden',
       matchedRules: [expect.objectContaining({ source: 'user' })],
@@ -69,6 +86,7 @@ describe('FEATURE_297 execpolicy CLI', () => {
       'kodax',
       'execpolicy',
       'check',
+      '--json',
       'node',
       '-e',
       `require('node:fs').writeFileSync('${marker}', 'executed')`,
@@ -100,7 +118,7 @@ describe('FEATURE_297 execpolicy CLI', () => {
     });
 
     await program.parseAsync([
-      'node', 'kodax', 'execpolicy', 'check', 'git status && rm -rf /',
+      'node', 'kodax', 'execpolicy', 'check', '--pretty', 'git status && rm -rf /',
     ]);
 
     expect(JSON.parse(output)).toMatchObject({
@@ -136,6 +154,7 @@ describe('FEATURE_297 execpolicy CLI', () => {
       'kodax',
       'execpolicy',
       'check',
+      '--json',
       '--host-executable',
       'cmd.exe',
       'curl',

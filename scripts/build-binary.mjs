@@ -544,7 +544,7 @@ async function verifyHostBinary(binaryPath) {
     }
     rmSync(lockPath);
     process.stdout.write('    ✓ standalone smoke: embedded auth help and read-only storage maintenance\n');
-    const result = spawnSync(smokeBinaryPath, ['a2a', 'list'], {
+    const result = spawnSync(smokeBinaryPath, ['a2a', 'list', '--json'], {
       cwd: packageDir,
       encoding: 'utf8',
       env: {
