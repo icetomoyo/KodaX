@@ -58,7 +58,11 @@ function fakeRuntime(): KodaXRuntime {
       location: 'user',
       path: `${HOME}/commands/review.md`,
       userInvocable: true,
-    }],
+    },
+    // What command.execute cannot run: the REPL's own command, a Skill's, and one no person may start.
+    { name: 'model', description: 'Switch the model', source: 'builtin' },
+    { name: 'ship', description: 'Ship it', source: 'skill' },
+    { name: 'hidden', description: 'For the model only', source: 'prompt', userInvocable: false }],
     skills: async filter => [{
       name: 'deploy',
       description: `Deploy ${filter?.projectRoot ?? 'everything'}`,
@@ -167,7 +171,7 @@ describe('v2 catalogs served by the v1 implementation', () => {
     });
   });
 
-  it('lists commands and Skills with their paths for the owner', async () => {
+  it('lists the commands command.execute runs, and Skills, with their paths for the owner', async () => {
     const owner = await connect('owner');
     expect(await owner.request('command.list', { projectRoot: '/work/app' })).toEqual({
       items: [{
@@ -2653,6 +2657,8 @@ describe('v2 read-only catalogs and statistics served by the v1 implementation',
     );
 
     expect(await names('command.list', { project: 'app' })).toContain('greet');
+    // The REPL's own commands are the REPL's: a client cannot run them through the Host.
+    expect(await names('command.list', { project: 'app' })).not.toContain('help');
     expect(await names('skill.list', { project: 'app' })).toContain('ship');
     // Without a project, a Host with a workspace lists what a Session created without one would have: the workspace root's.
     expect(await names('command.list')).not.toContain('greet');

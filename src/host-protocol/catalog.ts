@@ -106,6 +106,10 @@ export const CATALOG_METHODS = {
     params: hostParams({ provider: z.string().min(1).max(256), model: z.string().min(1).max(256).optional() }),
     result: hostList(z.string()),
   },
+  /**
+   * The commands `command.execute` runs: prompt commands and extension commands a person may start.
+   * The REPL's own commands, such as `/model`, are not among them; the REPL runs them itself.
+   */
   'command.list': {
     primitive: 'query',
     plane: 'data',

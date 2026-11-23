@@ -26,7 +26,7 @@ import type {
 
 import type { McpServerStatus, McpServerToolList } from '@kodax-ai/coding';
 import type {
-  RuntimeCompactSessionResult, RuntimeConfigReloadResult, RuntimeDaemonManagementState, RuntimeEffectiveConfigSnapshot, RuntimeExtensionListResult, RuntimeIdentity, RuntimeIntegrationHealth, RuntimeStatusSnapshot,
+  RuntimeCommandInfo, RuntimeCompactSessionResult, RuntimeConfigReloadResult, RuntimeDaemonManagementState, RuntimeEffectiveConfigSnapshot, RuntimeExtensionListResult, RuntimeIdentity, RuntimeIntegrationHealth, RuntimeStatusSnapshot,
   RuntimeConversationHistoryEntryChunk, RuntimeConversationHistorySlice, RuntimePermissionGrant, RuntimeRunAnswer, RuntimeRunStatus,
   RuntimeSession, RuntimeSessionPromotionResult, RuntimeSessionSettings, RuntimeSessionStatus, RuntimeSessionSummary, RuntimeTranscriptSearchResult,
   RuntimeMcpValidateResult, RuntimeVersionedValue, RuntimeWorkflowSnapshot, RuntimeWorkflowStartResult, RuntimeWorkflowSummary,
@@ -187,9 +187,10 @@ const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } =
   'provider.reasoning.efforts': async ({ provider, model }, v1) => (
     { items: await v1('provider.reasoning.efforts', defined({ provider, model })) }
   ),
-  'command.list': async ({ project, projectRoot }, v1, caller) => (
-    { items: await v1('command.list', defined({ projectRoot: await catalogProject(caller, project, projectRoot) })) }
-  ),
+  'command.list': async ({ project, projectRoot }, v1, caller) => {
+    const commands = await v1('command.list', defined({ projectRoot: await catalogProject(caller, project, projectRoot) })) as readonly RuntimeCommandInfo[];
+    return { items: commands.filter(runsThroughHost) };
+  },
   'command.readPrompt': async ({ sessionId, name, args }, v1) => (
     { prompt: await v1('invocations.readCommandPrompt', defined({ sessionId, name, args })) ?? undefined }
   ),
@@ -1568,6 +1569,14 @@ async function heldHostTools(v1: V1Call, leaseId: string): Promise<RuntimeHostTo
 
 function toToolLease({ id, tools }: RuntimeHostToolLease): Readonly<Record<string, unknown>> {
   return { id, kind: 'host_tool', tools };
+}
+
+/**
+ * Whether `command.execute` runs a command: a prompt or extension command a person may start.
+ * The REPL runs its own commands, and a Skill starts through an input that names it.
+ */
+function runsThroughHost(command: RuntimeCommandInfo): boolean {
+  return (command.source === 'prompt' || command.source === 'extension') && command.userInvocable !== false;
 }
 
 /** v1 names the states of a tool call by its own steps; v2 by what the client can do about them. */

@@ -87,6 +87,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `command.list` on v2 lists only the commands `command.execute` runs:
+  prompt and extension commands a person may start. The REPL's own commands,
+  which the Host could not run, are no longer among them.
 - A v2 service connection is no longer offered `interaction.respond`, which it
   may not call. Calling it now gets `method_not_found`.
 - A workflow's finished event now arrives after its run has settled, so a

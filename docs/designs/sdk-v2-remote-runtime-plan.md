@@ -1384,7 +1384,7 @@ Run 的限制与选项的落地细节（2026-11-21，未经用户确认）。这
 | v2 方法 | 原语 | 对应的 v1 方法 | 说明 |
 |---|---|---|---|
 | `agent.list` ★ | 查 | `agent.list`（新增） | M1a 已落地。列出创建会话时能选的 Agent，见"按名字选 Agent 的落地细节"。`agent.get` 不做（2026-11-21 改，未经用户确认） |
-| `command.list` ★ | 查 | `command.list` | M1a 已落地。`projectRoot` 只有 owner 能传；`path` 只发给 owner。2026-11-21 加了 `project` |
+| `command.list` ★ | 查 | `command.list` | M1a 已落地。`projectRoot` 只有 owner 能传；`path` 只发给 owner。2026-11-21 加了 `project`。2026-11-23 起只列 `command.execute` 能跑的 |
 | ~~`command.resolve`~~ | | `command.resolve` | 不进 v2（2026-11-21 改，未经用户确认），见下面的落地细节 |
 | `skill.list` ★ | 查 | `skill.list` | M1a 已落地。去掉恒为 `true` 的 `userInvocable` 和已弃用的 `userInvocableOnly`。2026-11-21 加了 `project` |
 | `skill.get` | 查 | `skill.describe`、`skill.read` | M1a 已转发。Host 路径只发给 owner |
@@ -2490,7 +2490,7 @@ KodaX 在实例契约里给出检查清单，但不实现：
 13. 2026-11-23 协议审查找到、r1 冻结前要做的（三份审查报告和综合结论在本地 `docs/research/2026-11-23-v2-*`）：
     - ~~错误：v1 的错误映射成 `internal` 时带着原始 message 发给客户端，而且不记日志。改成发通用说明和一个 `incidentId`，同一个编号写进日志。~~ 2026-11-23 落地，见"错误模型"。MCP 工具列表里单个服务器读不到时的 `error` 字段仍是原始信息，这是有意展示给客户端的服务器故障，没有改（未经用户确认）。
     - blob：提交后的 blob 只在 Session 删除时回收，没有删除方法，Host 共用 1 GiB 上限。Host 要自己回收不再被引用的 blob，客户端不知道哪些还在用。
-    - `command.list` 列出了 `command.execute` 跑不了的命令（REPL 内建命令，`runtime-product-commands.ts:92-111`）。要么只列能执行的，要么标出哪些只能在 REPL 里用。
+    - ~~`command.list` 列出了 `command.execute` 跑不了的命令（REPL 内建命令，`runtime-product-commands.ts:92-111`）。要么只列能执行的，要么标出哪些只能在 REPL 里用。~~ 2026-11-23 落地，选了只列能执行的（未经用户确认）：v2 只列 prompt 命令和扩展命令，且是用户能启动的。REPL 内建命令由 REPL 自己跑，它的补全和 `/help` 本来就读本地注册表；Skill 命令用 `input.submit` 发 `/name` 启动，`skill.list` 照旧列出。v1 的 `command.list` 不变。
     - ~~`initialize.methods` 对 service 列出了它不能调用的 `interaction.respond`（`connection.ts:166-168` 和 `access.ts:263-265` 不一致）。~~ 2026-11-23 落地：两边读同一张表（`access.ts` 的 `runtimeRoleRefusal`），v2 不再给 service 列这个方法，调用时报 `method_not_found`，和 Host 没有的方法一样；v1 仍报 `forbidden`。
     - 只写进文档：同一个 `instanceSecret` 被多个浏览器标签页共用时会互相顶掉，浏览器 SDK 本身不存它，所以只影响自己传它又持有租约的调用方；JWT 时钟偏差会让重连失败几次，每次重连都会取新凭证，能自己恢复。
     - 不改：`learning.*` 不合并成一个 `learning.decide`（闭合的动作枚举加一项就要升 revision）；review 的三个入口不合并（Space 的授权方把它们当成不同的类别）；附件放开到图片以外推迟，v1 本身也不收，以后的做法是把文件复制进工作目录、把路径写进输入。
