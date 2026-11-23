@@ -482,7 +482,7 @@ inputs changed:
 
   Persona, override and tool-policy roots now also get the compact Worker
   and tool text, which cut first-request input by about 28-34% in evals. See
-  [SDK_MIGRATION.md](docs/SDK_MIGRATION.md#统一提示词链路未发布).
+  [SDK_MIGRATION.md](docs/SDK_MIGRATION.md#统一提示词链路随-v0797-beta12-发布).
 
 - The skill-creator helper scripts now call the model in the way each job
   needs:

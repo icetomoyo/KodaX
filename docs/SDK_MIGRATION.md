@@ -14,10 +14,10 @@ Space 的可信授权绑定、canonical Fork/Retry/Rewind、宿主配置、附�
 Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` 保留，
 根运行都会向模型提供可用且已授权的 Skill 目录。运行时绑定生成的
 目录共用 8,000 UTF-16 单元上限；省略目录项不会删除已绑定的授权。
-`systemPromptOverride` 在根运行上的语义见[统一提示词链路](#统一提示词链路未发布)。
-`sa` 和 `amaw` 都是已弃用的输入，见 [SA 模式退役](#sa-模式退役未发布)。
+`systemPromptOverride` 在根运行上的语义见[统一提示词链路](#统一提示词链路随-v0797-beta12-发布)。
+`sa` 和 `amaw` 都是已弃用的输入，见 [SA 模式退役](#sa-模式退役随-v0797-beta12-发布)。
 
-## 统一提示词链路（未发布）
+## 统一提示词链路（随 v0.7.97-beta.12 发布）
 
 每个根运行都走 managed Worker，每个入口发出同一套工具说明。原来的直连根引擎和
 `system.md` 已删除。SDK 客户已不再直接依赖直连引擎，因此没有弃用期。
@@ -28,7 +28,7 @@ Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` �
   Actor 与 Workflow 工具。不需要这些工具时，用 `excludeTools` 或工具策略去掉。
 - `runs.start({ mode: 'coding' })` 和 daemon `run.start` 的 `mode: 'coding'` 仍被接受，但会被
   忽略并给出 `runtime.runs.start` 警告诊断；`agentMode: 'sa'` 同理。Run handle 的
-  `warnings` 会列出被忽略的输入（未发布），daemon 客户端同样可见。新 Run 的 `Run.mode` 一律是 `managed_task`。
+  `warnings` 会列出被忽略的输入（v0.7.97-beta.13 起），daemon 客户端同样可见。新 Run 的 `Run.mode` 一律是 `managed_task`。
   已持久化的 `coding` Run 记录照常可读，恢复时在 managed Worker 上继续。
 - 不带 `agentMode` 的根运行用 Worker 的精简段落（执行指导、Run Context 信任、收尾）。
   `agentMode: 'ama'` 的根运行用完整段落（信任与范围、并行工作、执行与交付）。两者来自同一个源头，
@@ -90,18 +90,18 @@ profile: await services.createExecutionProfile({
   包含 Managed Run Context 标记。所有条目文本合计不超过 8,000 字符。格式不对的 spec
   在开始工作前以 `invalid_params` 拒绝。
 
-`prompt` 用于根运行，现在所有根运行都是 managed（见[统一提示词链路](#统一提示词链路未发布)）。
+`prompt` 用于根运行，现在所有根运行都是 managed（见[统一提示词链路](#统一提示词链路随-v0797-beta12-发布)）。
 只有内部叶子执行器以 `prompt_spec_requires_managed_run` 拒绝它。Host 必须声明 `promptSpec.version === 1`；
 旧 Host 在输入发出前以 `daemon_upgrade_required` 拒绝。
 
-## SA 模式退役（未发布）
+## SA 模式退役（随 v0.7.97-beta.12 发布）
 
 `agentMode: 'sa'` 仍可传入，但不再选择任何行为，与 `amaw` 的处理方式相同：
 
 - `runManagedTask`、会话设置和 Product 输入收到 `'sa'` 时运行 AMA Worker。
   原来 SA 的子 Agent/Workflow 工具排除和 `[Direct Path Rule]` 叠加提示已删除。
 - `runKodaX` 和未指定 `mode` 的 `runs.start` 把 `'sa'` 当作未指定，运行不带 `agentMode` 的
-  managed Worker。直连引擎已删除，见[统一提示词链路](#统一提示词链路未发布)。
+  managed Worker。直连引擎已删除，见[统一提示词链路](#统一提示词链路随-v0797-beta12-发布)。
   新 Run 的 `effectiveConfig.agentMode` 和会话视图都报 `'ama'`。
 - 需要"不派子 Agent"的 Host 改用 `excludeTools`、`agentProfile` 或工具策略。
 - `runManagedTask` 带 `'sa'` 时，`context.systemPromptOverride` 按 AMA 语义作为 Worker 指令

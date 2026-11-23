@@ -1,6 +1,6 @@
 # KodaX Architecture Decision Records
 
-## Every root Run uses one Worker and one tool text — 2026-11-19 (unreleased)
+## Every root Run uses one Worker and one tool text — 2026-11-19 (shipped in v0.7.97-beta.12)
 
 The 2026-10-26/27 first-turn token work left the source text alone. It built the
 full system prompt and tool descriptions, then swapped in compact text when an
@@ -157,7 +157,7 @@ dispatched every time in both arms. No arm touched the child's file. glm now
 reads the test file before the root-owned edit in 3 of 4 samples (before: 0 of
 4), which costs one read.
 
-## SA mode is retired from every caller — 2026-11-18 (unreleased)
+## SA mode is retired from every caller — 2026-11-18 (shipped in v0.7.97-beta.12)
 
 ADR-072 moved CLI, REPL and unset Product turns to AMA but kept SA for explicit
 SDK Runs. That remainder still had effects. A config.json `agentMode: "sa"`

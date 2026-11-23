@@ -14,7 +14,7 @@ integration health and the client-exit recovery reasons — are covered in the
 [client contract view-item table](../../docs/CLIENT_CONTRACT.md) and
 [Space SDK seams](../../docs/SPACE_SDK_SEAMS.md);
 the beta.12 unified prompt chain, final Stop outcomes and prompt-spec changes
-are covered in [One prompt chain for every root Run](#one-prompt-chain-for-every-root-run-unreleased)
+are covered in [One prompt chain for every root Run](#one-prompt-chain-for-every-root-run-shipped-in-v0797-beta12)
 and [Actor settlement convergence v3](#actor-settlement-convergence-v3-unreleased-after-v0797-beta11);
 the beta.11 readable-history-during-a-Run changes and the beta.10 merged-input
 acknowledgement (`ClientViewItem.inputIds`) are covered in the
@@ -119,7 +119,7 @@ Explicit SDK profiles, specialist children and tool-visibility policies retain
 their declared scope instead of being replaced by product presets. CLI
 `--agent-mode sa/amaw` is a migration error. SDK input `agentMode: 'amaw'` is
 normalized to AMA. `'sa'` is deprecated and treated as unset, so managed entries run AMA.
-The direct engine is gone; see [One prompt chain for every root Run](#one-prompt-chain-for-every-root-run-unreleased).
+The direct engine is gone; see [One prompt chain for every root Run](#one-prompt-chain-for-every-root-run-shipped-in-v0797-beta12).
 Script availability does not prove model adoption or task-efficiency parity.
 
 Model-visible tool consolidation does not delete the underlying independently
@@ -141,9 +141,9 @@ metadata; changed or newly loaded tools require fresh authorization. Root
 This contract requires `productExecutionProfile.version === 2`; older Hosts fail
 explicitly. See the [Main example and boundaries](../../docs/SDK_MIGRATION.md#2026-10-30-sdk-组合契约修复未发布).
 
-#### One prompt chain for every root Run (unreleased)
+#### One prompt chain for every root Run (shipped in v0.7.97-beta.12)
 
-Chinese: [统一提示词链路](../../docs/SDK_MIGRATION.md#统一提示词链路未发布).
+Chinese: [统一提示词链路](../../docs/SDK_MIGRATION.md#统一提示词链路随-v0797-beta12-发布).
 
 Every root Run uses the managed Worker, and every entry sends the same tool
 descriptions. The direct root engine and its `system.md` prompt are removed.

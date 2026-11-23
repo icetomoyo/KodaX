@@ -2,8 +2,8 @@
 
 Date: 2026-11-20. Status: shipped in `v0.7.97-beta.12`.
 [Design block](../features/v0.7.97.md#feature_311-unified-prompt-chain),
-[ADR entry](../ADR.md#every-root-run-uses-one-worker-and-one-tool-text--2026-11-19-unreleased),
-[migration](../SDK_MIGRATION.md#统一提示词链路未发布).
+[ADR entry](../ADR.md#every-root-run-uses-one-worker-and-one-tool-text--2026-11-19-shipped-in-v0797-beta12),
+[migration](../SDK_MIGRATION.md#统一提示词链路随-v0797-beta12-发布).
 
 Every root Run uses the managed Worker, and every entry sends one tool text. This guide checks that
 from the outside. Run all commands from the repository root after `npm run build:packages`.
