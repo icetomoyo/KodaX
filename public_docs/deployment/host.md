@@ -213,12 +213,13 @@ with an unknown outcome and unanswered questions are lost.
 
 ### Questions nobody answers
 
-By default an approval request waits 5 minutes and an ordinary question waits
-forever. A question nobody answers keeps the Host busy, so it never reports
-`canStop`. On a platform, set a deadline:
+By default an approval request waits 30 minutes, then the call is rejected and
+the model carries on. An ordinary question waits forever. A question nobody
+answers keeps the Host busy, so it never reports `canStop`. On a platform, set a
+question deadline:
 
 ```bash
-kodax daemon serve --user-input-timeout-ms 1800000 --permission-timeout-ms 1800000
+kodax daemon serve --user-input-timeout-ms 1800000
 ```
 
 ## Health: `/healthz`

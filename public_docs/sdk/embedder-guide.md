@@ -4200,7 +4200,7 @@ The timeout defaults to `0`, disabling it; positive values are integer
 milliseconds up to 2,147,483,647. Defaults only suggest an answer for display.
 Skip/timeout returns `{ unanswered: true, reason: 'skipped' | 'timeout' | 'non_interactive' }`;
 the tool emits `{ success: true, status: 'unanswered', reason }` for the model
-to interpret normally. Permission approval keeps its separate five-minute
+to interpret normally. Permission approval keeps its separate thirty-minute
 default and fail-closed policy, with `permissionTimeoutMs: 0` disabling its
 timer. MCP elicitation retains its protocol-level lifecycle; an unanswered form
 field maps to the protocol's cancel result rather than being submitted as data.

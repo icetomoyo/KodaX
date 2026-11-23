@@ -15543,6 +15543,27 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
+  it("gives a permission request thirty minutes by default", async () => {
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
+    const runtime = await createKodaXRuntime({
+      homeDir: tempRoot,
+      sessionsDir: tempRoot,
+    });
+    const decision = runtime.permissions.request({
+      sessionId: "permission-default-deadline-session",
+      runId: "permission-default-deadline-run",
+      toolName: "bash",
+    });
+    const [pending] = await runtime.permissions.listPending({
+      runId: "permission-default-deadline-run",
+    });
+    if (pending?.expiresAt === undefined) throw new Error("expected a permission deadline");
+    expect(Date.parse(pending.expiresAt) - Date.parse(pending.createdAt)).toBe(30 * 60_000);
+    await runtime.permissions.respond(pending.id, { type: "reject" });
+    await decision;
+    await runtime.close();
+  });
+
   it("keeps zero as the explicit disabled permission deadline", async () => {
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({

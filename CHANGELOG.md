@@ -54,6 +54,10 @@ All notable changes to this project will be documented in this file.
   - `/extensions` lists the loaded extensions and recent failures. The
     commands they add are in `/help`.
   - The status panel reads its counts from the Host.
+- A permission request now waits 30 minutes instead of 5 before it is
+  rejected. The model still carries on after a rejection, and
+  `permissionTimeoutMs: 0` still turns the timer off. Questions still wait
+  until answered.
 
 ### Deprecated
 

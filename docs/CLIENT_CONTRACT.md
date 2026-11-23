@@ -706,7 +706,7 @@ matcher 匹配。它适用于同一 Agent Home 下的所有 Run，包括带授�
 宿主可用 `permissions.listGrants` 和 `revokeGrant` 查看与撤销授权。
 
 **每个交互都要结算。** 无人值守客户端必须回答或拒绝每个 Interaction。
-权限请求默认 5 分钟后按拒绝结算（`daemon serve --permission-timeout-ms`，0 表示无期限）。
+权限请求默认 30 分钟后按拒绝结算（`daemon serve --permission-timeout-ms`，0 表示无期限）。
 普通问题默认无期限（`--user-input-timeout-ms`，或新启动 Host 时的
 `ensureKodaXClient({ userInputTimeoutMs })`）；不设期限又无人回答时 Run 会一直等待。
 无法作答的客户端应像 one-shot CLI 一样处理本 Run 的交互：普通问题以

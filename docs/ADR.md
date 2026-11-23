@@ -6245,6 +6245,12 @@ Only the Host may originate timeout; MCP maps no answer to its protocol `cancel`
 Permission rejection and timeout policies are unchanged. This amends the bounded-AskUser
 and validated-default clauses below; the remaining decision still applies.
 
+**Amendment (2026-11-23)**: the permission default goes from five to thirty
+minutes, so a remote user who steps away does not lose the step. Timeout still
+rejects the one call and the model carries on; the Run does not fail.
+`permissionTimeoutMs: 0` still disables the timer. Ordinary AskUser requests are
+unchanged and still wait indefinitely by default.
+
 **Driver**: a host prompt or permission dialog can outlive the authoritative
 Runtime request, while an interactive host can race a prepared Session append
 with another durable writer and either hang or lose the newest tail.

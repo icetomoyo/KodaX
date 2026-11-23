@@ -959,7 +959,7 @@ export interface CreateKodaXRuntimeOptions {
   readonly sessionsDir?: string;
   readonly defaultProvider?: string;
   readonly defaultModel?: string;
-  /** Fail-closed permission deadline in milliseconds; 0 disables it. Defaults to five minutes. */
+  /** Fail-closed permission deadline in milliseconds; 0 disables it. Defaults to thirty minutes. */
   readonly permissionTimeoutMs?: number;
   /** Ordinary-question deadline in milliseconds; 0 (default) waits indefinitely. Expiry returns unanswered. */
   readonly userInputTimeoutMs?: number;
@@ -1049,7 +1049,7 @@ export interface ConnectKodaXRuntimeOptions {
   readonly sessionsDir?: string;
   readonly defaultProvider?: string;
   readonly defaultModel?: string;
-  /** Applied when this connection starts a new daemon owner; 0 disables it. Defaults to five minutes. */
+  /** Applied when this connection starts a new daemon owner; 0 disables it. Defaults to thirty minutes. */
   readonly permissionTimeoutMs?: number;
   /** Ordinary-question deadline for a new daemon; 0 (default) waits indefinitely. Expiry returns unanswered. */
   readonly userInputTimeoutMs?: number;
@@ -4145,7 +4145,8 @@ class RuntimeStatusLockTimeoutError extends Error {
   }
 }
 
-const DEFAULT_PERMISSION_TIMEOUT_MS = 5 * 60_000;
+// A remote user may step away; the timeout rejects the call and the Run goes on.
+const DEFAULT_PERMISSION_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_USER_INPUT_TIMEOUT_MS = 0;
 const MAX_RUNTIME_TIMEOUT_MS = 2_147_483_647;
 const MAX_RUNTIME_PENDING_EVENTS = 1_024;

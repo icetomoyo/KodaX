@@ -169,10 +169,10 @@ Host 这一段有 90 秒的总截止时间，之后的清理最多再花 160 秒
 
 ### 没人回答的提问
 
-默认情况下，审批请求等 5 分钟，普通提问一直等。没人回答的提问让 Host 一直处于忙碌状态，永远不会报 `canStop`。平台上应该设一个时限：
+默认情况下，审批请求等 30 分钟，超时后这次调用被拒绝，模型接着做。普通提问一直等。没人回答的提问让 Host 一直处于忙碌状态，永远不会报 `canStop`。平台上应该给提问设一个时限：
 
 ```bash
-kodax daemon serve --user-input-timeout-ms 1800000 --permission-timeout-ms 1800000
+kodax daemon serve --user-input-timeout-ms 1800000
 ```
 
 ## 健康检查：`/healthz`
