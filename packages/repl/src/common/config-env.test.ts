@@ -31,6 +31,7 @@ describe('config.json environment bindings', () => {
       { configPath: 'effort', env: 'KODAX_EFFORT' },
       { configPath: 'sessionRetentionDays', env: 'KODAX_SESSION_RETENTION_DAYS' },
       { configPath: 'lspAutoDownload', env: 'KODAX_LSP_DOWNLOAD' },
+      { configPath: 'cacheWarming', env: 'KODAX_CACHE_WARMING' },
       { configPath: 'repoIntelligenceMode', env: 'KODAX_REPO_INTELLIGENCE' },
     ]));
   });
@@ -45,6 +46,7 @@ describe('config.json environment bindings', () => {
       verifierLog: false,
       sessionRetentionDays: 14,
       lspAutoDownload: true,
+      cacheWarming: 'run',
       repoIntelligenceMode: 'full',
       repoIntelligence: { toolWaitMs: 250 },
       workflow: { maxConcurrency: 3 },
@@ -55,6 +57,7 @@ describe('config.json environment bindings', () => {
     expect(process.env.KODAX_VERIFIER_LOG).toBeUndefined();
     expect(process.env.KODAX_SESSION_RETENTION_DAYS).toBe('14');
     expect(process.env.KODAX_LSP_DOWNLOAD).toBe('1');
+    expect(process.env.KODAX_CACHE_WARMING).toBe('run');
     expect(process.env.KODAX_REPO_INTELLIGENCE).toBe('full');
     expect(process.env.KODAX_REPO_INTELLIGENCE_TOOL_WAIT_MS).toBe('250');
     expect(process.env.KODAX_WORKFLOW_MAX_CONCURRENCY).toBe('3');

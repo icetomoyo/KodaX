@@ -193,6 +193,7 @@ import {
   protectWorkflowProject,
   parseInlineSkillReferences,
   parseBareInlineSlashReferences,
+  cancelPromptCacheWarming,
   type KodaXShellPermissionMode,
 } from "@kodax-ai/coding";
 import {
@@ -854,6 +855,7 @@ const RUNTIME_CONFIG_PATCH_KEYS = [
   "deepModel",
   "maxOutputTokens",
   "disablePromptCache",
+  "cacheWarming",
   "lsp",
   "lspAutoDownload",
   "acpLogLevel",
@@ -2256,6 +2258,7 @@ export type RuntimeDaemonKodaXOptions = Pick<
   | "modelTiers"
   | "maxOutputTokens"
   | "disablePromptCache"
+  | "cacheWarming"
   | "lsp"
   | "workflow"
   | "selfManual"
@@ -9238,6 +9241,7 @@ function createRuntimeSessionService(
           if (!await manager.storage.promoteOwned(request.sessionId, ownerId, request)) throw new Error('Session no longer exists.');
         });
         invalidateMaterializedSessionCapture(request.sessionId);
+        cancelPromptCacheWarming(request.sessionId);
       });
       sessionViews.changed(request.sessionId, true);
       return { requestId: request.requestId, session: await service.load(request.sessionId) };
@@ -10100,6 +10104,8 @@ function createRuntimeSessionService(
     },
 
     async updateSettings(sessionId, patch) {
+      // Its prompt cache entry no longer matches the next request.
+      cancelPromptCacheWarming(sessionId);
       return mutateActiveSession(sessionId, async (sessionData) => {
         if (patch.workMode !== undefined) {
           const current = await settingsOwner.read(sessionId);
@@ -10122,6 +10128,7 @@ function createRuntimeSessionService(
     },
 
     async updateSettingsVersioned(sessionId, patch, options) {
+      cancelPromptCacheWarming(sessionId);
       return mutateActiveSession(
         sessionId,
         async (sessionData) => {
@@ -10291,6 +10298,7 @@ function createRuntimeSessionService(
     },
 
     async rewind(input) {
+      cancelPromptCacheWarming(input.sessionId);
       if (input.turn) {
         if (input.historyBoundary !== undefined || input.selector !== undefined
           || (input.expectedHead !== undefined && input.expectedHead !== input.turn.expectedHead)) throw Object.assign(new Error('Turn changed.'), { code: 'invalid_params' });
@@ -10341,6 +10349,7 @@ function createRuntimeSessionService(
     },
 
     async setActiveEntry(input) {
+      cancelPromptCacheWarming(input.sessionId);
       return mutateActiveSession(input.sessionId, async (current) => {
         assertSessionMutationAllowed(input.sessionId, sessionMutationOwner);
         await sessionViews.flush(input.sessionId);
@@ -10534,6 +10543,7 @@ function createRuntimeSessionService(
           };
       } finally {
         admissionResult.providerCredentialScope?.close("manual compaction settled");
+        cancelPromptCacheWarming(input.sessionId);
         activeCompactions.delete(input.sessionId);
         compactionControls.delete(input.sessionId);
         admissionResult.control.resolve();
@@ -10577,6 +10587,7 @@ function createRuntimeSessionService(
         // Archived Sessions release their live per-Session MCP resources;
         // the persisted record stays for the unarchive rebuild.
         await integrations.releaseSession(sessionId);
+        cancelPromptCacheWarming(sessionId);
         invalidateMaterializedSessionCapture(sessionId);
       });
     },
@@ -14707,6 +14718,7 @@ async function createRuntimeRunService(deps: {
 
     async closeAll(reason) {
       settingsSubscription.close();
+      cancelPromptCacheWarming();
       productQueue.close();
       const waitingForCheckpoint = [...deps.runs.values()].filter(run => run.ownedByRuntime
         && !run.stop && !hasBlockingShellCleanups(run)
@@ -14857,6 +14869,7 @@ async function createRuntimeRunService(deps: {
       }
     },
     releaseSession(sessionId) {
+      cancelPromptCacheWarming(sessionId);
       productQueue.releaseSession(sessionId);
       autoModeGuardrails.delete(sessionId);
       for (const run of deps.runs.values()) {
@@ -15122,12 +15135,14 @@ function createRuntimeConfigService(
       patchRuntimeConfig(configFile, normalized, patchOptions?.expectedRevision);
       clearRemovedExecutionConfig(toClientConfig(readRuntimeConfig(configFile)));
       replApi.applyExecutionConfigEnvironment(normalized, true);
+      if ('cacheWarming' in normalized || 'disablePromptCache' in normalized) cancelPromptCacheWarming();
       options.onChanged?.();
       return redactRuntimeConfig(readRuntimeConfigView(configFile));
     },
 
     async reload() {
       ensureOpen();
+      cancelPromptCacheWarming();
       if (configFile !== undefined) {
         registerRuntimeConfiguredCustomProviders(configFile);
         clearRemovedExecutionConfig(toClientConfig(readRuntimeConfig(configFile)));

@@ -1053,6 +1053,7 @@ export function loadConfig(): {
    */
   maxOutputTokens?: number;
   disablePromptCache?: boolean;
+  cacheWarming?: 'off' | 'run' | 'idle';
   lsp?: boolean;
   lspAutoDownload?: boolean;
   acpLogLevel?: string;
@@ -1100,6 +1101,7 @@ export function loadConfig(): {
         deepModel?: string;
         maxOutputTokens?: number;
         disablePromptCache?: boolean;
+        cacheWarming?: 'off' | 'run' | 'idle';
         lsp?: boolean;
         lspAutoDownload?: boolean;
         acpLogLevel?: string;
@@ -1290,6 +1292,7 @@ const CONFIG_ENV_BRIDGES: ReadonlyArray<{
   { configPath: 'sessionRetentionDays', env: 'KODAX_SESSION_RETENTION_DAYS', value: (c) => configNumberString(c.sessionRetentionDays) },
   { configPath: 'maxOutputTokens', env: 'KODAX_MAX_OUTPUT_TOKENS', value: (c) => configNumberString(c.maxOutputTokens) },
   { configPath: 'disablePromptCache', env: 'KODAX_DISABLE_PROMPT_CACHE', value: (c) => configBooleanString(c.disablePromptCache) },
+  { configPath: 'cacheWarming', env: 'KODAX_CACHE_WARMING', value: (c) => normalizedConfigString(c.cacheWarming) },
   { configPath: 'lsp', env: 'KODAX_LSP', value: (c) => configBooleanString(c.lsp) },
   { configPath: 'lspAutoDownload', env: 'KODAX_LSP_DOWNLOAD', value: (c) => configBooleanString(c.lspAutoDownload) },
   { configPath: 'acpLogLevel', env: 'KODAX_ACP_LOG', value: (c) => normalizedConfigString(c.acpLogLevel) },
@@ -1382,6 +1385,7 @@ export function saveConfig(config: {
   /** Config surface bridged to KODAX_* env for the coding/llm layer. */
   maxOutputTokens?: number;
   disablePromptCache?: boolean;
+  cacheWarming?: 'off' | 'run' | 'idle';
   lsp?: boolean;
   lspAutoDownload?: boolean;
   acpLogLevel?: string;

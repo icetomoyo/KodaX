@@ -182,19 +182,20 @@ it('applies saved execution defaults only to subsequent Runs without changing am
     const session = await client.sessions.create({ projectPath: homeDir });
     await client.sessions.updateSettings(session.id, { permissionMode: 'full-access', reasoningMode: 'off' });
     for (const maxOutputTokens of [1234, 2345]) {
-      await client.config.patch({ maxOutputTokens, disablePromptCache: true, lsp: false, fastModel: 'fast-fixture' });
+      await client.config.patch({ maxOutputTokens, disablePromptCache: true, cacheWarming: 'run', lsp: false, fastModel: 'fast-fixture' });
       await client.config.reload();
       const before = snapshots.length;
       const accepted = await client.inputs.submit({ sessionId: session.id, inputId: `config-${maxOutputTokens}`, text: 'Reply briefly.' });
       await client.runs.await(accepted.runId!);
       expect(snapshots[before]).toMatchObject({ max: maxOutputTokens, scoped: { maxOutputTokens,
-        disablePromptCache: true, lsp: false, modelTiers: { fast: { model: 'fast-fixture' } } } });
+        disablePromptCache: true, cacheWarming: 'run', lsp: false, modelTiers: { fast: { model: 'fast-fixture' } } } });
       expect(await client.config.readEffective()).toMatchObject({ maxOutputTokens: { value: maxOutputTokens, applied: true },
+        cacheWarming: { value: 'run', applied: true },
         application: { maxOutputTokens: 'next_run', locale: 'restart' } });
     }
     expect(process.env.KODAX_MAX_OUTPUT_TOKENS).toBeUndefined();
     applyConfigEnvironment({ maxOutputTokens: 2345, disablePromptCache: true, lsp: false, fastModel: 'fast-fixture' });
-    await client.config.patch({ maxOutputTokens: null, disablePromptCache: null, lsp: null, fastModel: null });
+    await client.config.patch({ maxOutputTokens: null, disablePromptCache: null, cacheWarming: null, lsp: null, fastModel: null });
     await client.config.reload();
     const before = snapshots.length;
     const cleared = await client.inputs.submit({ sessionId: session.id, inputId: 'cleared', text: 'Reply briefly.' });

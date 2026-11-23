@@ -25,7 +25,7 @@ export function resolveGenerationRecoveryWorkMode(resume: RuntimeGenerationResum
 
 const OPTION_KEYS = new Set(['provider', 'model', 'modelOverride', 'effort', 'thinking', 'reasoningMode',
   'agentMode', 'workMode', 'maxIter', 'maxDurationMs', 'soleInput', 'workflowHostPolicy', 'workflowRunsBaseDir', 'modelTiers', 'maxOutputTokens',
-  'disablePromptCache', 'lsp', 'workflow', 'selfManual', 'compaction', 'timeouts', 'sandbox', 'maxConcurrentThreadsPerSession',
+  'disablePromptCache', 'cacheWarming', 'lsp', 'workflow', 'selfManual', 'compaction', 'timeouts', 'sandbox', 'maxConcurrentThreadsPerSession',
   'executionToolCeiling', 'executionBinding', 'executionWorkMode']);
 const CONTEXT_KEYS = new Set(['gitRoot', 'executionCwd', 'shellExecution', 'contextTokenSnapshot',
   'projectSnapshot', 'longRunning', 'providerPolicyHints', 'repoRoutingSignals', 'repoIntelligenceMode',

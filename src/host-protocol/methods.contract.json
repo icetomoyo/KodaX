@@ -19576,6 +19576,21 @@
                 }
               ]
             },
+            "cacheWarming": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "run",
+                    "idle"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "lsp": {
               "anyOf": [
                 {

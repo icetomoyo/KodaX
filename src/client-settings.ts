@@ -23,7 +23,7 @@ export const CLIENT_CONFIG_KEYS = [
   'permissionMode', 'agentMode', 'locale', 'providerModels', 'extensions',
   'fallbackProviders', 'repoIntelligenceMode', 'repoIntelligenceTrace',
   'stallLog', 'fastProvider', 'fastModel', 'deepProvider', 'deepModel',
-  'maxOutputTokens', 'disablePromptCache', 'lsp', 'lspAutoDownload', 'acpLogLevel',
+  'maxOutputTokens', 'disablePromptCache', 'cacheWarming', 'lsp', 'lspAutoDownload', 'acpLogLevel',
   'sessionRetentionDays', 'repoIntelligence', 'workflow',
 ] as const satisfies readonly (keyof ClientConfig)[];
 
@@ -70,6 +70,7 @@ export function toClientEffectiveConfig({ entries, application }: {
       application: application as NonNullable<ClientEffectiveExecutionConfig['application']>,
       maxOutputTokens: optional('maxOutputTokens', Number) as ClientEffectiveExecutionConfig['maxOutputTokens'],
       disablePromptCache: optional('disablePromptCache', asFlag) as ClientEffectiveExecutionConfig['disablePromptCache'],
+      cacheWarming: optional('cacheWarming', String) as ClientEffectiveExecutionConfig['cacheWarming'],
       lsp: optional('lsp', asFlag) as ClientEffectiveExecutionConfig['lsp'],
     }),
     stallLog: project('stallLog', asFlag(entries.stallLog?.value)),

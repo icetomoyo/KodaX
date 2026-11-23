@@ -94,6 +94,9 @@
   // Provider/LSP/ACP process settings.
   // "maxOutputTokens": 8192,
   // "disablePromptCache": false,
+  // Keep prompt cache entries warm: "off", "run" (while a Run is active) or
+  // "idle" (also while a Session waits for its next Run, only for large prompts).
+  // "cacheWarming": "idle",
   // "lsp": true,
   // "lspAutoDownload": false,
   // "acpLogLevel": "info",

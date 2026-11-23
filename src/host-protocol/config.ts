@@ -47,6 +47,8 @@ const ConfigPatch = z.strictObject({
   deepModel: Name.nullable(),
   maxOutputTokens: z.int().positive().nullable(),
   disablePromptCache: z.boolean().nullable(),
+  /** When prompt cache entries are kept warm: `off`, `run` (while a Run is active) or `idle` (also while a Session waits for its next Run). */
+  cacheWarming: z.enum(['off', 'run', 'idle']).nullable(),
   lsp: z.boolean().nullable(),
   lspAutoDownload: z.boolean().nullable(),
   acpLogLevel: Name.nullable(),
