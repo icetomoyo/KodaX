@@ -330,8 +330,9 @@ describe('daemon CLI smoke', () => {
 
     let stderr = '';
     let stdout = '';
+    // Through the bootstrap, as the kodax command runs: it points the data root at --home.
     const child = spawn(process.execPath, [
-      '--import', 'tsx', path.join(process.cwd(), 'src', 'kodax_cli.ts'),
+      '--import', 'tsx', path.join(process.cwd(), 'src', 'kodax_bootstrap.ts'),
       'host', 'serve', '--home', homeDir,
       '--provider', 'mock-provider',
     ], {
@@ -445,7 +446,7 @@ describe('daemon CLI smoke', () => {
     }), 'utf8');
 
     const child = spawn(process.execPath, [
-      '--import', 'tsx', path.join(process.cwd(), 'src', 'kodax_cli.ts'),
+      '--import', 'tsx', path.join(process.cwd(), 'src', 'kodax_bootstrap.ts'),
       'host', 'serve', '--home', homeDir,
       '--provider', 'mock-provider',
       '--orphan-exit-ms', '150',
@@ -724,7 +725,7 @@ describe('daemon CLI smoke', () => {
       [
         '--import',
         'tsx',
-        path.join(process.cwd(), 'src', 'kodax_cli.ts'),
+        path.join(process.cwd(), 'src', 'kodax_bootstrap.ts'),
         'host',
         'serve',
         '--home',

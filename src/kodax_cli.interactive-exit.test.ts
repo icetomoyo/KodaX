@@ -493,6 +493,8 @@ async function importMainWithMocks(options: {
       guidance: [] as readonly string[],
     })),
   }));
+  // The agent and repl mocks fix the data root; host-data-root.test.ts covers the check.
+  vi.doMock('./cli/host-data-root.js', () => ({ assertHostDataRoot: vi.fn() }));
   vi.doMock('./a2a/runtime-config.js', () => ({
     createConfiguredA2ARuntimeIntegration: vi.fn(() => ({
       runtimeOptions: { factories: [], policy: vi.fn(() => ({ allowed: true })) },

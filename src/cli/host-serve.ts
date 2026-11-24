@@ -20,8 +20,8 @@ import {
   RUNTIME_DAEMON_BOOTSTRAP_LOG_MAX_BYTES,
 } from '../runtime-daemon/process.js';
 import { createExtensionRuntime } from '@kodax-ai/coding';
-import { emitKodaXDiagnostic, tryAcquireStorageFileLock } from '@kodax-ai/agent';
-import { prepareRuntimeConfig, IntegrationConfigController } from '@kodax-ai/repl';
+import { emitKodaXDiagnostic, getAgentConfigHome, tryAcquireStorageFileLock } from '@kodax-ai/agent';
+import { KODAX_DIR, prepareRuntimeConfig, IntegrationConfigController } from '@kodax-ai/repl';
 import { type IntegrationHotReloadHandle } from '../integration-hot-reload.js';
 import {
   createConfiguredA2ARuntimeIntegration,
@@ -41,6 +41,7 @@ import { createHostA2AMount, type HostA2AMount } from '../a2a/host-mount.js';
 import type { prepareKodaXA2AServer } from '../a2a/server.js';
 import { loadA2AServer } from '../cli-lazy-components.js';
 import { delay, normalizeCliError } from './util.js';
+import { assertHostDataRoot } from './host-data-root.js';
 import { cleanupDaemonServeProcessResources } from './process-cleanup.js';
 
 export async function serveDaemonCommand(input: {
@@ -55,6 +56,7 @@ export async function serveDaemonCommand(input: {
   readonly orphanExitMs?: number;
 }): Promise<void> {
   const daemonConfigHome = path.resolve(input.configHome);
+  assertHostDataRoot(daemonConfigHome, [getAgentConfigHome(), KODAX_DIR]);
   const commitStartup = captureRuntimeDaemonStartupHandoff();
   const daemonPaths = resolveRuntimeDaemonPathsFromConfigHome(
     daemonConfigHome,

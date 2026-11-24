@@ -148,6 +148,24 @@ describe('KodaX CLI bootstrap', () => {
     expect(ref).not.toHaveBeenCalled();
   });
 
+  it('points the data root at a served Host\'s own before the full CLI reads it', async () => {
+    vi.stubEnv('KODAX_HOME', path.resolve('/home/owner/.kodax'));
+    const home = path.resolve('/srv/tenant-a');
+    let rootAtLoad: string | undefined;
+    try {
+      await runKodaXBootstrap({
+        argv: ['node', 'kodax', 'host', 'serve', '--home', home],
+        loadCli: async () => {
+          rootAtLoad = process.env.KODAX_HOME;
+          return { main: async () => {} };
+        },
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(rootAtLoad).toBe(path.join(home, '.kodax'));
+  });
+
   it('recognizes only an exact one-token bare resume request', () => {
     expect(isBareResumeRequest(['-r'])).toBe(true);
     expect(isBareResumeRequest(['--resume'])).toBe(true);

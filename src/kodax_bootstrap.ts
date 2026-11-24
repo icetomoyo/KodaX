@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { createCliStartupProgress, isInteractiveCliStartup, type CliStartupProgress } from './cli-startup-progress.js';
 import { reportDaemonStartupPhase } from './runtime-daemon/startup-progress.js';
+import { useServedHostDataRoot } from './cli/host-data-root.js';
 
 export type BootstrapResumeRoute =
   | { readonly kind: 'continue'; readonly argv: readonly string[] }
@@ -69,6 +70,7 @@ export async function runKodaXBootstrap(options: KodaXBootstrapOptions = {}): Pr
     return cliModulePromise;
   };
   const args = argv.slice(2);
+  useServedHostDataRoot(args);
   let startupProgress: CliStartupProgress | undefined;
   try {
     if (isVersionRequest(args)) {
