@@ -2349,9 +2349,12 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
 - **MCP 的密钥**：对网络连接（`!caller.local`），`mcp.server.list/get/upsert/reload` 和 `config.get/update/reload` 里 v1 遗留的 `mcpServers`，`env` 和 `headers` 只给名字，值换成 `[redacted]`。`revision` 仍是 Host 的原值，`ifRevision` 照常可用。保存带 `[redacted]` 值的 server 报 `invalid_params`（reason `redacted_value`），避免把读回来的占位符写回去覆盖掉密钥。
 - **已知的缺口**：`apiKeyEnv` 只在保存时检查。保存时 Host 没设、之后平台又设了这个变量，这个 provider 会用上它。平台给 Host 加环境变量时要知道这一点；要堵上得在每次用 key 时再查一次，等有平台遇到再做。
 - **用户自带 key**（2026-11-24 补上，用户同意 Host 读 `auth.json`）：
-  - Host 跑 Run 时，环境变量里没有 key，就读它配置旁边的 `auth.json`（profile `default`，按 provider 和连接指纹绑定）。环境变量优先；在凭据租约的作用域里只用租约。实现在 `packages/llm/src/ambient-provider-key.ts`（进程级的 key 来源，只有 Host 安装）和 `src/runtime-daemon/host-provider-keys.ts`。
+  - Host 跑 Run 时，环境变量里没有 key，就读 Host 自己 config home 里的 `auth.json`（profile `default`，按 provider 和连接指纹绑定）。环境变量优先；在凭据租约的作用域里只用租约。实现在 `packages/llm/src/ambient-provider-key.ts`（进程级的 key 来源，只有 Host 安装）和 `src/runtime-daemon/host-provider-keys.ts`。
   - v2 `provider.key.get/set/remove` 只写不读，key 不回传。`resend: 'auto'`：重发同一个 key 直接返回当前状态，否则 `ifRevision` 过期报 `conflict`（reason `revision_mismatch`）。`user` 受 `providers` 锁。
-  - 未经用户确认：存下的 key 是 Host 主人的一份，所有连接共用，不按 Session 的主人分开；网络 `user` 能覆盖或删掉主人存的 key（按网络对等原则，平台可以用 `providers` 锁住）；`auth.json` 读不了时只记一次警告、当作没存 key，不挡 Host 启动和列 provider。
+  - 2026-11-24 用户确认：存下的 key 是 Host 主人的一份，同一个 Host 的所有连接共用，不按 Session 的主人分开。
+  - 2026-11-24 用户确认：网络 `user` 能覆盖或删掉**同一个 Host** 的 key（平台可以用 `providers` 锁住）；绝不能改到别的 Host 的 key，否则第三方多租户接入会出问题。所以 key 文件固定在 Host 自己的 config home（`hostProviderKeyFile(configHome)`），不跟着 runtime 读的配置走：`kodax host serve --config-home` 指向一个既不是 `homeDir/.kodax` 也不是 `KODAX_HOME` 的目录时，runtime 会退回读全局 `~/.kodax/config.json`，key 跟着它走就会和别的 Host 共用。
+  - 未经用户确认：`auth.json` 读不了时只记一次警告、当作没存 key，不挡 Host 启动和列 provider。
+  - 遗留问题（改之前就有，未处理）：上面那种 `--config-home` 启动方式下，Host 的配置、记忆、skills 等仍然读全局 `~/.kodax`，几个这样启动的 Host 会共用，A 上的 `config.update` 会改到 B。SDK 和默认 CLI 启动不会走到这条路。
 - **项目信任列表没做**：v2 里还没有这组方法，等有客户端要用时随方法一起加。
 
 ### M2 富 UI（M，四项可以并行）
