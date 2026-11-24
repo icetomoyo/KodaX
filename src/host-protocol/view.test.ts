@@ -47,7 +47,9 @@ describe('view notifications', () => {
     for (const schema of [spec.params, spec.localParams]) {
       const json = z.toJSONSchema(schema);
       expect(openObjects(json)).toEqual([]);
-      expect((json as { properties?: object }).properties).toHaveProperty('_meta');
+      // A Session view or the Host document: each shape reserves it.
+      const { anyOf } = json as { anyOf?: Array<{ properties?: object }> };
+      for (const shape of anyOf ?? [json as { properties?: object }]) expect(shape.properties).toHaveProperty('_meta');
     }
   });
 });

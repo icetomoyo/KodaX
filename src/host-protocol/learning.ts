@@ -26,6 +26,15 @@ const Carrier = z.string();
  */
 const Lifecycle = z.string();
 
+/** How many capabilities wait on the person, and the revision they were counted at. */
+export const LearningCounts = z.object({
+  ready: z.int(),
+  newlyActive: z.int(),
+  attention: z.int(),
+  active: z.int(),
+  revision: z.int(),
+});
+
 const Learning = z.object({
   id: z.string(),
   name: z.string(),
@@ -101,13 +110,7 @@ export const LEARNING_METHODS = {
     primitive: 'query',
     plane: 'data',
     params: hostParams({}),
-    result: hostResult({
-      ready: z.int(),
-      newlyActive: z.int(),
-      attention: z.int(),
-      active: z.int(),
-      revision: z.int(),
-    }),
+    result: hostResult(LearningCounts.shape),
   },
   /** The events after `afterRevision`, a sequence, oldest first. */
   'learning.events': {

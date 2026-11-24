@@ -1043,6 +1043,78 @@ describe('v2 workspace', () => {
   });
 });
 
+describe('v2 Host document', () => {
+  const QUESTION = { question: 'Which colour?', options: [{ label: 'Red', value: 'red' }, { label: 'Blue', value: 'blue' }] };
+  type HostSnapshot = {
+    readonly items: readonly unknown[];
+    readonly sessions: readonly SessionFacts[];
+    readonly runs: readonly { readonly id: string; readonly sessionId: string; readonly phase: string }[];
+    readonly interactions: readonly InteractionFacts[];
+    readonly learning: Readonly<Record<string, number>>;
+  };
+  const ids = (value: unknown): readonly string[] | undefined => (value as readonly { id: string }[] | undefined)?.map(entry => entry.id);
+
+  it('follows the Session list, the Runs and what waits for a person, and stops when unsubscribed', async () => {
+    const host = await makeModelHost(callsToolOnce('ask_user_question', QUESTION));
+    const runtime = await host.start();
+    const user = await connect('user', runtime, host.workspace);
+    const { session: first } = await user.request('session.create', { requestId: 'create-1', project: 'app', title: 'First' }) as SessionAnswer;
+    const sent = notifications(user);
+
+    const answer = await user.request('view.subscribe', { subscriptionId: 'host', target: { kind: 'host' } }) as unknown as
+      { subscriptionId: string; epoch: string; seq: number; snapshot: HostSnapshot };
+    expect(answer).toMatchObject({ subscriptionId: 'host', epoch: expect.any(String), seq: 0 });
+    expect(answer.snapshot).toEqual({
+      items: [], sessions: [expect.objectContaining({ id: first.id, title: 'First', project: 'app' })], runs: [], interactions: [],
+      learning: { ready: 0, newlyActive: 0, attention: 0, active: 0, revision: expect.any(Number) },
+    });
+    // No Host path reaches a person on another machine.
+    expect(JSON.stringify(answer)).not.toContain(path.basename(host.homeDir));
+
+    const { session: second } = await user.request('session.create', { requestId: 'create-2', project: 'app', title: 'Second' }) as SessionAnswer;
+    await expect.poll(() => [...ids(shown(sent, 'sessions')) ?? []].sort(), { timeout: 5000 }).toEqual([first.id, second.id].sort());
+
+    const { input } = await user.request('input.submit', { requestId: 'input-1', sessionId: second.id, text: 'Ask me.' }) as InputAnswer;
+    const pending = await pendingInteraction(user, second.id);
+    await expect.poll(() => ids(shown(sent, 'interactions')), { timeout: 5000 }).toEqual([pending.id]);
+    expect(shown(sent, 'runs')).toEqual([{ id: input.runId, sessionId: second.id, phase: 'waiting_user_input' }]);
+
+    await user.request('interaction.respond', { requestId: 'answer-1', interactionId: pending.id, response: { kind: 'question', answer: 'red' } });
+    await expect.poll(() => shown(sent, 'runs'), { timeout: 5000 }).toEqual([]);
+    expect(shown(sent, 'interactions')).toEqual([]);
+
+    await user.request('session.archive', { requestId: 'archive-1', sessionId: first.id });
+    await expect.poll(() => ids(shown(sent, 'sessions')), { timeout: 5000 }).toEqual([second.id]);
+    const frames = sent.filter(frame => frame.params.subscriptionId === 'host');
+    expect(frames.map(frame => frame.method)).toEqual(frames.map(() => 'view.patch'));
+    expect(frames.map(frame => frame.params.seq)).toEqual(frames.map((_frame, index) => index + 1));
+
+    expect(await user.request('view.unsubscribe', { subscriptionId: 'host' })).toEqual({});
+    const before = sent.length;
+    await user.request('session.unarchive', { requestId: 'unarchive-1', sessionId: first.id });
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    expect(sent.length).toBe(before);
+  });
+
+  it('gives the owner on the Host machine its Host paths, and takes over an id a Session view used', async () => {
+    const host = await makeHost();
+    const runtime = await host.start();
+    const owner = await connect('owner', runtime, host.workspace);
+    const projectRoot = path.join(host.workspaceRoot, 'app');
+    const { session } = await owner.request('session.create', { requestId: 'create-1', projectRoot }) as SessionAnswer;
+    const sent = notifications(owner);
+    await owner.request('view.subscribe', { subscriptionId: 'main', target: { kind: 'session', sessionId: session.id } });
+
+    const { snapshot } = await owner.request('view.subscribe', { subscriptionId: 'main', target: { kind: 'host' } }) as unknown as
+      { snapshot: HostSnapshot };
+    expect(snapshot.sessions).toEqual([expect.objectContaining({ id: session.id, workspaceRoot: projectRoot })]);
+    // The Session view under that id ended, so a change to the Session reaches the client only as the Host document's.
+    await runtime.sessions.appendNotice({ sessionId: session.id, content: 'The build finished.' });
+    await new Promise(resolve => setTimeout(resolve, 500));
+    expect(sent.flatMap(frame => frame.params.ops ?? []).filter(op => op.op === 'item.put')).toEqual([]);
+  });
+});
+
 /** A model that calls one tool and, once it has the result, answers `done`. */
 function callsToolOnce(name: string, input: Record<string, unknown>): ModelTurn {
   return (messages) => {

@@ -3017,7 +3017,22 @@ export interface RuntimeEventService {
     filter: RuntimeEventFilter,
     listener: RuntimeEventListener,
   ): RuntimeSubscription;
+  /**
+   * Calls the listener when the Session list may have changed: a Session was
+   * created, archived, restored, deleted or promoted, entered or left recovery,
+   * a Run started, changed phase or ended, or an interaction opened or settled.
+   * It does not say which, so it tells a listener nothing it could not read.
+   * Absent on a runtime that reaches its Host as a client.
+   */
+  onSessionListChanged?(listener: () => void): RuntimeSubscription;
 }
+
+/** The events after which the Session list, its Runs or what waits for a person may read differently. */
+const SESSION_LIST_EVENTS: ReadonlySet<RuntimeEventType> = new Set<RuntimeEventType>([
+  "session.created", "session.compacted", "session.rewound", "session.active_entry.updated",
+  "run.queued", "run.started", "run.updated", "run.completed", "run.failed", "run.cancelled", "run.interrupted",
+  "turn.completed", "permission.requested", "permission.resolved", "user_input.requested", "user_input.resolved",
+]);
 
 export type RuntimePermissionRisk = "low" | "medium" | "high";
 
@@ -4865,8 +4880,13 @@ async function createKodaXRuntimeInternal(
       .find(item => identity || toolIdentity || inputId !== undefined ? item.id === itemId : item.tool?.callId === toolId);
     return restored ? { ...restored, id: itemId } : null;
   });
+  const sessionListListeners = new Set<() => void>();
+  const sessionListChanged = (): void => {
+    for (const listener of [...sessionListListeners]) listener();
+  };
   const bus = createRuntimeEventBus((sessionId, type, payload, scope) => {
     if (type === 'session.created') executionFacts.created(sessionId);
+    if (SESSION_LIST_EVENTS.has(type)) sessionListChanged();
     if (type === 'session.rewound' || type === 'session.active_entry.updated') {
       sessionViews.resetHistory(sessionId);
     }
@@ -4949,7 +4969,10 @@ async function createKodaXRuntimeInternal(
   });
   const runs = new Map<string, RuntimeRunRecord>();
   const actorHealthBySession = new Map<string, AgentControllerHealth>();
-  const sessionRecoveries = createSessionRecoveryTracker((sessionId) => sessionViews.changed(sessionId));
+  const sessionRecoveries = createSessionRecoveryTracker((sessionId) => {
+    sessionViews.changed(sessionId);
+    sessionListChanged();
+  });
   const actorHealthWaiters = new Map<
     string,
     Set<(health: AgentControllerHealth) => void>
@@ -5638,6 +5661,7 @@ async function createKodaXRuntimeInternal(
     executionFacts, compactionControls,
     { provider: options.defaultProvider, model: options.defaultModel },
     sessionRecoveries,
+    sessionListChanged,
   );
   const managedWorkspaceRoot = path.join(
     options.homeDir ? path.resolve(options.homeDir) : os.homedir(),
@@ -5869,11 +5893,17 @@ async function createKodaXRuntimeInternal(
     capabilities: embeddedCapabilities,
     sessions: sessionService,
     runs: runService,
-    events: { subscribe(filter, listener) {
-      const principal = sideRequester.getStore();
-      if (!persistence.sideChats.admits(filter.sessionId, principal)) throw new Error('Side session is not admitted.');
-      return bus.service.subscribe(filter, listener);
-    } },
+    events: {
+      subscribe(filter, listener) {
+        const principal = sideRequester.getStore();
+        if (!persistence.sideChats.admits(filter.sessionId, principal)) throw new Error('Side session is not admitted.');
+        return bus.service.subscribe(filter, listener);
+      },
+      onSessionListChanged(listener) {
+        sessionListListeners.add(listener);
+        return { close: () => { sessionListListeners.delete(listener); } };
+      },
+    },
     permissions: permissions.service,
     userInputs: userInputs.service,
     interactions,
@@ -7516,6 +7546,8 @@ function createRuntimeSessionService(
   /** What a Session that chose no provider runs on. */
   hostDefault: { readonly provider?: string; readonly model?: string },
   recoveries: SessionRecoveryTracker,
+  /** Tells those following the Session list that it may have changed. */
+  sessionListChanged: () => void,
 ): RuntimeSessionService & { deleteTemporary(sessionId: string): Promise<void> } {
   const creatingSessionIds = new Set<string>();
   // FEATURE_298 T31 — in-flight manual compactions register occupancy so
@@ -9255,6 +9287,7 @@ function createRuntimeSessionService(
         cancelPromptCacheWarming(request.sessionId);
       });
       sessionViews.changed(request.sessionId, true);
+      sessionListChanged();
       return { requestId: request.requestId, session: await service.load(request.sessionId) };
     },
 
@@ -10601,6 +10634,7 @@ function createRuntimeSessionService(
         cancelPromptCacheWarming(sessionId);
         invalidateMaterializedSessionCapture(sessionId);
       });
+      sessionListChanged();
     },
 
     async unarchive(sessionId) {
@@ -10627,11 +10661,16 @@ function createRuntimeSessionService(
         await sessionMcpStore.rebuild(sessionId);
         invalidateMaterializedSessionCapture(sessionId);
       });
+      sessionListChanged();
     },
 
     async delete(sessionId) {
       const side = persistence.sideChats.get(sessionId);
-      if (!side) return deleteSession(sessionId, false);
+      if (!side) {
+        await deleteSession(sessionId, false);
+        sessionListChanged();
+        return;
+      }
       await sessionOperations.run(side.parent, async () => {
         await deleteSession(sessionId, false);
         persistence.sideChats.remove(side);

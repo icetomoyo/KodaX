@@ -33,7 +33,7 @@ function fieldPaths(schema: unknown, path = '', found: string[] = []): string[] 
   return found;
 }
 
-/** The object shapes a params schema accepts: each branch of a union by `kind`, or the one object. */
+/** The object shapes a schema accepts: each branch of a union, or the one object. */
 function paramShapes(schema: z.ZodType, io?: 'input'): Array<{ properties?: JsonSchema; required?: string[] }> {
   const json = z.toJSONSchema(schema, io === undefined ? {} : { io }) as { oneOf?: JsonSchema[]; anyOf?: JsonSchema[] };
   return (json.oneOf ?? json.anyOf ?? [json]) as Array<{ properties?: JsonSchema; required?: string[] }>;
@@ -58,7 +58,7 @@ describe('host method definitions', () => {
     for (const params of paramShapes(spec.params)) expect(params.properties).toHaveProperty('_meta');
     for (const schema of [spec.result, spec.localResult]) {
       if (schema === undefined) continue;
-      expect((z.toJSONSchema(schema) as { properties?: JsonSchema }).properties).toHaveProperty('_meta');
+      for (const shape of paramShapes(schema)) expect(shape.properties).toHaveProperty('_meta');
     }
   });
 

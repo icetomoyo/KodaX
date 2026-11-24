@@ -2351,7 +2351,7 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
    - 文件打开后基于 fd 做包含关系校验；
    - 沿用 read 工具的拒绝规则。
    - **状态**：2026-11-24 落地，见下面"第 2 项的落地细节"。
-3. Host 文档：`view.subscribe` 新增一种文档，内容是会话列表的实时状态、跨会话的待处理事项和技能学习的变化（取代 `learning.subscribe`）。
+3. Host 文档：`view.subscribe` 新增一种文档，内容是会话列表的实时状态、跨会话的待处理事项和技能学习的变化（取代 `learning.subscribe`）。**状态**：2026-11-24 落地，见下面"第 3 项的落地细节"。
 4. WS 被拦截时的自动回退：
    - Host 侧：在同一端口上提供 HTTP 承载，下行用 SSE，上行用 POST；SSE 带心跳，并禁用代理缓冲。
    - SDK 侧：浏览器 SDK 自动探测并切换。
@@ -2373,6 +2373,25 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
 - 包含校验：名字先在工作区内，realpath 之后再查一次是否在工作区内、是否命中密钥规则。读文件时打开之后用 fd 的 `fstat` 和路径重新 realpath 后的 `stat` 比 inode/dev，不一致就拒绝，堵住"检查后、打开前把某一级换成链接"的竞态。
 - git：先 `rev-parse --is-inside-work-tree`（不在仓库里时 `git diff` 会变成比较两个路径）。带 `-c core.fsmonitor=false`、`--no-ext-diff`、`--no-textconv`，环境里 `GIT_OPTIONAL_LOCKS=0`、`GIT_TERMINAL_PROMPT=0`。filter driver 没有选项能关掉：仓库自己的配置（local/worktree 范围）里配了 `filter.*` 时报 `forbidden`/`repository_filters`。Host 全局 git 配置里的 filter（比如 Git LFS）是运维的选择，照常放行。理由：默认权限模式下文件工具不让写 `.git`，但 full-access 下可以，而 Host 的工具上限可能不含 bash，这时读 diff 不能变成在 Host 上执行命令的口子（和 `mcpStdio` 同一个道理）。
 - 已验证：`workspace-files.test.ts`（分页、链接、各种拒绝、分块和变更、staged/unstaged、密钥排除、截断、仓库自配 filter、非仓库）；host-rpc 集成测试（user 能列能读、读不到 `.env`；没有工作区时 owner 也被拒）。
+
+**第 3 项的落地细节**（2026-11-24，未经用户确认的取舍）：
+
+- 订阅：`view.subscribe` 的 `target` 多一种 `{kind: 'host'}`。快照、`view.patch`、`view.reset`、`view.closed` 和会话视图同一套，文档没有项（`items` 永远为空），只有键，所以只出现 `set` 操作。一个 `subscriptionId` 只对应一个订阅：同一个 id 从会话视图改订 Host 文档（或反过来），旧的那个就停了。和前两项一样加在 r1，不升 `revision`。
+- 四个键，各自按调用者自己查询时会看到的样子读：
+  - `sessions`：没归档的最新 50 个 Session，和 `session.list` 同形状（带 FEATURE_313 的 `recovery`）。更多的用 `session.list` 翻页。
+  - `runs`：所有 Session 里没结束的 Run，`{id, sessionId, phase}`。
+  - `interactions`：所有 Session 里等人回答的交互，和 `interaction.list` 同形状。
+  - `learning`：`learning.snapshot` 的计数。v2 的 `learning.snapshot` 结果改成同一个 `LearningCounts` 定义，字段没变。
+  - 本机连接的 `sessions` 和 `interactions` 带 Host 路径，和对应的本机查询一样。
+- 什么时候重读：runtime 新增 `events.onSessionListChanged`（可选；Host 的 runtime 不提供时订阅失败）。Session 创建、压缩、回退、切换条目，Run 排队、开始、变化、结束，授权和提问的出现与结算，归档、恢复归档、删除、提升，以及恢复状态变化时都会触发。技能学习另外跟 `learning.subscribe`。触发后每个订阅最多每秒重读一次，读的过程中再有变化就读完再读一次，只把和客户端副本不同的键发出去。
+- 不轮询：`session.list` 每次都扫盘，定时重读的代价和 Session 数成正比，所以只靠事件。代价：没有事件的变化看不到。已知的两处：
+  - `learning.acknowledge` 和 `learning.snooze` 不发学习事件。在这个连接上调用时，这个连接的 Host 文档会重读；别的连接要等下一次别的变化。
+  - `snooze` 到期是按时间算的，没有事件，到期后计数要等下一次变化才更新。
+- `epoch`：每个连接一个。文档没有项，客户端手里没有会因 Host 的 ID 变化而过期的东西，所以不需要按订阅换。
+- 拥塞：和会话视图一样，链路积压时只留最新的一份，排空后发出去。
+- 读失败：这个订阅以 `view.closed`（`reason: 'internal'`，带 `incidentId`）结束，客户端重订即可。
+- 没做：客户端 SDK 没加专门的辅助方法（比如 `observeHost`），用通用的视图订阅即可，等有客户端要用时再加。
+- 已验证：`host-document.test.ts`（每秒最多读一次、拥塞时只留最新、读失败结束订阅并停止跟随）；host-rpc 集成测试（user 订阅后看到新 Session、提问时的交互和 `waiting_user_input` 的 Run，回答后两者消失，归档后 Session 消失，`seq` 连续，退订后不再收到；owner 的快照带 `workspaceRoot`；同一个 id 从会话视图改订 Host 文档后不再收到会话视图的补丁）。
 
 ### M3 收尾
 

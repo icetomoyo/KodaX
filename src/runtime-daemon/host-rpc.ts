@@ -15,7 +15,7 @@ import {
 
 import type { HostCloseReason } from '../host-protocol/close.js';
 import type { HostIncident } from '../host-protocol/codec.js';
-import { HostProtocolError, hostRpcNotification, type HostErrorCode } from '../host-protocol/codec.js';
+import { HostProtocolError, hostRpcNotification, newHostIncident, type HostErrorCode } from '../host-protocol/codec.js';
 import type { HostInitializeParams, HostLimits, HostMethodName, HostParams } from '../host-protocol/methods.js';
 import type {
   ClientCommandResult, ClientExecutionFactsPage, ClientExitReceipt, ClientHistoryTurnResolution, ClientHistoryTurnSelector,
@@ -30,12 +30,14 @@ import type {
   RuntimeConversationHistoryEntryChunk, RuntimeConversationHistorySlice, RuntimePermissionGrant, RuntimeRunAnswer, RuntimeRunStatus,
   RuntimeSession, RuntimeSessionPromotionResult, RuntimeSessionSettings, RuntimeSessionStatus, RuntimeSessionSummary, RuntimeTranscriptSearchResult,
   RuntimeMcpValidateResult, RuntimeVersionedValue, RuntimeWorkflowSnapshot, RuntimeWorkflowStartResult, RuntimeWorkflowSummary,
+  KodaXRuntime, RuntimeRunPhase,
 } from '../sdk-runtime.js';
 import type {
   RuntimeCredentialLease, RuntimeHostToolInvocationStatus, RuntimeHostToolLease,
 } from '../client-host-authorization.js';
 import type { HostDeviceRegistry } from '../host-server/devices.js';
 import type { HostBlobStore } from './host-blobs.js';
+import { createHostDocumentStreams, type HostDocumentStreams } from './host-document.js';
 import { createNote, forgetNote, getNote, listNotes, updateNote, type HostNoteStores } from './host-notes.js';
 import { boundViewItem } from '../session-view.js';
 import { runtimeAuthorizationSubject, runtimeRoleHasPlane, type RuntimeConnectionRole } from './access.js';
@@ -132,6 +134,8 @@ interface HostCaller {
   /** The note stores the Host's Runs in a project read. */
   readonly notes?: (projectRoot: string) => Promise<HostNoteStores>;
   readonly views: HostViewStreams;
+  /** The connection's subscriptions to the Host document. */
+  readonly documents: HostDocumentStreams;
   /** Aborted when the client cancels this call or the connection ends. */
   readonly signal: AbortSignal;
   /** Runs once the answer to this call is on the wire. */
@@ -522,11 +526,20 @@ const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } =
   },
 
   'view.subscribe': async ({ subscriptionId, target }, v1, caller) => {
-    const subscription = await caller.views.subscribe(subscriptionId, target.sessionId, v1);
+    // An id names one subscription, of whichever document was subscribed under it last.
+    let subscription;
+    if (target.kind === 'host') {
+      await caller.views.unsubscribe(subscriptionId);
+      subscription = await caller.documents.subscribe(subscriptionId, () => readHostDocument(v1, caller));
+    } else {
+      caller.documents.unsubscribe(subscriptionId);
+      subscription = await caller.views.subscribe(subscriptionId, target.sessionId, v1);
+    }
     caller.afterAnswer(subscription.answered);
     return subscription.answer;
   },
   'view.unsubscribe': async ({ subscriptionId }, _v1, caller) => {
+    caller.documents.unsubscribe(subscriptionId);
     await caller.views.unsubscribe(subscriptionId);
     return {};
   },
@@ -989,10 +1002,17 @@ const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } =
   'learning.events': async ({ afterRevision }, v1) => ({
     items: (await v1('learning.events', defined({ afterRevision })) as readonly LearningEvent[]).map(toLearningEvent),
   }),
-  'learning.acknowledge': async ({ nameOrSlug }, v1) => learningDecision(v1, 'learning.acknowledge', { nameOrSlug }),
-  'learning.snooze': async ({ nameOrSlug, until }, v1) => (
-    learningDecision(v1, 'learning.snooze', { nameOrSlug, until: new Date(until).toISOString() })
-  ),
+  // What a client acknowledged or snoozed is its own, and the Host learns of no change in it: its documents read it again.
+  'learning.acknowledge': async ({ nameOrSlug }, v1, caller) => {
+    const answer = await learningDecision(v1, 'learning.acknowledge', { nameOrSlug });
+    caller.documents.changed();
+    return answer;
+  },
+  'learning.snooze': async ({ nameOrSlug, until }, v1, caller) => {
+    const answer = await learningDecision(v1, 'learning.snooze', { nameOrSlug, until: new Date(until).toISOString() });
+    caller.documents.changed();
+    return answer;
+  },
   'learning.reject': async ({ nameOrSlug, ifRevision }, v1) => learningOutcome(v1, 'learning.reject', { nameOrSlug, ifRevision }),
   'learning.disable': async ({ nameOrSlug, ifRevision }, v1) => learningOutcome(v1, 'learning.disable', { nameOrSlug, ifRevision }),
   'learning.rollback': async ({ nameOrSlug, ifRevision }, v1) => learningOutcome(v1, 'learning.rollback', { nameOrSlug, ifRevision }),
@@ -1796,6 +1816,7 @@ export function createRuntimeDaemonHostRpcPeer(
   });
   /** The subscriptions of this connection, once it is admitted. */
   let views: HostViewStreams | undefined;
+  let hostDocuments: HostDocumentStreams | undefined;
   const connection = options.protocol.createHostConnection({
     methods: options.protocol.HOST_METHODS,
     send: options.send,
@@ -1848,6 +1869,17 @@ export function createRuntimeDaemonHostRpcPeer(
         send: options.send,
         congested: options.congested,
         closeObservation: async (subscriptionId) => { await v1('session.view.close', { subscriptionId }); },
+        onInternalError,
+      });
+      const documents = createHostDocumentStreams({
+        contract: runtimeRoleHasPlane(role, 'local')
+          ? options.protocol.LocalHostDocument
+          : options.protocol.HostDocument,
+        send: options.send,
+        congested: options.congested,
+        follow: changed => followHost(options.dispatcher.runtime, changed, (error) => {
+          onInternalError('view.subscribe', error, newHostIncident());
+        }),
         onInternalError,
       });
       const dispatcher = createRuntimeDaemonDispatcher({
@@ -1903,8 +1935,10 @@ export function createRuntimeDaemonHostRpcPeer(
         ...(options.blobs !== undefined ? { blobs: options.blobs } : {}),
         ...(notes !== undefined ? { notes } : {}),
         views: streams,
+        documents,
       };
       views = streams;
+      hostDocuments = documents;
       expireAt(credential?.expiresAt);
       return {
         role,
@@ -1931,6 +1965,7 @@ export function createRuntimeDaemonHostRpcPeer(
         close: () => {
           clearTimeout(expiry);
           streams.close();
+          documents.close();
           dispatcher.close();
         },
       };
@@ -1969,7 +2004,10 @@ export function createRuntimeDaemonHostRpcPeer(
   return {
     receive: connection.receive,
     close: connection.close,
-    drained: () => views?.drained(),
+    drained: () => {
+      views?.drained();
+      hostDocuments?.drained();
+    },
     admitted: () => views !== undefined,
     draining() {
       // A client still in its handshake learns of it from the refusal or the close that follows.
@@ -1985,6 +2023,61 @@ const QUARANTINE_REASONS: Readonly<Record<string, string>> = {
   actor_settlement_not_persisted: 'session_recovering',
   recovery_stalled: 'recovery_stalled',
 };
+
+/** As many Sessions as the Host document carries; `session.list` reads the rest. */
+const HOST_DOCUMENT_SESSIONS = 50;
+const UNSETTLED_RUN_PHASES: readonly RuntimeRunPhase[] = [
+  'queued', 'running', 'waiting_agent', 'recovering', 'waiting_permission', 'waiting_user_input', 'unknown',
+];
+
+/** The Host document as the caller may see it, each part read as the caller's own query would read it. */
+async function readHostDocument(v1: V1Call, caller: HostCaller): Promise<Readonly<Record<string, unknown>>> {
+  const [sessions, runs, interactions, learning] = await Promise.all([
+    V1_HANDLERS['session.list']({ limit: HOST_DOCUMENT_SESSIONS }, v1, caller) as Promise<{ readonly items: unknown }>,
+    v1('run.list', { phase: UNSETTLED_RUN_PHASES }) as Promise<readonly RuntimeRunStatus[]>,
+    V1_HANDLERS['interaction.list']({}, v1, caller) as Promise<{ readonly items: unknown }>,
+    v1('learning.snapshot'),
+  ]);
+  return {
+    items: [],
+    sessions: sessions.items,
+    runs: runs.map(run => ({ id: run.runId, sessionId: run.sessionId, phase: run.phase })),
+    interactions: interactions.items,
+    learning,
+  };
+}
+
+/**
+ * Calls `changed` when the Session list or what the Host learned may have
+ * changed. Learning is followed from the revision it is at now, so the first
+ * read of the document sees every change that came before.
+ */
+async function followHost(runtime: KodaXRuntime, changed: () => void, report: (error: unknown) => void): Promise<() => void> {
+  const sessions = runtime.events.onSessionListChanged?.(changed);
+  if (sessions === undefined) throw new Error('This runtime does not report changes to its Session list.');
+  let active = true;
+  try {
+    const { revision } = await runtime.learning.getSnapshot();
+    const learned = runtime.learning.subscribe({ afterRevision: revision });
+    await learned.ready;
+    void (async () => {
+      while (active) {
+        const next = await learned.next();
+        if (!active) return;
+        if (next.done === true) throw new Error('The Host stopped reporting what it learned.');
+        changed();
+      }
+    })().catch((error: unknown) => { if (active) report(error); });
+    return () => {
+      active = false;
+      sessions.close();
+      void learned.return?.().catch(report);
+    };
+  } catch (error: unknown) {
+    sessions.close();
+    throw error;
+  }
+}
 
 /** Exported for tests. */
 export function hostErrorFromV1(error: RuntimeDaemonError): HostProtocolError {

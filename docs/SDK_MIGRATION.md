@@ -220,7 +220,8 @@ Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` �
 | `learning.list` | `learning.list` |
 | `learning.get` | `learning.get` |
 | `learning.snapshot` | `learning.snapshot` |
-| `learning.events` | `learning.events`；`learning.subscribe` 的推送改为按 `afterRevision` 读 |
+| `learning.events` | `learning.events` |
+| `view.subscribe`（`target: {kind: 'host'}`） | `learning.subscribe`：Host 文档的 `learning` 键是 `learning.snapshot` 的计数，变了就推送；要看具体变化，再按 `afterRevision` 读 `learning.events` |
 | `learning.acknowledge` | `learning.acknowledge` |
 | `learning.snooze` | `learning.snooze` |
 | `learning.reject` | `learning.reject` |

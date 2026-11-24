@@ -71,6 +71,12 @@ All notable changes to this project will be documented in this file.
   sees changed in a project. They only read. Files that hold secrets, such as
   `.env` and anything under `.ssh`, are refused and left out of listings and
   diffs.
+- Protocol v2 `view.subscribe` with target `{kind: 'host'}` keeps a
+  client's copy of the Host document: the newest 50 Sessions that are not
+  archived, the Runs that have not ended, what any Session waits for a person
+  to answer, and the learning counts. It replaces `learning.subscribe`. The
+  Host reads it again when one of those may have changed, at most once a
+  second, and sends only what differs.
 - `kodax host` manages the Host, which `kodax daemon` did. `kodax daemon` still
   works, prints that it was renamed, and is removed in 0.7.100.
 - `kodax host logs --follow` keeps printing new log lines until Ctrl+C, across
