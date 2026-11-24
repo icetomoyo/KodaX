@@ -31,6 +31,11 @@ const HostGetResult = hostResult({
     mode: z.string(),
     profile: z.string(),
     startedAt: z.int(),
+    /**
+     * The installation the Host runs: where it was loaded from and a hash of its
+     * code. Two Hosts of the same `version` differ here when one is a newer build.
+     */
+    build: z.object({ origin: z.string(), fingerprint: z.string() }).optional(),
   }),
   /** `activeRuns` are Runs in progress that are not waiting in the queue. */
   counts: z.object({

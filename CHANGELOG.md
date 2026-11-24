@@ -94,6 +94,9 @@ All notable changes to this project will be documented in this file.
   `/a2a`: `kodax a2a expose --auth host --public-base-url <url>`. Callers
   bring the JWTs v2 clients use, checked against the same `owner` and
   `services`, and A2A tasks belong to whom the token stands for on v2.
+- Protocol v2 `host.get` reports `host.build`: where the Host was loaded from
+  (`origin`) and a hash of its code (`fingerprint`). Two Hosts of the same
+  version differ there when one is a newer build.
 - `kodax host` manages the Host, which `kodax daemon` did. `kodax daemon` still
   works, prints that it was renamed, and is removed in 0.7.100.
 - `kodax host logs --follow` keeps printing new log lines until Ctrl+C, across

@@ -3522,6 +3522,8 @@ describe('v2 local management served by the v1 implementation', () => {
       host: {
         id: runtime.identity.runtimeId, version: runtime.identity.version, mode: runtime.identity.mode,
         profile: runtime.identity.profile, startedAt: Date.parse(runtime.identity.startedAt),
+        // Which installation the Host runs, so a launcher can tell an older build of the same version.
+        build: { origin: runtime.identity.build!.origin, fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) },
       },
       // Workflows are counted for the whole process, and other tests in this file left some.
       counts: { sessions: 1, runs: 1, activeRuns: 1, queuedRuns: 0, workflows: expect.any(Number) },

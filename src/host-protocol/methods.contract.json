@@ -19423,6 +19423,22 @@
               "type": "integer",
               "minimum": -9007199254740991,
               "maximum": 9007199254740991
+            },
+            "build": {
+              "type": "object",
+              "properties": {
+                "origin": {
+                  "type": "string"
+                },
+                "fingerprint": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "origin",
+                "fingerprint"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [

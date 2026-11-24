@@ -2448,7 +2448,7 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
    - `kodax_manual` 的 4 个主题（sandbox、a2a、compaction、sdk）的来源路径改成对应的新指南，sdk 主题正文里的一句指向改成"the guides under public_docs/sdk/"。只是换指针，没有改写内容，没有跑 eval。
    - 新指南没有覆盖的旧内容：v1 产品客户端的完整用法（v1 在 v0.7.100 删除，对照表在 SDK_MIGRATION）、`context.workModePolicy: 'intersect'`（v2 用 Session 策略的 `tools` 限定工具）。
    - 另起一个 Agent 对着代码逐条核对了新指南。它查出的事实错误（如问题不会 30 分钟超时、`listProviderModels` 不发请求、渲染要 Chromium、沙箱只在 Windows 上配置）和示例代码问题（缺 import、未定义变量、顶层 `return`）已在英文、中文两份里改掉。
-8. 满足 §8 的条件后删除 v1。**状态**：删除线是 `v0.7.100`，由 FEATURE_314 做；前置项（`daemon` 命令和健康观测迁到 v2、`host.get` 报构建版本）见 FEATURE_314。
+8. 满足 §8 的条件后删除 v1。**状态**：删除线是 `v0.7.100`，由 FEATURE_314 做；前置项（`daemon` 命令和健康观测迁到 v2、`host.get` 报构建版本）见 FEATURE_314。2026-11-24：`host.get` 已报 `host.build`（`origin`、`fingerprint`）。启动器、健康探测和 `recovering-runtime-client` 还不能直接换成 v2：v2 之前的 Host 只答 v1，替换空闲的旧 Host 要在它上面调 v1 的 `runtime.daemon.inspect` 和停止。只为这类旧 Host 留一条 v1 回退到 `v0.7.100`，是 FEATURE_314 要定的设计点（未经用户确认）。
 
 ## 8. 迁移、兼容与回滚
 

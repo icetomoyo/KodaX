@@ -2392,6 +2392,7 @@ No params.
 | `host.mode` | string | yes |  |
 | `host.profile` | string | yes |  |
 | `host.startedAt` | integer | yes |  |
+| `host.build` | object | no | The installation the Host runs: where it was loaded from and a hash of its code. Two Hosts of the same `version` differ here when one is a newer build. |
 | `counts` | object | yes | `activeRuns` are Runs in progress that are not waiting in the queue. |
 | `counts.sessions` | integer | yes |  |
 | `counts.runs` | integer | yes |  |

@@ -2751,6 +2751,13 @@ fixed GitHub binary archive sidecar omission before tagging.
   are on v2; the `daemon`/`host` health probe (`observeRuntimeDaemonHealth`),
   the v1 path in `ensureKodaXHostClient`, `recovering-runtime-client` and the
   exported v1 client remain.
+- Progress (2026-11-24, later): v2 `host.get` reports `host.build`
+  (`origin`, `fingerprint`), which the launcher needs to tell a newer build of
+  the same version. The remaining callers still cannot simply switch: a Host
+  from before v2 answers only v1, and replacing an idle older Host needs v1
+  `runtime.daemon.inspect` and shutdown on it. Keeping a v1 fallback only for
+  such Hosts until `v0.7.100` is the open design point here (not yet
+  confirmed by the owner).
 - Risk: the window counts from the release that ships v2. If v2 ships after
   `v0.7.98`, fewer than two versions carry both protocols; recheck the line
   then.
