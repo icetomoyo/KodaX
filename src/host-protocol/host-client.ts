@@ -17,7 +17,7 @@ import type {
   HostMethodName,
   HostResult,
 } from './methods.js';
-import type { LocalSessionView, SessionView, ViewPatch, ViewSnapshot } from './view.js';
+import type { HostDocument, LocalHostDocument, LocalSessionView, SessionView, ViewPatch, ViewSnapshot } from './view.js';
 import { HOST_NO_RESEND } from './no-resend.js';
 import { applyViewOps, viewPatchStep, type ViewPosition } from './view-sync.js';
 
@@ -30,7 +30,7 @@ const ENDS_CLIENT = new Set<string>(['client.exit.request', 'host.stop']);
 
 type Spec<Method extends HostMethodName> = (typeof HOST_METHODS)[Method];
 
-/** The methods a client calls and is answered: queries and commands. Views are followed with `observeSession`. */
+/** The methods a client calls and is answered: queries and commands. Views are followed with `observeSession` and `observeHost`. */
 export type HostCallableMethod = {
   [Method in HostMethodName]: Spec<Method>['primitive'] extends 'query' | 'command' ? Method : never;
 }[HostMethodName];
@@ -48,6 +48,7 @@ export type HostCallResult<Method extends HostCallableMethod, Scope extends Host
   Scope extends 'local' ? HostLocalResult<Method> : HostResult<Method>;
 
 export type HostSessionView<Scope extends HostAnswerScope> = Scope extends 'local' ? LocalSessionView : SessionView;
+export type HostDocumentView<Scope extends HostAnswerScope> = Scope extends 'local' ? LocalHostDocument : HostDocument;
 
 export interface HostCallOptions {
   /** Aborting asks the Host to cancel and still waits for its answer, because only the Host knows what happened. */
@@ -59,7 +60,8 @@ type CallArgs<Method extends HostCallableMethod> = Record<string, never> extends
   : [params: HostCallParams<Method>, options?: HostCallOptions];
 
 export type HostConnectionState =
-  | { readonly state: 'connected'; readonly handshake: HostInitializeResult }
+  /** `draining`: the Host is stopping. Start nothing new; the link closes once its Runs have ended, and the client reconnects. */
+  | { readonly state: 'connected'; readonly handshake: HostInitializeResult; readonly draining?: true }
   /** The link was lost. Calls wait for the next connection; `error` is why the last attempt failed. */
   | { readonly state: 'reconnecting'; readonly attempt: number; readonly error?: HostProtocolError }
   /** For good: closed by the caller, ended on purpose, or refused in a way trying again would not change. */
@@ -69,6 +71,13 @@ export interface HostSessionObserver<Scope extends HostAnswerScope> {
   /** The whole view after every change. Also called with a fresh view after a reconnect. */
   readonly onView: (view: HostSessionView<Scope>) => void;
   /** The Host ended the observation, for example because the Session is gone. It is not resumed. */
+  readonly onClosed?: (reason: string) => void;
+}
+
+export interface HostDocumentObserver<Scope extends HostAnswerScope> {
+  /** The whole document after every change. Also called with a fresh one after a reconnect. */
+  readonly onView: (document: HostDocumentView<Scope>) => void;
+  /** The Host ended the observation. It is not resumed. */
   readonly onClosed?: (reason: string) => void;
 }
 
@@ -95,6 +104,11 @@ export interface KodaXHostClient<Scope extends HostAnswerScope = 'shared'> {
   call<Method extends HostCallableMethod>(method: Method, ...args: CallArgs<Method>): Promise<HostCallResult<Method, Scope>>;
   /** Resolves once the first view arrived. */
   observeSession(sessionId: string, observer: HostSessionObserver<Scope>): Promise<HostSessionObservation>;
+  /**
+   * Follows the whole Host: its newest Sessions, the Runs at work, what waits
+   * on a person, and what it learned. Resolves once the first document arrived.
+   */
+  observeHost(observer: HostDocumentObserver<Scope>): Promise<HostSessionObservation>;
   /** Called at once with the current state. Returns the function that removes the listener. */
   onConnectionChange(listener: (state: HostConnectionState) => void): () => void;
   /**
@@ -153,7 +167,8 @@ export async function createKodaXHostClient<Scope extends HostAnswerScope = 'sha
     get handshake() { return host.handshake(); },
     call: ((method: string, params?: Readonly<Record<string, unknown>>, callOptions?: HostCallOptions) =>
       host.call(method, params, callOptions)) as KodaXHostClient<Scope>['call'],
-    observeSession: (sessionId, observer) => host.observe(sessionId, observer as HostSessionObserver<HostAnswerScope>),
+    observeSession: (sessionId, observer) => host.observe({ kind: 'session', sessionId }, observer as AnyObserver),
+    observeHost: observer => host.observe({ kind: 'host' }, observer as AnyObserver),
     onConnectionChange: host.onConnectionChange,
     answerLeaseRequests: host.answerLeaseRequests,
     answerToolCalls: host.answerToolCalls,
@@ -228,6 +243,10 @@ function createHostLink(options: KodaXHostClientOptions, lifetime: AbortControll
     current = connection;
     latest = connection.handshake;
     connection.onNotification((method, params) => {
+      if (method === 'host.draining') {
+        if (current === connection) setState({ state: 'connected', handshake: connection.handshake, draining: true });
+        return;
+      }
       if (method === 'lease.request') {
         const request = params as HostLeaseRequest;
         void (request.kind === 'host_tool' ? answerToolCall(request) : answerLease(request));
@@ -369,11 +388,8 @@ function createHostLink(options: KodaXHostClientOptions, lifetime: AbortControll
       .catch((error: unknown) => report(error));
   };
 
-  const observe = async (
-    sessionId: string,
-    observer: HostSessionObserver<HostAnswerScope>,
-  ): Promise<HostSessionObservation> => {
-    const observation = createObservation(sessionId, observer, {
+  const observe = async (target: ViewTarget, observer: AnyObserver): Promise<HostSessionObservation> => {
+    const observation = createObservation(target, observer, {
       report, recover, forget: (done) => { observations.delete(done); },
     });
     // In the set before it subscribes, so a patch that arrives with the answer is not missed.
@@ -459,14 +475,12 @@ interface ObservationContext {
   forget(observation: Observation): void;
 }
 
-type AnyView = SessionView | LocalSessionView;
+type AnyView = SessionView | LocalSessionView | HostDocument | LocalHostDocument;
+type AnyObserver = { readonly onView: (view: AnyView) => void; readonly onClosed?: (reason: string) => void };
+type ViewTarget = { readonly kind: 'session'; readonly sessionId: string } | { readonly kind: 'host' };
 
-/** One followed Session: its copy of the view and where that copy stands. */
-function createObservation(
-  sessionId: string,
-  observer: HostSessionObserver<HostAnswerScope>,
-  context: ObservationContext,
-): Observation {
+/** One followed view, of a Session or of the Host: its copy and where that copy stands. */
+function createObservation(target: ViewTarget, observer: AnyObserver, context: ObservationContext): Observation {
   let link: HostRpcClient | undefined;
   let subscriptionId: string | undefined;
   let position: ViewPosition | undefined;
@@ -482,7 +496,8 @@ function createObservation(
 
   const deliver = (next: AnyView): void => {
     view = next;
-    if (recoverRuns) {
+    // Only a Session view asks for its Runs to go on; the Host document lists every Session's.
+    if (recoverRuns && target.kind === 'session') {
       for (const run of next.runs) if (run.phase === 'recovering') context.recover(run.id);
     }
     try {
@@ -523,7 +538,7 @@ function createObservation(
     subscriptionId = createRequestId();
     const answer = await connection.request('view.subscribe', {
       subscriptionId,
-      target: { kind: 'session', sessionId },
+      target,
     }) as unknown as ViewSnapshot;
     if (!active || link !== connection || answer.subscriptionId !== subscriptionId) return;
     accept(answer);

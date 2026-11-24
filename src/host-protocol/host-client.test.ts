@@ -468,6 +468,48 @@ describe('following a Session view', () => {
   });
 });
 
+describe('following the Host document', () => {
+  it('subscribes to the whole Host, applies its changes, and continues no Run it lists', async () => {
+    const recovering = { items: [], runs: [{ id: 'run_1', phase: 'recovering' }] };
+    let subscriptions = 0;
+    const sequence = hostSequence((method, params) => {
+      if (method === 'view.subscribe') return snapshot(params.subscriptionId, { ...recovering, items: [] }, 0, `e${++subscriptions}`);
+      return {};
+    }, ['host_a', 'host_b']);
+    const host = await client(sequence.open);
+    const documents: unknown[] = [];
+    const observation = await host.observeHost({ onView: document => documents.push(document) });
+    const first = sequence.latest();
+    expect(first.sent[0]).toMatchObject({ method: 'view.subscribe', params: { target: { kind: 'host' } } });
+    first.notify('view.patch', {
+      subscriptionId: first.sent[0]!.params.subscriptionId, epoch: 'e1', seq: 1, ops: [{ op: 'set', key: 'runs', value: [] }],
+    });
+    expect(documents).toEqual([recovering, { items: [], runs: [] }]);
+
+    first.drop();
+    const replacement = await vi.waitUntil(() => sequence.hosts[1]);
+    await vi.waitFor(() => expect(documents).toHaveLength(3));
+    expect(replacement.sent.map(request => request.method)).toEqual(['view.subscribe']);
+    observation.close();
+    expect(replacement.sent.at(-1)).toMatchObject({ method: 'view.unsubscribe' });
+  });
+});
+
+describe('a Host that is stopping', () => {
+  it('says so while the link lasts, and not of the Host that replaces it', async () => {
+    const sequence = hostSequence(() => ({}));
+    const host = await client(sequence.open);
+    const seen: HostConnectionState[] = [];
+    host.onConnectionChange(state => { seen.push(state); });
+    sequence.latest().notify('host.draining', {});
+    expect(seen.at(-1)).toMatchObject({ state: 'connected', draining: true });
+    sequence.latest().drop();
+    await vi.waitFor(() => expect(sequence.hosts).toHaveLength(2));
+    await vi.waitFor(() => expect(seen.at(-1)).toMatchObject({ state: 'connected' }));
+    expect(seen.at(-1)).not.toHaveProperty('draining');
+  });
+});
+
 describe('answering the Host for a leased key', () => {
   const request = {
     callId: 'call_1', kind: 'credential', leaseId: 'lease_1', provider: 'p', sessionId: 's1',

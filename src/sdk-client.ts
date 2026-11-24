@@ -27,9 +27,9 @@ export { connectKodaXHost, type ConnectKodaXHostOptions } from './host-protocol/
 export type {
   KodaXHostClient, KodaXHostClientOptions, HostAnswerScope, HostCallableMethod, HostCallParams, HostCallResult,
   HostCallOptions, HostConnectionState, HostSessionObserver, HostSessionObservation, HostSessionView,
-  HostLeaseHandler, HostCredentialRequest, HostToolHandler, HostToolCall,
+  HostDocumentObserver, HostDocumentView, HostLeaseHandler, HostCredentialRequest, HostToolHandler, HostToolCall,
 } from './host-protocol/host-client.js';
-export { HostProtocolError } from './host-protocol/codec.js';
+export { HostProtocolError, type HostErrorCode } from './host-protocol/codec.js';
 
 export interface ConnectKodaXClientOptions {
   /** Optional features; ensure upgrades an idle Host while connect stays passive. */
