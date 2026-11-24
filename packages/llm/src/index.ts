@@ -405,7 +405,7 @@ export type { KodaXOperationConnection, KodaXClassifierApi, KodaXClassifierConne
   KodaXImageConnection, KodaXImageRequest, KodaXImageResult, KodaXDeferredConnection, KodaXDeferredReference,
   KodaXDeferredRequest, KodaXDeferredResult } from './operations/types.js';
 
-export { createFileProviderCredentialStore, CredentialUpdateConflictError } from './auth-file.js';
+export { createFileProviderCredentialStore, createStoredProviderApiKeyReader, CredentialUpdateConflictError } from './auth-file.js';
 export type { ProviderCredentialFileBinding, StoredProviderApiKey, ProviderApiKeyStatus, FileProviderCredentialStore,
   AtomicFileProviderCredentialStore, ProviderApiKeySnapshot, ProviderApiKeyMutation } from './auth-file.js';
 
@@ -413,3 +413,4 @@ export { credentialConnectionFingerprint } from './credential-connection.js';
 export type { ProviderCredentialConnection } from './credential-connection.js';
 export { createFileProviderCredentialAccess } from './file-credential-access.js';
 export type { FileProviderCredentialAccessBinding } from './file-credential-access.js';
+export { setAmbientProviderKeySource, type AmbientProviderKeySource } from './ambient-provider-key.js';

@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { credentialFingerprint } from '../credential-fingerprint.js';
 import { requestIdentity } from '../providers/request-extensions.js';
+import { ambientProviderKey } from '../ambient-provider-key.js';
+import { credentialConnectionFingerprint } from '../credential-connection.js';
 import type { Response as OpenAIResponse, ResponseInputContent } from 'openai/resources/responses/responses';
 import type { KodaXAssistantBlock, KodaXGenerationSource, KodaXTokenUsage } from '../types.js';
 import { KodaXProviderError } from '../errors.js';
@@ -42,7 +44,8 @@ function validateCustomProperties(value: unknown): void {
 }
 function source(connection: KodaXDeferredConnection): KodaXGenerationSource {
   const key = getScopedProviderCredential(connection.name) ?? resolveProviderCredential(connection.name,
-    connection.credentialSource === 'broker' ? undefined : connection.apiKeyEnv ? process.env[connection.apiKeyEnv] : undefined);
+    connection.credentialSource === 'broker' ? undefined : connection.apiKeyEnv ? ambientProviderKey(connection.name, process.env[connection.apiKeyEnv],
+      () => credentialConnectionFingerprint({ provider: connection.name, api: 'openai-responses', baseUrl: connection.baseUrl })) : undefined);
   return { provider: connection.name, api: 'openai-responses', model: connection.model, baseUrl: connection.baseUrl,
     credentialScope: credentialFingerprint(key, requestIdentity()) };
 }

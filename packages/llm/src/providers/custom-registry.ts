@@ -12,6 +12,7 @@ import type {
   KodaXVerifyStrategy,
 } from '../types.js';
 import type { KodaXBaseProvider } from './base.js';
+import { ambientProviderKey } from '../ambient-provider-key.js';
 import {
   createCustomProvider,
   legacyCapabilityFromReasoningProfile,
@@ -186,7 +187,8 @@ export function getCustomProviderList(): Array<{
     custom: true;
   }> = [];
   for (const [name, config] of customProviders) {
-    const configured = !config.oauth && !config.cloud && !!process.env[config.apiKeyEnv];
+    const configured = !config.oauth && !config.cloud && !!ambientProviderKey(name, process.env[config.apiKeyEnv],
+      () => getCustomProvider(name)!.getCredentialConnectionFingerprint());
     const reasoningProfile = resolveCustomProviderReasoningProfile(config);
     const modelIds = (config.models ?? []).map(entry =>
       typeof entry === 'string' ? entry : entry.id,

@@ -28,6 +28,7 @@ import {
   hasScopedProviderCredentialAuthority,
   resolveProviderCredential,
 } from '../provider-credential-context.js';
+import { ambientProviderKey } from '../ambient-provider-key.js';
 import {
   cloneCapabilityProfile,
   normalizeCapabilityProfile,
@@ -392,17 +393,19 @@ export function getProvider(name?: string): KodaXBaseProvider {
   if (hasProviderCredentialContext()) return factory();
 
   const apiKeyEnv = resolveApiKeyEnvForProvider(n);
+  const cached = builtinProviderCache.get(n);
+  let created: KodaXBaseProvider | undefined;
+  // A key the owner stored is bound to the connection, which the instance knows.
+  const connection = () => (cached?.instance ?? (created ??= factory())).getCredentialConnectionFingerprint();
   const currentApiKey = resolveProviderCredential(
     n,
-    apiKeyEnv ? process.env[apiKeyEnv] : undefined,
+    apiKeyEnv ? ambientProviderKey(n, process.env[apiKeyEnv], connection) : undefined,
   );
-
-  const cached = builtinProviderCache.get(n);
   if (cached && cached.apiKey === currentApiKey) {
     return cached.instance;
   }
 
-  const instance = factory();
+  const instance = created ?? factory();
   builtinProviderCache.set(n, { apiKey: currentApiKey, instance });
   return instance;
 }
@@ -426,7 +429,8 @@ export function isProviderConfigured(name: string): boolean {
   if (scopedAuthority !== undefined) return scopedAuthority;
   return resolveProviderCredential(
     name,
-    process.env[KODAX_PROVIDER_SNAPSHOTS[name].apiKeyEnv],
+    ambientProviderKey(name, process.env[KODAX_PROVIDER_SNAPSHOTS[name].apiKeyEnv],
+      () => getProvider(name).getCredentialConnectionFingerprint()),
   ) !== undefined;
 }
 
@@ -489,7 +493,7 @@ export function getProviderList(): Array<{
       name,
       model: snapshot.model,
       models: getProviderModels(name),
-      configured: !!process.env[snapshot.apiKeyEnv],
+      configured: !!ambientProviderKey(name, process.env[snapshot.apiKeyEnv], () => getProvider(name).getCredentialConnectionFingerprint()),
       reasoningCapability: snapshot.reasoningCapability,
       reasoningProfile: snapshot.reasoningProfile,
       capabilityProfile: cloneCapabilityProfile(snapshot.capabilityProfile),

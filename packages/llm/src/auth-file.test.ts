@@ -5,7 +5,7 @@ import { afterEach, expect, it } from 'vitest';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createFileProviderCredentialStore } from './auth-file.js';
+import { createFileProviderCredentialStore, createStoredProviderApiKeyReader } from './auth-file.js';
 
 const folders: string[] = [];
 afterEach(async () => { for (const folder of folders.splice(0)) await rm(folder, { recursive: true, force: true }); });
@@ -178,4 +178,20 @@ it.skipIf(process.platform !== 'win32')('protects the actual plaintext file with
   const restored = await promisify(execFile)(path.join(process.env.SystemRoot!, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
     ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 10000, env: { ...process.env, KODAX_TEST_AUTH_ACL: file } });
   expect(restored.stdout.split('|')[0]).toBe('True');
+});
+it('reads a stored key synchronously and sees each later write', async () => {
+  const file = await fixture(), store = createFileProviderCredentialStore(file), read = createStoredProviderApiKeyReader(file);
+  expect(read(binding)).toBeUndefined();
+  const saved = await store.setApiKey(binding, 'first', null);
+  expect(read(binding)).toBe('first');
+  expect(read({ ...binding, connectionFingerprint: 'b'.repeat(64) })).toBeUndefined();
+  const replaced = await store.setApiKey(binding, 'second', saved.revision);
+  expect(read(binding)).toBe('second');
+  await store.removeApiKey(binding, replaced.revision);
+  expect(read(binding)).toBeUndefined();
+});
+it('refuses an unreadable key file instead of reading it as empty', async () => {
+  const file = await fixture();
+  await writeFile(file, '{"version":2,"apiKeys":');
+  expect(() => createStoredProviderApiKeyReader(file)(binding)).toThrow(/storage/);
 });

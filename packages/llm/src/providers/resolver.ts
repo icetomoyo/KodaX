@@ -38,6 +38,7 @@ import {
   isRuntimeModelProviderName,
 } from './runtime-registry.js';
 import { hasScopedProviderCredentialAuthority } from '../provider-credential-context.js';
+import { ambientProviderKey } from '../ambient-provider-key.js';
 
 /**
  * Resolve a provider by name. Built-in providers take precedence over custom.
@@ -243,7 +244,8 @@ export async function verifyProviderCredential(
     };
   }
 
-  if (meta && scopedCredentialAuthority !== true && !process.env[meta.apiKeyEnv]) {
+  if (meta && scopedCredentialAuthority !== true
+    && !ambientProviderKey(name, process.env[meta.apiKeyEnv], () => resolveProvider(name).getCredentialConnectionFingerprint())) {
     return {
       ok: false,
       error: 'unconfigured',

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { chmod, mkdir, open, readFile, realpath, rename, unlink, lstat } from 'node:fs/promises';
+import { lstatSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -70,6 +71,30 @@ async function readDocument(file: string): Promise<AuthDocument> {
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4 * 1024 * 1024) throw failure();
     return document(JSON.parse(await readFile(file, 'utf8')));
   } catch (error) { if (missing(error)) return { version: 2, apiKeys: {}, oauth: {} }; throw failure(); }
+}
+/**
+ * Trusted process owner only: reads one stored key synchronously, for the
+ * provider code that asks for a key without awaiting. The parsed file is kept
+ * until the file changes. An unreadable file throws, as `readApiKey` does.
+ */
+export function createStoredProviderApiKeyReader(filePath: string): (binding: ProviderCredentialFileBinding) => string | undefined {
+  let cached: { readonly stamp: string; readonly document: AuthDocument } | undefined;
+  const current = (): AuthDocument | undefined => {
+    let stat;
+    try { stat = lstatSync(filePath, { bigint: true }); }
+    catch (error) { if (missing(error)) return undefined; throw failure(); }
+    if (!stat.isFile() || stat.size > 4n * 1024n * 1024n) throw failure();
+    const stamp = [stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join(':');
+    if (cached?.stamp !== stamp) {
+      try { cached = { stamp, document: document(JSON.parse(readFileSync(filePath, 'utf8'))) }; }
+      catch { cached = undefined; throw failure(); }
+    }
+    return cached.document;
+  };
+  return binding => {
+    const entries = current()?.apiKeys;
+    return entries === undefined ? undefined : own(entries, bindingId(binding))?.key;
+  };
 }
 let windowsSid: string | undefined;
 async function protectFile(file: string, directory = false): Promise<void> {

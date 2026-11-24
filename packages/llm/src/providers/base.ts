@@ -42,6 +42,7 @@ import {
   getScopedCloudCredential,
   getScopedProviderReplayIdentity,
 } from '../provider-credential-context.js';
+import { ambientProviderKey } from '../ambient-provider-key.js';
 
 /**
  * Passive-learning guard threaded into `withRateLimit`: when the request fails
@@ -285,7 +286,7 @@ export abstract class KodaXBaseProvider {
   protected getRequestCredentialFingerprint(): string | undefined {
     const identity = getScopedProviderReplayIdentity(this.name);
     if (identity) return credentialFingerprint(['trusted-registration', identity], requestIdentity());
-    const plain = resolveProviderCredential(this.name, this.config.credentialSource === 'broker' ? undefined : requestEnvironment(this.config.apiKeyEnv));
+    const plain = resolveProviderCredential(this.name, this.config.credentialSource === 'broker' ? undefined : this.ambientApiKey(requestEnvironment(this.config.apiKeyEnv)));
     const credential = plain ?? getScopedCloudCredential(this.name);
     if (!credential) return undefined;
     return credentialFingerprint(credential, requestIdentity());
@@ -461,7 +462,7 @@ export abstract class KodaXBaseProvider {
     if (this.config.credentialSource === 'broker') return false;
     return resolveProviderCredential(
       this.name,
-      process.env[this.config.apiKeyEnv],
+      this.ambientApiKey(process.env[this.config.apiKeyEnv]),
     ) !== undefined;
   }
 
@@ -711,8 +712,13 @@ export abstract class KodaXBaseProvider {
     return this.config.contextWindow ?? 200_000;
   }
 
+  /** The environment's key, else the key the process owner stored for this connection. */
+  private ambientApiKey(environmentValue: string | undefined): string | undefined {
+    return ambientProviderKey(this.name, environmentValue, () => this.getCredentialConnectionFingerprint());
+  }
+
   protected getApiKey(): string {
-    const key = resolveProviderCredential(this.name, this.config.credentialSource === 'broker' ? undefined : requestEnvironment(this.config.apiKeyEnv));
+    const key = resolveProviderCredential(this.name, this.config.credentialSource === 'broker' ? undefined : this.ambientApiKey(requestEnvironment(this.config.apiKeyEnv)));
     if (!key) throw new Error(`${this.config.apiKeyEnv} not set`);
     return key;
   }

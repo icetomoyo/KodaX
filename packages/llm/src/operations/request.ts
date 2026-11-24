@@ -2,6 +2,7 @@ import { credentialConnectionFingerprint } from '../credential-connection.js';
 import { withProviderRequestCredential, resolveProviderCredential, redactScopedProviderCredential,
   hasProviderCredentialContext, runWithProviderCredential } from '../provider-credential-context.js';
 import { observeProviderAttempt } from '../provider-request-observation.js';
+import { ambientProviderKey } from '../ambient-provider-key.js';
 import { nativeResponse } from '../providers/native-http.js';
 import type { KodaXTokenUsage } from '../types.js';
 import type { KodaXOperationConnection } from './types.js';
@@ -31,7 +32,7 @@ export function runOperation<T>(connection: KodaXOperationConnection, purpose: '
   return withProviderRequestCredential(target, purpose, signal, async requestSignal => {
       requestSignal?.throwIfAborted();
       const key = resolveProviderCredential(connection.name, connection.credentialSource === 'broker' ? undefined
-        : connection.apiKeyEnv ? process.env[connection.apiKeyEnv] : undefined);
+        : connection.apiKeyEnv ? ambientProviderKey(connection.name, process.env[connection.apiKeyEnv], target.getCredentialConnectionFingerprint) : undefined);
       if (!key && !options.anonymous) throw new Error('Operation requires an authorized credential.');
       const headers = new Headers({ 'content-type': 'application/json', accept: 'application/json', ...(key ? { authorization: `Bearer ${key}` } : {}) });
       const execute = async () => {
