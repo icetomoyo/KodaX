@@ -2403,7 +2403,7 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
 - 客户端：`KodaXHostClient.observeHost({ onView, onClosed? })` 订阅 Host 文档，重连后自动重订，和 `observeSession` 一样。Host 发 `host.draining` 时，连接状态变成 `{ state: 'connected', draining: true }`，客户端可以提示用户 Host 正在停止。2026-11-24 写指南时补上，用户确认。
 - 已验证：`host-document.test.ts`（每秒最多读一次、拥塞时只留最新、读失败结束订阅并停止跟随）；host-rpc 集成测试（user 订阅后看到新 Session、提问时的交互和 `waiting_user_input` 的 Run，回答后两者消失，归档后 Session 消失，`seq` 连续，退订后不再收到；owner 的快照带 `workspaceRoot`；同一个 id 从会话视图改订 Host 文档后不再收到会话视图的补丁）。
 
-**第 4 项的落地细节**（2026-11-24，未经用户确认的取舍）：
+**第 4 项的落地细节**（2026-11-24，下面的取舍用户已确认）：
 
 - 两个端点，和 WS 同一端口、同一前缀：`POST /v2/events` 打开一条连接，应答是 `text/event-stream`，第一个事件 `open` 给出流名；之后每个帧是一个 `data` 事件。`POST /v2/messages` 的正文是流名加换行，后面每行一个帧（JSON 里没有裸换行）。一条流就是一条连接，listener 把它包成和 WS socket 同样的接口，握手期限、握手中的连接上限、空闲断开、拥塞合并、慢客户端丢弃、排空和关闭都走同一段代码。
 - 两个都用 POST，不用 `EventSource`：浏览器对同源 GET 不带 `Origin`，POST 一定带，所以来源和设备 cookie 的检查和 WS 完全一样。正文是 `text/plain`、不加自定义头，跨域时是简单请求，不触发预检；Host 对通过检查的来源回 `Access-Control-Allow-Origin` 和 `Allow-Credentials`。流名放在正文里而不是 URL 里，不进代理日志。
@@ -2411,7 +2411,7 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
 - 关闭：Host 的关闭码放在 `close` 事件里（`{code, reason}`，和 WS 关闭帧同一组码），然后结束应答。被拒的浏览器来源先给 `open` 再给 `close`（4403 `origin_not_allowed`），和 WS"先升级再关闭"一样，客户端把它当作连接结束而不是网络不通，不会转去重试。流没有 `close` 事件就断了，按 1006（断线）处理。
 - 防代理缓冲：应答头 `Cache-Control: no-cache, no-store, no-transform`、`X-Accel-Buffering: no`，关 Nagle；每 15 秒一行 SSE 注释作心跳，防止代理按空闲切断。会把整个应答攒到结束的代理仍然会让流打不开，这时客户端在 10 秒后放弃（见下一条），所以这种网络两种方式都不通，部署文档提醒平台对 `/v2/events` 关掉缓冲。
 - 上行顺序：客户端同一时间只有一个 POST 在路上，期间排队的帧在下一个 POST 里一起发（总量 1 MiB 以内，单个大帧单独发）。POST 失败（网络错误或非 2xx）就结束这条连接（按断线），因为不知道那批帧到了没有，和 WS 断开时一样交给上层的 `unknown_outcome` 和重发规则。Host 对正文的上限是 `maxFrameBytes` 加 64 字节，超过回 413；单行超过 `maxFrameBytes` 断开这条连接。
-- 客户端切换：`connectKodaXHost`（经 `openHostWebSocket`）先试 WS，WS 在打开之前失败或 10 秒没打开就试 HTTP，HTTP 的流同样 10 秒内要收到 `open`。哪种成功了，下次重连先试哪种；先试的失败了再试另一种，所以网络变了也能换回来。两种都失败报 `unavailable`（`connect_failed`，可重试），`cause` 是包含两个错误的 `AggregateError`。**与用户决定 5 的差别**：决定 5 说"在同一网络环境下记住这次选择"，这里只记在这个客户端对象里，页面刷新后从 WS 重新试起；没有写进 `localStorage`，因为 SDK 不替调用方选存储（和 `instanceId` 一样），代价是被拦截的网络里每次新开页面多等一次 WS 失败（被拒绝时很快，被挂起时最多 10 秒）。
+- 客户端切换：`connectKodaXHost`（经 `openHostWebSocket`）先试 WS，WS 在打开之前失败或 10 秒没打开就试 HTTP，HTTP 的流同样 10 秒内要收到 `open`。哪种成功了，下次重连先试哪种；先试的失败了再试另一种，所以网络变了也能换回来。两种都失败报 `unavailable`（`connect_failed`，可重试），`cause` 是包含两个错误的 `AggregateError`。**与用户决定 5 的差别**（2026-11-24 用户确认采用这个做法）：决定 5 说"在同一网络环境下记住这次选择"，这里只记在这个客户端对象里，页面刷新后从 WS 重新试起；没有写进 `localStorage`，因为 SDK 不替调用方选存储（和 `instanceId` 一样），代价是被拦截的网络里每次新开页面多等一次 WS 失败（被拒绝时很快，被挂起时最多 10 秒）。
 - 没有给调用方开选项（比如强制只用 HTTP）：没有真实需求，等有再加。
 - 已验证：`listener.test.ts`（双向帧和顺序、防缓冲的头、Host 给的关闭码、客户端离开时关掉 peer、被拒来源先 open 后 close 且带 CORS 头、别的来源和未知流 404、413、排空时 503）；`http-link.test.ts`（事件在任意位置被分块包括 `\r\n` 中间、跳过心跳、多行 data、排队的帧合并成一个 POST、关闭事件和断线、流打不开时超时）；`host-network-acceptance.test.ts` 的真实 Host 隔着一个拒绝所有 WS 升级的反向代理：SDK 连上，订阅视图、回答提问、完成 Run、上传 500 KiB 的块，代理断开所有连接后客户端走 HTTP 重连，没有再试 WS（代理只记到一次升级）。真机浏览器要等 Space 的 Web UI。
 
