@@ -3,7 +3,7 @@ import { reportDaemonStartupPhase } from '../runtime-daemon/startup-progress.js'
 import chalk from 'chalk';
 import path from 'path';
 import { createKodaXHostRuntime, resolveHostRuntimeConfigFile, type KodaXRuntime } from '../sdk-runtime.js';
-import { createHostProviderKeys, useHostStoredProviderKeys } from '../runtime-daemon/host-provider-keys.js';
+import { createHostProviderKeys, hostProviderKeyFile, useHostStoredProviderKeys } from '../runtime-daemon/host-provider-keys.js';
 import { isRuntimeDaemonPidAlive, observeRuntimeDaemonHealth } from '../runtime-daemon/lifecycle.js';
 import {
   appendRuntimeDaemonLog,
@@ -122,9 +122,13 @@ export async function serveDaemonCommand(input: {
     daemonConfigHome,
     path.join(input.homeDir, '.kodax'),
   );
-  // The Host's Runs use the keys the owner saved beside the config the runtime reads, after the environment's.
-  const hostConfigFile = resolveHostRuntimeConfigFile(usesCanonicalHome ? input.homeDir : undefined);
-  const stopStoredProviderKeys = useHostStoredProviderKeys(hostConfigFile);
+  // The Host's Runs use the keys saved in its own config home, after the environment's. Two Hosts
+  // whose runtimes read one shared config still keep their keys apart.
+  const hostKeyFiles = {
+    configPath: resolveHostRuntimeConfigFile(usesCanonicalHome ? input.homeDir : undefined),
+    keyFile: hostProviderKeyFile(daemonConfigHome),
+  };
+  const stopStoredProviderKeys = useHostStoredProviderKeys(hostKeyFiles.keyFile);
   try {
     const lease = await acquireRuntimeDaemonLease({
       profile: input.profile,
@@ -138,7 +142,7 @@ export async function serveDaemonCommand(input: {
       // `host.json` in the same config home may ask this Host to serve v2 over the network.
       networkConfigHome: daemonConfigHome,
       a2a: () => hostedA2AMount,
-      providerKeys: createHostProviderKeys(hostConfigFile),
+      providerKeys: createHostProviderKeys(hostKeyFiles),
       commitStartup,
       integrationStatuses: () => [
         ...extensions.hotReload.statuses(),

@@ -32,21 +32,32 @@ export interface HostProviderKeys {
 
 type Environment = () => Readonly<Record<string, string | undefined>>;
 
-function authFile(configPath: string): string {
-  return path.join(path.dirname(configPath), 'auth.json');
+/**
+ * The files the Host's keys depend on. `keyFile` is in the Host's own config
+ * home, so no other Host reads or changes it, even when both read one config.
+ */
+export interface HostProviderKeyFiles {
+  /** The config the Host's runtime reads, for the custom providers it names. */
+  readonly configPath: string;
+  readonly keyFile: string;
+}
+
+/** The Host's own key file. */
+export function hostProviderKeyFile(configHome: string): string {
+  return path.join(configHome, 'auth.json');
 }
 
 /**
- * Lets the Host's Runs use the keys saved next to its config when its
+ * Lets the Host's Runs use the keys saved in its own key file when its
  * environment holds none. A key file the Host cannot read leaves the saved keys
  * unused and is reported once, so listing providers never breaks on it.
  * Returns the function that stops it.
  */
 export function useHostStoredProviderKeys(
-  configPath: string,
+  keyFile: string,
   warn: (message: string) => void = message => emitKodaXDiagnostic({ source: 'host-provider-keys', level: 'warn', message }),
 ): () => void {
-  const read = createStoredProviderApiKeyReader(authFile(configPath));
+  const read = createStoredProviderApiKeyReader(keyFile);
   let warned = false;
   return setAmbientProviderKeySource((provider, connectionFingerprint) => {
     try {
@@ -54,7 +65,7 @@ export function useHostStoredProviderKeys(
       warned = false;
       return key;
     } catch {
-      if (!warned) warn(`Cannot read the saved provider keys in ${authFile(configPath)}; Runs use environment keys only until it is fixed.`);
+      if (!warned) warn(`Cannot read the saved provider keys in ${keyFile}; Runs use environment keys only until it is fixed.`);
       warned = true;
       return undefined;
     }
@@ -79,9 +90,9 @@ async function mapped<T>(work: () => Promise<T>): Promise<T> {
 }
 
 /** The owner's admin for the keys the Host keeps. Env-first, as the Host uses them. */
-export function createHostProviderKeys(configPath: string, environment: Environment = () => process.env): HostProviderKeys {
-  const manager = createProviderCredentialManager({ configPath, profile: PROFILE, environment });
-  const store = createFileProviderCredentialStore(authFile(configPath));
+export function createHostProviderKeys(files: HostProviderKeyFiles, environment: Environment = () => process.env): HostProviderKeys {
+  const manager = createProviderCredentialManager({ configPath: files.configPath, authFile: files.keyFile, profile: PROFILE, environment });
+  const store = createFileProviderCredentialStore(files.keyFile);
   const view = (provider: string, status: ProviderCredentialStatus): HostProviderKeyStatus => {
     const external = status.source === 'oauth' || status.source === 'external';
     const source = !external && environment()[status.apiKeyEnv]?.trim() ? 'environment' : status.source;

@@ -3835,7 +3835,9 @@ describe('v2 user settings served by the v1 implementation', () => {
   it('saves a provider key the client never reads back, and holds it under the providers lock', async () => {
     const host = await makeHost();
     const runtime = await host.start();
-    const providerKeys = createHostProviderKeys(path.join(host.homeDir, '.kodax', 'config.json'), () => ({}));
+    const providerKeys = createHostProviderKeys({
+      configPath: path.join(host.homeDir, '.kodax', 'config.json'), keyFile: path.join(host.homeDir, '.kodax', 'auth.json'),
+    }, () => ({}));
     const owner = await connect('owner', runtime, host.workspace, {}, undefined, { providerKeys });
 
     const before = await owner.request('provider.key.get', { provider: 'openai' }) as { revision: string };

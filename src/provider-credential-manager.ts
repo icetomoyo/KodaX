@@ -47,10 +47,12 @@ function configuredTarget(config: Record<string, unknown>, name: string) {
 }
 /** Trusted Main facade: UI may write a Key and inspect status, never read its original value. */
 export function createProviderCredentialManager(input: { readonly configPath?: string; readonly profile?: string;
+  /** Where the keys are kept. Defaults to `auth.json` beside `configPath`. */
+  readonly authFile?: string;
   readonly environment?: () => Readonly<Record<string, string | undefined>> } = {}): ProviderCredentialManager {
   const configPath = input.configPath ?? getAgentConfigPath('config.json'), profile = input.profile ?? 'default';
   if (!path.isAbsolute(configPath) || !profile.trim()) throw new Error('Credential manager requires a trusted config path and profile.');
-  const store = createFileProviderCredentialStore(path.join(path.dirname(configPath), 'auth.json'));
+  const store = createFileProviderCredentialStore(input.authFile ?? path.join(path.dirname(configPath), 'auth.json'));
   const target = async (name: string) => {
     const parsed = await readConfig(configPath), connection = configuredTarget(parsed.config, name);
     return { ...connection, configRevision: parsed.revision, binding: { profile, provider: name, connectionFingerprint: connection.provider.getCredentialConnectionFingerprint() } };
