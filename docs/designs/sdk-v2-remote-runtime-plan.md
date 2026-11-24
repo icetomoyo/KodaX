@@ -2354,7 +2354,9 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
   - 2026-11-24 用户确认：存下的 key 是 Host 主人的一份，同一个 Host 的所有连接共用，不按 Session 的主人分开。
   - 2026-11-24 用户确认：网络 `user` 能覆盖或删掉**同一个 Host** 的 key（平台可以用 `providers` 锁住）；绝不能改到别的 Host 的 key，否则第三方多租户接入会出问题。所以 key 文件固定在 Host 自己的 config home（`hostProviderKeyFile(configHome)`），不跟着 runtime 读的配置走：`kodax host serve --config-home` 指向一个既不是 `homeDir/.kodax` 也不是 `KODAX_HOME` 的目录时，runtime 会退回读全局 `~/.kodax/config.json`，key 跟着它走就会和别的 Host 共用。
   - 未经用户确认：`auth.json` 读不了时只记一次警告、当作没存 key，不挡 Host 启动和列 provider。
-  - 遗留问题（改之前就有，未处理）：上面那种 `--config-home` 启动方式下，Host 的配置、记忆、skills 等仍然读全局 `~/.kodax`，几个这样启动的 Host 会共用，A 上的 `config.update` 会改到 B。SDK 和默认 CLI 启动不会走到这条路。
+  - 2026-11-24 已修（用户要求）：前台 `kodax host serve --home/--config-home`、`kodax a2a serve --home` 以前只有配置和 Session 在 Host 自己的目录，记忆、skills、MCP、learned 等还在全局 `~/.kodax`（或 `KODAX_HOME`），几个 Host 会共用。现在启动入口（`kodax_bootstrap`）在加载 CLI 前就把 `KODAX_HOME` 设成 Host 自己的目录，和启动器拉起的 Host 一样（`process.ts` 一直这么做）；`serve` 再核对一次进程数据根，不一致就拒绝启动并给出要设的 `KODAX_HOME`。
+  - 分类结论：`.kodax` 里的东西都跟 Host 走（配置、key、Session、记忆、skills、MCP、learned、commands、workflows、缓存、子进程登记）。机器级的 Windows 沙箱状态本来就在 `ProgramDataKodaX`，不受影响。系统用户级的跨工具目录（`~/.agents/skills`、`~/.agents/commands`、`~/.codex`、`~/.gemini`）按 `os.homedir()` 读，不跟 Host 走。
+  - 未经用户确认：`~/.agents/skills` 和 `~/.agents/commands` 仍按系统用户共用；同一系统用户下跑多个租户 Host 时，平台不要往这两个目录放租户的东西。
 - **项目信任列表没做**：v2 里还没有这组方法，等有客户端要用时随方法一起加。
 
 ### M2 富 UI（M，四项可以并行）

@@ -247,6 +247,13 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- A Host run in the foreground with `kodax host serve --home <dir>` or
+  `kodax a2a serve --home <dir>` keeps its memory, Skills, MCP servers and
+  other data in `<dir>/.kodax`, beside its settings and Sessions. It used to
+  keep them in `~/.kodax` (or `KODAX_HOME`), so Hosts served for different
+  homes on one machine shared them. A Host whose process still reads another
+  root refuses to start and names the `KODAX_HOME` to set.
+
 - `kodax host restart` starts the Host when none is running, or when the
   state file names a process that is gone. It used to fail and start nothing.
 
