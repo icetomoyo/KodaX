@@ -197,7 +197,7 @@ L3 精确层   按需：通过 Host 现有 LSP 服务（packages/coding/src/lsp/
 - changed_scope 与 semantic_lookup 的工具说明、repo-explorer 说明和低置信说明不在首个请求里（延迟工具只发简短提示），本 eval 测不到。
 - 原始输出和盲评记录在本地 `%TEMP%/kodax-eval-dumps/repointel-p0-prompt/r3-full/`。
 
-## 9. 开工时的决定（2026-11-24 用户确认，第 4 项除外）
+## 9. 开工时的决定（2026-11-24 用户确认）
 
 体积实测（2026-11-24，Windows，发布用的编译设置）：程序本身 0.13 MB；rusqlite（bundled）+1.70 MB；语法库 TypeScript 含 TSX 2.93、JavaScript 0.49、Python 0.54、Go 0.30、Rust 1.19、Java 0.49、C++ 3.50 MB；七种全部 9.07 MB，再加 SQLite 10.77 MB（gzip 后 1.88 MB）。现在的 npm 包把五个平台的原生程序放在同一个包里，`0.7.97-rc.2` 解压后 35.0 MB，其中原生程序 4.5 MB。
 
@@ -208,7 +208,17 @@ L3 精确层   按需：通过 Host 现有 LSP 服务（packages/coding/src/lsp/
    - 内存：索引进程自己盯着用量，接近 300 MB 预算时停止扩大缓存，结果标为降级。Host 每隔几秒读它的实际内存，超过硬上限就结束它、标为降级，退避后重启。
    - 不单独给 Windows 套带内存上限的嵌套 Job：Linux 和 macOS 没有不需要特权的对等手段，硬上限还是要靠 Host 监视。Linux 的 `RLIMIT_AS` 按虚拟地址空间计，SQLite 和 Rust 的预留会被误判成超限。
    - 索引进程是 Host 的子进程，本来就在 Host 的 Job 里，Host 退出它跟着退出，这部分不用写代码。
-4. **语法库和安装包：待定。** 语法库静态编进程序，不在运行时加载外来原生代码。怎么发布（放进现有 npm 包、按平台拆包，还是做成单独下载的组件）还在和用户讨论。
+4. **语法库和安装包。**
+   - 语法库静态编进程序，不在运行时加载外来原生代码。
+   - RepoIntel 不做成扩展。接入代码（拉起和监管进程、地图注入、工具、L3）留在核心里；原生程序是可以缺的组件，缺了就退回只用 git 的工具面，并如实报告"未索引"。
+   - 阶段 1、2 放在开关后面，原生程序不进 npm 包，CI 为五个平台编出来放进 GitHub Release 的附件。
+   - 默认打开之前按评测结果二选一：值得默认打开就按平台拆包（npm `optionalDependencies`，和 Claude Code、Codex 一样）；只对部分人有用就做成按需下载的组件（和 pi 下载 rg、fd 一样）。
+   - 现有的必需原生程序（Windows 沙箱 helper、文本事务）留在主包里，不拆出去：它们缺了 Host 起不来，拆出去会让离线环境里漏同步一个包变成装好了却打不开。
+   - 离线安装（客户里有离线环境，用户 2026-11-24 要求）：
+     - 单文件版：GitHub Release 每个平台的压缩包里同时放 RepoIntel 程序，拷一个包就齐了。离线环境首推这个。
+     - npm 加内网仓库：同步主包时，把目标机器平台的 RepoIntel 包一起同步，版本和主包一致。在另一种系统的机器上装一遍来填内网仓库，会漏掉其他平台的包；安装文档列出要同步的包名。
+     - 如果选了按需下载：另外提供本地文件安装，指定从 Release 下载的压缩包，用主包里记下的哈希校验。
+     - 组件缺失或版本对不上时不阻塞使用：RepoIntel 退回只用 git 的工具面，`kodax doctor` 和 RepoIntel 的状态里写明缺哪个包、哪个版本、怎么补。
 5. **真值集：** 每个仓库固定到某个提交，评测时下载，不放进本仓库；检出时核对许可证。
    - TypeScript：KodaX 本身加 `honojs/hono`（MIT）。KodaX 同时充当混合语言仓库（TS、Rust、少量 Python）。
    - Python：`encode/httpx`（BSD-3）。
