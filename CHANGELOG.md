@@ -63,6 +63,11 @@ All notable changes to this project will be documented in this file.
   fixed. Paths on the Host, the Host's own keys and external Agent
   registrations stay with the owner, and MCP secret values read back as
   `[redacted]`.
+- The Host uses a provider key saved in the `auth.json` beside its
+  configuration when its environment holds none; environment keys still come
+  first. Protocol v2 `provider.key.get`, `provider.key.set` and
+  `provider.key.remove` save or delete such a key and never send it back. A
+  network `user` may call them unless `providers` is locked.
 - Protocol v2 tool items in the session view and in `history.read` carry
   `tool.change`: the diff a file tool made, in the shape of the approval
   `diff`. The file path is relative to the Host workspace.

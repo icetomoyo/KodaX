@@ -105,7 +105,7 @@ KodaX 客户端 SDK（`connectKodaXHost`）已经按这些关闭码处理。
 |---|---|
 | `mcp` | 添加、删除、重新加载 MCP server |
 | `extensions` | 重新加载扩展 |
-| `providers` | provider 和模型设置、自己加的 provider、推理强度探测 |
+| `providers` | provider 和模型设置、自己加的 provider、推理强度探测、存在 Host 上的 key（`provider.key.*`） |
 | `permissions` | 存盘的权限模式，以及审批时的"总是允许" |
 | `fullAccess` | `full-access` 模式，包括配置和每个 Session 上的 |
 
@@ -248,7 +248,7 @@ kodax host serve --user-input-timeout-ms 1800000
 
 1. 每个用户一个容器或系统账号，一个 home 只有一个 Host。home 放在同一时间只能被一个 Host 挂载的卷上。
 2. 封锁到 `169.254.169.254` 和集群内网的出站流量。模型在 `bash` 里执行的命令，能访问容器能访问的一切。
-3. 平台自己的模型 key 不要放进 Host 的环境变量，模型执行的命令会继承它们。用一个自动加 key 的出口代理，或者让可信客户端按请求借出 key（凭证租约）。
+3. 平台自己的模型 key 不要放进 Host 的环境变量，也不要存进 Host 的主目录：模型执行的命令会继承环境变量，也能读主目录，`provider.key.set` 就把 key 存在那里。用一个自动加 key 的出口代理，或者让可信客户端按请求借出 key（凭证租约）。
 4. 在 ingress 或服务网格上做 TLS。
 5. JWT 有效期要短，`aud` 绑定到这个 Host。
 6. 提供 Web UI 时，用严格的 CSP 并净化输出，见下文。

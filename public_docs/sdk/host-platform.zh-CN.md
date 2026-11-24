@@ -109,7 +109,7 @@ host.answerLeaseRequests(async (request) => vault.keyFor(request.provider));
 
 1. 如果 Session 策略绑定了凭证租约，这个 Session 的每个 Run 都用它。客户端在这里启动的每一轮子 Agent 也用它。
 2. 否则 Run 用启动它的那次调用里发送的租约。
-3. 否则用 Host 自己的 key。
+3. 否则用 Host 自己的 key：先看 Host 的环境变量，再看用 `provider.key.set` 存下的 key。
 
 在策略绑定了租约的 Session 里，调用自带租约会报 `invalid_params`，reason 为 `lease_bound_by_session`。
 

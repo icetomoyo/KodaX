@@ -142,7 +142,7 @@ can hide those controls.
 |---|---|
 | `mcp` | Adding, removing and reloading MCP servers |
 | `extensions` | Reloading extensions |
-| `providers` | The provider and model settings, the providers the person adds, and reasoning probes |
+| `providers` | The provider and model settings, the providers the person adds, reasoning probes, and the keys saved on the Host (`provider.key.*`) |
 | `permissions` | The saved permission mode, and "always allow" answers to approvals |
 | `fullAccess` | `full-access` mode, on the configuration and on each Session |
 
@@ -337,9 +337,10 @@ KodaX does not do these for you:
    home on a volume only one Host can use at a time.
 2. Block egress to `169.254.169.254` and your cluster's internal network.
    Commands the model runs in `bash` can reach anything the container can.
-3. Keep your own provider keys out of the Host's environment. Commands the
-   model runs inherit it. Use an egress proxy that adds the key, or have a
-   trusted client lend the key per request (a credential lease).
+3. Keep your own provider keys out of the Host's environment and its home.
+   Commands the model runs inherit the environment and can read the home,
+   where `provider.key.set` saves a key. Use an egress proxy that adds the
+   key, or have a trusted client lend the key per request (a credential lease).
 4. TLS at your ingress or mesh.
 5. Short-lived JWTs whose `aud` names this Host.
 6. If you serve a web UI, a strict CSP and sanitized output. See below.

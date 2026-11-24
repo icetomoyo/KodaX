@@ -146,7 +146,7 @@ the Session policy.
 1. If the Session's policy binds a credential lease, every Run of the Session uses it.
    So does every child turn a client starts there.
 2. Otherwise a Run uses the lease sent with the call that started it.
-3. Otherwise it uses the Host's own keys.
+3. Otherwise it uses the Host's own keys: its environment first, then `provider.key.set`.
 
 In a Session whose policy binds leases, a call that sends its own fails with
 `invalid_params`, reason `lease_bound_by_session`.

@@ -2331,7 +2331,7 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
 
 不包括人设存储：人设用已安装的 Agent（D4）。
 
-**状态**：2026-11-24 落地（未经用户确认的取舍见下）。没做的两项：用户自带 key 和项目信任列表，原因见最后两条。
+**状态**：2026-11-24 落地（未经用户确认的取舍见下）。用户自带 key 当天补上（见倒数第二条）；项目信任列表没做，原因见最后一条。
 
 落地细节（未经用户确认）：
 
@@ -2348,7 +2348,10 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
   - 外部 Agent 注册：`agent.registration.*` 和 v1 的 `agentRegistrations.*` 不在 `user` 的握手里，理由同上一节最后一条。上面表里给它们标的 `extensions` 锁只对将来开放时有意义。
 - **MCP 的密钥**：对网络连接（`!caller.local`），`mcp.server.list/get/upsert/reload` 和 `config.get/update/reload` 里 v1 遗留的 `mcpServers`，`env` 和 `headers` 只给名字，值换成 `[redacted]`。`revision` 仍是 Host 的原值，`ifRevision` 照常可用。保存带 `[redacted]` 值的 server 报 `invalid_params`（reason `redacted_value`），避免把读回来的占位符写回去覆盖掉密钥。
 - **已知的缺口**：`apiKeyEnv` 只在保存时检查。保存时 Host 没设、之后平台又设了这个变量，这个 provider 会用上它。平台给 Host 加环境变量时要知道这一点；要堵上得在每次用 key 时再查一次，等有平台遇到再做。
-- **用户自带 key 没做**：v1 的 `provider.key.*` 写的是 Host 本机的 `auth.json`，可是 Host 跑 Run 时并不读 `auth.json`，只用 Host 环境里的 key 或客户端借来的凭据租约（CLI 客户端在自己这边读 `auth.json`）。对网络用户开放写 `auth.json` 不会让他的 Run 用上这个 key。要做先得让 Host 能按 Session 的主人解析存下来的 key，这是单独一项，等有平台要用时再定。网页用户现在用自己的 key 的办法是凭据租约（M1b 第 9 项）。
+- **用户自带 key**（2026-11-24 补上，用户同意 Host 读 `auth.json`）：
+  - Host 跑 Run 时，环境变量里没有 key，就读它配置旁边的 `auth.json`（profile `default`，按 provider 和连接指纹绑定）。环境变量优先；在凭据租约的作用域里只用租约。实现在 `packages/llm/src/ambient-provider-key.ts`（进程级的 key 来源，只有 Host 安装）和 `src/runtime-daemon/host-provider-keys.ts`。
+  - v2 `provider.key.get/set/remove` 只写不读，key 不回传。`resend: 'auto'`：重发同一个 key 直接返回当前状态，否则 `ifRevision` 过期报 `conflict`（reason `revision_mismatch`）。`user` 受 `providers` 锁。
+  - 未经用户确认：存下的 key 是 Host 主人的一份，所有连接共用，不按 Session 的主人分开；网络 `user` 能覆盖或删掉主人存的 key（按网络对等原则，平台可以用 `providers` 锁住）；`auth.json` 读不了时只记一次警告、当作没存 key，不挡 Host 启动和列 provider。
 - **项目信任列表没做**：v2 里还没有这组方法，等有客户端要用时随方法一起加。
 
 ### M2 富 UI（M，四项可以并行）
