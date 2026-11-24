@@ -230,7 +230,7 @@ async function saveSessionSnapshotWithPolicy(
           `import { createSessionManager } from '@kodax-ai/kodax/session'; ` +
           `const { storage } = createSessionManager(); ` +
           `runKodaX({ session: { id, storage, ... }, ... }, prompt);  ` +
-          `See public_docs/sdk/embedder-guide.md §6.`,
+          `See public_docs/sdk/in-process.md, "Keep sessions on disk".`,
       });
     }
     return;

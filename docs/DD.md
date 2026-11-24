@@ -2479,5 +2479,5 @@ node scripts/openrouter-reasoning-live.mjs --run pilot|matrix|replay|rejection [
 - Product requirements: [PRD.md](PRD.md)
 - High-level design: [HLD.md](HLD.md)
 - Architecture decisions: [ADR.md](ADR.md)
-- SDK embedder guide: [embedder-guide.md](../public_docs/sdk/embedder-guide.md)
+- SDK guides: start at [overview.md](../public_docs/sdk/overview.md)
 - Release process: [release.md](release.md)

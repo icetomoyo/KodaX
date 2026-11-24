@@ -145,4 +145,4 @@ kodax execpolicy check --trust-project-policy -- git push origin main
 - [Providers](./providers.md) — Provider configuration
 - [Custom providers](./custom-providers.md) — Custom endpoint configuration
 - [Sandbox](./sandbox.md) — OS-level containment
-- [SDK embedder guide](../sdk/embedder-guide.md) — Runtime SDK and daemon API
+- [SDK overview](../sdk/overview.md) — the SDK, the Host and its protocol

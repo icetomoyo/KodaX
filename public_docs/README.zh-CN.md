@@ -10,7 +10,7 @@
 
 ## 入门指南
 
-会话工作模式（Agent、默认 Coding 和实验性 Script）、一致的问题结果、保存的原始工具读取、结构化任务报告和估算 token 流式进度在 `v0.7.97-alpha.11` 中发布；统一 Host 切换和提供商/OAuth 凭据一致性在 `v0.7.97-alpha.12` 中发布；Space 执行和 Session 接缝在 `v0.7.97-beta.1` 完成；Script 执行可靠性强化和共享 Host 恢复修复在 `v0.7.97-beta.2` 发布；长上下文恢复、持久化 Actor 结算及保存历史记录位置/轮次解析在 `v0.7.97-beta.3` 发布；指令与历史记录契约 v2 修复在 `v0.7.97-beta.4` 发布；扩展策略加固与单次批准、代理/私有 CA 支持及持久视觉观测在 `v0.7.97-beta.5` 发布；每个 `KODAX_HOME` 一个 Host 并删除 Host 位置的 `profile` 在 `v0.7.97-beta.6` 发布；Space SDK 图片投影、附件读取与扩展审批归属修复在 `v0.7.97-beta.7` 发布；Windows daemon 原生 Job 启动修复在 `v0.7.97-beta.8` 发布；数据根目录迁移与 steer 撤回在 `v0.7.97-beta.9` 发布。请阅读[当前 SDK 对齐说明](sdk/embedder-guide.md#post-alpha10-sdk-alignment)、[统一 Host 切换说明](sdk/embedder-guide.md#unified-host-sdk-cutover-shipped-in-v0797-alpha12)和[每个 KODAX_HOME 一个 Host](../docs/SDK_MIGRATION.md#one-host-per-kodax_home-profile-removed)以了解兼容性和独立库边界。首次读取延迟历史追踪见 Issue 371。
+会话工作模式（Agent、默认 Coding 和实验性 Script）、一致的问题结果、保存的原始工具读取、结构化任务报告和估算 token 流式进度在 `v0.7.97-alpha.11` 中发布；统一 Host 切换和提供商/OAuth 凭据一致性在 `v0.7.97-alpha.12` 中发布；Space 执行和 Session 接缝在 `v0.7.97-beta.1` 完成；Script 执行可靠性强化和共享 Host 恢复修复在 `v0.7.97-beta.2` 发布；长上下文恢复、持久化 Actor 结算及保存历史记录位置/轮次解析在 `v0.7.97-beta.3` 发布；指令与历史记录契约 v2 修复在 `v0.7.97-beta.4` 发布；扩展策略加固与单次批准、代理/私有 CA 支持及持久视觉观测在 `v0.7.97-beta.5` 发布；每个 `KODAX_HOME` 一个 Host 并删除 Host 位置的 `profile` 在 `v0.7.97-beta.6` 发布；Space SDK 图片投影、附件读取与扩展审批归属修复在 `v0.7.97-beta.7` 发布；Windows daemon 原生 Job 启动修复在 `v0.7.97-beta.8` 发布；数据根目录迁移与 steer 撤回在 `v0.7.97-beta.9` 发布。请阅读 [SDK 概览](sdk/overview.zh-CN.md)、[SDK 迁移指南](../docs/SDK_MIGRATION.md)和[每个 KODAX_HOME 一个 Host](../docs/SDK_MIGRATION.md#one-host-per-kodax_home-profile-removed)以了解兼容性和独立库边界。首次读取延迟历史追踪见 Issue 371。
 
 - [概述](./getting-started/overview.zh-CN.md) — KodaX 是什么，与同类工具的对比
 - [安装](./getting-started/installation.zh-CN.md) — npm、单体二进制、从源码构建
@@ -27,7 +27,12 @@
 
 ## SDK
 
-- [产品客户端集成](./sdk/embedder-guide.md#product-client-integration) — 共享 Session 应用的默认入口；同时链接到作用域低层 Host/库参考。
+- [SDK 概览](./sdk/overview.zh-CN.md) — 安装、包入口、v2 Host 客户端与进程内使用的区别、数据存放位置。
+- [Host 客户端](./sdk/host-client.zh-CN.md) — 连接 Host、跟随会话、提交输入、回答交互。
+- [Host 平台](./sdk/host-platform.zh-CN.md) — 角色、Session 策略、租约、子 Agent、A2A 与 ACP。
+- [进程内使用](./sdk/in-process.zh-CN.md) — 在你自己的 Node 进程里运行 KodaX。
+- [可选模块](./sdk/optional-modules.zh-CN.md) — Artifact SDK、沙箱、媒体输入、Skill 学习。
+- [Host 协议 v2 参考](./sdk/host-protocol-reference.md) — 全部方法，由代码生成（英文）。
 - [SDK 迁移指南](../docs/SDK_MIGRATION.md) — 新旧调用对照、生命周期和迁移验收（中文）。
 - [客户端契约](../docs/CLIENT_CONTRACT.md) — 完整产品方法清单、观测、历史记录与错误语义。
 - [Artifact SDK](../docs/ARTIFACT_SDK.md) — 可选独立包、共享 Host/Node 配置、九项操作、格式支持、证据与视觉审阅限制。

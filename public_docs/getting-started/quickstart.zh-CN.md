@@ -64,4 +64,4 @@ kodax -c "给出具体的修复建议"
 - [配置文件](../configuration/config-files.zh-CN.md) — 核心设置与优先级
 - [权限模式](../configuration/permissions.zh-CN.md) — 沙箱优先权限策略
 - [沙箱](../configuration/sandbox.zh-CN.md) — 平台隔离与配置
-- [SDK 嵌入指南](../sdk/embedder-guide.md) — 在你的应用中嵌入 KodaX
+- [SDK 概览](../sdk/overview.zh-CN.md) — 在你的应用中嵌入 KodaX

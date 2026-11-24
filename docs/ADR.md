@@ -415,7 +415,7 @@ remain independently usable. The public `resolveWorkMode` helper and managed
 `onEffectiveConfig.workMode` expose the effective choice; Session settings expose
 only the requested choice. Recovery persists the composition setting and still
 requires fresh authority bindings. See the
-[integration contract](../public_docs/sdk/embedder-guide.md#partner--agent-intersection-shipped-in-v0797-alpha12)
+[Session policy guide](../public_docs/sdk/host-platform.md#set-limits-with-a-session-policy)
 and [offline acceptance](test-guides/FEATURE_247_v0.7.97_TEST_GUIDE.md).
 
 The unified Host accepts Partner identity without turning that metadata into

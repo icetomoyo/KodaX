@@ -114,4 +114,4 @@ kodax execpolicy check --trust-project-policy -- git push origin main
 - [提供商](./providers.zh-CN.md) — 提供商配置
 - [自定义提供商](./custom-providers.zh-CN.md) — 自定义端点配置
 - [沙箱](./sandbox.zh-CN.md) — OS 级别隔离
-- [SDK 嵌入指南](../sdk/embedder-guide.md) — Runtime SDK 与 Daemon API
+- [SDK 概览](../sdk/overview.zh-CN.md) — SDK、Host 及其协议

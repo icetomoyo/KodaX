@@ -302,7 +302,7 @@ try {
 }
 ```
 
-The Host owns execution, settings and persistence; the UI submits inputs and observes from `sessions.observe`. See the [SDK embedder guide](public_docs/sdk/embedder-guide.md) and [Client contract](docs/CLIENT_CONTRACT.md).
+The Host owns execution, settings and persistence; the UI submits inputs and follows the Session view. See the [SDK overview](public_docs/sdk/overview.md), the [Host client guide](public_docs/sdk/host-client.md) and the [Client contract](docs/CLIENT_CONTRACT.md).
 
 ### SDK subpaths
 
@@ -407,7 +407,7 @@ Supported binary targets: `win-x64`, `linux-x64`, `linux-arm64`, `darwin-x64`, `
 | Document | Purpose |
 |---|---|
 | [README_CN.md](README_CN.md) | 中文文档 |
-| [public_docs/sdk/embedder-guide.md](public_docs/sdk/embedder-guide.md) | SDK hosting, shared Runtime daemon, permission routing, compaction/history recovery |
+| [public_docs/sdk/](public_docs/sdk/overview.md) | SDK guides: overview, Host client, Host platform, in-process, optional modules, v2 method reference |
 | [public_docs/configuration/](public_docs/configuration/) | Providers, custom providers, permissions, sandbox |
 | [docs/CLIENT_CONTRACT.md](docs/CLIENT_CONTRACT.md) | Product Client SDK contract |
 | [docs/SDK_MIGRATION.md](docs/SDK_MIGRATION.md) | Upgrade guide for SDK integrators |

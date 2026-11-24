@@ -115,8 +115,7 @@ support and durable visual observations shipped in `v0.7.97-beta.5`; one
 Host per `KODAX_HOME` with the Host-location `profile` removed shipped in
 `v0.7.97-beta.6`; the Space SDK image projection, attachment and
 approval-attribution corrections shipped in `v0.7.97-beta.7`; the Windows daemon native Job startup repairs shipped in `v0.7.97-beta.8`; data root relocation and steer withdrawal shipped in `v0.7.97-beta.9`; merged-input acknowledgement shipped in `v0.7.97-beta.10`; readable history during a busy Run and tool-neutral Skills shipped in `v0.7.97-beta.11`; one prompt chain for every root Run and final Stop outcomes shipped in `v0.7.97-beta.12`; the Space integration repairs and Session-read cost fixes shipped in `v0.7.97-beta.13`; the model catalog refresh and late provider/Host repairs shipped in `v0.7.97-rc.1`; the RepoIntel phase 0 default surface, reasoning-replay repairs and the `glm-5.4` listing shipped in `v0.7.97-rc.2`. Read the
-[current SDK alignment](sdk/embedder-guide.md#post-alpha10-sdk-alignment),
-[unified Host cutover](sdk/embedder-guide.md#unified-host-sdk-cutover-shipped-in-v0797-alpha12)
+[SDK overview](sdk/overview.md), the [SDK migration guide](../docs/SDK_MIGRATION.md)
 and [one Host per KODAX_HOME](../docs/SDK_MIGRATION.md#one-host-per-kodax_home-profile-removed)
 for compatibility and standalone-library boundaries. Historical first-read
 latency remains tracked in Issue 371.
@@ -136,7 +135,12 @@ latency remains tracked in Issue 371.
 
 ## SDK
 
-- [Product Client integration](./sdk/embedder-guide.md#product-client-integration) — default entry for shared-Session applications; also links to scoped low-level Host/library reference.
+- [SDK overview](./sdk/overview.md) — install, package entries, v2 Host client versus in-process use, where data lives.
+- [Host client](./sdk/host-client.md) — connect to a Host, follow Sessions, submit input, answer interactions.
+- [Host platform](./sdk/host-platform.md) — roles, Session policy, leases, child Agents, A2A and ACP.
+- [In-process](./sdk/in-process.md) — run KodaX inside your own Node process.
+- [Optional modules](./sdk/optional-modules.md) — Artifact SDK, sandbox, media input, Skill learning.
+- [Host protocol v2 reference](./sdk/host-protocol-reference.md) — every method, generated from the code.
 - [SDK migration](../docs/SDK_MIGRATION.md) — old-to-new calls, lifecycle and migration acceptance (Chinese).
 - [Client contract](../docs/CLIENT_CONTRACT.md) — complete Product method inventory, observation, history and error semantics.
 - [Artifact SDK](../docs/ARTIFACT_SDK.md) — optional independent package, shared-Host/Node setup, nine operations, format support, evidence and visual-review limits.

@@ -11,7 +11,7 @@ describe('isolated Skill Script platform documentation', () => {
   it('marks the protocol-10 route POSIX-only and Windows unavailable', () => {
     for (const relativePath of [
       'README.md',
-      'public_docs/sdk/embedder-guide.md',
+      'public_docs/sdk/optional-modules.md',
       'CHANGELOG.md',
     ]) {
       const source = read(relativePath);

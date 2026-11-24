@@ -5,7 +5,7 @@ Status: unreleased source change after `v0.7.97-alpha.11`, 2026-10-30.
 Keep the existing Partner options and set `workMode: 'agent'` plus
 `context.workModePolicy: 'intersect'`. Do not remove the profile, tool policy,
 exclusions, connector leases or authorization callbacks. Integration details:
-[embedder contract](../../public_docs/sdk/embedder-guide.md#partner--agent-intersection-unreleased-after-alpha11).
+[Session policy guide](../../public_docs/sdk/host-platform.md#set-limits-with-a-session-policy).
 
 ## Automated acceptance
 

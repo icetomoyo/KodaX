@@ -655,11 +655,11 @@ describe('FEATURE_218 manual registry', () => {
     expect(sdk).toContain('`AcpRuntimePermissionMode`');
     expect(MANUAL_REGISTRY.a2a.sources).toContainEqual({
       label: 'A2A SDK guide',
-      path: 'public_docs/sdk/embedder-guide.md',
+      path: 'public_docs/sdk/host-platform.md',
     });
     expect(MANUAL_REGISTRY.compaction.sources).toContainEqual({
       label: 'SDK guide',
-      path: 'public_docs/sdk/embedder-guide.md',
+      path: 'public_docs/sdk/in-process.md',
     });
   });
 

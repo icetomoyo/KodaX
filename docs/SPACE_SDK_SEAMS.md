@@ -146,7 +146,7 @@ modules、extensions、runtime、recovery、mcp、sessions、a2a、listener。Sp
 转发并映射展示文案，无需自行探测 Host。阶段可跳过/重复，不表示百分比或就绪；
 Host 的内部日志与启动 ID 仅用于 SDK 本机观测，不进入 Renderer 契约。
 
-`ready` 只表示 Client 接口可用；Main 的 Session 读取和 Renderer 的首次渲染仍有自己的完成边界。回调应快速返回，其 Promise 不被等待，故障不改变启动结果。Space 根据启动 Promise 清除加载或展示失败，再在自身 UI 边界完成交接；不假定已存在自动 IPC 桥。REPL 使用 `onBeforeRender` 完成终端交接，桌面 UI 无需依赖它。阶段、等待原因与完整示例见 [Client 契约](CLIENT_CONTRACT.md#连接启动与所有权)和[英文指南](../public_docs/sdk/embedder-guide.md#show-local-startup-progress)。
+`ready` 只表示 Client 接口可用；Main 的 Session 读取和 Renderer 的首次渲染仍有自己的完成边界。回调应快速返回，其 Promise 不被等待，故障不改变启动结果。Space 根据启动 Promise 清除加载或展示失败，再在自身 UI 边界完成交接；不假定已存在自动 IPC 桥。REPL 使用 `onBeforeRender` 完成终端交接，桌面 UI 无需依赖它。阶段、等待原因与完整示例见 [Client 契约](CLIENT_CONTRACT.md#连接启动与所有权)和[英文指南](../public_docs/sdk/host-client.md#startup-progress)。
 
 ## 会话列表时间与启动职责
 

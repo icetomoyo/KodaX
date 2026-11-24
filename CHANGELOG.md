@@ -230,6 +230,12 @@ All notable changes to this project will be documented in this file.
 ### Removed
 
 - The `/auto-denials` REPL command.
+- `public_docs/sdk/embedder-guide.md`. Five shorter guides replace it, each
+  in English and Chinese: `overview`, `host-client`, `host-platform`,
+  `in-process` and `optional-modules`, plus
+  `host-protocol-reference.md`, which lists every protocol v2 method and is
+  generated from the code. Its v0.7.97 removal table moved to
+  `docs/SDK_MIGRATION.md`. The npm package ships all of `public_docs/sdk`.
 
 ### Fixed
 

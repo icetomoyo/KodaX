@@ -41,7 +41,7 @@ Current unreleased sources also support `kodax --work-mode agent`,
 In the REPL, `/work-mode` shows the choice and `/work-mode agent` changes it while
 idle. This is separate from `/mode` permission profiles; it does not grant tool
 authority. Shared-session applications use the SDK Session setting described in
-the [integration guide](../sdk/embedder-guide.md#post-alpha10-sdk-alignment).
+the [Host client guide](../sdk/host-client.md#change-settings).
 
 1. **Open a project** — Run `kodax` inside your project directory. KodaX
    automatically detects the repo structure and builds a repo-intelligence
@@ -69,4 +69,4 @@ To share a finding, ask “Tell the parent only about the drive-letter case mism
 - [Configuration files](../configuration/config-files.md) — Core settings and precedence
 - [Permissions](../configuration/permissions.md) — Sandbox-first permission profiles
 - [Sandbox](../configuration/sandbox.md) — Platform containment and setup
-- [SDK embedder guide](../sdk/embedder-guide.md) — Embed KodaX in your own application
+- [SDK overview](../sdk/overview.md) — Embed KodaX in your own application

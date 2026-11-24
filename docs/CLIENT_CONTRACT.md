@@ -30,7 +30,7 @@ Shell 清理重试耗尽时保留 deferred 进程身份，允许后续对话和 
 
 2026-10-22 的检查点恢复接入 CLI（print、Ink、classic）与 `ensureKodaXClient`：启动器在本进程存活期间保留已认证身份，Host 连接丢失后自动重连并重新交付完整 Session 视图；正在观察或等待的原 Run 若有有效生成检查点，则经同一个 `runs.recover({sessionId, runId})` 接续。受信任 Main 的 `authorizeExecution` 在新 Host 上重新获取所需凭据/工具租约。Host 仍独占历史、Run 所有权、授权和副作用判定；客户端不重交输入、不重放工具、不拼接旧视图。Stop、显式退出/关闭、授权失败、历史变化和效果不明均不能绕过。底层 `ensureKodaXRuntime` 仍是单次连接启动器，`connectKodaXClient` 仍是被动连接；客户端自身也重启时需要调用方保存的原身份，不能借 Host 重启推导该授权。
 
-从旧 `KodaXClient`、Runtime 或文件 API 接入迁移，先读 [SDK 迁移指南](SDK_MIGRATION.md)；最小生命周期示例见[产品 Client 接入](../public_docs/sdk/embedder-guide.md#product-client-integration)。本文描述当前开发树，不表示 npm 已发布，也不宣告所有底层库入口已删除。
+从旧 `KodaXClient`、Runtime 或文件 API 接入迁移，先读 [SDK 迁移指南](SDK_MIGRATION.md)；v1 客户端的入口和移除时间见[英文概览：The v1 client](../public_docs/sdk/overview.md#the-v1-client)，v2 客户端见 [Host client 指南](../public_docs/sdk/host-client.md)。本文描述当前开发树，不表示 npm 已发布，也不宣告所有底层库入口已删除。
 
 类型与行为以 [client-contract.ts](../packages/coding/src/client-contract.ts)、[SDK 入口](../src/sdk-client.ts)、[运行时适配器](../src/client-runtime-adapter.ts) 为准；产品决策见 [FEATURE_298 D01/T02](features/v0.7.97.md)。本文覆盖公开产品接口，不把 `/runtime` 的全部底层管理、执行和诊断 API 提升为产品承诺。
 

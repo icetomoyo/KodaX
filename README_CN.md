@@ -302,7 +302,7 @@ try {
 }
 ```
 
-Host 负责执行、设置和持久化；UI 通过 `sessions.observe` 提交输入并观察结果。详见 [SDK 嵌入指南](public_docs/sdk/embedder-guide.md)和 [Client 契约](docs/CLIENT_CONTRACT.md)。
+Host 负责执行、设置和持久化；UI 提交输入并跟随 Session 视图。详见 [SDK 概览](public_docs/sdk/overview.zh-CN.md)、[Host 客户端指南](public_docs/sdk/host-client.zh-CN.md)和 [Client 契约](docs/CLIENT_CONTRACT.md)。
 
 ### SDK 子路径
 
@@ -407,7 +407,7 @@ npm run build:binary:all      # 全部 5 个目标
 | 文档 | 用途 |
 |---|---|
 | [README.md](README.md) | English 文档 |
-| [public_docs/sdk/embedder-guide.md](public_docs/sdk/embedder-guide.md) | SDK 托管、共享 Runtime Daemon、权限路由、压缩/历史恢复 |
+| [public_docs/sdk/](public_docs/sdk/overview.zh-CN.md) | SDK 指南：概览、Host 客户端、Host 平台、进程内使用、可选模块、v2 方法参考 |
 | [public_docs/configuration/](public_docs/configuration/) | 提供商、自定义提供商、权限、沙箱 |
 | [docs/CLIENT_CONTRACT.md](docs/CLIENT_CONTRACT.md) | Product Client SDK 契约 |
 | [docs/SDK_MIGRATION.md](docs/SDK_MIGRATION.md) | SDK 集成者升级指南 |

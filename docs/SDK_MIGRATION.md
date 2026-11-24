@@ -349,7 +349,7 @@ Markdown Agent / SDK profile 的行为指令通过 `agentProfile.instructions` �
 
 ## 应用提示词定制（随 v0.7.97-beta.12 发布）
 
-英文版见[嵌入方指南](../public_docs/sdk/embedder-guide.md#application-prompt-customization-shipped-in-v0797-beta12)。
+英文说明见 [Host 平台指南：Customize the prompt](../public_docs/sdk/host-platform.md#customize-the-prompt) 和[进程内指南：Shape the prompt](../public_docs/sdk/in-process.md#shape-the-prompt)。
 
 人设仍用 `agentProfile`，在整个 Session 内固定。要调整其余提示词，在同一个
 执行 profile 里加 `prompt`：
@@ -1017,7 +1017,7 @@ Issue 371 的历史首次读取延迟、Script 的模型效率及跨平台人工
 
 ## 1. 替换范围与文档权威
 
-TUI、桌面 UI、IDE、自动化应用接入共享 KodaX 时，以 `KodaXProductClient` 为业务契约。入口是 `@kodax-ai/kodax/client`；[完整行为契约](CLIENT_CONTRACT.md)与[类型定义](../packages/coding/src/client-contract.ts)共同说明方法、数据和错误语义。[英文接入指南](../public_docs/sdk/embedder-guide.md#product-client-integration)提供最小生命周期示例。
+TUI、桌面 UI、IDE、自动化应用接入共享 KodaX 时，以 `KodaXProductClient` 为业务契约。入口是 `@kodax-ai/kodax/client`；[完整行为契约](CLIENT_CONTRACT.md)与[类型定义](../packages/coding/src/client-contract.ts)共同说明方法、数据和错误语义。[英文概览：The v1 client](../public_docs/sdk/overview.md#the-v1-client)说明 v1 客户端的入口和移除时间。
 
 这不是对旧 Runtime 对象的重命名：提交输入、执行结算、交互、显示和持久历史现在各有明确边界。不要对旧对象做类型断言来假装它实现了 `KodaXProductClient`。
 
@@ -1174,7 +1174,7 @@ SDK 复用既有启动轮询和 bootstrap 日志尾部，无回调时不启用�
 
 启动 `ready` 只表示认证、身份及能力校验完成，Client 接口可用；不表示 Session 已加载、订阅已同步或 UI 已渲染。以返回 Promise 的结果处理成功/失败，在 `finally` 清除启动显示。阶段可以重复，连续相同通知会合并。回调在本机调用、不被等待；抛错或异步拒绝走现有诊断，不改变启动结果。已有无回调调用无需改动。
 
-REPL 的显示交接使用可选 `onBeforeRender`，在恢复提示及初始 banner/TUI 输出前清除终端加载显示；原先未发布的启动显示钩子 `onReady` 已直接更名，不保留别名。其他 UI 在自己的渲染边界完成交接。该能力不新增 Host RPC、持久事件或能力版本；完整语义见 [Client 契约](CLIENT_CONTRACT.md#连接启动与所有权)，可编译示例见[英文指南](../public_docs/sdk/embedder-guide.md#show-local-startup-progress)。
+REPL 的显示交接使用可选 `onBeforeRender`，在恢复提示及初始 banner/TUI 输出前清除终端加载显示；原先未发布的启动显示钩子 `onReady` 已直接更名，不保留别名。其他 UI 在自己的渲染边界完成交接。该能力不新增 Host RPC、持久事件或能力版本；完整语义见 [Client 契约](CLIENT_CONTRACT.md#连接启动与所有权)，可编译示例见[英文指南](../public_docs/sdk/host-client.md#startup-progress)。
 
 ### 订阅就绪与连接状态
 
@@ -1182,9 +1182,86 @@ Session 观察通过 `onStatus` 区分 live/interrupted/closed；重连中的提
 
 ## 7. 已移除与仍保留的能力
 
-本分支移除了通用 operation envelope/receipt、持久事件 journal/replay、旧 exit-settlement/rollback 协议和 Worker-hosted embedded Runtime。它们的迁移明细见[移除表](../public_docs/sdk/embedder-guide.md#migrating-to-v0797)。不能继续依赖旧 event cursor 跨重启续传，或把断连自动重发解释成恰好一次。
+本分支移除了通用 operation envelope/receipt、持久事件 journal/replay、旧 exit-settlement/rollback 协议和 Worker-hosted embedded Runtime。它们的迁移明细见下面的[移除表](#removed-in-v0797)（英文，原在已删除的 embedder-guide 里）。不能继续依赖旧 event cursor 跨重启续传，或把断连自动重发解释成恰好一次。
 
 独立 coding/Agent/LLM 库、显式 inline embedded Runtime、daemon、构造工具 handler worker、语义分析 worker 等并未因此全部退役。历史 ADR/feature 文档描述的是当时决策；当前产品行为以本迁移指南、Client 契约和实现为准。版本号相同也可能加载了不同源码/构建，升级后需要重新加载 SDK 进程；启动器不会强停忙碌 Host。
+
+### Removed in v0.7.97
+
+v0.7.97 is a breaking SDK release for embedders. It removes the durable event
+journal/replay surface, the generic operation envelope/receipts, the
+crash-resumable exit-settlement protocol, and the Worker-hosted embedded
+runtime. If you upgrade a host past v0.7.96, map every removed surface to its
+replacement:
+
+| Removed in v0.7.97 | Replacement |
+|---|---|
+| Operation envelope (`operation: { operationId }` on public control mutations), auto-generated operation IDs, `runtime.operations.get` receipts, and the `operationDeduplication` capability/requirement | Mutation identity comes from each mutation's own domain fields (explicit `sessionId` on create, returned `runId`, `expectedRevision` CAS on settings). After a lost response, re-read authoritative state (`runs.get`, `sessions.status`) and reconcile explicitly; there is no transparent retry or receipt query. |
+| `settleKodaXRuntimeExit()` SDK export, `daemon.rollbackToInline`, client `stopForInline`, and the `runtimeExitSettlement:2` capability | `runtime.shutdown` / `runtime.daemon.shutdown()` is a real idle shutdown (busy → structured `conflict`). Public inline ownership and its mode-switching helpers are also retired by the unified Host cutover. Legacy policy migration is automatic and one-way; shutdown never restores inline ownership. |
+| `event.subscribe`/`event.replay` RPCs, the `{ sessionId, journalEpoch, seq }` cursor, `journalEpoch` fields, and the `sessionEventJournal:1` capability | Events are a live in-process stream (`{ id, seq, time, sessionId, runId, turnId?, type, payload }`). Remote consumption reuses `session.observe` notifications; observation snapshots carry a `seq` high-water, live listener events are strictly greater, and `seq` never persists across restarts. Deleting/recreating a Session invalidates observations with `runtime_changed`. |
+| Diagnostics RPCs `context.budget.get`, `tool.exposure.preview`, `provider.cache.diagnostics.get` (and the `runtime.diagnostics.latest*` facade) | Removed. `capabilities.contextDiagnostics: true` only gates diagnostic event notifications (`context.budget.snapshot`, `tool.exposure.planned`, `provider.cache.diagnostics`, `context.compaction.skipped`) on the live stream. |
+| `isolation: 'worker'`, `worker: { configuredA2A: true }` (and `worker.*` options), `requirements.hardDispose`, and the `dist/runtime-worker.js` sidecar | Deleted. Connect to the shared Host, which loads configured A2A through internal owner assembly. Public executor-function injection is retired. |
+| Late-result redelivery after an abandoned read | Removed. `request.cancel`/`request.ack` remain daemon transport-control frames only; an abandoned read gets no late delivery. |
+| The product mode surfaces: the CLI `--runtime-mode` flag, the `KODAX_RUNTIME_MODE` environment variable, and the `runtimeMode` key in `~/.kodax/config.json` | Removed in the fixed-Host release. The `kodax` CLI always starts-or-attaches the daemon owner; the unified Host SDK also retires public embedded construction. `createKodaXRuntime({mode:'daemon'})` remains a connection launcher only. |
+| `setThinking` REPL callback | Removed. Use `setReasoningMode` (the shared settings key is `reasoningMode`). |
+| `getKodaXRuntimeOwnerPolicy` export | Removed. `getKodaXRuntimeOwnerState()` remains and reports policy, owner status, and the current owner in one call. |
+
+Product UIs connect through `connectKodaXClient` from `@kodax-ai/kodax/client`.
+The Host owns execution and saved history; `sessions.observe` delivers the
+current display; `readItem` expands display references, while `readHistory`,
+`readHistoryEntry` and `searchHistory` provide canonical history and its own
+readable references. A display preview is not the full
+message. The Runtime-to-product adapter is internal and is not an SDK export.
+
+Task reports are neutral `event` items with `taskResult` metadata in both live
+views and history. Its `source` is `child_task` or `workflow`; optional `taskId`,
+`runId`, `title` and `artifactRefs` retain known task facts. `status` is
+`completed`, `failed`, `cancelled` or `unknown`. A child failure/cancellation is
+independent of the root Run's phase and `failureDetail`.
+
+`taskResult.reportFormat` is `markdown`; the body lives in `item.text`, expanded
+through existing `readItem`/`readHistoryEntry` methods when bounded. Canonical
+metadata bodies retain code fences, whitespace and literal entities. Only old
+messages with an explicit task-delivery source have their envelope removed and
+transport escapes decoded once. Missing status remains unknown; prose such as
+`failed:` and a `<task-completed>` tag alone do not establish terminal state.
+The known legacy Actor `state="interrupted"` maps to cancellation. Mixed old/new
+deliveries retain unmatched old envelopes at their proven neighboring boundary;
+budgeted model-only fragments never reorder authoritative metadata.
+An old mailbox delivery ID is not an Actor Turn ID. The raw canonical message
+is preserved. Report order follows canonical delivery order; matching text does
+not merge different tasks. Existing per-surface item-ID boundaries still apply.
+This adds no pagination operation.
+
+Keep an input's original text, artifacts and `inputId` until its outcome is
+known. After a lost response, query that same Host with `inputs.read`; only a
+confirmed withdrawal returns a queued input to the editor. A replacement Host
+does not inherit the old Host's input identities.
+
+Product rewind requires the head the user reviewed, so another client's newer
+work cannot be silently discarded:
+
+```ts
+const lineage = await client.sessions.readLineage(sessionId);
+await client.sessions.rewindSession(sessionId, {
+  selector: targetEntryId,
+  expectedHead: lineage?.activeEntryId ?? null,
+});
+```
+
+On `conflict`, reload the lineage and let the user review the new state before
+trying again. Rewind changes the conversation branch; it does not undo files.
+Bound REPL Memory commands use the same daemon owner, and Workflow/Skill
+execution uses real Runs with the Session's effective settings and tool policy.
+
+Two compatibilities are unchanged and worth restating: the constructed-handler
+worker (repo-intelligence and managed-task workers in `@kodax-ai/coding`) is a
+separate, kept surface, and the `mode: 'embedded' | 'daemon'` option on
+`createKodaXRuntime` still selects the ownership form. Host-minted compact
+identity (`compact_<uuid>`, minted by the daemon for the scoped credential
+target of manual compaction) still exists — it is Host-internal, not a client
+envelope.
+
 
 ## 8. 接入验收
 

@@ -384,4 +384,4 @@ recovered and callers must reread external state before deciding what to do.
 
 - [Permissions](./permissions.md) — Permission modes and Auto Mode
 - [Configuration files](./config-files.md) — Config.json reference
-- [SDK sandbox API](../sdk/embedder-guide.md#30-standalone-sandbox-sdk-v0778) — SDK sandbox subpath
+- [SDK sandbox API](../sdk/optional-modules.md#standalone-sandbox) — SDK sandbox subpath

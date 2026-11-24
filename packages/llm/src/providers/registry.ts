@@ -536,7 +536,7 @@ export function isProviderName(name: string): name is ProviderName {
  * model so they are honest representations of the agent's behavior. They
  * are deliberately NOT sourced from upstream `/models` API responses,
  * which a 2026-05 cross-provider probe confirmed are sparse and often
- * empty (see public_docs/sdk/embedder-guide.md §9). Embedders showing these
+ * empty. Embedders showing these
  * values in a popout UI can trust them.
  */
 export interface KodaXModelCapabilities {

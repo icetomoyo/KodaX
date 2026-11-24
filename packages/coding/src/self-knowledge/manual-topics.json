@@ -683,8 +683,8 @@
         "path": "packages/repl/src/common/setup-guide.ts"
       },
       {
-        "label": "SDK embedder guide",
-        "path": "public_docs/sdk/embedder-guide.md"
+        "label": "SDK sandbox guide",
+        "path": "public_docs/sdk/optional-modules.md"
       }
     ],
     "nextTopics": [
@@ -1253,7 +1253,7 @@
     "sources": [
       {
         "label": "A2A SDK guide",
-        "path": "public_docs/sdk/embedder-guide.md"
+        "path": "public_docs/sdk/host-platform.md"
       },
       {
         "label": "A2A client",
@@ -1448,7 +1448,7 @@
       },
       {
         "label": "SDK guide",
-        "path": "public_docs/sdk/embedder-guide.md"
+        "path": "public_docs/sdk/in-process.md"
       }
     ],
     "nextTopics": [
@@ -1850,7 +1850,7 @@
       " ",
       "Dated release notes are no longer kept in this manual. Read CHANGELOG.md (shipped in",
       "the npm package), docs/SDK_MIGRATION.md, docs/CLIENT_CONTRACT.md and",
-      "public_docs/sdk/embedder-guide.md for version-by-version changes, migration steps and",
+      "the guides under public_docs/sdk/ for version-by-version changes, migration steps and",
       "the wire contract. Historical mechanisms described there never restore retired APIs",
       "such as the Sidecar Verifier, the durable operation journal, the settlement",
       "transaction (`settleKodaXRuntimeExit` / `runtimeExitSettlement`) or the Host-location",
@@ -1870,8 +1870,8 @@
         "path": "src/sdk-a2a.ts"
       },
       {
-        "label": "SDK embedder guide",
-        "path": "public_docs/sdk/embedder-guide.md"
+        "label": "SDK overview",
+        "path": "public_docs/sdk/overview.md"
       },
       {
         "label": "known issues",

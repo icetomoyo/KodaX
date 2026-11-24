@@ -280,7 +280,7 @@
     "README.md",
     "README_CN.md",
     "public_docs/README.md",
-    "public_docs/sdk/embedder-guide.md",
+    "public_docs/sdk",
     "docs/CLIENT_CONTRACT.md",
     "docs/SDK_MIGRATION.md",
     "docs/SPACE_SDK_SEAMS.md",

@@ -2440,7 +2440,14 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
 4. 合并 `schema.ts`。**状态**：同第 3 项，v1 的 schema 随 v1 删除。
 5. 记忆域按 FEATURE_309 之后的模型重定。**状态**：FEATURE_309（删除旧记忆）被 Space Issue 411 卡住，旧记忆还在时重定模型没有意义。
 6. 可选：子路径从 19 个减到 6 个。旧入口保留为转发，加弃用警告，配迁移指南，至少保留 2 个版本。**状态**：可选，排在最后；收拢子路径会让每个嵌入方改 import，没有真实需求前不动（未经用户确认）。
-7. 拆分 embedder-guide。
+7. 拆分 embedder-guide。**状态**：2026-11-24 落地（未经用户确认的取舍见下）。
+   - 5 篇指南，每篇英文、中文各一份，都不超过 400 行：`overview`（安装、入口、v2 客户端和进程内两种用法、数据位置、Windows/Electron）、`host-client`（连接、会话、输入、交互、可靠性、文件）、`host-platform`（角色、Session 策略、提示词、租约、子 Agent、记忆和学习、A2A/ACP）、`in-process`（`runKodaX` 一族）、`optional-modules`（Artifact、沙箱、媒体输入、Skill 学习、旧记忆）。
+   - 参考文档 `public_docs/sdk/host-protocol-reference.md` 由 `src/host-protocol/reference-doc.ts` 从方法表和每个方法的 JSDoc 生成，`reference-doc.test.ts` 让它和代码保持一致；只有英文。
+   - 旧的 `embedder-guide.md`（7693 行）删除，不留转发页。它按版本记的历史只留在 CHANGELOG、`docs/SDK_MIGRATION.md` 和 git 里；"Migrating to v0.7.97" 的移除表挪进 `SDK_MIGRATION.md` 第 7 节。
+   - 指向旧指南的链接都改到新指南：README、`public_docs` 索引和配置页、ADR、DD、CLIENT_CONTRACT、SDK_MIGRATION、SPACE_SDK_SEAMS、FEATURE_247 测试指南、`packages/coding/README.md`、几处代码注释和一条诊断信息。`package.json` 的 `files` 改为整个 `public_docs/sdk`。
+   - `kodax_manual` 的 4 个主题（sandbox、a2a、compaction、sdk）的来源路径改成对应的新指南，sdk 主题正文里的一句指向改成"the guides under public_docs/sdk/"。只是换指针，没有改写内容，没有跑 eval。
+   - 新指南没有覆盖的旧内容：v1 产品客户端的完整用法（v1 在 v0.7.100 删除，对照表在 SDK_MIGRATION）、`context.workModePolicy: 'intersect'`（v2 用 Session 策略的 `tools` 限定工具）。
+   - 另起一个 Agent 对着代码逐条核对了新指南。它查出的事实错误（如问题不会 30 分钟超时、`listProviderModels` 不发请求、渲染要 Chromium、沙箱只在 Windows 上配置）和示例代码问题（缺 import、未定义变量、顶层 `return`）已在英文、中文两份里改掉。
 8. 满足 §8 的条件后删除 v1。**状态**：删除线是 `v0.7.100`，由 FEATURE_314 做；前置项（`daemon` 命令和健康观测迁到 v2、`host.get` 报构建版本）见 FEATURE_314。
 
 ## 8. 迁移、兼容与回滚

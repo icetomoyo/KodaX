@@ -47,4 +47,4 @@ SDK 命令目标继承其执行宿主的环境。SDK 嵌入者也可通过 `@kod
 
 - [权限模式](./permissions.zh-CN.md) — 权限模式与 Auto 模式
 - [配置文件](./config-files.zh-CN.md) — Config.json 参考
-- [SDK 沙箱 API](../sdk/embedder-guide.md#30-standalone-sandbox-sdk-v0778) — SDK 沙箱子路径
+- [SDK 沙箱 API](../sdk/optional-modules.zh-CN.md#独立沙箱) — SDK 沙箱子路径

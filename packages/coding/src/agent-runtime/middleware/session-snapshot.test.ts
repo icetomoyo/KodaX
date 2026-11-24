@@ -153,7 +153,7 @@ describe('saveSessionSnapshot — v0.7.43 diagnostic for id-without-storage trap
     expect(msg).toContain('[KodaX SDK]');
     expect(msg).toContain('session.storage is undefined');
     expect(msg).toContain('createSessionManager');
-    expect(msg).toContain('public_docs/sdk/embedder-guide.md');
+    expect(msg).toContain('public_docs/sdk/in-process.md');
   });
 
   it('does not double-warn for the same session id across multiple terminal sites', async () => {

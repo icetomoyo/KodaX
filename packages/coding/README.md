@@ -154,7 +154,7 @@ process/ACL recovery. Live provider output is keyed by logical `responseId`
 and physical `providerRequestId`: replacement removes only the active failed
 segment, continuation appends, and raw Runtime journals remain the audit
 authority. Standalone Bun packaging now embeds lazy provider SDK dependency
-graphs. See the [SDK Embedder Guide](../../public_docs/sdk/embedder-guide.md)
+graphs. See the [SDK guides](../../public_docs/sdk/overview.md)
 for host integration rules.
 The same release bounds AskUser and permission interactions with owner
 AbortSignals, validates timeout defaults at the Runtime boundary, and keeps
@@ -174,7 +174,7 @@ Explicit Skill invocation is independent of model discovery. Skill
 runs if an embedder result observer throws. Run settlement
 observes finalization rejections and recovers an admitted `runId` through
 `runs.get()` / `runs.await()` instead of replaying `runs.start()`. See the
-[SDK Embedder Guide](../../public_docs/sdk/embedder-guide.md)
+[SDK guides](../../public_docs/sdk/overview.md)
 for host capability requirements.
 
 The v0.7.95 release advances Windows `sandboxRuntime` to `5` and local
