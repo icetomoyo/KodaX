@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { HostProtocolError } from '../host-protocol/codec.js';
+import { HOST_METHODS } from '../host-protocol/methods.js';
 import { redactUserMcpConfig, userSettingsRefusal } from './user-settings.js';
 
 const refusal = (
@@ -20,7 +21,7 @@ describe('userSettingsRefusal', () => {
     expect(refusal('config.update', { patch: { provider: 'openai', permissionMode: 'full-access' } })).toBeUndefined();
     expect(refusal('mcp.server.upsert', { name: 'docs', config: { type: 'stdio', command: 'npx' } })).toBeUndefined();
     expect(refusal('session.settings.update', { sessionId: 's', patch: { permissionMode: 'full-access' } })).toBeUndefined();
-    expect(refusal('interaction.respond', { requestId: 'r', interactionId: 'i', response: { kind: 'allow_always', suggestionId: 'x' } })).toBeUndefined();
+    expect(refusal('interaction.respond', { requestId: 'r', interactionId: 'i', response: { kind: 'permission', decision: { type: 'allow_always', suggestionId: 'x' } } })).toBeUndefined();
   });
 
   it('refuses each method its lock guards', () => {
@@ -62,8 +63,10 @@ describe('userSettingsRefusal', () => {
   });
 
   it('refuses a lasting approval while permissions are locked', () => {
-    const always = { requestId: 'r', interactionId: 'i', response: { kind: 'allow_always', suggestionId: 'x' } };
-    const once = { requestId: 'r', interactionId: 'i', response: { kind: 'allow' } };
+    const always = { requestId: 'r', interactionId: 'i', response: { kind: 'permission', decision: { type: 'allow_always', suggestionId: 'x' } } };
+    const once = { requestId: 'r', interactionId: 'i', response: { kind: 'permission', decision: { type: 'allow_session', suggestionId: 'x' } } };
+    // The lock reads the answer the connection lets through, so the test sends that answer.
+    for (const params of [always, once]) expect(HOST_METHODS['interaction.respond'].params.safeParse(params).error).toBeUndefined();
     expect(refusal('interaction.respond', always, ['permissions'])).toEqual({ code: 'forbidden', reason: 'locked' });
     expect(refusal('interaction.respond', once, ['permissions'])).toBeUndefined();
   });

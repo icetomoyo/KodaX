@@ -48,7 +48,7 @@ export function userSettingsRefusal(
     case 'config.update': return configRefusal(record(params.patch), context.locks);
     case 'session.settings.update': return fullAccessRefusal(record(params.patch), context.locks);
     case 'interaction.respond':
-      return record(params.response).kind === 'allow_always' && context.locks.has('permissions') ? locked('permissions') : undefined;
+      return record(record(params.response).decision).type === 'allow_always' && context.locks.has('permissions') ? locked('permissions') : undefined;
     case 'provider.custom.upsert': return providerRefusal(record(params.provider), context.environment);
     case 'mcp.server.upsert': return mcpRefusal(record(params.config), context.locks);
     default: return undefined;
