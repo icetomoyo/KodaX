@@ -14,6 +14,12 @@ a phone, see [Remote access](remote-access.md).
 A Host is one `kodax host serve` process. It owns one home directory
 (`KODAX_HOME`, normally `~/.kodax`) with that person's settings, Sessions and
 memory, and runs their agents. Clients connect to it over WebSocket at `/v2`.
+Where a proxy lets no WebSocket through, the SDK falls back to plain HTTP on
+the same port: `POST /v2/events` streams what the Host sends as server-sent
+events, and `POST /v2/messages` carries what the client sends. Both get the
+same origin and credential checks. If your ingress holds back responses until
+they end, turn that off for `/v2/events`; the Host already sends
+`X-Accel-Buffering: no` for nginx.
 
 - **One person per Host.** Everyone who can connect is the same person or a
   backend acting for them. Give each user their own Host, in their own

@@ -8,6 +8,13 @@ import { HostProtocolError, type HostErrorCode } from './codec.js';
 
 /** The path a client opens the WebSocket on. Others are left for the Host's web pages. */
 export const HOST_WEBSOCKET_PATH = '/v2';
+/**
+ * Where a client that cannot open a WebSocket connects over plain HTTP: it
+ * posts to open a stream of server-sent events, and posts its own frames to
+ * the messages path. The close events on that stream carry the same codes.
+ */
+export const HOST_EVENTS_PATH = `${HOST_WEBSOCKET_PATH}/events`;
+export const HOST_MESSAGES_PATH = `${HOST_WEBSOCKET_PATH}/messages`;
 
 export const HOST_CLOSE_CODES = {
   /** The client broke the protocol. Do not reconnect; report it. */

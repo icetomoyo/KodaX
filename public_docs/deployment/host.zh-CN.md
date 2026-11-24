@@ -6,7 +6,7 @@
 
 ## Host 是什么
 
-一个 Host 就是一个 `kodax host serve` 进程。它独占一个 home 目录（`KODAX_HOME`，通常是 `~/.kodax`），里面是这个人的设置、Session 和记忆，并运行他的 Agent。客户端通过 WebSocket 连到它的 `/v2`。
+一个 Host 就是一个 `kodax host serve` 进程。它独占一个 home 目录（`KODAX_HOME`，通常是 `~/.kodax`），里面是这个人的设置、Session 和记忆，并运行他的 Agent。客户端通过 WebSocket 连到它的 `/v2`。代理不放行 WebSocket 时，SDK 自动改用同一端口上的普通 HTTP：`POST /v2/events` 以 server-sent events 推送 Host 发出的内容，`POST /v2/messages` 传客户端发出的内容。两者的来源和凭证检查与 WebSocket 相同。如果 ingress 会把响应攒到结束再转发，要对 `/v2/events` 关掉；Host 已经为 nginx 发送了 `X-Accel-Buffering: no`。
 
 - **一个 Host 只属于一个人。** 能连上的都是这个人本人，或者替他工作的后端。每个用户一个 Host，放在各自的容器或系统账号里。
 - **一个 home 只有一个 Host。** home 已经被一个活着的 Host 持有时，再启动 `kodax host serve` 会以非 0 退出。

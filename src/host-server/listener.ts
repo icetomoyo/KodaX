@@ -1,22 +1,29 @@
 /**
- * Carries v2 over WebSocket for clients that are not on the Host's machine. It
+ * Carries v2 over WebSocket for clients that are not on the Host's machine,
+ * and over plain HTTP for those whose network lets no WebSocket through. It
  * owns what belongs to the wire: which path and browser origins may open a
- * socket, how many sockets may wait for their handshake, silence, a client
- * that stops reading, and the close code that tells a client why. The peer it
- * creates for each socket owns the protocol, credentials included. The same
- * port answers `GET /healthz` for the platform that runs the Host, and hands
- * other HTTP requests to the Host's web pages.
+ * connection, how many may wait for their handshake, silence, a client that
+ * stops reading, and the close code that tells a client why. The peer it
+ * creates for each connection owns the protocol, credentials included. The
+ * same port answers `GET /healthz` for the platform that runs the Host, and
+ * hands other HTTP requests to the Host's web pages.
  */
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { randomBytes } from 'node:crypto';
+import { createServer, type IncomingMessage, type OutgoingHttpHeaders, type ServerResponse } from 'node:http';
 import { createRequire } from 'node:module';
 import type { Duplex } from 'node:stream';
 
 import { emitKodaXDiagnostic } from '@kodax-ai/agent';
 
-import { HOST_CLOSE_CODES, HOST_WEBSOCKET_PATH, type HostCloseReason } from '../host-protocol/close.js';
+import {
+  HOST_CLOSE_CODES, HOST_EVENTS_PATH, HOST_MESSAGES_PATH, HOST_WEBSOCKET_PATH, type HostCloseReason,
+} from '../host-protocol/close.js';
 import { prepareUnixSocketEndpoint } from '../runtime-daemon/transport.js';
+import {
+  createEventStreamWire, eventStreamEvent, eventStreamHeaders, readRequestBody, type EventStreamWire, type HostWire,
+} from './event-stream.js';
 
-export { HOST_WEBSOCKET_PATH };
+export { HOST_EVENTS_PATH, HOST_MESSAGES_PATH, HOST_WEBSOCKET_PATH };
 /** The path a platform probes. It carries no Session content, so it asks for no credential. */
 export const HOST_HEALTH_PATH = '/healthz';
 
@@ -31,6 +38,8 @@ const MAX_OUTBOUND_BYTES = 64 * 1024 * 1024;
 const CLOSE_GRACE_MS = 2_000;
 /** How long a client has to read what was queued and answer a close before the Host drops the socket. */
 const DISCONNECT_GRACE_MS = 30_000;
+/** Room in a posted body for the stream's name and the line after it. */
+const MAX_STREAM_NAME_BYTES = 64;
 
 export interface HostNetworkTransport {
   send(frame: string): void;
@@ -103,14 +112,7 @@ export interface HostNetworkListener {
 }
 
 /** The part of the `ws` package the listener uses; the root package carries no types for it. */
-interface WsSocket {
-  readonly bufferedAmount: number;
-  send(data: string, callback: (error?: Error) => void): void;
-  close(code: number, reason: string): void;
-  terminate(): void;
-  on(event: 'message', listener: (data: Buffer, isBinary: boolean) => void): void;
-  on(event: 'close' | 'error', listener: () => void): void;
-}
+type WsSocket = HostWire;
 interface WsServer {
   handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer, callback: (socket: WsSocket) => void): void;
   /** The response headers of a handshake it is about to accept, which a listener may add to. */
@@ -130,7 +132,9 @@ export async function startHostNetworkListener(options: HostNetworkListenerOptio
   const maxPending = options.maxPendingHandshakes ?? MAX_PENDING_HANDSHAKES;
   /** Refused browsers waiting for their close to finish, which count against the pending limit. */
   const refusing = new Set<WsSocket>();
-  const connections = new Map<WsSocket, HostNetworkPeer>();
+  const connections = new Map<HostWire, HostNetworkPeer>();
+  /** The HTTP streams by the name their client posts frames under, and the browser origin that opened each. */
+  const streams = new Map<string, { readonly wire: EventStreamWire; readonly origin?: string }>();
   const devices = new WeakMap<IncomingMessage, HostDeviceAdmission>();
   let draining = false;
   wss.on('headers', (headers, request) => {
@@ -139,8 +143,17 @@ export async function startHostNetworkListener(options: HostNetworkListenerOptio
   });
 
   const server = createServer((request, response) => {
-    if (request.method === 'GET' && new URL(request.url ?? '/', 'http://host').pathname === HOST_HEALTH_PATH) {
+    const { pathname } = new URL(request.url ?? '/', 'http://host');
+    if (request.method === 'GET' && pathname === HOST_HEALTH_PATH) {
       void answerHealth(response);
+      return;
+    }
+    if (request.method === 'POST' && pathname === HOST_EVENTS_PATH) {
+      openStream(request, response);
+      return;
+    }
+    if (request.method === 'POST' && pathname === HOST_MESSAGES_PATH) {
+      void receiveMessages(request, response);
       return;
     }
     if (options.serveHttp !== undefined) options.serveHttp(request, response);
@@ -164,7 +177,9 @@ export async function startHostNetworkListener(options: HostNetworkListenerOptio
   }
   server.on('upgrade', (request: IncomingMessage, socket: Duplex, head: Buffer) => {
     socket.on('error', () => socket.destroy());
-    const refusal = refuseUpgrade(request);
+    const refusal = new URL(request.url ?? '/', 'http://host').pathname === HOST_WEBSOCKET_PATH
+      ? refuseConnection(request)
+      : '404 Not Found';
     if (refusal === ORIGIN_NOT_ALLOWED) {
       wss.handleUpgrade(request, socket, head, refuseBrowser);
       return;
@@ -180,9 +195,9 @@ export async function startHostNetworkListener(options: HostNetworkListenerOptio
     }));
   });
 
-  function refuseUpgrade(request: IncomingMessage): string | undefined {
+  /** Why a new connection is refused, as an HTTP status line, or `origin_not_allowed` for a browser to be told in a close. */
+  function refuseConnection(request: IncomingMessage): string | undefined {
     if (draining) return '503 Service Unavailable';
-    if (new URL(request.url ?? '/', 'http://host').pathname !== HOST_WEBSOCKET_PATH) return '404 Not Found';
     const pending = [...connections.values()].filter(peer => !peer.admitted()).length + refusing.size;
     if (pending >= maxPending) return '503 Service Unavailable';
     const { origin, cookie } = request.headers;
@@ -204,7 +219,70 @@ export async function startHostNetworkListener(options: HostNetworkListenerOptio
     socket.close(HOST_CLOSE_CODES.revoked, ORIGIN_NOT_ALLOWED);
   }
 
-  function attach(socket: WsSocket, request: { readonly origin?: string; readonly device?: string }): void {
+  /**
+   * Opens an HTTP stream. Its answer is what a WebSocket would be: a refused
+   * browser is told why in a close event, the same as in a close frame.
+   */
+  function openStream(request: IncomingMessage, response: ServerResponse): void {
+    const refusal = refuseConnection(request);
+    const { origin } = request.headers;
+    if (refusal !== undefined && refusal !== ORIGIN_NOT_ALLOWED) {
+      response.writeHead(Number(refusal.slice(0, 3)), { connection: 'close' }).end();
+      return;
+    }
+    const device = devices.get(request);
+    response.writeHead(200, eventStreamHeaders({
+      ...crossOrigin(origin),
+      ...(device !== undefined ? { 'set-cookie': device.setCookie } : {}),
+    }));
+    // Whoever holds the name can post frames as this connection, so it is as hard to guess as a credential.
+    const name = randomBytes(32).toString('base64url');
+    if (refusal === ORIGIN_NOT_ALLOWED) {
+      // Opened before it closes, as a refused WebSocket is, so the client reads it as an end and not a network to work around.
+      response.end(eventStreamEvent(JSON.stringify({ stream: name }), 'open')
+        + eventStreamEvent(JSON.stringify({ code: HOST_CLOSE_CODES.revoked, reason: ORIGIN_NOT_ALLOWED }), 'close'));
+      return;
+    }
+    const wire = createEventStreamWire(request, response);
+    streams.set(name, { wire, ...(origin !== undefined ? { origin } : {}) });
+    wire.on('close', () => streams.delete(name));
+    response.write(eventStreamEvent(JSON.stringify({ stream: name }), 'open'));
+    attach(wire, { ...(origin !== undefined ? { origin } : {}), ...(device !== undefined ? { device: device.device } : {}) });
+  }
+
+  /** Frames a client posted for its stream, one per line after the stream's name, taken in order. */
+  async function receiveMessages(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const { origin } = request.headers;
+    let body: string | undefined;
+    try {
+      body = await readRequestBody(request, options.maxFrameBytes + MAX_STREAM_NAME_BYTES);
+    } catch {
+      // The client went away mid-request; there is no one to answer.
+      response.destroy();
+      return;
+    }
+    if (body === undefined) {
+      response.writeHead(413, { connection: 'close' }).end();
+      return;
+    }
+    const [name = '', ...frames] = body.split('\n');
+    const stream = streams.get(name);
+    // Posted from another origin than the one that opened the stream: a page that learned the name cannot speak for it.
+    if (stream === undefined || stream.origin !== origin) {
+      response.writeHead(404).end();
+      return;
+    }
+    response.writeHead(204, crossOrigin(origin)).end();
+    for (const frame of frames) {
+      if (Buffer.byteLength(frame, 'utf8') > options.maxFrameBytes) {
+        stream.wire.terminate();
+        return;
+      }
+      stream.wire.deliver(frame);
+    }
+  }
+
+  function attach(socket: HostWire, request: { readonly origin?: string; readonly device?: string }): void {
     let open = true;
     let congested = false;
     let dropAfterGrace: ReturnType<typeof setTimeout> | undefined;
@@ -286,6 +364,12 @@ export async function startHostNetworkListener(options: HostNetworkListenerOptio
       clearTimeout(grace);
     },
   };
+}
+
+/** A browser on another origin reads an HTTP answer only when the Host names its origin; it was checked before. */
+function crossOrigin(origin: string | undefined): OutgoingHttpHeaders {
+  if (origin === undefined) return {};
+  return { 'access-control-allow-origin': origin, 'access-control-allow-credentials': 'true', vary: 'origin' };
 }
 
 async function listenOn(server: ReturnType<typeof createServer>, listen: HostNetworkListenerOptions['listen']): Promise<void> {

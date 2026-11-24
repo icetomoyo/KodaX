@@ -1,13 +1,15 @@
 /**
- * Reaching a Host over its network port: the WebSocket link, a credential
- * fetched for each connection, and renewing that credential before the Host
- * ends the connection for it. No Node dependency: it uses the global
- * `WebSocket` of a browser, or of Node 22.4 and later.
+ * Reaching a Host over its network port: the WebSocket link, or plain HTTP
+ * where the network lets no WebSocket through, a credential fetched for each
+ * connection, and renewing that credential before the Host ends the
+ * connection for it. No Node dependency: it uses the global `WebSocket` and
+ * `fetch` of a browser, or of Node 22.4 and later.
  */
 import { connectHostRpc, type HostRpcClient, type HostRpcDial } from './client.js';
 import { HOST_CLOSE_CODES, HOST_WEBSOCKET_PATH } from './close.js';
 import { HostProtocolError } from './codec.js';
 import { createKodaXHostClient, type KodaXHostClient, type KodaXHostClientOptions } from './host-client.js';
+import { dialHostHttp } from './http-link.js';
 import type { HostInitializeParams } from './methods.js';
 
 /** A Host that has not accepted the socket by then is given up on, and tried again. */
@@ -40,13 +42,32 @@ export function connectKodaXHost(options: ConnectKodaXHostOptions): Promise<Koda
   });
 }
 
-/** The `open` of a Host client: one WebSocket connection, with a fresh credential, kept renewed. */
+/**
+ * The `open` of a Host client: one connection, with a fresh credential, kept
+ * renewed. It is a WebSocket where one opens, and plain HTTP where a proxy or
+ * firewall keeps WebSockets out. Once HTTP was what worked, it is tried first
+ * on the next connection; WebSocket gets its turn again if HTTP stops working.
+ */
 export function openHostWebSocket(options: ConnectKodaXHostOptions): (signal: AbortSignal) => Promise<HostRpcClient> {
   const url = hostWebSocketUrl(options.url);
   const { credential, onError } = options;
+  const carriers = [dialHostWebSocket(url), dialHostHttp(hostHttpUrls(url))];
+  const dial: HostRpcDial = async (events) => {
+    const failures: unknown[] = [];
+    for (const carrier of [...carriers]) {
+      try {
+        const link = await carrier(events);
+        if (carrier !== carriers[0]) carriers.reverse();
+        return link;
+      } catch (error: unknown) {
+        failures.push(error);
+      }
+    }
+    throw new AggregateError(failures, 'The Host could not be reached over WebSocket or HTTP.');
+  };
   return async () => {
     const token = credential === undefined ? undefined : await fetchCredential(credential);
-    const connection = await connectHostRpc(dialHostWebSocket(url), {
+    const connection = await connectHostRpc(dial, {
       client: options.client,
       ...(token !== undefined ? { auth: { scheme: 'jwt', token } } : {}),
       ...(onError !== undefined ? { onError } : {}),
@@ -103,6 +124,18 @@ function hostWebSocketUrl(address: string): string {
   url.protocol = scheme;
   if (url.pathname === '/') url.pathname = HOST_WEBSOCKET_PATH;
   return url.href;
+}
+
+/** Where the HTTP link of a WebSocket address posts: the same place, over http(s), under the WebSocket path. */
+function hostHttpUrls(webSocketUrl: string) {
+  const url = new URL(webSocketUrl);
+  url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
+  const base = url.pathname.replace(/\/$/, '');
+  const at = (path: string): string => {
+    url.pathname = `${base}/${path}`;
+    return url.href;
+  };
+  return { eventsUrl: at('events'), messagesUrl: at('messages'), openTimeoutMs: OPEN_TIMEOUT_MS };
 }
 
 /** A link over one WebSocket. It rejects when the socket closes or stalls before it opens. */

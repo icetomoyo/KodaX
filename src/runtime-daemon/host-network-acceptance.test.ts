@@ -136,7 +136,8 @@ function signJwt(key: KeyObject, claims: Record<string, unknown>): string {
 }
 
 /** The smallest reverse proxy: plain requests forwarded, WebSocket upgrades piped as bytes. */
-async function startReverseProxy(targetPort: number) {
+/** With `blockWebSockets` it turns every WebSocket away, as some corporate proxies do, and passes plain HTTP. */
+async function startReverseProxy(targetPort: number, blockWebSockets = false) {
   let upgrades = 0;
   const server = createHttpServer((request, response) => {
     const upstream = httpRequest({
@@ -150,6 +151,10 @@ async function startReverseProxy(targetPort: number) {
   });
   server.on('upgrade', (request, socket, head) => {
     upgrades += 1;
+    if (blockWebSockets) {
+      socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+      return;
+    }
     const upstream = connectTcp(targetPort, '127.0.0.1', () => {
       const lines = [`${request.method} ${request.url} HTTP/1.1`];
       for (let index = 0; index < request.rawHeaders.length; index += 2) {
@@ -164,7 +169,11 @@ async function startReverseProxy(targetPort: number) {
     socket.on('error', () => upstream.destroy());
   });
   await listen(server);
-  return { url: `http://127.0.0.1:${portOf(server)}`, upgrades: () => upgrades, close: () => closeServer(server) };
+  return {
+    url: `http://127.0.0.1:${portOf(server)}`, upgrades: () => upgrades, close: () => closeServer(server),
+    /** Cuts every plain HTTP connection through it, as a network that drops does. */
+    drop: () => server.closeAllConnections(),
+  };
 }
 
 function listen(server: Server): Promise<void> {
@@ -187,7 +196,7 @@ function testEndpoint(root: string): RuntimeDaemonEndpoint {
 }
 
 /** A Host on a fresh home that listens on the network for `person-1` and `backend-1`, behind a reverse proxy. */
-async function startProxiedHost() {
+async function startProxiedHost(options: { readonly blockWebSockets?: boolean } = {}) {
   const homeDir = await realpath(await mkdtemp(path.join(tmpdir(), 'kodax-host-acceptance-')));
   cleanup.push(() => rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   const kodaxHome = path.join(homeDir, '.kodax');
@@ -228,7 +237,7 @@ async function startProxiedHost() {
   cleanup.push(() => host.close());
   const port = readRuntimeDaemonLog(paths).find(entry => entry.message === 'Runtime daemon listening on the network.')?.data?.port;
   if (typeof port !== 'number') throw new Error('Expected the Host to log the port it listens on.');
-  const proxy = await startReverseProxy(port);
+  const proxy = await startReverseProxy(port, options.blockWebSockets);
   cleanup.push(() => proxy.close());
 
   const errors: unknown[] = [];
@@ -352,6 +361,40 @@ describe('a Host reached through a reverse proxy with the SDK', () => {
       data: ONE_PIXEL_PNG.toString('base64'), mediaType: 'image/png', byteLength: ONE_PIXEL_PNG.length,
     });
     // One link the whole way, through the proxy.
+    expect(host.proxy.upgrades()).toBe(1);
+    expect(host.errors).toEqual([]);
+  }, 120_000);
+
+  it('reaches the Host over HTTP where the proxy lets no WebSocket through, and stays on HTTP when it reconnects', async () => {
+    const host: Host = await startProxiedHost({ blockWebSockets: true });
+    const person = await host.connect('person-1');
+    expect(person.handshake).toMatchObject({ role: 'user', subject: 'person' });
+    expect(host.proxy.upgrades()).toBe(1);
+    const { session } = await person.call('session.create', { requestId: 'create-1', project: 'app' });
+
+    // The view arrives over the event stream while a question waits, and the answer goes up in a POST.
+    const views: Array<{ readonly items: readonly unknown[] }> = [];
+    const observation = await person.observeSession(session.id, { onView: view => views.push(view as { readonly items: readonly unknown[] }) });
+    host.model.script(callsToolOnce('ask_user_question', QUESTION));
+    const asked = await submit(person, session.id, 'input-1', 'Ask me.');
+    const question = await pendingInteraction(person, session.id);
+    expect(await person.call('interaction.respond', {
+      requestId: 'answer-1', interactionId: question.id, response: { kind: 'question', answer: 'red' },
+    })).toEqual({ status: 'answered' });
+    expect((await person.call('run.wait', { runId: asked })).run.outcome).toMatchObject({ status: 'completed' });
+    await vi.waitFor(() => expect(views.at(-1)?.items.length).toBeGreaterThanOrEqual(2));
+    observation.close();
+
+    // A frame larger than one batch goes up on its own.
+    const upload = await uploadImage(person, session.id, Buffer.alloc(500 * 1024, 1));
+    expect(upload).toMatchObject({ byteLength: 500 * 1024 });
+
+    // The network drops; the client comes back on HTTP without trying the WebSocket that failed.
+    const states: string[] = [];
+    person.onConnectionChange(state => states.push(state.state));
+    host.proxy.drop();
+    await vi.waitFor(() => expect(states).toEqual(['connected', 'reconnecting', 'connected']), { timeout: 10_000 });
+    await expect(person.call('ping')).resolves.toEqual({});
     expect(host.proxy.upgrades()).toBe(1);
     expect(host.errors).toEqual([]);
   }, 120_000);

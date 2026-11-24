@@ -5,7 +5,8 @@ import { connect as connectTcp } from 'node:net';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { HostCloseReason } from '../host-protocol/close.js';
+import type { HostLinkClose, HostCloseReason } from '../host-protocol/close.js';
+import { dialHostHttp } from '../host-protocol/http-link.js';
 import {
   startHostNetworkListener,
   type HostHealth,
@@ -274,5 +275,105 @@ describe('startHostNetworkListener', () => {
     await listener.close();
     await expect(client.closed).resolves.toMatchObject({ code: 4503 });
     await expect(connect(url).opened).rejects.toThrow();
+  });
+});
+
+/** A client of the listener over HTTP, through the SDK's own link. */
+async function dialHttp(base: string) {
+  const frames: string[] = [];
+  let resolveEnded: (close: HostLinkClose | undefined) => void = () => undefined;
+  const ended = new Promise<HostLinkClose | undefined>((resolve) => { resolveEnded = resolve; });
+  const link = await dialHostHttp({ eventsUrl: `${base}/v2/events`, messagesUrl: `${base}/v2/messages`, openTimeoutMs: 5_000 })({
+    frame: text => frames.push(text),
+    end: resolveEnded,
+  });
+  return { link, frames, ended };
+}
+
+/** Opens a stream by hand and reads it to its end, or as far as `until` wants. */
+async function openRawStream(base: string, headers: Record<string, string> = {}) {
+  const answer = await fetch(`${base}/v2/events`, { method: 'POST', body: '', headers });
+  const reader = answer.body!.pipeThrough(new TextDecoderStream()).getReader();
+  let text = '';
+  const until = async (seen: (text: string) => boolean): Promise<string> => {
+    while (!seen(text)) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += value;
+    }
+    return text;
+  };
+  return { answer, until, cancel: () => reader.cancel() };
+}
+
+describe('the HTTP carriage, for a network that lets no WebSocket through', () => {
+  it('carries frames both ways, in the order they were sent, on a stream proxies are asked not to hold back', async () => {
+    const { base, peers } = await listen();
+    const client = await dialHttp(base);
+    for (const frame of ['{"a":1}', '{"b":2}', '{"c":3}']) client.link.send(frame);
+    await vi.waitFor(() => expect(client.frames).toEqual(['echo:{"a":1}', 'echo:{"b":2}', 'echo:{"c":3}']));
+    expect(peers[0]!.received).toEqual(['{"a":1}', '{"b":2}', '{"c":3}']);
+
+    const raw = await openRawStream(base);
+    expect(raw.answer.headers.get('content-type')).toBe('text/event-stream; charset=utf-8');
+    expect(raw.answer.headers.get('x-accel-buffering')).toBe('no');
+    expect(raw.answer.headers.get('cache-control')).toContain('no-transform');
+    await raw.cancel();
+  });
+
+  it('ends the stream with the close the Host gave, and closes the peer when the client goes away', async () => {
+    const { base, peers } = await listen();
+    const first = await dialHttp(base);
+    await vi.waitFor(() => expect(peers).toHaveLength(1));
+    peers[0]!.disconnect('credential');
+    await expect(first.ended).resolves.toEqual({ code: 4401, reason: 'credential' });
+
+    const second = await dialHttp(base);
+    await vi.waitFor(() => expect(peers).toHaveLength(2));
+    second.link.close();
+    await vi.waitFor(() => expect(peers[1]!.closed).toBe(true));
+  });
+
+  it('opens a refused browser origin only to close it with why, and answers its CORS read', async () => {
+    const { base, peers } = await listen();
+    const evil = await openRawStream(base, { origin: 'https://evil.example.test' });
+    const text = await evil.until(() => false);
+    expect(text).toMatch(/^event: open\ndata: \{"stream":"[\w-]+"\}\n\nevent: close\ndata: \{"code":4403,"reason":"origin_not_allowed"\}\n\n$/);
+    expect(evil.answer.headers.get('access-control-allow-origin')).toBe('https://evil.example.test');
+    expect(peers).toHaveLength(0);
+
+    const app = await openRawStream(base, { origin: 'https://app.example.test' });
+    await app.until(seen => seen.includes('event: open'));
+    expect(app.answer.headers.get('access-control-allow-origin')).toBe('https://app.example.test');
+    expect(app.answer.headers.get('access-control-allow-credentials')).toBe('true');
+    expect(peers[0]!.origin).toBe('https://app.example.test');
+    await app.cancel();
+  });
+
+  it('takes frames only for a stream it opened, from the origin that opened it', async () => {
+    const { base, peers } = await listen();
+    const app = await openRawStream(base, { origin: 'https://app.example.test' });
+    const name = /"stream":"([\w-]+)"/.exec(await app.until(seen => seen.includes('event: open')))![1]!;
+    const post = (body: string, origin?: string) => fetch(`${base}/v2/messages`, {
+      method: 'POST', body, headers: origin !== undefined ? { origin } : {},
+    });
+
+    expect((await post(`${name}\n{"x":1}`, 'https://evil.example.test')).status).toBe(404);
+    expect((await post(`${name}\n{"x":1}`)).status).toBe(404);
+    expect((await post('not-a-stream\n{"x":1}', 'https://app.example.test')).status).toBe(404);
+    expect(peers[0]!.received).toEqual([]);
+    const accepted = await post(`${name}\n{"x":1}\n{"y":2}`, 'https://app.example.test');
+    expect(accepted.status).toBe(204);
+    expect(accepted.headers.get('access-control-allow-origin')).toBe('https://app.example.test');
+    expect(peers[0]!.received).toEqual(['{"x":1}', '{"y":2}']);
+    await app.cancel();
+  });
+
+  it('refuses a body larger than a frame, and new streams while draining', async () => {
+    const { listener, base } = await listen({ maxFrameBytes: 1024 });
+    const big = await fetch(`${base}/v2/messages`, { method: 'POST', body: `name\n${'x'.repeat(4096)}` });
+    expect(big.status).toBe(413);
+    listener.drain();
+    expect((await fetch(`${base}/v2/events`, { method: 'POST', body: '' })).status).toBe(503);
   });
 });

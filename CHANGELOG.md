@@ -77,6 +77,10 @@ All notable changes to this project will be documented in this file.
   to answer, and the learning counts. It replaces `learning.subscribe`. The
   Host reads it again when one of those may have changed, at most once a
   second, and sends only what differs.
+- A client reaches a Host over plain HTTP where a proxy or firewall lets no
+  WebSocket through: `connectKodaXHost` tries the WebSocket first, falls back
+  to a server-sent event stream with POSTed messages on the same port, and
+  tries HTTP first on the next connection once it was what worked.
 - `kodax host` manages the Host, which `kodax daemon` did. `kodax daemon` still
   works, prints that it was renamed, and is removed in 0.7.100.
 - `kodax host logs --follow` keeps printing new log lines until Ctrl+C, across
