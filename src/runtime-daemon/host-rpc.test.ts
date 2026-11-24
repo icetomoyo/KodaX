@@ -11,7 +11,7 @@ import {
   createReferenceAgentExecutorFactory, resolveProjectLearnedAreaRoot, setKodaXDiagnosticSink, stageLearnedSkillRevision,
   type KodaXDiagnostic,
 } from '@kodax-ai/agent';
-import { awaitLatestCodingMemoryReviewDrain, getActiveExtensionRuntime } from '@kodax-ai/coding';
+import { awaitLatestCodingMemoryReviewDrain, getActiveExtensionRuntime, getTool, registerTool } from '@kodax-ai/coding';
 import {
   KodaXBaseProvider, registerModelProvider, type KodaXMessage, type KodaXProviderConfig, type KodaXStreamResult,
 } from '@kodax-ai/llm';
@@ -19,6 +19,8 @@ import { sessionVisualMediaDirectory } from '@kodax-ai/agent/media';
 import { FileSessionStorage } from '@kodax-ai/repl';
 
 import { createKodaXRuntime } from '../../tests/runtime-fixture.js';
+import { createKodaXArtifactHostPort } from '../../packages/artifacts/src/host-port.js';
+import { createArtifactSdk } from '../../packages/artifacts/src/index.js';
 import { connectHostRpc, type HostRpcClient } from '../host-protocol/client.js';
 import type { HostCloseReason } from '../host-protocol/close.js';
 import { HostProtocolError } from '../host-protocol/codec.js';
@@ -1770,6 +1772,38 @@ describe('v2 named tools and Run recovery served by the v1 implementation', () =
       .rejects.toMatchObject({ kodaxCode: 'invalid_params' });
     await expect(after.request('run.startTool', { ...start, requestId: 'tool-2', sessionId: 'no-such-session' }))
       .rejects.toMatchObject({ kodaxCode: 'not_found' });
+  }, 60_000);
+
+  it('serves the Artifact SDK an image by the blob on the tool item of its Run', async () => {
+    // Stands in for the artifact tool: its metadata line, then what `read` delivers for the raster.
+    const dispose = registerTool({
+      name: 'artifact_read_evidence', description: 'Reads a raster.',
+      input_schema: { type: 'object', properties: { source: { type: 'object' }, raster: { type: 'object' } }, required: ['source', 'raster'] },
+      toClassifierInput: () => 'read a raster', sideEffect: 'readonly', planModeAllowed: true,
+      handler: async (input, context) => {
+        const { raster } = input as { raster: { path: string } };
+        const read = await getTool('read')!({ path: raster.path }, context);
+        if (!Array.isArray(read)) throw new Error('read delivered no image');
+        return [{ type: 'text', text: JSON.stringify({ protocol: 'kodax-artifact/1', operation: 'readEvidence', status: 'ready', diagnostics: [], imageRef: raster }) }, ...read];
+      },
+    });
+    cleanup.push(async () => dispose());
+    const host = await makeModelHost();
+    const runtime = await host.start();
+    const rpc = await connect('user', runtime, host.workspace);
+    const client = await createKodaXHostClient({ open: async () => rpc });
+    cleanup.push(() => client.close());
+    const { session } = await client.call('session.create', { requestId: 'create-1', project: 'app' });
+    const png = path.join(host.workspaceRoot, 'app', 'dot.png');
+    await writeFile(png, ONE_PIXEL_PNG);
+    const raster = { path: png, sha256: createHash('sha256').update(ONE_PIXEL_PNG).digest('hex'), mediaType: 'image/png' as const,
+      width: 1, height: 1, locator: { kind: 'static' as const } };
+
+    const sdk = createArtifactSdk(createKodaXArtifactHostPort(client, session.id));
+    const result = await sdk.readEvidence({ source: { kind: 'surface', target: 'tab', observedAt: '2026-11-24T00:00:00Z' }, raster });
+
+    expect(Buffer.from(result.image!.dataBase64, 'base64')).toEqual(ONE_PIXEL_PNG);
+    expect(host.calls()).toBe(0);
   }, 60_000);
 
   /**

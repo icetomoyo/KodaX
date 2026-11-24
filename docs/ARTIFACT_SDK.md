@@ -9,7 +9,7 @@ outside core startup.
 | Public subpath | Responsibility |
 | --- | --- |
 | `@kodax-ai/kodax/artifacts` | Pure SDK/types and evidence validation |
-| `@kodax-ai/kodax/artifacts/client` | Bind to the existing Product Client/Session |
+| `@kodax-ai/kodax/artifacts/client` | Bind to an existing Host client (v2) or Product Client (v1) and Session |
 | `@kodax-ai/kodax/artifacts/runtime` | Explicitly authorized standalone Node file/browser work |
 | `@kodax-ai/kodax/artifacts/kodax` | Register managed tools in the existing trusted Host |
 
@@ -183,12 +183,12 @@ Check `client.catalog.extensions()` for load errors and `sdk.capabilities()`
 for actual backend readiness. Registration exposes nine `artifact_*` tools
 and the packaged artifact-review skill; installing the tarball alone does not.
 
-Then bind to the existing Product Client/session:
+Then bind to the existing Host client (`connectKodaXHost` from `@kodax-ai/kodax/client`) and Session:
 
 ```ts
 import { createArtifactSdk } from '@kodax-ai/kodax/artifacts';
-import { createKodaXArtifactPort } from '@kodax-ai/kodax/artifacts/client';
-const sdk = createArtifactSdk(createKodaXArtifactPort(client, sessionId));
+import { createKodaXArtifactHostPort } from '@kodax-ai/kodax/artifacts/client';
+const sdk = createArtifactSdk(createKodaXArtifactHostPort(host, sessionId));
 const capabilities = await sdk.capabilities();
 // Explicit user/Host-authorized preparation when browser operations need it:
 // await sdk.prepare();
@@ -205,7 +205,7 @@ tarball test. PNG whole-image evidence needs no browser; PPTX/PDF/DOCX and other
 browser-backed operations need compatible Chromium, prepared explicitly with
 `sdk.prepare()`/`artifact_prepare` or supplied by the trusted Host.
 
-The port uses `runs.startTool/await/stop`, correlates the actual tool-call identity and its formal metadata, then reads PNG chunks through `sessions.readItem`. Image bytes are absent from worker stdout, `lastText`, history text and logs. The tool delivers existing image content blocks to agents. The client returns the same `image` shape as the Node port after hashing its assembled bytes. There is no local fallback, extra Session owner, automatic replay, new Artifact Product Client domain or model call.
+The v2 port starts each operation with `run.startTool`, waits with `run.wait` and asks `run.stop` once when the caller aborts. It reads the one tool item of its own Run from the Session view: the metadata is the first line of the tool's text (read with `item.read` when the output was saved), and the PNG is the item's single image attachment, read with `blob.read` and refused unless the blob's sha256 equals the reference the tool returned. The v1 port `createKodaXArtifactPort(client, sessionId)` takes a `KodaXProductClient`, uses `runs.startTool/await/stop`, correlates the actual tool-call identity and its formal metadata, then reads PNG chunks through `sessions.readItem`; it is removed with the v1 client in v0.7.100. Image bytes are absent from worker stdout, `lastText`, history text and logs. The tool delivers existing image content blocks to agents. The client returns the same `image` shape as the Node port after hashing its assembled bytes. There is no local fallback, extra Session owner, automatic replay, new Artifact Product Client domain or model call.
 
 `executeManagedProcess` binds fixed argv through the admitted Host scope, including when extension and CLI use separate bundles. Missing bindings are rejected before shell execution. Permissions, sandbox, cancellation and settlement remain on the normal checked Bash path.
 

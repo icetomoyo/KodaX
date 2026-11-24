@@ -76,7 +76,16 @@ All notable changes to this project will be documented in this file.
   archived, the Runs that have not ended, what any Session waits for a person
   to answer, and the learning counts. It replaces `learning.subscribe`. The
   Host reads it again when one of those may have changed, at most once a
-  second, and sends only what differs.
+  second, and sends only what differs. `KodaXHostClient.observeHost` follows
+  it across reconnects, and the connection state reads
+  `{state: 'connected', draining: true}` while the Host is stopping.
+  `@kodax-ai/kodax/client` also exports `HostErrorCode`.
+- `@kodax-ai/kodax/artifacts/client` adds
+  `createKodaXArtifactHostPort(client, sessionId)`, the Artifact SDK port for
+  a protocol v2 Host client. It claims the one tool item of its own Run and
+  reads the PNG by that item's blob, refusing bytes whose hash differs from
+  what the tool reported. The v1 `createKodaXArtifactPort` goes away with the
+  v1 client in v0.7.100.
 - A client reaches a Host over plain HTTP where a proxy or firewall lets no
   WebSocket through: `connectKodaXHost` tries the WebSocket first, falls back
   to a server-sent event stream with POSTed messages on the same port, and

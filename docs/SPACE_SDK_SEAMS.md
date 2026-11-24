@@ -445,9 +445,10 @@ Main 在已有 Client/Session 上绑定 SDK，Renderer 经现有 IPC 消费结�
 
 ```ts
 import { createArtifactSdk } from '@kodax-ai/kodax/artifacts';
-import { createKodaXArtifactPort } from '@kodax-ai/kodax/artifacts/client';
+import { createKodaXArtifactHostPort } from '@kodax-ai/kodax/artifacts/client';
 
-const sdk = createArtifactSdk(createKodaXArtifactPort(client, sessionId));
+// host 是 connectKodaXHost 得到的 v2 客户端；v1 的 createKodaXArtifactPort 在 v0.7.100 移除。
+const sdk = createArtifactSdk(createKodaXArtifactHostPort(host, sessionId));
 const capabilities = await sdk.capabilities();
 // 浏览器后端缺运行时，则在正常授权下显式 await sdk.prepare()。
 const rendered = await sdk.render({ path: 'report.pdf', pages: [1] });

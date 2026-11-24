@@ -2309,7 +2309,16 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
 1. 给 Space 的迁移说明：Space 用到的每个 v1 调用对应哪个 v2 方法，行为、错误码和身份有什么不同。写进 `docs/SDK_MIGRATION.md`，交给 Space 线程。**状态**：2026-11-24 写入"协议 v2：v1 方法对照"一节，覆盖握手里的全部 140 个方法，`methods.contract.json` 有的方法表里都有。
 2. 按 Space 的反馈补方法：§12 第 1 条列的调用点由 Space 线程核对。有调用方的，SDK 补上对应的 v2 方法。
 3. 授权方租约：形状按 Space 线程给出的真实调用点定（见"第 9 项的落地细节"）。
-4. Artifact SDK 改为按 blob 引用匹配附件（D11）。Artifact SDK 是 KodaX 的包，这一项归 SDK。
+4. Artifact SDK 改为按 blob 引用匹配附件（D11）。Artifact SDK 是 KodaX 的包，这一项归 SDK。**状态**：2026-11-24 落地，见下面"第 4 项的落地细节"。
+
+第 4 项的落地细节（未经用户确认）：
+
+- 入口：`@kodax-ai/kodax/artifacts/client` 新增 `createKodaXArtifactHostPort(client, sessionId)`，`client` 是 v2 的 `KodaXHostClient`（端口只声明它用到的 `call` 重载和 `observeSession`）。v1 的 `createKodaXArtifactPort` 保留，随 v1 客户端在 v0.7.100 移除。
+- 每个操作一次 `run.startTool`，用 `run.wait` 等结局；调用方中止时只对自己的 Run 发一次 `run.stop`。Stop 失败不吞掉：操作也失败时两者合成 `AggregateError`。不重放结局未知的操作。
+- 认领工具结果：Run 完成后订一次会话视图，要求恰好一个 `runId` 是自己、工具名相符、状态 `success` 的工具条目；零个或多个都拒绝。
+- 元数据：工具条目的文本把输出的每个文本块按行拼起来，所以取第一行作为元数据 JSON（输出已存盘或被截断时用 `item.read` 读到第一个换行为止，上限 2 MB）。
+- 图片：条目上恰好一个 image 附件，按它的 `blobId` 用 `blob.read` 分块读。每块返回的 `sha256` 必须等于工具报告的图片哈希，`mediaType` 必须是 `image/png`，长度和各块一致；读完再按 Node 端口同样的规则校验像素。工具结果的附件不带 `sha256`，所以哈希比对靠 `blob.read`。
+- 已验证：`host-port.test.ts`（内联和存盘两种输出读到同样的字节；别的 Run 的条目、两个条目、没有或多个图片、哈希不符、字节损坏、Run 失败都被拒，且不多读 blob；中止时只停自己的 Run 并合并 Stop 的失败；Host 拒绝启动时不再启动）；host-rpc 集成测试用真实 Host、真实 `read` 工具和 `createKodaXHostClient`，`readEvidence` 读回的字节等于原图。
 
 等 Space 那边才能做的，记在这里是因为 SDK 有事项等着它：
 
@@ -2331,7 +2340,7 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
   - 只约束 `user`，owner 不受锁。
   - 每次调用现读一次配置，改了 `host.json` 下一次调用就生效。握手里的 `locks` 是连接时的快照，客户端重连后才更新显示。
   - 被锁的调用报 `forbidden`，reason `locked`，消息里写是哪一项。
-  - `fullAccess` 管住 `config.update` 和 `session.settings.update` 两个入口；`permissions` 管存盘的权限模式和审批时的"总是允许"。
+  - `fullAccess` 管住 `config.update` 和 `session.settings.update` 两个入口；`permissions` 管存盘的权限模式和审批时的"总是允许"。"总是允许"按 `interaction.respond` 的 `response.decision.type === 'allow_always'` 判断；最初的实现读错了字段，这个锁没生效，2026-11-24 修正并按真实参数形状补了测试。
   - `server.tools` 里没有 `bash` 时，Host 自动加上 `mcpStdio`：启动 stdio MCP server 等于在 Host 上执行命令，绕过了工具上限。
 - **不管锁不锁都拒绝 `user` 的**：
   - Host 上的路径：`config.update` 里的 `extensions` 和 `repoIntelligence.storageDir`（reason `host_path`）。
@@ -2391,7 +2400,7 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
 - `epoch`：每个连接一个。文档没有项，客户端手里没有会因 Host 的 ID 变化而过期的东西，所以不需要按订阅换。
 - 拥塞：和会话视图一样，链路积压时只留最新的一份，排空后发出去。
 - 读失败：这个订阅以 `view.closed`（`reason: 'internal'`，带 `incidentId`）结束，客户端重订即可。
-- 没做：客户端 SDK 没加专门的辅助方法（比如 `observeHost`），用通用的视图订阅即可，等有客户端要用时再加。
+- 客户端：`KodaXHostClient.observeHost({ onView, onClosed? })` 订阅 Host 文档，重连后自动重订，和 `observeSession` 一样。Host 发 `host.draining` 时，连接状态变成 `{ state: 'connected', draining: true }`，客户端可以提示用户 Host 正在停止。2026-11-24 写指南时补上（未经用户确认）。
 - 已验证：`host-document.test.ts`（每秒最多读一次、拥塞时只留最新、读失败结束订阅并停止跟随）；host-rpc 集成测试（user 订阅后看到新 Session、提问时的交互和 `waiting_user_input` 的 Run，回答后两者消失，归档后 Session 消失，`seq` 连续，退订后不再收到；owner 的快照带 `workspaceRoot`；同一个 id 从会话视图改订 Host 文档后不再收到会话视图的补丁）。
 
 **第 4 项的落地细节**（2026-11-24，未经用户确认的取舍）：

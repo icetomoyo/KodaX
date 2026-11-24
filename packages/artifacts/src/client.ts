@@ -4,6 +4,8 @@ import { artifactToolName, decodeArtifactRequest, decodeArtifactResult, decodeAr
 import { encodeBase64, verifyImageData } from './image-data.js';
 import { sameJson } from './identity.js';
 
+export { createKodaXArtifactHostPort, type ArtifactHostClient, type ArtifactHostItem, type ArtifactHostRun } from './host-port.js';
+
 /** Uses the connected Host's explicit tool Run. No local execution or automatic replay. */
 export function createKodaXArtifactPort(client: Pick<KodaXProductClient, 'runs' | 'sessions'>, sessionId: string): ArtifactExecutionPort {
  return { execute: async <O extends ArtifactOperation>(raw: ArtifactRequest<O>, signal?: AbortSignal): Promise<ArtifactResults[O]> => {
