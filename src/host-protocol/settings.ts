@@ -74,6 +74,7 @@ const SettingsState = {
 };
 
 export const SETTINGS_METHODS = {
+  /** The Session's settings and their `revision`. */
   'session.settings.get': {
     primitive: 'query',
     plane: 'data',

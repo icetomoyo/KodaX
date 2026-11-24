@@ -1,10 +1,11 @@
 /**
- * The MCP servers the Host connects to, and the tools they offer. Only the
- * owner may see or change them for now; a platform may later open them to the
- * person, item by item.
+ * The MCP servers the Host connects to, and the tools they offer. The owner
+ * and the person (`user`) may see and change them, unless a platform locks
+ * them with `server.userLocks`.
  *
- * A server's configuration comes back as saved, `env` and `headers`
- * included, so it may hold secrets.
+ * A server's configuration comes back as saved on the Host's own machine,
+ * secrets in `env` and `headers` included. Over the network those values
+ * read `[redacted]`, and saving one back is refused.
  */
 import { z } from 'zod/v4';
 
@@ -60,6 +61,7 @@ const ServerTools = z.object({
 });
 
 export const MCP_METHODS = {
+  /** The MCP servers configured on the Host and how each is doing. */
   'mcp.server.list': { primitive: 'query', plane: 'settings', params: hostParams({}), result: hostList(Server) },
   /** Fails with `not_found` when no server has the name. */
   'mcp.server.get': {

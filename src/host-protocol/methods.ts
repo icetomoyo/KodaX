@@ -97,9 +97,11 @@ export type HostInitializeResult = z.output<typeof InitializeResult>;
 export type HostLimits = HostInitializeResult['limits'];
 
 const CONNECTION_METHODS = {
+  /** Opens the connection: the protocol revision, who the client is and how it proves it. The answer lists what this connection may call. */
   'initialize': { primitive: 'handshake', plane: 'data', params: InitializeParams, result: InitializeResult },
+  /** Answers at once, so a client can tell the link is alive. */
   'ping': { primitive: 'query', plane: 'data', params: hostParams({}), result: hostResult({}) },
-  // A new token for the same subject and role, sent before `expiresAt`. Any other subject or role ends the connection.
+  /** A new token for the same subject and role, sent before `expiresAt`. Any other subject or role ends the connection. */
   'auth.renew': {
     primitive: 'handshake',
     plane: 'data',
@@ -107,6 +109,7 @@ const CONNECTION_METHODS = {
     result: hostResult({ expiresAt: z.int().optional() }),
   },
   // `id` is the JSON-RPC id of the request to give up. A command's `requestId` names its intent and is something else.
+  /** Gives up a request this client sent that is still running, by its `id`. The request fails with `cancelled`. */
   'request.cancel': { primitive: 'notification', plane: 'data', params: hostParams({ id: RpcId }) },
 } as const satisfies HostMethodRegistry;
 

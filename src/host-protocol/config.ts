@@ -96,6 +96,7 @@ const ConfigGetResult = hostResult({
 const CustomProvider = z.record(z.string(), z.unknown());
 
 export const CONFIG_METHODS = {
+  /** The Host's saved configuration with its `revision`, and what is in effect. */
   'config.get': { primitive: 'query', plane: 'settings', params: hostParams({}), result: ConfigGetResult },
   /** Fails with `conflict` when `ifRevision` is not the saved configuration's revision. */
   'config.update': {
@@ -107,6 +108,7 @@ export const CONFIG_METHODS = {
   },
   /** Reads the saved configuration again after something other than the Host changed it. */
   'config.reload': { primitive: 'command', resend: 'auto', plane: 'settings', params: hostCommandParams({}), result: SavedConfig },
+  /** The custom providers saved in the Host's configuration. */
   'provider.custom.list': { primitive: 'query', plane: 'settings', params: hostParams({}), result: hostList(CustomProvider) },
   /** Adds a provider, or replaces the one of the same `name`. Fails with `invalid_params` when the Host cannot use it. */
   'provider.custom.upsert': {

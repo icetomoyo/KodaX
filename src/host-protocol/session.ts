@@ -200,6 +200,7 @@ const SessionAnswer = { result: hostResult({ session: Session }), localResult: h
 const GoalAnswer = hostResult({ goal: Goal });
 
 export const SESSION_METHODS = {
+  /** The Sessions, a page at a time. */
   'session.list': {
     primitive: 'query',
     plane: 'data',
@@ -215,14 +216,15 @@ export const SESSION_METHODS = {
     result: hostList(Session),
     localResult: hostList(LocalSession),
   },
+  /** One Session. `phase` is `idle` or the phase of the Run that decides what the Session is doing; `runId` names that Run. */
   'session.get': {
     primitive: 'query',
     plane: 'data',
     params: hostParams({ sessionId: SessionRef }),
-    // `phase` is `idle` or the phase of the Run that decides what the Session is doing; `runId` names that Run.
     result: hostResult({ session: Session, phase: z.string(), runId: z.string().optional() }),
     localResult: hostResult({ session: LocalSession, phase: z.string(), runId: z.string().optional() }),
   },
+  /** Creates a Session. Its `policy` is fixed for the Session's life. */
   'session.create': {
     primitive: 'command',
     resend: 'auto',
@@ -288,7 +290,9 @@ export const SESSION_METHODS = {
     result: hostResult({ policy: SessionPolicy }),
   },
   // Each of these names a state, so sending one again changes nothing.
+  /** Takes the Session out of the list; `session.list` with `includeArchived` still shows it. */
   'session.archive': { primitive: 'command', resend: 'auto', plane: 'data', params: SessionCommand, result: Done },
+  /** Puts an archived Session back in the list. */
   'session.unarchive': { primitive: 'command', resend: 'auto', plane: 'data', params: SessionCommand, result: Done },
   /** Succeeds when the Session is already gone: what was asked for holds. */
   'session.delete': { primitive: 'command', resend: 'auto', plane: 'data', params: SessionCommand, result: Done },

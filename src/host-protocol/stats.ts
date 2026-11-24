@@ -165,13 +165,16 @@ const page = <Item extends z.ZodType>(item: Item) => hostResult({
 });
 
 export const STATS_METHODS = {
+  /** The Session's totals: requests, usage and tool calls. */
   'stats.get': {
     primitive: 'query',
     plane: 'data',
     params: hostParams({ sessionId: SessionRef }),
     result: hostResult({ stats: Stats }),
   },
+  /** The Session's model requests, a page at a time. */
   'stats.requests': { primitive: 'query', plane: 'data', params: PageParams, result: page(Request) },
+  /** The Session's tool calls, a page at a time. */
   'stats.tools': {
     primitive: 'query',
     plane: 'data',

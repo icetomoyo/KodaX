@@ -319,6 +319,7 @@ export interface ViewPatch {
 }
 
 export const VIEW_METHODS = {
+  /** Starts a stream of patches to a view: a Session's, or the Host document with `target.kind: 'host'`. The answer is the view as it is now. */
   'view.subscribe': {
     primitive: 'subscription',
     plane: 'data',
@@ -340,6 +341,7 @@ export const VIEW_METHODS = {
     params: hostParams({ subscriptionId: HostId }),
     result: hostResult({}),
   },
+  /** The whole of one item of a Session's view, a page at a time. */
   'item.read': {
     primitive: 'query',
     plane: 'data',

@@ -11,7 +11,7 @@ export type RuntimeConnectionRole = 'owner' | 'user' | 'service';
  * data     — sessions, inputs, Runs, interactions, views, history, read-only catalogs
  * settings — the person's own Host settings (MCP, extensions, providers, config); a platform may lock items
  * trusted  — leases and execution authorization a backend supplies for a person
- * local    — Host start/stop, logs, client exit, diagnostics, memory and learning
+ * local    — Host start/stop, logs, client exit, diagnostics, and the v1 memory methods
  */
 export type RuntimeMethodPlane = 'data' | 'settings' | 'trusted' | 'local';
 

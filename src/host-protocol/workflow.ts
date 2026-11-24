@@ -121,6 +121,7 @@ export const WORKFLOW_METHODS = {
     }),
     result: hostList(WorkflowSummary),
   },
+  /** One workflow of the Session and how it stands. */
   'workflow.get': {
     primitive: 'query',
     plane: 'data',

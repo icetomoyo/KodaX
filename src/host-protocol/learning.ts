@@ -129,9 +129,11 @@ export const LEARNING_METHODS = {
     params: hostCommandParams({ nameOrSlug: Name, until: z.int().min(0) }),
     result: Done,
   },
+  /** Turns down a capability the Host proposed; it is not used. */
   'learning.reject': { primitive: 'command', resend: 'auto', plane: 'data', params: Decision, result: Done },
   /** Stops using the capability. A rollback brings back the last good revision. */
   'learning.disable': { primitive: 'command', resend: 'auto', plane: 'data', params: Decision, result: Done },
+  /** Brings back the capability's last good revision and keeps it in use. */
   'learning.rollback': { primitive: 'command', resend: 'auto', plane: 'data', params: Decision, result: Done },
   /** Puts a Skill on trial: the Host uses it a few times and watches how it fares before it becomes active. */
   'learning.review': { primitive: 'command', resend: 'auto', plane: 'data', params: Decision, result: Done },

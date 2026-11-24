@@ -135,7 +135,9 @@ const RepoIndexResult = hostResult({
 });
 
 export const HOST_ADMIN_METHODS = {
+  /** Which Host this is, its version, and how much work it holds. */
   'host.get': { primitive: 'query', plane: 'local', params: hostParams({}), result: HostGetResult },
+  /** Whether the Host can stop now, and what stopping would cut short. */
   'host.preflight': { primitive: 'query', plane: 'local', params: hostParams({}), result: PreflightResult },
   /**
    * Fails with `conflict` while stopping would cut work short; `host.preflight`
@@ -143,6 +145,7 @@ export const HOST_ADMIN_METHODS = {
    * replaced the one it stopped.
    */
   'host.stop': { primitive: 'command', resend: 'never', plane: 'local', params: hostCommandParams({}), result: hostResult({}) },
+  /** The Host's most recent log entries. */
   'host.logs': { primitive: 'query', plane: 'local', params: hostParams({}), result: LogResult },
   /**
    * Stops this client's work on the Host, and the Host too with `shutdownHost`
@@ -157,6 +160,7 @@ export const HOST_ADMIN_METHODS = {
     params: hostCommandParams({ shutdownHost: z.boolean().optional() }),
     result: hostResult({ exit: ClientExit }),
   },
+  /** An exit this client asked for with `client.exit`, and how far it got. */
   'client.exit.get': {
     primitive: 'query',
     plane: 'local',

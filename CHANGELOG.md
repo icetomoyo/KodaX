@@ -139,9 +139,9 @@ All notable changes to this project will be documented in this file.
   model, and answer the Host through `answerLeaseRequests`. A lease survives a
   reconnect of the same `instanceId` and `instanceSecret` to the same Host.
 - A v2 client can start a child Agent with `actor.spawn` and give one a new
-  objective with `actor.followup`. A new turn runs on the key the client
-  lends, else the Session's, else the Host's own, and a repeat of the same
-  request starts nothing more.
+  objective with `actor.followup`. A new turn runs on the key its Session
+  binds; in a Session that binds none, on the key the client lends, else the
+  Host's own. A repeat of the same request starts nothing more.
 - `ensureKodaXHostClient` takes `exitWhenIdle`: a Host it starts stops about
   30 seconds after its last client leaves, unless it still has work. It also
   takes `recoveryLeases`, which gives the leases for a Run it continues on a

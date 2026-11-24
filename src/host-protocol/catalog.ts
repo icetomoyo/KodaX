@@ -98,6 +98,7 @@ const ProjectScope = ProjectChoice;
 const PROJECT_SCOPE_RESTRICTED = PROJECT_CHOICE_RESTRICTED;
 
 export const CATALOG_METHODS = {
+  /** The providers the Host knows, with their models and whether the Host can call them. */
   'provider.list': { primitive: 'query', plane: 'data', params: hostParams({}), result: hostList(Provider) },
   /** The efforts a Session on this model can be set to. A provider the Host does not know gets the efforts every model takes. */
   'provider.reasoning.efforts': {
@@ -133,6 +134,7 @@ export const CATALOG_METHODS = {
     }),
     result: hostResult({ prompt: z.object({ title: z.string(), text: z.string() }).optional() }),
   },
+  /** The Skills a Run in the project can use. */
   'skill.list': {
     primitive: 'query',
     plane: 'data',
@@ -152,6 +154,8 @@ export const CATALOG_METHODS = {
       skill: skillText(SkillFile.extend({ path: z.string() })).extend({ path: z.string(), skillFilePath: z.string() }).optional(),
     }),
   },
+  /** The tools a Run of the Session can use. */
   'tool.list': { primitive: 'query', plane: 'data', params: hostParams({ sessionId: SessionRef }), result: hostList(Tool) },
+  /** The Agents a Session can be created as (`session.create` with `agent`). */
   'agent.list': { primitive: 'query', plane: 'data', params: hostParams({}), result: hostList(Agent) },
 } as const satisfies HostMethodRegistry;

@@ -7,7 +7,8 @@
  * A client reads the tree and steers a child as the root: it starts children
  * and gives them new objectives as the root does. A child's turn runs within
  * the tools, time limit and leases of its Session and the tools of the Host.
- * Its key is the one the client lends, else the Session's, else the Host's own.
+ * Its key is the one its Session binds. In a Session that binds none, it is
+ * the one the client lends, else the Host's own.
  *
  * What a child wrote is named by paths on the Host, so only a role that
  * reaches the local plane is sent `artifacts`, `artifactDetails` and the
@@ -171,6 +172,7 @@ const Capabilities = z.strictObject({
 });
 
 export const ACTOR_METHODS = {
+  /** The Session's Agents as a tree: the main Agent and the children each started. */
   'actor.tree': {
     primitive: 'query',
     plane: 'data',
@@ -185,6 +187,7 @@ export const ACTOR_METHODS = {
       revision: z.int(),
     }),
   },
+  /** One Agent of the Session, by its path in the tree. */
   'actor.get': {
     primitive: 'query',
     plane: 'data',
@@ -229,9 +232,10 @@ export const ACTOR_METHODS = {
   },
   /**
    * Starts a child of the root at `/root/<taskName>` with its first turn. A
-   * name in use is refused with `conflict`. The model calls of the turn use
-   * the key of `leases.credential`, else of the Session when it binds one,
-   * else the Host's own, as a Run does.
+   * name in use is refused with `conflict`. As for a Run, the model calls of
+   * the turn use the key the Session binds; `leases` sent there are refused
+   * with `invalid_params`, reason `lease_bound_by_session`. In a Session that
+   * binds none, they use the key of `leases.credential`, else the Host's own.
    */
   'actor.spawn': {
     primitive: 'command',

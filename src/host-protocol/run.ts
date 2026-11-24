@@ -172,6 +172,7 @@ export const RUN_METHODS = {
     restricted: { localAttachments: 'local', budget: 'trusted', prompt: 'trusted', leases: 'trusted' },
     result: hostResult({ input: Input }),
   },
+  /** One input, by the id its client chose, and what became of it. */
   'input.get': {
     primitive: 'query',
     plane: 'data',
@@ -190,6 +191,7 @@ export const RUN_METHODS = {
     }),
   },
 
+  /** One Run and how it stands or ended. */
   'run.get': {
     primitive: 'query',
     plane: 'data',

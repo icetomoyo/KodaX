@@ -1,7 +1,9 @@
 /**
  * What extends the Host: the extension modules it loaded, and the external
- * Agents registered for its Runs to hand tasks to. Only the owner may see or
- * change them for now; a platform may later open them to the person.
+ * Agents registered for its Runs to hand tasks to. The person (`user`) may
+ * see and reload the extensions, unless a platform locks them. External Agent
+ * registrations stay with the owner: one can send any variable of the Host's
+ * environment to the address it names.
  */
 import { z } from 'zod/v4';
 
@@ -61,6 +63,7 @@ const Conditions = {
 };
 
 export const EXTENSION_METHODS = {
+  /** The extensions the Host loaded, and those that failed to load. */
   'extension.list': { primitive: 'query', plane: 'settings', params: hostParams({}), result: Extensions },
   /**
    * Loads again the extensions the Host has loaded, so a changed module takes
