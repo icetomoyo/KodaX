@@ -53,10 +53,14 @@ export function createBearerEnvA2AAuthentication(
 function createConfiguredAuthentication(
   config: A2AServerConfig['authentication'],
   env: NodeJS.ProcessEnv | undefined,
+  hostAuthentication: A2AAuthentication | undefined,
 ): A2AAuthentication {
-  return config.type === 'bearer-env'
-    ? createBearerEnvA2AAuthentication(config, env)
-    : createOAuth2JwtA2AAuthentication(config);
+  if (config.type === 'bearer-env') return createBearerEnvA2AAuthentication(config, env);
+  if (config.type === 'oauth2-jwt') return createOAuth2JwtA2AAuthentication(config);
+  if (hostAuthentication === undefined) {
+    throw new Error('A2A host authentication is served only by a Host listening on the network; run `kodax host serve`.');
+  }
+  return hostAuthentication;
 }
 
 function publishedAgent(config: A2AServerConfig, baseUrl: string) {
@@ -81,6 +85,8 @@ export function createA2AServerOptionsFromConfig(input: {
   readonly config: A2AServerConfig;
   readonly listenBaseUrl: string;
   readonly env?: NodeJS.ProcessEnv;
+  /** The check the Host's port gives, for a declaration whose authentication is `host`. */
+  readonly hostAuthentication?: A2AAuthentication;
 }): A2AServerOptions {
   return {
     runtime: input.runtime,
@@ -88,7 +94,7 @@ export function createA2AServerOptionsFromConfig(input: {
     execution: input.config.execution,
     dataDir: expandHome(input.config.dataDir),
     limits: input.config.limits,
-    authentication: createConfiguredAuthentication(input.config.authentication, input.env),
+    authentication: createConfiguredAuthentication(input.config.authentication, input.env, input.hostAuthentication),
     authorize: authorization,
   };
 }
@@ -97,11 +103,12 @@ export function createA2AServerHotOptions(input: {
   readonly config: A2AServerConfig;
   readonly listenBaseUrl: string;
   readonly env?: NodeJS.ProcessEnv;
+  readonly hostAuthentication?: A2AAuthentication;
 }): A2AServerHotOptions {
   return {
     agent: publishedAgent(input.config, input.listenBaseUrl),
     limits: input.config.limits,
-    authentication: createConfiguredAuthentication(input.config.authentication, input.env),
+    authentication: createConfiguredAuthentication(input.config.authentication, input.env, input.hostAuthentication),
     authorize: authorization,
   };
 }

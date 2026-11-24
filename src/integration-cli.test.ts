@@ -181,6 +181,22 @@ describe("integration CLI", () => {
     });
   });
 
+  it("configures A2A on the Host's network port, checked with the Host's own JWT", async () => {
+    await runCommand([
+      "a2a",
+      "expose",
+      "--auth",
+      "host",
+      "--public-base-url",
+      "https://agent.example.test",
+    ]);
+    const document = JSON.parse(
+      readFileSync(path.join(configHome, "integrations", "a2a.json"), "utf8"),
+    ) as { readonly server: { readonly authentication: unknown; readonly publicBaseUrl: unknown } };
+    expect(document.server.authentication).toEqual({ type: "host" });
+    expect(document.server.publicBaseUrl).toBe("https://agent.example.test/");
+  });
+
   it("configures an external OAuth2 issuer for JWT access-token validation", async () => {
     await runCommand([
       "a2a",

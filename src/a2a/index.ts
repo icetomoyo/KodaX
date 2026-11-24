@@ -39,4 +39,5 @@ export {
   type A2AWorkspaceConfig,
 } from './config.js';
 export * from './product.js';
+export * from './host-mount.js';
 export * from './runtime-config.js';

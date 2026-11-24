@@ -3,7 +3,8 @@
  * whose clients prove who they are with a JWT or a paired device's cookie. The
  * owner's subject connects as `user`, a listed backend's as `service`, a
  * paired browser as `user`, and nobody else gets in. The same port serves the
- * pairing endpoint and the pages in `webRoot`. The caller
+ * pairing endpoint, the pages in `webRoot`, and A2A at `/a2a` when the Host
+ * serves it there, checked with the same JWT and subjects. The caller
  * builds the peer for each connection, so this module never loads the Host's
  * dispatcher and the dispatcher never loads this one.
  *
@@ -13,6 +14,7 @@
  * changed, so the client fetches a token the new check accepts. Where to
  * listen, the workspace and the web root take effect when the Host restarts.
  */
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -22,6 +24,7 @@ import { IntegrationConfigController, type IntegrationConfigStatus } from '@koda
 import type { HostCloseReason } from '../host-protocol/close.js';
 import { HostProtocolError } from '../host-protocol/codec.js';
 import type { HostInitializeParams, HostLimits } from '../host-protocol/methods.js';
+import { runtimeAuthorizationSubject } from '../runtime-daemon/access.js';
 import type { HostCredential } from '../runtime-daemon/host-rpc.js';
 import type { HostUserLock } from '../runtime-daemon/user-settings.js';
 import { reportHostSecurityEvent } from '../runtime-daemon/security-log.js';
@@ -43,6 +46,8 @@ import { createHostWebHandler, deviceCookie, readDeviceCookie } from './web.js';
 const IDLE_TIMEOUT_MS = 60_000;
 /** Fields read once when the Host starts. */
 const RESTART_FIELDS = ['listen', 'workspaceRoot', 'webRoot'] as const;
+/** Where A2A answers on the Host's port: its JSON-RPC endpoint and its public Agent Card. */
+const A2A_PATHS: ReadonlySet<string> = new Set(['/a2a', '/.well-known/agent-card.json']);
 
 /** What every network connection shares: how to check its credential, its limits, and the workspace it may name projects in. */
 export interface HostNetworkConnection {
@@ -59,6 +64,17 @@ export interface HostNetworkServerOptions {
   readonly maxFrameBytes: number;
   readonly health: () => Promise<HostHealth>;
   readonly createPeer: (transport: HostNetworkTransport, connection: HostNetworkConnection) => HostNetworkPeer;
+  /** A2A, while the Host serves it on this port. */
+  readonly a2a?: () => HostA2AMount | undefined;
+}
+
+/**
+ * Answers one A2A request, with whom the Host admitted by its bearer JWT, or none. That is
+ * who a v2 connection with the same token acts for: `person` for the owner, `service:<sub>`
+ * for a listed backend, so A2A keeps no identity of its own.
+ */
+export interface HostA2AMount {
+  serve(request: IncomingMessage, response: ServerResponse, subject: string | undefined): void;
 }
 
 export interface HostNetworkServer extends HostNetworkListener {
@@ -147,7 +163,11 @@ export async function startHostNetworkServer(options: HostNetworkServerOptions):
         const device = token !== undefined ? pairing()?.admit(token, origin) : undefined;
         return device !== undefined ? { device: device.id, setCookie: deviceCookie(token!, origin) } : undefined;
       },
-      serveHttp: createHostWebHandler({ ...(served.webRoot !== undefined ? { webRoot: served.webRoot } : {}), devices: pairing }),
+      serveHttp: withA2A(
+        createHostWebHandler({ ...(served.webRoot !== undefined ? { webRoot: served.webRoot } : {}), devices: pairing }),
+        options.a2a,
+        token => admission.authenticate({ scheme: 'jwt', token }),
+      ),
       maxFrameBytes: options.maxFrameBytes,
       idleTimeoutMs: IDLE_TIMEOUT_MS,
       // A Host that pairs browsers is reached through a tunnel, which shows this port to anyone; no
@@ -215,6 +235,43 @@ export async function startHostNetworkServer(options: HostNetworkServerOptions):
   };
 }
 
+type HttpHandler = (request: IncomingMessage, response: ServerResponse) => void;
+
+/**
+ * Sends A2A's paths to A2A while the Host serves it. A2A answers a caller the
+ * Host does not admit itself, with the 401 and challenge A2A clients expect;
+ * the Agent Card is public, so nothing is checked for it. A cookie admits no
+ * one here: an A2A caller is a program with a token, not a paired browser.
+ */
+function withA2A(web: HttpHandler, a2a: HostNetworkServerOptions['a2a'], check: (token: string) => Promise<HostCredential>): HttpHandler {
+  return (request, response) => {
+    const { pathname } = new URL(request.url ?? '/', 'http://host');
+    const mount = A2A_PATHS.has(pathname) ? a2a?.() : undefined;
+    if (mount === undefined) return web(request, response);
+    const token = request.method === 'POST' ? bearerToken(request.headers.authorization) : undefined;
+    if (token === undefined) return mount.serve(request, response, undefined);
+    check(token).then(credential => runtimeAuthorizationSubject(credential.role, credential.subject), (error: unknown) => {
+      if (!(error instanceof HostProtocolError) || error.kodaxCode !== 'unauthorized') throw error;
+      reportRefusal(error, undefined, pathname);
+      return undefined;
+    }).then(subject => mount.serve(request, response, subject), (error: unknown) => {
+      const unavailable = error instanceof HostProtocolError && error.kodaxCode === 'unavailable';
+      if (!unavailable) {
+        emitKodaXDiagnostic({
+          source: 'host.network', level: 'warn', message: 'The Host could not check an A2A caller.',
+          detail: { error: error instanceof Error ? error.message : String(error) },
+        });
+      }
+      response.writeHead(unavailable ? 503 : 500, { 'content-type': 'application/json; charset=utf-8', connection: 'close' })
+        .end(JSON.stringify({ error: unavailable ? 'The Host cannot check credentials right now.' : 'Internal server error.' }));
+    });
+  };
+}
+
+function bearerToken(header: string | undefined): string | undefined {
+  return header === undefined ? undefined : /^Bearer ([^\s]+)$/i.exec(header)?.[1];
+}
+
 /** Starting a stdio MCP server runs a command on the Host, which a tool limit without `bash` forbids. */
 function userLocksOf(server: HostServerConfig | undefined): ReadonlySet<HostUserLock> {
   const locks = new Set<HostUserLock>(server?.userLocks ?? []);
@@ -268,9 +325,12 @@ function roleOf(server: Pick<HostServerConfig, 'owner' | 'services'>, subject: s
 }
 
 /** A refused credential is a security event; a check the Host could not make is not a refusal. */
-function reportRefusal(error: unknown, origin: string | undefined): void {
+function reportRefusal(error: unknown, origin: string | undefined, path?: string): void {
   if (!(error instanceof HostProtocolError) || error.kodaxCode !== 'unauthorized') return;
-  reportHostSecurityEvent({ event: 'auth_failed', reason: error.reason ?? 'unauthorized', ...(origin !== undefined ? { origin } : {}) });
+  reportHostSecurityEvent({
+    event: 'auth_failed', reason: error.reason ?? 'unauthorized',
+    ...(origin !== undefined ? { origin } : {}), ...(path !== undefined ? { path } : {}),
+  });
 }
 
 function notAdmitted(): HostProtocolError {

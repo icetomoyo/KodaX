@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { KodaXRuntime } from '../sdk-runtime.js';
 import { parseA2AIntegrationDocument } from './config.js';
+import { createHostA2AMount } from './host-mount.js';
 import {
   createA2AServerHotOptions,
   createA2AServerOptionsFromConfig,
@@ -36,6 +37,30 @@ describe('FEATURE_267 A2A product authentication', () => {
     expect(() => createBearerEnvA2AAuthentication({
       type: 'bearer-env', tokenEnv: 'MISSING_A2A_TOKEN', principalId: 'partner',
     }, {})).toThrow(/unset.*MISSING_A2A_TOKEN/i);
+  });
+
+  it('serves a declaration the Host checks only inside the Host, with the check its mount gives', () => {
+    const listenBaseUrl = 'https://agent.example.test';
+    const config = parseA2AIntegrationDocument({
+      version: 2,
+      agents: {},
+      server: {
+        execution: { kind: 'runtime-default' },
+        published: {
+          name: 'General Agent', description: 'General tasks', version: '0.7.97',
+          skills: [], inputModes: ['text/plain'], outputModes: ['text/plain'],
+        },
+        publicBaseUrl: listenBaseUrl,
+        authentication: { type: 'host' },
+        dataDir: '~/.kodax/a2a/tasks',
+      },
+    }).server!;
+    const runtime = {} as KodaXRuntime;
+    expect(() => createA2AServerOptionsFromConfig({ runtime, config, listenBaseUrl })).toThrow(/Host/);
+    const hostAuthentication = createHostA2AMount().authentication;
+    expect(createA2AServerOptionsFromConfig({ runtime, config, listenBaseUrl, hostAuthentication }).authentication)
+      .toBe(hostAuthentication);
+    expect(createA2AServerHotOptions({ config, listenBaseUrl, hostAuthentication }).authentication).toBe(hostAuthentication);
   });
 
   it('maps one validated declaration into initial and hot server options', async () => {

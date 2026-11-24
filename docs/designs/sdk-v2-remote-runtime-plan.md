@@ -2414,13 +2414,25 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
    - 为此 REPL 和 ACP 共用的 v2→v1 视图映射（`src/repl-host/view.ts`）把 `tool.change` 还原成 `fileChange`，审批请求的 `diff.path` 还原成 Host 上的绝对路径，和 v1 一样（v2 给本机客户端的是 `hostPath`）。
    - 没做的：§10 说的"删掉 REPL 从文本里解析 diff 的逻辑"。REPL 的 diff 显示（`diff-rows.ts`）读的是工具结果文本，里面除了 diff 还有"File edited"前言和 LSP 诊断，换成读 `fileChange` 是显示上的重做，用户看不到区别，不在这次做（未经用户确认）。
    - 已验证：`repl-host/view.test.ts`（工具改的文件和审批的 diff 经 v2 来回一趟后和 v1 一样）；`acp-client-view.test.ts`（有 `fileChange` 的工具结果带 `locations`，bash 不带）；`acp_server.test.ts`（bash 审批不带位置，文件工具的审批指向 `diff` 的路径）。
-2. A2A 挂到 `/a2a`，身份并入授权身份（D4）。
-3. `server.ts` 剩余的 case 全部拆成领域 handler，删除 15 个已退役的方法。
-4. 合并 `schema.ts`。
-5. 记忆域按 FEATURE_309 之后的模型重定。
-6. 可选：子路径从 19 个减到 6 个。旧入口保留为转发，加弃用警告，配迁移指南，至少保留 2 个版本。
+2. A2A 挂到 `/a2a`，身份并入授权身份（D4）。**状态**：2026-11-24 落地。
+   - 配置：`a2a.json` 的 `server.authentication` 新增 `{type: 'host'}`（只在 version 2）。用它时不能再写 `listen`（A2A 不开自己的监听），必须写 `publicBaseUrl`（Host 不知道外面怎么访问它，Agent Card 要写对端点）。`kodax a2a expose --auth host --public-base-url <url>` 写这份配置。在 `host` 和其他鉴权之间切换要重启 Host，因为服务的位置变了；其他字段的热加载不变。
+   - Host 端口上 `/a2a` 和 `/.well-known/agent-card.json` 交给 A2A 的 `handle()`（`src/a2a/host-mount.ts`，Node 请求和 fetch 请求的互转从 `server.ts` 的 `listen()` 抽到 `node-http.ts` 共用）。Host 端口没有配置 A2A 时，这两个路径照旧落到 web root（404）。
+   - 身份：Host 用 v2 同一个 JWT 校验和 `owner`/`services` 名单检查 `Authorization: Bearer`，A2A 的 principal subject 用 `runtimeAuthorizationSubject`，也就是 v2 连接的授权身份：owner 是 `person`，后端是 `service:<sub>`。realm 固定为 `kodax-host`，principal key 照旧按 `sha256([realm, subject, tenant])` 算。没有第三种身份。
+   - 拒绝：没带 token 或 token 不被接纳，Host 不自己回，交给 A2A 回 401 和 `WWW-Authenticate: Bearer`，这是 A2A 客户端认的形态；被拒的 token 记一条 `auth_failed` 安全事件，新加 `path` 字段。Host 暂时查不了 token（JWKS 不可达）回 503。
+   - 以下是自己定的（未经用户确认）：
+     - 配对浏览器的 cookie 不接纳 A2A 调用。A2A 调用方是带 token 的程序。
+     - Agent Card 不鉴权，和 A2A 自己的监听一样。
+     - A2A 起的 Run 仍带 `actorId: a2a:<key 前 16 位>`，没有写 v2 的 `origin.subject`；所以 v2 客户端看不到"这个 Run 是谁经 A2A 起的"。A2A 的任务只能经 A2A 读，按 principal key 隔离。
+     - `server.tools` 不约束 A2A，A2A 的工具范围仍由 `a2a.json` 的 `execution.toolPolicy` 决定。
+     - 不做浏览器来源检查：A2A 只认 Bearer 头，不认 cookie，没有 CSRF 面。
+     - `host.json` 没有网络监听时 Host 照常启动，日志写一条警告，因为没人连得上。
+   - 已验证：`a2a/config.test.ts`（解析和重启分类）、`a2a/product.test.ts`、`a2a/host-mount.test.ts`（只认 Host 交来的身份，失败回 500 并记日志）、`host-server/serve.test.ts`（路由、身份映射、安全事件、没配 A2A 时 404）、`runtime-daemon/host-network-acceptance.test.ts`（经反向代理：Agent Card、没 token 和陌生 token 401、后端 SendMessage 完成、owner 读不到后端的任务、任务的 principal key 是 `service:backend-1`）、`integration-cli.test.ts`（`--auth host`）。另外用打包后的 `kodax host serve` 在临时 home 上实测：Agent Card 端点正确、没 token 401。
+3. `server.ts` 剩余的 case 全部拆成领域 handler，删除 15 个已退役的方法。**状态**：等删除 v1（第 8 项，FEATURE_314）一起做。v1 还在时这些 case 就是 v1 的应答，拆成领域 handler 只会多一层转发；删 v1 时整块去掉。
+4. 合并 `schema.ts`。**状态**：同第 3 项，v1 的 schema 随 v1 删除。
+5. 记忆域按 FEATURE_309 之后的模型重定。**状态**：FEATURE_309（删除旧记忆）被 Space Issue 411 卡住，旧记忆还在时重定模型没有意义。
+6. 可选：子路径从 19 个减到 6 个。旧入口保留为转发，加弃用警告，配迁移指南，至少保留 2 个版本。**状态**：可选，排在最后；收拢子路径会让每个嵌入方改 import，没有真实需求前不动（未经用户确认）。
 7. 拆分 embedder-guide。
-8. 满足 §8 的条件后删除 v1。
+8. 满足 §8 的条件后删除 v1。**状态**：删除线是 `v0.7.100`，由 FEATURE_314 做；前置项（`daemon` 命令和健康观测迁到 v2、`host.get` 报构建版本）见 FEATURE_314。
 
 ## 8. 迁移、兼容与回滚
 

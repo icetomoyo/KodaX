@@ -12,7 +12,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HostProtocolError } from '../host-protocol/codec.js';
 import { HostJwtError, type HostJwtVerifier } from './jwt.js';
 import type { HostHealth, HostNetworkPeer } from './listener.js';
-import { createHostAuthenticator, startHostNetworkServer, type HostNetworkConnection, type HostNetworkServer } from './serve.js';
+import {
+  createHostAuthenticator,
+  startHostNetworkServer,
+  type HostNetworkConnection,
+  type HostNetworkServer,
+  type HostNetworkServerOptions,
+} from './serve.js';
 
 const verifier = (result: () => Promise<{ subject: string; expiresAt: number }>): HostJwtVerifier => ({ verify: result });
 const signed = (subject: string) => verifier(async () => ({ subject, expiresAt: 1_800_000_000_000 }));
@@ -140,11 +146,12 @@ describe('a listening Host that reads host.json again when it changes', () => {
   let lastConnection: HostNetworkConnection | undefined;
 
   /** Each peer reads its first frame as a JWT, answers with the role or the refusal, and echoes the rest. */
-  async function start(): Promise<HostNetworkServer> {
+  async function start(a2a?: HostNetworkServerOptions['a2a']): Promise<HostNetworkServer> {
     const started = await startHostNetworkServer({
       configHome,
       maxFrameBytes: 64 * 1024,
       health: async () => HEALTH,
+      ...(a2a !== undefined ? { a2a } : {}),
       createPeer: (transport, connection): HostNetworkPeer => {
         lastConnection = connection;
         let admitted = false;
@@ -290,6 +297,52 @@ describe('a listening Host that reads host.json again when it changes', () => {
     }));
     expect(devices.list()).toEqual([]);
     expect(devices.revoke('dev_000000000000')).toBe(false);
+  });
+
+  it('hands A2A requests to A2A as whom a v2 connection with the same JWT acts for', async () => {
+    const events: unknown[] = [];
+    const restore = setKodaXDiagnosticSink((diagnostic) => {
+      if (diagnostic.source === 'host.security') events.push(diagnostic.detail);
+    });
+    const served: Array<{ readonly path: string | undefined; readonly subject: string | undefined }> = [];
+    try {
+      writeConfig({ owner: 'person-1', services: ['backend-1'] });
+      await start(() => ({
+        serve(request, response, subject) {
+          served.push({ path: request.url, subject });
+          response.writeHead(200).end('from a2a');
+        },
+      }));
+      const base = `http://127.0.0.1:${network!.port!}`;
+      const call = (authorization?: string) => fetch(`${base}/a2a`, {
+        method: 'POST', headers: authorization !== undefined ? { authorization } : {}, body: '{}',
+      }).then(response => response.text());
+      await expect(call(`Bearer ${token('backend-1')}`)).resolves.toBe('from a2a');
+      await call(`Bearer ${token('person-1')}`);
+      // A2A answers these itself, with the 401 and challenge its clients expect.
+      await call(`Bearer ${token('stranger')}`);
+      await call();
+      await (await fetch(`${base}/.well-known/agent-card.json`)).text();
+    } finally {
+      restore();
+    }
+    expect(served).toEqual([
+      { path: '/a2a', subject: 'service:backend-1' },
+      { path: '/a2a', subject: 'person' },
+      { path: '/a2a', subject: undefined },
+      { path: '/a2a', subject: undefined },
+      { path: '/.well-known/agent-card.json', subject: undefined },
+    ]);
+    expect(events).toEqual([{ event: 'auth_failed', reason: 'subject_not_admitted', path: '/a2a' }]);
+  });
+
+  it('leaves the A2A paths to the web root while the Host serves no A2A', async () => {
+    writeConfig({ owner: 'person-1' });
+    await start(() => undefined);
+    const response = await fetch(`http://127.0.0.1:${network!.port!}/a2a`, {
+      method: 'POST', headers: { authorization: `Bearer ${token('person-1')}` }, body: '{}',
+    });
+    expect(response.status).toBe(404);
   });
 
   it('serves the web pages in its web root on the same port', async () => {

@@ -694,4 +694,34 @@ describe('FEATURE_267/268 A2A integration config', () => {
       fields: ['listen'],
     });
   });
+
+  it('lets the Host check A2A callers itself, on its own port, which needs a public address and no A2A listener', () => {
+    const base = { execution: { kind: 'runtime-default' }, published: published(), dataDir: '~/.kodax/a2a/tasks' };
+    const publicBaseUrl = 'https://agent.example.test';
+    const server = parseA2AIntegrationDocument({
+      version: 2, agents: {}, server: { ...base, publicBaseUrl, authentication: { type: 'host' } },
+    }).server!;
+    expect(server.authentication).toEqual({ type: 'host' });
+
+    expect(() => parseA2AIntegrationDocument({
+      version: 2, agents: {}, server: { ...base, authentication: { type: 'host' } },
+    })).toThrow(/publicBaseUrl/);
+    expect(() => parseA2AIntegrationDocument({
+      version: 2, agents: {}, server: {
+        ...base, publicBaseUrl, listen: { hostname: '127.0.0.1', port: 7311 }, authentication: { type: 'host' },
+      },
+    })).toThrow(/listen/);
+    expect(() => parseA2AIntegrationDocument({
+      version: 2, agents: {}, server: { ...base, publicBaseUrl, authentication: { type: 'host', owner: 'x' } },
+    })).toThrow(/owner/);
+    expect(() => parseA2AIntegrationDocument({
+      version: 1, agents: {}, server: { ...base, publicBaseUrl, authentication: { type: 'host' } },
+    })).toThrow(/version 2/);
+
+    // Where A2A is served changes with it, so the switch waits for a restart.
+    expect(classifyA2AServerChange(server, { ...server, authentication: authentication() })).toEqual({
+      kind: 'restart-required',
+      fields: ['authentication'],
+    });
+  });
 });

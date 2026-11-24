@@ -9,7 +9,7 @@
  */
 import { createHash, createSign, generateKeyPairSync, randomUUID, type KeyObject } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer as createHttpServer, request as httpRequest, type Server } from 'node:http';
 import { connect as connectTcp, type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -22,6 +22,9 @@ import {
 } from '@kodax-ai/llm';
 
 import { createKodaXRuntime } from '../../tests/runtime-fixture.js';
+import { createHostA2AMount, type HostA2AMount } from '../a2a/host-mount.js';
+import { realmA2APrincipalKey } from '../a2a/principal-key.js';
+import { prepareKodaXA2AServer } from '../a2a/server.js';
 import type { HostConnectionState, KodaXHostClient } from '../host-protocol/host-client.js';
 import { connectKodaXHost, openHostWebSocket } from '../host-protocol/remote-host.js';
 import { startRuntimeDaemonHost } from './host.js';
@@ -195,8 +198,36 @@ function testEndpoint(root: string): RuntimeDaemonEndpoint {
     : { kind: 'unix', path: path.join(root, 'daemon.sock') };
 }
 
+/** What the Host's port serves at `/a2a` when a test asks for it: the Runtime default Agent, reading only. */
+async function startA2A(runtime: Awaited<ReturnType<typeof createKodaXRuntime>>, dataDir: string): Promise<HostA2AMount> {
+  const host = createHostA2AMount();
+  const server = await prepareKodaXA2AServer({
+    runtime,
+    dataDir,
+    agent: {
+      name: 'Host Agent', description: 'Served on the Host port.', version: '1.0.0', publicBaseUrl: 'https://agent.example.test',
+      skills: [], inputModes: ['text/plain'], outputModes: ['text/plain'],
+    },
+    execution: {
+      kind: 'runtime-default',
+      workspace: { mode: 'managed' },
+      toolPolicy: {
+        workspace: 'read', process: 'deny', network: { mode: 'deny' }, tools: [], mcp: {}, skillScripts: {}, subagents: 'deny',
+      },
+    },
+    limits: {
+      maxRequestBytes: 64 * 1024, maxPartBytes: 32 * 1024, maxConcurrentTasks: 2, maxTaskWaitMs: 10_000,
+      maxWorkspaceBytesPerContext: 1024 * 1024,
+    },
+    authentication: host.authentication,
+    authorize: async () => true,
+  });
+  cleanup.push(() => server.close());
+  return host.mount(server);
+}
+
 /** A Host on a fresh home that listens on the network for `person-1` and `backend-1`, behind a reverse proxy. */
-async function startProxiedHost(options: { readonly blockWebSockets?: boolean } = {}) {
+async function startProxiedHost(options: { readonly blockWebSockets?: boolean; readonly a2a?: boolean } = {}) {
   const homeDir = await realpath(await mkdtemp(path.join(tmpdir(), 'kodax-host-acceptance-')));
   cleanup.push(() => rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   const kodaxHome = path.join(homeDir, '.kodax');
@@ -225,6 +256,8 @@ async function startProxiedHost(options: { readonly blockWebSockets?: boolean } 
   // As the Host starts it: interactions wait for an attached client instead of being refused.
   const runtime = await createKodaXRuntime({ homeDir, sharedDaemonHost: true, defaultProvider: MODEL });
   cleanup.push(() => runtime.close());
+  const a2aDataDir = path.join(homeDir, 'a2a-data');
+  const a2a = options.a2a === true ? await startA2A(runtime, a2aDataDir) : undefined;
   const paths = resolveRuntimeDaemonPaths(kodaxHome, 'default');
   const lock = tryAcquireRuntimeDaemonLock(paths, {
     runtimeId: runtime.identity.runtimeId, pid: process.pid, createdAt: runtime.identity.startedAt,
@@ -233,6 +266,7 @@ async function startProxiedHost(options: { readonly blockWebSockets?: boolean } 
   const host = await startRuntimeDaemonHost({
     runtime, paths, endpoint: testEndpoint(homeDir), lock, networkConfigHome: kodaxHome, orphanExitMs: 60_000,
     sessionsDir: path.join(kodaxHome, 'sessions'),
+    ...(a2a !== undefined ? { a2a: () => a2a } : {}),
   });
   cleanup.push(() => host.close());
   const port = readRuntimeDaemonLog(paths).find(entry => entry.message === 'Runtime daemon listening on the network.')?.data?.port;
@@ -259,7 +293,7 @@ async function startProxiedHost(options: { readonly blockWebSockets?: boolean } 
     return client;
   };
   return {
-    homeDir, projectRoot: path.join(workspaceRoot, 'app'), model, idp, proxy, connect, errors,
+    homeDir, projectRoot: path.join(workspaceRoot, 'app'), model, idp, proxy, connect, errors, a2aDataDir,
     /** How many tokens were fetched for `subject`: one per connection and one per renewal. */
     tokensFor: (subject: string) => tokens.get(subject) ?? 0,
   };
@@ -451,6 +485,42 @@ describe('a Host reached through a reverse proxy with the SDK', () => {
     expect(host.model.lastRunRequest().text).toContain('Order A1 ships on Friday.');
     expect(states).toEqual(['connected']);
     expect(host.errors).toEqual([]);
+  }, 60_000);
+
+  it('serves A2A at /a2a on the same port to whom it admits on v2, and keys its tasks by that identity', async () => {
+    const host: Host = await startProxiedHost({ a2a: true });
+    const rpc = (method: string, params: Record<string, unknown>, token?: string) => fetch(`${host.proxy.url}/a2a`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json', 'a2a-version': '1.0',
+        ...(token !== undefined ? { authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: method, method, params }),
+    });
+    const message = (messageId: string) => ({
+      message: { messageId, contextId: 'ctx-1', role: 'ROLE_USER', parts: [{ text: 'Say done.' }] },
+    });
+
+    const card = await (await fetch(`${host.proxy.url}/.well-known/agent-card.json`)).json() as Record<string, unknown>;
+    expect(card).toMatchObject({
+      supportedInterfaces: [expect.objectContaining({ url: 'https://agent.example.test/a2a' })],
+      securitySchemes: { bearer: { httpAuthSecurityScheme: { scheme: 'Bearer', bearerFormat: 'JWT' } } },
+    });
+    expect((await rpc('SendMessage', message('m-0'))).status).toBe(401);
+    expect((await rpc('SendMessage', message('m-0'), host.idp.token('stranger'))).status).toBe(401);
+
+    const sent = await (await rpc('SendMessage', message('m-1'), host.idp.token('backend-1'))).json() as {
+      readonly result?: { readonly task?: { readonly id: string; readonly status: { readonly state: string } } };
+    };
+    expect(sent.result?.task?.status.state).toBe('TASK_STATE_COMPLETED');
+    // Another backend cannot read the task: it belongs to service:backend-1.
+    const other = await (await rpc('GetTask', { id: sent.result!.task!.id }, host.idp.token('person-1'))).json() as Record<string, unknown>;
+    expect(other).toMatchObject({ error: expect.anything() });
+
+    const tasks = JSON.parse(await readFile(path.join(host.a2aDataDir, 'tasks.json'), 'utf8')) as Array<{ readonly principalKey: string }>;
+    expect(tasks.map(task => task.principalKey)).toEqual([
+      realmA2APrincipalKey({ securityRealm: 'kodax-host', subject: 'service:backend-1' }),
+    ]);
   }, 60_000);
 
   it('runs a backend Run that only has the business tool it lends', async () => {

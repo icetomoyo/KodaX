@@ -11,7 +11,7 @@ import {
 import type { HostBlobStore } from './host-blobs.js';
 import { createRuntimeDaemonHostRpcPeer, type HostRpcProtocol } from './host-rpc.js';
 import type { HostHealth } from '../host-server/listener.js';
-import type { HostNetworkServer } from '../host-server/serve.js';
+import type { HostA2AMount, HostNetworkServer } from '../host-server/serve.js';
 import {
   createRuntimeDaemonDispatcher,
   createRuntimeDaemonRunResultStore,
@@ -87,6 +87,8 @@ export interface RuntimeDaemonHostOptions {
    * over the network as well. A Host that listens stays up without clients.
    */
   readonly networkConfigHome?: string;
+  /** A2A, while this Host serves it at `/a2a` on its network port. */
+  readonly a2a?: () => HostA2AMount | undefined;
   /** Where the runtime keeps its Sessions. The blobs clients upload live with them; without it the Host takes none. */
   readonly sessionsDir?: string;
   /** @internal Commit shared ownership before this endpoint admits clients. */
@@ -198,6 +200,7 @@ export async function startRuntimeDaemonHost(
         configHome: options.networkConfigHome,
         maxFrameBytes: RUNTIME_DAEMON_MAX_FRAME_BYTES,
         health: createHostHealth(management, () => hostState),
+        ...(options.a2a !== undefined ? { a2a: options.a2a } : {}),
         createPeer: (transport, connection) => createRuntimeDaemonHostRpcPeer({
           protocol,
           dispatcher: networkDispatcherOptions,
@@ -214,6 +217,9 @@ export async function startRuntimeDaemonHost(
           ...(network.port !== undefined ? { port: network.port } : {}),
         });
       }
+    }
+    if (network === undefined && options.a2a?.() !== undefined) {
+      appendRuntimeDaemonLog(options.paths, 'warn', 'A2A is set to be served on the Host\'s network port, but host.json names no listen address, so nobody can reach it.');
     }
     const internalReadyDelayMs = process.env.KODAX_INTERNAL_DAEMON_TEST_READY_DELAY_MS;
     if (internalReadyDelayMs !== undefined) {

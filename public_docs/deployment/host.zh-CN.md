@@ -397,3 +397,21 @@ Register-ScheduledTask -TaskName 'KodaX Host' -Action $action -Trigger $trigger
 - 链接只允许 `http:` 和 `https:`，打开时带 `rel="noopener noreferrer"`。
 - 模型输出里的远程图片，不经用户同意不要加载。
 - diff 和代码按文本显示，不要经过 `innerHTML`。
+
+## 在同一个端口上提供 A2A
+
+在网络上监听的 Host 还可以在同一个端口上通过 [A2A](https://a2a-protocol.org)
+发布一个 Agent：端点是 `/a2a`，Agent Card 在 `/.well-known/agent-card.json`。
+调用方用的 JWT 和 v2 客户端一样，按同一份 `owner` 和 `services` 检查：
+
+```bash
+kodax a2a expose --auth host --public-base-url https://agent.example.com
+```
+
+- `--public-base-url` 是调用方访问 Host 的地址。Agent Card 里写的端点是 `<publicBaseUrl>/a2a`。
+- 调用方把 JWT 放在 `Authorization: Bearer <token>` 里。没有带，或者带的 token Host 不接纳，A2A 返回 `401`。被拒绝的 token 记成一条 `auth_failed` 安全事件，带 `path: "/a2a"`。
+- A2A 任务归属于用同一个 token 连 v2 时代表的身份：这个人，或者后端的 `service:<sub>`。一个后端读不到另一个后端的任务。
+- 配对浏览器的 cookie 不能用来调用 A2A。
+- Agent Card 是公开的，这是 A2A 的约定。
+
+发布出去的 Agent 能做什么（工作区、工具、上限）由 `kodax a2a expose` 写进 `integrations/a2a.json`，不受 `server.tools` 限制。在 `--auth host` 和 A2A 自己的监听之间切换，要等 Host 重启才生效。

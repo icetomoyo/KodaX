@@ -36,6 +36,7 @@ import {
   createA2AServerHotOptions,
   createA2AServerOptionsFromConfig,
 } from '../a2a/product.js';
+import { createHostA2AMount, type HostA2AMount } from '../a2a/host-mount.js';
 import type { prepareKodaXA2AServer } from '../a2a/server.js';
 import { loadA2AServer } from '../cli-lazy-components.js';
 import { delay, normalizeCliError } from './util.js';
@@ -96,6 +97,8 @@ export async function serveDaemonCommand(input: {
   let a2aHandle: ConfiguredA2ARuntimeHandle | undefined;
   let hostedA2AServer: Awaited<ReturnType<typeof prepareKodaXA2AServer>> | undefined;
   let hostedA2AConfigController: IntegrationConfigController<A2AIntegrationDocument> | undefined;
+  /** Set while A2A is served on the Host's network port rather than a listener of its own. */
+  let hostedA2AMount: HostA2AMount | undefined;
   // Shared teardown for the hosted A2A serving pair; watcher close is best
   // effort so a failing close cannot skip the server and outbound cleanup.
   const closeHostedA2AServing = async (): Promise<void> => {
@@ -105,6 +108,7 @@ export async function serveDaemonCommand(input: {
       // Watcher teardown is best effort before process-level cleanup.
     }
     hostedA2AConfigController = undefined;
+    hostedA2AMount = undefined;
     await hostedA2AServer?.close().catch(() => undefined);
     hostedA2AServer = undefined;
     a2aHandle?.close();
@@ -125,6 +129,7 @@ export async function serveDaemonCommand(input: {
       keepAlive: () => hostedA2AServer !== undefined,
       // `host.json` in the same config home may ask this Host to serve v2 over the network.
       networkConfigHome: daemonConfigHome,
+      a2a: () => hostedA2AMount,
       commitStartup,
       integrationStatuses: () => [
         ...extensions.hotReload.statuses(),
@@ -171,8 +176,14 @@ export async function serveDaemonCommand(input: {
           } catch {
             serverConfig = undefined;
           }
-          if (serverConfig?.listen) {
-            const { hostname, port } = serverConfig.listen;
+          // On the Host's port the Host checks callers with its own JWT; the config requires publicBaseUrl there.
+          const onHostPort = serverConfig?.authentication.type === 'host' && serverConfig.publicBaseUrl !== undefined
+            ? createHostA2AMount() : undefined;
+          if (serverConfig !== undefined && (serverConfig.listen || onHostPort)) {
+            const listenBaseUrl = serverConfig.listen
+              ? `http://${serverConfig.listen.hostname.includes(':') ? `[${serverConfig.listen.hostname}]` : serverConfig.listen.hostname}:${serverConfig.listen.port}`
+              : serverConfig.publicBaseUrl ?? '';
+            const hostAuthentication = onHostPort?.authentication;
             // A busy listen port fails the whole Host startup: serving was
             // explicitly enabled by bootstrap config, so silently serving
             // nowhere would hide the misconfiguration.
@@ -181,19 +192,26 @@ export async function serveDaemonCommand(input: {
               createA2AServerOptionsFromConfig({
                 runtime,
                 config: serverConfig,
-                listenBaseUrl: `http://${hostname.includes(':') ? `[${hostname}]` : hostname}:${port}`,
+                listenBaseUrl,
+                ...(hostAuthentication ? { hostAuthentication } : {}),
               }),
               { emitDiagnostic: emitKodaXDiagnostic, acquireStorageLock: tryAcquireStorageFileLock },
             );
             commitStartup();
-            const baseUrl = await hostedA2AServer.listen({
-              hostname,
-              port,
-              ...(serverConfig.publicBaseUrl
-                ? { publicBaseUrl: serverConfig.publicBaseUrl }
-                : {}),
-            });
-            console.error(chalk.dim(`[integrations] A2A serving on ${baseUrl}`));
+            let baseUrl = listenBaseUrl;
+            if (onHostPort) {
+              hostedA2AMount = onHostPort.mount(hostedA2AServer);
+              console.error(chalk.dim(`[integrations] A2A serving at /a2a on the Host's network port, published as ${baseUrl}`));
+            } else if (serverConfig.listen) {
+              baseUrl = await hostedA2AServer.listen({
+                hostname: serverConfig.listen.hostname,
+                port: serverConfig.listen.port,
+                ...(serverConfig.publicBaseUrl
+                  ? { publicBaseUrl: serverConfig.publicBaseUrl }
+                  : {}),
+              });
+              console.error(chalk.dim(`[integrations] A2A serving on ${baseUrl}`));
+            }
             // Hot fields (published/auth/limits) apply live; binding, store,
             // and listen changes stay restart-required by classification.
             let appliedServer = serverConfig;
@@ -220,7 +238,11 @@ export async function serveDaemonCommand(input: {
               }
               if (change.kind === 'hot' && hostedA2AServer) {
                 hostedA2AServer.updateHot(
-                  createA2AServerHotOptions({ config: next, listenBaseUrl: baseUrl }),
+                  createA2AServerHotOptions({
+                    config: next,
+                    listenBaseUrl: baseUrl,
+                    ...(hostAuthentication ? { hostAuthentication } : {}),
+                  }),
                 );
                 appliedServer = next;
                 console.error(chalk.dim(

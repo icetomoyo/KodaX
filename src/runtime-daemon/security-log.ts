@@ -18,7 +18,8 @@ export interface HostSecurityActor {
 }
 
 export type HostSecurityEvent =
-  | { readonly event: 'auth_failed'; readonly reason: string; readonly origin?: string }
+  /** `path` names the HTTP endpoint refused, for a caller other than a v2 connection. */
+  | { readonly event: 'auth_failed'; readonly reason: string; readonly origin?: string; readonly path?: string }
   | {
     readonly event: 'permission_decided';
     readonly actor: HostSecurityActor;

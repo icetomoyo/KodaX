@@ -509,3 +509,30 @@ fetched.
   `rel="noopener noreferrer"`.
 - Do not load remote images from model output without asking.
 - Show diffs and code as text, never through `innerHTML`.
+
+## Serve A2A on the same port
+
+A Host that listens on the network can also publish an agent over
+[A2A](https://a2a-protocol.org) on the same port, at `/a2a`, with its Agent
+Card at `/.well-known/agent-card.json`. Callers use the same JWTs as v2
+clients, checked against the same `owner` and `services`:
+
+```bash
+kodax a2a expose --auth host --public-base-url https://agent.example.com
+```
+
+- `--public-base-url` is the address callers reach the Host at. The Agent
+  Card names `<publicBaseUrl>/a2a` as the endpoint.
+- A caller sends its JWT as `Authorization: Bearer <token>`. Without one, or
+  with one the Host does not admit, A2A answers `401`. A refused token is
+  logged as an `auth_failed` security event with `path: "/a2a"`.
+- A2A tasks belong to whom a v2 connection with the same token acts for:
+  the person, or `service:<sub>` for a backend. One backend cannot read
+  another's tasks.
+- A paired browser's cookie does not admit an A2A call.
+- The Agent Card is public, as A2A expects.
+
+What the published agent may do (its workspace, tools and limits) is set by
+`kodax a2a expose` in `integrations/a2a.json`, not by `server.tools`.
+Switching between `--auth host` and A2A's own listener takes effect when the
+Host restarts.

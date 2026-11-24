@@ -2,7 +2,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import path from 'node:path';
-import { Readable } from 'node:stream';
 
 import { emitKodaXDiagnostic, tryAcquireStorageFileLock } from '@kodax-ai/agent';
 
@@ -17,6 +16,7 @@ import type {
   RuntimeRunResult,
 } from '../sdk-runtime.js';
 import { A2AError, errorMessage } from './errors.js';
+import { sendFetchResponse, toFetchRequest } from './node-http.js';
 import { A2A_PRINCIPAL_KEY_SCHEME, realmA2APrincipalKey } from './principal-key.js';
 import { isJsonMediaType, isRecord, parseA2AMessage, parseJsonRpcRequest } from './schemas.js';
 import { parseA2ASecurity } from './security.js';
@@ -40,7 +40,6 @@ import {
   type KodaXA2AServer,
 } from './types.js';
 
-type RequestInitWithDuplex = RequestInit & { readonly duplex: 'half' };
 
 interface PreparedA2AExecution {
   readonly service: RuntimeAgentBindingService;
@@ -686,24 +685,7 @@ class KodaXA2AServerRuntime implements KodaXA2AServer {
       throw new Error(`Fetch-compatible clients block port ${input.port}; choose another A2A listener port.`);
     }
     const server = createServer((request, response) => {
-      void this.handleNodeRequest(request).then((result) => {
-        response.statusCode = result.status;
-        result.headers.forEach((value, key) => response.setHeader(key, value));
-        if (!result.body) {
-          response.end();
-          return;
-        }
-        const body = Readable.fromWeb(result.body);
-        const closeBody = (): void => {
-          body.destroy();
-        };
-        response.once('close', closeBody);
-        body.once('close', () => response.off('close', closeBody));
-        body.once('error', () => {
-          if (!response.destroyed) response.destroy();
-        });
-        body.pipe(response);
-      }).catch((error: unknown) => {
+      void this.handle(toFetchRequest(request)).then(result => sendFetchResponse(response, result)).catch((error: unknown) => {
         const diagnosticId = sha256(errorMessage(error)).slice(0, 16);
         this.emit({ type: 'server.request_failed', time: nowIso(this.#now), outcome: 'failed', diagnosticId });
         response.statusCode = 500;
@@ -763,24 +745,6 @@ class KodaXA2AServerRuntime implements KodaXA2AServer {
     try { await this.options.preparedExecution?.close(); } catch (error: unknown) { errors.push(error); }
     if (errors.length === 1) throw errors[0];
     if (errors.length > 1) throw new AggregateError(errors, 'A2A server close failed.');
-  }
-
-  private async handleNodeRequest(request: import('node:http').IncomingMessage): Promise<Response> {
-    const host = request.headers.host ?? '127.0.0.1';
-    const url = `http://${host}${request.url ?? '/'}`;
-    const headers = new Headers();
-    for (const [key, value] of Object.entries(request.headers)) {
-      if (typeof value === 'string') headers.set(key, value);
-      else for (const item of value ?? []) headers.append(key, item);
-    }
-    const init: RequestInitWithDuplex = {
-      method: request.method,
-      headers,
-      ...(request.method === 'GET' || request.method === 'HEAD'
-        ? {} : { body: Readable.toWeb(request) as ReadableStream<Uint8Array> }),
-      duplex: 'half',
-    };
-    return this.handle(new Request(url, init));
   }
 
   private async handleRpc(request: Request): Promise<Response> {

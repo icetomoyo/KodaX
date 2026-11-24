@@ -81,6 +81,10 @@ All notable changes to this project will be documented in this file.
   WebSocket through: `connectKodaXHost` tries the WebSocket first, falls back
   to a server-sent event stream with POSTed messages on the same port, and
   tries HTTP first on the next connection once it was what worked.
+- A Host that listens on the network can serve A2A on the same port, at
+  `/a2a`: `kodax a2a expose --auth host --public-base-url <url>`. Callers
+  bring the JWTs v2 clients use, checked against the same `owner` and
+  `services`, and A2A tasks belong to whom the token stands for on v2.
 - `kodax host` manages the Host, which `kodax daemon` did. `kodax daemon` still
   works, prints that it was renamed, and is removed in 0.7.100.
 - `kodax host logs --follow` keeps printing new log lines until Ctrl+C, across

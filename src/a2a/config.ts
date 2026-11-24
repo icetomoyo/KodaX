@@ -118,9 +118,18 @@ export interface A2AOAuth2JwtAuthenticationConfig {
   readonly requiredScopes: readonly string[];
 }
 
+/**
+ * Served on the Host's own network port at `/a2a`, where the Host checks the
+ * caller's JWT against `integrations/host.json` as it does for a v2 client.
+ */
+export interface A2AHostAuthenticationConfig {
+  readonly type: 'host';
+}
+
 export type A2AServerAuthenticationConfig =
   | A2ABearerAuthenticationConfig
-  | A2AOAuth2JwtAuthenticationConfig;
+  | A2AOAuth2JwtAuthenticationConfig
+  | A2AHostAuthenticationConfig;
 
 export interface A2AServerLimitsConfig {
   readonly maxRequestBytes: number;
@@ -575,10 +584,14 @@ function parseAuthentication(value: unknown, version: 1 | 2): A2AServerAuthentic
     };
   }
   if (version === 1) {
-    throw new Error('A2A oauth2-jwt authentication requires integration config version 2.');
+    throw new Error('A2A oauth2-jwt or host authentication requires integration config version 2.');
+  }
+  if (source.type === 'host') {
+    noUnknown(source, ['type'], 'A2A server authentication');
+    return { type: 'host' };
   }
   if (source.type !== 'oauth2-jwt') {
-    throw new Error('A2A authentication type must be bearer-env or oauth2-jwt.');
+    throw new Error('A2A authentication type must be bearer-env, oauth2-jwt or host.');
   }
   noUnknown(source, [
     'type', 'scheme', 'issuer', 'audience', 'jwksUrl', 'tokenUrl',
@@ -636,6 +649,16 @@ function parseListen(value: unknown): A2AServerListenConfig {
   return { hostname, port };
 }
 
+/** On the Host's port A2A has no listener of its own, and the Host cannot tell from inside the address clients reach it at. */
+function assertServedByHost(listen: A2AServerListenConfig | undefined, publicBaseUrl: string | undefined): void {
+  if (listen !== undefined) {
+    throw new Error('A2A server.listen cannot be used with host authentication: A2A is served on the Host\'s own port, set in host.json.');
+  }
+  if (publicBaseUrl === undefined) {
+    throw new Error('A2A host authentication requires server.publicBaseUrl: the address clients reach the Host at.');
+  }
+}
+
 function parseServer(value: unknown, version: 1 | 2): A2AServerConfig {
   const source = record(value, 'A2A server');
   noUnknown(source, ['execution', 'published', 'publicBaseUrl', 'listen', 'authentication', 'limits', 'dataDir'], 'A2A server');
@@ -644,12 +667,14 @@ function parseServer(value: unknown, version: 1 | 2): A2AServerConfig {
     ? undefined
     : parseHttpUrl(source.publicBaseUrl, 'A2A server.publicBaseUrl', true);
   const listen = source.listen === undefined ? undefined : parseListen(source.listen);
+  const authentication = parseAuthentication(source.authentication, version);
+  if (authentication.type === 'host') assertServedByHost(listen, publicBaseUrl);
   return {
     execution,
     published: parsePublished(source.published),
     ...(publicBaseUrl ? { publicBaseUrl } : {}),
     ...(listen ? { listen } : {}),
-    authentication: parseAuthentication(source.authentication, version),
+    authentication,
     limits: parseLimits(source.limits, execution),
     dataDir: text(source.dataDir, 'A2A server.dataDir'),
   };
@@ -855,7 +880,11 @@ export function classifyA2AServerChange(
   const restartFields = ['execution', 'dataDir', 'listen'].filter((field) => (
     !isDeepStrictEqual(current[field as 'execution' | 'dataDir' | 'listen'], next[field as 'execution' | 'dataDir' | 'listen'])
   ));
+  // Moving onto or off the Host's port changes where A2A is served.
+  const moved = (current.authentication.type === 'host') !== (next.authentication.type === 'host');
+  if (moved) restartFields.push('authentication');
   const hotFields = ['published', 'publicBaseUrl', 'authentication', 'limits'].filter((field) => (
+    !(moved && field === 'authentication') &&
     !isDeepStrictEqual(
       current[field as 'published' | 'publicBaseUrl' | 'authentication' | 'limits'],
       next[field as 'published' | 'publicBaseUrl' | 'authentication' | 'limits'],

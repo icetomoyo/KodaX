@@ -711,7 +711,7 @@ function configureA2AExpose(command: Command, version: string): void {
       "Public Agent Card description",
       "Completes approved general tasks.",
     )
-    .option("--auth <type>", "bearer-env or oauth2-jwt", "bearer-env")
+    .option("--auth <type>", "bearer-env, oauth2-jwt, or host (the Host's own JWT check, on its network port)", "bearer-env")
     .option(
       "--token-env <name>",
       "Bearer token environment variable",
@@ -867,11 +867,13 @@ function configureA2AExpose(command: Command, version: string): void {
           },
         };
         const current = readA2AIntegration(KODAX_DIR);
-        if (!["bearer-env", "oauth2-jwt"].includes(options.auth)) {
-          throw new Error("--auth must be bearer-env or oauth2-jwt.");
+        if (!["bearer-env", "oauth2-jwt", "host"].includes(options.auth)) {
+          throw new Error("--auth must be bearer-env, oauth2-jwt, or host.");
         }
         const authentication =
-          options.auth === "bearer-env"
+          options.auth === "host"
+            ? { type: "host" }
+            : options.auth === "bearer-env"
             ? {
                 type: "bearer-env",
                 tokenEnv: options.tokenEnv,
@@ -932,7 +934,9 @@ function configureA2AExpose(command: Command, version: string): void {
           credential:
             options.auth === "bearer-env"
               ? `env:${options.tokenEnv}`
-              : "external-oauth2-issuer",
+              : options.auth === "host"
+                ? "host-jwt"
+                : "external-oauth2-issuer",
         };
       },
     ));
@@ -1072,10 +1076,12 @@ function configureA2ACommands(
           subject = options.subject?.trim() ?? "";
           if (subject.length === 0) {
             throw new Error(
-              "OAuth A2A task-owner migration requires --subject.",
+              "OAuth and Host A2A task-owner migration requires --subject.",
             );
           }
-          securityRealm = `oauth2-jwt:${server.authentication.issuer}`;
+          securityRealm = server.authentication.type === "host"
+            ? "kodax-host"
+            : `oauth2-jwt:${server.authentication.issuer}`;
         }
         return migrateA2ALegacyTaskOwners({
           dataDir: server.dataDir,

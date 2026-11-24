@@ -5135,6 +5135,11 @@ kodax a2a expose document-agent --auth oauth2-jwt \
 kodax a2a serve --port 8765
 ```
 
+A Host that already listens on the network (see the Host deployment guide)
+can serve A2A on its own port instead: `kodax a2a expose --auth host
+--public-base-url https://kodax.example` publishes `/a2a` there, and callers
+bring the same JWTs as v2 clients.
+
 The Authorization Server authenticates clients, provisions client IDs/secrets,
 issues/rotates/revokes tokens and, for JWT access tokens, signs them and
 publishes metadata/JWKS. The calling A2A
