@@ -12,6 +12,7 @@ import type { HostBlobStore } from './host-blobs.js';
 import { createRuntimeDaemonHostRpcPeer, type HostRpcProtocol } from './host-rpc.js';
 import type { HostHealth } from '../host-server/listener.js';
 import type { HostA2AMount, HostNetworkServer } from '../host-server/serve.js';
+import type { HostProviderKeys } from './host-provider-keys.js';
 import {
   createRuntimeDaemonDispatcher,
   createRuntimeDaemonRunResultStore,
@@ -89,6 +90,8 @@ export interface RuntimeDaemonHostOptions {
   readonly networkConfigHome?: string;
   /** A2A, while this Host serves it at `/a2a` on its network port. */
   readonly a2a?: () => HostA2AMount | undefined;
+  /** The provider keys the Host keeps, for the `provider.key.*` methods. Without it the Host keeps none. */
+  readonly providerKeys?: HostProviderKeys;
   /** Where the runtime keeps its Sessions. The blobs clients upload live with them; without it the Host takes none. */
   readonly sessionsDir?: string;
   /** @internal Commit shared ownership before this endpoint admits clients. */
@@ -179,6 +182,7 @@ export async function startRuntimeDaemonHost(
     const protocol = await loadHostRpcProtocol();
     blobs = options.sessionsDir === undefined ? undefined : protocol.createHostBlobStore({ sessionsDir: options.sessionsDir });
     const blobService = blobs === undefined ? {} : { blobs, limits: blobs.limits };
+    const keyService = options.providerKeys === undefined ? {} : { providerKeys: options.providerKeys };
     server = await createRuntimeDaemonSocketServer({
       endpoint: options.endpoint,
       createDispatcher: (notify, disconnect) => createRuntimeDaemonDispatcher({ ...dispatcherOptions, notify, disconnect }),
@@ -186,6 +190,7 @@ export async function startRuntimeDaemonHost(
         protocol,
         dispatcher: dispatcherOptions,
         ...blobService,
+        ...keyService,
         limits: { maxFrameBytes: RUNTIME_DAEMON_MAX_FRAME_BYTES, ...blobService.limits },
         devices: () => network?.devices,
         send,
@@ -206,6 +211,7 @@ export async function startRuntimeDaemonHost(
           dispatcher: networkDispatcherOptions,
           ...connection,
           ...blobService,
+          ...keyService,
           limits: { ...connection.limits, ...blobService.limits },
           send: transport.send,
           disconnect: transport.disconnect,

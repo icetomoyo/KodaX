@@ -24518,10 +24518,15 @@ function sanitizeRuntimeConfigPatch(
 }
 
 function resolveRuntimeConfigFile(
-  options: CreateKodaXHostRuntimeOptions,
+  options: Pick<CreateKodaXHostRuntimeOptions, 'homeDir'>,
 ): string | undefined {
   if (options.homeDir === undefined) return undefined;
   return path.join(path.resolve(options.homeDir), ".kodax", "config.json");
+}
+
+/** The config file a Host runtime created with this `homeDir` reads. Its `auth.json` sits beside it. */
+export function resolveHostRuntimeConfigFile(homeDir: string | undefined): string {
+  return resolveRuntimeConfigFile({ homeDir }) ?? replApi.KODAX_CONFIG_FILE;
 }
 
 function readRuntimeConfig(

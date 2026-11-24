@@ -2,7 +2,8 @@ import { createHostOwnedExtensionRuntime } from "../host-integrations.js";
 import { reportDaemonStartupPhase } from '../runtime-daemon/startup-progress.js';
 import chalk from 'chalk';
 import path from 'path';
-import { createKodaXHostRuntime, type KodaXRuntime } from '../sdk-runtime.js';
+import { createKodaXHostRuntime, resolveHostRuntimeConfigFile, type KodaXRuntime } from '../sdk-runtime.js';
+import { createHostProviderKeys, useHostStoredProviderKeys } from '../runtime-daemon/host-provider-keys.js';
 import { isRuntimeDaemonPidAlive, observeRuntimeDaemonHealth } from '../runtime-daemon/lifecycle.js';
 import {
   appendRuntimeDaemonLog,
@@ -117,6 +118,13 @@ export async function serveDaemonCommand(input: {
   let completedNormally = false;
   let ownedRuntimeId: string | undefined;
   let primaryError: Error | undefined;
+  const usesCanonicalHome = isSameRuntimeDaemonPath(
+    daemonConfigHome,
+    path.join(input.homeDir, '.kodax'),
+  );
+  // The Host's Runs use the keys the owner saved beside the config the runtime reads, after the environment's.
+  const hostConfigFile = resolveHostRuntimeConfigFile(usesCanonicalHome ? input.homeDir : undefined);
+  const stopStoredProviderKeys = useHostStoredProviderKeys(hostConfigFile);
   try {
     const lease = await acquireRuntimeDaemonLease({
       profile: input.profile,
@@ -130,6 +138,7 @@ export async function serveDaemonCommand(input: {
       // `host.json` in the same config home may ask this Host to serve v2 over the network.
       networkConfigHome: daemonConfigHome,
       a2a: () => hostedA2AMount,
+      providerKeys: createHostProviderKeys(hostConfigFile),
       commitStartup,
       integrationStatuses: () => [
         ...extensions.hotReload.statuses(),
@@ -137,10 +146,6 @@ export async function serveDaemonCommand(input: {
       ],
       ...(input.orphanExitMs !== undefined ? { orphanExitMs: input.orphanExitMs } : {}),
       createRuntime: async (runtimeId, host) => {
-        const usesCanonicalHome = isSameRuntimeDaemonPath(
-          daemonConfigHome,
-          path.join(input.homeDir, '.kodax'),
-        );
         const runtime = await createKodaXHostRuntime({
           profile: input.profile,
           ...(usesCanonicalHome ? { homeDir: input.homeDir } : {}),
@@ -386,6 +391,7 @@ export async function serveDaemonCommand(input: {
       // The durable outcome is the stop success fence; logging is best-effort here.
     }
   }
+  stopStoredProviderKeys();
   stopLogMirror?.();
 
   const ownsDaemonServeProcess =

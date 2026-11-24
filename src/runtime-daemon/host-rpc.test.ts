@@ -39,6 +39,7 @@ import * as hostRpcProtocol from './host-rpc-protocol.js';
 import { openHostDeviceRegistry } from '../host-server/devices.js';
 import type { RuntimeDaemonManagementController } from './management.js';
 import { createHostBlobStore } from './host-blobs.js';
+import { createHostProviderKeys } from './host-provider-keys.js';
 import { createRuntimeDaemonReverseBridgeHub } from './reverse-bridge.js';
 import { createHostWorkspace, type HostWorkspace } from './workspace.js';
 
@@ -113,7 +114,7 @@ async function connect(
   /** Proves a reconnect is the same client instance, so it keeps that instance's leases. */
   instanceSecret?: string,
   /** What the Host's network listener adds, such as its paired devices. */
-  network: Pick<RuntimeDaemonHostRpcPeerOptions, 'devices' | 'blobs' | 'userLocks'> = {},
+  network: Pick<RuntimeDaemonHostRpcPeerOptions, 'devices' | 'blobs' | 'userLocks' | 'providerKeys'> = {},
   purpose?: 'probe',
 ): Promise<HostRpcClient> {
   const client = await connectHostRpc(async (events) => {
@@ -3829,6 +3830,32 @@ describe('v2 user settings served by the v1 implementation', () => {
     expect(await owner.request('provider.custom.remove', { requestId: 'remove-1', name: 'local-llm' })).toEqual({});
     expect(await owner.request('provider.custom.remove', { requestId: 'remove-1', name: 'local-llm' })).toEqual({});
     expect(await owner.request('provider.custom.list')).toEqual({ items: [] });
+  });
+
+  it('saves a provider key the client never reads back, and holds it under the providers lock', async () => {
+    const host = await makeHost();
+    const runtime = await host.start();
+    const providerKeys = createHostProviderKeys(path.join(host.homeDir, '.kodax', 'config.json'), () => ({}));
+    const owner = await connect('owner', runtime, host.workspace, {}, undefined, { providerKeys });
+
+    const before = await owner.request('provider.key.get', { provider: 'openai' }) as { revision: string };
+    expect(before).toMatchObject({ provider: 'openai', apiKeyEnv: 'OPENAI_API_KEY', stored: false, source: 'missing' });
+    const set = { requestId: 'key-1', provider: 'openai', key: 'sk-client-secret', ifRevision: before.revision };
+    const saved = await owner.request('provider.key.set', set);
+    expect(saved).toMatchObject({ stored: true, source: 'file' });
+    expect(await owner.request('provider.key.set', set)).toEqual(saved);
+    expect(JSON.stringify(saved)).not.toContain('sk-client-secret');
+    await expect(owner.request('provider.key.set', { ...set, requestId: 'key-2', key: 'sk-other' }))
+      .rejects.toMatchObject({ kodaxCode: 'conflict', reason: 'revision_mismatch' });
+    await expect(owner.request('provider.key.set', { requestId: 'key-3', provider: 'openai', key: 'two\nlines' }))
+      .rejects.toMatchObject({ kodaxCode: 'invalid_params' });
+
+    const user = await connect('user', runtime, host.workspace, {}, undefined, { providerKeys, userLocks: () => new Set(['providers'] as const) });
+    await expect(user.request('provider.key.remove', { requestId: 'key-4', provider: 'openai' }))
+      .rejects.toMatchObject({ kodaxCode: 'forbidden', reason: 'locked' });
+    const remove = { requestId: 'key-5', provider: 'openai' };
+    expect(await owner.request('provider.key.remove', remove)).toMatchObject({ stored: false, source: 'missing' });
+    expect(await owner.request('provider.key.remove', remove)).toMatchObject({ stored: false, source: 'missing' });
   });
 
   it('asks a provider which efforts a model takes, and forgets the answers', async () => {

@@ -16,6 +16,7 @@ import {
   type RuntimeDaemonHealthCheckOptions,
 } from './lifecycle.js';
 import type { HostA2AMount } from '../host-server/serve.js';
+import type { HostProviderKeys } from './host-provider-keys.js';
 import { appendRuntimeDiagnostic, loadHostRpcProtocol, startRuntimeDaemonHost, type RuntimeDaemonHost } from './host.js';
 import {
   prepareRuntimeDaemonOwner,
@@ -52,6 +53,8 @@ export interface RuntimeDaemonLeaseOptions {
   readonly networkConfigHome?: string;
   /** A2A, while the Host serves it at `/a2a` on its network port. */
   readonly a2a?: () => HostA2AMount | undefined;
+  /** The provider keys a Host started here keeps. Without it the Host keeps none. */
+  readonly providerKeys?: HostProviderKeys;
   /** @internal Commit shared ownership before the first hosted A2A or daemon RPC publication. */
   readonly commitStartup?: () => void;
   createRuntime(runtimeId: string, host: RuntimeDaemonHostRuntimeOptions): Promise<KodaXRuntime>;
@@ -231,6 +234,7 @@ async function createClaimedDaemonLease(
         : {}),
       ...(options.networkConfigHome !== undefined ? { networkConfigHome: options.networkConfigHome } : {}),
       ...(options.a2a !== undefined ? { a2a: options.a2a } : {}),
+      ...(options.providerKeys !== undefined ? { providerKeys: options.providerKeys } : {}),
       sessionsDir: options.sessionsDir ?? path.join(paths.configHome, 'sessions'),
     });
     try {

@@ -26,7 +26,7 @@ the Host checks requests against. How to connect and call them is in
 - **connection**: [`initialize`](#initialize), [`ping`](#ping)
 - **auth**: [`auth.renew`](#authrenew)
 - **request**: [`request.cancel`](#requestcancel)
-- **provider**: [`provider.list`](#providerlist), [`provider.reasoning.efforts`](#providerreasoningefforts), [`provider.custom.list`](#providercustomlist), [`provider.custom.upsert`](#providercustomupsert), [`provider.custom.remove`](#providercustomremove), [`provider.reasoning.probe`](#providerreasoningprobe), [`provider.reasoning.forget`](#providerreasoningforget)
+- **provider**: [`provider.list`](#providerlist), [`provider.reasoning.efforts`](#providerreasoningefforts), [`provider.custom.list`](#providercustomlist), [`provider.custom.upsert`](#providercustomupsert), [`provider.custom.remove`](#providercustomremove), [`provider.reasoning.probe`](#providerreasoningprobe), [`provider.key.get`](#providerkeyget), [`provider.key.set`](#providerkeyset), [`provider.key.remove`](#providerkeyremove), [`provider.reasoning.forget`](#providerreasoningforget)
 - **command**: [`command.list`](#commandlist), [`command.readPrompt`](#commandreadprompt), [`command.execute`](#commandexecute)
 - **skill**: [`skill.list`](#skilllist), [`skill.get`](#skillget)
 - **tool**: [`tool.list`](#toollist)
@@ -237,6 +237,65 @@ Kind: command · Resend: never · Who: owner, user
 | `items[].status` | string | yes |  |
 | `items[].error` | string | no |  |
 | `nextCursor` | string | no |  |
+
+### `provider.key.get`
+
+Whether the Host keeps a key for a provider, and where it takes the key from.
+
+Kind: query · Who: owner, user
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `provider` | string | yes |  |
+
+| Result field | Type | Always | Notes |
+| --- | --- | --- | --- |
+| `provider` | string | yes |  |
+| `apiKeyEnv` | string | yes | The environment variable that supplies the key instead, when it is set where the Host runs. |
+| `stored` | boolean | yes | Whether a key is saved on the Host for the provider's current connection. |
+| `source` | string | yes | Where the Host takes the key from now: `environment` (used first), `file`, `cloud`, `oauth`, `external` or `missing`. |
+| `revision` | string | yes | Opaque. Send it as `ifRevision` to change the key only while nobody else has. |
+
+### `provider.key.set`
+
+Saves a key for the provider on the Host, bound to the provider's current connection. The Host uses it when its environment holds no key. Fails with `conflict` when `ifRevision` is out of date, unless the same key is saved already; with `not_found` for a provider the Host does not know; and with `invalid_params` for one that signs in another way.
+
+Kind: command · Resend: auto · Who: owner, user
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `requestId` | string | yes | The command runs once per id; send the same id to retry. |
+| `provider` | string | yes |  |
+| `key` | string | yes | On one line. Kept in the Host's `auth.json` and never sent back. |
+| `ifRevision` | string | no | The `revision` the change was made against. |
+
+| Result field | Type | Always | Notes |
+| --- | --- | --- | --- |
+| `provider` | string | yes |  |
+| `apiKeyEnv` | string | yes | The environment variable that supplies the key instead, when it is set where the Host runs. |
+| `stored` | boolean | yes | Whether a key is saved on the Host for the provider's current connection. |
+| `source` | string | yes | Where the Host takes the key from now: `environment` (used first), `file`, `cloud`, `oauth`, `external` or `missing`. |
+| `revision` | string | yes | Opaque. Send it as `ifRevision` to change the key only while nobody else has. |
+
+### `provider.key.remove`
+
+Deletes the saved key. Answers with the state when none is saved, so it is safe to send again.
+
+Kind: command · Resend: auto · Who: owner, user
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `requestId` | string | yes | The command runs once per id; send the same id to retry. |
+| `provider` | string | yes |  |
+| `ifRevision` | string | no | The `revision` the change was made against. |
+
+| Result field | Type | Always | Notes |
+| --- | --- | --- | --- |
+| `provider` | string | yes |  |
+| `apiKeyEnv` | string | yes | The environment variable that supplies the key instead, when it is set where the Host runs. |
+| `stored` | boolean | yes | Whether a key is saved on the Host for the provider's current connection. |
+| `source` | string | yes | Where the Host takes the key from now: `environment` (used first), `file`, `cloud`, `oauth`, `external` or `missing`. |
+| `revision` | string | yes | Opaque. Send it as `ifRevision` to change the key only while nobody else has. |
 
 ### `provider.reasoning.forget`
 

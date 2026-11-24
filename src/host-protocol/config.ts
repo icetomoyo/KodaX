@@ -95,6 +95,21 @@ const ConfigGetResult = hostResult({
  */
 const CustomProvider = z.record(z.string(), z.unknown());
 
+/** The state of the key the Host keeps for a provider. The key itself is never sent back. */
+const ProviderKeyStatus = hostResult({
+  provider: z.string(),
+  /** The environment variable that supplies the key instead, when it is set where the Host runs. */
+  apiKeyEnv: z.string(),
+  /** Whether a key is saved on the Host for the provider's current connection. */
+  stored: z.boolean(),
+  /** Where the Host takes the key from now: `environment` (used first), `file`, `cloud`, `oauth`, `external` or `missing`. */
+  source: z.string(),
+  /** Opaque. Send it as `ifRevision` to change the key only while nobody else has. */
+  revision: z.string(),
+});
+const KeyRevision = z.string().min(1).max(128);
+const ProviderKey = z.string().min(1).max(65_536).regex(/^[^\r\n]+$/);
+
 export const CONFIG_METHODS = {
   /** The Host's saved configuration with its `revision`, and what is in effect. */
   'config.get': { primitive: 'query', plane: 'settings', params: hostParams({}), result: ConfigGetResult },
@@ -140,6 +155,40 @@ export const CONFIG_METHODS = {
       status: z.string(),
       error: z.string().optional(),
     })),
+  },
+  /** Whether the Host keeps a key for a provider, and where it takes the key from. */
+  'provider.key.get': { primitive: 'query', plane: 'settings', params: hostParams({ provider: Name }), result: ProviderKeyStatus },
+  /**
+   * Saves a key for the provider on the Host, bound to the provider's current
+   * connection. The Host uses it when its environment holds no key. Fails with
+   * `conflict` when `ifRevision` is out of date, unless the same key is saved
+   * already; with `not_found` for a provider the Host does not know; and with
+   * `invalid_params` for one that signs in another way.
+   */
+  'provider.key.set': {
+    primitive: 'command',
+    resend: 'auto',
+    plane: 'settings',
+    params: hostCommandParams({
+      provider: Name,
+      /** On one line. Kept in the Host's `auth.json` and never sent back. */
+      key: ProviderKey,
+      /** The `revision` the change was made against. */
+      ifRevision: KeyRevision.optional(),
+    }),
+    result: ProviderKeyStatus,
+  },
+  /** Deletes the saved key. Answers with the state when none is saved, so it is safe to send again. */
+  'provider.key.remove': {
+    primitive: 'command',
+    resend: 'auto',
+    plane: 'settings',
+    params: hostCommandParams({
+      provider: Name,
+      /** The `revision` the change was made against. */
+      ifRevision: KeyRevision.optional(),
+    }),
+    result: ProviderKeyStatus,
   },
   /** Forgets what probing learned, for one model, one provider, or all of them. */
   'provider.reasoning.forget': {

@@ -20,21 +20,27 @@ export interface ProviderCredentialManager {
   setApiKey(provider: string, key: string, expected: ProviderCredentialStatus): Promise<ProviderCredentialStatus>;
   removeApiKey(provider: string, expected: ProviderCredentialStatus): Promise<ProviderCredentialStatus>;
 }
+/** A refusal the caller can name: which of the known reasons stopped the credential change. */
+export class ProviderCredentialError extends Error {
+  constructor(readonly reason: 'unknown_provider' | 'external_auth' | 'changed' | 'unreadable_config', message: string) {
+    super(message); this.name = 'ProviderCredentialError';
+  }
+}
 async function readConfig(file: string): Promise<{ config: Record<string, unknown>; revision: string }> {
   let bytes = '';
   try { bytes = await readFile(file, 'utf8'); }
-  catch (error) { if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT') throw new Error('Cannot read provider configuration.'); }
-  let config: unknown; try { config = bytes ? JSON.parse(bytes) as unknown : {}; } catch { throw new Error('Invalid provider configuration.'); }
-  if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('Invalid provider configuration.');
+  catch (error) { if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT') throw new ProviderCredentialError('unreadable_config', 'Cannot read provider configuration.'); }
+  let config: unknown; try { config = bytes ? JSON.parse(bytes) as unknown : {}; } catch { throw new ProviderCredentialError('unreadable_config', 'Invalid provider configuration.'); }
+  if (!config || typeof config !== 'object' || Array.isArray(config)) throw new ProviderCredentialError('unreadable_config', 'Invalid provider configuration.');
   return { config: config as Record<string, unknown>, revision: createHash('sha256').update(bytes).digest('hex') };
 }
 function configuredTarget(config: Record<string, unknown>, name: string) {
   const builtin = Object.entries(KODAX_PROVIDER_SNAPSHOTS).find(([id]) => id === name)?.[1];
   if (builtin) return { provider: getProvider(name), apiKeyEnv: builtin.apiKeyEnv, kind: builtin.capabilityProfile.transport === 'cli-bridge' ? 'external' as const : 'key' as const };
   const candidates = config.customProviders;
-  if (!Array.isArray(candidates)) throw new Error('Unknown configured provider.');
+  if (!Array.isArray(candidates)) throw new ProviderCredentialError('unknown_provider', 'Unknown configured provider.');
   const matches: unknown[] = candidates.filter((value: unknown) => value && typeof value === 'object' && 'name' in value && value.name === name);
-  if (matches.length !== 1) throw new Error('Unknown or duplicate configured provider.');
+  if (matches.length !== 1) throw new ProviderCredentialError('unknown_provider', 'Unknown or duplicate configured provider.');
   const connection = matches[0] as KodaXCustomProviderConfig; validateCustomProviderConfig(connection);
   return { provider: createCustomProvider(connection), apiKeyEnv: connection.apiKeyEnv,
     kind: connection.oauth ? 'oauth' as const : connection.cloud ? 'cloud' as const : 'key' as const };
@@ -60,13 +66,13 @@ export function createProviderCredentialManager(input: { readonly configPath?: s
   const mutate = async (name: string, expected: ProviderCredentialStatus, update?: { readonly key: string }) => {
     if (!expected || (expected.revision !== null && (typeof expected.revision !== 'string' || !expected.revision.trim()))) throw new Error('Credential update requires an expected revision. Refresh its state before retrying.');
     const selected = await target(name);
-    if (selected.kind === 'oauth' || selected.kind === 'external') throw new Error(`Use the provider's ${selected.kind === 'oauth' ? 'OAuth' : 'external'} authentication flow.`);
+    if (selected.kind === 'oauth' || selected.kind === 'external') throw new ProviderCredentialError('external_auth', `Use the provider's ${selected.kind === 'oauth' ? 'OAuth' : 'external'} authentication flow.`);
     if (expected.configRevision !== selected.configRevision || expected.binding.profile !== selected.binding.profile
-      || expected.binding.provider !== selected.binding.provider || expected.binding.connectionFingerprint !== selected.binding.connectionFingerprint) throw new Error('Provider configuration or connection changed. Refresh its state before retrying.');
+      || expected.binding.provider !== selected.binding.provider || expected.binding.connectionFingerprint !== selected.binding.connectionFingerprint) throw new ProviderCredentialError('changed', 'Provider configuration or connection changed. Refresh its state before retrying.');
     const previous = await store.readApiKey(selected.binding);
     const saved = update === undefined ? await store.removeApiKey(selected.binding, expected.revision) : await store.setApiKey(selected.binding, update.key, expected.revision);
     try {
-      if ((await readConfig(configPath)).revision !== selected.configRevision) throw new Error('Provider configuration changed while saving credentials.');
+      if ((await readConfig(configPath)).revision !== selected.configRevision) throw new ProviderCredentialError('changed', 'Provider configuration changed while saving credentials.');
       return await describe(name);
     } catch (error) {
       try { if (previous) await store.setApiKey(selected.binding, previous.key, saved.revision); else await store.removeApiKey(selected.binding, saved.revision); }

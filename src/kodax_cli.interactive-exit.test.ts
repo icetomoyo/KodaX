@@ -479,6 +479,7 @@ async function importMainWithMocks(options: {
     vi.doMock('./sdk-runtime.js', () => ({
       createKodaXHostRuntime,
       ensureKodaXRuntime,
+      resolveHostRuntimeConfigFile: (homeDir: string | undefined) => join(homeDir ?? tmpdir(), '.kodax', 'config.json'),
     }));
   }
   vi.doMock('./sandbox-runtime.js', () => ({

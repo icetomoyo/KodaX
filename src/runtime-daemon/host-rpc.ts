@@ -37,6 +37,7 @@ import type {
 } from '../client-host-authorization.js';
 import type { HostDeviceRegistry } from '../host-server/devices.js';
 import type { HostBlobStore } from './host-blobs.js';
+import type { HostProviderKeys } from './host-provider-keys.js';
 import { createHostDocumentStreams, type HostDocumentStreams } from './host-document.js';
 import { createNote, forgetNote, getNote, listNotes, updateNote, type HostNoteStores } from './host-notes.js';
 import { boundViewItem } from '../session-view.js';
@@ -133,6 +134,8 @@ interface HostCaller {
   readonly blobs?: HostBlobStore;
   /** The note stores the Host's Runs in a project read. */
   readonly notes?: (projectRoot: string) => Promise<HostNoteStores>;
+  /** The provider keys the Host keeps. Without it the Host keeps none. */
+  readonly providerKeys?: HostProviderKeys;
   readonly views: HostViewStreams;
   /** The connection's subscriptions to the Host document. */
   readonly documents: HostDocumentStreams;
@@ -140,6 +143,11 @@ interface HostCaller {
   readonly signal: AbortSignal;
   /** Runs once the answer to this call is on the wire. */
   readonly afterAnswer: (run: () => void) => void;
+}
+
+function keptProviderKeys(caller: HostCaller): HostProviderKeys {
+  if (caller.providerKeys === undefined) throw new HostProtocolError('invalid_state', 'This Host keeps no provider keys.');
+  return caller.providerKeys;
 }
 
 /** Answers with what v1 returned. The connection cuts it to the v2 contract, so a handler only reshapes. */
@@ -912,6 +920,9 @@ const V1_HANDLERS: { readonly [Method in ForwardedMethod]: V1Handler<Method> } =
   'provider.reasoning.probe': async ({ provider, model, efforts, leases }, v1) => ({
     items: await v1('provider.reasoning.probe', defined({ provider, model, efforts, credential: await credentialBinding(v1, leases) })),
   }),
+  'provider.key.get': async ({ provider }, _v1, caller) => keptProviderKeys(caller).get(provider),
+  'provider.key.set': async ({ provider, key, ifRevision }, _v1, caller) => keptProviderKeys(caller).set(provider, key, ifRevision),
+  'provider.key.remove': async ({ provider, ifRevision }, _v1, caller) => keptProviderKeys(caller).remove(provider, ifRevision),
   'provider.reasoning.forget': async ({ provider, model }, v1) => {
     await v1('provider.capabilities.forget', defined({ provider, model }));
     return {};
@@ -1789,6 +1800,8 @@ export interface RuntimeDaemonHostRpcPeerOptions {
   readonly blobs?: HostBlobStore;
   /** What the platform has locked of a person's settings, read again on each call. Only `user` connections are held by it. */
   readonly userLocks?: () => ReadonlySet<HostUserLock>;
+  /** The provider keys the Host keeps. Without it the Host keeps none. */
+  readonly providerKeys?: HostProviderKeys;
   readonly send: (frame: string) => void;
   readonly disconnect: (reason: HostCloseReason) => void;
   /** Whether the client is behind on reading what was already sent. */
@@ -1934,6 +1947,7 @@ export function createRuntimeDaemonHostRpcPeer(
         ...(options.workspace !== undefined ? { workspace: options.workspace } : {}),
         ...(options.blobs !== undefined ? { blobs: options.blobs } : {}),
         ...(notes !== undefined ? { notes } : {}),
+        ...(options.providerKeys !== undefined ? { providerKeys: options.providerKeys } : {}),
         views: streams,
         documents,
       };
