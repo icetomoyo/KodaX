@@ -197,10 +197,24 @@ L3 精确层   按需：通过 Host 现有 LSP 服务（packages/coding/src/lsp/
 - changed_scope 与 semantic_lookup 的工具说明、repo-explorer 说明和低置信说明不在首个请求里（延迟工具只发简短提示），本 eval 测不到。
 - 原始输出和盲评记录在本地 `%TEMP%/kodax-eval-dumps/repointel-p0-prompt/r3-full/`。
 
-## 9. 待定项（开工时决定）
+## 9. 开工时的决定（2026-11-24 用户确认，第 4 项除外）
 
-- 存储引擎：Rust 侧用 rusqlite（bundled）还是自定义文件格式；这只是进程内部的实现细节。
-- 进程协议：stdio 上的 JSON-RPC 帧格式，复用 LSP 风格的 framing。
-- 降优先级和内存上限在 Windows、Linux、macOS 上分别怎么实现；Windows 能否复用现有 Job 机制。
-- tree-sitter 语法库是静态编进二进制，还是按需加载（取决于安装包体积预算）。
-- 真值集用哪些外部仓库，以及它们的许可证。
+体积实测（2026-11-24，Windows，发布用的编译设置）：程序本身 0.13 MB；rusqlite（bundled）+1.70 MB；语法库 TypeScript 含 TSX 2.93、JavaScript 0.49、Python 0.54、Go 0.30、Rust 1.19、Java 0.49、C++ 3.50 MB；七种全部 9.07 MB，再加 SQLite 10.77 MB（gzip 后 1.88 MB）。现在的 npm 包把五个平台的原生程序放在同一个包里，`0.7.97-rc.2` 解压后 35.0 MB，其中原生程序 4.5 MB。
+
+1. **存储：rusqlite（bundled）。** 增量更新、写到一半崩溃不坏库、多读者都是现成的。bundled 的 SQLite 编译时开了 FTS5，阶段 4 的 BM25 直接用它。
+2. **进程协议：JSON-RPC 2.0，消息前带 `Content-Length` 头（和 LSP 一样）。** Host 侧用 LSP 客户端已经依赖的 `vscode-jsonrpc`，请求配对、取消和错误处理都现成。
+3. **降优先级和内存上限：三个平台同一套做法。**
+   - 降优先级：索引进程启动时自己进入后台模式，不需要特权。Windows 用 `PROCESS_MODE_BACKGROUND_BEGIN`；Linux 用 nice 10 加磁盘 IO 的 idle 级；macOS 用 `PRIO_DARWIN_BG`。
+   - 内存：索引进程自己盯着用量，接近 300 MB 预算时停止扩大缓存，结果标为降级。Host 每隔几秒读它的实际内存，超过硬上限就结束它、标为降级，退避后重启。
+   - 不单独给 Windows 套带内存上限的嵌套 Job：Linux 和 macOS 没有不需要特权的对等手段，硬上限还是要靠 Host 监视。Linux 的 `RLIMIT_AS` 按虚拟地址空间计，SQLite 和 Rust 的预留会被误判成超限。
+   - 索引进程是 Host 的子进程，本来就在 Host 的 Job 里，Host 退出它跟着退出，这部分不用写代码。
+4. **语法库和安装包：待定。** 语法库静态编进程序，不在运行时加载外来原生代码。怎么发布（放进现有 npm 包、按平台拆包，还是做成单独下载的组件）还在和用户讨论。
+5. **真值集：** 每个仓库固定到某个提交，评测时下载，不放进本仓库；检出时核对许可证。
+   - TypeScript：KodaX 本身加 `honojs/hono`（MIT）。KodaX 同时充当混合语言仓库（TS、Rust、少量 Python）。
+   - Python：`encode/httpx`（BSD-3）。
+   - Go：`gin-gonic/gin`（MIT）。
+   - Rust：`BurntSushi/ripgrep`（MIT/Unlicense）。
+   - Java（只有语法层）：`google/gson`（Apache-2.0）。
+   - C++（只有语法层）：`fmtlib/fmt`（MIT）。
+   - 1 万文件的性能基准：`microsoft/vscode`（MIT）。
+   - 真值来源：SCIP 索引器（scip-typescript、scip-python、scip-go）和 rust-analyzer 的 SCIP 输出。
