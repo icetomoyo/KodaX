@@ -2408,7 +2408,12 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
 
 ### M3 收尾
 
-1. ACP 迁到 v2，删掉 `infer*`。
+1. ACP 迁到 v2，删掉 `infer*`。**状态**：2026-11-24 落地（ACP 走 v2 是 11-23 做的）。
+   - ACP 告诉编辑器的文件位置（`locations`）只来自 Host 记下的事实：审批对话框用 Host 在询问前算出的 `diff` 的路径，工具结果用 M2 第 1 项的 `tool.change`。从工具输入的 `path` 和 bash 命令里猜路径的 `inferToolLocations` 删掉，bash 调用不再带位置（猜错时编辑器会跳到错的文件）。
+   - 工具种类（`kind`）仍按 KodaX 自己的工具名查表，这是确定的映射，不是猜测，函数改名为 `acpToolKind`。
+   - 为此 REPL 和 ACP 共用的 v2→v1 视图映射（`src/repl-host/view.ts`）把 `tool.change` 还原成 `fileChange`，审批请求的 `diff.path` 还原成 Host 上的绝对路径，和 v1 一样（v2 给本机客户端的是 `hostPath`）。
+   - 没做的：§10 说的"删掉 REPL 从文本里解析 diff 的逻辑"。REPL 的 diff 显示（`diff-rows.ts`）读的是工具结果文本，里面除了 diff 还有"File edited"前言和 LSP 诊断，换成读 `fileChange` 是显示上的重做，用户看不到区别，不在这次做（未经用户确认）。
+   - 已验证：`repl-host/view.test.ts`（工具改的文件和审批的 diff 经 v2 来回一趟后和 v1 一样）；`acp-client-view.test.ts`（有 `fileChange` 的工具结果带 `locations`，bash 不带）；`acp_server.test.ts`（bash 审批不带位置，文件工具的审批指向 `diff` 的路径）。
 2. A2A 挂到 `/a2a`，身份并入授权身份（D4）。
 3. `server.ts` 剩余的 case 全部拆成领域 handler，删除 15 个已退役的方法。
 4. 合并 `schema.ts`。

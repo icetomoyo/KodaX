@@ -36,7 +36,6 @@ import {
   type KodaXOptions,
   type KodaXReasoningMode,
   type KodaXWireReasoningEffort,
-  isToolFileMutation,
   normalizeReasoningEffortValue,
   parseReasoningEffortEnv,
   resolveRepoIntelligenceRuntimeConfig,
@@ -53,7 +52,6 @@ import {
 } from '@kodax-ai/coding';
 import {
   FileSessionStorage,
-  collectBashWriteTargets,
   prepareRuntimeConfig,
   resolveRuntimeEffortSelection,
   resolveRuntimeModelSelection,
@@ -87,6 +85,7 @@ import {
 import { mapLegacyReasoningModeToEffortIntent } from '@kodax-ai/llm';
 import { toKodaXProductClient } from './client-runtime-adapter.js';
 import { observeAcpClientPrompt } from './acp-client-view.js';
+import { toolResultFileChange } from './client-canonical-tools.js';
 import { createRequestId, type HostCallParams, type KodaXHostClient } from './host-protocol/host-client.js';
 import { ensureKodaXHostClient } from './local-host-client.js';
 import { awaitHostRun, projectOneShotOutcome } from './one-shot-task.js';
@@ -106,16 +105,6 @@ interface AcpHost {
   readonly plane: InkClientPlane;
 }
 
-// v0.7.42 — replaced the hardcoded `Set(['write', 'edit'])` with the
-// metadata-driven `isToolFileMutation` from `@kodax-ai/coding`. The old
-// 2-element list silently under-classified `multi_edit`,
-// `insert_after_anchor`, `undo`, `worktree_*`, construction-staircase
-// writes, etc. — ACP clients were not asked for protected-path / outside-
-// project confirmation on those tools. The metadata path auto-syncs as
-// new write tools are added.
-function acpIsFileModificationTool(toolName: string): boolean {
-  return isToolFileMutation(toolName);
-}
 const ACP_TOOL_KIND_MAP: Record<string, ToolKind> = {
   read: 'read',
   write: 'edit',
@@ -512,25 +501,17 @@ function runtimePermissionRequestFromEvent(
   };
 }
 
-function inferToolKind(toolName: string): ToolKind {
+function acpToolKind(toolName: string): ToolKind {
   return ACP_TOOL_KIND_MAP[toolName] ?? 'other';
 }
 
-function inferToolLocations(toolName: string, input: Record<string, unknown>): Array<{ path: string }> | undefined {
-  if (acpIsFileModificationTool(toolName)) {
-    const targetPath = typeof input.path === 'string' ? input.path : undefined;
-    return targetPath ? [{ path: targetPath }] : undefined;
-  }
-
-  if (toolName === 'bash') {
-    const command = typeof input.command === 'string' ? input.command : '';
-    const targets = collectBashWriteTargets(command);
-    if (targets.length > 0) {
-      return targets.map((targetPath: string) => ({ path: targetPath }));
-    }
-  }
-
-  return undefined;
+/**
+ * The file a tool changed, or would change, as the Host worked it out. Locations
+ * come only from there: a path read off a tool's input or a shell command would
+ * be a guess, and a wrong one sends the client's editor to the wrong file.
+ */
+function acpLocations(change: { readonly path: string } | undefined): Array<{ path: string }> | undefined {
+  return change === undefined ? undefined : [{ path: change.path }];
 }
 
 function extractPromptText(blocks: ContentBlock[]): string {
@@ -1065,10 +1046,11 @@ export class KodaXAcpServer implements Agent {
       notification => this.sendSessionUpdate({ ...notification, sessionId: session.sessionId }),
       async request => toClientPermissionDecision(await this.requestPermissionFromClient(session,
         request.options.toolName, request.options.plan === undefined
-          ? parsePermissionInputPreview(request.options.inputPreview) : { plan: request.options.plan }, request.options.toolCallId), request.options),
+          ? parsePermissionInputPreview(request.options.inputPreview) : { plan: request.options.plan }, request.options.toolCallId,
+        request.options.diff), request.options),
       (name, inputText) => {
         const rawInput = parsePermissionInputPreview(inputText);
-        return { rawInput, kind: inferToolKind(name), locations: inferToolLocations(name, rawInput) };
+        return { rawInput, kind: acpToolKind(name) };
       }, settings => this.applyHostSettings(session, settings));
     let runId: string | undefined;
     try {
@@ -1254,9 +1236,8 @@ export class KodaXAcpServer implements Agent {
                 sessionUpdate: 'tool_call',
                 toolCallId: tool.id,
                 title: tool.name,
-                kind: inferToolKind(tool.name),
+                kind: acpToolKind(tool.name),
                 rawInput: tool.input,
-                locations: inferToolLocations(tool.name, tool.input ?? {}),
                 status: 'pending',
               },
             }),
@@ -1274,6 +1255,7 @@ export class KodaXAcpServer implements Agent {
                 title: result.name,
                 status: isToolResultFailure(result.content) ? 'failed' : 'completed',
                 rawOutput: result.content,
+                locations: acpLocations(toolResultFileChange(result.toolResult)),
               },
             }),
           );
@@ -1381,6 +1363,7 @@ export class KodaXAcpServer implements Agent {
           request.toolName,
           request.plan === undefined ? parsePermissionInputPreview(request.inputPreview) : { plan: request.plan },
           request.toolCallId,
+          request.diff,
         ),
         settlement.settled.then(() => null),
       ]);
@@ -1413,6 +1396,7 @@ export class KodaXAcpServer implements Agent {
     toolName: string,
     input: Record<string, unknown>,
     toolId?: string,
+    change?: { readonly path: string },
   ): Promise<AcpPermissionDecision> {
     if (!this.connection) {
       this.events.emit({
@@ -1449,11 +1433,11 @@ export class KodaXAcpServer implements Agent {
     const toolCall: ToolCallUpdate = {
       toolCallId: toolId ?? randomUUID(),
       title: toolName,
-      kind: inferToolKind(toolName),
+      kind: acpToolKind(toolName),
       rawInput: input,
       ...(toolName === 'exit_plan_mode' && typeof input.plan === 'string'
         ? { content: [{ type: 'content' as const, content: { type: 'text' as const, text: input.plan } }] } : {}),
-      locations: inferToolLocations(toolName, input),
+      locations: acpLocations(change),
       status: 'pending',
     };
 

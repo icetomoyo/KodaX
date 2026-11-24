@@ -182,6 +182,10 @@ All notable changes to this project will be documented in this file.
     the ACP session id. A prompt reports the tokens its Run used, not the
     context snapshot. `--reasoning` and `--thinking` set the effort they stand
     for.
+  - In `kodax acp` a tool call names a file only when the Host recorded that
+    the tool changed it, or worked out before asking that it would. Paths are
+    no longer guessed from a tool's input or a shell command, so `bash` calls
+    name no files.
 - `kodax -h` lists the everyday commands first and ends with examples. The
   help topics `acp`, `skill`, `sessions`, `project` and `auto` are gone:
   `kodax -h acp`, `-h skill` and `-h sessions` show those commands' help, and

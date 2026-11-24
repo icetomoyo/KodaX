@@ -94,6 +94,22 @@ describe('a v2 view in the shapes the REPL renders', () => {
     expect(map(v2(v1View([tail('XXgh', 12)]))).items[0]?.textRevision).toBe(1);
   });
 
+  it('gives the file a tool changed, or would change, by its path on the Host, as v1 did', () => {
+    const change = { path: 'C:/work/app/a.txt', added: 1, removed: 0, unified: '@@ -0,0 +1,1 @@\n+a' };
+    const source = v1View([{
+      id: 'tool-1', type: 'tool', text: 'ok', sourceRunId: 'run-1',
+      tool: { callId: 'call-1', name: 'write', status: 'success', fileChange: change },
+    }], {
+      interactions: [{
+        requestId: 'allow-1', sessionId: 'session-1', runId: 'run-1', createdAt: STARTED, kind: 'permission',
+        options: { toolName: 'write', toolCallId: 'call-2', inputPreview: '{}', diff: change },
+      } as ClientSessionView['interactions'][number]],
+    });
+    const view = createClientViewMapper()(LocalSessionView.parse(toSessionView(source, 'C:/work')));
+    expect(view.items[0]?.tool?.fileChange).toEqual(change);
+    expect(view.interactions).toEqual(source.interactions);
+  });
+
   it('turns a listed Session into the v1 Session the resume picker reads', () => {
     expect(toClientSession({ id: 'session-2', title: 'Old', archived: false, messageCount: 7, lastMessageAt: Date.parse(STARTED) }))
       .toEqual({ id: 'session-2', title: 'Old', archived: false, msgCount: 7, lastMessageAt: STARTED });

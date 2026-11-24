@@ -14,7 +14,7 @@ export async function observeAcpClientPrompt(
   sessionId: string,
   notify: (notification: SessionNotification) => Promise<void>,
   permission: (request: PermissionInteraction) => Promise<ClientPermissionDecision>,
-  describeTool: (name: string, input: string) => Pick<ToolCall, 'rawInput' | 'kind' | 'locations'>,
+  describeTool: (name: string, input: string) => Pick<ToolCall, 'rawInput' | 'kind'>,
   settingsChanged?: (settings: ClientSessionView['settings']) => Promise<void>,
 ) {
   const emitted = new Map<string, string>();
@@ -56,7 +56,8 @@ export async function observeAcpClientPrompt(
       const status = tool.status === 'success' ? 'completed'
         : tool.status === 'error' || tool.status === 'cancelled' ? 'failed' : 'in_progress';
       await notify({ sessionId, update: { sessionUpdate: 'tool_call_update', toolCallId: tool.callId,
-        title: tool.name, status, rawOutput: text, content: [{ type: 'content', content: { type: 'text', text } }] } });
+        title: tool.name, status, rawOutput: text, content: [{ type: 'content', content: { type: 'text', text } }],
+        ...(tool.fileChange !== undefined ? { locations: [{ path: tool.fileChange.path }] } : {}) } });
       return;
     }
     if (item.type !== 'assistant' && item.type !== 'thinking') return;

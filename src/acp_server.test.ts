@@ -79,7 +79,6 @@ vi.mock('@kodax-ai/repl', async (importOriginal) => {
   return {
     ...actual,
     KODAX_CONFIG_FILE: 'C:/Users/test/.kodax/config.json',
-    collectBashWriteTargets: vi.fn(() => []),
     computeConfirmTools: vi.fn(() => []),
     generateSavePattern: vi.fn(() => ''),
     getBashOutsideProjectWriteRisk: vi.fn(() => ({ risky: false })),
@@ -492,7 +491,7 @@ describe('KodaXAcpServer product client face behaviors (T19)', () => {
       mcpServers: [],
     } as NewSessionRequest);
 
-    const permissionCalls: Array<{ toolCall: { title: string } }> = [];
+    const permissionCalls: Array<{ toolCall: { title: string; locations?: unknown } }> = [];
     (server as unknown as {
       connection: {
         signal: { aborted: boolean };
@@ -526,10 +525,18 @@ describe('KodaXAcpServer product client face behaviors (T19)', () => {
     await expect(decision).resolves.toMatchObject({ type: 'allow_once' });
     expect(permissionCalls).toHaveLength(1);
     expect(permissionCalls[0]!.toolCall.title).toBe('bash');
+    expect(permissionCalls[0]!.toolCall.locations).toBeUndefined();
     expect(interactionsRespond).toHaveBeenCalledWith(
       expect.any(String),
       { kind: 'permission', decision: { type: 'allow_once' } },
     );
+    // A file tool's dialog points at the file the Host worked out it would change.
+    const internals = server as unknown as {
+      requireSession(id: string): unknown;
+      requestPermissionFromClient(session: unknown, tool: string, input: Record<string, unknown>, toolId: string, change: { path: string }): Promise<unknown>;
+    };
+    await internals.requestPermissionFromClient(internals.requireSession(sessionId), 'write', { path: 'a.txt' }, 'call-perm-2', { path: 'C:/work/a.txt' });
+    expect(permissionCalls[1]!.toolCall.locations).toEqual([{ path: 'C:/work/a.txt' }]);
 
     releaseExecutor!({
       success: true, lastText: 'done', messages: [], sessionId,

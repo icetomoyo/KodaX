@@ -211,6 +211,39 @@ it('projects full current text and explicit revisions without replaying bounded 
   }
 });
 
+it('points the client at the file a tool changed, from what the Host recorded rather than a guess at its input', async () => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-acp-locations-'));
+  const runtime = await createKodaXRuntime({ homeDir });
+  const client = toKodaXProductClient(runtime);
+  const session = await client.sessions.create({ projectPath: homeDir });
+  let view: ClientSessionView = { session, settings: {}, items: [], queue: [], interactions: [], runs: [] };
+  let listener: ((next: ClientSessionView) => void) | undefined;
+  vi.spyOn(client.sessions, 'observe').mockImplementation(async (_id, receive) => {
+    listener ??= receive;
+    receive(view);
+    return { close() {} };
+  });
+  const updates: SessionNotification[] = [];
+  const projection = await observeAcpClientPrompt(asPlane(client), session.id, async update => { updates.push(update); },
+    async () => ({ type: 'allow_once' }), () => ({ kind: 'execute' }));
+  try {
+    const change = { path: path.join(homeDir, 'out.txt'), added: 1, removed: 0, unified: '@@ -0,0 +1,1 @@\n+hi' };
+    view = { ...view, items: [
+      { id: 'bash', type: 'tool', text: 'ok', tool: { callId: 'call-1', name: 'bash', status: 'success', inputText: '{"command":"echo hi > out.txt"}' } },
+      { id: 'write', type: 'tool', text: 'ok', tool: { callId: 'call-2', name: 'write', status: 'success', inputText: '{}', fileChange: change } },
+    ] };
+    listener!(view);
+    await projection.flush();
+    const locations = Object.fromEntries(updates.flatMap(({ update }) => update.sessionUpdate === 'tool_call_update'
+      ? [[update.toolCallId, update.locations]] : []));
+    expect(locations).toEqual({ 'call-1': undefined, 'call-2': [{ path: change.path }] });
+  } finally {
+    projection.close();
+    await runtime.close();
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
+
 it.each(['no-progress', 'disappeared'] as const)('fails promptly when a Host item page is %s', async scenario => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-acp-page-'));
   const runtime = await createKodaXRuntime({ homeDir });

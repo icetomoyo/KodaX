@@ -20,6 +20,7 @@ import { NOTICE_ICONS, type NoticeKind } from '../session-view-notices.js';
 type LocalSession = LocalSessionView['session'];
 type LocalInteraction = LocalSessionView['interactions'][number];
 type LocalSessionListItem = HostCallResult<'session.list', 'local'>['items'][number];
+type ClientFileChange = NonNullable<NonNullable<ClientViewItem['tool']>['fileChange']>;
 
 /** Where the text an item holds starts, and what it was the last time. */
 interface SeenText {
@@ -44,13 +45,20 @@ export function toClientSession(session: LocalSession | LocalSessionListItem): C
   };
 }
 
+/** v1 named a changed file by its path on the Host; v2 gives that to a local client as `hostPath`. */
+function toClientFileChange(change: { readonly path?: string; readonly hostPath: string }): ClientFileChange {
+  const { path: _workspacePath, hostPath, ...facts } = change;
+  return { ...facts, path: hostPath } as ClientFileChange;
+}
+
 export function toClientInteraction(interaction: LocalInteraction): ClientInteraction {
   const { id, request, createdAt, expiresAt, ...facts } = interaction;
+  const diff = 'diff' in request ? request.diff : undefined;
   // The Host builds the request from the same v1 options, so only the names differ.
   return {
     ...facts,
     requestId: id,
-    options: request,
+    options: diff === undefined ? request : { ...request, diff: toClientFileChange(diff) },
     createdAt: isoTime(createdAt)!,
     ...(expiresAt !== undefined ? { expiresAt: isoTime(expiresAt) } : {}),
   } as ClientInteraction;
@@ -92,6 +100,7 @@ export function toClientItem(item: LocalViewItem, textRevision?: number): Client
         ...(tool.progress !== undefined ? { progress: tool.progress } : {}),
         ...(tool.startedAt !== undefined ? { startedAt: tool.startedAt } : {}),
         ...(tool.endedAt !== undefined ? { endedAt: tool.endedAt } : {}),
+        ...(tool.change !== undefined ? { fileChange: toClientFileChange(tool.change) } : {}),
       },
     } : {}),
   };
