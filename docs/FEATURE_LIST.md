@@ -2755,9 +2755,9 @@ fixed GitHub binary archive sidecar omission before tagging.
   (`origin`, `fingerprint`), which the launcher needs to tell a newer build of
   the same version. The remaining callers still cannot simply switch: a Host
   from before v2 answers only v1, and replacing an idle older Host needs v1
-  `runtime.daemon.inspect` and shutdown on it. Keeping a v1 fallback only for
-  such Hosts until `v0.7.100` is the open design point here (not yet
-  confirmed by the owner).
+  `runtime.daemon.inspect` and shutdown on it. Owner decision (2026-11-24):
+  keep a minimal v1 fallback (inspect and shutdown) only for such Hosts, and
+  delete it with v1 in `v0.7.100`.
 - Risk: the window counts from the release that ships v2. If v2 ships after
   `v0.7.98`, fewer than two versions carry both protocols; recheck the line
   then.
