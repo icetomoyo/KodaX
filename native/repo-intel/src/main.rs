@@ -16,7 +16,7 @@ use std::io::{self, BufReader};
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    let mut server = Server::new(priority::enter_background());
+    let mut server = Server::new(priority::probe());
     let mut input = BufReader::new(io::stdin().lock());
     let mut output = io::stdout().lock();
     loop {

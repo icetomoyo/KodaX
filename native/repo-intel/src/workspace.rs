@@ -90,6 +90,9 @@ impl Workspace {
         let (signals, inbox) = mpsc::channel();
         let (shared, stop, folder) = (status.clone(), cancel.clone(), root.clone());
         let thread = thread::spawn(move || {
+            if let Err(reason) = crate::priority::lower_this_thread() {
+                eprintln!("kodax-repo-intel: indexing {} at normal priority: {reason}", folder.display());
+            }
             let mut index = Indexer { root: folder, store: &store, extractor: Extractor::default(), status: &shared };
             let mut pending = Pending { full: true, named: HashSet::new() };
             loop {

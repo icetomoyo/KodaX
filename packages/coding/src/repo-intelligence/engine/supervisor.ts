@@ -19,7 +19,7 @@ export interface RepoIntelSupervisorTiming {
   readonly statusTimeoutMs: number;
   /**
    * How long the engine may go without answering before it counts as stuck.
-   * It runs at background priority, so a busy machine can starve it for a while.
+   * It answers on a normal-priority thread, but a busy machine can still hold it up for a while.
    */
   readonly stuckMs: number;
   /** How long a repository may go unused before it is closed; the engine stops when none is left. */
