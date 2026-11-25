@@ -25,6 +25,7 @@ pub enum Referent {
 }
 
 /// Where following a name through imports ended.
+#[derive(Clone)]
 enum Found {
     In(BTreeSet<String>),
     External,
@@ -45,8 +46,6 @@ impl From<Found> for Referent {
 const RESOLVED_LANGUAGES: [&str; 6] = ["typescript", "tsx", "javascript", "python", "go", "rust"];
 /// Receivers that are the file's own code; inherited members stay unknown.
 const OWN_RECEIVERS: [&str; 4] = ["this", "self", "Self", "cls"];
-/// Re-export chains longer than this are taken as cycles.
-const MAX_HOPS: usize = 16;
 
 struct Facts {
     language: String,
@@ -90,11 +89,14 @@ pub struct Lookup<'s> {
     store: &'s Store,
     facts: HashMap<String, Option<Rc<Facts>>>,
     referents: HashMap<(String, String, Option<String>), Referent>,
+    /// Where each file gets each name it exports. Wildcard imports fan out at every step, so
+    /// without this a chain of `use super::*` is walked once per path through it.
+    exports: HashMap<(String, String), Found>,
 }
 
 impl<'s> Lookup<'s> {
     pub fn new(store: &'s Store) -> Lookup<'s> {
-        Lookup { store, facts: HashMap::new(), referents: HashMap::new() }
+        Lookup { store, facts: HashMap::new(), referents: HashMap::new(), exports: HashMap::new() }
     }
 
     /// What `name`, used in the file at `path` on `receiver` (`store` in `store.run()`), names.
@@ -131,7 +133,7 @@ impl<'s> Lookup<'s> {
     fn bare(&mut self, path: &str, facts: &Facts, name: &str) -> rusqlite::Result<Referent> {
         if let Some(import) = facts.import_of(name) {
             return Ok(match &import.lead {
-                Some(lead) if !binds_module(import) => self.follow(lead, &import.import.name, 0)?.into(),
+                Some(lead) if !binds_module(import) => self.follow(lead, &import.import.name)?.into(),
                 // A module called as a function, or a language without module resolution.
                 _ => Referent::Unknown,
             });
@@ -141,7 +143,7 @@ impl<'s> Lookup<'s> {
         }
         // TypeScript `export *` binds nothing in the file itself.
         if matches!(facts.language.as_str(), "python" | "go" | "rust") {
-            let found = self.through_wildcards(facts, name, 0)?;
+            let found = self.through_wildcards(facts, name)?;
             if !found.is_empty() {
                 return Ok(Referent::In(found));
             }
@@ -172,13 +174,13 @@ impl<'s> Lookup<'s> {
         if binds_module(import) {
             // `import pkg.util` binds `pkg`; only the whole dotted path is the module it leads to.
             let whole = !dotted || (import.import.name == "*" && import.import.module == receiver);
-            return Ok(if whole { self.follow(lead, name, 0)?.into() } else { Referent::Unknown });
+            return Ok(if whole { self.follow(lead, name)?.into() } else { Referent::Unknown });
         }
         if dotted {
             return Ok(Referent::Unknown);
         }
         // An imported item such as a class: the member is where the item is defined.
-        match self.follow(lead, &import.import.name, 0)? {
+        match self.follow(lead, &import.import.name)? {
             Found::In(owners) => self.defining(owners, name),
             found => Ok(found.into()),
         }
@@ -196,35 +198,49 @@ impl<'s> Lookup<'s> {
     }
 
     /// Where `name` is defined, starting from where an import leads.
-    fn follow(&mut self, lead: &Resolution, name: &str, hops: usize) -> rusqlite::Result<Found> {
+    fn follow(&mut self, lead: &Resolution, name: &str) -> rusqlite::Result<Found> {
         match lead {
             Resolution::External => Ok(Found::External),
             Resolution::Missing => Ok(Found::NotSeen),
             Resolution::Folder(folder) => self.in_package(folder, name),
-            Resolution::File(path) => self.exported(path, name, hops),
+            Resolution::File(path) => self.exported(path, name),
         }
     }
 
     /// Where the file at `path` gets its top-level `name`: from itself or from what it imports.
-    fn exported(&mut self, path: &str, name: &str, hops: usize) -> rusqlite::Result<Found> {
-        let Some(facts) = self.facts(path)?.filter(|_| hops <= MAX_HOPS) else { return Ok(Found::NotSeen) };
+    fn exported(&mut self, path: &str, name: &str) -> rusqlite::Result<Found> {
+        let key = (path.to_owned(), name.to_owned());
+        if let Some(found) = self.exports.get(&key) {
+            return Ok(found.clone());
+        }
+        // Reached again while still being worked out: an import cycle, cut here. A file inside
+        // the cycle can then come out NotSeen (left to name matching) where starting from it
+        // would have found the name; it never comes out naming the wrong file.
+        self.exports.insert(key.clone(), Found::NotSeen);
+        let found = self.exported_now(path, name)?;
+        self.exports.insert(key, found.clone());
+        Ok(found)
+    }
+
+    fn exported_now(&mut self, path: &str, name: &str) -> rusqlite::Result<Found> {
+        let Some(facts) = self.facts(path)? else { return Ok(Found::NotSeen) };
         if facts.defines(name, |d| d.container.is_none()) {
             return Ok(Found::In(BTreeSet::from([path.to_owned()])));
         }
         if let Some(import) = facts.import_of(name) {
             return match &import.lead {
-                Some(lead) if !binds_module(import) => self.follow(lead, &import.import.name, hops + 1),
+                Some(lead) if !binds_module(import) => self.follow(lead, &import.import.name),
                 _ => Ok(Found::NotSeen),
             };
         }
-        let found = self.through_wildcards(&facts, name, hops + 1)?;
+        let found = self.through_wildcards(&facts, name)?;
         Ok(if found.is_empty() { Found::NotSeen } else { Found::In(found) })
     }
 
-    fn through_wildcards(&mut self, facts: &Facts, name: &str, hops: usize) -> rusqlite::Result<BTreeSet<String>> {
+    fn through_wildcards(&mut self, facts: &Facts, name: &str) -> rusqlite::Result<BTreeSet<String>> {
         let mut found = BTreeSet::new();
         for lead in facts.wildcards() {
-            if let Found::In(files) = self.follow(&lead, name, hops)? {
+            if let Found::In(files) = self.follow(&lead, name)? {
                 found.extend(files);
             }
         }
@@ -365,6 +381,36 @@ mod tests {
                 ("src/lib.rs", "new", Some("Store"), files(&["src/store.rs"])),
                 ("src/store.rs", "make", Some("Self"), files(&["src/store.rs"])),
                 ("src/store.rs", "open", None, files(&["src/store.rs"])),
+            ],
+        );
+        workspace.close().unwrap();
+    }
+
+    #[test]
+    fn wildcard_imports_are_followed_once_per_file_even_in_cycles() {
+        // Fifteen levels of four modules, each importing every module of the next level with
+        // `*`: walked path by path that is 4^15 walks; codex's `use super::*` chains look like this.
+        let mut sources: Vec<(String, String)> = Vec::new();
+        for level in 0..15 {
+            for module in 0..4 {
+                let next: String = (0..4).map(|m| format!("from m{}_{m} import *\n", level + 1)).collect();
+                sources.push((format!("m{level}_{module}.py"), next));
+            }
+        }
+        sources.push(("m15_0.py".to_owned(), "def deep():\n    pass\n".to_owned()));
+        sources.push(("app.py".to_owned(), "from m0_0 import *\nfrom m0_1 import *\ndeep()\n".to_owned()));
+        sources.push(("cyc_a.py".to_owned(), "from cyc_b import *\ndef f():\n    pass\n".to_owned()));
+        sources.push(("cyc_b.py".to_owned(), "from cyc_a import *\n".to_owned()));
+        sources.push(("cyc_c.py".to_owned(), "from cyc_b import *\nf()\ng()\n".to_owned()));
+        let borrowed: Vec<(&str, &str)> = sources.iter().map(|(path, text)| (path.as_str(), text.as_str())).collect();
+        let (_dir, _storage, workspace) = indexed(&borrowed);
+        check(
+            &workspace,
+            &[
+                ("app.py", "deep", None, files(&["m15_0.py"])),
+                ("cyc_c.py", "g", None, Referent::Elsewhere),
+                ("cyc_c.py", "f", None, files(&["cyc_a.py"])),
+                ("cyc_b.py", "f", None, files(&["cyc_a.py"])),
             ],
         );
         workspace.close().unwrap();
