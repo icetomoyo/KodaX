@@ -1,10 +1,12 @@
 //! One open repository: a thread that keeps its index in step with the files.
-//! It sweeps once when opened, again when the Host reports changed files, and
-//! every `SWEEP_EVERY` in case something else changed them. A sweep reads only
-//! files whose size or modification time moved, or that the Host named.
+//! It sweeps once when opened and every `SWEEP_EVERY` in case something else
+//! changed them. A sweep lists the files with git and reads only those whose
+//! size or modification time moved. When the Host names files it changed and
+//! the index already knows them all, only those files are updated.
 
+use crate::extract::Extractor;
 use crate::manifest::{self, Language};
-use crate::store::{FileRow, FileStatus, Store};
+use crate::store::{FileRow, FileStatus, Known, Store};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -30,6 +32,7 @@ struct Status {
     state: &'static str,
     error: Option<String>,
     indexed: u64,
+    with_syntax_errors: u64,
     not_indexed: Vec<(String, u64)>,
     files_read: u64,
     sweeps: u64,
@@ -38,6 +41,19 @@ struct Status {
 enum Signal {
     Changed(Vec<String>),
     Close,
+}
+
+/// What the next pass covers: everything, or only files the Host named.
+struct Pending {
+    full: bool,
+    named: HashSet<String>,
+}
+
+impl Pending {
+    fn note(&mut self, paths: Vec<String>) {
+        self.full |= paths.is_empty();
+        self.named.extend(paths);
+    }
 }
 
 pub struct Workspace {
@@ -70,20 +86,21 @@ impl Workspace {
                 Ok(store) => store,
                 Err(error) => return update(&shared, |status| fail(status, format!("cannot open the index: {error}"))),
             };
-            let mut forced = HashSet::new();
+            let mut index = Indexer { root, store: &store, extractor: Extractor::default(), status: &shared };
+            let mut pending = Pending { full: true, named: HashSet::new() };
             loop {
-                let outcome = sweep(&root, &store, &forced, &stop, &shared);
-                forced.clear();
+                let outcome = index.run(&pending, &stop);
+                pending = Pending { full: false, named: HashSet::new() };
                 update(&shared, |status| finish(status, outcome, &store));
                 match inbox.recv_timeout(SWEEP_EVERY) {
-                    Ok(Signal::Changed(paths)) => forced.extend(paths),
+                    Ok(Signal::Changed(paths)) => pending.note(paths),
                     Ok(Signal::Close) | Err(RecvTimeoutError::Disconnected) => return,
-                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Timeout) => pending.full = true,
                 }
-                // Edits come in bursts: one sweep covers every notice already waiting.
+                // Edits come in bursts: one pass covers every notice already waiting.
                 while let Ok(signal) = inbox.try_recv() {
                     match signal {
-                        Signal::Changed(paths) => forced.extend(paths),
+                        Signal::Changed(paths) => pending.note(paths),
                         Signal::Close => return,
                     }
                 }
@@ -92,7 +109,7 @@ impl Workspace {
         Workspace { storage, status, signals, cancel, thread: Some(thread) }
     }
 
-    /// Re-reads the named files on the next sweep, which starts now.
+    /// Re-reads the named files now; with no names, sweeps the whole repository now.
     pub fn changed(&self, paths: Vec<String>) {
         // A send fails only when the thread has ended, and `close` reports that.
         let _ = self.signals.send(Signal::Changed(paths));
@@ -106,6 +123,7 @@ impl Workspace {
             "state": status.state,
             "error": status.error,
             "indexed": status.indexed,
+            "withSyntaxErrors": status.with_syntax_errors,
             "notIndexed": not_indexed,
             "filesRead": status.files_read,
             "sweeps": status.sweeps,
@@ -141,38 +159,80 @@ fn finish(status: &mut Status, outcome: Result<(), String>, store: &Store) {
             status.state = "ready";
             status.error = None;
             status.indexed = counts.indexed;
+            status.with_syntax_errors = counts.with_syntax_errors;
             status.not_indexed = counts.not_indexed;
         }
         Err(error) => fail(status, error),
     }
 }
 
-fn sweep(
-    root: &Path,
-    store: &Store,
-    forced: &HashSet<String>,
-    cancel: &AtomicBool,
-    status: &Mutex<Status>,
-) -> Result<(), String> {
-    let database = |error: rusqlite::Error| format!("the index failed: {error}");
-    let paths = manifest::list_files(root)?;
-    let known = store.known_files().map_err(database)?;
-    let mut present = HashSet::with_capacity(paths.len());
-    store.begin().map_err(database)?;
-    for (done, path) in paths.into_iter().enumerate() {
-        if cancel.load(Ordering::Relaxed) {
-            return store.commit().map_err(database);
+fn database(error: rusqlite::Error) -> String {
+    format!("the index failed: {error}")
+}
+
+struct Indexer<'a> {
+    root: PathBuf,
+    store: &'a Store,
+    extractor: Extractor,
+    status: &'a Mutex<Status>,
+}
+
+impl Indexer<'_> {
+    fn run(&mut self, pending: &Pending, cancel: &AtomicBool) -> Result<(), String> {
+        let mut all_known = true;
+        for path in &pending.named {
+            all_known &= self.store.known_file(path).map_err(database)?.is_some();
         }
-        if done > 0 && done % BATCH == 0 {
-            store.commit().and_then(|()| store.begin()).map_err(database)?;
+        if pending.full || !all_known {
+            // A file the index has not seen may be one git ignores, so let git decide.
+            self.sweep(&pending.named, cancel)
+        } else {
+            self.refresh(&pending.named)
         }
-        let file = root.join(&path);
+    }
+
+    fn sweep(&mut self, named: &HashSet<String>, cancel: &AtomicBool) -> Result<(), String> {
+        let paths = manifest::list_files(&self.root)?;
+        let known = self.store.known_files().map_err(database)?;
+        let mut present = HashSet::with_capacity(paths.len());
+        self.store.begin().map_err(database)?;
+        for (done, path) in paths.into_iter().enumerate() {
+            if cancel.load(Ordering::Relaxed) {
+                return self.store.commit().map_err(database);
+            }
+            if done > 0 && done % BATCH == 0 {
+                self.store.commit().and_then(|()| self.store.begin()).map_err(database)?;
+            }
+            // Listed by git but missing on disk (deleted, not yet staged): the file is gone.
+            if self.update_file(&path, known.get(&path), named.contains(&path)).map_err(database)? {
+                present.insert(path);
+            }
+        }
+        self.store.keep_only(&present).map_err(database)?;
+        self.store.commit().map_err(database)
+    }
+
+    fn refresh(&mut self, named: &HashSet<String>) -> Result<(), String> {
+        self.store.begin().map_err(database)?;
+        for path in named {
+            if !self.update_file(path, None, true).map_err(database)? {
+                self.store.remove_file(path).map_err(database)?;
+            }
+        }
+        // Analyses this leaves unused stay until the next sweep clears them: no file
+        // points at them, so no query sees them, and clearing them scans whole tables.
+        self.store.commit().map_err(database)
+    }
+
+    /// Brings one file's row up to date, reading it only if it moved or was named.
+    /// False when it is not a regular file on disk.
+    fn update_file(&mut self, path: &str, known: Option<&Known>, named: bool) -> rusqlite::Result<bool> {
+        let file = self.root.join(path);
         let Ok(metadata) = fs::metadata(&file) else {
-            // Listed by git but deleted on disk, not yet staged: the file is gone.
-            continue;
+            return Ok(false);
         };
         if !metadata.is_file() {
-            continue;
+            return Ok(false);
         }
         let size = metadata.len();
         let mtime_ns = metadata
@@ -180,41 +240,48 @@ fn sweep(
             .ok()
             .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
             .map_or(0, |since| since.as_nanos() as i64);
-        let unchanged = known.get(&path).is_some_and(|row| row.size == size && row.mtime_ns == mtime_ns);
-        if !unchanged || forced.contains(&path) {
-            let language = Language::of(&path);
-            let status_of_file = classify(&file, size, language, status);
-            if let (FileStatus::Indexed { hash }, Some(language)) = (&status_of_file, language) {
-                if !store.has_analysis(hash).map_err(database)? {
-                    store.record_analysis(hash, language.name()).map_err(database)?;
-                }
-            }
-            let row = FileRow { path: path.clone(), size, mtime_ns, language: language.map(Language::name), status: status_of_file };
-            store.record_file(&row).map_err(database)?;
+        if !named && known.is_some_and(|row| row.size == size && row.mtime_ns == mtime_ns) {
+            return Ok(true);
         }
-        present.insert(path);
+        let language = Language::of(path);
+        let status = match language {
+            None => FileStatus::NotIndexed { reason: "language" },
+            Some(language) => self.index_file(&file, size, language)?,
+        };
+        let row = FileRow { path: path.to_owned(), size, mtime_ns, language: language.map(Language::name), status };
+        self.store.record_file(&row)?;
+        Ok(true)
     }
-    store.keep_only(&present).map_err(database)?;
-    store.commit().map_err(database)
-}
 
-/// Decides whether a file is indexed, reading it only when it might be.
-fn classify(file: &Path, size: u64, language: Option<Language>, status: &Mutex<Status>) -> FileStatus {
-    if language.is_none() {
-        return FileStatus::NotIndexed { reason: "language" };
+    /// Reads and analyzes a source file, unless its content was analyzed before.
+    fn index_file(&mut self, file: &Path, size: u64, language: Language) -> rusqlite::Result<FileStatus> {
+        if size > MAX_FILE_BYTES {
+            return Ok(FileStatus::NotIndexed { reason: "size" });
+        }
+        update(self.status, |status| status.files_read += 1);
+        let Ok(bytes) = fs::read(file) else {
+            return Ok(FileStatus::NotIndexed { reason: "unreadable" });
+        };
+        if bytes[..bytes.len().min(BINARY_PROBE_BYTES)].contains(&0) {
+            return Ok(FileStatus::NotIndexed { reason: "binary" });
+        }
+        // The language is part of the key: the same text means different things in a .h and a .ts file.
+        let digest = Sha256::new().chain_update(language.name()).chain_update([0]).chain_update(&bytes).finalize();
+        let hash: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+        if self.store.has_analysis(&hash)? {
+            return Ok(FileStatus::Indexed { hash });
+        }
+        match self.extractor.extract(language, &bytes) {
+            Ok(analysis) => {
+                self.store.record_analysis(&hash, language.name(), &analysis)?;
+                Ok(FileStatus::Indexed { hash })
+            }
+            Err(error) => {
+                eprintln!("kodax-repo-intel: cannot analyze {}: {error}", file.display());
+                Ok(FileStatus::NotIndexed { reason: "unparsed" })
+            }
+        }
     }
-    if size > MAX_FILE_BYTES {
-        return FileStatus::NotIndexed { reason: "size" };
-    }
-    update(status, |status| status.files_read += 1);
-    let Ok(bytes) = fs::read(file) else {
-        return FileStatus::NotIndexed { reason: "unreadable" };
-    };
-    if bytes[..bytes.len().min(BINARY_PROBE_BYTES)].contains(&0) {
-        return FileStatus::NotIndexed { reason: "binary" };
-    }
-    let hash = Sha256::digest(&bytes).iter().map(|byte| format!("{byte:02x}")).collect();
-    FileStatus::Indexed { hash }
 }
 
 #[cfg(test)]
@@ -265,6 +332,24 @@ mod tests {
         fs::remove_file(dir.path().join("b.py")).unwrap();
         workspace.changed(vec![]);
         assert_eq!(wait_for_sweeps(&workspace, 5)["indexed"], 1);
+        workspace.close().unwrap();
+    }
+
+    #[test]
+    fn named_files_skip_the_sweep_unless_the_index_does_not_know_them() {
+        let dir = repo(&[("a.ts", "let a = 1;"), (".gitignore", "out/\n")]);
+        let storage = tempfile::tempdir().unwrap();
+        let workspace = Workspace::open(dir.path().to_owned(), storage.path().to_owned());
+        wait_for_sweeps(&workspace, 1);
+        fs::remove_file(dir.path().join("a.ts")).unwrap();
+        workspace.changed(vec!["a.ts".to_owned()]);
+        assert_eq!(wait_for_sweeps(&workspace, 2)["indexed"], 0);
+        fs::create_dir(dir.path().join("out")).unwrap();
+        fs::write(dir.path().join("out/x.ts"), "let x = 1;").unwrap();
+        fs::write(dir.path().join("c.ts"), "let c = 1;").unwrap();
+        workspace.changed(vec!["out/x.ts".to_owned(), "c.ts".to_owned()]);
+        let status = wait_for_sweeps(&workspace, 3);
+        assert_eq!(status["indexed"], 1, "only c.ts, because git ignores out/: {status}");
         workspace.close().unwrap();
     }
 

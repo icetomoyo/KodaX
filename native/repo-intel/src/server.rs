@@ -1,5 +1,6 @@
 //! Answers the Host's requests. One message in, at most one message out.
 
+use crate::manifest::Language;
 use crate::priority::Background;
 use crate::rpc::{self, failure, success};
 use crate::workspace::{Workspace, storage_dir};
@@ -145,7 +146,7 @@ impl Server {
         };
         Ok(json!({
             "version": env!("CARGO_PKG_VERSION"),
-            "languages": [],
+            "languages": Language::ALL.map(Language::name),
             "memoryBudgetMb": memory_budget_mb,
             "background": background,
         }))
@@ -201,6 +202,7 @@ mod tests {
         assert_eq!(reply["result"]["memoryBudgetMb"], 300);
         assert_eq!(reply["result"]["background"], json!({ "active": false, "reason": "no" }));
         assert_eq!(reply["result"]["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(reply["result"]["languages"].as_array().unwrap().len(), 8);
     }
 
     #[test]

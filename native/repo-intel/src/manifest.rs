@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::process::Command;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Language {
     TypeScript,
     Tsx,
@@ -16,6 +16,17 @@ pub enum Language {
 }
 
 impl Language {
+    pub const ALL: [Language; 8] = [
+        Language::TypeScript,
+        Language::Tsx,
+        Language::JavaScript,
+        Language::Python,
+        Language::Go,
+        Language::Rust,
+        Language::Java,
+        Language::Cpp,
+    ];
+
     pub fn name(self) -> &'static str {
         match self {
             Language::TypeScript => "typescript",
