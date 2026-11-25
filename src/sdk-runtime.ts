@@ -120,6 +120,7 @@ import { assembleConversationHistoryEntry, readFollowingMessage } from './conver
 import { CLIENT_CONFIG_APPLICATION, toClientConfig, toClientSessionSettings } from "./client-settings.js";
 export type { ClientHistoryTurnSelector, ClientHistoryTurnResolution } from '@kodax-ai/coding/client-contract';
 import { createHostIntegrations } from "./host-integrations.js";
+import { createRepoIntelEngineHost, relayRunEventToRepoIntel } from "./repo-intel-engine-host.js";
 import { spawnSync } from "node:child_process";
 import { RUNTIME_AUTO_MODE_GUARDRAIL_CAPABILITY } from './runtime-capability-facts.js';
 import * as fs from "node:fs";
@@ -4884,8 +4885,16 @@ async function createKodaXRuntimeInternal(
   const sessionListChanged = (): void => {
     for (const listener of [...sessionListListeners]) listener();
   };
+  // Lazy: no engine process starts until a Run opens a repository.
+  const repoIntelEngine = createRepoIntelEngineHost({ configHome, env: process.env,
+    onLog: (level, message) => emitKodaXDiagnostic({ source: "repo-intel", level, message }) });
   const bus = createRuntimeEventBus((sessionId, type, payload, scope) => {
     if (type === 'session.created') executionFacts.created(sessionId);
+    if (repoIntelEngine && (type === 'run.started' || type === 'tool.finished')) {
+      const record = runs.get(scope.runId);
+      const root = record?.admittedSessionContext?.gitRoot ?? record?.start?.options.context?.executionCwd;
+      if (root) relayRunEventToRepoIntel(repoIntelEngine, type, payload, root);
+    }
     if (SESSION_LIST_EVENTS.has(type)) sessionListChanged();
     if (type === 'session.rewound' || type === 'session.active_entry.updated') {
       sessionViews.resetHistory(sessionId);
@@ -5828,6 +5837,7 @@ async function createKodaXRuntimeInternal(
       }
       if (!hostResourcesClosed) {
         agentStore?.close();
+        await repoIntelEngine?.close();
         await integrations.close();
         releaseRuntimeAgentHome?.();
         if (getActiveUserInteraction() === sharedElicitSurface) {

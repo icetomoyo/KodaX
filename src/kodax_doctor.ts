@@ -24,6 +24,9 @@ import {
   probeTrustedTextNativeBinding,
   type TrustedTextNativeBindingProbe,
 } from './windows-text-transaction.js';
+import {
+  inspectRepoIntelEngine, REPO_INTEL_ENGINE_PATH, REPO_INTEL_ENGINE_SWITCH, type RepoIntelEngineInspection,
+} from './repo-intel-engine-host.js';
 
 interface DirSummary {
   readonly count: number;
@@ -66,6 +69,8 @@ interface DoctorReport {
   readonly traces: DirSummary | null;
   /** The Host serving this home, in the vocabulary of `kodax host status`. */
   readonly host: { readonly state: HostHealthState; readonly runtimeId?: string; readonly pid?: number };
+  /** A missing or broken engine is reported, not failed: RepoIntel keeps working without it. */
+  readonly repoIntel: RepoIntelEngineInspection;
   /** Present only when `--native-text` explicitly loads the verified addon. */
   readonly trustedTextNative?: TrustedTextNativeBindingProbe;
   /** Present only when `--ping` ran. Live reachability per configured provider. */
@@ -195,7 +200,24 @@ async function buildReport(version: string): Promise<DoctorReport> {
     sessions: summarizeDir(path.join(home, 'sessions')),
     traces: summarizeDir(path.join(home, '.traces')),
     host: await inspectHost(home),
+    repoIntel: await inspectRepoIntelEngine(home, process.env),
   };
+}
+
+function repoIntelLines(report: RepoIntelEngineInspection): string[] {
+  if (!report.enabled) return [`  off (set ${REPO_INTEL_ENGINE_SWITCH}=v2 to try it)`];
+  if (report.program === undefined) {
+    return [
+      '  ✗ program not found; looked in:',
+      ...(report.searched ?? []).map(place => `    ${place}`),
+      `  Put the program from the GitHub Release in one of those places, or set ${REPO_INTEL_ENGINE_PATH} to it.`,
+      '  RepoIntel keeps working without it.',
+    ];
+  }
+  const engine = report.engine;
+  if (engine === undefined || 'error' in engine) return [`  ✗ ${report.program}: ${engine?.error ?? 'not started'}`];
+  const priority = engine.background.active ? 'background priority' : `normal priority (${engine.background.reason ?? 'background unavailable'})`;
+  return [`  ✓ ${report.program}`, `  v${engine.version}; ${priority}; ${engine.languages.join(', ')}`];
 }
 
 function summaryLine(label: string, summary: DirSummary | null): string {
@@ -246,6 +268,9 @@ export async function runDoctor(
     '',
     'Host',
     `  ${report.host.state}${report.host.runtimeId !== undefined ? ` (${report.host.runtimeId}, PID ${report.host.pid})` : ''}`,
+    '',
+    'RepoIntel v2 engine',
+    ...repoIntelLines(report.repoIntel),
     '',
     'Retained locks (presence alone does not prove abandonment)',
     ...report.locks.items.map(item => `  ${item.state}: ${item.path}${item.record ? `; ${item.kind}, record=${item.record}, ownership=${item.ownership}` : ''}`),

@@ -152,6 +152,28 @@ describe('kodax doctor trusted text diagnostic', () => {
     } finally { fs.rmSync(home, { recursive: true, force: true }); }
   });
 
+  it('reports the RepoIntel v2 engine: off by default, and how to supply a missing program without failing', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-doctor-repo-intel-'));
+    vi.stubEnv('KODAX_HOME', home);
+    const output: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((value?: unknown) => { output.push(String(value)); });
+    try {
+      await runDoctor('test', true);
+      expect(JSON.parse(output[0]!)).toMatchObject({ repoIntel: { enabled: false } });
+
+      const missing = path.join(home, 'kodax-repo-intel');
+      vi.stubEnv('KODAX_REPO_INTELLIGENCE_ENGINE', 'v2');
+      vi.stubEnv('KODAX_REPO_INTELLIGENCE_ENGINE_PATH', missing);
+      output.length = 0;
+      expect(await runDoctor('test', true)).toBe(0);
+      expect(JSON.parse(output[0]!)).toMatchObject({ repoIntel: { enabled: true, searched: [missing] } });
+
+      output.length = 0;
+      await runDoctor('test', false);
+      expect(output.join('\n')).toMatch(/RepoIntel v2 engine\r?\n {2}✗ program not found[\s\S]*KODAX_REPO_INTELLIGENCE_ENGINE_PATH/);
+    } finally { fs.rmSync(home, { recursive: true, force: true }); }
+  });
+
   it('never treats digits in a parser excerpt as an offset', async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-doctor-excerpt-'));
     vi.stubEnv('KODAX_HOME', home);

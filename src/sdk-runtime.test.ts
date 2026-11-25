@@ -18742,9 +18742,11 @@ describe("createKodaXRuntime", () => {
       sessionId: session.id,
       prompt: "write safely",
     });
-    await flushMicrotasks();
-    const [pending] = await runtime.permissions.listPending({
-      runId: handle.runId,
+    // Under load the Run can take longer than one timer tick to ask.
+    const pending = await vi.waitFor(async () => {
+      const [request] = await runtime.permissions.listPending({ runId: handle.runId });
+      if (!request) throw new Error("no permission request yet");
+      return request;
     });
     expect(JSON.parse(pending?.inputPreview ?? "")).toEqual({
       __truncated: true,
@@ -19531,6 +19533,35 @@ describe("createKodaXRuntime", () => {
       runtime.userInputs.listPending({ runId: handle.runId }),
     ).resolves.toEqual([]);
     await runtime.runs.abort(handle.runId);
+    await runtime.close();
+  });
+
+  const repoIntelEngineProgram = path.resolve(
+    `native/repo-intel/target/release/kodax-repo-intel${process.platform === "win32" ? ".exe" : ""}`);
+  it.skipIf(!nodeFs.existsSync(repoIntelEngineProgram))("indexes a Run's repository with the RepoIntel v2 engine when the switch is on", async () => {
+    vi.stubEnv("KODAX_REPO_INTELLIGENCE_ENGINE", "v2");
+    vi.stubEnv("KODAX_REPO_INTELLIGENCE_ENGINE_PATH", repoIntelEngineProgram);
+    const repo = path.join(tempRoot, "repo");
+    await fs.mkdir(repo);
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    await fs.writeFile(path.join(repo, "a.ts"), "export function run() {}\n");
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
+    const runtime = await createKodaXRuntime({ homeDir: tempRoot, sessionsDir: tempRoot, defaultProvider: "mock-provider" });
+    const session = await runtime.sessions.create({ title: "RepoIntel v2", projectPath: repo });
+    codingMock.runManagedTask.mockResolvedValue({ success: true, lastText: "done", messages: [], sessionId: session.id } satisfies KodaXResult);
+    const handle = await runtime.runs.start({ sessionId: session.id, prompt: "index it" });
+    await handle.result;
+
+    const storage = path.join(tempRoot, ".kodax", "repo-intelligence-v2");
+    const deadline = Date.now() + 10_000;
+    let indexes: string[] = [];
+    while (indexes.length === 0 && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+      indexes = nodeFs.existsSync(storage)
+        ? (await fs.readdir(storage)).filter(entry => nodeFs.existsSync(path.join(storage, entry, "index.sqlite")))
+        : [];
+    }
+    expect(indexes).toEqual([expect.stringMatching(/^repo-[0-9a-f]{12}$/)]);
     await runtime.close();
   });
 
