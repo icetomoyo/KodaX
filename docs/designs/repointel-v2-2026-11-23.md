@@ -1,6 +1,6 @@
 # RepoIntel v2：可信且不拖慢 KodaX 的仓库智能
 
-日期：2026-11-23。状态：**阶段 0 已发布（v0.7.97-beta.12）；阶段 1 进行中（2026-11-25 起，计划见 §10）。**
+日期：2026-11-23。状态：**阶段 0 已发布（v0.7.97-beta.12）；阶段 1 已完成（2026-11-25，见 §10）；阶段 2 进行中（计划见 §11）。**
 基线：`c9589bdc2`（v0.7.97-rc.1）。
 
 ## 1. 为什么要重做
@@ -416,3 +416,28 @@ L3 精确层   按需：通过 Host 现有 LSP 服务（packages/coding/src/lsp/
 - **不进 npm 包：** npm 包的审计脚本见到 `kodax-repo-intel` 就失败。npm 用户要用引擎，就从 Release 压缩包里取出程序，设 `KODAX_REPO_INTELLIGENCE_ENGINE_PATH`。
 - **Linux：** 和原生文本组件一样，在钉死摘要的 `manylinux2014` 容器里编译（`build-linux-native.mjs repo-intel`），再过 glibc 2.17 检查。
 - **真机测试：** Release 流程在五个平台上都跑 `cargo test --release`。Linux 和 macOS 的线程优先级、进程内存这些测试，第一次在真机上跑就是下一次 Release 或手动触发的构建。
+
+## 11. 阶段 2 实施计划（2026-11-25）
+
+范围按 §7：L2 模块解析、仓库地图注入；按 §4.3 给 Agent 加导航工具。全部仍在 `KODAX_REPO_INTELLIGENCE_ENGINE=v2` 开关后面。退出条件：任务 A/B 赢过只用 grep 加 LSP。
+
+### 11.1 分层提交
+
+1. 本节计划。
+2. L1 补 import：每个文件记下导入了什么（模块说明符、导入的名字、本地别名、是否 re-export）。七种语言都提取，只有首批四种语言做解析。
+3. L2 TS/JS 模块解析：相对路径、`.js` 写成 `.ts`、目录的 index 文件、tsconfig 的 `paths` 和 `baseUrl`、workspace 包名按 package.json 解析到源码。产出文件级的 import 边，每条带证据（解析到了，或者没解析到及原因：外部包、找不到）。按编译器真值评测 import 边（旧引擎 70% / 63.6%）。
+4. L2 Python、Go、Rust 模块解析：Python 的包目录和相对导入，Go 的 `go.mod` 模块路径，Rust 的 `mod` 声明、`crate::` / `super::` 路径和 Cargo workspace 的 crate 名。用小型夹具测；这三种语言的真值集按 §9 第 5 条另做。
+5. 引用解析：一个名字先找本文件的定义，再顺着 import（含多跳 re-export）找到被导入文件里的定义，都找不到才退回同名匹配。解析到的引用标 `syntactic`，同名匹配仍标 `heuristic`。新增"某个定义的引用"查询。按编译器真值评测调用方（阶段 1 基线 34.4% / 97.5%），要在召回率基本不降的前提下提高精确率。
+6. 仓库地图：引擎按 import 图给文件排序（PageRank），每个文件列出排在前面的定义及签名，控制在 token 预算内。输出只取决于索引内容，不带时间，同样的索引得到同样的文本。
+7. Host 到工具的通道：supervisor 增加查询；`KodaXContextOptions` 增加可选的 RepoIntel 查询服务，Host 在 `buildRunOptions` 里注入，做法和 `lspService` 一样。索引不是 ready 时，查询直接回"还没好"，工具只告诉模型去用 grep 和 read。然后加导航工具。
+8. 地图注入：放进 Managed Run Context，和现有的 Repository Intelligence 段放在一起。新会话注入一次，之后只在内容变化时重述，沿用现有的变化检测。索引没好时不注入。
+9. 评测：先用 Layer 2 提示词 eval 检查工具说明和地图（ADR-033），再做任务 A/B。A/B 的用例、模型和预算先给用户确认再跑。
+
+### 11.2 未经用户确认的实现选择
+
+- **工具形态：** 先加两个工具：`find_symbol`（按名字查定义，可选带上引用，按文件分组、可翻页）和 `file_outline`（一个文件的定义和签名）。都不延迟加载，因为延迟会让模型多一轮才能看到完整说明。LSP 工具保持原样；A/B 的基线就是 grep 加 LSP。影响面和 BM25 定位按 §7 留到阶段 3、4。
+- **索引没好时的回答：** 工具返回正常结果（不是错误），说明索引在建、已索引多少文件，请用 grep 和 read。地图同样不注入半成品。
+- **地图预算：** 先定 1,024 token 左右，用 eval 调。只列文件和定义，不列行号以外的细节；没有定义的文件不打印。
+- **地图稳定性：** 只有排进地图的文件或它们列出的定义变了，地图文本才会变。普通编辑改的是函数体，地图不变，不会引起重述。
+- **语言范围：** L2 做首批四种语言（TS/JS、Python、Go、Rust）。Java、C++ 只有语法层，引用仍是同名匹配，按 §4.2。
+- **import 的存储：** import 跟着文件内容存（按内容 hash），解析结果跟着文件路径存，因为同一份内容放在不同位置解析结果不同。新增文件、删除文件或 tsconfig、package.json、go.mod、Cargo.toml 改动时，重新解析受影响的文件。
