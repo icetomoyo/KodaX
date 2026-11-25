@@ -1,5 +1,6 @@
 //! Answers to the Host's questions, each labeled with how far to trust it:
-//! - precision: `syntactic` for definitions, `heuristic` for references (a name match, not a resolution);
+//! - precision: `syntactic` for definitions and for references resolved through imports,
+//!   `heuristic` for references matched by name only;
 //! - completeness: the total and the next page, and what the index left out and why;
 //! - freshness: hits in files that changed since they were indexed are marked `stale`.
 //!
@@ -8,6 +9,7 @@
 
 use crate::extract::Extractor;
 use crate::manifest::{self, Language};
+use crate::references::{Lookup, Referent};
 use crate::resolve::Resolution;
 use crate::store::{Entry, Hit, Known, Store, Table};
 use serde_json::{Value, json};
@@ -34,14 +36,7 @@ pub fn on_disk(file: &Path) -> Option<Known> {
 pub fn find(store: &Store, root: &Path, table: Table, name: &str, limit: u64, offset: u64) -> rusqlite::Result<Value> {
     let (hits, total) = store.find(table, name, limit, offset)?;
     let end = offset + hits.len() as u64;
-    let hits: Vec<Value> = hits
-        .iter()
-        .map(|hit| {
-            let mut value = hit_json(hit, None);
-            value["stale"] = json!(on_disk(&root.join(&hit.path)).as_ref() != Some(&hit.known));
-            value
-        })
-        .collect();
+    let hits: Vec<Value> = hits.iter().map(|hit| found_json(root, hit)).collect();
     Ok(json!({
         "precision": match table { Table::Definitions => "syntactic", Table::References => "heuristic" },
         "hits": hits,
@@ -49,6 +44,61 @@ pub fn find(store: &Store, root: &Path, table: Table, name: &str, limit: u64, of
         "offset": offset,
         "nextOffset": if end < total { json!(end) } else { Value::Null },
     }))
+}
+
+/// The references that name the definition `name` in the file at `path`: first those resolved
+/// to that file through its imports (`syntactic`, including uses under an import alias), then
+/// those the index cannot resolve, matched by name (`heuristic`), each in path and line order.
+/// References resolved elsewhere are left out.
+pub fn references_to(store: &Store, root: &Path, path: &str, name: &str, limit: u64, offset: u64) -> rusqlite::Result<Value> {
+    let mut lookup = Lookup::new(store);
+    let (mut resolved, mut matched) = (Vec::new(), Vec::new());
+    for (hit, receiver) in store.references_named(name)? {
+        match lookup.referent(&hit.path, name, receiver.as_deref())? {
+            Referent::In(files) if files.contains(path) => resolved.push(hit),
+            Referent::Unknown => matched.push(hit),
+            Referent::In(_) | Referent::Elsewhere => {}
+        }
+    }
+    for (importer, alias) in store.aliases_of(name)? {
+        for (hit, receiver) in store.references_named(&alias)? {
+            if hit.path != importer {
+                continue;
+            }
+            if matches!(lookup.referent(&hit.path, &alias, receiver.as_deref())?, Referent::In(files) if files.contains(path)) {
+                resolved.push(hit);
+            }
+        }
+    }
+    resolved.sort_by(|a, b| (&a.path, a.line, a.column).cmp(&(&b.path, b.line, b.column)));
+    let total = (resolved.len() + matched.len()) as u64;
+    let labeled = resolved.iter().map(|hit| (hit, "syntactic")).chain(matched.iter().map(|hit| (hit, "heuristic")));
+    let hits: Vec<Value> = labeled
+        .skip(offset as usize)
+        .take(limit as usize)
+        .map(|(hit, precision)| {
+            let mut value = found_json(root, hit);
+            value["precision"] = json!(precision);
+            value
+        })
+        .collect();
+    let end = offset + hits.len() as u64;
+    Ok(json!({
+        "path": path,
+        "name": name,
+        "hits": hits,
+        "total": total,
+        "resolved": resolved.len(),
+        "offset": offset,
+        "nextOffset": if end < total { json!(end) } else { Value::Null },
+    }))
+}
+
+/// A hit as found in the index, marked `stale` when its file changed since.
+fn found_json(root: &Path, hit: &Hit) -> Value {
+    let mut value = hit_json(hit, None);
+    value["stale"] = json!(on_disk(&root.join(&hit.path)).as_ref() != Some(&hit.known));
+    value
 }
 
 fn hit_json(hit: &Hit, signature: Option<&str>) -> Value {

@@ -65,10 +65,12 @@ pub enum FileStatus {
 }
 
 /// An import with where it leads; `lead` is None when the language has no module resolution.
+/// `submodule` when the imported name is itself a module (`from pkg import models`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedImport {
     pub import: Import,
     pub lead: Option<Resolution>,
+    pub submodule: bool,
 }
 
 /// Where one import of the file at `path` leads. `name` is empty for the module itself, and
@@ -358,6 +360,49 @@ impl Store {
         Ok((hits, total as u64))
     }
 
+    /// Every reference named `name`, with what it is used on, in path and line order.
+    pub fn references_named(&self, name: &str) -> rusqlite::Result<Vec<(Hit, Option<String>)>> {
+        let mut statement = self.connection.prepare_cached(
+            "SELECT f.path, f.size, f.mtime_ns, a.language, t.line, t.column, t.kind, t.receiver
+             FROM refs t JOIN analyses a ON a.id = t.analysis JOIN files f ON f.hash = a.hash
+             WHERE t.name = ?1 ORDER BY f.path, t.line, t.column",
+        )?;
+        statement
+            .query_map(params![name], |row| {
+                let hit = Hit {
+                    path: row.get(0)?,
+                    known: Known { size: row.get::<_, i64>(1)? as u64, mtime_ns: row.get(2)? },
+                    language: row.get(3)?,
+                    name: name.to_owned(),
+                    line: row.get(4)?,
+                    column: row.get(5)?,
+                    kind: row.get(6)?,
+                    container: None,
+                    end_line: None,
+                };
+                Ok((hit, row.get(7)?))
+            })?
+            .collect()
+    }
+
+    /// The files that import `name` under another name, and that name (`import { a as b }`).
+    pub fn aliases_of(&self, name: &str) -> rusqlite::Result<Vec<(String, String)>> {
+        let mut statement = self.connection.prepare_cached(
+            "SELECT DISTINCT f.path, i.local FROM imports i JOIN analyses a ON a.id = i.analysis JOIN files f ON f.hash = a.hash
+             WHERE i.name = ?1 AND i.local <> ?1 AND i.local <> '' ORDER BY f.path, i.local",
+        )?;
+        statement.query_map(params![name], |row| Ok((row.get(0)?, row.get(1)?)))?.collect()
+    }
+
+    /// The paths of files with a top-level definition named `name`.
+    pub fn top_level_paths(&self, name: &str) -> rusqlite::Result<Vec<String>> {
+        let mut statement = self.connection.prepare_cached(
+            "SELECT DISTINCT f.path FROM definitions t JOIN analyses a ON a.id = t.analysis JOIN files f ON f.hash = a.hash
+             WHERE t.name = ?1 AND t.container IS NULL ORDER BY f.path",
+        )?;
+        statement.query_map(params![name], |row| row.get(0))?.collect()
+    }
+
     pub fn entry(&self, path: &str) -> rusqlite::Result<Option<Entry>> {
         let row = self
             .connection
@@ -407,7 +452,7 @@ impl Store {
     /// What the file at `path` imports, in source order, with where each import leads; empty when it is not indexed.
     pub fn imports(&self, path: &str) -> rusqlite::Result<Vec<ResolvedImport>> {
         let mut statement = self.connection.prepare_cached(
-            "SELECT i.module, i.name, i.local, COALESCE(n.target, m.target), COALESCE(n.kind, m.kind)
+            "SELECT i.module, i.name, i.local, COALESCE(n.target, m.target), COALESCE(n.kind, m.kind), n.kind IS NOT NULL
              FROM files f JOIN analyses a ON a.hash = f.hash JOIN imports i ON i.analysis = a.id
              LEFT JOIN edges m ON m.path = f.path AND m.module = i.module AND m.name = ''
              LEFT JOIN edges n ON n.path = f.path AND n.module = i.module AND n.name = i.name AND i.name <> ''
@@ -420,6 +465,7 @@ impl Store {
                 Ok(ResolvedImport {
                     import: Import { module: row.get(0)?, name: row.get(1)?, local: row.get(2)? },
                     lead: kind.and_then(|kind| Resolution::from_parts(target, &kind)),
+                    submodule: row.get(5)?,
                 })
             })?
             .collect()
@@ -556,6 +602,9 @@ mod tests {
         assert_eq!((hits.len(), total), (1, 2));
         assert_eq!((hits[0].path.as_str(), hits[0].container.as_deref(), hits[0].end_line), ("a.ts", Some("Store"), Some(1)));
         assert_eq!(store.find(Table::Definitions, "run", 5, 1).unwrap().0[0].path, "b.ts");
+        let named = store.references_named("run").unwrap();
+        assert_eq!(named.iter().map(|(hit, receiver)| (hit.path.as_str(), receiver.clone())).collect::<Vec<_>>(), vec![("a.ts", None), ("b.ts", None)]);
+        assert_eq!(store.top_level_paths("run").unwrap(), Vec::<String>::new(), "run sits in Store");
         let (references, total) = store.find(Table::References, "run", 5, 0).unwrap();
         assert_eq!((references[0].line, references[0].kind.as_str(), references[0].end_line, total), (4, "call", None, 2));
         assert_eq!(store.find(Table::Definitions, "missing", 5, 0).unwrap(), (vec![], 0));
@@ -570,7 +619,7 @@ mod tests {
         with_imports.imports = vec![import("./z", "b", "b"), import("./a", "*", "")];
         store.record_analysis("h", "typescript", &with_imports).unwrap();
         store.record_file(&row("a.ts", indexed("h"))).unwrap();
-        let unresolved = |import: Import| ResolvedImport { import, lead: None };
+        let unresolved = |import: Import| ResolvedImport { import, lead: None, submodule: false };
         assert_eq!(store.imports("a.ts").unwrap(), with_imports.imports.iter().cloned().map(unresolved).collect::<Vec<_>>());
         assert_eq!(store.imports("none.ts").unwrap(), vec![]);
         store.keep_only(&HashSet::new()).unwrap();
@@ -609,6 +658,8 @@ mod tests {
         ];
         store.replace_edges(None, &edges).unwrap();
         let leads = |path: &str| store.imports(path).unwrap().into_iter().map(|i| i.lead).collect::<Vec<_>>();
+        let submodules = store.imports("a.ts").unwrap().into_iter().map(|i| i.submodule).collect::<Vec<_>>();
+        assert_eq!(submodules, vec![false, false, false, true]);
         let sub = Resolution::Folder("b".to_owned());
         assert_eq!(leads("a.ts"), vec![Some(b.clone()), Some(Resolution::External), Some(b.clone()), Some(sub)]);
         assert_eq!(leads("c.ts")[0], Some(Resolution::Missing));

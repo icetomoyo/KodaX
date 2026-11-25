@@ -125,6 +125,12 @@ impl Server {
             }
             (State::Running(_), "symbols.definitions") => self.find(Table::Definitions, &params),
             (State::Running(_), "symbols.references") => self.find(Table::References, &params),
+            (State::Running(_), "symbols.referencesTo") => {
+                let path = relative_path(&params)?;
+                let (name, limit, offset) = named_page(&params)?;
+                let workspace = self.open_workspace(&params)?;
+                workspace.references_to(&path, name, limit, offset).map_err(|error| (rpc::INTERNAL_ERROR, error))
+            }
             (State::Running(_), "file.outline") => {
                 let path = relative_path(&params)?;
                 let root = root_of(&params)?;
@@ -141,16 +147,7 @@ impl Server {
     }
 
     fn find(&self, table: Table, params: &Value) -> Answer {
-        let name = params
-            .get("name")
-            .and_then(Value::as_str)
-            .filter(|name| !name.is_empty())
-            .ok_or((rpc::INVALID_PARAMS, "name must be a non-empty string.".to_owned()))?;
-        let limit = whole_number(params, "limit", query::DEFAULT_LIMIT)?;
-        if !(1..=query::MAX_LIMIT).contains(&limit) {
-            return Err((rpc::INVALID_PARAMS, format!("limit must be between 1 and {}.", query::MAX_LIMIT)));
-        }
-        let offset = whole_number(params, "offset", 0)?;
+        let (name, limit, offset) = named_page(params)?;
         let workspace = self.open_workspace(params)?;
         workspace.find(table, name, limit, offset).map_err(|error| (rpc::INTERNAL_ERROR, error))
     }
@@ -193,6 +190,20 @@ impl Server {
             "background": background,
         }))
     }
+}
+
+/// The `name` asked for and the page: `limit` and `offset`.
+fn named_page(params: &Value) -> Result<(&str, u64, u64), (i64, String)> {
+    let name = params
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty())
+        .ok_or((rpc::INVALID_PARAMS, "name must be a non-empty string.".to_owned()))?;
+    let limit = whole_number(params, "limit", query::DEFAULT_LIMIT)?;
+    if !(1..=query::MAX_LIMIT).contains(&limit) {
+        return Err((rpc::INVALID_PARAMS, format!("limit must be between 1 and {}.", query::MAX_LIMIT)));
+    }
+    Ok((name, limit, whole_number(params, "offset", 0)?))
 }
 
 fn whole_number(params: &Value, key: &str, default: u64) -> Result<u64, (i64, String)> {
@@ -313,6 +324,9 @@ mod tests {
         assert_eq!(error_code(server.handle(request(2, "symbols.definitions", find(json!(""), Value::Null)))), rpc::INVALID_PARAMS);
         assert_eq!(error_code(server.handle(request(3, "symbols.references", find(json!("x"), json!(0))))), rpc::INVALID_PARAMS);
         assert_eq!(error_code(server.handle(request(4, "symbols.references", find(json!("x"), json!(501))))), rpc::INVALID_PARAMS);
+        let to = |path: Value| json!({ "root": absolute_root(), "path": path, "name": "x" });
+        assert_eq!(error_code(server.handle(request(6, "symbols.referencesTo", to(json!("../a.ts"))))), rpc::INVALID_PARAMS);
+        assert_eq!(error_code(server.handle(request(7, "symbols.referencesTo", to(Value::Null)))), rpc::INVALID_PARAMS);
         for path in ["../a.ts", "", "a/../../b.ts"] {
             let params = json!({ "root": root, "path": path });
             assert_eq!(error_code(server.handle(request(5, "file.outline", params))), rpc::INVALID_PARAMS, "{path}");

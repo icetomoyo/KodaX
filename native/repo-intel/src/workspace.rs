@@ -135,6 +135,19 @@ impl Workspace {
         Ok(answer)
     }
 
+    /// One page of the references to the definition `name` in the file at `path`.
+    pub fn references_to(&self, path: &str, name: &str, limit: u64, offset: u64) -> Result<Value, String> {
+        let mut answer = query::references_to(&self.reader, &self.root, path, name, limit, offset)
+            .map_err(|error| format!("the index failed: {error}"))?;
+        answer["coverage"] = self.coverage();
+        Ok(answer)
+    }
+
+    #[cfg(test)]
+    pub fn reader(&self) -> &Store {
+        &self.reader
+    }
+
     /// What one file imports and where each import leads.
     pub fn imports(&self, path: &str) -> Result<Value, String> {
         let mut answer = query::imports(&self.reader, &self.root, path)?;
@@ -384,13 +397,13 @@ impl Indexer<'_> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::manifest::tests::repo;
     use std::fs;
     use std::time::Instant;
 
-    fn wait_for_sweeps(workspace: &Workspace, sweeps: u64) -> Value {
+    pub fn wait_for_sweeps(workspace: &Workspace, sweeps: u64) -> Value {
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             let status = workspace.status();
@@ -532,6 +545,44 @@ mod tests {
                 json!(["crate", "Config", "src/lib.rs", null, null]),
             ]
         );
+        workspace.close().unwrap();
+    }
+
+    #[test]
+    fn lists_the_references_to_a_definition_resolved_ones_first() {
+        let dir = repo(&[
+            ("store.ts", "export function open() {}
+function local() { open(); }
+"),
+            ("other.ts", "export function open() {}
+open();
+"),
+            ("app.ts", "import { open } from './store';
+open();
+conn.open();
+"),
+            ("alias.ts", "import { open as begin } from './store';
+import { open as other } from './other';
+begin();
+other();
+"),
+        ]);
+        let storage = tempfile::tempdir().unwrap();
+        let workspace = Workspace::open(dir.path().to_owned(), storage.path().to_owned()).unwrap();
+        wait_for_sweeps(&workspace, 1);
+        let sites = |answer: &Value| -> Vec<Value> {
+            answer["hits"].as_array().unwrap().iter().map(|hit| json!([hit["path"], hit["line"], hit["precision"]])).collect()
+        };
+        let first = workspace.references_to("store.ts", "open", 2, 0).unwrap();
+        assert_eq!(sites(&first), vec![json!(["alias.ts", 3, "syntactic"]), json!(["app.ts", 2, "syntactic"])]);
+        assert_eq!(first["hits"][0]["name"], "begin", "a use under an import alias keeps the name it is used by");
+        assert_eq!((first["total"].as_u64(), first["resolved"].as_u64(), first["nextOffset"].as_u64()), (Some(4), Some(3), Some(2)));
+        assert_eq!(first["coverage"]["state"], "ready");
+        let rest = workspace.references_to("store.ts", "open", 2, 2).unwrap();
+        assert_eq!(sites(&rest), vec![json!(["store.ts", 2, "syntactic"]), json!(["app.ts", 3, "heuristic"])]);
+        assert!(rest["nextOffset"].is_null());
+        let other = workspace.references_to("other.ts", "open", 10, 0).unwrap();
+        assert_eq!(sites(&other), vec![json!(["alias.ts", 4, "syntactic"]), json!(["other.ts", 2, "syntactic"]), json!(["app.ts", 3, "heuristic"])]);
         workspace.close().unwrap();
     }
 
