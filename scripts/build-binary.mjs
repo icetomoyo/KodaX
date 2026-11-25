@@ -500,6 +500,17 @@ function buildOne(target, version) {
     cpSync(nativeSrc, nativeDst, { recursive: true });
   }
 
+  // 6. The RepoIntel engine from `npm run build:repo-intel`, beside the native
+  //    authorities, where the Host looks for it. It is optional: without it
+  //    RepoIntel keeps working on git alone. The release workflow requires it.
+  const engineDirectory = `${target.startsWith('win-') ? 'win32' : target.startsWith('linux-') ? 'linux' : 'darwin'}-${target.endsWith('x64') ? 'x64' : 'arm64'}`;
+  const engineSrc = join(ROOT, 'dist', 'repo-intel', engineDirectory);
+  if (existsSync(engineSrc)) {
+    cpSync(engineSrc, join(outDir, 'vendor', 'kodax-native', engineDirectory), { recursive: true });
+  } else {
+    console.log(`    - ${target}: no RepoIntel engine in ${engineSrc}; packaging without it`);
+  }
+
   console.log(`    ✓ ${target}: ${binaryPath}`);
 }
 
@@ -625,6 +636,24 @@ async function verifyHostBinary(binaryPath) {
       );
     }
     console.log('    ✓ standalone smoke: packaged trusted text native binding');
+
+    if (existsSync(join(packageDir, 'vendor', 'kodax-native', `${process.platform}-${process.arch}`, `kodax-repo-intel${process.platform === 'win32' ? '.exe' : ''}`))) {
+      const engineResult = spawnSync(smokeBinaryPath, ['doctor', '--json'], {
+        cwd: packageDir, encoding: 'utf8', windowsHide: true, timeout: 60_000,
+        env: { ...process.env, KODAX_HOME: smokeHome, KODAX_TRACING: '0', KODAX_REPO_INTELLIGENCE_ENGINE: 'v2', KODAX_REPO_INTELLIGENCE_ENGINE_PATH: '' },
+      });
+      if (engineResult.error) throw engineResult.error;
+      let engine;
+      try {
+        engine = JSON.parse(engineResult.stdout.trim()).repoIntel?.engine;
+      } catch {
+        throw new Error(`Standalone RepoIntel smoke must emit one JSON doctor report: ${engineResult.stdout}\n${engineResult.stderr}`);
+      }
+      if (typeof engine?.version !== 'string' || engine.background?.active !== true) {
+        throw new Error(`Standalone RepoIntel engine smoke failed: ${JSON.stringify(engine)}\n${engineResult.stderr.trim()}`);
+      }
+      console.log(`    ✓ standalone smoke: packaged RepoIntel engine v${engine.version}`);
+    }
 
     const bunChildResult = spawnSync(smokeBinaryPath, [
       '-e',

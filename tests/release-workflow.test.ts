@@ -481,7 +481,8 @@ describe('GitHub release workflow', () => {
     expect(builder).toContain('manylinux2014_x86_64@sha256:');
     expect(builder).toContain('manylinux2014_aarch64@sha256:');
     expect(builder).toContain("const rustToolchain = '1.98.0'");
-    expect(builder).toContain('CARGO_TARGET_DIR=/work/native/windows-text-transaction/target-manylinux-2.17');
+    expect(builder).toContain("const crates = ['windows-text-transaction', 'repo-intel']");
+    expect(builder).toContain('CARGO_TARGET_DIR=/work/native/${crate}/target-manylinux-2.17');
     expect(stage).toContain("process.env.KODAX_NATIVE_PREBUILT === '1'");
     expect(stage).toContain("'target-manylinux-2.17'");
 

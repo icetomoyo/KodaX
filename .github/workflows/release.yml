@@ -148,12 +148,27 @@ jobs:
           KODAX_NATIVE_TARGET_ARCH: ${{ matrix.native_arch }}
         run: node scripts/build-linux-native.mjs
 
+      - name: Compile Linux RepoIntel engine for glibc 2.17
+        if: steps.filter.outputs.skip == 'false' && runner.os == 'Linux'
+        env:
+          KODAX_NATIVE_TARGET_ARCH: ${{ matrix.native_arch }}
+        run: node scripts/build-linux-native.mjs repo-intel
+
       - name: Build
         if: steps.filter.outputs.skip == 'false'
         env:
           KODAX_NATIVE_TARGET_ARCH: ${{ matrix.native_arch }}
           KODAX_NATIVE_PREBUILT: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: npm run build
+
+      # Only the Release archives carry the engine (RepoIntel v2 design §9);
+      # build-binary puts it beside the executable.
+      - name: Build RepoIntel engine
+        if: steps.filter.outputs.skip == 'false'
+        env:
+          KODAX_NATIVE_TARGET_ARCH: ${{ matrix.native_arch }}
+          KODAX_NATIVE_PREBUILT: ${{ runner.os == 'Linux' && '1' || '0' }}
+        run: npm run build:repo-intel
 
       - name: Build binary (${{ matrix.target }})
         if: steps.filter.outputs.skip == 'false'
@@ -221,8 +236,12 @@ jobs:
             script-worker.cjs
             image-codec
           )
+          # Every target carries the RepoIntel engine in vendor/kodax-native/.
+          engine="vendor/kodax-native/${{ matrix.native_dir }}/kodax-repo-intel"
+          [ "${target#win-}" != "${target}" ] && engine="${engine}.exe"
+          test -f "$engine" || { echo "Missing RepoIntel engine: $engine" >&2; exit 1; }
           # vendor/srt-win/<arch>/srt-win.exe is only produced for win-* targets
-          # (build-binary step 5); other platforms have no vendor directory.
+          # (build-binary step 5).
           if [ -d vendor ]; then
             sidecars+=(vendor)
           elif [ "${target#win-}" != "${target}" ]; then
@@ -275,11 +294,17 @@ jobs:
 
       - name: Enforce Linux glibc 2.17 ABI
         if: steps.filter.outputs.skip == 'false' && runner.os == 'Linux'
-        run: node scripts/check-native-glibc.mjs --max 2.17 dist/native/${{ matrix.native_dir }}/kodax-text-transaction.node
+        run: node scripts/check-native-glibc.mjs --max 2.17 dist/native/${{ matrix.native_dir }}/kodax-text-transaction.node dist/repo-intel/${{ matrix.native_dir }}/kodax-repo-intel
 
       - name: Native trusted text transaction tests
         if: steps.filter.outputs.skip == 'false' && matrix.smoke && matrix.target != 'win-x64'
         run: npm run test:native
+
+      # The engine's own tests on each platform it ships for: thread priority,
+      # process memory and paths differ between Windows, Linux and macOS.
+      - name: RepoIntel engine tests
+        if: steps.filter.outputs.skip == 'false'
+        run: cargo test --release --locked --manifest-path native/repo-intel/Cargo.toml
 
       - name: Real POSIX per-command sandbox concurrency gate
         if: steps.filter.outputs.skip == 'false' && matrix.target != 'win-x64'
@@ -479,6 +504,7 @@ jobs:
             echo
             echo "Each archive contains the \`kodax\` executable, \`builtin/\`, provider metadata, and all required Worker sidecars."
             echo "Extract anywhere and run \`./kodax\` (or \`kodax.exe\` on Windows). No Node.js required."
+            echo "They also carry the RepoIntel engine in \`vendor/kodax-native/\`; KodaX uses it when \`KODAX_REPO_INTELLIGENCE_ENGINE=v2\` is set."
             echo
             echo "Verify integrity with the matching \`.sha256\` file or the aggregated \`SHA256SUMS\`."
             echo "EOF"

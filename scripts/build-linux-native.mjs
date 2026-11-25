@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const rustToolchain = '1.98.0';
+/** The crates built at the glibc 2.17 floor; the first is the default. */
+const crates = ['windows-text-transaction', 'repo-intel'];
 const builders = {
   x64: {
     image: 'quay.io/pypa/manylinux2014_x86_64@sha256:62eeff30ef134a85ec0f97109e008a319b0315ca5e8a6d754ee771556c02622a',
@@ -31,6 +33,10 @@ function run(command, args) {
 function main() {
   if (process.platform !== 'linux') {
     throw new Error('The glibc 2.17 native builder must run on Linux.');
+  }
+  const crate = process.argv[2] ?? crates[0];
+  if (!crates.includes(crate)) {
+    throw new Error(`Unknown native crate: ${crate}. Expected one of ${crates.join(', ')}.`);
   }
   const targetArch = process.env.KODAX_NATIVE_TARGET_ARCH ?? process.arch;
   const builder = builders[targetArch];
@@ -59,9 +65,9 @@ function main() {
     '--workdir', '/work',
     builder.image,
     '/bin/bash', '-lc',
-    'CARGO_TARGET_DIR=/work/native/windows-text-transaction/target-manylinux-2.17 '
+    `CARGO_TARGET_DIR=/work/native/${crate}/target-manylinux-2.17 `
       + `/cargo/bin/cargo +${rustToolchain} build --release --locked `
-      + '--manifest-path native/windows-text-transaction/Cargo.toml '
+      + `--manifest-path native/${crate}/Cargo.toml `
       + `--target ${builder.target}`,
   ]);
   process.stdout.write(

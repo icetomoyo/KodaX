@@ -116,6 +116,7 @@
     "build:packages": "tsc -b tsconfig.build.json && npm run copy:builtin -w @kodax-ai/agent && npm run copy:runtime-programs -w @kodax-ai/agent && npm run copy:provider-caps -w @kodax-ai/llm && npm run build:browser -w @kodax-ai/artifacts",
     "build:bundle": "node scripts/build-bundle.mjs",
     "build:native": "node scripts/build-native.mjs",
+    "build:repo-intel": "node scripts/build-repo-intel.mjs",
     "dev": "node --max-old-space-size=4096 --require ./scripts/production-env.cjs --import tsx src/kodax_bootstrap.ts",
     "dev:cli": "node --max-old-space-size=4096 --require ./scripts/production-env.cjs --import tsx src/kodax_bootstrap.ts",
     "dev:mem-diag": "node scripts/mem-diag-launch.cjs",

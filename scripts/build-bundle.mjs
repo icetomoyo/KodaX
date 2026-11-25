@@ -227,8 +227,10 @@ log(`External packages: ${external.length} third-party + node built-ins`);
 const distDir = path.join(repoRoot, 'dist');
 log(`Cleaning ${path.relative(repoRoot, distDir)}`);
 mkdirSync(distDir, { recursive: true });
+// Native outputs are built by their own steps; `npm run build:binary` rebuilds
+// the bundles after `npm run build:repo-intel` and must keep its engine.
 for (const entry of readdirSync(distDir)) {
-  if (entry === 'native') continue;
+  if (entry === 'native' || entry === 'repo-intel') continue;
   rmSync(path.join(distDir, entry), { recursive: true, force: true });
 }
 

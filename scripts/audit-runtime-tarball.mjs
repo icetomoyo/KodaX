@@ -21,6 +21,9 @@ export function auditRuntimeTarball(tarballPath, options = {}) {
   const cwdRelative = relative(process.cwd(), absoluteTarball);
   const tarPath = cwdRelative.includes(':') ? absoluteTarball.replaceAll('\\', '/') : cwdRelative;
   const archiveEntries = runTar(['-tf', tarPath]).split(/\r?\n/);
+  // The RepoIntel engine ships only in the GitHub Release archives (RepoIntel v2 design §9).
+  const engine = archiveEntries.find(entry => /(^|\/)kodax-repo-intel(\.exe)?$/.test(entry));
+  if (engine) throw new Error(`Tarball must not carry the RepoIntel engine: ${engine}`);
   for (const required of ['package/dist/builtin/visual-review/SKILL.md', ...(options.requiredEntries ?? [])]) {
     if (!archiveEntries.includes(required)) throw new Error(`Tarball is missing required entry: ${required}`);
   }
