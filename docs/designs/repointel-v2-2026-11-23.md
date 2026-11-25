@@ -1,6 +1,6 @@
 # RepoIntel v2：可信且不拖慢 KodaX 的仓库智能
 
-日期：2026-11-23。状态：**方向已定，未开工**。实施排在其他工作之后，本记录是开工入口。
+日期：2026-11-23。状态：**阶段 0 已发布（v0.7.97-beta.12）；阶段 1 进行中（2026-11-25 起，计划见 §10）。**
 基线：`c9589bdc2`（v0.7.97-rc.1）。
 
 ## 1. 为什么要重做
@@ -228,3 +228,42 @@ L3 精确层   按需：通过 Host 现有 LSP 服务（packages/coding/src/lsp/
    - C++（只有语法层）：`fmtlib/fmt`（MIT）。
    - 1 万文件的性能基准：`microsoft/vscode`（MIT）。
    - 真值来源：SCIP 索引器（scip-typescript、scip-python、scip-go）和 rust-analyzer 的 SCIP 输出。
+## 10. 阶段 1 实施计划（2026-11-25）
+
+范围按 §7：Rust 引擎 L0 + L1、诚实契约、外部存储，放在开关后，由 Host 管理。
+
+### 10.1 分层提交
+
+1. 本节计划。
+2. crate `native/repo-intel`：stdio 上的 JSON-RPC（`Content-Length` 分帧）、`initialize` / `shutdown`、启动即进入后台优先级。
+3. L0：`git ls-files` 清单、内容 hash、SQLite 存储；按文件增量。
+4. L1：七种语言的 tree-sitter 提取（定义、引用、import、完整签名、doc 注释）。用各语法库自带的 `tags.scm`，TS 要叠加 JS 的查询；签名和注释由引擎按节点补。
+5. 查询和诚实契约：精度、完整性（翻页）、新鲜度、未索引原因。
+6. Host 侧：找程序、拉起、监管、空闲回收、编辑通知、`kodax doctor` 状态。
+7. 评测：真值集适配和性能基准。
+8. 构建：`build:native` 和 CI 只把程序放进 Release 附件。
+
+### 10.2 引擎协议（阶段 1）
+
+| 方法 | 作用 |
+|---|---|
+| `initialize` | Host 给出存储根目录和内存预算；引擎回版本和支持的语言 |
+| `workspace.open` / `workspace.close` | 开始或停止维护一个仓库的索引；后台进行，立即返回 |
+| `workspace.status` | 状态（索引中 / 就绪 / 降级）、已索引和过期文件数、按原因分组的未索引文件、引擎自报内存 |
+| `files.changed` | Host 的编辑工具通知改了哪些文件 |
+| `symbols.definitions` / `symbols.references` | 按名字查；每条带精度，整体带完整性和新鲜度 |
+| `file.outline` | 一个文件的定义、签名和注释；文件过期就现场重新分析 |
+
+- 阶段 1 的引用都是名字匹配，标为 `heuristic`；定义标为 `syntactic`。
+- 外部改动的兜底：引擎在后台定期比对清单里文件的修改时间和大小，并重跑 `git ls-files` 发现新文件。阶段 1 不引入文件监视库。
+
+### 10.3 未经用户确认的实现选择
+
+- **开关：** 环境变量 `KODAX_REPO_INTELLIGENCE_ENGINE=v2`。打开后 Host 拉起引擎并维护索引。阶段 1 不改 Agent 看到的工具和提示词，地图注入和工具在阶段 2 起接入，所以本阶段不需要提示词 eval。
+- **内存上限：** 引擎自己报 RSS，Host 定时读取。超过硬上限、或者 ping 不回，Host 就结束它、标为降级，并退避重启。这样 Host 不用为读别的进程的内存加新的原生代码。引擎不保留语法树，SQLite 页缓存有上限，所以内存靠设计封顶。
+- **进入下一阶段的门槛：** 阶段 1 没有 L2 的模块解析，调用边只能是名字匹配，跟旧引擎比调用边精确率不公平。门槛定为：
+  - 在 KodaX 上按编译器真值，定义的精确率和召回率都要高于旧引擎（旧引擎每个文件最多 40 个符号）；
+  - 每条引用都标 `heuristic`，没有静默截断；
+  - 性能达到 §5 的预算（KodaX 和 `microsoft/vscode`）。
+  - 调用边照常统计，只作为阶段 2 的基线。
+- **存储位置：** `<config home>/repo-intelligence-v2/<目录名>-<路径哈希12位>/index.sqlite`，和阶段 0 的旧存储分开。
