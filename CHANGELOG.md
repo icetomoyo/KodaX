@@ -57,6 +57,13 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Protocol v2 `onView` observers get a second argument, `{ epoch, reset }`.
+  `reset` is true when the view moved to another epoch (the Host restarted,
+  or the Session was rewound or moved to another branch), so a client knows
+  when to drop the items it kept from earlier views. The client guide now
+  says what an item leaving the view means: a `settled` one slid out of the
+  150-item window and `history.read` still returns it under the same id; a
+  `live` one was discarded.
 - A person connected to a Host over the network (`user`) can change their own
   settings: the saved configuration, MCP servers, the providers they add, and
   extension reloads. `server.userLocks` in `host.json` keeps chosen items
@@ -247,6 +254,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- In a protocol v2 Session view, a running Run's earlier answers were
+  `live` until the Run ended, so a long Run's text slid out of the window
+  looking discarded. Only the answer the Run is writing is `live` now.
 - A Host run in the foreground with `kodax host serve --home <dir>` or
   `kodax a2a serve --home <dir>` keeps its memory, Skills, MCP servers and
   other data in `<dir>/.kodax`, beside its settings and Sessions. It used to

@@ -132,7 +132,7 @@ const { session } = await host.call('session.create', {
 
 ```ts
 const observation = await host.observeSession(session.id, {
-  onView: view => render(view),
+  onView: (view, { reset }) => render(view, reset),
   onClosed: reason => showClosed(reason),
 });
 ```
@@ -140,6 +140,10 @@ const observation = await host.observeSession(session.id, {
 - `onView` gets the whole view after every change; the client applies the Host's patches for you.
   The promise resolves once the first view arrived. After a reconnect, the client subscribes again
   and sends a fresh view.
+- The second argument says where the view stands: its `epoch`, and `reset`. `reset` is true when
+  the view is in another epoch than the last one the observer got: the Host restarted, or the
+  Session was rewound or moved to another branch. A reconnect to the same epoch is not a reset, and
+  compacting the Session keeps the epoch.
 - `onClosed` means the Host ended the view for good, for example because the Session was deleted.
 - `observation.close()` stops following. It does not stop any Run.
 
@@ -149,6 +153,19 @@ when present `activity`, `contextBudget` and `sandbox`. An item with `textTotal`
 end of its text; `item.read` pages through all of it. A tool item's `tool.change` says what a file
 tool changed. Values you only show, such as an item's `type`, are open strings: show the text of an
 item type you do not know.
+
+`items` holds the newest 150. To show more, keep the items that leave the view, and read older
+ones with `history.read`:
+
+- Within one epoch, a `settled` item that leaves slid out of the window. The conversation still
+  has it, and `history.read` returns it under the same id, also while its Run goes on. Keep it.
+- A `live` item that leaves was discarded or replaced, for example when a provider request was
+  retried. Drop it.
+- On `reset`, drop everything you kept, slid-out items included, and read history again.
+
+Some items are for people only and never come back from `history.read`: notices, a Run's error,
+and side-chat reports, of which the view shows the newest 8. Task results, and messages saved by
+old builds without an id, can carry another id in `history.read` than in the view.
 
 A command's answer and the view change it causes can arrive in either order. Match them by id, for
 example by a user item's `inputIds`.

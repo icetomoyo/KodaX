@@ -104,16 +104,25 @@ const { session } = await host.call('session.create', {
 
 ```ts
 const observation = await host.observeSession(session.id, {
-  onView: view => render(view),
+  onView: (view, { reset }) => render(view, reset),
   onClosed: reason => showClosed(reason),
 });
 ```
 
 - 每次变化后，`onView` 都会拿到完整的视图；客户端替你应用 Host 发来的补丁。第一份视图到达后，promise 才完成。重连后，客户端重新订阅并发出一份新视图。
+- 第二个参数说明这份视图处在哪里：`epoch` 和 `reset`。视图与观察者上一次拿到的不在同一个 epoch 时，`reset` 为 true：Host 重启了，或者 Session 被回退、切到了另一个分支。重连后仍在同一个 epoch，不算 reset；压缩 Session 也不换 epoch。
 - `onClosed` 表示 Host 永久结束了这个视图，比如 Session 被删除了。
 - `observation.close()` 停止跟随。它不会停止任何 Run。
 
 视图（`HostSessionView`）包含 `items`（对话）、`session`、`runs`、`queue`（等待中的输入）、`interactions`、`settings`（实际生效的设置）、Session 启动的 `workflows`，以及存在时的 `activity`、`contextBudget` 和 `sandbox`。带 `textTotal` 的条目只包含文本的末尾；用 `item.read` 分页读取全文。工具条目的 `tool.change` 说明文件工具改了什么。只用于显示的值，比如条目的 `type`，是开放的字符串：遇到不认识的条目类型，显示它的文本。
+
+`items` 只放最新的 150 项。要显示更多，就留住离开视图的条目，更早的用 `history.read` 读：
+
+- 同一个 epoch 里，`settled` 的条目离开视图，是滑出了窗口。对话里还有它，`history.read` 用同一个 id 返回它，Run 还在进行时也一样。留着它。
+- `live` 的条目离开视图，是被丢弃或替换了，比如 provider 请求重试了。丢掉它。
+- 遇到 `reset`，丢掉留下的一切，包括滑出窗口的条目，再重新读历史。
+
+有些条目只给人看，`history.read` 永远不会返回：提示、Run 的错误，以及旁聊报告（视图只显示最新的 8 条）。任务结果，以及旧版本保存的没有 id 的消息，在 `history.read` 里的 id 可能和视图里不同。
 
 命令的回答和它引起的视图变化，到达顺序不确定。按 id 对应它们，比如用户条目的 `inputIds`。
 
