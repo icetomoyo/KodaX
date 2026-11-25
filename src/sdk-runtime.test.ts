@@ -19558,7 +19558,7 @@ describe("createKodaXRuntime", () => {
     while (indexes.length === 0 && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 50));
       indexes = nodeFs.existsSync(storage)
-        ? (await fs.readdir(storage)).filter(entry => nodeFs.existsSync(path.join(storage, entry, "index.sqlite")))
+        ? (await fs.readdir(storage)).filter(entry => nodeFs.readdirSync(path.join(storage, entry)).some(name => /^index-v\d+\.sqlite$/.test(name)))
         : [];
     }
     expect(indexes).toEqual([expect.stringMatching(/^repo-[0-9a-f]{12}$/)]);

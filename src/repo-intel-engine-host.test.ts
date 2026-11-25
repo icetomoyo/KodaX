@@ -128,12 +128,12 @@ describe('relayRunEventToRepoIntel', () => {
     expect(target.changed.mock.calls).toEqual([[root, ['src/a.ts']], [root, ['src/b.ts']]]);
   });
 
-  it('ignores tools that changed no file, and files outside the repository', () => {
+  it('keeps the repository in use for any tool, but passes on only files inside it', () => {
     const target = engine();
-    relayRunEventToRepoIntel(target, 'tool.finished', { result: { id: 't2', name: 'read', content: 'text' } }, root);
+    relayRunEventToRepoIntel(target, 'tool.finished', { result: { id: 't2', name: 'bash', content: 'text' } }, root);
     relayRunEventToRepoIntel(target, 'tool.finished', edited(path.resolve('/elsewhere/c.ts')), root);
     relayRunEventToRepoIntel(target, 'turn.started', {}, root);
     expect(target.changed).not.toHaveBeenCalled();
-    expect(target.open).not.toHaveBeenCalled();
+    expect(target.open.mock.calls).toEqual([[root], [root]]);
   });
 });

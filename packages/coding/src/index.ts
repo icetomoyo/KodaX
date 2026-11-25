@@ -592,7 +592,7 @@ export {
   renderImpactEstimate,
 } from './repo-intelligence/semantic-render.js';
 
-export { createRepoIntelSupervisor } from './repo-intelligence/engine/supervisor.js';
+export { createRepoIntelSupervisor, repoIntelEngineProtocolProblem } from './repo-intelligence/engine/supervisor.js';
 export type {
   RepoIntelEngineLaunch,
   RepoIntelEngineState,

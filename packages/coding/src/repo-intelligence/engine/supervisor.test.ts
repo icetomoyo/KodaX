@@ -11,7 +11,8 @@ const fixture = fileURLToPath(new URL('./fake-engine.fixture.mjs', import.meta.u
 /** Built by `cargo build --release` in native/repo-intel; the test that needs it skips without it. */
 const realEngine = fileURLToPath(new URL(
   `../../../../../native/repo-intel/target/release/kodax-repo-intel${process.platform === 'win32' ? '.exe' : ''}`, import.meta.url));
-const timing = { pollMs: 40, statusTimeoutMs: 300, idleMs: 60_000, restartMinMs: 20, restartMaxMs: 80 };
+const timing = { pollMs: 40, statusTimeoutMs: 300, stuckMs: 600, idleMs: 60_000, restartMinMs: 20, restartMaxMs: 80 };
+const pause = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
 interface Received { readonly pid: number; readonly method: string; readonly params?: Record<string, unknown> }
 
@@ -99,6 +100,13 @@ describe('RepoIntel supervisor', () => {
     expect(engine.status().roots).toEqual([other]);
   });
 
+  it('keeps an engine that misses one status answer, as a starved low-priority process may', async () => {
+    const engine = start(['--hang-status-once']);
+    engine.open(scratch);
+    await until(() => received().filter(item => item.method === 'engine.status').length >= 3, 'later status polls');
+    expect(engine.status()).toMatchObject({ state: 'running', restarts: 0 });
+  });
+
   it('replaces an engine that stops answering and reopens its repositories', async () => {
     const engine = start(['--hang-status']);
     engine.open(scratch);
@@ -107,11 +115,13 @@ describe('RepoIntel supervisor', () => {
     expect(engine.status().problem).toMatch(/did not answer/);
   });
 
-  it('replaces an engine that grows past the hard memory limit', async () => {
+  it('reports an engine over its memory budget without replacing it', async () => {
     const engine = start(['--rss', String(700 * 1024 * 1024)]);
     engine.open(scratch);
-    await until(() => engine.status().restarts >= 1, 'a restart');
-    expect(engine.status().problem).toMatch(/700 MB.*600 MB/);
+    await until(() => engine.status().problem, 'a problem report');
+    expect(engine.status().problem).toMatch(/700 MB.*300 MB budget/);
+    await until(() => received().filter(item => item.method === 'engine.status').length >= 4, 'later status polls');
+    expect(engine.status()).toMatchObject({ state: 'running', restarts: 0, residentBytes: 700 * 1024 * 1024 });
   });
 
   it('restarts an engine that exits, waiting longer after each failure', async () => {
@@ -132,7 +142,11 @@ describe('RepoIntel supervisor', () => {
     expect(() => supervisor!.open(scratch)).not.toThrow();
     await until(() => supervisor!.status().problem, 'a problem report');
     expect(supervisor.status().problem).toMatch(/cannot start/);
-    expect(supervisor.status().restarts).toBeGreaterThanOrEqual(1);
+    // No timer retries a program that is not there; the next use does.
+    await pause(200);
+    expect(supervisor.status()).toMatchObject({ state: 'idle', restarts: 1 });
+    supervisor.open(scratch);
+    await until(() => supervisor!.status().restarts === 2, 'a retry on the next use');
   });
 
   it('reports a program the system refuses to run', async () => {
@@ -144,11 +158,38 @@ describe('RepoIntel supervisor', () => {
     expect(supervisor.status().problem).toMatch(/cannot start/);
   });
 
+  it('refuses an engine that speaks another protocol, as after an update while the Host kept running', async () => {
+    const engine = start(['--protocol', '0']);
+    engine.open(scratch);
+    await until(() => engine.status().problem, 'a problem report');
+    expect(engine.status().problem).toMatch(/protocol 0.*needs 1.*[Rr]estart KodaX/);
+    await until(() => received().some(item => item.method === 'exit') || engine.status().pid === undefined, 'the engine to go');
+    expect(engine.status().state).toBe('idle');
+    expect(opens(scratch)).toEqual([]);
+  });
+
   it('reports an engine that refuses initialize', async () => {
     const engine = start(['--fail-initialize']);
     engine.open(scratch);
     await until(() => engine.status().problem, 'a problem report');
     expect(engine.status().problem).toMatch(/storageRoot is not a folder/);
+  });
+
+  it('closes a repository nobody used for a while and keeps the engine for the others', async () => {
+    const engine = start([], { idleMs: 300 });
+    const other = path.join(scratch, 'other');
+    engine.open(scratch);
+    engine.open(other);
+    const closed = (root: string): boolean => received().some(item => item.method === 'workspace.close' && item.params?.root === root);
+    const deadline = Date.now() + 5_000;
+    while (!closed(scratch) && Date.now() < deadline) {
+      engine.open(other);
+      await pause(50);
+    }
+    expect(closed(scratch)).toBe(true);
+    expect(closed(other)).toBe(false);
+    expect(engine.status()).toMatchObject({ state: 'running', roots: [other] });
+    expect(received().some(item => item.method === 'exit')).toBe(false);
   });
 
   it('stops an idle engine and forgets its repositories until the next use', async () => {

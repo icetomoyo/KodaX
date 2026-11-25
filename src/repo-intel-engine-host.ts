@@ -10,7 +10,8 @@ import { statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  connectRepoIntelEngine, createRepoIntelSupervisor, type RepoIntelEngineConnection, type RepoIntelSupervisor,
+  connectRepoIntelEngine, createRepoIntelSupervisor, repoIntelEngineProtocolProblem,
+  type RepoIntelEngineConnection, type RepoIntelSupervisor,
 } from '@kodax-ai/coding';
 import type { KodaXToolResultBlock } from '@kodax-ai/agent';
 import { toolResultFileChange } from './client-canonical-tools.js';
@@ -98,8 +99,10 @@ export async function inspectRepoIntelEngine(configHome: string, env: NodeJS.Pro
   try {
     // A program the system cannot run may throw here rather than report through `exited`.
     connection = await connectRepoIntelEngine({ command: location.path });
-    const answer = await connection.request<Exclude<RepoIntelEngineInspection['engine'], { error: string } | undefined>>('initialize',
-      { storageRoot: path.join(configHome, 'repo-intelligence-v2') }, INSPECT_TIMEOUT_MS);
+    const answer = await connection.request<Exclude<RepoIntelEngineInspection['engine'], { error: string } | undefined> & { protocol?: unknown }>(
+      'initialize', { storageRoot: path.join(configHome, 'repo-intelligence-v2') }, INSPECT_TIMEOUT_MS);
+    const refused = repoIntelEngineProtocolProblem(answer);
+    if (refused !== undefined) return { enabled: true, program: location.path, engine: { error: refused } };
     const { version, languages, background } = answer;
     return { enabled: true, program: location.path, engine: { version, languages, background } };
   } catch (error: unknown) {
@@ -119,12 +122,14 @@ function changedPath(payload: unknown, root: string): string | undefined {
   return relative.split(path.sep).join('/');
 }
 
-/** Feeds one Runtime event of a Run working in `root` to the engine. */
+/**
+ * Feeds one Runtime event of a Run working in `root` to the engine. Every tool
+ * call keeps the repository in use, so a long Run that edits only through the
+ * shell still has its repository swept.
+ */
 export function relayRunEventToRepoIntel(engine: RepoIntelSupervisor, type: string, payload: unknown, root: string): void {
-  if (type === 'run.started') {
-    engine.open(root);
-    return;
-  }
+  if (type !== 'run.started' && type !== 'tool.finished') return;
+  engine.open(root);
   if (type !== 'tool.finished') return;
   const changed = changedPath(payload, root);
   if (changed !== undefined) engine.changed(root, [changed]);

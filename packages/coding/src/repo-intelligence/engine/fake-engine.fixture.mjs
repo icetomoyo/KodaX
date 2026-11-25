@@ -5,6 +5,8 @@
  * see what the Host sent. Flags make it misbehave the way a real engine might:
  *   --rss <bytes>      report this resident size from engine.status
  *   --hang-status      never answer engine.status
+ *   --hang-status-once leave only the first engine.status unanswered
+ *   --protocol <n>     report this protocol version from initialize (default 1)
  *   --exit-after-open  exit with code 3 after answering the first workspace.open
  *   --fail-initialize  answer initialize with an error
  */
@@ -17,6 +19,8 @@ const value = name => {
 };
 const journal = value('--journal');
 const rss = Number(value('--rss') ?? 50 * 1024 * 1024);
+const protocol = Number(value('--protocol') ?? 1);
+let statusAsked = 0;
 
 let buffer = Buffer.alloc(0);
 process.stdin.on('data', chunk => {
@@ -49,10 +53,13 @@ function handle(message) {
     send({ id, error: { code: -32602, message: 'storageRoot is not a folder' } });
     return;
   }
+  if (method === 'engine.status') statusAsked += 1;
   if (method === 'engine.status' && flag('--hang-status')) return;
+  if (method === 'engine.status' && flag('--hang-status-once') && statusAsked === 1) return;
   const results = {
-    initialize: { name: 'fake-engine', version: '0.0.0', languages: ['typescript'] },
+    initialize: { name: 'fake-engine', version: '0.0.0', protocol, languages: ['typescript'] },
     'workspace.open': { state: 'indexing', root: params?.root },
+    'workspace.close': null,
     'engine.status': { residentBytes: rss, memoryBudgetMb: params?.memoryBudgetMb ?? 300, workspaces: 0 },
     shutdown: null,
   };
