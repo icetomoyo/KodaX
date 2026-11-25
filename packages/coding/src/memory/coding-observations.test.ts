@@ -235,6 +235,27 @@ describe('FEATURE_260 coding memory observations', () => {
 
     expect(observations).toEqual([]);
   });
+  it('records one outcome when a provider repeats a tool-call id in one batch', () => {
+    const observations = buildToolMemoryObservations({
+      toolBlocks: [tool('read', { path: 'a.png' }), tool('read', { path: 'a.png' })],
+      toolResults: [result('read', '[Tool Error] missing', true), result('read', '[Tool Error] missing', true)],
+      startSequence: 0,
+      observedAt: '2026-07-12T02:00:00.000Z',
+    });
+
+    expect(observations.map((item) => [item.id, item.sequence])).toEqual([['tool-outcome:call-read', 1]]);
+  });
+  it('gives a call id reused from an earlier batch a distinct observation id', () => {
+    const observations = buildToolMemoryObservations({
+      toolBlocks: [tool('read', { path: 'b.png' })],
+      toolResults: [result('read', '[Tool Error] missing', true)],
+      startSequence: 1,
+      observedAt: '2026-07-12T02:00:00.000Z',
+      priorCallIds: new Set(['call-read']),
+    });
+
+    expect(observations.map((item) => [item.id, item.sequence])).toEqual([['tool-outcome:call-read#2', 2]]);
+  });
   it('clamps evidence grades by the built-in coding source registry', () => {
     const evidence = {
       ref: 'source:1',

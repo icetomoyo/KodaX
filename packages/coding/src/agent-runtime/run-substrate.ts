@@ -474,7 +474,7 @@ import {
 // non-bash dispatch are wrapped inside `runToolDispatch` in the same
 // module.
 
-// CAP-025 (`tryMcpFallback`, `MCP_FALLBACK_ALLOWED_TOOLS`) lives in
+// CAP-025 (`withMcpFallbackHint`, `MCP_FALLBACK_ALLOWED_TOOLS`) lives in
 // `agent-runtime/tool-dispatch.ts` since FEATURE_100 P2.
 
 // CAP-077 (`runToolDispatch` — bash sequential / non-bash parallel +
@@ -1274,6 +1274,7 @@ async function runSubstrateInContext(
     messages.length === 1,
   );
   let memoryObservationSequence = 0;
+  const memoryObservedCallIds = new Set<string>();
   let pendingMemoryInterventionTriggers: MemoryInterventionTrigger[] = [];
   if (memoryController !== undefined && memoryPack !== undefined) {
     const controlPlane = memoryController;
@@ -2818,10 +2819,12 @@ async function runSubstrateInContext(
             toolResults,
             startSequence: memoryObservationSequence,
             observedAt: new Date().toISOString(),
+            priorCallIds: memoryObservedCallIds,
             ...(memoryDecisionBinding?.actionSignature !== undefined
               ? { decisionActionSignature: memoryDecisionBinding.actionSignature }
               : {}),
           });
+          for (const block of result.toolBlocks) memoryObservedCallIds.add(block.id);
           for (const observation of observations) memorySession.observe(observation);
           memoryObservationSequence = observations.at(-1)?.sequence ?? memoryObservationSequence;
           for (const observation of observations) {

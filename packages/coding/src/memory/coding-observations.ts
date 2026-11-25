@@ -15,6 +15,8 @@ export interface ToolMemoryObservationInput {
   readonly startSequence: number;
   readonly observedAt: string;
   readonly decisionActionSignature?: string;
+  /** Call ids already seen earlier in this Run; some providers reuse them. */
+  readonly priorCallIds?: ReadonlySet<string>;
 }
 
 export function buildToolMemoryObservations(
@@ -23,8 +25,13 @@ export function buildToolMemoryObservations(
   const resultByCall = new Map(input.toolResults.map((result) => [result.tool_use_id, result]));
   const observations: MemoryObservation[] = [];
   let sequence = input.startSequence;
+  // Some providers repeat a call id within one batch. Results are keyed by id,
+  // so a repeat carries no new outcome; observing it again would collide.
+  const observedCallIds = new Set<string>();
   for (const block of input.toolBlocks) {
     if (block.name === 'memory_recall') continue;
+    if (observedCallIds.has(block.id)) continue;
+    observedCallIds.add(block.id);
     const result = resultByCall.get(block.id);
     if (result === undefined) continue;
     const content = toolResultText(result);
@@ -64,7 +71,9 @@ export function buildToolMemoryObservations(
       : `Verification command succeeded: ${safeResult ?? 'Inspect the referenced tool result.'}`;
     sequence += 1;
     observations.push({
-      id: `tool-outcome:${callRefId}`,
+      id: input.priorCallIds?.has(block.id) === true
+        ? `tool-outcome:${callRefId}#${sequence}`
+        : `tool-outcome:${callRefId}`,
       sequence,
       kind: 'outcome',
       summary,
