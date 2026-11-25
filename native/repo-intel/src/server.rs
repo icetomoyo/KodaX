@@ -2,11 +2,13 @@
 
 use crate::manifest::Language;
 use crate::priority::Background;
+use crate::query;
 use crate::rpc::{self, failure, success};
+use crate::store::Table;
 use crate::workspace::{Workspace, storage_dir};
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 /// Memory budget when the Host names none, in MB.
 const DEFAULT_MEMORY_BUDGET_MB: u64 = 300;
@@ -99,9 +101,12 @@ impl Server {
                 if !root.is_dir() {
                     return Err((rpc::INVALID_PARAMS, format!("{} is not a folder.", root.display())));
                 }
-                let storage = storage_dir(&config.storage_root, &root);
-                let workspace = self.workspaces.entry(root.clone()).or_insert_with(|| Workspace::open(root, storage));
-                Ok(workspace.status())
+                if !self.workspaces.contains_key(&root) {
+                    let workspace = Workspace::open(root.clone(), storage_dir(&config.storage_root, &root))
+                        .map_err(|error| (rpc::INTERNAL_ERROR, error))?;
+                    self.workspaces.insert(root.clone(), workspace);
+                }
+                Ok(self.workspaces[&root].status())
             }
             (State::Running(_), "workspace.status") => Ok(self.open_workspace(&params)?.status()),
             (State::Running(_), "workspace.close") => {
@@ -110,8 +115,32 @@ impl Server {
                 let workspace = self.workspaces.remove(&root).expect("checked above");
                 workspace.close().map(|()| Value::Null).map_err(|error| (rpc::INTERNAL_ERROR, error))
             }
+            (State::Running(_), "symbols.definitions") => self.find(Table::Definitions, &params),
+            (State::Running(_), "symbols.references") => self.find(Table::References, &params),
+            (State::Running(_), "file.outline") => {
+                let path = relative_path(&params)?;
+                let root = root_of(&params)?;
+                self.open_workspace(&params)?;
+                let workspace = self.workspaces.get_mut(&root).expect("checked above");
+                workspace.outline(&path).map_err(|error| (rpc::INTERNAL_ERROR, error))
+            }
             (State::Running(_), _) => Err((rpc::METHOD_NOT_FOUND, format!("Unknown method: {method}"))),
         }
+    }
+
+    fn find(&self, table: Table, params: &Value) -> Answer {
+        let name = params
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty())
+            .ok_or((rpc::INVALID_PARAMS, "name must be a non-empty string.".to_owned()))?;
+        let limit = whole_number(params, "limit", query::DEFAULT_LIMIT)?;
+        if !(1..=query::MAX_LIMIT).contains(&limit) {
+            return Err((rpc::INVALID_PARAMS, format!("limit must be between 1 and {}.", query::MAX_LIMIT)));
+        }
+        let offset = whole_number(params, "offset", 0)?;
+        let workspace = self.open_workspace(params)?;
+        workspace.find(table, name, limit, offset).map_err(|error| (rpc::INTERNAL_ERROR, error))
     }
 
     fn open_workspace(&self, params: &Value) -> Result<&Workspace, (i64, String)> {
@@ -151,6 +180,32 @@ impl Server {
             "background": background,
         }))
     }
+}
+
+fn whole_number(params: &Value, key: &str, default: u64) -> Result<u64, (i64, String)> {
+    match params.get(key) {
+        None | Some(Value::Null) => Ok(default),
+        Some(value) => value
+            .as_u64()
+            .filter(|number| *number <= i64::MAX as u64)
+            .ok_or((rpc::INVALID_PARAMS, format!("{key} must be a whole number."))),
+    }
+}
+
+/// The file path inside the root, with `/` between parts. Absolute paths and `..`
+/// are refused, so a query never reads outside the repository.
+fn relative_path(params: &Value) -> Result<String, (i64, String)> {
+    let refused = || (rpc::INVALID_PARAMS, "path must be a file path relative to root, without `..`.".to_owned());
+    let path = Path::new(params.get("path").and_then(Value::as_str).ok_or_else(refused)?);
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+            Component::CurDir => {}
+            _ => return Err(refused()),
+        }
+    }
+    if parts.is_empty() { Err(refused()) } else { Ok(parts.join("/")) }
 }
 
 fn root_of(params: &Value) -> Result<PathBuf, (i64, String)> {
@@ -224,6 +279,23 @@ mod tests {
     fn leaves_notifications_unanswered() {
         let mut server = started();
         assert_eq!(server.handle(json!({ "jsonrpc": "2.0", "method": "files.changed" })), Outcome::Silent);
+    }
+
+    #[test]
+    fn refuses_bad_query_parameters() {
+        let mut server = started();
+        let root = absolute_root();
+        let find = |name: Value, limit: Value| json!({ "root": root, "name": name, "limit": limit });
+        assert_eq!(error_code(server.handle(request(2, "symbols.definitions", find(json!(""), Value::Null)))), rpc::INVALID_PARAMS);
+        assert_eq!(error_code(server.handle(request(3, "symbols.references", find(json!("x"), json!(0))))), rpc::INVALID_PARAMS);
+        assert_eq!(error_code(server.handle(request(4, "symbols.references", find(json!("x"), json!(501))))), rpc::INVALID_PARAMS);
+        for path in ["../a.ts", "", "a/../../b.ts"] {
+            let params = json!({ "root": root, "path": path });
+            assert_eq!(error_code(server.handle(request(5, "file.outline", params))), rpc::INVALID_PARAMS, "{path}");
+        }
+        assert_eq!(relative_path(&json!({ "path": "./src/a.ts" })), Ok("src/a.ts".to_owned()));
+        let absolute = std::env::temp_dir().join("a.ts");
+        assert!(relative_path(&json!({ "path": absolute })).is_err());
     }
 
     #[test]

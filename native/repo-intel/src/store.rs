@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 /// Bumped when the tables change; an index with another version is rebuilt.
-const SCHEMA_VERSION: &str = "4";
+const SCHEMA_VERSION: &str = "5";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Known {
@@ -30,6 +30,34 @@ pub struct FileRow {
     pub mtime_ns: i64,
     pub language: Option<&'static str>,
     pub status: FileStatus,
+}
+
+/// A definition or reference found by name, with the file it is in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hit {
+    pub path: String,
+    pub known: Known,
+    pub language: String,
+    pub name: String,
+    pub kind: String,
+    pub container: Option<String>,
+    pub line: u32,
+    pub column: u32,
+    /// Definitions only.
+    pub end_line: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Table {
+    Definitions,
+    References,
+}
+
+/// What the index holds for one file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Entry {
+    Indexed { known: Known, language: String, has_syntax_errors: bool, definitions: Vec<Hit> },
+    NotIndexed { known: Known, reason: String },
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -85,12 +113,14 @@ impl Store {
                id INTEGER PRIMARY KEY, hash TEXT NOT NULL UNIQUE, language TEXT NOT NULL,
                syntax_errors INTEGER NOT NULL);
              -- Rows are stored in name order, so a lookup by name reads them together;
-             -- the small integer analysis id keeps each row short. There is no index by
-             -- analysis: it would double the size, and only cleanup after an edit needs it.
+             -- the small integer analysis id keeps each row short. References have no index
+             -- by analysis: it would double their size, and only cleanup needs it. Definitions,
+             -- far fewer, have one for file outlines.
              CREATE TABLE definitions(
                name TEXT NOT NULL, analysis INTEGER NOT NULL, line INTEGER NOT NULL, column INTEGER NOT NULL,
                kind TEXT NOT NULL, container TEXT, end_line INTEGER NOT NULL,
                PRIMARY KEY(name, analysis, line, column)) WITHOUT ROWID;
+             CREATE INDEX definitions_analysis ON definitions(analysis);
              CREATE TABLE refs(
                name TEXT NOT NULL, analysis INTEGER NOT NULL, line INTEGER NOT NULL, column INTEGER NOT NULL,
                kind TEXT NOT NULL,
@@ -217,6 +247,82 @@ impl Store {
         Ok(Counts { indexed: indexed as u64, with_syntax_errors: with_syntax_errors as u64, not_indexed })
     }
 
+    /// One page of the definitions or references named `name`, in path and line order, and how many there are in all.
+    pub fn find(&self, table: Table, name: &str, limit: u64, offset: u64) -> rusqlite::Result<(Vec<Hit>, u64)> {
+        let (columns, from) = match table {
+            Table::Definitions => ("t.kind, t.container, t.end_line", "definitions"),
+            Table::References => ("t.kind, NULL, NULL", "refs"),
+        };
+        let join = format!("{from} t JOIN analyses a ON a.id = t.analysis JOIN files f ON f.hash = a.hash WHERE t.name = ?1");
+        let total = self.connection.query_row(&format!("SELECT COUNT(*) FROM {join}"), params![name], |row| row.get::<_, i64>(0))?;
+        let mut statement = self.connection.prepare_cached(&format!(
+            "SELECT f.path, f.size, f.mtime_ns, a.language, t.line, t.column, {columns} FROM {join}
+             ORDER BY f.path, t.line, t.column LIMIT ?2 OFFSET ?3"
+        ))?;
+        let hits = statement
+            .query_map(params![name, limit as i64, offset as i64], |row| {
+                Ok(Hit {
+                    path: row.get(0)?,
+                    known: Known { size: row.get::<_, i64>(1)? as u64, mtime_ns: row.get(2)? },
+                    language: row.get(3)?,
+                    name: name.to_owned(),
+                    line: row.get(4)?,
+                    column: row.get(5)?,
+                    kind: row.get(6)?,
+                    container: row.get(7)?,
+                    end_line: row.get(8)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok((hits, total as u64))
+    }
+
+    pub fn entry(&self, path: &str) -> rusqlite::Result<Option<Entry>> {
+        let row = self
+            .connection
+            .query_row(
+                "SELECT f.size, f.mtime_ns, f.reason, a.id, a.language, a.syntax_errors
+                 FROM files f LEFT JOIN analyses a ON a.hash = f.hash WHERE f.path = ?1",
+                params![path],
+                |row| {
+                    let known = Known { size: row.get::<_, i64>(0)? as u64, mtime_ns: row.get(1)? };
+                    let reason: Option<String> = row.get(2)?;
+                    let analysis: Option<(i64, String, bool)> = match row.get::<_, Option<i64>>(3)? {
+                        Some(id) => Some((id, row.get(4)?, row.get(5)?)),
+                        None => None,
+                    };
+                    Ok((known, reason, analysis))
+                },
+            )
+            .optional()?;
+        let Some((known, reason, analysis)) = row else {
+            return Ok(None);
+        };
+        let Some((id, language, has_syntax_errors)) = analysis else {
+            return Ok(Some(Entry::NotIndexed { known, reason: reason.unwrap_or_else(|| "unparsed".to_owned()) }));
+        };
+        let mut statement = self.connection.prepare_cached(
+            "SELECT name, kind, container, line, column, end_line FROM definitions WHERE analysis = ?1",
+        )?;
+        let mut definitions = statement
+            .query_map(params![id], |row| {
+                Ok(Hit {
+                    path: path.to_owned(),
+                    known: known.clone(),
+                    language: language.clone(),
+                    name: row.get(0)?,
+                    kind: row.get(1)?,
+                    container: row.get(2)?,
+                    line: row.get(3)?,
+                    column: row.get(4)?,
+                    end_line: row.get(5)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        definitions.sort_by_key(|hit| (hit.line, hit.column));
+        Ok(Some(Entry::Indexed { known, language, has_syntax_errors, definitions }))
+    }
+
     #[cfg(test)]
     pub fn analysis_count(&self) -> rusqlite::Result<u64> {
         self.connection.query_row("SELECT COUNT(*) FROM analyses", [], |row| row.get::<_, i64>(0)).map(|n| n as u64)
@@ -285,6 +391,42 @@ mod tests {
         assert!(!store.has_analysis("own").unwrap());
         assert_eq!(store.analysis_count().unwrap(), 1);
         assert_eq!(store.definition_names().unwrap(), vec!["shared"]);
+    }
+
+    #[test]
+    fn finds_by_name_across_files_a_page_at_a_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("index.sqlite")).unwrap();
+        let mut shared = analysis(&["run"], false);
+        shared.definitions[0].container = Some("Store".to_owned());
+        shared.references.push(crate::extract::Reference { name: "run".to_owned(), kind: "call".to_owned(), line: 4, column: 2 });
+        store.record_analysis("h", "typescript", &shared).unwrap();
+        for path in ["b.ts", "a.ts"] {
+            store.record_file(&row(path, indexed("h"))).unwrap();
+        }
+        let (hits, total) = store.find(Table::Definitions, "run", 1, 0).unwrap();
+        assert_eq!((hits.len(), total), (1, 2));
+        assert_eq!((hits[0].path.as_str(), hits[0].container.as_deref(), hits[0].end_line), ("a.ts", Some("Store"), Some(1)));
+        assert_eq!(store.find(Table::Definitions, "run", 5, 1).unwrap().0[0].path, "b.ts");
+        let (references, total) = store.find(Table::References, "run", 5, 0).unwrap();
+        assert_eq!((references[0].line, references[0].kind.as_str(), references[0].end_line, total), (4, "call", None, 2));
+        assert_eq!(store.find(Table::Definitions, "missing", 5, 0).unwrap(), (vec![], 0));
+    }
+
+    #[test]
+    fn tells_an_indexed_file_from_one_left_out_or_unknown() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("index.sqlite")).unwrap();
+        store.record_analysis("h", "typescript", &analysis(&["b", "a"], true)).unwrap();
+        store.record_file(&row("a.ts", indexed("h"))).unwrap();
+        store.record_file(&row("a.md", FileStatus::NotIndexed { reason: "language" })).unwrap();
+        let Some(Entry::Indexed { has_syntax_errors, definitions, .. }) = store.entry("a.ts").unwrap() else {
+            panic!("a.ts is indexed");
+        };
+        assert!(has_syntax_errors);
+        assert_eq!(definitions.iter().map(|d| d.name.as_str()).collect::<Vec<_>>().len(), 2);
+        assert!(matches!(store.entry("a.md").unwrap(), Some(Entry::NotIndexed { reason, .. }) if reason == "language"));
+        assert_eq!(store.entry("none.ts").unwrap(), None);
     }
 
     #[test]

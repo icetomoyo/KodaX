@@ -4,6 +4,7 @@
 mod extract;
 mod manifest;
 mod priority;
+mod query;
 mod rpc;
 mod server;
 mod store;

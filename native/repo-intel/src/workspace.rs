@@ -6,23 +6,19 @@
 
 use crate::extract::Extractor;
 use crate::manifest::{self, Language};
-use crate::store::{FileRow, FileStatus, Known, Store};
+use crate::query;
+use crate::store::{FileRow, FileStatus, Known, Store, Table};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::Duration;
 
 const SWEEP_EVERY: Duration = Duration::from_secs(15);
-/// Larger files are mostly generated or vendored; reading them costs more than they give.
-const MAX_FILE_BYTES: u64 = 1024 * 1024;
-/// A NUL byte this early means the file is not text.
-const BINARY_PROBE_BYTES: usize = 8 * 1024;
 /// Rows written per transaction, so a long first sweep never holds one open.
 const BATCH: usize = 500;
 
@@ -57,7 +53,12 @@ impl Pending {
 }
 
 pub struct Workspace {
+    root: PathBuf,
     storage: PathBuf,
+    /// Queries read through their own connection while the thread writes.
+    reader: Store,
+    /// For outlines of files that changed since they were indexed.
+    extractor: Extractor,
     status: Arc<Mutex<Status>>,
     signals: Sender<Signal>,
     cancel: Arc<AtomicBool>,
@@ -75,18 +76,18 @@ pub fn storage_dir(storage_root: &Path, root: &Path) -> PathBuf {
 }
 
 impl Workspace {
-    pub fn open(root: PathBuf, storage: PathBuf) -> Workspace {
+    /// Opens (or makes) the index now, so queries can read it at once; indexing goes on in the background.
+    pub fn open(root: PathBuf, storage: PathBuf) -> Result<Workspace, String> {
+        let index = storage.join("index.sqlite");
+        let cannot_open = |error: rusqlite::Error| format!("cannot open the index at {}: {error}", index.display());
+        let store = Store::open(&index).map_err(cannot_open)?;
+        let reader = Store::open(&index).map_err(cannot_open)?;
         let status = Arc::new(Mutex::new(Status { state: "indexing", ..Status::default() }));
         let cancel = Arc::new(AtomicBool::new(false));
         let (signals, inbox) = mpsc::channel();
-        let index = storage.join("index.sqlite");
-        let (shared, stop) = (status.clone(), cancel.clone());
+        let (shared, stop, folder) = (status.clone(), cancel.clone(), root.clone());
         let thread = thread::spawn(move || {
-            let store = match Store::open(&index) {
-                Ok(store) => store,
-                Err(error) => return update(&shared, |status| fail(status, format!("cannot open the index: {error}"))),
-            };
-            let mut index = Indexer { root, store: &store, extractor: Extractor::default(), status: &shared };
+            let mut index = Indexer { root: folder, store: &store, extractor: Extractor::default(), status: &shared };
             let mut pending = Pending { full: true, named: HashSet::new() };
             loop {
                 let outcome = index.run(&pending, &stop);
@@ -106,7 +107,34 @@ impl Workspace {
                 }
             }
         });
-        Workspace { storage, status, signals, cancel, thread: Some(thread) }
+        Ok(Workspace { root, storage, reader, extractor: Extractor::default(), status, signals, cancel, thread: Some(thread) })
+    }
+
+    /// One page of definitions or references by name, with how complete the index is.
+    pub fn find(&self, table: Table, name: &str, limit: u64, offset: u64) -> Result<Value, String> {
+        let mut answer = query::find(&self.reader, &self.root, table, name, limit, offset)
+            .map_err(|error| format!("the index failed: {error}"))?;
+        answer["coverage"] = self.coverage();
+        Ok(answer)
+    }
+
+    pub fn outline(&mut self, path: &str) -> Result<Value, String> {
+        let (answer, catch_up) = query::outline(&self.reader, &mut self.extractor, &self.root, path)?;
+        if catch_up {
+            self.changed(vec![path.to_owned()]);
+        }
+        Ok(answer)
+    }
+
+    /// What a query could not see: an index still being built, files left out, files that did not parse cleanly.
+    fn coverage(&self) -> Value {
+        let status = self.status();
+        json!({
+            "state": status["state"],
+            "indexed": status["indexed"],
+            "withSyntaxErrors": status["withSyntaxErrors"],
+            "notIndexed": status["notIndexed"],
+        })
     }
 
     /// Re-reads the named files now; with no names, sweeps the whole repository now.
@@ -228,21 +256,13 @@ impl Indexer<'_> {
     /// False when it is not a regular file on disk.
     fn update_file(&mut self, path: &str, known: Option<&Known>, named: bool) -> rusqlite::Result<bool> {
         let file = self.root.join(path);
-        let Ok(metadata) = fs::metadata(&file) else {
+        let Some(now) = query::on_disk(&file) else {
             return Ok(false);
         };
-        if !metadata.is_file() {
-            return Ok(false);
-        }
-        let size = metadata.len();
-        let mtime_ns = metadata
-            .modified()
-            .ok()
-            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-            .map_or(0, |since| since.as_nanos() as i64);
-        if !named && known.is_some_and(|row| row.size == size && row.mtime_ns == mtime_ns) {
+        if !named && known == Some(&now) {
             return Ok(true);
         }
+        let Known { size, mtime_ns } = now;
         let language = Language::of(path);
         let status = match language {
             None => FileStatus::NotIndexed { reason: "language" },
@@ -255,16 +275,14 @@ impl Indexer<'_> {
 
     /// Reads and analyzes a source file, unless its content was analyzed before.
     fn index_file(&mut self, file: &Path, size: u64, language: Language) -> rusqlite::Result<FileStatus> {
-        if size > MAX_FILE_BYTES {
+        if manifest::too_large(size) {
             return Ok(FileStatus::NotIndexed { reason: "size" });
         }
         update(self.status, |status| status.files_read += 1);
-        let Ok(bytes) = fs::read(file) else {
-            return Ok(FileStatus::NotIndexed { reason: "unreadable" });
+        let bytes = match manifest::read_source(file) {
+            Ok(bytes) => bytes,
+            Err(reason) => return Ok(FileStatus::NotIndexed { reason }),
         };
-        if bytes[..bytes.len().min(BINARY_PROBE_BYTES)].contains(&0) {
-            return Ok(FileStatus::NotIndexed { reason: "binary" });
-        }
         // The language is part of the key: the same text means different things in a .h and a .ts file.
         let digest = Sha256::new().chain_update(language.name()).chain_update([0]).chain_update(&bytes).finalize();
         let hash: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
@@ -288,6 +306,7 @@ impl Indexer<'_> {
 mod tests {
     use super::*;
     use crate::manifest::tests::repo;
+    use std::fs;
     use std::time::Instant;
 
     fn wait_for_sweeps(workspace: &Workspace, sweeps: u64) -> Value {
@@ -304,10 +323,10 @@ mod tests {
 
     #[test]
     fn indexes_source_files_and_says_why_others_are_left_out() {
-        let big = "x".repeat(MAX_FILE_BYTES as usize + 1);
+        let big = "x".repeat(1024 * 1024 + 1);
         let dir = repo(&[("a.ts", "let a = 1;"), ("b.md", "# b"), ("big.ts", &big), ("bin.go", "pack\0age")]);
         let storage = tempfile::tempdir().unwrap();
-        let workspace = Workspace::open(dir.path().to_owned(), storage.path().to_owned());
+        let workspace = Workspace::open(dir.path().to_owned(), storage.path().to_owned()).unwrap();
         let status = wait_for_sweeps(&workspace, 1);
         assert_eq!(status["state"], "ready", "{status}");
         assert_eq!(status["indexed"], 1);
@@ -320,7 +339,7 @@ mod tests {
     fn rereads_only_what_changed_or_was_named() {
         let dir = repo(&[("a.ts", "let a = 1;"), ("b.py", "b = 2")]);
         let storage = tempfile::tempdir().unwrap();
-        let workspace = Workspace::open(dir.path().to_owned(), storage.path().to_owned());
+        let workspace = Workspace::open(dir.path().to_owned(), storage.path().to_owned()).unwrap();
         assert_eq!(wait_for_sweeps(&workspace, 1)["filesRead"], 2);
         workspace.changed(vec![]);
         assert_eq!(wait_for_sweeps(&workspace, 2)["filesRead"], 2);
@@ -339,7 +358,7 @@ mod tests {
     fn named_files_skip_the_sweep_unless_the_index_does_not_know_them() {
         let dir = repo(&[("a.ts", "let a = 1;"), (".gitignore", "out/\n")]);
         let storage = tempfile::tempdir().unwrap();
-        let workspace = Workspace::open(dir.path().to_owned(), storage.path().to_owned());
+        let workspace = Workspace::open(dir.path().to_owned(), storage.path().to_owned()).unwrap();
         wait_for_sweeps(&workspace, 1);
         fs::remove_file(dir.path().join("a.ts")).unwrap();
         workspace.changed(vec!["a.ts".to_owned()]);
@@ -357,10 +376,10 @@ mod tests {
     fn reopening_keeps_the_index_and_reads_nothing() {
         let dir = repo(&[("a.ts", "let a = 1;")]);
         let storage = tempfile::tempdir().unwrap();
-        let first = Workspace::open(dir.path().to_owned(), storage.path().to_owned());
+        let first = Workspace::open(dir.path().to_owned(), storage.path().to_owned()).unwrap();
         wait_for_sweeps(&first, 1);
         first.close().unwrap();
-        let again = Workspace::open(dir.path().to_owned(), storage.path().to_owned());
+        let again = Workspace::open(dir.path().to_owned(), storage.path().to_owned()).unwrap();
         let status = wait_for_sweeps(&again, 1);
         assert_eq!((status["indexed"].as_u64(), status["filesRead"].as_u64()), (Some(1), Some(0)));
         again.close().unwrap();
@@ -370,7 +389,7 @@ mod tests {
     fn reports_a_folder_that_is_not_a_repository() {
         let dir = tempfile::tempdir().unwrap();
         let storage = tempfile::tempdir().unwrap();
-        let workspace = Workspace::open(dir.path().join("missing"), storage.path().to_owned());
+        let workspace = Workspace::open(dir.path().join("missing"), storage.path().to_owned()).unwrap();
         let status = wait_for_sweeps(&workspace, 1);
         assert_eq!(status["state"], "degraded");
         assert!(status["error"].as_str().unwrap().contains("git ls-files failed"), "{status}");

@@ -85,7 +85,7 @@ fn stops_when_the_host_closes_its_input() {
 fn opens_a_repository_and_reports_when_it_is_indexed() {
     let repo = tempfile::Builder::new().prefix("kodax-repo-intel-e2e-").tempdir().unwrap();
     assert!(Command::new("git").arg("-C").arg(repo.path()).args(["init", "-q"]).status().unwrap().success());
-    std::fs::write(repo.path().join("a.ts"), "export const a = 1;").unwrap();
+    std::fs::write(repo.path().join("a.ts"), "export function run() {}\nrun();\n").unwrap();
     let storage = tempfile::tempdir().unwrap();
     let mut engine = Engine::start();
     engine.call(1, "initialize", json!({ "storageRoot": storage.path() }));
@@ -102,6 +102,15 @@ fn opens_a_repository_and_reports_when_it_is_indexed() {
         std::thread::sleep(std::time::Duration::from_millis(50));
     };
     assert_eq!((status["state"].as_str(), status["indexed"].as_u64()), (Some("ready"), Some(1)), "{status}");
+    let find = |name: &str| json!({ "root": repo.path(), "name": name });
+    let found = engine.call(id + 10, "symbols.definitions", find("run"))["result"].clone();
+    assert_eq!((found["total"].as_u64(), found["hits"][0]["line"].as_u64()), (Some(1), Some(1)), "{found}");
+    assert_eq!((found["precision"].as_str(), found["coverage"]["state"].as_str()), (Some("syntactic"), Some("ready")));
+    let used = engine.call(id + 11, "symbols.references", find("run"))["result"].clone();
+    assert_eq!((used["precision"].as_str(), used["hits"][0]["line"].as_u64()), (Some("heuristic"), Some(2)), "{used}");
+    assert_eq!(engine.call(id + 12, "symbols.definitions", find("none"))["result"]["total"], 0);
+    let outline = engine.call(id + 13, "file.outline", json!({ "root": repo.path(), "path": "a.ts" }))["result"].clone();
+    assert_eq!((outline["source"].as_str(), outline["definitions"][0]["name"].as_str()), (Some("index"), Some("run")), "{outline}");
     assert_eq!(engine.call(id + 1, "workspace.close", root.clone())["result"], Value::Null);
     assert_eq!(engine.call(id + 2, "workspace.status", root)["error"]["code"], -32602);
     assert_eq!(engine.call(id + 3, "shutdown", Value::Null)["result"], Value::Null);

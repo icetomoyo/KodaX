@@ -56,6 +56,24 @@ impl Language {
     }
 }
 
+/// Larger files are mostly generated or vendored; reading them costs more than they give.
+const MAX_FILE_BYTES: u64 = 1024 * 1024;
+/// A NUL byte this early means the file is not text.
+const BINARY_PROBE_BYTES: usize = 8 * 1024;
+
+pub fn too_large(size: u64) -> bool {
+    size > MAX_FILE_BYTES
+}
+
+/// A source file's bytes, or why it is not read as source: `unreadable` or `binary`.
+pub fn read_source(file: &Path) -> Result<Vec<u8>, &'static str> {
+    let bytes = std::fs::read(file).map_err(|_| "unreadable")?;
+    if bytes[..bytes.len().min(BINARY_PROBE_BYTES)].contains(&0) {
+        return Err("binary");
+    }
+    Ok(bytes)
+}
+
 /// The repository's files that git tracks or would track: committed, staged,
 /// and new files that are not ignored. Paths are relative and use `/`.
 pub fn list_files(root: &Path) -> Result<Vec<String>, String> {
