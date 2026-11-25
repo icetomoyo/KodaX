@@ -28,6 +28,10 @@ pub struct Reference {
     pub kind: String,
     pub line: u32,
     pub column: u32,
+    /// What the name is used on: None for a bare name (`run()`), the text before the dot or
+    /// `::` for a member (`store.run()`, `store::open()`, `self.run()`), empty when that is
+    /// not a plain (dotted) name (`f().run()`).
+    pub receiver: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -71,6 +75,7 @@ const RUST_EXTRA: &str = r#"
 (static_item name: (identifier) @name) @definition.constant
 (function_signature_item name: (identifier) @name) @definition.method
 (impl_item type: [(type_identifier) @name (generic_type type: (type_identifier) @name)]) @container
+(call_expression function: (scoped_identifier name: (identifier) @name)) @reference.call
 "#;
 
 const JAVA_EXTRA: &str = r#"
@@ -180,11 +185,23 @@ fn analysis_of(mut found: Vec<Found>, source: &[u8], has_syntax_errors: bool) ->
     let mut references: Vec<Reference> = found
         .iter()
         .filter(|item| item.role == Role::Reference)
-        .map(|item| Reference {
-            name: text(item.name),
-            kind: item.kind.clone(),
-            line: item.name.start_position().row as u32 + 1,
-            column: item.name.start_position().column as u32 + 1,
+        .map(|item| {
+            // `new ns.Store()` names the whole member expression; the name is its last part.
+            let (name, receiver) = match member_parts(item.name) {
+                Some((object, member)) => (member, Some(object)),
+                None => (item.name, item.name.parent().and_then(member_parts).filter(|(_, m)| *m == item.name).map(|(o, _)| o)),
+            };
+            let receiver = receiver.map(text).map(|object| {
+                let plain = object.chars().all(|c| c.is_alphanumeric() || "_$.:".contains(c));
+                if plain { object } else { String::new() }
+            });
+            Reference {
+                name: text(name),
+                kind: item.kind.clone(),
+                line: name.start_position().row as u32 + 1,
+                column: name.start_position().column as u32 + 1,
+                receiver,
+            }
         })
         .collect();
     // TypeScript runs the JavaScript query too, so both may name the same site.
@@ -221,6 +238,19 @@ fn analysis_of(mut found: Vec<Found>, source: &[u8], has_syntax_errors: bool) ->
         open.push((item.node.end_byte(), name, kind));
     }
     Analysis { definitions, references, imports: Vec::new(), has_syntax_errors }
+}
+
+/// The object and the member of a member access (`a.b`, `a::b`), in any of the first-class languages.
+fn member_parts(node: Node) -> Option<(Node, Node)> {
+    let (object, member) = match node.kind() {
+        "member_expression" => ("object", "property"),
+        "attribute" => ("object", "attribute"),
+        "selector_expression" => ("operand", "field"),
+        "field_expression" => ("value", "field"),
+        "scoped_identifier" => ("path", "name"),
+        _ => return None,
+    };
+    Some((node.child_by_field_name(object)?, node.child_by_field_name(member)?))
 }
 
 #[cfg(test)]
@@ -298,6 +328,28 @@ mod tests {
             analysis.references.iter().map(|r| (r.name.as_str(), r.kind.as_str(), r.line)).collect();
         assert_eq!(names, vec![("run", "call", 2), ("Store", "class", 3), ("Shape", "type", 4)]);
         assert!(!analysis.has_syntax_errors);
+    }
+
+    #[test]
+    fn a_reference_keeps_what_it_is_called_on() {
+        let receivers = |language: Language, source: &str| -> Vec<(String, Option<String>)> {
+            let analysis = Extractor::default().extract(language, source.as_bytes()).unwrap();
+            analysis.references.into_iter().filter(|r| r.kind == "call" || r.kind == "class").map(|r| (r.name, r.receiver)).collect()
+        };
+        let r = |name: &str, receiver: Option<&str>| (name.to_owned(), receiver.map(str::to_owned));
+        assert_eq!(
+            receivers(Language::TypeScript, "run();\nstore.run();\nthis.run();\na.b.run();\nf().run();\nnew ns.Store();\nnew Store();\n"),
+            vec![r("run", None), r("run", Some("store")), r("run", Some("this")), r("run", Some("a.b")), r("f", None), r("run", Some("")), r("Store", Some("ns")), r("Store", None)]
+        );
+        assert_eq!(
+            receivers(Language::Python, "run()\nstore.run()\nself.run()\na.b.run()\n"),
+            vec![r("run", None), r("run", Some("store")), r("run", Some("self")), r("run", Some("a.b"))]
+        );
+        assert_eq!(receivers(Language::Go, "package p\nfunc f() { Open(); store.Open() }\n"), vec![r("Open", None), r("Open", Some("store"))]);
+        assert_eq!(
+            receivers(Language::Rust, "fn f() { open(); store::open(); crate::a::b(); self.run(); Store::new(); }\n"),
+            vec![r("open", None), r("open", Some("store")), r("b", Some("crate::a")), r("run", Some("self")), r("new", Some("Store"))]
+        );
     }
 
     #[test]

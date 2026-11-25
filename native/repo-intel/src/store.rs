@@ -10,7 +10,7 @@ use std::path::Path;
 
 /// Bumped when the tables change, or when files are read into them differently
 /// (what the extractor finds, which files it reads); an index with another version is rebuilt.
-const SCHEMA_VERSION: u32 = 9;
+const SCHEMA_VERSION: u32 = 10;
 
 /// Past this size the write-ahead log is cut back once its pages are in the index.
 /// SQLite otherwise keeps the log at the size of the largest batch ever written:
@@ -182,9 +182,10 @@ impl Store {
                kind TEXT NOT NULL, container TEXT, end_line INTEGER NOT NULL,
                PRIMARY KEY(name, analysis, line, column)) WITHOUT ROWID;
              CREATE INDEX definitions_analysis ON definitions(analysis);
+             -- receiver: what the name is used on (`store` in `store.run()`), NULL for a bare name.
              CREATE TABLE refs(
                name TEXT NOT NULL, analysis INTEGER NOT NULL, line INTEGER NOT NULL, column INTEGER NOT NULL,
-               kind TEXT NOT NULL,
+               kind TEXT NOT NULL, receiver TEXT,
                PRIMARY KEY(name, analysis, line, column)) WITHOUT ROWID;
              -- What each analysis imports, read together when its file's imports are resolved.
              CREATE TABLE imports(
@@ -246,9 +247,9 @@ impl Store {
         }
         let mut reference = self
             .connection
-            .prepare_cached("INSERT OR IGNORE INTO refs(name, analysis, line, column, kind) VALUES (?1, ?2, ?3, ?4, ?5)")?;
+            .prepare_cached("INSERT OR IGNORE INTO refs(name, analysis, line, column, kind, receiver) VALUES (?1, ?2, ?3, ?4, ?5, ?6)")?;
         for r in &analysis.references {
-            reference.execute(params![r.name, id, r.line, r.column, r.kind])?;
+            reference.execute(params![r.name, id, r.line, r.column, r.kind, r.receiver])?;
         }
         let mut import = self
             .connection
@@ -546,7 +547,7 @@ mod tests {
         let store = Store::open(&dir.path().join("index.sqlite")).unwrap();
         let mut shared = analysis(&["run"], false);
         shared.definitions[0].container = Some("Store".to_owned());
-        shared.references.push(crate::extract::Reference { name: "run".to_owned(), kind: "call".to_owned(), line: 4, column: 2 });
+        shared.references.push(crate::extract::Reference { name: "run".to_owned(), kind: "call".to_owned(), line: 4, column: 2, receiver: None });
         store.record_analysis("h", "typescript", &shared).unwrap();
         for path in ["b.ts", "a.ts"] {
             store.record_file(&row(path, indexed("h"))).unwrap();
