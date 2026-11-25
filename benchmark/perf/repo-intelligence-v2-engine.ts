@@ -71,7 +71,8 @@ export async function openAndWait(engine: BenchEngine, root: string, onPoll?: ()
 }
 
 export interface FindPage<T> {
-  readonly precision: string;
+  /** Absent from `symbols.referencesTo`, which labels each hit. */
+  readonly precision?: string;
   readonly hits: T[];
   readonly total: number;
   readonly nextOffset: number | null;
@@ -84,17 +85,19 @@ export interface FindAll<T> {
   readonly precisions: Set<string>;
 }
 
-/** Every hit for `name`, following `nextOffset` to the end. */
-export async function findAll<T>(engine: BenchEngine, method: string, root: string, name: string): Promise<FindAll<T>> {
+/** Every hit for `name`, following `nextOffset` to the end; `extra` adds parameters (`path`). */
+export async function findAll<T>(
+  engine: BenchEngine, method: string, root: string, name: string, extra: Record<string, unknown> = {},
+): Promise<FindAll<T>> {
   const hits: T[] = [];
   const precisions = new Set<string>();
   let offset: number | null = 0;
   let total = 0;
   let pages = 0;
   while (offset !== null) {
-    const page: FindPage<T> = await engine.call<FindPage<T>>(method, { root, name, limit: 500, offset });
+    const page: FindPage<T> = await engine.call<FindPage<T>>(method, { ...extra, root, name, limit: 500, offset });
     hits.push(...page.hits);
-    precisions.add(page.precision);
+    if (page.precision !== undefined) precisions.add(page.precision);
     total = page.total;
     pages += 1;
     offset = page.nextOffset;
@@ -102,7 +105,7 @@ export async function findAll<T>(engine: BenchEngine, method: string, root: stri
   return { hits, total, pages, precisions };
 }
 
-export type ReferenceHit = ReferenceSite & { readonly name: string };
+export type ReferenceHit = ReferenceSite & { readonly name: string; readonly precision?: string };
 
 export interface OutlineAnswer {
   readonly indexed: boolean;

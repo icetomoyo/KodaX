@@ -9,9 +9,10 @@
  *     `repo-intelligence-v2-score.ts`), plus how often the lines agree; v2's
  *     extra keys are checked against the syntax tree, since the truth lists
  *     top-level units only and v2 reports every scope;
- *   - callers: v2 references are name matches, so the callers they imply are
- *     the baseline phase 2 must beat; scored on the old truth bench's seeded
- *     sample next to the old engine's callers;
+ *   - callers: `symbols.references` are name matches, the phase 1 baseline;
+ *     `symbols.referencesTo` resolves them through imports, scored resolved
+ *     hits alone and with the name matches it could not resolve; all on the
+ *     old truth bench's seeded sample next to the old engine's callers;
  *   - the reference contract: every page labeled `heuristic`, and paging
  *     through `nextOffset` returns exactly `total` hits;
  *   - import edges: `file.imports` targets of every TypeScript file against
@@ -144,6 +145,10 @@ interface ReferenceContract {
 
 interface V2Callers {
   readonly callers: Map<string, Set<string>>;
+  /** From `symbols.referencesTo`: hits resolved to the definition, and those plus the unresolved name matches. */
+  readonly resolved: Map<string, Set<string>>;
+  readonly resolvedOrMatched: Map<string, Set<string>>;
+  readonly resolvedContract: ReferenceContract;
   readonly contract: ReferenceContract;
   readonly outsideUnits: number;
   readonly outsideTruthFiles: number;
@@ -153,7 +158,10 @@ interface V2Callers {
 async function v2Callers(engine: BenchEngine, root: string, keys: readonly string[], truth: TruthIndex, outlines: Outlines): Promise<V2Callers> {
   const start = performance.now();
   const callers = new Map<string, Set<string>>();
+  const resolved = new Map<string, Set<string>>();
+  const resolvedOrMatched = new Map<string, Set<string>>();
   const contract: ReferenceContract = { queries: 0, pages: 0, hits: 0, largestTotal: 0, labels: {}, incomplete: [] };
+  const resolvedContract: ReferenceContract = { queries: 0, pages: 0, hits: 0, largestTotal: 0, labels: {}, incomplete: [] };
   let outsideUnits = 0;
   let outsideTruthFiles = 0;
   for (const key of keys) {
@@ -169,8 +177,20 @@ async function v2Callers(engine: BenchEngine, root: string, keys: readonly strin
     callers.set(key, result.callers);
     outsideUnits += result.outsideUnits;
     outsideTruthFiles += result.outsideTruthFiles;
+    const unit = truth.units.get(key);
+    if (!unit) continue;
+    const to = await findAll<ReferenceHit>(engine, 'symbols.referencesTo', root, name, { path: unit.filePath });
+    resolvedContract.queries += 1;
+    resolvedContract.pages += to.pages;
+    resolvedContract.hits += to.hits.length;
+    resolvedContract.largestTotal = Math.max(resolvedContract.largestTotal, to.total);
+    for (const hit of to.hits) resolvedContract.labels[hit.precision ?? 'none'] = (resolvedContract.labels[hit.precision ?? 'none'] ?? 0) + 1;
+    if (to.hits.length !== to.total) resolvedContract.incomplete.push(`${name}: ${to.hits.length} of ${to.total}`);
+    const syntactic = to.hits.filter((hit) => hit.precision === 'syntactic');
+    resolved.set(key, callersFromReferences(syntactic, outlines.definitions, key).callers);
+    resolvedOrMatched.set(key, callersFromReferences(to.hits, outlines.definitions, key).callers);
   }
-  return { callers, contract, outsideUnits, outsideTruthFiles, ms: Math.round(performance.now() - start) };
+  return { callers, resolved, resolvedOrMatched, resolvedContract, contract, outsideUnits, outsideTruthFiles, ms: Math.round(performance.now() - start) };
 }
 
 interface V2Run {
@@ -286,6 +306,10 @@ interface Scores {
   readonly v2PrecisionWithLocals: number | null;
   readonly old?: DefinitionScore;
   readonly v2Callers: Metric;
+  readonly v2ResolvedCallers: Metric;
+  readonly v2ResolvedOrMatchedCallers: Metric;
+  /** `definition <- caller` pairs the resolved hits got wrong. */
+  readonly v2ResolvedErrors: { readonly falsePositives: string[]; readonly misses: string[] };
   readonly fnInFilesWithSyntaxErrors: number;
   readonly importEdges: ImportEdgeScore;
 }
@@ -321,15 +345,20 @@ function renderSummary(meta: Record<string, unknown>, scores: Scores, v2: V2Run,
     '| Source | Precision | Recall | TP | FP | FN |',
     '|---|---|---|---|---|---|',
     `| v2 references (name match) | ${metricCells(scores.v2Callers)} |`,
+    `| v2 referencesTo, resolved only | ${metricCells(scores.v2ResolvedCallers)} |`,
+    `| v2 referencesTo, resolved + unresolved name matches | ${metricCells(scores.v2ResolvedOrMatchedCallers)} |`,
     ...(old ? [`| old, whole index | ${metricCells(old.callers)} |`, `| old, 8 per record | ${metricCells(old.callersAt8)} |`] : []),
     '',
     `- v2 calls in top-level code (no caller unit): ${v2.callers.outsideUnits}; calls in files outside the truth: ${v2.callers.outsideTruthFiles}.`,
+    `- Resolved only, false positives (first ${LISTED_ERRORS}): ${scores.v2ResolvedErrors.falsePositives.slice(0, LISTED_ERRORS).join(', ') || 'none'}.`,
+    `- Resolved only, misses (first ${LISTED_ERRORS}): ${scores.v2ResolvedErrors.misses.slice(0, LISTED_ERRORS).join(', ') || 'none'}.`,
     '',
     '## Reference contract',
     '',
     `- ${contract.queries} names, ${contract.pages} pages, ${contract.hits} hits, largest total ${contract.largestTotal}.`,
     `- Page labels: ${JSON.stringify(contract.labels)}; every page heuristic: ${Object.keys(contract.labels).join() === 'heuristic' ? 'yes' : 'NO'}.`,
     `- Queries whose pages did not add up to total: ${contract.incomplete.length === 0 ? 'none' : contract.incomplete.join('; ')}.`,
+    `- referencesTo: ${v2.callers.resolvedContract.queries} definitions, ${v2.callers.resolvedContract.pages} pages, ${v2.callers.resolvedContract.hits} hits, largest total ${v2.callers.resolvedContract.largestTotal}; hit labels ${JSON.stringify(v2.callers.resolvedContract.labels)}; incomplete: ${v2.callers.resolvedContract.incomplete.join('; ') || 'none'}.`,
     '',
     '## Import edges (every TypeScript file, file to file)',
     '',
@@ -344,6 +373,22 @@ function renderSummary(meta: Record<string, unknown>, scores: Scores, v2: V2Run,
     `- Misses (first ${LISTED_ERRORS}): ${scores.importEdges.falseNegatives.slice(0, LISTED_ERRORS).join(', ') || 'none'}.`,
     '',
   ].join('\n');
+}
+
+function relationErrors(
+  keys: readonly string[],
+  truthOf: (key: string) => ReadonlySet<string>,
+  engineOf: (key: string) => ReadonlySet<string>,
+): { falsePositives: string[]; misses: string[] } {
+  const falsePositives: string[] = [];
+  const misses: string[] = [];
+  for (const key of keys) {
+    const truth = truthOf(key);
+    const found = engineOf(key);
+    for (const caller of found) if (!truth.has(caller)) falsePositives.push(`${key} <- ${caller}`);
+    for (const caller of truth) if (!found.has(caller)) misses.push(`${key} <- ${caller}`);
+  }
+  return { falsePositives, misses };
 }
 
 function safeRemoveTempDir(dir: string): void {
@@ -380,6 +425,11 @@ async function main(): Promise<void> {
     v2PrecisionWithLocals: precisionWithLocals(v2Score, v2Extras),
     ...(old ? { old: scoreDefinitions(units, old.keys) } : {}),
     v2Callers: evaluateRelation(sample, (key) => truth.callers.get(key) ?? none, (key) => v2.callers.callers.get(key) ?? none, () => '.').overall,
+    v2ResolvedCallers: evaluateRelation(sample, (key) => truth.callers.get(key) ?? none, (key) => v2.callers.resolved.get(key) ?? none, () => '.').overall,
+    v2ResolvedOrMatchedCallers: evaluateRelation(
+      sample, (key) => truth.callers.get(key) ?? none, (key) => v2.callers.resolvedOrMatched.get(key) ?? none, () => '.',
+    ).overall,
+    v2ResolvedErrors: relationErrors(sample, (key) => truth.callers.get(key) ?? none, (key) => v2.callers.resolved.get(key) ?? none),
     fnInFilesWithSyntaxErrors: v2Score.falseNegatives.filter((key) => v2.outlines.withSyntaxErrors.has(units.get(key)!.filePath)).length,
     importEdges: scoreImportEdges(
       new Map([...truth.fileImports].filter(([file]) => fileSet.has(file))),
