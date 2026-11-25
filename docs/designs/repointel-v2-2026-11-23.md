@@ -454,6 +454,16 @@ L3 精确层   按需：通过 Host 现有 LSP 服务（packages/coding/src/lsp/
 - **Rust 的模块树：** `self`、`super`、`crate` 分别从文件自己的模块、上一级模块和 crate 根开始。第一段是本模块的子模块文件，就从那里开始；是 workspace 里某个 crate 的名字（Cargo.toml 的 `[lib] name`，否则 `[package] name`，`-` 读作 `_`），就从它的库根开始；其余算外部。路径一直走到最后一个模块文件，剩下的段是这个文件里的条目或内联模块，所以 `crate::Config` 解析到 `lib.rs`。
 - **Rust 的 `#[path]` 和 `[lib] path`：** `#[path = "x_tests.rs"] mod tests;` 导入的是相对声明文件所在目录的那个文件；写在内联模块里时，内联模块名是路径里的目录（非 `mod.rs`、非 crate 根的文件，还要放在以文件名命名的目录下）。Cargo.toml 的 `[lib] path` 指定库根。经 `#[path]` 引入的文件，里面的 `super` 仍按普通模块文件算，所以常常是 `missing`；要算对得反查是谁引入了它，暂不做。
 - **内联模块里的 `super`：** `mod tests { use super::*; }` 里的 `super` 是文件自己的模块。提取 import 时按所在内联模块的层数折算，`super` 记成 `self`，多出来的 `super` 才往上走。
+- **引用在查询时解析，不入库：** 第 5 层不改 schema。查"某个定义的引用"时，先取同名引用，再逐个按 import 解析，同一次查询里按文件缓存 import 和定义。好处是 import 或定义一变，下次查询自然就对，不用维护失效；代价是每翻一页都重新解析一遍（见 §11.5 的耗时）。
+- **一个名字指向哪里：** 本文件有同名 import 就顺着 import 走，没有再看本文件的定义（方法不算，方法要通过对象调用）；Python、Go、Rust 再看通配导入，Go 再看同一包目录里的其他文件。都没有就判定为"指向别处"，不算这个定义的引用。import 优先于本文件定义，是因为 TS、Rust 里两者同名编译不过，Python 里后写的赢，但 import 通常写在最前面、定义覆盖它的情况很少。
+- **对象上的调用：** `this.x()`、`self.x()`、`Self::x()`、`cls.x()` 解析到本文件。`Foo.x()`、`ns.x()` 的 `Foo`、`ns` 是导入的类或模块时顺着 import 走，是本文件的类时看本文件里 `Foo` 有没有这个方法。其他接收者（变量、调用结果、`(await import()).x`）不推断类型，仍按同名匹配，标 `heuristic`。
+- **只到文件，不到类：** 解析结果是"哪个文件里的定义"，不区分同一文件里两个类的同名方法。例如 `extensions/runtime.ts` 里两个类都有 `emit`，`this.emit()` 两个都算。要分清得按调用所在的类判断，暂不做。
+- **别名：** `import { open as begin }` 之后的 `begin()` 也算 `open` 的引用。查询时先用 `aliases_of` 找出以别名导入这个名字的文件，只在这些文件里按别名查。
+- **结果顺序：** 解析到的（`syntactic`）在前，按路径、行、列排；没法解析的同名匹配（`heuristic`）在后。确定指向别处的同名引用不返回。`total` 是两者之和，另带 `resolved` 表示其中解析到的条数。
+- **新方法而不是改旧方法：** 新增 `symbols.referencesTo`（参数 `path` 加 `name`，定义所在文件加名字）。`symbols.references` 保持按名字查、全部标 `heuristic`，不改它的语义。
+- **地图的排序：** 文件按 import 边做 PageRank（阻尼 0.85，固定 50 轮，结果每次相同）；指向目录的边（Go 包、Python 命名空间包）平分给目录下直接的已索引文件。一个文件的顶层定义分摊这个文件的 rank，每个定义的权重是 1 加上按名字导入它的文件数；分数从高到低放进地图，第一个放不下的就停。分摊是为了不让一个大的类型文件占满地图（不分摊时 KodaX 的 `packages/llm/src/types.ts` 一个文件就占了 29 行）。同一个文件里同名的定义（重载）只列第一行。没有 import 解析的语言（Java、C++）各文件 rank 相同，地图基本按路径排，意义不大，暂不另想办法。
+- **地图的格式：** 每个文件一行路径，下面每个定义缩进一行，内容是定义所在的源码行，去掉末尾的 `{`，超过 120 个字符截断。文件按路径排、定义按行号排，不按分数排，这样 rank 小幅变动不会打乱整张地图的顺序。文件在索引之后改过时，这个文件只写"种类 名字"，不读源码行，保证文本只取决于索引内容。不写"还有多少个定义"这类行，要看全部用 `file_outline`。
+- **token 估算：** 和记忆索引同一个规则：ASCII 字符 4 个算 1 token，其他字符 1 个算 1 token。新增引擎方法 `workspace.map`，参数 `tokens` 默认 1,024。
 
 ### 11.3 第 3 层结果（2026-11-25）
 
@@ -483,3 +493,32 @@ Python、Go、Rust 的模块解析。`file.imports` 新增 `folder`（见 §11.2
 - codex 第一次探查有 4,444 条 `missing` 和 1,903 条指回自己。前者几乎都是测试辅助 crate 用了 `[lib] path = "lib.rs"`；后者是 codex 惯用的 `#[path = "client_tests.rs"] mod tests;`。补上 `[lib] path`、`#[path]`、内联模块里的 `super` 后降到 77 条，剩下的都是经 `#[path]` 引入的测试文件里写的 `super::…`（见 §11.2）。还有 58 条指回自己，抽查都是 `crate::remote` 这类内联模块，指回自己是对的。
 - hermes 第一次探查有 46 条 `missing`，都是插件目录和它包装的库同名（`email`、`telegram`、`discord`）。另有 3 条标准库同名导入指错了文件（`import signal`、`import email`）。按 §11.2 的推测根边界修正后，剩 3 条 `missing`，都是测试引用了已经删掉的模块（`plugins.model_providers.custom` 等），解析正确。
 - TS 基准没有回退：仍是 99.9% / 99.9%（TP 11,989、FP 7、FN 7）。
+
+### 11.5 第 5 层结果（2026-11-25）
+
+新增引擎方法 `symbols.referencesTo`（见 §11.2）。schema 不变，仍是 10。
+
+KodaX 仓库，`npm run bench:repo-intel-v2-truth -- . --no-old`，抽 300 个函数和方法，调用方对照编译器真值（`findReferences`）：
+
+| 来源 | 精确率 | 召回率 | TP | FP | FN |
+|---|---|---|---|---|---|
+| 同名匹配（`symbols.references`，阶段 1 记 34.4% / 97.5%） | 35.0% | 96.8% | 754 | 1,398 | 25 |
+| `referencesTo` 只取 `syntactic` | 96.7% | 89.3% | 696 | 24 | 83 |
+| `referencesTo` 全部（`syntactic` 加 `heuristic`） | 44.4% | 97.6% | 760 | 950 | 19 |
+
+- 解析到的部分精确率 96.7%。全部结果的召回率 97.6%，不低于同名匹配，没有丢掉真调用方；同名匹配的误报从 1,398 条降到 950 条，其中 448 条被确定是"指向别处"排除掉。
+- 只取 `syntactic` 的 24 条误报：大多是评测归属的问题（同一行里的内联回调如 `now`、`clock`、`execute`，以及真值没覆盖的 `.mjs`、`App.js`）；8 条是 `extensions/runtime.ts` 的 `this.emit`，见 §11.2"只到文件，不到类"。
+- 只取 `syntactic` 漏掉的 83 条：泛型调用 `findAll<T>()` 在 L1 提取时就没记成引用（同名匹配也漏）；其余是变量上的方法调用、动态 import 的接收者、`(await import()).x`，按设计留给 `heuristic`。
+- 别名支持加上后，`syntactic` 召回率从 88.6% 升到 89.3%，全部结果的召回率从 96.8% 升到 97.6%。
+- import 边仍是 99.9% / 99.9%，没有回退。600 次调用方查询共 2,285 毫秒。
+- 常见名字翻完所有页的耗时（KodaX 仓库）：`get` 2,891 条 384 毫秒，`has` 1,592 条 221 毫秒，`push` 7,198 条约 15 页 1,781 毫秒。每页都会重新解析全部同名引用，`push` 每页约 120 毫秒。工具每次通常只取第一页，暂不做跨页缓存。
+- codex（Rust，7,201 个文件）里查 `new`：同名 50,549 条，`referencesTo` 留下 22,608 条，其中解析到的 18 条（`client.rs`）或 2 条（`agent/types.rs`）。每页约 0.6 秒，同名匹配的第一页 25 毫秒。留下的大多是 `Vec::new()`、`String::new()` 这类：接收者是 Rust prelude 里的类型，文件里没有导入也没有定义，现在按"不知道"处理。按 `::` 和 `.` 区分接收者以后可以把它们判为"指向别处"，暂不做。
+- 第一次在 codex 上测时，一页超过 9 分钟没出结果：顺着通配导入找名字时没有记住每个文件的结果，codex 成串的 `use super::*` 让查找按路径数指数增长。现在一次查询里每个文件、每个名字只找一次，import 成环时在环闭合处截断，不再靠 16 跳上限。修复后 KodaX 的调用方评测结果不变。
+
+### 11.6 第 6 层结果（2026-11-25）
+
+新增引擎方法 `workspace.map`（见 §11.2）。KodaX 仓库（3,737 个已索引文件），默认 1,024 token：32 个文件、52 个定义、1,018 token，生成一次 150–170 毫秒。
+
+- 排在前面的是被大量导入的基础文件：`packages/llm/src/types.ts`（`KodaXMessage`、`KodaXToolDefinition` 等 10 个）、`packages/coding/src/types.ts`（`KodaXOptions`、`KodaXResult` 等 4 个）、`packages/agent/src/diagnostics.ts`、`staticText`、`createAgent`。
+- 也排进了测试和评测的公共代码：`benchmark/harness/*`、`tests/runtime-fixture.ts`，因为很多测试导入它们。`src/sdk-runtime.ts` 这类大的核心文件导入它的文件少，没进地图。按 import 排序就是这样。要不要降低测试文件发出的边的权重，等第 9 层 eval 看地图对任务有没有帮助再定（未经用户确认）。
+
