@@ -326,7 +326,7 @@ mod tests {
 
     #[test]
     fn indexes_source_files_and_says_why_others_are_left_out() {
-        let big = "x".repeat(1024 * 1024 + 1);
+        let big = "x".repeat(manifest::MAX_FILE_BYTES as usize + 1);
         let dir = repo(&[("a.ts", "let a = 1;"), ("b.md", "# b"), ("big.ts", &big), ("bin.go", "pack\0age")]);
         let storage = tempfile::tempdir().unwrap();
         let workspace = Workspace::open(dir.path().to_owned(), storage.path().to_owned()).unwrap();

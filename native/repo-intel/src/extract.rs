@@ -36,14 +36,22 @@ pub struct Analysis {
     pub has_syntax_errors: bool,
 }
 
+// A constructor and a class field hold what is defined in them, so none of it reads as a class member.
 const JS_EXTRA: &str = r#"
 (program (lexical_declaration (variable_declarator name: (identifier) @name) @definition.variable))
 (export_statement (lexical_declaration (variable_declarator name: (identifier) @name) @definition.variable))
+(method_definition name: (private_property_identifier) @name) @definition.method
+(method_definition name: (property_identifier) @name (#eq? @name "constructor")) @container
+"#;
+
+const JS_ONLY: &str = r#"
+(field_definition property: (_) @name) @container
 "#;
 
 const TS_EXTRA: &str = r#"
 (type_alias_declaration name: (type_identifier) @name) @definition.type
 (enum_declaration name: (identifier) @name) @definition.enum
+(public_field_definition name: (_) @name) @container
 "#;
 
 const GO_EXTRA: &str = r#"
@@ -81,7 +89,7 @@ fn grammar_of(language: Language) -> (tree_sitter::Language, Vec<&'static str>) 
     match language {
         Language::TypeScript => (tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(), vec![js, ts, JS_EXTRA, TS_EXTRA]),
         Language::Tsx => (tree_sitter_typescript::LANGUAGE_TSX.into(), vec![js, ts, JS_EXTRA, TS_EXTRA]),
-        Language::JavaScript => (tree_sitter_javascript::LANGUAGE.into(), vec![js, JS_EXTRA]),
+        Language::JavaScript => (tree_sitter_javascript::LANGUAGE.into(), vec![js, JS_EXTRA, JS_ONLY]),
         Language::Python => (tree_sitter_python::LANGUAGE.into(), vec![tree_sitter_python::TAGS_QUERY]),
         Language::Go => (tree_sitter_go::LANGUAGE.into(), vec![tree_sitter_go::TAGS_QUERY, GO_EXTRA]),
         Language::Rust => (tree_sitter_rust::LANGUAGE.into(), vec![tree_sitter_rust::TAGS_QUERY, RUST_EXTRA]),
@@ -251,6 +259,28 @@ mod tests {
                 def("handler", "function", None),
                 def("LIMIT", "variable", None),
             ]
+        );
+    }
+
+    #[test]
+    fn what_sits_in_a_class_field_or_constructor_is_not_a_class_member() {
+        let source = "class Plane {\n  readonly tasks = { cancel: async () => 1, list() { return 2; } };\n\
+            private waiting?: { resolve(value: string): void };\n  constructor() { const abort = () => 1; }\n\
+            #reload() {}\n}\n";
+        assert_eq!(
+            definitions(Language::TypeScript, source),
+            vec![
+                def("Plane", "class", None),
+                def("cancel", "function", Some("tasks")),
+                def("list", "method", Some("tasks")),
+                def("resolve", "method", Some("waiting")),
+                def("abort", "function", Some("constructor")),
+                def("#reload", "method", Some("Plane")),
+            ]
+        );
+        assert_eq!(
+            definitions(Language::JavaScript, "class A {\n  tasks = { cancel: () => 1 };\n  #reload() {}\n}\n"),
+            vec![def("A", "class", None), def("cancel", "function", Some("tasks")), def("#reload", "method", Some("A"))]
         );
     }
 

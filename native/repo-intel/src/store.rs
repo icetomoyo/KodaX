@@ -7,8 +7,14 @@ use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-/// Bumped when the tables change; an index with another version is rebuilt.
-const SCHEMA_VERSION: u32 = 5;
+/// Bumped when the tables change, or when files are read into them differently
+/// (what the extractor finds, which files it reads); an index with another version is rebuilt.
+const SCHEMA_VERSION: u32 = 6;
+
+/// Past this size the write-ahead log is cut back once its pages are in the index.
+/// SQLite otherwise keeps the log at the size of the largest batch ever written:
+/// tens of MB beside the index on a large repository.
+const WAL_LIMIT_BYTES: i64 = 4 * 1024 * 1024;
 
 /// Each schema version has its own file, so engines of two versions that share
 /// a storage folder never rebuild each other's index.
@@ -117,6 +123,7 @@ impl Store {
         let connection = Connection::open(path)?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "synchronous", "NORMAL")?;
+        connection.pragma_update(None, "journal_size_limit", WAL_LIMIT_BYTES)?;
         // A bounded page cache keeps the engine's memory within its budget.
         connection.pragma_update(None, "cache_size", -16_000)?;
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
@@ -473,5 +480,22 @@ mod tests {
         old.execute("UPDATE meta SET value = '0' WHERE key = 'schema'", []).unwrap();
         drop(old);
         assert_eq!(Store::open(&path).unwrap().counts().unwrap().indexed, 0);
+    }
+
+    #[test]
+    fn the_write_ahead_log_shrinks_back_after_a_large_batch() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("index.sqlite");
+        let store = Store::open(&path).unwrap();
+        let names: Vec<String> = (0..20_000).map(|n| format!("name{n}")).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        store.begin().unwrap();
+        for n in 0..10 {
+            store.record_analysis(&format!("h{n}"), "typescript", &analysis(&names, false)).unwrap();
+        }
+        store.commit().unwrap();
+        store.record_file(&row("a.ts", indexed("h0"))).unwrap();
+        let wal = std::fs::metadata(dir.path().join("index.sqlite-wal")).unwrap().len();
+        assert!(wal <= WAL_LIMIT_BYTES as u64, "the log is {wal} bytes");
     }
 }

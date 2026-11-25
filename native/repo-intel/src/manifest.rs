@@ -57,7 +57,8 @@ impl Language {
 }
 
 /// Larger files are mostly generated or vendored; reading them costs more than they give.
-const MAX_FILE_BYTES: u64 = 1024 * 1024;
+/// Hand-written source and tests do reach 1-3 MB (KodaX's sdk-runtime.ts, vscode's agent tests).
+pub const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
 /// A NUL byte this early means the file is not text.
 const BINARY_PROBE_BYTES: usize = 8 * 1024;
 
