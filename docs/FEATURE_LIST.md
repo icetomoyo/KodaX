@@ -2559,6 +2559,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 | `314` | Host Protocol v1 Removal | SDK / Host Protocol | High | `v0.7.100` | [Addition](#2026-11-22-feature_314-addition) — Planned; `src/host-protocol-v1-removal.test.ts` fails from the first 0.7.100 build |
 | `315` | AG-UI Adapter for the v2 Host | SDK / Host Protocol | Medium | On demand | [Addition](#2026-11-23-feature_315-addition) — Planned; waits for a real AG-UI client |
 | `316` | Prompt Cache Warming | LLM Cost / Runtime | High | SDK v2 | [Addition](#2026-11-23-feature_316-addition) — Implemented on `KodaX-next-dev` 2026-11-23, unreleased |
+| `319` | MCP Tool Call Progress | MCP / Host Protocol | Medium | After SDK v2 | [Addition](#2026-11-25-feature_319-addition) — Planned; starts after the v2 protocol work on `KodaX-next-dev` settles |
 | `300` | Git Execution Consolidation with Shared macOS Preflight | Refactor | Medium | `v0.7.99` | [v0.7.99](features/v0.7.99.md#feature_300-git-execution-consolidation-with-shared-macos-preflight) — Planned; design only |
 | `287` | Advisor Mode Virtual Provider | Enhancement / LLM Provider + Session Quality | High | `v0.8.13` | [v0.8.13](features/v0.8.13.md#feature_287-advisor-mode-virtual-provider) |
 | `288` | CLI-Space Daemon Profile Alignment | Enhancement / Runtime + Multi-Client UX | High | `v0.8.14` | [v0.8.14](features/v0.8.14.md#feature_288-cli-space-daemon-profile-alignment) |
@@ -2579,6 +2580,26 @@ fixed GitHub binary archive sidecar omission before tagging.
 | `262` | npm 12 Install-Time Security + Trusted Publishing Migration | Internal / Supply Chain Security | High | `v0.9.0` | [v0.9.0](features/v0.9.0.md#feature_262-npm-12-install-time-security--trusted-publishing-migration) |
 
 ---
+
+## 2026-11-25 FEATURE_319 Addition
+
+- Status: Planned. Owner decision (2026-11-25): customers need to see progress
+  of long MCP tool calls; build it on `KodaX-next-dev` after the v2 protocol
+  work settles, so it is not built against the old protocol first.
+- Today: the MCP client sends `_meta.progressToken` on `tools/call` and each
+  `notifications/progress` re-arms the call timeout, so long calls are no
+  longer killed. The progress itself is dropped.
+- Shape: `McpServerRuntime.callTool` takes a progress callback; `mcp_call`
+  (and run-scoped Host MCP tools) forward each update to
+  `ctx.reportToolProgress`, which already feeds `onToolProgress`, the Session
+  view `tool.progress` field, `tool.progress` Runtime events and the REPL tool
+  row. Text is the server `message`, else `Progress {progress}/{total}`.
+- Open for the v2 contract: whether `tool.progress` carries numeric
+  `progress`/`total` next to the text so SDK and Space clients can draw a bar,
+  and how often updates are coalesced before they reach the wire.
+- Peers (2026-11-25): pi shows MCP progress in the live tool card and over
+  RPC; codex defines `item/mcpToolCall/progress` but never sends it; opencode
+  requests progress only to keep proxies alive and drops it.
 
 ## 2026-11-23 FEATURE_318 Addition
 
