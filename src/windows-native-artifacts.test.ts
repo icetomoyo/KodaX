@@ -5,10 +5,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
   _internalWindowsNativeArtifacts,
+  NATIVE_ARTIFACT_REMOVED_CODE,
+  NativeArtifactRemovedError,
   assertWindowsNativeArtifactStoreNotDirectlyWritable,
   assertWindowsSandboxControlStateNotDirectlyAccessible,
   ensureUnixTrustedTextStateRoot,
@@ -35,31 +37,25 @@ it.skipIf(process.platform !== 'win32')('resolves a short-name cache anchor with
   } finally { vi.unstubAllEnvs(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-it('retains the exact audited native provisioning programs after externalizing their data', () => {
+it('retains only the exact audited broker program after native provisioning replaced the scripts', () => {
   const scripts = JSON.parse(fs.readFileSync(new URL('./windows-native-scripts.json', import.meta.url), 'utf8')) as Record<string, string>;
-  const expected = {
-    provision: '1dc640daef701ff7648e4980ae640a28b2776b73a4793e5423304c729cc86016',
-    control: 'a3d7af9f9308494634b3b19ce263cc7ec0901b034691c94883567ca44a5e567b',
-    asrtBroker: 'b0ef25b6284fc6a7fcc57a6fea215e48e2554b6ba8e07c058f7d544224fe4d18',
-  };
-  for (const [key, hash] of Object.entries(expected)) {
-    expect(createHash('sha256').update(scripts[key]!, 'utf8').digest('hex')).toBe(hash);
-    const expectedBytes: Readonly<Record<string, number>> = { provision: 17574, control: 16816, asrtBroker: 22662 };
-    expect(Buffer.byteLength(scripts[key]!, 'utf16le')).toBe(expectedBytes[key]);
-  }
+  expect(Object.keys(scripts)).toEqual(['asrtBroker']);
+  expect(createHash('sha256').update(scripts.asrtBroker!, 'utf8').digest('hex'))
+    .toBe('b0ef25b6284fc6a7fcc57a6fea215e48e2554b6ba8e07c058f7d544224fe4d18');
+  expect(Buffer.byteLength(scripts.asrtBroker!, 'utf16le')).toBe(22662);
 });
 
 it('fails before native execution when a packaged script is missing or changed, and retries valid data', () => {
   const missing = vi.spyOn(fs, 'readFileSync').mockImplementationOnce(() => {
     throw Object.assign(new Error('fixture resource missing'), { code: 'ENOENT' });
   });
-  expect(() => _internalWindowsNativeArtifacts.nativeScript('provision')).toThrow('fixture resource missing');
+  expect(() => _internalWindowsNativeArtifacts.nativeScript('asrtBroker')).toThrow('fixture resource missing');
   missing.mockRestore();
-  const changed = vi.spyOn(fs, 'readFileSync').mockReturnValueOnce(JSON.stringify({ control: 'changed program' }));
-  expect(() => _internalWindowsNativeArtifacts.nativeScript('control')).toThrow(/audited program/);
+  const changed = vi.spyOn(fs, 'readFileSync').mockReturnValueOnce(JSON.stringify({ asrtBroker: 'changed program' }));
+  expect(() => _internalWindowsNativeArtifacts.nativeScript('asrtBroker')).toThrow(/audited program/);
   changed.mockRestore();
-  expect(createHash('sha256').update(_internalWindowsNativeArtifacts.nativeScript('control'), 'utf8').digest('hex'))
-    .toBe('a3d7af9f9308494634b3b19ce263cc7ec0901b034691c94883567ca44a5e567b');
+  expect(createHash('sha256').update(_internalWindowsNativeArtifacts.nativeScript('asrtBroker'), 'utf8').digest('hex'))
+    .toBe('b0ef25b6284fc6a7fcc57a6fea215e48e2554b6ba8e07c058f7d544224fe4d18');
 });
 
 function windowsManifestText(
@@ -84,7 +80,26 @@ function windowsManifestText(
   });
 }
 
+// Fixture manifests pin fake bytes, so provisioning runs through the helper
+// that build:native produced for this checkout.
+const builtShellSandbox = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..', 'dist', 'native', `win32-${process.arch}`, 'kodax-windows-sandbox.exe',
+);
+
 describe('Windows native artifact trust boundary', () => {
+  beforeAll(() => {
+    if (process.platform !== 'win32') return;
+    if (!fs.existsSync(builtShellSandbox)) {
+      throw new Error(`Run npm run build:native first; missing ${builtShellSandbox}`);
+    }
+    _internalWindowsNativeArtifacts.setNativeProvisionerForTests([builtShellSandbox]);
+  });
+
+  afterAll(() => {
+    _internalWindowsNativeArtifacts.setNativeProvisionerForTests(undefined);
+  });
+
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
@@ -490,6 +505,8 @@ describe('Windows native artifact trust boundary', () => {
           'KODAX_WINDOWS_NATIVE_MANIFEST_JSON',
           windowsManifestText('a'.repeat(64), sha256),
         );
+        // A PowerShell launch resolves through SystemRoot and would fail here.
+        vi.stubEnv('SystemRoot', path.join(temporary, 'missing-system-root'));
 
         const cold = resolveWindowsNativeArtifact(
           pathToFileURL(moduleFile).href,
@@ -497,7 +514,6 @@ describe('Windows native artifact trust boundary', () => {
           1,
           { provision: true },
         );
-        vi.stubEnv('SystemRoot', path.join(temporary, 'missing-system-root'));
         const warm = resolveWindowsNativeArtifact(
           pathToFileURL(moduleFile).href,
           'shellSandbox',
@@ -650,6 +666,7 @@ import fs from 'node:fs';
 const input = JSON.parse(process.argv[1]);
 globalThis.KODAX_WINDOWS_NATIVE_MANIFEST_JSON = input.manifestText;
 const api = await import(input.implementation);
+api._internalWindowsNativeArtifacts.setNativeProvisionerForTests([input.provisioner]);
 fs.writeFileSync(input.ready, 'ready', { flag: 'wx' });
 while (!fs.existsSync(input.gate)) await new Promise((resolve) => setTimeout(resolve, 10));
 const artifact = api.resolveWindowsNativeArtifact(input.moduleFileUrl, 'shellSandbox', 1, { provision: true });
@@ -666,6 +683,7 @@ process.stdout.write(JSON.stringify({ path: artifact.path, bytes: fs.readFileSyn
               manifestText,
               gate,
               ready,
+              provisioner: builtShellSandbox,
             }),
           ], {
             cwd: path.resolve('.'),
@@ -711,6 +729,54 @@ process.stdout.write(JSON.stringify({ path: artifact.path, bytes: fs.readFileSyn
       }
     },
     30_000,
+  );
+
+  it.runIf(process.platform === 'win32')(
+    'reports an image removed right after provisioning as a dedicated non-retryable error',
+    () => {
+      const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'kodax-native-quarantine-'));
+      const moduleFile = path.join(temporary, 'package', 'dist', 'sdk-sandbox.js');
+      const nativeDirectory = path.join(path.dirname(moduleFile), 'native', `win32-${process.arch}`);
+      const fakeQuarantine = path.join(temporary, 'quarantine.mjs');
+      vi.stubEnv('LOCALAPPDATA', path.join(temporary, 'local-app-data'));
+      try {
+        const bytes = Buffer.from('KodaX shell artifact quarantined by security software');
+        const sha256 = createHash('sha256').update(bytes).digest('hex');
+        fs.mkdirSync(path.join(temporary, 'local-app-data'), { recursive: true });
+        fs.mkdirSync(nativeDirectory, { recursive: true });
+        fs.writeFileSync(path.join(nativeDirectory, 'kodax_windows_shell_sandbox.exe'), bytes);
+        vi.stubGlobal('KODAX_WINDOWS_NATIVE_MANIFEST_JSON', windowsManifestText('a'.repeat(64), sha256));
+        // Mode "after" lets the real helper publish, then deletes the image the
+        // way an antivirus quarantine does; mode "during" reports the helper's
+        // own vanished-image exit status.
+        fs.writeFileSync(fakeQuarantine, [
+          "import { spawnSync } from 'node:child_process';",
+          "import fs from 'node:fs';",
+          'const [mode, helper, ...args] = process.argv.slice(2);',
+          "if (mode === 'during') { process.stderr.write('image vanished'); process.exit(3); }",
+          'const result = spawnSync(helper, args, { input: fs.readFileSync(0) });',
+          'fs.rmSync(result.stdout.toString().trim());',
+          'process.stdout.write(result.stdout);',
+          'process.exit(result.status ?? 1);',
+        ].join('\n'));
+        const resolve = (): unknown => resolveWindowsNativeArtifact(
+          pathToFileURL(moduleFile).href, 'shellSandbox', 1, { provision: true },
+        );
+        for (const mode of ['after', 'during']) {
+          _internalWindowsNativeArtifacts.setNativeProvisionerForTests(
+            [process.execPath, fakeQuarantine, mode, builtShellSandbox],
+          );
+          let failure: unknown;
+          try { resolve(); } catch (error: unknown) { failure = error; }
+          expect(failure, mode).toBeInstanceOf(NativeArtifactRemovedError);
+          expect(failure, mode).toMatchObject({ code: NATIVE_ARTIFACT_REMOVED_CODE, retryable: false });
+          expect(String(failure), mode).not.toMatch(/native artifact is unavailable/);
+        }
+      } finally {
+        _internalWindowsNativeArtifacts.setNativeProvisionerForTests([builtShellSandbox]);
+        fs.rmSync(temporary, { recursive: true, force: true });
+      }
+    },
   );
 
   it.runIf(process.platform === 'win32')(

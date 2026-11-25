@@ -56,6 +56,7 @@ import {
   type RuntimeDaemonEndpoint,
 } from "./transport.js";
 import { spawnWindowsJobContainedProcess, WindowsJobStartupCleanupError } from "./windows-job-supervisor.js";
+import { NATIVE_ARTIFACT_REMOVED_CODE } from '../windows-native-artifacts.js';
 import { createClientStartupProgressReporter } from '../client-startup-progress.js';
 import type { ClientStartupProgress } from '@kodax-ai/coding/client-contract';
 import { DAEMON_STARTUP_PROGRESS_ENV, readDaemonStartupPhase } from './startup-progress.js';
@@ -316,7 +317,14 @@ function capFileToTail(file: string, maxBytes: number): void {
 }
 
 export type RuntimeDaemonStartupFailureReason =
-  "cancelled" | "child_exit" | "identity_mismatch" | "timeout" | "unhealthy";
+  | "cancelled"
+  | "child_exit"
+  | "identity_mismatch"
+  | "timeout"
+  | "unhealthy"
+  // Security software removed a native image KodaX just wrote. Retrying
+  // rewrites it and gets it removed again, so the user must act first.
+  | typeof NATIVE_ARTIFACT_REMOVED_CODE;
 
 export class RuntimeDaemonStartupError extends Error {
   readonly code = 'daemon_startup_failed' as const;
@@ -325,8 +333,9 @@ export class RuntimeDaemonStartupError extends Error {
   constructor(
     message: string,
     readonly reason: RuntimeDaemonStartupFailureReason,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
     this.name = "RuntimeDaemonStartupError";
     // Early exit is retryable only after waitForHealthyDaemonStartup verifies
     // cleanup. Unknown cleanup retains the exact child in the gate below.
@@ -905,8 +914,12 @@ function runtimeDaemonExitedEarly(
     `Runtime daemon child exited before becoming healthy (${status}).` +
       (cause ? ` Cause: ${cause}.` : "") +
       ` See daemon bootstrap log: ${runtimeDaemonBootstrapLogPath(paths)}`,
-    "child_exit",
+    childFailureReason(cause ?? ''),
   );
+}
+
+function childFailureReason(text: string): RuntimeDaemonStartupFailureReason {
+  return text.includes(`[${NATIVE_ARTIFACT_REMOVED_CODE}]`) ? NATIVE_ARTIFACT_REMOVED_CODE : 'child_exit';
 }
 
 /**
@@ -1065,7 +1078,8 @@ export async function spawnRuntimeDaemonServeProcess(
     throw new RuntimeDaemonStartupError(
       `Runtime daemon launch failed: ${message}` +
         (cause && !message.includes(cause) ? ` Cause: ${cause}.` : ''),
-      'child_exit',
+      childFailureReason(`${message} ${cause ?? ''}`),
+      { cause: error },
     );
   } finally {
     closeSync(bootstrapLog);

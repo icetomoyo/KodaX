@@ -144,7 +144,7 @@ unsafe extern "system" {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum AclMode {
+pub(crate) enum AclMode {
     Deny,
     Grant,
 }
@@ -215,20 +215,20 @@ impl RequiredAce {
 }
 
 #[derive(Debug)]
-struct ValidatedAclPath {
-    dos: String,
+pub(crate) struct ValidatedAclPath {
+    pub(crate) dos: String,
     nt: Vec<u16>,
 }
 
-struct AclTarget {
-    handle: OwnedHandle,
-    canonical_path: String,
-    directory: bool,
-    identity: AclTargetIdentity,
+pub(crate) struct AclTarget {
+    pub(crate) handle: OwnedHandle,
+    pub(crate) canonical_path: String,
+    pub(crate) directory: bool,
+    pub(crate) identity: AclTargetIdentity,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct AclTargetIdentity {
+pub(crate) struct AclTargetIdentity {
     volume_serial: u64,
     file_id: [u8; 16],
 }
@@ -339,23 +339,23 @@ pub fn remove_persistent_deny_read(paths: &[String], sandbox_group_sid: &str) ->
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ObservedAce {
-    index: u32,
-    mode: AclMode,
-    sid: String,
-    mask: u32,
-    flags: u8,
+pub(crate) struct ObservedAce {
+    pub(crate) index: u32,
+    pub(crate) mode: AclMode,
+    pub(crate) sid: String,
+    pub(crate) mask: u32,
+    pub(crate) flags: u8,
 }
 
-struct AceSnapshot {
-    aces: Vec<ObservedAce>,
-    directory: bool,
+pub(crate) struct AceSnapshot {
+    pub(crate) aces: Vec<ObservedAce>,
+    pub(crate) directory: bool,
 }
 
-struct RawDacl {
-    descriptor: PSECURITY_DESCRIPTOR,
-    dacl: *mut ACL,
-    owner: PSID,
+pub(crate) struct RawDacl {
+    pub(crate) descriptor: PSECURITY_DESCRIPTOR,
+    pub(crate) dacl: *mut ACL,
+    pub(crate) owner: PSID,
 }
 
 struct LocalAcl(*mut ACL);
@@ -837,7 +837,7 @@ fn is_dos_device_alias(value: &str) -> bool {
         })
 }
 
-fn validate_acl_path(path: &Path) -> Result<ValidatedAclPath> {
+pub(crate) fn validate_acl_path(path: &Path) -> Result<ValidatedAclPath> {
     use std::path::{Component, Prefix};
 
     let mut components = path.components();
@@ -932,16 +932,44 @@ fn require_supported_filesystem(handle: HANDLE) -> Result<()> {
     Ok(())
 }
 
-fn open_acl_target_with_access(path: &Path, desired_access: u32) -> Result<AclTarget> {
-    let validated = validate_acl_path(path)?;
+/// NT status of a failed no-reparse create/open, kept so callers can tell a
+/// missing or colliding name apart from a hostile path.
+pub(crate) struct NtOpenFailure {
+    pub(crate) status: NTSTATUS,
+    pub(crate) error: anyhow::Error,
+}
+
+pub(crate) const FILE_CREATE: u32 = 2;
+pub(crate) const FILE_DIRECTORY_FILE: u32 = 0x1;
+pub(crate) const FILE_WRITE_THROUGH: u32 = 0x2;
+pub(crate) const FILE_NON_DIRECTORY_FILE: u32 = 0x40;
+pub(crate) const STATUS_OBJECT_NAME_COLLISION: NTSTATUS = NTSTATUS(0xC000_0035_u32 as i32);
+pub(crate) const STATUS_OBJECT_NAME_NOT_FOUND: NTSTATUS = NTSTATUS(0xC000_0034_u32 as i32);
+pub(crate) const STATUS_OBJECT_PATH_NOT_FOUND: NTSTATUS = NTSTATUS(0xC000_003A_u32 as i32);
+
+/// Create or open `path` without following any reparse point in any component.
+/// `security_descriptor` applies only when the call creates the object.
+pub(crate) fn nt_create_file(
+    path: &Path,
+    desired_access: u32,
+    share_access: u32,
+    create_disposition: u32,
+    create_options: u32,
+    security_descriptor: *const c_void,
+) -> std::result::Result<OwnedHandle, NtOpenFailure> {
+    let fail = |error: anyhow::Error| NtOpenFailure {
+        status: NTSTATUS(0),
+        error,
+    };
+    let validated = validate_acl_path(path).map_err(fail)?;
     let name_bytes = (validated.nt.len() - 1)
         .checked_mul(size_of::<u16>())
         .and_then(|length| u16::try_from(length).ok())
-        .ok_or_else(|| anyhow!("Windows sandbox ACL path is too long"))?;
+        .ok_or_else(|| fail(anyhow!("Windows sandbox ACL path is too long")))?;
     let object_name = UNICODE_STRING {
         Length: name_bytes,
         MaximumLength: u16::try_from(validated.nt.len() * size_of::<u16>())
-            .context("Windows sandbox ACL path is too long")?,
+            .map_err(|_| fail(anyhow!("Windows sandbox ACL path is too long")))?,
         Buffer: PWSTR(validated.nt.as_ptr() as *mut u16),
     };
     let attributes = ObjectAttributes {
@@ -949,7 +977,7 @@ fn open_acl_target_with_access(path: &Path, desired_access: u32) -> Result<AclTa
         root_directory: HANDLE::default(),
         object_name: &object_name,
         attributes: (OBJ_CASE_INSENSITIVE | OBJ_DONT_REPARSE).0,
-        security_descriptor: null(),
+        security_descriptor,
         security_quality_of_service: null(),
     };
     let mut status_block = IO_STATUS_BLOCK::default();
@@ -962,26 +990,54 @@ fn open_acl_target_with_access(path: &Path, desired_access: u32) -> Result<AclTa
             &mut status_block,
             null(),
             FILE_ATTRIBUTE_NORMAL.0,
-            (FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE).0,
-            FILE_OPEN,
-            FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_FOR_BACKUP_INTENT,
+            share_access,
+            create_disposition,
+            create_options | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_FOR_BACKUP_INTENT,
             null(),
             0,
         )
     };
     if status.0 < 0 {
         if status == STATUS_REPARSE_POINT_ENCOUNTERED {
-            bail!("Windows sandbox ACL path contains a reparse point");
+            return Err(NtOpenFailure {
+                status,
+                error: anyhow!("Windows sandbox ACL path contains a reparse point"),
+            });
         }
         let code = unsafe { RtlNtStatusToDosError(status) };
-        return Err(std::io::Error::from_raw_os_error(code as i32)).with_context(|| {
+        let error = anyhow::Error::new(std::io::Error::from_raw_os_error(code as i32)).context(
             format!(
                 "open Windows sandbox ACL target without following links: {}",
                 path.display(),
-            )
-        });
+            ),
+        );
+        return Err(NtOpenFailure { status, error });
     }
-    let handle = OwnedHandle::new(raw, "Windows sandbox ACL target")?;
+    OwnedHandle::new(raw, "Windows sandbox ACL target").map_err(fail)
+}
+
+fn open_acl_target_with_access(path: &Path, desired_access: u32) -> Result<AclTarget> {
+    open_acl_target_with_share(
+        path,
+        desired_access,
+        (FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE).0,
+    )
+}
+
+pub(crate) fn open_acl_target_with_share(
+    path: &Path,
+    desired_access: u32,
+    share_access: u32,
+) -> Result<AclTarget> {
+    let handle = nt_create_file(path, desired_access, share_access, FILE_OPEN, 0, null())
+        .map_err(|failure| failure.error)?;
+    inspect_opened_acl_target(path, handle)
+}
+
+/// Bind an opened handle to the path it was opened by: no reparse point, one
+/// link for files, no case-sensitive directory, NTFS/ReFS, and no path alias.
+pub(crate) fn inspect_opened_acl_target(path: &Path, handle: OwnedHandle) -> Result<AclTarget> {
+    let validated = validate_acl_path(path)?;
     let mut tag: FILE_ATTRIBUTE_TAG_INFO = unsafe { zeroed() };
     unsafe {
         GetFileInformationByHandleEx(
@@ -1062,14 +1118,14 @@ fn open_acl_target(path: &Path) -> Result<AclTarget> {
     )
 }
 
-fn inspect_acl_target(path: &Path) -> Result<AclTarget> {
+pub(crate) fn inspect_acl_target(path: &Path) -> Result<AclTarget> {
     open_acl_target_with_access(
         path,
         READ_CONTROL.0 | FILE_READ_ATTRIBUTES.0 | SYNCHRONIZE.0,
     )
 }
 
-fn raw_dacl(handle: HANDLE) -> Result<RawDacl> {
+pub(crate) fn raw_dacl(handle: HANDLE) -> Result<RawDacl> {
     let mut descriptor = PSECURITY_DESCRIPTOR::default();
     let mut dacl = null_mut();
     let mut owner = PSID::default();
@@ -1155,7 +1211,7 @@ impl AclTarget {
         Ok(())
     }
 
-    fn read_aces(&self) -> Result<AceSnapshot> {
+    pub(crate) fn read_aces(&self) -> Result<AceSnapshot> {
         let dacl = raw_dacl(self.handle.raw())?;
         let mut information = ACL_SIZE_INFORMATION::default();
         unsafe {
@@ -1941,7 +1997,7 @@ pub fn recover_stale_execution_denies(control_directory: &Path) -> Result<()> {
     recover_stale_execution_denies_until(control_directory, deadline)
 }
 
-fn verify_open_control_directory_boundary(control: &AclTarget, host_sid: &str) -> Result<()> {
+pub(crate) fn verify_open_control_directory_boundary(control: &AclTarget, host_sid: &str) -> Result<()> {
     ensure!(
         control.directory,
         "Windows sandbox control state is not a directory"

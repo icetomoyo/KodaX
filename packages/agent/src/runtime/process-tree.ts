@@ -465,7 +465,8 @@ export function installWindowsProcessHelper(resolve: (() => string) | undefined)
   windowsProcessHelper = undefined;
 }
 
-function resolveWindowsProcessHelper(): string | undefined {
+/** The installed native helper path, or undefined when PowerShell must be used. */
+export function resolveWindowsProcessHelper(): string | undefined {
   if (windowsProcessHelper === undefined) {
     try {
       windowsProcessHelper = windowsProcessHelperResolver?.() ?? null;

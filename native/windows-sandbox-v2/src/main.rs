@@ -3,6 +3,10 @@
 #[cfg(windows)]
 mod acl;
 #[cfg(windows)]
+mod artifact_store;
+#[cfg(windows)]
+mod effect_job;
+#[cfg(windows)]
 mod host;
 mod model;
 mod protocol;
@@ -284,6 +288,39 @@ fn run() -> anyhow::Result<u32> {
             let supervisor = args.next().context("Supervisor PID is required")?.to_string_lossy().parse::<u32>()?;
             ensure!(args.next().is_none(), "Unexpected daemon identity arguments");
             println!("{}", job_identity::query(&name.to_string_lossy(), pid, supervisor)?);
+            Ok(0)
+        }
+        "__provision-artifact" => {
+            ensure!(args.next().is_none(), "Artifact provisioning takes its request from stdin");
+            artifact_store::run_provision()
+        }
+        "__control-directory" => {
+            let action = args.next().context("Control directory action is required")?;
+            ensure!(args.next().is_none(), "Control directory accepts one action");
+            artifact_store::run_control(&action.to_string_lossy())
+        }
+        "__effect-job-supervise" => {
+            let target = process_tree::parse_pid(&args.next().context("Effect target PID is required")?.to_string_lossy())?;
+            let owner = process_tree::parse_pid(&args.next().context("Effect owner PID is required")?.to_string_lossy())?;
+            let name = args.next().context("Effect Job name is required")?;
+            ensure!(args.next().is_none(), "Unexpected effect Job arguments");
+            effect_job::supervise(target, owner, &name.to_string_lossy())
+        }
+        "__effect-job-recover" => {
+            let name = args.next().context("Effect Job name is required")?;
+            ensure!(args.next().is_none(), "Unexpected effect Job arguments");
+            println!("{}", if effect_job::recover(&name.to_string_lossy())? { "DRAINED" } else { "NOT_FOUND" });
+            Ok(0)
+        }
+        "__sid-active" => {
+            let sid = args.next().context("SID is required")?;
+            let ignore_tree = match args.next() {
+                None => false,
+                Some(flag) if flag == "--ignore-current-tree" => true,
+                Some(_) => anyhow::bail!("Unexpected SID probe argument"),
+            };
+            ensure!(args.next().is_none(), "Unexpected SID probe arguments");
+            println!("{}", if effect_job::sid_has_processes(&sid.to_string_lossy(), ignore_tree)? { "ACTIVE" } else { "CLEAR" });
             Ok(0)
         }
         "__process-snapshot" => {

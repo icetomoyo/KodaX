@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -12,8 +12,6 @@ declare const KODAX_NATIVE_MANIFEST_JSON: string | undefined;
 declare const KODAX_NATIVE_MANIFESTS_JSON: string | undefined;
 
 const NATIVE_SCRIPT_HASHES = {
-  provision: '1dc640daef701ff7648e4980ae640a28b2776b73a4793e5423304c729cc86016',
-  control: 'a3d7af9f9308494634b3b19ce263cc7ec0901b034691c94883567ca44a5e567b',
   asrtBroker: 'b0ef25b6284fc6a7fcc57a6fea215e48e2554b6ba8e07c058f7d544224fe4d18',
 } as const;
 const nativeScripts = new Map<keyof typeof NATIVE_SCRIPT_HASHES, string>();
@@ -228,7 +226,7 @@ function sameOrInside(parent: string, candidate: string): boolean {
   return relative === '' || (!relative.startsWith('..') && !pathApi.isAbsolute(relative));
 }
 
-// PowerShell's GetFullPath expands 8.3 path components (a TEMP root like
+// Win32 full-path normalization expands 8.3 path components (a TEMP root like
 // `C:\Users\RUNNER~1\...` comes back as `...\runneradmin\...`), so two
 // strings for the same file can disagree. Compare through the filesystem's
 // long-form paths once the destination exists.
@@ -708,13 +706,79 @@ function protectedArtifactDirectory(
   );
 }
 
-// The fixed System32 provisioner receives only bytes already authenticated by
-// the embedded release manifest. It creates every cache component with its
-// final protected DACL; existing components are verified and never repaired
-// through a path-based ACL mutation.
+/** Security software removed a protected image right after KodaX wrote it. */
+export const NATIVE_ARTIFACT_REMOVED_CODE = 'native_artifact_removed_after_provision';
 
+export class NativeArtifactRemovedError extends Error {
+  readonly code = NATIVE_ARTIFACT_REMOVED_CODE;
+  readonly retryable = false;
+  constructor(readonly artifactPath: string, detail?: string) {
+    super(
+      `[${NATIVE_ARTIFACT_REMOVED_CODE}] KodaX native artifact ${artifactPath} `
+      + 'disappeared right after it was written; '
+      + 'security software (for example Windows Defender) likely quarantined it. '
+      + 'Restore it from quarantine or allow it, then restart KodaX.'
+      + (detail === undefined ? '' : ` ${detail}`),
+    );
+    this.name = 'NativeArtifactRemovedError';
+  }
+}
 
+/** Exit status the native provisioner uses when its published image vanished. */
+const NATIVE_PROVISIONER_ARTIFACT_REMOVED_EXIT = 3;
 
+type NativeProvisionerCommand = readonly [executable: string, ...leadingArgs: string[]];
+let nativeProvisionerOverride: NativeProvisionerCommand | undefined;
+
+// The provisioner is this build's own shell sandbox helper: the protected
+// host-only copy when one exists, otherwise the hash-verified shipped image,
+// which can then provision its own protected copy. Writing images from a
+// native process keeps script hosts out of the write path; security software
+// treats a script that decodes an executable into AppData as a dropper.
+function resolveWindowsNativeProvisioner(writeRoots: readonly string[]): NativeProvisionerCommand {
+  if (nativeProvisionerOverride !== undefined) return nativeProvisionerOverride;
+  const embedded = embeddedNativeManifestText();
+  const diagnostics: string[] = [];
+  for (const directory of artifactDirectories(import.meta.url, embedded !== undefined)) {
+    const manifestPath = path.join(directory, 'manifest.json');
+    try {
+      const { entry } = parseManifestEntryText(
+        embedded ?? fs.readFileSync(manifestPath, 'utf8'),
+        'shellSandbox',
+      );
+      const existing = resolveExistingProtectedArtifact({ kind: 'shellSandbox', entry });
+      if (existing !== undefined) return [existing];
+      assertDevelopmentSourceIsOutsideWriteRoots(directory, writeRoots);
+      const source = path.join(directory, entry.file);
+      readVerifiedArtifact(source, entry.sha256);
+      return [source];
+    } catch (error: unknown) {
+      diagnostics.push(`${manifestPath}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  throw new Error(`The KodaX native artifact provisioner is unavailable. ${diagnostics.join(' | ')}`);
+}
+
+function runWindowsNativeProvisioner(
+  args: readonly string[],
+  input: string,
+  writeRoots: readonly string[],
+): SpawnSyncReturns<string> {
+  const [executable, ...leadingArgs] = resolveWindowsNativeProvisioner(writeRoots);
+  return spawnSync(executable, [...leadingArgs, ...args], {
+    input,
+    encoding: 'utf8',
+    env: process.env,
+    shell: false,
+    windowsHide: true,
+    timeout: 30_000,
+    maxBuffer: 1024 * 1024,
+  });
+}
+
+function nativeProvisionerFailure(result: SpawnSyncReturns<string>): string {
+  return result.error?.message ?? (result.stderr.trim() || `exit ${String(result.status)}`);
+}
 
 function runWindowsSandboxControlDirectoryAction(
   action: 'verify' | 'ensure' | 'repair',
@@ -724,25 +788,15 @@ function runWindowsSandboxControlDirectoryAction(
   }
   const cacheRoot = windowsNativeArtifactCacheRoot();
   const controlRoot = windowsSandboxControlDirectory();
-  const powershell = path.join(
-    process.env.SystemRoot ?? String.raw`C:\Windows`,
-    'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe',
+  const result = runWindowsNativeProvisioner(
+    ['__control-directory', action],
+    JSON.stringify({ cacheRoot, controlRoot }),
+    [],
   );
-  const result = spawnSync(powershell, [
-    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-    '-EncodedCommand', Buffer.from(nativeScript('control'), 'utf16le').toString('base64'),
-  ], {
-    input: JSON.stringify({ action, cacheRoot, controlRoot }),
-    encoding: 'utf8',
-    env: process.env,
-    shell: false,
-    windowsHide: true,
-    timeout: 30_000,
-    maxBuffer: 1024 * 1024,
-  });
   if (result.error !== undefined || result.status !== 0) {
-    const reason = result.error?.message ?? (result.stderr.trim() || `exit ${String(result.status)}`);
-    throw new Error(`Cannot ${action} protected KodaX native shell control state: ${reason}`);
+    throw new Error(
+      `Cannot ${action} protected KodaX native shell control state: ${nativeProvisionerFailure(result)}`,
+    );
   }
   if (result.stdout.trim().toLowerCase() !== controlRoot.toLowerCase()
     && !sameRealPath(result.stdout.trim(), controlRoot)) {
@@ -775,6 +829,7 @@ function provisionProtectedArtifact(input: {
   readonly sandboxReadSid?: string;
   readonly localUsersReadExecute?: boolean;
   readonly allowCreate?: boolean;
+  readonly writeRoots?: readonly string[];
 }): string {
   if (input.sandboxReadSid !== undefined && !/^S-\d+(?:-\d+)+$/i.test(input.sandboxReadSid)) {
     throw new Error('Native artifact sandbox-read SID is invalid.');
@@ -787,43 +842,37 @@ function provisionProtectedArtifact(input: {
     input.sandboxReadSid,
     input.localUsersReadExecute === true,
   );
-  const powershell = path.join(
-    process.env.SystemRoot ?? String.raw`C:\Windows`,
-    'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe',
-  );
-  const result = spawnSync(powershell, [
-    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-    '-EncodedCommand', Buffer.from(nativeScript('provision'), 'utf16le').toString('base64'),
-  ], {
-    input: JSON.stringify({
-      cacheRoot,
-      anchor,
-      destinationDirectory,
-      file: input.entry.file,
-      sha256: input.entry.sha256,
-      bytes: input.bytes.toString('base64'),
-      sandboxReadSid: input.sandboxReadSid ?? '',
-      localUsersReadExecute: input.localUsersReadExecute === true,
-      allowCreate: input.allowCreate !== false,
-    }),
-    encoding: 'utf8',
-    env: process.env,
-    shell: false,
-    windowsHide: true,
-    timeout: 30_000,
-    maxBuffer: 1024 * 1024,
-  });
+  const expected = path.join(destinationDirectory, input.entry.file);
+  const result = runWindowsNativeProvisioner(['__provision-artifact'], JSON.stringify({
+    cacheRoot,
+    anchor,
+    destinationDirectory,
+    file: input.entry.file,
+    sha256: input.entry.sha256,
+    bytes: input.bytes.toString('base64'),
+    sandboxReadSid: input.sandboxReadSid ?? '',
+    localUsersReadExecute: input.localUsersReadExecute === true,
+    allowCreate: input.allowCreate !== false,
+  }), input.writeRoots ?? []);
+  if (result.error === undefined && result.status === NATIVE_PROVISIONER_ARTIFACT_REMOVED_EXIT) {
+    throw new NativeArtifactRemovedError(expected, result.stderr.trim());
+  }
   if (result.error !== undefined || result.status !== 0) {
-    const reason = result.error?.message ?? (result.stderr.trim() || `exit ${String(result.status)}`);
-    throw new Error(`Cannot provision protected KodaX native artifact: ${reason}`);
+    throw new Error(`Cannot provision protected KodaX native artifact: ${nativeProvisionerFailure(result)}`);
   }
   const destination = result.stdout.trim();
-  const expected = path.join(destinationDirectory, input.entry.file);
   if (destination.toLowerCase() !== expected.toLowerCase()
     && !sameRealPath(destination, expected)) {
     throw new Error('Native artifact provisioner returned an unexpected path.');
   }
-  readVerifiedArtifact(destination, input.entry.sha256);
+  try {
+    readVerifiedArtifact(destination, input.entry.sha256);
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new NativeArtifactRemovedError(expected, error instanceof Error ? error.message : undefined);
+    }
+    throw error;
+  }
   const canonicalRoot = fs.realpathSync.native(cacheRoot);
   const canonicalDestination = fs.realpathSync.native(destination);
   if (!sameOrInside(canonicalRoot, canonicalDestination)) {
@@ -839,6 +888,7 @@ function verifyOrProvisionProtectedArtifact(input: {
   readonly provision: boolean;
   readonly sandboxReadSid?: string;
   readonly localUsersReadExecute?: boolean;
+  readonly writeRoots: readonly string[];
 }): string {
   const artifact = {
     kind: input.kind,
@@ -864,7 +914,9 @@ function verifyOrProvisionProtectedArtifact(input: {
       ? Reflect.get(error, 'code')
       : undefined;
     if (!input.provision || (code !== 'ENOENT' && code !== 'ENOTDIR')) throw error;
-    return provisionProtectedArtifact({ ...artifact, bytes: input.bytes, allowCreate: true });
+    return provisionProtectedArtifact({
+      ...artifact, bytes: input.bytes, allowCreate: true, writeRoots: input.writeRoots,
+    });
   }
 }
 
@@ -995,6 +1047,7 @@ export function resolveWindowsAsrtRunnerArtifact(
           bytes,
           provision: options.provision !== false,
           localUsersReadExecute: true,
+          writeRoots: options.untrustedWriteRoots ?? [],
         }),
         sha256: manifest.asrtRunner.sha256,
       };
@@ -1003,6 +1056,7 @@ export function resolveWindowsAsrtRunnerArtifact(
         developmentTrustRoots: candidate.developmentTrustRoots,
       };
     } catch (error: unknown) {
+      if (error instanceof NativeArtifactRemovedError) throw error;
       diagnostics.push(
         `${candidate.manifestPath}: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -1033,13 +1087,14 @@ export function resolveWindowsNativeArtifact(
   }
   assertWindowsNativeArtifactStoreNotDirectlyWritable(options.untrustedWriteRoots ?? []);
   const trustedManifestText = embeddedNativeManifestText();
+  const sourceWriteRoots = trustedManifestText === undefined
+    ? options.developmentWriteRoots ?? options.untrustedWriteRoots ?? []
+    : options.untrustedWriteRoots ?? [];
   const diagnostics: string[] = [];
   for (const directory of artifactDirectories(moduleUrl, trustedManifestText !== undefined)) {
     const manifestPath = path.join(directory, 'manifest.json');
     try {
-      assertDevelopmentSourceIsOutsideWriteRoots(directory, trustedManifestText === undefined
-        ? options.developmentWriteRoots ?? options.untrustedWriteRoots ?? []
-        : options.untrustedWriteRoots ?? []);
+      assertDevelopmentSourceIsOutsideWriteRoots(directory, sourceWriteRoots);
       const { manifest, entry } = parseManifestEntryText(
         trustedManifestText ?? fs.readFileSync(manifestPath, 'utf8'),
         kind,
@@ -1071,6 +1126,7 @@ export function resolveWindowsNativeArtifact(
         entry,
         bytes,
         provision: options.provision !== false,
+        writeRoots: sourceWriteRoots,
         ...(options.sandboxReadSid === undefined
           ? {}
           : { sandboxReadSid: options.sandboxReadSid }),
@@ -1082,6 +1138,7 @@ export function resolveWindowsNativeArtifact(
         developmentTrustRoots: trustedManifestText === undefined ? [directory] : [],
       };
     } catch (error: unknown) {
+      if (error instanceof NativeArtifactRemovedError) throw error;
       diagnostics.push(`${manifestPath}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -1092,6 +1149,11 @@ export function resolveWindowsNativeArtifact(
 
 export const _internalWindowsNativeArtifacts = {
   nativeScript,
+  /** Tests point provisioning at a freshly built helper; undefined restores resolution. */
+  setNativeProvisionerForTests(command: NativeProvisionerCommand | undefined): void {
+    nativeProvisionerOverride = command;
+  },
+  resolveWindowsNativeProvisioner,
   assertDevelopmentSourceIsOutsideWriteRoots,
   artifactDirectories,
   physicalElectronArtifactPath,

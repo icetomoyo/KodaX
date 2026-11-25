@@ -17,6 +17,7 @@ vi.mock("./windows-job-supervisor.js", async (original) => ({
 }));
 import { acquireRuntimeDaemonProcessLease } from "./process.js";
 import { WindowsJobStartupCleanupError } from "./windows-job-supervisor.js";
+import { NATIVE_ARTIFACT_REMOVED_CODE, NativeArtifactRemovedError } from "../windows-native-artifacts.js";
 
 beforeEach(() => vi.resetAllMocks());
 
@@ -243,6 +244,31 @@ it.skipIf(process.platform !== "win32")(
       expect(cleanup).toHaveBeenCalledTimes(2);
     } finally {
       finishCleanup();
+      rmSync(configHome, { recursive: true, force: true });
+    }
+  },
+);
+
+it.skipIf(process.platform !== "win32")(
+  "reports a quarantined native helper as a dedicated non-retryable startup failure",
+  async () => {
+    const configHome = mkdtempSync(path.join(os.tmpdir(), "kodax-quarantined-helper-"));
+    const removed = new NativeArtifactRemovedError("C:\fixture\kodax-windows-sandbox.exe");
+    observe.mockResolvedValue({
+      state: undefined,
+      pidAlive: false,
+      reachable: false,
+      identityMatches: false,
+    });
+    spawn.mockRejectedValue(removed);
+    try {
+      await expect(acquireRuntimeDaemonProcessLease({ configHome })).rejects.toMatchObject({
+        code: "daemon_startup_failed",
+        reason: NATIVE_ARTIFACT_REMOVED_CODE,
+        retryable: false,
+        cause: removed,
+      });
+    } finally {
       rmSync(configHome, { recursive: true, force: true });
     }
   },

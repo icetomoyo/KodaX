@@ -30,6 +30,20 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Windows: KodaX no longer uses PowerShell to write its sandbox helper into
+  `%LOCALAPPDATA%`. Windows Defender quarantined the helper written that way
+  (Issue 443). The helper now writes and verifies its own protected copy,
+  with the same hash, ACL and atomic-publish checks. A cold start no longer
+  launches `powershell.exe`. Existing caches are still accepted.
+- Windows: the effect Job supervisor, Job recovery and sandbox process probe
+  run in the native helper instead of compiling C# in PowerShell.
+  PowerShell is now only a fallback when the helper is unavailable.
+- Windows: when security software removes a native component right after
+  KodaX writes it, startup fails with `daemon_startup_failed`,
+  `reason: 'native_artifact_removed_after_provision'` and
+  `retryable: false`. The message says how to restore or allow the file.
+  Previously this was a generic "native artifact is unavailable" error that
+  was retried.
 - An MCP call rejected for its arguments now returns the tool's input schema,
   so the model can fix the call in one step.
 - MCP discovery retries HTTP 408, 429 and 5xx twice before failing.

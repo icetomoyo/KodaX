@@ -1572,14 +1572,36 @@ function windowsSandboxAclOwnerLiveness(
   }
 }
 
+/**
+ * The sandbox user's process probe runs the native helper from the copy its
+ * group can read. Without that copy the probe still works through PowerShell,
+ * so a missing copy must not block account rotation.
+ */
+async function sandboxReadableWindowsHelper(groupSid: string | undefined): Promise<string | undefined> {
+  if (groupSid === undefined) return undefined;
+  try {
+    return (await prepareWindowsShellArtifact(groupSid, [], false)).path;
+  } catch (error: unknown) {
+    emitKodaXDiagnostic({
+      source: 'runtime:sandbox-setup',
+      level: 'debug',
+      message: 'Sandbox-readable native helper is unavailable; the sandbox-user process probe uses PowerShell.',
+      detail: error,
+    });
+    return undefined;
+  }
+}
+
 async function windowsSandboxSidIsIdle(expectedSid: string): Promise<boolean> {
   try {
     const runner = requirePreparedWindowsRunner();
     const status = getWindowsSandboxUserStatus({ srtWin: runner.srtWin });
     if (status.sid !== undefined && status.sid !== expectedSid) return false;
+    const nativeHelper = await sandboxReadableWindowsHelper(status.groupSid);
     return !(await windowsSandboxSidHasOtherProcesses(expectedSid, {
       executable: runner.srtWin.exe,
       prependArgs: runner.srtWin.prependArgs,
+      ...(nativeHelper === undefined ? {} : { nativeHelper }),
     }));
   } catch (error: unknown) {
     emitKodaXDiagnostic({

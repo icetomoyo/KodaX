@@ -411,13 +411,13 @@ vi.mock('node:child_process', async (importOriginal) => {
             stderr: '',
           };
         }
-        if (
-          windowsSandboxMock.deleteArtifactDuringControlVerification !== undefined
-          && script.includes('control directory ACL')
-        ) {
-          rmSync(windowsSandboxMock.deleteArtifactDuringControlVerification, { force: true });
-          windowsSandboxMock.deleteArtifactDuringControlVerification = undefined;
-        }
+      }
+      if (
+        windowsSandboxMock.deleteArtifactDuringControlVerification !== undefined
+        && args.includes('__control-directory')
+      ) {
+        rmSync(windowsSandboxMock.deleteArtifactDuringControlVerification, { force: true });
+        windowsSandboxMock.deleteArtifactDuringControlVerification = undefined;
       }
       if (args.includes('wfp') && args.includes('verify')) {
         if (windowsSandboxMock.wfpOutcome === 'timeout') {
@@ -4972,6 +4972,10 @@ $rule = [Security.AccessControl.FileSystemAccessRule]::new($users, [Security.Acc
     expect(capturedSyncSpawns.filter(({ args }) => (
       args[0] === '__persistent-deny-read' && args[1] === 'remove'
     ))).toHaveLength(0);
+    // The sandbox user runs the native probe from the copy its group can read.
+    expect(windowsSandboxMock.sidProbeLaunches[0]?.launcher).toMatchObject({
+      nativeHelper: expect.stringMatching(/[\\/]shellSandbox[\\/]sandbox-[0-9a-f]+[\\/][0-9a-f]{64}[\\/]kodax-windows-sandbox\.exe$/),
+    });
   });
 
   it('repairs a missing cutover marker online after exact setup migration proof', async () => {

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 import { emitKodaXDiagnostic } from '../diagnostics.js';
-import { killChildProcessTree } from './process-tree.js';
+import { killChildProcessTree, resolveWindowsProcessHelper } from './process-tree.js';
 
 const PAYLOAD_ENV = 'KODAX_EFFECT_JOB_PAYLOAD';
 const STARTUP_TIMEOUT_MS = 15_000;
@@ -51,6 +51,8 @@ export interface WindowsEffectJob {
 export interface WindowsSandboxSidProbeLauncher {
   readonly executable: string;
   readonly prependArgs?: readonly string[];
+  /** Native helper the sandbox user can read; without it the probe uses PowerShell. */
+  readonly nativeHelper?: string;
 }
 
 interface WindowsEffectJobActionResult {
@@ -76,10 +78,16 @@ function windowsPowerShellPath(): string {
   );
 }
 
-function spawnWindowsEffectJobAction(
+interface WindowsEffectJobCommand {
+  readonly executable: string;
+  readonly args: readonly string[];
+  readonly env: NodeJS.ProcessEnv;
+}
+
+function powershellEffectJobCommand(
   payloadValue: Readonly<Record<string, unknown>>,
   launcher?: WindowsSandboxSidProbeLauncher,
-): ChildProcess {
+): WindowsEffectJobCommand {
   const payload = Buffer.from(JSON.stringify(payloadValue), 'utf8').toString('base64');
   const powershell = windowsPowerShellPath();
   const encodedCommand = payloadValue.action === 'sid-active'
@@ -93,25 +101,67 @@ function spawnWindowsEffectJobAction(
     '-EncodedCommand',
     encodedCommand,
   ];
-  const executable = launcher?.executable ?? powershell;
-  const args = launcher === undefined
-    ? powershellArgs
-    : [
-        ...(launcher.prependArgs ?? []),
-        'exec',
-        '--quiet',
-        '--env',
-        `${PAYLOAD_ENV}=${payload}`,
-        '--',
-        powershell,
-        ...powershellArgs,
-      ];
-  return spawn(executable, args, {
-    env: launcher === undefined
-      ? { ...process.env, [PAYLOAD_ENV]: payload }
-      : process.env,
+  if (launcher === undefined) {
+    return { executable: powershell, args: powershellArgs, env: { ...process.env, [PAYLOAD_ENV]: payload } };
+  }
+  return {
+    executable: launcher.executable,
+    args: [
+      ...(launcher.prependArgs ?? []),
+      'exec',
+      '--quiet',
+      '--env',
+      `${PAYLOAD_ENV}=${payload}`,
+      '--',
+      powershell,
+      ...powershellArgs,
+    ],
+    env: process.env,
+  };
+}
+
+/**
+ * The native helper replaces PowerShell compiling C# with Add-Type on every
+ * call, which is slow and looks like code injection to security software.
+ */
+function nativeEffectJobCommand(
+  helperArgs: readonly string[],
+  launcher?: WindowsSandboxSidProbeLauncher,
+): WindowsEffectJobCommand | undefined {
+  if (launcher !== undefined) {
+    if (launcher.nativeHelper === undefined) return undefined;
+    return {
+      executable: launcher.executable,
+      args: [...(launcher.prependArgs ?? []), 'exec', '--quiet', '--', launcher.nativeHelper, ...helperArgs],
+      env: process.env,
+    };
+  }
+  const helper = resolveWindowsProcessHelper();
+  return helper === undefined ? undefined : { executable: helper, args: helperArgs, env: process.env };
+}
+
+function spawnWindowsEffectJobCommand(command: WindowsEffectJobCommand): ChildProcess {
+  return spawn(command.executable, [...command.args], {
+    env: command.env,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
+  });
+}
+
+function isProcessSpawnFailure(error: unknown): boolean {
+  for (let current: unknown = error; current instanceof Error; current = current.cause) {
+    const syscall = (current as NodeJS.ErrnoException).syscall;
+    if (typeof syscall === 'string' && syscall.startsWith('spawn')) return true;
+  }
+  return false;
+}
+
+function reportNativeHelperFallback(subject: string, error: unknown): void {
+  emitKodaXDiagnostic({
+    source: 'runtime:windows',
+    level: 'warn',
+    message: `${subject} could not use the native helper; using PowerShell.`,
+    detail: { error: error instanceof Error ? error.message : String(error) },
   });
 }
 
@@ -249,21 +299,68 @@ class WindowsEffectJobActionObserver {
   };
 }
 
-function runWindowsEffectJobAction(
-  payloadValue: Readonly<Record<string, unknown>>,
+function runWindowsEffectJobCommand(
+  command: WindowsEffectJobCommand,
   timeoutMs: number,
   subject: string,
-  launcher?: WindowsSandboxSidProbeLauncher,
 ): Promise<WindowsEffectJobActionResult> {
   let child: ChildProcess;
   try {
-    child = spawnWindowsEffectJobAction(payloadValue, launcher);
+    child = spawnWindowsEffectJobCommand(command);
   } catch (error: unknown) {
     return Promise.reject(new Error(`${subject} failed to start: ${String(error)}`, { cause: error }));
   }
   return new Promise<WindowsEffectJobActionResult>((resolve, reject) => {
     new WindowsEffectJobActionObserver(child, timeoutMs, subject, resolve, reject).start();
   });
+}
+
+interface WindowsEffectJobAction<Answer extends string> {
+  /** PowerShell program input. */
+  readonly payload: Readonly<Record<string, unknown>>;
+  /** Native helper arguments for the same action. */
+  readonly helperArgs: readonly string[];
+  readonly answers: readonly Answer[];
+}
+
+/** Run an action and return its last stdout line, which must be one of its answers. */
+async function runWindowsEffectJobAction<Answer extends string>(
+  action: WindowsEffectJobAction<Answer>,
+  timeoutMs: number,
+  subject: string,
+  launcher?: WindowsSandboxSidProbeLauncher,
+): Promise<Answer> {
+  const native = nativeEffectJobCommand(action.helperArgs, launcher);
+  if (native !== undefined) {
+    try {
+      return windowsEffectJobAnswer(await runWindowsEffectJobCommand(native, timeoutMs, subject), action.answers, subject);
+    } catch (error: unknown) {
+      // The host's own helper is hash-verified, so only a launch failure (for
+      // example a quarantined image) justifies PowerShell; its other answers
+      // are authoritative. The sandbox user may be unable to read its copy.
+      if (launcher === undefined && !isProcessSpawnFailure(error)) throw error;
+      reportNativeHelperFallback(subject, error);
+    }
+  }
+  const command = powershellEffectJobCommand(action.payload, launcher);
+  return windowsEffectJobAnswer(await runWindowsEffectJobCommand(command, timeoutMs, subject), action.answers, subject);
+}
+
+function windowsEffectJobAnswer<Answer extends string>(
+  result: WindowsEffectJobActionResult,
+  answers: readonly Answer[],
+  subject: string,
+): Answer {
+  const output = result.stdout.trim().split(/\r?\n/).at(-1);
+  const answer = answers.find((candidate) => candidate === output);
+  if (result.exitCode !== 0 || answer === undefined) {
+    throw new Error(
+      `${subject} failed (exit ${String(result.exitCode)}`
+      + `${result.signal === null ? '' : `, signal ${result.signal}`}): `
+      + `${result.stdout.trim() || result.stderr.trim() || '(empty output)'}.`,
+    );
+  }
+  return answer;
 }
 
 export async function containWindowsEffectProcess(
@@ -273,30 +370,34 @@ export async function containWindowsEffectProcess(
   if (process.platform !== 'win32') {
     throw new Error('Windows effect Job containment is available only on Windows.');
   }
-  const powershell = windowsPowerShellPath();
   const jobName = `Global\\KodaXEffect-${randomUUID()}`;
-  const payload = Buffer.from(JSON.stringify({
-    targetPid: processPid,
-    ownerPid,
+  const native = nativeEffectJobCommand([
+    '__effect-job-supervise',
+    String(processPid),
+    String(ownerPid),
     jobName,
-  }), 'utf8').toString('base64');
-  let supervisor: ChildProcess;
-  try {
-    supervisor = spawn(powershell, [
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-EncodedCommand',
-      windowsProgram('effectJob'),
-    ], {
-      env: { ...process.env, [PAYLOAD_ENV]: payload },
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-    });
-  } catch (error) {
-    throw error;
+  ]);
+  if (native !== undefined) {
+    try {
+      return await startWindowsEffectJobSupervisor(native, jobName);
+    } catch (error: unknown) {
+      // Only a helper that could not launch at all falls back; a helper that
+      // ran and refused the target has the authoritative answer.
+      if (!isProcessSpawnFailure(error)) throw error;
+      reportNativeHelperFallback('Windows effect Job supervisor', error);
+    }
   }
+  return await startWindowsEffectJobSupervisor(
+    powershellEffectJobCommand({ targetPid: processPid, ownerPid, jobName }),
+    jobName,
+  );
+}
+
+async function startWindowsEffectJobSupervisor(
+  command: WindowsEffectJobCommand,
+  jobName: string,
+): Promise<WindowsEffectJob> {
+  const supervisor = spawnWindowsEffectJobCommand(command);
   const drained = new Promise<void>((resolve, reject) => {
     supervisor.once('error', reject);
     supervisor.once('exit', (code) => {
@@ -350,45 +451,34 @@ export async function terminateWindowsEffectJob(
   if (!WINDOWS_EFFECT_JOB_NAME_PATTERN.test(jobName)) {
     throw new Error('Windows effect Job recovery received an invalid Job name.');
   }
-  const result = await runWindowsEffectJobAction({
-    action: 'recover',
-    jobName,
+  const answer = await runWindowsEffectJobAction({
+    payload: { action: 'recover', jobName },
+    helperArgs: ['__effect-job-recover', jobName],
+    answers: ['DRAINED', 'NOT_FOUND'],
   }, timeoutMs, 'Windows effect Job recovery');
-  const output = result.stdout.trim().split(/\r?\n/).at(-1);
-  if (result.exitCode !== 0 || (output !== 'DRAINED' && output !== 'NOT_FOUND')) {
-    throw new Error(
-      `Windows effect Job recovery failed (exit ${String(result.exitCode)}`
-      + `${result.signal === null ? '' : `, signal ${result.signal}`}): `
-      + `${result.stdout.trim() || result.stderr.trim() || '(empty output)'}.`,
-    );
-  }
-  return output === 'DRAINED' ? 'drained' : 'not_found';
+  return answer === 'DRAINED' ? 'drained' : 'not_found';
 }
 
-export async function windowsSandboxSidHasActiveProcesses(
-  sid: string,
-  timeoutMs = 15_000,
-): Promise<boolean> {
+function assertWindowsSidProbeInput(sid: string): void {
   if (process.platform !== 'win32') {
     throw new Error('Windows sandbox process inspection is available only on Windows.');
   }
   if (!/^S-1-(?:\d+-)+\d+$/i.test(sid)) {
     throw new Error('Windows sandbox process inspection received an invalid SID.');
   }
-  const result = await runWindowsEffectJobAction(
-    { action: 'sid-active', sid },
-    timeoutMs,
-    'Windows sandbox process inspection',
-  );
-  const output = result.stdout.trim().split(/\r?\n/).at(-1);
-  if (result.exitCode !== 0 || (output !== 'ACTIVE' && output !== 'CLEAR')) {
-    throw new Error(
-      `Windows sandbox process inspection failed (exit ${String(result.exitCode)}`
-      + `${result.signal === null ? '' : `, signal ${result.signal}`}): `
-      + `${result.stdout.trim() || result.stderr.trim() || '(empty output)'}.`,
-    );
-  }
-  return output === 'ACTIVE';
+}
+
+export async function windowsSandboxSidHasActiveProcesses(
+  sid: string,
+  timeoutMs = 15_000,
+): Promise<boolean> {
+  assertWindowsSidProbeInput(sid);
+  const answer = await runWindowsEffectJobAction({
+    payload: { action: 'sid-active', sid },
+    helperArgs: ['__sid-active', sid],
+    answers: ['ACTIVE', 'CLEAR'],
+  }, timeoutMs, 'Windows sandbox process inspection');
+  return answer === 'ACTIVE';
 }
 
 export async function windowsSandboxSidHasOtherProcesses(
@@ -396,30 +486,16 @@ export async function windowsSandboxSidHasOtherProcesses(
   launcher: WindowsSandboxSidProbeLauncher,
   timeoutMs = 15_000,
 ): Promise<boolean> {
-  if (process.platform !== 'win32') {
-    throw new Error('Windows sandbox process inspection is available only on Windows.');
-  }
-  if (!/^S-1-(?:\d+-)+\d+$/i.test(sid)) {
-    throw new Error('Windows sandbox process inspection received an invalid SID.');
-  }
-  const result = await runWindowsEffectJobAction(
-    { action: 'sid-active', sid, ignoreCurrentProcessTree: true },
-    timeoutMs,
-    'Windows sandbox-user process inspection',
-    launcher,
-  );
-  const output = result.stdout.trim().split(/\r?\n/).at(-1);
-  if (result.exitCode !== 0 || (output !== 'ACTIVE' && output !== 'CLEAR')) {
-    throw new Error(
-      `Windows sandbox-user process inspection failed (exit ${String(result.exitCode)}`
-      + `${result.signal === null ? '' : `, signal ${result.signal}`}): `
-      + `${result.stdout.trim() || result.stderr.trim() || '(empty output)'}.`,
-    );
-  }
-  return output === 'ACTIVE';
+  assertWindowsSidProbeInput(sid);
+  const answer = await runWindowsEffectJobAction({
+    payload: { action: 'sid-active', sid, ignoreCurrentProcessTree: true },
+    helperArgs: ['__sid-active', sid, '--ignore-current-tree'],
+    answers: ['ACTIVE', 'CLEAR'],
+  }, timeoutMs, 'Windows sandbox-user process inspection', launcher);
+  return answer === 'ACTIVE';
 }
 
-/** Startup cost is mostly Add-Type compiling the supervisor, which runs on every launch. */
+/** PowerShell startup is mostly Add-Type compiling the supervisor; the native helper reports no compile time. */
 function reportSupervisorStartup(readyMs: number, compileMs: number | undefined, error?: Error): void {
   emitKodaXDiagnostic({
     source: 'runtime:windows',
@@ -448,7 +524,7 @@ function waitForEffectJobReady(supervisor: ChildProcess): Promise<void> {
       stdout.off('data', onStdout);
       stderr?.off('data', onStderr);
       supervisor.off('error', onError);
-      supervisor.off('exit', onExit);
+      supervisor.off('close', onExit);
     };
     const settle = (error?: Error): void => {
       cleanup();
@@ -484,6 +560,6 @@ function waitForEffectJobReady(supervisor: ChildProcess): Promise<void> {
     stdout.on('data', onStdout);
     stderr?.on('data', onStderr);
     supervisor.once('error', onError);
-    supervisor.once('exit', onExit);
+    supervisor.once('close', onExit);
   });
 }

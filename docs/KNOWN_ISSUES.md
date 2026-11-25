@@ -1,6 +1,6 @@
 # Known Issues
 
-_Last Updated: 2026-11-23_
+_Last Updated: 2026-11-25_
 
 ---
 
@@ -46,6 +46,108 @@ This predates the child contract projection; the eval uses raw per-call usage,
 not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
+
+## Issue 443: Windows Defender quarantines the sandbox helper that PowerShell writes into AppData
+
+- Priority: High
+- Status: Resolved (code); quarantine on a customer machine not yet re-verified
+- Introduced: native artifact store V3 (PowerShell provisioning)
+- Created / Resolved: 2026-11-25 / 2026-11-25
+- Fixed: unreleased (after `v0.7.97-rc.2`)
+- Reported by: Space, from a Windows customer
+
+### Original Problem
+
+KodaX copied `kodax-windows-sandbox.exe` into
+`%LOCALAPPDATA%\KodaXNativeArtifactsV3\v2\win32-x64\shellSandbox\host-only\<sha>\`
+with `powershell.exe -ExecutionPolicy Bypass -EncodedCommand`. The script
+decoded the image from base64 and wrote a PE file into AppData. Defender
+treats that as a script host dropping an executable and quarantined the file
+right after it was written. The Host then failed with "A compatible KodaX
+shellSandbox native artifact is unavailable". That message was buried in the
+candidate list and gave no hint that security software was the cause, and
+the startup error was marked retryable, so retries were quarantined again.
+
+The effect Job supervisor and the sandbox SID probe had the same shape: on
+every call, PowerShell compiled C# with `Add-Type` and loaded it.
+
+Code signing would help but is not available, so the fix removes the
+behavior that looks like a dropper.
+
+### Resolution
+
+- `kodax-windows-sandbox.exe` writes and verifies the cache itself:
+  `__provision-artifact` and `__control-directory verify|ensure|repair`.
+  The security rules are unchanged. Paths still use the content hash. The
+  DACL keeps the same shape and existing DENY entries are preserved.
+  Reparse points are rejected. Hashes are checked before and after the
+  copy. Publishing is atomic and safe under concurrent starts.
+- KodaX does not need a cached copy to run the writer. On a cold start, the
+  shipped helper is hash-checked and writes its own protected copy. A cold
+  start no longer launches `powershell.exe`.
+- Existing V3 caches and control directories written by PowerShell are
+  accepted unchanged. Caches written by the native helper still pass the old
+  PowerShell verifier, so a rollback works.
+- If the helper exits with code 3, or the image is gone right after a
+  successful write, KodaX raises `NativeArtifactRemovedError`. Its code is
+  `native_artifact_removed_after_provision` and it is not retryable. It
+  stops the candidate search instead of being listed with the other
+  candidates. The daemon reports `daemon_startup_failed` with
+  `reason: 'native_artifact_removed_after_provision'`,
+  `retryable: false` and the original error as `cause`.
+- The effect Job supervisor, Job recovery and SID probe run as native
+  subcommands: `__effect-job-supervise`, `__effect-job-recover` and
+  `__sid-active`. The stdout protocol is unchanged
+  (READY/DRAINED/NOT_FOUND/ACTIVE/CLEAR). PowerShell is used only as a
+  fallback: when no helper is installed (standalone `@kodax-ai/agent`), when
+  the helper cannot launch, or when the sandbox user cannot run its readable
+  copy.
+
+Files changed:
+
+- Native: `native/windows-sandbox-v2/src/artifact_store.rs` and
+  `effect_job.rs` (new), plus `acl.rs`, `win.rs`, `main.rs` and
+  `Cargo.toml`.
+- TypeScript: `src/windows-native-artifacts.ts`,
+  `src/windows-native-scripts.json`, `src/runtime-daemon/process.ts`,
+  `src/sandbox-runtime.ts`,
+  `packages/agent/src/runtime/windows-effect-job.ts` and
+  `process-tree.ts`.
+
+Tests:
+
+- Rust: `artifact_store` covers ACL shape, DENY preservation, reparse
+  rejection, hash mismatch and concurrent publish. `effect_job` covers name
+  and SID validation, a missing Job, the SID probe and draining a target's
+  descendants.
+- `windows-native-artifacts.test.ts`: a cold start with `SystemRoot` hidden
+  proves PowerShell is not launched. A fake quarantine that deletes the
+  image after the write, or exits 3, yields the dedicated non-retryable
+  error.
+- `process-admission.test.ts`: the daemon maps the error to
+  `reason: 'native_artifact_removed_after_provision'`, `retryable: false`.
+- `windows-effect-job.test.ts`: the whole suite runs in PowerShell mode and
+  in native mode with PowerShell hidden. Native mode also checks that a
+  helper which cannot launch falls back to PowerShell and reports it.
+- Legacy compatibility (manual): caches and control directories written by
+  PowerShell pass native verify, ensure and repair; native output passes
+  the old PowerShell verifier.
+
+Not covered:
+
+- The sandbox-user probe through `srt-win exec` with the native helper has
+  run only against mocks; it needs an installed sandbox account.
+- No Defender or ASR machine has re-run a cold start. Heuristics can still
+  flag an unsigned exe. In that case the user now sees the dedicated code
+  and the restore instructions, not a generic "unavailable".
+
+Further mitigations without signing:
+
+- Add a VERSIONINFO resource and an application manifest to the exe.
+- Submit the exe as a false positive to Microsoft WDSI, and to 360 and
+  Huorong, for each release.
+- Document the exclusion path
+  `%LOCALAPPDATA%\KodaXNativeArtifactsV3` for managed fleets.
 
 ## Issue 442: Gemini and pi-messages replay another model's tool calls as text
 

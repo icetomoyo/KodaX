@@ -210,7 +210,11 @@ impl Drop for LocalSid {
 pub struct LocalSecurityDescriptor(PSECURITY_DESCRIPTOR);
 
 impl LocalSecurityDescriptor {
-    fn from_sddl(value: &str) -> Result<Self> {
+    pub fn raw(&self) -> PSECURITY_DESCRIPTOR {
+        self.0
+    }
+
+    pub fn from_sddl(value: &str) -> Result<Self> {
         let wide = wide(value);
         let mut descriptor = PSECURITY_DESCRIPTOR::default();
         unsafe {
