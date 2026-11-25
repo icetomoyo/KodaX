@@ -37,11 +37,7 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import ts from 'typescript';
 
-import {
-  getRepoIntelligenceIndex,
-  getSymbolContext,
-} from '../../packages/coding/src/repo-intelligence/runtime.js';
-import * as workerClient from '../../packages/coding/src/repo-intelligence/semantic-worker-client.js';
+import { getSymbolContext } from '../../packages/coding/src/repo-intelligence/runtime.js';
 import {
   buildTruthIndex,
   isTestFile,
@@ -49,7 +45,6 @@ import {
   type TruthIndex,
 } from './repo-intelligence-truth-oracle.js';
 import {
-  buildEngineView,
   compareModuleEdges,
   definitionLineAgreement,
   engineEdgeComposition,
@@ -58,11 +53,18 @@ import {
   missingSymbols,
   moduleForFile,
   toMetric,
-  type EngineIndexLike,
   type EngineView,
   type ModuleEdgeReport,
   type RelationReport,
 } from './repo-intelligence-truth-score.js';
+import {
+  buildEngine,
+  configureEngineEnv,
+  sampleKeys,
+  seededShuffle,
+  shutdownWorker,
+  workerPath,
+} from './repo-intelligence-truth-run.js';
 
 const ENGINE_SYMBOLS_PER_FILE_CAP = 40;
 const SCOPES = ['sample', 'pinned', 'population'] as const;
@@ -103,27 +105,6 @@ function parseOptions(argv: readonly string[]): BenchOptions {
   };
 }
 
-function mulberry32(seed: number): () => number {
-  let state = seed >>> 0;
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let value = state;
-    value = Math.imul(value ^ (value >>> 15), value | 1);
-    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
-    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function seededShuffle<T>(items: readonly T[], seed: number): T[] {
-  const random = mulberry32(seed);
-  const result = [...items];
-  for (let index = result.length - 1; index > 0; index -= 1) {
-    const swap = Math.floor(random() * (index + 1));
-    [result[index], result[swap]] = [result[swap]!, result[index]!];
-  }
-  return result;
-}
-
 function pickPinnedFiles(truth: TruthIndex, seed: number): string[] {
   const counts = new Map<string, number>();
   for (const unit of truth.units.values()) {
@@ -139,16 +120,11 @@ function pickPinnedFiles(truth: TruthIndex, seed: number): string[] {
 
 function selectEvaluationSet(truth: TruthIndex, sampleSize: number, seed: number): EvaluationSet {
   const units = Array.from(truth.units.values());
-  const pool = units
-    .filter((unit) => (unit.kind === 'function' || unit.kind === 'method') && unit.exported)
-    .filter((unit) => isTypeScriptSource(unit.filePath) && !isTestFile(unit.filePath))
-    .map((unit) => unit.key)
-    .sort();
   const pinnedFiles = pickPinnedFiles(truth, seed);
   return {
     pinnedFiles,
     keys: {
-      sample: seededShuffle(pool, seed).slice(0, sampleSize),
+      sample: sampleKeys(truth, sampleSize, seed),
       pinned: units.filter((unit) => pinnedFiles.includes(unit.filePath)).map((unit) => unit.key).sort(),
       population: units.filter((unit) => isTypeScriptSource(unit.filePath)).map((unit) => unit.key).sort(),
     },
@@ -181,44 +157,6 @@ function startMemorySampler() {
       return { peakRssMb: peak, maxRssMb: Math.round(process.resourceUsage().maxRSS / 1024), phases };
     },
   };
-}
-
-/** Engine env: full mode, temp storage, and enough worker heap to finish (2 GB runs out on KodaX). */
-function configureEngineEnv(storageRoot: string): Record<string, string> {
-  process.env.KODAX_REPO_INTELLIGENCE_STORAGE_DIR = storageRoot;
-  process.env.KODAX_REPO_INTELLIGENCE = 'full';
-  process.env.KODAX_REPO_INTELLIGENCE_WORKER_OLD_SPACE_MB ??= '6144';
-  process.env.KODAX_REPO_INTELLIGENCE_WORKER_TIMEOUT_MS ??= '600000';
-  return {
-    KODAX_REPO_INTELLIGENCE: 'full',
-    KODAX_REPO_INTELLIGENCE_WORKER_OLD_SPACE_MB: process.env.KODAX_REPO_INTELLIGENCE_WORKER_OLD_SPACE_MB,
-    KODAX_REPO_INTELLIGENCE_WORKER_TIMEOUT_MS: process.env.KODAX_REPO_INTELLIGENCE_WORKER_TIMEOUT_MS,
-  };
-}
-
-// Looked up by name so the bench keeps running if these internal helpers move.
-async function shutdownWorker(): Promise<void> {
-  const shutdown: unknown = Reflect.get(workerClient, 'shutdownRepoIntelligenceWorkerForTest');
-  if (typeof shutdown === 'function') await shutdown();
-}
-
-function workerPath(): string | undefined {
-  const read: unknown = Reflect.get(workerClient, 'getRepoIntelligenceWorkerPathForDiagnostics');
-  return typeof read === 'function' ? String(read()) : undefined;
-}
-
-async function buildEngine(repoRoot: string): Promise<{ view: EngineView; ms: number; status: string }> {
-  const start = performance.now();
-  const options = { refresh: true, mode: 'full' as const };
-  const index = await getRepoIntelligenceIndex({ executionCwd: repoRoot, gitRoot: repoRoot }, options);
-  const ms = Math.round(performance.now() - start);
-  const status = index.capability?.status ?? 'unknown';
-  if (index.symbols.length === 0) {
-    throw new Error(`Engine returned an empty index (capability status: ${status}). Check worker heap / timeout.`);
-  }
-  const view = buildEngineView(index as EngineIndexLike);
-  await shutdownWorker();
-  return { view, ms, status };
 }
 
 type ToolOutcome = 'exact' | 'alternative' | 'wrong-symbol' | 'not-ok-status' | 'error';
