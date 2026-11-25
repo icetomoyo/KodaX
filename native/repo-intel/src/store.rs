@@ -403,6 +403,39 @@ impl Store {
         statement.query_map(params![name], |row| row.get(0))?.collect()
     }
 
+    /// The paths of indexed files, in order.
+    pub fn indexed_paths(&self) -> rusqlite::Result<Vec<String>> {
+        let mut statement = self.connection.prepare("SELECT f.path FROM files f JOIN analyses a ON a.hash = f.hash ORDER BY f.path")?;
+        statement.query_map([], |row| row.get(0))?.collect()
+    }
+
+    /// Where imports lead inside the repository, as (path, target, kind); kind is `file` or `folder`.
+    pub fn links(&self) -> rusqlite::Result<Vec<(String, String, String)>> {
+        let mut statement =
+            self.connection.prepare("SELECT DISTINCT path, target, kind FROM edges WHERE target IS NOT NULL ORDER BY path, target")?;
+        statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?.collect()
+    }
+
+    /// How many files import each name from each file, as (target, name, files).
+    pub fn importer_counts(&self) -> rusqlite::Result<Vec<(String, String, u64)>> {
+        let mut statement = self.connection.prepare(
+            "SELECT e.target, i.name, COUNT(DISTINCT e.path) FROM edges e
+             JOIN files f ON f.path = e.path JOIN analyses a ON a.hash = f.hash
+             JOIN imports i ON i.analysis = a.id AND i.module = e.module
+             WHERE e.name = '' AND e.kind = 'file' GROUP BY e.target, i.name",
+        )?;
+        statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get::<_, i64>(2)? as u64)))?.collect()
+    }
+
+    /// Every top-level definition of an indexed file, as (path, name, kind, line).
+    pub fn top_level_definitions(&self) -> rusqlite::Result<Vec<(String, String, String, u32)>> {
+        let mut statement = self.connection.prepare(
+            "SELECT f.path, t.name, t.kind, t.line FROM files f JOIN analyses a ON a.hash = f.hash
+             JOIN definitions t ON t.analysis = a.id WHERE t.container IS NULL",
+        )?;
+        statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?.collect()
+    }
+
     pub fn entry(&self, path: &str) -> rusqlite::Result<Option<Entry>> {
         let row = self
             .connection

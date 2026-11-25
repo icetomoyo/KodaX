@@ -1,6 +1,7 @@
 //! Answers the Host's requests. One message in, at most one message out.
 
 use crate::manifest::Language;
+use crate::map;
 use crate::memory;
 use crate::priority::Background;
 use crate::query;
@@ -130,6 +131,13 @@ impl Server {
                 let (name, limit, offset) = named_page(&params)?;
                 let workspace = self.open_workspace(&params)?;
                 workspace.references_to(&path, name, limit, offset).map_err(|error| (rpc::INTERNAL_ERROR, error))
+            }
+            (State::Running(_), "workspace.map") => {
+                let tokens = whole_number(&params, "tokens", map::DEFAULT_TOKENS)?;
+                if tokens == 0 {
+                    return Err((rpc::INVALID_PARAMS, "tokens must be a positive whole number.".to_owned()));
+                }
+                self.open_workspace(&params)?.map(tokens).map_err(|error| (rpc::INTERNAL_ERROR, error))
             }
             (State::Running(_), "file.outline") => {
                 let path = relative_path(&params)?;
@@ -327,6 +335,8 @@ mod tests {
         let to = |path: Value| json!({ "root": absolute_root(), "path": path, "name": "x" });
         assert_eq!(error_code(server.handle(request(6, "symbols.referencesTo", to(json!("../a.ts"))))), rpc::INVALID_PARAMS);
         assert_eq!(error_code(server.handle(request(7, "symbols.referencesTo", to(Value::Null)))), rpc::INVALID_PARAMS);
+        let map = json!({ "root": absolute_root(), "tokens": 0 });
+        assert_eq!(error_code(server.handle(request(8, "workspace.map", map))), rpc::INVALID_PARAMS);
         for path in ["../a.ts", "", "a/../../b.ts"] {
             let params = json!({ "root": root, "path": path });
             assert_eq!(error_code(server.handle(request(5, "file.outline", params))), rpc::INVALID_PARAMS, "{path}");

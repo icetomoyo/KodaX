@@ -4,6 +4,7 @@
 mod extract;
 mod imports;
 mod manifest;
+mod map;
 mod memory;
 mod priority;
 mod query;

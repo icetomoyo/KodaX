@@ -8,6 +8,7 @@
 
 use crate::extract::Extractor;
 use crate::manifest::{self, Language};
+use crate::map;
 use crate::query;
 use crate::resolve::{Resolver, is_resolution_config};
 use crate::store::{Edge, FileRow, FileStatus, Known, Store, Table};
@@ -141,6 +142,18 @@ impl Workspace {
             .map_err(|error| format!("the index failed: {error}"))?;
         answer["coverage"] = self.coverage();
         Ok(answer)
+    }
+
+    /// The repository map in at most `tokens` tokens.
+    pub fn map(&self, tokens: u64) -> Result<Value, String> {
+        let map = map::repo_map(&self.reader, &self.root, tokens).map_err(|error| format!("the index failed: {error}"))?;
+        Ok(json!({
+            "text": map.text,
+            "files": map.files,
+            "definitions": map.definitions,
+            "tokens": map.tokens,
+            "coverage": self.coverage(),
+        }))
     }
 
     #[cfg(test)]
