@@ -1,6 +1,7 @@
 //! Answers the Host's requests. One message in, at most one message out.
 
 use crate::manifest::Language;
+use crate::memory;
 use crate::priority::Background;
 use crate::query;
 use crate::rpc::{self, failure, success};
@@ -25,8 +26,6 @@ pub enum Outcome {
 #[derive(Debug)]
 pub struct Config {
     pub storage_root: PathBuf,
-    // Read by the memory report the Host's watchdog polls, which comes with the Host side.
-    #[allow(dead_code)]
     pub memory_budget_mb: u64,
 }
 
@@ -108,6 +107,11 @@ impl Server {
                 }
                 Ok(self.workspaces[&root].status())
             }
+            (State::Running(config), "engine.status") => Ok(json!({
+                "residentBytes": memory::resident_bytes(),
+                "memoryBudgetMb": config.memory_budget_mb,
+                "workspaces": self.workspaces.len(),
+            })),
             (State::Running(_), "workspace.status") => Ok(self.open_workspace(&params)?.status()),
             (State::Running(_), "workspace.close") => {
                 let root = root_of(&params)?;
@@ -279,6 +283,16 @@ mod tests {
     fn leaves_notifications_unanswered() {
         let mut server = started();
         assert_eq!(server.handle(json!({ "jsonrpc": "2.0", "method": "files.changed" })), Outcome::Silent);
+    }
+
+    #[test]
+    fn reports_its_own_memory_against_the_budget() {
+        let mut server = started();
+        let Outcome::Reply(reply) = server.handle(request(2, "engine.status", Value::Null)) else {
+            panic!("engine.status must answer");
+        };
+        assert!(reply["result"]["residentBytes"].as_u64().is_some_and(|bytes| bytes > 0), "{reply}");
+        assert_eq!((reply["result"]["memoryBudgetMb"].as_u64(), reply["result"]["workspaces"].as_u64()), (Some(300), Some(0)));
     }
 
     #[test]

@@ -3,6 +3,7 @@
 
 mod extract;
 mod manifest;
+mod memory;
 mod priority;
 mod query;
 mod rpc;
