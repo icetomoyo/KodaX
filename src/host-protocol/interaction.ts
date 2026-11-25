@@ -38,7 +38,10 @@ const Question = z.object({
   ...CHOICE_RULES,
 });
 
-/** Several questions asked together. An answer names each by its `question` text. */
+/**
+ * Several questions asked together. An answer names each by its `question` text.
+ * Questions it leaves out are skipped; an empty map skips them all.
+ */
 const Questions = z.object({
   questions: z.array(z.object({
     question: z.string(),

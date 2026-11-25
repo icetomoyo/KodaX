@@ -20906,11 +20906,15 @@ function isRuntimeQuestionAnswer(options: unknown, answer: unknown): boolean {
 
 function isRuntimeMultiQuestionAnswer(options: unknown, answer: unknown): boolean {
   if (!isRecord(options) || !Array.isArray(options.questions) || !isRecord(answer)) return false;
-  const questions: unknown[] = options.questions;
-  return Object.keys(answer).length === questions.length && questions.every(question =>
-    isRecord(question) && typeof question.question === "string"
-      && Object.hasOwn(answer, question.question)
-      && isRuntimeQuestionAnswer(question, answer[question.question]));
+  // A partial map is a valid answer: questions left out count as skipped, and
+  // an empty map skips them all (docs/CLIENT_CONTRACT.md, ask_user_question).
+  const questions = new Map<string, unknown>();
+  for (const question of options.questions as unknown[]) {
+    if (!isRecord(question) || typeof question.question !== "string") return false;
+    questions.set(question.question, question);
+  }
+  return Object.entries(answer).every(([text, value]) =>
+    questions.has(text) && isRuntimeQuestionAnswer(questions.get(text), value));
 }
 
 function createRuntimePermissionRegistry(

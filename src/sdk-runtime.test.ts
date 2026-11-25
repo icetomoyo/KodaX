@@ -19534,6 +19534,42 @@ describe("createKodaXRuntime", () => {
     await runtime.close();
   });
 
+  it("accepts a multi-question answer that leaves questions out, and refuses an unknown one", async () => {
+    const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
+    const runtime = await createKodaXRuntime({
+      homeDir: tempRoot,
+      sessionsDir: tempRoot,
+      defaultProvider: "mock-provider",
+      sharedDaemonHost: true,
+    });
+    const session = await runtime.sessions.create({ title: "Partial multi-question answer" });
+    let answer: Promise<unknown> | undefined;
+    codingMock.runManagedTask.mockImplementation(
+      (options: KodaXOptions): Promise<KodaXResult> => {
+        queueMicrotask(() => {
+          answer = options.events?.askUserMulti?.({
+            questions: [
+              { question: "Mode?", options: [{ label: "Safe", value: "safe" }, { label: "Fast", value: "fast" }] },
+              { question: "Branch?", options: [{ label: "Main", value: "main" }, { label: "New", value: "new" }] },
+            ],
+          });
+        });
+        return new Promise<KodaXResult>(() => undefined);
+      },
+    );
+    const handle = await runtime.runs.start({ sessionId: session.id, prompt: "ask two" });
+    await flushMicrotasks();
+    const [request] = await runtime.userInputs.listPending({ runId: handle.runId });
+    if (!request) throw new Error("expected a pending multi-question request");
+
+    await expect(runtime.userInputs.respond(request.id, { "Other?": "x" })).rejects.toThrow(/Invalid answer/);
+    await expect(runtime.userInputs.respond(request.id, { "Mode?": "slow" })).rejects.toThrow(/Invalid answer/);
+    await expect(runtime.userInputs.respond(request.id, { "Mode?": "fast" })).resolves.toMatchObject({ accepted: true });
+    await expect(answer).resolves.toEqual({ "Mode?": "fast" });
+    await runtime.runs.abort(handle.runId);
+    await runtime.close();
+  });
+
   it("keeps a Run waiting until every concurrent AskUser request settles", async () => {
     const { createKodaXRuntime } = await import("../tests/runtime-fixture.js");
     const runtime = await createKodaXRuntime({
