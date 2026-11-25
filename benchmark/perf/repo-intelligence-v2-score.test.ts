@@ -5,6 +5,7 @@ import {
   classifyExtraDefinition,
   oldDefinitionKeys,
   scoreDefinitions,
+  scoreImportEdges,
   v2DefinitionKeys,
   type V2Definition,
 } from './repo-intelligence-v2-score.js';
@@ -127,5 +128,21 @@ describe('callersFromReferences', () => {
     ], outlines, 'src/a.ts:run');
     expect([...result.callers]).toEqual(['tool/x.py:*']);
     expect(result.outsideTruthFiles).toBe(2);
+  });
+});
+
+describe('scoreImportEdges', () => {
+  it('scores file edges, counting built package output as the source behind it and leaving JSON out', () => {
+    const sources = new Set(['a.ts', 'b.ts', 'd.ts', 'e.ts', 'packages/p/src/index.ts']);
+    const truth = new Map([
+      ['a.ts', new Set(['b.ts', 'packages/p/dist/index.d.ts', 'packages/q/dist/x.d.ts', 'c.json'])],
+      ['e.ts', new Set(['b.ts'])],
+    ]);
+    const engine = new Map([['a.ts', new Set(['b.ts', 'packages/p/src/index.ts', 'd.ts', 'c.json', 'a.ts'])]]);
+    const score = scoreImportEdges(truth, engine, sources);
+    expect(score.metric).toMatchObject({ tp: 2, fp: 1, fn: 1 });
+    expect(score.falsePositives).toEqual(['a.ts -> d.ts']);
+    expect(score.falseNegatives).toEqual(['e.ts -> b.ts']);
+    expect(score.buildOutputDropped).toBe(1);
   });
 });

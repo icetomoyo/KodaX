@@ -13,7 +13,9 @@
  *     the baseline phase 2 must beat; scored on the old truth bench's seeded
  *     sample next to the old engine's callers;
  *   - the reference contract: every page labeled `heuristic`, and paging
- *     through `nextOffset` returns exactly `total` hits.
+ *     through `nextOffset` returns exactly `total` hits;
+ *   - import edges: `file.imports` targets of every TypeScript file against
+ *     the files the compiler resolves (see `scoreImportEdges`).
  *
  * Usage (from the repo root, after `cargo build --release` in native/repo-intel):
  *   npm run bench:repo-intel-v2-truth -- [repoRoot] [--sample=300] [--seed=20261123]
@@ -34,12 +36,12 @@ import { buildTruthIndex, isTypeScriptSource, type TruthIndex } from './repo-int
 import { buildEngine, configureEngineEnv, sampleKeys, shutdownWorker } from './repo-intelligence-truth-run.js';
 import { evaluateRelation, type Metric } from './repo-intelligence-truth-score.js';
 import {
-  benchEngineProgram, findAll, openAndWait, outlineOf, startBenchEngine,
+  benchEngineProgram, findAll, importsOf, openAndWait, outlineOf, startBenchEngine,
   type BenchEngine, type ReferenceHit, type WorkspaceStatus,
 } from './repo-intelligence-v2-engine.js';
 import {
-  callersFromReferences, classifyExtraDefinition, oldDefinitionKeys, scoreDefinitions, v2DefinitionKeys,
-  type DefinitionKeys, type DefinitionScore, type ExtraDefinitionClass, type V2Definition,
+  callersFromReferences, classifyExtraDefinition, oldDefinitionKeys, scoreDefinitions, scoreImportEdges, v2DefinitionKeys,
+  type DefinitionKeys, type DefinitionScore, type ExtraDefinitionClass, type ImportEdgeScore, type V2Definition,
 } from './repo-intelligence-v2-score.js';
 
 const OUTLINE_BATCH = 32;
@@ -98,6 +100,38 @@ async function readOutlines(engine: BenchEngine, root: string, files: readonly s
   return { definitions, withSyntaxErrors, notIndexed };
 }
 
+interface Imports {
+  readonly edges: Map<string, Set<string>>;
+  /** Imports with no target, by why. */
+  readonly unresolved: Record<string, number>;
+  /** `missing` ones: the import names a repository file that is not there. */
+  readonly missing: string[];
+  readonly ms: number;
+}
+
+async function readImports(engine: BenchEngine, root: string, files: readonly string[]): Promise<Imports> {
+  const start = performance.now();
+  const edges = new Map<string, Set<string>>();
+  const unresolved: Record<string, number> = {};
+  const missing: string[] = [];
+  for (let first = 0; first < files.length; first += OUTLINE_BATCH) {
+    const batch = files.slice(first, first + OUTLINE_BATCH);
+    const answers = await Promise.all(batch.map((file) => importsOf(engine, root, file)));
+    answers.forEach((answer, index) => {
+      const file = batch[index]!;
+      const targets = new Set<string>();
+      for (const item of answer.imports ?? []) {
+        if (item.target) targets.add(item.target);
+        const reason = item.unresolved ?? (item.target ? undefined : 'not resolved');
+        if (reason) unresolved[reason] = (unresolved[reason] ?? 0) + 1;
+        if (reason === 'missing') missing.push(`${file}: ${item.module}`);
+      }
+      edges.set(file, targets);
+    });
+  }
+  return { edges, unresolved, missing: [...new Set(missing)], ms: Math.round(performance.now() - start) };
+}
+
 interface ReferenceContract {
   queries: number;
   pages: number;
@@ -144,6 +178,7 @@ interface V2Run {
   readonly outlines: Outlines;
   readonly keys: DefinitionKeys;
   readonly callers: V2Callers;
+  readonly imports: Imports;
   readonly version: unknown;
 }
 
@@ -155,7 +190,8 @@ async function runV2(options: BenchOptions, files: readonly string[], sample: re
     log(`v2: ${cold.status.indexed} files indexed in ${cold.ms} ms; reading ${files.length} outlines`);
     const outlines = await readOutlines(engine, options.repoRoot, files);
     const callers = await v2Callers(engine, options.repoRoot, sample, truth, outlines);
-    return { cold, outlines, keys: v2DefinitionKeys(outlines.definitions), callers, version: engine.initialize.version };
+    const imports = await readImports(engine, options.repoRoot, files);
+    return { cold, outlines, keys: v2DefinitionKeys(outlines.definitions), callers, imports, version: engine.initialize.version };
   } finally {
     await engine.stop();
     safeRemoveTempDir(storage);
@@ -251,6 +287,7 @@ interface Scores {
   readonly old?: DefinitionScore;
   readonly v2Callers: Metric;
   readonly fnInFilesWithSyntaxErrors: number;
+  readonly importEdges: ImportEdgeScore;
 }
 
 function renderSummary(meta: Record<string, unknown>, scores: Scores, v2: V2Run, old: OldRun | undefined): string {
@@ -294,6 +331,18 @@ function renderSummary(meta: Record<string, unknown>, scores: Scores, v2: V2Run,
     `- Page labels: ${JSON.stringify(contract.labels)}; every page heuristic: ${Object.keys(contract.labels).join() === 'heuristic' ? 'yes' : 'NO'}.`,
     `- Queries whose pages did not add up to total: ${contract.incomplete.length === 0 ? 'none' : contract.incomplete.join('; ')}.`,
     '',
+    '## Import edges (every TypeScript file, file to file)',
+    '',
+    '| Source | Precision | Recall | TP | FP | FN |',
+    '|---|---|---|---|---|---|',
+    `| v2 file.imports | ${metricCells(scores.importEdges.metric)} |`,
+    '',
+    `- Truth edges to build output with no listed source, left out: ${scores.importEdges.buildOutputDropped}.`,
+    `- v2 imports without a target: ${JSON.stringify(v2.imports.unresolved)}.`,
+    `- v2 \`missing\` (first ${LISTED_ERRORS}): ${v2.imports.missing.slice(0, LISTED_ERRORS).join(', ') || 'none'}.`,
+    `- False positives (first ${LISTED_ERRORS}): ${scores.importEdges.falsePositives.slice(0, LISTED_ERRORS).join(', ') || 'none'}.`,
+    `- Misses (first ${LISTED_ERRORS}): ${scores.importEdges.falseNegatives.slice(0, LISTED_ERRORS).join(', ') || 'none'}.`,
+    '',
   ].join('\n');
 }
 
@@ -332,6 +381,11 @@ async function main(): Promise<void> {
     ...(old ? { old: scoreDefinitions(units, old.keys) } : {}),
     v2Callers: evaluateRelation(sample, (key) => truth.callers.get(key) ?? none, (key) => v2.callers.callers.get(key) ?? none, () => '.').overall,
     fnInFilesWithSyntaxErrors: v2Score.falseNegatives.filter((key) => v2.outlines.withSyntaxErrors.has(units.get(key)!.filePath)).length,
+    importEdges: scoreImportEdges(
+      new Map([...truth.fileImports].filter(([file]) => fileSet.has(file))),
+      v2.imports.edges,
+      new Set(truth.sourceFiles),
+    ),
   };
   const meta = {
     bench: 'repo-intelligence-v2-truth',
@@ -343,7 +397,7 @@ async function main(): Promise<void> {
     seed: options.seed,
     truth: { typeScriptFiles: files.length, units: units.size, sample: sample.length },
     v2Index: v2.cold.status,
-    timingMs: { v2Cold: v2.cold.ms, v2CallerQueries: v2.callers.ms, oldCold: old?.ms, total: Math.round(performance.now() - started) },
+    timingMs: { v2Cold: v2.cold.ms, v2CallerQueries: v2.callers.ms, v2Imports: v2.imports.ms, oldCold: old?.ms, total: Math.round(performance.now() - started) },
   };
   const summary = renderSummary(meta, scores, v2, old);
   mkdirSync(options.outDir, { recursive: true });

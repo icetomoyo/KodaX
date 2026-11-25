@@ -114,3 +114,19 @@ export interface OutlineAnswer {
 export async function outlineOf(engine: BenchEngine, root: string, filePath: string): Promise<OutlineAnswer> {
   return engine.call<OutlineAnswer>('file.outline', { root, path: filePath });
 }
+
+export interface ImportsAnswer {
+  readonly indexed: boolean;
+  readonly reason?: string;
+  readonly imports?: readonly {
+    readonly module: string;
+    readonly name: string;
+    readonly local: string;
+    readonly target?: string;
+    readonly unresolved?: 'external' | 'missing';
+  }[];
+}
+
+export async function importsOf(engine: BenchEngine, root: string, filePath: string): Promise<ImportsAnswer> {
+  return engine.call<ImportsAnswer>('file.imports', { root, path: filePath });
+}

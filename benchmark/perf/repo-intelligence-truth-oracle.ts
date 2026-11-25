@@ -355,6 +355,8 @@ function importSpecifiers(sourceFile: ts.SourceFile): ts.StringLiteralLike[] {
   const visit = (node: ts.Node): void => {
     if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
       if (ts.isStringLiteralLike(node.moduleSpecifier)) specifiers.push(node.moduleSpecifier);
+    } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument) && ts.isStringLiteralLike(node.argument.literal)) {
+      specifiers.push(node.argument.literal);
     } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
       const expression = node.moduleReference.expression;
       if (ts.isStringLiteralLike(expression)) specifiers.push(expression);

@@ -234,3 +234,61 @@ export function callersFromReferences(
   }
   return { callers, outsideUnits, outsideTruthFiles };
 }
+
+export interface ImportEdgeScore {
+  readonly metric: Metric;
+  /** `from -> to`, sorted. */
+  readonly falsePositives: string[];
+  readonly falseNegatives: string[];
+  /** Truth edges to build output with no listed source behind it, left out. */
+  readonly buildOutputDropped: number;
+}
+
+const BUILD_FOLDER = /(^|\/)(dist|lib|build|out)\//;
+const BUILT_EXTENSION = /\.(d\.ts|d\.mts|d\.cts|js|mjs|cjs)$/;
+
+/** The listed source a built file is compiled from: `packages/p/dist/x.d.ts` -> `packages/p/src/x.ts`. */
+function sourceOfBuilt(target: string, sources: ReadonlySet<string>): string | undefined {
+  if (!BUILD_FOLDER.test(target)) return undefined;
+  const stem = target.replace(BUILD_FOLDER, '$1src/').replace(BUILT_EXTENSION, '');
+  return ['.ts', '.tsx', '.mts', '.cts'].map((extension) => stem + extension).find((candidate) => sources.has(candidate));
+}
+
+/**
+ * File-level import edges against the compiler's, over the files the truth lists.
+ * A truth target outside the listed sources (a workspace package's `dist/x.d.ts`)
+ * counts as the source it is built from when that is listed, else is left out;
+ * the engine maps package imports to source the same way. JSON targets and
+ * self-imports are left out on both sides, as the truth leaves out JSON.
+ */
+export function scoreImportEdges(
+  truth: ReadonlyMap<string, ReadonlySet<string>>,
+  engine: ReadonlyMap<string, ReadonlySet<string>>,
+  sources: ReadonlySet<string>,
+): ImportEdgeScore {
+  const counted = (from: string, to: string) => to !== from && !to.endsWith('.json');
+  const falsePositives: string[] = [];
+  const falseNegatives: string[] = [];
+  let tp = 0;
+  let buildOutputDropped = 0;
+  for (const [from, truthTargets] of truth) {
+    const expected = new Set<string>();
+    for (const target of truthTargets) {
+      const listed = sources.has(target) ? target : sourceOfBuilt(target, sources);
+      if (listed === undefined) buildOutputDropped += counted(from, target) ? 1 : 0;
+      else if (counted(from, listed)) expected.add(listed);
+    }
+    const found = new Set([...(engine.get(from) ?? [])].filter((target) => counted(from, target)));
+    for (const target of found) {
+      if (expected.has(target)) tp += 1;
+      else falsePositives.push(`${from} -> ${target}`);
+    }
+    for (const target of expected) if (!found.has(target)) falseNegatives.push(`${from} -> ${target}`);
+  }
+  return {
+    metric: toMetric({ tp, fp: falsePositives.length, fn: falseNegatives.length }),
+    falsePositives: falsePositives.sort(),
+    falseNegatives: falseNegatives.sort(),
+    buildOutputDropped,
+  };
+}
