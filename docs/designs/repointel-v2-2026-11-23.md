@@ -242,7 +242,7 @@ L3 精确层   按需：通过 Host 现有 LSP 服务（packages/coding/src/lsp/
 5. 查询和诚实契约：精度、完整性（翻页）、新鲜度、未索引原因。
 6. Host 侧：找程序、拉起、监管、空闲回收、编辑通知、`kodax doctor` 状态。
 7. 评测：真值集适配和性能基准。
-8. 构建：`build:native` 和 CI 只把程序放进 Release 附件。
+8. 构建：CI 只把程序放进 Release 附件。实际用了单独的 `npm run build:repo-intel`，没有并进 `build:native`，见 §10.5。
 
 ### 10.2 引擎协议（阶段 1）
 
@@ -402,9 +402,17 @@ L3 精确层   按需：通过 Host 现有 LSP 服务（packages/coding/src/lsp/
   - 精确率按"把真实声明算对"的口径，v2 保留局部定义；
   - 冷索引不阻塞请求，可以更长；
   - 索引没建完时工具不给结构化结果，让模型用 grep 和 read（见 §4.3，阶段 2 加工具时实现）；
-  - 优先级按实验选，选的是"只降索引线程"。
-- 还没经过用户确认的：
+  - 优先级按实验选，选的是"只降索引线程"；
   - 单文件大小上限 4 MiB（依据见上）；
   - WAL 上限 4 MB；
   - Windows 上报私有内存；
   - 不加内存硬上限。
+
+### 10.5 第 8 层：构建和发布（2026-11-25）
+
+- **单独的构建命令：** `npm run build:repo-intel`，不并进 `build:native`。`build:native` 在日常 `npm run build`、Full CI 和 npm 包聚合里都会跑，并进去会让这些地方都多编一遍引擎，可 npm 包根本不带它。
+- **产物：** `dist/repo-intel/<平台>-<架构>/`，里面是程序、`LICENSE-APACHE-repo-intel.txt`，以及 `THIRD-PARTY-NOTICES-repo-intel.txt`（41 个编进程序的依赖的许可证原文；只在编译时运行的过程宏不算）。C++、Java、TypeScript 三个语法库发布的 crate 里没带许可证文件，原文从上游仓库拷到 `native/repo-intel/licenses/`；以后再有依赖缺许可证，构建直接失败，不会发出没有声明的程序。`npm run build` 清理 `dist/` 时保留 `dist/repo-intel`，和 `dist/native` 一样，所以先编引擎再 `npm run build:binary` 也不会丢。目录不叫 `dist/native/`，因为 package.json 的 `files` 带着 `dist/native`。
+- **进单文件版：** `build-binary` 把它拷到可执行文件旁的 `vendor/kodax-native/<平台>/`，Host 本来就在那里找。目录里没有引擎时照常打包，只打印一行；Release 流程在打压缩包时要求它存在。打包后的自检会打开开关跑一次 `kodax doctor --json`，要求报出版本，且后台优先级生效。
+- **不进 npm 包：** npm 包的审计脚本见到 `kodax-repo-intel` 就失败。npm 用户要用引擎，就从 Release 压缩包里取出程序，设 `KODAX_REPO_INTELLIGENCE_ENGINE_PATH`。
+- **Linux：** 和原生文本组件一样，在钉死摘要的 `manylinux2014` 容器里编译（`build-linux-native.mjs repo-intel`），再过 glibc 2.17 检查。
+- **真机测试：** Release 流程在五个平台上都跑 `cargo test --release`。Linux 和 macOS 的线程优先级、进程内存这些测试，第一次在真机上跑就是下一次 Release 或手动触发的构建。

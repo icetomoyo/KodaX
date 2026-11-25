@@ -1252,8 +1252,15 @@ following side-by-side files. Extract it into a dedicated directory:
 └── vendor/kodax-native/<platform-arch>/
     ├── manifest.json               # Protocol and SHA-256 manifest
     ├── LICENSE-APACHE.txt          # Native component license
-    └── kodax[-windows]-text-transaction.node  # Trusted text binding
+    ├── kodax[-windows]-text-transaction.node  # Trusted text binding
+    ├── kodax-repo-intel[.exe]      # RepoIntel engine (used with KODAX_REPO_INTELLIGENCE_ENGINE=v2)
+    ├── LICENSE-APACHE-repo-intel.txt
+    └── THIRD-PARTY-NOTICES-repo-intel.txt
 ```
+
+The RepoIntel engine ships only in these archives, never in the npm package;
+the npm tarball audit rejects it. npm users who turn the engine on point
+`KODAX_REPO_INTELLIGENCE_ENGINE_PATH` at the program from an archive.
 
 Windows archives additionally contain `kodax-windows-sandbox.exe` in the same
 native directory and the pinned ASRT runner at
@@ -1300,6 +1307,7 @@ LoongArch64 / MIPS are **not supported** (Bun has no toolchain for them).
 ```bash
 # Current platform/architecture only
 npm run build:native
+npm run build:repo-intel   # optional: the RepoIntel engine (needs cargo)
 npm run build:binary
 
 # Explicit target on its matching native host
@@ -1317,10 +1325,13 @@ Output lives under `dist/binary/<target>/`. Native bindings built by the local
 commands above are executed on a matching OS/architecture. Official Linux
 artifacts are instead compiled by
 `scripts/build-linux-native.mjs` in digest-pinned `manylinux2014` builders and
-must pass the ELF glibc 2.17 ABI gate. The release workflow's five native
+must pass the ELF glibc 2.17 ABI gate; the RepoIntel engine builds the same way
+(`node scripts/build-linux-native.mjs repo-intel`). The release workflow's five native
 runners aggregate the npm package afterward. The build runs the local artifact
 with an isolated `KODAX_HOME` and requires `a2a list` to emit exactly one A2A
-v2 JSON document. A supplementary manual version smoke is:
+v2 JSON document. When the RepoIntel engine is packaged, the build also runs
+`doctor --json` with the engine switched on and requires it to report its
+version and background indexing. A supplementary manual version smoke is:
 
 ```bash
 dist/binary/linux-x64/kodax --version
