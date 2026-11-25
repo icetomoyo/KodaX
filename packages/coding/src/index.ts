@@ -592,6 +592,17 @@ export {
   renderImpactEstimate,
 } from './repo-intelligence/semantic-render.js';
 
+export { createRepoIntelSupervisor } from './repo-intelligence/engine/supervisor.js';
+export type {
+  RepoIntelEngineLaunch,
+  RepoIntelEngineState,
+  RepoIntelSupervisor,
+  RepoIntelSupervisorOptions,
+  RepoIntelSupervisorStatus,
+} from './repo-intelligence/engine/supervisor.js';
+export { connectRepoIntelEngine } from './repo-intelligence/engine/connection.js';
+export type { RepoIntelEngineConnection } from './repo-intelligence/engine/connection.js';
+
 // ============== Prompts ==============
 
 export {
