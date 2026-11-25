@@ -2356,7 +2356,7 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
   - 未经用户确认：`auth.json` 读不了时只记一次警告、当作没存 key，不挡 Host 启动和列 provider。
   - 2026-11-24 已修（用户要求）：前台 `kodax host serve --home/--config-home`、`kodax a2a serve --home` 以前只有配置和 Session 在 Host 自己的目录，记忆、skills、MCP、learned 等还在全局 `~/.kodax`（或 `KODAX_HOME`），几个 Host 会共用。现在启动入口（`kodax_bootstrap`）在加载 CLI 前就把 `KODAX_HOME` 设成 Host 自己的目录，和启动器拉起的 Host 一样（`process.ts` 一直这么做）；`serve` 再核对一次进程数据根，不一致就拒绝启动并给出要设的 `KODAX_HOME`。
   - 分类结论：`.kodax` 里的东西都跟 Host 走（配置、key、Session、记忆、skills、MCP、learned、commands、workflows、缓存、子进程登记）。机器级的 Windows 沙箱状态本来就在 `ProgramDataKodaX`，不受影响。系统用户级的跨工具目录（`~/.agents/skills`、`~/.agents/commands`、`~/.codex`、`~/.gemini`）按 `os.homedir()` 读，不跟 Host 走。
-  - 未经用户确认：`~/.agents/skills` 和 `~/.agents/commands` 仍按系统用户共用；同一系统用户下跑多个租户 Host 时，平台不要往这两个目录放租户的东西。
+  - 2026-11-25 用户确认：`~/.agents/skills` 和 `~/.agents/commands` 按系统用户共用，所有 Host 都能读，不跟 `--home` 走；多租户本来就不该往这里放东西，租户的放各自 `<home>/.kodax`。Run 的工具写不进去（权限策略和沙箱都把 `.agents` 列为受保护）。
 - **项目信任列表没做**：v2 里还没有这组方法，等有客户端要用时随方法一起加。
 
 ### M2 富 UI（M，四项可以并行）
