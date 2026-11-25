@@ -368,6 +368,7 @@ export type {
   CapabilityCache,
   CapabilityCacheEntry,
   CapabilityCacheSource,
+  CapabilityExecuteOptions,
   CapabilityKind,
   CapabilityProvider,
   CapabilityResult,

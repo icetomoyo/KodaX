@@ -23,6 +23,7 @@ export type { ExecOptions, ExecResult, WebhookOptions, WebhookResult } from './h
 // third-party providers (MCP, RAG, custom indexes, …) can implement it
 // without a coding dependency. Re-exported here for backward compatibility.
 import type {
+  CapabilityExecuteOptions,
   CapabilityKind,
   CapabilityProvider,
   CapabilityResult,
@@ -32,6 +33,7 @@ import type {
   CapabilitySearchSnapshot,
 } from '@kodax-ai/agent';
 export type {
+  CapabilityExecuteOptions,
   CapabilityKind,
   CapabilityProvider,
   CapabilityResult,

@@ -726,6 +726,12 @@ upsertMcpServer('filesystem', {
   command: 'mcp-server-filesystem',
   args: ['/repo'],
   connect: 'lazy',
+  // Optional. Exact tool names; disabledTools applies after enabledTools.
+  // Hidden tools are absent from search and the prompt, and calls are refused.
+  disabledTools: ['delete_file'],
+  // Optional. Applies to discovery and tool calls. Without it, tool calls
+  // default to 300s (reset by server progress) and discovery to 60s.
+  requestTimeoutMs: 120_000,
 });
 
 // Remote servers: `type: 'streamable-http'` or `'sse'`. For ecosystem-config
@@ -4216,6 +4222,10 @@ await runtime.catalog.upsertCustomProvider({
 await runtime.mcp.upsertServer('filesystem', {
   command: 'npx',
   args: ['-y', '@modelcontextprotocol/server-filesystem', process.cwd()],
+  // Optional exact-name tool filters. Hidden tools never reach search,
+  // describe, or the model, and a direct mcp_call to one is refused.
+  disabledTools: ['write_file', 'move_file'],
+  // enabledTools: ['read_text_file', 'list_directory'],
 });
 await runtime.mcp.reloadServers();
 

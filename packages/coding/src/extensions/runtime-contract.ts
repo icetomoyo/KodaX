@@ -15,6 +15,7 @@
 import type {
   CapabilityKind,
   CapabilityProvider,
+  CapabilityExecuteOptions,
   CapabilityResult,
   CapabilitySearchSnapshot,
   KodaXExtensionSessionRecord,
@@ -79,6 +80,7 @@ export interface CapabilityRuntimeContract {
     providerId: string,
     capabilityId: string,
     input: Record<string, unknown>,
+    options?: CapabilityExecuteOptions,
   ): Promise<CapabilityResult>;
 
   readCapability(

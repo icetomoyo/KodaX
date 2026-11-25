@@ -79,6 +79,8 @@ export class McpTransportCleanupIncompleteError extends Error {
   }
 }
 
+const STDERR_TAIL_CHARS = 2_000;
+
 export function createStdioTransport(config: {
   configHome?: string;
   command: string;
@@ -96,6 +98,9 @@ export function createStdioTransport(config: {
   let cleanupOnProcessExit: (() => void) | undefined;
   let removeCleanupOnProcessExit: (() => void) | undefined;
   let unregisterManagedChild: (() => void) | undefined;
+  // Servers log freely on stderr, so it is not an error signal by itself; the
+  // tail is kept to explain an unexpected exit (missing token, bad args, …).
+  let stderrTail = '';
   const closingChildren = new WeakSet<ChildProcessWithoutNullStreams>();
 
   function drainBuffer(): void {
@@ -202,11 +207,9 @@ export function createStdioTransport(config: {
         buffer = Buffer.concat([buffer, chunk]);
         drainBuffer();
       });
+      stderrTail = '';
       child.stderr.on('data', (chunk: Buffer) => {
-        const text = chunk.toString('utf8').trim();
-        if (text) {
-          ev.onError(new Error(text));
-        }
+        stderrTail = (stderrTail + chunk.toString('utf8')).slice(-STDERR_TAIL_CHARS);
       });
       child.on('error', (error) => {
         rememberChildProcessTree(child);
@@ -233,8 +236,10 @@ export function createStdioTransport(config: {
         if (closingChildren.has(child)) {
           return;
         }
+        const stderr = stderrTail.trim();
         ev.onClose(
-          `Process exited (${code ?? 'signal'}${signal ? `:${signal}` : ''}).`,
+          `Process exited (${code ?? 'signal'}${signal ? `:${signal}` : ''}).`
+          + (stderr ? ` stderr: ${stderr}` : ''),
         );
       });
     },

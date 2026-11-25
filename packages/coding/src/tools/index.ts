@@ -92,7 +92,7 @@ export { toolCodeSearch } from './code-search.js';
 export { toolSemanticLookup } from './semantic-lookup.js';
 export { toolMcpSearch } from './mcp-search.js';
 export { toolMcpDescribe } from './mcp-describe.js';
-export { toolMcpCall } from './mcp-call.js';
+export { isReadOnlyMcpCall, toolMcpCall } from './mcp-call.js';
 export { toolMcpReadResource } from './mcp-read-resource.js';
 export { toolMcpGetPrompt } from './mcp-get-prompt.js';
 export { toolWorktreeCreate, toolWorktreeRemove } from './worktree.js';

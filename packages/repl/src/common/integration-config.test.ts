@@ -79,6 +79,18 @@ describe("FEATURE_268 integration config substrate", () => {
     expect(() =>
       parseMcpIntegrationDocument({ version: 2, servers: {} }),
     ).toThrow(/version/i);
+    expect(
+      parseMcpIntegrationDocument({
+        version: 1,
+        servers: { gh: { command: "gh-mcp", enabledTools: ["read_issue"], disabledTools: ["delete_repo"] } },
+      }).servers.gh,
+    ).toMatchObject({ enabledTools: ["read_issue"], disabledTools: ["delete_repo"] });
+    expect(() =>
+      parseMcpIntegrationDocument({
+        version: 1,
+        servers: { gh: { command: "gh-mcp", disabledTools: "delete_repo" } },
+      }),
+    ).toThrow(/disabledTools/);
 
     expect(
       parseExtensionsIntegrationDocument({

@@ -28,6 +28,8 @@ export interface McpCatalogItem {
   tags?: string[];
   risk?: McpCapabilityRisk;
   annotations?: Record<string, unknown>;
+  /** Argument names from the input schema, e.g. `(owner, repo, body?)`. */
+  argsSignature?: string;
   cachedAt: string;
 }
 export interface McpCapabilityDescriptor extends McpCatalogItem {
@@ -47,6 +49,10 @@ export interface McpServerCatalogSnapshot {
   items: McpCatalogItem[];
   descriptors: McpCapabilityDescriptor[];
   updatedAt: string;
+  /** Hash of the server config that produced this catalog; a config edit invalidates the cache. */
+  configFingerprint?: string;
+  /** One line on what the server is for, from its initialize result. */
+  serverPurpose?: string;
 }
 
 export interface McpCatalogSearchOptions {
@@ -194,6 +200,69 @@ export function summarizeMcpCatalogEntry(
     ? value.title.trim()
     : '';
   return description || title || fallback;
+}
+
+const SERVER_PURPOSE_MAX_CHARS = 100;
+
+function firstSentence(text: string): string | undefined {
+  // Skip markdown headings; a server name alone says less than its first sentence.
+  const prose = text.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith('#')).join(' ');
+  const sentence = prose.match(/^.*?(?:[.!?](?=\s|$)|。)/)?.[0] ?? prose;
+  return sentence.trim() || undefined;
+}
+
+/**
+ * One line on what a server is for, so the resident manifest tells the model
+ * when an MCP search is worth it. Prefers the first sentence of the initialize
+ * `instructions`, then `serverInfo.description`, then `serverInfo.title`.
+ */
+export function summarizeMcpServerPurpose(initializeResult: unknown): string | undefined {
+  if (!initializeResult || typeof initializeResult !== 'object') return undefined;
+  const result = initializeResult as Record<string, unknown>;
+  const info = result.serverInfo && typeof result.serverInfo === 'object'
+    ? result.serverInfo as Record<string, unknown>
+    : {};
+  const candidates = [result.instructions, info.description, info.title];
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue;
+    const line = firstSentence(candidate)?.replace(/\s+/g, ' ');
+    if (!line) continue;
+    return line.length > SERVER_PURPOSE_MAX_CHARS ? `${line.slice(0, SERVER_PURPOSE_MAX_CHARS - 1)}…` : line;
+  }
+  return undefined;
+}
+
+const SIGNATURE_MAX_ARGS = 8;
+
+function listArgs(schema: unknown): Array<{ name: string; required: boolean }> | undefined {
+  if (Array.isArray(schema)) {
+    // Prompt arguments arrive as [{ name, required }].
+    return schema.flatMap((entry: unknown) => {
+      const record = entry && typeof entry === 'object' ? entry as Record<string, unknown> : undefined;
+      return typeof record?.name === 'string' && record.name
+        ? [{ name: record.name, required: record.required === true }]
+        : [];
+    });
+  }
+  if (!schema || typeof schema !== 'object') return undefined;
+  const { properties, required } = schema as { properties?: unknown; required?: unknown };
+  if (!properties || typeof properties !== 'object') return [];
+  const requiredNames = new Set(Array.isArray(required) ? required : []);
+  return Object.keys(properties).map((name) => ({ name, required: requiredNames.has(name) }));
+}
+
+/**
+ * One-line argument list for search results, so a simple tool can be called
+ * without a describe round. Types and nesting stay in mcp_describe.
+ */
+export function summarizeMcpArgsSignature(schema: unknown): string | undefined {
+  const args = listArgs(schema);
+  if (!args) return undefined;
+  const names = args
+    .slice(0, SIGNATURE_MAX_ARGS)
+    .map((arg) => (arg.required ? arg.name : `${arg.name}?`));
+  if (args.length > SIGNATURE_MAX_ARGS) names.push('…');
+  return `(${names.join(', ')})`;
 }
 
 // Per 2025-11-25 icon security rules clients MUST reject unsafe schemes
@@ -388,11 +457,24 @@ export function getMcpCachePaths(cacheDir: string, serverId: string): {
   itemsPath: string;
 } {
   const catalogDir = path.join(cacheDir, 'catalog');
+  const fileStem = toCacheFileStem(serverId);
   return {
     catalogDir,
-    indexPath: path.join(catalogDir, `${serverId}.index.json`),
-    itemsPath: path.join(catalogDir, `${serverId}.items.json`),
+    indexPath: path.join(catalogDir, `${fileStem}.index.json`),
+    itemsPath: path.join(catalogDir, `${fileStem}.items.json`),
   };
+}
+
+/**
+ * Server ids come from user config, so they may contain path separators or
+ * characters Windows rejects. Ordinary ids keep their readable name; anything
+ * else is percent-encoded. Safe ids never contain `%`, so the mapping is
+ * injective and two servers cannot share a cache file.
+ */
+function toCacheFileStem(serverId: string): string {
+  if (/^[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(serverId)) return serverId;
+  return encodeURIComponent(serverId)
+    .replace(/[!'()*~.]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
 export async function writeMcpServerCatalog(
@@ -406,6 +488,8 @@ export async function writeMcpServerCatalog(
     JSON.stringify({
       serverId: snapshot.serverId,
       updatedAt: snapshot.updatedAt,
+      configFingerprint: snapshot.configFingerprint,
+      serverPurpose: snapshot.serverPurpose,
       items: snapshot.items,
     }, null, 2),
     'utf8',
@@ -424,6 +508,7 @@ export async function writeMcpServerCatalog(
 export async function readMcpServerCatalog(
   cacheDir: string,
   serverId: string,
+  configFingerprint?: string,
 ): Promise<McpServerCatalogSnapshot | undefined> {
   const { indexPath, itemsPath } = getMcpCachePaths(cacheDir, serverId);
   try {
@@ -434,6 +519,11 @@ export async function readMcpServerCatalog(
     const indexJson = JSON.parse(indexRaw) as unknown;
     const itemsJson = JSON.parse(itemsRaw) as unknown;
     if (!isRecord(indexJson) || !isRecord(itemsJson)) return undefined;
+    // A cache written before fingerprints existed stays usable until the next refresh stamps it.
+    const storedFingerprint = typeof indexJson.configFingerprint === 'string' ? indexJson.configFingerprint : undefined;
+    if (configFingerprint !== undefined && storedFingerprint !== undefined && storedFingerprint !== configFingerprint) {
+      return undefined;
+    }
     if (
       (indexJson.serverId !== undefined && indexJson.serverId !== serverId)
       || (itemsJson.serverId !== undefined && itemsJson.serverId !== serverId)
@@ -456,6 +546,8 @@ export async function readMcpServerCatalog(
       updatedAt: itemsUpdatedAt ?? indexUpdatedAt ?? new Date(0).toISOString(),
       items: catalogItems,
       descriptors,
+      ...(storedFingerprint !== undefined ? { configFingerprint: storedFingerprint } : {}),
+      ...(typeof indexJson.serverPurpose === 'string' ? { serverPurpose: indexJson.serverPurpose } : {}),
     };
   } catch {
     return undefined;

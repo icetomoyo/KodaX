@@ -631,6 +631,11 @@ const BUILTIN_TOOL_DEFINITION_SOURCE: LocalToolDefinition[] = [
       type: 'object',
       properties: {
         id: { type: 'string', description: 'MCP capability id from mcp_search' },
+        ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'More capability ids to describe in the same call',
+        },
       },
       required: ['id'],
     },

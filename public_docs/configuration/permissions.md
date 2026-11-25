@@ -58,6 +58,22 @@ Access policy without execution. Without `--mode`, the checker uses the
 conservative built-in fallback contract. This is a token-prefix policy, not a
 semantic analyzer of arbitrary script files or dynamically generated programs.
 
+## MCP tools
+
+An MCP server can mark a tool as read-only (`readOnlyHint`) or destructive.
+KodaX uses those marks for `mcp_call`:
+
+| Mode | Read-only, not destructive | Any other MCP tool |
+|---|---|---|
+| **Plan** | Runs | Refused |
+| **Edits** | Runs | Asks first |
+| **Auto[LLM]** / **Full Access** | Runs | Runs |
+
+The marks come from the server. Configure only servers you trust. Use
+`enabledTools` or `disabledTools` in a server's config to hide tools you never
+want called. Approving an MCP tool for the Session covers later calls to the
+same tool with any arguments.
+
 ## SDK permission control
 
 SDK callers control permissions through shared Runtime Session settings.

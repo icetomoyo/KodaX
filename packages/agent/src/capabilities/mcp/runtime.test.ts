@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { McpServerRuntime } from './runtime.js';
+import { getToolCallTimeoutMs, McpServerRuntime } from './runtime.js';
 import type { McpReverseCapabilities } from './reverse-capabilities.js';
 import { createFetchHttpFixture } from '../../../../../tests/fetch-http-fixture.js';
 
@@ -2176,5 +2176,347 @@ describe('McpServerRuntime protocol compatibility', () => {
     const error = await call;
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toMatch(/not connected|disposed/i);
+  });
+});
+
+function createLifecycleServerSource(options: {
+  cancelPath: string;
+  stderrOnInit?: string;
+  progressCall?: { steps: number; intervalMs: number };
+  messagelessError?: boolean;
+}): string {
+  return `
+const fs = require('node:fs');
+let buffer = '';
+const write = (payload) => process.stdout.write(JSON.stringify(payload) + '\\n');
+function handle(message) {
+  const method = message.method;
+  if (method === 'initialize') {
+    ${options.stderrOnInit ? `process.stderr.write(${JSON.stringify(options.stderrOnInit)} + '\\n'); setTimeout(() => process.exit(1), 20); return;` : ''}
+    write({ jsonrpc: '2.0', id: message.id, result: {
+      protocolVersion: '2025-11-25',
+      capabilities: { tools: {} },
+      serverInfo: { name: 'lifecycle-test', version: '1.0.0' },
+    } });
+    return;
+  }
+  if (method === 'notifications/cancelled') {
+    fs.appendFileSync(${JSON.stringify(options.cancelPath)}, JSON.stringify(message.params) + '\\n');
+    return;
+  }
+  if (method === 'tools/list') {
+    write({ jsonrpc: '2.0', id: message.id, result: { tools: [{ name: 'slow_tool', inputSchema: { type: 'object' } }] } });
+    return;
+  }
+  if (method === 'tools/call') {
+    ${options.messagelessError ? "write({ jsonrpc: '2.0', id: message.id, error: { code: -32000 } }); return;" : ''}
+    ${options.progressCall ? `
+    const token = message.params && message.params._meta && message.params._meta.progressToken;
+    let step = 0;
+    const timer = setInterval(() => {
+      step += 1;
+      if (step <= ${options.progressCall.steps}) {
+        write({ jsonrpc: '2.0', method: 'notifications/progress', params: { progressToken: token, progress: step } });
+        return;
+      }
+      clearInterval(timer);
+      write({ jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: 'done after progress' }] } });
+    }, ${options.progressCall.intervalMs});` : ''}
+    return;
+  }
+}
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => {
+  buffer += chunk;
+  let lineEnd;
+  while ((lineEnd = buffer.indexOf('\\n')) >= 0) {
+    const line = buffer.slice(0, lineEnd).trim();
+    buffer = buffer.slice(lineEnd + 1);
+    if (line) handle(JSON.parse(line));
+  }
+});
+process.on('SIGTERM', () => process.exit(0));
+process.on('SIGINT', () => process.exit(0));
+`;
+}
+
+describe('McpServerRuntime call lifecycle', () => {
+  it('cancels an in-flight tools/call on abort and notifies the server', async () => {
+    const dir = await createTempDir();
+    const cancelPath = path.join(dir, 'cancel.jsonl');
+    const scriptPath = await writeScript(dir, createLifecycleServerSource({ cancelPath }));
+    const runtime = await createRuntime(dir, scriptPath, 2_000, 30_000);
+    const controller = new AbortController();
+
+    try {
+      await runtime.getCatalog(true);
+      const started = Date.now();
+      const call = runtime.callTool('slow_tool', {}, { signal: controller.signal });
+      setTimeout(() => controller.abort(), 100);
+      await expect(call).rejects.toThrow(/cancel/i);
+      expect(Date.now() - started).toBeLessThan(5_000);
+      await expect.poll(() => readFile(cancelPath, 'utf8').catch(() => '')).toMatch(/"requestId"/);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it('rejects immediately without sending when the signal is already aborted', async () => {
+    const dir = await createTempDir();
+    const cancelPath = path.join(dir, 'cancel.jsonl');
+    const scriptPath = await writeScript(dir, createLifecycleServerSource({ cancelPath }));
+    const runtime = await createRuntime(dir, scriptPath, 2_000, 30_000);
+
+    try {
+      await runtime.getCatalog(true);
+      await expect(runtime.callTool('slow_tool', {}, { signal: AbortSignal.abort() }))
+        .rejects.toThrow(/cancel/i);
+      expect(await readFile(cancelPath, 'utf8').catch(() => '')).toBe('');
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it('keeps a tools/call alive while the server reports progress', async () => {
+    const dir = await createTempDir();
+    const cancelPath = path.join(dir, 'cancel.jsonl');
+    const scriptPath = await writeScript(dir, createLifecycleServerSource({
+      cancelPath,
+      progressCall: { steps: 6, intervalMs: 150 },
+    }));
+    const runtime = await createRuntime(dir, scriptPath, 2_000, 500);
+
+    try {
+      await runtime.getCatalog(true);
+      const result = await runtime.callTool('slow_tool', {});
+      expect(result.content).toContain('done after progress');
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it('rejects JSON-RPC error responses that carry no message', async () => {
+    const dir = await createTempDir();
+    const cancelPath = path.join(dir, 'cancel.jsonl');
+    const scriptPath = await writeScript(dir, createLifecycleServerSource({ cancelPath, messagelessError: true }));
+    const runtime = await createRuntime(dir, scriptPath, 2_000, 2_000);
+
+    try {
+      await runtime.getCatalog(true);
+      await expect(runtime.callTool('slow_tool', {})).rejects.toThrow(/-32000/);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it('reports the stderr tail when a stdio server exits during startup', async () => {
+    const dir = await createTempDir();
+    const cancelPath = path.join(dir, 'cancel.jsonl');
+    const scriptPath = await writeScript(dir, createLifecycleServerSource({
+      cancelPath,
+      stderrOnInit: 'fatal: GITHUB_TOKEN is not set',
+    }));
+    const runtime = await createRuntime(dir, scriptPath, 2_000, 2_000);
+
+    try {
+      await expect(runtime.getCatalog(true)).rejects.toThrow(/GITHUB_TOKEN is not set/);
+      expect(runtime.getDiagnostics().lastError).toMatch(/GITHUB_TOKEN is not set/);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it('ignores a cached catalog written under a different server config', async () => {
+    const dir = await createTempDir();
+    const scriptPath = await writeScript(dir, createLifecycleServerSource({ cancelPath: path.join(dir, 'cancel.jsonl') }));
+    const first = await createRuntime(dir, scriptPath, 2_000, 2_000);
+    try {
+      await first.getCatalog(true);
+    } finally {
+      await first.dispose();
+    }
+    const reopen = (args: string[]) => new McpServerRuntime(
+      'test-server',
+      { type: 'stdio', command: process.execPath, args, connect: 'lazy' },
+      path.join(dir, 'cache'),
+    );
+    const same = reopen([scriptPath]);
+    const changed = reopen([scriptPath, '--toolset=all']);
+    try {
+      expect(await same.getCachedCatalog()).toBeDefined();
+      expect(await changed.getCachedCatalog()).toBeUndefined();
+    } finally {
+      await same.dispose();
+      await changed.dispose();
+    }
+  });
+
+  it('hides and refuses tools excluded by enabledTools or disabledTools', async () => {
+    const dir = await createTempDir();
+    const called: string[] = [];
+    const server = await startHttpServer(async (req, res) => {
+      if (req.method !== 'POST') {
+        res.writeHead(405);
+        res.end();
+        return;
+      }
+      const payload = asRecord(JSON.parse(await readRequestBody(req)));
+      const method = typeof payload?.method === 'string' ? payload.method : '';
+      if (payload?.id === undefined) {
+        res.writeHead(202);
+        res.end();
+        return;
+      }
+      if (method === 'tools/call') called.push(String(asRecord(payload.params)?.name));
+      const result: JsonObject = method === 'initialize'
+        ? { protocolVersion: '2025-11-25', capabilities: { tools: {} }, serverInfo: { name: 'filtered', version: '1.0.0' } }
+        : method === 'tools/list'
+          ? { tools: ['read_issue', 'delete_repo', 'search'].map((name) => ({ name, inputSchema: { type: 'object' } })) }
+          : { content: [{ type: 'text', text: 'ok' }] };
+      writeJsonRpcResponse(res, payload.id, result);
+    });
+    const open = (filter: { enabledTools?: string[]; disabledTools?: string[] }) => new McpServerRuntime(
+      'filtered',
+      { type: 'streamable-http', url: server.url, connect: 'lazy', ...filter },
+      path.join(dir, 'cache'),
+    );
+    const denied = open({ disabledTools: ['delete_repo'] });
+    const allowed = open({ enabledTools: ['read_issue', 'delete_repo'], disabledTools: ['delete_repo'] });
+
+    try {
+      expect((await denied.getCatalog(true)).items.map((item) => item.name)).toEqual(['read_issue', 'search']);
+      await expect(denied.callTool('delete_repo', {})).rejects.toThrow(/disabled/i);
+      expect((await allowed.getCatalog(true)).items.map((item) => item.name)).toEqual(['read_issue']);
+      await expect(allowed.callTool('search', {})).rejects.toThrow(/disabled/i);
+      await allowed.callTool('read_issue', {});
+      expect(called).toEqual(['read_issue']);
+    } finally {
+      await denied.dispose();
+      await allowed.dispose();
+      await server.stop();
+    }
+  });
+
+  it('lists argument names on catalog items and returns the input schema when a server rejects arguments', async () => {
+    const dir = await createTempDir();
+    const inputSchema = {
+      type: 'object',
+      properties: { owner: { type: 'string' }, repo: { type: 'string' }, body: { type: 'string' } },
+      required: ['owner', 'repo'],
+    };
+    const server = await startHttpServer(async (req, res) => {
+      if (req.method !== 'POST') {
+        res.writeHead(405);
+        res.end();
+        return;
+      }
+      const payload = asRecord(JSON.parse(await readRequestBody(req)));
+      const method = typeof payload?.method === 'string' ? payload.method : '';
+      if (payload?.id === undefined) {
+        res.writeHead(202);
+        res.end();
+        return;
+      }
+      const name = String(asRecord(payload.params)?.name ?? '');
+      if (method === 'tools/call' && name === 'protocol_reject') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: payload.id, error: { code: -32602, message: 'Invalid params: owner is required' } }));
+        return;
+      }
+      const result: JsonObject = method === 'initialize'
+        ? { protocolVersion: '2025-11-25', capabilities: { tools: {}, prompts: {} }, serverInfo: { name: 'sig', version: '1.0.0' }, instructions: 'Track demo issues. Ask before writing.' }
+        : method === 'tools/list'
+          ? { tools: ['protocol_reject', 'result_reject', 'runtime_fail'].map((tool) => ({ name: tool, inputSchema })) }
+          : method === 'prompts/list'
+            ? { prompts: [{ name: 'review', arguments: [{ name: 'pr', required: true }, { name: 'focus' }] }] }
+            : name === 'result_reject'
+              ? { isError: true, content: [{ type: 'text', text: 'Input validation error: repo is required' }] }
+              : { isError: true, content: [{ type: 'text', text: 'rate limited by upstream' }] };
+      writeJsonRpcResponse(res, payload.id, result);
+    });
+    const runtime = new McpServerRuntime('sig', { type: 'streamable-http', url: server.url, connect: 'lazy' }, path.join(dir, 'cache'));
+
+    try {
+      const catalog = await runtime.getCatalog(true);
+      const signatures = Object.fromEntries(catalog.items.map((item) => [item.name, item.argsSignature]));
+      expect(signatures).toMatchObject({ protocol_reject: '(owner, repo, body?)', review: '(pr, focus?)' });
+      expect(catalog.serverPurpose).toBe('Track demo issues.');
+      const diskReader = new McpServerRuntime('sig', { type: 'streamable-http', url: server.url, connect: 'lazy' }, path.join(dir, 'cache'));
+      expect((await diskReader.getCachedCatalog())?.serverPurpose).toBe('Track demo issues.');
+      await diskReader.dispose();
+
+      const schemaText = `Expected input schema: ${JSON.stringify(inputSchema)}`;
+      await expect(runtime.callTool('protocol_reject', {})).rejects.toThrow(schemaText);
+      const rejected = await runtime.callTool('result_reject', {});
+      expect(JSON.stringify(rejected.content)).toContain('Expected input schema');
+      const unrelated = await runtime.callTool('runtime_fail', { owner: 'a', repo: 'b' });
+      expect(JSON.stringify(unrelated.content)).not.toContain('Expected input schema');
+    } finally {
+      await runtime.dispose();
+      await server.stop();
+    }
+  });
+
+  it('retries transient HTTP failures for initialize and lists, but never for tools/call', async () => {
+    const dir = await createTempDir();
+    const attempts = new Map<string, number>();
+    const failFirst: Record<string, number> = { initialize: 503, 'tools/list': 429, 'tools/call': 503 };
+    const server = await startHttpServer(async (req, res) => {
+      if (req.method !== 'POST') {
+        res.writeHead(405);
+        res.end();
+        return;
+      }
+      const payload = asRecord(JSON.parse(await readRequestBody(req)));
+      const method = typeof payload?.method === 'string' ? payload.method : '';
+      const attempt = (attempts.get(method) ?? 0) + 1;
+      attempts.set(method, attempt);
+      if (payload?.id === undefined) {
+        res.writeHead(202);
+        res.end();
+        return;
+      }
+      const status = failFirst[method];
+      if (status !== undefined && attempt === 1) {
+        res.writeHead(status);
+        res.end();
+        return;
+      }
+      const result: JsonObject = method === 'initialize'
+        ? { protocolVersion: '2025-11-25', capabilities: { tools: {} }, serverInfo: { name: 'flaky', version: '1.0.0' } }
+        : method === 'tools/list'
+          ? { tools: [{ name: 'echo', inputSchema: { type: 'object' } }] }
+          : { content: [{ type: 'text', text: 'ok' }] };
+      writeJsonRpcResponse(res, payload.id, result);
+    });
+    const runtime = new McpServerRuntime(
+      'flaky',
+      { type: 'streamable-http', url: server.url, connect: 'lazy', startupTimeoutMs: 2_000, requestTimeoutMs: 2_000 },
+      path.join(dir, 'cache'),
+    );
+
+    try {
+      const catalog = await runtime.getCatalog(true);
+      expect(catalog.items.map((item) => item.name)).toEqual(['echo']);
+      await expect(runtime.callTool('echo', {})).rejects.toThrow(/503/);
+      expect(attempts.get('initialize')).toBe(2);
+      expect(attempts.get('tools/list')).toBe(2);
+      expect(attempts.get('tools/call')).toBe(1);
+    } finally {
+      await runtime.dispose();
+      await server.stop();
+    }
+  });
+});
+
+describe('getToolCallTimeoutMs', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('gives tools/call five minutes by default and honors explicit overrides', () => {
+    vi.stubEnv('MCP_REQUEST_TIMEOUT', '');
+    expect(getToolCallTimeoutMs({ command: 'x' })).toBe(300_000);
+    expect(getToolCallTimeoutMs({ command: 'x', requestTimeoutMs: 5_000 })).toBe(5_000);
+    vi.stubEnv('MCP_REQUEST_TIMEOUT', '90000');
+    expect(getToolCallTimeoutMs({ command: 'x' })).toBe(90_000);
   });
 });

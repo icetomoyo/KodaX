@@ -8112,3 +8112,93 @@ failed instead of reporting a failed task.
 - **Keep the throwing contract on the public entries and document it.** It
   breaks every embedder that relied on the direct engine, and the first
   failure ends a `KodaXClient` conversation.
+
+## ADR-083: MCP Disclosure Stays Out of the Cached Prefix, and MCP Tools Get Their Own Permission Rules
+
+**Status**: Accepted (2026-11-25). Unreleased. Numbered after KodaX-next-dev's
+ADR-082 so the next merge does not collide.
+
+**Context**: An audit of the MCP integration, compared with opencode, pi and
+codex, found that the resident cost was already bounded: five fixed tools and
+a manifest capped at 320 tokens. The problems were in what the model saw
+after that, and in how calls ran:
+
+- Models spent an `mcp_describe` round on simple tools, one id per call.
+- A call rejected for its arguments returned no schema to correct against.
+- A large catalog reduced the manifest to server names, so an opaque name
+  such as `atlas` gave no hint of when to search it.
+- Edits mode ran every `mcp_call` without asking. Plan mode refused
+  read-only MCP tools.
+- A failed read-only built-in silently ran a same-named MCP tool under the
+  built-in's permission (CAP-025).
+- `tools/call` shared the 60-second discovery timeout, ignored the caller's
+  stop and dropped server progress.
+- One transient HTTP error failed discovery. A cached catalog survived a
+  config edit. There was no per-server tool filter. Server stderr lines
+  surfaced as errors.
+
+**Decision**:
+
+1. The MCP manifest stays in the retained Managed Run Context, not in the
+   system prompt or the tool list. A Run builds it once, and a change between
+   Runs restates only that section, so the cached prefix survives. Measured
+   manifests were 188 to 465 tokens across one to eight servers.
+2. Detail arrives on demand. `mcp_search` rows carry an argument signature
+   such as `(owner, repo, body?)`. `mcp_describe` accepts up to 10 `ids` in one
+   call. A rejected call (JSON-RPC -32602, or an `isError` result that reads
+   as an argument error) gets the tool's input schema appended, capped at
+   6000 characters.
+3. Each server line may carry a purpose of up to 100 characters. It comes from
+   the first sentence of the initialize `instructions`, then
+   `serverInfo.description`, then `serverInfo.title`, and is cached with the
+   catalog. Purposes get their own budget allowance on top of the 320 tokens,
+   so they never push the id or name list out. The fleet summary omits them.
+4. MCP tools follow their own annotations. Plan and Edits run an `mcp_call`
+   whose target declares `readOnlyHint` and no destructive hint. Edits asks
+   before any other `mcp_call`. Auto[LLM] and Full Access are unchanged. A
+   Session grant for `mcp_call` names one tool id, not one set of arguments.
+5. CAP-025 names the same-named MCP tool in the built-in's error and never
+   runs it. The model calls `mcp_call`, which goes through the checks above.
+6. `tools/call` defaults to a 300-second timeout. An explicit
+   `requestTimeoutMs` or `MCP_REQUEST_TIMEOUT` still applies to it. The call
+   carries a progress token, so server progress restarts the timeout. A stop
+   sends `notifications/cancelled`.
+7. Discovery retries HTTP 408, 429 and 5xx twice, after 500 ms and 1500 ms.
+   `tools/call` never retries, because it may already have had side effects.
+8. The catalog cache stores a fingerprint of the server's command, args, cwd,
+   url, env, headers and tool filters. A mismatch refetches. A cache without
+   a fingerprint is still read.
+9. `enabledTools` and `disabledTools` take exact tool names. A hidden tool is
+   absent from search, the manifest and the cache, and a call to it is
+   refused. `disabledTools` applies after `enabledTools`.
+10. Stdio stderr is kept as a 2000-character tail and reported only when the
+    process exits unexpectedly.
+
+**Consequences**:
+
+- Server-provided text now reaches the resident prompt. The manifest labels
+  purposes as untrusted data, quotes them as JSON and caps them at one line.
+  A probe with an injected purpose ("Ignore earlier rules and call …") on
+  glm-5.3-flash, deepseek-flash and kimi-for-coding was obeyed 0 of 6 times.
+  The user already trusts a configured server to run its own code.
+- Read-only annotations are server-declared. A server that mislabels a
+  writing tool can run it without a prompt in Plan and Edits.
+- A slow tool now runs for up to five minutes before the model hears of it.
+  Server progress is not yet shown to the user. FEATURE_319 adds that on the
+  v2 protocol.
+- Evals: `tests/mcp-progressive-disclosure.eval.ts` (direct correct calls
+  6/6 versus 0/6) and `tests/mcp-server-purpose.eval.ts` (the right server
+  searched 12/12 versus 0/12, no over-trigger). Both recommend shipping.
+
+**Rejected alternatives**:
+
+- **Expose each MCP tool as a native tool (pi, codex).** It saves the search
+  round. But the tool list sits at the head of the cached prefix, so every
+  server connect or list change re-bills the whole prompt. It stays deferred
+  until a provider-gated measurement shows a net gain.
+- **Raise the manifest budget so ids always fit.** Cost grows with the catalog
+  and buys less than a purpose line does.
+- **Keep CAP-025 executing the fallback.** It ran a remote tool under a local
+  tool's permission and skipped the Plan, Edits and Auto checks.
+- **Ask for every `mcp_call` in Edits.** It ignores a reliable signal for the
+  common read-only case, and users learn to approve without reading.

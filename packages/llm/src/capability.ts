@@ -46,6 +46,12 @@ export interface CapabilityResult {
   metadata?: Record<string, unknown>;
 }
 
+/** Per-call options for {@link CapabilityProvider.execute}. */
+export interface CapabilityExecuteOptions {
+  /** Aborting cancels the in-flight execution; providers should reject promptly. */
+  signal?: AbortSignal;
+}
+
 export interface CapabilityProvider {
   id: string;
   kinds: CapabilityKind[];
@@ -58,7 +64,13 @@ export interface CapabilityProvider {
     options?: Omit<CapabilitySearchOptions, 'limit'>,
   ) => Promise<CapabilitySearchSnapshot>;
   describe?: (id: string) => Promise<unknown>;
-  execute?: (id: string, input: Record<string, unknown>) => Promise<CapabilityResult>;
+  // Method syntax on purpose: extension providers narrow `options` to their
+  // execution scope, which also carries `signal` (checked bivariantly).
+  execute?(
+    id: string,
+    input: Record<string, unknown>,
+    options?: CapabilityExecuteOptions,
+  ): Promise<CapabilityResult>;
   read?: (id: string, options?: Record<string, unknown>) => Promise<CapabilityResult>;
   getPrompt?: (id: string, args?: Record<string, unknown>) => Promise<unknown>;
   getPromptContext?: () => Promise<string | undefined> | string | undefined;

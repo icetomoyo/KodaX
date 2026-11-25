@@ -887,7 +887,8 @@ remain distinct. Path matchers are limited to known built-in file tools and
 bind one tool to one normalized absolute path, not to one Write/Edit body.
 Extension, MCP, and other unknown tool shapes use an exact-call matcher even
 when their input happens to contain a field named `path`, and are eligible only
-for an in-memory Session grant. High-risk, absolute-deny,
+for an in-memory Session grant. An `mcp_call` matcher binds the MCP tool id
+only, because the arguments change on every call. High-risk, absolute-deny,
 dangerous-pattern, and dynamically expanded shell calls never receive a
 persistent suggestion. New grants are revisioned and audited; legacy
 `toolName`/`sessionId` grants remain listable, matchable, and revocable but are
@@ -1787,6 +1788,25 @@ Core modules:
 The published `@kodax-ai/kodax/mcp` subpath exposes a focused MCP surface.
 Coding tools consume MCP through capability providers rather than duplicating
 connection logic.
+
+MCP disclosure and calls (ADR-083):
+
+- The resident manifest lives in the retained Managed Run Context. It lists
+  exact ids, then names, then per-server summaries, then a fleet summary,
+  whichever fits 320 tokens. Each server line can add a cached purpose of up
+  to 100 characters, with its own budget allowance.
+- `mcp_search` rows carry an argument signature. `mcp_describe` takes `id` or
+  up to 10 `ids`. A call rejected for its arguments returns the input schema.
+- In Plan and Edits, an `mcp_call` to a tool annotated `readOnlyHint` and not
+  destructive runs like a read. Edits asks before any other `mcp_call`.
+- A failed read-only built-in names a same-named MCP tool in its error; it
+  never runs it (CAP-025).
+- `tools/call` defaults to 300 seconds, restarted by server progress, and a
+  stop sends `notifications/cancelled`. Discovery requests keep 60 seconds and
+  retry HTTP 408, 429 and 5xx twice; `tools/call` never retries.
+- The catalog cache carries a config fingerprint; a mismatch refetches.
+  `enabledTools` / `disabledTools` hide tools from search, the manifest and
+  the cache, and refuse calls to them.
 
 MCP tool-output recovery keeps the model preview separate from SDK full reads.
 Direct MCP provider calls return complete normalized content and structured

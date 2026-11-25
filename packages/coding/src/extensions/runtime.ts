@@ -847,6 +847,7 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
     providerId: string,
     capabilityId: string,
     input: Record<string, unknown>,
+    options?: import('./types.js').CapabilityExecuteOptions,
   ): Promise<import('./types.js').CapabilityResult> {
     const provider = this.getCapabilityProvider(providerId);
     if (!provider?.execute) {
@@ -858,7 +859,7 @@ export class KodaXExtensionRuntime implements ExtensionRuntimeContract {
       capabilityId,
       kind: 'tool',
     });
-    return this.withCapabilityProvider(provider, () => provider.execute!(capabilityId, input));
+    return this.withCapabilityProvider(provider, () => provider.execute!(capabilityId, input, options));
   }
 
   async readCapability(
@@ -1761,10 +1762,11 @@ export class CombinedExtensionRuntime implements ExtensionRuntimeContract {
     providerId: string,
     capabilityId: string,
     input: Record<string, unknown>,
+    options?: Parameters<KodaXExtensionRuntime['executeCapability']>[3],
   ): ReturnType<KodaXExtensionRuntime['executeCapability']> {
     return this.firstCapabilityResult(providerId, [
-      () => this.primary.executeCapability(providerId, capabilityId, input),
-      () => this.secondary.executeCapability(providerId, capabilityId, input),
+      () => this.primary.executeCapability(providerId, capabilityId, input, options),
+      () => this.secondary.executeCapability(providerId, capabilityId, input, options),
     ]);
   }
 

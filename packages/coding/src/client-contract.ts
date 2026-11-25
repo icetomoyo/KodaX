@@ -1216,6 +1216,10 @@ export interface ClientMcpServerConfig {
   readonly connect?: 'lazy' | 'prewarm' | 'disabled';
   readonly startupTimeoutMs?: number;
   readonly requestTimeoutMs?: number;
+  /** Exact tool names to expose; omitted means every tool the server lists. */
+  readonly enabledTools?: string[];
+  /** Exact tool names to hide and refuse; applied after enabledTools. */
+  readonly disabledTools?: string[];
   readonly auth?: {
     readonly type: 'oauth2';
     readonly clientId?: string;

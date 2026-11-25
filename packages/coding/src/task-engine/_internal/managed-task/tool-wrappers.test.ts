@@ -61,18 +61,16 @@ it('gives the shell host authorizer the current Runner call as its review contex
  expect(authorize).toHaveBeenCalledWith(expect.objectContaining({ toolCallId: 'call' }),
   { agent, abortSignal: signal, messages: transcript, permissionIntent: intent });
 });
-it('falls back to a same-named MCP tool only for read-only tools', async () => {
+it('names a same-named MCP tool only for read-only tools, without running it', async () => {
   const executeCapability = vi.fn(async () => ({ content: 'remote frame' }));
   const extensionRuntime = { searchCapabilities: vi.fn(async () => [{ id: 'mcp:visual:tool:read', name: 'read' }]), executeCapability };
   const ctx = { backups: new Map(), extensionRuntime } as unknown as Parameters<typeof wrapCodingToolAsRunnable>[2];
   const wrap = (name: string) => wrapCodingToolAsRunnable({ name, description: 'probe', input_schema: { type: 'object', properties: {} } },
     async () => `[Tool Error] ${name}: missing`, ctx);
   const read = await wrap('read').execute({ path: 'missing.png' }, { agent: { name: 'worker' } as Agent });
-  expect(read).toMatchObject({ content: expect.stringContaining('[MCP Fallback via mcp:visual:tool:read]') });
-  expect(read.isError).toBeUndefined();
-  expect(executeCapability).toHaveBeenCalledWith('mcp', 'mcp:visual:tool:read', { path: 'missing.png' });
+  expect(read).toMatchObject({ content: expect.stringContaining('mcp_call with id "mcp:visual:tool:read"') });
   expect((await wrap('write').execute({ path: 'x' }, { agent: { name: 'worker' } as Agent })).content).toBe('[Tool Error] write: missing');
-  expect(executeCapability).toHaveBeenCalledTimes(1);
+  expect(executeCapability).not.toHaveBeenCalled();
 });
 
 describe('recordMutationForTool — file mutation tracking', () => {

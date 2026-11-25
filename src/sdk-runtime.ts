@@ -183,6 +183,7 @@ import {
   protectWorkflowProject,
   parseInlineSkillReferences,
   parseBareInlineSlashReferences,
+  isReadOnlyMcpCall,
   type KodaXShellPermissionMode,
 } from "@kodax-ai/coding";
 import {
@@ -21839,6 +21840,12 @@ function wrapKodaXEvents(input: {
         record.trustedTextApprovals?.grant(exactCall);
         return true;
       }
+      // MCP tools carry their own read-only declaration; the policy needs it
+      // wherever mcp_call is not otherwise auto-allowed.
+      const policyFacts: RuntimePermissionPolicyFacts = tool === "mcp_call"
+        && (permissionMode === "plan" || permissionMode === "accept-edits")
+        ? { mcpReadOnly: await isReadOnlyMcpCall(toolInput, record.start?.options.extensionRuntime) }
+        : {};
       if (permissionMode === "accept-edits" && tool === "bash") {
         // Edits also attempts the OS sandbox before creating user permission
         // work. A failed boundary escalates through the runtime's forced
@@ -21850,6 +21857,7 @@ function wrapKodaXEvents(input: {
           record,
           tool,
           toolInput,
+          policyFacts,
         );
         if (planDecision !== true && planDecision !== undefined)
           return planDecision;
@@ -21871,7 +21879,7 @@ function wrapKodaXEvents(input: {
       // fallback for headless/daemon execution where no executable callback can
       // cross the wire.
       const policyDecision = original?.beforeToolExecute === undefined
-        ? resolveRuntimePermissionPolicy(record, tool, toolInput)
+        ? resolveRuntimePermissionPolicy(record, tool, toolInput, policyFacts)
         : undefined;
       if (policyDecision !== undefined) return policyDecision;
       // FEATURE_298 T14: exactly one authority answers each action. An
@@ -26328,10 +26336,16 @@ async function createRuntimeAutoModeGuardrail(input: {
   return guardrail;
 }
 
+interface RuntimePermissionPolicyFacts {
+  /** The mcp_call target declares readOnlyHint without a destructive hint. */
+  readonly mcpReadOnly?: boolean;
+}
+
 function resolveRuntimePermissionPolicy(
   record: RuntimeRunRecord,
   tool: string,
   input: Record<string, unknown>,
+  facts: RuntimePermissionPolicyFacts = {},
 ): RuntimePermissionToolDecision | undefined {
   if (RUNTIME_PERMISSION_BRIDGE_TOOLS.has(tool)) return true;
   const mode = replApi.normalizePermissionMode(record.permissionMode);
@@ -26348,6 +26362,7 @@ function resolveRuntimePermissionPolicy(
     rawProjectRoot === undefined ? undefined : path.resolve(rawProjectRoot);
   const executionCwd = resolveRuntimeExecutionCwd(record);
   if (mode === "plan") {
+    if (tool === "mcp_call" && facts.mcpReadOnly === true) return true;
     // FEATURE_294: run-scoped host tools resolve plan-mode admission through
     // their materialized metadata; unknown names stay fail-closed.
     const runScopedTools = runScopedToolMap(
@@ -26396,6 +26411,9 @@ function resolveRuntimePermissionPolicy(
     ) {
       return undefined;
     }
+  }
+  if (tool === "mcp_call" && mode === "accept-edits") {
+    return facts.mcpReadOnly === true ? true : undefined;
   }
   return replApi.computeConfirmTools(mode).has(tool) ? undefined : true;
 }

@@ -352,6 +352,7 @@ export type {
 // for data sources (MCP/RAG/custom indexes). The richer extension runtime
 // (commands / files / logger) stays in @kodax-ai/coding/src/extensions/.
 export type {
+  CapabilityExecuteOptions,
   CapabilityKind,
   CapabilityProvider,
   CapabilityResult,

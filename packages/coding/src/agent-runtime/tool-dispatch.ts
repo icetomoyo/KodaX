@@ -45,19 +45,18 @@
  *      tool registry. The `reportToolProgress` callback is wired only
  *      when `events.onToolProgress` is set, to avoid synthesising the
  *      callback for every dispatch (FEATURE_067 v2).
- *   7. **MCP fallback (CAP-025)** — when a built-in tool returns a
+ *   7. **MCP fallback hint (CAP-025)** — when a built-in tool returns a
  *      `[Tool Error]` envelope AND the context has an extension
- *      runtime, try `tryMcpFallback`. The fallback is gated by the
- *      7-tool allow-list — mutating tools (`write`/`edit`/`bash`)
- *      MUST never silently redirect.
+ *      runtime, `withMcpFallbackHint` names a same-named MCP tool in the
+ *      error. It never runs that tool, and only the 7-tool read-only
+ *      allow-list gets a hint.
  *
  * The function returns raw ToolResult content because
  * the substrate dispatch loop also handles cancellation and parallel
  * tool execution at a higher level — wrapping into a block happens in
  * the loop, not here.
  *
- * **`tryMcpFallback` (CAP-025)** — see CAP-025 docstring section
- * below. Three short-circuits + result wrapping.
+ * **`withMcpFallbackHint` (CAP-025)** — see its docstring below.
  *
  * **`runToolDispatch` (CAP-077)** — splits assistant tool_use
  * blocks into bash and non-bash, runs non-bash tools in parallel
@@ -96,7 +95,7 @@
  * Migration history: extracted from `agent.ts:873-880`
  * (`createToolResultBlock`), `agent.ts:1306-1379` (`executeToolCall`),
  * `agent.ts:1384-1392` (`MCP_FALLBACK_ALLOWED_TOOLS`),
- * `agent.ts:1394-1428` (`tryMcpFallback`) — pre-FEATURE_100 baseline
+ * `agent.ts:1394-1428` (`tryMcpFallback`, now `withMcpFallbackHint`) — pre-FEATURE_100 baseline
  * — during FEATURE_100 P2.  `runToolDispatch` and
  * `applyPostToolProcessing` extracted from `agent.ts:1271-1353`
  * — pre-FEATURE_100 baseline — during FEATURE_100 P3.3d.
@@ -114,7 +113,7 @@ import type {
   KodaXToolResultBlock,
 } from '../types.js';
 import type { KodaXToolUseBlock } from '@kodax-ai/llm';
-import { renderCapabilityToolResult } from '../tools/capability-result.js';
+import { isMcpCapabilityVisible } from '../tools/mcp-visibility.js';
 import { withVisualImageAdmission } from '@kodax-ai/agent/media';
 import { countTokens } from '@kodax-ai/agent';
 import { projectModelToolDefinition } from '../tools/model-tool-definition.js';
@@ -298,13 +297,10 @@ export async function executeToolCall(
   try {
     let executionCall = toolCall;
     const executeNative = async () => {
-      let output = await (runScopedDefinition === undefined
+      const output = await (runScopedDefinition === undefined
         ? executeTool(executionCall.name, executionCall.input ?? {}, ctxWithToolHooks)
         : executeRunScopedTool(ctxWithToolHooks, runScopedDefinition, executionCall.input ?? {}));
-      if (allowMcpFallback && toolResultText(output).startsWith('[Tool Error]') && ctxWithToolHooks.extensionRuntime) {
-        output = await tryMcpFallback(executionCall.name, executionCall.input ?? {}, ctxWithToolHooks) ?? output;
-      }
-      return output;
+      return allowMcpFallback ? withMcpFallbackHint(executionCall.name, ctxWithToolHooks, output) : output;
     };
     const beforeInvoke = ctxWithToolHooks.beforeToolInvoke;
     const execute = beforeInvoke ? async () => {
@@ -552,13 +548,10 @@ async function executeBridgeToolCall(input: {
   let result: ToolResult;
   try {
     result = await executeInExtensionScope(targetCall, ctxWithToolHooks, input.abortSignal, input.events, async () => {
-      let output = await (runScopedTarget === undefined
+      const output = await (runScopedTarget === undefined
         ? executeTool(targetName, targetInput, ctxWithToolHooks)
         : executeRunScopedTool(ctxWithToolHooks, runScopedTarget, targetInput));
-      if (input.allowMcpFallback && toolResultText(output).startsWith('[Tool Error]') && ctxWithToolHooks.extensionRuntime) {
-        output = await tryMcpFallback(targetName, targetInput, ctxWithToolHooks) ?? output;
-      }
-      return output;
+      return input.allowMcpFallback ? withMcpFallbackHint(targetName, ctxWithToolHooks, output) : output;
     });
     recordWrittenFile(input.ctx.writtenFiles, targetCall, result, resolveExecutionCwd(input.ctx));
   } finally {
@@ -570,9 +563,9 @@ async function executeBridgeToolCall(input: {
   return result;
 }
 
-// Only allow MCP fallback for read-only / network-fetch tools.
-// Write, edit, bash, and other mutating tools must never silently
-// redirect to a remote MCP capability.
+// Only read-only / network-fetch tools may point at a same-named MCP tool.
+// Write, edit, bash and other mutating tools never redirect to a remote
+// capability, even as a suggestion.
 export const MCP_FALLBACK_ALLOWED_TOOLS = new Set([
   'web_search',
   'web_fetch',
@@ -583,47 +576,41 @@ export const MCP_FALLBACK_ALLOWED_TOOLS = new Set([
   'semantic_lookup',
 ]);
 
-export async function tryMcpFallback(
+/**
+ * CAP-025: when a read-only built-in fails and an MCP tool of the same name
+ * exists, name it in the error so the model can choose `mcp_call`. The MCP
+ * tool is never run here: running it under the built-in's permission would
+ * skip the plan, accept-edits and Auto checks that `mcp_call` goes through.
+ */
+export async function withMcpFallbackHint(
   toolName: string,
-  input: Record<string, unknown>,
   ctx: KodaXToolExecutionContext,
-): Promise<ToolResult | undefined> {
-  if (!MCP_FALLBACK_ALLOWED_TOOLS.has(toolName)) {
-    return undefined;
-  }
+  output: ToolResult,
+): Promise<ToolResult> {
+  if (!MCP_FALLBACK_ALLOWED_TOOLS.has(toolName) || !ctx.extensionRuntime) return output;
+  if (!toolResultText(output).startsWith('[Tool Error]')) return output;
+  let id: string | undefined;
   try {
-    const hits = await ctx.extensionRuntime!.searchCapabilities('mcp', toolName, {
-      kind: 'tool',
-      limit: 1,
-    });
-    if (hits.length === 0) {
-      return undefined;
-    }
-    const hit = hits[0] as { id?: string; name?: string };
-    // Only fallback when the MCP tool name exactly matches the built-in name.
-    if (!hit?.id || (hit.name !== toolName && !hit.id.endsWith(`:${toolName}`))) {
-      return undefined;
-    }
-    const mcpResult = await ctx.extensionRuntime!.executeCapability('mcp', hit.id, input);
-    const metadataOnly = mcpResult.content === undefined && mcpResult.structuredContent === undefined
-      ? JSON.stringify(mcpResult, null, 2) : '';
-    // Fallback has historically pretty-printed structured evidence; ordinary
-    // mcp_call keeps its compact retrieval rendering. Preserve both contracts.
-    const structuredContent = mcpResult.structuredContent == null || typeof mcpResult.structuredContent === 'string'
-      ? mcpResult.structuredContent : JSON.stringify(mcpResult.structuredContent, null, 2);
-    return renderCapabilityToolResult({ ...mcpResult, structuredContent }, (content) =>
-      `[MCP Fallback via ${hit.id}]\n${content ?? metadataOnly}`);
+    const hits = await ctx.extensionRuntime.searchCapabilities('mcp', toolName, { kind: 'tool', limit: 1 });
+    const hit = hits[0] as { id?: string; name?: string } | undefined;
+    const matches = hit?.id !== undefined && (hit.name === toolName || hit.id.endsWith(`:${toolName}`));
+    id = matches && isMcpCapabilityVisible(hit.id!, ctx) ? hit.id : undefined;
   } catch (error) {
-    if (process.env.KODAX_DEBUG_TOOL_HISTORY) {
-      emitKodaXDiagnostic({
-        source: 'coding:tool-dispatch',
-        level: 'debug',
-        message: `MCP fallback failed for ${toolName}.`,
-        detail: error,
-      });
-    }
-    return undefined;
+    // Best effort: the original error still reaches the model unchanged.
+    emitKodaXDiagnostic({
+      source: 'coding:tool-dispatch',
+      level: 'debug',
+      message: `MCP fallback lookup failed for ${toolName}.`,
+      detail: error,
+    });
   }
+  if (id === undefined) return output;
+  const hint = `An MCP tool with the same name is available. If it fits this request, call mcp_call with id "${id}".`;
+  return typeof output === 'string'
+    ? `${output}
+
+${hint}`
+    : [...output, { type: 'text', text: hint }];
 }
 
 export interface RunToolDispatchInput {

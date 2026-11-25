@@ -37,6 +37,7 @@ describe('MCP retrieval tools', () => {
     const searchOutput = await toolMcpSearch({ query: 'echo', server: fixture.serverId }, ctx);
     expect(searchOutput).toContain('MCP capability search');
     expect(searchOutput).toContain(fixture.toolId);
+    expect(searchOutput).toContain(`${fixture.toolId} | args=(text, mode?)`);
 
     const browseOutput = await toolMcpSearch({ server: fixture.serverId, kind: 'tool', limit: 10 }, ctx);
     expect(browseOutput).toContain('MCP catalog inventory');
@@ -58,6 +59,12 @@ describe('MCP retrieval tools', () => {
     expect(describeOutput).toContain('Catalog Freshness: live');
     expect(describeOutput).toContain('Catalog Complete: true');
 
+    const batchOutput = await toolMcpDescribe({ id: fixture.toolId, ids: [fixture.promptId, fixture.toolId] }, ctx);
+    expect(batchOutput.split('\n\n---\n\n')).toHaveLength(2);
+    expect(batchOutput).toContain(`Described MCP capability ${fixture.toolId}.`);
+    expect(batchOutput).toContain(`Described MCP capability ${fixture.promptId}.`);
+    expect(await toolMcpDescribe({ id: fixture.toolId, ids: Array.from({ length: 10 }, (_, i) => `mcp:x:tool:t${i}`) }, ctx))
+      .toContain('Describe at most 10 ids per call');
     const describeWithoutSchemeOutput = await toolMcpDescribe({ id: toolIdWithoutScheme }, ctx);
     expect(describeWithoutSchemeOutput).toContain('Retrieval result for mcp_describe');
     expect(describeWithoutSchemeOutput).toContain(`Described MCP capability ${fixture.toolId}.`);
@@ -138,6 +145,30 @@ describe('MCP retrieval tools', () => {
     expect(resourceOutput).toContain('Structured content:\n{"format":"markdown","lines":1}');
     expect(identicalResourceOutput.match(/same body/g)).toHaveLength(1);
     expect(promptOutput).toContain('Content:\n  prompt body\n\n\nArtifacts:');
+  });
+
+  it('forwards the run abort signal to the MCP call', async () => {
+    const signals: Array<AbortSignal | undefined> = [];
+    const extensionRuntime = {
+      executeCapability: async (
+        _providerId: string,
+        _capabilityId: string,
+        _input: Record<string, unknown>,
+        options?: { signal?: AbortSignal },
+      ) => {
+        signals.push(options?.signal);
+        return { kind: 'tool', content: 'ok' };
+      },
+    } as unknown as NonNullable<KodaXToolExecutionContext['extensionRuntime']>;
+    const controller = new AbortController();
+
+    await toolMcpCall({ id: 'mcp:demo:tool:echo' }, {
+      backups: new Map(),
+      extensionRuntime,
+      abortSignal: controller.signal,
+    });
+
+    expect(signals).toEqual([controller.signal]);
   });
 
   it('returns a complete compact inventory when the requested limit covers the catalog', async () => {

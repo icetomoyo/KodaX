@@ -3768,10 +3768,10 @@ function mergeExtensionRuntimeContracts(
       }
       return base.describeCapability(providerId, capabilityId);
     },
-    executeCapability(providerId, capabilityId, input) {
+    executeCapability(providerId, capabilityId, input, options) {
       return capabilityId.startsWith("host:")
-        ? host.executeCapability(providerId, capabilityId, input)
-        : base.executeCapability(providerId, capabilityId, input);
+        ? host.executeCapability(providerId, capabilityId, input, options)
+        : base.executeCapability(providerId, capabilityId, input, options);
     },
     readCapability(providerId, capabilityId, options) {
       return base.readCapability(providerId, capabilityId, options);

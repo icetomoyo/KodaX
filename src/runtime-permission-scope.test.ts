@@ -247,6 +247,20 @@ describe('Runtime permission scope normalization', () => {
     })).toBe(false);
   });
 
+  it('scopes an mcp_call grant to the MCP tool, not to its arguments', () => {
+    const matcher = createRuntimePermissionMatcher({
+      toolName: 'mcp_call',
+      toolInput: { id: 'mcp:docs:tool:search', args: { query: 'first' } },
+      executionCwd: '/workspace/repo',
+      platform: 'posix',
+    });
+    const matches = (toolInput: Record<string, unknown>) => runtimePermissionMatcherMatches(matcher, {
+      toolName: 'mcp_call', toolInput, executionCwd: '/workspace/repo', platform: 'posix',
+    });
+    expect(matches({ id: 'mcp:docs:tool:search', args: { query: 'second' } })).toBe(true);
+    expect(matches({ id: 'mcp:docs:tool:delete', args: { query: 'first' } })).toBe(false);
+  });
+
   it('does not infer a path-wide grant for an arbitrary extension tool', () => {
     const matcher = createRuntimePermissionMatcher({
       toolName: 'extension_publish',

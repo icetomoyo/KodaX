@@ -394,7 +394,7 @@ it('retains trusted recovery artifact metadata for large native shell output', a
   expect(String(result.receipts[0]?.result.content)).toContain('KODAX_RESULT_INCOMPLETE');
 }, 30_000);
 
-it('keeps host extensions bound but prevents Script failures from falling back to unqualified MCP tools', async () => {
+it('keeps host extensions bound but keeps Script failures from naming unqualified MCP tools', async () => {
   const { ctx, budget, dispatch } = await fixture();
   const remote = vi.fn(async () => ({ kind: 'tool' as const, content: 'remote result' }));
   const extensionRuntime: NonNullable<KodaXToolExecutionContext['extensionRuntime']> = {
@@ -405,13 +405,12 @@ it('keeps host extensions bound but prevents Script failures from falling back t
   ctx.extensionRuntime = extensionRuntime;
   const native = await runToolDispatch({ ...dispatch, abortSignal: undefined,
     toolBlocks: [{ type: 'tool_use', id: 'native-read', name: 'read', input: { path: 'missing.mjs' } }] });
-  expect(native.get('native-read')).toContain('MCP Fallback');
-  expect(remote).toHaveBeenCalledOnce();
-  remote.mockClear();
+  expect(native.get('native-read')).toContain('call mcp_call with id "mcp:read"');
+  expect(remote).not.toHaveBeenCalled();
   const pilot = createScriptPilot(dispatch, budget);
   const result = await pilot.run("return await tools.read({path:'missing.mjs'});", limits);
   expect(result.hadToolErrors).toBe(true);
-  expect(result.receipts[0]?.result.content).not.toContain('MCP Fallback');
+  expect(result.receipts[0]?.result.content).not.toContain('mcp_call');
   expect(remote).not.toHaveBeenCalled();
   expect(budget.spentBudget).toBe(1);
   expect(ctx.extensionRuntime).toBe(extensionRuntime);
@@ -420,7 +419,7 @@ it('keeps host extensions bound but prevents Script failures from falling back t
   expect(budget.spentBudget).toBe(2);
   const bridge = await runToolDispatch({ ...dispatch, abortSignal: undefined, allowMcpFallback: false,
     toolBlocks: [{ type: 'tool_use', id: 'bridge-read', name: 'tool_call', input: { name: 'read', input: { path: 'missing.mjs' } } }] });
-  expect(bridge.get('bridge-read')).not.toContain('MCP Fallback');
+  expect(bridge.get('bridge-read')).not.toContain('mcp_call');
   expect(remote).not.toHaveBeenCalled();
 });
 

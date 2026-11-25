@@ -75,7 +75,11 @@ export function createRuntimePermissionMatcher(
     return createExactPathMatcher(input.toolName, targetPath, input.executionCwd, platform);
   }
   const cwd = normalizePermissionPath(input.executionCwd, input.executionCwd, platform);
-  const inputFingerprint = stableFingerprint(normalizeGenericInput(input.toolInput));
+  // An mcp_call grant names one MCP tool; its arguments change on every call.
+  const scopedInput = input.toolName === 'mcp_call'
+    ? { id: input.toolInput.id }
+    : input.toolInput;
+  const inputFingerprint = stableFingerprint(normalizeGenericInput(scopedInput));
   return {
     version: 1,
     kind: 'exact-call',

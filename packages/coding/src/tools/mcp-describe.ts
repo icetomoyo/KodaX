@@ -18,18 +18,44 @@ function formatValue(label: string, value: unknown): string | undefined {
   }
 }
 
+const MAX_DESCRIBE_IDS = 10;
+
+function readRequestedIds(input: Record<string, unknown>): string[] {
+  const listed = Array.isArray(input.ids)
+    ? input.ids.filter((value): value is string => typeof value === 'string' && value.trim() !== '')
+    : [];
+  const single = readOptionalString(input, 'id');
+  const ids = [...new Set([...(single ? [single] : []), ...listed].map((value) => value.trim()))];
+  if (ids.length === 0) throw new Error('id is required.');
+  if (ids.length > MAX_DESCRIBE_IDS) {
+    throw new Error(`Describe at most ${MAX_DESCRIBE_IDS} ids per call; got ${ids.length}.`);
+  }
+  return ids;
+}
+
 export async function toolMcpDescribe(
   input: Record<string, unknown>,
   ctx: KodaXToolExecutionContext,
 ): Promise<string> {
+  let ids: string[];
   try {
     if (!ctx.extensionRuntime) {
       throw new Error('mcp_describe requires an active extension runtime.');
     }
+    ids = readRequestedIds(input);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return `[Tool Error] mcp_describe: ${message}`;
+  }
+  if (ids.length === 1) return describeOne(ids[0]!, ctx);
+  const sections = await Promise.all(ids.map((id) => describeOne(id, ctx)));
+  return sections.join('\n\n---\n\n');
+}
 
-    const id = readOptionalString(input, 'id');
-    if (!id) {
-      throw new Error('id is required.');
+async function describeOne(id: string, ctx: KodaXToolExecutionContext): Promise<string> {
+  try {
+    if (!ctx.extensionRuntime) {
+      throw new Error('mcp_describe requires an active extension runtime.');
     }
     const capabilityId = normalizeMcpCapabilityId(id);
     if (!isMcpCapabilityVisible(capabilityId, ctx)) throw new Error('Tool is not active in the current execution scope.');

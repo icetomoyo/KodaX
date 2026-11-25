@@ -136,8 +136,10 @@ function renderCapability(record: Record<string, unknown>, inventory: boolean): 
   if (inventory) return `- ${id}`;
   const purpose = readString(record.summary) ?? readString(record.title) ?? readString(record.name);
   const risk = readString(record.risk);
+  const args = readString(record.argsSignature);
   return [
     `- ${id}`,
+    ...(args ? [`args=${args}`] : []),
     ...(risk ? [`risk=${risk}`] : []),
     ...(purpose ? [`purpose=${compactText(purpose, PURPOSE_TOKEN_LIMIT)}`] : []),
   ].join(' | ');

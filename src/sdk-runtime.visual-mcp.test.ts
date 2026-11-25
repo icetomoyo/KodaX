@@ -97,12 +97,14 @@ it.each(cells)('admits MCP typed bytes with exact call ordinals, permission and 
     if (protocol === 'openai') {
       resourceMode = false; fallbackMode = true; turn = 0; await writeFile(source, png);
       await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access' });
-      const fallback = await runtime.runs.acceptInput({ sessionId: session.id, inputId: 'typed-fallback', text: 'Read the missing path using the available read fallback.' });
+      const fallback = await runtime.runs.acceptInput({ sessionId: session.id, inputId: 'typed-fallback', text: 'Read the missing path; a same-named MCP tool exists.' });
       expect((await runtime.runs.await(fallback.runId!)).phase).toBe('completed');
+      // A failed read only names the MCP tool; running it is the model's own mcp_call.
+      expect((await readFile(callsPath, 'utf8')).trim().split('\n')).toHaveLength(2);
       const fallbackRecords = (await store.loadSession(session.id))!.extensionRecords!.filter(record => record.extensionId === 'kodax.visual' && record.type === 'observation'
         && (record.data as { sourceKey: string }).sourceKey === 'mcp:visual:tool:read');
-      expect(fallbackRecords).toHaveLength(4);
-      expect(JSON.stringify(wires.at(-1)).includes('source=mcp:visual:tool:read')).toBe(true);
+      expect(fallbackRecords).toHaveLength(0);
+      expect(JSON.stringify(wires.at(-1)).includes('mcp_call with id \\"mcp:visual:tool:read\\"')).toBe(true);
     }
     if (protocol === 'openai' && !bridge) {
       const failingSession = await runtime.sessions.create({ projectPath: homeDir });
@@ -124,7 +126,7 @@ it.each(cells)('admits MCP typed bytes with exact call ordinals, permission and 
   } finally { await runtime.close(); clearRuntimeModelProviders(); vi.unstubAllEnvs(); await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 }, 45_000);
 
-it('uses final read arguments once for MCP fallback and never calls it after an extension block or ask denial', async () => {
+it('names the same-named MCP tool after a failed read without calling it, and never after an extension block or ask denial', async () => {
   const homeDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-mcp-final-read-'));
   const callsPath = path.join(homeDir, 'calls.jsonl');
   const originalPath = path.join(homeDir, 'missing-original.png');
@@ -143,12 +145,17 @@ it('uses final read arguments once for MCP fallback and never calls it after an 
     document: { version: 1, servers: { visual: { type: 'stdio', command: process.execPath, args: [server] } } } });
   let policy: 'allow' | 'block' | 'ask' = 'allow'; let turn = 0;
   const hookInputs: string[] = [];
+  const toolResults: string[] = [];
   vi.stubEnv('KODAX_MCP_FINAL_READ', 'offline');
   class Provider extends KodaXBaseProvider {
     readonly name = 'mcp-final-read'; readonly supportsThinking = false;
     protected readonly config: KodaXProviderConfig = { apiKeyEnv: 'KODAX_MCP_FINAL_READ', model: 'fixture', supportsThinking: false,
       capabilityProfile: { ...NATIVE_PROVIDER_CAPABILITY_PROFILE, multimodalSupport: 'image-input' } };
-    async stream(_messages: import('@kodax-ai/llm').KodaXMessage[], tools: import('@kodax-ai/llm').KodaXToolDefinition[]): Promise<KodaXStreamResult> {
+    async stream(messages: import('@kodax-ai/llm').KodaXMessage[], tools: import('@kodax-ai/llm').KodaXToolDefinition[]): Promise<KodaXStreamResult> {
+      const last = messages.at(-1);
+      if (last?.role === 'user' && Array.isArray(last.content)) {
+        for (const block of last.content) if (block.type === 'tool_result') toolResults.push(typeof block.content === 'string' ? block.content : JSON.stringify(block.content));
+      }
       if (tools.some(tool => tool.name === 'todo_update') && turn++ === 0) return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use',
         toolBlocks: [{ type: 'tool_use', id: 'read-final-path', name: 'read', input: { path: originalPath } }] };
       return { textBlocks: [{ type: 'text', text: 'Done.' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };
@@ -166,9 +173,8 @@ it('uses final read arguments once for MCP fallback and never calls it after an 
   try {
     const session = await runtime.sessions.create({ projectPath: homeDir });
     await runtime.sessions.updateSettings(session.id, { workMode: 'coding', permissionMode: 'full-access' });
-    const store = createSessionManager({ sessionsDir: path.join(homeDir, '.kodax', 'sessions'), configHome: path.join(homeDir, '.kodax') });
     for (policy of ['allow', 'block', 'ask'] as const) {
-      turn = 0;
+      turn = 0; toolResults.length = 0;
       const runId = (await runtime.runs.acceptInput({ sessionId: session.id, inputId: policy, text: 'Read the controlled image.' })).runId!;
       if (policy === 'ask') {
         const pending = await vi.waitFor(async () => {
@@ -176,17 +182,13 @@ it('uses final read arguments once for MCP fallback and never calls it after an 
           expect(requests).toHaveLength(1); return requests;
         });
         expect(pending[0]).toMatchObject({ toolName: 'read', reason: expect.stringContaining('Approve the controlled image read.') });
-        expect(await readFile(callsPath, 'utf8')).toBe(`${JSON.stringify({ path: finalPath })}\n`);
         await runtime.permissions.respond(pending[0]!.id, { type: 'reject', reason: 'Read denied.' });
       }
       expect((await runtime.runs.await(runId)).phase).toBe('completed');
       expect(hookInputs).toEqual(Array(hookInputs.length).fill(originalPath));
       expect(hookInputs).toHaveLength(policy === 'allow' ? 1 : policy === 'block' ? 2 : 3);
-      expect(await readFile(callsPath, 'utf8')).toBe(`${JSON.stringify({ path: finalPath })}\n`);
-      const observations = (await store.loadSession(session.id))!.extensionRecords?.filter(record =>
-        record.extensionId === 'kodax.visual' && record.type === 'observation') ?? [];
-      expect(observations).toHaveLength(1);
-      expect(observations[0]!.data).toMatchObject({ sourceKey: 'mcp:visual:tool:read' });
+      expect(await readFile(callsPath, 'utf8')).toBe('');
+      expect(toolResults.join('\n').includes('mcp_call with id "mcp:visual:tool:read"')).toBe(policy === 'allow');
     }
   } finally { removeHook(); await runtime.close(); clearRuntimeModelProviders(); vi.unstubAllEnvs(); await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 }, 30_000);

@@ -1,5 +1,6 @@
 import { normalizeMcpCapabilityId } from '@kodax-ai/agent';
 import type { KodaXToolExecutionContext } from '../types.js';
+import type { CapabilityRuntimeContract } from '../extensions/runtime-contract.js';
 import { readOptionalString } from './internal.js';
 import { renderRetrievalResult } from './retrieval.js';
 import { renderCapabilityToolResult } from './capability-result.js';
@@ -12,6 +13,31 @@ function omitRepeatedMetadata(
   return Object.fromEntries(
     Object.entries(metadata ?? {}).filter(([key]) => key !== 'providerId' && key !== 'capabilityId'),
   );
+}
+
+/**
+ * Whether one mcp_call targets a tool its server declares read-only. A
+ * destructive hint wins over a read-only one. The hint is server-declared;
+ * the user already trusts a configured server to run its own code.
+ */
+export async function isReadOnlyMcpCall(
+  input: Record<string, unknown>,
+  runtime: Pick<CapabilityRuntimeContract, 'describeCapability'> | undefined,
+): Promise<boolean> {
+  const id = readOptionalString(input, 'id');
+  if (!id || !runtime) return false;
+  let descriptor: unknown;
+  try {
+    descriptor = await runtime.describeCapability('mcp', normalizeMcpCapabilityId(id));
+  } catch {
+    // Fail closed: an unknown target keeps the mutating gate, and the call
+    // itself reports the real lookup error to the model.
+    return false;
+  }
+  const annotations = (descriptor as { annotations?: unknown } | undefined)?.annotations;
+  if (!annotations || typeof annotations !== 'object') return false;
+  const hints = annotations as Record<string, unknown>;
+  return hints.readOnlyHint === true && hints.destructiveHint !== true && hints.destructive !== true;
 }
 
 export async function toolMcpCall(
@@ -34,7 +60,9 @@ export async function toolMcpCall(
       ? input.args as Record<string, unknown>
       : {};
 
-    const result = await ctx.extensionRuntime.executeCapability('mcp', capabilityId, args);
+    const result = await ctx.extensionRuntime.executeCapability('mcp', capabilityId, args, {
+      signal: ctx.abortSignal,
+    });
     return renderCapabilityToolResult(result, (content) => renderRetrievalResult({
       tool: 'mcp_call',
       scope: 'remote',

@@ -107,11 +107,31 @@ describe('McpCapabilityProvider disclosure', () => {
     const context = await provider.getPromptContext();
 
     expect(context).toContain(entry.id);
-    expect(context).toContain('untrusted identifiers');
+    expect(context).toContain('untrusted data');
     expect(context).not.toContain(entry.summary);
     expect(context).not.toContain('status=');
     expect(context).not.toContain('warning=');
     expect(countTokens(context ?? '')).toBeLessThanOrEqual(320);
+  });
+
+  it('shows a cached server purpose without letting it push the id list out', async () => {
+    const cacheDir = await mkdtemp(path.join(os.tmpdir(), 'kodax-mcp-prompt-purpose-'));
+    tempDirs.push(cacheDir);
+    // Sized so the id list alone fits the base budget but not once a purpose is added.
+    const descriptors = Array.from({ length: 20 }, (_, index) => descriptor('github', `tool_${index}_${'x'.repeat(12)}`, 'Remote text'));
+    const purpose = 'Manage GitHub repositories, issues, pull requests and Actions workflows for the signed-in account.';
+    await writeMcpServerCatalog(cacheDir, { ...snapshot('github', descriptors), serverPurpose: purpose });
+    const provider = new McpCapabilityProvider({
+      github: { type: 'stdio', command: path.join(cacheDir, 'missing.exe') },
+    }, { cacheDir });
+
+    const context = await provider.getPromptContext() ?? '';
+
+    expect(context).toContain(`| purpose=${JSON.stringify(purpose)}`);
+    expect(context).toContain('catalog=complete-ids');
+    expect(context).toContain(descriptors.at(-1)!.id);
+    expect(countTokens(context)).toBeGreaterThan(320);
+    expect(countTokens(context.replace(` | purpose=${JSON.stringify(purpose)}`, ''))).toBeLessThanOrEqual(320);
   });
 
   it('shows no order-biased partial id list when the complete manifest exceeds budget', async () => {

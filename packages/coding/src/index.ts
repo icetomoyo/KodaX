@@ -483,6 +483,7 @@ export {
   clampToolResultPolicyToBudget,
   inspectEditFailure,
   parseEditToolError,
+  isReadOnlyMcpCall,
 } from './tools/index.js';
 
 export type {

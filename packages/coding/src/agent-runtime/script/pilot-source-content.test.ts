@@ -8,7 +8,6 @@ import type { KodaXToolExecutionContext } from '../../types.js';
 import type { ExtensionRuntimeContract } from '../../extensions/runtime-contract.js';
 import { renderCapabilityToolResult } from '../../tools/capability-result.js';
 import { toolWebFetch } from '../../tools/web-fetch.js';
-import { tryMcpFallback } from '../tool-dispatch.js';
 
 const name = 'sample.original-content';
 const limits = { timeoutMs: 5000, memoryBytes: 16 * 1024 * 1024, maxCalls: 4, maxTransferBytes: 64 * 1024 };
@@ -224,15 +223,12 @@ it('pages the complete source, display and JSON receipt without repeating the Ho
   expect(budget.spentBudget).toBe(1);
 });
 
-it.each(['resource', 'fallback'] as const)('does not extend the source projection into the %s renderer path', async route => {
+it('does not extend the source projection into the resource renderer path', async () => {
   const { dispatch, executeCapability } = fixture({ kind: 'tool', content: 'Original outside the projected paths' });
   const projection = vi.fn();
   const ctx = { ...dispatch.ctx, toolCallId: 'unprojected', recordToolResultProjection: projection };
-  ctx.extensionRuntime!.searchCapabilities = async () => [{ id: 'mcp:fixture:tool:read', name: 'read' }];
-  const display = route === 'resource'
-    ? await toolWebFetch({ provider_id: 'mcp', capability_id: 'mcp:fixture:resource:sample' }, ctx)
-    : await tryMcpFallback('read', {}, ctx);
+  const display = await toolWebFetch({ provider_id: 'mcp', capability_id: 'mcp:fixture:resource:sample' }, ctx);
   expect(display).toContain('Original outside the projected paths');
   expect(projection).not.toHaveBeenCalled();
-  expect(executeCapability).toHaveBeenCalledTimes(route === 'fallback' ? 1 : 0);
+  expect(executeCapability).not.toHaveBeenCalled();
 });

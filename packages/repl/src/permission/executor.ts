@@ -4,7 +4,7 @@
  * 工具执行权限包装器 - 在 REPL 层处理权限检查
  */
 
-import { executeTool } from '@kodax-ai/coding';
+import { executeTool, isReadOnlyMcpCall } from '@kodax-ai/coding';
 import type { KodaXToolExecutionContext } from '@kodax-ai/coding';
 import {
   PermissionMode,
@@ -42,6 +42,15 @@ export async function executeWithPermission(
   permContext: PermissionContext
 ): ReturnType<typeof executeTool> {
   const mode = permContext.permissionMode;
+
+  // MCP tools carry their own read-only declaration: such calls behave like reads.
+  if (
+    toolName === 'mcp_call'
+    && (mode === 'plan' || mode === 'accept-edits')
+    && await isReadOnlyMcpCall(input, coreContext.extensionRuntime)
+  ) {
+    return executeTool(toolName, input, coreContext);
+  }
 
   // === 1. Plan mode: block all modification tools ===
   if (mode === 'plan') {
@@ -86,7 +95,10 @@ export async function executeWithPermission(
   }
 
   // === 6. Profile-owned standard confirmation check ===
-  if (permContext.confirmTools.has(toolName)) {
+  // An MCP tool without a read-only declaration may change remote state.
+  const needsConfirmation = permContext.confirmTools.has(toolName)
+    || (mode === 'accept-edits' && toolName === 'mcp_call');
+  if (needsConfirmation) {
     let skipConfirmation = false;
 
     // Only check alwaysAllowTools in accept-edits mode for bash. FEATURE_153:

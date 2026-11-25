@@ -687,6 +687,7 @@ interface RunnerMemoryRuntime {
   readonly preferredReviewJobRef: { current: string | undefined };
   reviewDrain: Promise<void>;
   observationSequence: number;
+  readonly observedCallIds: Set<string>;
   readonly handledMemoryOperations: KodaXHandledMemoryOperation[];
   finished: boolean;
 }
@@ -833,6 +834,7 @@ async function startRunnerMemoryRuntime(
         preferredReviewJobRef,
         reviewDrain,
         observationSequence: 0,
+        observedCallIds: new Set(),
         handledMemoryOperations: [],
         finished: false,
       },
@@ -2567,10 +2569,12 @@ async function runManagedTaskViaRunnerInner(
         }],
         startSequence: memoryRuntime.observationSequence,
         observedAt: new Date().toISOString(),
+        priorCallIds: memoryRuntime.observedCallIds,
         ...(plan?.decision.primaryTask === undefined
           ? {}
           : { decisionActionSignature: `task:${plan.decision.primaryTask}` }),
       });
+      memoryRuntime.observedCallIds.add(call.id);
       for (const observation of observations) memoryRuntime.session.observe(observation);
       memoryRuntime.observationSequence =
         observations.at(-1)?.sequence ?? memoryRuntime.observationSequence;

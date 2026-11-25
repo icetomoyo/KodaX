@@ -10,7 +10,6 @@ import { incrementManagedBudgetUsage } from './budget.js';
 import { isToolResultErrorContent } from '../../../agent-runtime/tool-result-classify.js';
 import { recordWrittenFile } from '../../../agent-runtime/written-files.js';
 import { resolveExecutionCwd } from '../../../runtime-paths.js';
-import { toolResultText } from '../../../tools/tool-result-content.js';
 import type { ManagedTaskBudgetController } from './budget.js';
 import type {
   KodaXEvents,
@@ -176,7 +175,7 @@ export function wrapCodingToolAsRunnable(
       const toolResultCapacityTokens = runnerCtx?.transcript
         ? baseCtx.resolveToolResultCapacityTokens?.(runnerCtx.transcript)
         : undefined;
-      const { createContextForToolCall, tryMcpFallback } = await import('../../../agent-runtime/tool-dispatch.js');
+      const { createContextForToolCall, withMcpFallbackHint } = await import('../../../agent-runtime/tool-dispatch.js');
       const call = runnerCtx?.toolCall ?? { id: toolCallId ?? definition.name, name: definition.name, input };
       const ctxForCall = createContextForToolCall(events ?? {}, call, {
         ...baseCtx,
@@ -205,14 +204,9 @@ export function wrapCodingToolAsRunnable(
         ctxForCall.invokeCheckedTool = (name, parameters) => baseCtx.invokeCheckedTool!(name, parameters, runnerCtx);
       }
       try {
-        // Mirrors the direct engine's dispatch: a failed read-only tool may be
-        // served by a same-named MCP tool (CAP-025).
-        const execute = async () => {
-          const output = await handler(input, ctxForCall);
-          return ctxForCall.extensionRuntime && toolResultText(output).startsWith('[Tool Error]')
-            ? await tryMcpFallback(definition.name, input, ctxForCall) ?? output
-            : output;
-        };
+        // Mirrors the direct engine's dispatch: a failed read-only tool may
+        // name a same-named MCP tool (CAP-025).
+        const execute = async () => withMcpFallbackHint(definition.name, ctxForCall, await handler(input, ctxForCall));
         // Lazy import avoids the registry -> construction -> AMA module cycle.
         const content = ctxForCall.invokeCheckedTool && toolCallId
           ? await (await import('../../../agent-runtime/tool-dispatch.js')).executeInExtensionScope(

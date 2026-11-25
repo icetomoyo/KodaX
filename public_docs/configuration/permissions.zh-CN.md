@@ -35,6 +35,18 @@ kodax execpolicy check --mode full-access -- <命令>
 
 不带 `--mode` 时，检查器使用保守的内置回退契约。这是 token 前缀策略，不是任意脚本文件或动态生成程序的语义分析器。
 
+## MCP 工具
+
+MCP 服务器可以把工具标记为只读（`readOnlyHint`）或破坏性。KodaX 按这些标记处理 `mcp_call`：
+
+| 模式 | 只读且非破坏性 | 其他 MCP 工具 |
+|---|---|---|
+| **Plan** | 直接执行 | 拒绝 |
+| **Edits** | 直接执行 | 先询问 |
+| **Auto[LLM]** / **Full Access** | 直接执行 | 直接执行 |
+
+这些标记由服务器提供，只配置你信任的服务器。不希望被调用的工具，可在该服务器配置里用 `enabledTools` 或 `disabledTools` 隐藏。对某个 MCP 工具选择"本会话允许"后，之后对同一工具的调用不论参数都不再询问。
+
 ## SDK 权限控制
 
 SDK 调用方通过共享 Runtime 会话设置控制权限。直接 `runKodaX`/Coding 消费者拥有自己的宿主护栏和权限策略；`KodaXOptions` 不选择 Runtime 权限配置。Runtime 拥有沙箱优先路由；客户端不得添加第二个预分类器或从显示预览重建权限。`RuntimePermissionMode` 是标准的四模式输出类型；`RuntimePermissionModeInput` 额外接受旧的 `auto-in-project` 输入别名。

@@ -32,6 +32,10 @@ export interface McpServerConfig {
   connect?: McpConnectMode;
   startupTimeoutMs?: number;
   requestTimeoutMs?: number;
+  /** Exact tool names to expose; omitted means every tool the server lists. */
+  enabledTools?: string[];
+  /** Exact tool names to hide and refuse; applied after enabledTools. */
+  disabledTools?: string[];
   /**
    * OAuth 2.0 for authenticated MCP servers. All endpoint fields are optional:
    * when omitted, KodaX discovers them at runtime (RFC 9728 → RFC 8414) and

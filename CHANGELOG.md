@@ -6,6 +6,38 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- MCP server configs accept `enabledTools` and `disabledTools` (exact tool
+  names). Hidden tools are absent from search and the prompt, and calls to
+  them are refused.
+- `mcp_search` rows show each capability's arguments, such as
+  `(owner, repo, body?)`. `mcp_describe` accepts up to 10 `ids` in one call.
+- The MCP manifest can show a one-line purpose for each server, taken from
+  its initialize result, so the model knows when a server is worth searching.
+
+### Changed
+
+- `mcp_call` follows the target tool's annotations. Plan and Edits run tools
+  marked `readOnlyHint` (and not destructive) without asking. Edits now asks
+  before any other MCP tool. A Session approval covers one MCP tool with any
+  arguments.
+- A failed read-only built-in no longer runs a same-named MCP tool. Its error
+  names the MCP tool, and the model calls it through `mcp_call`.
+- MCP tool calls default to a 300-second timeout, restarted by server
+  progress. Stopping a Run cancels the call on the server. An explicit
+  `requestTimeoutMs` or `MCP_REQUEST_TIMEOUT` still applies.
+
+### Fixed
+
+- An MCP call rejected for its arguments now returns the tool's input schema,
+  so the model can fix the call in one step.
+- MCP discovery retries HTTP 408, 429 and 5xx twice before failing.
+- Editing an MCP server's command, args, env, url, headers or tool filters
+  refetches its catalog instead of reusing the stale cache.
+- Stdio MCP server stderr no longer surfaces as errors. It is reported only
+  when the process exits unexpectedly.
+
 ---
 
 ## [0.7.97-rc.2] - 2026-11-23

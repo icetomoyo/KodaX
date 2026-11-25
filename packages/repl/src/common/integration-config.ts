@@ -119,6 +119,8 @@ const MCP_SERVER_KEYS = new Set([
   "connect",
   "startupTimeoutMs",
   "requestTimeoutMs",
+  "enabledTools",
+  "disabledTools",
   "auth",
 ]);
 
@@ -209,6 +211,10 @@ function parseMcpServer(name: string, value: unknown): McpServerConfig {
     requireStringMap(record.env, `MCP server "${name}" env`);
   if (record.headers !== undefined)
     requireStringMap(record.headers, `MCP server "${name}" headers`);
+  for (const key of ["enabledTools", "disabledTools"] as const) {
+    if (record[key] !== undefined)
+      requireStringArray(record[key], `MCP server "${name}" ${key}`);
+  }
   if (
     record.connect !== undefined &&
     !["lazy", "prewarm", "disabled"].includes(String(record.connect))

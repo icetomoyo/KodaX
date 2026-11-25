@@ -10,6 +10,7 @@ import {
 import { createMcpTestServerFixture } from '@kodax-ai/agent';
 import { parseMcpIntegrationDocument, writeIntegrationDocument } from '@kodax-ai/repl';
 import { awaitLatestCodingMemoryReviewDrain } from '@kodax-ai/coding';
+import type { ClientInteraction, ClientSessionView } from '@kodax-ai/coding/client-contract';
 import { connectKodaXClient } from '@kodax-ai/kodax/client';
 import { createKodaXRuntime } from "../tests/runtime-fixture.js";
 import { startRuntimeDaemonHost } from './runtime-daemon/host.js';
@@ -24,6 +25,13 @@ class McpTestProvider extends KodaXBaseProvider {
   constructor(private readonly toolId: string, private readonly results: string[]) { super(); }
   async stream(...args: Parameters<KodaXBaseProvider['stream']>): Promise<KodaXStreamResult> {
     const last = args[0].at(-1);
+    const echoText = typeof last?.content === 'string' ? /^Echo: (.+)$/.exec(last.content)?.[1] : undefined;
+    if (last?.role === 'user' && echoText !== undefined) {
+      return {
+        textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use',
+        toolBlocks: [{ type: 'tool_use', id: randomUUID(), name: 'mcp_call', input: { id: this.toolId, args: { text: echoText } } }],
+      };
+    }
     if (last?.role === 'user' && (last.content === 'Call the echo MCP tool.' || last.content === 'Call the private MCP tool.')) {
       const toolId = last.content === 'Call the private MCP tool.' ? this.toolId.replace(':demo:', ':private:') : this.toolId;
       return {
@@ -139,4 +147,76 @@ it('keeps the second session MCP provider usable after deleting the first privat
   await client!.sessions.delete(firstPrivate.id);
   await invokePrivate(secondPrivate.id, 'second-private');
   expect(Object.keys(await client!.mcp.listServers())).toEqual([fixture.serverId]);
+});
+
+function pendingPermission(views: readonly ClientSessionView[]): ClientInteraction | undefined {
+  return views.at(-1)?.interactions.find((item) => item.kind === 'permission');
+}
+
+async function echoInMode(
+  mode: 'plan' | 'accept-edits',
+  text: string,
+  options: { readOnly?: boolean; sessionId?: string; onPermission?: (permission: ClientInteraction) => Promise<void> } = {},
+): Promise<{ sessionId: string; prompted: boolean }> {
+  if (options.readOnly) {
+    const server = fixture.servers[fixture.serverId]!;
+    await client!.mcp.upsertServer(fixture.serverId, { ...server, args: [...(server.args ?? []), '--read-only'] });
+    await client!.mcp.reloadServers();
+  }
+  const sessionId = options.sessionId ?? (await client!.sessions.create({ projectPath: homeDir })).id;
+  await client!.sessions.updateSettings(sessionId, { provider: 'product-mcp-test', permissionMode: mode });
+  const views: ClientSessionView[] = [];
+  const observation = await client!.sessions.observe(sessionId, (view) => views.push(view));
+  let prompted = false;
+  try {
+    const run = await client!.inputs.submit({ sessionId, inputId: randomUUID(), text: `Echo: ${text}` });
+    if (!run.runId) throw new Error('Expected an immediate Run.');
+    const finished = runtime!.runs.await(run.runId);
+    const permission = await Promise.race([
+      finished.then(() => undefined),
+      expect.poll(() => pendingPermission(views), { timeout: 15_000 }).toBeTruthy().then(() => pendingPermission(views)),
+    ]);
+    if (permission) {
+      prompted = true;
+      await options.onPermission?.(permission);
+    }
+    await finished;
+  } finally {
+    observation.close();
+  }
+  return { sessionId, prompted };
+}
+
+it('asks before an unannotated MCP tool in accept-edits, and a session grant covers other arguments', async () => {
+  const first = await echoInMode('accept-edits', 'first', {
+    onPermission: async (permission) => {
+      if (permission.kind !== 'permission') throw new Error(`Expected permission, got ${permission.kind}`);
+      expect(permission.options.toolName).toBe('mcp_call');
+      const suggestion = permission.options.grantSuggestions?.find((item) => item.kind === 'session');
+      if (!suggestion) throw new Error('Expected a session grant suggestion.');
+      await client!.interactions.respond(permission.requestId, {
+        kind: 'permission', decision: { type: 'allow_session', suggestionId: suggestion.id },
+      });
+    },
+  });
+  expect(first.prompted).toBe(true);
+  expect(results.join('\n')).toContain('echo:first');
+  const second = await echoInMode('accept-edits', 'second', { sessionId: first.sessionId });
+  expect(second.prompted).toBe(false);
+  expect(results.join('\n')).toContain('echo:second');
+});
+
+it('runs a readOnlyHint MCP tool in accept-edits without asking', async () => {
+  const run = await echoInMode('accept-edits', 'read-only', { readOnly: true });
+  expect(run.prompted).toBe(false);
+  expect(results.join('\n')).toContain('echo:read-only');
+});
+
+it('lets plan mode call a readOnlyHint MCP tool and blocks an unannotated one', async () => {
+  await echoInMode('plan', 'mutating');
+  expect(results.join('\n')).not.toContain('echo:mutating');
+  expect(results.join('\n')).toContain('plan mode');
+  results.length = 0;
+  await echoInMode('plan', 'planning-read', { readOnly: true });
+  expect(results.join('\n')).toContain('echo:planning-read');
 });

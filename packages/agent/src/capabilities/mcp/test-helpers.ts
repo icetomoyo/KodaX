@@ -11,6 +11,7 @@ const TEST_PROMPT_NAME = 'draft_prompt';
 const MCP_TEST_SERVER_SOURCE = String.raw`const TOOL_NAME = 'echo_tool';
 const RESOURCE_URI = 'memory://guide';
 const PROMPT_NAME = 'draft_prompt';
+const READ_ONLY = process.argv.includes('--read-only');
 let buffer = '';
 
 function writeMessage(payload) {
@@ -57,7 +58,7 @@ function handleRequest(message) {
             },
             required: ['text'],
           },
-          annotations: {
+          annotations: READ_ONLY ? { readOnlyHint: true } : {
             destructive: false,
           },
         }],

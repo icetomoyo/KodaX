@@ -1,11 +1,15 @@
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   createMcpCatalogRevision,
   createMcpCapabilityId,
+  getMcpCachePaths,
   normalizeMcpCapabilityId,
   parseMcpCapabilityId,
   sanitizeMcpIcons,
   searchMcpCatalog,
+  summarizeMcpArgsSignature,
+  summarizeMcpServerPurpose,
   type McpCatalogItem,
 } from './catalog.js';
 
@@ -95,6 +99,44 @@ describe('MCP capability ids', () => {
       const once = normalizeMcpCapabilityId(id);
       expect(normalizeMcpCapabilityId(once)).toBe(once);
     }
+  });
+});
+
+describe('summarizeMcpServerPurpose', () => {
+  it('takes the first prose sentence of instructions, skipping headings', () => {
+    expect(summarizeMcpServerPurpose({
+      instructions: '# GitHub MCP\n\nManage repositories and issues. Use search before writing.',
+      serverInfo: { name: 'github', title: 'GitHub' },
+    })).toBe('Manage repositories and issues.');
+    expect(summarizeMcpServerPurpose({ instructions: '查询内部知识库。写入需要审批。' })).toBe('查询内部知识库。');
+  });
+
+  it('falls back to serverInfo description, then title, and caps the length', () => {
+    expect(summarizeMcpServerPurpose({ instructions: '  ', serverInfo: { description: 'Query the warehouse.', title: 'DB' } }))
+      .toBe('Query the warehouse.');
+    expect(summarizeMcpServerPurpose({ serverInfo: { name: 'db', title: 'Analytics DB' } })).toBe('Analytics DB');
+    expect(summarizeMcpServerPurpose({ serverInfo: { name: 'db' } })).toBeUndefined();
+    const long = summarizeMcpServerPurpose({ instructions: 'word '.repeat(60) });
+    expect(long).toHaveLength(100);
+    expect(long?.endsWith('…')).toBe(true);
+  });
+});
+
+describe('summarizeMcpArgsSignature', () => {
+  it('lists schema properties in order and marks optional ones', () => {
+    expect(summarizeMcpArgsSignature({
+      type: 'object',
+      properties: { owner: {}, repo: {}, body: {} },
+      required: ['owner', 'repo'],
+    })).toBe('(owner, repo, body?)');
+    expect(summarizeMcpArgsSignature({ type: 'object' })).toBe('()');
+    expect(summarizeMcpArgsSignature(undefined)).toBeUndefined();
+  });
+
+  it('reads prompt argument arrays and truncates long lists', () => {
+    expect(summarizeMcpArgsSignature([{ name: 'pr', required: true }, { name: 'focus' }, { bogus: 1 }])).toBe('(pr, focus?)');
+    const properties = Object.fromEntries(Array.from({ length: 10 }, (_, index) => [`a${index}`, {}]));
+    expect(summarizeMcpArgsSignature({ type: 'object', properties })).toBe('(a0?, a1?, a2?, a3?, a4?, a5?, a6?, a7?, …)');
   });
 });
 
@@ -193,5 +235,28 @@ describe('MCP catalog discovery', () => {
       ...items,
       catalogItem('github', 'new_tool', 'A newly published tool.'),
     ])).not.toBe(createMcpCatalogRevision(items));
+  });
+});
+
+describe('getMcpCachePaths', () => {
+  it('keeps ordinary server ids readable', () => {
+    const paths = getMcpCachePaths('/cache', 'github-server_1.2');
+    expect(path.basename(paths.indexPath)).toBe('github-server_1.2.index.json');
+  });
+
+  it('keeps hostile or Windows-invalid server ids inside the catalog directory', () => {
+    for (const serverId of ['../evil', 'a:b*?', '..', 'x/y\\z', '.hidden']) {
+      const paths = getMcpCachePaths('/cache', serverId);
+      for (const file of [paths.indexPath, paths.itemsPath]) {
+        expect(path.dirname(file)).toBe(paths.catalogDir);
+        expect(path.basename(file)).not.toMatch(/[<>:"/\\|?*]/);
+        expect(path.basename(file).startsWith('.')).toBe(false);
+      }
+    }
+  });
+
+  it('keeps distinct server ids in distinct files', () => {
+    expect(getMcpCachePaths('/cache', 'a:b').indexPath)
+      .not.toBe(getMcpCachePaths('/cache', 'a%3Ab').indexPath);
   });
 });

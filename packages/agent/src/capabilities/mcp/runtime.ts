@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { McpServerConfig as KodaXMcpServerConfig } from './config.js';
 import { getActiveMcpCallContext, runWithMcpCallContext } from './call-context.js';
 import type { CapabilityResult, KodaXToolResultContentItem } from '@kodax-ai/llm';
@@ -11,6 +12,8 @@ import {
   deriveMcpCapabilityRisk,
   readMcpServerCatalog,
   sanitizeMcpIcons,
+  summarizeMcpArgsSignature,
+  summarizeMcpServerPurpose,
   summarizeMcpCatalogEntry,
   type McpCapabilityDescriptor,
   type McpToolTaskSupport,
@@ -22,6 +25,7 @@ import {
 import {
   McpAuthRequiredError,
   McpExpiredSessionError,
+  McpHttpStatusError,
   createMcpTransport,
   type McpTransport,
 } from './transport.js';
@@ -48,6 +52,26 @@ interface JsonRpcRequestRecord {
   timeout: NodeJS.Timeout;
   /** Host call context captured when the request was sent (may be absent). */
   context?: unknown;
+  /** Restarts the idle timeout; present only on requests that carry a progressToken. */
+  onProgress?: () => void;
+}
+
+/** Per-call options for client→server requests. */
+export interface McpRequestOptions {
+  /** Aborting rejects the request and sends notifications/cancelled. */
+  signal?: AbortSignal;
+  /** Attach a progressToken so server progress notifications keep the request alive. */
+  trackProgress?: boolean;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function createMcpCancelledError(serverId: string, method: string): Error {
+  const error = new Error(`MCP request cancelled for ${serverId}:${method}`);
+  error.name = 'AbortError';
+  return error;
 }
 
 interface JsonRpcResponseError {
@@ -357,16 +381,17 @@ function toCatalogItem(
   descriptor: McpCapabilityDescriptor,
 ): McpCatalogItem {
   const {
-    inputSchema: _inputSchema,
+    inputSchema,
     outputSchema: _outputSchema,
-    promptArgsSchema: _promptArgsSchema,
+    promptArgsSchema,
     uri: _uri,
     mimeType: _mimeType,
     icons: _icons,
     taskSupport: _taskSupport,
     ...item
   } = descriptor;
-  return item;
+  const argsSignature = summarizeMcpArgsSignature(inputSchema ?? promptArgsSchema);
+  return argsSignature ? { ...item, argsSignature } : item;
 }
 
 function extractListEntries(
@@ -399,6 +424,12 @@ function extractListEntries(
 // or globally via MCP_TIMEOUT / MCP_REQUEST_TIMEOUT env vars.
 const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;   // Claude Code: 30s
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;   // Claude Code: 60s
+// tools/call does real work (builds, queries, browsers); discovery requests
+// keep the short default so a dead server still fails fast.
+const DEFAULT_TOOL_CALL_TIMEOUT_MS = 300_000;
+// Discovery is idempotent, so a transient HTTP failure (408/429/5xx) is worth
+// a short retry. tools/call never retries: it may already have side effects.
+const TRANSIENT_HTTP_RETRY_DELAYS_MS = [500, 1_500];
 
 // Requested base protocol version. Optional client features are advertised
 // separately via initialize.capabilities; KodaX currently sends {} there.
@@ -406,7 +437,40 @@ const MCP_PROTOCOL_VERSION = '2025-11-25';
 
 const JsonRpcErrorCode = {
   MethodNotFound: -32601,
+  InvalidParams: -32602,
 } as const;
+
+// Servers report bad arguments either as a -32602 protocol error or, since
+// 2025-11-25, as an isError tool result. Either way the caller gets the input
+// schema so it can correct the call in one step.
+const INVALID_ARGUMENTS_PATTERN = /invalid (?:arguments?|params|parameters|input)|validation (?:error|failed)|required (?:property|parameter|argument)|-32602/i;
+const SCHEMA_HINT_MAX_CHARS = 6_000;
+
+function formatInputSchemaHint(schema: unknown): string | undefined {
+  const json = schema === undefined ? undefined : JSON.stringify(schema);
+  if (!json) return undefined;
+  const shown = json.length > SCHEMA_HINT_MAX_CHARS
+    ? `${json.slice(0, SCHEMA_HINT_MAX_CHARS)}… (truncated)`
+    : json;
+  return `Expected input schema: ${shown}`;
+}
+
+function contentText(content: CapabilityResult['content']): string {
+  if (typeof content === 'string') return content;
+  return (content ?? [])
+    .map((item) => (item.type === 'text' ? item.text : ''))
+    .join('\n');
+}
+
+function appendSchemaHint(
+  content: CapabilityResult['content'],
+  hint: string,
+): CapabilityResult['content'] {
+  if (typeof content === 'string' || content === undefined) {
+    return content ? `${content}\n\n${hint}` : hint;
+  }
+  return [...content, { type: 'text', text: hint }];
+}
 
 /** Sentinel from {@link McpServerRuntime.dispatchServerRequest} = not an advertised capability. */
 const UNHANDLED_SERVER_REQUEST = Symbol('mcp.unhandled-server-request');
@@ -522,6 +586,43 @@ function getRequestTimeoutMs(config: KodaXMcpServerConfig): number {
     ?? (parseInt(process.env.MCP_REQUEST_TIMEOUT ?? '', 10) || DEFAULT_REQUEST_TIMEOUT_MS);
 }
 
+/** Explicit per-server or env overrides apply to tool calls too. */
+export function getToolCallTimeoutMs(config: KodaXMcpServerConfig): number {
+  return config.requestTimeoutMs
+    ?? (parseInt(process.env.MCP_REQUEST_TIMEOUT ?? '', 10) || DEFAULT_TOOL_CALL_TIMEOUT_MS);
+}
+
+function isTransientHttpError(error: unknown): boolean {
+  return error instanceof McpHttpStatusError
+    && (error.status === 408 || error.status === 429 || error.status >= 500);
+}
+
+/** Covers what can change the exposed catalog (toolsets often come from args, env or headers); timeouts cannot. */
+function fingerprintMcpConfig(config: KodaXMcpServerConfig): string {
+  const sorted = (record: Record<string, string> | undefined) => record && Object.entries(record).sort(([a], [b]) => a.localeCompare(b));
+  const { type, command, args, cwd, url, enabledTools, disabledTools } = config;
+  return createHash('sha256')
+    .update(JSON.stringify({
+      type, command, args, cwd, url, enabledTools, disabledTools,
+      env: sorted(config.env), headers: sorted(config.headers),
+    }))
+    .digest('hex')
+    .slice(0, 16);
+}
+
+function isToolExposed(config: KodaXMcpServerConfig, name: string): boolean {
+  if (config.enabledTools !== undefined && !config.enabledTools.includes(name)) return false;
+  return config.disabledTools?.includes(name) !== true;
+}
+
+function withoutHiddenTools(
+  config: KodaXMcpServerConfig,
+  snapshot: McpServerCatalogSnapshot,
+): McpServerCatalogSnapshot {
+  const visible = (entry: { kind: McpCapabilityKind; name: string }) => entry.kind !== 'tool' || isToolExposed(config, entry.name);
+  return { ...snapshot, items: snapshot.items.filter(visible), descriptors: snapshot.descriptors.filter(visible) };
+}
+
 function hasServerCapability(
   capabilities: Record<string, unknown> | undefined,
   name: 'tools' | 'resources' | 'prompts',
@@ -548,6 +649,7 @@ export class McpServerRuntime {
   private discoveryPromise?: Promise<McpDiscoveryCatalog>;
   private catalog?: McpServerCatalogSnapshot;
   private serverCapabilities?: Record<string, unknown>;
+  private serverPurpose?: string;
   private cachedHttpTransport?: 'streamable-http' | 'sse';
   private diagnostics: McpServerRuntimeDiagnostics;
 
@@ -580,10 +682,15 @@ export class McpServerRuntime {
     await this.refreshCatalog(true);
   }
 
+  private async readCachedCatalog(): Promise<McpServerCatalogSnapshot | undefined> {
+    const cached = await readMcpServerCatalog(this.cacheDir, this.serverId, fingerprintMcpConfig(this.config));
+    return cached && withoutHiddenTools(this.config, cached);
+  }
+
   /** Load catalog from memory or disk only — never triggers a lazy connection. */
   async getCachedCatalog(): Promise<McpServerCatalogSnapshot | undefined> {
     if (!this.catalog) {
-      this.catalog = await readMcpServerCatalog(this.cacheDir, this.serverId);
+      this.catalog = await this.readCachedCatalog();
       if (this.catalog) {
         this.applyCatalogSnapshot(this.catalog);
       }
@@ -593,7 +700,7 @@ export class McpServerRuntime {
 
   async getCatalog(forceRefresh = false): Promise<McpServerCatalogSnapshot> {
     if (!this.catalog) {
-      this.catalog = await readMcpServerCatalog(this.cacheDir, this.serverId);
+      this.catalog = await this.readCachedCatalog();
       if (this.catalog) {
         this.applyCatalogSnapshot(this.catalog);
       }
@@ -658,21 +765,29 @@ export class McpServerRuntime {
     return catalog.descriptors.find((descriptor) => descriptor.id === capabilityId);
   }
 
-  async callTool(name: string, args: Record<string, unknown>): Promise<{
+  async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<{
     content?: CapabilityResult['content'];
     isError?: boolean;
     structuredContent?: unknown;
     metadata?: Record<string, unknown>;
   }> {
+    if (!isToolExposed(this.config, name)) {
+      throw new Error(`MCP tool "${name}" on "${this.serverId}" is disabled by this server's enabledTools/disabledTools config.`);
+    }
     await this.connect();
     // A tool marked execution.taskSupport: "required" only runs via task
     // augmentation (2025-11-25). KodaX does not implement tasks yet, so surface
     // a clear error instead of a plain tools/call the server will reject.
     const catalog = this.catalog ?? await this.getCatalog();
-    const taskSupport = catalog.descriptors.find(
-      (descriptor) => descriptor.kind === 'tool' && descriptor.name === name,
-    )?.taskSupport;
-    if (taskSupport === 'required') {
+    const descriptor = catalog.descriptors.find(
+      (entry) => entry.kind === 'tool' && entry.name === name,
+    );
+    const schemaHint = formatInputSchemaHint(descriptor?.inputSchema);
+    if (descriptor?.taskSupport === 'required') {
       throw new Error(
         `MCP tool "${name}" on "${this.serverId}" only runs as a task `
         + `(execution.taskSupport: "required"), which KodaX does not yet support.`,
@@ -683,16 +798,25 @@ export class McpServerRuntime {
     // server that keeps demanding elicitation cannot loop forever.
     for (let attempt = 0; ; attempt += 1) {
       try {
-        const response = await this.request('tools/call', { name, arguments: args });
+        const response = await this.request(
+          'tools/call',
+          { name, arguments: args },
+          getToolCallTimeoutMs(this.config),
+          true,
+          { signal: options.signal, trackProgress: true },
+        );
         const record = asRecord(response);
         const contentMetadata = collectContentMetadata(record?.content);
+        const isError = readBoolean(record?.isError) ?? readBoolean(record?.is_error) ?? false;
+        const content = await normalizeMcpContent(record?.content, `mcp:${this.serverId}:tool:${name}`);
+        const rejectedArgs = isError && schemaHint && INVALID_ARGUMENTS_PATTERN.test(contentText(content));
         return {
-          content: await normalizeMcpContent(record?.content, `mcp:${this.serverId}:tool:${name}`),
-          isError: readBoolean(record?.isError) ?? readBoolean(record?.is_error) ?? false,
+          content: rejectedArgs ? appendSchemaHint(content, schemaHint) : content,
+          isError,
           structuredContent: record?.structuredContent !== undefined ? record.structuredContent : record?.structured_content,
           metadata: {
             serverId: this.serverId,
-            isError: readBoolean(record?.isError) ?? readBoolean(record?.is_error) ?? false,
+            isError,
             ...omitRecordKeys(record, new Set([
               'content',
               'structuredContent',
@@ -708,6 +832,13 @@ export class McpServerRuntime {
           ? parseUrlElicitationRequired(error)
           : undefined;
         if (!elicitation || !(await this.satisfyUrlElicitation(elicitation))) {
+          if (
+            schemaHint
+            && error instanceof McpJsonRpcError
+            && error.code === JsonRpcErrorCode.InvalidParams
+          ) {
+            throw new McpJsonRpcError(`${error.message}\n${schemaHint}`, error.code, error.data);
+          }
           throw error;
         }
         // consent + completion done — loop retries the tools/call.
@@ -828,12 +959,14 @@ export class McpServerRuntime {
           `MCP catalog changed during discovery for "${this.serverId}"; retry the refresh.`,
         );
       }
-      const descriptors = [...tools, ...resources, ...prompts];
+      const descriptors = [...tools.filter((tool) => isToolExposed(this.config, tool.name)), ...resources, ...prompts];
       snapshot = {
         serverId: this.serverId,
         descriptors,
         items: descriptors.map(toCatalogItem),
         updatedAt: cachedAt,
+        configFingerprint: fingerprintMcpConfig(this.config),
+        ...(this.serverPurpose ? { serverPurpose: this.serverPurpose } : {}),
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -968,6 +1101,7 @@ export class McpServerRuntime {
     // compatibility fallback for legacy/custom servers.
     const isStdio = (this.config.type ?? 'stdio') === 'stdio';
     const framings = isStdio ? ['ndjson', 'content-length'] as const : [undefined] as const;
+    let firstError: unknown;
 
     for (const framing of framings) {
       await this.resetTransport();
@@ -1006,7 +1140,7 @@ export class McpServerRuntime {
         // the host injected (capability declaration = implementation promise);
         // unadvertised server→client requests still get a -32601 reply.
         const baseStartup = getStartupTimeoutMs(this.config);
-        const initializeResult = await this.request('initialize', {
+        const initializeResult = await this.requestDiscovery('initialize', {
           protocolVersion: MCP_PROTOCOL_VERSION,
           capabilities: buildInitializeCapabilities(this.reverse),
           clientInfo: {
@@ -1016,6 +1150,7 @@ export class McpServerRuntime {
         }, baseStartup, false);
         const initialized = asRecord(initializeResult);
         this.serverCapabilities = asRecord(initialized?.capabilities);
+        this.serverPurpose = summarizeMcpServerPurpose(initialized);
         const protocolVersion = readNegotiatedProtocolVersion(initializeResult);
         transport.setProtocolVersion?.(protocolVersion);
         await this.notify('notifications/initialized', {});
@@ -1036,9 +1171,17 @@ export class McpServerRuntime {
           await this.resetTransport();
           throw error;
         }
+        firstError ??= error;
         // If this is the last framing option, propagate the error.
         if (framing === framings[framings.length - 1]) {
-          throw error;
+          if (firstError === error) throw error;
+          // The spec framing's failure (e.g. the server exited with a stderr
+          // reason) is the real cause; the legacy fallback's failure is context.
+          const combined = new Error(
+            `${errorMessage(firstError)} (Content-Length fallback also failed: ${errorMessage(error)})`,
+          );
+          this.diagnostics.lastError = combined.message;
+          throw combined;
         }
         // Otherwise, try next framing mode.
       }
@@ -1098,7 +1241,7 @@ export class McpServerRuntime {
     while (true) {
       let result: unknown;
       try {
-        result = await this.request(method, cursor ? { cursor } : {});
+        result = await this.requestDiscovery(method, cursor ? { cursor } : {});
       } catch (error) {
         const isOptionalList = method === 'resources/list' || method === 'prompts/list';
         if (cursor === undefined && isOptionalList && isMethodNotFoundLikeError(error, method)) {
@@ -1137,19 +1280,37 @@ export class McpServerRuntime {
     return descriptors;
   }
 
-  private async request(
+  private async requestDiscovery(
     method: string,
     params: Record<string, unknown>,
     timeoutMs = getRequestTimeoutMs(this.config),
     retryExpiredSession = true,
   ): Promise<unknown> {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.request(method, params, timeoutMs, retryExpiredSession);
+      } catch (error) {
+        const delay = TRANSIENT_HTTP_RETRY_DELAYS_MS[attempt];
+        if (delay === undefined || !isTransientHttpError(error)) throw error;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  private async request(
+    method: string,
+    params: Record<string, unknown>,
+    timeoutMs = getRequestTimeoutMs(this.config),
+    retryExpiredSession = true,
+    options: McpRequestOptions = {},
+  ): Promise<unknown> {
     try {
-      return await this.sendRequest(method, params, timeoutMs);
+      return await this.sendRequest(method, params, timeoutMs, options);
     } catch (error) {
       if (retryExpiredSession && error instanceof McpExpiredSessionError) {
         await this.resetTransport();
         await this.connect();
-        return this.request(method, params, timeoutMs, false);
+        return this.request(method, params, timeoutMs, false, options);
       }
       // FEATURE_222 — mid-session 401 (token expired) or 403 insufficient_scope
       // (step-up): re-authenticate, reconnect, and retry the request once.
@@ -1159,7 +1320,7 @@ export class McpServerRuntime {
         if (token) {
           await this.resetTransport();
           await this.connect();
-          return this.request(method, params, timeoutMs, false);
+          return this.request(method, params, timeoutMs, false, options);
         }
       }
       throw error;
@@ -1170,46 +1331,77 @@ export class McpServerRuntime {
     method: string,
     params: Record<string, unknown>,
     timeoutMs: number,
+    options: McpRequestOptions = {},
   ): Promise<unknown> {
+    const { signal, trackProgress } = options;
+    if (signal?.aborted) {
+      return Promise.reject(createMcpCancelledError(this.serverId, method));
+    }
     if (!this.transport?.connected) {
       throw new Error(`MCP server "${this.serverId}" is not connected.`);
     }
 
     const requestId = ++this.nextRequestId;
+    // Spec (utilities/progress): the progressToken rides in params._meta. The
+    // request id is unique per session, so it doubles as the token.
+    const sentParams = trackProgress
+      ? { ...params, _meta: { ...asRecord(params._meta), progressToken: requestId } }
+      : params;
     const json = jsonRpcString({
       jsonrpc: '2.0',
       id: requestId,
       method,
-      params,
+      params: sentParams,
     });
 
     return new Promise<unknown>((resolve, reject) => {
-      const timeout = setTimeout(() => {
+      // Spec (utilities/cancellation): when the client stops waiting it SHOULD
+      // notify the server so it can stop work. initialize MUST NOT be cancelled.
+      const cancelOnServer = (reason: string): void => {
+        if (method === 'initialize') return;
+        void this.notify('notifications/cancelled', { requestId, reason })
+          .catch((error: unknown) => this.recordSendError(error));
+      };
+      const onTimeout = (): void => {
+        record.reject(new Error(`MCP request timed out for ${this.serverId}:${method}`));
+        cancelOnServer(`Client request timed out after ${timeoutMs}ms`);
+      };
+      const onAbort = (): void => {
+        record.reject(createMcpCancelledError(this.serverId, method));
+        cancelOnServer('Client cancelled the request');
+      };
+      const armTimeout = (): NodeJS.Timeout => {
+        const timeout = setTimeout(onTimeout, timeoutMs);
+        timeout.unref?.();
+        return timeout;
+      };
+      // Every settle path (response, timeout, abort, send failure, transport
+      // close) goes through these wrappers so the timer and abort listener
+      // never outlive the request.
+      const settle = (): void => {
+        clearTimeout(record.timeout);
+        signal?.removeEventListener('abort', onAbort);
         this.pending.delete(requestId);
-        // Spec (utilities/cancellation): on timeout the client SHOULD notify the
-        // server so it can stop processing and release resources. The initialize
-        // request MUST NOT be cancelled, so it is exempt.
-        if (method !== 'initialize') {
-          void this.notify('notifications/cancelled', {
-            requestId,
-            reason: `Client request timed out after ${timeoutMs}ms`,
-          }).catch((error: unknown) => this.recordSendError(error));
-        }
-        reject(new Error(`MCP request timed out for ${this.serverId}:${method}`));
-      }, timeoutMs);
-      timeout.unref?.();
-
-      this.pending.set(requestId, {
-        resolve,
-        reject,
-        timeout,
+      };
+      const record: JsonRpcRequestRecord = {
+        resolve: (value) => { settle(); resolve(value); },
+        reject: (error) => { settle(); reject(error); },
+        timeout: armTimeout(),
         context: getActiveMcpCallContext(),
-      });
+        ...(trackProgress ? {
+          // A progress notification proves the server is still working, so the
+          // idle timeout restarts. Abort remains the caller's hard stop.
+          onProgress: () => {
+            clearTimeout(record.timeout);
+            record.timeout = armTimeout();
+          },
+        } : {}),
+      };
+      this.pending.set(requestId, record);
+      signal?.addEventListener('abort', onAbort, { once: true });
 
       this.transport!.send(json).catch((error) => {
-        clearTimeout(timeout);
-        this.pending.delete(requestId);
-        reject(error instanceof Error ? error : new Error(String(error)));
+        record.reject(error instanceof Error ? error : new Error(String(error)));
       });
     });
   }
@@ -1247,8 +1439,9 @@ export class McpServerRuntime {
       clearTimeout(pending.timeout);
       this.pending.delete(numericId);
       const error = asRecord(payload.error) as JsonRpcResponseError | undefined;
-      if (error?.message) {
-        pending.reject(new McpJsonRpcError(error.message, error.code, error.data));
+      if (error) {
+        const message = readString(error.message) ?? `MCP error ${error.code ?? 'unknown'}`;
+        pending.reject(new McpJsonRpcError(message, error.code, error.data));
         return;
       }
       pending.resolve(payload.result);
@@ -1260,6 +1453,11 @@ export class McpServerRuntime {
     }
 
     // Server notification (no id).
+    if (method === 'notifications/progress') {
+      const token = asRecord(payload.params)?.progressToken;
+      if (typeof token === 'number') this.pending.get(token)?.onProgress?.();
+      return;
+    }
     if (method.endsWith('/list_changed')) {
       this.catalogInvalidationVersion += 1;
       this.diagnostics.dirty = true;
