@@ -67,16 +67,30 @@ export type HostConnectionState =
   /** For good: closed by the caller, ended on purpose, or refused in a way trying again would not change. */
   | { readonly state: 'closed'; readonly error?: HostProtocolError };
 
+/**
+ * Where a delivered view stands. The Host starts a new epoch when the history it shows is
+ * replaced: it restarted, or the Session was rewound or moved to another branch.
+ */
+export interface HostViewChange {
+  readonly epoch: string;
+  /**
+   * The view is in a different epoch from the one this observer was last given: drop
+   * whatever was kept from earlier views, items that slid out of the window included.
+   * A reconnect or a new subscription to the same epoch is not a reset. The first view is not one either.
+   */
+  readonly reset: boolean;
+}
+
 export interface HostSessionObserver<Scope extends HostAnswerScope> {
   /** The whole view after every change. Also called with a fresh view after a reconnect. */
-  readonly onView: (view: HostSessionView<Scope>) => void;
+  readonly onView: (view: HostSessionView<Scope>, change: HostViewChange) => void;
   /** The Host ended the observation, for example because the Session is gone. It is not resumed. */
   readonly onClosed?: (reason: string) => void;
 }
 
 export interface HostDocumentObserver<Scope extends HostAnswerScope> {
   /** The whole document after every change. Also called with a fresh one after a reconnect. */
-  readonly onView: (document: HostDocumentView<Scope>) => void;
+  readonly onView: (document: HostDocumentView<Scope>, change: HostViewChange) => void;
   /** The Host ended the observation. It is not resumed. */
   readonly onClosed?: (reason: string) => void;
 }
@@ -476,7 +490,7 @@ interface ObservationContext {
 }
 
 type AnyView = SessionView | LocalSessionView | HostDocument | LocalHostDocument;
-type AnyObserver = { readonly onView: (view: AnyView) => void; readonly onClosed?: (reason: string) => void };
+type AnyObserver = { readonly onView: (view: AnyView, change: HostViewChange) => void; readonly onClosed?: (reason: string) => void };
 type ViewTarget = { readonly kind: 'session'; readonly sessionId: string } | { readonly kind: 'host' };
 
 /** One followed view, of a Session or of the Host: its copy and where that copy stands. */
@@ -485,6 +499,8 @@ function createObservation(target: ViewTarget, observer: AnyObserver, context: O
   let subscriptionId: string | undefined;
   let position: ViewPosition | undefined;
   let view: AnyView | undefined;
+  /** The epoch of the last view given to the observer. */
+  let delivered: string | undefined;
   /** Patches that came before the answer they follow was read. */
   let early: ViewPatch[] = [];
   let recoverRuns = false;
@@ -494,14 +510,16 @@ function createObservation(target: ViewTarget, observer: AnyObserver, context: O
   // Whoever waits on it hears the rejection; one that nobody waits on must not surface as unhandled.
   ready.catch(() => undefined);
 
-  const deliver = (next: AnyView): void => {
+  const deliver = (next: AnyView, epoch: string): void => {
     view = next;
+    const change = { epoch, reset: delivered !== undefined && delivered !== epoch };
+    delivered = epoch;
     // Only a Session view asks for its Runs to go on; the Host document lists every Session's.
     if (recoverRuns && target.kind === 'session') {
       for (const run of next.runs) if (run.phase === 'recovering') context.recover(run.id);
     }
     try {
-      observer.onView(next);
+      observer.onView(next, change);
     } catch (error: unknown) {
       context.report(error);
     }
@@ -511,7 +529,7 @@ function createObservation(target: ViewTarget, observer: AnyObserver, context: O
     position = { epoch: snapshot.epoch, seq: snapshot.seq };
     settleReady?.resolve();
     settleReady = undefined;
-    deliver(snapshot.snapshot);
+    deliver(snapshot.snapshot, snapshot.epoch);
     const waiting = early;
     early = [];
     for (const patch of waiting) apply(patch);
@@ -528,7 +546,7 @@ function createObservation(target: ViewTarget, observer: AnyObserver, context: O
       return;
     }
     position = { epoch: patch.epoch, seq: patch.seq };
-    deliver(applied.view as AnyView);
+    deliver(applied.view as AnyView, patch.epoch);
   };
 
   const subscribe = async (connection: HostRpcClient): Promise<void> => {

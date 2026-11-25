@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { HostRpcClient } from './client.js';
 import { HOST_CLOSE_CODES, hostLinkEnd, type HostLinkClose, type HostLinkEnd } from './close.js';
 import { HOST_PROTOCOL, HostProtocolError } from './codec.js';
-import { createKodaXHostClient, createRequestId, type HostConnectionState, type KodaXHostClient } from './host-client.js';
+import { createKodaXHostClient, createRequestId, type HostConnectionState, type HostViewChange, type KodaXHostClient } from './host-client.js';
 
 type Params = Readonly<Record<string, unknown>>;
 type Responder = (method: string, params: Params, host: FakeHost) => Promise<Params> | Params;
@@ -370,6 +370,36 @@ describe('following a Session view', () => {
       { items: [{ id: 'i2', text: 'again!' }], runs: [] },
     ]);
     expect(onClosed).toHaveBeenCalledWith('session_deleted');
+  });
+
+  it('says which epoch each view is in, and marks a new epoch as a reset, not a new subscription', async () => {
+    const epochs = ['e1', 'e1', 'e2'];
+    let subscriptions = 0;
+    const sequence = hostSequence((method, params) => {
+      if (method !== 'view.subscribe') return {};
+      return snapshot(params.subscriptionId, { items: [], runs: [] }, 0, epochs[Math.min(subscriptions++, epochs.length - 1)]);
+    });
+    const host = await client(sequence.open);
+    const changes: HostViewChange[] = [];
+    await host.observeSession('s1', { onView: (_view, change) => changes.push(change) });
+    const first = sequence.latest();
+    first.notify('view.patch', { subscriptionId: subscriptionOf(first), epoch: 'e1', seq: 1, ops: [] });
+    // A gap makes the client subscribe again; the Host is still in the same epoch.
+    first.notify('view.patch', { subscriptionId: subscriptionOf(first), epoch: 'e1', seq: 5, ops: [] });
+    await vi.waitFor(() => expect(changes).toHaveLength(3));
+    // The next connection finds the Host in a new epoch.
+    first.drop();
+    await vi.waitFor(() => expect(changes).toHaveLength(4));
+    const second = sequence.latest();
+    second.notify('view.reset', snapshot(subscriptionOf(second), { items: [], runs: [] }, 0, 'e3'));
+
+    expect(changes).toEqual([
+      { epoch: 'e1', reset: false },
+      { epoch: 'e1', reset: false },
+      { epoch: 'e1', reset: false },
+      { epoch: 'e2', reset: true },
+      { epoch: 'e3', reset: true },
+    ]);
   });
 
   it('tells the caller why the first view never came', async () => {

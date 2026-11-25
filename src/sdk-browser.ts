@@ -8,6 +8,6 @@ export { connectKodaXHost, type ConnectKodaXHostOptions } from './host-protocol/
 export { createRequestId } from './host-protocol/host-client.js';
 export type {
   KodaXHostClient, HostCallableMethod, HostCallParams, HostCallResult, HostCallOptions,
-  HostConnectionState, HostSessionObserver, HostSessionObservation, HostSessionView, HostDocumentObserver, HostDocumentView,
+  HostConnectionState, HostSessionObserver, HostSessionObservation, HostSessionView, HostViewChange, HostDocumentObserver, HostDocumentView,
 } from './host-protocol/host-client.js';
 export { HostProtocolError, type HostErrorCode } from './host-protocol/codec.js';

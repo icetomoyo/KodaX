@@ -26,7 +26,7 @@ export { createKodaXHostClient, createRequestId } from './host-protocol/host-cli
 export { connectKodaXHost, type ConnectKodaXHostOptions } from './host-protocol/remote-host.js';
 export type {
   KodaXHostClient, KodaXHostClientOptions, HostAnswerScope, HostCallableMethod, HostCallParams, HostCallResult,
-  HostCallOptions, HostConnectionState, HostSessionObserver, HostSessionObservation, HostSessionView,
+  HostCallOptions, HostConnectionState, HostSessionObserver, HostSessionObservation, HostSessionView, HostViewChange,
   HostDocumentObserver, HostDocumentView, HostLeaseHandler, HostCredentialRequest, HostToolHandler, HostToolCall,
 } from './host-protocol/host-client.js';
 export { HostProtocolError, type HostErrorCode } from './host-protocol/codec.js';
