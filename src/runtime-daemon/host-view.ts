@@ -333,14 +333,14 @@ export function toWorkflow(summary: RuntimeWorkflowSummary): Readonly<Record<str
 export function toSessionView(
   view: ClientSessionView, workspaceRoot?: string, workflows: readonly unknown[] = [],
 ): Readonly<Record<string, unknown>> {
-  const streaming = new Set(view.runs.filter(run => STREAMING_RUN_PHASES.has(run.phase)).map(run => run.runId));
+  const writing = writingOutputs(view);
   const seen = new Map<string, number>();
   return {
     items: view.items.map((item) => {
       // Display history saved by old builds can repeat an id; a client's copy is keyed by it.
       const repeats = seen.get(item.id) ?? 0;
       seen.set(item.id, repeats + 1);
-      return toViewItem(item, repeats === 0 ? item.id : `${item.id}~${repeats}`, streaming, workspaceRoot);
+      return toViewItem(item, repeats === 0 ? item.id : `${item.id}~${repeats}`, writing, workspaceRoot);
     }),
     session: toSessionResource(view.session, workspaceRoot !== undefined && view.session.workspaceRoot !== undefined
       ? within(workspaceRoot, view.session.workspaceRoot) : undefined),
@@ -402,18 +402,41 @@ function toFileChange(change: ProposedFileChange, workspaceRoot: string | undefi
 }
 
 /**
- * A v1 item in v2 terms. `streaming` names the Runs that may still write; without
- * it the item comes from saved history, where nothing changes any more.
+ * The Runs that may still write, each with the output it writes now. A Run writes
+ * one output at a time, so its earlier ones are done even before they are saved.
+ */
+function writingOutputs(view: ClientSessionView): ReadonlyMap<string, string | undefined> {
+  const writing = new Map<string, string | undefined>();
+  for (const run of view.runs) if (STREAMING_RUN_PHASES.has(run.phase)) writing.set(run.runId, undefined);
+  for (const item of view.items) {
+    if (item.outputState === 'draft' && item.sourceRunId !== undefined && writing.has(item.sourceRunId)) {
+      writing.set(item.sourceRunId, item.outputId);
+    }
+  }
+  return writing;
+}
+
+/** Whether a text item may still change: its Run writes it now, or saves it later under another id. */
+function stillWritten(item: ClientViewItem, writing: ReadonlyMap<string, string | undefined>): boolean {
+  const run = item.sourceRunId;
+  // A draft outlives an interrupted Run, so being a draft alone does not make an item live.
+  if (run === undefined || !writing.has(run)) return false;
+  if (item.outputState === 'draft') return writing.get(run) === item.outputId;
+  return item.outputState === undefined && item.outputId === undefined && (item.type === 'assistant' || item.type === 'thinking');
+}
+
+/**
+ * A v1 item in v2 terms. `writing` names the Runs that may still write and the output
+ * each writes now; without it the item comes from saved history, where nothing changes any more.
  */
 export function toViewItem(
-  item: ClientViewItem, id: string = item.id, streaming?: ReadonlySet<string>, workspaceRoot?: string,
+  item: ClientViewItem, id: string = item.id, writing?: ReadonlyMap<string, string | undefined>, workspaceRoot?: string,
 ): Readonly<Record<string, unknown>> {
   const { tool } = item;
   const notice = noticeKind(item.icon);
-  // A draft outlives an interrupted Run, so being a draft alone does not make an item live.
-  const live = streaming !== undefined && (tool !== undefined
+  const live = writing !== undefined && (tool !== undefined
     ? tool.status === 'running' || tool.status === 'awaiting_approval'
-    : item.outputState === 'draft' && item.sourceRunId !== undefined && streaming.has(item.sourceRunId));
+    : stillWritten(item, writing));
   return {
     id,
     type: item.type,

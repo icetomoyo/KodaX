@@ -370,7 +370,7 @@ export const VIEW_METHODS = {
 export const VIEW_NOTIFICATIONS = {
   /** The changes since the previous position. */
   'view.patch': { params: z.union([shared.patch, hostShared.patch]), localParams: z.union([local.patch, hostLocal.patch]) },
-  /** The whole view again, after the Host had to drop patches for a slow client. */
+  /** The whole view again, in a new epoch: the Host restarted, or the Session was rewound or moved to another branch. */
   'view.reset': {
     params: z.union([shared.snapshot, hostShared.snapshot]),
     localParams: z.union([local.snapshot, hostLocal.snapshot]),

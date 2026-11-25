@@ -26,6 +26,7 @@ import type { HostCloseReason } from '../host-protocol/close.js';
 import { HostProtocolError } from '../host-protocol/codec.js';
 import { createKodaXHostClient } from '../host-protocol/host-client.js';
 import { HOST_METHODS, type HostMethodSpec } from '../host-protocol/methods.js';
+import { applyViewOps, type ViewOp } from '../host-protocol/view-sync.js';
 import { createHostCredentialService } from '../host-credentials.js';
 import { bindRequestCredentials } from '../request-credential-binding.js';
 import type { KodaXRuntime } from '../sdk-runtime.js';
@@ -483,7 +484,7 @@ interface ViewFrame {
   readonly epoch: string;
   readonly seq: number;
   readonly snapshot?: { readonly items: readonly { readonly id: string; readonly text: string; readonly textTotal?: number }[] };
-  readonly ops?: readonly { readonly op: string; readonly item?: { readonly id: string; readonly text: string } }[];
+  readonly ops?: readonly { readonly op: string; readonly id?: string; readonly item?: { readonly id: string; readonly text: string } }[];
   readonly reason?: string;
 }
 
@@ -641,7 +642,10 @@ async function makeModelHost(turn?: ModelTurn) {
         });
       });
       signal?.throwIfAborted();
-      return turn?.(args[0]) ?? { textBlocks: [{ type: 'text', text: 'done' }], toolBlocks: [], thinkingBlocks: [] };
+      const result = turn?.(args[0]) ?? { textBlocks: [{ type: 'text', text: 'done' }], toolBlocks: [], thinkingBlocks: [] };
+      // As a real provider does, the text arrives as it is written before the answer ends.
+      for (const block of result.textBlocks) args[4]?.onTextDelta?.(block.text);
+      return result;
     }
   }
   vi.stubEnv('KODAX_HOST_RPC_TEST_KEY', 'offline-test');
@@ -1625,7 +1629,78 @@ describe('v2 history served by the v1 implementation', () => {
     await expect(user.request('item.read', { sessionId, itemId: `${sessionId}:input:never-sent` }))
       .rejects.toMatchObject({ kodaxCode: 'not_found' });
   }, 60_000);
+
+  it('still has what slid out of a running turn\'s view, under the ids the view used', async () => {
+    const ROUNDS = 100;
+    let paused: ReturnType<typeof host.hold> | undefined;
+    const host = await makeModelHost((messages) => {
+      const results = messages.flatMap(message => typeof message.content === 'string' ? [] : message.content)
+        .filter(block => block.type === 'tool_result').length;
+      // Hold the Run part-way, after more than a window of items.
+      if (results >= ROUNDS && paused === undefined) paused = host.hold();
+      return {
+        textBlocks: [{ type: 'text', text: `Step ${results}.` }], thinkingBlocks: [], stopReason: 'tool_use',
+        toolBlocks: [{ type: 'tool_use', id: `call-${results}`, name: 'read', input: { path: 'notes.txt' } }],
+      };
+    });
+    const runtime = await host.start();
+    const user = await connect('user', runtime, host.workspace);
+    await writeFile(path.join(host.workspaceRoot, 'app', 'notes.txt'), 'The release is on Friday.');
+    const { session } = await user.request('session.create', { requestId: 'create-1', project: 'app' }) as SessionAnswer;
+    const sessionId = session.id;
+    const sent = notifications(user);
+    const answer = await user.request('view.subscribe', {
+      subscriptionId: 'main', target: { kind: 'session', sessionId },
+    }) as unknown as { readonly epoch: string; readonly snapshot: { readonly items: readonly ShownItem[] } };
+    await user.request('input.submit', { requestId: 'long-1', sessionId, text: 'Read the notes again and again.' });
+    await vi.waitFor(() => expect(paused).toBeDefined(), { timeout: 60_000 });
+    await paused!.called;
+
+    // Follow the view as a client does, noting the state of every item it loses.
+    let copy = answer.snapshot;
+    const removed: ShownItem[] = [];
+    const follow = (): void => {
+      for (const frame of sent.splice(0)) {
+        expect(frame.method).toBe('view.patch');
+        expect(frame.params.epoch).toBe(answer.epoch);
+        for (const op of frame.params.ops ?? []) {
+          if (op.op === 'item.remove') removed.push(copy.items.find(item => item.id === op.id)!);
+        }
+        copy = applyViewOps(copy, (frame.params.ops ?? []) as readonly ViewOp<ShownItem>[]).view!;
+      }
+    };
+    await vi.waitFor(() => {
+      follow();
+      expect(copy.items.some(item => item.type === 'tool' && item.state === 'settled' && item.tool?.callId === `call-${ROUNDS}`)).toBe(true);
+    }, { timeout: 10_000 });
+    expect(copy.items).toHaveLength(150);
+
+    const history: HistoryPage['items'][number][] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await user.request('history.read', { sessionId, limit: 200, ...(cursor ? { cursor } : {}) }) as unknown as HistoryPage;
+      history.unshift(...page.items);
+      cursor = page.nextCursor;
+    } while (cursor !== undefined);
+    const saved = new Map(history.map(item => [item.id, item]));
+
+    // Nothing was retried, so whatever left the view slid out: it was settled, and the conversation still has it.
+    expect(removed.length).toBeGreaterThan(0);
+    expect(removed.filter(item => item.state !== 'settled').map(item => item.text)).toEqual([]);
+    expect(removed.map(item => saved.get(item.id)?.text)).toEqual(removed.map(item => item.text));
+    // And what the window shows as settled is already saved under the same ids.
+    expect(copy.items.filter(item => item.state === 'settled' && !saved.has(item.id)).map(item => item.id)).toEqual([]);
+    paused!.release();
+  }, 120_000);
 });
+
+interface ShownItem {
+  readonly id: string;
+  readonly type: string;
+  readonly state: string;
+  readonly text: string;
+  readonly tool?: { readonly callId: string };
+}
 
 interface CompactAnswer {
   readonly compacted: boolean;
@@ -1697,6 +1772,25 @@ describe('v2 compaction served by the v1 implementation', () => {
     // What was said can still be read.
     const { items } = await restarted.request('history.read', { sessionId }) as unknown as HistoryPage;
     expect(items.length).toBeGreaterThan(0);
+  }, 60_000);
+
+  it('keeps the view\'s epoch and items, and history still has them under the same ids', async () => {
+    const { client, sessionId, compact, talk } = await sessionWorthCompacting();
+    await talk();
+    type Snapshot = { readonly epoch: string; readonly snapshot: { readonly items: readonly ShownItem[] } };
+    const subscribe = async (subscriptionId: string) => await client.request('view.subscribe', {
+      subscriptionId, target: { kind: 'session', sessionId },
+    }) as unknown as Snapshot;
+    const before = await subscribe('before');
+    expect((await compact('compact-1')).compacted).toBe(true);
+
+    const after = await subscribe('after');
+    expect(after.epoch).toBe(before.epoch);
+    const kept = new Set(after.snapshot.items.map(item => item.id));
+    expect(before.snapshot.items.filter(item => !kept.has(item.id)).map(item => item.text.slice(0, 40))).toEqual([]);
+    const { items } = await client.request('history.read', { sessionId, limit: 200 }) as unknown as HistoryPage;
+    const saved = new Set(items.map(item => item.id));
+    expect(before.snapshot.items.filter(item => item.state === 'settled' && !saved.has(item.id)).map(item => item.text.slice(0, 40))).toEqual([]);
   }, 60_000);
 
   it('answers the same request while it is still at work and refuses any other', async () => {

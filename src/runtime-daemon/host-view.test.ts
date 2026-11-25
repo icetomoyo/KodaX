@@ -389,6 +389,20 @@ describe('a v1 view in v2 terms', () => {
     });
   });
 
+  it('settles a running Run\'s earlier answers: it writes only its newest', () => {
+    const view = SessionView.parse(toSessionView(v1View([
+      { id: 'o1-thinking', type: 'thinking', text: 'first', outputId: 'o1', outputState: 'draft', sourceRunId: 'run-live' },
+      { id: 'o1', type: 'assistant', text: 'first', outputId: 'o1', outputState: 'draft', sourceRunId: 'run-live' },
+      { id: 'o2', type: 'assistant', text: 'second', outputId: 'o2', outputState: 'draft', sourceRunId: 'run-live' },
+      // Text with no output id is replaced under another id once saved, so it stays live while its Run writes.
+      { id: 'run-live:p9:assistant', type: 'assistant', text: 'unsaved', sourceRunId: 'run-live' },
+      { id: 'notice', type: 'info', text: 'Retrying', sourceRunId: 'run-live' },
+    ] as ClientViewItem[], { runs: [{ runId: 'run-live', phase: 'running', provider: 'anthropic' }] })));
+    expect(Object.fromEntries(view.items.map(item => [item.id, item.state]))).toEqual({
+      'o1-thinking': 'settled', o1: 'settled', o2: 'live', 'run-live:p9:assistant': 'live', notice: 'settled',
+    });
+  });
+
   it('names the file of a proposed change inside the workspace, and its Host path for the owner only', () => {
     const workspace = path.resolve('host-workspace');
     const change = { added: 1, removed: 0, unified: '@@ -0,0 +1,1 @@\n+note' };
