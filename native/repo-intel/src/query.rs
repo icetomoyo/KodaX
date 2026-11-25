@@ -8,6 +8,7 @@
 
 use crate::extract::Extractor;
 use crate::manifest::{self, Language};
+use crate::resolve::Resolution;
 use crate::store::{Entry, Hit, Known, Store, Table};
 use serde_json::{Value, json};
 use std::fs;
@@ -70,7 +71,8 @@ fn hit_json(hit: &Hit, signature: Option<&str>) -> Value {
 }
 
 /// What one file imports, from the index, and where each import leads: `target` for a file
-/// of the repository, else `unresolved` (`external` or `missing`). `stale` when the file
+/// of the repository, `folder` for a folder (a Go package, a Python namespace package), else
+/// `unresolved` (`external` or `missing`); none for Java and C++. `stale` when the file
 /// changed since it was indexed. Not indexed: `missing` on disk, `pending` when the index has not seen it yet.
 pub fn imports(store: &Store, root: &Path, path: &str) -> Result<Value, String> {
     let failed = |error: rusqlite::Error| format!("the index failed: {error}");
@@ -87,11 +89,12 @@ pub fn imports(store: &Store, root: &Path, path: &str) -> Result<Value, String> 
         .into_iter()
         .map(|row| {
             let mut item = json!({ "module": row.import.module, "name": row.import.name, "local": row.import.local });
-            if let Some(target) = row.target {
-                item["target"] = json!(target);
-            }
-            if let Some(reason) = row.unresolved {
-                item["unresolved"] = json!(reason);
+            match row.lead {
+                Some(Resolution::File(path)) => item["target"] = json!(path),
+                Some(Resolution::Folder(path)) => item["folder"] = json!(path),
+                Some(Resolution::External) => item["unresolved"] = json!("external"),
+                Some(Resolution::Missing) => item["unresolved"] = json!("missing"),
+                None => {}
             }
             item
         })

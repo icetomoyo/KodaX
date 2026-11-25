@@ -254,7 +254,7 @@ L3 精确层   按需：通过 Host 现有 LSP 服务（packages/coding/src/lsp/
 | `files.changed` | Host 的编辑工具通知改了哪些文件 |
 | `symbols.definitions` / `symbols.references` | 按名字查；每条带精度，整体带完整性和新鲜度 |
 | `file.outline` | 一个文件的定义、签名和注释；文件过期就现场重新分析 |
-| `file.imports` | 阶段 2 新增：一个文件的 import 及解析到的文件（见 §11.3） |
+| `file.imports` | 阶段 2 新增：一个文件的 import 及解析到的文件或目录（见 §11.3、§11.4） |
 
 - 阶段 1 的引用都是名字匹配，标为 `heuristic`；定义标为 `syntactic`。
 - 外部改动的兜底：引擎在后台定期比对清单里文件的修改时间和大小，并重跑 `git ls-files` 发现新文件。阶段 1 不引入文件监视库。
@@ -447,6 +447,13 @@ L3 精确层   按需：通过 Host 现有 LSP 服务（packages/coding/src/lsp/
 - **构建产物找回源码：** import 指向 `dist/`、`lib/`、`build/`、`out/` 里的文件（或 package.json 的 `exports`、`main` 指向那里）时，先按最近配置的 `outDir` → `rootDir`，再把这一层目录换成 `src/`，找到源码就算解析到。模型要看的是源码，构建产物通常也不在 git 里。
 - **重新解析的范围：** 有文件新增或删除，或任何 tsconfig、jsconfig、package.json 被重新读过，就重新解析全部 import；否则只重新解析内容变了的文件。KodaX 仓库冷索引（含一次全量解析）实测 9.0 秒，第 2 层结束时是 8.4 秒。
 - **`file.imports` 的未索引原因：** 磁盘上没有这个文件回 `missing`；文件在但索引还没扫到回 `pending`；其余沿用文件自己的未索引原因（`size`、`binary` 等）。
+- **解析到目录：** Go 的 import 指向一个包，也就是一个目录；Python 没有 `__init__.py` 的命名空间包也是目录。这两种解析结果带 `folder`，不带 `target`，不硬挑目录里的某个文件。
+- **子模块作为导入的名字：** `from pkg import models`、`use crate::store::{sqlite}` 里导入的名字本身可能就是子模块。引擎对每个导入的名字再解析一次，解析到别的文件或目录就单独记一条边；否则这个名字跟着模块走。
+- **Python 的查找根：** 绝对导入依次在这些目录里找：文件顶层包的上一级目录（脚本、测试从这里跑）、各个项目目录（有 `pyproject.toml`、`setup.py` 或 `setup.cfg`，文件所在的项目优先）和它们的 `src`、仓库根目录。普通模块和包优先于命名空间包。哪里都找不到时：第一段在仓库里有，就算 `missing`；否则算 `external`。
+- **Python 推测根的边界：** "顶层包的上一级目录"只是对脚本目录的猜测。顶层包嵌在仓库深处时（如 `plugins/platforms/email/`），这个目录只用来找到模块，不用来判定 `missing`；标准库同名的模块也不在这里找。引擎内置 Python 3.12 的 `sys.stdlib_module_names`（212 个公开名字）。例如 `plugins/platforms/discord/adapter.py` 的 `import email` 是标准库，不是仓库里的 `plugins/platforms/email/`；`telegram` 插件里的 `from telegram.ext import …` 是外部库。
+- **Rust 的模块树：** `self`、`super`、`crate` 分别从文件自己的模块、上一级模块和 crate 根开始。第一段是本模块的子模块文件，就从那里开始；是 workspace 里某个 crate 的名字（Cargo.toml 的 `[lib] name`，否则 `[package] name`，`-` 读作 `_`），就从它的库根开始；其余算外部。路径一直走到最后一个模块文件，剩下的段是这个文件里的条目或内联模块，所以 `crate::Config` 解析到 `lib.rs`。
+- **Rust 的 `#[path]` 和 `[lib] path`：** `#[path = "x_tests.rs"] mod tests;` 导入的是相对声明文件所在目录的那个文件；写在内联模块里时，内联模块名是路径里的目录（非 `mod.rs`、非 crate 根的文件，还要放在以文件名命名的目录下）。Cargo.toml 的 `[lib] path` 指定库根。经 `#[path]` 引入的文件，里面的 `super` 仍按普通模块文件算，所以常常是 `missing`；要算对得反查是谁引入了它，暂不做。
+- **内联模块里的 `super`：** `mod tests { use super::*; }` 里的 `super` 是文件自己的模块。提取 import 时按所在内联模块的层数折算，`super` 记成 `self`，多出来的 `super` 才往上走。
 
 ### 11.3 第 3 层结果（2026-11-25）
 
@@ -462,3 +469,17 @@ KodaX 仓库，`npm run bench:repo-intel-v2-truth -- . --no-old`，每个 TS 文
 - 剩下 7 对都是配置选择不同：真值整个仓库用根目录的 `tsconfig.test.json`，引擎用最近的 `tsconfig.json`。例如 `packages/artifacts/src/client.ts` 导入 `@kodax-ai/kodax/client`，引擎按 `packages/artifacts/tsconfig.json` 的 `paths` 解析到 `packages/coding/src/client-contract.ts`，这也是这个包自己编译时用的；真值按根配置解析到 `src/sdk-client.ts`。
 - 没解析到的：外部包 14,248 条，`missing` 53 条，都是 `_archive` 里引用已删除文件的旧 eval，解析正确。
 - 评测时补了真值的一个漏洞：`import('./x').T` 这种类型位置的导入编译器会解析，原先的真值没收。补上之前 FP 是 90，其中 83 条是这个原因。
+
+### 11.4 第 4 层结果（2026-11-25）
+
+Python、Go、Rust 的模块解析。`file.imports` 新增 `folder`（见 §11.2）。索引库 schema 升到 9，`edges` 表按（文件、模块、导入的名字）存。Python、Go、Rust 的单元测试用小型夹具；本机没有 Go 仓库，Go 只有夹具测试。真值集按 §9 第 5 条另做，这里用本机的公开仓库探查：看 `missing`（仓库里应该有却没找到）和指回文件自己的边，逐条核对原因。
+
+| 仓库 | 文件 | 解析到文件 | 外部 | missing |
+|---|---|---|---|---|
+| codex（Rust） | 6,146 个 `.rs` | 74,646 | 35,014 | 77 |
+| hermes-agent（Python） | 12,746 个 `.py` | 96,102 | 62,702 | 3 |
+| labs-OO-Agents（Python） | 921 个 `.py` | 4,830 | 3,709 | 0 |
+
+- codex 第一次探查有 4,444 条 `missing` 和 1,903 条指回自己。前者几乎都是测试辅助 crate 用了 `[lib] path = "lib.rs"`；后者是 codex 惯用的 `#[path = "client_tests.rs"] mod tests;`。补上 `[lib] path`、`#[path]`、内联模块里的 `super` 后降到 77 条，剩下的都是经 `#[path]` 引入的测试文件里写的 `super::…`（见 §11.2）。还有 58 条指回自己，抽查都是 `crate::remote` 这类内联模块，指回自己是对的。
+- hermes 第一次探查有 46 条 `missing`，都是插件目录和它包装的库同名（`email`、`telegram`、`discord`）。另有 3 条标准库同名导入指错了文件（`import signal`、`import email`）。按 §11.2 的推测根边界修正后，剩 3 条 `missing`，都是测试引用了已经删掉的模块（`plugins.model_providers.custom` 等），解析正确。
+- TS 基准没有回退：仍是 99.9% / 99.9%（TP 11,989、FP 7、FN 7）。

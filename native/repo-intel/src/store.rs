@@ -10,7 +10,7 @@ use std::path::Path;
 
 /// Bumped when the tables change, or when files are read into them differently
 /// (what the extractor finds, which files it reads); an index with another version is rebuilt.
-const SCHEMA_VERSION: u32 = 8;
+const SCHEMA_VERSION: u32 = 9;
 
 /// Past this size the write-ahead log is cut back once its pages are in the index.
 /// SQLite otherwise keeps the log at the size of the largest batch ever written:
@@ -64,13 +64,21 @@ pub enum FileStatus {
     NotIndexed { reason: &'static str },
 }
 
-/// An import with where it leads: `target` when it is a file of the repository,
-/// else why not in `unresolved` (`external`, `missing`); both empty when the language has no module resolution.
+/// An import with where it leads; `lead` is None when the language has no module resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedImport {
     pub import: Import,
-    pub target: Option<String>,
-    pub unresolved: Option<String>,
+    pub lead: Option<Resolution>,
+}
+
+/// Where one import of the file at `path` leads. `name` is empty for the module itself, and
+/// the imported name when that is a submodule of it (`from pkg import models`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Edge {
+    pub path: String,
+    pub module: String,
+    pub name: String,
+    pub lead: Resolution,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -185,9 +193,10 @@ impl Store {
                PRIMARY KEY(analysis, position)) WITHOUT ROWID;
              -- Where each file's imports lead. Kept by path, not by analysis: the same text
              -- in another folder imports other files. The index on target finds importers.
+             -- name is '' for the module, else an imported name that is a submodule of it.
              CREATE TABLE edges(
-               path TEXT NOT NULL, module TEXT NOT NULL, target TEXT, reason TEXT,
-               PRIMARY KEY(path, module)) WITHOUT ROWID;
+               path TEXT NOT NULL, module TEXT NOT NULL, name TEXT NOT NULL, target TEXT, kind TEXT NOT NULL,
+               PRIMARY KEY(path, module, name)) WITHOUT ROWID;
              CREATE INDEX edges_target ON edges(target) WHERE target IS NOT NULL;
 ",
         )?;
@@ -397,16 +406,19 @@ impl Store {
     /// What the file at `path` imports, in source order, with where each import leads; empty when it is not indexed.
     pub fn imports(&self, path: &str) -> rusqlite::Result<Vec<ResolvedImport>> {
         let mut statement = self.connection.prepare_cached(
-            "SELECT i.module, i.name, i.local, e.target, e.reason FROM files f JOIN analyses a ON a.hash = f.hash
-             JOIN imports i ON i.analysis = a.id LEFT JOIN edges e ON e.path = f.path AND e.module = i.module
+            "SELECT i.module, i.name, i.local, COALESCE(n.target, m.target), COALESCE(n.kind, m.kind)
+             FROM files f JOIN analyses a ON a.hash = f.hash JOIN imports i ON i.analysis = a.id
+             LEFT JOIN edges m ON m.path = f.path AND m.module = i.module AND m.name = ''
+             LEFT JOIN edges n ON n.path = f.path AND n.module = i.module AND n.name = i.name AND i.name <> ''
              WHERE f.path = ?1 ORDER BY i.position",
         )?;
         statement
             .query_map(params![path], |row| {
+                let target: Option<String> = row.get(3)?;
+                let kind: Option<String> = row.get(4)?;
                 Ok(ResolvedImport {
                     import: Import { module: row.get(0)?, name: row.get(1)?, local: row.get(2)? },
-                    target: row.get(3)?,
-                    unresolved: row.get(4)?,
+                    lead: kind.and_then(|kind| Resolution::from_parts(target, &kind)),
                 })
             })?
             .collect()
@@ -417,15 +429,17 @@ impl Store {
         Ok(self.known_files()?.into_keys().collect())
     }
 
-    /// The modules each indexed file imports, with its language: of `paths` only, or of every file.
-    pub fn import_modules(&self, paths: Option<&HashSet<String>>) -> rusqlite::Result<Vec<(String, String, String)>> {
-        const SELECT: &str = "SELECT DISTINCT f.path, a.language, i.module FROM files f JOIN analyses a ON a.hash = f.hash
+    /// What each indexed file imports, as (path, language, module, name), grouped by path
+    /// and module: of `paths` only, or of every file.
+    pub fn imported_names(&self, paths: Option<&HashSet<String>>) -> rusqlite::Result<Vec<(String, String, String, String)>> {
+        const SELECT: &str = "SELECT DISTINCT f.path, a.language, i.module, i.name FROM files f JOIN analyses a ON a.hash = f.hash
              JOIN imports i ON i.analysis = a.id";
-        let row = |row: &rusqlite::Row| Ok((row.get(0)?, row.get(1)?, row.get(2)?));
+        const ORDER: &str = "ORDER BY f.path, i.module";
+        let row = |row: &rusqlite::Row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?));
         let Some(paths) = paths else {
-            return self.connection.prepare(SELECT)?.query_map([], row)?.collect();
+            return self.connection.prepare(&format!("{SELECT} {ORDER}"))?.query_map([], row)?.collect();
         };
-        let mut statement = self.connection.prepare_cached(&format!("{SELECT} WHERE f.path = ?1"))?;
+        let mut statement = self.connection.prepare_cached(&format!("{SELECT} WHERE f.path = ?1 {ORDER}"))?;
         let mut found = Vec::new();
         for path in paths {
             found.extend(statement.query_map(params![path], row)?.collect::<rusqlite::Result<Vec<_>>>()?);
@@ -434,7 +448,7 @@ impl Store {
     }
 
     /// Replaces where the imports of `paths` lead (of every file when None) with `edges`.
-    pub fn replace_edges(&self, paths: Option<&HashSet<String>>, edges: &[(String, String, Resolution)]) -> rusqlite::Result<()> {
+    pub fn replace_edges(&self, paths: Option<&HashSet<String>>, edges: &[Edge]) -> rusqlite::Result<()> {
         match paths {
             None => {
                 self.connection.execute("DELETE FROM edges", [])?;
@@ -446,11 +460,12 @@ impl Store {
                 }
             }
         }
-        let mut insert =
-            self.connection.prepare_cached("INSERT OR REPLACE INTO edges(path, module, target, reason) VALUES (?1, ?2, ?3, ?4)")?;
-        for (path, module, resolution) in edges {
-            let (target, reason) = resolution.parts();
-            insert.execute(params![path, module, target, reason])?;
+        let mut insert = self
+            .connection
+            .prepare_cached("INSERT OR REPLACE INTO edges(path, module, name, target, kind) VALUES (?1, ?2, ?3, ?4, ?5)")?;
+        for edge in edges {
+            let (target, kind) = edge.lead.parts();
+            insert.execute(params![edge.path, edge.module, edge.name, target, kind])?;
         }
         Ok(())
     }
@@ -554,7 +569,7 @@ mod tests {
         with_imports.imports = vec![import("./z", "b", "b"), import("./a", "*", "")];
         store.record_analysis("h", "typescript", &with_imports).unwrap();
         store.record_file(&row("a.ts", indexed("h"))).unwrap();
-        let unresolved = |import: Import| ResolvedImport { import, target: None, unresolved: None };
+        let unresolved = |import: Import| ResolvedImport { import, lead: None };
         assert_eq!(store.imports("a.ts").unwrap(), with_imports.imports.iter().cloned().map(unresolved).collect::<Vec<_>>());
         assert_eq!(store.imports("none.ts").unwrap(), vec![]);
         store.keep_only(&HashSet::new()).unwrap();
@@ -567,33 +582,39 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("index.sqlite")).unwrap();
         let mut with_imports = analysis(&[], false);
-        let import = |module: &str| Import { module: module.to_owned(), name: "x".to_owned(), local: "x".to_owned() };
-        with_imports.imports = vec![import("./b"), import("react"), import("./b")];
+        let import = |module: &str, name: &str| Import { module: module.to_owned(), name: name.to_owned(), local: name.to_owned() };
+        with_imports.imports = vec![import("./b", "x"), import("react", "x"), import("./b", "x"), import("./b", "sub")];
         store.record_analysis("h", "typescript", &with_imports).unwrap();
         for path in ["a.ts", "c.ts"] {
             store.record_file(&row(path, indexed("h"))).unwrap();
         }
-        let mut modules = store.import_modules(None).unwrap();
-        modules.sort();
-        let module = |path: &str, module: &str| (path.to_owned(), "typescript".to_owned(), module.to_owned());
-        assert_eq!(modules, vec![module("a.ts", "./b"), module("a.ts", "react"), module("c.ts", "./b"), module("c.ts", "react")]);
+        let names = store.imported_names(None).unwrap();
+        let name = |path: &str, module: &str, name: &str| (path.to_owned(), "typescript".to_owned(), module.to_owned(), name.to_owned());
+        let a = [name("a.ts", "./b", "sub"), name("a.ts", "./b", "x"), name("a.ts", "react", "x")];
+        assert_eq!(&names[..2].iter().map(|n| n.2.clone()).collect::<Vec<_>>(), &["./b", "./b"], "grouped by path and module");
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(sorted[..3], a);
         let only_a = HashSet::from(["a.ts".to_owned()]);
-        assert_eq!(store.import_modules(Some(&only_a)).unwrap().len(), 2);
+        assert_eq!(store.imported_names(Some(&only_a)).unwrap().len(), 3);
 
-        let edge = |path: &str, module: &str, resolution: Resolution| (path.to_owned(), module.to_owned(), resolution);
+        let edge = |path: &str, module: &str, name: &str, lead: Resolution| Edge { path: path.to_owned(), module: module.to_owned(), name: name.to_owned(), lead };
+        let b = Resolution::File("b.ts".to_owned());
         let edges = [
-            edge("a.ts", "./b", Resolution::File("b.ts".to_owned())),
-            edge("a.ts", "react", Resolution::External),
-            edge("c.ts", "./b", Resolution::Missing),
+            edge("a.ts", "./b", "", b.clone()),
+            edge("a.ts", "./b", "sub", Resolution::Folder("b".to_owned())),
+            edge("a.ts", "react", "", Resolution::External),
+            edge("c.ts", "./b", "", Resolution::Missing),
         ];
         store.replace_edges(None, &edges).unwrap();
-        let leads = |path: &str| store.imports(path).unwrap().into_iter().map(|i| (i.target, i.unresolved)).collect::<Vec<_>>();
-        let file = (Some("b.ts".to_owned()), None);
-        assert_eq!(leads("a.ts"), vec![file.clone(), (None, Some("external".to_owned())), file.clone()]);
-        assert_eq!(leads("c.ts")[0], (None, Some("missing".to_owned())));
+        let leads = |path: &str| store.imports(path).unwrap().into_iter().map(|i| i.lead).collect::<Vec<_>>();
+        let sub = Resolution::Folder("b".to_owned());
+        assert_eq!(leads("a.ts"), vec![Some(b.clone()), Some(Resolution::External), Some(b.clone()), Some(sub)]);
+        assert_eq!(leads("c.ts")[0], Some(Resolution::Missing));
+        assert_eq!(leads("c.ts")[3], Some(Resolution::Missing), "a member with no edge of its own leads where its module does");
         store.replace_edges(Some(&only_a), &[]).unwrap();
-        assert_eq!(leads("a.ts")[0], (None, None));
-        assert_eq!(leads("c.ts")[0], (None, Some("missing".to_owned())));
+        assert_eq!(leads("a.ts")[0], None);
+        assert_eq!(leads("c.ts")[0], Some(Resolution::Missing));
     }
 
     #[test]

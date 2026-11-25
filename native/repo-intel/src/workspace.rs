@@ -10,7 +10,7 @@ use crate::extract::Extractor;
 use crate::manifest::{self, Language};
 use crate::query;
 use crate::resolve::{Resolver, is_resolution_config};
-use crate::store::{FileRow, FileStatus, Known, Store, Table};
+use crate::store::{Edge, FileRow, FileStatus, Known, Store, Table};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -274,17 +274,23 @@ impl Indexer<'_> {
         }
         let Some(resolver) = &self.resolver else { return Ok(()) };
         let scope = (!everything).then_some(&reread);
-        let edges: Vec<_> = self
-            .store
-            .import_modules(scope)
-            .map_err(database)?
-            .into_iter()
-            .filter_map(|(path, language, module)| {
-                let language = Language::ALL.into_iter().find(|known| known.name() == language)?;
-                let resolution = resolver.resolve(language, &path, &module)?;
-                Some((path, module, resolution))
-            })
-            .collect();
+        let mut edges: Vec<Edge> = Vec::new();
+        for (path, language, module, name) in self.store.imported_names(scope).map_err(database)? {
+            let Some(language) = Language::ALL.into_iter().find(|known| known.name() == language) else { continue };
+            // Rows come grouped by path and module: the module is resolved once, at its first row.
+            let last = edges.iter().rev().find(|edge| edge.name.is_empty());
+            let lead = match last.filter(|edge| edge.path == path && edge.module == module) {
+                Some(edge) => edge.lead.clone(),
+                None => {
+                    let Some(lead) = resolver.resolve(language, &path, &module) else { continue };
+                    edges.push(Edge { path: path.clone(), module: module.clone(), name: String::new(), lead: lead.clone() });
+                    lead
+                }
+            };
+            if let Some(member) = resolver.member(language, &path, &module, &name, &lead) {
+                edges.push(Edge { path, module, name, lead: member });
+            }
+        }
         self.store.begin().map_err(database)?;
         self.store.replace_edges(scope, &edges).map_err(database)?;
         self.store.commit().map_err(database)
@@ -483,6 +489,49 @@ mod tests {
         assert_eq!(leads(&workspace), vec![json!(["../lib/c", "lib/c.ts", null])]);
         assert_eq!(workspace.imports("lib/c.ts").unwrap()["imports"], json!([]));
         assert_eq!(workspace.imports("none.ts").unwrap()["indexed"], false);
+        workspace.close().unwrap();
+    }
+
+    #[test]
+    fn follows_python_go_and_rust_imports_to_submodules_and_package_folders() {
+        let dir = repo(&[
+            ("pkg/__init__.py", "from . import models\nfrom .models import User\nimport json\n"),
+            ("pkg/models.py", "class User: pass\n"),
+            ("go.mod", "module example.com/app\n"),
+            ("main.go", "package main\n\nimport (\n\t\"fmt\"\n\t\"example.com/app/store\"\n)\n"),
+            ("store/store.go", "package store\n"),
+            ("Cargo.toml", "[package]\nname = \"app\"\n"),
+            ("src/lib.rs", "mod store;\nuse crate::{store as kept, Config};\npub struct Config;\n"),
+            ("src/store.rs", "pub struct Store;\n"),
+        ]);
+        let storage = tempfile::tempdir().unwrap();
+        let workspace = Workspace::open(dir.path().to_owned(), storage.path().to_owned()).unwrap();
+        wait_for_sweeps(&workspace, 1);
+        let leads = |path: &str| -> Vec<Value> {
+            let answer = workspace.imports(path).unwrap();
+            let imports = answer["imports"].as_array().unwrap_or_else(|| panic!("{answer}"));
+            imports.iter().map(|i| json!([i["module"], i["name"], i["target"], i["folder"], i["unresolved"]])).collect()
+        };
+        assert_eq!(
+            leads("pkg/__init__.py"),
+            vec![
+                json!([".", "models", "pkg/models.py", null, null]),
+                json!([".models", "User", "pkg/models.py", null, null]),
+                json!(["json", "*", null, null, "external"]),
+            ]
+        );
+        assert_eq!(
+            leads("main.go"),
+            vec![json!(["fmt", "*", null, null, "external"]), json!(["example.com/app/store", "*", null, "store", null])]
+        );
+        assert_eq!(
+            leads("src/lib.rs"),
+            vec![
+                json!(["self::store", "*", "src/store.rs", null, null]),
+                json!(["crate", "store", "src/store.rs", null, null]),
+                json!(["crate", "Config", "src/lib.rs", null, null]),
+            ]
+        );
         workspace.close().unwrap();
     }
 

@@ -123,6 +123,8 @@ export interface ImportsAnswer {
     readonly name: string;
     readonly local: string;
     readonly target?: string;
+    /** A folder the import leads to: a Go package, a Python namespace package. */
+    readonly folder?: string;
     readonly unresolved?: 'external' | 'missing';
   }[];
 }

@@ -240,21 +240,55 @@ impl Reader<'_> {
     fn rust(&self, node: Node, found: &mut Vec<Import>) -> bool {
         match node.kind() {
             "use_declaration" => {
-                if let Some(argument) = node.child_by_field_name("argument") {
-                    self.use_tree(argument, "", found);
+                let Some(argument) = node.child_by_field_name("argument") else { return true };
+                let start = found.len();
+                self.use_tree(argument, "", found);
+                let depth = std::iter::successors(node.parent(), Node::parent).filter(|n| n.kind() == "mod_item").count();
+                for import in &mut found[start..] {
+                    import.module = from_the_file(&import.module, depth);
                 }
                 true
             }
-            // `mod store;` makes the child module `store` of this one, as `use self::store` names it.
+            // `mod store;` makes the child module `store` of this one, as `use self::store` names it;
+            // with `#[path = "x.rs"]` its file is that path instead, kept as the module.
             "mod_item" if node.child_by_field_name("body").is_none() => {
-                if let Some(name) = node.child_by_field_name("name").map(|n| self.text(n)) {
-                    found.push(Import::new(format!("self::{name}"), "*", name));
-                }
+                let Some(name) = node.child_by_field_name("name").map(|n| self.text(n)) else { return true };
+                let module = match self.path_attribute(node) {
+                    // Inside inline modules, their names are folders of the path.
+                    Some(path) => {
+                        let mut folders: Vec<String> = std::iter::successors(node.parent(), Node::parent)
+                            .filter(|n| n.kind() == "mod_item")
+                            .filter_map(|n| n.child_by_field_name("name").map(|n| self.text(n)))
+                            .collect();
+                        folders.reverse();
+                        folders.push(path);
+                        folders.join("/")
+                    }
+                    None => format!("self::{name}"),
+                };
+                found.push(Import::new(module, "*", name));
                 true
             }
             _ => false,
         }
     }
+
+    /// The value of a `#[path = "..."]` attribute on the item `node`, among the attributes before it.
+    fn path_attribute(&self, node: Node) -> Option<String> {
+        let mut sibling = node.prev_named_sibling();
+        while let Some(attribute) = sibling.filter(|s| s.kind() == "attribute_item") {
+            let inner = attribute.named_child(0).filter(|inner| inner.kind() == "attribute");
+            if let Some(inner) = inner
+                && inner.named_child(0).is_some_and(|path| self.text(path) == "path")
+                && let Some(value) = inner.child_by_field_name("value")
+            {
+                return Some(self.unquoted(value));
+            }
+            sibling = attribute.prev_named_sibling();
+        }
+        None
+    }
+
 
     /// One part of a `use` tree; `prefix` is the path of the lists it sits in, ending in `::` when not empty.
     fn use_tree(&self, node: Node, prefix: &str, found: &mut Vec<Import>) {
@@ -304,6 +338,18 @@ impl Reader<'_> {
             _ => {}
         }
     }
+}
+
+/// A Rust path written `depth` inline modules deep, with its leading `super`s counted from
+/// the file's own module instead: `super::x` in `mod tests { }` is `self::x`, an item of the file.
+fn from_the_file(module: &str, depth: usize) -> String {
+    let segments: Vec<&str> = module.split("::").collect();
+    let supers = segments.iter().take_while(|segment| **segment == "super").count();
+    if depth == 0 || supers == 0 {
+        return module.to_owned();
+    }
+    let rest = &segments[supers.min(depth)..];
+    if supers > depth { rest.join("::") } else { std::iter::once("self").chain(rest.iter().copied()).collect::<Vec<_>>().join("::") }
 }
 
 #[cfg(test)]
@@ -403,6 +449,32 @@ mod tests {
                 i("example.com/app/driver", "", ""),
                 i("example.com/app/run", "*", "run"),
             ]
+        );
+    }
+
+    #[test]
+    fn rust_module_files_named_by_a_path_attribute_keep_that_path() {
+        let source = "#[cfg(test)]\n#[path = \"client_tests.rs\"]\nmod tests;\n#[path = \"impl/unix.rs\"] mod sys;\n#[cfg(test)]\nmod plain;\n\
+            mod outer { mod tests { #[path = \"a_tests.rs\"] mod a; } }\n";
+        assert_eq!(
+            imports(Language::Rust, source),
+            vec![
+                i("client_tests.rs", "*", "tests"),
+                i("impl/unix.rs", "*", "sys"),
+                i("self::plain", "*", "plain"),
+                // Inside inline modules, their names are folders of the path.
+                i("outer/tests/a_tests.rs", "*", "a"),
+            ]
+        );
+    }
+
+    #[test]
+    fn rust_super_in_inline_modules_counts_from_the_file() {
+        let source = "use super::a;\n#[cfg(test)]\nmod tests {\n    use super::*;\n    use super::super::b;\n    use crate::c;\n\
+            mod deeper { use super::super::d; use super::super::super::e; }\n}\n";
+        assert_eq!(
+            imports(Language::Rust, source),
+            vec![i("super", "a", "a"), i("self", "*", ""), i("super", "b", "b"), i("crate", "c", "c"), i("self", "d", "d"), i("super", "e", "e")]
         );
     }
 
