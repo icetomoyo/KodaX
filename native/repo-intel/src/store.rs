@@ -2,14 +2,14 @@
 //! A file's analysis is stored under its content hash, so content seen before
 //! (a branch switched back, a file moved) is never analyzed twice.
 
-use crate::extract::Analysis;
+use crate::extract::{Analysis, Import};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 /// Bumped when the tables change, or when files are read into them differently
 /// (what the extractor finds, which files it reads); an index with another version is rebuilt.
-const SCHEMA_VERSION: u32 = 6;
+const SCHEMA_VERSION: u32 = 7;
 
 /// Past this size the write-ahead log is cut back once its pages are in the index.
 /// SQLite otherwise keeps the log at the size of the largest batch ever written:
@@ -146,6 +146,7 @@ impl Store {
              DROP TABLE IF EXISTS analyses;
              DROP TABLE IF EXISTS definitions;
              DROP TABLE IF EXISTS refs;
+             DROP TABLE IF EXISTS imports;
              CREATE TABLE files(
                path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
                language TEXT, hash TEXT, reason TEXT);
@@ -166,6 +167,11 @@ impl Store {
                name TEXT NOT NULL, analysis INTEGER NOT NULL, line INTEGER NOT NULL, column INTEGER NOT NULL,
                kind TEXT NOT NULL,
                PRIMARY KEY(name, analysis, line, column)) WITHOUT ROWID;
+             -- What each analysis imports, read together when its file's imports are resolved.
+             CREATE TABLE imports(
+               analysis INTEGER NOT NULL, position INTEGER NOT NULL, module TEXT NOT NULL,
+               name TEXT NOT NULL, local TEXT NOT NULL,
+               PRIMARY KEY(analysis, position)) WITHOUT ROWID;
 ",
         )?;
         self.connection.execute(
@@ -218,6 +224,12 @@ impl Store {
         for r in &analysis.references {
             reference.execute(params![r.name, id, r.line, r.column, r.kind])?;
         }
+        let mut import = self
+            .connection
+            .prepare_cached("INSERT INTO imports(analysis, position, module, name, local) VALUES (?1, ?2, ?3, ?4, ?5)")?;
+        for (position, i) in analysis.imports.iter().enumerate() {
+            import.execute(params![id, position as i64, i.module, i.name, i.local])?;
+        }
         Ok(())
     }
 
@@ -264,6 +276,7 @@ impl Store {
             self.connection.execute_batch(&format!(
                 "DELETE FROM definitions WHERE analysis IN ({UNUSED});
                  DELETE FROM refs WHERE analysis IN ({UNUSED});
+                 DELETE FROM imports WHERE analysis IN ({UNUSED});
                  DELETE FROM analyses WHERE id IN ({UNUSED});"
             ))?;
         }
@@ -364,6 +377,18 @@ impl Store {
         Ok(Some(Entry::Indexed { known, language, has_syntax_errors, definitions }))
     }
 
+    /// What the file at `path` imports, in source order; empty when it is not indexed.
+    #[allow(dead_code)] // Module resolution, the next layer, reads it.
+    pub fn imports(&self, path: &str) -> rusqlite::Result<Vec<Import>> {
+        let mut statement = self.connection.prepare_cached(
+            "SELECT i.module, i.name, i.local FROM files f JOIN analyses a ON a.hash = f.hash
+             JOIN imports i ON i.analysis = a.id WHERE f.path = ?1 ORDER BY i.position",
+        )?;
+        statement
+            .query_map(params![path], |row| Ok(Import { module: row.get(0)?, name: row.get(1)?, local: row.get(2)? }))?
+            .collect()
+    }
+
     #[cfg(test)]
     pub fn analysis_count(&self) -> rusqlite::Result<u64> {
         self.connection.query_row("SELECT COUNT(*) FROM analyses", [], |row| row.get::<_, i64>(0)).map(|n| n as u64)
@@ -396,7 +421,7 @@ mod tests {
                 end_line: 1,
             })
             .collect();
-        Analysis { definitions, references: vec![], has_syntax_errors }
+        Analysis { definitions, references: vec![], imports: vec![], has_syntax_errors }
     }
 
     fn indexed(hash: &str) -> FileStatus {
@@ -452,6 +477,22 @@ mod tests {
         let (references, total) = store.find(Table::References, "run", 5, 0).unwrap();
         assert_eq!((references[0].line, references[0].kind.as_str(), references[0].end_line, total), (4, "call", None, 2));
         assert_eq!(store.find(Table::Definitions, "missing", 5, 0).unwrap(), (vec![], 0));
+    }
+
+    #[test]
+    fn keeps_each_file_s_imports_in_order_until_the_analysis_goes() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("index.sqlite")).unwrap();
+        let mut with_imports = analysis(&[], false);
+        let import = |module: &str, name: &str, local: &str| Import { module: module.to_owned(), name: name.to_owned(), local: local.to_owned() };
+        with_imports.imports = vec![import("./z", "b", "b"), import("./a", "*", "")];
+        store.record_analysis("h", "typescript", &with_imports).unwrap();
+        store.record_file(&row("a.ts", indexed("h"))).unwrap();
+        assert_eq!(store.imports("a.ts").unwrap(), with_imports.imports);
+        assert_eq!(store.imports("none.ts").unwrap(), vec![]);
+        store.keep_only(&HashSet::new()).unwrap();
+        let left = store.connection.query_row("SELECT COUNT(*) FROM imports", [], |row| row.get::<_, i64>(0)).unwrap();
+        assert_eq!(left, 0);
     }
 
     #[test]

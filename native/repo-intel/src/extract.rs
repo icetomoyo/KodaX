@@ -4,6 +4,8 @@
 //! Nothing here resolves a name to its definition: definitions are syntactic,
 //! and a reference is only a name at a position.
 
+pub use crate::imports::Import;
+use crate::imports::imports_of;
 use crate::manifest::Language;
 use std::collections::HashMap;
 use tree_sitter::{Node, Parser, Query, QueryCursor, StreamingIterator};
@@ -32,6 +34,7 @@ pub struct Reference {
 pub struct Analysis {
     pub definitions: Vec<Definition>,
     pub references: Vec<Reference>,
+    pub imports: Vec<Import>,
     /// The parser had to skip text it could not read; some definitions may be missing.
     pub has_syntax_errors: bool,
 }
@@ -166,7 +169,9 @@ impl Extractor {
                 found.push(Found { pattern: found_match.pattern_index, role, kind, name, node, scope });
             }
         }
-        Ok(analysis_of(found, source, tree.root_node().has_error()))
+        let mut analysis = analysis_of(found, source, tree.root_node().has_error());
+        analysis.imports = imports_of(language, tree.root_node(), source);
+        Ok(analysis)
     }
 }
 
@@ -215,7 +220,7 @@ fn analysis_of(mut found: Vec<Found>, source: &[u8], has_syntax_errors: bool) ->
         });
         open.push((item.node.end_byte(), name, kind));
     }
-    Analysis { definitions, references, has_syntax_errors }
+    Analysis { definitions, references, imports: Vec::new(), has_syntax_errors }
 }
 
 #[cfg(test)]

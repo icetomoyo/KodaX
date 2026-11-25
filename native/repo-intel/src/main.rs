@@ -2,6 +2,7 @@
 //! and answers over stdio with JSON-RPC framed as LSP frames it.
 
 mod extract;
+mod imports;
 mod manifest;
 mod memory;
 mod priority;
