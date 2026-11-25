@@ -11,6 +11,10 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 
+/// Bumped when a method or its parameters change, so a Host refuses an engine
+/// it cannot talk to, as after an update installed while the Host kept running.
+pub const PROTOCOL: u64 = 1;
+
 /// Memory budget when the Host names none, in MB.
 const DEFAULT_MEMORY_BUDGET_MB: u64 = 300;
 
@@ -179,6 +183,7 @@ impl Server {
         };
         Ok(json!({
             "version": env!("CARGO_PKG_VERSION"),
+            "protocol": PROTOCOL,
             "languages": Language::ALL.map(Language::name),
             "memoryBudgetMb": memory_budget_mb,
             "background": background,
@@ -261,6 +266,7 @@ mod tests {
         assert_eq!(reply["result"]["memoryBudgetMb"], 300);
         assert_eq!(reply["result"]["background"], json!({ "active": false, "reason": "no" }));
         assert_eq!(reply["result"]["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(reply["result"]["protocol"], PROTOCOL);
         assert_eq!(reply["result"]["languages"].as_array().unwrap().len(), 8);
     }
 

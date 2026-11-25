@@ -8,7 +8,41 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 /// Bumped when the tables change; an index with another version is rebuilt.
-const SCHEMA_VERSION: &str = "5";
+const SCHEMA_VERSION: u32 = 5;
+
+/// Each schema version has its own file, so engines of two versions that share
+/// a storage folder never rebuild each other's index.
+pub fn index_file_name() -> String {
+    format!("index-v{SCHEMA_VERSION}.sqlite")
+}
+
+/// The schema version an index file (or its -wal / -shm file) belongs to;
+/// `index.sqlite` is from before versions were in the name.
+fn index_file_version(name: &str) -> Option<u32> {
+    let rest = name.strip_prefix("index")?;
+    if rest.starts_with(".sqlite") {
+        return Some(0);
+    }
+    let (digits, suffix) = rest.strip_prefix("-v")?.split_once('.')?;
+    if !suffix.starts_with("sqlite") {
+        return None;
+    }
+    digits.parse().ok()
+}
+
+/// Removes the index files of older versions from `folder` and says which could
+/// not go (an older engine still running may hold one open). Newer ones stay,
+/// since a newer engine may be using them.
+pub fn remove_older_indexes(folder: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|entry| index_file_version(&entry.file_name().to_string_lossy()).is_some_and(|v| v < SCHEMA_VERSION))
+        .filter_map(|entry| std::fs::remove_file(entry.path()).err().map(|error| format!("{}: {error}", entry.path().display())))
+        .collect()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Known {
@@ -97,7 +131,7 @@ impl Store {
             .connection
             .query_row("SELECT value FROM meta WHERE key = 'schema'", [], |row| row.get(0))
             .optional()?;
-        if version.as_deref() == Some(SCHEMA_VERSION) {
+        if version == Some(SCHEMA_VERSION.to_string()) {
             return Ok(());
         }
         self.connection.execute_batch(
@@ -129,7 +163,7 @@ impl Store {
         )?;
         self.connection.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', ?1)",
-            params![SCHEMA_VERSION],
+            params![SCHEMA_VERSION.to_string()],
         )?;
         Ok(())
     }

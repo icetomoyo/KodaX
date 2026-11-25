@@ -78,7 +78,10 @@ pub fn storage_dir(storage_root: &Path, root: &Path) -> PathBuf {
 impl Workspace {
     /// Opens (or makes) the index now, so queries can read it at once; indexing goes on in the background.
     pub fn open(root: PathBuf, storage: PathBuf) -> Result<Workspace, String> {
-        let index = storage.join("index.sqlite");
+        for failure in crate::store::remove_older_indexes(&storage) {
+            eprintln!("kodax-repo-intel: cannot remove an older index, will try again next time: {failure}");
+        }
+        let index = storage.join(crate::store::index_file_name());
         let cannot_open = |error: rusqlite::Error| format!("cannot open the index at {}: {error}", index.display());
         let store = Store::open(&index).map_err(cannot_open)?;
         let reader = Store::open(&index).map_err(cannot_open)?;
@@ -393,6 +396,25 @@ mod tests {
         let status = wait_for_sweeps(&workspace, 1);
         assert_eq!(status["state"], "degraded");
         assert!(status["error"].as_str().unwrap().contains("git ls-files failed"), "{status}");
+        workspace.close().unwrap();
+    }
+
+    #[test]
+    fn keeps_its_index_in_a_file_named_for_its_version_and_removes_older_ones() {
+        let dir = repo(&[("a.ts", "let a = 1;")]);
+        let storage = tempfile::tempdir().unwrap();
+        let older = ["index.sqlite", "index.sqlite-wal", "index-v4.sqlite", "index-v4.sqlite-shm"];
+        for name in older.iter().chain(&["index-v99.sqlite", "notes.txt"]) {
+            fs::write(storage.path().join(name), "").unwrap();
+        }
+        let workspace = Workspace::open(dir.path().to_owned(), storage.path().to_owned()).unwrap();
+        assert_eq!(wait_for_sweeps(&workspace, 1)["indexed"], 1);
+        assert!(storage.path().join(crate::store::index_file_name()).is_file());
+        for name in older {
+            assert!(!storage.path().join(name).exists(), "{name} is left");
+        }
+        assert!(storage.path().join("index-v99.sqlite").exists(), "a newer engine may still use its index");
+        assert!(storage.path().join("notes.txt").exists());
         workspace.close().unwrap();
     }
 
