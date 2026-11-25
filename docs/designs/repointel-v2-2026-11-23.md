@@ -254,6 +254,7 @@ L3 精确层   按需：通过 Host 现有 LSP 服务（packages/coding/src/lsp/
 | `files.changed` | Host 的编辑工具通知改了哪些文件 |
 | `symbols.definitions` / `symbols.references` | 按名字查；每条带精度，整体带完整性和新鲜度 |
 | `file.outline` | 一个文件的定义、签名和注释；文件过期就现场重新分析 |
+| `file.imports` | 阶段 2 新增：一个文件的 import 及解析到的文件（见 §11.3） |
 
 - 阶段 1 的引用都是名字匹配，标为 `heuristic`；定义标为 `syntactic`。
 - 外部改动的兜底：引擎在后台定期比对清单里文件的修改时间和大小，并重跑 `git ls-files` 发现新文件。阶段 1 不引入文件监视库。
@@ -442,3 +443,22 @@ L3 精确层   按需：通过 Host 现有 LSP 服务（packages/coding/src/lsp/
 - **语言范围：** L2 做首批四种语言（TS/JS、Python、Go、Rust）。Java、C++ 只有语法层，引用仍是同名匹配，按 §4.2。
 - **import 的存储：** import 跟着文件内容存（按内容 hash），解析结果跟着文件路径存，因为同一份内容放在不同位置解析结果不同。新增文件、删除文件或 tsconfig、package.json、go.mod、Cargo.toml 改动时，重新解析受影响的文件。
 - **re-export 不单独标记：** `export { a } from './x'`、`export * from './x'`、Rust 的 `pub use`、Python 包里 `__init__.py` 的 `from .x import a`，都按普通 import 记。查名字时，被导入的文件里找不到定义，就顺着它自己的 import 继续找。这样不区分导出与否也不会找错：TS 和 Rust 里，一个文件只 import 没 export 的名字，别的文件拿不到，编译器会报错，能编译的代码里没有这种链；Python 本来就能从模块里取到它导入的任何名字。
+- **用哪份 tsconfig：** 每个文件用离它最近的那个目录里的 `tsconfig.json`（没有就用 `jsconfig.json`），顺着相对路径的 `extends` 合并。同目录下的 `tsconfig.test.json` 这类文件不看，也不按 `include` 判断文件归哪份配置。代价见 §11.3 剩下的 7 对差异。
+- **构建产物找回源码：** import 指向 `dist/`、`lib/`、`build/`、`out/` 里的文件（或 package.json 的 `exports`、`main` 指向那里）时，先按最近配置的 `outDir` → `rootDir`，再把这一层目录换成 `src/`，找到源码就算解析到。模型要看的是源码，构建产物通常也不在 git 里。
+- **重新解析的范围：** 有文件新增或删除，或任何 tsconfig、jsconfig、package.json 被重新读过，就重新解析全部 import；否则只重新解析内容变了的文件。KodaX 仓库冷索引（含一次全量解析）实测 9.0 秒，第 2 层结束时是 8.4 秒。
+- **`file.imports` 的未索引原因：** 磁盘上没有这个文件回 `missing`；文件在但索引还没扫到回 `pending`；其余沿用文件自己的未索引原因（`size`、`binary` 等）。
+
+### 11.3 第 3 层结果（2026-11-25）
+
+新增引擎方法 `file.imports`：一个文件的每条 import（模块说明符、导入的名字、本地别名），解析到仓库文件就带 `target`，否则带 `unresolved`（`external` 外部包，`missing` 指向仓库里不存在的文件）。文件改过但索引还没跟上时带 `stale`。索引库 schema 升到 8，新增 `edges` 表。
+
+KodaX 仓库，`npm run bench:repo-intel-v2-truth -- . --no-old`，每个 TS 文件的文件级 import 边对照编译器真值（`ts.resolveModuleName`，根目录 `tsconfig.test.json`）：
+
+| 来源 | 精确率 | 召回率 | TP | FP | FN |
+|---|---|---|---|---|---|
+| v2 `file.imports` | 99.9% | 99.9% | 11,989 | 7 | 7 |
+
+- 旧引擎的 70% / 63.6% 是模块级，口径更松，不能直接比。
+- 剩下 7 对都是配置选择不同：真值整个仓库用根目录的 `tsconfig.test.json`，引擎用最近的 `tsconfig.json`。例如 `packages/artifacts/src/client.ts` 导入 `@kodax-ai/kodax/client`，引擎按 `packages/artifacts/tsconfig.json` 的 `paths` 解析到 `packages/coding/src/client-contract.ts`，这也是这个包自己编译时用的；真值按根配置解析到 `src/sdk-client.ts`。
+- 没解析到的：外部包 14,248 条，`missing` 53 条，都是 `_archive` 里引用已删除文件的旧 eval，解析正确。
+- 评测时补了真值的一个漏洞：`import('./x').T` 这种类型位置的导入编译器会解析，原先的真值没收。补上之前 FP 是 90，其中 83 条是这个原因。

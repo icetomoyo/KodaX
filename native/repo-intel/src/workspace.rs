@@ -2,11 +2,14 @@
 //! It sweeps once when opened and every `SWEEP_EVERY` in case something else
 //! changed them. A sweep lists the files with git and reads only those whose
 //! size or modification time moved. When the Host names files it changed and
-//! the index already knows them all, only those files are updated.
+//! the index already knows them all, only those files are updated. After each
+//! pass it works out where imports lead: for every file when files came or went
+//! or a tsconfig or package.json changed, else for the files it re-read.
 
 use crate::extract::Extractor;
 use crate::manifest::{self, Language};
 use crate::query;
+use crate::resolve::{Resolver, is_resolution_config};
 use crate::store::{FileRow, FileStatus, Known, Store, Table};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -93,7 +96,15 @@ impl Workspace {
             if let Err(reason) = crate::priority::lower_this_thread() {
                 eprintln!("kodax-repo-intel: indexing {} at normal priority: {reason}", folder.display());
             }
-            let mut index = Indexer { root: folder, store: &store, extractor: Extractor::default(), status: &shared };
+            let mut index = Indexer {
+                root: folder,
+                store: &store,
+                extractor: Extractor::default(),
+                status: &shared,
+                resolver: None,
+                reread: HashSet::new(),
+                files_moved: false,
+            };
             let mut pending = Pending { full: true, named: HashSet::new() };
             loop {
                 let outcome = index.run(&pending, &stop);
@@ -120,6 +131,13 @@ impl Workspace {
     pub fn find(&self, table: Table, name: &str, limit: u64, offset: u64) -> Result<Value, String> {
         let mut answer = query::find(&self.reader, &self.root, table, name, limit, offset)
             .map_err(|error| format!("the index failed: {error}"))?;
+        answer["coverage"] = self.coverage();
+        Ok(answer)
+    }
+
+    /// What one file imports and where each import leads.
+    pub fn imports(&self, path: &str) -> Result<Value, String> {
+        let mut answer = query::imports(&self.reader, &self.root, path)?;
         answer["coverage"] = self.coverage();
         Ok(answer)
     }
@@ -209,6 +227,12 @@ struct Indexer<'a> {
     store: &'a Store,
     extractor: Extractor,
     status: &'a Mutex<Status>,
+    /// Kept between passes; built again when files come or go or the configuration changes.
+    resolver: Option<Resolver>,
+    /// Files re-read in this pass.
+    reread: HashSet<String>,
+    /// A file came or went in this pass.
+    files_moved: bool,
 }
 
 impl Indexer<'_> {
@@ -219,10 +243,51 @@ impl Indexer<'_> {
         }
         if pending.full || !all_known {
             // A file the index has not seen may be one git ignores, so let git decide.
-            self.sweep(&pending.named, cancel)
+            self.sweep(&pending.named, cancel)?;
         } else {
-            self.refresh(&pending.named)
+            self.refresh(&pending.named)?;
         }
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        self.resolve_imports()
+    }
+
+    /// Works out where imports lead, for every file or only the ones this pass re-read.
+    fn resolve_imports(&mut self) -> Result<(), String> {
+        let reread = std::mem::take(&mut self.reread);
+        let files_moved = std::mem::take(&mut self.files_moved);
+        let everything = self.resolver.is_none() || files_moved || reread.iter().any(|path| is_resolution_config(path));
+        if !everything && reread.is_empty() {
+            return Ok(());
+        }
+        if everything {
+            let root = self.root.clone();
+            let read = move |path: &str| match std::fs::read_to_string(root.join(path)) {
+                Ok(text) => Some(text),
+                Err(error) => {
+                    eprintln!("kodax-repo-intel: cannot read {path}; imports it configures stay unresolved: {error}");
+                    None
+                }
+            };
+            self.resolver = Some(Resolver::new(self.store.paths().map_err(database)?, read));
+        }
+        let Some(resolver) = &self.resolver else { return Ok(()) };
+        let scope = (!everything).then_some(&reread);
+        let edges: Vec<_> = self
+            .store
+            .import_modules(scope)
+            .map_err(database)?
+            .into_iter()
+            .filter_map(|(path, language, module)| {
+                let language = Language::ALL.into_iter().find(|known| known.name() == language)?;
+                let resolution = resolver.resolve(language, &path, &module)?;
+                Some((path, module, resolution))
+            })
+            .collect();
+        self.store.begin().map_err(database)?;
+        self.store.replace_edges(scope, &edges).map_err(database)?;
+        self.store.commit().map_err(database)
     }
 
     fn sweep(&mut self, named: &HashSet<String>, cancel: &AtomicBool) -> Result<(), String> {
@@ -239,9 +304,11 @@ impl Indexer<'_> {
             }
             // Listed by git but missing on disk (deleted, not yet staged): the file is gone.
             if self.update_file(&path, known.get(&path), named.contains(&path)).map_err(database)? {
+                self.files_moved |= !known.contains_key(&path);
                 present.insert(path);
             }
         }
+        self.files_moved |= known.keys().any(|path| !present.contains(path));
         self.store.keep_only(&present).map_err(database)?;
         self.store.commit().map_err(database)
     }
@@ -251,6 +318,7 @@ impl Indexer<'_> {
         for path in named {
             if !self.update_file(path, None, true).map_err(database)? {
                 self.store.remove_file(path).map_err(database)?;
+                self.files_moved = true;
             }
         }
         // Analyses this leaves unused stay until the next sweep clears them: no file
@@ -268,6 +336,7 @@ impl Indexer<'_> {
         if !named && known == Some(&now) {
             return Ok(true);
         }
+        self.reread.insert(path.to_owned());
         let Known { size, mtime_ns } = now;
         let language = Language::of(path);
         let status = match language {
@@ -375,6 +444,45 @@ mod tests {
         workspace.changed(vec!["out/x.ts".to_owned(), "c.ts".to_owned()]);
         let status = wait_for_sweeps(&workspace, 3);
         assert_eq!(status["indexed"], 1, "only c.ts, because git ignores out/: {status}");
+        workspace.close().unwrap();
+    }
+
+    #[test]
+    fn follows_imports_to_files_and_keeps_up_with_removals_config_and_edits() {
+        let dir = repo(&[
+            ("src/a.ts", "import { b } from './b.js';\nimport { c } from '@lib/c';\nimport x from 'react';\n"),
+            ("src/b.ts", "export const b = 1;"),
+            ("tsconfig.json", r#"{"compilerOptions": {"paths": {"@lib/*": ["./lib/*"]}}}"#),
+            ("lib/c.ts", "export const c = 1;"),
+            ("lib2/c.ts", "export const c = 2;"),
+        ]);
+        let storage = tempfile::tempdir().unwrap();
+        let workspace = Workspace::open(dir.path().to_owned(), storage.path().to_owned()).unwrap();
+        let leads = |workspace: &Workspace| -> Vec<Value> {
+            let answer = workspace.imports("src/a.ts").unwrap();
+            let imports = answer["imports"].as_array().unwrap_or_else(|| panic!("{answer}"));
+            imports.iter().map(|i| json!([i["module"], i["target"], i["unresolved"]])).collect()
+        };
+        wait_for_sweeps(&workspace, 1);
+        let expected = [json!(["./b.js", "src/b.ts", null]), json!(["@lib/c", "lib/c.ts", null]), json!(["react", null, "external"])];
+        assert_eq!(leads(&workspace), expected);
+
+        fs::remove_file(dir.path().join("src/b.ts")).unwrap();
+        workspace.changed(vec!["src/b.ts".to_owned()]);
+        wait_for_sweeps(&workspace, 2);
+        assert_eq!(leads(&workspace)[0], json!(["./b.js", null, "missing"]));
+
+        fs::write(dir.path().join("tsconfig.json"), r#"{"compilerOptions": {"paths": {"@lib/*": ["./lib2/*"]}}}"#).unwrap();
+        workspace.changed(vec!["tsconfig.json".to_owned()]);
+        wait_for_sweeps(&workspace, 3);
+        assert_eq!(leads(&workspace)[1], json!(["@lib/c", "lib2/c.ts", null]));
+
+        fs::write(dir.path().join("src/a.ts"), "import { c } from '../lib/c';\n").unwrap();
+        workspace.changed(vec!["src/a.ts".to_owned()]);
+        wait_for_sweeps(&workspace, 4);
+        assert_eq!(leads(&workspace), vec![json!(["../lib/c", "lib/c.ts", null])]);
+        assert_eq!(workspace.imports("lib/c.ts").unwrap()["imports"], json!([]));
+        assert_eq!(workspace.imports("none.ts").unwrap()["indexed"], false);
         workspace.close().unwrap();
     }
 

@@ -3,13 +3,14 @@
 //! (a branch switched back, a file moved) is never analyzed twice.
 
 use crate::extract::{Analysis, Import};
+use crate::resolve::Resolution;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 /// Bumped when the tables change, or when files are read into them differently
 /// (what the extractor finds, which files it reads); an index with another version is rebuilt.
-const SCHEMA_VERSION: u32 = 7;
+const SCHEMA_VERSION: u32 = 8;
 
 /// Past this size the write-ahead log is cut back once its pages are in the index.
 /// SQLite otherwise keeps the log at the size of the largest batch ever written:
@@ -61,6 +62,15 @@ pub enum FileStatus {
     Indexed { hash: String },
     /// Not indexed, and why: `language`, `size`, `binary`, `unreadable` or `unparsed`.
     NotIndexed { reason: &'static str },
+}
+
+/// An import with where it leads: `target` when it is a file of the repository,
+/// else why not in `unresolved` (`external`, `missing`); both empty when the language has no module resolution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedImport {
+    pub import: Import,
+    pub target: Option<String>,
+    pub unresolved: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,6 +157,7 @@ impl Store {
              DROP TABLE IF EXISTS definitions;
              DROP TABLE IF EXISTS refs;
              DROP TABLE IF EXISTS imports;
+             DROP TABLE IF EXISTS edges;
              CREATE TABLE files(
                path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
                language TEXT, hash TEXT, reason TEXT);
@@ -172,6 +183,12 @@ impl Store {
                analysis INTEGER NOT NULL, position INTEGER NOT NULL, module TEXT NOT NULL,
                name TEXT NOT NULL, local TEXT NOT NULL,
                PRIMARY KEY(analysis, position)) WITHOUT ROWID;
+             -- Where each file's imports lead. Kept by path, not by analysis: the same text
+             -- in another folder imports other files. The index on target finds importers.
+             CREATE TABLE edges(
+               path TEXT NOT NULL, module TEXT NOT NULL, target TEXT, reason TEXT,
+               PRIMARY KEY(path, module)) WITHOUT ROWID;
+             CREATE INDEX edges_target ON edges(target) WHERE target IS NOT NULL;
 ",
         )?;
         self.connection.execute(
@@ -377,16 +394,65 @@ impl Store {
         Ok(Some(Entry::Indexed { known, language, has_syntax_errors, definitions }))
     }
 
-    /// What the file at `path` imports, in source order; empty when it is not indexed.
-    #[allow(dead_code)] // Module resolution, the next layer, reads it.
-    pub fn imports(&self, path: &str) -> rusqlite::Result<Vec<Import>> {
+    /// What the file at `path` imports, in source order, with where each import leads; empty when it is not indexed.
+    pub fn imports(&self, path: &str) -> rusqlite::Result<Vec<ResolvedImport>> {
         let mut statement = self.connection.prepare_cached(
-            "SELECT i.module, i.name, i.local FROM files f JOIN analyses a ON a.hash = f.hash
-             JOIN imports i ON i.analysis = a.id WHERE f.path = ?1 ORDER BY i.position",
+            "SELECT i.module, i.name, i.local, e.target, e.reason FROM files f JOIN analyses a ON a.hash = f.hash
+             JOIN imports i ON i.analysis = a.id LEFT JOIN edges e ON e.path = f.path AND e.module = i.module
+             WHERE f.path = ?1 ORDER BY i.position",
         )?;
         statement
-            .query_map(params![path], |row| Ok(Import { module: row.get(0)?, name: row.get(1)?, local: row.get(2)? }))?
+            .query_map(params![path], |row| {
+                Ok(ResolvedImport {
+                    import: Import { module: row.get(0)?, name: row.get(1)?, local: row.get(2)? },
+                    target: row.get(3)?,
+                    unresolved: row.get(4)?,
+                })
+            })?
             .collect()
+    }
+
+    /// Every path the index knows, indexed or not.
+    pub fn paths(&self) -> rusqlite::Result<HashSet<String>> {
+        Ok(self.known_files()?.into_keys().collect())
+    }
+
+    /// The modules each indexed file imports, with its language: of `paths` only, or of every file.
+    pub fn import_modules(&self, paths: Option<&HashSet<String>>) -> rusqlite::Result<Vec<(String, String, String)>> {
+        const SELECT: &str = "SELECT DISTINCT f.path, a.language, i.module FROM files f JOIN analyses a ON a.hash = f.hash
+             JOIN imports i ON i.analysis = a.id";
+        let row = |row: &rusqlite::Row| Ok((row.get(0)?, row.get(1)?, row.get(2)?));
+        let Some(paths) = paths else {
+            return self.connection.prepare(SELECT)?.query_map([], row)?.collect();
+        };
+        let mut statement = self.connection.prepare_cached(&format!("{SELECT} WHERE f.path = ?1"))?;
+        let mut found = Vec::new();
+        for path in paths {
+            found.extend(statement.query_map(params![path], row)?.collect::<rusqlite::Result<Vec<_>>>()?);
+        }
+        Ok(found)
+    }
+
+    /// Replaces where the imports of `paths` lead (of every file when None) with `edges`.
+    pub fn replace_edges(&self, paths: Option<&HashSet<String>>, edges: &[(String, String, Resolution)]) -> rusqlite::Result<()> {
+        match paths {
+            None => {
+                self.connection.execute("DELETE FROM edges", [])?;
+            }
+            Some(paths) => {
+                let mut forget = self.connection.prepare_cached("DELETE FROM edges WHERE path = ?1")?;
+                for path in paths {
+                    forget.execute(params![path])?;
+                }
+            }
+        }
+        let mut insert =
+            self.connection.prepare_cached("INSERT OR REPLACE INTO edges(path, module, target, reason) VALUES (?1, ?2, ?3, ?4)")?;
+        for (path, module, resolution) in edges {
+            let (target, reason) = resolution.parts();
+            insert.execute(params![path, module, target, reason])?;
+        }
+        Ok(())
     }
 
     #[cfg(test)]
@@ -488,11 +554,46 @@ mod tests {
         with_imports.imports = vec![import("./z", "b", "b"), import("./a", "*", "")];
         store.record_analysis("h", "typescript", &with_imports).unwrap();
         store.record_file(&row("a.ts", indexed("h"))).unwrap();
-        assert_eq!(store.imports("a.ts").unwrap(), with_imports.imports);
+        let unresolved = |import: Import| ResolvedImport { import, target: None, unresolved: None };
+        assert_eq!(store.imports("a.ts").unwrap(), with_imports.imports.iter().cloned().map(unresolved).collect::<Vec<_>>());
         assert_eq!(store.imports("none.ts").unwrap(), vec![]);
         store.keep_only(&HashSet::new()).unwrap();
         let left = store.connection.query_row("SELECT COUNT(*) FROM imports", [], |row| row.get::<_, i64>(0)).unwrap();
         assert_eq!(left, 0);
+    }
+
+    #[test]
+    fn keeps_where_imports_lead_by_path_and_replaces_them_for_some_files_or_all() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("index.sqlite")).unwrap();
+        let mut with_imports = analysis(&[], false);
+        let import = |module: &str| Import { module: module.to_owned(), name: "x".to_owned(), local: "x".to_owned() };
+        with_imports.imports = vec![import("./b"), import("react"), import("./b")];
+        store.record_analysis("h", "typescript", &with_imports).unwrap();
+        for path in ["a.ts", "c.ts"] {
+            store.record_file(&row(path, indexed("h"))).unwrap();
+        }
+        let mut modules = store.import_modules(None).unwrap();
+        modules.sort();
+        let module = |path: &str, module: &str| (path.to_owned(), "typescript".to_owned(), module.to_owned());
+        assert_eq!(modules, vec![module("a.ts", "./b"), module("a.ts", "react"), module("c.ts", "./b"), module("c.ts", "react")]);
+        let only_a = HashSet::from(["a.ts".to_owned()]);
+        assert_eq!(store.import_modules(Some(&only_a)).unwrap().len(), 2);
+
+        let edge = |path: &str, module: &str, resolution: Resolution| (path.to_owned(), module.to_owned(), resolution);
+        let edges = [
+            edge("a.ts", "./b", Resolution::File("b.ts".to_owned())),
+            edge("a.ts", "react", Resolution::External),
+            edge("c.ts", "./b", Resolution::Missing),
+        ];
+        store.replace_edges(None, &edges).unwrap();
+        let leads = |path: &str| store.imports(path).unwrap().into_iter().map(|i| (i.target, i.unresolved)).collect::<Vec<_>>();
+        let file = (Some("b.ts".to_owned()), None);
+        assert_eq!(leads("a.ts"), vec![file.clone(), (None, Some("external".to_owned())), file.clone()]);
+        assert_eq!(leads("c.ts")[0], (None, Some("missing".to_owned())));
+        store.replace_edges(Some(&only_a), &[]).unwrap();
+        assert_eq!(leads("a.ts")[0], (None, None));
+        assert_eq!(leads("c.ts")[0], (None, Some("missing".to_owned())));
     }
 
     #[test]

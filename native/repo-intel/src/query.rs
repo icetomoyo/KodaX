@@ -69,6 +69,36 @@ fn hit_json(hit: &Hit, signature: Option<&str>) -> Value {
     value
 }
 
+/// What one file imports, from the index, and where each import leads: `target` for a file
+/// of the repository, else `unresolved` (`external` or `missing`). `stale` when the file
+/// changed since it was indexed. Not indexed: `missing` on disk, `pending` when the index has not seen it yet.
+pub fn imports(store: &Store, root: &Path, path: &str) -> Result<Value, String> {
+    let failed = |error: rusqlite::Error| format!("the index failed: {error}");
+    let now = on_disk(&root.join(path));
+    let known = match store.entry(path).map_err(failed)? {
+        _ if now.is_none() => return Ok(not_indexed(path, "missing")),
+        None => return Ok(not_indexed(path, "pending")),
+        Some(Entry::NotIndexed { reason, .. }) => return Ok(not_indexed(path, &reason)),
+        Some(Entry::Indexed { known, .. }) => known,
+    };
+    let imports: Vec<Value> = store
+        .imports(path)
+        .map_err(failed)?
+        .into_iter()
+        .map(|row| {
+            let mut item = json!({ "module": row.import.module, "name": row.import.name, "local": row.import.local });
+            if let Some(target) = row.target {
+                item["target"] = json!(target);
+            }
+            if let Some(reason) = row.unresolved {
+                item["unresolved"] = json!(reason);
+            }
+            item
+        })
+        .collect();
+    Ok(json!({ "path": path, "indexed": true, "stale": Some(known) != now, "imports": imports }))
+}
+
 /// The outline of one file and whether the index needs to catch up with it.
 /// A file that changed since it was indexed is analyzed now instead.
 pub fn outline(store: &Store, extractor: &mut Extractor, root: &Path, path: &str) -> Result<(Value, bool), String> {

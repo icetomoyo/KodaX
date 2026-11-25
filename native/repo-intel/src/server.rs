@@ -132,6 +132,10 @@ impl Server {
                 let workspace = self.workspaces.get_mut(&root).expect("checked above");
                 workspace.outline(&path).map_err(|error| (rpc::INTERNAL_ERROR, error))
             }
+            (State::Running(_), "file.imports") => {
+                let path = relative_path(&params)?;
+                self.open_workspace(&params)?.imports(&path).map_err(|error| (rpc::INTERNAL_ERROR, error))
+            }
             (State::Running(_), _) => Err((rpc::METHOD_NOT_FOUND, format!("Unknown method: {method}"))),
         }
     }

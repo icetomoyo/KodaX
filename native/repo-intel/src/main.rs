@@ -7,6 +7,7 @@ mod manifest;
 mod memory;
 mod priority;
 mod query;
+mod resolve;
 mod rpc;
 mod server;
 mod store;
