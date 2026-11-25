@@ -1,9 +1,12 @@
 //! KodaX RepoIntel engine: indexes repositories for the Host that starts it,
 //! and answers over stdio with JSON-RPC framed as LSP frames it.
 
+mod manifest;
 mod priority;
 mod rpc;
 mod server;
+mod store;
+mod workspace;
 
 use server::{Outcome, Server};
 use std::io::{self, BufReader};

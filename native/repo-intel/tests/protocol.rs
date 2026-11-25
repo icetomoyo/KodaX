@@ -80,3 +80,29 @@ fn stops_when_the_host_closes_its_input() {
     drop(engine.input);
     assert_eq!(engine.child.wait().unwrap().code(), Some(1));
 }
+
+#[test]
+fn opens_a_repository_and_reports_when_it_is_indexed() {
+    let repo = tempfile::Builder::new().prefix("kodax-repo-intel-e2e-").tempdir().unwrap();
+    assert!(Command::new("git").arg("-C").arg(repo.path()).args(["init", "-q"]).status().unwrap().success());
+    std::fs::write(repo.path().join("a.ts"), "export const a = 1;").unwrap();
+    let storage = tempfile::tempdir().unwrap();
+    let mut engine = Engine::start();
+    engine.call(1, "initialize", json!({ "storageRoot": storage.path() }));
+    let root = json!({ "root": repo.path() });
+    assert!(engine.call(2, "workspace.open", root.clone())["result"]["state"].is_string());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let mut id = 3;
+    let status = loop {
+        let status = engine.call(id, "workspace.status", root.clone())["result"].clone();
+        if status["state"] != "indexing" || std::time::Instant::now() > deadline {
+            break status;
+        }
+        id += 1;
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    assert_eq!((status["state"].as_str(), status["indexed"].as_u64()), (Some("ready"), Some(1)), "{status}");
+    assert_eq!(engine.call(id + 1, "workspace.close", root.clone())["result"], Value::Null);
+    assert_eq!(engine.call(id + 2, "workspace.status", root)["error"]["code"], -32602);
+    assert_eq!(engine.call(id + 3, "shutdown", Value::Null)["result"], Value::Null);
+}

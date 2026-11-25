@@ -2,7 +2,9 @@
 
 use crate::priority::Background;
 use crate::rpc::{self, failure, success};
+use crate::workspace::{Workspace, storage_dir};
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Memory budget when the Host names none, in MB.
@@ -20,6 +22,8 @@ pub enum Outcome {
 #[derive(Debug)]
 pub struct Config {
     pub storage_root: PathBuf,
+    // Read by the memory report the Host's watchdog polls, which comes with the Host side.
+    #[allow(dead_code)]
     pub memory_budget_mb: u64,
 }
 
@@ -32,11 +36,14 @@ enum State {
 pub struct Server {
     state: State,
     background: Background,
+    workspaces: HashMap<PathBuf, Workspace>,
 }
+
+type Answer = Result<Value, (i64, String)>;
 
 impl Server {
     pub fn new(background: Background) -> Self {
-        Self { state: State::Starting, background }
+        Self { state: State::Starting, background, workspaces: HashMap::new() }
     }
 
     /// Answers a frame body that is not JSON, keeping the stream usable.
@@ -54,6 +61,7 @@ impl Server {
             return Outcome::Exit(if matches!(self.state, State::ShutDown) { 0 } else { 1 });
         }
         let Some(id) = id else {
+            self.notified(method, params);
             return Outcome::Silent;
         };
         Outcome::Reply(match self.answer(method, params) {
@@ -62,21 +70,62 @@ impl Server {
         })
     }
 
-    fn answer(&mut self, method: &str, params: Value) -> Result<Value, (i64, String)> {
+    /// Notifications get no answer, so a bad one is reported on stderr, which the Host logs.
+    fn notified(&mut self, method: &str, params: Value) {
+        if !matches!(self.state, State::Running(_)) || method != "files.changed" {
+            return;
+        }
+        let paths: Option<Vec<String>> = params.get("paths").and_then(|paths| serde_json::from_value(paths.clone()).ok());
+        match (root_of(&params).ok().and_then(|root| self.workspaces.get(&root)), paths) {
+            (Some(workspace), Some(paths)) => workspace.changed(paths),
+            _ => eprintln!("kodax-repo-intel: files.changed needs an open root and a list of paths: {params}"),
+        }
+    }
+
+    fn answer(&mut self, method: &str, params: Value) -> Answer {
         match (&self.state, method) {
             (State::Starting, "initialize") => self.initialize(params),
             (State::Starting, _) => Err((rpc::SERVER_NOT_INITIALIZED, "Send initialize first.".to_owned())),
             (State::ShutDown, _) => Err((rpc::INVALID_REQUEST, "The engine is shutting down; send exit.".to_owned())),
             (State::Running(_), "initialize") => Err((rpc::INVALID_REQUEST, "The engine is already initialized.".to_owned())),
             (State::Running(_), "shutdown") => {
+                let closed = self.close_all();
                 self.state = State::ShutDown;
-                Ok(Value::Null)
+                closed
+            }
+            (State::Running(config), "workspace.open") => {
+                let root = root_of(&params)?;
+                if !root.is_dir() {
+                    return Err((rpc::INVALID_PARAMS, format!("{} is not a folder.", root.display())));
+                }
+                let storage = storage_dir(&config.storage_root, &root);
+                let workspace = self.workspaces.entry(root.clone()).or_insert_with(|| Workspace::open(root, storage));
+                Ok(workspace.status())
+            }
+            (State::Running(_), "workspace.status") => Ok(self.open_workspace(&params)?.status()),
+            (State::Running(_), "workspace.close") => {
+                let root = root_of(&params)?;
+                self.open_workspace(&params)?;
+                let workspace = self.workspaces.remove(&root).expect("checked above");
+                workspace.close().map(|()| Value::Null).map_err(|error| (rpc::INTERNAL_ERROR, error))
             }
             (State::Running(_), _) => Err((rpc::METHOD_NOT_FOUND, format!("Unknown method: {method}"))),
         }
     }
 
-    fn initialize(&mut self, params: Value) -> Result<Value, (i64, String)> {
+    fn open_workspace(&self, params: &Value) -> Result<&Workspace, (i64, String)> {
+        let root = root_of(params)?;
+        self.workspaces
+            .get(&root)
+            .ok_or_else(|| (rpc::INVALID_PARAMS, format!("{} is not open; send workspace.open first.", root.display())))
+    }
+
+    fn close_all(&mut self) -> Answer {
+        let failures: Vec<String> = self.workspaces.drain().filter_map(|(_, workspace)| workspace.close().err()).collect();
+        if failures.is_empty() { Ok(Value::Null) } else { Err((rpc::INTERNAL_ERROR, failures.join("; "))) }
+    }
+
+    fn initialize(&mut self, params: Value) -> Answer {
         let storage_root = params
             .get("storageRoot")
             .and_then(Value::as_str)
@@ -101,6 +150,15 @@ impl Server {
             "background": background,
         }))
     }
+}
+
+fn root_of(params: &Value) -> Result<PathBuf, (i64, String)> {
+    params
+        .get("root")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .filter(|root| root.is_absolute())
+        .ok_or((rpc::INVALID_PARAMS, "root must be an absolute path.".to_owned()))
 }
 
 #[cfg(test)]
