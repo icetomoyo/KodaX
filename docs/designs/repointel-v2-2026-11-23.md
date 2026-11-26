@@ -592,4 +592,4 @@ supervisor 增加 `query(root, method, params)`；每个 Run 拿到绑定了自�
 - **多出的 token 不是地图带来的：** 地图约 1,000 token，第一次请求之后就走缓存。差别主要来自轨迹变长，比如 kimi 的 T1 开启组中位 32 轮，关闭组 23 轮。T1、T2、T4 有 17 次跑满了 40 轮上限，轮次和 token 都被截断。
 - **发现一个和 A/B 无关的产品 bug：** 在 CRLF 文件上，模型写的多行 `old_string` 用 LF，精确匹配一定失败，退到按行归一化匹配。`text-anchor.ts` 返回的范围包含末行的换行符，替换后下一行就接到上一行末尾。两组都受影响：每个改代码的 Run 里有 1–19 次这样的编辑，deepseek 开启组 T4 第 3 次就因此失败。
 
-结论 recommend-iterate：没有达到 §11 的退出条件（比 grep 加 LSP 更省轮次、更省 token，且成功率不降），v2 留在 `KODAX_REPO_INTELLIGENCE_ENGINE=v2` 开关后面，不进默认。工具说明和地图措辞不改。阶段 3、4 是否继续由用户决定。完整评审在评测目录 `repointel-p2-ab/r3/review.md`。
+结论 recommend-iterate：没有达到 §11 的退出条件（比 grep 加 LSP 更省轮次、更省 token，且成功率不降），v2 留在 `KODAX_REPO_INTELLIGENCE_ENGINE=v2` 开关后面，不进默认。工具说明和地图措辞不改。用户 2026-11-26 决定：阶段 3、4 暂停；v2 留在开关后面，旧引擎暂不删除。理由是模型很少主动用索引工具，这一点没解决之前加功能不太可能有收益；有新证据（更大的仓库、更会用工具的模型）再重新评估。完整评审在评测目录 `repointel-p2-ab/r3/review.md`。
