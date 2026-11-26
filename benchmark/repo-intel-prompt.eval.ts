@@ -216,7 +216,7 @@ async function captureLlm(specId: string): Promise<void> {
         await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', executionCwd: workspace });
         const handle = await runtime.runs.start({ sessionId: session.id, mode: 'managed_task', prompt: task.task, options: {
           provider: 'repointel-capture', model: 'capture-model', reasoningMode: 'off', lsp: false, maxIter: 2, disablePromptCache: true,
-          learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' as const, reasonCodes: ['eval-isolated'] } }),
+          learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] } }),
           agentMode: 'ama', workMode: 'coding',
           context: { executionCwd: workspace, gitRoot: workspace, repoIntelligenceMode: spec.repoMode, resolveShellPermissionMode: () => 'full-access' },
         } });

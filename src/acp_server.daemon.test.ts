@@ -34,7 +34,7 @@ it('runs default ACP prompts in the existing shared Host and only detaches on di
     async stream(_messages: KodaXMessage[], _tools: KodaXToolDefinition[], _system: string,
       _reasoning?: boolean | KodaXReasoningRequest, options?: KodaXProviderStreamOptions): Promise<KodaXStreamResult> {
       if (_tools.some(tool => tool.name === 'commit_episode_learning_review')) {
-        return { textBlocks: [], thinkingBlocks: [], toolBlocks: [{ type: 'tool_use', id: 'review', name: 'commit_episode_learning_review', input: { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' } } }], stopReason: 'tool_use' };
+        return { textBlocks: [], thinkingBlocks: [], toolBlocks: [{ type: 'tool_use', id: 'review', name: 'commit_episode_learning_review', input: { memoryPlan: { actions: [], warnings: [] } } }], stopReason: 'tool_use' };
       }
       providerStarted = true;
       if (hold) { markHeldProviderEntered(); options?.onTextDelta?.('Waiting for Host interaction.'); }

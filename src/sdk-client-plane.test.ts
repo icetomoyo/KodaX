@@ -39,7 +39,7 @@ class ProbeProvider extends KodaXBaseProvider {
     if (tools.some((tool) => tool.name === 'commit_episode_learning_review')) {
       return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [{
         type: 'tool_use', id: 'fixture-learning-review', name: 'commit_episode_learning_review',
-        input: { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' } },
+        input: { memoryPlan: { actions: [], warnings: [] } },
       }] };
     }
     void messages;

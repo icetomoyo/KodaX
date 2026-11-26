@@ -34,15 +34,12 @@ const input = {
       visibility: 'prompt_safe' as const,
       createdAt: '2026-07-27T00:00:00.000Z',
     },
-    exactInvokedSkill: null,
     verifierFacts: [{ ref: 'artifact:check-1', verdict: 'passed' as const }],
     priorDigests: [],
     qualification: {
       reusableMethodEvidence: true,
-      explicitSkillPreservation: false,
       independentEpisodeCount: 2,
       verifiedOutcome: true,
-      exactSkillInvoked: false,
     },
   },
 };
@@ -110,30 +107,16 @@ describe('FEATURE_263 production unified learning reviewer', () => {
 
   it('makes the unified result shape and approval invariant explicit to the model', () => {
     const memoryPlan = LEARNING_REVIEW_TOOL.input_schema.properties?.memoryPlan;
-    const capability = LEARNING_REVIEW_TOOL.input_schema.properties?.capabilityDecision;
-    const spec = capability?.properties?.spec;
 
-    expect(LEARNING_REVIEW_TOOL.input_schema.required).toEqual([
-      'memoryPlan',
-      'capabilityDecision',
-    ]);
-    expect(LEARNING_REVIEW_SYSTEM_PROMPT).toContain(
-      'memoryPlan and capabilityDecision as top-level siblings',
-    );
+    expect(LEARNING_REVIEW_TOOL.input_schema.required).toEqual(['memoryPlan']);
+    expect(Object.keys(LEARNING_REVIEW_TOOL.input_schema.properties ?? {})).toEqual(['memoryPlan']);
     expect(LEARNING_REVIEW_SYSTEM_PROMPT).toContain(
       'Set requiresApproval to true on every Memory action',
     );
-    expect(LEARNING_REVIEW_SYSTEM_PROMPT).toContain(
-      'lowercase hyphenated slug',
-    );
+    expect(LEARNING_REVIEW_SYSTEM_PROMPT).not.toMatch(/skill|capability/i);
     expect(memoryPlan?.required).toEqual(['actions', 'warnings']);
     expect(memoryPlan?.properties?.trigger).toBeUndefined();
     expect(memoryPlan?.properties?.sourceRefs).toBeUndefined();
-    expect(spec?.properties?.name).toMatchObject({
-      type: 'string',
-      pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$',
-      maxLength: 64,
-    });
   });
 
   it('makes one forced structured call under a dedicated cache domain', async () => {
@@ -146,12 +129,11 @@ describe('FEATURE_263 production unified learning reviewer', () => {
         actions: [],
         warnings: [],
       },
-      capabilityDecision: { disposition: 'discard', reasonCodes: ['one_off'] },
     });
     const reviewer = createProductionLearningReviewer({ provider: model, model: 'review-model' });
 
     await expect(reviewer(input)).resolves.toMatchObject({
-      capabilityDecision: { disposition: 'discard' },
+      memoryPlan: { actions: [] },
     });
     expect(model.stream).toHaveBeenCalledOnce();
     const call = vi.mocked(model.stream).mock.calls[0]!;

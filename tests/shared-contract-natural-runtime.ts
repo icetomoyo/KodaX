@@ -226,7 +226,7 @@ export async function runNaturalRuntime(directory: string, id: NaturalCaseId | P
         options: { provider: providerName, model: options.model ?? 'fixture', agentMode: 'ama', workMode: options.workMode ?? 'coding',
           lsp: false, reasoningMode: options.reasoning ?? 'off', effort: options.effort ?? 'none', maxIter: limits.calls + 1, maxOutputTokens: options.maxOutputTokens ?? 4096, abortSignal: signal, disablePromptCache: true,
           guardrails: [boundary],
-          learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['eval-isolated'] } }),
+          learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] } }),
           context: { executionCwd: workspace, gitRoot: workspace, shellExecution: execution.shellExecution,
             skillsPrompt: '', skillRegistry: new SkillRegistry(workspace), repoIntelligenceMode: 'off', resolveShellPermissionMode: () => turn.permissionMode },
           events: { onToolUseStart: (tool, meta) => { events.push({ kind: 'start', ...tool, meta }); }, onToolResult: (receipt, meta) => { events.push({ kind: 'result', ...receipt, meta }); } },

@@ -74,7 +74,7 @@ export async function captureReadonlySearchInput(directory: string, task: string
     const run = await runtime.runs.start({ sessionId: session.id, mode: 'managed_task', prompt: task,
       options: { provider: providerName, model: 'offline', agentMode: 'ama', lsp: false,
         abortSignal: AbortSignal.timeout(60_000),
-        learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['eval-isolated'] } }),
+        learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] } }),
         context: { executionCwd: workspace, gitRoot: workspace, repoIntelligenceMode: 'auto', skillsPrompt: '', skillRegistry: new SkillRegistry(workspace), resolveShellPermissionMode: () => 'full-access' },
       } });
     const result = await run.result;

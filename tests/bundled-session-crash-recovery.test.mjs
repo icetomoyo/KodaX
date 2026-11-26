@@ -27,7 +27,7 @@ if (process.argv[2] === '--run-fixture') {
     async stream(messages, tools) {
       if (tools.some(tool => tool.name === 'commit_episode_learning_review')) {
         return { textBlocks: [], thinkingBlocks: [], toolBlocks: [{ type: 'tool_use', id: 'review', name: 'commit_episode_learning_review',
-          input: { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['one_off'] } } }], stopReason: 'tool_use' };
+          input: { memoryPlan: { actions: [], warnings: [] } } }], stopReason: 'tool_use' };
       }
       // The note memory's background reflection, which writes nothing here.
       if (tools.some(tool => tool.name === 'memory_reflect')) {
@@ -132,8 +132,7 @@ if (process.argv[2] === '--run-fixture') {
           }
         }
         const delta = review ? { tool_calls: [{ index: 0, id: 'review', type: 'function', function: {
-          name: 'commit_episode_learning_review', arguments: JSON.stringify({ memoryPlan: { actions: [], warnings: [] },
-            capabilityDecision: { disposition: 'discard', reasonCodes: ['one_off'] } }),
+          name: 'commit_episode_learning_review', arguments: JSON.stringify({ memoryPlan: { actions: [], warnings: [] } }),
         } }] } : { content: 'Completed after cold Host recovery.' };
         response.writeHead(200, { 'content-type': 'text/event-stream' });
         response.end(`data: ${JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk',

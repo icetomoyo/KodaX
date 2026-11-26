@@ -295,15 +295,12 @@ export async function buildReviewerInput(
   const memory = await controller.prepareEpisodeReview(digest);
   const packet: LearningReviewEvidencePacket = {
     outcomeDigest: digest,
-    exactInvokedSkill: null,
     verifierFacts: [],
     priorDigests: [],
     qualification: {
       reusableMethodEvidence: false,
-      explicitSkillPreservation: false,
       independentEpisodeCount: 1,
       verifiedOutcome: false,
-      exactSkillInvoked: false,
       failedWithLesson: false,
     },
   };

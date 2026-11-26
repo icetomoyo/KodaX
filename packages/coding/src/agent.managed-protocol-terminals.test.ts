@@ -23,7 +23,7 @@ describe('CAP-MANAGED-PROTO-002 public terminal results', () => {
       async stream(_messages: KodaXMessage[], tools: KodaXToolDefinition[]): Promise<KodaXStreamResult> {
         if (tools.some(tool => tool.name === 'commit_episode_learning_review')) return { textBlocks: [], thinkingBlocks: [],
           toolBlocks: [{ type: 'tool_use', id: 'review', name: 'commit_episode_learning_review', input: {
-            memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['one_off'] },
+            memoryPlan: { actions: [], warnings: [] },
           } }], stopReason: 'tool_use' };
         if (++calls === 1) return { textBlocks: [], thinkingBlocks: [], toolBlocks: [
           { type: 'tool_use', id: 'emit', name: 'fixture_emit', input: {} },

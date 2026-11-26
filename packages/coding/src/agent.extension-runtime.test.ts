@@ -56,7 +56,7 @@ class Feature034TestProvider extends KodaXBaseProvider {
         Feature034TestProvider.completedReviews += 1;
         return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [{
           type: 'tool_use', id: 'learning-review', name: LEARNING_REVIEW_TOOL.name,
-          input: { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' } },
+          input: { memoryPlan: { actions: [], warnings: [] } },
         }] };
       } finally { Feature034TestProvider.reviewsInFlight -= 1; }
     }

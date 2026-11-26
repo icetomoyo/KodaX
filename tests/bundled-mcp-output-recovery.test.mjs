@@ -72,8 +72,7 @@ for (const scenario of ['recoverable', 'without-read', 'storage-failure',
         let answer = 'Auxiliary fixture response.';
         if (names.includes('commit_episode_learning_review')) {
           tool = 'commit_episode_learning_review';
-          args = { memoryPlan: { actions: [], warnings: [] },
-            capabilityDecision: { disposition: 'discard', reasonCodes: ['fixture-no-reusable-method'] } };
+          args = { memoryPlan: { actions: [], warnings: [] } };
         } else if (names.includes('mcp_call')) {
           primaryRequests++;
           const result = [...payload.messages].reverse().find(message => message.role === 'tool');

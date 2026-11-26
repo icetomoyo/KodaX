@@ -32,8 +32,7 @@ for (const agentMode of [undefined, 'ama'] as const) for (const kind of ['defaul
       async stream(messages: KodaXMessage[], tools: KodaXToolDefinition[], system: string): Promise<KodaXStreamResult> {
         if (tools.some(tool => tool.name === 'commit_episode_learning_review')) {
           return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [{ type: 'tool_use', id: 'review',
-            name: 'commit_episode_learning_review', input: { memoryPlan: { actions: [], warnings: [] },
-              capabilityDecision: { disposition: 'discard', reasonCodes: ['fixture-no-reusable-method'] } } }] };
+            name: 'commit_episode_learning_review', input: { memoryPlan: { actions: [], warnings: [] } } }] };
         }
         const surfaces = [system, ...messages.flatMap(message => typeof message.content === 'string' ? [message.content]
           : message.content.filter(block => block.type === 'text').map(block => block.text))];

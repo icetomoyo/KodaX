@@ -42,7 +42,7 @@ it.each([
       if (args[1].some(tool => tool.name === LEARNING_REVIEW_TOOL.name)) return {
         textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [{
           type: 'tool_use', id: 'review', name: LEARNING_REVIEW_TOOL.name,
-          input: { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' } },
+          input: { memoryPlan: { actions: [], warnings: [] } },
         }],
       };
       if (seedingHistory) return {

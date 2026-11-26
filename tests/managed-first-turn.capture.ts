@@ -100,7 +100,7 @@ async function captureCase(root: string, testCase: ManagedCaptureCase, catalog: 
   const unregister = registerModelProvider(PROVIDER, () => new CaptureProvider());
   const shared = {
     provider: PROVIDER, model: MODEL, reasoningMode: 'off' as const, lsp: false, maxIter: childLane ? 4 : 2, disablePromptCache: true,
-    learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' as const, reasonCodes: ['eval-isolated'] } }),
+    learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] } }),
   };
   if (runKodaXEntry) {
     try {

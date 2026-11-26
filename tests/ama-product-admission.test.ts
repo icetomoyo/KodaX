@@ -36,7 +36,7 @@ async function startAdmissionHost(homeDir: string): Promise<AdmissionHost> {
       if (args[1].some(tool => tool.name === LEARNING_REVIEW_TOOL.name)) return {
         textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [{
           type: 'tool_use', id: randomUUID(), name: LEARNING_REVIEW_TOOL.name,
-          input: { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' } },
+          input: { memoryPlan: { actions: [], warnings: [] } },
         }],
       };
       mainRequests.push(args[2]);

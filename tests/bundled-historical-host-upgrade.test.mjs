@@ -55,7 +55,7 @@ test('real rc.1 Host keeps busy work and upgrades in place without losing its Se
       response.end(`data: ${JSON.stringify({ id: 'historical-review', object: 'chat.completion.chunk',
         choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'h05-review', type: 'function',
           function: { name: 'commit_episode_learning_review', arguments: JSON.stringify({
-            memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['one_off'] },
+            memoryPlan: { actions: [], warnings: [] },
           }) } }] }, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n`);
       return;
     }

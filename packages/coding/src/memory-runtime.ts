@@ -3,8 +3,6 @@ import path from 'node:path';
 
 import {
   createMemoryControlPlane,
-  commitLearnedSkillRevision,
-  createLearnedCapabilityScope,
   drainPendingEpisodeReviews,
   EpisodeReviewFailure,
   appendMemoryClientNotice,
@@ -13,16 +11,9 @@ import {
   createSessionLineage,
   getSessionLineagePath,
   getAgentConfigPath,
-  exactInvokedSkillSnapshotForSession,
-  getDefaultSkillPaths,
   isUnifiedLearningReviewModelInput,
-  LearnedAreaStore,
   normalizeUnifiedLearningReview,
-  quarantineLearnedSkillRevision,
-  resolveProjectLearnedAreaRoot,
   sanitizeUnifiedLearningReviewInput,
-  SkillRegistry,
-  slugifyLearnedCapabilityName,
   tryGitRemote,
   type MemoryContextIdentity,
   type KodaXMemoryOutcomeDigest,
@@ -34,7 +25,6 @@ import {
   type MemoryController,
   type MemoryEpisodeReviewResult,
   type MemoryReviewPlan,
-  type NormalizedLearnedSkillDecision,
   type PendingEpisodeReview,
   type PendingEpisodeReviewV2,
   type UnifiedLearningReviewModelInput,
@@ -422,15 +412,9 @@ async function drainStartedCodingMemoryReviewInbox(
       return {
         inputHash: checkpoint.evidenceHash,
         memoryProposalIds: [],
-        requiredCarriers: requiredUnifiedReviewCarriers(normalized.capabilityDecision),
         memoryPlan: normalized.memoryPlan,
-        ...(normalized.capabilityDecision === undefined
-          ? {}
-          : { capabilityDecision: normalized.capabilityDecision }),
       };
     }),
-    listV2Actions: (_entry, decision) =>
-      requiredUnifiedReviewCarriers(decision.capabilityDecision),
     applyV2Action: async (entry, decision, carrier, _claim, commitWithAuthority) => (
       applyUnifiedReviewAction(
         options,
@@ -534,7 +518,7 @@ function isReviewEnvelope(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object'
     && value !== null
     && !Array.isArray(value)
-    && ('memoryPlan' in value || 'capabilityDecision' in value);
+    && 'memoryPlan' in value;
 }
 
 async function buildUnifiedReviewInput(
@@ -555,7 +539,6 @@ async function buildUnifiedReviewInput(
     entry,
     resolveExecutionCwd(options.context),
   );
-  const exactInvokedSkill = await exactInvokedSkillForEpisode(options, identity, entry);
   const evidence = entry.digest.evidence ?? [];
   const expectedVerdict = entry.digest.outcome === 'succeeded' ? 'passed' : 'failed';
   const verifiedOutcome = evidence.some((item) => (
@@ -572,7 +555,6 @@ async function buildUnifiedReviewInput(
   ));
   const packet: LearningReviewEvidencePacket = {
     outcomeDigest: entry.digest,
-    exactInvokedSkill,
     verifierFacts: evidence
       .filter((item) => (
         isTrustedTerminalEvidence(item)
@@ -584,10 +566,8 @@ async function buildUnifiedReviewInput(
       reusableMethodEvidence: entry.digest.actionSignature !== undefined
         && entry.digest.outcome === 'succeeded'
         && (entry.digest.lesson !== undefined || entry.digest.preconditions !== undefined),
-      explicitSkillPreservation: explicitSkillPreservationRequested(memory),
       independentEpisodeCount: new Set(matchingEpisodes.map((item) => item.reviewKey)).size,
       verifiedOutcome,
-      exactSkillInvoked: exactInvokedSkill !== null,
       failedWithLesson: entry.digest.outcome === 'failed' && entry.digest.lesson !== undefined,
     },
   };
@@ -596,98 +576,6 @@ async function buildUnifiedReviewInput(
     memory,
     evidence: packet,
   });
-}
-
-function explicitSkillPreservationRequested(
-  memory: UnifiedLearningReviewModelInput['memory'],
-): boolean {
-  const text = `${memory.userFeedback}\n${memory.task}`;
-  return /\b(?:save|preserve|remember|keep)\b.{0,80}\b(?:as\s+(?:a\s+)?skill|skill)\b/i.test(text)
-    || /(?:保存|保留|记住).{0,40}(?:为|成)?(?:一个)?(?:技能|Skill)/iu.test(text);
-}
-
-async function exactInvokedSkillForEpisode(
-  options: KodaXOptions,
-  identity: MemoryContextIdentity,
-  entry: PendingEpisodeReviewV2,
-): Promise<LearningReviewEvidencePacket['exactInvokedSkill']> {
-  if (entry.digest.episodeId === undefined) return null;
-  for (const area of await openProjectLearnedAreas(options, identity)) {
-    const snapshot = await exactInvokedSkillSnapshotForSession(
-      area.store,
-      entry.ownerSessionRef,
-      { bindingId: entry.digest.episodeId },
-    );
-    if (snapshot !== null) {
-      const record = await area.store.readCapability(snapshot.capabilityId);
-      if (record?.schemaVersion === 2 && sameLearnedScope(record.scope, area.scope)) {
-        return snapshot;
-      }
-    }
-  }
-  return null;
-}
-
-interface ProjectLearnedArea {
-  readonly projectId: string;
-  readonly store: LearnedAreaStore;
-  readonly scope: ReturnType<typeof createLearnedCapabilityScope>;
-}
-
-async function openProjectLearnedAreas(
-  options: KodaXOptions,
-  identity: MemoryContextIdentity,
-): Promise<readonly ProjectLearnedArea[]> {
-  if (identity.projectId === undefined) return [];
-  const configHome = identity.configHome ?? options.context?.configHome ?? getAgentConfigPath();
-  const projectRoot = resolveExecutionCwd(options.context);
-  const localProjectId = `local:${path.resolve(projectRoot).toLowerCase()}`;
-  const projectIds = [...new Set([identity.projectId, localProjectId])];
-  const areas = projectIds.map((projectId): ProjectLearnedArea => ({
-    projectId,
-    store: new LearnedAreaStore(resolveProjectLearnedAreaRoot(configHome, {
-      tenantId: identity.tenantId,
-      projectId,
-    })),
-    scope: createLearnedCapabilityScope(configHome, {
-      tenantId: identity.tenantId,
-      projectId,
-    }),
-  }));
-  await Promise.all(areas.map(async ({ store }) => store.initialize()));
-  return areas;
-}
-
-async function selectProjectLearnedArea(
-  areas: readonly ProjectLearnedArea[],
-  capability: NormalizedLearnedSkillDecision,
-): Promise<ProjectLearnedArea> {
-  const primary = areas[0];
-  if (primary === undefined) throw new Error('project Learned Area is unavailable');
-  if (capability.targetCapabilityId === undefined) return primary;
-  let firstOwningArea: ProjectLearnedArea | undefined;
-  for (const area of areas) {
-    const record = await area.store.readCapability(capability.targetCapabilityId);
-    if (record?.schemaVersion !== 2 || !sameLearnedScope(record.scope, area.scope)) continue;
-    firstOwningArea ??= area;
-    const revisionMatches = capability.expectedRevision === undefined
-      || (record.schemaVersion === 2
-        && record.artifact.contentRevision === capability.expectedRevision);
-    const fingerprintMatches = capability.expectedFingerprint === undefined
-      || (record.schemaVersion === 2
-        && record.artifact.fingerprint === capability.expectedFingerprint);
-    if (revisionMatches && fingerprintMatches) return area;
-  }
-  return firstOwningArea ?? primary;
-}
-
-function sameLearnedScope(
-  left: ReturnType<typeof createLearnedCapabilityScope>,
-  right: ReturnType<typeof createLearnedCapabilityScope>,
-): boolean {
-  return left.configHomeHash === right.configHomeHash
-    && left.tenantHash === right.tenantHash
-    && left.projectHash === right.projectHash;
 }
 
 async function priorOutcomeDigests(
@@ -746,9 +634,9 @@ async function applyUnifiedReviewAction(
     effect: (revalidateAuthority: () => Promise<void>) => Promise<readonly string[]>,
   ) => Promise<readonly string[]>,
 ): Promise<readonly string[]> {
-  if (carrier === 'skill') {
-    return applyUnifiedSkillDecision(options, identity, decision, commitWithAuthority);
-  }
+  // Learned Skills were removed (FEATURE_309). A review decided before then may still
+  // list a skill carrier; it finishes with no effect so the review can complete.
+  if (carrier === 'skill') return [];
   const plan = decision.memoryPlan;
   if (!isPersistedMemoryReviewPlan(plan)) {
     throw new Error('committed unified review decision has an invalid Memory plan');
@@ -768,138 +656,6 @@ async function applyUnifiedReviewAction(
   });
 }
 
-async function applyUnifiedSkillDecision(
-  options: KodaXOptions,
-  identity: MemoryContextIdentity,
-  decision: import('@kodax-ai/agent').EpisodeReviewDecision,
-  commitWithAuthority: (
-    effect: (revalidateAuthority: () => Promise<void>) => Promise<readonly string[]>,
-  ) => Promise<readonly string[]>,
-): Promise<readonly string[]> {
-  const capability = decision.capabilityDecision;
-  if (isCommittedSkillDecision(capability)
-    && ((capability.disposition !== 'discard' && capability.spec !== undefined)
-      || capability.quarantineExactInvokedRevision === true)) {
-    const configHome = identity.configHome ?? options.context?.configHome ?? getAgentConfigPath();
-    if (identity.projectId === undefined) {
-      const store = new LearnedAreaStore(path.join(configHome, 'learned'));
-      await store.initialize();
-      const displayName = capability.spec?.name
-        ?? capability.targetCapabilityId
-        ?? 'learned-skill-attention';
-      const capabilityId = `lc_ready_${createHash('sha256')
-        .update(`${decision.decisionId}:project-identity-unavailable`)
-        .digest('hex')
-        .slice(0, 24)}`;
-      return commitWithAuthority(async (revalidateAuthority) => {
-        await store.withOwnerMutation(async () => {
-          await revalidateAuthority();
-          if (await store.readCapability(capabilityId) !== undefined) return;
-          const now = new Date().toISOString();
-          const record: import('@kodax-ai/agent').LearnedCapabilityRecordV1 = {
-            schemaVersion: 1,
-            capabilityId,
-            displayName,
-            slug: slugifyLearnedCapabilityName(displayName),
-            carrier: 'skill',
-            lifecycle: 'ready',
-            revision: 1,
-            createdAt: now,
-            updatedAt: now,
-            source: { kind: 'skill_learning_loop' },
-            diagnostics: ['stable project identity unavailable; automatic activation was denied'],
-          };
-          await revalidateAuthority();
-          await store.writeCapability(record);
-          await store.ensureCurrentEvent(record);
-        });
-        return [capabilityId];
-      });
-    }
-    const areas = await openProjectLearnedAreas(options, {
-      ...identity,
-      configHome,
-    });
-    const area = await selectProjectLearnedArea(areas, capability);
-    const store = area.store;
-    if ((capability.disposition === 'discard' || capability.spec === undefined)
-      && capability.quarantineExactInvokedRevision === true
-      && capability.targetCapabilityId !== undefined
-      && capability.expectedRevision !== undefined
-      && capability.expectedFingerprint !== undefined) {
-      return commitWithAuthority(async (revalidateAuthority) => {
-        const quarantined = await quarantineLearnedSkillRevision(
-          store,
-          capability.targetCapabilityId!,
-          {
-            expectedRevision: capability.expectedRevision!,
-            expectedFingerprint: capability.expectedFingerprint!,
-            reason: 'verified rule-level contradiction in the exact invoked learned Skill revision',
-            revalidateAuthority,
-          },
-        );
-        return [quarantined.capabilityId];
-      });
-    }
-    if (capability.spec === undefined || capability.disposition === 'discard') return [];
-    const record = await commitLearnedSkillRevision(store, {
-      scope: area.scope,
-      spec: capability.spec,
-      disposition: capability.disposition,
-      operation: capability.operation,
-      provenance: {
-        jobId: decision.jobId,
-        inputHash: decision.inputHash,
-        decisionId: decision.decisionId,
-        actionId: `${decision.decisionId}:skill`,
-      },
-      ...(capability.targetCapabilityId === undefined
-        ? {}
-        : { targetCapabilityId: capability.targetCapabilityId }),
-      ...(capability.expectedRevision === undefined
-        ? {}
-        : { expectedRevision: capability.expectedRevision }),
-      ...(capability.expectedFingerprint === undefined
-        ? {}
-        : { expectedFingerprint: capability.expectedFingerprint }),
-      protectedSkillNames: await resolveProtectedFormalSkillNames(options),
-      authority: {
-        commit: async (operation) => {
-          let committed: import('@kodax-ai/agent').LearnedCapabilityRecordV2 | undefined;
-          await commitWithAuthority(async (revalidateAuthority) => {
-            committed = await operation(revalidateAuthority);
-            return [committed.capabilityId];
-          });
-          if (committed === undefined) {
-            throw new Error('learned Skill commit completed without a record');
-          }
-          return committed;
-        },
-      },
-    });
-    return [record.capabilityId];
-  }
-  return [];
-}
-
-/** Formal Skill names a learned Skill may not shadow, discovered only when a review commits one. */
-async function resolveProtectedFormalSkillNames(options: KodaXOptions): Promise<readonly string[]> {
-  const names = options.context?.skillRegistry?.list().map((skill) => skill.name) ?? [];
-  const configHome = options.context?.memoryIdentity?.configHome ?? options.context?.configHome;
-  if (configHome === undefined) return names;
-  const projectRoot = options.context?.gitRoot ?? resolveExecutionCwd(options.context);
-  const defaults = getDefaultSkillPaths(projectRoot);
-  const registry = new SkillRegistry(projectRoot, {
-    ...defaults,
-    userPaths: [
-      path.join(configHome, 'skills'),
-      ...defaults.userPaths.filter((skillPath) => path.basename(path.dirname(skillPath)) === '.agents'),
-    ],
-  });
-  await registry.discover();
-  return [...new Set([...names, ...registry.list().map((skill) => skill.name)])];
-}
-
 function isPersistedMemoryReviewPlan(value: unknown): value is MemoryReviewPlan {
   return typeof value === 'object'
     && value !== null
@@ -910,37 +666,6 @@ function isPersistedMemoryReviewPlan(value: unknown): value is MemoryReviewPlan 
     && Array.isArray(value.candidateRefs)
     && 'warnings' in value
     && Array.isArray(value.warnings);
-}
-
-function isCommittedSkillDecision(
-  value: unknown,
-): value is import('@kodax-ai/agent').NormalizedLearnedSkillDecision & (
-  | { readonly disposition: 'discard' }
-  | {
-      readonly disposition: 'ready' | 'project_canary';
-      readonly operation: 'create' | 'patch';
-    }
-) {
-  if (!(typeof value === 'object'
-    && value !== null
-    && 'disposition' in value
-    && (value.disposition === 'discard'
-      || value.disposition === 'ready'
-      || value.disposition === 'project_canary'))) return false;
-  return value.disposition === 'discard'
-    || ('operation' in value
-      && (value.operation === 'create' || value.operation === 'patch'));
-}
-
-function requiredUnifiedReviewCarriers(
-  capabilityDecision: unknown,
-): readonly ('memory' | 'skill')[] {
-  return isCommittedSkillDecision(capabilityDecision)
-    && ((capabilityDecision.disposition !== 'discard'
-      && capabilityDecision.spec !== undefined)
-      || capabilityDecision.quarantineExactInvokedRevision === true)
-    ? ['memory', 'skill']
-    : ['memory'];
 }
 
 async function reviewPendingEpisode(

@@ -55,8 +55,7 @@ for (const agentMode of [undefined, 'ama']) for (const kind of ['default', 'prof
         const names = payload.tools?.map(tool => tool.function.name) ?? [];
         let tool, input;
         if (names.includes('commit_episode_learning_review')) {
-          tool = 'commit_episode_learning_review'; input = { memoryPlan: { actions: [], warnings: [] },
-            capabilityDecision: { disposition: 'discard', reasonCodes: ['fixture-no-reusable-method'] } };
+          tool = 'commit_episode_learning_review'; input = { memoryPlan: { actions: [], warnings: [] } };
         } else if (names.includes('skill')) {
           requests.push(payload);
           if (!loaded && JSON.stringify(payload.messages).includes('- audit-00:')) {

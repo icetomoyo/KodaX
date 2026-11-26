@@ -72,7 +72,6 @@ function fakeResponse(input: { readonly userMessage: string; readonly forcedTool
         name: input.forcedToolName,
         input: {
           memoryPlan: { actions: isW1 ? [REVIEW_ACTION] : [], warnings: [] },
-          capabilityDecision: { disposition: 'discard', reasonCodes: ['no_reusable_learning'] },
         },
       }],
     };
@@ -294,7 +293,6 @@ describe('FEATURE_308 runner', () => {
     it('reports a proposal that needs approval and nothing auto-applied for a plain preference', async () => {
       const processed = await processWriteCell(w1, {
         memoryPlan: { actions: [REVIEW_ACTION], warnings: [] },
-        capabilityDecision: { disposition: 'discard', reasonCodes: ['no_reusable_learning'] },
       }, 'unit-w1');
       expect(processed.status).toBe('normalized');
       expect(processed.actions[0]).toMatchObject({ action: 'write_memdir', claimKey: 'test-command' });

@@ -96,7 +96,7 @@ async function captureUnderRuntime(): Promise<void> {
     await runtime.sessions.updateSettings(session.id, { permissionMode: 'full-access', executionCwd: workspace });
     const handle = await runtime.runs.start({ sessionId: session.id, mode: 'managed_task', prompt, options: {
       provider: 'repointel-nav-capture', model: 'capture-model', reasoningMode: 'off', lsp: false, maxIter: 2, disablePromptCache: true,
-      learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' as const, reasonCodes: ['eval-isolated'] } }),
+      learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] } }),
       agentMode: 'ama', workMode: 'coding',
       context: { executionCwd: workspace, gitRoot: workspace, resolveShellPermissionMode: () => 'full-access' },
     } });

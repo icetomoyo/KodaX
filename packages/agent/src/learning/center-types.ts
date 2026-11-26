@@ -152,47 +152,6 @@ export interface LearningClientRecord {
   readonly events: Readonly<Record<string, LearningClientEventState>>;
 }
 
-export interface LearningSurfaceSnapshot {
-  readonly ready: number;
-  readonly newlyActive: number;
-  readonly attention: number;
-  readonly active: number;
-  readonly revision: number;
-}
-
-export interface LearningQuery {
-  readonly search?: string;
-  readonly carrier?: LearnedCapabilityCarrier;
-  readonly lifecycle?: LearnedCapabilityLifecycle;
-  readonly limit?: number;
-  readonly cursor?: string;
-}
-
-export interface LearningPage {
-  readonly items: readonly LearnedCapabilityRecord[];
-  readonly nextCursor?: string;
-  readonly revision: number;
-}
-
-export interface LearningSubscribeOptions {
-  readonly afterRevision?: number;
-}
-
-export interface LearningExplicitUserAuthority {
-  readonly authority: 'explicit_user';
-  readonly expectedRevision: number;
-  readonly expectedFingerprint?: string;
-}
-
-export interface LearningActionDriver {
-  readonly carrier: LearnedCapabilityCarrier;
-  readonly actions: readonly LearningAction[];
-  execute(
-    action: LearningAction,
-    capability: LearnedCapabilityRecord,
-  ): Promise<LearnedCapabilityRecord>;
-}
-
 export type LearningCapabilityErrorCode =
   | 'ambiguous_name'
   | 'action_failed'
@@ -211,37 +170,6 @@ export class LearningCapabilityError extends Error {
   ) {
     super(message);
     this.name = 'LearningCapabilityError';
-  }
-}
-
-const TRANSITIONS: Readonly<Record<LearnedCapabilityLifecycle, readonly LearnedCapabilityLifecycle[]>> = {
-  opportunity: ['drafting', 'archived', 'rejected'],
-  drafting: ['ready', 'archived', 'rejected'],
-  ready: ['testing', 'active_learned', 'promoted_user', 'archived', 'rejected', 'quarantined'],
-  testing: ['active_learned', 'quarantined', 'archived'],
-  active_learned: ['testing', 'quarantined', 'archived', 'promoted_user'],
-  promoted_user: [],
-  quarantined: ['ready', 'testing', 'active_learned', 'archived', 'rejected'],
-  archived: ['ready', 'active_learned', 'rejected'],
-  rejected: [],
-};
-
-export function canTransitionLearnedCapability(
-  from: LearnedCapabilityLifecycle,
-  to: LearnedCapabilityLifecycle,
-): boolean {
-  return TRANSITIONS[from].includes(to);
-}
-
-export function assertLearnedCapabilityTransition(
-  from: LearnedCapabilityLifecycle,
-  to: LearnedCapabilityLifecycle,
-): void {
-  if (!canTransitionLearnedCapability(from, to)) {
-    throw new LearningCapabilityError(
-      'invalid_transition',
-      `learned capability cannot transition from ${from} to ${to}`,
-    );
   }
 }
 

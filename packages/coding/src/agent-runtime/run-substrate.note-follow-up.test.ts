@@ -84,7 +84,7 @@ describe('runSubstrate note memory follow-up', { timeout: 30_000 }, () => {
 
   it('only counts reads when the host supplied its own learning reviewer', async () => {
     vi.stubEnv('KODAX_MEMORY_NOTES', '1');
-    await run({}, { learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['offline'] } }) });
+    await run({}, { learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] } }) });
     expect((scheduled.mock.calls[0]![0] as Call).reflect).toBe(false);
   });
 

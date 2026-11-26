@@ -30,8 +30,7 @@ it('delivers complete plan approval and preserves Host mode and effort across AC
       reasoning?: boolean | KodaXReasoningRequest): Promise<KodaXStreamResult> {
       if (_tools.some(tool => tool.name === 'commit_episode_learning_review')) {
         return { textBlocks: [], thinkingBlocks: [], toolBlocks: [{ type: 'tool_use', id: 'review',
-          name: 'commit_episode_learning_review', input: { memoryPlan: { actions: [], warnings: [] },
-            capabilityDecision: { disposition: 'discard' } } }], stopReason: 'tool_use' };
+          name: 'commit_episode_learning_review', input: { memoryPlan: { actions: [], warnings: [] } } }], stopReason: 'tool_use' };
       }
       reasoningRequests.push(reasoning);
       if (firstTurn) {

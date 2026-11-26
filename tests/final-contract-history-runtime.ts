@@ -112,7 +112,7 @@ export async function runFinalHistoryRuntime(directory: string, invoke: NaturalI
         provider: providerName, model: config.model, agentMode: 'ama', workMode: 'coding', lsp: false,
         reasoningMode: config.reasoning, effort: config.reasoning === 'on' ? 'low' : 'none', maxIter: config.calls,
         maxOutputTokens: 8192, abortSignal: config.signal, disablePromptCache: true, guardrails: [boundary],
-        learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['eval-isolated'] } }),
+        learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] } }),
         context: { executionCwd: workspace, gitRoot: workspace, shellExecution: execution.shellExecution,
           skillsPrompt: '', skillRegistry: new SkillRegistry(workspace), repoIntelligenceMode: 'off', resolveShellPermissionMode: () => 'full-access' },
         events: { onToolResult: (receipt, meta) => { events.push({ phase, kind: 'result', ...receipt, meta }); } },

@@ -38,7 +38,6 @@ function finishResponse(response, review) {
   const delta = review ? { tool_calls: [{ index: 0, id: 'review-call', type: 'function',
     function: { name: reviewTool, arguments: JSON.stringify({
       memoryPlan: { actions: [], warnings: [] },
-      capabilityDecision: { disposition: 'discard', reasonCodes: ['one_off'] },
     }) } }] } : { content: 'The requested inspection is complete.' };
   response.writeHead(200, { 'content-type': 'text/event-stream' });
   response.end(`data: ${JSON.stringify({ id: 'local-response', object: 'chat.completion.chunk',

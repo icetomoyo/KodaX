@@ -122,7 +122,6 @@ export interface EpisodeReviewDecisionInput {
   readonly memoryProposalIds: readonly string[];
   readonly requiredCarriers?: readonly ('memory' | 'skill')[];
   readonly memoryPlan?: unknown;
-  readonly capabilityDecision?: unknown;
 }
 
 export interface EpisodeReviewDecision extends EpisodeReviewDecisionInput {
@@ -492,9 +491,6 @@ export async function commitEpisodeReviewDecision(
         memoryProposalIds: [...input.memoryProposalIds],
         requiredCarriers: [...requiredCarriers],
         ...(input.memoryPlan === undefined ? {} : { memoryPlan: input.memoryPlan }),
-        ...(input.capabilityDecision === undefined
-          ? {}
-          : { capabilityDecision: input.capabilityDecision }),
         committedAt,
       };
       await writeJsonAtomic(jobDecisionPath(identity, claim.jobId), decision);

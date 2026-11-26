@@ -45,7 +45,7 @@ it('hands the finished AMA session to the note follow-up', async () => {
 
 it('only counts reads when the host supplied its own learning reviewer', async () => {
   vi.stubEnv('KODAX_MEMORY_NOTES', '1');
-  await runAma({}, { learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['offline'] } }) });
+  await runAma({}, { learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] } }) });
   expect((scheduled.mock.calls[0]![0] as { reflect: boolean }).reflect).toBe(false);
 });
 

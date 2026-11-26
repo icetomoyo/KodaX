@@ -402,7 +402,7 @@ it('uses saved log controls during the next actual stall sidecar execution witho
         textBlocks: [], thinkingBlocks: [], toolBlocks: [{ type: 'tool_use', id: randomUUID(), name, input }], stopReason: 'tool_use',
       });
       if (tools.some(tool => tool.name === LEARNING_REVIEW_TOOL.name)) return result(LEARNING_REVIEW_TOOL.name,
-        { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' } });
+        { memoryPlan: { actions: [], warnings: [] } });
       if (tools.some(tool => tool.name === 'emit_sidecar_verdict')) {
         probes.verifier += 1; return result('emit_sidecar_verdict', { verdict: 'accept' });
       }
@@ -533,7 +533,7 @@ it('uses the Host goal journal during an actual Run without a completion sidecar
       });
       requests.push(args[4]?.forcedToolName ?? 'ordinary');
       if (args[1].some(tool => tool.name === LEARNING_REVIEW_TOOL.name)) return result(LEARNING_REVIEW_TOOL.name,
-        { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' } });
+        { memoryPlan: { actions: [], warnings: [] } });
       if (++turn === 1) return result('create_goal', { objective: 'Inspect the requested result.' });
       if (turn === 2) return result('get_goal', {});
       if (turn === 3) return result('update_goal', { status: 'complete' });
@@ -560,7 +560,7 @@ it('keeps goal continuation out of user history while preserving the original in
       const tool = (name: string, input: Record<string, unknown>): KodaXStreamResult => ({ textBlocks: [], thinkingBlocks: [],
         toolBlocks: [{ type: 'tool_use', id: randomUUID(), name, input }], stopReason: 'tool_use' });
       if (args[1].some(item => item.name === LEARNING_REVIEW_TOOL.name)) return tool(LEARNING_REVIEW_TOOL.name,
-        { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' } });
+        { memoryPlan: { actions: [], warnings: [] } });
       if (++turn === 1) return tool('create_goal', { objective: 'Finish the actual requested result.' });
       if (turn === 3) return tool('update_goal', { status: 'complete' });
       return { textBlocks: [{ type: 'text', text: turn === 2 ? 'Still checking the result.' : 'Checks finished.' }], thinkingBlocks: [], toolBlocks: [], stopReason: 'end_turn' };

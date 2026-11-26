@@ -99,7 +99,7 @@ it.each(['agent', 'coding', 'script'] as const)('keeps %s URL/report work direct
     const run = async (prompt: string) => {
       const handle = await runtime.runs.start({ sessionId: session.id, mode: 'managed_task', prompt,
         options: { agentMode: 'ama', reasoningMode: 'off', lsp: false,
-          learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['offline'] } }),
+          learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] } }),
           context: { repoIntelligenceMode: 'off', skillsPrompt: '' },
           events: { onToolResult: value => {
             const content = typeof value.content === 'string' ? value.content : JSON.stringify(value.content);

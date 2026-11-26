@@ -3101,10 +3101,6 @@ describe('runManagedTaskViaRunner — end-to-end', () => {
               }],
               warnings: [],
             },
-            capabilityDecision: {
-              disposition: 'discard',
-              reasonCodes: ['preference_belongs_in_memory'],
-            },
           };
         },
         events: {
@@ -3418,10 +3414,6 @@ describe('runManagedTaskViaRunner — end-to-end', () => {
               candidateRefs: input.memory.candidateRefs,
               actions: [],
               warnings: [],
-            },
-            capabilityDecision: {
-              disposition: 'discard',
-              reasonCodes: ['no_reusable_learning'],
             },
           };
         },

@@ -46,8 +46,7 @@ it.each([1, 2])('settles a restored AMA completion with a %i-response budget wit
     await runtime.sessions.load(session.id);
     const options = { provider: providerName, agentMode: 'ama' as const, reasoningMode: 'off' as const,
       maxIter: 4, lsp: false,
-      learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] },
-        capabilityDecision: { disposition: 'discard' as const, reasonCodes: ['offline-test'] } }),
+      learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] } }),
     };
     const handle = await runtime.runs.start({ sessionId: session.id, mode: 'managed_task', prompt: 'Report the work and unfinished QA.', options });
     const result = await handle.result;

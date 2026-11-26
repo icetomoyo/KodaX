@@ -39,7 +39,6 @@ it.each([
         choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'review-result', type: 'function',
           function: { name: 'commit_episode_learning_review', arguments: JSON.stringify({
             memoryPlan: { actions: [], warnings: [] },
-            capabilityDecision: { disposition: 'discard', reasonCodes: ['fixture-no-reusable-method'] },
           }) } }] }, finish_reason: 'tool_calls' }],
       })}\n\ndata: [DONE]\n\n`);
       return;

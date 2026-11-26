@@ -106,12 +106,9 @@ export type {
 export { EpisodeReviewFailure } from './review-inbox.js';
 export { EpisodeReviewBranchChangedError } from './review-inbox.js';
 export type {
-  ExactInvokedSkillSnapshot,
-  LearnedSkillDecisionDisposition,
   LearningReviewEvidencePacket,
   LearningReviewQualification,
   LearningReviewVerifierFact,
-  NormalizedLearnedSkillDecision,
   UnifiedLearningReviewModelInput,
   UnifiedLearningReviewResult,
   UnifiedLearningReviewRunner,

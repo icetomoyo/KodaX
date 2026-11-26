@@ -263,7 +263,7 @@ function scriptedModel(mode: ModelMode) {
       if (tools.some(tool => tool.name === 'commit_episode_learning_review')) {
         return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [{
           type: 'tool_use', id: 'review', name: 'commit_episode_learning_review',
-          input: { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' } },
+          input: { memoryPlan: { actions: [], warnings: [] } },
         }] };
       }
       calls += 1;

@@ -101,7 +101,7 @@ it.each([32_768, 65_536])('keeps paged and owned evidence recoverable across Run
           context: { skillsPrompt: '', repoIntelligenceMode: 'off', ...(next === 0 ? {
             inputArtifacts: [{ kind: 'image', path: imagePath, mediaType: 'image/png' }],
           } : {}) },
-          learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['offline'] } }),
+          learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] } }),
           events: { onToolResult: result => { receipts.push({ phase, id: result.id,
             text: typeof result.content === 'string' ? result.content : JSON.stringify(result.content) }); } },
         } });

@@ -1,8 +1,3 @@
-import {
-  validateDeclarativeSkillSpec,
-  type DeclarativeSkillSpec,
-} from '../learning/learned-skill.js';
-import type { ExactInvokedSkillSnapshot } from '../learning/learned-skill-usage.js';
 import type { KodaXMemoryOutcomeDigest } from '../types.js';
 import type {
   MemoryReviewDraftAction,
@@ -13,30 +8,15 @@ import type {
 import { sanitizePromptSafeMemoryClaim } from './prompt-safety.js';
 import { EpisodeReviewFailure } from './review-inbox.js';
 
-const HASH_RE = /^[a-f0-9]{64}$/;
-const AUTHORITY_RISK_CODES = new Set([
-  'credential_access',
-  'role_override',
-  'cross_project',
-  'global_mutation',
-  'bypass_permissions',
-  'destructive_default',
-  'network_default',
-]);
-
 export interface LearningReviewVerifierFact {
   readonly ref: string;
   readonly verdict: 'passed' | 'failed' | 'inconclusive';
 }
 
-export type { ExactInvokedSkillSnapshot } from '../learning/learned-skill-usage.js';
-
 export interface LearningReviewQualification {
   readonly reusableMethodEvidence: boolean;
-  readonly explicitSkillPreservation: boolean;
   readonly independentEpisodeCount: number;
   readonly verifiedOutcome: boolean;
-  readonly exactSkillInvoked: boolean;
   /**
    * FEATURE_290 §3.3: additive admission signal
    * (`outcome === 'failed' && lesson !== undefined`). No existing predicate
@@ -47,7 +27,6 @@ export interface LearningReviewQualification {
 
 export interface LearningReviewEvidencePacket {
   readonly outcomeDigest: KodaXMemoryOutcomeDigest;
-  readonly exactInvokedSkill: ExactInvokedSkillSnapshot | null;
   readonly verifierFacts: readonly LearningReviewVerifierFact[];
   readonly priorDigests: readonly KodaXMemoryOutcomeDigest[];
   readonly qualification: LearningReviewQualification;
@@ -59,25 +38,8 @@ export interface UnifiedLearningReviewModelInput {
   readonly evidence: LearningReviewEvidencePacket;
 }
 
-export type LearnedSkillDecisionDisposition =
-  | 'discard'
-  | 'ready'
-  | 'project_canary';
-
-export interface NormalizedLearnedSkillDecision {
-  readonly disposition: LearnedSkillDecisionDisposition;
-  readonly reasonCodes: readonly string[];
-  readonly operation?: 'create' | 'patch';
-  readonly spec?: DeclarativeSkillSpec;
-  readonly targetCapabilityId?: string;
-  readonly expectedFingerprint?: string;
-  readonly expectedRevision?: number;
-  readonly quarantineExactInvokedRevision?: true;
-}
-
 export interface UnifiedLearningReviewResult {
   readonly memoryPlan: MemoryReviewPlan;
-  readonly capabilityDecision?: NormalizedLearnedSkillDecision;
 }
 
 export type UnifiedLearningReviewRunner = (
@@ -88,13 +50,6 @@ export type UnifiedLearningReviewRunner = (
 export function sanitizeUnifiedLearningReviewInput(
   input: UnifiedLearningReviewModelInput,
 ): UnifiedLearningReviewModelInput {
-  const exactInvokedSkill = input.evidence.exactInvokedSkill === null
-    || sanitizePromptSafeMemoryClaim(
-      input.evidence.exactInvokedSkill.content,
-      input.evidence.exactInvokedSkill.content.length,
-    ) === undefined
-    ? null
-    : input.evidence.exactInvokedSkill;
   return {
     cacheDomain: 'learning-review',
     memory: {
@@ -146,17 +101,12 @@ export function sanitizeUnifiedLearningReviewInput(
     },
     evidence: {
       outcomeDigest: sanitizeOutcomeDigest(input.evidence.outcomeDigest),
-      exactInvokedSkill,
       verifierFacts: input.evidence.verifierFacts.map((fact) => ({
         ...fact,
         ref: safeReviewText(fact.ref, 'unsafe verifier ref'),
       })),
       priorDigests: input.evidence.priorDigests.map(sanitizeOutcomeDigest),
-      qualification: {
-        ...input.evidence.qualification,
-        exactSkillInvoked: exactInvokedSkill !== null
-          && input.evidence.qualification.exactSkillInvoked,
-      },
+      qualification: input.evidence.qualification,
     },
   };
 }
@@ -274,10 +224,8 @@ export function isUnifiedLearningReviewModelInput(
     && evidence.priorDigests.length <= 2
     && isRecord(qualification)
     && typeof qualification.reusableMethodEvidence === 'boolean'
-    && typeof qualification.explicitSkillPreservation === 'boolean'
     && Number.isSafeInteger(qualification.independentEpisodeCount)
     && typeof qualification.verifiedOutcome === 'boolean'
-    && typeof qualification.exactSkillInvoked === 'boolean'
     && (qualification.failedWithLesson === undefined
       || typeof qualification.failedWithLesson === 'boolean');
 }
@@ -331,14 +279,7 @@ export function normalizeUnifiedLearningReview(
     input.evidence.outcomeDigest,
     input.evidence.qualification,
   );
-  const capabilityDecision = normalizeCapabilityDecision(
-    record.capabilityDecision,
-    input.evidence,
-  );
-  return {
-    memoryPlan,
-    ...(capabilityDecision === undefined ? {} : { capabilityDecision }),
-  };
+  return { memoryPlan };
 }
 
 function normalizeProviderMemoryPlan(
@@ -358,179 +299,6 @@ function normalizeProviderMemoryPlan(
     candidateRefs: input.candidateRefs,
     actions: value.actions,
     warnings: value.warnings ?? [],
-  };
-}
-
-function normalizeCapabilityDecision(
-  value: unknown,
-  evidence: LearningReviewEvidencePacket,
-): NormalizedLearnedSkillDecision | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (!isRecord(value)
-    || !['discard', 'ready', 'project_canary'].includes(String(value.disposition))
-    || !Array.isArray(value.reasonCodes)
-    || !value.reasonCodes.every((code) => typeof code === 'string')) {
-    return { disposition: 'ready', reasonCodes: ['invalid_capability_decision'] };
-  }
-  const reasonCodes = [...new Set(value.reasonCodes as string[])];
-  const quarantine = exactQuarantineFields(evidence, reasonCodes);
-  if (value.disposition === 'discard') {
-    return { disposition: 'discard', reasonCodes, ...quarantine };
-  }
-  const spec = parseDeclarativeSkillSpec(value.spec);
-  if (spec === undefined) {
-    return {
-      disposition: 'ready',
-      reasonCodes: unique([...reasonCodes, 'invalid_skill_spec']),
-      ...quarantine,
-    };
-  }
-  try {
-    validateDeclarativeSkillSpec(spec);
-  } catch {
-    return {
-      disposition: 'ready',
-      reasonCodes: unique([...reasonCodes, 'unsafe_skill_spec']),
-      ...quarantine,
-    };
-  }
-  const operation = value.operation === 'create' || value.operation === 'patch'
-    ? value.operation
-    : undefined;
-  if (value.disposition === 'ready') {
-    return {
-      disposition: 'ready',
-      reasonCodes,
-      ...(operation === undefined ? {} : { operation }),
-      spec,
-      ...quarantine,
-    };
-  }
-  const gateReasons: string[] = [];
-  const patch = operation === 'patch';
-  if (value.requestedScope !== 'project') gateReasons.push('project_scope_required');
-  if (value.semanticDisposition !== 'allow'
-    || reasonCodes.some((code) => AUTHORITY_RISK_CODES.has(code))) {
-    gateReasons.push('semantic_authority_risk');
-  }
-  const qualification = evidence.qualification;
-  const qualifiedCreateEvidence = qualification.reusableMethodEvidence
-    && qualification.verifiedOutcome
-    && evidence.outcomeDigest.outcome === 'succeeded'
-    && evidence.verifierFacts.some((fact) => fact.verdict === 'passed')
-    && (qualification.explicitSkillPreservation
-      || qualification.independentEpisodeCount >= 2);
-  const qualifiedPatchEvidence = patch
-    && qualification.exactSkillInvoked
-    && qualification.verifiedOutcome
-    && evidence.verifierFacts.some((fact) => fact.verdict === 'failed')
-    && reasonCodes.includes('rule_level_contradiction')
-    && !reasonCodes.includes('environment_failure');
-  if (patch ? !qualifiedPatchEvidence : !qualifiedCreateEvidence) {
-    gateReasons.push('insufficient_independent_verified_evidence');
-  }
-  if (operation === undefined) gateReasons.push('invalid_skill_operation');
-  const targetCapabilityId = typeof value.targetCapabilityId === 'string'
-    ? value.targetCapabilityId
-    : undefined;
-  const expectedFingerprint = typeof value.expectedFingerprint === 'string'
-    ? value.expectedFingerprint
-    : undefined;
-  const expectedRevision = Number.isSafeInteger(value.expectedRevision)
-    ? value.expectedRevision as number
-    : undefined;
-  if (patch && !matchesExactInvokedRevision(
-    evidence,
-    targetCapabilityId,
-    expectedFingerprint,
-    expectedRevision,
-  )) {
-    gateReasons.push('exact_invoked_revision_required');
-  }
-  if (gateReasons.length > 0) {
-    return {
-      disposition: 'ready',
-      reasonCodes: unique([...reasonCodes, ...gateReasons]),
-      ...(operation === undefined ? {} : { operation }),
-      spec,
-      ...(targetCapabilityId === undefined ? {} : { targetCapabilityId }),
-      ...(expectedFingerprint === undefined ? {} : { expectedFingerprint }),
-      ...(expectedRevision === undefined ? {} : { expectedRevision }),
-      ...quarantine,
-    };
-  }
-  return {
-    disposition: 'project_canary',
-    reasonCodes,
-    operation,
-    spec,
-    ...(targetCapabilityId === undefined ? {} : { targetCapabilityId }),
-    ...(expectedFingerprint === undefined ? {} : { expectedFingerprint }),
-    ...(expectedRevision === undefined ? {} : { expectedRevision }),
-    ...quarantine,
-  };
-}
-
-function exactQuarantineFields(
-  evidence: LearningReviewEvidencePacket,
-  reasonCodes: readonly string[],
-): Pick<
-  NormalizedLearnedSkillDecision,
-  | 'quarantineExactInvokedRevision'
-  | 'targetCapabilityId'
-  | 'expectedFingerprint'
-  | 'expectedRevision'
-> {
-  const invoked = evidence.exactInvokedSkill;
-  const qualified = invoked !== null
-    && evidence.qualification.exactSkillInvoked
-    && evidence.qualification.verifiedOutcome
-    && evidence.verifierFacts.some((fact) => fact.verdict === 'failed')
-    && reasonCodes.includes('rule_level_contradiction')
-    && !reasonCodes.includes('environment_failure')
-    && HASH_RE.test(invoked.fingerprint);
-  return !qualified || invoked === null
-    ? {}
-    : {
-        quarantineExactInvokedRevision: true,
-        targetCapabilityId: invoked.capabilityId,
-        expectedFingerprint: invoked.fingerprint,
-        expectedRevision: invoked.revision,
-      };
-}
-
-function matchesExactInvokedRevision(
-  evidence: LearningReviewEvidencePacket,
-  capabilityId: string | undefined,
-  fingerprint: string | undefined,
-  revision: number | undefined,
-): boolean {
-  const invoked = evidence.exactInvokedSkill;
-  return evidence.qualification.exactSkillInvoked
-    && invoked !== null
-    && invoked.capabilityId === capabilityId
-    && invoked.fingerprint === fingerprint
-    && invoked.revision === revision
-    && HASH_RE.test(invoked.fingerprint);
-}
-
-function parseDeclarativeSkillSpec(value: unknown): DeclarativeSkillSpec | undefined {
-  if (!isRecord(value)
-    || typeof value.name !== 'string'
-    || typeof value.description !== 'string'
-    || typeof value.purpose !== 'string'
-    || !isStringArray(value.triggers)
-    || !isStringArray(value.steps)
-    || !isStringArray(value.verification)
-    || !isStringArray(value.pitfalls)) return undefined;
-  return {
-    name: value.name,
-    description: value.description,
-    purpose: value.purpose,
-    triggers: value.triggers,
-    steps: value.steps,
-    verification: value.verification,
-    pitfalls: value.pitfalls,
   };
 }
 

@@ -108,7 +108,7 @@ it('records an accounted truncated optional review after history and still compl
           reviewCalls++;
           expect(wire.max_tokens).toBe(1200);
           if (reviewCalls > 1) return nativeResponse([{ type: 'tool_use', id: `review-${reviewCalls}`, name: 'commit_episode_learning_review',
-            input: { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['no-durable-learning'] } } }], wire.stream === true);
+            input: { memoryPlan: { actions: [], warnings: [] } } }], wire.stream === true);
           expect(primaryCalls).toBe(2);
           const response = nativeResponse([{ type: 'text', text: 'Optional review was truncated.' }], wire.stream === true);
           const body = (await response.text()).replaceAll('"output_tokens":20', '"output_tokens":1200')

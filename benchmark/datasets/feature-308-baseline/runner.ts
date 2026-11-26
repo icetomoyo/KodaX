@@ -491,7 +491,6 @@ interface WriteProcessing {
   readonly status: 'normalized' | 'rejected' | 'no-review-call';
   readonly error?: string;
   readonly actions: readonly { readonly action: string; readonly claimKey?: string; readonly proposedBody?: string; readonly risk: string }[];
-  readonly capabilityDisposition?: string;
   readonly decisions: readonly { readonly kind: string; readonly reason: string }[];
   readonly proposalCount: number;
   readonly autoAppliedCount: number;
@@ -518,7 +517,6 @@ export async function processWriteCell(writeCase: WriteCase, raw: unknown | unde
         ...(action.proposedBody === undefined ? {} : { proposedBody: action.proposedBody }),
         risk: action.risk,
       })),
-      ...(normalized.capabilityDecision === undefined ? {} : { capabilityDisposition: normalized.capabilityDecision.disposition }),
       decisions: applied.decisions.map((decision) => ({ kind: decision.kind, reason: decision.reason })),
       proposalCount: applied.proposalIds.length,
       autoAppliedCount: applied.appliedProposalIds.length,

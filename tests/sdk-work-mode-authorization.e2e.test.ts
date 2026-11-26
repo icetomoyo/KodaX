@@ -21,8 +21,7 @@ async function fixture(options: { holdFirst?: boolean; defaultSkill?: boolean; s
       response.writeHead(200, { 'content-type': 'text/event-stream' });
       response.end(`data: ${JSON.stringify({ id: 'mode-review', choices: [{ index: 0,
         delta: { tool_calls: [{ index: 0, id: 'discard-one-off', type: 'function', function: {
-          name: 'commit_episode_learning_review', arguments: JSON.stringify({ memoryPlan: { actions: [], warnings: [] },
-            capabilityDecision: { disposition: 'discard', reasonCodes: ['one_off'] } }),
+          name: 'commit_episode_learning_review', arguments: JSON.stringify({ memoryPlan: { actions: [], warnings: [] } }),
         } }] }, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n`);
       return;
     }

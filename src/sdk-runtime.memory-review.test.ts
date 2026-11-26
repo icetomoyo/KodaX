@@ -50,7 +50,7 @@ function reviewerGate() {
       }
       return { memoryPlan: { trigger: input.memory.trigger, createdAt: new Date().toISOString(),
         sourceRefs: input.memory.sourceRefs, candidateRefs: input.memory.candidateRefs,
-        actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: [] } };
+        actions: [], warnings: [] } };
     } finally { signal.removeEventListener('abort', onAbort); }
   };
   return { reviewer, entered: entered.promise, aborted: aborted.promise,

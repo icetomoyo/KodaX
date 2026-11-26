@@ -177,7 +177,7 @@ async function captureActivation(mode: WorkMode, entryScoped = false) {
       phase = next; step = 0;
       const started = Date.now();
       const handle = await runtime.runs.start({ sessionId, mode: 'managed_task', prompt, options: { agentMode: 'ama', reasoningMode: 'off', lsp: false,
-        learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard', reasonCodes: ['offline'] } }),
+        learningReviewer: async () => ({ memoryPlan: { actions: [], warnings: [] } }),
         context: { repoIntelligenceMode: 'off', skillsPrompt: '' }, events: { onToolResult: result => {
           const content = typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
           const sent = dispatched.find(item => item.action.id === result.id)?.action;

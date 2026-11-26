@@ -81,7 +81,7 @@ it.each(['permissionMode', 'planModeEffort'] as const)('audit: live %s change sh
     async stream(...args: Parameters<KodaXBaseProvider['stream']>): Promise<KodaXStreamResult> {
       if (args[1].some(tool => tool.name === LEARNING_REVIEW_TOOL.name)) return {
         textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [{ type: 'tool_use', id: 'review', name: LEARNING_REVIEW_TOOL.name,
-          input: { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' } } }],
+          input: { memoryPlan: { actions: [], warnings: [] } } }],
       };
       requests.push(typeof args[3] === 'object' ? { enabled: args[3].enabled, effort: args[3].effort } : args[3]);
       if (requests.length === 1) {

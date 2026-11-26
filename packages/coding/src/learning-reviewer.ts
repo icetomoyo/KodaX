@@ -25,7 +25,7 @@ const STRING_ARRAY = {
 
 export const LEARNING_REVIEW_TOOL: KodaXToolDefinition = {
   name: TOOL_NAME,
-  description: 'Commit one structured Memory plan and optional learned Skill decision.',
+  description: 'Commit one structured Memory plan.',
   input_schema: {
     type: 'object',
     properties: {
@@ -52,7 +52,6 @@ export const LEARNING_REVIEW_TOOL: KodaXToolDefinition = {
                     'link_refs',
                     'write_memdir',
                     'patch_memdir',
-                    'handoff_to_skill_loop',
                     'quarantine',
                     'archive',
                     'conflict_report',
@@ -97,51 +96,8 @@ export const LEARNING_REVIEW_TOOL: KodaXToolDefinition = {
         },
         required: ['actions', 'warnings'],
       },
-      capabilityDecision: {
-        type: 'object',
-        properties: {
-          disposition: {
-            type: 'string',
-            enum: ['discard', 'ready', 'project_canary'],
-          },
-          reasonCodes: STRING_ARRAY,
-          operation: { type: 'string', enum: ['create', 'patch'] },
-          requestedScope: { type: 'string', enum: ['project', 'global', 'ambiguous'] },
-          semanticDisposition: { type: 'string', enum: ['allow', 'deny', 'ambiguous'] },
-          targetCapabilityId: { type: 'string' },
-          expectedFingerprint: { type: 'string' },
-          expectedRevision: { type: 'number' },
-          spec: {
-            type: 'object',
-            properties: {
-              name: {
-                type: 'string',
-                pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$',
-                maxLength: 64,
-                description: 'Lowercase hyphenated slug, for example verify-release.',
-              },
-              description: { type: 'string' },
-              purpose: { type: 'string' },
-              triggers: STRING_ARRAY,
-              steps: STRING_ARRAY,
-              verification: STRING_ARRAY,
-              pitfalls: STRING_ARRAY,
-            },
-            required: [
-              'name',
-              'description',
-              'purpose',
-              'triggers',
-              'steps',
-              'verification',
-              'pitfalls',
-            ],
-          },
-        },
-        required: ['disposition', 'reasonCodes'],
-      },
     },
-    required: ['memoryPlan', 'capabilityDecision'],
+    required: ['memoryPlan'],
   },
 };
 

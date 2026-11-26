@@ -60,7 +60,7 @@ beforeEach(async () => {
       if (args[1].some(tool => tool.name === LEARNING_REVIEW_TOOL.name)) return {
         textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use' as const,
         toolBlocks: [{ type: 'tool_use' as const, id: 'memory-review', name: LEARNING_REVIEW_TOOL.name,
-          input: { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' } } }],
+          input: { memoryPlan: { actions: [], warnings: [] } } }],
       };
       const probe = JSON.stringify(args[0]);
       const reversedIndex = [...args[0]].reverse().findIndex(message => message.role === 'user'

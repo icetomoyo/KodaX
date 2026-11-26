@@ -53,7 +53,7 @@ describe('Direct-engine Host queue consumption at the iteration limit', () => {
         if (tools.some(tool => tool.name === LEARNING_REVIEW_TOOL.name)) {
           return { textBlocks: [], thinkingBlocks: [], stopReason: 'tool_use', toolBlocks: [{
             type: 'tool_use', id: 'review', name: LEARNING_REVIEW_TOOL.name,
-            input: { memoryPlan: { actions: [], warnings: [] }, capabilityDecision: { disposition: 'discard' } },
+            input: { memoryPlan: { actions: [], warnings: [] } },
           }] };
         }
         requests.push(structuredClone(messages));
