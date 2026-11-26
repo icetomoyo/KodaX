@@ -46,6 +46,11 @@ export interface PendingSessionInput {
   readonly subject?: string;
 }
 
+/** Whether a queued input's authority is read again before it joins a Run, rather than taken as it was submitted. */
+function needsAuthorization(execution: ProductExecutionContext | undefined): boolean {
+  return execution?.resolve !== undefined || execution?.refresh !== undefined;
+}
+
 /** Original input retained until its Session is released; never execution authority. */
 export interface WithdrawnSessionInput {
   readonly input: ClientSubmitInput;
@@ -404,11 +409,12 @@ export class SessionInputQueue {
     let batch = this.batch(sessionId);
     if (batch.length === 0 || batch[0]!.skill || batch[0]!.input.runOptions !== undefined
       || batch[0]!.execution?.principalId !== principalId) return [];
-    if (batch[0]!.execution?.resolve === undefined && batch[0]!.execution?.key !== executionKey) return [];
+    if (!needsAuthorization(batch[0]!.execution) && batch[0]!.execution?.key !== executionKey) return [];
     let count = 0;
     for (const item of batch) {
-      if (item.execution?.resolve !== undefined || item.execution?.profile?.requiredWorkMode !== undefined) {
-        if (!authorize || !await authorize(item.input, item.execution)) break;
+      const { execution } = item;
+      if (execution !== undefined && (needsAuthorization(execution) || execution.profile?.requiredWorkMode !== undefined)) {
+        if (!authorize || !await authorize(item.input, execution)) break;
       } else if (item.execution?.key !== executionKey) break;
       count += 1;
     }

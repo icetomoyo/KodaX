@@ -1905,7 +1905,7 @@ describe('v2 named tools and Run recovery served by the v1 implementation', () =
    * A Session that talked once, and on disk two Runs of it the way a Host that
    * shut down part-way leaves one: stopped where the conversation stands now.
    */
-  async function sessionWithRunsLeftWaiting() {
+  async function sessionWithRunsLeftWaiting(startOptions: Record<string, unknown> = { provider: MODEL }) {
     const host = await makeModelHost();
     const first = await host.start();
     const before = await connect('user', first, host.workspace);
@@ -1936,7 +1936,7 @@ describe('v2 named tools and Run recovery served by the v1 implementation', () =
         _runtime: { revision: 1, owner: { ownerId: 'stopped-owner', runtimeId: 'stopped-runtime', pid: 2147483647, startedAt: stoppedAt } },
       }));
       await writeFile(path.join(runsDir, runId, 'generation-recovery.json'), JSON.stringify({
-        version: 1, checkpoint, start: { prompt: 'Say done.', options: { provider: MODEL }, requiredBindings: [] },
+        version: 1, checkpoint, start: { prompt: 'Say done.', options: startOptions, requiredBindings: [] },
         requiresCredential: false, requiresHostTools: false, actorTurnBaseline: [],
       }));
     }
@@ -1977,6 +1977,30 @@ describe('v2 named tools and Run recovery served by the v1 implementation', () =
     expect(host.calls() - asked).toBe(1);
     await expect(user.request('run.recover', { requestId: 'recover-5', runId: 'no-such-run' }))
       .rejects.toMatchObject({ kodaxCode: 'not_found' });
+  }, 60_000);
+
+  it('continues a Run as the persona it started as, within the limits its Session has now', async () => {
+    const { host, runtime, sessionId } = await sessionWithRunsLeftWaiting({ provider: MODEL, context: {
+      agentProfile: { name: 'Clerk', instructions: 'You are the release clerk.' },
+      prompt: { context: [{ key: 'tone', kind: 'rule', text: 'Answer in one sentence.' }] },
+    } });
+    // While the Run waited, its Session was given to another persona and fewer tools.
+    const owner = await connect('owner', runtime, host.workspace);
+    await owner.request('session.policy.update', { requestId: 'update-1', sessionId, policy: {
+      tools: ['read'], agentProfile: { name: 'Auditor', instructions: 'You are the auditor.' },
+      prompt: { context: [{ key: 'tone', kind: 'rule', text: 'Answer at length.' }] },
+    } });
+
+    const user = await connect('user', runtime, host.workspace);
+    await user.request('run.recover', { requestId: 'recover-1', runId: 'run-left-waiting' });
+    const { run } = await user.request('run.wait', { runId: 'run-left-waiting' }) as RunAnswer;
+    expect(run.outcome).toMatchObject({ status: 'completed' });
+    const asked = host.lastRunRequest();
+    expect(asked.text).toContain('You are the release clerk.');
+    expect(asked.text).toContain('Answer in one sentence.');
+    expect(asked.text).not.toContain('You are the auditor.');
+    expect(asked.text).not.toContain('Answer at length.');
+    expect(asked.tools).toEqual(['read']);
   }, 60_000);
 });
 
@@ -4740,6 +4764,59 @@ describe('v2 Host Tool leases served by the v1 reverse bridge', () => {
       const { input: keyedInput } = await user.request('input.submit', { requestId: 'input-3', sessionId: keyed.id, text: 'Hi.' }) as InputAnswer;
       expect((await user.request('run.wait', { runId: keyedInput.runId }) as RunAnswer).run.outcome).toMatchObject({ status: 'completed' });
       expect(host.lastRunRequest().apiKey).toBe('leased-key');
+    });
+
+    /** A person's input that waits behind a Run of theirs the model holds. */
+    async function queueBehindHeldRun(host: Awaited<ReturnType<typeof makeModelHost>>, user: HostRpcClient, sessionId: string) {
+      const held = host.hold();
+      const { input: first } = await user.request('input.submit', { requestId: 'input-1', sessionId, text: 'Wait.' }) as InputAnswer;
+      await held.called;
+      expect(await user.request('input.submit', { requestId: 'input-2', sessionId, text: 'Then this.', delivery: 'after_turn' }))
+        .toEqual({ input: { id: 'input-2', state: 'queued' } });
+      return async () => {
+        held.release();
+        await user.request('run.wait', { runId: first.runId });
+      };
+    }
+
+    it('gives a queued input the leases its Session binds when its Run starts', async () => {
+      const { host, backend, user } = await threeParties(makeModelHost());
+      await backend.request('lease.register', { requestId: 'tools-1', kind: 'host_tool', tools: [LOOKUP] });
+      await backend.request('lease.register', { requestId: 'tools-2', kind: 'host_tool', tools: [{ ...LOOKUP, name: 'track_parcel' }] });
+      const { session } = await backend.request('session.create', {
+        requestId: 'create-1', project: 'app', policy: { leases: { hostTools: 'tools-1' } },
+      }) as SessionAnswer;
+      const releaseFirst = await queueBehindHeldRun(host, user, session.id);
+
+      await backend.request('session.policy.update', { requestId: 'update-1', sessionId: session.id, policy: { leases: { hostTools: 'tools-2' } } });
+      await releaseFirst();
+      const runId = await vi.waitFor(async () => {
+        const { input } = await user.request('input.get', { sessionId: session.id, inputId: 'input-2' }) as InputAnswer;
+        if (input.runId === undefined) throw new Error('The queued input has no Run yet.');
+        return input.runId;
+      }, { timeout: 20_000, interval: 25 });
+      await user.request('run.wait', { runId });
+      expect(host.lastRunRequest().tools).toContain('track_parcel');
+      expect(host.lastRunRequest().tools).not.toContain('lookup_order');
+    });
+
+    it('keeps a queued input, saying why, when the client lending the key of its Session is away as its Run would start', async () => {
+      const { host, backend, user } = await threeParties(makeModelHost());
+      await backend.request('lease.register', { requestId: 'key-1', kind: 'credential', providers: [MODEL] });
+      const { session } = await backend.request('session.create', { requestId: 'create-1', project: 'app' }) as SessionAnswer;
+      const releaseFirst = await queueBehindHeldRun(host, user, session.id);
+
+      await backend.request('session.policy.update', { requestId: 'update-1', sessionId: session.id, policy: { leases: { credential: 'key-1' } } });
+      backend.close();
+      await backend.closed;
+      await releaseFirst();
+      await vi.waitFor(async () => {
+        expect(await user.request('input.get', { sessionId: session.id, inputId: 'input-2' })).toEqual({ input: {
+          id: 'input-2', state: 'queued', admissionError: { code: 'execution_binding_unavailable', message: expect.stringContaining('away') },
+        } });
+      }, { timeout: 20_000, interval: 25 });
+      expect(await user.request('input.withdraw', { requestId: 'withdraw-1', sessionId: session.id, inputId: 'input-2' }))
+        .toMatchObject({ input: { id: 'input-2', text: 'Then this.' } });
     });
 
     it('binds only leases the creator holds, as a client instance that can come back', async () => {

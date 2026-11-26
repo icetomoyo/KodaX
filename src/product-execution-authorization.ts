@@ -13,6 +13,11 @@ export interface ProductExecutionContext {
   readonly authorization?: RuntimeExecutionAuthorization;
   readonly bindingSnapshot?: RuntimeExecutionBindingSnapshot;
   readonly resolve?: (request: RuntimeExecutionBindingRequest, signal?: AbortSignal) => Promise<ProductExecutionContext>;
+  /**
+   * Reads again the leases the Session binds, for an input that waited in the
+   * queue: they are taken when its Run starts, as the rest of the policy is.
+   */
+  readonly refresh?: () => Promise<ProductExecutionContext>;
   /** Captures the original authenticated Main connection, never a timeout heuristic. */
   readonly bindingAvailable?: () => boolean;
   readonly principalId?: string;

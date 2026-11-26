@@ -151,6 +151,21 @@ function lower(limit: number | undefined, own: number | undefined): number | und
   return limit === undefined ? own : Math.min(limit, own ?? limit);
 }
 
+/**
+ * What a Run that is continued takes from the policy its Session has now: the
+ * limits, which can only get lower. It goes on as the persona it started as and
+ * with the prompt it started with, so a policy changed meanwhile does not hand
+ * half a task to someone else.
+ */
+export function sessionPolicyLimits(policy: ClientSessionPolicy | undefined): ClientSessionPolicy | undefined {
+  if (policy === undefined) return undefined;
+  return {
+    ...(policy.tools === undefined ? {} : { tools: policy.tools }),
+    ...(policy.budget === undefined ? {} : { budget: policy.budget }),
+    ...(policy.interactions === undefined ? {} : { interactions: policy.interactions }),
+  };
+}
+
 /** Binds the options a Run is about to start with to the policy of its Session. */
 export function applySessionPolicy(options: RuntimeKodaXOptions, policy: ClientSessionPolicy | undefined): RuntimeKodaXOptions {
   if (policy === undefined) return options;

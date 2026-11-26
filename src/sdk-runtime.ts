@@ -59,7 +59,7 @@ import { currentProductExecution, withProductExecution, productExecutionIntentKe
 import { runtimeConfigRevision } from './runtime-config-revision.js';
 import type { RuntimeExecutionAuthorization, RuntimeExecutionProfile } from './client-host-authorization.js';
 import { assertExecutionWorkMode, createExecutionToolPolicy, intersectExecutionToolCeilings } from './execution-profile.js';
-import { applySessionPolicy, parseRunOptions, parseSessionPolicy } from './session-policy.js';
+import { applySessionPolicy, parseRunOptions, parseSessionPolicy, sessionPolicyLimits } from './session-policy.js';
 import { listInstalledAgents, sessionAsInstalledAgent, type InstalledAgent } from './session-agent.js';
 import { registerClientWorkCleanup, settleClientWork, type ClientWorkCleanup } from './runtime-client-work.js';
 import { registerHostCloseQuiesce, type HostCloseQuiesce } from './runtime-host-close.js';
@@ -5982,7 +5982,8 @@ async function createKodaXRuntimeInternal(
         const effective = applySessionPolicy(applySessionPolicy(buildEffectiveRuntimeOptions({
           ...resolveExecutionConfig(toClientConfig(readRuntimeConfig(configFile))), ...recovery?.start.options,
           extensionRuntime: trusted.actorExtensionRuntime?.(runId, integrations.forSession(sessionId))
-          ?? integrations.forSession(sessionId) }, settings, [], session), parseSessionPolicy(session.runtimeInfo?.policy)),
+          ?? integrations.forSession(sessionId) }, settings, [], session),
+        recovery === undefined ? parseSessionPolicy(session.runtimeInfo?.policy) : sessionPolicyLimits(parseSessionPolicy(session.runtimeInfo?.policy))),
         hostTools === undefined ? undefined : { tools: hostTools });
         await protectRuntimeWorkflowProject(effective.context?.executionCwd);
         const provider = effective.provider ?? options.defaultProvider ?? KODAX_DEFAULT_PROVIDER;
@@ -12338,7 +12339,9 @@ async function createRuntimeRunService(deps: {
           await persist(materialized);
         }, record.productExecutionKey, record.origin?.principalId, async (input, execution) => {
           try {
-            const resolved = await resolveProductExecution(input, execution, record.abortController?.signal);
+            let resolved = await resolveProductExecution(input, execution, record.abortController?.signal);
+            // Leases the Session binds now; if they changed, the input waits for a Run of its own.
+            if (resolved?.refresh !== undefined) resolved = await resolved.refresh();
             if (record.abortController?.signal.aborted) return false;
             assertExecutionWorkMode(resolved?.profile?.requiredWorkMode, record.workMode ?? 'coding');
             if (resolved?.defaultSkill !== undefined || resolved?.key !== record.productExecutionKey) {
@@ -12982,7 +12985,9 @@ async function createRuntimeRunService(deps: {
     const ownOptions = parseRunOptions(trustedInput.productInput?.runOptions);
     if (ownOptions !== undefined) options = { ...applySessionPolicy(options, ownOptions), soleInput: true };
     // A stored policy this Host cannot read refuses the Run: an unread limit is not a lifted one.
-    options = applySessionPolicy(options, parseSessionPolicy(admittedSessionContext.runtimeInfo?.policy));
+    // A Run that is continued keeps its persona and prompt and takes only the limits of now.
+    const sessionPolicy = parseSessionPolicy(admittedSessionContext.runtimeInfo?.policy);
+    options = applySessionPolicy(options, recovery === undefined ? sessionPolicy : sessionPolicyLimits(sessionPolicy));
     // The Host's limit is bound last, so neither the Run nor its Session can lift it.
     const hostTools = deps.hostToolCeiling?.();
     if (hostTools !== undefined) options = applySessionPolicy(options, { tools: hostTools });
@@ -13666,6 +13671,7 @@ async function createRuntimeRunService(deps: {
     let preparedSkill: Awaited<ReturnType<typeof prepareSkillInput>>;
     try {
       execution = await resolveProductExecution(first.input, first.execution);
+      if (execution?.refresh !== undefined) execution = await execution.refresh();
       await assertProductExecutionMode(sessionId, execution);
       // Earlier binding builds marked recognized redirects with null instead of
       // their method name. Newly deferred plain inputs carry their own marker;

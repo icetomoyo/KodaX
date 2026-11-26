@@ -2620,8 +2620,8 @@ async function dispatchRuntimeDaemonRequest(
     || authorization?.credential !== undefined || authorization?.hostTools !== undefined || authorization?.binding !== undefined;
   const sessionLeases = request.method === 'input.withdraw' || !requestSessionId ? undefined
     : await sessionLeaseAuthorization(runtime, requestSessionId, options.reverseBridgeHub, ownLeases);
-  const leaseBridge = sessionLeases?.bridge ?? reverseBridge;
-  const createContext = (approved: Record<string, unknown> | undefined, intentKey?: string, sessionId = requestSessionId): ProductExecutionContext => {
+  const createContext = (approved: Record<string, unknown> | undefined, intentKey?: string, sessionId = requestSessionId,
+    boundLeases = sessionLeases): ProductExecutionContext => {
     const deferred = optionalRecord(approved?.binding);
     if (deferred !== undefined) {
       if (!sessionId || !['input.submit', 'run.recover'].includes(request.method)
@@ -2665,6 +2665,16 @@ async function dispatchRuntimeDaemonRequest(
       bindingAvailable: reverseBridge.executionBindings.captureAvailability(),
       authorization: approved as import('../client-host-authorization.js').RuntimeExecutionAuthorization | undefined,
       ...(!approved && !credential && !hostTools ? { defaultForSession: (target: string) => createContext(undefined, undefined, target) } : {}),
+      ...(ownLeases || !sessionId || request.method !== 'input.submit' ? {} : { async refresh() {
+        // A queued input reports any lender that is away the same way, so it stays queued and says why.
+        const now = await sessionLeaseAuthorization(runtime, sessionId, options.reverseBridgeHub, false).catch((error: unknown) => {
+          if (isRecord(error) && error.code === 'host_tool_unavailable') {
+            throw daemonError('execution_binding_unavailable', String(error.message), { reason: 'lease_holder_away' });
+          }
+          throw error;
+        });
+        return createContext(now === undefined ? authorization : { ...authorization, ...now.approved }, intentKey ?? key, sessionId, now);
+      } }),
       defaultSkill: profile?.defaultSkill, assertAdmission,
       async bindRun(runInput, runId, baseExtensionRuntime) {
         assertAdmission();
@@ -2672,7 +2682,7 @@ async function dispatchRuntimeDaemonRequest(
           ...(credential !== undefined ? { credential } : {}), ...(hostTools !== undefined ? { hostTools } : {}),
           ...(workflowHostPolicy !== undefined ? { options: { ...runInput.options, workflowHostPolicy } } : {}),
         }, profile, sessionId: runInput.sessionId, trustedRunId: runId, principalId, subject, clientName, clientVersion,
-          reverseBridge: leaseBridge, ...(sessionLeases !== undefined ? { leasesBoundBySession: true as const } : {}),
+          reverseBridge: boundLeases?.bridge ?? reverseBridge, ...(boundLeases !== undefined ? { leasesBoundBySession: true as const } : {}),
           baseExtensionRuntime, trustedProductPreparation: true }) as unknown as RuntimeStartRunInput;
         return bindingSnapshot === undefined ? bound : { ...bound, options: { ...bound.options, executionBinding: bindingSnapshot } };
       },
