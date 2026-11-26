@@ -1,5 +1,6 @@
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReasoningPlan } from '../../reasoning.js';
+import type { RepoIntelQuery } from '../../repo-intelligence/engine/supervisor.js';
 
 const sources = vi.hoisted(() => ({
   buildRepoIntelligenceContext: vi.fn(),
@@ -139,4 +140,46 @@ it('leaves module and impact capsules out unless the semantic surface is opted i
   expect(sources.getRepoPreturnBundle).not.toHaveBeenCalled();
   expect(sources.getModuleContext).not.toHaveBeenCalled();
   expect(sources.getImpactEstimate).not.toHaveBeenCalled();
+});
+
+describe('the repository map', () => {
+  const ready = { state: 'ready', indexed: 120, withSyntaxErrors: 0, notIndexed: {} };
+  const map = 'src/types.ts\n  export interface Task';
+  const bound = (answer: unknown, asked: string[] = []): RepoIntelQuery => ({
+    root: 'C:/repo-map',
+    request: async <T>(method: string): Promise<T> => {
+      asked.push(method);
+      if (answer instanceof Error) throw answer;
+      return answer as T;
+    },
+  });
+  const build = (repoIntel: RepoIntelQuery, isNewSession = true, decision = plan.decision) =>
+    buildAutoRepoIntelligenceContext({ provider: 'offline-fixture', context: { executionCwd: 'C:/repo-map', repoIntel } },
+      { decision } as ReasoningPlan, isNewSession);
+
+  beforeEach(() => {
+    surface.enabled.mockReturnValue(false);
+    sources.buildRepoIntelligenceContext.mockResolvedValue('current repository overview');
+  });
+
+  it('follows the overview once the index is ready', async () => {
+    const asked: string[] = [];
+    const result = await build(bound({ text: map, files: 1, definitions: 1, tokens: 9, coverage: ready }, asked));
+    expect(asked).toEqual(['workspace.map']);
+    expect(result).toBe(['current repository overview', '', '## Repository Map',
+      'The files the rest of the repository imports most, with their most imported definitions.',
+      'Most files and definitions are not listed.', map].join('\n'));
+  });
+
+  it('is left out while the index is being built, or when the engine cannot answer', async () => {
+    const indexing = await build(bound({ text: map, files: 1, definitions: 1, tokens: 9, coverage: { ...ready, state: 'indexing' } }));
+    const failed = await build(bound(new Error('The RepoIntel engine is starting.')));
+    expect([indexing, failed]).toEqual(['current repository overview', 'current repository overview']);
+  });
+
+  it('comes with the overview only, not with the change scope of a resumed simple task', async () => {
+    const asked: string[] = [];
+    await build(bound({ text: map, files: 1, definitions: 1, tokens: 9, coverage: ready }, asked), false);
+    expect(asked).toEqual([]);
+  });
 });

@@ -51,6 +51,7 @@ import {
   type KodaXRepoIntelligenceCarrier,
 } from '../../types.js';
 import { buildRepoIntelligenceContext } from '../../repo-intelligence/index.js';
+import type { RepoIntelQuery } from '../../repo-intelligence/engine/supervisor.js';
 import {
   getImpactEstimate,
   getModuleContext,
@@ -90,6 +91,24 @@ interface AutoContextPreturnKeyContext {
 }
 
 const autoContextPreturnStates = new Map<string, AutoContextPreturnState>();
+
+/**
+ * The engine's map of the repository, once its index is ready: a map of part of the repository
+ * would present the files indexed so far as the ones that matter. Engine failures are left out
+ * here; the supervisor reports them, and find_symbol says why it cannot answer.
+ */
+async function repositoryMap(repo: RepoIntelQuery | undefined): Promise<string> {
+  if (!repo) return '';
+  const map = await repo.request<{ readonly text: string; readonly coverage: { readonly state: string } }>('workspace.map', {})
+    .catch(() => null);
+  if (map?.coverage.state !== 'ready' || !map.text.trim()) return '';
+  return [
+    '## Repository Map',
+    'The files the rest of the repository imports most, with their most imported definitions.',
+    'Most files and definitions are not listed.',
+    map.text.trimEnd(),
+  ].join('\n');
+}
 
 async function settleWithinAutoContextBudget<T>(
   promise: Promise<T | null>,
@@ -291,9 +310,13 @@ export async function buildAutoRepoIntelligenceContext(
         changedScope: 'all',
       }).catch(() => null),
     );
-    const [overviewBudget, preturnBudget] = await Promise.all([
+    const mapBudgetPromise = includeRepoOverview
+      ? settleWithinAutoContextBudget(repositoryMap(options.context?.repoIntel))
+      : Promise.resolve({ value: '', timedOut: false });
+    const [overviewBudget, preturnBudget, mapBudget] = await Promise.all([
       overviewBudgetPromise,
       preturnBudgetPromise,
+      mapBudgetPromise,
     ]);
     const generatedContext = overviewBudget.value ?? '';
     const preturn = preturnBudget.value;
@@ -387,6 +410,7 @@ export async function buildAutoRepoIntelligenceContext(
       // additional semantic evidence. Prefer this request's current snapshot
       // over its cached copy; keep the bundle as a best-effort fallback.
       generatedContext || bundledRepoContext,
+      mapBudget.value,
       moduleContext,
       impactContext,
       fallbackGuidance,
