@@ -534,3 +534,18 @@ KodaX 仓库，`npm run bench:repo-intel-v2-truth -- . --no-old`，抽 300 个�
 - 排在前面的是被大量导入的基础文件：`packages/llm/src/types.ts`（`KodaXMessage`、`KodaXToolDefinition` 等 10 个）、`packages/coding/src/types.ts`（`KodaXOptions`、`KodaXResult` 等 4 个）、`packages/agent/src/diagnostics.ts`、`staticText`、`createAgent`。
 - 也排进了测试和评测的公共代码：`benchmark/harness/*`、`tests/runtime-fixture.ts`，因为很多测试导入它们。`src/sdk-runtime.ts` 这类大的核心文件导入它的文件少，没进地图。按 import 排序就是这样。要不要降低测试文件发出的边的权重，等第 9 层 eval 看地图对任务有没有帮助再定（未经用户确认）。
 
+
+### 11.7 第 7 层结果（2026-11-26）
+
+supervisor 增加 `query(root, method, params)`；每个 Run 拿到绑定了自己仓库根的查询服务（`RepoIntelQuery`），Host 在 `buildRunOptions` 里注入，调用方不能自带。新增工具 `find_symbol`、`file_outline`，只在绑定了索引时提供。
+
+真实引擎在 KodaX 仓库上冒烟：查定义 1 毫秒；`resolveExecutionCwd` 带 `path` 查引用，34 处全部按 import 解析到，4 毫秒；`run` 有 172 个定义，按名字匹配引用 8 毫秒；`file_outline` 1 毫秒。
+
+未经用户确认的实现选择：
+
+- **子 Agent：** 和父 Agent 在同一个仓库根工作的子 Agent 继承索引；在自己 worktree 里的不继承，因为索引回答的是父仓库的文件，行号和内容会对不上。
+- **建索引期间：** `find_symbol` 不给结果，只说明还在建、已索引多少文件，请用 grep 和 read。`file_outline` 照常回答：一个文件的大纲对这个文件是完整的，引擎会当场分析索引后改过的文件。
+- **引用默认怎么查：** 名字只在一个文件里定义时，自动按那个文件做 import 解析；在多个文件里定义又没给 `path` 时，先列出定义，再按名字匹配列引用，并提示给 `path`。
+- **路径的写法：** 结果里的路径相对当前工作目录，和 read、grep 一致；`path` 参数也按工作目录解析，仓库外的路径报错。
+- **和其他仓库工具一致的地方：** 计为只读；仓库智能关闭时隐藏；结果在 microcompaction 中保留；计入"读了多少次还没定计划"的提示计数。
+- **脚本工具里不加：** script pilot 的仓库工具列表没加这两个，等有用到再说。
