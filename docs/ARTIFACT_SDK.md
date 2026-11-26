@@ -102,16 +102,18 @@ previous verification limits.
 | `capabilities()` | Format/operation availability and diagnostics; no installation or renderer launch |
 | `prepare(signal?)` | Explicit compatible Chromium preparation; custom executables remain the trusted host's responsibility |
 | `create`, `edit`, `export` | Existing PPTX authoring, limited text/geometry repair, exclusive new output; no new-format editors |
-| `open` | Content-identified PPTX/PDF/DOCX/PNG/JPEG/WebP/SVG/HTML identity; PPTX object inspection; intrinsic PPTX/PDF page count |
+| `open` | Content-identified PPTX/PDF/DOCX/PNG/JPEG/WebP/SVG/HTML/GIF/MP4/MOV/WebM identity; PPTX object inspection; intrinsic PPTX/PDF page count; a non-blocking `timeline` diagnostic for GIF, animated WebP and video when a decoder is available |
 | `render` | PPTX, native PDF, exact PNG bytes, JPEG/WebP/SVG rasters, DOCX pages (host LibreOffice conversion by default when configured; lightweight candidate otherwise) |
-| `capture` | Static image/SVG regions; PDF/DOCX pages; local HTML `loaded` state at explicit viewport, sequence `0`; actual SVG SMIL seconds |
+| `capture` | Static image/SVG regions; PDF/DOCX pages; local HTML `loaded` state at explicit viewport, sequence `0`; actual seconds of SVG SMIL, GIF, animated WebP and MP4/MOV/WebM video |
 | `readEvidence` | Provenance/current file and dependency hashes, actual PNG hash/geometry/bounds, then PNG data as base64 |
 
 Missing capability records do not imply support. When the host supplies `libreOfficeExecutable`, DOCX render defaults to `backend: 'libreoffice'`: the DOCX snapshot is converted to PDF and rendered by PDF.js, while evidence stays bound to the DOCX source hash and the result may be `ready` with a non-blocking `docx-converted` note. Conversion can recalculate page-number fields; a table of contents can remain empty or outdated and needs review. Field values and pagination must be checked against the intended Word/WPS output. The lightweight backend (no converter, or `backend: 'lightweight'`) stays **unverified** with a blocking `docx-preview-fidelity` diagnostic, and a document the lightweight renderer cannot lay out returns structured `docx-render-failed` instead of throwing. DOCX `open` has no `pages`; pagination belongs to `evidence.layout.totalPages`. Minimal documents without settings are normalized only in the rendering snapshot; source bytes stay unchanged. Fields, floating objects, complex sections and native Office pagination need reference validation.
 
 PPTX geometry uses inches. Text/rectangle colors are six hexadecimal digits without `#` (for example, `172C45`). `edit` uses inspected `page/objectId`, the current `expectedSourceHash` and an exclusive new `output`. Text replacement supports a single run in a single paragraph; rich-run/multi-paragraph text needs another compatible editor. Geometry edits retain their existing bounds and grouped-object limitations. Use `render({ path, pages })` for PPTX page evidence; PPTX does not implement `capture`.
 
-PDF.js captures page content at 96 DPI, adapting the viewport for each page's dimensions/rotation. Form interaction and annotation appearance are outside the current capture. PNG render preserves original alpha/bytes; explicit image/SVG capture backgrounds use Chromium. HTML captures its authored CSS background and only the observed loaded viewport, not interaction behavior. SVG samples cover SMIL, not script/CSS animation, continuous playback or audio. Animated WebP, GIF/video, spreadsheet calculation/native display, EPUB, desktop/mobile/terminal and 3D/CAD have no default backend.
+PDF.js captures page content at 96 DPI, adapting the viewport for each page's dimensions/rotation. Form interaction and annotation appearance are outside the current capture. PNG render preserves original alpha/bytes; explicit image/SVG capture backgrounds use Chromium. HTML captures its authored CSS background and only the observed loaded viewport, not interaction behavior. SVG samples cover SMIL, not script/CSS animation, continuous playback or audio. Spreadsheet calculation/native display, audio, EPUB, desktop/mobile/terminal and 3D/CAD have no default backend.
+
+GIF and animated WebP decode in the prepared Chromium through WebCodecs `ImageDecoder`. Each sample is the composited frame displayed at that second, drawn over `background` (default white); `locator.frame` reports that frame's index, and a requested `frame` that differs yields a blocking `frame-mismatch`. Samples do not wrap around loops, so a time at or after the end is a blocking `time-out-of-range`. Video uses the host's `ffmpegExecutable`: the demuxer is forced from the detected container, only the `file` protocol is allowed, and each sample is the first frame at or after that second. A time inside the last frame therefore has no frame and yields a blocking `no-frame-at-time`. Video frames are opaque, so `background` and `frame` are rejected. Without ffmpeg, video `open` stays `ready` with a non-blocking `timeline-unavailable` note and capture returns a blocking `ffmpeg-unavailable`. Every temporal result records `scope.temporal.coverage: 'sampled'`, never continuous playback. `render` on these formats returns unverified `temporal-capture-required`. Inputs are limited to 32 MiB, except MP4/MOV/WebM video, which may be up to 1 GiB and is hashed by streaming instead of loaded into memory. A capture hashes the source up to three times (read, `expectedSource` check, final stale-source check) and `readEvidence` twice, so a video near 1 GiB costs several seconds of disk reads per call. Animated WebP follows the GIF rules for every operation, so static capture also returns `temporal-capture-required`. MP4/MOV detection accepts only video major brands; AVIF, HEIC, M4A and other ISO BMFF files stay unsupported.
 
 Supported file rendering runs headlessly: a terminal-only system can produce PNG evidence and send it to an image-capable provider without a desktop UI. This does not add capture of the terminal UI itself. The selected operation still needs its runtime dependencies and normal Host authorization.
 
@@ -122,7 +124,7 @@ Supported file rendering runs headlessly: a terminal-only system can produce PNG
 | PNG/JPEG/WebP/static SVG | `static`: optional `region: [x, y, width, height]` in pixels |
 | PDF/DOCX | `paginated`: `page` (one-based); sheet/range capture has no default backend |
 | Local HTML | `interactive`: actual `target`, `state: 'loaded'`, explicit `viewport: [width, height]`, `sequence: 0` |
-| SVG SMIL | `temporal`: `time` in seconds; samples do not certify continuous playback |
+| SVG SMIL, GIF, animated WebP, MP4/MOV/WebM | `temporal`: `time` in seconds (GIF/WebP may add the expected `frame`); samples do not certify continuous playback |
 
 For example, `sdk.capture({ target: 'diagram.svg', kind: 'static', locators: [{ kind: 'static', region: [0, 0, 320, 180] }] })` requests actual region pixels. `expectedSource`, when supplied, must be the current `VisualSource`, not a bare file hash. Use the public SDK types/validation; the model-facing locator schema still has a documented [schema/decoder mismatch](ARTIFACT_SDK.md#tool-schema-gaps).
 
@@ -151,7 +153,7 @@ if (result.evidence) {
 }
 ```
 
-Browser/LibreOffice executable paths and workspace authority belong to trusted runtime options, never model request JSON. LibreOffice is optional for PPTX and DOCX conversion; other supported formats do not require it. On Windows, a configured `soffice.exe` runs through its sibling console entry `soffice.com`, because the GUI launcher blocks on command-line calls. Render capability records include `backend: 'lightweight' | 'libreoffice'`; select by operation, format and backend. LibreOffice availability checks the configured absolute file and browser presence without launching either; its identity/version is checked during rendering. Preparation may download the pinned Playwright browser and write its cache; ordinary permission/sandbox rules apply. Querying/rendering never installs implicitly.
+Browser/LibreOffice/ffmpeg executable paths and workspace authority belong to trusted runtime options, never model request JSON. ffmpeg is optional and only needed for video; its file must print `ffmpeg version` and is checked when a video is opened or captured. LibreOffice is optional for PPTX and DOCX conversion; other supported formats do not require it. On Windows, a configured `soffice.exe` runs through its sibling console entry `soffice.com`, because the GUI launcher blocks on command-line calls. Render capability records include `backend: 'lightweight' | 'libreoffice'`; select by operation, format and backend. LibreOffice availability checks the configured absolute file and browser presence without launching either; its identity/version is checked during rendering. Preparation may download the pinned Playwright browser and write its cache; ordinary permission/sandbox rules apply. Querying/rendering never installs implicitly.
 
 ## Existing shared KodaX Host
 
@@ -164,6 +166,7 @@ import { registerArtifactTools } from '@kodax-ai/kodax/artifacts/kodax';
 import { executeManagedProcess } from '@kodax-ai/kodax/coding';
 export default api => registerArtifactTools(api, {
   execute: executeManagedProcess, nodeExecutable: process.execPath,
+  // Optional absolute trusted paths: browserExecutable, libreOfficeExecutable, ffmpegExecutable (video).
 });
 ```
 

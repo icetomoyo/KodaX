@@ -19,7 +19,6 @@ export async function renderWeb(bytes: Buffer, artifact: ArtifactRef, input: Cap
  }
  if ((kind === 'temporal' && artifact.format !== 'svg') || kind === 'paginated' || (kind === 'interactive' && artifact.format !== 'html')) return { status: 'unverified', diagnostics: [{ code: 'capture-unavailable', message: 'This format does not support the requested capture kind.', blocking: true }] };
  if (locators.length > (options.maxRenderPages ?? 1000)) throw new Error('Specify a bounded capture batch.');
- if (artifact.format === 'webp' && bytes.includes(Buffer.from('ANIM'))) return { status: 'unverified', diagnostics: [{ code: 'animated-webp', message: 'Animated WebP needs a temporal decoder; a single image is insufficient.', blocking: true }] };
  const directory = await fs.mkdtemp(path.join(options.workspaceRoot, '.artifact-render-'));
  return withArtifactPage(options, async page => {
   let totalBytes = bytes.length;

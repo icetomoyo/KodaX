@@ -530,6 +530,9 @@ The nine operations are `capabilities`, `prepare`, `create`, `open`, `edit`,
 `export`, `render`, `capture` and `readEvidence`. PPTX supports authoring and
 limited edits/export; PDF, PNG/JPEG/WebP/SVG, candidate DOCX pagination, local
 HTML loaded viewports and SVG SMIL samples provide actual visual evidence.
+GIF and animated WebP give sampled frames at actual seconds through the prepared
+browser. MP4/MOV/WebM video gives sampled frames only when the Host passes an
+absolute `ffmpegExecutable`; otherwise video stays unverified.
 DOCX page count belongs to rendered layout; Word/WPS fidelity remains unverified.
 `capture` requires kind-matched locators, and `readEvidence` checks source,
 dependencies, provenance, PNG hash and geometry before returning actual bytes.

@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { ArtifactInputs, EvidenceImage, RasterEvidence, VisualSource } from './types.js';
-import { artifactPath, hashBytes, readPresentation } from './files.js';
+import { artifactPath, hashBytes, readArtifactSource } from './files.js';
 import { inspectPng } from './pixels.js';
 import { record, validateRaster, validateSource } from './contract.js';
 import { sameJson, sameSource } from './identity.js';
@@ -17,8 +17,8 @@ export async function saveEvidence(directory: string, name: string, bytes: Buffe
 }
 export async function assertCurrentSource(root: string, source: VisualSource): Promise<void> {
  if (source.kind === 'surface') return; // Only the observed capture, never a claim about the live revision now.
- await readPresentation(root, source.file.path, source.file.sourceHash);
- for (const dependency of source.dependencies ?? []) await readPresentation(root, dependency.path, dependency.sha256);
+ await readArtifactSource(root, source.file.path, source.file.sourceHash);
+ for (const dependency of source.dependencies ?? []) await readArtifactSource(root, dependency.path, dependency.sha256);
 }
 export async function readEvidenceFile(root: string, input: ArtifactInputs['readEvidence'], signal?: AbortSignal): Promise<EvidenceImage> {
  signal?.throwIfAborted();

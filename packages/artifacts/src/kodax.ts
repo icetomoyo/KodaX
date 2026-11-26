@@ -9,6 +9,7 @@ export interface KodaXArtifactOptions {
  readonly nodeExecutable: string;
  readonly browserExecutable?: string;
  readonly libreOfficeExecutable?: string;
+ readonly ffmpegExecutable?: string;
 }
 const text = { type: 'string' };
 const file = { path: text, expectedSourceHash: text };
@@ -23,13 +24,13 @@ const operations = {
    ...box.properties, type: { type: 'string', enum: ['text', 'rectangle', 'image', 'table', 'chart'] }, text, fontSize: { type: 'number' }, fontFace: text, color: text, path: text,
    rows: { type: 'array', items: { type: 'array', items: text } }, categories: { type: 'array', items: text }, values: { type: 'array', items: { type: 'number' } }, name: text,
   }, required: ['type', ...box.required] } } }, required: ['elements'] } } }, required: ['output', 'slides'] },
- open: { description: 'Inspect actual PPTX/PDF/DOCX/image/SVG/HTML format and source SHA256. PPTX/PDF have intrinsic pages; DOCX pagination belongs to render output. Structure is not a visual pass.', properties: file, required: ['path'] },
+ open: { description: 'Inspect actual PPTX/PDF/DOCX/image/SVG/HTML/GIF/video format and source SHA256. PPTX/PDF have intrinsic pages; DOCX pagination belongs to render output. GIF, animated WebP and video report their timeline when the host can decode them. Structure is not a visual pass.', properties: file, required: ['path'] },
  edit: { description: 'Edit single-run single-paragraph PPTX text shapes or explicit geometry (inches) into a NEW file. Requires current source hash and object IDs from artifact_open. Rich text/table/chart text edits and unsupported preservation are rejected; geometry repair remains available. Render the new file after repair.',
   properties: { ...file, output: text, changes: { type: 'array', items: { type: 'object', properties: { page: { type: 'integer' }, objectId: text, text, box }, required: ['page', 'objectId'] } } }, required: ['path', 'expectedSourceHash', 'output', 'changes'] },
  export: { description: 'Export exact source PPTX to a new exclusive path. Does not convert formats or overwrite.', properties: { ...file, output: text }, required: ['path', 'output'] },
  render: { description: 'Render actual PPTX/PDF/DOCX pages or static PNG/JPEG/WebP/SVG into PNG evidence. Up to 4 pages per call; use batches. DOCX uses the host converter when one is provided; otherwise its pages are a lightweight approximation. Result diagnostics name the scope that stays unverified. The libreoffice backend applies to PPTX and DOCX. ready means pixels prepared, never approval. Inspect delivered images and recapture after repair.',
   properties: { ...file, pages: { type: 'array', items: { type: 'integer' }, maxItems: 4 }, backend: { type: 'string', enum: ['lightweight', 'libreoffice'] } }, required: ['path'] },
- capture: { description: 'Capture image/SVG regions, PDF/DOCX pages, local HTML loaded state at explicit viewport (sequence 0), or SVG SMIL samples at actual seconds. Live surfaces need their existing authorized owner. GIF/video/3D/native apps unsupported. A screenshot never checks interactions or continuous playback.',
+ capture: { description: 'Capture image/SVG regions, PDF/DOCX pages, local HTML loaded state at explicit viewport (sequence 0), or temporal samples at actual seconds from SVG SMIL, GIF, animated WebP and MP4/MOV/WebM video. Choose sample times from the timeline artifact_open reports. Video frames need the host ffmpeg. Live surfaces need their existing authorized owner. 3D and native apps are unsupported. A screenshot never checks interactions or continuous playback.',
   properties: { kind: { type: 'string', enum: ['static', 'paginated', 'interactive', 'temporal'] }, target: text, expectedSource: { type: 'object' }, background: text,
    locators: { type: 'array', items: { type: 'object', properties: { kind: { type: 'string', enum: ['static', 'paginated', 'interactive', 'temporal'] }, region: { type: 'array', items: { type: 'number' }, minItems: 4, maxItems: 4 }, page: { type: 'integer' }, sheet: text, range: text, target: text, state: text, viewport: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 }, camera: text, sequence: { type: 'integer' }, time: { type: 'number' }, frame: { type: 'integer' } }, required: ['kind'] } },
   }, required: ['kind', 'target', 'locators'] },
@@ -57,7 +58,7 @@ export function registerArtifactTools(api: KodaXExtensionAPI, options: KodaXArti
    const request = decodeArtifactRequest({ operation, input });
    const requestPath = path.join(context.sessionScratchDir ?? workspaceRoot, '.artifact-request-' + randomUUID() + '.json');
    const manifest = JSON.stringify({ request, options: { workspaceRoot,
-    browserExecutable: options.browserExecutable, libreOfficeExecutable: options.libreOfficeExecutable, maxRenderPages: 4 } });
+    browserExecutable: options.browserExecutable, libreOfficeExecutable: options.libreOfficeExecutable, ffmpegExecutable: options.ffmpegExecutable, maxRenderPages: 4 } });
    const manifestHash = createHash('sha256').update(manifest).digest('hex');
    const staged = await scope.invokeTool('write', { path: requestPath, content: manifest });
    if (typeof staged !== 'string' || /^\[(?:Error|Blocked|Cancelled|Sandbox)/.test(staged)) return staged;

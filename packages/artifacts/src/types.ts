@@ -3,7 +3,7 @@ export interface Diagnostic { readonly code: string; readonly message: string; r
 type FileRef = { readonly path: string; readonly sourceHash: string };
 export type PresentationRef = FileRef & { readonly format: 'pptx'; readonly pages: number };
 export type ArtifactRef = PresentationRef | (FileRef & { readonly format: 'pdf'; readonly pages: number })
- | (FileRef & { readonly format: 'docx' | 'png' | 'jpeg' | 'webp' | 'svg' | 'html'; readonly pages?: never });
+ | (FileRef & { readonly format: 'docx' | 'png' | 'jpeg' | 'webp' | 'svg' | 'html' | 'gif' | 'mp4' | 'mov' | 'webm'; readonly pages?: never });
 export type VisualSource =
  | { readonly kind: 'file'; readonly file: ArtifactRef; readonly dependencies?: readonly { readonly path: string; readonly sha256: string }[] }
  | { readonly kind: 'surface'; readonly target: string; readonly observedAt: string; readonly revision?: string; readonly sourceHash?: never };

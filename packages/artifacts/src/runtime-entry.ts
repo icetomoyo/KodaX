@@ -15,7 +15,7 @@ try {
  if (!/^[a-f0-9]{64}$/.test(process.argv[3] ?? '') || createHash('sha256').update(source).digest('hex') !== process.argv[3]) throw new Error('Artifact manifest changed after admission.');
  const manifest = record(JSON.parse(source)), request = decodeArtifactRequest(manifest.request), settings = record(manifest.options);
  if (typeof settings.workspaceRoot !== 'string' || !path.isAbsolute(settings.workspaceRoot)) throw new Error('Invalid artifact workspace.');
- for (const key of ['browserExecutable', 'libreOfficeExecutable']) if (settings[key] !== undefined && (typeof settings[key] !== 'string' || !path.isAbsolute(settings[key]))) throw new Error('Invalid artifact executable.');
+ for (const key of ['browserExecutable', 'libreOfficeExecutable', 'ffmpegExecutable']) if (settings[key] !== undefined && (typeof settings[key] !== 'string' || !path.isAbsolute(settings[key]))) throw new Error('Invalid artifact executable.');
  if (settings.maxRenderPages !== undefined && (typeof settings.maxRenderPages !== 'number' || !Number.isSafeInteger(settings.maxRenderPages) || settings.maxRenderPages < 1)) throw new Error('Invalid artifact batch limit.');
  const result = await executeArtifactRequest(request, { ...settings, signal: controller.signal } as ArtifactRuntimeOptions);
  const payload = request.operation === 'readEvidence' ? { status: result.status, diagnostics: result.diagnostics,

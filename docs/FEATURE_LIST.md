@@ -2574,6 +2574,20 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 ---
 
+## 2026-11-26 FEATURE_320 Addition
+
+- Status: Completed 2026-11-26 on `KodaX`, unreleased; ships with the `v0.7.97` final release (owner decision 2026-11-26: build on mainline, not next-dev). ID 320 skips 318–319,
+  which `KodaX-next-dev` already uses. `KodaX-next-dev` touches `packages/artifacts` only through the format-agnostic
+  `host-port.ts`, so the merge back is expected to be clean.
+- Source: visual-review covers GIF, video and animation as method only; `artifact_render`/`artifact_capture` reject
+  them, `read` sends only the first GIF frame on Anthropic routes, and animated WebP returns `animated-webp`.
+- Scope: temporal `artifact_capture` samples GIF and animated WebP through the prepared Chromium (`ImageDecoder`, no new
+  dependency) and MP4/MOV/WebM through an embedder-supplied absolute `ffmpegExecutable`; `artifact_open` reports the
+  timeline. Sending video natively to providers is out of scope.
+- Design block: [v0.7.97](features/v0.7.97.md#feature_320-temporal-artifact-evidence-for-gif-animated-webp-and-video).
+
+---
+
 ## 2026-11-23 FEATURE_317 Addition
 
 - Status: Completed 2026-11-23, unreleased; ships with the `v0.7.97` final release (rc.1 is out). ID 317 skips 314–316, which
@@ -2762,6 +2776,7 @@ fixed GitHub binary archive sidecar omission before tagging.
 
 | ID | Title | Version | Design | Notes |
 |---|---|---|---|---|
+| `320` | Temporal Artifact Evidence for GIF, Animated WebP and Video | `v0.7.97` | [v0.7.97](features/v0.7.97.md#feature_320-temporal-artifact-evidence-for-gif-animated-webp-and-video) | `artifact_open` reports GIF, animated WebP and MP4/MOV/WebM timelines; temporal `artifact_capture` returns PNG samples at actual seconds. GIF and WebP decode in the prepared Chromium (`ImageDecoder`); video uses the host's absolute `ffmpegExecutable` and stays unverified without it. Coverage is always `sampled`; render and static capture return `temporal-capture-required`; video may be up to 1 GiB, hashed by streaming. Prompt eval (66 calls, blind-reviewed) recommended ship after the first skill wording was rejected. |
 | `317` | RepoIntel Phase 0 — Honest Default Surface | `v0.7.97-rc.2` | [v0.7.97](features/v0.7.97.md#feature_317-repointel-phase-0--honest-default-surface) | Default `auto` offers `repo_overview`, `changed_scope` and `changed_diff`; the semantic tools, module/impact injection and the background index build need explicit `full` or `light`, and routing signals come from git changes. Output reports omitted items, not-found names and warming/unavailable indexes instead of placeholders. Storage moves to `<config home>/repo-intelligence`; `target_path` must stay in the workspace. Prompt eval (82 calls, blind-reviewed) recommended ship; `npm run bench:repo-intel-truth` holds the old-engine baseline. KNOWN_ISSUES #133 closed. |
 | `311` | Unified Prompt Chain | `v0.7.97` (shipped in `v0.7.97-beta.12`) | [v0.7.97](features/v0.7.97.md#feature_311-unified-prompt-chain) | Every root Run uses the managed Worker and every entry sends one tool text: the request-time projection, the canonical Worker and tool texts, the direct root engine and `system.md` are deleted. `runs.start({ mode: 'coding' })` is ignored with a warning; the leaf executor stays internal for child Agents. `tests/f311-entry-matrix.test.ts` pins every entry; ADR "Every root Run uses one Worker and one tool text" records it. |
 | `310` | SA Mode Residue Removal | `v0.7.97` (shipped in `v0.7.97-beta.12`) | [v0.7.97](features/v0.7.97.md#feature_310-sa-mode-residue-removal) | Public and config.json `agentMode: 'sa'` normalize the way `amaw` did: managed entries run AMA, `runKodaX` and `runs.start` without a mode treat it as unset, and persisted `'sa'` records stay readable. The SA dispatch branch, Direct Path overlay, `'sa'` labels and the FEATURE_100 golden recorder are gone; ADR "SA mode is retired from every caller" records it. The `sa-mutation-reflection` eval id keeps its name. |

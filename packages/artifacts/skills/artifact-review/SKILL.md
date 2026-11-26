@@ -1,6 +1,6 @@
 ---
 name: artifact-review
-description: Use already registered Artifact tools to create/edit PPTX or render and inspect supported PPTX, PDF, DOCX and image artifacts. Apply this adapter when the task uses artifact_* tools; use visual-review for general visual methods, websites, video or unsupported formats.
+description: Use already registered Artifact tools to create/edit PPTX or render and inspect supported PPTX, PDF, DOCX, image, GIF and video artifacts. Apply this adapter when the task uses artifact_* tools; use visual-review for general visual methods, websites or unsupported formats.
 ---
 
 # Artifact tool adapter
@@ -50,8 +50,20 @@ cannot verify animation or transitions.
 
 Local HTML capture supports loaded state and sequence 0 at the requested viewport.
 Native/live surfaces need their existing authorized owner. SVG temporal capture
-samples actual SMIL seconds, not CSS/script animation. Spreadsheet native display
-and calculation, video/GIF/audio, EPUB and 3D/CAD are unsupported by this default
-adapter. Use existing authorized tools when available; report the exact remaining
+samples actual SMIL seconds, not CSS/script animation.
+
+GIF, animated WebP and MP4/MOV/WebM video use temporal capture at actual seconds.
+artifact_open reports the timeline, so pick times that reach the states the task
+cares about: the first and last frames, captions and each transition. An
+animation sample shows the frame displayed at that second. A video sample shows
+the first frame at or after that second. The last video frame starts at the
+duration minus one frame (1/fps); sample that time to see it, because any later
+time returns no frame.
+Video needs the host ffmpeg; without it the video stays unverified. Samples never
+prove continuous playback. Use consecutive close times where motion or flicker
+matters.
+
+Spreadsheet native display and calculation, audio, EPUB and 3D/CAD are
+unsupported by this default adapter. Use existing authorized tools when available; report the exact remaining
 gap without fabricating states or continuous coverage. Keep normal sandbox,
 cancellation and settlement; no verifier daemon or separate completion API.

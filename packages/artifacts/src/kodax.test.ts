@@ -15,7 +15,7 @@ describe('KodaX artifact managed adapter', () => {
   } }));
   const api = { registerTool: (tool: typeof tools[number]) => { tools.push(tool); return () => undefined; },
    getExecutionScope: () => scope, registerSkillPath: () => () => undefined } as unknown as KodaXExtensionAPI;
-  registerArtifactTools(api, { execute, nodeExecutable: process.execPath });
+  registerArtifactTools(api, { execute, nodeExecutable: process.execPath, ffmpegExecutable: '/opt/ffmpeg/bin/ffmpeg' });
   const render = tools.find(tool => tool.name === 'artifact_render')!;
   expect(render.sideEffect).toBe('mutates-shell'); expect(render.interruptBehavior).toBe('cancel');
   const context = { backups: new Map(), executionCwd: '/work' };
@@ -25,6 +25,7 @@ describe('KodaX artifact managed adapter', () => {
    invokeTool, reportProgress: () => undefined };
   const result = await render.handler({ path: 'deck.pptx', pages: [1] }, context);
   expect(invokeTool.mock.calls.map(call => call[0])).toEqual(['write', 'read']);
+  expect(JSON.parse((invokeTool.mock.calls[0] as unknown as [string, { content: string }])[1].content).options.ffmpegExecutable).toBe('/opt/ffmpeg/bin/ffmpeg');
   expect(execute).toHaveBeenCalledWith(scope, expect.objectContaining({ executable: process.execPath, args: expect.any(Array) }));
   expect(result).toContainEqual({ type: 'image', path: '/work/slide.png' });
   execute.mockResolvedValue('Command: worker\nExit: 1\nWorker failed');

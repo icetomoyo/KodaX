@@ -26,13 +26,28 @@ export async function artifactPath(root: string, requested: string, output = fal
  }
  return resolved;
 }
-export async function readPresentation(root: string, requested: string, expected?: string) {
+const IN_MEMORY_LIMIT = 32 * 1024 * 1024, ON_DISK_LIMIT = 1024 * 1024 * 1024;
+/**
+ * Reads a hash-checked source. Files above 32 MiB stay on disk: `bytes` is then only the
+ * header and `complete` is false, so format detection can admit large video alone.
+ */
+export async function readArtifactSource(root: string, requested: string, expected?: string) {
  const file = await artifactPath(root, requested);
- const bytes = await fs.readFile(file);
- if (bytes.length > 32 * 1024 * 1024) throw new Error('Artifact input exceeds 32 MiB.');
- const sourceHash = hashBytes(bytes);
- if (expected !== undefined && expected !== sourceHash) throw new Error('Stale artifact source hash.');
- return { path: file, bytes, sourceHash };
+ const handle = await fs.open(file, 'r');
+ try {
+  const { size } = await handle.stat();
+  if (size > ON_DISK_LIMIT) throw new Error('Artifact input exceeds 1 GiB.');
+  let bytes: Buffer, sourceHash: string;
+  if (size <= IN_MEMORY_LIMIT) { bytes = await handle.readFile(); sourceHash = hashBytes(bytes); }
+  else {
+   bytes = Buffer.alloc(4096); await handle.read(bytes, 0, bytes.length, 0);
+   const hash = createHash('sha256');
+   for await (const chunk of handle.createReadStream({ start: 0, autoClose: false })) hash.update(chunk as Buffer);
+   sourceHash = hash.digest('hex');
+  }
+  if (expected !== undefined && expected !== sourceHash) throw new Error('Stale artifact source hash.');
+  return { path: file, bytes, sourceHash, complete: size <= IN_MEMORY_LIMIT };
+ } finally { await handle.close(); }
 }
 export async function writePresentation(root: string, requested: string, bytes: Uint8Array): Promise<string> {
  if (path.extname(requested).toLowerCase() !== '.pptx') throw new Error('Output must be a new PPTX file.');

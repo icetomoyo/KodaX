@@ -1,14 +1,15 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { ArtifactCapability, ArtifactOperation, ArtifactRef, ArtifactRequest, ArtifactResult, ArtifactResults, ArtifactExecutionPort } from './types.js';
-import { artifactPath, hashBytes, readPresentation, writePresentation } from './files.js';
+import { artifactPath, hashBytes, readArtifactSource, writePresentation } from './files.js';
 import { decodeArtifactRequest, decodeArtifactResult } from './contract.js';
 import { assertCurrentSource, readEvidenceFile, saveEvidence } from './evidence-files.js';
 import { inspectPng } from './pixels.js';
 import { browserAvailable, prepareBrowser } from './prepare.js';
-import { detectFormat } from './formats.js';
+import { detectFormat, isAnimatedWebp, isVideoFormat } from './formats.js';
+import type { AnimatedFormat, VideoFormat } from './formats.js';
 
-export interface ArtifactRuntimeOptions { readonly workspaceRoot: string; readonly browserExecutable?: string; readonly libreOfficeExecutable?: string; readonly maxRenderPages?: number; readonly signal?: AbortSignal }
+export interface ArtifactRuntimeOptions { readonly workspaceRoot: string; readonly browserExecutable?: string; readonly libreOfficeExecutable?: string; readonly ffmpegExecutable?: string; readonly maxRenderPages?: number; readonly signal?: AbortSignal }
 /** Explicit local authority for independent, trusted Node hosts. Product UIs use the Host port. */
 export function createNodeArtifactPort(options: ArtifactRuntimeOptions): ArtifactExecutionPort {
  return { execute: (request, signal) => executeArtifactRequest(request, { ...options,
@@ -36,11 +37,14 @@ async function execute(request: ArtifactRequest, options: ArtifactRuntimeOptions
    capabilities.push({ operation: format === 'html' ? 'capture' : 'render', input: format, ...(format === 'html' ? {} : { backend: 'lightweight' as const }), availability: format === 'png' || available ? 'available' : 'not-prepared', engine, diagnostics });
    if (format !== 'pptx' && format !== 'html') capabilities.push({ operation: 'capture', input: format, availability: format === 'png' || available ? 'available' : 'not-prepared', engine, diagnostics });
   }
-  let converterAvailable = false;
-  if (options.libreOfficeExecutable && path.isAbsolute(options.libreOfficeExecutable)) {
-   try { converterAvailable = (await fs.stat(options.libreOfficeExecutable)).isFile(); }
-   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-  }
+  const converterAvailable = await executableAvailable(options.libreOfficeExecutable), ffmpegAvailable = await executableAvailable(options.ffmpegExecutable);
+  const inspection = { name: 'source-content-inspection', version: '1' };
+  capabilities.push({ operation: 'open', input: 'gif', availability: 'available', engine: inspection, diagnostics: [] },
+   { operation: 'capture', input: 'gif', availability: available ? 'available' : 'not-prepared', engine: { name: 'Chromium ImageDecoder', version: 'not-observed' },
+    diagnostics: [{ code: 'temporal-samples', message: 'Temporal samples of the frame displayed at each second; animated WebP uses the same decoder. Never continuous playback.' }] });
+  for (const input of ['mp4', 'mov', 'webm'] as const) capabilities.push({ operation: 'open', input, availability: 'available', engine: inspection, diagnostics: [] },
+   { operation: 'capture', input, availability: ffmpegAvailable ? 'available' : 'not-prepared', engine: { name: 'ffmpeg', version: 'not-observed' },
+    diagnostics: [{ code: 'decoder-candidate', message: 'Requires a trusted absolute ffmpeg path from the host. File presence is checked here; identity is verified during capture.' }] });
   for (const input of ['pptx', 'docx'] as const) capabilities.push({ operation: 'render', input, backend: 'libreoffice', availability: converterAvailable && available ? 'available' : 'not-prepared',
    engine: { name: 'LibreOffice/PDF.js', version: 'not-observed' }, diagnostics: [{ code: 'converter-candidate', message: 'Requires trusted absolute LibreOffice and prepared Chromium paths. File presence is checked here; converter identity/version is verified during render.' }] });
   for (const operation of ['create', 'edit', 'export'] as const) capabilities.push({ operation, input: 'pptx', availability: 'available', diagnostics: [] });
@@ -55,9 +59,9 @@ async function execute(request: ArtifactRequest, options: ArtifactRuntimeOptions
   const file = await writePresentation(options.workspaceRoot, request.input.output, bytes);
   return { status: 'ready', artifact: { path: file, sourceHash: hashBytes(bytes), format: 'pptx', pages: request.input.slides.length }, diagnostics: [] };
  }
- const source = await readPresentation(options.workspaceRoot, request.operation === 'capture' ? request.input.target : request.input.path,
+ const source = await readArtifactSource(options.workspaceRoot, request.operation === 'capture' ? request.input.target : request.input.path,
   request.operation === 'capture' ? request.input.expectedSource?.kind === 'file' ? request.input.expectedSource.file.sourceHash : undefined : request.input.expectedSourceHash);
- const format = await detectFormat(source.bytes, source.path), base = { path: source.path, sourceHash: source.sourceHash };
+ const format = await detectFormat(source.bytes, source.path, source.complete), base = { path: source.path, sourceHash: source.sourceHash };
  if (request.operation === 'capture' && request.input.expectedSource?.kind === 'file') {
   const expected = request.input.expectedSource;
   if (await artifactPath(options.workspaceRoot, expected.file.path) !== source.path || expected.file.format !== format) throw new Error('Capture source identity differs from the requested file.');
@@ -78,8 +82,12 @@ async function execute(request: ArtifactRequest, options: ArtifactRuntimeOptions
  } else {
   if (request.operation === 'edit' || request.operation === 'export') throw new Error('Edit/export are available only for PPTX.');
   if (request.operation === 'render' && request.input.backend === 'libreoffice' && format !== 'docx') throw new Error('LibreOffice conversion is available only for PPTX and DOCX; other formats use their declared renderer.');
-  if (request.operation === 'open' && format !== 'pdf') { if (format === 'png') inspectPng(source.bytes); return { status: 'ready', artifact: { ...base, format }, diagnostics: [] }; }
-  if (format === 'pdf' || format === 'docx') {
+  if (format === 'gif' || isVideoFormat(format) || (format === 'webp' && isAnimatedWebp(source.bytes))) {
+   const temporal = await executeTemporal(source.bytes, { ...base, format }, request, options);
+   if (request.operation === 'open' || !temporal.evidence) return temporal;
+   result = temporal;
+  } else if (request.operation === 'open' && format !== 'pdf') { if (format === 'png') inspectPng(source.bytes); return { status: 'ready', artifact: { ...base, format }, diagnostics: [] }; }
+  else if (format === 'pdf' || format === 'docx') {
    // A host-supplied converter is the default DOCX layout engine; the lightweight renderer remains the fallback.
    const backend = format === 'docx' ? (request.operation === 'render' ? request.input.backend : undefined) ?? (options.libreOfficeExecutable ? 'libreoffice' : 'lightweight') : 'lightweight';
    if (backend === 'libreoffice' && !options.libreOfficeExecutable) return { status: 'unverified', artifact: { ...base, format: 'docx' }, diagnostics: [
@@ -111,5 +119,36 @@ async function execute(request: ArtifactRequest, options: ArtifactRuntimeOptions
   }
  }
  return result;
+}
+async function executableAvailable(executable: string | undefined): Promise<boolean> {
+ if (!executable || !path.isAbsolute(executable)) return false;
+ try { return (await fs.stat(executable)).isFile(); }
+ catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; return false; }
+}
+type TemporalRef = ArtifactRef & { readonly format: AnimatedFormat | VideoFormat };
+/** GIF, animated WebP and video: open reports the timeline; only temporal capture yields pixels. */
+async function executeTemporal(bytes: Buffer, artifact: TemporalRef, request: ArtifactRequest, options: ArtifactRuntimeOptions): Promise<ArtifactResult> {
+ const format = artifact.format;
+ if (!isVideoFormat(format)) return executeAnimation(bytes, { ...artifact, format }, request, options);
+ const ready = await executableAvailable(options.ffmpegExecutable);
+ if (request.operation === 'open') {
+  if (!ready) return { status: 'ready', artifact, diagnostics: [{ code: 'timeline-unavailable', message: 'The host has not provided ffmpeg, so the video timeline is unknown.' }] };
+  return { status: 'ready', artifact, diagnostics: [await (await import('./video-render.js')).videoTimeline(artifact.path, format, options)] };
+ }
+ if (request.operation !== 'capture' || request.input.kind !== 'temporal') return temporalCaptureRequired();
+ const video = await import('./video-render.js');
+ return ready ? video.captureVideo({ ...artifact, format }, request.input, options) : { status: 'unverified', diagnostics: [video.ffmpegUnavailable()] };
+}
+async function executeAnimation(bytes: Buffer, artifact: ArtifactRef & { readonly format: AnimatedFormat }, request: ArtifactRequest, options: ArtifactRuntimeOptions): Promise<ArtifactResult> {
+ const ready = await browserAvailable(options);
+ if (request.operation === 'open') {
+  if (!ready) return { status: 'ready', artifact, diagnostics: [{ code: 'timeline-unavailable', message: 'Prepare a compatible browser to read the animation timeline.' }] };
+  return { status: 'ready', artifact, diagnostics: [await (await import('./animation-render.js')).animationTimeline(bytes, artifact.format, options)] };
+ }
+ if (request.operation !== 'capture' || request.input.kind !== 'temporal') return temporalCaptureRequired();
+ return ready ? (await import('./animation-render.js')).captureAnimation(bytes, artifact, request.input, options) : missingBrowser();
+}
+function temporalCaptureRequired(): ArtifactResult {
+ return { status: 'unverified', diagnostics: [{ code: 'temporal-capture-required', message: 'Moving content needs temporal capture at explicit seconds; one still image cannot represent it.', blocking: true }] };
 }
 function missingBrowser(): ArtifactResult { return { status: 'unverified', diagnostics: [{ code: 'missing-browser', message: 'Prepare a compatible browser explicitly before this operation.', blocking: true }] }; }

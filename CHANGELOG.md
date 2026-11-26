@@ -15,6 +15,12 @@ All notable changes to this project will be documented in this file.
   `(owner, repo, body?)`. `mcp_describe` accepts up to 10 `ids` in one call.
 - The MCP manifest can show a one-line purpose for each server, taken from
   its initialize result, so the model knows when a server is worth searching.
+- Artifact review can check GIF, animated WebP and MP4/MOV/WebM video.
+  `artifact_open` reports the timeline. `artifact_capture` with
+  `kind: 'temporal'` returns PNG frames at the requested seconds. GIF and
+  WebP decode in the prepared Chromium. Video needs the Host to pass
+  `ffmpegExecutable`; without it, video stays unverified. Video files may be
+  up to 1 GiB. Samples never count as continuous playback.
 
 ### Changed
 

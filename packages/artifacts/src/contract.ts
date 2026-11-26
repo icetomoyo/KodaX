@@ -3,7 +3,7 @@ import { sameJson } from './identity.js';
 
 const operations = ['create', 'open', 'edit', 'export', 'render', 'capture', 'capabilities', 'prepare', 'readEvidence'] as const;
 const kinds = ['static', 'paginated', 'interactive', 'temporal'];
-const formats = ['pptx', 'pdf', 'docx', 'png', 'jpeg', 'webp', 'svg', 'html'];
+const formats = ['pptx', 'pdf', 'docx', 'png', 'jpeg', 'webp', 'svg', 'html', 'gif', 'mp4', 'mov', 'webm'];
 export const artifactToolName = (operation: ArtifactOperation): string => 'artifact_' + (operation === 'readEvidence' ? 'read_evidence' : operation);
 export function record(value: unknown): Record<string, unknown> {
  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('Expected artifact object.');
