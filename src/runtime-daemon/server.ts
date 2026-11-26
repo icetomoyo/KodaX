@@ -2656,7 +2656,10 @@ async function dispatchRuntimeDaemonRequest(
       : parseExecutionBindingSnapshot({ businessBinding: approved.businessBinding,
         ...(profile?.defaultSkill === undefined ? {} : { defaultSkill: profile.defaultSkill }) });
     if (approved?.businessBinding !== undefined && !bindingSnapshot) throw daemonError('execution_binding_rejected', 'Invalid committed business binding snapshot.');
-    const key = approved === undefined ? undefined : JSON.stringify([principalId, sessionId,
+    // A client's own leases are its instance's. The leases a Session binds serve whoever the Session
+    // admits, so there the key names the person, and their other client holds the same authority.
+    const holder = authorization === undefined && boundLeases !== undefined ? subject ?? principalId : principalId;
+    const key = approved === undefined ? undefined : JSON.stringify([holder, sessionId,
       credential === undefined ? null : [credential.leaseId, credential.mode === 'scoped'
         ? [...requireStringArrayField(credential, 'providers')].sort() : credential.provider], hostTools?.leaseId ?? null,
       ...(workflowHostPolicy === undefined ? [] : [[workflowHostPolicy.maxAgents ?? null, workflowHostPolicy.tokenBudget ?? null]]),

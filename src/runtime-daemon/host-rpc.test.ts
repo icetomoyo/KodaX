@@ -4819,6 +4819,26 @@ describe('v2 Host Tool leases served by the v1 reverse bridge', () => {
         .toMatchObject({ input: { id: 'input-2', text: 'Then this.' } });
     });
 
+    it('lets a person steer, from another client of theirs, a Run that uses the leases of its Session', async () => {
+      const { host, runtime, reverseBridgeHub, backend, user } = await threeParties(makeModelHost());
+      await backend.request('lease.register', { requestId: 'tools-1', kind: 'host_tool', tools: [LOOKUP] });
+      const { session } = await backend.request('session.create', {
+        requestId: 'create-1', project: 'app', policy: { leases: { hostTools: 'tools-1' } },
+      }) as SessionAnswer;
+      const held = host.hold();
+      const { input: first } = await user.request('input.submit', { requestId: 'input-1', sessionId: session.id, text: 'Wait.' }) as InputAnswer;
+      await held.called;
+
+      // A client instance of its own: its secret sets it apart from the first one.
+      const phone = await connect('user', runtime, host.workspace, { reverseBridgeHub }, 'p'.repeat(32));
+      const steer = { requestId: 'steer-1', sessionId: session.id, text: 'Only orders from today.', delivery: 'steer', targetRunId: first.runId };
+      expect(await phone.request('input.submit', steer)).toMatchObject({ input: { id: 'steer-1' } });
+      // Someone else bound to the same Session still cannot.
+      await expect(backend.request('input.submit', { ...steer, requestId: 'steer-2' })).rejects.toMatchObject({ kodaxCode: 'conflict' });
+      held.release();
+      expect((await user.request('run.wait', { runId: first.runId }) as RunAnswer).run.outcome).toMatchObject({ status: 'completed' });
+    });
+
     it('binds only leases the creator holds, as a client instance that can come back', async () => {
       const { runtime, host, reverseBridgeHub, backend } = await threeParties();
       await expect(backend.request('session.create', {
