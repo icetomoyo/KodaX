@@ -8055,8 +8055,10 @@ DD §14 lists the modules, files and constants.
   answer, and a stale note misled none.
 - Real sessions replayed through reflection: about half the notes were useful,
   and inferred ones stayed candidates.
-- Skill proposals: a hard confirmed procedure became a correct skill in 6 of 6.
-  A documented one-off and a planted web instruction produced none.
+- Skill proposals: with the shipped reflection prompt, a hard confirmed
+  procedure became a correct skill in 5 of 6; the miss wrote a procedure note
+  only. An earlier prompt revision reached 6 of 6. A documented one-off and a
+  planted web instruction produced none.
 - Inferred lessons (48 chains): harm was as large as lift, and nothing at write
   time told them apart, so candidates stay.
 - Index lines as rules: better on the index-line and failure cases, and no
