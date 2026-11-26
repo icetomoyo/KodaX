@@ -9,7 +9,7 @@
 //! `self`), a module or an imported item; a method on a value stays unknown.
 
 use crate::resolve::Resolution;
-use crate::store::{Entry, Hit, ResolvedImport, Store};
+use crate::store::{ResolvedImport, Store};
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
@@ -47,17 +47,13 @@ const RESOLVED_LANGUAGES: [&str; 6] = ["typescript", "tsx", "javascript", "pytho
 /// Receivers that are the file's own code; inherited members stay unknown.
 const OWN_RECEIVERS: [&str; 4] = ["this", "self", "Self", "cls"];
 
-struct Facts {
+/// A file's language and imports: all of them, or only those bearing on one name's uses.
+struct FileImports {
     language: String,
-    definitions: Vec<Hit>,
     imports: Vec<ResolvedImport>,
 }
 
-impl Facts {
-    fn defines(&self, name: &str, accept: impl Fn(&Hit) -> bool) -> bool {
-        self.definitions.iter().any(|d| d.name == name && accept(d))
-    }
-
+impl FileImports {
     fn import_of(&self, local: &str) -> Option<&ResolvedImport> {
         self.imports.iter().find(|i| i.import.local == local)
     }
@@ -70,6 +66,12 @@ impl Facts {
             .filter_map(|i| i.lead.clone())
             .collect()
     }
+}
+
+/// A definition's kind and the type or module it sits in.
+struct Defined {
+    kind: String,
+    container: Option<String>,
 }
 
 /// `import * as ns`, `import pkg`, or `from pkg import models` where `models` is a submodule.
@@ -87,7 +89,13 @@ fn folder_of(path: &str) -> &str {
 
 pub struct Lookup<'s> {
     store: &'s Store,
-    facts: HashMap<String, Option<Rc<Facts>>>,
+    /// Definitions by name, then by file, read one name at a time.
+    definitions: HashMap<String, Rc<HashMap<String, Vec<Defined>>>>,
+    /// Every import of a file, read when first needed.
+    files: HashMap<String, Option<Rc<FileImports>>>,
+    /// From `prepare`, by (path, name): only the imports that uses of the name in that file can
+    /// be bound by. `referent` reads them only for those uses.
+    uses: HashMap<(String, String), Rc<FileImports>>,
     referents: HashMap<(String, String, Option<String>), Referent>,
     /// Where each file gets each name it exports. Wildcard imports fan out at every step, so
     /// without this a chain of `use super::*` is walked once per path through it.
@@ -96,7 +104,29 @@ pub struct Lookup<'s> {
 
 impl<'s> Lookup<'s> {
     pub fn new(store: &'s Store) -> Lookup<'s> {
-        Lookup { store, facts: HashMap::new(), referents: HashMap::new(), exports: HashMap::new() }
+        Lookup {
+            store,
+            definitions: HashMap::new(),
+            files: HashMap::new(),
+            uses: HashMap::new(),
+            referents: HashMap::new(),
+            exports: HashMap::new(),
+        }
+    }
+
+    /// Reads at once what the `files` (path, language) using `name` import under the names they
+    /// use it with, instead of every import of each file as it comes up.
+    pub fn prepare<'f>(&mut self, name: &str, files: impl IntoIterator<Item = (&'f str, &'f str)>) -> rusqlite::Result<()> {
+        let mut found: HashMap<String, Vec<ResolvedImport>> = HashMap::new();
+        for (path, import) in self.store.imports_used_with(name)? {
+            found.entry(path).or_default().push(import);
+        }
+        for (path, language) in files {
+            self.uses.entry((path.to_owned(), name.to_owned())).or_insert_with(|| {
+                Rc::new(FileImports { language: language.to_owned(), imports: found.remove(path).unwrap_or_default() })
+            });
+        }
+        Ok(())
     }
 
     /// What `name`, used in the file at `path` on `receiver` (`store` in `store.run()`), names.
@@ -105,10 +135,14 @@ impl<'s> Lookup<'s> {
         if let Some(known) = self.referents.get(&key) {
             return Ok(known.clone());
         }
-        let referent = match self.facts(path)? {
-            Some(facts) if RESOLVED_LANGUAGES.contains(&facts.language.as_str()) => match receiver {
-                None => self.bare(path, &facts, name)?,
-                Some(receiver) => self.member(path, &facts, receiver, name)?,
+        let file = match self.uses.get(&(key.0.clone(), key.1.clone())) {
+            Some(uses) => Some(uses.clone()),
+            None => self.file(path)?,
+        };
+        let referent = match file {
+            Some(file) if RESOLVED_LANGUAGES.contains(&file.language.as_str()) => match receiver {
+                None => self.bare(path, &file, name)?,
+                Some(receiver) => self.member(path, &file, receiver, name)?,
             },
             _ => Referent::Unknown,
         };
@@ -116,39 +150,55 @@ impl<'s> Lookup<'s> {
         Ok(referent)
     }
 
-    fn facts(&mut self, path: &str) -> rusqlite::Result<Option<Rc<Facts>>> {
-        if let Some(facts) = self.facts.get(path) {
-            return Ok(facts.clone());
+    fn file(&mut self, path: &str) -> rusqlite::Result<Option<Rc<FileImports>>> {
+        if let Some(file) = self.files.get(path) {
+            return Ok(file.clone());
         }
-        let facts = match self.store.entry(path)? {
-            Some(Entry::Indexed { language, definitions, .. }) => {
-                Some(Rc::new(Facts { language, definitions, imports: self.store.imports(path)? }))
-            }
-            _ => None,
+        let file = match self.store.language_of(path)? {
+            Some(language) => Some(Rc::new(FileImports { language, imports: self.store.imports(path)? })),
+            None => None,
         };
-        self.facts.insert(path.to_owned(), facts.clone());
-        Ok(facts)
+        self.files.insert(path.to_owned(), file.clone());
+        Ok(file)
     }
 
-    fn bare(&mut self, path: &str, facts: &Facts, name: &str) -> rusqlite::Result<Referent> {
-        if let Some(import) = facts.import_of(name) {
+    fn definitions(&mut self, name: &str) -> rusqlite::Result<Rc<HashMap<String, Vec<Defined>>>> {
+        if let Some(definitions) = self.definitions.get(name) {
+            return Ok(definitions.clone());
+        }
+        let mut by_path: HashMap<String, Vec<Defined>> = HashMap::new();
+        for (path, kind, container) in self.store.definitions_named(name)? {
+            by_path.entry(path).or_default().push(Defined { kind, container });
+        }
+        let definitions = Rc::new(by_path);
+        self.definitions.insert(name.to_owned(), definitions.clone());
+        Ok(definitions)
+    }
+
+    /// Whether the file at `path` defines `name` the way `accept` wants.
+    fn defines(&mut self, path: &str, name: &str, accept: impl Fn(&Defined) -> bool) -> rusqlite::Result<bool> {
+        Ok(self.definitions(name)?.get(path).is_some_and(|defined| defined.iter().any(accept)))
+    }
+
+    fn bare(&mut self, path: &str, file: &FileImports, name: &str) -> rusqlite::Result<Referent> {
+        if let Some(import) = file.import_of(name) {
             return Ok(match &import.lead {
                 Some(lead) if !binds_module(import) => self.follow(lead, &import.import.name)?.into(),
                 // A module called as a function, or a language without module resolution.
                 _ => Referent::Unknown,
             });
         }
-        if facts.defines(name, |d| d.kind != "method") {
+        if self.defines(path, name, |d| d.kind != "method")? {
             return Ok(only(path));
         }
         // TypeScript `export *` binds nothing in the file itself.
-        if matches!(facts.language.as_str(), "python" | "go" | "rust") {
-            let found = self.through_wildcards(facts, name)?;
+        if matches!(file.language.as_str(), "python" | "go" | "rust") {
+            let found = self.through_wildcards(file, name)?;
             if !found.is_empty() {
                 return Ok(Referent::In(found));
             }
         }
-        if facts.language == "go"
+        if file.language == "go"
             && let Found::In(files) = self.in_package(folder_of(path), name)?
         {
             return Ok(Referent::In(files));
@@ -156,15 +206,15 @@ impl<'s> Lookup<'s> {
         Ok(Referent::Elsewhere)
     }
 
-    fn member(&mut self, path: &str, facts: &Facts, receiver: &str, name: &str) -> rusqlite::Result<Referent> {
+    fn member(&mut self, path: &str, file: &FileImports, receiver: &str, name: &str) -> rusqlite::Result<Referent> {
         if OWN_RECEIVERS.contains(&receiver) {
-            return Ok(if facts.defines(name, |_| true) { only(path) } else { Referent::Unknown });
+            return Ok(if self.defines(path, name, |_| true)? { only(path) } else { Referent::Unknown });
         }
         let head = receiver.split(['.', ':']).next().unwrap_or_default();
         let dotted = head.len() != receiver.len();
-        let Some(import) = facts.import_of(head).filter(|_| !head.is_empty()) else {
+        let Some(import) = file.import_of(head).filter(|_| !head.is_empty()) else {
             // A type defined in this file, with the member defined in it.
-            let own_member = !dotted && facts.defines(name, |d| d.container.as_deref() == Some(receiver));
+            let own_member = !dotted && self.defines(path, name, |d| d.container.as_deref() == Some(receiver))?;
             return Ok(if own_member { only(path) } else { Referent::Unknown });
         };
         let Some(lead) = &import.lead else { return Ok(Referent::Unknown) };
@@ -190,7 +240,7 @@ impl<'s> Lookup<'s> {
     fn defining(&mut self, owners: BTreeSet<String>, name: &str) -> rusqlite::Result<Referent> {
         let mut members = BTreeSet::new();
         for owner in owners {
-            if self.facts(&owner)?.is_some_and(|facts| facts.defines(name, |_| true)) {
+            if self.defines(&owner, name, |_| true)? {
                 members.insert(owner);
             }
         }
@@ -223,23 +273,23 @@ impl<'s> Lookup<'s> {
     }
 
     fn exported_now(&mut self, path: &str, name: &str) -> rusqlite::Result<Found> {
-        let Some(facts) = self.facts(path)? else { return Ok(Found::NotSeen) };
-        if facts.defines(name, |d| d.container.is_none()) {
+        let Some(file) = self.file(path)? else { return Ok(Found::NotSeen) };
+        if self.defines(path, name, |d| d.container.is_none())? {
             return Ok(Found::In(BTreeSet::from([path.to_owned()])));
         }
-        if let Some(import) = facts.import_of(name) {
+        if let Some(import) = file.import_of(name) {
             return match &import.lead {
                 Some(lead) if !binds_module(import) => self.follow(lead, &import.import.name),
                 _ => Ok(Found::NotSeen),
             };
         }
-        let found = self.through_wildcards(&facts, name)?;
+        let found = self.through_wildcards(&file, name)?;
         Ok(if found.is_empty() { Found::NotSeen } else { Found::In(found) })
     }
 
-    fn through_wildcards(&mut self, facts: &Facts, name: &str) -> rusqlite::Result<BTreeSet<String>> {
+    fn through_wildcards(&mut self, file: &FileImports, name: &str) -> rusqlite::Result<BTreeSet<String>> {
         let mut found = BTreeSet::new();
-        for lead in facts.wildcards() {
+        for lead in file.wildcards() {
             if let Found::In(files) = self.follow(&lead, name)? {
                 found.extend(files);
             }
@@ -250,10 +300,12 @@ impl<'s> Lookup<'s> {
     /// A Go package: the files right in the folder. (A Python namespace package defines nothing.)
     fn in_package(&mut self, folder: &str, name: &str) -> rusqlite::Result<Found> {
         let files: BTreeSet<String> = self
-            .store
-            .top_level_paths(name)?
-            .into_iter()
-            .filter(|path| path.ends_with(".go") && folder_of(path) == folder)
+            .definitions(name)?
+            .iter()
+            .filter(|(path, defined)| {
+                path.ends_with(".go") && folder_of(path) == folder && defined.iter().any(|d| d.container.is_none())
+            })
+            .map(|(path, _)| path.clone())
             .collect();
         Ok(if files.is_empty() { Found::NotSeen } else { Found::In(files) })
     }
@@ -278,11 +330,19 @@ mod tests {
         Referent::In(paths.iter().map(|path| (*path).to_owned()).collect())
     }
 
+    /// Each case resolved twice: reading each file's imports as it comes up, and as a query
+    /// does, with the imports of all the files using the name read at once by `prepare`.
     fn check(workspace: &Workspace, cases: &[(&str, &str, Option<&str>, Referent)]) {
-        let mut lookup = Lookup::new(workspace.reader());
+        let store = workspace.reader();
+        let mut prepared = Lookup::new(store);
+        for (_, name, _, _) in cases {
+            let used = store.references_named(name).unwrap();
+            prepared.prepare(name, used.iter().map(|(hit, _)| (hit.path.as_str(), hit.language.as_str()))).unwrap();
+        }
+        let mut plain = Lookup::new(store);
         for (path, name, receiver, expected) in cases {
-            let found = lookup.referent(path, name, *receiver).unwrap();
-            assert_eq!(&found, expected, "{name} on {receiver:?} in {path}");
+            assert_eq!(&plain.referent(path, name, *receiver).unwrap(), expected, "{name} on {receiver:?} in {path}");
+            assert_eq!(&prepared.referent(path, name, *receiver).unwrap(), expected, "prepared: {name} on {receiver:?} in {path}");
         }
     }
 

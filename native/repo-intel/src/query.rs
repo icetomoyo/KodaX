@@ -51,9 +51,11 @@ pub fn find(store: &Store, root: &Path, table: Table, name: &str, limit: u64, of
 /// those the index cannot resolve, matched by name (`heuristic`), each in path and line order.
 /// References resolved elsewhere are left out.
 pub fn references_to(store: &Store, root: &Path, path: &str, name: &str, limit: u64, offset: u64) -> rusqlite::Result<Value> {
+    let references = store.references_named(name)?;
     let mut lookup = Lookup::new(store);
+    lookup.prepare(name, references.iter().map(|(hit, _)| (hit.path.as_str(), hit.language.as_str())))?;
     let (mut resolved, mut matched) = (Vec::new(), Vec::new());
-    for (hit, receiver) in store.references_named(name)? {
+    for (hit, receiver) in references {
         match lookup.referent(&hit.path, name, receiver.as_deref())? {
             Referent::In(files) if files.contains(path) => resolved.push(hit),
             Referent::Unknown => matched.push(hit),
@@ -61,10 +63,7 @@ pub fn references_to(store: &Store, root: &Path, path: &str, name: &str, limit: 
         }
     }
     for (importer, alias) in store.aliases_of(name)? {
-        for (hit, receiver) in store.references_named(&alias)? {
-            if hit.path != importer {
-                continue;
-            }
+        for (hit, receiver) in store.references_in(&importer, &alias)? {
             if matches!(lookup.referent(&hit.path, &alias, receiver.as_deref())?, Referent::In(files) if files.contains(path)) {
                 resolved.push(hit);
             }

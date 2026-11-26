@@ -10,7 +10,7 @@ use std::path::Path;
 
 /// Bumped when the tables change, or when files are read into them differently
 /// (what the extractor finds, which files it reads); an index with another version is rebuilt.
-const SCHEMA_VERSION: u32 = 10;
+const SCHEMA_VERSION: u32 = 11;
 
 /// Past this size the write-ahead log is cut back once its pages are in the index.
 /// SQLite otherwise keeps the log at the size of the largest batch ever written:
@@ -194,6 +194,8 @@ impl Store {
                analysis INTEGER NOT NULL, position INTEGER NOT NULL, module TEXT NOT NULL,
                name TEXT NOT NULL, local TEXT NOT NULL,
                PRIMARY KEY(analysis, position)) WITHOUT ROWID;
+             -- Imports under another name (`import { a as b }`), found by the name imported.
+             CREATE INDEX imports_aliases ON imports(name) WHERE local <> name AND local <> '';
              -- Where each file's imports lead. Kept by path, not by analysis: the same text
              -- in another folder imports other files. The index on target finds importers.
              -- name is '' for the module, else an imported name that is a submodule of it.
@@ -362,13 +364,22 @@ impl Store {
 
     /// Every reference named `name`, with what it is used on, in path and line order.
     pub fn references_named(&self, name: &str) -> rusqlite::Result<Vec<(Hit, Option<String>)>> {
-        let mut statement = self.connection.prepare_cached(
+        self.references_where("t.name = ?1 AND ?2 IS NULL", name, None)
+    }
+
+    /// The references named `name` in the file at `path`, in line order.
+    pub fn references_in(&self, path: &str, name: &str) -> rusqlite::Result<Vec<(Hit, Option<String>)>> {
+        self.references_where("t.name = ?1 AND f.path = ?2", name, Some(path))
+    }
+
+    fn references_where(&self, condition: &str, name: &str, path: Option<&str>) -> rusqlite::Result<Vec<(Hit, Option<String>)>> {
+        let mut statement = self.connection.prepare_cached(&format!(
             "SELECT f.path, f.size, f.mtime_ns, a.language, t.line, t.column, t.kind, t.receiver
              FROM refs t JOIN analyses a ON a.id = t.analysis JOIN files f ON f.hash = a.hash
-             WHERE t.name = ?1 ORDER BY f.path, t.line, t.column",
-        )?;
+             WHERE {condition} ORDER BY f.path, t.line, t.column"
+        ))?;
         statement
-            .query_map(params![name], |row| {
+            .query_map(params![name, path], |row| {
                 let hit = Hit {
                     path: row.get(0)?,
                     known: Known { size: row.get::<_, i64>(1)? as u64, mtime_ns: row.get(2)? },
@@ -387,20 +398,50 @@ impl Store {
 
     /// The files that import `name` under another name, and that name (`import { a as b }`).
     pub fn aliases_of(&self, name: &str) -> rusqlite::Result<Vec<(String, String)>> {
-        let mut statement = self.connection.prepare_cached(
-            "SELECT DISTINCT f.path, i.local FROM imports i JOIN analyses a ON a.id = i.analysis JOIN files f ON f.hash = a.hash
-             WHERE i.name = ?1 AND i.local <> ?1 AND i.local <> '' ORDER BY f.path, i.local",
-        )?;
+        let mut statement = self.connection.prepare_cached(ALIASES)?;
         statement.query_map(params![name], |row| Ok((row.get(0)?, row.get(1)?)))?.collect()
     }
 
-    /// The paths of files with a top-level definition named `name`.
-    pub fn top_level_paths(&self, name: &str) -> rusqlite::Result<Vec<String>> {
+    /// Every definition named `name`, as (path, kind, container).
+    pub fn definitions_named(&self, name: &str) -> rusqlite::Result<Vec<(String, String, Option<String>)>> {
         let mut statement = self.connection.prepare_cached(
-            "SELECT DISTINCT f.path FROM definitions t JOIN analyses a ON a.id = t.analysis JOIN files f ON f.hash = a.hash
-             WHERE t.name = ?1 AND t.container IS NULL ORDER BY f.path",
+            "SELECT f.path, t.kind, t.container FROM definitions t JOIN analyses a ON a.id = t.analysis JOIN files f ON f.hash = a.hash
+             WHERE t.name = ?1 ORDER BY f.path",
         )?;
-        statement.query_map(params![name], |row| row.get(0))?.collect()
+        statement.query_map(params![name], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?.collect()
+    }
+
+    /// The language of the file at `path`, when it is indexed.
+    pub fn language_of(&self, path: &str) -> rusqlite::Result<Option<String>> {
+        self.connection
+            .query_row(
+                "SELECT a.language FROM files f JOIN analyses a ON a.hash = f.hash WHERE f.path = ?1",
+                params![path],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    /// For the files with references named `name`, the imports those references can be bound by,
+    /// as (path, import) in path and source order: an import under `name` itself or under the
+    /// first part of what a reference uses it on (`store` in `store.run()`, `Foo` in
+    /// `Foo::new()`), and every wildcard import. Reading only these, all files at once, is what
+    /// keeps a common name fast: its uses spread over thousands of files with dozens of imports each.
+    pub fn imports_used_with(&self, name: &str) -> rusqlite::Result<Vec<(String, ResolvedImport)>> {
+        let mut statement = self.connection.prepare_cached(
+            "WITH used(analysis, local) AS (
+               SELECT DISTINCT analysis, CASE WHEN receiver IS NULL THEN name
+                 ELSE substr(receiver, 1, min(instr(receiver || '.', '.'), instr(receiver || ':', ':')) - 1) END
+               FROM refs WHERE name = ?1)
+             SELECT f.path, i.module, i.name, i.local, COALESCE(n.target, m.target), COALESCE(n.kind, m.kind), n.kind IS NOT NULL
+             FROM analyses a JOIN files f ON f.hash = a.hash JOIN imports i ON i.analysis = a.id
+             LEFT JOIN edges m ON m.path = f.path AND m.module = i.module AND m.name = ''
+             LEFT JOIN edges n ON n.path = f.path AND n.module = i.module AND n.name = i.name AND i.name <> ''
+             WHERE a.id IN (SELECT analysis FROM used)
+               AND ((i.name = '*' AND i.local = '') OR (a.id, i.local) IN (SELECT analysis, local FROM used))
+             ORDER BY f.path, i.position",
+        )?;
+        statement.query_map(params![name], |row| Ok((row.get(0)?, resolved_import(row, 1)?)))?.collect()
     }
 
     /// The paths of indexed files, in order.
@@ -491,17 +532,7 @@ impl Store {
              LEFT JOIN edges n ON n.path = f.path AND n.module = i.module AND n.name = i.name AND i.name <> ''
              WHERE f.path = ?1 ORDER BY i.position",
         )?;
-        statement
-            .query_map(params![path], |row| {
-                let target: Option<String> = row.get(3)?;
-                let kind: Option<String> = row.get(4)?;
-                Ok(ResolvedImport {
-                    import: Import { module: row.get(0)?, name: row.get(1)?, local: row.get(2)? },
-                    lead: kind.and_then(|kind| Resolution::from_parts(target, &kind)),
-                    submodule: row.get(5)?,
-                })
-            })?
-            .collect()
+        statement.query_map(params![path], |row| resolved_import(row, 0))?.collect()
     }
 
     /// Every path the index knows, indexed or not.
@@ -560,6 +591,20 @@ impl Store {
         let mut statement = self.connection.prepare("SELECT name FROM definitions ORDER BY name")?;
         statement.query_map([], |row| row.get(0))?.collect()
     }
+}
+
+const ALIASES: &str = "SELECT DISTINCT f.path, i.local FROM imports i JOIN analyses a ON a.id = i.analysis JOIN files f ON f.hash = a.hash
+     WHERE i.name = ?1 AND i.local <> i.name AND i.local <> '' ORDER BY f.path, i.local";
+
+/// An import read as six columns from `first`: module, name, local, target, kind, submodule.
+fn resolved_import(row: &rusqlite::Row, first: usize) -> rusqlite::Result<ResolvedImport> {
+    let target: Option<String> = row.get(first + 3)?;
+    let kind: Option<String> = row.get(first + 4)?;
+    Ok(ResolvedImport {
+        import: Import { module: row.get(first)?, name: row.get(first + 1)?, local: row.get(first + 2)? },
+        lead: kind.and_then(|kind| Resolution::from_parts(target, &kind)),
+        submodule: row.get(first + 5)?,
+    })
 }
 
 #[cfg(test)]
@@ -637,10 +682,29 @@ mod tests {
         assert_eq!(store.find(Table::Definitions, "run", 5, 1).unwrap().0[0].path, "b.ts");
         let named = store.references_named("run").unwrap();
         assert_eq!(named.iter().map(|(hit, receiver)| (hit.path.as_str(), receiver.clone())).collect::<Vec<_>>(), vec![("a.ts", None), ("b.ts", None)]);
-        assert_eq!(store.top_level_paths("run").unwrap(), Vec::<String>::new(), "run sits in Store");
+        let in_b = store.references_in("b.ts", "run").unwrap();
+        assert_eq!(in_b.iter().map(|(hit, _)| (hit.path.as_str(), hit.line)).collect::<Vec<_>>(), vec![("b.ts", 4)]);
+        let defined = store.definitions_named("run").unwrap();
+        assert_eq!(defined.iter().map(|(path, _, container)| (path.as_str(), container.as_deref())).collect::<Vec<_>>(), vec![("a.ts", Some("Store")), ("b.ts", Some("Store"))]);
         let (references, total) = store.find(Table::References, "run", 5, 0).unwrap();
         assert_eq!((references[0].line, references[0].kind.as_str(), references[0].end_line, total), (4, "call", None, 2));
         assert_eq!(store.find(Table::Definitions, "missing", 5, 0).unwrap(), (vec![], 0));
+    }
+
+    #[test]
+    fn finds_aliases_through_an_index_not_a_scan_of_every_import() {
+        // Every reference query looks for aliases; a scan of all imports cost ~35 ms per query on vscode.
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("index.sqlite")).unwrap();
+        let plan: Vec<String> = store
+            .connection
+            .prepare(&format!("EXPLAIN QUERY PLAN {ALIASES}"))
+            .unwrap()
+            .query_map(params!["open"], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert!(plan.iter().any(|step| step.contains("SEARCH i USING INDEX imports_aliases")), "{plan:?}");
     }
 
     #[test]
