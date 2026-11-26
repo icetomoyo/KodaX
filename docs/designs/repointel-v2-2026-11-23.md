@@ -560,3 +560,16 @@ supervisor 增加 `query(root, method, params)`；每个 Run 拿到绑定了自�
 - **索引没好时：** 不带地图，也不提示"地图稍后会有"。之后的 Run 只要带概览，就会带上地图。
 - **说明里不写工具名：** 这一段也会出现在工具只能通过脚本调用的模式里，所以只说"大部分没列出"，不点名 `file_outline`、`find_symbol`。
 - **引擎出错时：** 这一段不带地图、不报错。引擎故障由 supervisor 记日志，`find_symbol` 会说明为什么答不了。
+
+### 11.9 第 9 层：提示词 eval 结果（2026-11-26）
+
+`benchmark/repo-intel-nav-prompt.eval.ts`，用例和评分标准在 `benchmark/repo-intel-nav-prompt.cases.ts`。输入是真实 managed Runtime 的首个请求：Host 开着 v2 引擎，仓库是 packages/agent 的快照（402 个已索引文件）。候选组就是这个请求；对照组去掉 `find_symbol`、`file_outline` 和地图段，等于没有引擎时的请求。deepseek-flash、kimi-for-coding、glm-5.3-flash 各 3 次，共 90 次调用、122 万 token，没有报错和截断。
+
+- **找调用方：** 9 次里 4 次用了 `find_symbol`（都同时跑了 grep），对照组全是 grep。没有一对比对照组差。
+- **字符串搜索（守卫）：** 候选组 9 次都用 grep 搜环境变量，没有拿 `find_symbol` 去搜字符串。
+- **大文件结构：** 候选组 9 次都用 `file_outline`；对照组整读文件、盲读一段或用 bash 列。
+- **地图：** 候选组 9 次里 8 次第一步就搜地图里给出的 `NoteScope` 或 `memory-store/record.ts`，对照组 0 次；没有只看地图就作答的。
+- **索引还在建：** 9 次都在同一次回复里改用 grep。
+- **名字有多个定义：** 9 次里 8 次带上正确的 `path` 重查。
+
+结论 recommend-ship，工具说明和地图措辞不改。§11.6 留下的问题定了：测试文件的边不降权，地图现在就能把模型引到对的代码。
