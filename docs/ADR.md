@@ -8202,3 +8202,63 @@ after that, and in how calls ran:
   tool's permission and skipped the Plan, Edits and Auto checks.
 - **Ask for every `mcp_call` in Edits.** It ignores a reliable signal for the
   common read-only case, and users learn to approve without reading.
+
+## ADR-084: Writer Lanes Dispatch on Their Area, Not on Exact Files
+
+**Status**: Accepted (2026-11-26). Unreleased.
+
+**Context**: The owner noticed fewer subagents in recent versions. A live
+probe (real Runtime and models, stopped at the first `spawn_agent`) showed
+no regression. Reviews and audits dispatch in every version, and the
+quiet sessions were task shapes that v0.7.96 also handled alone. The probe
+did find an older gap: a request with several independent fixes almost
+never dispatched. Replaying Issues 434+435 and 438-440 at their pre-fix
+commits, every version from v0.7.96 to HEAD diagnosed the issues one by one
+for 14-16 turns. It dispatched in 1 of 8 runs at HEAD.
+
+Models named the lanes within three turns. Three rules held them back:
+
+- A writer had to own "exact exclusive paths". The Runtime does not enforce
+  ownership, so this rule only made the root find every file before
+  dispatching.
+- Briefs had to carry evidence refs, so the root investigated to fill them.
+- The worker prompt asks the root to reproduce first.
+
+**Decision**: `worker.full.dispatch`, `worker.full.collaboration` and the
+`spawn_agent` description now say:
+
+1. A request listing several independent fixes or features normally has
+   one writer lane per fix. Dispatch them once a quick look shows where
+   each fix lives.
+2. The request text plus the inherited conversation is a sufficient brief.
+   Each child diagnoses and reproduces its own fix.
+3. A writer owns a named module or file set. Knowing a lane's area is
+   enough to dispatch it. Fixes that may touch the same files stay in one
+   lane.
+4. The root briefs with the evidence it has. It does not investigate further
+   just to fill a brief.
+
+`worker.parallel-first` (limited roles) still asks for exact files. It was
+not part of the eval.
+
+**Consequences**:
+
+- Eval (deepseek-flash and glm-5.4, 16-turn cap, coding mode): positive
+  cases dispatched in 6/8 runs versus 1/8 at HEAD, at turns 10-14. Controls
+  stayed clean: a single issue, a trivial edit, and two fixes that share
+  files (Issues 431+432). A blind review found no harmful split.
+- The root now dispatches lanes it has not diagnosed. A child that finds
+  its fix outside its area must report instead of editing.
+- Occasionally a child and the root each own a region of one shared file.
+  Children were not run, so end-to-end quality and wall time are unmeasured.
+
+**Rejected alternatives**:
+
+- **A worked example in PARALLEL WORK alone.** 0/8; the exact-file rule
+  still held the root back.
+- **An explicit single-owner rule for files shared by lanes.** It kept the
+  dispatch rate (3/4) but did not raise single ownership in a blind review
+  (2/3 versus 3/4), so it adds words without a measured gain.
+- **Changing routing or injecting a fan-out contract for dev tasks.** The
+  router labels these requests simple. A prompt change was enough, and a
+  routing change would affect every task.

@@ -146,6 +146,10 @@ describe('buildWorkerInstructions', () => {
     expect(output).toContain('PARALLEL WORK');
     expect(output).toContain('With 2+ substantive independent lanes and available slots, dispatch in the same assistant response');
     expect(output).toContain('Broad reviews/audits normally have module/file/failure-axis lanes');
+    expect(output).toContain('A request listing several independent fixes or features normally has one writer lane per fix');
+    expect(output).toContain('Knowing the area a lane will touch is enough to dispatch it');
+    expect(output).toContain('do not investigate further just to fill a brief');
+    expect(output).toContain('Keep fixes that may touch the same files in one lane');
     expect(output).toContain('fan out before `changed_diff`');
     expect(output).toContain('Assign distinct evidence scopes or exclusive write sets');
     expect(output).toContain('Root keeps the immediate blocker');

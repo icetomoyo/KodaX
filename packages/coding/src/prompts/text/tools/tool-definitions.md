@@ -89,7 +89,7 @@ Search file contents: regex by default, literal:true for verbatim/long text; glo
 List host-allowed Native/Constructed/External executors; use returned canonical agent_id in spawn_agent.
 
 <!-- @key tool.spawn_agent.description -->
-Start a named direct child; returns canonical path. Runtime atomically enforces shared session concurrency/work budgets. For broad multi-file reviews, launch distinct read-only lanes once scope is known. Implementation lanes require read_only:false and disjoint write ownership with exact exclusive paths/generated outputs. quality_strategy is optional telemetry, never admission control; invalid/conflicting data is ignored.
+Start a named direct child; returns canonical path. Runtime atomically enforces shared session concurrency/work budgets. For broad multi-file reviews, launch distinct read-only lanes once scope is known. Implementation lanes require read_only:false and a disjoint owned module or file set, including generated outputs; the child may diagnose its lane before patching. quality_strategy is optional telemetry, never admission control; invalid/conflicting data is ignored.
 
 <!-- @key tool.send_message.description -->
 Message, no new turn: running receives at next safe boundary; idle retains until next turn. Direct parent/child, admitted peer or broadcast capped at 20; Runtime validates forwarding lineage against cycles.

@@ -1946,7 +1946,7 @@ Required before other work when the user names a listed Skill or its description
 
 ## spawn_agent
 
-Start a named direct child; returns canonical path. Runtime atomically enforces shared session concurrency/work budgets. For broad multi-file reviews, launch distinct read-only lanes once scope is known. Implementation lanes require read_only:false and disjoint write ownership with exact exclusive paths/generated outputs. quality_strategy is optional telemetry, never admission control; invalid/conflicting data is ignored.
+Start a named direct child; returns canonical path. Runtime atomically enforces shared session concurrency/work budgets. For broad multi-file reviews, launch distinct read-only lanes once scope is known. Implementation lanes require read_only:false and a disjoint owned module or file set, including generated outputs; the child may diagnose its lane before patching. quality_strategy is optional telemetry, never admission control; invalid/conflicting data is ignored.
 
 ```json
 {

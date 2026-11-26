@@ -57,10 +57,10 @@ describe('tool registry', () => {
     expect(description).toContain('broad multi-file review');
     expect(description).toContain('distinct read-only lanes');
     expect(description).toContain('generated outputs');
-    expect(description).toContain('disjoint write ownership');
+    expect(description).toContain('disjoint owned module or file set');
     expect(description).toContain('read_only:false');
     expect(description).toContain('Default shared');
-    expect(description).toContain('exact exclusive paths');
+    expect(description).toContain('the child may diagnose its lane before patching');
     expect(description).toMatch(/edits are visible in the root workspace; do not reapply/);
     expect(description).toContain('explicit merge-back strategy');
   });

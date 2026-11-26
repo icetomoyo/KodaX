@@ -43,7 +43,7 @@ describe('unified tool text on every managed entry', () => {
   });
 
   it('carries the coordination teaching in the tool descriptions themselves', () => {
-    expect(unified('spawn_agent').description).toContain('Implementation lanes require read_only:false and disjoint write ownership');
+    expect(unified('spawn_agent').description).toContain('Implementation lanes require read_only:false and a disjoint owned module or file set');
     expect(unified('wait_agent').description).toContain('wait sparingly when required Agent evidence is on the critical path');
     expect(unified('todo_update').description).toContain('Keep one in_progress item per owner.');
     expect(unified('todo_update').description).toContain('Mark in_progress with activeForm before work, completed only after finishing');

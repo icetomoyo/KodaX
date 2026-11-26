@@ -18,6 +18,10 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- A request listing several independent fixes now usually runs them in
+  parallel subagents. The root dispatches a writer lane per fix once it
+  knows where each fix lives, instead of diagnosing every fix first. Fixes
+  that may touch the same files stay in one lane (ADR-084).
 - `mcp_call` follows the target tool's annotations. Plan and Edits run tools
   marked `readOnlyHint` (and not destructive) without asking. Edits now asks
   before any other MCP tool. A Session approval covers one MCP tool with any
