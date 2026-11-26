@@ -12,7 +12,6 @@ import path from 'node:path';
 
 import {
   applyReflectionOperation,
-  type DeclarativeSkillSpec,
   buildEvidence,
   createNoteStore,
   type MemoryNote,
@@ -23,12 +22,7 @@ import {
   type SessionEvidence,
 } from '@kodax-ai/agent';
 
-import {
-  buildReflectionRequest,
-  parseReflectionCall,
-  parseSkillCall,
-  SKILL_TOOL_NAME,
-} from '../../../packages/coding/src/memory/note-reflection.js';
+import { buildReflectionRequest, parseReflectionCall } from '../../../packages/coding/src/memory/note-reflection.js';
 import type { ReflectCase } from './cases.js';
 
 export const REFLECT_FIXTURE_ROOT = path.join(os.tmpdir(), 'kodax-eval-fixtures', 'feature-308-reflect');
@@ -87,8 +81,6 @@ export interface ReflectReplay {
   readonly calls: readonly ReplayedCall[];
   readonly before: readonly MemoryNote[];
   readonly after: readonly MemoryNote[];
-  /** Skills the host guards accepted and handed to the learned-skill sink. */
-  readonly skills: readonly DeclarativeSkillSpec[];
 }
 
 export function evidenceOf(item: Pick<ReflectCase, 'messages'>): SessionEvidence {
@@ -104,18 +96,12 @@ export async function replayReflectCalls(
   const before = await allNotes(stores);
   const evidence = evidenceOf(item);
   const calls: ReplayedCall[] = [];
-  const skills: DeclarativeSkillSpec[] = [];
-  const sink = async (spec: DeclarativeSkillSpec): Promise<MemoryOpResult> => {
-    skills.push(spec);
-    return { ok: true, message: `skill ${spec.name} accepted` };
-  };
-  for (const { name, input: raw } of recorded) {
-    const parse = name === SKILL_TOOL_NAME ? parseSkillCall : parseReflectionCall;
-    const input = typeof raw === 'object' && raw !== null ? parse(raw as Record<string, unknown>) : undefined;
+  for (const { input: raw } of recorded) {
+    const input = typeof raw === 'object' && raw !== null ? parseReflectionCall(raw as Record<string, unknown>) : undefined;
     const result = input === undefined
       ? { ok: false, message: 'malformed memory_reflect call' }
-      : await applyReflectionOperation({ stores, evidence, sessionId: CURRENT_SESSION, skills: sink }, input);
+      : await applyReflectionOperation({ stores, evidence, sessionId: CURRENT_SESSION }, input);
     calls.push({ input, result });
   }
-  return { calls, before, after: await allNotes(stores), skills };
+  return { calls, before, after: await allNotes(stores) };
 }

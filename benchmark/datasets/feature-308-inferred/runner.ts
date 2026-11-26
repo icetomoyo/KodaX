@@ -40,7 +40,7 @@ import {
 } from '@kodax-ai/agent';
 import type { KodaXAssistantBlock, KodaXContentBlock, KodaXMessage, KodaXTokenUsage, KodaXToolDefinition } from '@kodax-ai/llm';
 
-import { buildReflectionRequest, parseReflectionCall, REFLECT_TOOL_NAME, SKILL_TOOL_NAME } from '../../../packages/coding/src/memory/note-reflection.js';
+import { buildReflectionRequest, parseReflectionCall, REFLECT_TOOL_NAME } from '../../../packages/coding/src/memory/note-reflection.js';
 import { MODEL_ALIASES, type ModelAlias } from '../../harness/aliases.js';
 import { runOneShot } from '../../harness/harness.js';
 import type { ModelOutput, Scored } from '../feature-308-baseline/oracles.js';
@@ -417,7 +417,6 @@ export async function pack(root: string = INFERRED_ROOT, pilot = false): Promise
       ...summarize(subset),
       notesVisibleInC: subset.filter((row) => row.arms.C.state.notes.some((note) => note.status === 'active')).length,
       notesVisibleInE: subset.filter((row) => row.arms.E.state.notes.some((note) => note.status === 'active')).length,
-      skillProposals: subset.filter((row) => row.reflect.toolCalls.some((call) => call.name === SKILL_TOOL_NAME)).length,
     }];
   }));
   const byKind = Object.fromEntries(['durable', 'spurious', 'misattributed'].map((kind) => [kind, summarize(rows.filter((row) => row.chain.item.kind === kind))]));
@@ -441,7 +440,6 @@ export async function pack(root: string = INFERRED_ROOT, pilot = false): Promise
       notesWritten: arms.C.state.notes.map((note) => ({ id: note.id, status: note.status, source: note.source, description: note.description, body: note.body, why: note.why })),
       reflectTraceC: arms.C.state.trace,
       reflectTraceE: arms.E.state.trace,
-      skillProposals: reflect.toolCalls.filter((call) => call.name === SKILL_TOOL_NAME).map((call) => call.input),
       reflectText: reflect.text.slice(0, 600),
     };
   });

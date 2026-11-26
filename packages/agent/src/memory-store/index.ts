@@ -15,7 +15,7 @@ export { shouldReflect, signalsOf } from './reflection-gate.js';
 export { markReflected, reflectedUserTurns } from './reflection-cursor.js';
 export { DAILY_REFLECTION_CALLS, takeReflectionSlot } from './reflection-budget.js';
 export { applyReflectionOperation, NOTE_VIEW_CHARS, noteBodyView } from './reflection-op.js';
-export type { ReflectionOpContext, ReflectionOpInput, SkillSink } from './reflection-op.js';
+export type { ReflectionOpContext, ReflectionOpInput } from './reflection-op.js';
 export { pruneRevisions } from './revisions.js';
 export { noteReadsFrom, recordNoteReads, toolUseIds } from './usage.js';
 export type { NoteReads, RecordReadsInput } from './usage.js';

@@ -17,7 +17,7 @@ import { takeReflectionSlot } from './reflection-budget.js';
 import { markReflected, reflectedUserTurns } from './reflection-cursor.js';
 import { freezePending, listPending, livePending, PENDING_IDLE_MS, removePending, savePending, type PendingReflection } from './reflection-pending.js';
 import { shouldReflect, signalsOf } from './reflection-gate.js';
-import { applyReflectionOperation, type ReflectionOpInput, type SkillSink } from './reflection-op.js';
+import { applyReflectionOperation, type ReflectionOpInput } from './reflection-op.js';
 import type { MemoryNote, NoteScope } from './record.js';
 import type { NoteStore } from './store.js';
 
@@ -41,8 +41,6 @@ export interface ReflectSessionInput {
   readonly now?: () => Date;
   /** Judge calls allowed per day; defaults to the job's standing cap. */
   readonly dailyCap?: number;
-  /** Where a validated skill proposal goes; without it every proposal is refused. */
-  readonly skills?: SkillSink;
 }
 
 export type ReflectSessionResult =
@@ -110,7 +108,7 @@ async function reflectPending(input: Omit<ReflectSessionInput, 'messages'>, reco
   let applied = 0;
   const appliedByOperation: Partial<Record<ReflectionOpInput['operation'], number>> = {};
   const rejected: string[] = [];
-  const context = { stores: input.stores, evidence, sessionId, ...projectOf(record), ...(input.now === undefined ? {} : { now: input.now }), ...(input.skills === undefined ? {} : { skills: input.skills }) };
+  const context = { stores: input.stores, evidence, sessionId, ...projectOf(record), ...(input.now === undefined ? {} : { now: input.now }) };
   for (const operation of operations) {
     // One failing write must not lose the rest, nor the cursor: the judge call is already paid for.
     const outcome = await applyReflectionOperation(context, operation).catch((error: unknown) => ({

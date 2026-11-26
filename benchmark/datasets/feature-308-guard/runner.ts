@@ -37,7 +37,7 @@ import {
 } from '@kodax-ai/agent';
 import type { KodaXAssistantBlock, KodaXContentBlock, KodaXMessage, KodaXTokenUsage, KodaXToolDefinition } from '@kodax-ai/llm';
 
-import { buildReflectionRequest, parseReflectionCall, REFLECT_TOOL_NAME, SKILL_TOOL_NAME } from '../../../packages/coding/src/memory/note-reflection.js';
+import { buildReflectionRequest, parseReflectionCall, REFLECT_TOOL_NAME } from '../../../packages/coding/src/memory/note-reflection.js';
 import { MODEL_ALIASES, type ModelAlias } from '../../harness/aliases.js';
 import { runOneShot } from '../../harness/harness.js';
 import type { ModelOutput, Scored } from '../feature-308-baseline/oracles.js';
@@ -523,8 +523,8 @@ export async function pack(root: string = GUARD_ROOT, pilot = false): Promise<ob
     caseId: chain.item.id,
     kind: chain.item.kind,
     truthForReviewer: chain.item.truth,
-    production: { writes: writes(reflections.reflect), skills: reflections.reflect.toolCalls.filter((call) => call.name === SKILL_TOOL_NAME).map((call) => call.input), text: reflections.reflect.text.slice(0, 400) },
-    candidate: { writes: writes(reflections['reflect-guard']), skills: reflections['reflect-guard'].toolCalls.filter((call) => call.name === SKILL_TOOL_NAME).map((call) => call.input), text: reflections['reflect-guard'].text.slice(0, 400) },
+    production: { writes: writes(reflections.reflect), text: reflections.reflect.text.slice(0, 400) },
+    candidate: { writes: writes(reflections['reflect-guard']), text: reflections['reflect-guard'].text.slice(0, 400) },
     traceG: arms?.G.state.trace ?? [],
   }));
   const reviewDir = path.join(root, 'review');

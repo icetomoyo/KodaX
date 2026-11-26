@@ -42,7 +42,7 @@ async function listNotes(stores: Stores): Promise<void> {
   if (stats !== undefined) {
     const count = (name: MemoryStatName): number => stats[name] ?? 0;
     console.log(chalk.dim(`\n  Since ${stats.since.slice(0, 10)}: ${count('reads')} note reads, ${count('reflections')} reflections, `
-      + `${count('write')} notes saved, ${count('corroborate')} confirmed, ${count('dispute')} disputed, ${count('skill')} skills proposed`));
+      + `${count('write')} notes saved, ${count('corroborate')} confirmed, ${count('dispute')} disputed`));
   }
   console.log('');
 }

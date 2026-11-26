@@ -22,11 +22,14 @@ import { ARMS } from './inputs.js';
  * r4: regression check for a later change. Arm A is the text shipped after r3; arm B
  * adds when a candidate holds (the holistic run confirmed candidates on a repeated
  * situation). The pilot covers the cases with notes in the store plus two lessons.
+ * r5: not run. FEATURE_309 removed skill_propose, so the request carries only
+ * memory_reflect, and the reflect cases r11 to r13 now have note oracles. Both
+ * hashes are pinned again; the arm texts are unchanged.
  */
-export const NOTELINE_REVISION = 'f308-notelines-r4' as const;
-export const NOTELINE_CASES_SHA256 = 'ae18665539611b5eb159422d40f36e54b5446a40c658a70f920bdfba3ebab085' as const;
+export const NOTELINE_REVISION = 'f308-notelines-r5' as const;
+export const NOTELINE_CASES_SHA256 = 'd861b167a2007ed1c9ea0a8f59a292f247115900a176c5f0e190d319ebf46949' as const;
 /** Hash of every arm-A input. Arm A's two texts equal the production texts shipped after r3. */
-export const NOTELINE_ARM_A_SHA256 = 'e5dd091cc3dcb9037dae64217d6fd8256dd8ab3c327bc8e3059939feee58bdd5' as const;
+export const NOTELINE_ARM_A_SHA256 = '446b234f72c0f154280190f32d816f6a8b8fc4708c4993407933cf63426a6082' as const;
 export const NOTELINE_ALIASES: readonly ModelAlias[] = Object.freeze(['ark/v4flash', 'zhipu/glm52', 'ark/k27']);
 export const NOTELINE_RAW_ROOT = path.join(os.tmpdir(), 'kodax-eval-dumps', 'feature-308', NOTELINE_REVISION);
 
