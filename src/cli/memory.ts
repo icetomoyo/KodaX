@@ -13,6 +13,7 @@ import {
   deriveCodingMemoryIdentity,
   drainCodingMemoryReviewInbox,
   installProductionLearningReviewer,
+  isNoteMemoryEnabled,
   resolveProvider,
 } from '@kodax-ai/coding';
 import { createMemoryControlPlane } from '@kodax-ai/agent';
@@ -36,7 +37,7 @@ export function configureKodaXMemoryCommand(program: Command): Command {
 
   memoryCommand
     .command('review-drain')
-    .description('Drain pending memory review jobs in the foreground')
+    .description('Drain pending legacy memory review jobs in the foreground')
     .option(
       '--max <n>',
       'Maximum number of review jobs to process (default: unbounded)',
@@ -61,6 +62,15 @@ async function runMemoryReviewDrain(input: {
   readonly provider?: string;
   readonly model?: string;
 }): Promise<void> {
+  // Note memory never queues review jobs. A leftover legacy job would run the
+  // legacy reviewer, which can create or patch learned skills behind the note path.
+  if (isNoteMemoryEnabled()) {
+    console.log(chalk.dim(
+      '\n[memory review-drain] note memory is on and has no review inbox; '
+        + 'set KODAX_MEMORY_NOTES=0 to drain the legacy inbox.\n',
+    ));
+    return;
+  }
   const config = loadConfig();
   const providerOverride = input.provider ?? process.env.KODAX_PROVIDER;
   const providerName = resolveCliProviderSelection(

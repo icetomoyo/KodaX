@@ -41,6 +41,25 @@ describe('FEATURE_289 §3.4 — kodax memory review-drain', () => {
       output.mockRestore();
     }
   });
+  it('does not drain the legacy inbox while note memory is on', async () => {
+    // The legacy reviewer can create or patch learned skills, and note memory
+    // is the default, so a leftover legacy job must not run unless the user
+    // switched back to the legacy plane.
+    vi.stubEnv('KODAX_MEMORY_NOTES', '1');
+    drain.mockClear();
+    const program = new Command().name('kodax').exitOverride();
+    configureKodaXMemoryCommand(program);
+    const output = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      await program.parseAsync(['node', 'kodax', 'memory', 'review-drain']);
+      expect(drain).not.toHaveBeenCalled();
+      expect(output.mock.calls.flat().join('\n')).toContain('KODAX_MEMORY_NOTES=0');
+    } finally {
+      output.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('registers the memory command with a review-drain subcommand and --max option', () => {
     const program = new Command().name('kodax').exitOverride();
     const memory = configureKodaXMemoryCommand(program);
