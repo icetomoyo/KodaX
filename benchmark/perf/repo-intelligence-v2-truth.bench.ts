@@ -10,7 +10,7 @@
  *     extra keys are checked against the syntax tree, since the truth lists
  *     top-level units only and v2 reports every scope;
  *   - callers: `symbols.references` are name matches, the phase 1 baseline;
- *     `symbols.referencesTo` resolves them through imports, scored resolved
+ *     `symbols.references` with the defining file's path resolves them through imports, scored resolved
  *     hits alone and with the name matches it could not resolve; all on the
  *     old truth bench's seeded sample next to the old engine's callers;
  *   - the reference contract: every page labeled `heuristic`, and paging
@@ -145,7 +145,7 @@ interface ReferenceContract {
 
 interface V2Callers {
   readonly callers: Map<string, Set<string>>;
-  /** From `symbols.referencesTo`: hits resolved to the definition, and those plus the unresolved name matches. */
+  /** From `symbols.references` with a path: hits resolved to the definition, and those plus the unresolved name matches. */
   readonly resolved: Map<string, Set<string>>;
   readonly resolvedOrMatched: Map<string, Set<string>>;
   readonly resolvedContract: ReferenceContract;
@@ -179,7 +179,7 @@ async function v2Callers(engine: BenchEngine, root: string, keys: readonly strin
     outsideTruthFiles += result.outsideTruthFiles;
     const unit = truth.units.get(key);
     if (!unit) continue;
-    const to = await findAll<ReferenceHit>(engine, 'symbols.referencesTo', root, name, { path: unit.filePath });
+    const to = await findAll<ReferenceHit>(engine, 'symbols.references', root, name, { path: unit.filePath });
     resolvedContract.queries += 1;
     resolvedContract.pages += to.pages;
     resolvedContract.hits += to.hits.length;

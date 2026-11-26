@@ -125,8 +125,11 @@ impl Server {
                 workspace.close().map(|()| Value::Null).map_err(|error| (rpc::INTERNAL_ERROR, error))
             }
             (State::Running(_), "symbols.definitions") => self.find(Table::Definitions, &params),
-            (State::Running(_), "symbols.references") => self.find(Table::References, &params),
-            (State::Running(_), "symbols.referencesTo") => {
+            // With the defining file's `path`, references resolve through imports; without it, they match by name.
+            (State::Running(_), "symbols.references") if params.get("path").is_none_or(Value::is_null) => {
+                self.find(Table::References, &params)
+            }
+            (State::Running(_), "symbols.references") => {
                 let path = relative_path(&params)?;
                 let (name, limit, offset) = named_page(&params)?;
                 let workspace = self.open_workspace(&params)?;
@@ -333,8 +336,8 @@ mod tests {
         assert_eq!(error_code(server.handle(request(3, "symbols.references", find(json!("x"), json!(0))))), rpc::INVALID_PARAMS);
         assert_eq!(error_code(server.handle(request(4, "symbols.references", find(json!("x"), json!(501))))), rpc::INVALID_PARAMS);
         let to = |path: Value| json!({ "root": absolute_root(), "path": path, "name": "x" });
-        assert_eq!(error_code(server.handle(request(6, "symbols.referencesTo", to(json!("../a.ts"))))), rpc::INVALID_PARAMS);
-        assert_eq!(error_code(server.handle(request(7, "symbols.referencesTo", to(Value::Null)))), rpc::INVALID_PARAMS);
+        assert_eq!(error_code(server.handle(request(6, "symbols.references", to(json!("../a.ts"))))), rpc::INVALID_PARAMS);
+        assert_eq!(error_code(server.handle(request(7, "symbols.references", to(json!(7))))), rpc::INVALID_PARAMS);
         let map = json!({ "root": absolute_root(), "tokens": 0 });
         assert_eq!(error_code(server.handle(request(8, "workspace.map", map))), rpc::INVALID_PARAMS);
         for path in ["../a.ts", "", "a/../../b.ts"] {

@@ -71,7 +71,7 @@ export async function openAndWait(engine: BenchEngine, root: string, onPoll?: ()
 }
 
 export interface FindPage<T> {
-  /** Absent from `symbols.referencesTo`, which labels each hit. */
+  /** Absent from `symbols.references` with a `path`, which labels each hit. */
   readonly precision?: string;
   readonly hits: T[];
   readonly total: number;

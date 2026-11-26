@@ -460,7 +460,7 @@ L3 精确层   按需：通过 Host 现有 LSP 服务（packages/coding/src/lsp/
 - **只到文件，不到类：** 解析结果是"哪个文件里的定义"，不区分同一文件里两个类的同名方法。例如 `extensions/runtime.ts` 里两个类都有 `emit`，`this.emit()` 两个都算。要分清得按调用所在的类判断，暂不做。
 - **别名：** `import { open as begin }` 之后的 `begin()` 也算 `open` 的引用。查询时先用 `aliases_of` 找出以别名导入这个名字的文件，只在这些文件里按别名查。
 - **结果顺序：** 解析到的（`syntactic`）在前，按路径、行、列排；没法解析的同名匹配（`heuristic`）在后。确定指向别处的同名引用不返回。`total` 是两者之和，另带 `resolved` 表示其中解析到的条数。
-- **新方法而不是改旧方法：** 新增 `symbols.referencesTo`（参数 `path` 加 `name`，定义所在文件加名字）。`symbols.references` 保持按名字查、全部标 `heuristic`，不改它的语义。
+- **同一个方法，带不带 `path`：** `symbols.references` 带上定义所在文件的 `path` 时按 import 解析（下面几条），不带时按名字匹配、全部标 `heuristic`。不知道定义在哪个文件、或查外部库的名字时仍要按名字查，所以保留这种用法，但不另开方法。第 5 层先做成了单独的 `symbols.referencesTo`，产品代码里没有调用方，已合并。
 - **地图的排序：** 文件按 import 边做 PageRank（阻尼 0.85，固定 50 轮，结果每次相同）；指向目录的边（Go 包、Python 命名空间包）平分给目录下直接的已索引文件。一个文件的顶层定义分摊这个文件的 rank，每个定义的权重是 1 加上按名字导入它的文件数；分数从高到低放进地图，第一个放不下的就停。分摊是为了不让一个大的类型文件占满地图（不分摊时 KodaX 的 `packages/llm/src/types.ts` 一个文件就占了 29 行）。同一个文件里同名的定义（重载）只列第一行。没有 import 解析的语言（Java、C++）各文件 rank 相同，地图基本按路径排，意义不大，暂不另想办法。
 - **地图的格式：** 每个文件一行路径，下面每个定义缩进一行，内容是定义所在的源码行，去掉末尾的 `{`，超过 120 个字符截断。文件按路径排、定义按行号排，不按分数排，这样 rank 小幅变动不会打乱整张地图的顺序。文件在索引之后改过时，这个文件只写"种类 名字"，不读源码行，保证文本只取决于索引内容。不写"还有多少个定义"这类行，要看全部用 `file_outline`。
 - **token 估算：** 和记忆索引同一个规则：ASCII 字符 4 个算 1 token，其他字符 1 个算 1 token。新增引擎方法 `workspace.map`，参数 `tokens` 默认 1,024。
@@ -496,7 +496,7 @@ Python、Go、Rust 的模块解析。`file.imports` 新增 `folder`（见 §11.2
 
 ### 11.5 第 5 层结果（2026-11-25）
 
-新增引擎方法 `symbols.referencesTo`（见 §11.2）。schema 不变，仍是 10。
+新增引擎方法 `symbols.referencesTo`（见 §11.2；之后并入 `symbols.references` 的 `path` 参数，下面的 `referencesTo` 都指带 `path` 的查询）。schema 不变，仍是 10。
 
 KodaX 仓库，`npm run bench:repo-intel-v2-truth -- . --no-old`，抽 300 个函数和方法，调用方对照编译器真值（`findReferences`）：
 

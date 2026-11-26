@@ -108,6 +108,9 @@ fn opens_a_repository_and_reports_when_it_is_indexed() {
     assert_eq!((found["precision"].as_str(), found["coverage"]["state"].as_str()), (Some("syntactic"), Some("ready")));
     let used = engine.call(id + 11, "symbols.references", find("run"))["result"].clone();
     assert_eq!((used["precision"].as_str(), used["hits"][0]["line"].as_u64()), (Some("heuristic"), Some(2)), "{used}");
+    let to_run = json!({ "root": repo.path(), "name": "run", "path": "a.ts" });
+    let resolved = engine.call(id + 14, "symbols.references", to_run)["result"].clone();
+    assert_eq!((resolved["resolved"].as_u64(), resolved["hits"][0]["precision"].as_str()), (Some(1), Some("syntactic")), "{resolved}");
     assert_eq!(engine.call(id + 12, "symbols.definitions", find("none"))["result"]["total"], 0);
     let outline = engine.call(id + 13, "file.outline", json!({ "root": repo.path(), "path": "a.ts" }))["result"].clone();
     assert_eq!((outline["source"].as_str(), outline["definitions"][0]["name"].as_str()), (Some("index"), Some("run")), "{outline}");
