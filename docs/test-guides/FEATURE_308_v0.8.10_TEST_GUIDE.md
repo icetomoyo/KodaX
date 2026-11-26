@@ -73,6 +73,18 @@ Expected: `.reflected.json` and `.reflection-budget.json` appear in the user
 store (`~/.kodax/notes/`), and the correction is saved as a note. The eleventh
 reflection on one UTC day makes no model call.
 
+### Case D2: Nothing is lost between passes
+
+1. In one session, get a correction reflected (Case D), then add one more user
+   turn with a new correction and exit.
+2. More than 30 minutes later, finish a run in another session of the same
+   project.
+
+Expected: during step 1 a file appears in `~/.kodax/notes/.pending-reflection/`.
+After step 2 the second correction is saved as a note and the file is gone. A
+session that compacts keeps learning: its next reflection does not wait for the
+pre-compaction turn count.
+
 ### Case E: Notes are protected
 
 Ask the agent to edit a note file with the edit tool or `echo >>`.

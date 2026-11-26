@@ -9,7 +9,7 @@ import { buildEvidence, quoteInEvidence, renderEvidence, toolSource } from './ev
 import { setKodaXDiagnosticSink } from '../diagnostics.js';
 import { markReflected, reflectedUserTurns } from './reflection-cursor.js';
 import { shouldReflect } from './reflection-gate.js';
-import { applyReflectionOperation, type ReflectionOpContext } from './reflection-op.js';
+import { applyReflectionOperation, NOTE_VIEW_CHARS, noteBodyView, type ReflectionOpContext } from './reflection-op.js';
 import { keepRevision, pruneRevisions } from './revisions.js';
 import { createNoteStore } from './store.js';
 
@@ -373,8 +373,29 @@ describe('reflection operations', () => {
     const byUser = await applyReflectionOperation(ctx, { operation: 'rewrite', id: 'usr', description: 'always run make check-fast', quote: 'always run make check-fast before pushing' });
     expect(byUser.ok).toBe(true);
     const byId = Object.fromEntries((await notes(ctx)).map((n) => [n.id, n]));
-    expect(byId['inf']).toMatchObject({ status: 'active', description: 'new' });
+    // A correction from local output is one session's reading, so it waits for confirmation like any candidate.
+    expect(byId['inf']).toMatchObject({ status: 'candidate', description: 'new' });
     expect(await fs.readdir(path.join(dir, '.revisions'))).toHaveLength(2);
+  });
+
+  it('lets the user\'s own words settle a disputed note', async () => {
+    const ctx = context('s2');
+    await ctx.stores.project.write({ id: 'inf', type: 'project', description: 'old', status: 'disputed', source: 'inferred', body: 'old\n' });
+    expect((await applyReflectionOperation(ctx, { operation: 'rewrite', id: 'inf', description: 'always run make check-fast', quote: 'always run make check-fast before pushing' })).ok).toBe(true);
+    expect((await notes(ctx))[0]).toMatchObject({ status: 'active', source: 'user' });
+  });
+
+  it('refuses to replace the body of a note longer than the job was shown, but still fixes its line', async () => {
+    const ctx = context('s2');
+    const body = `${'step '.repeat(NOTE_VIEW_CHARS / 4)}\nCONFLICT (2026-11-20, session s1): later evidence contradicts this note\n`;
+    await ctx.stores.project.write({ id: 'long', type: 'project', description: 'old', status: 'active', source: 'inferred', body });
+    const replaced = await applyReflectionOperation(ctx, { operation: 'rewrite', id: 'long', description: 'new', body: 'short\n', quote: 'check-fast passed in 40s' });
+    expect(replaced.ok).toBe(false);
+    expect((await applyReflectionOperation(ctx, { operation: 'rewrite', id: 'long', description: 'new', quote: 'check-fast passed in 40s' })).ok).toBe(true);
+    expect((await notes(ctx))[0]).toMatchObject({ description: 'new', body });
+    const view = noteBodyView(body);
+    expect(view.length).toBeLessThan(body.length);
+    expect(view).toContain('CONFLICT (2026-11-20');
   });
 
   it('never puts a secret into a note through a rewrite', async () => {

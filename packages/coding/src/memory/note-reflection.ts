@@ -9,6 +9,7 @@
 import {
   NOTE_SCOPES,
   NOTE_TYPES,
+  noteBodyView,
   oneOf,
   renderEvidence,
   type MemoryNote,
@@ -23,7 +24,6 @@ export const REFLECT_TOOL_NAME = 'memory_reflect';
 export const SKILL_TOOL_NAME = 'skill_propose';
 
 const OPERATIONS = ['write', 'corroborate', 'dispute', 'rewrite'] as const;
-const NOTE_BODY_CHARS = 1500;
 
 export const REFLECT_TOOL: KodaXToolDefinition = {
   name: REFLECT_TOOL_NAME,
@@ -125,7 +125,7 @@ function renderNote(note: MemoryNote): string {
     ...(note.why === undefined ? [] : [`why: ${note.why}`]),
     ...(note.check === undefined ? [] : [`check: ${note.check}`]),
   ];
-  return `${header.join('\n')}\n${note.body.trim().slice(0, NOTE_BODY_CHARS)}`;
+  return `${header.join('\n')}\n${noteBodyView(note.body)}`;
 }
 
 export function renderReflectionInput(evidence: SessionEvidence, notes: readonly MemoryNote[]): string {

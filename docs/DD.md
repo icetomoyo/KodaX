@@ -1970,7 +1970,7 @@ Each store holds `<id>.md` notes, `MEMORY.md` (index budget: project 1600
 tokens, user 800; notes past the budget are linked from `MEMORY.more.md`),
 `.revisions/` (kept 30 days) and `.legacy-converted.json` once a conversion
 finished. The user store also holds the reflection cursor (`.reflected.json`),
-the daily call counter (`.reflection-budget.json`) and `.memory-stats.json`
+the evidence still owed a pass (`.pending-reflection/`), the daily call counter (`.reflection-budget.json`) and `.memory-stats.json`
 (reads, reflections, applied and rejected operations). State files are written
 atomically.
 
@@ -1982,8 +1982,9 @@ atomically.
 | `index-builder` | `MEMORY.md` and `MEMORY.more.md`; candidates and archived notes are left out |
 | `memory-op` | The `memory` tool's write/edit/delete; an inferred write needs a `why` |
 | `quote`, `secrets` | Exact-quote checks (pieces split at line breaks, ellipses and result heads; ten characters of weight for reflection, six for the tool) and the secret scan |
-| `reflection-op` | Host checks for reflection: write, confirm, dispute, rewrite and `skill` |
+| `reflection-op` | Host checks for reflection: write, confirm, dispute, rewrite and `skill`; the job sees a note body up to 1500 characters (`NOTE_VIEW_CHARS`, head and end), and a rewrite cannot replace a longer body; a disputed note rewritten from local output becomes a candidate, from the user's words active |
 | `reflection-gate`, `reflection-cursor`, `reflection-budget`, `reflect-session` | Skip sessions with one user turn and no recovered failure; read a session again after 3 more user turns (`REFLECT_AGAIN_AFTER_TURNS`); 10 calls per UTC day (`DAILY_REFLECTION_CALLS`), taken before the call |
+| `reflection-pending` | Every run end that passes the gate saves the session's evidence before any call, and a successful pass removes it. When compaction drops turns, the saved copy is frozen and the session's count starts over. After its own pass, a run end reflects the project's frozen copies and other sessions quiet for 30 minutes (`PENDING_IDLE_MS`), so the turns before an exit, a crash or a failed call are not lost |
 | `evidence` | The session as evidence, capped at 60k characters (`EVIDENCE_BUDGET_CHARS`); network shell output counts as external |
 | `usage`, `stats` | Observed note reads and counters |
 | `organizer`, `revisions` | Archive inferred notes untouched for 90 days (`STALE_AFTER_DAYS`); never archive a user-stated note; merge equal descriptions; prune revisions after 30 days |

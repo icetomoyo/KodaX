@@ -8024,7 +8024,11 @@ improved a task.
    note, user-scope notes change only on the user's words, and secrets are
    refused. It makes at most ten calls a day, reads at most 60k characters of
    evidence, and reads a session again after three more user turns. It skips
-   CLI-bridge providers and hosts that bring their own reviewer.
+   CLI-bridge providers and hosts that bring their own reviewer. Evidence is
+   saved before the call and kept until a pass succeeds, so the turns between
+   passes, the turns compaction drops, and a session that exits, crashes or hits
+   a failed call are reflected later by another run end in the project
+   (2026-11-26).
 5. **A candidate is confirmed only when its way is the way that worked** in the
    later session, not when the session merely met the same situation. The
    index line states the rule, not a topic.

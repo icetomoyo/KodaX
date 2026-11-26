@@ -6,7 +6,7 @@ import type { KodaXMessage } from '@kodax-ai/llm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { CURSOR_FILE } from './reflection-cursor.js';
-import { reflectSession, REFLECT_AGAIN_AFTER_TURNS, type ReflectionJudge } from './reflect-session.js';
+import { drainPendingReflections, reflectSession, REFLECT_AGAIN_AFTER_TURNS, type ReflectionJudge } from './reflect-session.js';
 import { createNoteStore } from './store.js';
 
 const turns = (count: number): KodaXMessage[] =>
@@ -64,5 +64,61 @@ describe('reflectSession: long sessions and the cost cap', () => {
     expect(outcome).toMatchObject({ status: 'done', applied: 0 });
     expect(outcome.status === 'done' && outcome.rejected.join('\n')).toContain('disk gone');
     expect(JSON.parse(await fs.readFile(path.join(dir, CURSOR_FILE), 'utf8'))).toHaveProperty('s1');
+  });
+});
+
+describe('reflectSession: evidence the cadence, compaction or an exit would lose', () => {
+  let dir: string;
+  let seen: string[];
+  const judge: ReflectionJudge = async ({ evidence }) => { seen.push(evidence.userText); return []; };
+  const stores = (): Parameters<typeof reflectSession>[0]['stores'] => ({
+    project: createNoteStore(path.join(dir, 'project'), 'project'),
+    user: createNoteStore(path.join(dir, 'user'), 'user'),
+  });
+  const at = (minutes: number) => () => new Date(Date.UTC(2026, 10, 26, 8, minutes));
+  const common = (extra: Partial<Parameters<typeof reflectSession>[0]> = {}) =>
+    ({ sessionId: 's1', project: 'p', stores: stores(), cursorRoot: dir, judge, now: at(0), ...extra });
+  const run = (messages: KodaXMessage[], extra: Partial<Parameters<typeof reflectSession>[0]> = {}) =>
+    reflectSession({ ...common(extra), messages });
+  const drain = (extra: Partial<Parameters<typeof reflectSession>[0]> = {}) => drainPendingReflections(common({ sessionId: 'other', ...extra }));
+
+  beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), 'f308-pending-')); seen = []; });
+  afterEach(async () => { await fs.rm(dir, { recursive: true, force: true }); });
+
+  it('picks up the last turns of a session that went quiet before its next pass was due', async () => {
+    await run(turns(2));
+    expect(await run(turns(4), { now: at(1) })).toEqual({ status: 'skipped', reason: 'already-reflected' });
+    expect(await drain({ now: at(10) })).toEqual([]);
+    expect(await drain({ now: at(40) })).toMatchObject([{ status: 'done' }]);
+    expect(seen.at(-1)).toContain('request number 3');
+    expect(await drain({ now: at(50) })).toEqual([]);
+    expect(await run(turns(4), { now: at(51) })).toEqual({ status: 'skipped', reason: 'already-reflected' });
+  });
+
+  it('keeps learning after compaction drops turns, and still reflects the turns it dropped', async () => {
+    await run(turns(2));
+    await run(turns(4), { now: at(1) });
+    expect(await run(turns(2), { now: at(2) })).toEqual({ status: 'skipped', reason: 'already-reflected' });
+    expect(await drain({ now: at(3) })).toMatchObject([{ status: 'done' }]);
+    expect(seen.at(-1)).toContain('request number 3');
+    expect(await run(turns(3), { now: at(4) })).toMatchObject({ status: 'done' });
+  });
+
+  it('keeps the evidence when the judge call fails, for a later pass', async () => {
+    const failing: ReflectionJudge = async () => { throw new Error('provider down'); };
+    await expect(run(turns(2), { judge: failing })).rejects.toThrow('provider down');
+    expect(await drain({ now: at(40) })).toMatchObject([{ status: 'done' }]);
+  });
+
+  it('leaves another project\'s evidence for a run in that project', async () => {
+    await run(turns(2), { judge: async () => { throw new Error('provider down'); } }).catch(() => undefined);
+    expect(await drain({ project: 'q', now: at(40) })).toEqual([]);
+    expect(await drain({ now: at(40) })).toMatchObject([{ status: 'done' }]);
+  });
+
+  it('stops at the daily cap and keeps what it could not reflect', async () => {
+    await run(turns(2), { judge: async () => { throw new Error('provider down'); } }).catch(() => undefined);
+    expect(await drain({ now: at(40), dailyCap: 1 })).toEqual([{ status: 'skipped', reason: 'daily-cap' }]);
+    expect(await drain({ now: at(41), dailyCap: 2 })).toMatchObject([{ status: 'done' }]);
   });
 });

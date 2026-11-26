@@ -14,14 +14,14 @@ export type { EvidenceSegment, EvidenceSource, SessionEvidence } from './evidenc
 export { shouldReflect, signalsOf } from './reflection-gate.js';
 export { markReflected, reflectedUserTurns } from './reflection-cursor.js';
 export { DAILY_REFLECTION_CALLS, takeReflectionSlot } from './reflection-budget.js';
-export { applyReflectionOperation } from './reflection-op.js';
+export { applyReflectionOperation, NOTE_VIEW_CHARS, noteBodyView } from './reflection-op.js';
 export type { ReflectionOpContext, ReflectionOpInput, SkillSink } from './reflection-op.js';
 export { pruneRevisions } from './revisions.js';
 export { noteReadsFrom, recordNoteReads, toolUseIds } from './usage.js';
 export type { NoteReads, RecordReadsInput } from './usage.js';
 export { organizeStore, STALE_AFTER_DAYS } from './organizer.js';
 export type { OrganizeReport } from './organizer.js';
-export { reflectSession, REFLECT_AGAIN_AFTER_TURNS } from './reflect-session.js';
+export { drainPendingReflections, reflectSession, REFLECT_AGAIN_AFTER_TURNS } from './reflect-session.js';
 export type { ReflectionJudge, ReflectSessionInput, ReflectSessionResult } from './reflect-session.js';
 export { addMemoryStats, readMemoryStats, STATS_FILE } from './stats.js';
 export type { MemoryStatName, MemoryStats } from './stats.js';

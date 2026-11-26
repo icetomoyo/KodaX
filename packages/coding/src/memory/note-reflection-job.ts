@@ -3,8 +3,9 @@
  * background and never awaited by the run:
  *
  *   1. count the notes the agent opened during the run (usage signal),
- *   2. reflect on the session when it qualifies (gate, cursor, daily cap); a
- *      procedure it proposes is saved as a learned skill waiting for the user,
+ *   2. reflect on the session when it qualifies (gate, cursor, daily cap), then
+ *      on what other sessions of the project left pending; a procedure it
+ *      proposes is saved as a learned skill waiting for the user,
  *   3. when reflection ran, tidy the stores and drop revisions past retention.
  *
  * The reflection call uses the session's own provider and model: the run just
@@ -18,6 +19,7 @@ import {
   addMemoryStats,
   commitLearnedSkillRevision,
   createLearnedCapabilityScope,
+  drainPendingReflections,
   emitKodaXDiagnostic,
   LearnedAreaStore,
   LearningCapabilityError,
@@ -28,6 +30,7 @@ import {
   reflectSession,
   resolveProjectLearnedAreaRoot,
   type ReflectionJudge,
+  type ReflectSessionResult,
   type SkillSink,
 } from '@kodax-ai/agent';
 import { withProviderRequestCredential, type KodaXBaseProvider, type KodaXMessage } from '@kodax-ai/llm';
@@ -126,21 +129,30 @@ export async function finishNoteRun(run: NoteRunFinish, judge?: ReflectionJudge)
   const reads = await recordNoteReads({ stores, messages: run.messages, ignoreCalls: run.earlierCalls });
   await addMemoryStats(stores.user.root, { reads });
   if (!run.reflect || !canReflectWith(run.provider, run.model)) return;
-  const outcome = await reflectSession({
+  const input = {
     sessionId: run.sessionId,
     project: projectKeyOf(run.place),
-    messages: run.messages,
     stores,
     cursorRoot: stores.user.root,
     judge: judge ?? createProviderJudge(run.provider, run.model),
     skills: createLearnedSkillSink(run.place),
-  });
-  if (outcome.status !== 'done') return;
-  await addMemoryStats(stores.user.root, { reflections: 1, rejected: outcome.rejected.length, ...outcome.appliedByOperation });
+  };
+  const outcome = await reflectSession({ ...input, messages: run.messages });
+  let reflected = await recordOutcome(stores, outcome);
+  if (outcome.status !== 'skipped' || outcome.reason !== 'daily-cap') {
+    for (const drained of await drainPendingReflections(input)) reflected = await recordOutcome(stores, drained) || reflected;
+  }
+  if (!reflected) return;
   for (const scope of NOTE_SCOPES) {
     await organizeStore(stores[scope]);
     await pruneRevisions(stores[scope].root);
   }
+}
+
+/** Counts one pass in the local stats; true when the pass ran. */
+async function recordOutcome(stores: ReturnType<typeof noteStoresFor>, outcome: ReflectSessionResult): Promise<boolean> {
+  if (outcome.status !== 'done') return false;
+  await addMemoryStats(stores.user.root, { reflections: 1, rejected: outcome.rejected.length, ...outcome.appliedByOperation });
   if (outcome.rejected.length > 0) {
     emitKodaXDiagnostic({
       source: 'coding:note-reflection',
@@ -149,6 +161,7 @@ export async function finishNoteRun(run: NoteRunFinish, judge?: ReflectionJudge)
       detail: { applied: outcome.applied, rejected: outcome.rejected },
     });
   }
+  return true;
 }
 
 /** Queues a finish behind the earlier ones. The returned promise never rejects; failures go to diagnostics. */

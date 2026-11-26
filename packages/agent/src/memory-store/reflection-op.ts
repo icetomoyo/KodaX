@@ -9,7 +9,9 @@
  *   dispute      active or candidate -> disputed (hidden from the index, kept on disk)
  *   rewrite      corrects a note; a note the user stated can only be rewritten
  *                from a user message, local evidence can only dispute it; a
- *                candidate rewritten from a user message becomes active
+ *                candidate or disputed note rewritten from a user message becomes
+ *                active, a disputed one rewritten from local output a candidate;
+ *                a body longer than the job was shown keeps its body
  *   skill        proposes a learned skill; same proof as dispute, a valid and
  *                unsafe-pattern-free spec, no external text; the host stores it
  *                as "ready", so the user reviews it before it is ever used
@@ -184,6 +186,21 @@ async function dispute(store: NoteStore, context: ReflectionOpContext, note: Mem
   return done.ok ? { ok: true, message: `Memory '${note.id}' is now disputed.` } : fail(`Could not update '${note.id}'.`);
 }
 
+/** How much of a note body the reflection job is shown. */
+export const NOTE_VIEW_CHARS = 1500;
+
+/**
+ * The body as the reflection job sees it. A long body keeps its head and its end,
+ * because dispute appends its CONFLICT lines at the end.
+ */
+export function noteBodyView(body: string): string {
+  const text = body.trim();
+  if (text.length <= NOTE_VIEW_CHARS) return text;
+  const tail = Math.floor(NOTE_VIEW_CHARS / 3);
+  const head = NOTE_VIEW_CHARS - tail;
+  return `${text.slice(0, head)}\n[... ${text.length - NOTE_VIEW_CHARS} characters not shown ...]\n${text.slice(-tail)}`;
+}
+
 async function rewrite(store: NoteStore, note: MemoryNote, input: ReflectionOpInput, fromUser: boolean): Promise<MemoryOpResult> {
   if (note.status === 'archived') return fail(`Memory '${note.id}' is archived.`);
   if (input.description === undefined || input.description.trim().length === 0) {
@@ -192,14 +209,19 @@ async function rewrite(store: NoteStore, note: MemoryNote, input: ReflectionOpIn
   if (note.source !== 'inferred' && !fromUser) {
     return fail('A note the user stated can only be rewritten from the user\'s own words. Dispute it instead.');
   }
+  // The job saw only part of this body, so a new body would drop the part it never saw.
+  if (input.body !== undefined && note.body.trim().length > NOTE_VIEW_CHARS) {
+    return fail(`The body of '${note.id}' is longer than the part shown, so it cannot be replaced; change its description, why or check instead.`);
+  }
   const done = await store.edit(note.id, {
     ...(input.description === undefined ? {} : { description: input.description }),
     ...(input.check === undefined ? {} : { check: input.check }),
     ...(input.why === undefined ? {} : { why: input.why }),
     ...(input.body === undefined ? {} : { body: input.body }),
-    ...(note.status === 'disputed' ? { status: 'active' as const } : {}),
-    // The user stated the corrected rule, so a candidate becomes theirs, as with corroborate.
-    ...(note.status === 'candidate' && fromUser ? { status: 'active' as const, source: 'user' as const } : {}),
+    // A correction the user stated settles the note and makes it theirs, as with corroborate.
+    // One from local output is this session's reading, so the note waits for confirmation.
+    ...(note.status === 'disputed' && !fromUser ? { status: 'candidate' as const } : {}),
+    ...((note.status === 'candidate' || note.status === 'disputed') && fromUser ? { status: 'active' as const, source: 'user' as const } : {}),
   });
   return done.ok ? { ok: true, message: `Rewrote memory '${note.id}'.` } : fail(done.reason === 'secret' ? (done.detail ?? 'Secrets are never stored in memory.') : `Could not update '${note.id}'.`);
 }

@@ -10,6 +10,7 @@ import {
   resolveNoteRoot,
   resolveProjectLearnedAreaRoot,
   setAgentConfigHome,
+  type ReflectionJudge,
 } from '@kodax-ai/agent';
 import type { KodaXBaseProvider, KodaXMessage } from '@kodax-ai/llm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -152,6 +153,22 @@ describe('finishNoteRun', () => {
     const fake = provider([]);
     await finishNoteRun(finish({ messages: [{ role: 'user', content: 'What is 2+2?' }], provider: fake }));
     expect(fake.stream).not.toHaveBeenCalled();
+  });
+
+  it('reflects a session whose pass failed when a later session of the project ends', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-11-26T08:00:00Z'));
+      const failing: ReflectionJudge = async () => { throw new Error('provider down'); };
+      await expect(finishNoteRun(finish(), failing)).rejects.toThrow('provider down');
+      vi.setSystemTime(new Date('2026-11-26T09:00:00Z'));
+      const judge = createProviderJudge(provider([{ name: REFLECT_TOOL_NAME, input: { operation: 'write', id: 'tests', type: 'feedback', description: 'Run tests with make check-fast', quote: CORRECTION } }]), undefined);
+      await finishNoteRun(finish({ sessionId: 'sess-2', messages: [{ role: 'user', content: 'What is 2+2?' }] }), judge);
+      const project = createNoteStore(resolveNoteRoot(cwd, 'project'), 'project');
+      expect(await project.list()).toMatchObject([{ id: 'tests', status: 'active', session: 'sess-1' }]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
