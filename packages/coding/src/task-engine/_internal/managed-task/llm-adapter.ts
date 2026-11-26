@@ -337,9 +337,11 @@ export function resolveManagedProviderReasoning(
   const userCeiling: KodaXWireReasoningEffort =
     options.effort ?? mapLegacyReasoningModeToEffortIntent(resolveReasoningMode(options));
   const effort = resolveRoleEffort(userCeiling, agent.reasoning);
-  return effort === 'none'
-    ? { enabled: false, effort: 'none' }
-    : { enabled: true, effort };
+  if (effort !== 'none') return { enabled: true, effort };
+  // With no reasoning choice, 'off' is only a default: a model that cannot turn thinking off
+  // uses its own default instead of refusing the request. An explicit choice stays explicit.
+  const chosen = options.effort !== undefined || options.reasoningMode !== undefined || options.thinking !== undefined;
+  return chosen ? { enabled: false, effort: 'none' } : { enabled: false };
 }
 
 export function buildRunnerLlmAdapter(
@@ -489,8 +491,10 @@ export function buildRunnerLlmAdapter(
     if (prepared.blockedReason) throw new Error(prepared.blockedReason);
     options.provider = prepared.provider;
     options.model = options.modelOverride = activeModel = prepared.model;
-    options.effort = prepared.reasoningMode ?? providerReasoning.effort;
-    providerReasoning = { enabled: options.effort !== 'none', effort: options.effort };
+    if (prepared.reasoningMode !== undefined) {
+      providerReasoning = { enabled: prepared.reasoningMode !== 'none', effort: prepared.reasoningMode };
+    }
+    options.effort = providerReasoning.effort;
     if (selection && (selection.selectionRevision ?? 0) === selectionRevision) {
       selection.modelSelection = { provider: options.provider, model: activeModel };
       selection.thinkingLevel = options.effort;

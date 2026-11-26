@@ -47,6 +47,36 @@ not the duplicated child summary. It does not establish duplicate Goal charging.
 No production accounting change is claimed here. See the
 [recorded scope and evidence](test-guides/FEATURE_TOKEN_EFFICIENCY_v0.7.97_TEST_GUIDE.md#最终生产child独立smoke).
 
+## Issue 445: A Run with no reasoning setting fails on a model that always thinks
+
+- Priority: Medium
+- Status: Resolved
+- Introduced: `v0.7.57` (`51fb53d32`, single-track reasoning effort)
+- Created / Resolved: 2026-11-26 / 2026-11-26
+- Fixed: unreleased (after `v0.7.97-rc.2`)
+- Reported by: RepoIntel v2 task A/B setup (design doc §11.10)
+
+### Original Problem
+
+An SDK or Host Session that sets no `effort`, `reasoningMode` or `thinking`
+falls back to reasoning `off`. The managed Run turned that default into an
+explicit `effort: 'none'`. Models that cannot turn thinking off, such as
+`kimi-code` / `k3.1-pro`, refuse an explicit `none`, so the Run failed before
+the first request: `kimi-code/k3.1-pro does not support reasoning effort
+"none"`. The CLI, REPL and ACP default to `auto` and were not affected.
+
+### Resolution
+
+- `resolveManagedProviderReasoning` in `llm-adapter.ts` sends a reasoning-off
+  default without an effort when the caller chose nothing. The provider
+  treats it as a default: an always-thinking model uses its own default
+  effort, and a model that can turn thinking off still runs with it off. An
+  explicit `off` or `none` is still refused on an always-thinking model.
+- The provider hook step keeps that unset effort instead of re-sending it as
+  explicit.
+- Tests: `llm-adapter.unset-reasoning.test.ts` (unset on `k3.1-pro` thinks at
+  `max`; explicit `off` is refused; unset on `k3-256k` stays off).
+
 ## Issue 444: A multi-line edit on a CRLF file joins the next line onto the replacement
 
 - Priority: High
@@ -4824,6 +4854,7 @@ by the focused sandbox, lineage, REPL, and coding-runtime tests.
 
 | ID | Priority | Status | Title | Introduced | Fixed | Created | Resolved |
 |----|----------|--------|-------|------------|-------|---------|----------|
+| 445 | Medium | Resolved | A Run with no reasoning setting fails on a model that always thinks | `v0.7.57` | unreleased (after `v0.7.97-rc.2`) | 2026-11-26 | 2026-11-26 |
 | 444 | High | Resolved | A multi-line edit on a CRLF file joins the next line onto the replacement | `v0.7.15` | unreleased (after `v0.7.97-rc.2`) | 2026-11-26 | 2026-11-26 |
 | 443 | Low | Open | Side chat gaps left after FEATURE_307 | FEATURE_307 (unreleased, `KodaX-next-dev`) | — | 2026-11-24 | — |
 | 442 | Medium | Resolved | Gemini and pi-messages replay another model's tool calls as text | `v0.7.97-alpha.12` | unreleased (after `v0.7.97-rc.1`) | 2026-11-23 | 2026-11-23 |
@@ -20613,12 +20644,19 @@ Commit `ef085fc` 把 V1 精简到 V2 时没区分"信息载体"和"脚手架"，
 ---
 
 ## Summary
-- Total: 318 (48 Open including 1 needs-info, 1 ready, 267 Resolved, 0 Partially Resolved, 1 Won't Fix)
+- Total: 320 (48 Open including 1 needs-info, 1 ready, 269 Resolved, 0 Partially Resolved, 1 Won't Fix)
 - Ready: 1 (420)
 - Highest Priority Open: 091 - 缺少一等公民 MCP / Web Search / Code Search 工具体系 (High)
 - Historical archived issues are maintained in ISSUES_ARCHIVED.md
 
 ## Changelog
+
+### 2026-11-26: Issues 444 and 445
+
+- A normalized `edit` / `multi_edit` match keeps the line break after the
+  replaced block (Issue 444).
+- A Run with no reasoning setting no longer fails on an always-thinking
+  model (Issue 445).
 
 ### 2026-11-23: Issue 442
 
