@@ -69,6 +69,7 @@ const { session } = await host.call('session.create', {
 | `prompt` | Rules and references every Run starts with. See the next section. |
 | `interactions` | `wait` puts questions and approvals to a person. `reject` answers them at once. |
 | `leases` | Leases every Run of the Session uses. See [Which key a Run uses](#which-key-a-run-uses). |
+| `defaultSkill` | `{ name }`: the Skill each input runs through, with the input as its arguments. |
 
 Limits nest. The Host's `server.tools` holds for every Run. A Session policy narrows it,
 and a Run narrows the Session. Where two layers set the same limit, the lower one holds.
@@ -81,6 +82,11 @@ Nothing a Session or a Run sends lifts `server.tools`.
   is `wait`.
 - `session.policy.get` reads the policy. `session.policy.update` replaces all of it for
   Runs that start later; a Run already working keeps the policy it started with.
+- With `defaultSkill`, an input that names another Skill (`/summarize the memo`) runs
+  through that one instead. The Skill is looked up when the Run starts, so a queued input
+  takes the one its Session has then. When the project has no Skill of that name, the
+  input fails with `not_found` and the reason `default_skill_unavailable`. A Session whose
+  agent is not built on a Skill leaves the field out.
 
 `agent` on `session.create` names an Agent from `agent.list`. Its instructions and tools
 are copied into the policy, where they narrow what `policy` sets, and the Session starts

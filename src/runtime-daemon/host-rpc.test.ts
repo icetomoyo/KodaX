@@ -2109,6 +2109,54 @@ describe('v2 Session policy served by the v1 implementation', () => {
     const recovered = await user.request('session.recover', { requestId: 'recover-1', sessionId: session.id }) as SessionAnswer;
     expect(await user.request('session.policy.get', { sessionId: recovered.session.id })).toEqual({ policy: POLICY });
   }, 60_000);
+
+  it('runs each input of a Session through its default Skill, unless the input names another', async () => {
+    const host = await makeModelHost();
+    const skills = path.join(host.workspaceRoot, 'app', '.kodax', 'skills');
+    for (const [name, method] of [['contract-review', 'REVIEW-METHOD'], ['summarize', 'SUMMARY-METHOD']]) {
+      await mkdir(path.join(skills, name), { recursive: true });
+      await writeFile(path.join(skills, name, 'SKILL.md'), `---\nname: ${name}\ndescription: Fixture method.\n---\n${method} $ARGUMENTS\n`);
+    }
+    const runtime = await host.start();
+    const service = await connect('service', runtime, host.workspace);
+    const user = await connect('user', runtime, host.workspace);
+    const policy = { defaultSkill: { name: 'contract-review' } };
+    const { session } = await service.request('session.create', { requestId: 'create-1', project: 'app', policy }) as SessionAnswer;
+    expect(await user.request('session.policy.get', { sessionId: session.id })).toEqual({ policy: { ...policy, interactions: 'reject' } });
+    const ask = async (requestId: string, text: string): Promise<string> => {
+      const { input } = await user.request('input.submit', { requestId, sessionId: session.id, text }) as InputAnswer;
+      await user.request('run.wait', { runId: input.runId });
+      return host.lastRequest().text;
+    };
+
+    const reviewed = await ask('input-1', 'Check clause 5.');
+    expect(reviewed).toContain('REVIEW-METHOD Check clause 5.');
+    const summarized = await ask('input-2', '/summarize the memo');
+    expect(summarized).toContain('SUMMARY-METHOD the memo');
+    expect(summarized).not.toContain('REVIEW-METHOD the memo');
+
+    // An input that waited takes the default Skill its Session has when its Run starts.
+    await service.request('session.policy.update', { requestId: 'update-1', sessionId: session.id, policy: {} });
+    const held = host.hold();
+    const { input: first } = await user.request('input.submit', { requestId: 'input-3', sessionId: session.id, text: 'Wait.' }) as InputAnswer;
+    await held.called;
+    await user.request('input.submit', { requestId: 'input-4', sessionId: session.id, text: 'Check clause 9.', delivery: 'after_turn' });
+    await service.request('session.policy.update', { requestId: 'update-2', sessionId: session.id, policy });
+    held.release();
+    await user.request('run.wait', { runId: first.runId });
+    const queuedRun = await vi.waitFor(async () => {
+      const { input } = await user.request('input.get', { sessionId: session.id, inputId: 'input-4' }) as InputAnswer;
+      if (input.runId === undefined) throw new Error('The queued input has no Run yet.');
+      return input.runId;
+    }, { timeout: 20_000, interval: 25 });
+    await user.request('run.wait', { runId: queuedRun });
+    expect(host.lastRequest().text).toContain('REVIEW-METHOD Check clause 9.');
+
+    // A Skill that is gone is reported, not quietly left out.
+    await service.request('session.policy.update', { requestId: 'update-3', sessionId: session.id, policy: { defaultSkill: { name: 'gone' } } });
+    await expect(user.request('input.submit', { requestId: 'input-5', sessionId: session.id, text: 'Check clause 7.' }))
+      .rejects.toMatchObject({ kodaxCode: 'not_found', reason: 'default_skill_unavailable', message: expect.stringContaining('gone') });
+  }, 60_000);
 });
 
 describe('the tool limit of the Host, served by the v1 implementation', () => {

@@ -16,6 +16,8 @@ import type { RuntimeKodaXOptions } from './sdk-runtime.js';
 const PROFILE_FIELDS = ['surface', 'id', 'version', 'name', 'instructions'] as const;
 const BUDGET_FIELDS = ['maxIter', 'maxDurationMs'] as const;
 const LEASE_FIELDS = ['credential', 'hostTools', 'holder'] as const;
+/** As long as a Skill name may be, and as the Host checks it when it loads the Skill. */
+const LONGEST_SKILL_NAME = 128;
 /** The longest wait a timer of the platform holds. */
 const LONGEST_DURATION_MS = 2 ** 31 - 1;
 
@@ -71,6 +73,17 @@ function parseAgentProfile(value: unknown): KodaXAgentProfile {
   return profile;
 }
 
+/** Only the name is kept: the Skill itself is looked up when a Run starts, in the project of the Session. */
+function parseDefaultSkill(value: unknown): NonNullable<ClientSessionPolicy['defaultSkill']> {
+  if (!isRecord(value)) throw invalid('defaultSkill must be an object');
+  assertKnownFields(value, ['name'], 'defaultSkill.');
+  const { name } = value;
+  if (typeof name !== 'string' || name.trim().length === 0 || name.length > LONGEST_SKILL_NAME || /[\x00-\x1f]/.test(name)) {
+    throw invalid(`defaultSkill.name must be a Skill name of at most ${LONGEST_SKILL_NAME} characters`);
+  }
+  return { name };
+}
+
 /** The Host routes a Run's requests by these; `applySessionPolicy` leaves them alone. Bound to nothing reads as none. */
 function parseLeases(value: unknown): ClientSessionLeases | undefined {
   if (!isRecord(value)) throw invalid('leases must be an object');
@@ -93,7 +106,7 @@ function parseLeases(value: unknown): ClientSessionLeases | undefined {
 export function parseSessionPolicy(value: unknown): ClientSessionPolicy | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) throw invalid('must be an object');
-  assertKnownFields(value, ['tools', 'budget', 'agentProfile', 'prompt', 'interactions', 'leases'], '');
+  assertKnownFields(value, ['tools', 'budget', 'agentProfile', 'prompt', 'interactions', 'leases', 'defaultSkill'], '');
   const budget = value.budget === undefined ? undefined : parseBudget(value.budget);
   if (value.prompt !== undefined) assertKodaXPromptSpec(value.prompt);
   const leases = value.leases === undefined ? undefined : parseLeases(value.leases);
@@ -108,6 +121,7 @@ export function parseSessionPolicy(value: unknown): ClientSessionPolicy | undefi
     ...(value.prompt === undefined ? {} : { prompt: structuredClone(value.prompt) }),
     ...(interactions === undefined ? {} : { interactions }),
     ...(leases === undefined ? {} : { leases }),
+    ...(value.defaultSkill === undefined ? {} : { defaultSkill: parseDefaultSkill(value.defaultSkill) }),
   };
   return Object.keys(policy).length > 0 ? policy : undefined;
 }

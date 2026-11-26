@@ -121,6 +121,15 @@ const SessionPolicy = z.strictObject({
    */
   interactions: z.enum(['wait', 'reject']).optional(),
   /**
+   * The Skill each input of the Session runs through, with the text of the
+   * input as its arguments. An input that names another Skill runs through
+   * that one instead. It is read when a Run starts, so an input waiting in the
+   * queue takes the one its Session has then. When the project of the Session
+   * has no Skill of that name, the input is refused with `not_found` and the
+   * reason `default_skill_unavailable`, or, if it waited, stays queued saying so.
+   */
+  defaultSkill: z.strictObject({ name: z.string().regex(/\S/).regex(/^[^\x00-\x1f]*$/).max(128) }).optional(),
+  /**
    * Leases of the creator that every Run of the Session uses, whoever submits
    * it. Their requests go to the client instance that bound them, which must
    * hold them and connect with an `instanceSecret`. A Run there brings no

@@ -54,6 +54,7 @@ const { session } = await host.call('session.create', {
 | `prompt` | 每个 Run 开始时带的规则和参考资料。见下一节。 |
 | `interactions` | `wait` 把提问和审批交给人。`reject` 立刻回绝。 |
 | `leases` | 这个 Session 每个 Run 都用的租约。见 [Run 用哪把 key](#run-用哪把-key)。 |
+| `defaultSkill` | `{ name }`：每条输入都经过的 Skill，输入文字作为它的参数。 |
 
 上限是一层套一层的。Host 的 `server.tools` 对每个 Run 都生效。Session 策略在它之内收窄，Run 又在 Session 之内收窄。两层设了同一项上限时，取较低的那个。Session 和 Run 发什么都放宽不了 `server.tools`。
 
@@ -61,6 +62,7 @@ const { session } = await host.call('session.create', {
 - 用完全部轮次的 Run，结局里有 `limitReached: true`。
 - `service` 创建 Session 时不设 `interactions`，就是 `reject`。人创建的是 `wait`。
 - `session.policy.get` 读取策略。`session.policy.update` 整个替换策略，对之后开始的 Run 生效；已经在工作的 Run 保持开始时的策略。
+- 设了 `defaultSkill` 时，点名另一个 Skill 的输入（`/summarize the memo`）改走那个 Skill。Skill 在 Run 开始时才查找，所以排队中的输入用的是那时 Session 的设置。项目里没有这个名字的 Skill，输入报 `not_found`，reason 为 `default_skill_unavailable`。不基于 Skill 构建的 Agent，不设这个字段即可。
 
 `session.create` 的 `agent` 指定 `agent.list` 里的一个 Agent。它的指令和工具被复制进策略，在 `policy` 设定的范围内再收窄，Session 也从这个 Agent 的模型开始。`agent` 和 `policy.agentProfile` 一起发，报 `invalid_params`。名字不存在，报 `not_found`。
 

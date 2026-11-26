@@ -2108,6 +2108,27 @@
                 "reject"
               ]
             },
+            "defaultSkill": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "maxLength": 128,
+                  "allOf": [
+                    {
+                      "pattern": "\\S"
+                    },
+                    {
+                      "pattern": "^[^\\x00-\\x1f]*$"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "additionalProperties": false
+            },
             "leases": {
               "type": "object",
               "properties": {
@@ -2550,6 +2571,27 @@
                 "reject"
               ]
             },
+            "defaultSkill": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "maxLength": 128,
+                  "allOf": [
+                    {
+                      "pattern": "\\S"
+                    },
+                    {
+                      "pattern": "^[^\\x00-\\x1f]*$"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "additionalProperties": false
+            },
             "leases": {
               "type": "object",
               "properties": {
@@ -2710,6 +2752,27 @@
                 "reject"
               ]
             },
+            "defaultSkill": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "maxLength": 128,
+                  "allOf": [
+                    {
+                      "pattern": "\\S"
+                    },
+                    {
+                      "pattern": "^[^\\x00-\\x1f]*$"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "additionalProperties": false
+            },
             "leases": {
               "type": "object",
               "properties": {
@@ -2857,6 +2920,27 @@
                 "wait",
                 "reject"
               ]
+            },
+            "defaultSkill": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "maxLength": 128,
+                  "allOf": [
+                    {
+                      "pattern": "\\S"
+                    },
+                    {
+                      "pattern": "^[^\\x00-\\x1f]*$"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "additionalProperties": false
             },
             "leases": {
               "type": "object",

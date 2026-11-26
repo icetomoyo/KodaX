@@ -12299,7 +12299,7 @@ async function createRuntimeRunService(deps: {
         }, record.productExecutionKey, record.origin?.principalId, async (input, execution) => {
           try {
             let resolved = await resolveProductExecution(input, execution, record.abortController?.signal);
-            // Leases the Session binds now; if they changed, the input waits for a Run of its own.
+            // What the Session binds now; with other leases or a default Skill, the input waits for a Run of its own.
             if (resolved?.refresh !== undefined) resolved = await resolved.refresh();
             if (record.abortController?.signal.aborted) return false;
             assertExecutionWorkMode(resolved?.profile?.requiredWorkMode, record.workMode ?? 'coding');

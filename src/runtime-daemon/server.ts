@@ -20,7 +20,7 @@ import type {
   CodingActorCredentialAccessFactory,
   ExtensionRuntimeContract,
 } from "@kodax-ai/coding";
-import type { ClientInteractionResponse, ClientSessionPolicy, ClientSessionView } from "@kodax-ai/coding/client-contract";
+import type { ClientInteractionResponse, ClientSessionLeases, ClientSessionPolicy, ClientSessionView } from "@kodax-ai/coding/client-contract";
 import {
   emitKodaXDiagnostic,
   ExternalAgentRegistrationConflictError,
@@ -2487,10 +2487,11 @@ async function dispatchRuntimeDaemonRequest(
   const assertAdmission = () => options.clientLifecycle?.assertAdmission(principalId);
   const ownLeases = params.credential !== undefined || params.hostTools !== undefined
     || authorization?.credential !== undefined || authorization?.hostTools !== undefined || authorization?.binding !== undefined;
-  const sessionLeases = request.method === 'input.withdraw' || !requestSessionId ? undefined
-    : await sessionLeaseAuthorization(runtime, requestSessionId, options.reverseBridgeHub, ownLeases);
+  const sessionBinding = request.method === 'input.withdraw' || !requestSessionId ? undefined
+    : await sessionExecution(runtime, requestSessionId, options.reverseBridgeHub, ownLeases);
   const createContext = (approved: Record<string, unknown> | undefined, intentKey?: string, sessionId = requestSessionId,
-    boundLeases = sessionLeases): ProductExecutionContext => {
+    bound = sessionBinding): ProductExecutionContext => {
+    const boundLeases = bound?.leases;
     const deferred = optionalRecord(approved?.binding);
     if (deferred !== undefined) {
       if (!sessionId || !['input.submit', 'run.recover'].includes(request.method)
@@ -2536,18 +2537,19 @@ async function dispatchRuntimeDaemonRequest(
     return { key, intentKey, principalId, subject, sessionId, profile, bindingSnapshot,
       bindingAvailable: reverseBridge.executionBindings.captureAvailability(),
       authorization: approved as import('../client-host-authorization.js').RuntimeExecutionAuthorization | undefined,
-      ...(!approved && !credential && !hostTools ? { defaultForSession: (target: string) => createContext(undefined, undefined, target) } : {}),
+      ...(!approved && !credential && !hostTools ? { defaultForSession: (target: string) => createContext(undefined, undefined, target, {}) } : {}),
       ...(ownLeases || !sessionId || request.method !== 'input.submit' ? {} : { async refresh() {
         // A queued input reports any lender that is away the same way, so it stays queued and says why.
-        const now = await sessionLeaseAuthorization(runtime, sessionId, options.reverseBridgeHub, false).catch((error: unknown) => {
+        const now = await sessionExecution(runtime, sessionId, options.reverseBridgeHub, false).catch((error: unknown) => {
           if (isRecord(error) && error.code === 'host_tool_unavailable') {
             throw daemonError('execution_binding_unavailable', String(error.message), { reason: 'lease_holder_away' });
           }
           throw error;
         });
-        return createContext(now === undefined ? authorization : { ...authorization, ...now.approved }, intentKey ?? key, sessionId, now);
+        return createContext(now.leases === undefined ? authorization : { ...authorization, ...now.leases.approved }, intentKey ?? key, sessionId, now);
       } }),
-      defaultSkill: profile?.defaultSkill, assertAdmission,
+      // What the Session fixes holds over what a client brings for one input.
+      defaultSkill: bound?.defaultSkill ?? profile?.defaultSkill, assertAdmission,
       async bindRun(runInput, runId, baseExtensionRuntime) {
         assertAdmission();
         const bound = await bindTrustedRunInput({ params: { ...runInput,
@@ -2560,7 +2562,7 @@ async function dispatchRuntimeDaemonRequest(
       },
     };
   };
-  let context = createContext(sessionLeases === undefined ? authorization : { ...authorization, ...sessionLeases.approved });
+  let context = createContext(sessionBinding?.leases === undefined ? authorization : { ...authorization, ...sessionBinding.leases.approved });
   if (request.method === 'run.recover' && context.resolve !== undefined) {
     const status = await runtime.runs.get(requireStringField(params, 'runId'));
     const original = status.executionBinding;
@@ -2601,16 +2603,32 @@ function bindSessionLeases(policy: unknown, bridge: RuntimeDaemonReverseBridge, 
   return { ...policy as Record<string, unknown>, leases: { ...leases, holder } };
 }
 
+/** What the policy of a Session decides for a Run a request starts there: the leases it binds and its default Skill. */
+interface SessionExecution {
+  readonly leases?: { readonly approved: Record<string, unknown>; readonly bridge: RuntimeDaemonReverseBridge };
+  readonly defaultSkill?: NonNullable<ClientSessionPolicy['defaultSkill']>;
+}
+
+async function sessionExecution(
+  runtime: KodaXRuntime, sessionId: string, hub: RuntimeDaemonReverseBridgeHub | undefined, ownLeases: boolean,
+): Promise<SessionExecution> {
+  const { policy } = await runtime.sessions.load(sessionId);
+  const leases = sessionLeaseAuthorization(policy?.leases, hub, ownLeases);
+  return {
+    ...(leases === undefined ? {} : { leases }),
+    ...(policy?.defaultSkill === undefined ? {} : { defaultSkill: policy.defaultSkill }),
+  };
+}
+
 /**
  * The leases a Session binds, as the execution authorization of a Run there,
  * and the bridge of the instance that holds them. A Run there brings none of
  * its own. One that needs the key is refused while the holder is away; a tool
  * call waits for it instead.
  */
-async function sessionLeaseAuthorization(
-  runtime: KodaXRuntime, sessionId: string, hub: RuntimeDaemonReverseBridgeHub | undefined, ownLeases: boolean,
-): Promise<{ readonly approved: Record<string, unknown>; readonly bridge: RuntimeDaemonReverseBridge } | undefined> {
-  const leases = (await runtime.sessions.load(sessionId)).policy?.leases;
+function sessionLeaseAuthorization(
+  leases: ClientSessionLeases | undefined, hub: RuntimeDaemonReverseBridgeHub | undefined, ownLeases: boolean,
+): { readonly approved: Record<string, unknown>; readonly bridge: RuntimeDaemonReverseBridge } | undefined {
   if (leases?.holder === undefined || (leases.credential === undefined && leases.hostTools === undefined)) return undefined;
   if (ownLeases) throw daemonError('invalid_params', 'This Session binds the leases its Runs use.', { reason: 'lease_bound_by_session' });
   const bridge = hub?.heldBy(leases.holder);
@@ -2639,7 +2657,7 @@ async function actorLeases(
 ): Promise<{ readonly authorization: Record<string, unknown> | undefined; readonly bridge: RuntimeDaemonReverseBridge; readonly lent: boolean }> {
   const authorization = optionalRecord(params.authorization);
   const ownLeases = params.credential !== undefined || authorization?.credential !== undefined || authorization?.hostTools !== undefined;
-  const session = await sessionLeaseAuthorization(runtime, sessionId, hub, ownLeases);
+  const session = sessionLeaseAuthorization((await runtime.sessions.load(sessionId)).policy?.leases, hub, ownLeases);
   return session === undefined
     ? { authorization, bridge: own, lent: false }
     : { authorization: { ...authorization, ...session.approved }, bridge: session.bridge, lent: true };

@@ -15,6 +15,7 @@ describe('reading a Session policy', () => {
       agentProfile: { name: 'Clerk', instructions: 'You are the release clerk.' },
       prompt: { kodaxGuidance: 'omit', context: [{ key: 'tone', kind: 'rule', text: 'Answer in one sentence.' }] },
       interactions: 'reject',
+      defaultSkill: { name: 'contract-review' },
     };
     expect(parseSessionPolicy(policy)).toEqual({ ...policy, tools: ['read', 'grep'] });
     expect(parseSessionPolicy({ interactions: 'wait' })).toEqual({ interactions: 'wait' });
@@ -38,6 +39,11 @@ describe('reading a Session policy', () => {
     ['a persona field that is not text', { agentProfile: { name: 7 } }],
     ['a malformed application prompt', { prompt: { context: [{ key: 'Tone', kind: 'rule', text: 'x' }] } }],
     ['a way to treat questions it does not know', { interactions: 'ask' }],
+    ['a default Skill that is not an object', { defaultSkill: 'contract-review' }],
+    ['a default Skill without a name', { defaultSkill: { name: ' ' } }],
+    ['a default Skill field it does not know', { defaultSkill: { name: 'contract-review', version: '2' } }],
+    ['a default Skill name with a line break', { defaultSkill: { name: 'contract\nreview' } }],
+    ['a default Skill name longer than any Skill has', { defaultSkill: { name: 'x'.repeat(129) } }],
   ])('refuses %s', (_what, value) => {
     expect(() => parseSessionPolicy(value)).toThrow(expect.objectContaining({ code: 'invalid_params' }));
   });

@@ -2753,7 +2753,10 @@ fixed GitHub binary archive sidecar omission before tagging.
     release that removes v1 lists it under Breaking.
 - Prerequisites found by the 2026-11-23 protocol review (the owner agreed):
   - `actor.spawn` and `actor.followup` on v2; Space uses `followup`.
-  - The Space authorizer lease from M1c item 3.
+  - M1c item 3. Changed 2026-11-26: no authorizer lease. Space's experts
+    map onto the Session policy, which gained `defaultSkill`; a recovered
+    Run keeps its persona and queued inputs use the current Session leases.
+    Landed 2026-11-26.
   - `kodax acp` on v2: it opens the v1 client today
     (`src/acp_server.ts` `ensureKodaXClient`).
   - The `kodax a2a` probe on v2, which keeps `agent.registration.*`
@@ -2767,8 +2770,8 @@ fixed GitHub binary archive sidecar omission before tagging.
     designed together with opening `learning.*`. It replaces Space's v1
     memory calls and closes Issue 411.
 - Progress (2026-11-24): every prerequisite above has landed on
-  `KodaX-next-dev` except the authorizer lease, which waits for Space's call
-  sites. Of KodaX's own v1 callers, print mode, `-r`, ACP and the a2a probe
+  `KodaX-next-dev` except M1c item 3, which landed 2026-11-26. Of KodaX's
+  own v1 callers, print mode, `-r`, ACP and the a2a probe
   are on v2; the `daemon`/`host` health probe (`observeRuntimeDaemonHealth`),
   the v1 path in `ensureKodaXHostClient`, `recovering-runtime-client` and the
   exported v1 client remain.

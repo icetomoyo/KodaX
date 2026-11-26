@@ -2308,7 +2308,7 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
 
 1. 给 Space 的迁移说明：Space 用到的每个 v1 调用对应哪个 v2 方法，行为、错误码和身份有什么不同。写进 `docs/SDK_MIGRATION.md`，交给 Space 线程。**状态**：2026-11-24 写入"协议 v2：v1 方法对照"一节，覆盖握手里的全部 140 个方法，`methods.contract.json` 有的方法表里都有。
 2. 按 Space 的反馈补方法：§12 第 1 条列的调用点由 Space 线程核对。有调用方的，SDK 补上对应的 v2 方法。
-3. ~~授权方租约~~：2026-11-26 改为不做。Space 的"专家"用 Session 策略表达，见下面"第 3 项的设计"（待用户确认）。
+3. ~~授权方租约~~：2026-11-26 改为不做。Space 的"专家"用 Session 策略表达，见下面"第 3 项的设计"（2026-11-26 落地）。
 4. Artifact SDK 改为按 blob 引用匹配附件（D11）。Artifact SDK 是 KodaX 的包，这一项归 SDK。**状态**：2026-11-24 落地，见下面"第 4 项的落地细节"。
 
 第 4 项的落地细节（2026-11-24 用户确认）：
@@ -2320,7 +2320,7 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
 - 图片：条目上恰好一个 image 附件，按它的 `blobId` 用 `blob.read` 分块读。每块返回的 `sha256` 必须等于工具报告的图片哈希，`mediaType` 必须是 `image/png`，长度和各块一致；读完再按 Node 端口同样的规则校验像素。工具结果的附件不带 `sha256`，所以哈希比对靠 `blob.read`。
 - 已验证：`host-port.test.ts`（内联和存盘两种输出读到同样的字节；别的 Run 的条目、两个条目、没有或多个图片、哈希不符、字节损坏、Run 失败都被拒，且不多读 blob；中止时只停自己的 Run 并合并 Stop 的失败；Host 拒绝启动时不再启动）；host-rpc 集成测试用真实 Host、真实 `read` 工具和 `createKodaXHostClient`，`readEvidence` 读回的字节等于原图。
 
-第 3 项的设计（2026-11-26；两处缺口已落地，`defaultSkill` 待用户确认）：
+第 3 项的设计（2026-11-26，用户确认；两处缺口和 `defaultSkill` 都已落地）：
 
 **结论**：v2 不做授权方租约。
 
@@ -2372,11 +2372,11 @@ Space 怎么迁、什么时候切换，由 Space 的线程自己定（§8 "客�
 
 **要改的代码**（按 TDD 做）：
 
-1. 策略新增 `defaultSkill`：在 `session.create` 和 `policy.update` 里校验，由 `policy.get` 返回，Run 开始时接到现有的默认方法逻辑上。
+1. 策略新增 `defaultSkill`：在 `session.create` 和 `policy.update` 里校验，由 `policy.get` 返回，Run 开始时接到现有的默认方法逻辑上。**状态**：2026-11-26 落地。Session 策略的 `defaultSkill` 优先于客户端单条输入带的；排队的输入在开 Run 时重读；不存在的 Skill 报 `not_found`（原因 `default_skill_unavailable`）。专家不基于 Skill 时不设这个字段。
 2. 缺口 1，恢复会换专家：`sdk-runtime.ts:12985` 原来对恢复的 Run 整份再套一次当前策略，`applySessionPolicy` 会用当前的 `agentProfile` 和 `prompt` 盖掉原来的。改成恢复时只收窄限制。**状态**：2026-11-26 落地。`session-policy.ts` 的 `sessionPolicyLimits` 只取工具、预算和交互方式，`startRun` 和 Actor 轮次的恢复路径都用它。
 3. 缺口 2，排队的输入用旧租约：Session 租约原来在提交时解析（`server.ts:2728`），排队期间换了租约，排着的输入还在用旧的，和策略的静态部分不一致。改成在开 Run 时解析；开不了的走 `admissionError`。**状态**：2026-11-26 落地。`input.submit` 的执行上下文带 `refresh`，队列在排空和轮次边界合并时都先重读 Session 租约；租约变了的输入另开自己的 Run。绑定方不在时，凭证和工具都报 `execution_binding_unavailable`（原因 `lease_holder_away`），输入留在队列里。
 
-- 已验证：`host-rpc.test.ts` 用真实 Host 测了三件事。恢复的 Run 仍是原来的人设和提示词，工具按当前策略收窄。排队期间换了工具租约，排着的输入用上新的。排队期间改绑凭证、绑定方离开，输入留在队列里并带上 `admissionError`，还能撤回。
+- 已验证：`host-rpc.test.ts` 用真实 Host 测了三件事。恢复的 Run 仍是原来的人设和提示词，工具按当前策略收窄。排队期间换了工具租约，排着的输入用上新的。排队期间改绑凭证、绑定方离开，输入留在队列里并带上 `admissionError`，还能撤回。另测了 `defaultSkill`：输入经过默认 Skill；点名别的 Skill 的输入走那个；排队期间改了默认 Skill，排着的输入用新的；不存在的 Skill 报 `default_skill_unavailable`。
 - 问题 6 已修（2026-11-26，`57f8dc7af`）：用 Session 租约的执行上下文，键里记的是人（`subject`），同一个人换个客户端可以插话。客户端自带的租约仍按连接实例记，别的客户端拿着它的租约 ID 也插不进去（v1 的 `binding-controls` 测试照旧通过）。上表"插话要比较完整的授权键"一行的其余部分（插话完全不比授权）没做：v1 客户端插话时自带授权，比对它能防止借用别人的租约。
 
 **不做**：授权方租约、业务快照、关闭 Session、按问题动态授权的钩子。
@@ -2553,7 +2553,7 @@ v1 只需要在 **Host** 里保留一段时间，原因是一台机器上的 Hos
 - 窗口从发布 v2 的版本算起。v2 晚于 `v0.7.98` 发布时，同时带两个协议的版本不足 2 个，届时重新确认删除线。
 - 删除前要先落地的（2026-11-23 协议审查，用户同意，FEATURE_314 里有同样的清单）：
   - ~~`actor.spawn` 和 `actor.followup`~~：2026-11-23 落地（子代理的落地细节）。
-  - M1c 第 3 项：不做授权方租约，改为策略的 `defaultSkill` 加两处缺口（见"第 3 项的设计"，待用户确认）。
+  - ~~M1c 第 3 项：不做授权方租约，改为策略的 `defaultSkill` 加两处缺口~~：2026-11-26 落地（见"第 3 项的设计"）。
   - ~~`kodax acp` 改走 v2~~：2026-11-23 落地（ACP 的落地细节）。
   - ~~`kodax a2a` 的探测改走 v2，`agent.registration.*` 留给本机 owner~~：2026-11-23 落地。`kodax a2a` 改 A2A 配置之前，对每个在跑的 Host 用 v2 的 `host.get` 看 `integrations.domains` 里有没有 `a2a`，有才说明这个 Host 会重新加载这份配置；v1 看的是 `a2aConfigReconciler` 能力。两者在 `kodax daemon` 起的 Host 上同时成立，配置无效时也一样。`agent.registration.*` 在 settings 平面，本来就只给 owner。Host 存活和归属的判断（`observeRuntimeDaemonHealth`）仍走 v1 的 `initialize`，和 `daemon` 命令一起迁。
   - ~~打印模式像 REPL 一样读 v2 会话视图~~：2026-11-23 落地（打印模式的落地细节）。

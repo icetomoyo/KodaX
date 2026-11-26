@@ -939,6 +939,11 @@ export interface ClientSessionPolicy {
    * that needs approval is not run. Absent is `wait`.
    */
   readonly interactions?: 'wait' | 'reject';
+  /**
+   * The Skill each input runs through, with the input as its arguments, unless
+   * the input names another. Read when its Run starts.
+   */
+  readonly defaultSkill?: { readonly name: string };
   /** Leases every Run of the Session uses, held by the client instance that bound them. */
   readonly leases?: ClientSessionLeases;
 }
