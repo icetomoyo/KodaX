@@ -2,7 +2,8 @@
  * A stand-in for the native RepoIntel engine in supervisor tests. It speaks
  * the same Content-Length framed JSON-RPC over stdio, and appends every
  * message it receives to the journal file named by `--journal`, so a test can
- * see what the Host sent. Flags make it misbehave the way a real engine might:
+ * see what the Host sent. A query (`symbols.*`, `file.*`) is answered with what it asked.
+ * Flags make it misbehave the way a real engine might:
  *   --rss <bytes>      report this resident size from engine.status
  *   --hang-status      never answer engine.status
  *   --hang-status-once leave only the first engine.status unanswered
@@ -64,6 +65,7 @@ function handle(message) {
     shutdown: null,
   };
   if (Object.hasOwn(results, method)) send({ id, result: results[method] });
+  else if (/^(symbols|file)\./.test(method)) send({ id, result: { asked: method, params } });
   else send({ id, error: { code: -32601, message: `unknown method ${method}` } });
   if (method === 'workspace.open' && flag('--exit-after-open')) setTimeout(() => process.exit(3), 20);
 }

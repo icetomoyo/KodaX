@@ -42,6 +42,13 @@ export interface RepoIntelSupervisorOptions {
 
 export type RepoIntelEngineState = 'idle' | 'starting' | 'running' | 'restarting' | 'closed';
 
+/** The engine's answers about one repository, as the Host hands them to a Run's tools. */
+export interface RepoIntelQuery {
+  /** The repository; paths in questions and answers are relative to it, written with `/`. */
+  readonly root: string;
+  request<T>(method: string, params: Readonly<Record<string, unknown>>): Promise<T>;
+}
+
 export interface RepoIntelSupervisorStatus {
   readonly state: RepoIntelEngineState;
   readonly pid?: number;
@@ -58,6 +65,11 @@ export interface RepoIntelSupervisor {
   open(root: string): void;
   /** Tells the engine which files of a repository an edit changed. */
   changed(root: string, paths: readonly string[]): void;
+  /**
+   * Asks the engine about a repository, which keeps the repository in use. Rejects, saying
+   * why, while the engine is not running; it is started for the next query.
+   */
+  query<T>(root: string, method: string, params: Readonly<Record<string, unknown>>): Promise<T>;
   status(): RepoIntelSupervisorStatus;
   close(): Promise<void>;
 }
@@ -247,6 +259,12 @@ export function createRepoIntelSupervisor(options: RepoIntelSupervisorOptions): 
     await idle?.stop(timing.statusTimeoutMs).catch((error: unknown) => log(`RepoIntel engine: cannot stop it: ${message(error)}`));
   };
 
+  const notRunning = (): string => {
+    if (state === 'closed') return 'The RepoIntel engine has shut down.';
+    if (state === 'starting') return 'The RepoIntel engine is starting.';
+    return `The RepoIntel engine is not running: ${problem ?? 'it stopped after idling and starts again on use'}`;
+  };
+
   const open = (root: string): void => {
     if (state === 'closed') return;
     const known = roots.has(root);
@@ -266,6 +284,11 @@ export function createRepoIntelSupervisor(options: RepoIntelSupervisorOptions): 
       if (!roots.has(root)) return open(root);
       roots.set(root, Date.now());
       if (state === 'running') engine?.notify('files.changed', { root, paths });
+    },
+    query<T>(root: string, method: string, params: Readonly<Record<string, unknown>>): Promise<T> {
+      open(root);
+      if (state === 'running' && engine) return engine.request<T>(method, { ...params, root }, timing.stuckMs);
+      return Promise.reject(new Error(notRunning()));
     },
     status: () => ({
       state,

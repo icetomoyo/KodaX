@@ -596,6 +596,7 @@ export { createRepoIntelSupervisor, repoIntelEngineProtocolProblem } from './rep
 export type {
   RepoIntelEngineLaunch,
   RepoIntelEngineState,
+  RepoIntelQuery,
   RepoIntelSupervisor,
   RepoIntelSupervisorOptions,
   RepoIntelSupervisorStatus,

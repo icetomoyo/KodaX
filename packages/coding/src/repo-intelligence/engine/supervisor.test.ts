@@ -214,6 +214,28 @@ describe('RepoIntel supervisor', () => {
     expect(supervisor.status().state).toBe('closed');
   });
 
+  it('asks the engine about a repository on its behalf and keeps the repository in use', async () => {
+    const engine = start();
+    engine.open(scratch);
+    await until(() => engine.status().state === 'running', 'the engine to run');
+    const answer = await engine.query(scratch, 'symbols.definitions', { name: 'run' });
+    expect(answer).toEqual({ asked: 'symbols.definitions', params: { name: 'run', root: scratch } });
+  });
+
+  it('turns a query away while the engine starts, and starts it for the next one', async () => {
+    const engine = start();
+    await expect(engine.query(scratch, 'file.outline', { path: 'a.ts' })).rejects.toThrow(/starting/);
+    await until(() => opens(scratch).length === 1, 'the query to open its repository');
+    await expect(engine.query(scratch, 'file.outline', { path: 'a.ts' })).resolves.toMatchObject({ asked: 'file.outline' });
+  });
+
+  it('says why it cannot answer when the engine would not start', async () => {
+    const engine = start(['--fail-initialize'], { restartMinMs: 60_000, restartMaxMs: 60_000 });
+    engine.open(scratch);
+    await until(() => engine.status().problem, 'the failure');
+    await expect(engine.query(scratch, 'file.outline', { path: 'a.ts' })).rejects.toThrow(/storageRoot is not a folder/);
+  });
+
   it('shuts the engine down on close and ignores later calls', async () => {
     const engine = start();
     engine.open(scratch);
@@ -222,6 +244,7 @@ describe('RepoIntel supervisor', () => {
     expect(received().map(item => item.method).slice(-2)).toEqual(['shutdown', 'exit']);
     expect(engine.status().state).toBe('closed');
     engine.open(scratch);
+    await expect(engine.query(scratch, 'file.outline', { path: 'a.ts' })).rejects.toThrow(/shut down/);
     await new Promise(resolve => setTimeout(resolve, 100));
     expect(opens(scratch)).toHaveLength(1);
   });
